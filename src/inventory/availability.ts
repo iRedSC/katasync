@@ -90,3 +90,39 @@ export async function getBundlesContaining(
 		);
 	return rows.map((r) => r.id);
 }
+
+// Components that leave a bundle with nothing to sell, and which bundles each
+// one blocks. A component blocks a bundle when there isn't enough of it for
+// even one unit. Sorted so the part blocking the most bundles comes first.
+export async function getBundleBlockers(
+	db: Db,
+	locationIds: number[],
+): Promise<{ productId: number; blocks: number[] }[]> {
+	const recipes = await db
+		.select({
+			bundleId: productComponents.parentProductId,
+			componentId: productComponents.componentProductId,
+			quantity: productComponents.quantity,
+		})
+		.from(productComponents)
+		.innerJoin(products, eq(products.id, productComponents.parentProductId))
+		.where(eq(products.kind, "bundle"));
+	const available = await getAvailability(
+		db,
+		[...new Set(recipes.map((r) => r.componentId))],
+		locationIds,
+	);
+
+	const blocks = new Map<number, number[]>();
+	for (const r of recipes) {
+		if ((available.get(r.componentId) ?? 0) < r.quantity) {
+			blocks.set(r.componentId, [
+				...(blocks.get(r.componentId) ?? []),
+				r.bundleId,
+			]);
+		}
+	}
+	return [...blocks]
+		.map(([productId, bundles]) => ({ productId, blocks: bundles }))
+		.sort((a, b) => b.blocks.length - a.blocks.length);
+}

@@ -5,6 +5,7 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { AppSidebar } from "#/components/app-sidebar";
+import { CommandPalette } from "#/components/command-palette";
 import { SidebarInset, SidebarProvider } from "#/components/ui/sidebar";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import appCss from "../styles.css?url";
@@ -26,6 +27,17 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 		],
 	}),
 	shellComponent: RootDocument,
+	errorComponent: ({ error }) => (
+		<div className="mx-auto flex max-w-md flex-col items-center gap-3 py-32 text-center">
+			<p className="text-lg font-medium">Something broke on this page</p>
+			<p className="text-sm text-muted-foreground">
+				{error instanceof Error ? error.message : String(error)}
+			</p>
+			<a href="/" className="text-sm text-primary underline">
+				Back to Today
+			</a>
+		</div>
+	),
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
@@ -36,10 +48,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			</head>
 			<body>
 				<TooltipProvider>
-					<SidebarProvider>
+					<SidebarProvider defaultOpen={false}>
 						<AppSidebar />
 						<SidebarInset>{children}</SidebarInset>
 					</SidebarProvider>
+					<CommandPalette />
 				</TooltipProvider>
 				<Scripts />
 			</body>

@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { desc, eq, lt, sql } from "drizzle-orm";
+import { desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import {
 	listings,
@@ -13,8 +13,8 @@ import {
 	stockLevels,
 	stores,
 } from "#/db/schema";
-import { getAvailability } from "#/inventory/availability";
-import { postMovements } from "#/inventory/ledger";
+import { getAvailability, getBundleBlockers } from "#/inventory/availability";
+import { recordCount as recordShelfCount } from "#/inventory/ledger";
 
 async function ownedLocationIds() {
 	const rows = await getDb()
@@ -191,86 +191,152 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			listings: productListings,
 			history,
 			available: available ?? 0,
+			// Where a count could be recorded. One location means nobody has to pick.
+			locations: await db
+				.select({ id: locations.id, name: locations.name })
+				.from(locations)
+				.where(eq(locations.kind, "owned"))
+				.orderBy(locations.name),
 		};
 	});
 
 export const getDashboard = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
-		const [counts] = await db
-			.select({
-				products: sql<number>`count(*)::int`,
-				bundles: sql<number>`count(*) filter (where ${products.kind} = 'bundle')::int`,
-			})
-			.from(products);
+		const owned = await ownedLocationIds();
+
 		const [stock] = await db
 			.select({
 				units: sql<number>`coalesce(sum(greatest(${stockLevels.onHand}, 0)), 0)::int`,
 				value: sql<number>`coalesce(sum(greatest(${stockLevels.onHand}, 0) * ${products.unitCost}), 0)::float`,
+				// Stocked products with no cost make the value an undercount.
+				uncosted: sql<number>`count(*) filter (where ${stockLevels.onHand} > 0 and ${products.unitCost} is null)::int`,
 			})
 			.from(stockLevels)
 			.innerJoin(products, eq(products.id, stockLevels.productId));
+
 		const oversold = await db
 			.select({
 				sku: products.sku,
 				name: products.name,
 				variantName: products.variantName,
+				imageUrl: products.imageUrl,
 				onHand: stockLevels.onHand,
 			})
 			.from(stockLevels)
 			.innerJoin(products, eq(products.id, stockLevels.productId))
 			.where(lt(stockLevels.onHand, 0))
 			.orderBy(stockLevels.onHand);
-		const [unmapped] = await db
-			.select({ count: sql<number>`count(*)::int` })
+
+		const blockers = await getBundleBlockers(db, owned);
+		const blockerIds = blockers.slice(0, 6).map((b) => b.productId);
+		const blockerProducts = new Map(
+			(blockerIds.length === 0
+				? []
+				: await db
+						.select({
+							id: products.id,
+							sku: products.sku,
+							name: products.name,
+							variantName: products.variantName,
+							imageUrl: products.imageUrl,
+						})
+						.from(products)
+						.where(inArray(products.id, blockerIds))
+			).map((p) => [p.id, p]),
+		);
+		const blockedBundles = new Set(blockers.flatMap((b) => b.blocks)).size;
+
+		const byCategory = await db
+			.select({
+				category: sql<string>`coalesce(${products.category}, 'Uncategorized')`,
+				value: sql<number>`sum(greatest(${stockLevels.onHand}, 0) * ${products.unitCost})::float`,
+				units: sql<number>`sum(greatest(${stockLevels.onHand}, 0))::int`,
+			})
+			.from(stockLevels)
+			.innerJoin(products, eq(products.id, stockLevels.productId))
+			.where(
+				sql`${products.unitCost} is not null and ${stockLevels.onHand} > 0`,
+			)
+			.groupBy(sql`1`)
+			.orderBy(sql`2 desc`);
+
+		const [{ bundles }] = await db
+			.select({ bundles: sql<number>`count(*)::int` })
+			.from(products)
+			.where(eq(products.kind, "bundle"));
+		const [{ unmapped }] = await db
+			.select({ unmapped: sql<number>`count(*)::int` })
 			.from(listings)
 			.where(sql`${listings.productId} is null`);
 
-		const bundleIds = (
-			await db
-				.select({ id: products.id })
-				.from(products)
-				.where(eq(products.kind, "bundle"))
-		).map((b) => b.id);
-		const bundleAvailability = await getAvailability(
-			db,
-			bundleIds,
-			await ownedLocationIds(),
-		);
-		const bundlesOut = [...bundleAvailability.values()].filter(
-			(v) => v === 0,
-		).length;
-
 		return {
-			...counts,
 			...stock,
 			oversold,
-			unmappedListings: unmapped.count,
-			bundlesOut,
+			blockers: blockers.slice(0, 6).map((b) => ({
+				...(blockerProducts.get(b.productId) ?? {
+					sku: "?",
+					name: "?",
+					variantName: null,
+					imageUrl: null,
+				}),
+				blocks: b.blocks.length,
+			})),
+			blockedBundles,
+			bundles,
+			unmapped,
+			// Top categories by value. The long tail is summed separately rather
+			// than drawn as a bar, where it would dwarf the real categories.
+			byCategory: byCategory.slice(0, 8),
+			otherCategories: {
+				count: Math.max(byCategory.length - 8, 0),
+				value: byCategory.slice(8).reduce((sum, c) => sum + c.value, 0),
+			},
 		};
 	},
 );
 
-export const listMovements = createServerFn({ method: "GET" }).handler(
+// The ledger, one row per operation: an import or an assembly reads as one
+// line instead of hundreds.
+export const listMovementBatches = createServerFn({ method: "GET" }).handler(
 	async () => {
-		return getDb()
+		const rows = await getDb()
 			.select({
-				id: movements.id,
-				createdAt: movements.createdAt,
-				sku: products.sku,
-				name: products.name,
-				location: locations.name,
-				delta: movements.delta,
-				reason: movements.reason,
-				reference: movements.reference,
-				note: movements.note,
+				batchId: movements.batchId,
+				createdAt: sql<Date>`min(${movements.createdAt})`,
+				lines: sql<number>`count(*)::int`,
+				delta: sql<number>`sum(${movements.delta})::int`,
+				// node-postgres can't parse arrays of enums, so join to text.
+				reasons: sql<string>`string_agg(distinct ${movements.reason}::text, ',')`,
+				reference: sql<string | null>`max(${movements.reference})`,
+				note: sql<string | null>`max(${movements.note})`,
+				sku: sql<string>`min(${products.sku})`,
+				name: sql<string>`min(${products.name})`,
+				imageUrl: sql<string | null>`min(${products.imageUrl})`,
 			})
 			.from(movements)
 			.innerJoin(products, eq(products.id, movements.productId))
-			.innerJoin(locations, eq(locations.id, movements.locationId))
-			.orderBy(desc(movements.id))
-			.limit(200);
+			.groupBy(movements.batchId)
+			.orderBy(sql`max(${movements.id}) desc`)
+			.limit(100);
+		return rows.map((r) => ({
+			...r,
+			reasons: r.reasons.split(","),
+			createdAt: new Date(r.createdAt),
+		}));
 	},
+);
+
+export const listProductIndex = createServerFn({ method: "GET" }).handler(
+	async () =>
+		getDb()
+			.select({
+				sku: products.sku,
+				name: products.name,
+				variantName: products.variantName,
+			})
+			.from(products)
+			.orderBy(products.sku),
 );
 
 export const listLocations = createServerFn({ method: "GET" }).handler(
@@ -298,15 +364,16 @@ export const listUnmappedListings = createServerFn({ method: "GET" }).handler(
 			.where(sql`${listings.productId} is null`),
 );
 
-// A manual correction, e.g. after a cycle count. Recorded as an adjustment
-// movement so the history explains the change.
-export const adjustStock = createServerFn({ method: "POST" })
+// Records what someone counted on the shelf. The app works out the change, and
+// the location when there's only one.
+export const recordCount = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			sku: "string > 0",
-			locationId: "number.integer > 0",
-			delta: "number.integer",
-			note: "string > 0",
+			counted: "number.integer",
+			reason: "'count' | 'damaged' | 'found' | 'other'",
+			"note?": "string",
+			"locationId?": "number.integer > 0",
 		}),
 	)
 	.handler(async ({ data }) => {
@@ -316,18 +383,23 @@ export const adjustStock = createServerFn({ method: "POST" })
 			.from(products)
 			.where(eq(products.sku, data.sku));
 		if (!product) throw new Error(`No product ${data.sku}`);
-		const result = await postMovements(db, {
-			note: data.note,
-			lines: [
-				{
-					productId: product.id,
-					locationId: data.locationId,
-					delta: data.delta,
-					reason: "adjustment",
-				},
-			],
+		const owned = await ownedLocationIds();
+		const locationId =
+			data.locationId ?? (owned.length === 1 ? owned[0] : undefined);
+		if (locationId === undefined) throw new Error("Pick a location");
+
+		const labels = {
+			count: "Counted",
+			damaged: "Damaged",
+			found: "Found",
+			other: "Other",
+		};
+		return recordShelfCount(db, {
+			productId: product.id,
+			locationId,
+			counted: data.counted,
+			note: [labels[data.reason], data.note?.trim()].filter(Boolean).join(": "),
 		});
-		return { onHand: result.levels[0].onHand };
 	});
 
 export type ProductRow = Awaited<ReturnType<typeof listProducts>>[number];

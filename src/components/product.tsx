@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { Badge } from "#/components/ui/badge";
 import {
 	Table,
 	TableBody,
@@ -9,20 +8,6 @@ import {
 	TableRow,
 } from "#/components/ui/table";
 import { formatDateTime, formatDelta, formatReason } from "#/lib/format";
-
-const variants = {
-	simple: "secondary",
-	kit: "outline",
-	bundle: "default",
-} as const;
-
-export function KindBadge({ kind }: { kind: "simple" | "kit" | "bundle" }) {
-	return (
-		<Badge variant={variants[kind]} className="capitalize">
-			{kind}
-		</Badge>
-	);
-}
 
 export function ProductImage({
 	src,

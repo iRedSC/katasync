@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
-import { getAvailability, getBundlesContaining } from "./availability";
+import {
+	getAvailability,
+	getBundleBlockers,
+	getBundlesContaining,
+} from "./availability";
 import {
 	assembleKits,
 	disassembleKits,
 	postMovements,
+	recordCount,
 	recordSale,
 } from "./ledger";
 import { setRecipe } from "./recipes";
@@ -314,5 +319,79 @@ describe("products", () => {
 			groupId: group.id,
 			variantName: "Large",
 		});
+	});
+});
+
+describe("getBundleBlockers", () => {
+	test("names the components that leave bundles unsellable", async () => {
+		const handle = await sku("HANDLE", "simple");
+		const blade = await sku("BLADE", "simple");
+		const knife = await sku("KNIFE", "simple");
+		const setA = await sku("SET-A", "bundle");
+		const setB = await sku("SET-B", "bundle");
+		await setRecipe(db, setA, [
+			{ productId: handle, quantity: 2 },
+			{ productId: blade, quantity: 1 },
+		]);
+		await setRecipe(db, setB, [
+			{ productId: handle, quantity: 1 },
+			{ productId: knife, quantity: 1 },
+		]);
+		await receive(handle, warehouse, 1); // enough for SET-B, not SET-A
+		await receive(blade, warehouse, 5);
+
+		expect(await getBundleBlockers(db, [warehouse])).toEqual([
+			{ productId: handle, blocks: [setA] },
+			{ productId: knife, blocks: [setB] },
+		]);
+	});
+});
+
+describe("recordCount", () => {
+	test("records the difference between the count and what we thought", async () => {
+		const wrench = await sku("WRENCH", "simple");
+		await recordSale(db, {
+			productId: wrench,
+			quantity: 3,
+			locationId: warehouse,
+			reference: "o",
+		});
+
+		expect(
+			await recordCount(db, {
+				productId: wrench,
+				locationId: warehouse,
+				counted: 4,
+				note: "Counted",
+			}),
+		).toEqual({ delta: 7, onHand: 4 });
+		expect(await onHand(wrench, warehouse)).toBe(4);
+	});
+
+	test("a matching count records nothing", async () => {
+		const wrench = await sku("WRENCH", "simple");
+		await receive(wrench, warehouse, 5);
+		const before = (await db.select().from(schema.movements)).length;
+		expect(
+			await recordCount(db, {
+				productId: wrench,
+				locationId: warehouse,
+				counted: 5,
+				note: "Counted",
+			}),
+		).toEqual({ delta: 0, onHand: 5 });
+		expect(await db.select().from(schema.movements)).toHaveLength(before);
+	});
+
+	test("tool sets can't be counted", async () => {
+		const set = await sku("SET", "bundle");
+		await expect(
+			recordCount(db, {
+				productId: set,
+				locationId: warehouse,
+				counted: 1,
+				note: "x",
+			}),
+		).rejects.toThrow(/count their parts/);
 	});
 });

@@ -1,177 +1,179 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { AlertTriangle, Link2, Truck } from "lucide-react";
-import { EmptyState, PageBody, PageHeader } from "#/components/page";
-import { Badge } from "#/components/ui/badge";
+import { ArrowRight } from "lucide-react";
+import { BarList } from "#/components/bar-list";
+import { PageBody, PageHeader, Section, StatusTile } from "#/components/page";
+import { ProductImage } from "#/components/product";
 import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "#/components/ui/card";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "#/components/ui/table";
-import { formatCount, formatMoney } from "#/lib/format";
+	formatCount,
+	formatMoneyCompact,
+	formatMoneyWhole,
+} from "#/lib/format";
 import { getDashboard } from "#/server/catalog";
 
 export const Route = createFileRoute("/")({
 	loader: () => getDashboard(),
-	component: Dashboard,
+	component: Today,
 });
 
-function Dashboard() {
-	const data = Route.useLoaderData();
+function Today() {
+	const d = Route.useLoaderData();
+	const allGood = d.oversold.length === 0 && d.blockedBundles === 0;
+
 	return (
 		<>
-			<PageHeader title="Dashboard" />
+			<PageHeader title="Today" />
 			<PageBody>
-				<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-					<Stat
-						label="Products"
-						value={formatCount(data.products)}
-						hint={`${formatCount(data.bundles)} bundles`}
-					/>
-					<Stat
-						label="Units on hand"
-						value={formatCount(data.units)}
-						hint="Across owned locations"
-					/>
-					<Stat
-						label="Stock value"
-						value={formatMoney(data.value)}
-						hint="At landed cost, where known"
-					/>
-					<Stat
-						label="Bundles out of stock"
-						value={formatCount(data.bundlesOut)}
-						hint={`of ${formatCount(data.bundles)}`}
-					/>
+				<div className="grid gap-4 md:grid-cols-2">
+					{d.oversold.length > 0 && (
+						<StatusTile
+							tone="bad"
+							value={formatCount(d.oversold.length)}
+							label="products sold that we don't have"
+							hint="Count the shelf, or a restock is overdue"
+							link={{ to: "/products", search: { show: "oversold" } }}
+						/>
+					)}
+					{d.blockedBundles > 0 && (
+						<StatusTile
+							tone="warn"
+							value={formatCount(d.blockedBundles)}
+							label={`of ${formatCount(d.bundles)} tool sets can't be sold`}
+							hint="A part is missing. The ones blocking the most are below."
+							link={{ to: "/products", search: { show: "blocked" } }}
+						/>
+					)}
+					{allGood && (
+						<StatusTile
+							tone="good"
+							value="0"
+							label="problems. Everything can be sold."
+						/>
+					)}
 				</div>
 
-				<div className="grid gap-4 lg:grid-cols-2">
-					<Card>
-						<CardHeader>
-							<CardTitle>To ship</CardTitle>
-							<CardDescription>
-								Open orders across every channel
-							</CardDescription>
-						</CardHeader>
-						<CardContent>
-							<EmptyState icon={Truck} title="Order intake isn't connected yet">
-								Orders from Shopify, Amazon, eBay, and TikTok Shop will queue
-								here.
-							</EmptyState>
-						</CardContent>
-					</Card>
-					<Card>
-						<CardHeader>
-							<CardTitle>Unmapped listings</CardTitle>
-							<CardDescription>
-								Channel listings not yet tied to a product
-							</CardDescription>
-						</CardHeader>
-						<CardContent>
-							<EmptyState
-								icon={Link2}
-								title={
-									data.unmappedListings === 0
-										? "Nothing to map"
-										: `${data.unmappedListings} to map`
-								}
-							>
-								Listings arrive once channels sync.{" "}
-								<Link to="/listings" className="text-primary underline">
-									Open listings
-								</Link>
-							</EmptyState>
-						</CardContent>
-					</Card>
-				</div>
-
-				<Card>
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
-							<AlertTriangle className="size-4 text-destructive" />
-							Oversold
-							<Badge variant="secondary">{data.oversold.length}</Badge>
-						</CardTitle>
-						<CardDescription>
-							Products with negative stock: sold before we had them
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead>SKU</TableHead>
-									<TableHead>Product</TableHead>
-									<TableHead className="text-right">On hand</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{data.oversold.slice(0, 15).map((row) => (
-									<TableRow key={row.sku}>
-										<TableCell className="font-mono text-xs">
-											<Link
-												to="/products/$sku"
-												params={{ sku: row.sku }}
-												className="hover:underline"
-											>
-												{row.sku}
-											</Link>
-										</TableCell>
-										<TableCell>
-											{row.name}
-											{row.variantName && (
-												<span className="text-muted-foreground">
-													{" "}
-													· {row.variantName}
-												</span>
-											)}
-										</TableCell>
-										<TableCell className="text-right font-medium text-destructive tabular-nums">
-											{formatCount(row.onHand)}
-										</TableCell>
-									</TableRow>
+				<div className="grid gap-10 lg:grid-cols-2">
+					{d.blockers.length > 0 && (
+						<Section title="Missing parts holding up tool sets">
+							<ul className="flex flex-col">
+								{d.blockers.map((b) => (
+									<ProductRow
+										key={b.sku}
+										sku={b.sku}
+										name={b.name}
+										variantName={b.variantName}
+										imageUrl={b.imageUrl}
+									>
+										<span className="text-sm text-muted-foreground">
+											blocks{" "}
+											<span className="text-base font-semibold text-foreground tabular-nums">
+												{b.blocks}
+											</span>{" "}
+											{b.blocks === 1 ? "set" : "sets"}
+										</span>
+									</ProductRow>
 								))}
-							</TableBody>
-						</Table>
-						{data.oversold.length > 15 && (
-							<p className="pt-3 text-sm text-muted-foreground">
-								And {data.oversold.length - 15} more.
+							</ul>
+						</Section>
+					)}
+
+					{d.oversold.length > 0 && (
+						<Section
+							title="Sold the most beyond what we have"
+							aside={
+								<Link
+									to="/products"
+									search={{ show: "oversold" }}
+									className="inline-flex items-center gap-1 hover:text-foreground"
+								>
+									All {d.oversold.length} <ArrowRight className="size-3.5" />
+								</Link>
+							}
+						>
+							<ul className="flex flex-col">
+								{d.oversold.slice(0, 6).map((o) => (
+									<ProductRow key={o.sku} {...o}>
+										<span className="text-base font-semibold text-bad tabular-nums">
+											{formatCount(o.onHand)}
+										</span>
+									</ProductRow>
+								))}
+							</ul>
+						</Section>
+					)}
+				</div>
+
+				<Section
+					title="Where the money sits"
+					aside={
+						d.uncosted > 0
+							? `${formatCount(d.uncosted)} stocked products have no cost yet, so this is low`
+							: undefined
+					}
+				>
+					<div className="flex flex-col gap-6 rounded-xl border p-6">
+						<div>
+							<div className="text-5xl font-semibold tracking-tight tabular-nums">
+								{formatMoneyWhole(d.value)}
+							</div>
+							<div className="mt-1 text-muted-foreground">
+								in stock across {formatCount(d.units)} units
+							</div>
+						</div>
+						<BarList
+							rows={d.byCategory.map((c) => ({
+								label: c.category,
+								value: c.value,
+							}))}
+							format={formatMoneyCompact}
+							detail={(i) =>
+								`${formatMoneyWhole(d.byCategory[i].value)} · ${formatCount(d.byCategory[i].units)} units`
+							}
+						/>
+						{d.otherCategories.count > 0 && (
+							<p className="px-2 text-sm text-muted-foreground">
+								Plus {formatMoneyCompact(d.otherCategories.value)} spread across{" "}
+								{formatCount(d.otherCategories.count)} smaller types.
 							</p>
 						)}
-					</CardContent>
-				</Card>
+					</div>
+				</Section>
 			</PageBody>
 		</>
 	);
 }
 
-function Stat({
-	label,
-	value,
-	hint,
+function ProductRow({
+	sku,
+	name,
+	variantName,
+	imageUrl,
+	children,
 }: {
-	label: string;
-	value: string;
-	hint: string;
+	sku: string;
+	name: string;
+	variantName: string | null;
+	imageUrl: string | null;
+	children: React.ReactNode;
 }) {
 	return (
-		<Card>
-			<CardHeader>
-				<CardDescription>{label}</CardDescription>
-				<CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
-			</CardHeader>
-			<CardContent className="text-xs text-muted-foreground">
-				{hint}
-			</CardContent>
-		</Card>
+		<li>
+			<Link
+				to="/products/$sku"
+				params={{ sku }}
+				className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent"
+			>
+				<ProductImage src={imageUrl} className="size-9" />
+				<div className="min-w-0 flex-1">
+					<div className="truncate">
+						{name}
+						{variantName && (
+							<span className="text-muted-foreground"> · {variantName}</span>
+						)}
+					</div>
+					<div className="font-mono text-xs text-muted-foreground">{sku}</div>
+				</div>
+				{children}
+			</Link>
+		</li>
 	);
 }

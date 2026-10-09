@@ -1,14 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PageBody, PageHeader } from "#/components/page";
-import { Badge } from "#/components/ui/badge";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "#/components/ui/card";
-import { Table, TableBody, TableCell, TableRow } from "#/components/ui/table";
+import type { ReactNode } from "react";
+import { PageBody, PageHeader, Section, StatusDot } from "#/components/page";
 import { listLocations, listStores } from "#/server/catalog";
 
 export const Route = createFileRoute("/settings")({
@@ -31,73 +23,53 @@ function Settings() {
 	return (
 		<>
 			<PageHeader title="Settings" />
-			<PageBody>
-				<div className="grid gap-4 lg:grid-cols-2">
-					<Card>
-						<CardHeader>
-							<CardTitle>Channels</CardTitle>
-							<CardDescription>Connected seller accounts</CardDescription>
-						</CardHeader>
-						<CardContent>
-							<Table>
-								<TableBody>
-									{channels.map((c) => {
-										const connected = stores.filter((s) => s.channel === c.id);
-										return (
-											<TableRow key={c.id}>
-												<TableCell className="font-medium">{c.name}</TableCell>
-												<TableCell className="text-right">
-													{connected.length > 0 ? (
-														<Badge>
-															{connected.map((s) => s.name).join(", ")}
-														</Badge>
-													) : (
-														<Badge variant="outline">Not connected</Badge>
-													)}
-												</TableCell>
-											</TableRow>
-										);
-									})}
-								</TableBody>
-							</Table>
-						</CardContent>
-					</Card>
-					<Card>
-						<CardHeader>
-							<CardTitle>Locations</CardTitle>
-							<CardDescription>Where stock lives</CardDescription>
-						</CardHeader>
-						<CardContent>
-							<Table>
-								<TableBody>
-									{locations.map((l) => (
-										<TableRow key={l.id}>
-											<TableCell className="font-medium">{l.name}</TableCell>
-											<TableCell className="text-right">
-												<Badge
-													variant={l.kind === "fba" ? "outline" : "secondary"}
-												>
-													{l.kind === "fba" ? "FBA (read-only)" : "Owned"}
-												</Badge>
-											</TableCell>
-										</TableRow>
-									))}
-								</TableBody>
-							</Table>
-						</CardContent>
-					</Card>
-					<Card>
-						<CardHeader>
-							<CardTitle>Printing</CardTitle>
-							<CardDescription>Labels print through QZ Tray</CardDescription>
-						</CardHeader>
-						<CardContent className="text-sm text-muted-foreground">
-							Not set up yet. Each packing PC needs QZ Tray and the katasync
-							certificate.
-						</CardContent>
-					</Card>
-				</div>
+			<PageBody className="max-w-2xl">
+				<Section title="Stores">
+					<ul>
+						{channels.map((c) => {
+							const connected = stores.filter((s) => s.channel === c.id);
+							return (
+								<Item key={c.id} label={c.name}>
+									{connected.length > 0 ? (
+										<StatusDot tone="good">
+											{connected.map((s) => s.name).join(", ")}
+										</StatusDot>
+									) : (
+										<span className="text-sm text-muted-foreground">
+											Not connected
+										</span>
+									)}
+								</Item>
+							);
+						})}
+					</ul>
+				</Section>
+				<Section title="Where stock lives">
+					<ul>
+						{locations.map((l) => (
+							<Item key={l.id} label={l.name}>
+								<span className="text-sm text-muted-foreground">
+									{l.kind === "fba" ? "Amazon's warehouse" : "Ours"}
+								</span>
+							</Item>
+						))}
+					</ul>
+				</Section>
+				<Section title="Label printing">
+					<p className="text-sm text-muted-foreground">
+						Not set up yet. Each packing computer needs QZ Tray.
+					</p>
+				</Section>
 			</PageBody>
 		</>
+	);
+}
+
+function Item({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		<li className="flex items-center justify-between border-b py-3 last:border-0">
+			<span className="font-medium">{label}</span>
+			{children}
+		</li>
 	);
 }

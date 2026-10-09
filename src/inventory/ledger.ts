@@ -258,3 +258,62 @@ function assertPositiveInteger(quantity: number) {
 		);
 	}
 }
+
+// Records what someone counted on the shelf as a correction for the
+// difference. Returns the change, which is 0 (and records nothing) when the
+// count matches. Runs in one transaction with the row locked, so a sale landing
+// mid-count can't be overwritten.
+export async function recordCount(
+	db: Db,
+	input: {
+		productId: number;
+		locationId: number;
+		counted: number;
+		note: string;
+	},
+): Promise<{ delta: number; onHand: number }> {
+	if (!Number.isInteger(input.counted)) {
+		throw new LedgerError(`Count must be a whole number, got ${input.counted}`);
+	}
+	return db.transaction(async (tx) => {
+		const product = await getProduct(tx, input.productId);
+		if (product.kind === "bundle") {
+			throw new LedgerError(
+				"Tool sets have no stock of their own; count their parts",
+			);
+		}
+		// Lock the row (creating it if needed) before reading it.
+		await tx
+			.insert(stockLevels)
+			.values({
+				productId: input.productId,
+				locationId: input.locationId,
+				onHand: 0,
+			})
+			.onConflictDoNothing();
+		const [level] = await tx
+			.select({ onHand: stockLevels.onHand })
+			.from(stockLevels)
+			.where(
+				and(
+					eq(stockLevels.productId, input.productId),
+					eq(stockLevels.locationId, input.locationId),
+				),
+			)
+			.for("update");
+		const delta = input.counted - level.onHand;
+		if (delta === 0) return { delta, onHand: level.onHand };
+		const result = await postMovements(tx, {
+			note: input.note,
+			lines: [
+				{
+					productId: input.productId,
+					locationId: input.locationId,
+					delta,
+					reason: "adjustment",
+				},
+			],
+		});
+		return { delta, onHand: result.levels[0].onHand };
+	});
+}

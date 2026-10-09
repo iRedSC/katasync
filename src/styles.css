@@ -30,6 +30,11 @@
   --chart-4: oklch(0.7 0.15 230);
   --chart-5: oklch(0.45 0.2 285);
   --radius: 0.625rem;
+  /* Status, from the dataviz reference palette. Always paired with an icon and
+     a word, never color alone. */
+  --good: #0ca30c;
+  --warn: #fab219;
+  --bad: #d03b3b;
   --sidebar: oklch(0.985 0.002 280);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
   --sidebar-primary: oklch(0.51 0.24 278);
@@ -105,6 +110,9 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);

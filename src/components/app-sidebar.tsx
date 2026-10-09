@@ -1,50 +1,20 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import {
-	ArrowLeftRight,
-	ClipboardList,
-	LayoutDashboard,
-	Link2,
-	Package,
-	Settings,
-	Truck,
-} from "lucide-react";
+import { Search } from "lucide-react";
+import { openFind, pages } from "#/components/command-palette";
 import {
 	Sidebar,
 	SidebarContent,
 	SidebarFooter,
 	SidebarGroup,
 	SidebarGroupContent,
-	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from "#/components/ui/sidebar";
 
-const sections = [
-	{
-		label: null,
-		items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard }],
-	},
-	{
-		label: "Fulfillment",
-		items: [{ to: "/orders", label: "Orders", icon: Truck }],
-	},
-	{
-		label: "Inventory",
-		items: [
-			{ to: "/products", label: "Products", icon: Package },
-			{ to: "/stock", label: "Stock movements", icon: ArrowLeftRight },
-			{ to: "/listings", label: "Listings", icon: Link2 },
-		],
-	},
-	{
-		label: "Purchasing",
-		items: [
-			{ to: "/purchasing", label: "Purchase orders", icon: ClipboardList },
-		],
-	},
-] as const;
+const main = pages.filter((p) => p.to !== "/settings");
+const settings = pages.filter((p) => p.to === "/settings");
 
 export function AppSidebar() {
 	return (
@@ -64,47 +34,51 @@ export function AppSidebar() {
 				</SidebarMenu>
 			</SidebarHeader>
 			<SidebarContent>
-				{sections.map((section) => (
-					<SidebarGroup key={section.label ?? "home"}>
-						{section.label && (
-							<SidebarGroupLabel>{section.label}</SidebarGroupLabel>
-						)}
-						<SidebarGroupContent>
-							<SidebarMenu>
-								{section.items.map((item) => (
-									<SidebarMenuItem key={item.to}>
-										<NavButton {...item} />
-									</SidebarMenuItem>
-								))}
-							</SidebarMenu>
-						</SidebarGroupContent>
-					</SidebarGroup>
-				))}
+				<SidebarGroup>
+					<SidebarGroupContent>
+						<SidebarMenu>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip="Find (⌘K)"
+									className="text-muted-foreground"
+									onClick={openFind}
+								>
+									<Search />
+									<span>Find</span>
+									<kbd className="ml-auto text-xs">⌘K</kbd>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							{main.map((p) => (
+								<SidebarMenuItem key={p.to}>
+									<NavButton {...p} />
+								</SidebarMenuItem>
+							))}
+						</SidebarMenu>
+					</SidebarGroupContent>
+				</SidebarGroup>
 			</SidebarContent>
 			<SidebarFooter>
 				<SidebarMenu>
-					<SidebarMenuItem>
-						<NavButton to="/settings" label="Settings" icon={Settings} />
-					</SidebarMenuItem>
+					{settings.map((p) => (
+						<SidebarMenuItem key={p.to}>
+							<NavButton {...p} />
+						</SidebarMenuItem>
+					))}
 				</SidebarMenu>
 			</SidebarFooter>
 		</Sidebar>
 	);
 }
 
-function NavButton({
-	to,
-	label,
-	icon: Icon,
-}: {
-	to: string;
-	label: string;
-	icon: typeof Settings;
-}) {
+function NavButton({ to, label, icon: Icon, keys }: (typeof pages)[number]) {
 	const pathname = useLocation({ select: (l) => l.pathname });
 	const isActive = to === "/" ? pathname === "/" : pathname.startsWith(to);
 	return (
-		<SidebarMenuButton asChild isActive={isActive} tooltip={label}>
+		<SidebarMenuButton
+			asChild
+			isActive={isActive}
+			tooltip={`${label} (${keys.toUpperCase()})`}
+		>
 			<Link to={to}>
 				<Icon />
 				<span>{label}</span>
