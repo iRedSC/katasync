@@ -176,12 +176,12 @@ function formatPhone(phone: string) {
 		: phone;
 }
 
-// "2 : 4 : 20" is order pin, box pin, and ounces; "-" where quick ship has
+// "2 : 4 : 20" is order pin, box pin, and ounces; X where quick ship has
 // nothing to suggest yet.
 function packLine(pin: number, boxPin: number | null, grams: number | null) {
 	const ounces =
 		grams === null
-			? "-"
+			? "X"
 			: String(Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10);
-	return `${pin} : ${boxPin ?? "-"} : ${ounces}`;
+	return `${pin} : ${boxPin ?? "X"} : ${ounces}`;
 }
