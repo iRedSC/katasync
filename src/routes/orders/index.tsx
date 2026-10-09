@@ -91,6 +91,9 @@ function Orders() {
 					<table className="w-full">
 						<thead>
 							<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+								{view === "ship" && (
+									<th className="w-16 px-4 py-2 font-medium">Pin</th>
+								)}
 								<th className="px-4 py-2 font-medium">Order</th>
 								<th className="hidden px-4 py-2 font-medium md:table-cell">
 									Date
@@ -120,6 +123,11 @@ function Orders() {
 											i === selected ? "bg-[#f1f1f1]" : "hover:bg-[#f7f7f7]",
 										)}
 									>
+										{view === "ship" && (
+											<td className="px-4 py-2.5 font-mono text-base font-bold tabular-nums">
+												{o.pin}
+											</td>
+										)}
 										<td className="px-4 py-2.5 font-semibold">{o.name}</td>
 										<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
 											{formatOrderDate(o.placedAt)}

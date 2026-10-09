@@ -144,6 +144,12 @@ export function amazonToChannelOrder(
 		shipCity: order.ShippingAddress?.City ?? null,
 		shipRegion: order.ShippingAddress?.StateOrRegion ?? null,
 		shipCountry: order.ShippingAddress?.CountryCode ?? null,
+		// Street, ZIP, and phone need the restricted Direct-to-Consumer
+		// Shipping role.
+		shipAddress1: null,
+		shipAddress2: null,
+		shipPostalCode: null,
+		shipPhone: null,
 		total: amount(order.OrderTotal),
 		shippingCharged: items.reduce(
 			(sum, i) => sum + amount(i.ShippingPrice) - amount(i.ShippingDiscount),

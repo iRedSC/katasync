@@ -13,6 +13,7 @@ import { syncAmazon } from "#/channels/amazon";
 import { syncEbay } from "#/channels/ebay";
 import { backfillShopify, syncShopify } from "#/channels/shopify";
 import { getDb } from "#/db/client";
+import { assignOrderPins } from "#/shipping/pins";
 
 try {
 	process.loadEnvFile(".env.local");
@@ -68,6 +69,8 @@ async function pass(channel: (typeof channels)[number]) {
 			`${new Date().toISOString()} ${result.store}: ${result.orders} orders in ${seconds}s`,
 		);
 		for (const problem of result.problems) console.log(`  ${problem}`);
+		const pinned = await assignOrderPins(getDb());
+		if (pinned > 0) console.log(`  ${pinned} new orders to ship got pins`);
 	} catch (error) {
 		// One channel failing (an outage, an expired token) doesn't stop the rest.
 		console.error(`${new Date().toISOString()} ${channel.name} failed:`, error);

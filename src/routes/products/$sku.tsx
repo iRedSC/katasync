@@ -7,6 +7,7 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { toast } from "sonner";
 import { CountDialog } from "#/components/count-dialog";
 import { Badge, Banner, Card, Page, type Tone } from "#/components/page";
 import { MovementTable, ProductImage, ProductName } from "#/components/product";
@@ -14,7 +15,11 @@ import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
-import { getProductDetail, type ProductDetail } from "#/server/catalog";
+import {
+	getProductDetail,
+	type ProductDetail,
+	setInsureWhenShipped,
+} from "#/server/catalog";
 
 export const Route = createFileRoute("/products/$sku")({
 	loader: ({ params }) => getProductDetail({ data: { sku: params.sku } }),
@@ -372,17 +377,47 @@ function Details({ d }: { d: ProductDetail }) {
 	if (p.lengthMm && p.widthMm && p.heightMm) {
 		rows.push(["Box", `${p.lengthMm} × ${p.widthMm} × ${p.heightMm} mm`]);
 	}
-	if (rows.length === 0) return null;
 	return (
 		<Card title="Product organization">
-			<dl className="flex flex-col gap-2">
-				{rows.map(([label, value]) => (
-					<div key={label}>
-						<dt className="text-muted-foreground">{label}</dt>
-						<dd className="tabular-nums">{value}</dd>
-					</div>
-				))}
-			</dl>
+			{rows.length > 0 && (
+				<dl className="mb-3 flex flex-col gap-2">
+					{rows.map(([label, value]) => (
+						<div key={label}>
+							<dt className="text-muted-foreground">{label}</dt>
+							<dd className="tabular-nums">{value}</dd>
+						</div>
+					))}
+				</dl>
+			)}
+			<InsureToggle sku={p.sku} insure={p.insureWhenShipped} />
 		</Card>
+	);
+}
+
+function InsureToggle({ sku, insure }: { sku: string; insure: boolean }) {
+	const router = useRouter();
+	async function set(next: boolean) {
+		await setInsureWhenShipped({ data: { sku, insure: next } });
+		router.invalidate();
+		toast.success(next ? "Insured when shipped" : "No longer insured", {
+			action: {
+				label: "Undo",
+				onClick: async () => {
+					await setInsureWhenShipped({ data: { sku, insure: !next } });
+					router.invalidate();
+				},
+			},
+		});
+	}
+	return (
+		<label className="flex cursor-pointer items-center gap-2">
+			<input
+				type="checkbox"
+				checked={insure}
+				onChange={(e) => set(e.target.checked)}
+				className="size-4 accent-[#303030]"
+			/>
+			Insure when shipped
+		</label>
 	);
 }

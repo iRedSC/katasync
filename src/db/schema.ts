@@ -9,9 +9,11 @@ import {
 	pgEnum,
 	pgTable,
 	primaryKey,
+	smallint,
 	text,
 	timestamp,
 	unique,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 
@@ -23,6 +25,16 @@ export const locations = pgTable("locations", {
 	id: integer().primaryKey().generatedAlwaysAsIdentity(),
 	name: text().notNull().unique(),
 	kind: locationKind().notNull(),
+	// Ship-from address for labels, filled from the store's own location
+	// record rather than typed in.
+	shipFromName: text(),
+	address1: text(),
+	address2: text(),
+	city: text(),
+	region: text(),
+	postalCode: text(),
+	country: text(),
+	phone: text(),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -60,6 +72,8 @@ export const products = pgTable(
 		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 		// Shipped weight and box size, for buying labels.
 		weightGrams: integer(),
+		// Always offer insurance when this ships, whatever the order's value.
+		insureWhenShipped: boolean().notNull().default(false),
 		lengthMm: integer(),
 		widthMm: integer(),
 		heightMm: integer(),
@@ -251,9 +265,16 @@ export const orders = pgTable(
 		fulfilledByChannel: boolean().notNull().default(false),
 		financialStatus: text(),
 		customerName: text(),
+		shipAddress1: text(),
+		shipAddress2: text(),
 		shipCity: text(),
 		shipRegion: text(),
+		shipPostalCode: text(),
 		shipCountry: text(),
+		shipPhone: text(),
+		// A 3-digit number to find the order while packing. Only orders still to
+		// ship have one, so pins are reused once an order ships.
+		pin: smallint(),
 		total: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		shippingCharged: numeric({ precision: 12, scale: 2, mode: "number" })
 			.notNull()
@@ -264,6 +285,8 @@ export const orders = pgTable(
 	(t) => [
 		unique("orders_store_external_id").on(t.storeId, t.externalId),
 		index("orders_placed_at_idx").on(t.placedAt),
+		uniqueIndex("orders_pin_unique").on(t.pin).where(sql`${t.pin} is not null`),
+		check("orders_pin_three_digits", sql`${t.pin} between 100 and 999`),
 	],
 );
 
@@ -294,5 +317,62 @@ export const orderLines = pgTable(
 	(t) => [
 		unique("order_lines_order_external_id").on(t.orderId, t.externalId),
 		index("order_lines_product_idx").on(t.productId),
+	],
+);
+
+// A box we ship in, with its own 3-digit pin for quick ship.
+export const packages = pgTable(
+	"packages",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		pin: smallint().notNull().unique(),
+		name: text().notNull(),
+		lengthMm: integer().notNull(),
+		widthMm: integer().notNull(),
+		heightMm: integer().notNull(),
+		// The empty box, so a weight estimate can include it.
+		weightGrams: integer().notNull().default(0),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check("packages_pin_three_digits", sql`${t.pin} between 100 and 999`),
+	],
+);
+
+// A label bought for an order. Also what quick ship learns from: the weight
+// the same items shipped at, and which service gets picked for a box.
+export const shipments = pgTable(
+	"shipments",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		packageId: integer().references(() => packages.id),
+		// What was in the box, e.g. "HANDLE×1|KNIFE-5×2" (see contentsKey). The
+		// next order with the same contents starts from this box and weight.
+		contentsKey: text().notNull(),
+		lengthMm: integer().notNull(),
+		widthMm: integer().notNull(),
+		heightMm: integer().notNull(),
+		weightGrams: integer().notNull(),
+		// "shippo" for now; Amazon and TikTok labels come later.
+		provider: text().notNull(),
+		carrier: text().notNull(),
+		// The provider's service code, e.g. Shippo's "usps_ground_advantage".
+		service: text().notNull(),
+		serviceName: text().notNull(),
+		cost: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+		insuredAmount: numeric({ precision: 12, scale: 2, mode: "number" }),
+		trackingNumber: text(),
+		labelUrl: text().notNull(),
+		externalId: text().notNull().unique(),
+		// Bought with a test key: a sample label that can't actually ship.
+		test: boolean().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("shipments_order_idx").on(t.orderId),
+		index("shipments_contents_idx").on(t.contentsKey, t.createdAt),
 	],
 );

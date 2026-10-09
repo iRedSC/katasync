@@ -7,6 +7,7 @@ import {
 import { Toaster } from "sonner";
 import { AppShell } from "#/components/app-shell";
 import { CommandPalette } from "#/components/command-palette";
+import { QuickShip } from "#/components/quick-ship";
 import appCss from "../styles.css?url";
 
 interface MyRouterContext {
@@ -48,6 +49,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			<body>
 				<AppShell>{children}</AppShell>
 				<CommandPalette />
+				<QuickShip />
 				<Toaster
 					position="bottom-center"
 					toastOptions={{

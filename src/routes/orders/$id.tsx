@@ -42,6 +42,11 @@ function OrderPage() {
 				<span className="flex items-center gap-2">
 					{order.name}
 					<Badge tone={status.tone}>{status.label}</Badge>
+					{order.pin !== null && (
+						<span className="font-mono text-base text-muted-foreground">
+							Pin {order.pin}
+						</span>
+					)}
 				</span>
 			}
 		>

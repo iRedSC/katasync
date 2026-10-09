@@ -1,21 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { orderLines, orders, products, stores } from "#/db/schema";
-
-// The one definition of "someone still has to ship this": not cancelled, not
-// refunded or voided, and not fully fulfilled. Shopify's own "unfulfilled"
-// filter also counts cancelled and refunded orders, so it can't be used as-is.
-export const needsShipping = and(
-	isNull(orders.cancelledAt),
-	notInArray(orders.fulfillmentStatus, [
-		"FULFILLED",
-		"FULFILLMENT_NOT_REQUIRED",
-		"RESTOCKED",
-	]),
-	sql`coalesce(${orders.financialStatus}, '') not in ('REFUNDED', 'VOIDED')`,
-);
+import { needsShipping } from "#/orders/to-ship";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
 	async () => {
@@ -46,6 +34,7 @@ export const listOrders = createServerFn({ method: "GET" })
 			.select({
 				id: orders.id,
 				name: orders.name,
+				pin: orders.pin,
 				salesChannel: orders.salesChannel,
 				placedAt: orders.placedAt,
 				cancelledAt: orders.cancelledAt,
@@ -76,6 +65,7 @@ export const getOrder = createServerFn({ method: "GET" })
 			.select({
 				id: orders.id,
 				name: orders.name,
+				pin: orders.pin,
 				salesChannel: orders.salesChannel,
 				placedAt: orders.placedAt,
 				cancelledAt: orders.cancelledAt,

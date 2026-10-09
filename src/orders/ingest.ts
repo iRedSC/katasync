@@ -27,9 +27,13 @@ export type ChannelOrder = {
 	fulfilledByChannel: boolean;
 	financialStatus: string | null;
 	customerName: string | null;
+	shipAddress1: string | null;
+	shipAddress2: string | null;
 	shipCity: string | null;
 	shipRegion: string | null;
+	shipPostalCode: string | null;
 	shipCountry: string | null;
+	shipPhone: string | null;
 	total: number;
 	shippingCharged: number;
 	sourceUpdatedAt: Date;

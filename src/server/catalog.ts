@@ -441,3 +441,13 @@ export const undoMovement = createServerFn({ method: "POST" })
 
 export type ProductRow = Awaited<ReturnType<typeof listProducts>>[number];
 export type ProductDetail = Awaited<ReturnType<typeof getProductDetail>>;
+
+// Quick ship asks about insurance for any order holding this product.
+export const setInsureWhenShipped = createServerFn({ method: "POST" })
+	.validator(type({ sku: "string > 0", insure: "boolean" }))
+	.handler(async ({ data }) => {
+		await getDb()
+			.update(products)
+			.set({ insureWhenShipped: data.insure })
+			.where(eq(products.sku, data.sku));
+	});
