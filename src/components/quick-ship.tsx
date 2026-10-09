@@ -1,5 +1,10 @@
 import { useRouter } from "@tanstack/react-router";
-import { CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
+import {
+	CircleAlert,
+	CircleCheck,
+	ExternalLink,
+	LoaderCircle,
+} from "lucide-react";
 import {
 	type KeyboardEvent,
 	type ReactNode,
@@ -237,34 +242,40 @@ export function QuickShip() {
 		router.invalidate();
 	}
 
-	const steps: { id: Step; label: string; value: string | null }[] = [
-		{ id: "pin", label: "Order", value: found?.order.name ?? null },
-		{
-			id: "package",
-			label: "Box",
-			value: box ? box.name : dims ? `${size(dims)} in` : null,
-		},
-		{
-			id: "weight",
-			label: "Weight",
-			value: weightGrams ? `${ounces(weightGrams)} oz` : null,
-		},
-		...(found?.insure
-			? [
-					{
-						id: "insure" as const,
-						label: "Insurance",
-						value:
-							step === "insure" || !weightGrams
-								? null
-								: insureAmount
-									? formatMoney(insureAmount)
-									: "None",
-					},
-				]
-			: []),
-		{ id: "rates", label: "Service", value: bought?.serviceName ?? null },
-	];
+	const external = found?.external ?? null;
+	const steps: { id: Step; label: string; value: string | null }[] = external
+		? [
+				{ id: "pin", label: "Order", value: found?.order.name ?? null },
+				{ id: "package", label: "Ship on", value: external.name },
+			]
+		: [
+				{ id: "pin", label: "Order", value: found?.order.name ?? null },
+				{
+					id: "package",
+					label: "Box",
+					value: box ? box.name : dims ? `${size(dims)} in` : null,
+				},
+				{
+					id: "weight",
+					label: "Weight",
+					value: weightGrams ? `${ounces(weightGrams)} oz` : null,
+				},
+				...(found?.insure
+					? [
+							{
+								id: "insure" as const,
+								label: "Insurance",
+								value:
+									step === "insure" || !weightGrams
+										? null
+										: insureAmount
+											? formatMoney(insureAmount)
+											: "None",
+							},
+						]
+					: []),
+				{ id: "rates", label: "Service", value: bought?.serviceName ?? null },
+			];
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
@@ -272,6 +283,11 @@ export function QuickShip() {
 				className="grid-cols-[minmax(0,1fr)] gap-0 overflow-hidden bg-card p-0 sm:max-w-2xl"
 				showCloseButton={false}
 				onKeyDown={(e: KeyboardEvent) => {
+					// An Enter typed in a field finishes that step only. Without this,
+					// the same keypress lands on the next step's button and presses it.
+					if (e.key === "Enter" && e.target instanceof HTMLInputElement) {
+						e.preventDefault();
+					}
 					if (e.key === "Escape") {
 						e.preventDefault();
 						back();
@@ -289,15 +305,17 @@ export function QuickShip() {
 						<PinStep busy={busy} lookUp={lookUp} onSubmit={choosePin} />
 					)}
 
-					{step === "package" && found && found.labelSource !== "shippo" && (
-						<Notice tone="info">
-							{found.labelSource === "tiktok"
-								? "TikTok orders ship on TikTok's own label. Print it from TikTok Seller Center for now."
-								: "Amazon orders ship on Amazon's own label. Buy it in Seller Central until Amazon approves the restricted role."}
-						</Notice>
+					{step === "package" && external && (
+						<ExternalStep
+							name={external.name}
+							onOpen={() => {
+								window.open(external.url, "_blank", "noreferrer");
+								setOpen(false);
+							}}
+						/>
 					)}
 
-					{step === "package" && found?.labelSource === "shippo" && (
+					{step === "package" && found && !external && (
 						<PackageStep
 							boxes={boxes}
 							current={box}
@@ -479,6 +497,7 @@ function PinStep({
 							{" "}
 							· {preview.order.customerName ?? "No name"} ·{" "}
 							{preview.lines.reduce((n, l) => n + l.quantity, 0)} items
+							{preview.external && ` · ships on ${preview.external.name}`}
 						</span>
 					</span>
 				)}
@@ -912,4 +931,24 @@ function Key({ children }: { children: ReactNode }) {
 
 function Spinner() {
 	return <LoaderCircle className="size-6 animate-spin" />;
+}
+
+// Orders whose label comes from the marketplace: Enter opens its page.
+function ExternalStep({ name, onOpen }: { name: string; onOpen: () => void }) {
+	const button = useRef<HTMLButtonElement>(null);
+	useEffect(() => button.current?.focus(), []);
+	return (
+		<div className="flex flex-col items-center gap-4 py-4 text-center">
+			<p className="text-2xl font-semibold">Ships on {name}'s own label</p>
+			<button
+				ref={button}
+				type="button"
+				onClick={onOpen}
+				className="inline-flex h-16 items-center gap-3 rounded-xl bg-[#303030] px-8 text-xl font-semibold text-white outline-none hover:bg-[#1a1a1a] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+			>
+				Press Enter to go to the fulfillment page
+				<ExternalLink className="size-6" />
+			</button>
+		</div>
+	);
 }

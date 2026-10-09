@@ -1,11 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { PackageCheck, Printer } from "lucide-react";
+import { ExternalLink, PackageCheck, Printer } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
+import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
 import { listOrders, type OrderRow } from "#/server/orders";
 
@@ -126,6 +127,7 @@ function Orders() {
 						<tbody ref={list}>
 							{rows.map((o, i) => {
 								const status = orderStatus(o);
+								const external = externalFulfillment(o);
 								return (
 									<tr
 										key={o.id}
@@ -142,7 +144,24 @@ function Orders() {
 												{o.pin}
 											</td>
 										)}
-										<td className="px-4 py-2.5 font-semibold">{o.name}</td>
+										<td className="px-4 py-2.5 font-semibold">
+											{external ? (
+												// Opens the marketplace's page; the rest of the row
+												// still opens katasync's.
+												<a
+													href={external.url}
+													target="_blank"
+													rel="noreferrer"
+													onClick={(e) => e.stopPropagation()}
+													className="inline-flex items-center gap-1 text-link hover:underline"
+												>
+													{o.name}
+													<ExternalLink className="size-3.5" />
+												</a>
+											) : (
+												o.name
+											)}
+										</td>
 										<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
 											{formatOrderDate(o.placedAt)}
 										</td>

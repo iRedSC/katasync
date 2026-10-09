@@ -8,25 +8,13 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { contentsKey } from "./contents";
 import type { Rate } from "./shippo";
 
 // Orders worth more than this get the insurance step even if no item asks
 // for it.
 export const INSURE_ABOVE = 500;
-
-// Where an order's label comes from. Marketplaces that sell their own labels
-// keep that protection; Shippo covers the rest.
-export type LabelSource = "shippo" | "amazon" | "tiktok";
-
-export function labelSource(order: {
-	channel: string;
-	salesChannel: string | null;
-}): LabelSource {
-	if (order.channel === "amazon") return "amazon";
-	if (order.salesChannel === "TikTok") return "tiktok";
-	return "shippo";
-}
 
 export function needsInsurance(order: {
 	total: number;
@@ -47,6 +35,7 @@ export async function orderForShipping(db: Db, pin: number) {
 			pin: orders.pin,
 			channel: stores.channel,
 			salesChannel: orders.salesChannel,
+			marketplaceOrderId: orders.marketplaceOrderId,
 			total: orders.total,
 			customerName: orders.customerName,
 			shipAddress1: orders.shipAddress1,
@@ -99,6 +88,7 @@ export async function orderForShipping(db: Db, pin: number) {
 		lines,
 		contentsKey: key,
 		labelSource: labelSource(order),
+		external: externalFulfillment(order),
 		insure: needsInsurance({ total: order.total, lines }),
 		// The box and weight these contents shipped in last time, if ever.
 		last: last ?? null,

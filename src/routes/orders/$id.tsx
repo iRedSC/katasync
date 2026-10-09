@@ -5,10 +5,13 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
+import { ExternalLink } from "lucide-react";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
+import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
 import { getOrder } from "#/server/orders";
 
@@ -23,6 +26,7 @@ function OrderPage() {
 	const navigate = useNavigate();
 	const canGoBack = useCanGoBack();
 	const status = orderStatus(order);
+	const external = externalFulfillment(order);
 	// No SKU means a custom item; only real SKUs need matching.
 	const unmatched = lines.filter(
 		(l) => l.productSku === null && l.sku !== null,
@@ -38,6 +42,17 @@ function OrderPage() {
 		<Page
 			narrow
 			back={{ to: "/orders" }}
+			actions={
+				external && (
+					<Button asChild size="sm">
+						<a href={external.url} target="_blank" rel="noreferrer">
+							{status.label === "Fulfill externally" ? "Fulfill" : "View"} on{" "}
+							{external.name}
+							<ExternalLink />
+						</a>
+					</Button>
+				)
+			}
 			title={
 				<span className="flex items-center gap-2">
 					{order.name}

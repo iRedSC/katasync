@@ -2,11 +2,11 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { createProduct, createTestDb } from "#/test/db";
 import { contentsKey } from "./contents";
 import { assignOrderPins } from "./pins";
 import {
-	labelSource,
 	lastPackedFor,
 	needsInsurance,
 	orderForShipping,
@@ -50,6 +50,36 @@ describe("needsInsurance and labelSource", () => {
 			"tiktok",
 		);
 		expect(labelSource({ channel: "ebay", salesChannel: null })).toBe("shippo");
+	});
+});
+
+describe("externalFulfillment", () => {
+	test("links Amazon and TikTok orders to their marketplace page", () => {
+		expect(
+			externalFulfillment({
+				channel: "amazon",
+				salesChannel: "Amazon",
+				marketplaceOrderId: "amazon:111-2557110-8817016",
+			})?.url,
+		).toBe(
+			"https://sellercentral.amazon.com/orders-v3/order/111-2557110-8817016",
+		);
+		expect(
+			externalFulfillment({
+				channel: "shopify",
+				salesChannel: "TikTok",
+				marketplaceOrderId: "tiktok:5770000000000001",
+			})?.url,
+		).toBe(
+			"https://seller-us.tiktok.com/order/detail?order_no=5770000000000001",
+		);
+		expect(
+			externalFulfillment({
+				channel: "shopify",
+				salesChannel: "Online Store",
+				marketplaceOrderId: null,
+			}),
+		).toBeNull();
 	});
 });
 
