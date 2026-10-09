@@ -69,7 +69,7 @@ function Invoice({
 	].filter(Boolean);
 
 	return (
-		<article className="mx-auto mb-6 flex max-w-[8.5in] flex-col gap-8 bg-white p-[0.5in] text-[11pt] text-black shadow-card break-after-page last:break-after-auto print:m-0 print:max-w-none print:p-0 print:shadow-none">
+		<article className="mx-auto mb-6 flex min-h-[11in] max-w-[8.5in] flex-col gap-8 bg-white p-[0.5in] text-[11pt] text-black shadow-card break-after-page last:break-after-auto print:m-0 print:min-h-[9.95in] print:max-w-none print:p-0 print:shadow-none">
 			<header className="flex items-start justify-between gap-6">
 				<div>
 					<p className="text-[14pt] font-bold">{from?.name}</p>
@@ -82,11 +82,6 @@ function Invoice({
 				<div className="text-right">
 					<p className="text-[20pt] font-bold">Invoice</p>
 					<p className="font-semibold">{o.name}</p>
-					{o.pin !== null && (
-						<p className="font-semibold tabular-nums">
-							{packLine(o.pin, o.boxPin, o.weightGrams)}
-						</p>
-					)}
 					<p>
 						{new Date(o.placedAt).toLocaleDateString("en-US", {
 							month: "long",
@@ -161,9 +156,15 @@ function Invoice({
 				</dd>
 			</dl>
 
-			<p className="mt-auto text-center text-[#616161]">
-				Thank you for your order.
-			</p>
+			{/* The packer's line sits in the page's bottom corner. */}
+			<footer className="mt-auto flex items-end justify-between gap-6">
+				<p className="text-[#616161]">Thank you for your order.</p>
+				{o.pin !== null && (
+					<p className="text-[13pt] font-bold tabular-nums">
+						{packLine(o.pin, o.boxPin, o.weightGrams)}
+					</p>
+				)}
+			</footer>
 		</article>
 	);
 }
