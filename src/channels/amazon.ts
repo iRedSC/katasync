@@ -166,29 +166,63 @@ export function amazonToChannelOrder(
 	};
 }
 
+const DAY = 24 * 60 * 60 * 1000;
 const FIRST_SYNC_DAYS = 60;
-// Each window is fetched completely before the cursor moves, so a stopped
-// backfill resumes where it left off.
-const WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+// History is fetched in windows; the cursor moves only after a window is
+// complete, so a stopped backfill resumes where it left off.
+const WINDOW_MS = 3 * DAY;
+// While history is still filling in, each pass also fetches recent changes
+// first, so today's orders never wait behind the backfill.
+const RECENT_MS = 2 * DAY;
+// Amazon's rate limits make history slow; a few windows per pass keeps each
+// pass short enough that recent orders stay current.
+const HISTORY_WINDOWS_PER_PASS = 2;
+
+export type AmazonWindow = {
+	from: number;
+	until: number;
+	advancesCursor: boolean;
+};
+
+// Which time ranges one pass fetches, in order: recent changes first (only
+// while the cursor lags), then the next history windows.
+export function planAmazonWindows(
+	cursor: number,
+	latest: number,
+): AmazonWindow[] {
+	const windows: AmazonWindow[] = [];
+	if (latest - cursor > RECENT_MS) {
+		windows.push({
+			from: latest - RECENT_MS,
+			until: latest,
+			advancesCursor: false,
+		});
+	}
+	let from = cursor;
+	for (let i = 0; i < HISTORY_WINDOWS_PER_PASS && from < latest; i++) {
+		const until = Math.min(from + WINDOW_MS, latest);
+		windows.push({ from, until, advancesCursor: true });
+		from = until;
+	}
+	return windows;
+}
 
 export async function syncAmazon(db: Db) {
 	const store = await ensureStore(db, "amazon", "Amazon US");
 	const locationId = await shippingLocation(db);
 	// Amazon refuses ranges that end less than two minutes ago.
 	const latest = Date.now() - 3 * 60 * 1000;
-	let from =
-		store.ordersSyncedThrough?.getTime() ??
-		Date.now() - FIRST_SYNC_DAYS * 24 * 60 * 60 * 1000;
+	const cursor =
+		store.ordersSyncedThrough?.getTime() ?? Date.now() - FIRST_SYNC_DAYS * DAY;
 	let count = 0;
 	const problems: string[] = [];
 
-	while (from < latest) {
-		const until = Math.min(from + WINDOW_MS, latest);
+	for (const window of planAmazonWindows(cursor, latest)) {
 		let nextToken: string | undefined;
 		do {
 			const query = nextToken
 				? `NextToken=${encodeURIComponent(nextToken)}`
-				: `LastUpdatedAfter=${new Date(from).toISOString()}&LastUpdatedBefore=${new Date(until).toISOString()}&MaxResultsPerPage=100`;
+				: `LastUpdatedAfter=${new Date(window.from).toISOString()}&LastUpdatedBefore=${new Date(window.until).toISOString()}&MaxResultsPerPage=100`;
 			const page = ordersPage.assert(
 				await spApi(
 					`/orders/v0/orders?MarketplaceIds=${MARKETPLACE_US}&${query}`,
@@ -207,8 +241,9 @@ export async function syncAmazon(db: Db) {
 			}
 			nextToken = page.payload.NextToken;
 		} while (nextToken);
-		await advanceOrderCursor(db, store.id, new Date(until));
-		from = until;
+		if (window.advancesCursor) {
+			await advanceOrderCursor(db, store.id, new Date(window.until));
+		}
 	}
 	return { store: store.name, orders: count, problems };
 }

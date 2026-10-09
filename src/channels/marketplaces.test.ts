@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { amazonItem, amazonOrder, amazonToChannelOrder } from "./amazon";
+import {
+	amazonItem,
+	amazonOrder,
+	amazonToChannelOrder,
+	planAmazonWindows,
+} from "./amazon";
 import { ebayOrder, ebayToChannelOrder } from "./ebay";
 
 describe("amazonToChannelOrder", () => {
@@ -147,5 +152,24 @@ describe("ebayToChannelOrder", () => {
 		);
 		expect(o.cancelledAt).toEqual(new Date("2026-10-08T13:00:00Z"));
 		expect(o.financialStatus).toBe("REFUNDED");
+	});
+});
+
+describe("planAmazonWindows", () => {
+	const day = 24 * 60 * 60 * 1000;
+	const now = 100 * day;
+
+	test("during a backfill, recent changes come first, then two history windows", () => {
+		expect(planAmazonWindows(now - 60 * day, now)).toEqual([
+			{ from: now - 2 * day, until: now, advancesCursor: false },
+			{ from: now - 60 * day, until: now - 57 * day, advancesCursor: true },
+			{ from: now - 57 * day, until: now - 54 * day, advancesCursor: true },
+		]);
+	});
+
+	test("once caught up, one window from the cursor to now", () => {
+		expect(planAmazonWindows(now - 10 * 60 * 1000, now)).toEqual([
+			{ from: now - 10 * 60 * 1000, until: now, advancesCursor: true },
+		]);
 	});
 });
