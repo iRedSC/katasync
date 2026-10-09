@@ -269,7 +269,7 @@ export function QuickShip() {
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogContent
-				className="gap-0 overflow-hidden bg-card p-0 sm:max-w-2xl"
+				className="grid-cols-[minmax(0,1fr)] gap-0 overflow-hidden bg-card p-0 sm:max-w-2xl"
 				showCloseButton={false}
 				onKeyDown={(e: KeyboardEvent) => {
 					if (e.key === "Escape") {
@@ -367,6 +367,8 @@ function StepStrip({
 						key={s.id}
 						className={cn(
 							"min-w-0 border-b-4 px-4 pt-3 pb-2",
+							// Marketplace order numbers run long; the order gets two shares.
+							s.id === "pin" && "col-span-2",
 							active ? "border-[#303030] bg-white" : "border-transparent",
 						)}
 					>
