@@ -131,7 +131,7 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 		>
 			{boxes.length === 0 && !adding && (
 				<p className="px-4 py-3 text-muted-foreground">
-					No boxes yet. Each box gets a 3-digit pin to type in quick ship
+					No boxes yet. Each box gets a short pin to type in quick ship
 					(Ctrl+Space).
 				</p>
 			)}

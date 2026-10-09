@@ -148,11 +148,11 @@ export async function serviceHistory(
 		.groupBy(shipments.service);
 }
 
-// Picks a free 3-digit pin for a new box.
+// Picks the smallest free pin for a new box, so boxes get one-key pins.
 export async function freePackagePin(db: Db) {
 	const used = new Set(
 		(await db.select({ pin: packages.pin }).from(packages)).map((p) => p.pin),
 	);
-	for (let pin = 100; pin <= 999; pin++) if (!used.has(pin)) return pin;
+	for (let pin = 1; pin <= 999; pin++) if (!used.has(pin)) return pin;
 	throw new Error("Every box pin is taken");
 }

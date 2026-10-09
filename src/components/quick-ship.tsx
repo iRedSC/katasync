@@ -439,11 +439,11 @@ function PinStep({
 	const [value, setValue] = useState("");
 	const [preview, setPreview] = useState<Found | null | "loading">(null);
 
-	// The third digit starts the lookup, so Enter usually has nothing to wait
+	// Every keystroke looks the pin up, so Enter usually has nothing to wait
 	// for. lookUp caches by pin, so only the typed value matters here.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: see above
 	useEffect(() => {
-		if (value.length !== 3) return setPreview(null);
+		if (!value) return setPreview(null);
 		let current = true;
 		setPreview("loading");
 		lookUp(Number(value))
@@ -464,10 +464,9 @@ function PinStep({
 				maxLength={3}
 				disabled={busy}
 				value={value}
-				placeholder="000"
 				onChange={(e) => setValue(e.target.value.replace(/\D/g, ""))}
 				onKeyDown={(e) => {
-					if (e.key === "Enter" && value.length === 3) onSubmit(Number(value));
+					if (e.key === "Enter" && Number(value) > 0) onSubmit(Number(value));
 				}}
 				className={cn(bigInput, "tracking-[0.4em] placeholder:text-[#e3e3e3]")}
 			/>
@@ -483,7 +482,7 @@ function PinStep({
 						</span>
 					</span>
 				)}
-				{preview === null && value.length === 3 && (
+				{preview === null && value && (
 					<span className="text-critical-text">No order has that pin</span>
 				)}
 			</div>
@@ -556,7 +555,6 @@ function PackageStep({
 					inputMode="numeric"
 					maxLength={3}
 					value={value}
-					placeholder="000"
 					onFocus={(e) => e.target.select()}
 					onChange={(e) => {
 						if (e.target.value.toLowerCase().endsWith("c")) {
@@ -587,7 +585,7 @@ function PackageStep({
 					<span className="text-muted-foreground">
 						No saved boxes yet. Press C for a custom size.
 					</span>
-				) : value.length === 3 ? (
+				) : value ? (
 					<span className="text-critical-text">No box has that pin</span>
 				) : null}
 			</div>

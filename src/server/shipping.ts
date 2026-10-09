@@ -35,7 +35,7 @@ export const savePackage = createServerFn({ method: "POST" })
 			widthIn: "number > 0",
 			heightIn: "number > 0",
 			weightOz: "number >= 0",
-			"pin?": "100 <= number.integer <= 999",
+			"pin?": "1 <= number.integer <= 999",
 		}),
 	)
 	.handler(async ({ data }) => {
@@ -61,7 +61,7 @@ export const deletePackage = createServerFn({ method: "POST" })
 	});
 
 export const quickShipLookup = createServerFn({ method: "GET" })
-	.validator(type({ pin: "100 <= number.integer <= 999" }))
+	.validator(type({ pin: "1 <= number.integer <= 999" }))
 	.handler(async ({ data }) => orderForShipping(getDb(), data.pin));
 
 const parcel = {

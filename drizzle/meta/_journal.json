@@ -64,6 +64,13 @@
       "when": 1791583041487,
       "tag": "0008_freezing_zaran",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791584095354,
+      "tag": "0009_productive_bishop",
+      "breakpoints": true
     }
   ]
 }

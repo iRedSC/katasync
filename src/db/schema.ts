@@ -274,8 +274,8 @@ export const orders = pgTable(
 		shipPostalCode: text(),
 		shipCountry: text(),
 		shipPhone: text(),
-		// A 3-digit number to find the order while packing. Only orders still to
-		// ship have one, so pins are reused once an order ships.
+		// A short number (1 to 999) to find the order while packing. Only orders
+		// still to ship have one, so pins are reused once an order ships.
 		pin: smallint(),
 		total: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		shippingCharged: numeric({ precision: 12, scale: 2, mode: "number" })
@@ -288,7 +288,7 @@ export const orders = pgTable(
 		unique("orders_store_external_id").on(t.storeId, t.externalId),
 		index("orders_placed_at_idx").on(t.placedAt),
 		uniqueIndex("orders_pin_unique").on(t.pin).where(sql`${t.pin} is not null`),
-		check("orders_pin_three_digits", sql`${t.pin} between 100 and 999`),
+		check("orders_pin_range", sql`${t.pin} between 1 and 999`),
 	],
 );
 
@@ -322,7 +322,7 @@ export const orderLines = pgTable(
 	],
 );
 
-// A box we ship in, with its own 3-digit pin for quick ship.
+// A box we ship in, with its own short pin (1 to 999) for quick ship.
 export const packages = pgTable(
 	"packages",
 	{
@@ -336,9 +336,7 @@ export const packages = pgTable(
 		weightGrams: integer().notNull().default(0),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [
-		check("packages_pin_three_digits", sql`${t.pin} between 100 and 999`),
-	],
+	(t) => [check("packages_pin_range", sql`${t.pin} between 1 and 999`)],
 );
 
 // A label bought for an order. Also what quick ship learns from: the weight

@@ -112,8 +112,9 @@ describe("with a database", () => {
 			(await db.select().from(schema.orders).where(eq(schema.orders.id, id)))[0]
 				.pin;
 		const pin = await pinOf(open);
-		expect(pin).toBeGreaterThanOrEqual(100);
-		expect(pin).toBeLessThanOrEqual(999);
+		// The first pins are a single key.
+		expect(pin).toBeGreaterThanOrEqual(1);
+		expect(pin).toBeLessThanOrEqual(9);
 		expect(await pinOf(cancelled)).toBeNull();
 
 		// Running again keeps the same pin.
@@ -126,6 +127,18 @@ describe("with a database", () => {
 			.where(eq(schema.orders.id, open));
 		await assignOrderPins(db);
 		expect(await pinOf(open)).toBeNull();
+	});
+
+	test("pins stay one digit until those run out", async () => {
+		for (let i = 1; i <= 10; i++) await addOrder(`#${i}`);
+		await assignOrderPins(db);
+		const pins = (
+			await db.select({ pin: schema.orders.pin }).from(schema.orders)
+		).map((o) => o.pin as number);
+		expect(pins.filter((p) => p <= 9).sort()).toEqual([
+			1, 2, 3, 4, 5, 6, 7, 8, 9,
+		]);
+		expect(pins.filter((p) => p >= 10 && p <= 99)).toHaveLength(1);
 	});
 
 	test("a pin finds the order with the box and weight used last time", async () => {
