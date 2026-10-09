@@ -3,12 +3,15 @@
 //   pnpm sync                one pass of every channel
 //   pnpm sync --watch        keep going, each channel on its own schedule
 //   pnpm sync --only amazon  just one channel
+//   pnpm sync --shopify-history 365
+//                            one-time import of Shopify orders placed in the
+//                            last 365 days that the regular sync hasn't seen
 //
 // A channel without credentials in the environment is skipped.
 import { parseArgs } from "node:util";
 import { syncAmazon } from "#/channels/amazon";
 import { syncEbay } from "#/channels/ebay";
-import { syncShopify } from "#/channels/shopify";
+import { backfillShopify, syncShopify } from "#/channels/shopify";
 import { getDb } from "#/db/client";
 
 try {
@@ -21,6 +24,7 @@ const { values } = parseArgs({
 	options: {
 		watch: { type: "boolean", default: false },
 		only: { type: "string" },
+		"shopify-history": { type: "string" },
 	},
 });
 
@@ -68,6 +72,21 @@ async function pass(channel: (typeof channels)[number]) {
 		// One channel failing (an outage, an expired token) doesn't stop the rest.
 		console.error(`${new Date().toISOString()} ${channel.name} failed:`, error);
 	}
+}
+
+if (values["shopify-history"]) {
+	const days = Number(values["shopify-history"]);
+	if (!Number.isInteger(days) || days <= 0) throw new Error("Give a number of days");
+	// The regular sync already covers the newest 60 days.
+	const until = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+	const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+	const started = Date.now();
+	const result = await backfillShopify(getDb(), from, until);
+	console.log(
+		`${result.store}: ${result.orders} older orders in ${((Date.now() - started) / 1000).toFixed(0)}s`,
+	);
+	for (const problem of result.problems) console.log(`  ${problem}`);
+	process.exit(0);
 }
 
 const ready = channels.filter((c) => {

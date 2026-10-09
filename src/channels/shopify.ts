@@ -190,11 +190,49 @@ export async function syncShopify(
 	const since =
 		store.ordersSyncedThrough ??
 		new Date(Date.now() - FIRST_SYNC_DAYS * 24 * 60 * 60 * 1000);
-	const search = `updated_at:>='${since.toISOString()}'`;
-	let newest = since;
+	const result = await ingestMatching(
+		db,
+		store,
+		`updated_at:>='${since.toISOString()}'`,
+		locationId,
+	);
+	await advanceOrderCursor(db, store.id, result.newest ?? since);
+	return {
+		store: store.name,
+		variants,
+		mapped: mapped.length,
+		orders: result.count,
+		problems: [...caughtUp.problems, ...result.problems],
+	};
+}
+
+// One-time history import: orders placed in the given window, by date
+// placed rather than last change, so old orders that never change still
+// come in. It never moves the sync cursor, and orders from before the stock
+// snapshot are history only, so it can't touch stock.
+export async function backfillShopify(db: Db, from: Date, until: Date) {
+	const { shop } = shopInfo.assert(await shopifyQuery("{ shop { name } }", {}));
+	const store = await ensureStore(db, "shopify", shop.name);
+	const result = await ingestMatching(
+		db,
+		store,
+		`created_at:>='${from.toISOString()}' created_at:<'${until.toISOString()}'`,
+		await shippingLocation(db),
+	);
+	return { store: store.name, orders: result.count, problems: result.problems };
+}
+
+// Ingests every order matching a Shopify search, page by page.
+async function ingestMatching(
+	db: Db,
+	store: Awaited<ReturnType<typeof ensureStore>>,
+	search: string,
+	locationId: number | null,
+) {
+	let newest: Date | null = null;
 	let count = 0;
-	const problems: string[] = [...caughtUp.problems];
-	cursor = null;
+	const problems: string[] = [];
+	let cursor: string | null = null;
 	do {
 		const page = ordersPage.assert(
 			await shopifyQuery(ORDERS_QUERY, { cursor, query: search }),
@@ -212,22 +250,14 @@ export async function syncShopify(
 				locationId,
 			);
 			problems.push(...result.problems);
-			if (o.updatedAt > newest) newest = o.updatedAt;
+			if (!newest || o.updatedAt > newest) newest = o.updatedAt;
 			count++;
 		}
 		cursor = page.orders.pageInfo.hasNextPage
 			? (page.orders.pageInfo.endCursor ?? null)
 			: null;
 	} while (cursor);
-
-	await advanceOrderCursor(db, store.id, newest);
-	return {
-		store: store.name,
-		variants,
-		mapped: mapped.length,
-		orders: count,
-		problems,
-	};
+	return { count, newest, problems };
 }
 
 // Shopify's TikTok channel tags each order "TikTokOrderID:<id>".
