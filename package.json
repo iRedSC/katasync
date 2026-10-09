@@ -19,7 +19,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "import:sumtracker": "tsx scripts/import-sumtracker.ts",
-    "sync:shopify": "tsx scripts/sync-shopify.ts"
+    "sync": "tsx scripts/sync.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

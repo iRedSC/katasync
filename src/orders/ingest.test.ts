@@ -21,6 +21,7 @@ function order(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 		placedAt: new Date("2026-10-05T12:00:00Z"),
 		cancelledAt: null,
 		fulfillmentStatus: "UNFULFILLED",
+		fulfilledByChannel: false,
 		financialStatus: "PAID",
 		customerName: "Pat Doe",
 		shipCity: "Harrisburg",
@@ -210,5 +211,21 @@ describe("ingestOrder", () => {
 			ingestOrder(db, store(), otherSource, warehouse),
 		).rejects.toThrow();
 		expect(await db.select().from(schema.orders)).toHaveLength(1);
+	});
+
+	test("an order shipped by the marketplace (FBA) never takes our stock", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, 10);
+		const { problems } = await ingestOrder(
+			db,
+			store(),
+			order({
+				fulfilledByChannel: true,
+				fulfillmentStatus: "FULFILLMENT_NOT_REQUIRED",
+			}),
+			warehouse,
+		);
+		expect(problems).toEqual([]);
+		expect(await onHand(wrench)).toBe(10);
 	});
 });

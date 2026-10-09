@@ -19,7 +19,12 @@ export type ChannelOrder = {
 	marketplaceOrderId: string | null;
 	placedAt: Date;
 	cancelledAt: Date | null;
+	// Shopify's words, which other channels map onto: UNFULFILLED,
+	// PARTIALLY_FULFILLED, FULFILLED, FULFILLMENT_NOT_REQUIRED, ON_HOLD.
 	fulfillmentStatus: string;
+	// The marketplace ships it from its own stock (Amazon FBA). It never takes
+	// stock here: FBA quantities mirror what Amazon reports.
+	fulfilledByChannel: boolean;
 	financialStatus: string | null;
 	customerName: string | null;
 	shipCity: string | null;
@@ -66,6 +71,7 @@ export async function ingestOrder(
 
 		const problems: string[] = [];
 		const takesStock =
+			!order.fulfilledByChannel &&
 			store.stockFrom !== null &&
 			order.placedAt >= store.stockFrom &&
 			order.cancelledAt === null;

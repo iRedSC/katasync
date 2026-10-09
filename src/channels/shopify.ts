@@ -1,9 +1,8 @@
 import { type } from "arktype";
-import { and, desc, eq, max } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { locations, movements, stores } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { autoMapListings, syncListings } from "./listings";
+import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
 const API_VERSION = "2026-10";
 
@@ -148,27 +147,6 @@ query Variants($cursor: String) {
 
 const shopInfo = type({ shop: { name: "string" } });
 
-// The katasync store row for this Shopify shop. A new store starts taking
-// stock from the most recent opening balance, since anything sold before that
-// is already reflected in it.
-async function getStore(db: Db) {
-	const { shop } = shopInfo.assert(await shopifyQuery("{ shop { name } }", {}));
-	const [existing] = await db
-		.select()
-		.from(stores)
-		.where(and(eq(stores.channel, "shopify"), eq(stores.name, shop.name)));
-	if (existing) return existing;
-	const [{ openedAt }] = await db
-		.select({ openedAt: max(movements.createdAt) })
-		.from(movements)
-		.where(eq(movements.reason, "opening_balance"));
-	const [created] = await db
-		.insert(stores)
-		.values({ channel: "shopify", name: shop.name, stockFrom: openedAt })
-		.returning();
-	return created;
-}
-
 // Shopify's 60-day window is the furthest back read_orders reaches.
 const FIRST_SYNC_DAYS = 60;
 
@@ -176,7 +154,8 @@ export async function syncShopify(
 	db: Db,
 	options: { listings: boolean } = { listings: true },
 ) {
-	const store = await getStore(db);
+	const { shop } = shopInfo.assert(await shopifyQuery("{ shop { name } }", {}));
+	const store = await ensureStore(db, "shopify", shop.name);
 
 	// Listings first, so order lines can resolve to products.
 	let cursor: string | null = null;
@@ -204,14 +183,7 @@ export async function syncShopify(
 		} while (cursor);
 	const mapped = options.listings ? await autoMapListings(db) : 0;
 
-	// Stock comes from the one location we own; with several, katasync can't
-	// guess, so it reports instead of taking stock from the wrong shelf.
-	const owned = await db
-		.select({ id: locations.id })
-		.from(locations)
-		.where(eq(locations.kind, "owned"))
-		.orderBy(desc(locations.id));
-	const locationId = owned.length === 1 ? owned[0].id : null;
+	const locationId = await shippingLocation(db);
 
 	const since =
 		store.ordersSyncedThrough ??
@@ -246,10 +218,7 @@ export async function syncShopify(
 			: null;
 	} while (cursor);
 
-	await db
-		.update(stores)
-		.set({ ordersSyncedThrough: newest })
-		.where(eq(stores.id, store.id));
+	await advanceOrderCursor(db, store.id, newest);
 	return { store: store.name, variants, mapped, orders: count, problems };
 }
 
@@ -273,6 +242,7 @@ function toChannelOrder(
 		placedAt: o.createdAt,
 		cancelledAt: o.cancelledAt,
 		fulfillmentStatus: o.displayFulfillmentStatus,
+		fulfilledByChannel: false,
 		financialStatus: o.displayFinancialStatus,
 		customerName: o.shippingAddress?.name ?? null,
 		shipCity: o.shippingAddress?.city ?? null,
