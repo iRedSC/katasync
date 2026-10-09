@@ -1,8 +1,14 @@
 import { useRouter } from "@tanstack/react-router";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
+import {
+	type KeyboardEvent,
+	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
-import { Button } from "#/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
@@ -21,11 +27,22 @@ type Found = NonNullable<Awaited<ReturnType<typeof quickShipLookup>>>;
 type Box = Awaited<ReturnType<typeof listPackages>>[number];
 type Dims = { lengthMm: number; widthMm: number; heightMm: number };
 type Step = "pin" | "package" | "weight" | "insure" | "rates" | "done";
+type Rates = { list: Rate[]; notes: string[]; test: boolean };
+type Bought = Awaited<ReturnType<typeof quickShipBuy>>;
 
 const inches = (mm: number) => Math.round((mm / MM_PER_INCH) * 10) / 10;
+const ounces = (grams: number) => (grams / GRAMS_PER_OUNCE).toFixed(1);
+const size = (d: Dims) =>
+	`${inches(d.lengthMm)} × ${inches(d.widthMm)} × ${inches(d.heightMm)}`;
+
+// The big inputs every step types into.
+const bigInput =
+	"h-24 w-full rounded-xl border-2 border-input bg-white text-center text-6xl font-bold tabular-nums outline-none focus:border-[#303030] disabled:opacity-60";
 
 // Ctrl+Space anywhere: order pin, box pin, weight, (insurance), service.
-// Enter moves forward, Escape steps back.
+// Enter moves forward, Escape steps back. The order loads as the third
+// digit is typed, and prices load while the weight is still on screen, so
+// Enter rarely waits.
 export function QuickShip() {
 	const router = useRouter();
 	const [open, setOpen] = useState(false);
@@ -38,15 +55,15 @@ export function QuickShip() {
 	const [box, setBox] = useState<Box | null>(null);
 	const [dims, setDims] = useState<Dims | null>(null);
 	const [weightGrams, setWeightGrams] = useState<number | null>(null);
+	const [draftGrams, setDraftGrams] = useState<number | null>(null);
 	const [insureAmount, setInsureAmount] = useState<number | null>(null);
-	const [rates, setRates] = useState<{
-		list: Rate[];
-		notes: string[];
-		test: boolean;
-	} | null>(null);
-	const [bought, setBought] = useState<Awaited<
-		ReturnType<typeof quickShipBuy>
-	> | null>(null);
+	const [rates, setRates] = useState<Rates | null>(null);
+	const [bought, setBought] = useState<Bought | null>(null);
+
+	// Lookups and prices already asked for, so asking again is instant.
+	const lookups = useRef(new Map<number, Promise<Found | null>>());
+	const priced = useRef(new Map<string, Promise<Rates>>());
+	const latest = useRef(0);
 
 	function reset() {
 		setStep("pin");
@@ -55,9 +72,12 @@ export function QuickShip() {
 		setBox(null);
 		setDims(null);
 		setWeightGrams(null);
+		setDraftGrams(null);
 		setInsureAmount(null);
 		setRates(null);
 		setBought(null);
+		lookups.current.clear();
+		priced.current.clear();
 	}
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset only calls state setters
@@ -79,6 +99,50 @@ export function QuickShip() {
 		if (open) listPackages().then(setBoxes);
 	}, [open]);
 
+	function lookUp(pin: number) {
+		let pending = lookups.current.get(pin);
+		if (!pending) {
+			pending = quickShipLookup({ data: { pin } });
+			pending.catch(() => lookups.current.delete(pin));
+			lookups.current.set(pin, pending);
+		}
+		return pending;
+	}
+
+	function priceFor(grams: number, insure: number | null) {
+		if (!found || !dims) return null;
+		const key = JSON.stringify([box?.id, dims, grams, insure]);
+		let pending = priced.current.get(key);
+		if (!pending) {
+			pending = quickShipRates({
+				data: {
+					orderId: found.order.id,
+					packageId: box?.id,
+					...dims,
+					weightGrams: grams,
+					insureAmount: insure,
+					contentsKey: found.contentsKey,
+				},
+			}).then((r) => ({ list: r.rates, notes: r.notes, test: r.test }));
+			pending.catch(() => priced.current.delete(key));
+			priced.current.set(key, pending);
+		}
+		return pending;
+	}
+
+	// Ask for prices as soon as a weight sits still for a moment, using the
+	// insurance the next step would suggest.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: priceFor reads the same state
+	useEffect(() => {
+		if (step !== "weight" || !draftGrams || !found) return;
+		const timer = setTimeout(() => {
+			priceFor(draftGrams, found.insure ? found.order.total : null)?.catch(
+				() => {},
+			);
+		}, 250);
+		return () => clearTimeout(timer);
+	}, [step, draftGrams, found]);
+
 	async function run<T>(work: () => Promise<T>) {
 		setBusy(true);
 		setError(null);
@@ -94,16 +158,16 @@ export function QuickShip() {
 
 	const back = () => {
 		setError(null);
-		const order: Step[] = ["pin", "package", "weight", "insure", "rates"];
-		const i = order.indexOf(step);
 		if (step === "pin" || step === "done") return setOpen(false);
-		let previous = order[i - 1];
+		const order: Step[] = ["pin", "package", "weight", "insure", "rates"];
+		let previous = order[order.indexOf(step) - 1];
 		if (previous === "insure" && !found?.insure) previous = "weight";
+		latest.current++;
 		setStep(previous);
 	};
 
-	async function lookUp(pin: number) {
-		const result = await run(() => quickShipLookup({ data: { pin } }));
+	async function choosePin(pin: number) {
+		const result = await run(() => lookUp(pin));
 		if (result === undefined) return;
 		if (result === null) return setError(`No order to ship has pin ${pin}`);
 		setFound(result);
@@ -119,12 +183,13 @@ export function QuickShip() {
 		setDims(next.dims);
 		// Weight starts from these exact contents' last shipment, else the
 		// items' known weights plus the empty box.
-		setWeightGrams(
+		const grams =
 			found.last?.weightGrams ??
-				(found.itemsWeightGrams === null
-					? null
-					: found.itemsWeightGrams + (next.box?.weightGrams ?? 0)),
-		);
+			(found.itemsWeightGrams === null
+				? null
+				: found.itemsWeightGrams + (next.box?.weightGrams ?? 0));
+		setWeightGrams(grams);
+		setDraftGrams(grams);
 		setStep("weight");
 	}
 
@@ -136,32 +201,22 @@ export function QuickShip() {
 			setStep("insure");
 		} else {
 			setInsureAmount(null);
-			loadRates(grams, null);
+			showRates(grams, null);
 		}
 	}
 
-	async function loadRates(grams: number, insure: number | null) {
-		if (!found || !dims) return;
+	async function showRates(grams: number, insure: number | null) {
+		const pending = priceFor(grams, insure);
+		if (!pending) return;
+		const mine = ++latest.current;
 		setStep("rates");
 		setRates(null);
-		const result = await run(() =>
-			quickShipRates({
-				data: {
-					orderId: found.order.id,
-					packageId: box?.id,
-					...dims,
-					weightGrams: grams,
-					insureAmount: insure,
-					contentsKey: found.contentsKey,
-				},
-			}),
-		);
-		if (result)
-			setRates({ list: result.rates, notes: result.notes, test: result.test });
+		const result = await run(() => pending);
+		if (result && mine === latest.current) setRates(result);
 	}
 
 	async function buy(rate: Rate) {
-		if (!found || !dims || weightGrams === null) return;
+		if (!found || !dims || weightGrams === null || busy) return;
 		const result = await run(() =>
 			quickShipBuy({
 				data: {
@@ -182,10 +237,39 @@ export function QuickShip() {
 		router.invalidate();
 	}
 
+	const steps: { id: Step; label: string; value: string | null }[] = [
+		{ id: "pin", label: "Order", value: found?.order.name ?? null },
+		{
+			id: "package",
+			label: "Box",
+			value: box ? box.name : dims ? `${size(dims)} in` : null,
+		},
+		{
+			id: "weight",
+			label: "Weight",
+			value: weightGrams ? `${ounces(weightGrams)} oz` : null,
+		},
+		...(found?.insure
+			? [
+					{
+						id: "insure" as const,
+						label: "Insurance",
+						value:
+							step === "insure" || !weightGrams
+								? null
+								: insureAmount
+									? formatMoney(insureAmount)
+									: "None",
+					},
+				]
+			: []),
+		{ id: "rates", label: "Service", value: bought?.serviceName ?? null },
+	];
+
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogContent
-				className="gap-0 overflow-hidden p-0 sm:max-w-lg"
+				className="gap-0 overflow-hidden bg-card p-0 sm:max-w-2xl"
 				showCloseButton={false}
 				onKeyDown={(e: KeyboardEvent) => {
 					if (e.key === "Escape") {
@@ -195,30 +279,26 @@ export function QuickShip() {
 				}}
 				onEscapeKeyDown={(e) => e.preventDefault()}
 			>
-				<DialogTitle className="flex items-center justify-between border-b px-4 py-3 text-sm font-semibold">
-					<span>Quick ship{found && ` · ${found.order.name}`}</span>
-					<span className="text-xs font-normal text-muted-foreground">
-						Esc to go back
-					</span>
-				</DialogTitle>
+				<DialogTitle className="sr-only">Quick ship</DialogTitle>
+				<StepStrip steps={steps} current={step} />
 
 				{found && step !== "pin" && <OrderSummary found={found} />}
 
-				<div className="flex flex-col gap-3 p-4">
+				<div className="flex flex-col gap-4 p-6">
 					{step === "pin" && (
-						<PinPrompt label="Order pin" busy={busy} onSubmit={lookUp} />
+						<PinStep busy={busy} lookUp={lookUp} onSubmit={choosePin} />
 					)}
 
 					{step === "package" && found && found.labelSource !== "shippo" && (
-						<p>
+						<Notice tone="info">
 							{found.labelSource === "tiktok"
-								? "This order ships on TikTok's own label. Printing TikTok labels is coming next; for now, print it from TikTok Seller Center."
-								: "Amazon orders use Amazon's own labels, which need the restricted Amazon role you applied for. For now, buy it in Seller Central."}
-						</p>
+								? "TikTok orders ship on TikTok's own label. Print it from TikTok Seller Center for now."
+								: "Amazon orders ship on Amazon's own label. Buy it in Seller Central until Amazon approves the restricted role."}
+						</Notice>
 					)}
 
 					{step === "package" && found?.labelSource === "shippo" && (
-						<PackagePrompt
+						<PackageStep
 							boxes={boxes}
 							current={box}
 							dims={dims}
@@ -227,74 +307,117 @@ export function QuickShip() {
 					)}
 
 					{step === "weight" && (
-						<WeightPrompt
+						<WeightStep
 							initialGrams={weightGrams}
 							hint={
 								found?.last
-									? "same as last time"
+									? "Same as last time"
 									: weightGrams !== null
-										? "items plus box"
+										? "Items plus box"
 										: null
 							}
+							onDraft={setDraftGrams}
 							onSubmit={chooseWeight}
 						/>
 					)}
 
 					{step === "insure" && found && (
-						<InsurePrompt
+						<InsureStep
 							total={found.order.total}
 							onSubmit={(amount) => {
 								setInsureAmount(amount);
-								if (weightGrams !== null) loadRates(weightGrams, amount);
+								if (weightGrams !== null) showRates(weightGrams, amount);
 							}}
 						/>
 					)}
 
 					{step === "rates" && !(error && !rates) && (
-						<RatesPrompt rates={rates} busy={busy} onBuy={buy} />
+						<RatesStep rates={rates} busy={busy} onBuy={buy} />
 					)}
 
 					{step === "done" && bought && (
-						<DonePanel
-							bought={bought}
-							onNext={() => {
-								reset();
-							}}
-						/>
+						<DoneStep bought={bought} onNext={reset} />
 					)}
 
-					{error && <p className="text-critical-text">{error}</p>}
+					{error && <Notice tone="critical">{error}</Notice>}
+
+					<p className="text-center text-muted-foreground">
+						<Key>Enter</Key> next · <Key>Esc</Key> back
+					</p>
 				</div>
 			</DialogContent>
 		</Dialog>
 	);
 }
 
+// Every choice so far, big enough to check from arm's length.
+function StepStrip({
+	steps,
+	current,
+}: {
+	steps: { id: Step; label: string; value: string | null }[];
+	current: Step;
+}) {
+	return (
+		<ol className="grid auto-cols-fr grid-flow-col border-b bg-[#f7f7f7]">
+			{steps.map((s) => {
+				const active = s.id === current;
+				return (
+					<li
+						key={s.id}
+						className={cn(
+							"min-w-0 border-b-4 px-4 pt-3 pb-2",
+							active ? "border-[#303030] bg-white" : "border-transparent",
+						)}
+					>
+						<div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+							{s.label}
+						</div>
+						<div
+							className={cn(
+								"truncate text-lg font-semibold",
+								!s.value && "text-[#b5b5b5]",
+							)}
+						>
+							{s.value ?? "—"}
+						</div>
+					</li>
+				);
+			})}
+		</ol>
+	);
+}
+
 function OrderSummary({ found }: { found: Found }) {
 	const o = found.order;
 	return (
-		<div className="flex flex-col gap-2 border-b bg-[#f7f7f7] px-4 py-3">
-			<div className="flex items-center justify-between gap-2">
-				<span className="truncate">
-					{o.customerName ?? "No name"}
+		<div className="flex flex-col gap-3 border-b px-6 py-4">
+			<div className="flex items-center justify-between gap-3">
+				<div className="min-w-0">
+					<div className="truncate text-xl font-semibold">
+						{o.customerName ?? "No name"}
+					</div>
 					{o.shipCity && (
-						<span className="text-muted-foreground">
-							{" "}
+						<div className="text-muted-foreground">
 							{[o.shipCity, o.shipRegion].filter(Boolean).join(", ")}
-						</span>
+						</div>
 					)}
-				</span>
-				<span className="flex shrink-0 gap-1.5">
-					{found.labelsBought > 0 && <Badge tone="warning">Has a label</Badge>}
+				</div>
+				<div className="flex shrink-0 gap-1.5">
+					{found.labelsBought > 0 && (
+						<Badge tone="warning">Already has a label</Badge>
+					)}
 					<Badge>{o.salesChannel ?? o.channel}</Badge>
-				</span>
+				</div>
 			</div>
-			<ul className="flex flex-col gap-1">
+			<ul className="flex flex-col gap-2">
 				{found.lines.map((l) => (
-					<li key={`${l.sku}-${l.title}`} className="flex items-center gap-2">
-						<ProductImage src={l.imageUrl} className="size-7" />
-						<span className="font-semibold tabular-nums">{l.quantity}×</span>
-						<span className="truncate">{l.title}</span>
+					<li key={`${l.sku}-${l.title}`} className="flex items-center gap-3">
+						<ProductImage src={l.imageUrl} className="size-12" />
+						<span className="w-12 shrink-0 text-2xl font-bold tabular-nums">
+							{l.quantity}×
+						</span>
+						<span className="min-w-0 truncate text-base">{l.title}</span>
 					</li>
 				))}
 			</ul>
@@ -302,19 +425,36 @@ function OrderSummary({ found }: { found: Found }) {
 	);
 }
 
-function PinPrompt({
-	label,
+function PinStep({
 	busy,
+	lookUp,
 	onSubmit,
 }: {
-	label: string;
 	busy: boolean;
+	lookUp: (pin: number) => Promise<Found | null>;
 	onSubmit: (pin: number) => void;
 }) {
 	const [value, setValue] = useState("");
+	const [preview, setPreview] = useState<Found | null | "loading">(null);
+
+	// The third digit starts the lookup, so Enter usually has nothing to wait
+	// for. lookUp caches by pin, so only the typed value matters here.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see above
+	useEffect(() => {
+		if (value.length !== 3) return setPreview(null);
+		let current = true;
+		setPreview("loading");
+		lookUp(Number(value))
+			.then((f) => current && setPreview(f))
+			.catch(() => current && setPreview(null));
+		return () => {
+			current = false;
+		};
+	}, [value]);
+
 	return (
-		<label className="flex flex-col gap-1">
-			<span className="text-muted-foreground">{label}</span>
+		<div className="flex flex-col gap-3">
+			<p className="text-center text-xl font-semibold">Order pin</p>
 			<input
 				// biome-ignore lint/a11y/noAutofocus: the modal exists to type this
 				autoFocus
@@ -322,17 +462,34 @@ function PinPrompt({
 				maxLength={3}
 				disabled={busy}
 				value={value}
+				placeholder="000"
 				onChange={(e) => setValue(e.target.value.replace(/\D/g, ""))}
 				onKeyDown={(e) => {
 					if (e.key === "Enter" && value.length === 3) onSubmit(Number(value));
 				}}
-				className="h-14 rounded-lg border border-input text-center text-3xl font-bold tracking-[0.3em] tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+				className={cn(bigInput, "tracking-[0.4em] placeholder:text-[#e3e3e3]")}
 			/>
-		</label>
+			<div className="flex h-8 items-center justify-center text-lg">
+				{preview === "loading" && <Spinner />}
+				{preview && preview !== "loading" && (
+					<span>
+						<span className="font-semibold">{preview.order.name}</span>
+						<span className="text-muted-foreground">
+							{" "}
+							· {preview.order.customerName ?? "No name"} ·{" "}
+							{preview.lines.reduce((n, l) => n + l.quantity, 0)} items
+						</span>
+					</span>
+				)}
+				{preview === null && value.length === 3 && (
+					<span className="text-critical-text">No order has that pin</span>
+				)}
+			</div>
+		</div>
 	);
 }
 
-function PackagePrompt({
+function PackageStep({
 	boxes,
 	current,
 	dims,
@@ -345,31 +502,32 @@ function PackagePrompt({
 }) {
 	const [value, setValue] = useState(current ? String(current.pin) : "");
 	const [custom, setCustom] = useState(!current && dims !== null);
-	const [size, setSize] = useState(
+	const [typed, setTyped] = useState(
 		dims
 			? `${inches(dims.lengthMm)} ${inches(dims.widthMm)} ${inches(dims.heightMm)}`
 			: "",
 	);
 	const match = boxes.find((b) => String(b.pin) === value);
+	const parts = typed
+		.split(/[\s×xX,]+/)
+		.map(Number)
+		.filter((n) => n > 0);
 
 	function submit() {
-		if (custom) {
-			const parts = size
-				.split(/[\s×xX,]+/)
-				.map(Number)
-				.filter((n) => n > 0);
-			if (parts.length !== 3) return;
+		if (custom && parts.length === 3) {
 			const [l, w, h] = parts.map((n) => Math.round(n * MM_PER_INCH));
 			onChoose({ box: null, dims: { lengthMm: l, widthMm: w, heightMm: h } });
-		} else if (match) {
+		} else if (!custom && match) {
 			onChoose({ box: match, dims: match });
 		}
 	}
 
 	return (
-		<div className="flex flex-col gap-2">
-			<div className="flex items-center justify-between text-muted-foreground">
-				<span>{custom ? "Box size in inches (L W H)" : "Box pin"}</span>
+		<div className="flex flex-col gap-3">
+			<div className="flex items-baseline justify-between">
+				<p className="text-xl font-semibold">
+					{custom ? "Box size in inches" : "Box pin"}
+				</p>
 				<button
 					type="button"
 					className="text-link hover:underline"
@@ -382,11 +540,12 @@ function PackagePrompt({
 				<input
 					// biome-ignore lint/a11y/noAutofocus: the step exists to type this
 					autoFocus
-					value={size}
+					value={typed}
 					placeholder="12 9 4"
-					onChange={(e) => setSize(e.target.value)}
+					onFocus={(e) => e.target.select()}
+					onChange={(e) => setTyped(e.target.value)}
 					onKeyDown={(e) => e.key === "Enter" && submit()}
-					className="h-12 rounded-lg border border-input px-3 text-xl tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+					className={cn(bigInput, "text-5xl placeholder:text-[#e3e3e3]")}
 				/>
 			) : (
 				<input
@@ -395,68 +554,83 @@ function PackagePrompt({
 					inputMode="numeric"
 					maxLength={3}
 					value={value}
+					placeholder="000"
+					onFocus={(e) => e.target.select()}
 					onChange={(e) => {
-						if (e.target.value.toLowerCase() === "c") return setCustom(true);
+						if (e.target.value.toLowerCase().endsWith("c")) {
+							return setCustom(true);
+						}
 						setValue(e.target.value.replace(/\D/g, ""));
 					}}
 					onKeyDown={(e) => e.key === "Enter" && submit()}
-					className="h-14 rounded-lg border border-input text-center text-3xl font-bold tracking-[0.3em] tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+					className={cn(
+						bigInput,
+						"tracking-[0.4em] placeholder:text-[#e3e3e3]",
+					)}
 				/>
 			)}
-			{!custom && (
-				<p className="text-muted-foreground">
-					{match
-						? `${match.name}: ${inches(match.lengthMm)} × ${inches(match.widthMm)} × ${inches(match.heightMm)} in`
-						: boxes.length === 0
-							? "No boxes saved yet. Add them in Settings, or press C for a custom size."
-							: value.length === 3
-								? "No box has that pin."
-								: ""}
-				</p>
-			)}
+			<div className="flex h-8 items-center justify-center text-lg">
+				{custom ? (
+					parts.length === 3 ? (
+						<span className="font-semibold">{parts.join(" × ")} in</span>
+					) : (
+						<span className="text-muted-foreground">Length, width, height</span>
+					)
+				) : match ? (
+					<span>
+						<span className="font-semibold">{match.name}</span>
+						<span className="text-muted-foreground"> · {size(match)} in</span>
+					</span>
+				) : boxes.length === 0 ? (
+					<span className="text-muted-foreground">
+						No saved boxes yet. Press C for a custom size.
+					</span>
+				) : value.length === 3 ? (
+					<span className="text-critical-text">No box has that pin</span>
+				) : null}
+			</div>
 		</div>
 	);
 }
 
-function WeightPrompt({
+function WeightStep({
 	initialGrams,
 	hint,
+	onDraft,
 	onSubmit,
 }: {
 	initialGrams: number | null;
 	hint: string | null;
+	onDraft: (grams: number | null) => void;
 	onSubmit: (grams: number) => void;
 }) {
 	const [unit, setUnit] = useState<"oz" | "lb">("oz");
-	const toUnit = (g: number) =>
-		unit === "oz"
-			? (g / GRAMS_PER_OUNCE).toFixed(1)
-			: (g / GRAMS_PER_OUNCE / 16).toFixed(2);
 	const [value, setValue] = useState(
-		initialGrams === null ? "" : toUnit(initialGrams),
+		initialGrams === null ? "" : ounces(initialGrams),
 	);
 	const input = useRef<HTMLInputElement>(null);
+	const grams = (text: string, u: "oz" | "lb") => {
+		const n = Number(text);
+		return n > 0
+			? Math.round((u === "oz" ? n : n * 16) * GRAMS_PER_OUNCE)
+			: null;
+	};
 
 	function toggle() {
 		const n = Number(value);
 		const next = unit === "oz" ? "lb" : "oz";
-		if (n > 0)
+		if (n > 0) {
 			setValue(next === "lb" ? (n / 16).toFixed(2) : (n * 16).toFixed(1));
+		}
 		setUnit(next);
 		input.current?.focus();
 	}
 
 	return (
-		<div className="flex flex-col gap-2">
-			<div className="flex items-center justify-between text-muted-foreground">
-				<span>Weight{hint && ` (${hint})`}</span>
-				<button
-					type="button"
-					className="text-link hover:underline"
-					onClick={toggle}
-				>
-					Switch to {unit === "oz" ? "pounds" : "ounces"} (Tab)
-				</button>
+		<div className="flex flex-col gap-3">
+			<div className="flex items-baseline justify-between">
+				<p className="text-xl font-semibold">Weight</p>
+				{hint && <span className="text-muted-foreground">{hint}</span>}
 			</div>
 			<div className="relative">
 				<input
@@ -465,31 +639,39 @@ function WeightPrompt({
 					autoFocus
 					inputMode="decimal"
 					value={value}
+					placeholder="0"
 					onFocus={(e) => e.target.select()}
-					onChange={(e) => setValue(e.target.value.replace(/[^\d.]/g, ""))}
+					onChange={(e) => {
+						const text = e.target.value.replace(/[^\d.]/g, "");
+						setValue(text);
+						onDraft(grams(text, unit));
+					}}
 					onKeyDown={(e) => {
 						if (e.key === "Tab") {
 							e.preventDefault();
 							toggle();
 						}
-						const n = Number(value);
-						if (e.key === "Enter" && n > 0) {
-							onSubmit(
-								Math.round((unit === "oz" ? n : n * 16) * GRAMS_PER_OUNCE),
-							);
-						}
+						const g = grams(value, unit);
+						if (e.key === "Enter" && g) onSubmit(g);
 					}}
-					className="h-14 w-full rounded-lg border border-input px-3 pr-14 text-3xl font-bold tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+					className={cn(bigInput, "pr-24 placeholder:text-[#e3e3e3]")}
 				/>
-				<span className="absolute top-4 right-4 text-lg text-muted-foreground">
+				<button
+					type="button"
+					onClick={toggle}
+					className="absolute top-1/2 right-3 -translate-y-1/2 rounded-lg bg-[#f1f1f1] px-3 py-2 text-2xl font-semibold hover:bg-[#e3e3e3]"
+				>
 					{unit}
-				</span>
+				</button>
 			</div>
+			<p className="text-center text-muted-foreground">
+				<Key>Tab</Key> switches to {unit === "oz" ? "pounds" : "ounces"}
+			</p>
 		</div>
 	);
 }
 
-function InsurePrompt({
+function InsureStep({
 	total,
 	onSubmit,
 }: {
@@ -498,50 +680,52 @@ function InsurePrompt({
 }) {
 	const [choice, setChoice] = useState(0);
 	const [custom, setCustom] = useState(String(Math.round(total)));
-	const options = [
-		`Insure for the order value, ${formatMoney(total)}`,
-		"Insure for a different amount",
-		"Don't insure",
-	];
-
-	function submit() {
-		if (choice === 0) onSubmit(total);
-		if (choice === 1 && Number(custom) > 0) onSubmit(Number(custom));
-		if (choice === 2) onSubmit(null);
-	}
-
 	const group = useRef<HTMLDivElement>(null);
 	useEffect(() => group.current?.focus(), []);
+
+	const options = [
+		{ label: "Order value", value: formatMoney(total) },
+		{ label: "Other amount", value: null },
+		{ label: "Don't insure", value: null },
+	];
+
+	function submit(i = choice) {
+		if (i === 0) onSubmit(total);
+		if (i === 1 && Number(custom) > 0) onSubmit(Number(custom));
+		if (i === 2) onSubmit(null);
+	}
 
 	return (
 		<div
 			ref={group}
 			role="listbox"
 			aria-label="Insurance"
-			className="flex flex-col gap-2 outline-none"
 			tabIndex={0}
+			className="flex flex-col gap-2 outline-none"
 			onKeyDown={(e) => {
 				if (e.key === "ArrowDown") setChoice((c) => Math.min(c + 1, 2));
 				if (e.key === "ArrowUp") setChoice((c) => Math.max(c - 1, 0));
 				if (e.key === "Enter" && choice !== 1) submit();
 			}}
 		>
-			<p className="font-semibold">This order should be insured</p>
-			{options.map((label, i) => (
+			<p className="text-xl font-semibold">Insure this package?</p>
+			{options.map((o, i) => (
 				<button
-					key={label}
+					key={o.label}
 					type="button"
-					onClick={() =>
-						i === 1 ? setChoice(1) : onSubmit(i === 0 ? total : null)
-					}
+					onMouseMove={() => setChoice(i)}
+					onClick={() => (i === 1 ? setChoice(1) : submit(i))}
 					className={cn(
-						"rounded-lg border px-3 py-2 text-left",
+						"flex h-16 items-center justify-between rounded-xl border-2 px-5 text-left text-xl",
 						choice === i
-							? "border-foreground bg-[#f1f1f1]"
-							: "hover:bg-[#f7f7f7]",
+							? "border-[#303030] bg-[#303030] text-white"
+							: "border-[#e3e3e3] hover:bg-[#f7f7f7]",
 					)}
 				>
-					{label}
+					<span>{o.label}</span>
+					{o.value && (
+						<span className="text-2xl font-bold tabular-nums">{o.value}</span>
+					)}
 				</button>
 			))}
 			{choice === 1 && (
@@ -550,21 +734,27 @@ function InsurePrompt({
 					autoFocus
 					inputMode="decimal"
 					value={custom}
+					onFocus={(e) => e.target.select()}
 					onChange={(e) => setCustom(e.target.value.replace(/[^\d.]/g, ""))}
-					onKeyDown={(e) => e.key === "Enter" && submit()}
-					className="h-11 rounded-lg border border-input px-3 text-lg tabular-nums outline-none focus:border-ring"
+					onKeyDown={(e) => {
+						if (e.key === "Enter") {
+							e.stopPropagation();
+							submit(1);
+						}
+					}}
+					className={cn(bigInput, "h-20 text-5xl")}
 				/>
 			)}
 		</div>
 	);
 }
 
-function RatesPrompt({
+function RatesStep({
 	rates,
 	busy,
 	onBuy,
 }: {
-	rates: { list: Rate[]; notes: string[]; test: boolean } | null;
+	rates: Rates | null;
 	busy: boolean;
 	onBuy: (rate: Rate) => void;
 }) {
@@ -574,13 +764,19 @@ function RatesPrompt({
 		if (rates) list.current?.focus();
 	}, [rates]);
 
-	if (!rates) return <p className="text-muted-foreground">Getting prices…</p>;
+	if (!rates) {
+		return (
+			<div className="flex h-40 items-center justify-center gap-3 text-xl text-muted-foreground">
+				<Spinner /> Getting prices
+			</div>
+		);
+	}
 	if (rates.list.length === 0) {
 		return (
-			<p className="text-critical-text">
+			<Notice tone="critical">
 				No services available.
 				{rates.notes.length > 0 && ` ${rates.notes.join(" ")}`}
-			</p>
+			</Notice>
 		);
 	}
 	return (
@@ -588,17 +784,20 @@ function RatesPrompt({
 			ref={list}
 			role="listbox"
 			aria-label="Services"
-			className="flex flex-col gap-1 outline-none"
 			tabIndex={0}
+			className="flex flex-col gap-2 outline-none"
 			onKeyDown={(e) => {
-				if (e.key === "ArrowDown")
+				if (e.key === "ArrowDown") {
 					setSelected((i) => Math.min(i + 1, rates.list.length - 1));
+				}
 				if (e.key === "ArrowUp") setSelected((i) => Math.max(i - 1, 0));
-				if (e.key === "Enter" && !busy) onBuy(rates.list[selected]);
+				if (e.key === "Enter") onBuy(rates.list[selected]);
 			}}
 		>
-			<div className="flex items-center justify-between pb-1 text-muted-foreground">
-				<span>Enter buys the highlighted label</span>
+			<div className="flex items-baseline justify-between">
+				<p className="text-xl font-semibold">
+					{busy ? "Buying label…" : "Enter buys the label"}
+				</p>
 				{rates.test && <Badge tone="info">Test labels</Badge>}
 			</div>
 			{rates.list.map((r, i) => (
@@ -609,60 +808,108 @@ function RatesPrompt({
 					onMouseMove={() => setSelected(i)}
 					onClick={() => onBuy(r)}
 					className={cn(
-						"flex items-center justify-between rounded-lg px-3 py-2 text-left",
-						i === selected ? "bg-[#303030] text-white" : "hover:bg-[#f7f7f7]",
+						"flex h-16 items-center justify-between rounded-xl border-2 px-5 text-left",
+						i === selected
+							? "border-[#303030] bg-[#303030] text-white"
+							: "border-[#e3e3e3] hover:bg-[#f7f7f7]",
+						busy && i !== selected && "opacity-40",
 					)}
 				>
-					<span>
-						{r.serviceName}
+					<span className="min-w-0">
+						<span className="block truncate text-lg font-semibold">
+							{r.serviceName}
+						</span>
 						{r.days !== null && (
 							<span
 								className={
 									i === selected ? "text-white/70" : "text-muted-foreground"
 								}
 							>
-								{" "}
 								{r.days} {r.days === 1 ? "day" : "days"}
 							</span>
 						)}
 					</span>
-					<span className="font-semibold tabular-nums">
+					<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">
+						{busy && i === selected && <Spinner />}
 						{formatMoney(r.cost)}
 					</span>
 				</button>
 			))}
-			{busy && <p className="text-muted-foreground">Buying label…</p>}
 		</div>
 	);
 }
 
-function DonePanel({
-	bought,
-	onNext,
-}: {
-	bought: Awaited<ReturnType<typeof quickShipBuy>>;
-	onNext: () => void;
-}) {
+function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
+	const next = useRef<HTMLButtonElement>(null);
+	useEffect(() => next.current?.focus(), []);
 	return (
-		<div className="flex flex-col gap-2">
-			<p className="font-semibold">
-				Label bought{bought.test && " (test label, can't ship)"}
+		<div className="flex flex-col items-center gap-3 rounded-xl bg-success-surface px-6 py-8 text-center">
+			<CircleCheck className="size-16 text-success-icon" />
+			<p className="text-4xl font-bold">Label bought</p>
+			<p className="text-xl">
+				{bought.serviceName} ·{" "}
+				<span className="font-semibold">{formatMoney(bought.cost)}</span>
 			</p>
-			<p className="text-muted-foreground">
-				{bought.serviceName}, {formatMoney(bought.cost)}
-				{bought.trackingNumber && `, tracking ${bought.trackingNumber}`}
-			</p>
-			<a
-				href={bought.labelUrl}
-				target="_blank"
-				rel="noreferrer"
-				className="text-link hover:underline"
-			>
-				Open the label again
-			</a>
-			<Button autoFocus className="self-start" onClick={onNext}>
-				Next order (Enter)
-			</Button>
+			{bought.test && (
+				<Badge tone="info">Test label: it won't ship anything</Badge>
+			)}
+			{bought.trackingNumber && (
+				<p className="font-mono text-muted-foreground">
+					{bought.trackingNumber}
+				</p>
+			)}
+			<div className="mt-2 flex items-center gap-4">
+				<button
+					ref={next}
+					type="button"
+					onClick={onNext}
+					className="h-14 rounded-xl bg-[#303030] px-8 text-xl font-semibold text-white outline-none hover:bg-[#1a1a1a] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				>
+					Next order
+				</button>
+				<a
+					href={bought.labelUrl}
+					target="_blank"
+					rel="noreferrer"
+					className="text-lg text-link hover:underline"
+				>
+					Open label again
+				</a>
+			</div>
 		</div>
 	);
+}
+
+function Notice({
+	tone,
+	children,
+}: {
+	tone: "critical" | "info";
+	children: ReactNode;
+}) {
+	return (
+		<div
+			className={cn(
+				"flex items-start gap-3 rounded-xl border-2 px-5 py-4 text-lg",
+				tone === "critical"
+					? "border-critical-border bg-critical-surface text-critical-text"
+					: "border-info-border bg-info-surface text-info-text",
+			)}
+		>
+			<CircleAlert className="mt-0.5 size-6 shrink-0" />
+			<span>{children}</span>
+		</div>
+	);
+}
+
+function Key({ children }: { children: ReactNode }) {
+	return (
+		<kbd className="rounded border border-b-2 bg-white px-1.5 py-0.5 font-sans text-xs font-semibold text-foreground">
+			{children}
+		</kbd>
+	);
+}
+
+function Spinner() {
+	return <LoaderCircle className="size-6 animate-spin" />;
 }
