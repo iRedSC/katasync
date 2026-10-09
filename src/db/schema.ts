@@ -35,6 +35,8 @@ export const locations = pgTable("locations", {
 	postalCode: text(),
 	country: text(),
 	phone: text(),
+	// Carriers want an email on the sender; the store's contact email.
+	email: text(),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 

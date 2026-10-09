@@ -25,6 +25,7 @@ export type Address = {
 	zip: string;
 	country: string;
 	phone?: string | null;
+	email?: string | null;
 };
 
 export type Parcel = {

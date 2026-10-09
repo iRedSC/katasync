@@ -205,7 +205,7 @@ query Variants($cursor: String) {
 const shopInfo = type({ shop: { name: "string" } });
 
 const shipFromInfo = type({
-	shop: { name: "string" },
+	shop: { name: "string", contactEmail: "string | null" },
 	locations: {
 		nodes: type({
 			isPrimary: "boolean",
@@ -234,7 +234,7 @@ async function syncShipFrom(db: Db) {
 	if (owned.length !== 1) return;
 	const info = shipFromInfo.assert(
 		await shopifyQuery(
-			"{ shop { name } locations(first: 20) { nodes { isPrimary address { address1 address2 city provinceCode zip countryCode phone } } } }",
+			"{ shop { name contactEmail } locations(first: 20) { nodes { isPrimary address { address1 address2 city provinceCode zip countryCode phone } } } }",
 			{},
 		),
 	);
@@ -251,6 +251,7 @@ async function syncShipFrom(db: Db) {
 			postalCode: primary.address.zip,
 			country: primary.address.countryCode,
 			phone: primary.address.phone,
+			email: info.shop.contactEmail,
 		})
 		.where(eq(locations.id, owned[0].id));
 }

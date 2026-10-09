@@ -89,9 +89,15 @@ async function addresses(
 	const [from] = locationId
 		? await db.select().from(locations).where(eq(locations.id, locationId))
 		: [];
-	if (!from?.address1 || !from.city || !from.postalCode || !from.country) {
+	if (
+		!from?.address1 ||
+		!from.city ||
+		!from.postalCode ||
+		!from.country ||
+		!from.email
+	) {
 		throw new Error(
-			"The warehouse has no ship-from address yet; it comes from Shopify's primary location",
+			"The warehouse has no ship-from address or email yet; both come from Shopify (primary location and store contact email)",
 		);
 	}
 	return {
@@ -104,6 +110,7 @@ async function addresses(
 			zip: from.postalCode,
 			country: from.country,
 			phone: from.phone,
+			email: from.email,
 		},
 		to: {
 			name: o.customerName ?? "Customer",
