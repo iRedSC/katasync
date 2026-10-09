@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Link2 } from "lucide-react";
-import { EmptyState, PageBody, PageHeader, StatusDot } from "#/components/page";
+import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { listUnmappedListings } from "#/server/catalog";
 
 export const Route = createFileRoute("/listings")({
@@ -11,36 +11,33 @@ export const Route = createFileRoute("/listings")({
 function Listings() {
 	const unmapped = Route.useLoaderData();
 	return (
-		<>
-			<PageHeader title="Listings" />
-			<PageBody>
+		<Page title="Listings">
+			<Card flush>
 				{unmapped.length === 0 ? (
 					<EmptyState icon={Link2} title="Every listing is matched">
 						When a store adds a listing katasync can't match to a product on its
 						own, it waits here for you.
 					</EmptyState>
 				) : (
-					<ul className="flex flex-col">
+					<ul>
 						{unmapped.map((l) => (
 							<li
 								key={l.id}
-								className="flex items-center gap-4 border-b py-3 last:border-0"
+								className="flex items-center gap-4 border-t px-4 py-2.5 first:border-t-0"
 							>
 								<div className="min-w-0 flex-1">
-									<div className="truncate">{l.title}</div>
-									<div className="text-xs text-muted-foreground">
-										{l.store}
-										{l.externalSku && (
-											<span className="ml-2">{l.externalSku}</span>
-										)}
+									<div className="truncate font-medium">{l.title}</div>
+									<div className="flex gap-2 text-xs text-muted-foreground">
+										<span>{l.store}</span>
+										{l.externalSku && <span>{l.externalSku}</span>}
 									</div>
 								</div>
-								<StatusDot tone="warn">Needs a product</StatusDot>
+								<Badge tone="warning">Needs a product</Badge>
 							</li>
 						))}
 					</ul>
 				)}
-			</PageBody>
-		</>
+			</Card>
+		</Page>
 	);
 }

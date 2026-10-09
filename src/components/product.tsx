@@ -1,13 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Package } from "lucide-react";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "#/components/ui/table";
+import { ImageIcon } from "lucide-react";
 import { formatDateTime, formatDelta, formatReason } from "#/lib/format";
 import { cn } from "#/lib/utils";
 
@@ -23,17 +15,20 @@ export function ProductImage({
 			src={src}
 			alt=""
 			loading="lazy"
-			className={cn(className, "shrink-0 rounded-lg bg-white object-contain")}
+			className={cn(
+				className,
+				"shrink-0 rounded-lg border bg-white object-contain",
+			)}
 		/>
 	) : (
-		// No photo yet: a quiet stand-in rather than an empty box.
+		// No photo yet: Shopify's placeholder look rather than an empty box.
 		<div
 			className={cn(
 				className,
-				"flex shrink-0 items-center justify-center rounded-lg bg-deep text-haze/40",
+				"flex shrink-0 items-center justify-center rounded-lg border bg-[#f7f7f7] text-[#b5b5b5]",
 			)}
 		>
-			<Package className="size-1/2" strokeWidth={1.5} />
+			<ImageIcon className="size-1/2" strokeWidth={1.5} />
 		</div>
 	);
 }
@@ -43,72 +38,10 @@ export function ProductLink({ sku }: { sku: string }) {
 		<Link
 			to="/products/$sku"
 			params={{ sku }}
-			className="text-xs text-muted-foreground hover:text-foreground"
+			className="text-link hover:underline"
 		>
 			{sku}
 		</Link>
-	);
-}
-
-export function MovementTable({
-	rows,
-}: {
-	rows: {
-		id: number;
-		createdAt: Date;
-		location: string;
-		delta: number;
-		reason: string;
-		reference: string | null;
-		note: string | null;
-		sku?: string;
-	}[];
-}) {
-	if (rows.length === 0) {
-		return <p className="text-sm text-muted-foreground">No movements yet.</p>;
-	}
-	return (
-		<Table>
-			<TableHeader>
-				<TableRow>
-					<TableHead>When</TableHead>
-					{rows[0].sku !== undefined && <TableHead>SKU</TableHead>}
-					<TableHead>Reason</TableHead>
-					<TableHead>Location</TableHead>
-					<TableHead>Reference</TableHead>
-					<TableHead className="text-right">Change</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{rows.map((m) => (
-					<TableRow key={m.id}>
-						<TableCell className="whitespace-nowrap text-muted-foreground">
-							{formatDateTime(m.createdAt)}
-						</TableCell>
-						{m.sku !== undefined && (
-							<TableCell>
-								<ProductLink sku={m.sku} />
-							</TableCell>
-						)}
-						<TableCell>
-							{formatReason(m.reason)}
-							{m.note && (
-								<div className="text-xs text-muted-foreground">{m.note}</div>
-							)}
-						</TableCell>
-						<TableCell>{m.location}</TableCell>
-						<TableCell className="text-muted-foreground">
-							{m.reference ?? "—"}
-						</TableCell>
-						<TableCell
-							className={`text-right font-medium tabular-nums ${m.delta < 0 ? "text-bad-ink" : "text-good-ink"}`}
-						>
-							{formatDelta(m.delta)}
-						</TableCell>
-					</TableRow>
-				))}
-			</TableBody>
-		</Table>
 	);
 }
 
@@ -122,12 +55,67 @@ export function ProductName({
 }) {
 	return (
 		<span className="flex min-w-0 items-center gap-2">
-			<span className="truncate">{name}</span>
+			<span className="truncate font-medium">{name}</span>
 			{variantName && (
-				<span className="shrink-0 rounded-md bg-dusk px-1.5 py-0.5 text-xs text-muted-foreground">
+				<span className="shrink-0 rounded-md bg-[#f1f1f1] px-1.5 text-xs text-muted-foreground">
 					{variantName}
 				</span>
 			)}
 		</span>
+	);
+}
+
+type MovementRow = {
+	id: number;
+	createdAt: Date;
+	location: string;
+	delta: number;
+	reason: string;
+	reference: string | null;
+	note: string | null;
+};
+
+// Polaris index-table look: gray header row, hairline row dividers.
+export function MovementTable({ rows }: { rows: MovementRow[] }) {
+	if (rows.length === 0) {
+		return <p className="px-4 pb-4 text-muted-foreground">No changes yet.</p>;
+	}
+	return (
+		<table className="w-full">
+			<thead>
+				<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+					<th className="px-4 py-2 font-medium">Date</th>
+					<th className="px-4 py-2 font-medium">Reason</th>
+					<th className="px-4 py-2 font-medium">Location</th>
+					<th className="px-4 py-2 text-right font-medium">Change</th>
+				</tr>
+			</thead>
+			<tbody>
+				{rows.map((m) => (
+					<tr key={m.id} className="border-t first:border-t-0">
+						<td className="px-4 py-2.5 whitespace-nowrap text-muted-foreground">
+							{formatDateTime(m.createdAt)}
+						</td>
+						<td className="px-4 py-2.5">
+							{formatReason(m.reason)}
+							{(m.note ?? m.reference) && (
+								<div className="text-xs text-muted-foreground">
+									{m.note ?? m.reference}
+								</div>
+							)}
+						</td>
+						<td className="px-4 py-2.5">{m.location}</td>
+						<td
+							className={cn(
+								"px-4 py-2.5 text-right font-semibold tabular-nums",
+								m.delta < 0 ? "text-critical-text" : "text-success-text",
+							)}
+						>
+							{formatDelta(m.delta)}
+						</td>
+					</tr>
+				))}
+			</tbody>
+		</table>
 	);
 }

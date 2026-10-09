@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PageBody, PageHeader, StatusDot } from "#/components/page";
+import { Badge, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import { formatCount } from "#/lib/format";
@@ -9,6 +9,7 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import { listProducts, type ProductRow } from "#/server/catalog";
 
+// Saved views, shown as tabs like Shopify's product index.
 const filters = {
 	all: { label: "All", test: () => true },
 	oversold: {
@@ -43,7 +44,7 @@ function Products() {
 	const { show = "all" } = Route.useSearch();
 	const navigate = useNavigate();
 	const search = useRef<HTMLInputElement>(null);
-	const list = useRef<HTMLUListElement>(null);
+	const list = useRef<HTMLTableSectionElement>(null);
 	const [query, setQuery] = useState("");
 	const [shown, setShown] = useState(PAGE);
 	const [selected, setSelected] = useState(0);
@@ -95,16 +96,40 @@ function Products() {
 	});
 
 	return (
-		<>
-			<PageHeader title="Products" />
-			<PageBody className="gap-6">
-				<div className="flex flex-col gap-4">
+		<Page title="Products">
+			<Card flush>
+				<div className="flex flex-wrap gap-1 border-b p-2">
+					{(Object.keys(filters) as Filter[]).map((key) => (
+						<button
+							key={key}
+							type="button"
+							onClick={() =>
+								navigate({
+									to: "/products",
+									search: key === "all" ? {} : { show: key },
+								})
+							}
+							className={cn(
+								"inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 font-medium",
+								show === key
+									? "bg-[#e3e3e3] text-foreground"
+									: "text-muted-foreground hover:bg-[#f1f1f1] hover:text-foreground",
+							)}
+						>
+							{filters[key].label}
+							<span className="tabular-nums text-muted-foreground">
+								{formatCount(counts[key])}
+							</span>
+						</button>
+					))}
+				</div>
+				<div className="border-b p-2">
 					<div className="relative">
-						<Search className="absolute top-3 left-3 size-5 text-muted-foreground" />
+						<Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
 						<input
 							ref={search}
 							placeholder="Search by name or SKU"
-							className="h-11 w-full rounded-lg border bg-transparent pr-12 pl-11 text-base outline-none focus:border-primary"
+							className="h-8 w-full rounded-lg border border-[#8a8a8a] bg-white pr-10 pl-8 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 							value={query}
 							onChange={(e) => {
 								setQuery(e.target.value);
@@ -122,111 +147,102 @@ function Products() {
 								}
 							}}
 						/>
-						<kbd className="absolute top-3 right-3 rounded border px-1.5 text-xs text-muted-foreground">
+						<kbd className="absolute top-1.5 right-2 rounded border bg-[#f7f7f7] px-1.5 text-xs text-muted-foreground">
 							/
 						</kbd>
 					</div>
-					<div className="flex flex-wrap gap-2">
-						{(Object.keys(filters) as Filter[]).map((key) => (
-							<button
-								key={key}
-								type="button"
-								onClick={() =>
-									navigate({
-										to: "/products",
-										search: key === "all" ? {} : { show: key },
-									})
-								}
-								className={cn(
-									"inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm transition-colors",
-									show === key
-										? "border-foreground bg-foreground text-background"
-										: "hover:bg-accent",
-								)}
-							>
-								{key === "oversold" && <Dot tone="bg-bad" />}
-								{key === "blocked" && <Dot tone="bg-warn" />}
-								{filters[key].label}
-								<span className="tabular-nums opacity-60">
-									{formatCount(counts[key])}
-								</span>
-							</button>
-						))}
-					</div>
 				</div>
 
-				<ul ref={list} className="flex flex-col">
-					{filtered.slice(0, shown).map((p, i) => (
-						<li key={p.id} data-index={i}>
-							<button
-								type="button"
+				<table className="w-full">
+					<thead>
+						<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+							<th className="px-4 py-2 font-medium">Product</th>
+							<th className="hidden px-4 py-2 font-medium md:table-cell">
+								Status
+							</th>
+							<th className="px-4 py-2 font-medium">Inventory</th>
+							<th className="hidden px-4 py-2 font-medium lg:table-cell">
+								Type
+							</th>
+						</tr>
+					</thead>
+					<tbody ref={list}>
+						{filtered.slice(0, shown).map((p, i) => (
+							<tr
+								key={p.id}
+								data-index={i}
 								onClick={() => open(p)}
 								onMouseMove={() => setSelected(i)}
 								className={cn(
-									"flex w-full items-center gap-4 rounded-lg px-3 py-2.5 text-left",
-									i === selected && "bg-accent",
+									"cursor-pointer border-t first:border-t-0",
+									i === selected ? "bg-[#f1f1f1]" : "hover:bg-[#f7f7f7]",
 								)}
 							>
-								<ProductImage src={p.imageUrl} />
-								<div className="min-w-0 flex-1">
-									<ProductName name={p.name} variantName={p.variantName} />
-									<div className="flex items-center gap-2 text-xs text-muted-foreground">
-										<span>{p.sku}</span>
-										{p.kind !== "simple" && (
-											<span>{p.kind === "bundle" ? "Tool set" : "Kit"}</span>
-										)}
+								<td className="px-4 py-2">
+									<div className="flex items-center gap-3">
+										<ProductImage src={p.imageUrl} />
+										<div className="min-w-0">
+											<ProductName name={p.name} variantName={p.variantName} />
+											<div className="flex gap-2 text-xs text-muted-foreground">
+												<span>{p.sku}</span>
+												{p.kind === "bundle" && <span>Tool set</span>}
+												{p.kind === "kit" && <span>Kit</span>}
+											</div>
+										</div>
 									</div>
-								</div>
-								<RowStatus product={p} />
-								<div className="w-16 text-right">
-									<div
-										className={cn(
-											"text-lg font-semibold tabular-nums",
-											p.available === 0 && "text-muted-foreground/60",
-										)}
-									>
-										{formatCount(p.available)}
-									</div>
-									<div className="text-xs text-muted-foreground">to sell</div>
-								</div>
-							</button>
-						</li>
-					))}
-				</ul>
+								</td>
+								<td className="hidden px-4 py-2 md:table-cell">
+									<RowStatus product={p} />
+								</td>
+								<td className="px-4 py-2 whitespace-nowrap">
+									<Inventory product={p} />
+								</td>
+								<td className="hidden px-4 py-2 text-muted-foreground lg:table-cell">
+									{p.category ?? ""}
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
 				{filtered.length === 0 && (
 					<p className="py-16 text-center text-muted-foreground">
-						Nothing matches.
+						No products match. Try a shorter search.
 					</p>
 				)}
 				{shown < filtered.length && (
-					<Button
-						variant="ghost"
-						className="self-center text-muted-foreground"
-						onClick={() => setShown((n) => n + PAGE)}
-					>
-						Show {formatCount(Math.min(PAGE, filtered.length - shown))} more
-					</Button>
+					<div className="flex justify-center border-t p-3">
+						<Button variant="outline" onClick={() => setShown((n) => n + PAGE)}>
+							Show {formatCount(Math.min(PAGE, filtered.length - shown))} more
+						</Button>
+					</div>
 				)}
-			</PageBody>
-		</>
+			</Card>
+		</Page>
 	);
 }
 
-function Dot({ tone }: { tone: string }) {
-	return <span className={cn("size-2 rounded-full", tone)} />;
+// Only problems get a badge. A healthy row stays quiet.
+function RowStatus({ product: p }: { product: ProductRow }) {
+	if ((p.onHand ?? 0) < 0) return <Badge tone="critical">Oversold</Badge>;
+	if (p.kind === "bundle" && p.available === 0) {
+		return <Badge tone="warning">Missing parts</Badge>;
+	}
+	if (p.available === 0) return <Badge>Sold out</Badge>;
+	return null;
 }
 
-// Only problems get a label. A healthy row stays quiet.
-function RowStatus({ product: p }: { product: ProductRow }) {
+function Inventory({ product: p }: { product: ProductRow }) {
 	if ((p.onHand ?? 0) < 0) {
 		return (
-			<StatusDot tone="bad">
-				Oversold by {formatCount(-(p.onHand ?? 0))}
-			</StatusDot>
+			<span className="font-medium text-critical-text">
+				{formatCount(p.onHand ?? 0)} in stock
+			</span>
 		);
 	}
-	if (p.kind === "bundle" && p.available === 0) {
-		return <StatusDot tone="warn">Missing parts</StatusDot>;
-	}
-	return null;
+	return (
+		<span className={cn(p.available === 0 && "text-muted-foreground")}>
+			{formatCount(p.available)}{" "}
+			{p.kind === "bundle" ? "can be built" : "in stock"}
+		</span>
+	);
 }

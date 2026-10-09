@@ -27,14 +27,45 @@ import {
 import { useHotkeys } from "#/lib/hotkeys";
 import { listProductIndex } from "#/server/catalog";
 
+// Navigation, Shopify-style: inventory pages sit under Products.
 export const pages = [
-	{ to: "/", label: "Today", icon: LayoutDashboard, keys: "g t" },
-	{ to: "/orders", label: "Orders", icon: Truck, keys: "g o" },
-	{ to: "/products", label: "Products", icon: Package, keys: "g p" },
-	{ to: "/stock", label: "Stock history", icon: ArrowLeftRight, keys: "g h" },
-	{ to: "/listings", label: "Listings", icon: Link2, keys: "g l" },
-	{ to: "/purchasing", label: "Purchasing", icon: ClipboardList, keys: "g b" },
-	{ to: "/settings", label: "Settings", icon: Settings, keys: "g s" },
+	{ to: "/", label: "Home", icon: LayoutDashboard, keys: "g h", parent: null },
+	{ to: "/orders", label: "Orders", icon: Truck, keys: "g o", parent: null },
+	{
+		to: "/products",
+		label: "Products",
+		icon: Package,
+		keys: "g p",
+		parent: null,
+	},
+	{
+		to: "/stock",
+		label: "Inventory history",
+		icon: ArrowLeftRight,
+		keys: "g i",
+		parent: "/products",
+	},
+	{
+		to: "/listings",
+		label: "Listings",
+		icon: Link2,
+		keys: "g l",
+		parent: "/products",
+	},
+	{
+		to: "/purchasing",
+		label: "Purchase orders",
+		icon: ClipboardList,
+		keys: "g b",
+		parent: "/products",
+	},
+	{
+		to: "/settings",
+		label: "Settings",
+		icon: Settings,
+		keys: "g s",
+		parent: null,
+	},
 ] as const;
 
 // Opens the palette from anywhere, e.g. a button.

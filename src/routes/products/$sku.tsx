@@ -6,10 +6,9 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { ClipboardCheck } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { CountDialog } from "#/components/count-dialog";
-import { PageBody, PageHeader, Section, type Tone } from "#/components/page";
+import { Badge, Banner, Card, Page, type Tone } from "#/components/page";
 import { MovementTable, ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney } from "#/lib/format";
@@ -39,184 +38,253 @@ function ProductPage() {
 	});
 
 	return (
-		<>
-			<PageHeader
-				title={
-					p.kind === "bundle"
-						? "Tool set"
-						: p.kind === "kit"
-							? "Kit"
-							: "Product"
-				}
-				actions={
-					canCount && (
-						<Button onClick={() => setCounting(true)}>
-							<ClipboardCheck />
-							Count shelf
-							<kbd className="ml-1 text-xs opacity-60">C</kbd>
-						</Button>
-					)
-				}
-			/>
-			<PageBody>
-				<div className="flex flex-col gap-8 md:flex-row md:items-center">
-					<ProductImage src={p.imageUrl} className="size-36" />
-					<div className="flex min-w-0 flex-1 flex-col gap-1">
-						<h2 className="text-2xl font-semibold tracking-tight">{p.name}</h2>
-						{p.variantName && (
-							<div className="text-lg text-muted-foreground">
-								{p.variantName}
+		<Page
+			narrow
+			back={{ to: "/products" }}
+			title={
+				<span className="flex items-center gap-2">
+					<span className="truncate">{p.name}</span>
+					{p.kind === "bundle" && <Badge tone="info">Tool set</Badge>}
+					{p.kind === "kit" && <Badge tone="info">Kit</Badge>}
+				</span>
+			}
+			actions={
+				canCount && (
+					<Button onClick={() => setCounting(true)}>
+						Count shelf
+						<kbd className="text-xs opacity-60">C</kbd>
+					</Button>
+				)
+			}
+		>
+			{verdict && <Banner tone={verdict.tone} title={verdict.text} />}
+
+			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+				<div className="flex min-w-0 flex-col gap-4">
+					<Card>
+						<div className="flex items-center gap-4">
+							<ProductImage src={p.imageUrl} className="size-24" />
+							<div className="min-w-0">
+								<p className="text-base font-semibold">{p.name}</p>
+								{p.variantName && (
+									<p className="text-muted-foreground">{p.variantName}</p>
+								)}
+								<p className="text-muted-foreground">{p.sku}</p>
 							</div>
-						)}
-						<div className="text-sm text-muted-foreground">{p.sku}</div>
-					</div>
-					<div className="md:text-right">
-						<div
-							className={cn(
-								"text-6xl font-semibold tracking-tight tabular-nums",
-								d.available === 0 && "text-muted-foreground/50",
-							)}
-						>
-							<NumberFlow value={d.available} />
 						</div>
-						<div className="text-muted-foreground">can be sold</div>
-					</div>
-				</div>
+					</Card>
 
-				{verdict && <Verdict tone={verdict.tone}>{verdict.text}</Verdict>}
-
-				<div className="grid gap-10 lg:grid-cols-2">
 					{d.components.length > 0 && (
-						<Section
+						<Card
 							title={p.kind === "bundle" ? "Parts in this set" : "Built from"}
+							flush
 						>
-							<ul className="flex flex-col">
-								{d.components.map((c) => {
-									const short = c.available < c.quantity;
-									return (
-										<li key={c.sku}>
-											<Link
-												to="/products/$sku"
-												params={{ sku: c.sku }}
-												className="-mx-2 flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent"
-											>
-												<span
-													className={cn(
-														"size-2 shrink-0 rounded-full",
-														short ? "bg-warn" : "bg-transparent",
-													)}
-												/>
-												<div className="min-w-0 flex-1">
-													<div className="flex min-w-0 items-center gap-1.5">
-														{c.quantity > 1 && (
-															<span className="shrink-0 font-semibold">
-																{c.quantity} ×
-															</span>
-														)}
+							<table className="w-full">
+								<thead>
+									<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+										<th className="px-4 py-2 font-medium">Part</th>
+										<th className="px-4 py-2 text-right font-medium">Needed</th>
+										<th className="px-4 py-2 text-right font-medium">
+											In stock
+										</th>
+									</tr>
+								</thead>
+								<tbody>
+									{d.components.map((c) => {
+										const short = c.available < c.quantity;
+										return (
+											<tr key={c.sku} className="border-t first:border-t-0">
+												<td className="px-4 py-2.5">
+													<Link
+														to="/products/$sku"
+														params={{ sku: c.sku }}
+														className="block hover:underline"
+													>
 														<ProductName
 															name={c.name}
 															variantName={c.variantName}
 														/>
-													</div>
+													</Link>
 													<div className="text-xs text-muted-foreground">
 														{c.sku}
 													</div>
-												</div>
-												<div className="text-right">
-													<div
-														className={cn(
-															"font-semibold tabular-nums",
-															short && "text-muted-foreground/60",
-														)}
-													>
-														{formatCount(c.available)}
-													</div>
-													<div className="text-xs text-muted-foreground">
-														{short ? "not enough" : "in stock"}
-													</div>
-												</div>
-											</Link>
-										</li>
-									);
-								})}
-							</ul>
-						</Section>
+												</td>
+												<td className="px-4 py-2.5 text-right tabular-nums">
+													{c.quantity}
+												</td>
+												<td className="px-4 py-2.5 text-right">
+													{short ? (
+														<Badge tone="warning">
+															Only {formatCount(c.available)}
+														</Badge>
+													) : (
+														<span className="tabular-nums">
+															{formatCount(c.available)}
+														</span>
+													)}
+												</td>
+											</tr>
+										);
+									})}
+								</tbody>
+							</table>
+						</Card>
 					)}
 
-					{d.usedIn.length > 0 && (
-						<Section
-							title={`Part of ${d.usedIn.length} tool ${d.usedIn.length === 1 ? "set" : "sets"}`}
+					{canCount && (
+						<Card
+							title="Inventory"
+							aside={
+								<button
+									type="button"
+									onClick={() => setCounting(true)}
+									className="text-link hover:underline"
+								>
+									Count shelf
+								</button>
+							}
+							flush
 						>
-							<div className="flex flex-wrap gap-2">
-								{d.usedIn.map((u) => (
-									<Link
-										key={u.sku}
-										to="/products/$sku"
-										params={{ sku: u.sku }}
-										className="max-w-full truncate rounded-full border px-3 py-1 text-sm hover:bg-accent"
-									>
-										{u.quantity > 1 && `${u.quantity} × `}
-										{u.name}
-									</Link>
-								))}
-							</div>
-						</Section>
+							<table className="w-full">
+								<thead>
+									<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+										<th className="px-4 py-2 font-medium">Location</th>
+										<th className="px-4 py-2 text-right font-medium">
+											On hand
+										</th>
+									</tr>
+								</thead>
+								<tbody>
+									{d.stock.length === 0 && (
+										<tr>
+											<td
+												className="px-4 py-2.5 text-muted-foreground"
+												colSpan={2}
+											>
+												No stock recorded yet.
+											</td>
+										</tr>
+									)}
+									{d.stock.map((s) => (
+										<tr key={s.location} className="border-t first:border-t-0">
+											<td className="px-4 py-2.5">
+												{s.location}
+												{s.kind === "fba" && (
+													<span className="ml-2">
+														<Badge>Amazon FBA</Badge>
+													</span>
+												)}
+											</td>
+											<td
+												className={cn(
+													"px-4 py-2.5 text-right font-semibold tabular-nums",
+													s.onHand < 0 && "text-critical-text",
+												)}
+											>
+												<NumberFlow value={s.onHand} />
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</Card>
 					)}
+
+					{canCount && (
+						<Card title="History" flush>
+							<MovementTable rows={d.history.slice(0, 10)} />
+						</Card>
+					)}
+				</div>
+
+				<div className="flex min-w-0 flex-col gap-4">
+					<Card title="Availability">
+						<div className="text-3xl font-bold tabular-nums">
+							<NumberFlow value={d.available} />
+						</div>
+						<p className="text-muted-foreground">
+							{p.kind === "bundle" ? "sets can be sold" : "can be sold"}
+						</p>
+					</Card>
+
+					<Details d={d} />
 
 					{d.group && d.variants.length > 1 && (
-						<Section title="Other sizes and versions">
-							<div className="flex flex-wrap gap-2">
+						<Card title="Variants">
+							<div className="flex flex-wrap gap-1.5">
 								{d.variants.map((v) => (
 									<Link
 										key={v.sku}
 										to="/products/$sku"
 										params={{ sku: v.sku }}
 										className={cn(
-											"rounded-full border px-3 py-1 text-sm",
+											"rounded-lg px-2 py-0.5 font-medium",
 											v.sku === p.sku
-												? "border-foreground bg-foreground text-background"
-												: "hover:bg-accent",
+												? "bg-[#303030] text-white"
+												: "bg-[#f1f1f1] hover:bg-[#e3e3e3]",
 										)}
 									>
 										{v.variantName ?? v.sku}
 									</Link>
 								))}
 							</div>
-						</Section>
+						</Card>
 					)}
 
-					{(d.stock.length > 1 ||
-						d.listings.length > 0 ||
-						d.aliases.length > 0) && (
-						<Section title="Where it lives and sells">
-							<dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
-								{d.stock.length > 1 &&
-									d.stock.map((s) => (
-										<Row key={s.location} label={s.location}>
-											{formatCount(s.onHand)} on the shelf
-										</Row>
-									))}
+					{d.usedIn.length > 0 && (
+						<Card
+							title={`Part of ${d.usedIn.length} tool ${d.usedIn.length === 1 ? "set" : "sets"}`}
+							flush
+						>
+							<ul>
+								{d.usedIn.map((u) => (
+									<li key={u.sku} className="border-t first:border-t-0">
+										<Link
+											to="/products/$sku"
+											params={{ sku: u.sku }}
+											className="flex gap-2 px-4 py-2 hover:bg-[#f7f7f7]"
+										>
+											<span className="truncate">{u.name}</span>
+											{u.quantity > 1 && (
+												<span className="shrink-0 text-muted-foreground">
+													× {u.quantity}
+												</span>
+											)}
+										</Link>
+									</li>
+								))}
+							</ul>
+						</Card>
+					)}
+
+					<Card title="Sales channels">
+						{d.listings.length === 0 && d.aliases.length === 0 ? (
+							<p className="text-muted-foreground">
+								Not linked to any store listing yet.
+							</p>
+						) : (
+							<ul className="flex flex-col gap-1.5">
 								{d.listings.map((l) => (
-									<Row key={`${l.store}-${l.externalId}`} label={l.store}>
-										{l.fulfillment === "fba" ? "Shipped by Amazon" : "Listed"}
-									</Row>
+									<li
+										key={`${l.store}-${l.externalId}`}
+										className="flex justify-between gap-2"
+									>
+										<span>{l.store}</span>
+										{l.fulfillment === "fba" && (
+											<Badge>Fulfilled by Amazon</Badge>
+										)}
+									</li>
 								))}
 								{d.aliases.length > 0 && (
-									<Row label="Amazon">Also sold as {d.aliases.join(", ")}</Row>
+									<li className="text-muted-foreground">
+										Amazon SKU {d.aliases.join(", ")}
+									</li>
 								)}
-							</dl>
-						</Section>
-					)}
-
-					<Details d={d} />
+							</ul>
+						)}
+					</Card>
 				</div>
-
-				{canCount && d.history.length > 0 && (
-					<Section title="What changed">
-						<MovementTable rows={d.history.slice(0, 10)} />
-					</Section>
-				)}
-			</PageBody>
+			</div>
 
 			{canCount && (
 				<CountDialog
@@ -228,7 +296,7 @@ function ProductPage() {
 					onHandByLocation={new Map(d.stock.map((s) => [s.location, s.onHand]))}
 				/>
 			)}
-		</>
+		</Page>
 	);
 }
 
@@ -238,14 +306,14 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 		const missing = d.components.filter((c) => c.available < c.quantity);
 		if (missing.length > 0) {
 			return {
-				tone: "warn",
+				tone: "warning",
 				text: (
 					<>
-						Can't sell this set. Not enough{" "}
+						This set can't be sold. Not enough{" "}
 						{missing.map((c, i) => (
 							<span key={c.sku}>
 								{i > 0 && (i === missing.length - 1 ? " or " : ", ")}
-								<strong>{c.name}</strong>
+								{c.name}
 								{c.quantity > 1 &&
 									` (needs ${c.quantity}, have ${formatCount(c.available)})`}
 							</span>
@@ -260,12 +328,12 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 			(c) => Math.floor(c.available / c.quantity) === d.available,
 		);
 		return {
-			tone: "warn",
+			tone: "warning",
 			text:
 				limiting.length === 1 ? (
 					<>
-						Only {formatCount(d.available)} left.{" "}
-						<strong>{limiting[0].name}</strong> runs out first.
+						Only {formatCount(d.available)} left. {limiting[0].name} runs out
+						first.
 					</>
 				) : (
 					<>
@@ -281,11 +349,11 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 	const onHand = d.stock.reduce((sum, s) => sum + s.onHand, 0);
 	if (onHand < 0) {
 		return {
-			tone: "bad",
+			tone: "critical",
 			text: (
 				<>
-					Sold <strong>{formatCount(-onHand)}</strong> more than we have. Count
-					the shelf, or a restock is overdue.
+					Sold {formatCount(-onHand)} more than we have. Count the shelf, or a
+					restock is overdue.
 				</>
 			),
 		};
@@ -293,61 +361,28 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 	return null;
 }
 
-function Verdict({ tone, children }: { tone: Tone; children: ReactNode }) {
-	return (
-		<div
-			className={cn(
-				"relative overflow-hidden rounded-xl px-6 py-4 pl-7 text-base",
-				tone === "bad" ? "bg-bad/8" : "bg-warn/12",
-			)}
-		>
-			<span
-				className={cn(
-					"absolute inset-y-0 left-0 w-1.5",
-					tone === "bad" ? "bg-bad" : "bg-warn",
-				)}
-			/>
-			{children}
-		</div>
-	);
-}
-
 // Only what's filled in. Empty fields aren't worth a glance.
 function Details({ d }: { d: ProductDetail }) {
 	const p = d.product;
 	const rows: [string, ReactNode][] = [];
-	if (p.unitCost !== null) rows.push(["Cost", formatMoney(p.unitCost)]);
 	if (p.category) rows.push(["Type", p.category]);
-	if (p.barcode)
-		rows.push([
-			"Barcode",
-			<span key="barcode" className="tabular-nums">
-				{p.barcode}
-			</span>,
-		]);
+	if (p.unitCost !== null) rows.push(["Cost", formatMoney(p.unitCost)]);
+	if (p.barcode) rows.push(["Barcode", p.barcode]);
 	if (p.weightGrams) rows.push(["Weight", `${formatCount(p.weightGrams)} g`]);
 	if (p.lengthMm && p.widthMm && p.heightMm) {
 		rows.push(["Box", `${p.lengthMm} × ${p.widthMm} × ${p.heightMm} mm`]);
 	}
 	if (rows.length === 0) return null;
 	return (
-		<Section title="Details">
-			<dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+		<Card title="Product organization">
+			<dl className="flex flex-col gap-2">
 				{rows.map(([label, value]) => (
-					<Row key={label} label={label}>
-						{value}
-					</Row>
+					<div key={label}>
+						<dt className="text-muted-foreground">{label}</dt>
+						<dd className="tabular-nums">{value}</dd>
+					</div>
 				))}
 			</dl>
-		</Section>
-	);
-}
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-	return (
-		<>
-			<dt className="text-muted-foreground">{label}</dt>
-			<dd>{children}</dd>
-		</>
+		</Card>
 	);
 }

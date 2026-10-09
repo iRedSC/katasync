@@ -21,14 +21,14 @@ export function BarList({
 			{rows.map((row, i) => (
 				<Tooltip key={row.label}>
 					<TooltipTrigger asChild>
-						<div className="grid grid-cols-[minmax(8rem,14rem)_1fr] items-center gap-4 rounded-md px-2 py-1.5 hover:bg-accent">
-							<span className="truncate text-sm">{row.label}</span>
+						<div className="grid grid-cols-[minmax(8rem,14rem)_1fr] items-center gap-4 rounded-lg px-2 py-1.5 hover:bg-[#f7f7f7]">
+							<span className="truncate">{row.label}</span>
 							<div className="flex items-center gap-3">
 								<div
-									className="h-2.5 rounded-r-[4px] bg-primary"
+									className="h-2.5 rounded-r-[4px] bg-brand"
 									style={{ width: `${(row.value / max) * 85}%` }}
 								/>
-								<span className="shrink-0 text-sm font-medium tabular-nums">
+								<span className="shrink-0 font-medium tabular-nums">
 									{format(row.value)}
 								</span>
 							</div>

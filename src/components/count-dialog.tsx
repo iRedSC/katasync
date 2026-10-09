@@ -125,7 +125,7 @@ export function CountDialog({
 							placeholder={String(current)}
 							className="w-full bg-transparent text-center text-6xl font-semibold tabular-nums outline-none placeholder:text-muted-foreground/30"
 						/>
-						<p className="text-sm text-muted-foreground">
+						<p className="text-muted-foreground">
 							{delta === null ? (
 								<>We think there are {formatCount(current)}</>
 							) : delta === 0 ? (
@@ -135,7 +135,7 @@ export function CountDialog({
 									<span
 										className={cn(
 											"font-semibold tabular-nums",
-											delta < 0 ? "text-bad-ink" : "text-good-ink",
+											delta < 0 ? "text-critical-text" : "text-success-text",
 										)}
 									>
 										<NumberFlow
@@ -161,7 +161,7 @@ export function CountDialog({
 						))}
 					</div>
 
-					{error && <p className="text-center text-sm text-bad-ink">{error}</p>}
+					{error && <p className="text-center text-critical-text">{error}</p>}
 					<DialogFooter>
 						<Button
 							type="submit"
@@ -192,10 +192,8 @@ function Chip({
 			type="button"
 			onClick={onClick}
 			className={cn(
-				"rounded-full border px-3 py-1 text-sm transition-colors",
-				active
-					? "border-foreground bg-foreground text-background"
-					: "hover:bg-accent",
+				"h-7 rounded-lg px-3 font-medium transition-colors",
+				active ? "bg-[#303030] text-white" : "bg-[#f1f1f1] hover:bg-[#e3e3e3]",
 			)}
 		>
 			{children}

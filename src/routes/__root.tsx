@@ -5,9 +5,8 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { Toaster } from "sonner";
-import { AppSidebar } from "#/components/app-sidebar";
+import { AppShell } from "#/components/app-shell";
 import { CommandPalette } from "#/components/command-palette";
-import { SidebarInset, SidebarProvider } from "#/components/ui/sidebar";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import appCss from "../styles.css?url";
 
@@ -30,12 +29,12 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 	shellComponent: RootDocument,
 	errorComponent: ({ error }) => (
 		<div className="mx-auto flex max-w-md flex-col items-center gap-3 py-32 text-center">
-			<p className="text-lg font-medium">Something broke on this page</p>
-			<p className="text-sm text-muted-foreground">
+			<p className="text-base font-semibold">This page couldn't load</p>
+			<p className="text-muted-foreground">
 				{error instanceof Error ? error.message : String(error)}
 			</p>
-			<a href="/" className="text-sm text-primary underline">
-				Back to Today
+			<a href="/" className="text-link hover:underline">
+				Go to Home
 			</a>
 		</div>
 	),
@@ -43,26 +42,24 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en" className="dark">
+		<html lang="en">
 			<head>
 				<HeadContent />
 			</head>
 			<body>
 				<TooltipProvider>
-					<SidebarProvider defaultOpen={false}>
-						<AppSidebar />
-						<SidebarInset>{children}</SidebarInset>
-					</SidebarProvider>
+					<AppShell>{children}</AppShell>
 					<CommandPalette />
 					<Toaster
-						theme="dark"
 						position="bottom-center"
 						toastOptions={{
+							// Shopify's toast: a dark pill at the bottom of the screen.
 							classNames: {
 								toast:
-									"!bg-dusk !border-border !text-foreground !rounded-xl !text-sm",
+									"!bg-[#303030] !border-0 !text-white !rounded-xl !text-[0.8125rem]",
+								description: "!text-white/70",
 								actionButton:
-									"!bg-primary !text-primary-foreground !font-semibold",
+									"!bg-white !text-[#303030] !font-semibold !rounded-lg",
 							},
 						}}
 					/>
