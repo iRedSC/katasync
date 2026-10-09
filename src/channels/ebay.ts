@@ -5,11 +5,14 @@ import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
 // eBay US through the Sell Fulfillment API.
 const API = "https://api.ebay.com";
-// Must match the scopes the user granted; eBay rejects a refresh that asks
-// for more.
+// Must be scopes the user granted; eBay rejects a refresh that asks for
+// more. The token is shared with profit-margarine, which was granted these
+// plus sell.fulfillment.readonly. sell.fulfillment marks orders shipped;
+// sell.inventory pushes stock to listings.
 const SCOPES = [
 	"https://api.ebay.com/oauth/api_scope",
-	"https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+	"https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+	"https://api.ebay.com/oauth/api_scope/sell.inventory",
 	"https://api.ebay.com/oauth/api_scope/sell.finances",
 ].join(" ");
 
