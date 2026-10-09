@@ -271,7 +271,7 @@ export async function recordCount(
 		counted: number;
 		note: string;
 	},
-): Promise<{ delta: number; onHand: number }> {
+): Promise<{ delta: number; onHand: number; batchId: string | null }> {
 	if (!Number.isInteger(input.counted)) {
 		throw new LedgerError(`Count must be a whole number, got ${input.counted}`);
 	}
@@ -302,7 +302,7 @@ export async function recordCount(
 			)
 			.for("update");
 		const delta = input.counted - level.onHand;
-		if (delta === 0) return { delta, onHand: level.onHand };
+		if (delta === 0) return { delta, onHand: level.onHand, batchId: null };
 		const result = await postMovements(tx, {
 			note: input.note,
 			lines: [
@@ -314,6 +314,39 @@ export async function recordCount(
 				},
 			],
 		});
-		return { delta, onHand: result.levels[0].onHand };
+		return {
+			delta,
+			onHand: result.levels[0].onHand,
+			batchId: result.batchId,
+		};
+	});
+}
+
+// Reverses an earlier operation by posting its exact opposite, since movements
+// are never edited. Each batch can be undone once.
+export async function undoBatch(db: Db, batchId: string) {
+	return db.transaction(async (tx) => {
+		const original = await tx
+			.select()
+			.from(movements)
+			.where(eq(movements.batchId, batchId));
+		if (original.length === 0) throw new LedgerError("Nothing to undo");
+		const reference = `undo:${batchId}`;
+		const [already] = await tx
+			.select({ id: movements.id })
+			.from(movements)
+			.where(eq(movements.reference, reference))
+			.limit(1);
+		if (already) throw new LedgerError("Already undone");
+		return postMovements(tx, {
+			reference,
+			note: original[0].note ? `Undo: ${original[0].note}` : "Undo",
+			lines: original.map((m) => ({
+				productId: m.productId,
+				locationId: m.locationId,
+				delta: -m.delta,
+				reason: m.reason,
+			})),
+		});
 	});
 }

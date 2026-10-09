@@ -42,24 +42,22 @@ function StockHistory() {
 									<div className="truncate">
 										{single
 											? b.name
-											: `${what} · ${formatCount(b.lines)} products`}
+											: `${what} for ${formatCount(b.lines)} products`}
 									</div>
 									<div className="truncate text-xs text-muted-foreground">
-										{single ? what : null}
-										{b.note && (
-											<>
-												{single && " · "}
-												{b.note}
-											</>
-										)}
-										{!single && !b.note && b.reference}
+										{[
+											single ? what : null,
+											b.note ?? (single ? null : b.reference),
+										]
+											.filter(Boolean)
+											.join(", ")}
 									</div>
 								</div>
 								<div className="text-right">
 									<div
 										className={cn(
 											"font-semibold tabular-nums",
-											b.delta < 0 ? "text-bad" : "text-good",
+											b.delta < 0 ? "text-bad-ink" : "text-good-ink",
 										)}
 									>
 										{formatDelta(b.delta)}

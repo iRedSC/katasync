@@ -140,7 +140,7 @@ export function CommandPalette() {
 												</span>
 											)}
 										</span>
-										<CommandShortcut className="font-mono tracking-normal">
+										<CommandShortcut className="tracking-normal">
 											{p.sku}
 										</CommandShortcut>
 									</CommandItem>

@@ -8,7 +8,9 @@ const buttonVariants = cva(
 	{
 		variants: {
 			variant: {
-				default: "bg-primary text-primary-foreground hover:bg-primary/90",
+				// The logo gradient: reserved for the main action on a screen.
+				default:
+					"bg-aurora font-semibold text-primary-foreground shadow-[0_0_24px_-6px_#7c6cff] hover:brightness-110 active:brightness-95",
 				destructive:
 					"bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",
 				outline:

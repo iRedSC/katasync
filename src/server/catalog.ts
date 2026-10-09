@@ -14,7 +14,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { getAvailability, getBundleBlockers } from "#/inventory/availability";
-import { recordCount as recordShelfCount } from "#/inventory/ledger";
+import { recordCount as recordShelfCount, undoBatch } from "#/inventory/ledger";
 
 async function ownedLocationIds() {
 	const rows = await getDb()
@@ -400,6 +400,12 @@ export const recordCount = createServerFn({ method: "POST" })
 			counted: data.counted,
 			note: [labels[data.reason], data.note?.trim()].filter(Boolean).join(": "),
 		});
+	});
+
+export const undoMovement = createServerFn({ method: "POST" })
+	.validator(type({ batchId: "string.uuid" }))
+	.handler(async ({ data }) => {
+		await undoBatch(getDb(), data.batchId);
 	});
 
 export type ProductRow = Awaited<ReturnType<typeof listProducts>>[number];

@@ -1,3 +1,4 @@
+import NumberFlow from "@number-flow/react";
 import {
 	createFileRoute,
 	Link,
@@ -9,7 +10,7 @@ import { ClipboardCheck } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { CountDialog } from "#/components/count-dialog";
 import { PageBody, PageHeader, Section, type Tone } from "#/components/page";
-import { MovementTable, ProductImage } from "#/components/product";
+import { MovementTable, ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
@@ -67,9 +68,7 @@ function ProductPage() {
 								{p.variantName}
 							</div>
 						)}
-						<div className="font-mono text-sm text-muted-foreground">
-							{p.sku}
-						</div>
+						<div className="text-sm text-muted-foreground">{p.sku}</div>
 					</div>
 					<div className="md:text-right">
 						<div
@@ -78,7 +77,7 @@ function ProductPage() {
 								d.available === 0 && "text-muted-foreground/50",
 							)}
 						>
-							{formatCount(d.available)}
+							<NumberFlow value={d.available} />
 						</div>
 						<div className="text-muted-foreground">can be sold</div>
 					</div>
@@ -108,21 +107,18 @@ function ProductPage() {
 													)}
 												/>
 												<div className="min-w-0 flex-1">
-													<div className="truncate">
+													<div className="flex min-w-0 items-center gap-1.5">
 														{c.quantity > 1 && (
-															<span className="font-semibold">
-																{c.quantity} ×{" "}
+															<span className="shrink-0 font-semibold">
+																{c.quantity} ×
 															</span>
 														)}
-														{c.name}
-														{c.variantName && (
-															<span className="text-muted-foreground">
-																{" "}
-																· {c.variantName}
-															</span>
-														)}
+														<ProductName
+															name={c.name}
+															variantName={c.variantName}
+														/>
 													</div>
-													<div className="font-mono text-xs text-muted-foreground">
+													<div className="text-xs text-muted-foreground">
 														{c.sku}
 													</div>
 												</div>
@@ -227,7 +223,7 @@ function ProductPage() {
 					open={counting}
 					onOpenChange={setCounting}
 					sku={p.sku}
-					name={p.variantName ? `${p.name} · ${p.variantName}` : p.name}
+					name={p.variantName ? `${p.name}, ${p.variantName}` : p.name}
 					locations={d.locations}
 					onHandByLocation={new Map(d.stock.map((s) => [s.location, s.onHand]))}
 				/>
@@ -325,7 +321,7 @@ function Details({ d }: { d: ProductDetail }) {
 	if (p.barcode)
 		rows.push([
 			"Barcode",
-			<span key="barcode" className="font-mono">
+			<span key="barcode" className="tabular-nums">
 				{p.barcode}
 			</span>,
 		]);

@@ -1,3 +1,4 @@
+import NumberFlow from "@number-flow/react";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import {
 	AlertTriangle,
@@ -107,7 +108,7 @@ export function StatusTile({
 	link,
 }: {
 	tone: Tone;
-	value: string;
+	value: number;
 	label: string;
 	hint?: string;
 	link?: LinkProps;
@@ -127,7 +128,7 @@ export function StatusTile({
 				{t.label}
 			</div>
 			<div className="text-5xl font-semibold tracking-tight tabular-nums">
-				{value}
+				<NumberFlow value={value} />
 			</div>
 			<div className="text-base font-medium">{label}</div>
 			{hint && <div className="text-sm text-muted-foreground">{hint}</div>}

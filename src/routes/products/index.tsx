@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PageBody, PageHeader, StatusDot } from "#/components/page";
-import { ProductImage } from "#/components/product";
+import { ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import { formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
@@ -169,17 +169,9 @@ function Products() {
 							>
 								<ProductImage src={p.imageUrl} />
 								<div className="min-w-0 flex-1">
-									<div className="truncate">
-										{p.name}
-										{p.variantName && (
-											<span className="text-muted-foreground">
-												{" "}
-												· {p.variantName}
-											</span>
-										)}
-									</div>
+									<ProductName name={p.name} variantName={p.variantName} />
 									<div className="flex items-center gap-2 text-xs text-muted-foreground">
-										<span className="font-mono">{p.sku}</span>
+										<span>{p.sku}</span>
 										{p.kind !== "simple" && (
 											<span>{p.kind === "bundle" ? "Tool set" : "Kit"}</span>
 										)}

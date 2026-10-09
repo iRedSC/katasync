@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { Package } from "lucide-react";
 import {
 	Table,
 	TableBody,
@@ -8,6 +9,7 @@ import {
 	TableRow,
 } from "#/components/ui/table";
 import { formatDateTime, formatDelta, formatReason } from "#/lib/format";
+import { cn } from "#/lib/utils";
 
 export function ProductImage({
 	src,
@@ -21,10 +23,18 @@ export function ProductImage({
 			src={src}
 			alt=""
 			loading="lazy"
-			className={`${className} shrink-0 rounded-md border bg-white object-contain`}
+			className={cn(className, "shrink-0 rounded-lg bg-white object-contain")}
 		/>
 	) : (
-		<div className={`${className} shrink-0 rounded-md border bg-muted`} />
+		// No photo yet: a quiet stand-in rather than an empty box.
+		<div
+			className={cn(
+				className,
+				"flex shrink-0 items-center justify-center rounded-lg bg-deep text-haze/40",
+			)}
+		>
+			<Package className="size-1/2" strokeWidth={1.5} />
+		</div>
 	);
 }
 
@@ -33,7 +43,7 @@ export function ProductLink({ sku }: { sku: string }) {
 		<Link
 			to="/products/$sku"
 			params={{ sku }}
-			className="font-mono text-xs hover:underline"
+			className="text-xs text-muted-foreground hover:text-foreground"
 		>
 			{sku}
 		</Link>
@@ -91,7 +101,7 @@ export function MovementTable({
 							{m.reference ?? "—"}
 						</TableCell>
 						<TableCell
-							className={`text-right font-medium tabular-nums ${m.delta < 0 ? "text-destructive" : "text-emerald-600"}`}
+							className={`text-right font-medium tabular-nums ${m.delta < 0 ? "text-bad-ink" : "text-good-ink"}`}
 						>
 							{formatDelta(m.delta)}
 						</TableCell>
@@ -99,5 +109,25 @@ export function MovementTable({
 				))}
 			</TableBody>
 		</Table>
+	);
+}
+
+// A product's name with its variant as a quiet chip, e.g. "Flat Box [12 x 9]".
+export function ProductName({
+	name,
+	variantName,
+}: {
+	name: string;
+	variantName: string | null;
+}) {
+	return (
+		<span className="flex min-w-0 items-center gap-2">
+			<span className="truncate">{name}</span>
+			{variantName && (
+				<span className="shrink-0 rounded-md bg-dusk px-1.5 py-0.5 text-xs text-muted-foreground">
+					{variantName}
+				</span>
+			)}
+		</span>
 	);
 }

@@ -1,8 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight } from "lucide-react";
 import { BarList } from "#/components/bar-list";
 import { PageBody, PageHeader, Section, StatusTile } from "#/components/page";
-import { ProductImage } from "#/components/product";
+import { ProductImage, ProductName } from "#/components/product";
 import {
 	formatCount,
 	formatMoneyCompact,
@@ -27,7 +26,7 @@ function Today() {
 					{d.oversold.length > 0 && (
 						<StatusTile
 							tone="bad"
-							value={formatCount(d.oversold.length)}
+							value={d.oversold.length}
 							label="products sold that we don't have"
 							hint="Count the shelf, or a restock is overdue"
 							link={{ to: "/products", search: { show: "oversold" } }}
@@ -36,7 +35,7 @@ function Today() {
 					{d.blockedBundles > 0 && (
 						<StatusTile
 							tone="warn"
-							value={formatCount(d.blockedBundles)}
+							value={d.blockedBundles}
 							label={`of ${formatCount(d.bundles)} tool sets can't be sold`}
 							hint="A part is missing. The ones blocking the most are below."
 							link={{ to: "/products", search: { show: "blocked" } }}
@@ -45,7 +44,7 @@ function Today() {
 					{allGood && (
 						<StatusTile
 							tone="good"
-							value="0"
+							value={0}
 							label="problems. Everything can be sold."
 						/>
 					)}
@@ -85,14 +84,14 @@ function Today() {
 									search={{ show: "oversold" }}
 									className="inline-flex items-center gap-1 hover:text-foreground"
 								>
-									All {d.oversold.length} <ArrowRight className="size-3.5" />
+									See all {d.oversold.length}
 								</Link>
 							}
 						>
 							<ul className="flex flex-col">
 								{d.oversold.slice(0, 6).map((o) => (
 									<ProductRow key={o.sku} {...o}>
-										<span className="text-base font-semibold text-bad tabular-nums">
+										<span className="text-base font-semibold text-bad-ink tabular-nums">
 											{formatCount(o.onHand)}
 										</span>
 									</ProductRow>
@@ -126,7 +125,7 @@ function Today() {
 							}))}
 							format={formatMoneyCompact}
 							detail={(i) =>
-								`${formatMoneyWhole(d.byCategory[i].value)} · ${formatCount(d.byCategory[i].units)} units`
+								`${formatMoneyWhole(d.byCategory[i].value)} across ${formatCount(d.byCategory[i].units)} units`
 							}
 						/>
 						{d.otherCategories.count > 0 && (
@@ -164,13 +163,8 @@ function ProductRow({
 			>
 				<ProductImage src={imageUrl} className="size-9" />
 				<div className="min-w-0 flex-1">
-					<div className="truncate">
-						{name}
-						{variantName && (
-							<span className="text-muted-foreground"> · {variantName}</span>
-						)}
-					</div>
-					<div className="font-mono text-xs text-muted-foreground">{sku}</div>
+					<ProductName name={name} variantName={variantName} />
+					<div className="text-xs text-muted-foreground">{sku}</div>
 				</div>
 				{children}
 			</Link>

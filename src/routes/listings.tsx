@@ -31,7 +31,7 @@ function Listings() {
 									<div className="text-xs text-muted-foreground">
 										{l.store}
 										{l.externalSku && (
-											<span className="font-mono"> · {l.externalSku}</span>
+											<span className="ml-2">{l.externalSku}</span>
 										)}
 									</div>
 								</div>

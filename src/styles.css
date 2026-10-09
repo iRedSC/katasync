@@ -1,87 +1,65 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import '@fontsource-variable/geist';
 
 @custom-variant dark (&:is(.dark *));
 
-/* shadcn zinc base with the logo's indigo-violet as primary. */
+/* Midnight: one theme, built from the logo's blue-to-violet. Contrast on the
+   page background: text 17:1, secondary text 8:1, accent 6:1. Status colors
+   always come with an icon and a word, never color alone. */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.51 0.24 278);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.962 0.018 280);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.51 0.24 278);
-  --chart-1: oklch(0.51 0.24 278);
-  --chart-2: oklch(0.62 0.19 255);
-  --chart-3: oklch(0.6 0.22 300);
-  --chart-4: oklch(0.7 0.15 230);
-  --chart-5: oklch(0.45 0.2 285);
-  --radius: 0.625rem;
-  /* Status, from the dataviz reference palette. Always paired with an icon and
-     a word, never color alone. */
+  --midnight: #0b0d1c;
+  --deep: #12152a;
+  --dusk: #1a1e38;
+  --line: #262a48;
+  --starlight: #eef0fa;
+  --haze: #a3a9cc;
+  --aurora: linear-gradient(100deg, #4f8bff, #7c6cff 55%, #a77bff);
+
+  --background: var(--midnight);
+  --foreground: var(--starlight);
+  --card: var(--deep);
+  --card-foreground: var(--starlight);
+  --popover: var(--dusk);
+  --popover-foreground: var(--starlight);
+  --primary: #8b87ff;
+  --primary-foreground: var(--midnight);
+  --secondary: var(--dusk);
+  --secondary-foreground: var(--starlight);
+  --muted: var(--deep);
+  --muted-foreground: var(--haze);
+  --accent: var(--deep);
+  --accent-foreground: var(--starlight);
+  --destructive: #ff7a7a;
+  --destructive-foreground: var(--midnight);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: #8b87ff;
+  --chart-1: #7c79ff;
+  --radius: 0.75rem;
+  --sidebar: var(--midnight);
+  --sidebar-foreground: var(--haze);
+  --sidebar-primary: #8b87ff;
+  --sidebar-primary-foreground: var(--midnight);
+  --sidebar-accent: var(--deep);
+  --sidebar-accent-foreground: var(--starlight);
+  --sidebar-border: var(--line);
+  --sidebar-ring: #8b87ff;
+
+  /* Status marks (dots, bars, tile edges) from the dataviz reference palette,
+     plus lighter versions for status-colored text on midnight. */
   --good: #0ca30c;
   --warn: #fab219;
   --bad: #d03b3b;
-  --sidebar: oklch(0.985 0.002 280);
-  --sidebar-foreground: oklch(0.141 0.005 285.823);
-  --sidebar-primary: oklch(0.51 0.24 278);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.955 0.02 280);
-  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-  --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.51 0.24 278);
-}
+  --good-ink: #4ade80;
+  --warn-ink: #fcc44a;
+  --bad-ink: #ff7a7a;
 
-.dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.18 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.18 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.65 0.2 280);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.02 280);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
-  --border: oklch(0.274 0.006 286.033);
-  --input: oklch(0.274 0.006 286.033);
-  --ring: oklch(0.65 0.2 280);
-  --chart-1: oklch(0.65 0.2 280);
-  --chart-2: oklch(0.7 0.16 255);
-  --chart-3: oklch(0.68 0.19 300);
-  --chart-4: oklch(0.75 0.13 230);
-  --chart-5: oklch(0.55 0.2 285);
-  --sidebar: oklch(0.18 0.006 285.885);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.65 0.2 280);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.274 0.02 280);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.274 0.006 286.033);
-  --sidebar-ring: oklch(0.65 0.2 280);
+  color-scheme: dark;
 }
 
 @theme inline {
-  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -102,10 +80,6 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -113,6 +87,12 @@
   --color-good: var(--good);
   --color-warn: var(--warn);
   --color-bad: var(--bad);
+  --color-good-ink: var(--good-ink);
+  --color-warn-ink: var(--warn-ink);
+  --color-bad-ink: var(--bad-ink);
+  --color-dusk: var(--dusk);
+  --color-deep: var(--deep);
+  --color-haze: var(--haze);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -130,4 +110,9 @@
   body {
     @apply bg-background text-foreground antialiased;
   }
+}
+
+/* The logo gradient. Used for the one main action on a screen and the brand. */
+@utility bg-aurora {
+  background-image: var(--aurora);
 }

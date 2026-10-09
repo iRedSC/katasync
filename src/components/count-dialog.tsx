@@ -1,5 +1,7 @@
+import NumberFlow from "@number-flow/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -9,9 +11,9 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
-import { formatCount, formatDelta } from "#/lib/format";
+import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import { recordCount } from "#/server/catalog";
+import { recordCount, undoMovement } from "#/server/catalog";
 
 const reasons = [
 	{ value: "count", label: "Counted" },
@@ -57,10 +59,31 @@ export function CountDialog({
 		setSaving(true);
 		setError(null);
 		try {
-			await recordCount({ data: { sku, counted: value, reason, locationId } });
+			const result = await recordCount({
+				data: { sku, counted: value, reason, locationId },
+			});
 			onOpenChange(false);
 			setCounted("");
 			await router.invalidate();
+			const { batchId } = result;
+			if (batchId) {
+				toast.success(
+					`Count saved. ${formatCount(result.onHand)} on the shelf.`,
+					{
+						description: name,
+						// Long enough to notice a mistake and reach Undo.
+						duration: 10_000,
+						action: {
+							label: "Undo",
+							onClick: async () => {
+								await undoMovement({ data: { batchId } });
+								await router.invalidate();
+								toast("Count undone", { description: name });
+							},
+						},
+					},
+				);
+			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
 		} finally {
@@ -112,10 +135,13 @@ export function CountDialog({
 									<span
 										className={cn(
 											"font-semibold tabular-nums",
-											delta < 0 ? "text-bad" : "text-good",
+											delta < 0 ? "text-bad-ink" : "text-good-ink",
 										)}
 									>
-										{formatDelta(delta)}
+										<NumberFlow
+											value={delta}
+											format={{ signDisplay: "always" }}
+										/>
 									</span>{" "}
 									from the {formatCount(current)} we think there are
 								</>
@@ -135,7 +161,7 @@ export function CountDialog({
 						))}
 					</div>
 
-					{error && <p className="text-center text-sm text-bad">{error}</p>}
+					{error && <p className="text-center text-sm text-bad-ink">{error}</p>}
 					<DialogFooter>
 						<Button
 							type="submit"

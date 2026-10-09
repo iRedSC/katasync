@@ -14,6 +14,7 @@ import {
 	postMovements,
 	recordCount,
 	recordSale,
+	undoBatch,
 } from "./ledger";
 import { setRecipe } from "./recipes";
 
@@ -364,7 +365,7 @@ describe("recordCount", () => {
 				counted: 4,
 				note: "Counted",
 			}),
-		).toEqual({ delta: 7, onHand: 4 });
+		).toMatchObject({ delta: 7, onHand: 4 });
 		expect(await onHand(wrench, warehouse)).toBe(4);
 	});
 
@@ -379,7 +380,7 @@ describe("recordCount", () => {
 				counted: 5,
 				note: "Counted",
 			}),
-		).toEqual({ delta: 0, onHand: 5 });
+		).toEqual({ delta: 0, onHand: 5, batchId: null });
 		expect(await db.select().from(schema.movements)).toHaveLength(before);
 	});
 
@@ -393,5 +394,23 @@ describe("recordCount", () => {
 				note: "x",
 			}),
 		).rejects.toThrow(/count their parts/);
+	});
+});
+
+describe("undoBatch", () => {
+	test("reverses a count exactly, once", async () => {
+		const wrench = await sku("WRENCH", "simple");
+		await receive(wrench, warehouse, 5);
+		const { batchId } = await recordCount(db, {
+			productId: wrench,
+			locationId: warehouse,
+			counted: 2,
+			note: "Counted",
+		});
+		if (!batchId) throw new Error("expected a batch");
+
+		await undoBatch(db, batchId);
+		expect(await onHand(wrench, warehouse)).toBe(5);
+		await expect(undoBatch(db, batchId)).rejects.toThrow(/Already undone/);
 	});
 });

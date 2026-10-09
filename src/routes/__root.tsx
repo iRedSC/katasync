@@ -4,6 +4,7 @@ import {
 	HeadContent,
 	Scripts,
 } from "@tanstack/react-router";
+import { Toaster } from "sonner";
 import { AppSidebar } from "#/components/app-sidebar";
 import { CommandPalette } from "#/components/command-palette";
 import { SidebarInset, SidebarProvider } from "#/components/ui/sidebar";
@@ -42,7 +43,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en">
+		<html lang="en" className="dark">
 			<head>
 				<HeadContent />
 			</head>
@@ -53,6 +54,18 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 						<SidebarInset>{children}</SidebarInset>
 					</SidebarProvider>
 					<CommandPalette />
+					<Toaster
+						theme="dark"
+						position="bottom-center"
+						toastOptions={{
+							classNames: {
+								toast:
+									"!bg-dusk !border-border !text-foreground !rounded-xl !text-sm",
+								actionButton:
+									"!bg-aurora !text-primary-foreground !font-semibold",
+							},
+						}}
+					/>
 				</TooltipProvider>
 				<Scripts />
 			</body>
