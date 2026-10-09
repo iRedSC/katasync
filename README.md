@@ -9,7 +9,7 @@ Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Tr
 ## Setup
 
 1. `pnpm install`
-2. Create a Neon project, copy `.env.example` to `.env`, and set `DATABASE_URL`.
+2. `neon link --project-id mute-paper-12299244 --branch production` (writes `DATABASE_URL` and `DATABASE_URL_UNPOOLED` to `.env.local`).
 3. `pnpm db:migrate`
 4. `pnpm dev` (http://localhost:3000)
 

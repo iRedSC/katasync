@@ -51,6 +51,8 @@ export const products = pgTable(
 		// What sets this apart within its group, e.g. "12 x 9 x 2".
 		variantName: text(),
 		imageUrl: text(),
+		// Free-form type for filtering and reports, e.g. "Flat Box".
+		category: text(),
 		// UPC/EAN. Unique so a scan finds exactly one product.
 		barcode: text().unique(),
 		// USD per unit, for PO totals and stock value.
@@ -70,6 +72,16 @@ export const products = pgTable(
 		),
 	],
 );
+
+// Other seller SKUs that mean this product, e.g. an FBA listing's
+// "ECDT-12KIT-AMZ" for "ECDT-12KIT". Used to suggest listing mappings. An alias
+// must not equal any product SKU; src/import/sumtracker.ts checks this.
+export const productAliases = pgTable("product_aliases", {
+	alias: text().primaryKey(),
+	productId: integer()
+		.notNull()
+		.references(() => products.id),
+});
 
 // Recipe for kits and bundles. Which kinds may contain which is enforced in
 // src/inventory/recipes.ts.
@@ -103,6 +115,8 @@ export const movementReason = pgEnum("movement_reason", [
 	"transfer_in",
 	"assembly_consume",
 	"assembly_produce",
+	// Starting stock carried over from another system.
+	"opening_balance",
 ]);
 
 // Append-only. A trigger in the migrations rejects UPDATE and DELETE; fix

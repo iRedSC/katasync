@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { listings, products, stores } from "#/db/schema";
+import { listings, productAliases, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
 
 export type ChannelListing = {
@@ -100,22 +100,37 @@ export async function mapListing(
 	});
 }
 
-// Maps every unmapped listing whose channel SKU exactly matches a katasync SKU.
-// Returns how many were mapped. Anything else is left for a person to map.
+// Maps every unmapped listing whose channel SKU exactly matches a product SKU
+// or alias. Returns how many were mapped. Anything else is left for a person.
 export async function autoMapListings(db: Db): Promise<number> {
-	const mapped = await db
-		.update(listings)
-		.set({ productId: products.id })
-		.from(products)
-		.where(
-			and(
-				isNull(listings.productId),
-				eq(listings.externalSku, products.sku),
-				sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`,
-			),
-		)
-		.returning({ id: listings.id });
-	return mapped.length;
+	return db.transaction(async (tx) => {
+		const bySku = await tx
+			.update(listings)
+			.set({ productId: products.id })
+			.from(products)
+			.where(
+				and(
+					isNull(listings.productId),
+					eq(listings.externalSku, products.sku),
+					sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`,
+				),
+			)
+			.returning({ id: listings.id });
+		const byAlias = await tx
+			.update(listings)
+			.set({ productId: products.id })
+			.from(productAliases)
+			.innerJoin(products, eq(products.id, productAliases.productId))
+			.where(
+				and(
+					isNull(listings.productId),
+					eq(listings.externalSku, productAliases.alias),
+					sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`,
+				),
+			)
+			.returning({ id: listings.id });
+		return bySku.length + byAlias.length;
+	});
 }
 
 export async function getUnmappedListings(db: Db) {

@@ -1,9 +1,10 @@
 import { defineConfig } from "drizzle-kit";
 
+// `neon link` writes connection strings to .env.local.
 try {
-	process.loadEnvFile();
+	process.loadEnvFile(".env.local");
 } catch {
-	// No .env file; rely on the real environment.
+	// No .env.local; rely on the real environment.
 }
 
 export default defineConfig({
@@ -11,5 +12,8 @@ export default defineConfig({
 	schema: "./src/db/schema.ts",
 	out: "./drizzle",
 	casing: "snake_case",
-	dbCredentials: { url: process.env.DATABASE_URL ?? "" },
+	// Migrations use the direct connection; the pooler doesn't suit DDL.
+	dbCredentials: {
+		url: process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL ?? "",
+	},
 });

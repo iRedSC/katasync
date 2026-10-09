@@ -15,6 +15,13 @@
       "when": 1791569455057,
       "tag": "0001_immutable_movements",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791569981024,
+      "tag": "0002_catalog_import",
+      "breakpoints": true
     }
   ]
 }
