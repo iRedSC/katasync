@@ -5,9 +5,16 @@ import { ProductImage, ProductName } from "#/components/product";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { getDashboard } from "#/server/catalog";
+import { countOrdersToShip } from "#/server/orders";
 
 export const Route = createFileRoute("/")({
-	loader: () => getDashboard(),
+	loader: async () => {
+		const [dashboard, toShip] = await Promise.all([
+			getDashboard(),
+			countOrdersToShip(),
+		]);
+		return { ...dashboard, toShip };
+	},
 	component: Home,
 });
 
@@ -18,11 +25,7 @@ function Home() {
 		<Page title="Home">
 			<Card flush>
 				<dl className="grid grid-cols-2 md:grid-cols-4 md:divide-x">
-					<Stat
-						label="Open orders"
-						link={{ to: "/orders" }}
-						pending="Waiting on Shopify"
-					/>
+					<Stat label="Open orders" value={d.toShip} link={{ to: "/orders" }} />
 					<Stat
 						label="POs ready"
 						link={{ to: "/purchasing" }}

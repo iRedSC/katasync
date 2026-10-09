@@ -177,6 +177,12 @@ export const stores = pgTable("stores", {
 	id: integer().primaryKey().generatedAlwaysAsIdentity(),
 	channel: channel().notNull(),
 	name: text().notNull().unique(),
+	// Orders placed at or after this time take stock from the ledger. Earlier
+	// orders are kept for history only, because the opening balances already
+	// reflect them. Null means this store's orders never move stock.
+	stockFrom: timestamp({ withTimezone: true }),
+	// Sync resumes from the newest order update seen so far.
+	ordersSyncedThrough: timestamp({ withTimezone: true }),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -214,5 +220,71 @@ export const listings = pgTable(
 	(t) => [
 		unique("listings_store_external_id").on(t.storeId, t.externalId),
 		index("listings_product_idx").on(t.productId),
+	],
+);
+
+// An order as the channel reports it. Money is in the store's currency.
+export const orders = pgTable(
+	"orders",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		storeId: integer()
+			.notNull()
+			.references(() => stores.id),
+		externalId: text().notNull(),
+		// What the channel shows people, e.g. "#5536".
+		name: text().notNull(),
+		// Where the sale happened when a store relays other channels, e.g. a
+		// Shopify order placed on TikTok Shop or at the Point of Sale.
+		salesChannel: text(),
+		placedAt: timestamp({ withTimezone: true }).notNull(),
+		cancelledAt: timestamp({ withTimezone: true }),
+		// The channel's own wording, e.g. UNFULFILLED, PARTIALLY_FULFILLED.
+		fulfillmentStatus: text().notNull(),
+		financialStatus: text(),
+		customerName: text(),
+		shipCity: text(),
+		shipRegion: text(),
+		shipCountry: text(),
+		total: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+		shippingCharged: numeric({ precision: 12, scale: 2, mode: "number" })
+			.notNull()
+			.default(0),
+		sourceUpdatedAt: timestamp({ withTimezone: true }).notNull(),
+		syncedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("orders_store_external_id").on(t.storeId, t.externalId),
+		index("orders_placed_at_idx").on(t.placedAt),
+	],
+);
+
+export const orderLines = pgTable(
+	"order_lines",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		externalId: text().notNull(),
+		// The listing's ID on the channel (Shopify: variant ID).
+		listingExternalId: text(),
+		// Null until the listing is mapped to a product.
+		productId: integer().references(() => products.id),
+		sku: text(),
+		title: text().notNull(),
+		quantity: integer().notNull(),
+		// Price per unit after every discount.
+		unitPrice: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+		// Cost per unit when the line first came in, so later cost changes don't
+		// rewrite past profit. Null when any part has no cost.
+		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
+		// The stock movement this line made, if any. Set once, so re-syncing never
+		// takes stock twice; a cancellation reverses exactly this batch.
+		saleBatchId: uuid(),
+	},
+	(t) => [
+		unique("order_lines_order_external_id").on(t.orderId, t.externalId),
+		index("order_lines_product_idx").on(t.productId),
 	],
 );

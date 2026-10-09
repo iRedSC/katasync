@@ -22,6 +22,20 @@
       "when": 1791569981024,
       "tag": "0002_catalog_import",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791575272121,
+      "tag": "0003_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791575970474,
+      "tag": "0004_order_sales_channel",
+      "breakpoints": true
     }
   ]
 }
