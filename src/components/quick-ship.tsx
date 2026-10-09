@@ -233,8 +233,6 @@ export function QuickShip() {
 					insureAmount,
 					contentsKey: found.contentsKey,
 					rateId: rate.id,
-					// The pin step already showed "Already has a label".
-					another: found.labelsBought > 0,
 				},
 			}),
 		);
@@ -318,14 +316,27 @@ export function QuickShip() {
 						/>
 					)}
 
-					{step === "package" && found && !external && (
-						<PackageStep
-							boxes={boxes}
-							current={box}
-							dims={dims}
-							onChoose={choosePackage}
-						/>
-					)}
+					{step === "package" &&
+						found &&
+						!external &&
+						found.labelsBought > 0 && (
+							<Notice tone="info">
+								This order already has a label. To ship it in a different box,
+								void that label on the order page first.
+							</Notice>
+						)}
+
+					{step === "package" &&
+						found &&
+						!external &&
+						found.labelsBought === 0 && (
+							<PackageStep
+								boxes={boxes}
+								current={box}
+								dims={dims}
+								onChoose={choosePackage}
+							/>
+						)}
 
 					{step === "weight" && (
 						<WeightStep
@@ -353,12 +364,7 @@ export function QuickShip() {
 					)}
 
 					{step === "rates" && !(error && !rates) && (
-						<RatesStep
-							rates={rates}
-							busy={busy}
-							another={(found?.labelsBought ?? 0) > 0}
-							onBuy={buy}
-						/>
+						<RatesStep rates={rates} busy={busy} onBuy={buy} />
 					)}
 
 					{step === "done" && bought && (
@@ -779,12 +785,10 @@ function InsureStep({
 function RatesStep({
 	rates,
 	busy,
-	another,
 	onBuy,
 }: {
 	rates: Rates | null;
 	busy: boolean;
-	another: boolean;
 	onBuy: (rate: Rate) => void;
 }) {
 	const [selected, setSelected] = useState(0);
@@ -825,11 +829,7 @@ function RatesStep({
 		>
 			<div className="flex items-baseline justify-between">
 				<p className="text-xl font-semibold">
-					{busy
-						? "Buying label…"
-						: another
-							? "Already has a label · Enter buys a second"
-							: "Enter buys the label"}
+					{busy ? "Buying label…" : "Enter buys the label"}
 				</p>
 				{rates.test && <Badge tone="info">Test labels</Badge>}
 			</div>

@@ -431,6 +431,11 @@ const openFulfillmentOrders = type({
 		fulfillmentOrders: {
 			nodes: type({ id: "string", status: "string" }).array(),
 		},
+		fulfillments: type({
+			id: "string",
+			status: "string",
+			trackingInfo: type({ number: "string | null" }).array(),
+		}).array(),
 	}).or("null"),
 });
 
@@ -443,18 +448,26 @@ const fulfillmentCreated = type({
 
 // Marks everything still open on the order as shipped with this tracking,
 // and has Shopify email the customer. Returns Shopify's fulfillment id,
-// which voiding needs. Needs write_merchant_managed_fulfillment_orders.
+// which voiding needs. Safe to repeat: if this tracking number is already
+// on the order (an earlier try got through), that fulfillment is returned
+// instead of a second one. Needs write_merchant_managed_fulfillment_orders.
 export async function shopifyFulfill(
 	orderId: string,
 	tracking: { company: string; number: string; url: string | null },
 ) {
 	const { order } = openFulfillmentOrders.assert(
 		await shopifyQuery(
-			"query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 20) { nodes { id status } } } }",
+			"query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 20) { nodes { id status } } fulfillments(first: 50) { id status trackingInfo { number } } } }",
 			{ id: orderId },
 		),
 	);
 	if (!order) throw new Error("Shopify has no such order");
+	const already = order.fulfillments.find(
+		(f) =>
+			f.status !== "CANCELLED" &&
+			f.trackingInfo.some((t) => t.number === tracking.number),
+	);
+	if (already) return already.id;
 	const open = order.fulfillmentOrders.nodes.filter((f) =>
 		["OPEN", "IN_PROGRESS"].includes(f.status),
 	);

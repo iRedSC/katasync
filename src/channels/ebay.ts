@@ -218,9 +218,17 @@ export function ebayCarrierCode(carrier: string) {
 	return known[carrier.trim().toUpperCase()] ?? "Other";
 }
 
+const shippingFulfillments = type({
+	"fulfillments?": type({
+		fulfillmentId: "string",
+		"shipmentTrackingNumber?": "string",
+	}).array(),
+});
+
 // Marks these line items shipped with this tracking; eBay tells the buyer.
-// Returns eBay's id for the shipping fulfillment. eBay has no way to take
-// one back, so a voided label's tracking stays on eBay.
+// Returns eBay's id for the shipping fulfillment. Safe to repeat: tracking
+// already on the order returns that fulfillment instead of adding another.
+// eBay has no way to take one back, so a voided label's tracking stays.
 export async function ebayFulfill(
 	orderId: string,
 	shipment: {
@@ -230,22 +238,35 @@ export async function ebayFulfill(
 		shippedAt: Date;
 	},
 ) {
-	const response = await fetch(
-		`${API}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}/shipping_fulfillment`,
-		{
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${await accessToken()}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({
-				lineItems: shipment.lineItems,
-				shippedDate: shipment.shippedAt.toISOString(),
-				shippingCarrierCode: ebayCarrierCode(shipment.carrier),
-				trackingNumber: shipment.trackingNumber,
-			}),
+	const url = `${API}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}/shipping_fulfillment`;
+	const existing = await fetch(url, {
+		headers: { Authorization: `Bearer ${await accessToken()}` },
+	});
+	if (!existing.ok) {
+		throw new Error(
+			`eBay answered ${existing.status}: ${await existing.text()}`,
+		);
+	}
+	const already = shippingFulfillments
+		.assert(await existing.json())
+		.fulfillments?.find(
+			(f) => f.shipmentTrackingNumber === shipment.trackingNumber,
+		);
+	if (already) return already.fulfillmentId;
+
+	const response = await fetch(url, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${await accessToken()}`,
+			"Content-Type": "application/json",
 		},
-	);
+		body: JSON.stringify({
+			lineItems: shipment.lineItems,
+			shippedDate: shipment.shippedAt.toISOString(),
+			shippingCarrierCode: ebayCarrierCode(shipment.carrier),
+			trackingNumber: shipment.trackingNumber,
+		}),
+	});
 	if (!response.ok) {
 		throw new Error(
 			`eBay refused: ${response.status} ${await response.text()}`,

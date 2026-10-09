@@ -4,7 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import { locations, orders, packages, shipments } from "#/db/schema";
-import { sendTracking, voidShipment } from "#/shipping/handoff";
+import { sendTracking, voidShipment, withOrderLock } from "#/shipping/handoff";
 import {
 	freePackagePin,
 	orderForShipping,
@@ -147,56 +147,54 @@ export const quickShipRates = createServerFn({ method: "POST" })
 
 // Buys the chosen label, records it, and sends the tracking to the order's
 // marketplace. The rate is read back from Shippo, so the recorded cost and
-// service are Shippo's, not the browser's. An order that already has a live
-// label only gets another when asked (a second box), never by a double press.
+// service are Shippo's, not the browser's. One live label per order: the
+// check and the purchase hold the order's lock, so a double press or two
+// people can't buy twice. (A second box means voiding first, until
+// multi-box shipments exist.)
 export const quickShipBuy = createServerFn({ method: "POST" })
-	.validator(
-		type({
-			...parcel,
-			contentsKey: "string",
-			rateId: "string > 0",
-			"another?": "boolean",
-		}),
-	)
+	.validator(type({ ...parcel, contentsKey: "string", rateId: "string > 0" }))
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const [existing] = await db
-			.select({ serviceName: shipments.serviceName })
-			.from(shipments)
-			.where(
-				and(eq(shipments.orderId, data.orderId), isNull(shipments.voidedAt)),
-			)
-			.limit(1);
-		if (existing && !data.another) {
-			throw new Error(
-				`This order already has a ${existing.serviceName} label. Void it first, or confirm a second box.`,
-			);
-		}
-		const rate = await getRate(data.rateId);
-		const label = await buyLabel(data.rateId);
-		const [saved] = await db
-			.insert(shipments)
-			.values({
-				orderId: data.orderId,
-				packageId: data.packageId ?? null,
-				contentsKey: data.contentsKey,
-				lengthMm: data.lengthMm,
-				widthMm: data.widthMm,
-				heightMm: data.heightMm,
-				weightGrams: data.weightGrams,
-				provider: "shippo",
-				carrier: rate.carrier,
-				service: rate.service,
-				serviceName: rate.serviceName,
-				cost: rate.cost,
-				insuredAmount: data.insureAmount,
-				trackingNumber: label.trackingNumber,
-				trackingUrl: label.trackingUrl,
-				labelUrl: label.labelUrl,
-				externalId: label.id,
-				test: shippoIsTest(),
-			})
-			.returning();
+		const saved = await withOrderLock(db, data.orderId, async (tx) => {
+			const [existing] = await tx
+				.select({ serviceName: shipments.serviceName })
+				.from(shipments)
+				.where(
+					and(eq(shipments.orderId, data.orderId), isNull(shipments.voidedAt)),
+				)
+				.limit(1);
+			if (existing) {
+				throw new Error(
+					`This order already has a ${existing.serviceName} label. Void it on the order page to buy a new one.`,
+				);
+			}
+			const rate = await getRate(data.rateId);
+			const label = await buyLabel(data.rateId);
+			const [row] = await tx
+				.insert(shipments)
+				.values({
+					orderId: data.orderId,
+					packageId: data.packageId ?? null,
+					contentsKey: data.contentsKey,
+					lengthMm: data.lengthMm,
+					widthMm: data.widthMm,
+					heightMm: data.heightMm,
+					weightGrams: data.weightGrams,
+					provider: "shippo",
+					carrier: rate.carrier,
+					service: rate.service,
+					serviceName: rate.serviceName,
+					cost: rate.cost,
+					insuredAmount: data.insureAmount,
+					trackingNumber: label.trackingNumber,
+					trackingUrl: label.trackingUrl,
+					labelUrl: label.labelUrl,
+					externalId: label.id,
+					test: shippoIsTest(),
+				})
+				.returning();
+			return row;
+		});
 		return { ...saved, handoff: await sendTracking(db, saved.id) };
 	});
 

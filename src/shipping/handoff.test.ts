@@ -178,6 +178,25 @@ describe("voidShipment", () => {
 		expect(outside.refund).toHaveBeenCalledTimes(1);
 	});
 
+	test("two voids at once refund only once", async () => {
+		const outside = fakes();
+		const id = await addLabel();
+		const results = await Promise.allSettled([
+			voidShipment(db, id, outside),
+			voidShipment(db, id, outside),
+		]);
+		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		expect(outside.refund).toHaveBeenCalledTimes(1);
+	});
+
+	test("a voided label's tracking is never sent", async () => {
+		const outside = fakes();
+		const id = await addLabel();
+		await voidShipment(db, id, outside);
+		await expect(sendTracking(db, id, outside)).rejects.toThrow("voided");
+		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
+	});
+
 	test("a refused refund leaves the label live", async () => {
 		const outside = fakes({
 			refund: vi.fn(async () => {
