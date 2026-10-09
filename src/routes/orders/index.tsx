@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { PackageCheck } from "lucide-react";
+import { PackageCheck, Printer } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
+import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
@@ -48,7 +49,20 @@ function Orders() {
 	});
 
 	return (
-		<Page title="Orders">
+		<Page
+			title="Orders"
+			actions={
+				view === "ship" &&
+				rows.length > 0 && (
+					<Button asChild variant="outline" size="sm">
+						<a href="/print/invoices" target="_blank" rel="noreferrer">
+							<Printer />
+							Print all
+						</a>
+					</Button>
+				)
+			}
+		>
 			<Card flush>
 				<div className="flex gap-1 border-b p-2">
 					{views.map((v) => (

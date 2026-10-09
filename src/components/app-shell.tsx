@@ -18,6 +18,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: close the mobile nav after navigating
 	useEffect(() => setNavOpen(false), [pathname]);
 
+	// Print pages are the paper itself: no bars, no nav.
+	if (pathname.startsWith("/print")) return children;
+
 	return (
 		<div className="flex min-h-svh flex-col">
 			<header className="sticky top-0 z-30 flex h-14 items-center gap-3 bg-topbar px-3 text-white">

@@ -63,3 +63,13 @@ export function formatOrderDate(value: Date | string) {
 			: monthDay.format(date);
 	return `${day} at ${time.format(date)}`;
 }
+
+// "Mechanicsburg, PA 17055", leaving out whatever is missing.
+export function cityLine(
+	city: string | null,
+	region: string | null,
+	zip: string | null,
+) {
+	const place = [region, zip].filter(Boolean).join(" ");
+	return [city, place].filter(Boolean).join(", ");
+}

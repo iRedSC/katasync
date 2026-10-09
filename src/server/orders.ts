@@ -1,8 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
-import { orderLines, orders, products, stores } from "#/db/schema";
+import { locations, orderLines, orders, products, stores } from "#/db/schema";
+import { cityLine } from "#/lib/format";
 import { needsShipping } from "#/orders/to-ship";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
@@ -103,6 +105,77 @@ export const getOrder = createServerFn({ method: "GET" })
 			.orderBy(orderLines.id);
 		return { order, lines };
 	});
+
+// Everything the invoices for orders still to ship print, in pin order so
+// the stack matches what packers type.
+export const listInvoices = createServerFn({ method: "GET" }).handler(
+	async () => {
+		const db = getDb();
+		const locationId = await shippingLocation(db);
+		const [from] = locationId
+			? await db.select().from(locations).where(eq(locations.id, locationId))
+			: [];
+		const toShip = await db
+			.select({
+				id: orders.id,
+				name: orders.name,
+				pin: orders.pin,
+				placedAt: orders.placedAt,
+				salesChannel: orders.salesChannel,
+				customerName: orders.customerName,
+				shipAddress1: orders.shipAddress1,
+				shipAddress2: orders.shipAddress2,
+				shipCity: orders.shipCity,
+				shipRegion: orders.shipRegion,
+				shipPostalCode: orders.shipPostalCode,
+				shipCountry: orders.shipCountry,
+				total: orders.total,
+				shippingCharged: orders.shippingCharged,
+			})
+			.from(orders)
+			.where(needsShipping)
+			.orderBy(asc(orders.pin), asc(orders.placedAt));
+		const lines = toShip.length
+			? await db
+					.select({
+						orderId: orderLines.orderId,
+						sku: sql<
+							string | null
+						>`coalesce(${products.sku}, ${orderLines.sku})`,
+						title: orderLines.title,
+						quantity: orderLines.quantity,
+						unitPrice: orderLines.unitPrice,
+					})
+					.from(orderLines)
+					.leftJoin(products, eq(products.id, orderLines.productId))
+					.where(
+						inArray(
+							orderLines.orderId,
+							toShip.map((o) => o.id),
+						),
+					)
+					.orderBy(orderLines.id)
+			: [];
+		return {
+			from: from
+				? {
+						name: from.shipFromName ?? from.name,
+						lines: [
+							from.address1,
+							from.address2,
+							cityLine(from.city, from.region, from.postalCode),
+						].filter((l): l is string => !!l),
+						phone: from.phone,
+						email: from.email,
+					}
+				: null,
+			invoices: toShip.map((o) => ({
+				...o,
+				lines: lines.filter((l) => l.orderId === o.id),
+			})),
+		};
+	},
+);
 
 export type OrderRow = Awaited<ReturnType<typeof listOrders>>[number];
 export type OrderDetail = Awaited<ReturnType<typeof getOrder>>;
