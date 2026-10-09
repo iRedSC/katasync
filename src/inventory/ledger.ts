@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { movements, skuComponents, skus, stockLevels } from "#/db/schema";
+import {
+	movements,
+	productComponents,
+	products,
+	stockLevels,
+} from "#/db/schema";
 
 export class LedgerError extends Error {
 	name = "LedgerError";
@@ -10,13 +15,17 @@ export class LedgerError extends Error {
 type MovementReason = (typeof movements.$inferInsert)["reason"];
 
 export type MovementLine = {
-	skuId: number;
+	productId: number;
 	locationId: number;
 	delta: number;
 	reason: MovementReason;
 };
 
-export type StockLevel = { skuId: number; locationId: number; onHand: number };
+export type StockLevel = {
+	productId: number;
+	locationId: number;
+	onHand: number;
+};
 
 // The only way stock changes. Inserts the movements and updates stock_levels in
 // one transaction, so the two can't drift apart.
@@ -34,21 +43,23 @@ export async function postMovements(
 				`Delta must be a nonzero integer, got ${line.delta}`,
 			);
 		}
-		const key = `${line.skuId}:${line.locationId}`;
+		const key = `${line.productId}:${line.locationId}`;
 		if (seen.has(key)) {
 			throw new LedgerError(
-				`SKU ${line.skuId} appears twice at location ${line.locationId}`,
+				`Product ${line.productId} appears twice at location ${line.locationId}`,
 			);
 		}
 		seen.add(key);
 	}
 
 	return db.transaction(async (tx) => {
-		const skuIds = [...new Set(lines.map((l) => l.skuId))];
+		const productIds = [...new Set(lines.map((l) => l.productId))];
 		const bundles = await tx
-			.select({ sku: skus.sku })
-			.from(skus)
-			.where(and(inArray(skus.id, skuIds), eq(skus.kind, "bundle")));
+			.select({ sku: products.sku })
+			.from(products)
+			.where(
+				and(inArray(products.id, productIds), eq(products.kind, "bundle")),
+			);
 		if (bundles.length > 0) {
 			throw new LedgerError(
 				`Bundles have no stock of their own: ${bundles.map((b) => b.sku).join(", ")}`,
@@ -68,19 +79,19 @@ export async function postMovements(
 		// Update rows in a fixed order so concurrent batches lock them in the same
 		// order and can't deadlock. The upsert locks each row until commit.
 		const ordered = [...lines].sort(
-			(a, b) => a.skuId - b.skuId || a.locationId - b.locationId,
+			(a, b) => a.productId - b.productId || a.locationId - b.locationId,
 		);
 		const levels: StockLevel[] = [];
 		for (const line of ordered) {
 			const [level] = await tx
 				.insert(stockLevels)
 				.values({
-					skuId: line.skuId,
+					productId: line.productId,
 					locationId: line.locationId,
 					onHand: line.delta,
 				})
 				.onConflictDoUpdate({
-					target: [stockLevels.skuId, stockLevels.locationId],
+					target: [stockLevels.productId, stockLevels.locationId],
 					set: { onHand: sql`${stockLevels.onHand} + ${line.delta}` },
 				})
 				.returning();
@@ -90,19 +101,22 @@ export async function postMovements(
 	});
 }
 
-async function getRecipe(db: Db, parentSkuId: number) {
+async function getRecipe(db: Db, parentProductId: number) {
 	return db
 		.select({
-			skuId: skuComponents.componentSkuId,
-			quantity: skuComponents.quantity,
+			productId: productComponents.componentProductId,
+			quantity: productComponents.quantity,
 		})
-		.from(skuComponents)
-		.where(eq(skuComponents.parentSkuId, parentSkuId));
+		.from(productComponents)
+		.where(eq(productComponents.parentProductId, parentProductId));
 }
 
-async function getSku(db: Db, skuId: number) {
-	const [sku] = await db.select().from(skus).where(eq(skus.id, skuId));
-	if (!sku) throw new LedgerError(`Unknown SKU ${skuId}`);
+async function getProduct(db: Db, productId: number) {
+	const [sku] = await db
+		.select()
+		.from(products)
+		.where(eq(products.id, productId));
+	if (!sku) throw new LedgerError(`Unknown product ${productId}`);
 	return sku;
 }
 
@@ -111,7 +125,7 @@ async function getSku(db: Db, skuId: number) {
 export async function recordSale(
 	db: Db,
 	input: {
-		skuId: number;
+		productId: number;
 		quantity: number;
 		locationId: number;
 		reference: string;
@@ -119,21 +133,21 @@ export async function recordSale(
 ) {
 	assertPositiveInteger(input.quantity);
 	return db.transaction(async (tx) => {
-		const sku = await getSku(tx, input.skuId);
+		const sku = await getProduct(tx, input.productId);
 		const taken =
 			sku.kind === "bundle"
 				? (await getRecipe(tx, sku.id)).map((c) => ({
-						skuId: c.skuId,
+						productId: c.productId,
 						quantity: c.quantity * input.quantity,
 					}))
-				: [{ skuId: sku.id, quantity: input.quantity }];
+				: [{ productId: sku.id, quantity: input.quantity }];
 		if (taken.length === 0)
 			throw new LedgerError(`Bundle ${sku.sku} has no components`);
 
 		return postMovements(tx, {
 			reference: input.reference,
 			lines: taken.map((t) => ({
-				skuId: t.skuId,
+				productId: t.productId,
 				locationId: input.locationId,
 				delta: -t.quantity,
 				reason: "sale" as const,
@@ -148,7 +162,7 @@ export async function recordSale(
 export async function assembleKits(
 	db: Db,
 	input: {
-		kitSkuId: number;
+		kitProductId: number;
 		quantity: number;
 		locationId: number;
 		reference?: string;
@@ -161,7 +175,7 @@ export async function assembleKits(
 export async function disassembleKits(
 	db: Db,
 	input: {
-		kitSkuId: number;
+		kitProductId: number;
 		quantity: number;
 		locationId: number;
 		reference?: string;
@@ -173,7 +187,7 @@ export async function disassembleKits(
 async function convertKits(
 	db: Db,
 	input: {
-		kitSkuId: number;
+		kitProductId: number;
 		quantity: number;
 		locationId: number;
 		reference?: string;
@@ -182,7 +196,7 @@ async function convertKits(
 ) {
 	assertPositiveInteger(input.quantity);
 	return db.transaction(async (tx) => {
-		const kit = await getSku(tx, input.kitSkuId);
+		const kit = await getProduct(tx, input.kitProductId);
 		if (kit.kind !== "kit") throw new LedgerError(`${kit.sku} is not a kit`);
 		const recipe = await getRecipe(tx, kit.id);
 		if (recipe.length === 0)
@@ -193,14 +207,14 @@ async function convertKits(
 			reference: input.reference,
 			lines: [
 				{
-					skuId: kit.id,
+					productId: kit.id,
 					locationId: input.locationId,
 					delta: sign * input.quantity,
 					reason:
 						direction === "assemble" ? "assembly_produce" : "assembly_consume",
 				},
 				...recipe.map((c) => ({
-					skuId: c.skuId,
+					productId: c.productId,
 					locationId: input.locationId,
 					delta: -sign * c.quantity * input.quantity,
 					reason:
@@ -214,23 +228,23 @@ async function convertKits(
 		// Only what this operation consumed can be short. A kit that was already
 		// oversold shouldn't block building more of it.
 		const consumed = new Set(
-			direction === "assemble" ? recipe.map((c) => c.skuId) : [kit.id],
+			direction === "assemble" ? recipe.map((c) => c.productId) : [kit.id],
 		);
 		const short = result.levels.filter(
-			(l) => consumed.has(l.skuId) && l.onHand < 0,
+			(l) => consumed.has(l.productId) && l.onHand < 0,
 		);
 		if (short.length > 0) {
-			const shortSkus = await tx
-				.select({ sku: skus.sku })
-				.from(skus)
+			const shortProducts = await tx
+				.select({ sku: products.sku })
+				.from(products)
 				.where(
 					inArray(
-						skus.id,
-						short.map((l) => l.skuId),
+						products.id,
+						short.map((l) => l.productId),
 					),
 				);
 			throw new LedgerError(
-				`Not enough stock to ${direction} ${input.quantity} × ${kit.sku}: ${shortSkus.map((s) => s.sku).join(", ")}`,
+				`Not enough stock to ${direction} ${input.quantity} × ${kit.sku}: ${shortProducts.map((s) => s.sku).join(", ")}`,
 			);
 		}
 		return result;

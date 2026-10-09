@@ -22,8 +22,11 @@ Edit `src/db/schema.ts`, then `pnpm db:generate` and commit the new file in `dri
 ## Inventory model
 
 - **Locations** are `owned` (we pick from them) or `fba` (Amazon's stock, mirrored read-only).
-- **SKUs** are `simple`, `kit` (pre-assembled, has its own stock), or `bundle` (virtual, availability comes from components). Kits hold simple SKUs; bundles hold simple SKUs or kits.
+- **Products** are the canonical record for one SKU: name, image, barcode, cost, weight, and box size. Each is `simple`, `kit` (pre-assembled, has its own stock), or `bundle` (virtual, availability comes from components). Kits hold simple products; bundles hold simple products or kits.
+- **Product groups** collect variants (e.g. one flat box in several sizes) for display. Stock and listings work on individual products.
 - **Movements** are the append-only ledger. The database rejects edits and deletes; fix mistakes with a new movement.
 - **Stock levels** are the running balance of movements per SKU and location, updated in the same transaction. They can go negative when a channel oversells.
 
-All stock changes go through `src/inventory/ledger.ts`.
+- **Stores** are connected seller accounts (a channel plus a name). **Listings** are what each store sells, each mapped to one product. A multi-pack is a bundle product. FBA listings must map to a simple product or kit, since Amazon stocks physical units.
+
+All stock changes go through `src/inventory/ledger.ts`. Mapping rules live in `src/channels/listings.ts`.

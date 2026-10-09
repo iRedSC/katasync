@@ -1,22 +1,22 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { skuComponents, skus, stockLevels } from "#/db/schema";
+import { productComponents, products, stockLevels } from "#/db/schema";
 
 // Sellable units per SKU across the given locations. Simple SKUs and kits use
 // their own stock. A bundle is limited by its scarcest component. Negative
 // stock counts as zero.
 export async function getAvailability(
 	db: Db,
-	skuIds: number[],
+	productIds: number[],
 	locationIds: number[],
 ): Promise<Map<number, number>> {
 	const result = new Map<number, number>();
-	if (skuIds.length === 0) return result;
+	if (productIds.length === 0) return result;
 
 	const requested = await db
 		.select()
-		.from(skus)
-		.where(inArray(skus.id, skuIds));
+		.from(products)
+		.where(inArray(products.id, productIds));
 	const bundleIds = requested
 		.filter((s) => s.kind === "bundle")
 		.map((s) => s.id);
@@ -25,31 +25,31 @@ export async function getAvailability(
 			? []
 			: await db
 					.select()
-					.from(skuComponents)
-					.where(inArray(skuComponents.parentSkuId, bundleIds));
+					.from(productComponents)
+					.where(inArray(productComponents.parentProductId, bundleIds));
 
 	const stockedIds = [
 		...new Set([
 			...requested.filter((s) => s.kind !== "bundle").map((s) => s.id),
-			...recipes.map((r) => r.componentSkuId),
+			...recipes.map((r) => r.componentProductId),
 		]),
 	];
 	const onHand = new Map<number, number>();
 	if (stockedIds.length > 0 && locationIds.length > 0) {
 		const rows = await db
 			.select({
-				skuId: stockLevels.skuId,
+				productId: stockLevels.productId,
 				onHand: sql<number>`sum(${stockLevels.onHand})::int`,
 			})
 			.from(stockLevels)
 			.where(
 				and(
-					inArray(stockLevels.skuId, stockedIds),
+					inArray(stockLevels.productId, stockedIds),
 					inArray(stockLevels.locationId, locationIds),
 				),
 			)
-			.groupBy(stockLevels.skuId);
-		for (const row of rows) onHand.set(row.skuId, Math.max(0, row.onHand));
+			.groupBy(stockLevels.productId);
+		for (const row of rows) onHand.set(row.productId, Math.max(0, row.onHand));
 	}
 
 	for (const sku of requested) {
@@ -57,14 +57,14 @@ export async function getAvailability(
 			result.set(sku.id, onHand.get(sku.id) ?? 0);
 			continue;
 		}
-		const parts = recipes.filter((r) => r.parentSkuId === sku.id);
+		const parts = recipes.filter((r) => r.parentProductId === sku.id);
 		result.set(
 			sku.id,
 			parts.length === 0
 				? 0
 				: Math.min(
 						...parts.map((p) =>
-							Math.floor((onHand.get(p.componentSkuId) ?? 0) / p.quantity),
+							Math.floor((onHand.get(p.componentProductId) ?? 0) / p.quantity),
 						),
 					),
 		);
@@ -76,14 +76,17 @@ export async function getAvailability(
 // listings need a fresh quantity pushed too.
 export async function getBundlesContaining(
 	db: Db,
-	skuId: number,
+	productId: number,
 ): Promise<number[]> {
 	const rows = await db
-		.select({ id: skuComponents.parentSkuId })
-		.from(skuComponents)
-		.innerJoin(skus, eq(skus.id, skuComponents.parentSkuId))
+		.select({ id: productComponents.parentProductId })
+		.from(productComponents)
+		.innerJoin(products, eq(products.id, productComponents.parentProductId))
 		.where(
-			and(eq(skuComponents.componentSkuId, skuId), eq(skus.kind, "bundle")),
+			and(
+				eq(productComponents.componentProductId, productId),
+				eq(products.kind, "bundle"),
+			),
 		);
 	return rows.map((r) => r.id);
 }

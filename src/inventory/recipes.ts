@@ -1,6 +1,6 @@
 import { eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { skuComponents, skus } from "#/db/schema";
+import { productComponents, products } from "#/db/schema";
 import { LedgerError } from "./ledger";
 
 // What each kind may contain. Kits hold only simple SKUs; bundles may also hold
@@ -14,15 +14,15 @@ const allowedComponents = {
 // Replaces the full recipe for a kit or bundle.
 export async function setRecipe(
 	db: Db,
-	parentSkuId: number,
-	components: { skuId: number; quantity: number }[],
+	parentProductId: number,
+	components: { productId: number; quantity: number }[],
 ) {
 	return db.transaction(async (tx) => {
 		const [parent] = await tx
 			.select()
-			.from(skus)
-			.where(eq(skus.id, parentSkuId));
-		if (!parent) throw new LedgerError(`Unknown SKU ${parentSkuId}`);
+			.from(products)
+			.where(eq(products.id, parentProductId));
+		if (!parent) throw new LedgerError(`Unknown product ${parentProductId}`);
 		if (parent.kind === "simple") {
 			throw new LedgerError(
 				`${parent.sku} is a simple SKU and can't have components`,
@@ -34,18 +34,19 @@ export async function setRecipe(
 
 		const rows = await tx
 			.select()
-			.from(skus)
+			.from(products)
 			.where(
 				inArray(
-					skus.id,
-					components.map((c) => c.skuId),
+					products.id,
+					components.map((c) => c.productId),
 				),
 			);
 		const byId = new Map(rows.map((r) => [r.id, r]));
 		const allowed: readonly string[] = allowedComponents[parent.kind];
 		for (const c of components) {
-			const child = byId.get(c.skuId);
-			if (!child) throw new LedgerError(`Unknown component SKU ${c.skuId}`);
+			const child = byId.get(c.productId);
+			if (!child)
+				throw new LedgerError(`Unknown component product ${c.productId}`);
 			if (!allowed.includes(child.kind)) {
 				throw new LedgerError(
 					`A ${parent.kind} can't contain a ${child.kind} (${parent.sku} → ${child.sku})`,
@@ -59,12 +60,12 @@ export async function setRecipe(
 		}
 
 		await tx
-			.delete(skuComponents)
-			.where(eq(skuComponents.parentSkuId, parentSkuId));
-		await tx.insert(skuComponents).values(
+			.delete(productComponents)
+			.where(eq(productComponents.parentProductId, parentProductId));
+		await tx.insert(productComponents).values(
 			components.map((c) => ({
-				parentSkuId,
-				componentSkuId: c.skuId,
+				parentProductId,
+				componentProductId: c.productId,
 				quantity: c.quantity,
 			})),
 		);

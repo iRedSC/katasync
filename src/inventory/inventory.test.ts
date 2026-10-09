@@ -1,10 +1,8 @@
-import { PGlite } from "@electric-sql/pglite";
 import { sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { createProduct, createTestDb } from "#/test/db";
 import { getAvailability, getBundlesContaining } from "./availability";
 import {
 	assembleKits,
@@ -18,35 +16,28 @@ let db: Db;
 let warehouse: number;
 let garage: number;
 
-async function sku(code: string, kind: "simple" | "kit" | "bundle") {
-	const [row] = await db
-		.insert(schema.skus)
-		.values({ sku: code, name: code, kind })
-		.returning();
-	return row.id;
+function sku(code: string, kind: "simple" | "kit" | "bundle") {
+	return createProduct(db, code, kind);
 }
 
-async function receive(skuId: number, locationId: number, qty: number) {
+async function receive(productId: number, locationId: number, qty: number) {
 	await postMovements(db, {
-		lines: [{ skuId, locationId, delta: qty, reason: "receipt" }],
+		lines: [{ productId, locationId, delta: qty, reason: "receipt" }],
 	});
 }
 
-async function onHand(skuId: number, locationId: number) {
+async function onHand(productId: number, locationId: number) {
 	const [row] = await db
 		.select()
 		.from(schema.stockLevels)
 		.where(
-			sql`${schema.stockLevels.skuId} = ${skuId} and ${schema.stockLevels.locationId} = ${locationId}`,
+			sql`${schema.stockLevels.productId} = ${productId} and ${schema.stockLevels.locationId} = ${locationId}`,
 		);
 	return row?.onHand ?? 0;
 }
 
 beforeEach(async () => {
-	db = drizzle(new PGlite(), { schema, casing: "snake_case" });
-	await migrate(db as Parameters<typeof migrate>[0], {
-		migrationsFolder: "drizzle",
-	});
+	db = await createTestDb();
 	[{ id: warehouse }, { id: garage }] = await db
 		.insert(schema.locations)
 		.values([
@@ -62,7 +53,7 @@ describe("postMovements", () => {
 		await receive(wrench, warehouse, 10);
 		await postMovements(db, {
 			lines: [
-				{ skuId: wrench, locationId: warehouse, delta: -3, reason: "sale" },
+				{ productId: wrench, locationId: warehouse, delta: -3, reason: "sale" },
 			],
 		});
 
@@ -78,8 +69,18 @@ describe("postMovements", () => {
 		await expect(
 			postMovements(db, {
 				lines: [
-					{ skuId: wrench, locationId: warehouse, delta: 5, reason: "receipt" },
-					{ skuId: 9999, locationId: warehouse, delta: 5, reason: "receipt" },
+					{
+						productId: wrench,
+						locationId: warehouse,
+						delta: 5,
+						reason: "receipt",
+					},
+					{
+						productId: 9999,
+						locationId: warehouse,
+						delta: 5,
+						reason: "receipt",
+					},
 				],
 			}),
 		).rejects.toThrow();
@@ -115,7 +116,7 @@ describe("recordSale", () => {
 		const wrench = await sku("WRENCH", "simple");
 		await receive(wrench, warehouse, 1);
 		await recordSale(db, {
-			skuId: wrench,
+			productId: wrench,
 			quantity: 3,
 			locationId: warehouse,
 			reference: "order-1",
@@ -128,14 +129,14 @@ describe("recordSale", () => {
 		const socket = await sku("SOCKET", "simple");
 		const set = await sku("SET", "bundle");
 		await setRecipe(db, set, [
-			{ skuId: wrench, quantity: 2 },
-			{ skuId: socket, quantity: 1 },
+			{ productId: wrench, quantity: 2 },
+			{ productId: socket, quantity: 1 },
 		]);
 		await receive(wrench, warehouse, 10);
 		await receive(socket, warehouse, 10);
 
 		await recordSale(db, {
-			skuId: set,
+			productId: set,
 			quantity: 3,
 			locationId: warehouse,
 			reference: "order-1",
@@ -149,11 +150,11 @@ describe("kits", () => {
 	test("assembly turns components into kits", async () => {
 		const bit = await sku("BIT", "simple");
 		const kit = await sku("BIT-KIT", "kit");
-		await setRecipe(db, kit, [{ skuId: bit, quantity: 5 }]);
+		await setRecipe(db, kit, [{ productId: bit, quantity: 5 }]);
 		await receive(bit, warehouse, 12);
 
 		await assembleKits(db, {
-			kitSkuId: kit,
+			kitProductId: kit,
 			quantity: 2,
 			locationId: warehouse,
 		});
@@ -161,7 +162,7 @@ describe("kits", () => {
 		expect(await onHand(bit, warehouse)).toBe(2);
 
 		await disassembleKits(db, {
-			kitSkuId: kit,
+			kitProductId: kit,
 			quantity: 1,
 			locationId: warehouse,
 		});
@@ -172,11 +173,15 @@ describe("kits", () => {
 	test("assembly without enough components changes nothing", async () => {
 		const bit = await sku("BIT", "simple");
 		const kit = await sku("BIT-KIT", "kit");
-		await setRecipe(db, kit, [{ skuId: bit, quantity: 5 }]);
+		await setRecipe(db, kit, [{ productId: bit, quantity: 5 }]);
 		await receive(bit, warehouse, 4);
 
 		await expect(
-			assembleKits(db, { kitSkuId: kit, quantity: 1, locationId: warehouse }),
+			assembleKits(db, {
+				kitProductId: kit,
+				quantity: 1,
+				locationId: warehouse,
+			}),
 		).rejects.toThrow(/Not enough stock.*BIT/);
 		expect(await onHand(bit, warehouse)).toBe(4);
 		expect(await onHand(kit, warehouse)).toBe(0);
@@ -185,17 +190,17 @@ describe("kits", () => {
 	test("an oversold kit can still be assembled", async () => {
 		const bit = await sku("BIT", "simple");
 		const kit = await sku("BIT-KIT", "kit");
-		await setRecipe(db, kit, [{ skuId: bit, quantity: 1 }]);
+		await setRecipe(db, kit, [{ productId: bit, quantity: 1 }]);
 		await receive(bit, warehouse, 5);
 		await recordSale(db, {
-			skuId: kit,
+			productId: kit,
 			quantity: 2,
 			locationId: warehouse,
 			reference: "order-1",
 		});
 
 		await assembleKits(db, {
-			kitSkuId: kit,
+			kitProductId: kit,
 			quantity: 1,
 			locationId: warehouse,
 		});
@@ -210,20 +215,20 @@ describe("setRecipe", () => {
 		const otherKit = await sku("OTHER-KIT", "kit");
 		const set = await sku("SET", "bundle");
 		const bigSet = await sku("BIG-SET", "bundle");
-		await setRecipe(db, kit, [{ skuId: bit, quantity: 1 }]);
+		await setRecipe(db, kit, [{ productId: bit, quantity: 1 }]);
 
 		await expect(
-			setRecipe(db, otherKit, [{ skuId: kit, quantity: 1 }]),
+			setRecipe(db, otherKit, [{ productId: kit, quantity: 1 }]),
 		).rejects.toThrow(/kit can't contain a kit/);
 		await expect(
-			setRecipe(db, bigSet, [{ skuId: set, quantity: 1 }]),
+			setRecipe(db, bigSet, [{ productId: set, quantity: 1 }]),
 		).rejects.toThrow(/bundle can't contain a bundle/);
 		await expect(
-			setRecipe(db, bit, [{ skuId: kit, quantity: 1 }]),
+			setRecipe(db, bit, [{ productId: kit, quantity: 1 }]),
 		).rejects.toThrow(/simple SKU/);
 		await setRecipe(db, set, [
-			{ skuId: kit, quantity: 1 },
-			{ skuId: bit, quantity: 2 },
+			{ productId: kit, quantity: 1 },
+			{ productId: bit, quantity: 2 },
 		]);
 	});
 });
@@ -234,16 +239,16 @@ describe("getAvailability", () => {
 		const bit = await sku("BIT", "simple");
 		const kit = await sku("BIT-KIT", "kit");
 		const set = await sku("SET", "bundle");
-		await setRecipe(db, kit, [{ skuId: bit, quantity: 1 }]);
+		await setRecipe(db, kit, [{ productId: bit, quantity: 1 }]);
 		await setRecipe(db, set, [
-			{ skuId: wrench, quantity: 2 },
-			{ skuId: kit, quantity: 1 },
+			{ productId: wrench, quantity: 2 },
+			{ productId: kit, quantity: 1 },
 		]);
 		await receive(wrench, warehouse, 5);
 		await receive(wrench, garage, 4);
 		await receive(bit, warehouse, 10);
 		await assembleKits(db, {
-			kitSkuId: kit,
+			kitProductId: kit,
 			quantity: 6,
 			locationId: warehouse,
 		});
@@ -266,7 +271,7 @@ describe("getAvailability", () => {
 	test("negative stock counts as zero", async () => {
 		const wrench = await sku("WRENCH", "simple");
 		await recordSale(db, {
-			skuId: wrench,
+			productId: wrench,
 			quantity: 2,
 			locationId: warehouse,
 			reference: "o",
@@ -274,5 +279,40 @@ describe("getAvailability", () => {
 		expect((await getAvailability(db, [wrench], [warehouse])).get(wrench)).toBe(
 			0,
 		);
+	});
+});
+
+describe("products", () => {
+	test("a barcode belongs to one product", async () => {
+		await db
+			.insert(schema.products)
+			.values({ sku: "A", name: "A", kind: "simple", barcode: "012345678905" });
+		await expect(
+			db.insert(schema.products).values({
+				sku: "B",
+				name: "B",
+				kind: "simple",
+				barcode: "012345678905",
+			}),
+		).rejects.toThrow();
+	});
+
+	test("a variant name needs a group", async () => {
+		await expect(
+			db
+				.insert(schema.products)
+				.values({ sku: "A", name: "A", kind: "simple", variantName: "Large" }),
+		).rejects.toThrow();
+		const [group] = await db
+			.insert(schema.productGroups)
+			.values({ name: "Flat box" })
+			.returning();
+		await db.insert(schema.products).values({
+			sku: "BOX-L",
+			name: "Flat box",
+			kind: "simple",
+			groupId: group.id,
+			variantName: "Large",
+		});
 	});
 });
