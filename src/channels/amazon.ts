@@ -108,7 +108,8 @@ const itemsPage = type({
 });
 
 const fulfillment: Record<string, string> = {
-	Pending: "UNFULFILLED",
+	// Payment hasn't cleared; Amazon says not to ship yet.
+	Pending: "AWAITING_PAYMENT",
 	Unshipped: "UNFULFILLED",
 	PartiallyShipped: "PARTIALLY_FULFILLED",
 	Shipped: "FULFILLED",

@@ -75,6 +75,12 @@ describe("amazonToChannelOrder", () => {
 		const o = amazonToChannelOrder(order({ OrderStatus: "Canceled" }), items);
 		expect(o.cancelledAt).toEqual(new Date("2026-10-08T13:00:00Z"));
 	});
+
+	test("a pending order waits for payment instead of going to ship", () => {
+		const o = amazonToChannelOrder(order({ OrderStatus: "Pending" }), items);
+		expect(o.fulfillmentStatus).toBe("AWAITING_PAYMENT");
+		expect(o.financialStatus).toBe("PENDING");
+	});
 });
 
 describe("ebayToChannelOrder", () => {

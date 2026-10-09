@@ -71,6 +71,13 @@
       "when": 1791584095354,
       "tag": "0009_productive_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791585517203,
+      "tag": "0010_amazon_awaiting_payment",
+      "breakpoints": true
     }
   ]
 }

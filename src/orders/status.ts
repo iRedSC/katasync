@@ -20,6 +20,8 @@ export function orderStatus(order: {
 			return { label: "No shipping needed" };
 		case "PARTIALLY_FULFILLED":
 			return { label: "Partly shipped", tone: "warning" };
+		case "AWAITING_PAYMENT":
+			return { label: "Waiting for payment" };
 		case "ON_HOLD":
 			return { label: "On hold", tone: "warning" };
 		default:

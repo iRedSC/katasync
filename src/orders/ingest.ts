@@ -20,7 +20,8 @@ export type ChannelOrder = {
 	placedAt: Date;
 	cancelledAt: Date | null;
 	// Shopify's words, which other channels map onto: UNFULFILLED,
-	// PARTIALLY_FULFILLED, FULFILLED, FULFILLMENT_NOT_REQUIRED, ON_HOLD.
+	// PARTIALLY_FULFILLED, FULFILLED, FULFILLMENT_NOT_REQUIRED, ON_HOLD. Plus
+	// AWAITING_PAYMENT for Amazon's Pending, which must not ship yet.
 	fulfillmentStatus: string;
 	// The marketplace ships it from its own stock (Amazon FBA). It never takes
 	// stock here: FBA quantities mirror what Amazon reports.
