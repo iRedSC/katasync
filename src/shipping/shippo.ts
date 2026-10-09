@@ -166,6 +166,7 @@ const transactionResponse = type({
 	status: "string",
 	"label_url?": "string | null",
 	"tracking_number?": "string | null",
+	"tracking_url_provider?": "string | null",
 	"messages?": message.array(),
 });
 
@@ -187,5 +188,23 @@ export async function buyLabel(rateId: string) {
 		id: body.object_id,
 		labelUrl: body.label_url,
 		trackingNumber: body.tracking_number ?? null,
+		trackingUrl: body.tracking_url_provider || null,
 	};
+}
+
+const refundResponse = type({ object_id: "string", status: "string" });
+
+// Asks for a label's postage back. QUEUED or PENDING means Shippo accepted
+// it and the carrier decides (USPS takes days); ERROR means no refund, say
+// because the label was already scanned.
+export async function refundLabel(transactionId: string) {
+	const body = refundResponse.assert(
+		await shippo("/refunds/", { transaction: transactionId, async: false }),
+	);
+	if (body.status === "ERROR") {
+		throw new Error(
+			"Shippo refused the refund; the label may already be in use",
+		);
+	}
+	return { status: body.status };
 }

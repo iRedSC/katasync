@@ -1,0 +1,206 @@
+import { eq } from "drizzle-orm";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import type { Db } from "#/db/client";
+import * as schema from "#/db/schema";
+import { createTestDb } from "#/test/db";
+import { type Outside, sendTracking, voidShipment } from "./handoff";
+import { assignOrderPins } from "./pins";
+
+let db: Db;
+let orderId: number;
+
+function fakes(overrides: Partial<Outside> = {}): Outside {
+	return {
+		shopifyFulfill: vi.fn(async () => "gid://shopify/Fulfillment/1"),
+		shopifyCancel: vi.fn(async () => {}),
+		ebayFulfill: vi.fn(async () => "ebay-f-1"),
+		refund: vi.fn(async () => ({ status: "QUEUED" })),
+		...overrides,
+	};
+}
+
+async function setUp(channel: "shopify" | "ebay") {
+	db = await createTestDb();
+	const [store] = await db
+		.insert(schema.stores)
+		.values({ channel, name: channel })
+		.returning();
+	[{ id: orderId }] = await db
+		.insert(schema.orders)
+		.values({
+			storeId: store.id,
+			externalId: channel === "shopify" ? "gid://shopify/Order/9" : "12-34",
+			name: "#9",
+			placedAt: new Date(),
+			fulfillmentStatus: "UNFULFILLED",
+			total: 30,
+			sourceUpdatedAt: new Date(),
+		})
+		.returning();
+	await db.insert(schema.orderLines).values({
+		orderId,
+		externalId: "line-1",
+		sku: "WRENCH",
+		title: "Wrench",
+		quantity: 2,
+		unitPrice: 15,
+	});
+	await assignOrderPins(db);
+}
+
+async function addLabel(
+	extra: Partial<typeof schema.shipments.$inferInsert> = {},
+) {
+	const [row] = await db
+		.insert(schema.shipments)
+		.values({
+			orderId,
+			contentsKey: "WRENCH×2",
+			lengthMm: 300,
+			widthMm: 200,
+			heightMm: 100,
+			weightGrams: 600,
+			provider: "shippo",
+			carrier: "USPS",
+			service: "usps_ground_advantage",
+			serviceName: "USPS Ground Advantage",
+			cost: 7.08,
+			trackingNumber: "9400100000000000000000",
+			trackingUrl: "https://tools.usps.com/x",
+			labelUrl: "https://example.com/label.pdf",
+			externalId: `tx-${Math.random()}`,
+			test: false,
+			...extra,
+		})
+		.returning();
+	return row.id;
+}
+
+const order = async () =>
+	(
+		await db.select().from(schema.orders).where(eq(schema.orders.id, orderId))
+	)[0];
+const label = async (id: number) =>
+	(
+		await db.select().from(schema.shipments).where(eq(schema.shipments.id, id))
+	)[0];
+
+describe("sendTracking", () => {
+	beforeEach(() => setUp("shopify"));
+
+	test("marks the order shipped on Shopify and here", async () => {
+		const outside = fakes();
+		const id = await addLabel();
+		const result = await sendTracking(db, id, outside);
+
+		expect(result.sent).toBe(true);
+		expect(outside.shopifyFulfill).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			{
+				company: "USPS",
+				number: "9400100000000000000000",
+				url: "https://tools.usps.com/x",
+			},
+		);
+		expect((await label(id)).channelFulfillmentId).toBe(
+			"gid://shopify/Fulfillment/1",
+		);
+		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+		expect((await order()).pin).toBeNull();
+	});
+
+	test("never sends a test label's fake tracking", async () => {
+		const outside = fakes();
+		const result = await sendTracking(
+			db,
+			await addLabel({ test: true }),
+			outside,
+		);
+		expect(result.sent).toBe(false);
+		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
+		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
+	});
+
+	test("a refusal is recorded and the order stays to ship", async () => {
+		const outside = fakes({
+			shopifyFulfill: vi.fn(async () => {
+				throw new Error("Access denied");
+			}),
+		});
+		const id = await addLabel();
+		const result = await sendTracking(db, id, outside);
+		expect(result).toEqual({
+			sent: false,
+			message: "Tracking didn't reach Shopify: Access denied",
+		});
+		expect((await label(id)).channelError).toBe("Access denied");
+		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect((await order()).pin).not.toBeNull();
+	});
+});
+
+describe("sendTracking on eBay", () => {
+	beforeEach(() => setUp("ebay"));
+
+	test("sends every line with its quantity", async () => {
+		const outside = fakes();
+		await sendTracking(db, await addLabel(), outside);
+		expect(outside.ebayFulfill).toHaveBeenCalledWith(
+			"12-34",
+			expect.objectContaining({
+				lineItems: [{ lineItemId: "line-1", quantity: 2 }],
+				carrier: "USPS",
+				trackingNumber: "9400100000000000000000",
+			}),
+		);
+	});
+});
+
+describe("voidShipment", () => {
+	beforeEach(() => setUp("shopify"));
+
+	test("refunds once, cancels on Shopify, and puts the order back", async () => {
+		const outside = fakes();
+		const id = await addLabel();
+		await sendTracking(db, id, outside);
+
+		const result = await voidShipment(db, id, outside);
+		expect(result.refundStatus).toBe("QUEUED");
+		expect(outside.shopifyCancel).toHaveBeenCalledWith(
+			"gid://shopify/Fulfillment/1",
+		);
+		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect((await order()).pin).not.toBeNull();
+
+		await expect(voidShipment(db, id, outside)).rejects.toThrow(
+			"already voided",
+		);
+		expect(outside.refund).toHaveBeenCalledTimes(1);
+	});
+
+	test("a refused refund leaves the label live", async () => {
+		const outside = fakes({
+			refund: vi.fn(async () => {
+				throw new Error("already scanned");
+			}),
+		});
+		const id = await addLabel();
+		await expect(voidShipment(db, id, outside)).rejects.toThrow(
+			"already scanned",
+		);
+		expect((await label(id)).voidedAt).toBeNull();
+	});
+
+	test("if Shopify won't cancel, the order isn't put back", async () => {
+		const outside = fakes({
+			shopifyCancel: vi.fn(async () => {
+				throw new Error("nope");
+			}),
+		});
+		const id = await addLabel();
+		await sendTracking(db, id, outside);
+		const result = await voidShipment(db, id, outside);
+		expect(result.notes[0]).toContain("Shopify still shows it shipped");
+		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+	});
+});

@@ -6,6 +6,8 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Button } from "#/components/ui/button";
@@ -13,7 +15,8 @@ import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
-import { getOrder } from "#/server/orders";
+import { getOrder, type OrderDetail } from "#/server/orders";
+import { resendTracking, voidLabel } from "#/server/shipping";
 
 export const Route = createFileRoute("/orders/$id")({
 	loader: ({ params }) => getOrder({ data: { id: Number(params.id) } }),
@@ -21,7 +24,7 @@ export const Route = createFileRoute("/orders/$id")({
 });
 
 function OrderPage() {
-	const { order, lines } = Route.useLoaderData();
+	const { order, lines, labels } = Route.useLoaderData();
 	const router = useRouter();
 	const navigate = useNavigate();
 	const canGoBack = useCanGoBack();
@@ -131,6 +134,19 @@ function OrderPage() {
 				</Card>
 
 				<div className="flex flex-col gap-4">
+					{labels.length > 0 && (
+						<Card title="Labels" flush>
+							<ul>
+								{labels.map((l) => (
+									<LabelRow
+										key={l.id}
+										label={l}
+										channel={order.salesChannel ?? order.store}
+									/>
+								))}
+							</ul>
+						</Card>
+					)}
 					<Card title="Ship to">
 						<p className="font-medium">{order.customerName ?? "No name"}</p>
 						<p className="text-muted-foreground">
@@ -163,5 +179,122 @@ function Line({
 				{value}
 			</dd>
 		</div>
+	);
+}
+
+// One bought label: where its tracking stands, with a retry when it didn't
+// reach the marketplace and a two-step void.
+function LabelRow({
+	label: l,
+	channel,
+}: {
+	label: OrderDetail["labels"][number];
+	channel: string;
+}) {
+	const router = useRouter();
+	const [confirm, setConfirm] = useState(false);
+	const [busy, setBusy] = useState(false);
+
+	async function act(work: () => Promise<string>) {
+		setBusy(true);
+		try {
+			toast.success(await work());
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err));
+		} finally {
+			setBusy(false);
+			setConfirm(false);
+			router.invalidate();
+		}
+	}
+
+	const state = l.voidedAt
+		? {
+				tone: undefined,
+				text: `Voided · refund ${(l.refundStatus ?? "requested").toLowerCase()}`,
+			}
+		: l.test
+			? { tone: "info" as const, text: "Test label" }
+			: l.channelSentAt
+				? { tone: "success" as const, text: `Tracking sent to ${channel}` }
+				: l.channelError
+					? { tone: "critical" as const, text: "Tracking not sent" }
+					: { tone: "warning" as const, text: "Tracking not sent yet" };
+
+	return (
+		<li className="flex flex-col gap-2 border-t px-4 py-3 first:border-t-0">
+			<div className="flex items-start justify-between gap-2">
+				<div className={l.voidedAt ? "text-muted-foreground line-through" : ""}>
+					<p className="font-medium">{l.serviceName}</p>
+					<p className="tabular-nums">{formatMoney(l.cost)}</p>
+				</div>
+				<Badge tone={state.tone}>{state.text}</Badge>
+			</div>
+			{l.trackingNumber && (
+				<a
+					href={l.trackingUrl ?? undefined}
+					target="_blank"
+					rel="noreferrer"
+					className="font-mono text-xs text-link hover:underline"
+				>
+					{l.trackingNumber}
+				</a>
+			)}
+			{l.channelError && !l.channelSentAt && !l.voidedAt && (
+				<p className="text-critical-text">{l.channelError}</p>
+			)}
+			{!l.voidedAt && (
+				<div className="flex flex-wrap gap-2">
+					<Button asChild size="sm" variant="outline">
+						<a href={l.labelUrl} target="_blank" rel="noreferrer">
+							Print
+						</a>
+					</Button>
+					{!l.channelSentAt && !l.test && (
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={busy}
+							onClick={() =>
+								act(async () => {
+									const r = await resendTracking({ data: { id: l.id } });
+									if (!r.sent) throw new Error(r.message);
+									return r.message;
+								})
+							}
+						>
+							Send tracking
+						</Button>
+					)}
+					{confirm ? (
+						<Button
+							size="sm"
+							variant="destructive"
+							disabled={busy}
+							onClick={() =>
+								act(async () => {
+									const r = await voidLabel({ data: { id: l.id } });
+									return [
+										`Voided, refund ${r.refundStatus.toLowerCase()}.`,
+										...r.notes,
+									].join(" ");
+								})
+							}
+						>
+							Void and refund {formatMoney(l.cost)}?
+						</Button>
+					) : (
+						<Button
+							size="sm"
+							variant="ghost"
+							disabled={busy}
+							onClick={() => setConfirm(true)}
+						>
+							Void
+						</Button>
+					)}
+				</div>
+			)}
+		</li>
 	);
 }

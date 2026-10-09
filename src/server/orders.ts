@@ -3,7 +3,14 @@ import { type } from "arktype";
 import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
-import { locations, orderLines, orders, products, stores } from "#/db/schema";
+import {
+	locations,
+	orderLines,
+	orders,
+	products,
+	shipments,
+	stores,
+} from "#/db/schema";
 import { cityLine } from "#/lib/format";
 import { needsShipping } from "#/orders/to-ship";
 import { contentsKey } from "#/shipping/contents";
@@ -107,7 +114,25 @@ export const getOrder = createServerFn({ method: "GET" })
 			.leftJoin(products, eq(products.id, orderLines.productId))
 			.where(eq(orderLines.orderId, data.id))
 			.orderBy(orderLines.id);
-		return { order, lines };
+		const labels = await db
+			.select({
+				id: shipments.id,
+				serviceName: shipments.serviceName,
+				cost: shipments.cost,
+				trackingNumber: shipments.trackingNumber,
+				trackingUrl: shipments.trackingUrl,
+				labelUrl: shipments.labelUrl,
+				test: shipments.test,
+				channelSentAt: shipments.channelSentAt,
+				channelError: shipments.channelError,
+				voidedAt: shipments.voidedAt,
+				refundStatus: shipments.refundStatus,
+				createdAt: shipments.createdAt,
+			})
+			.from(shipments)
+			.where(eq(shipments.orderId, data.id))
+			.orderBy(shipments.createdAt);
+		return { order, lines, labels };
 	});
 
 // Everything the invoices for orders still to ship print, in pin order so

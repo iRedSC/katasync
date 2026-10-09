@@ -204,3 +204,53 @@ export async function syncEbay(db: Db) {
 	await advanceOrderCursor(db, store.id, startedAt);
 	return { store: store.name, orders: count, problems };
 }
+
+// eBay's carrier codes for the carriers Shippo sells; anything else is sent
+// as eBay's "Other".
+export function ebayCarrierCode(carrier: string) {
+	const known: Record<string, string> = {
+		USPS: "USPS",
+		UPS: "UPS",
+		FEDEX: "FEDEX",
+		"DHL EXPRESS": "DHL",
+		DHL: "DHL",
+	};
+	return known[carrier.trim().toUpperCase()] ?? "Other";
+}
+
+// Marks these line items shipped with this tracking; eBay tells the buyer.
+// Returns eBay's id for the shipping fulfillment. eBay has no way to take
+// one back, so a voided label's tracking stays on eBay.
+export async function ebayFulfill(
+	orderId: string,
+	shipment: {
+		lineItems: { lineItemId: string; quantity: number }[];
+		carrier: string;
+		trackingNumber: string;
+		shippedAt: Date;
+	},
+) {
+	const response = await fetch(
+		`${API}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}/shipping_fulfillment`,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${await accessToken()}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				lineItems: shipment.lineItems,
+				shippedDate: shipment.shippedAt.toISOString(),
+				shippingCarrierCode: ebayCarrierCode(shipment.carrier),
+				trackingNumber: shipment.trackingNumber,
+			}),
+		},
+	);
+	if (!response.ok) {
+		throw new Error(
+			`eBay refused: ${response.status} ${await response.text()}`,
+		);
+	}
+	// The new fulfillment's id is the last part of the Location header.
+	return response.headers.get("location")?.split("/").pop() ?? null;
+}

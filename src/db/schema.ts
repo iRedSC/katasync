@@ -365,10 +365,21 @@ export const shipments = pgTable(
 		cost: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		insuredAmount: numeric({ precision: 12, scale: 2, mode: "number" }),
 		trackingNumber: text(),
+		trackingUrl: text(),
 		labelUrl: text().notNull(),
 		externalId: text().notNull().unique(),
 		// Bought with a test key: a sample label that can't actually ship.
 		test: boolean().notNull(),
+		// Handing tracking to the marketplace the order came from. Sent: when
+		// it got there, and the marketplace's id for that fulfillment (Shopify
+		// needs it to cancel on void). Not sent: why, shown with a retry.
+		channelSentAt: timestamp({ withTimezone: true }),
+		channelFulfillmentId: text(),
+		channelError: text(),
+		// Voiding asks the provider for the postage back. Refunds can take
+		// days (USPS); refundStatus is the provider's word on it.
+		voidedAt: timestamp({ withTimezone: true }),
+		refundStatus: text(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

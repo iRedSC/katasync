@@ -420,3 +420,92 @@ function toChannelOrder(
 		})),
 	};
 }
+
+const userErrors = type({
+	field: "string[] | null",
+	message: "string",
+}).array();
+
+const openFulfillmentOrders = type({
+	order: type({
+		fulfillmentOrders: {
+			nodes: type({ id: "string", status: "string" }).array(),
+		},
+	}).or("null"),
+});
+
+const fulfillmentCreated = type({
+	fulfillmentCreate: {
+		fulfillment: type({ id: "string" }).or("null"),
+		userErrors,
+	},
+});
+
+// Marks everything still open on the order as shipped with this tracking,
+// and has Shopify email the customer. Returns Shopify's fulfillment id,
+// which voiding needs. Needs write_merchant_managed_fulfillment_orders.
+export async function shopifyFulfill(
+	orderId: string,
+	tracking: { company: string; number: string; url: string | null },
+) {
+	const { order } = openFulfillmentOrders.assert(
+		await shopifyQuery(
+			"query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 20) { nodes { id status } } } }",
+			{ id: orderId },
+		),
+	);
+	if (!order) throw new Error("Shopify has no such order");
+	const open = order.fulfillmentOrders.nodes.filter((f) =>
+		["OPEN", "IN_PROGRESS"].includes(f.status),
+	);
+	if (open.length === 0) {
+		throw new Error("Shopify shows nothing left to ship on this order");
+	}
+	const { fulfillmentCreate } = fulfillmentCreated.assert(
+		await shopifyQuery(
+			"mutation($fulfillment: FulfillmentInput!) { fulfillmentCreate(fulfillment: $fulfillment) { fulfillment { id } userErrors { field message } } }",
+			{
+				fulfillment: {
+					lineItemsByFulfillmentOrder: open.map((f) => ({
+						fulfillmentOrderId: f.id,
+					})),
+					trackingInfo: {
+						company: tracking.company,
+						number: tracking.number,
+						...(tracking.url ? { url: tracking.url } : {}),
+					},
+					notifyCustomer: true,
+				},
+			},
+		),
+	);
+	if (
+		fulfillmentCreate.userErrors.length > 0 ||
+		!fulfillmentCreate.fulfillment
+	) {
+		throw new Error(
+			`Shopify refused: ${fulfillmentCreate.userErrors.map((e) => e.message).join("; ")}`,
+		);
+	}
+	return fulfillmentCreate.fulfillment.id;
+}
+
+const fulfillmentCancelled = type({
+	fulfillmentCancel: { userErrors },
+});
+
+// Undoes shopifyFulfill after a label is voided: the order goes back to
+// unfulfilled on Shopify.
+export async function shopifyCancelFulfillment(fulfillmentId: string) {
+	const { fulfillmentCancel } = fulfillmentCancelled.assert(
+		await shopifyQuery(
+			"mutation($id: ID!) { fulfillmentCancel(id: $id) { userErrors { field message } } }",
+			{ id: fulfillmentId },
+		),
+	);
+	if (fulfillmentCancel.userErrors.length > 0) {
+		throw new Error(
+			`Shopify refused: ${fulfillmentCancel.userErrors.map((e) => e.message).join("; ")}`,
+		);
+	}
+}

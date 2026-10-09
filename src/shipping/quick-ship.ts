@@ -1,4 +1,4 @@
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	orderLines,
@@ -81,7 +81,7 @@ export async function orderForShipping(db: Db, pin: number) {
 	const [{ labels }] = await db
 		.select({ labels: sql<number>`count(*)::int` })
 		.from(shipments)
-		.where(eq(shipments.orderId, order.id));
+		.where(and(eq(shipments.orderId, order.id), isNull(shipments.voidedAt)));
 
 	return {
 		order,

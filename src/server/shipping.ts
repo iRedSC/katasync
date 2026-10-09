@@ -1,9 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import { locations, orders, packages, shipments } from "#/db/schema";
+import { sendTracking, voidShipment } from "#/shipping/handoff";
 import {
 	freePackagePin,
 	orderForShipping,
@@ -144,14 +145,36 @@ export const quickShipRates = createServerFn({ method: "POST" })
 		return { rates: rankRates(rates, history), notes, test: shippoIsTest() };
 	});
 
-// Buys the chosen label and records it. The rate is read back from Shippo,
-// so the recorded cost and service are Shippo's, not the browser's.
+// Buys the chosen label, records it, and sends the tracking to the order's
+// marketplace. The rate is read back from Shippo, so the recorded cost and
+// service are Shippo's, not the browser's. An order that already has a live
+// label only gets another when asked (a second box), never by a double press.
 export const quickShipBuy = createServerFn({ method: "POST" })
-	.validator(type({ ...parcel, contentsKey: "string", rateId: "string > 0" }))
+	.validator(
+		type({
+			...parcel,
+			contentsKey: "string",
+			rateId: "string > 0",
+			"another?": "boolean",
+		}),
+	)
 	.handler(async ({ data }) => {
+		const db = getDb();
+		const [existing] = await db
+			.select({ serviceName: shipments.serviceName })
+			.from(shipments)
+			.where(
+				and(eq(shipments.orderId, data.orderId), isNull(shipments.voidedAt)),
+			)
+			.limit(1);
+		if (existing && !data.another) {
+			throw new Error(
+				`This order already has a ${existing.serviceName} label. Void it first, or confirm a second box.`,
+			);
+		}
 		const rate = await getRate(data.rateId);
 		const label = await buyLabel(data.rateId);
-		const [saved] = await getDb()
+		const [saved] = await db
 			.insert(shipments)
 			.values({
 				orderId: data.orderId,
@@ -168,10 +191,20 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 				cost: rate.cost,
 				insuredAmount: data.insureAmount,
 				trackingNumber: label.trackingNumber,
+				trackingUrl: label.trackingUrl,
 				labelUrl: label.labelUrl,
 				externalId: label.id,
 				test: shippoIsTest(),
 			})
 			.returning();
-		return saved;
+		return { ...saved, handoff: await sendTracking(db, saved.id) };
 	});
+
+// Tries sending a label's tracking to the marketplace again.
+export const resendTracking = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(async ({ data }) => sendTracking(getDb(), data.id));
+
+export const voidLabel = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(async ({ data }) => voidShipment(getDb(), data.id));

@@ -22,6 +22,7 @@ import {
 	quickShipBuy,
 	quickShipLookup,
 	quickShipRates,
+	voidLabel,
 } from "#/server/shipping";
 import type { Rate } from "#/shipping/shippo";
 
@@ -232,6 +233,8 @@ export function QuickShip() {
 					insureAmount,
 					contentsKey: found.contentsKey,
 					rateId: rate.id,
+					// The pin step already showed "Already has a label".
+					another: found.labelsBought > 0,
 				},
 			}),
 		);
@@ -350,7 +353,12 @@ export function QuickShip() {
 					)}
 
 					{step === "rates" && !(error && !rates) && (
-						<RatesStep rates={rates} busy={busy} onBuy={buy} />
+						<RatesStep
+							rates={rates}
+							busy={busy}
+							another={(found?.labelsBought ?? 0) > 0}
+							onBuy={buy}
+						/>
 					)}
 
 					{step === "done" && bought && (
@@ -771,10 +779,12 @@ function InsureStep({
 function RatesStep({
 	rates,
 	busy,
+	another,
 	onBuy,
 }: {
 	rates: Rates | null;
 	busy: boolean;
+	another: boolean;
 	onBuy: (rate: Rate) => void;
 }) {
 	const [selected, setSelected] = useState(0);
@@ -815,7 +825,11 @@ function RatesStep({
 		>
 			<div className="flex items-baseline justify-between">
 				<p className="text-xl font-semibold">
-					{busy ? "Buying label…" : "Enter buys the label"}
+					{busy
+						? "Buying label…"
+						: another
+							? "Already has a label · Enter buys a second"
+							: "Enter buys the label"}
 				</p>
 				{rates.test && <Badge tone="info">Test labels</Badge>}
 			</div>
@@ -861,23 +875,33 @@ function RatesStep({
 function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 	const next = useRef<HTMLButtonElement>(null);
 	useEffect(() => next.current?.focus(), []);
-	return (
-		<div className="flex flex-col items-center gap-3 rounded-xl bg-success-surface px-6 py-8 text-center">
-			<CircleCheck className="size-16 text-success-icon" />
-			<p className="text-4xl font-bold">Label bought</p>
-			<p className="text-xl">
-				{bought.serviceName} ·{" "}
-				<span className="font-semibold">{formatMoney(bought.cost)}</span>
-			</p>
-			{bought.test && (
-				<Badge tone="info">Test label: it won't ship anything</Badge>
-			)}
-			{bought.trackingNumber && (
-				<p className="font-mono text-muted-foreground">
-					{bought.trackingNumber}
-				</p>
-			)}
-			<div className="mt-2 flex items-center gap-4">
+	const [voiding, setVoiding] = useState<"ask" | "busy" | null>(null);
+	const [voided, setVoided] = useState<string | null>(null);
+	const [voidError, setVoidError] = useState<string | null>(null);
+
+	async function confirmVoid() {
+		setVoiding("busy");
+		setVoidError(null);
+		try {
+			const result = await voidLabel({ data: { id: bought.id } });
+			setVoided(
+				[
+					`Label voided, refund ${result.refundStatus.toLowerCase()}.`,
+					...result.notes,
+				].join(" "),
+			);
+		} catch (err) {
+			setVoidError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setVoiding(null);
+		}
+	}
+
+	if (voided) {
+		return (
+			<div className="flex flex-col items-center gap-4 py-4 text-center">
+				<p className="text-3xl font-bold">Label voided</p>
+				<p className="text-lg text-muted-foreground">{voided}</p>
 				<button
 					ref={next}
 					type="button"
@@ -886,15 +910,77 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 				>
 					Next order
 				</button>
-				<a
-					href={bought.labelUrl}
-					target="_blank"
-					rel="noreferrer"
-					className="text-lg text-link hover:underline"
-				>
-					Open label again
-				</a>
 			</div>
+		);
+	}
+
+	return (
+		<div className="flex flex-col gap-3">
+			<div className="flex flex-col items-center gap-3 rounded-xl bg-success-surface px-6 py-8 text-center">
+				<CircleCheck className="size-16 text-success-icon" />
+				<p className="text-4xl font-bold">Label bought</p>
+				<p className="text-xl">
+					{bought.serviceName} ·{" "}
+					<span className="font-semibold">{formatMoney(bought.cost)}</span>
+				</p>
+				{bought.test && (
+					<Badge tone="info">Test label: it won't ship anything</Badge>
+				)}
+				{bought.trackingNumber && (
+					<p className="font-mono text-muted-foreground">
+						{bought.trackingNumber}
+					</p>
+				)}
+				{bought.handoff.sent && (
+					<p className="text-lg font-semibold text-success-text">
+						{bought.handoff.message}
+					</p>
+				)}
+				<div className="mt-2 flex items-center gap-4">
+					<button
+						ref={next}
+						type="button"
+						onClick={onNext}
+						className="h-14 rounded-xl bg-[#303030] px-8 text-xl font-semibold text-white outline-none hover:bg-[#1a1a1a] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+					>
+						Next order
+					</button>
+					<a
+						href={bought.labelUrl}
+						target="_blank"
+						rel="noreferrer"
+						className="text-lg text-link hover:underline"
+					>
+						Open label again
+					</a>
+					{voiding === "ask" ? (
+						<button
+							type="button"
+							onClick={confirmVoid}
+							className="text-lg font-semibold text-critical-text hover:underline"
+						>
+							Void and refund {formatMoney(bought.cost)}?
+						</button>
+					) : (
+						<button
+							type="button"
+							disabled={voiding === "busy"}
+							onClick={() => setVoiding("ask")}
+							className="text-lg text-muted-foreground hover:underline"
+						>
+							{voiding === "busy" ? "Voiding…" : "Void label"}
+						</button>
+					)}
+				</div>
+			</div>
+			{!bought.handoff.sent && (
+				<Notice tone={bought.test ? "info" : "critical"}>
+					{bought.handoff.message}
+					{!bought.test &&
+						". Retry from the order page; it stays on To ship until then."}
+				</Notice>
+			)}
+			{voidError && <Notice tone="critical">{voidError}</Notice>}
 		</div>
 	);
 }
