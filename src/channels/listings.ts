@@ -100,9 +100,12 @@ export async function mapListing(
 	});
 }
 
-// Maps every unmapped listing whose channel SKU exactly matches a product SKU
-// or alias. Returns how many were mapped. Anything else is left for a person.
-export async function autoMapListings(db: Db): Promise<number> {
+// Maps every unmapped listing to the product its channel SKU names: an exact
+// SKU or alias first, then the same SKU in different capitals ("tt-052576" for
+// "TT-052576") when exactly one product matches. Returns the listings mapped.
+// Anything else is left for a person.
+export async function autoMapListings(db: Db): Promise<number[]> {
+	const notFbaBundle = sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`;
 	return db.transaction(async (tx) => {
 		const bySku = await tx
 			.update(listings)
@@ -112,7 +115,7 @@ export async function autoMapListings(db: Db): Promise<number> {
 				and(
 					isNull(listings.productId),
 					eq(listings.externalSku, products.sku),
-					sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`,
+					notFbaBundle,
 				),
 			)
 			.returning({ id: listings.id });
@@ -125,12 +128,63 @@ export async function autoMapListings(db: Db): Promise<number> {
 				and(
 					isNull(listings.productId),
 					eq(listings.externalSku, productAliases.alias),
-					sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`,
+					notFbaBundle,
 				),
 			)
 			.returning({ id: listings.id });
-		return bySku.length + byAlias.length;
+		const byCase = await tx
+			.update(listings)
+			.set({ productId: products.id })
+			.from(products)
+			.where(
+				and(
+					isNull(listings.productId),
+					sql`lower(trim(${listings.externalSku})) = lower(${products.sku})`,
+					sql`(select count(*) from ${products} p2 where lower(p2.sku) = lower(trim(${listings.externalSku}))) = 1`,
+					notFbaBundle,
+				),
+			)
+			.returning({ id: listings.id });
+		return [...bySku, ...byAlias, ...byCase].map((l) => l.id);
 	});
+}
+
+// Turns a listing for something not yet in the catalog into a product,
+// filled in from the listing, and maps the listing to it.
+export async function createProductFromListing(db: Db, listingId: number) {
+	return db.transaction(async (tx) => {
+		const [listing] = await tx
+			.select()
+			.from(listings)
+			.where(eq(listings.id, listingId));
+		if (!listing) throw new LedgerError(`Unknown listing ${listingId}`);
+		const sku = listing.externalSku?.trim();
+		if (!sku)
+			throw new LedgerError("This listing has no SKU, so it's a custom item");
+		const [taken] = await tx
+			.select({ sku: products.sku })
+			.from(products)
+			.where(sql`lower(${products.sku}) = lower(${sku})`);
+		if (taken) {
+			throw new LedgerError(
+				`${taken.sku} already exists; match the listing to it instead`,
+			);
+		}
+		const [product] = await tx
+			.insert(products)
+			.values({ sku, name: cleanTitle(listing.title), kind: "simple" })
+			.returning({ id: products.id, sku: products.sku });
+		await tx
+			.update(listings)
+			.set({ productId: product.id })
+			.where(eq(listings.id, listingId));
+		return product;
+	});
+}
+
+// Shopify names single-variant products "Name - Default Title".
+export function cleanTitle(title: string) {
+	return title.replace(/ - Default Title$/, "").trim();
 }
 
 export async function getUnmappedListings(db: Db) {

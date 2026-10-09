@@ -1,11 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { createProductFromListing, mapListing } from "#/channels/listings";
+import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
 	listings,
 	locations,
 	movements,
+	orderLines,
+	orders,
 	productAliases,
 	productComponents,
 	productGroups,
@@ -15,6 +19,7 @@ import {
 } from "#/db/schema";
 import { getAvailability, getBundleBlockers } from "#/inventory/availability";
 import { recordCount as recordShelfCount, undoBatch } from "#/inventory/ledger";
+import { applyListingsToOrders } from "#/orders/remap";
 
 async function ownedLocationIds() {
 	const rows = await getDb()
@@ -317,25 +322,78 @@ export const listStores = createServerFn({ method: "GET" }).handler(async () =>
 	getDb().select().from(stores).orderBy(stores.name),
 );
 
+// Listings that need a product, most-sold first so the ones that matter come
+// up top. Listings without a SKU are custom products and never appear.
 export const listUnmappedListings = createServerFn({ method: "GET" }).handler(
-	async () =>
-		getDb()
+	async () => {
+		const sold = getDb()
+			.select({
+				storeId: orders.storeId,
+				listingExternalId: orderLines.listingExternalId,
+				units: sql<number>`sum(${orderLines.quantity})::int`.as("units"),
+			})
+			.from(orderLines)
+			.innerJoin(orders, eq(orders.id, orderLines.orderId))
+			.groupBy(orders.storeId, orderLines.listingExternalId)
+			.as("sold");
+		return getDb()
 			.select({
 				id: listings.id,
 				store: stores.name,
 				channel: stores.channel,
-				externalId: listings.externalId,
 				externalSku: listings.externalSku,
 				title: listings.title,
 				fulfillment: listings.fulfillment,
+				unitsSold: sql<number>`coalesce(${sold.units}, 0)`,
 			})
 			.from(listings)
 			.innerJoin(stores, eq(stores.id, listings.storeId))
-			// Listings with no SKU are custom products; there's nothing to match.
+			.leftJoin(
+				sold,
+				and(
+					eq(sold.storeId, listings.storeId),
+					eq(sold.listingExternalId, listings.externalId),
+				),
+			)
 			.where(
 				sql`${listings.productId} is null and ${listings.externalSku} is not null`,
-			),
+			)
+			.orderBy(sql`coalesce(${sold.units}, 0) desc`, listings.title);
+	},
 );
+
+// Matches a listing to an existing product, then catches up past orders.
+export const matchListing = createServerFn({ method: "POST" })
+	.validator(type({ listingId: "number.integer > 0", sku: "string > 0" }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [product] = await db
+			.select({ id: products.id, sku: products.sku })
+			.from(products)
+			.where(eq(products.sku, data.sku));
+		if (!product) throw new Error(`No product ${data.sku}`);
+		await mapListing(db, data.listingId, product.id);
+		const caughtUp = await applyListingsToOrders(
+			db,
+			[data.listingId],
+			await shippingLocation(db),
+		);
+		return { sku: product.sku, ordersUpdated: caughtUp.lines };
+	});
+
+// Creates the product a listing is selling, filled in from the listing.
+export const createListingProduct = createServerFn({ method: "POST" })
+	.validator(type({ listingId: "number.integer > 0" }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const product = await createProductFromListing(db, data.listingId);
+		const caughtUp = await applyListingsToOrders(
+			db,
+			[data.listingId],
+			await shippingLocation(db),
+		);
+		return { sku: product.sku, ordersUpdated: caughtUp.lines };
+	});
 
 // Records what someone counted on the shelf. The app works out the change, and
 // the location when there's only one.

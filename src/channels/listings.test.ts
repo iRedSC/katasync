@@ -6,6 +6,7 @@ import { createProduct, createTestDb } from "#/test/db";
 import {
 	autoMapListings,
 	type ChannelListing,
+	createProductFromListing,
 	getListingsForProducts,
 	getUnmappedListings,
 	mapListing,
@@ -93,12 +94,13 @@ describe("mapListing", () => {
 });
 
 describe("autoMapListings", () => {
-	test("maps exact SKU matches and leaves the rest for a person", async () => {
+	test("maps SKU matches and leaves the rest for a person", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		const set = await createProduct(db, "SET", "bundle");
 		await syncListings(db, shopify, [
 			listing("1", { externalSku: "WRENCH" }),
 			listing("2", { externalSku: "wrench" }),
+			listing("3", { externalSku: "NOT-IN-CATALOG" }),
 		]);
 		await syncListings(db, amazon, [
 			listing("WRENCH"),
@@ -106,18 +108,73 @@ describe("autoMapListings", () => {
 			listing("NO-SKU", { externalSku: null }),
 		]);
 
-		expect(await autoMapListings(db)).toBe(2);
+		expect(await autoMapListings(db)).toHaveLength(3);
 		expect((await getListing(shopify, "1")).productId).toBe(wrench);
+		// Different capitals, but only one product it could be.
+		expect((await getListing(shopify, "2")).productId).toBe(wrench);
 		expect((await getListing(amazon, "WRENCH")).productId).toBe(wrench);
 		expect((await getListing(amazon, "SET")).productId).toBeNull();
 
 		const unmapped = await getUnmappedListings(db);
-		expect(unmapped.map((l) => l.externalId).sort()).toEqual(["2", "SET"]);
+		expect(unmapped.map((l) => l.externalId).sort()).toEqual(["3", "SET"]);
 
 		const forWrench = await getListingsForProducts(db, [wrench, set]);
 		expect(forWrench.map((l) => l.channel).sort()).toEqual([
 			"amazon",
 			"shopify",
+			"shopify",
 		]);
+	});
+});
+
+describe("matching by SKU in different capitals", () => {
+	test("maps when exactly one product matches, ignoring case and spaces", async () => {
+		const spring = await createProduct(db, "TT-052576", "simple");
+		await syncListings(db, shopify, [
+			listing("1", { externalSku: " tt-052576 " }),
+		]);
+		expect(await autoMapListings(db)).toHaveLength(1);
+		expect((await getListing(shopify, "1")).productId).toBe(spring);
+	});
+
+	test("leaves it for a person when two products would match", async () => {
+		await createProduct(db, "AB-1", "simple");
+		await createProduct(db, "ab-1", "simple");
+		await syncListings(db, shopify, [listing("1", { externalSku: "Ab-1" })]);
+		expect(await autoMapListings(db)).toHaveLength(0);
+	});
+});
+
+describe("createProductFromListing", () => {
+	test("fills the product in from the listing and maps it", async () => {
+		await syncListings(db, shopify, [
+			listing("1", {
+				externalSku: "TPRO-FAN",
+				title: "Tapepro Flat Applicator Nozzle - Default Title",
+			}),
+		]);
+		const { id } = await getListing(shopify, "1");
+		const product = await createProductFromListing(db, id);
+		const [row] = await db
+			.select()
+			.from(schema.products)
+			.where(eq(schema.products.id, product.id));
+		expect(row).toMatchObject({
+			sku: "TPRO-FAN",
+			name: "Tapepro Flat Applicator Nozzle",
+			kind: "simple",
+		});
+		expect((await getListing(shopify, "1")).productId).toBe(product.id);
+	});
+
+	test("refuses a SKU that already exists in other capitals", async () => {
+		await createProduct(db, "TPRO-FAN", "simple");
+		await syncListings(db, shopify, [
+			listing("1", { externalSku: "tpro-fan" }),
+		]);
+		const { id } = await getListing(shopify, "1");
+		await expect(createProductFromListing(db, id)).rejects.toThrow(
+			/match the listing/,
+		);
 	});
 });

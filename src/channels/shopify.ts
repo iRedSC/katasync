@@ -1,7 +1,8 @@
 import { type } from "arktype";
 import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
-import { autoMapListings, syncListings } from "./listings";
+import { applyListingsToOrders } from "#/orders/remap";
+import { autoMapListings, cleanTitle, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
 const API_VERSION = "2026-10";
@@ -173,7 +174,7 @@ export async function syncShopify(
 				nodes.map((v) => ({
 					externalId: v.id,
 					externalSku: v.sku || null,
-					title: v.displayName,
+					title: cleanTitle(v.displayName),
 					fulfillment: "merchant" as const,
 				})),
 			);
@@ -181,9 +182,10 @@ export async function syncShopify(
 				? (page.productVariants.pageInfo.endCursor ?? null)
 				: null;
 		} while (cursor);
-	const mapped = options.listings ? await autoMapListings(db) : 0;
-
 	const locationId = await shippingLocation(db);
+	const mapped = options.listings ? await autoMapListings(db) : [];
+	// Orders that sold a newly matched listing pick up the product now.
+	const caughtUp = await applyListingsToOrders(db, mapped, locationId);
 
 	const since =
 		store.ordersSyncedThrough ??
@@ -191,7 +193,7 @@ export async function syncShopify(
 	const search = `updated_at:>='${since.toISOString()}'`;
 	let newest = since;
 	let count = 0;
-	const problems: string[] = [];
+	const problems: string[] = [...caughtUp.problems];
 	cursor = null;
 	do {
 		const page = ordersPage.assert(
@@ -219,7 +221,13 @@ export async function syncShopify(
 	} while (cursor);
 
 	await advanceOrderCursor(db, store.id, newest);
-	return { store: store.name, variants, mapped, orders: count, problems };
+	return {
+		store: store.name,
+		variants,
+		mapped: mapped.length,
+		orders: count,
+		problems,
+	};
 }
 
 // Shopify's TikTok channel tags each order "TikTokOrderID:<id>".

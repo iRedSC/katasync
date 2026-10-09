@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
 	bigint,
+	boolean,
 	check,
 	index,
 	integer,
@@ -245,6 +246,9 @@ export const orders = pgTable(
 		cancelledAt: timestamp({ withTimezone: true }),
 		// The channel's own wording, e.g. UNFULFILLED, PARTIALLY_FULFILLED.
 		fulfillmentStatus: text().notNull(),
+		// The marketplace ships it from its own stock (Amazon FBA); it never
+		// takes ours.
+		fulfilledByChannel: boolean().notNull().default(false),
 		financialStatus: text(),
 		customerName: text(),
 		shipCity: text(),

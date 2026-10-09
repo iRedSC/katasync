@@ -43,6 +43,13 @@
       "when": 1791576873491,
       "tag": "0005_marketplace_order_id",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791580014097,
+      "tag": "0006_order_fulfilled_by_channel",
+      "breakpoints": true
     }
   ]
 }

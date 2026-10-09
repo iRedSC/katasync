@@ -70,11 +70,7 @@ export async function ingestOrder(
 			.returning({ id: orders.id });
 
 		const problems: string[] = [];
-		const takesStock =
-			!order.fulfilledByChannel &&
-			store.stockFrom !== null &&
-			order.placedAt >= store.stockFrom &&
-			order.cancelledAt === null;
+		const takesStock = orderTakesStock(store, order);
 
 		for (const line of lines) {
 			const productId = await resolveProduct(tx, store.id, line);
@@ -125,28 +121,59 @@ export async function ingestOrder(
 				}
 				continue;
 			}
-			if (locationId === null) {
-				problems.push(`${order.name}: no location to take stock from`);
-				continue;
-			}
-			try {
-				const sale = await recordSale(tx, {
-					productId: row.productId,
-					quantity: row.quantity,
-					locationId,
-					reference: `order:${saved.id}:${row.id}`,
-				});
-				await tx
-					.update(orderLines)
-					.set({ saleBatchId: sale.batchId })
-					.where(eq(orderLines.id, row.id));
-			} catch (error) {
-				if (!(error instanceof LedgerError)) throw error;
-				problems.push(`${order.name}: ${error.message}`);
-			}
+			const problem = await takeStock(
+				tx,
+				{ ...row, productId: row.productId },
+				order.name,
+				locationId,
+			);
+			if (problem) problems.push(problem);
 		}
 		return { orderId: saved.id, problems };
 	});
+}
+
+// Whether an order's lines take stock: placed after the store started
+// tracking stock, not cancelled, and shipped by us rather than the marketplace.
+export function orderTakesStock(
+	store: IngestStore,
+	order: Pick<ChannelOrder, "fulfilledByChannel" | "placedAt" | "cancelledAt">,
+) {
+	return (
+		!order.fulfilledByChannel &&
+		store.stockFrom !== null &&
+		order.placedAt >= store.stockFrom &&
+		order.cancelledAt === null
+	);
+}
+
+// Takes one line's stock and remembers the movement on the line, so it's
+// never taken twice. Returns a problem to report instead of throwing for
+// ledger rule failures, so one bad line doesn't stop the rest.
+export async function takeStock(
+	db: Db,
+	line: { id: number; orderId: number; productId: number; quantity: number },
+	orderName: string,
+	locationId: number | null,
+): Promise<string | null> {
+	if (locationId === null)
+		return `${orderName}: no location to take stock from`;
+	try {
+		const sale = await recordSale(db, {
+			productId: line.productId,
+			quantity: line.quantity,
+			locationId,
+			reference: `order:${line.orderId}:${line.id}`,
+		});
+		await db
+			.update(orderLines)
+			.set({ saleBatchId: sale.batchId })
+			.where(eq(orderLines.id, line.id));
+		return null;
+	} catch (error) {
+		if (!(error instanceof LedgerError)) throw error;
+		return `${orderName}: ${error.message}`;
+	}
 }
 
 // The listing mapping decides first. Before listings have synced, an exact SKU
@@ -183,7 +210,10 @@ async function resolveProduct(
 
 // Cost of one unit right now. A bundle costs the sum of its parts; unknown if
 // any part has no cost.
-async function costOf(db: Db, productId: number): Promise<number | null> {
+export async function costOf(
+	db: Db,
+	productId: number,
+): Promise<number | null> {
 	const [product] = await db
 		.select({ kind: products.kind, unitCost: products.unitCost })
 		.from(products)
