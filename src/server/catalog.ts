@@ -44,24 +44,25 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			.from(products)
 			.leftJoin(productGroups, eq(productGroups.id, products.groupId))
 			.orderBy(products.name, products.variantName);
-		const available = await getAvailability(
-			db,
-			rows.map((r) => r.id),
-			await ownedLocationIds(),
-		);
-		const onHand = new Map(
-			(
-				await db
-					.select({
-						productId: stockLevels.productId,
-						onHand: sql<number>`sum(${stockLevels.onHand})::int`,
-					})
-					.from(stockLevels)
-					.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-					.where(eq(locations.kind, "owned"))
-					.groupBy(stockLevels.productId)
-			).map((r) => [r.productId, r.onHand]),
-		);
+		const [available, onHandRows] = await Promise.all([
+			ownedLocationIds().then((owned) =>
+				getAvailability(
+					db,
+					rows.map((r) => r.id),
+					owned,
+				),
+			),
+			db
+				.select({
+					productId: stockLevels.productId,
+					onHand: sql<number>`sum(${stockLevels.onHand})::int`,
+				})
+				.from(stockLevels)
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(eq(locations.kind, "owned"))
+				.groupBy(stockLevels.productId),
+		]);
+		const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
 		return rows.map((r) => ({
 			...r,
 			onHand: r.kind === "bundle" ? null : (onHand.get(r.id) ?? 0),
@@ -80,123 +81,129 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			.where(eq(products.sku, data.sku));
 		if (!product) throw new Error(`No product ${data.sku}`);
 
-		const [group] = product.groupId
-			? await db
-					.select()
-					.from(productGroups)
-					.where(eq(productGroups.id, product.groupId))
-			: [];
-		const variants = product.groupId
-			? await db
-					.select({
-						sku: products.sku,
-						variantName: products.variantName,
-					})
-					.from(products)
-					.where(eq(products.groupId, product.groupId))
-					.orderBy(products.variantName)
-			: [];
-
-		const components = await db
-			.select({
-				sku: products.sku,
-				name: products.name,
-				variantName: products.variantName,
-				quantity: productComponents.quantity,
-				id: products.id,
-			})
-			.from(productComponents)
-			.innerJoin(
-				products,
-				eq(products.id, productComponents.componentProductId),
-			)
-			.where(eq(productComponents.parentProductId, product.id));
-		const componentAvailability = await getAvailability(
-			db,
-			components.map((c) => c.id),
-			await ownedLocationIds(),
-		);
-
-		const usedIn = await db
-			.select({
-				sku: products.sku,
-				name: products.name,
-				quantity: productComponents.quantity,
-			})
-			.from(productComponents)
-			.innerJoin(products, eq(products.id, productComponents.parentProductId))
-			.where(eq(productComponents.componentProductId, product.id))
-			.orderBy(products.sku);
-
-		const stock = await db
-			.select({
-				location: locations.name,
-				kind: locations.kind,
-				onHand: stockLevels.onHand,
-			})
-			.from(stockLevels)
-			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(eq(stockLevels.productId, product.id))
+		// Everything below depends only on the product, so it runs at once:
+		// one round trip of waiting instead of a dozen in a row.
+		const owned = db
+			.select({ id: locations.id, name: locations.name })
+			.from(locations)
+			.where(eq(locations.kind, "owned"))
 			.orderBy(locations.name);
+		const [
+			group,
+			variants,
+			components,
+			usedIn,
+			stock,
+			aliases,
+			productListings,
+			history,
+			ownedLocations,
+		] = await Promise.all([
+			product.groupId
+				? db
+						.select()
+						.from(productGroups)
+						.where(eq(productGroups.id, product.groupId))
+						.then((rows) => rows[0] ?? null)
+				: null,
+			product.groupId
+				? db
+						.select({ sku: products.sku, variantName: products.variantName })
+						.from(products)
+						.where(eq(products.groupId, product.groupId))
+						.orderBy(products.variantName)
+				: [],
+			db
+				.select({
+					sku: products.sku,
+					name: products.name,
+					variantName: products.variantName,
+					quantity: productComponents.quantity,
+					id: products.id,
+				})
+				.from(productComponents)
+				.innerJoin(
+					products,
+					eq(products.id, productComponents.componentProductId),
+				)
+				.where(eq(productComponents.parentProductId, product.id)),
+			db
+				.select({
+					sku: products.sku,
+					name: products.name,
+					quantity: productComponents.quantity,
+				})
+				.from(productComponents)
+				.innerJoin(products, eq(products.id, productComponents.parentProductId))
+				.where(eq(productComponents.componentProductId, product.id))
+				.orderBy(products.sku),
+			db
+				.select({
+					location: locations.name,
+					kind: locations.kind,
+					onHand: stockLevels.onHand,
+				})
+				.from(stockLevels)
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(eq(stockLevels.productId, product.id))
+				.orderBy(locations.name),
+			db
+				.select({ alias: productAliases.alias })
+				.from(productAliases)
+				.where(eq(productAliases.productId, product.id)),
+			db
+				.select({
+					store: stores.name,
+					channel: stores.channel,
+					externalId: listings.externalId,
+					externalSku: listings.externalSku,
+					title: listings.title,
+					fulfillment: listings.fulfillment,
+				})
+				.from(listings)
+				.innerJoin(stores, eq(stores.id, listings.storeId))
+				.where(eq(listings.productId, product.id)),
+			db
+				.select({
+					id: movements.id,
+					createdAt: movements.createdAt,
+					location: locations.name,
+					delta: movements.delta,
+					reason: movements.reason,
+					reference: movements.reference,
+					note: movements.note,
+				})
+				.from(movements)
+				.innerJoin(locations, eq(locations.id, movements.locationId))
+				.where(eq(movements.productId, product.id))
+				.orderBy(desc(movements.id))
+				.limit(50),
+			owned,
+		]);
 
-		const aliases = await db
-			.select({ alias: productAliases.alias })
-			.from(productAliases)
-			.where(eq(productAliases.productId, product.id));
-
-		const productListings = await db
-			.select({
-				store: stores.name,
-				channel: stores.channel,
-				externalId: listings.externalId,
-				externalSku: listings.externalSku,
-				title: listings.title,
-				fulfillment: listings.fulfillment,
-			})
-			.from(listings)
-			.innerJoin(stores, eq(stores.id, listings.storeId))
-			.where(eq(listings.productId, product.id));
-
-		const history = await db
-			.select({
-				id: movements.id,
-				createdAt: movements.createdAt,
-				location: locations.name,
-				delta: movements.delta,
-				reason: movements.reason,
-				reference: movements.reference,
-				note: movements.note,
-			})
-			.from(movements)
-			.innerJoin(locations, eq(locations.id, movements.locationId))
-			.where(eq(movements.productId, product.id))
-			.orderBy(desc(movements.id))
-			.limit(50);
-
-		const [available] = (
-			await getAvailability(db, [product.id], await ownedLocationIds())
-		).values();
+		// The product and its parts in one availability lookup.
+		const availability = await getAvailability(
+			db,
+			[product.id, ...components.map((c) => c.id)],
+			ownedLocations.map((l) => l.id),
+		);
 
 		return {
 			product,
-			group: group ?? null,
+			group,
 			variants,
 			components: components.map((c) => ({
 				...c,
-				available: componentAvailability.get(c.id) ?? 0,
+				available: availability.get(c.id) ?? 0,
 			})),
 			usedIn,
 			stock,
 			aliases: aliases.map((a) => a.alias),
 			listings: productListings,
 			history,
-			available: available ?? 0,
+			available: availability.get(product.id) ?? 0,
 			// Where a count could be recorded. One location means nobody has to pick.
-			locations: await db
-				.select({ id: locations.id, name: locations.name })
-				.from(locations)
-				.where(eq(locations.kind, "owned"))
-				.orderBy(locations.name),
+			locations: ownedLocations,
 		};
 	});
 

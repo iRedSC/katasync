@@ -11,7 +11,8 @@ export function getRouter() {
 		context,
 		scrollRestoration: true,
 		defaultPreload: "intent",
-		defaultPreloadStaleTime: 0,
+		// Data preloaded on hover stays fresh long enough to be used by the click.
+		defaultPreloadStaleTime: 30_000,
 	});
 
 	setupRouterSsrQueryIntegration({ router, queryClient: context.queryClient });

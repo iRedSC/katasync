@@ -62,7 +62,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 								toast:
 									"!bg-dusk !border-border !text-foreground !rounded-xl !text-sm",
 								actionButton:
-									"!bg-aurora !text-primary-foreground !font-semibold",
+									"!bg-primary !text-primary-foreground !font-semibold",
 							},
 						}}
 					/>

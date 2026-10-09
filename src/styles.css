@@ -4,9 +4,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Midnight: one theme, built from the logo's blue-to-violet. Contrast on the
-   page background: text 17:1, secondary text 8:1, accent 6:1. Status colors
-   always come with an icon and a word, never color alone. */
+/* Midnight: one theme in the logo's violet, flat colors only (no gradients,
+   no glows). Contrast on the page background: text 17:1, secondary text
+   8:1, accent 6:1. Status colors always come with an icon and a word, never
+   color alone. */
 :root {
   --midnight: #0b0d1c;
   --deep: #12152a;
@@ -14,7 +15,6 @@
   --line: #262a48;
   --starlight: #eef0fa;
   --haze: #a3a9cc;
-  --aurora: linear-gradient(100deg, #4f8bff, #7c6cff 55%, #a77bff);
 
   --background: var(--midnight);
   --foreground: var(--starlight);
@@ -110,9 +110,4 @@
   body {
     @apply bg-background text-foreground antialiased;
   }
-}
-
-/* The logo gradient. Used for the one main action on a screen and the brand. */
-@utility bg-aurora {
-  background-image: var(--aurora);
 }
