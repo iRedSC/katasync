@@ -17,6 +17,7 @@ function order(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 		externalId: "gid://shopify/Order/1",
 		name: "#1001",
 		salesChannel: "Online Store",
+		marketplaceOrderId: null,
 		placedAt: new Date("2026-10-05T12:00:00Z"),
 		cancelledAt: null,
 		fulfillmentStatus: "UNFULFILLED",
@@ -180,5 +181,34 @@ describe("ingestOrder", () => {
 		const line = { ...order().lines[0], sku: "ECDT-12KIT-AMZ", quantity: 1 };
 		await ingestOrder(db, store(), order({ lines: [line] }), warehouse);
 		expect(await onHand(kit)).toBe(2);
+	});
+
+	test("a custom item with no SKU is saved without a flag", async () => {
+		const line = { ...order().lines[0], sku: null, title: "Custom sharpening" };
+		const { problems } = await ingestOrder(
+			db,
+			store(),
+			order({ lines: [line] }),
+			warehouse,
+		);
+		expect(problems).toEqual([]);
+		expect(await db.select().from(schema.orderLines)).toHaveLength(1);
+	});
+
+	test("the same marketplace order can't be saved twice from two sources", async () => {
+		await ingestOrder(
+			db,
+			store(),
+			order({ marketplaceOrderId: "tiktok:577609" }),
+			warehouse,
+		);
+		const otherSource = order({
+			externalId: "tiktok-direct-577609",
+			marketplaceOrderId: "tiktok:577609",
+		});
+		await expect(
+			ingestOrder(db, store(), otherSource, warehouse),
+		).rejects.toThrow();
+		expect(await db.select().from(schema.orders)).toHaveLength(1);
 	});
 });

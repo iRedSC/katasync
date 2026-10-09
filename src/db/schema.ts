@@ -237,6 +237,10 @@ export const orders = pgTable(
 		// Where the sale happened when a store relays other channels, e.g. a
 		// Shopify order placed on TikTok Shop or at the Point of Sale.
 		salesChannel: text(),
+		// The order's ID on the marketplace it was really placed on, when a store
+		// relays it (TikTok's order ID on a Shopify order). Unique, so one sale
+		// can't be saved twice from two sources; marketplace fees match on it.
+		marketplaceOrderId: text().unique(),
 		placedAt: timestamp({ withTimezone: true }).notNull(),
 		cancelledAt: timestamp({ withTimezone: true }),
 		// The channel's own wording, e.g. UNFULFILLED, PARTIALLY_FULFILLED.

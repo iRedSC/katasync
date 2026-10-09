@@ -35,7 +35,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				orderId: orderLines.orderId,
 				items: sql<number>`sum(${orderLines.quantity})::int`.as("items"),
 				unmatched:
-					sql<number>`count(*) filter (where ${orderLines.productId} is null)::int`.as(
+					sql<number>`count(*) filter (where ${orderLines.productId} is null and ${orderLines.sku} is not null)::int`.as(
 						"unmatched",
 					),
 			})

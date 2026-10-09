@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, productAliases, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
@@ -134,20 +134,23 @@ export async function autoMapListings(db: Db): Promise<number> {
 }
 
 export async function getUnmappedListings(db: Db) {
-	return db
-		.select({
-			id: listings.id,
-			store: stores.name,
-			channel: stores.channel,
-			externalId: listings.externalId,
-			externalSku: listings.externalSku,
-			title: listings.title,
-			fulfillment: listings.fulfillment,
-		})
-		.from(listings)
-		.innerJoin(stores, eq(stores.id, listings.storeId))
-		.where(isNull(listings.productId))
-		.orderBy(stores.name, listings.title);
+	return (
+		db
+			.select({
+				id: listings.id,
+				store: stores.name,
+				channel: stores.channel,
+				externalId: listings.externalId,
+				externalSku: listings.externalSku,
+				title: listings.title,
+				fulfillment: listings.fulfillment,
+			})
+			.from(listings)
+			.innerJoin(stores, eq(stores.id, listings.storeId))
+			// Listings with no SKU are custom products; there's nothing to match.
+			.where(and(isNull(listings.productId), isNotNull(listings.externalSku)))
+			.orderBy(stores.name, listings.title)
+	);
 }
 
 // Listings selling any of these SKUs: the ones that need a new quantity when

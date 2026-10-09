@@ -16,6 +16,7 @@ export type ChannelOrder = {
 	externalId: string;
 	name: string;
 	salesChannel: string | null;
+	marketplaceOrderId: string | null;
 	placedAt: Date;
 	cancelledAt: Date | null;
 	fulfillmentStatus: string;
@@ -44,7 +45,8 @@ export type IngestStore = { id: number; stockFrom: Date | null };
 //   recorded on the line so a re-sync never takes it again.
 // - A cancelled order gives back exactly what its lines took.
 // - Lines that can't be matched to a product are saved without moving stock
-//   and reported, so one unknown SKU doesn't stop the sync.
+//   and reported, so one unknown SKU doesn't stop the sync. Lines with no
+//   SKU are custom items and aren't reported.
 export async function ingestOrder(
 	db: Db,
 	store: IngestStore,
@@ -110,9 +112,11 @@ export async function ingestOrder(
 			}
 			if (!takesStock || row.saleBatchId) continue;
 			if (row.productId === null) {
-				problems.push(
-					`${order.name}: no product for ${line.sku ?? line.title}`,
-				);
+				// No SKU means a custom item (a one-off charge, a special order):
+				// nothing to take from stock, nothing to flag.
+				if (line.sku !== null) {
+					problems.push(`${order.name}: no product for ${line.sku}`);
+				}
 				continue;
 			}
 			if (locationId === null) {

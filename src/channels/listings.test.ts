@@ -112,11 +112,7 @@ describe("autoMapListings", () => {
 		expect((await getListing(amazon, "SET")).productId).toBeNull();
 
 		const unmapped = await getUnmappedListings(db);
-		expect(unmapped.map((l) => l.externalId).sort()).toEqual([
-			"2",
-			"NO-SKU",
-			"SET",
-		]);
+		expect(unmapped.map((l) => l.externalId).sort()).toEqual(["2", "SET"]);
 
 		const forWrench = await getListingsForProducts(db, [wrench, set]);
 		expect(forWrench.map((l) => l.channel).sort()).toEqual([

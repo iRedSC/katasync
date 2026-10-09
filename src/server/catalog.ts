@@ -331,7 +331,10 @@ export const listUnmappedListings = createServerFn({ method: "GET" }).handler(
 			})
 			.from(listings)
 			.innerJoin(stores, eq(stores.id, listings.storeId))
-			.where(sql`${listings.productId} is null`),
+			// Listings with no SKU are custom products; there's nothing to match.
+			.where(
+				sql`${listings.productId} is null and ${listings.externalSku} is not null`,
+			),
 );
 
 // Records what someone counted on the shelf. The app works out the change, and

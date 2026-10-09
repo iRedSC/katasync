@@ -23,7 +23,10 @@ function OrderPage() {
 	const navigate = useNavigate();
 	const canGoBack = useCanGoBack();
 	const status = orderStatus(order);
-	const unmatched = lines.filter((l) => l.productSku === null);
+	// No SKU means a custom item; only real SKUs need matching.
+	const unmatched = lines.filter(
+		(l) => l.productSku === null && l.sku !== null,
+	);
 	const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
 	useHotkeys({
@@ -81,7 +84,7 @@ function OrderPage() {
 									)}
 									<div className="flex gap-2 text-xs text-muted-foreground">
 										<span>{l.sku ?? "No SKU"}</span>
-										{l.productSku === null && (
+										{l.productSku === null && l.sku !== null && (
 											<Badge tone="critical">Unknown product</Badge>
 										)}
 									</div>

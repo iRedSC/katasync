@@ -70,6 +70,7 @@ const ordersPage = type({
 			id: "string",
 			name: "string",
 			sourceName: "string | null",
+			tags: "string[]",
 			app: type({ name: "string" }).or("null"),
 			channelInformation: type({
 				channelDefinition: type({ channelName: "string" }).or("null"),
@@ -107,7 +108,7 @@ query Orders($cursor: String, $query: String) {
 	orders(first: 25, after: $cursor, sortKey: UPDATED_AT, query: $query) {
 		pageInfo { hasNextPage endCursor }
 		nodes {
-			id name createdAt updatedAt cancelledAt sourceName
+			id name createdAt updatedAt cancelledAt sourceName tags
 			app { name }
 			channelInformation { channelDefinition { channelName } }
 			displayFulfillmentStatus displayFinancialStatus
@@ -252,6 +253,12 @@ export async function syncShopify(
 	return { store: store.name, variants, mapped, orders: count, problems };
 }
 
+// Shopify's TikTok channel tags each order "TikTokOrderID:<id>".
+function tiktokOrderId(tags: string[]) {
+	const tag = tags.find((t) => t.startsWith("TikTokOrderID:"));
+	return tag ? `tiktok:${tag.slice("TikTokOrderID:".length)}` : null;
+}
+
 function toChannelOrder(
 	o: (typeof ordersPage.infer.orders.nodes)[number],
 ): ChannelOrder {
@@ -262,6 +269,7 @@ function toChannelOrder(
 			o.channelInformation?.channelDefinition?.channelName ??
 			o.app?.name ??
 			o.sourceName,
+		marketplaceOrderId: tiktokOrderId(o.tags),
 		placedAt: o.createdAt,
 		cancelledAt: o.cancelledAt,
 		fulfillmentStatus: o.displayFulfillmentStatus,
