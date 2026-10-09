@@ -1,13 +1,9 @@
 import NumberFlow from "@number-flow/react";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { BarList } from "#/components/bar-list";
+import { createFileRoute, Link, type LinkProps } from "@tanstack/react-router";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
-import {
-	formatCount,
-	formatMoneyCompact,
-	formatMoneyWhole,
-} from "#/lib/format";
+import { formatCount } from "#/lib/format";
+import { cn } from "#/lib/utils";
 import { getDashboard } from "#/server/catalog";
 
 export const Route = createFileRoute("/")({
@@ -17,22 +13,31 @@ export const Route = createFileRoute("/")({
 
 function Home() {
 	const d = Route.useLoaderData();
-	const sellableSets = d.bundles - d.blockedBundles;
 
 	return (
 		<Page title="Home">
-			{d.oversold.length > 0 && (
-				<Banner
-					tone="critical"
-					title={`${formatCount(d.oversold.length)} products sold that we don't have`}
-					action={{
-						label: "Review oversold products",
-						link: { to: "/products", search: { show: "oversold" } },
-					}}
-				>
-					Count the shelf for each one, or a restock is overdue.
-				</Banner>
-			)}
+			<Card flush>
+				<dl className="grid grid-cols-2 md:grid-cols-4 md:divide-x">
+					<Stat
+						label="Open orders"
+						link={{ to: "/orders" }}
+						pending="Waiting on Shopify"
+					/>
+					<Stat
+						label="POs ready"
+						link={{ to: "/purchasing" }}
+						pending="Waiting on purchasing"
+					/>
+					<Stat
+						label="Oversold"
+						value={d.oversold.length}
+						tone={d.oversold.length > 0 ? "critical" : undefined}
+						link={{ to: "/products", search: { show: "oversold" } }}
+					/>
+					<Stat label="Monthly profit" pending="Waiting on profit app" />
+				</dl>
+			</Card>
+
 			{d.blockedBundles > 0 && (
 				<Banner
 					tone="warning"
@@ -42,23 +47,9 @@ function Home() {
 						link: { to: "/products", search: { show: "blocked" } },
 					}}
 				>
-					Each is missing a part. The parts blocking the most sets are listed
-					below.
+					Each is missing a part. The parts blocking the most sets are below.
 				</Banner>
 			)}
-
-			<Card flush>
-				<dl className="grid grid-cols-2 md:grid-cols-4 md:divide-x">
-					<Metric label="Stock value" value={d.value} money />
-					<Metric label="Units on hand" value={d.units} />
-					<Metric label="Products oversold" value={d.oversold.length} />
-					<Metric
-						label="Tool sets ready to sell"
-						value={sellableSets}
-						suffix={` of ${formatCount(d.bundles)}`}
-					/>
-				</dl>
-			</Card>
 
 			<div className="grid gap-4 lg:grid-cols-2">
 				{d.blockers.length > 0 && (
@@ -100,66 +91,49 @@ function Home() {
 					</Card>
 				)}
 			</div>
-
-			<Card
-				title="Stock value by product type"
-				aside={
-					d.uncosted > 0
-						? `${formatCount(d.uncosted)} stocked products have no cost, so totals run low`
-						: undefined
-				}
-			>
-				<BarList
-					rows={d.byCategory.map((c) => ({
-						label: c.category,
-						value: c.value,
-					}))}
-					format={formatMoneyCompact}
-					detail={(i) =>
-						`${formatMoneyWhole(d.byCategory[i].value)} across ${formatCount(d.byCategory[i].units)} units`
-					}
-				/>
-				{d.otherCategories.count > 0 && (
-					<p className="px-2 pt-2 text-muted-foreground">
-						Plus {formatMoneyCompact(d.otherCategories.value)} across{" "}
-						{formatCount(d.otherCategories.count)} smaller types.
-					</p>
-				)}
-			</Card>
 		</Page>
 	);
 }
 
-function Metric({
+// One stat in the strip. A stat whose source isn't connected says so plainly
+// instead of showing a made-up zero.
+function Stat({
 	label,
 	value,
-	money = false,
-	suffix,
+	tone,
+	link,
+	pending,
 }: {
 	label: string;
-	value: number;
-	money?: boolean;
-	suffix?: string;
+	value?: number;
+	tone?: "critical";
+	link?: LinkProps;
+	pending?: string;
 }) {
-	return (
-		<div className="flex flex-col gap-1 p-4">
+	const body = (
+		<div className="flex h-full flex-col gap-1 p-4">
 			<dt className="text-muted-foreground">{label}</dt>
-			<dd className="text-xl font-bold tabular-nums">
-				<NumberFlow
-					value={value}
-					format={
-						money
-							? { style: "currency", currency: "USD", maximumFractionDigits: 0 }
-							: undefined
-					}
-				/>
-				{suffix && (
-					<span className="text-sm font-normal text-muted-foreground">
-						{suffix}
-					</span>
+			<dd
+				className={cn(
+					"text-xl font-bold tabular-nums",
+					tone === "critical" && "text-critical-text",
+				)}
+			>
+				{value === undefined ? (
+					<span className="text-[#b5b5b5]">—</span>
+				) : (
+					<NumberFlow value={value} />
 				)}
 			</dd>
+			{pending && <dd className="text-xs text-muted-foreground">{pending}</dd>}
 		</div>
+	);
+	return link ? (
+		<Link {...link} className="block hover:bg-[#f7f7f7]">
+			{body}
+		</Link>
+	) : (
+		body
 	);
 }
 

@@ -12,28 +12,6 @@ export function formatMoney(value: number | null) {
 	return value === null ? "—" : usd.format(value);
 }
 
-const usdWhole = new Intl.NumberFormat("en-US", {
-	style: "currency",
-	currency: "USD",
-	maximumFractionDigits: 0,
-});
-const usdCompact = new Intl.NumberFormat("en-US", {
-	style: "currency",
-	currency: "USD",
-	notation: "compact",
-	maximumFractionDigits: 1,
-});
-
-// For glanceable totals: $543,096 rather than $543,096.04.
-export function formatMoneyWhole(value: number) {
-	return usdWhole.format(value);
-}
-
-// For chart labels: $86.2K.
-export function formatMoneyCompact(value: number) {
-	return usdCompact.format(value);
-}
-
 export function formatCount(value: number) {
 	return count.format(value);
 }

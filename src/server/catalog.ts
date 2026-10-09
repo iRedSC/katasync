@@ -207,38 +207,34 @@ export const getProductDetail = createServerFn({ method: "GET" })
 		};
 	});
 
+// Home shows only what needs someone. Stock totals are deliberately absent:
+// nobody acts on them.
 export const getDashboard = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
-		const owned = await ownedLocationIds();
+		const [oversold, blockers, [{ bundles }]] = await Promise.all([
+			db
+				.select({
+					sku: products.sku,
+					name: products.name,
+					variantName: products.variantName,
+					imageUrl: products.imageUrl,
+					onHand: stockLevels.onHand,
+				})
+				.from(stockLevels)
+				.innerJoin(products, eq(products.id, stockLevels.productId))
+				.where(lt(stockLevels.onHand, 0))
+				.orderBy(stockLevels.onHand),
+			ownedLocationIds().then((owned) => getBundleBlockers(db, owned)),
+			db
+				.select({ bundles: sql<number>`count(*)::int` })
+				.from(products)
+				.where(eq(products.kind, "bundle")),
+		]);
 
-		const [stock] = await db
-			.select({
-				units: sql<number>`coalesce(sum(greatest(${stockLevels.onHand}, 0)), 0)::int`,
-				value: sql<number>`coalesce(sum(greatest(${stockLevels.onHand}, 0) * ${products.unitCost}), 0)::float`,
-				// Stocked products with no cost make the value an undercount.
-				uncosted: sql<number>`count(*) filter (where ${stockLevels.onHand} > 0 and ${products.unitCost} is null)::int`,
-			})
-			.from(stockLevels)
-			.innerJoin(products, eq(products.id, stockLevels.productId));
-
-		const oversold = await db
-			.select({
-				sku: products.sku,
-				name: products.name,
-				variantName: products.variantName,
-				imageUrl: products.imageUrl,
-				onHand: stockLevels.onHand,
-			})
-			.from(stockLevels)
-			.innerJoin(products, eq(products.id, stockLevels.productId))
-			.where(lt(stockLevels.onHand, 0))
-			.orderBy(stockLevels.onHand);
-
-		const blockers = await getBundleBlockers(db, owned);
-		const blockerIds = blockers.slice(0, 6).map((b) => b.productId);
+		const top = blockers.slice(0, 6);
 		const blockerProducts = new Map(
-			(blockerIds.length === 0
+			(top.length === 0
 				? []
 				: await db
 						.select({
@@ -249,56 +245,23 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(
 							imageUrl: products.imageUrl,
 						})
 						.from(products)
-						.where(inArray(products.id, blockerIds))
+						.where(
+							inArray(
+								products.id,
+								top.map((b) => b.productId),
+							),
+						)
 			).map((p) => [p.id, p]),
 		);
-		const blockedBundles = new Set(blockers.flatMap((b) => b.blocks)).size;
-
-		const byCategory = await db
-			.select({
-				category: sql<string>`coalesce(${products.category}, 'Uncategorized')`,
-				value: sql<number>`sum(greatest(${stockLevels.onHand}, 0) * ${products.unitCost})::float`,
-				units: sql<number>`sum(greatest(${stockLevels.onHand}, 0))::int`,
-			})
-			.from(stockLevels)
-			.innerJoin(products, eq(products.id, stockLevels.productId))
-			.where(
-				sql`${products.unitCost} is not null and ${stockLevels.onHand} > 0`,
-			)
-			.groupBy(sql`1`)
-			.orderBy(sql`2 desc`);
-
-		const [{ bundles }] = await db
-			.select({ bundles: sql<number>`count(*)::int` })
-			.from(products)
-			.where(eq(products.kind, "bundle"));
-		const [{ unmapped }] = await db
-			.select({ unmapped: sql<number>`count(*)::int` })
-			.from(listings)
-			.where(sql`${listings.productId} is null`);
 
 		return {
-			...stock,
 			oversold,
-			blockers: blockers.slice(0, 6).map((b) => ({
-				...(blockerProducts.get(b.productId) ?? {
-					sku: "?",
-					name: "?",
-					variantName: null,
-					imageUrl: null,
-				}),
-				blocks: b.blocks.length,
-			})),
-			blockedBundles,
+			blockers: top.flatMap((b) => {
+				const product = blockerProducts.get(b.productId);
+				return product ? [{ ...product, blocks: b.blocks.length }] : [];
+			}),
+			blockedBundles: new Set(blockers.flatMap((b) => b.blocks)).size,
 			bundles,
-			unmapped,
-			// Top categories by value. The long tail is summed separately rather
-			// than drawn as a bar, where it would dwarf the real categories.
-			byCategory: byCategory.slice(0, 8),
-			otherCategories: {
-				count: Math.max(byCategory.length - 8, 0),
-				value: byCategory.slice(8).reduce((sum, c) => sum + c.value, 0),
-			},
 		};
 	},
 );

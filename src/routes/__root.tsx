@@ -7,7 +7,6 @@ import {
 import { Toaster } from "sonner";
 import { AppShell } from "#/components/app-shell";
 import { CommandPalette } from "#/components/command-palette";
-import { TooltipProvider } from "#/components/ui/tooltip";
 import appCss from "../styles.css?url";
 
 interface MyRouterContext {
@@ -47,23 +46,21 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<HeadContent />
 			</head>
 			<body>
-				<TooltipProvider>
-					<AppShell>{children}</AppShell>
-					<CommandPalette />
-					<Toaster
-						position="bottom-center"
-						toastOptions={{
-							// Shopify's toast: a dark pill at the bottom of the screen.
-							classNames: {
-								toast:
-									"!bg-[#303030] !border-0 !text-white !rounded-xl !text-[0.8125rem]",
-								description: "!text-white/70",
-								actionButton:
-									"!bg-white !text-[#303030] !font-semibold !rounded-lg",
-							},
-						}}
-					/>
-				</TooltipProvider>
+				<AppShell>{children}</AppShell>
+				<CommandPalette />
+				<Toaster
+					position="bottom-center"
+					toastOptions={{
+						// Shopify's toast: a dark pill at the bottom of the screen.
+						classNames: {
+							toast:
+								"!bg-[#303030] !border-0 !text-white !rounded-xl !text-[0.8125rem]",
+							description: "!text-white/70",
+							actionButton:
+								"!bg-white !text-[#303030] !font-semibold !rounded-lg",
+						},
+					}}
+				/>
 				<Scripts />
 			</body>
 		</html>
