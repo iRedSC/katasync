@@ -11,6 +11,8 @@ export const Route = createFileRoute("/print/invoices")({
 	component: Invoices,
 });
 
+const GRAMS_PER_OUNCE = 28.349523125;
+
 type Data = Awaited<ReturnType<typeof listInvoices>>;
 
 function Invoices() {
@@ -77,31 +79,22 @@ function Invoice({
 					{from?.phone && <p>{formatPhone(from.phone)}</p>}
 					{from?.email && <p>{from.email}</p>}
 				</div>
-				<div className="flex items-start gap-5 text-right">
-					<div>
-						<p className="text-[20pt] font-bold">Invoice</p>
-						<p className="font-semibold">{o.name}</p>
-						<p>
-							{new Date(o.placedAt).toLocaleDateString("en-US", {
-								month: "long",
-								day: "numeric",
-								year: "numeric",
-							})}
-						</p>
-						{o.salesChannel && (
-							<p className="text-[#616161]">{o.salesChannel}</p>
-						)}
-					</div>
+				<div className="text-right">
+					<p className="text-[20pt] font-bold">Invoice</p>
+					<p className="font-semibold">{o.name}</p>
 					{o.pin !== null && (
-						<div className="flex min-w-[0.9in] flex-col items-center rounded-lg border-2 border-black px-3 py-1">
-							<span className="text-[8pt] font-semibold tracking-wide uppercase">
-								Pin
-							</span>
-							<span className="text-[28pt] leading-none font-bold tabular-nums">
-								{o.pin}
-							</span>
-						</div>
+						<p className="font-semibold tabular-nums">
+							{packLine(o.pin, o.boxPin, o.weightGrams)}
+						</p>
 					)}
+					<p>
+						{new Date(o.placedAt).toLocaleDateString("en-US", {
+							month: "long",
+							day: "numeric",
+							year: "numeric",
+						})}
+					</p>
+					{o.salesChannel && <p className="text-[#616161]">{o.salesChannel}</p>}
 				</div>
 			</header>
 
@@ -181,4 +174,14 @@ function formatPhone(phone: string) {
 	return digits.length === 10
 		? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
 		: phone;
+}
+
+// "2 : 4 : 20" is order pin, box pin, and ounces; "-" where quick ship has
+// nothing to suggest yet.
+function packLine(pin: number, boxPin: number | null, grams: number | null) {
+	const ounces =
+		grams === null
+			? "-"
+			: String(Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10);
+	return `${pin} : ${boxPin ?? "-"} : ${ounces}`;
 }

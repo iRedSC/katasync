@@ -6,6 +6,8 @@ import { getDb } from "#/db/client";
 import { locations, orderLines, orders, products, stores } from "#/db/schema";
 import { cityLine } from "#/lib/format";
 import { needsShipping } from "#/orders/to-ship";
+import { contentsKey } from "#/shipping/contents";
+import { lastPackedFor } from "#/shipping/quick-ship";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
 	async () => {
@@ -145,6 +147,7 @@ export const listInvoices = createServerFn({ method: "GET" }).handler(
 						title: orderLines.title,
 						quantity: orderLines.quantity,
 						unitPrice: orderLines.unitPrice,
+						weightGrams: products.weightGrams,
 					})
 					.from(orderLines)
 					.leftJoin(products, eq(products.id, orderLines.productId))
@@ -156,6 +159,9 @@ export const listInvoices = createServerFn({ method: "GET" }).handler(
 					)
 					.orderBy(orderLines.id)
 			: [];
+		const linesOf = (id: number) => lines.filter((l) => l.orderId === id);
+		const keys = new Map(toShip.map((o) => [o.id, contentsKey(linesOf(o.id))]));
+		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
 		return {
 			from: from
 				? {
@@ -169,10 +175,22 @@ export const listInvoices = createServerFn({ method: "GET" }).handler(
 						email: from.email,
 					}
 				: null,
-			invoices: toShip.map((o) => ({
-				...o,
-				lines: lines.filter((l) => l.orderId === o.id),
-			})),
+			invoices: toShip.map((o) => {
+				const own = linesOf(o.id);
+				const last = lastPacked.get(keys.get(o.id) ?? "");
+				return {
+					...o,
+					lines: own,
+					// What quick ship will suggest: the box and weight these exact
+					// contents went out in last time, else the items' own weight.
+					boxPin: last?.boxPin ?? null,
+					weightGrams:
+						last?.weightGrams ??
+						(own.every((l) => l.weightGrams !== null)
+							? own.reduce((g, l) => g + (l.weightGrams ?? 0) * l.quantity, 0)
+							: null),
+				};
+			}),
 		};
 	},
 );

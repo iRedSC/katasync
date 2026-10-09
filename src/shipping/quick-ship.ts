@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	orderLines,
@@ -156,3 +156,22 @@ export async function freePackagePin(db: Db) {
 	for (let pin = 1; pin <= 999; pin++) if (!used.has(pin)) return pin;
 	throw new Error("Every box pin is taken");
 }
+
+// The box and weight each set of contents shipped in last time, for
+// printing on invoices. Contents never shipped before are left out.
+export async function lastPackedFor(db: Db, keys: string[]) {
+	if (keys.length === 0) return new Map<string, LastPacked>();
+	const rows = await db
+		.selectDistinctOn([shipments.contentsKey], {
+			contentsKey: shipments.contentsKey,
+			boxPin: packages.pin,
+			weightGrams: shipments.weightGrams,
+		})
+		.from(shipments)
+		.leftJoin(packages, eq(packages.id, shipments.packageId))
+		.where(inArray(shipments.contentsKey, keys))
+		.orderBy(shipments.contentsKey, desc(shipments.createdAt));
+	return new Map(rows.map((r) => [r.contentsKey, r]));
+}
+
+export type LastPacked = { boxPin: number | null; weightGrams: number };

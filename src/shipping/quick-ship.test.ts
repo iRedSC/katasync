@@ -7,6 +7,7 @@ import { contentsKey } from "./contents";
 import { assignOrderPins } from "./pins";
 import {
 	labelSource,
+	lastPackedFor,
 	needsInsurance,
 	orderForShipping,
 	rankRates,
@@ -127,6 +128,49 @@ describe("with a database", () => {
 			.where(eq(schema.orders.id, open));
 		await assignOrderPins(db);
 		expect(await pinOf(open)).toBeNull();
+	});
+
+	test("invoices get the box and weight these contents last shipped in", async () => {
+		const order = await addOrder("#1");
+		const [box] = await db
+			.insert(schema.packages)
+			.values({
+				pin: 4,
+				name: "Flat",
+				lengthMm: 300,
+				widthMm: 200,
+				heightMm: 50,
+			})
+			.returning();
+		const ship = (externalId: string, weightGrams: number, at: string) =>
+			db.insert(schema.shipments).values({
+				orderId: order,
+				packageId: box.id,
+				contentsKey: "WRENCH×2",
+				lengthMm: 300,
+				widthMm: 200,
+				heightMm: 50,
+				weightGrams,
+				provider: "shippo",
+				carrier: "USPS",
+				service: "usps_ground_advantage",
+				serviceName: "USPS Ground Advantage",
+				cost: 8,
+				labelUrl: "https://example.com/label.pdf",
+				externalId,
+				test: true,
+				createdAt: new Date(at),
+			});
+		await ship("old", 500, "2026-10-01T00:00:00Z");
+		await ship("new", 567, "2026-10-05T00:00:00Z");
+
+		const last = await lastPackedFor(db, ["WRENCH×2", "NEVER×1"]);
+		expect(last.get("WRENCH×2")).toEqual({
+			contentsKey: "WRENCH×2",
+			boxPin: 4,
+			weightGrams: 567,
+		});
+		expect(last.has("NEVER×1")).toBe(false);
 	});
 
 	test("pins stay one digit until those run out", async () => {
