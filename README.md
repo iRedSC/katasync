@@ -1,4 +1,4 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+<img src="assets/logo.png" width="64" alt="">
 
 # katasync
 
@@ -9,9 +9,9 @@ Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Tr
 ## Setup
 
 1. `pnpm install`
-2. `neon link --project-id mute-paper-12299244 --branch production` (writes `DATABASE_URL` and `DATABASE_URL_UNPOOLED` to `.env.local`).
+2. `neon link --project-id mute-paper-12299244 --branch dev` (writes `DATABASE_URL` and `DATABASE_URL_UNPOOLED` to `.env.local`). Develop against the `dev` branch; `production` stays empty until cutover.
 3. `pnpm db:migrate`
-4. `pnpm dev` (http://localhost:3000)
+4. `pnpm dev` (http://127.0.0.1:3000). To reach it from other devices: `tailscale serve --bg --https=3000 http://127.0.0.1:3000`.
 
 `pnpm test` runs against an in-memory Postgres (PGlite) and needs no database.
 

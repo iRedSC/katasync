@@ -6,7 +6,7 @@
     "#/*": "./src/*"
   },
   "scripts": {
-    "dev": "vite dev --port 3000",
+    "dev": "vite dev --port 3000 --strictPort",
     "generate-routes": "tsr generate",
     "build": "vite build",
     "preview": "vite preview",
@@ -24,12 +24,8 @@
     "@neon/config": "^1.8.6",
     "@neon/env": "^1.5.3",
     "@tailwindcss/vite": "^4.1.18",
-    "@tanstack/match-sorter-utils": "9.2.6",
-    "@tanstack/react-devtools": "0.10.13",
     "@tanstack/react-query": "5.104.1",
-    "@tanstack/react-query-devtools": "5.104.1",
     "@tanstack/react-router": "1.170.41",
-    "@tanstack/react-router-devtools": "1.167.2",
     "@tanstack/react-router-ssr-query": "1.167.3",
     "@tanstack/react-start": "1.168.60",
     "@tanstack/react-table": "9.2.8",
@@ -41,6 +37,7 @@
     "lucide-react": "^0.577.0",
     "nitro": "3.0.260610-beta",
     "pg": "^8.23.1",
+    "radix-ui": "^1.7.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwind-merge": "^3.0.2",
@@ -50,8 +47,6 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.5",
     "@electric-sql/pglite": "^0.5.8",
-    "@tailwindcss/typography": "^0.5.16",
-    "@tanstack/devtools-vite": "0.8.5",
     "@tanstack/router-cli": "^1.132.0",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.23.1",
