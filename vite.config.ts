@@ -22,9 +22,11 @@ const config = defineConfig({
   server: { host: '127.0.0.1', allowedHosts: ['.ts.net'] },
   plugins: [
     nitro({
-      // Left as a package rather than bundled: its certificate library needs
-      // reflect-metadata loaded first, and bundling reorders that.
-      traceDeps: ['@simplewebauthn/server*'],
+      // Left as packages rather than bundled. SimpleWebAuthn's certificate
+      // library needs reflect-metadata loaded first, and bundling reorders
+      // that. react-pdf loads its fonts through package imports
+      // (#standard-fonts/...) that only resolve inside its own package.
+      traceDeps: ['@simplewebauthn/server*', '@react-pdf/renderer*', '@react-pdf/font*', 'pdfkit*'],
     }),
     tailwindcss(),
     tanstackStart(),
