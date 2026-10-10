@@ -186,6 +186,22 @@ export const stockLevels = pgTable(
 	(t) => [primaryKey({ columns: [t.productId, t.locationId] })],
 );
 
+// One row per count that changed stock, keyed by its movement batch. Undoing
+// the batch puts previousCountedAt back on the shelf. A count that matched
+// posts no movements, so there is nothing to undo and no row.
+export const stockCounts = pgTable("stock_counts", {
+	batchId: uuid().primaryKey(),
+	productId: integer()
+		.notNull()
+		.references(() => products.id),
+	locationId: integer()
+		.notNull()
+		.references(() => locations.id),
+	// The same transaction time recordCount wrote to stock_levels.lastCountedAt.
+	countedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	previousCountedAt: timestamp({ withTimezone: true }),
+});
+
 export const channel = pgEnum("channel", [
 	"shopify",
 	"amazon",
