@@ -535,7 +535,6 @@ function ViewDialog({
 						<DialogTitle>{view ? "Edit view" : "Save view"}</DialogTitle>
 					</DialogHeader>
 					<input
-						// biome-ignore lint/a11y/noAutofocus: naming is all this dialog asks
 						autoFocus
 						value={name}
 						onChange={(e) => setName(e.target.value)}
