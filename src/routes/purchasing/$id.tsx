@@ -413,11 +413,10 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 						)}
 						<td className="px-3 py-2 text-right font-semibold tabular-nums">
 							{draft ? (
-								<DraftField
+								<QuantityField
 									key={`q${l.quantity}`}
 									line={l}
 									purchaseOrderId={d.order.id}
-									field="quantity"
 								/>
 							) : (
 								formatCount(l.quantity)
@@ -425,11 +424,10 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 						</td>
 						<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
 							{draft ? (
-								<DraftField
+								<PriceField
 									key={`c${l.unitCost}`}
 									line={l}
 									purchaseOrderId={d.order.id}
-									field="unitCost"
 								/>
 							) : (
 								formatMoney(l.unitCost)
@@ -462,41 +460,26 @@ const field =
 	"h-8 rounded-lg border border-input bg-white px-2 text-right tabular-nums outline-none focus:border-ring";
 
 // Quantity reads as a bold number on a soft fill, so the column scans at a
-// glance; it turns into a normal field when focused.
-const quantityField =
-	"h-9 w-16 cursor-pointer rounded-lg border border-transparent bg-[#f1f1f1] px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none hover:bg-[#e8e8e8] focus:cursor-text focus:border-ring focus:bg-white";
+// glance.
+const quantityBox =
+	"h-9 w-16 rounded-lg border border-transparent bg-[#f1f1f1] px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none";
 
-// Quantity or price on a draft line. Saves on Enter or leaving the field; a
-// quantity of 0 takes the line off. Escape puts the old value back. Price is
-// plain text with a dotted underline until clicked, since it rarely changes.
-function DraftField({
+// A draft line's quantity. Click to type a number, or drag sideways for the
+// number line. 0 takes the line off, with Undo.
+function QuantityField({
 	line,
 	purchaseOrderId,
-	field: name,
 }: {
 	line: Line;
 	purchaseOrderId: number;
-	field: "quantity" | "unitCost";
 }) {
-	const { busy, run } = useAction();
-	const initial =
-		name === "quantity"
-			? String(line.quantity)
-			: (line.unitCost?.toFixed(2) ?? "");
-	const [value, setValue] = useState(initial);
-	const [editing, setEditing] = useState(name === "quantity");
+	const { run } = useAction();
 	const router = useRouter();
-	const scrub = useNumberLine({
-		value: line.quantity,
-		disabled: busy || name !== "quantity",
-		onCommit: (next) => {
-			setValue(String(next));
-			saveQuantity(next);
-		},
-	});
+	const [typing, setTyping] = useState(false);
+	const [text, setText] = useState("");
 
-	// 0 takes the line off; Undo puts it back as it was, price included.
-	async function saveQuantity(quantity: number) {
+	async function save(quantity: number) {
+		if (quantity === line.quantity) return;
 		const r = await run(() =>
 			setLine({
 				data: { purchaseOrderId, productId: line.productId, quantity },
@@ -521,17 +504,91 @@ function DraftField({
 			});
 	}
 
+	const scrub = useNumberLine({ value: line.quantity, onCommit: save });
+
+	function finishTyping() {
+		setTyping(false);
+		const value = text.trim();
+		if (value === "") return;
+		const n = Number(value);
+		if (!Number.isInteger(n) || n < 0) {
+			toast.error(`"${value}" isn't a whole number`);
+			return;
+		}
+		save(n);
+	}
+
+	if (typing)
+		return (
+			<input
+				value={text}
+				// biome-ignore lint/a11y/noAutofocus: opened by a click to type
+				autoFocus
+				inputMode="numeric"
+				placeholder={String(line.quantity)}
+				aria-label={`Quantity of ${line.sku}`}
+				onChange={(e) => setText(e.target.value)}
+				onBlur={finishTyping}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") e.currentTarget.blur();
+					if (e.key === "Escape") {
+						setText("");
+						e.stopPropagation();
+						e.currentTarget.blur();
+					}
+				}}
+				className={cn(quantityBox, "border-ring bg-white")}
+			/>
+		);
+
+	return (
+		<>
+			<button
+				type="button"
+				aria-label={`Quantity of ${line.sku}: ${line.quantity}`}
+				title="Click to type, or drag sideways"
+				{...scrub.handlers}
+				onClick={() => {
+					// A drag's release isn't a click.
+					if (scrub.wasDrag()) return;
+					setText("");
+					setTyping(true);
+				}}
+				className={cn(
+					quantityBox,
+					"cursor-pointer select-none hover:bg-[#e8e8e8]",
+					scrub.dragging && "cursor-ew-resize",
+				)}
+			>
+				{scrub.dragging ? scrub.shown : line.quantity}
+			</button>
+			{scrub.line}
+		</>
+	);
+}
+
+// A draft line's price: plain text with a dotted underline until clicked,
+// since it rarely changes. Saves on Enter or leaving the field; Escape puts
+// the old price back. Empty means no price yet.
+function PriceField({
+	line,
+	purchaseOrderId,
+}: {
+	line: Line;
+	purchaseOrderId: number;
+}) {
+	const { busy, run } = useAction();
+	const initial = line.unitCost?.toFixed(2) ?? "";
+	const [value, setValue] = useState(initial);
+	const [editing, setEditing] = useState(false);
+
 	function save() {
-		if (name === "unitCost") setEditing(false);
+		setEditing(false);
 		if (value.trim() === initial) return;
 		const n = Number(value);
 		if (value.trim() !== "" && !(Number.isFinite(n) && n >= 0)) {
-			toast.error(`"${value}" isn't a number`);
+			toast.error(`"${value}" isn't a price`);
 			setValue(initial);
-			return;
-		}
-		if (name === "quantity") {
-			saveQuantity(Math.round(n));
 			return;
 		}
 		run(() =>
@@ -561,43 +618,28 @@ function DraftField({
 			</button>
 		);
 
-	const input = (
+	return (
 		<input
-			value={scrub.dragging ? String(scrub.shown) : value}
+			value={value}
 			disabled={busy}
-			// biome-ignore lint/a11y/noAutofocus: price opens to type into it
-			autoFocus={name === "unitCost"}
-			onFocus={(e) => name === "unitCost" && e.currentTarget.select()}
-			inputMode={name === "quantity" ? "numeric" : "decimal"}
-			placeholder={name === "unitCost" ? "Price?" : undefined}
-			aria-label={
-				name === "quantity" ? `Quantity of ${line.sku}` : `Price of ${line.sku}`
-			}
+			// biome-ignore lint/a11y/noAutofocus: opened by a click to type
+			autoFocus
+			onFocus={(e) => e.currentTarget.select()}
+			inputMode="decimal"
+			placeholder="Price?"
+			aria-label={`Price of ${line.sku}`}
 			onChange={(e) => setValue(e.target.value)}
 			onBlur={save}
 			onKeyDown={(e) => {
 				if (e.key === "Enter") e.currentTarget.blur();
 				if (e.key === "Escape") {
 					setValue(initial);
-					if (name === "unitCost") setEditing(false);
+					setEditing(false);
 					e.stopPropagation();
 				}
 			}}
-			className={
-				name === "quantity"
-					? cn(quantityField, scrub.dragging && "cursor-ew-resize select-none")
-					: cn(field, "w-20")
-			}
-			{...(name === "quantity" ? scrub.handlers : {})}
+			className={cn(field, "w-20")}
 		/>
-	);
-	if (name !== "quantity") return input;
-	return (
-		// Drag sideways to step the number; a click still types into it.
-		<span className="inline-block" title="Type, or drag sideways">
-			{input}
-			{scrub.line}
-		</span>
 	);
 }
 

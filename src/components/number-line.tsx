@@ -43,6 +43,8 @@ export function useNumberLine({
 		frame: number | null;
 		lastTime: number;
 	} | null>(null);
+	// Whether the last press was a drag, so its release isn't also a click.
+	const dragged = useRef(false);
 	const [preview, setPreview] = useState<{
 		start: number;
 		value: number;
@@ -98,6 +100,7 @@ export function useNumberLine({
 	const handlers = {
 		onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
 			if (disabled || e.button > 0) return;
+			dragged.current = false;
 			const r = e.currentTarget.getBoundingClientRect();
 			drag.current = {
 				x: e.clientX,
@@ -117,6 +120,7 @@ export function useNumberLine({
 			if (!d.active) {
 				if (Math.abs(d.dx) < SLOP_PX) return;
 				d.active = true;
+				dragged.current = true;
 				// Keep getting moves if the pointer leaves the field. It can be gone
 				// already (a lifted finger), and the drag still works without it.
 				try {
@@ -151,6 +155,8 @@ export function useNumberLine({
 	return {
 		handlers,
 		dragging: preview !== null,
+		// True right after a drag ends; check it in the element's onClick.
+		wasDrag: () => dragged.current,
 		// The number to show while dragging, else the real one.
 		shown: preview?.value ?? value,
 		line: preview && createPortal(<NumberLine {...preview} />, document.body),
