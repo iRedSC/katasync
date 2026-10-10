@@ -424,8 +424,9 @@ export const suppliers = pgTable("suppliers", {
 	// Days of sales each PO should cover once it arrives. Longer means bigger,
 	// rarer orders.
 	coverDays: integer().notNull().default(30),
-	// A suggested PO counts as ready once its total reaches this, e.g. their
-	// free-shipping minimum. 0 means ready as soon as anything needs ordering.
+	// Spend threshold: a suggested PO counts as ready once its total reaches
+	// this, e.g. their free-shipping minimum. 0 means ready as soon as anything
+	// needs ordering.
 	minimumOrder: numeric({ precision: 12, scale: 2, mode: "number" })
 		.notNull()
 		.default(0),

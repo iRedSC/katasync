@@ -30,6 +30,7 @@ import {
 	getPurchaseOrder,
 	getPurchaseOrderPdf,
 	type PurchaseOrderDetail,
+	pullSuggestions,
 	receiveLine,
 	sendPurchaseOrder,
 	setLine,
@@ -179,6 +180,22 @@ function PurchaseOrderPage() {
 						<LineTable detail={d} />
 						<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
 							{draft && <AddLine purchaseOrderId={po.id} />}
+							{draft && d.toAdd > 0 && (
+								<Button
+									size="sm"
+									variant="outline"
+									disabled={busy}
+									onClick={() =>
+										run(
+											() => pullSuggestions({ data: { id: po.id } }),
+											(n) =>
+												`Added ${n} ${n === 1 ? "product" : "products"} that need reordering`,
+										)
+									}
+								>
+									Add what needs reordering ({d.toAdd})
+								</Button>
+							)}
 							<span className="text-muted-foreground">
 								{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
 								{unpriced > 0 && `, ${unpriced} without a price`}
@@ -347,7 +364,8 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 	if (d.lines.length === 0)
 		return (
 			<p className="px-4 py-6 text-center text-muted-foreground">
-				Nothing on this PO yet. Add a product by SKU below.
+				Nothing on this PO yet. Add a product by SKU below, or what needs
+				reordering.
 			</p>
 		);
 	return (

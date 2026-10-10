@@ -6,11 +6,13 @@ import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
 import {
+	addSuggestions,
 	averageCost,
 	cancelOrder,
 	closeOrder,
 	draftFromSuggestions,
 	markSent,
+	openDraft,
 	receive,
 	setDraftLine,
 	undoReceipt,
@@ -231,6 +233,23 @@ describe("a PO from draft to received", () => {
 			quantity: 0,
 		});
 		expect(await linesOf(id)).toHaveLength(1);
+	});
+
+	test("a blank PO pulls in what needs reordering, once", async () => {
+		const id = await openDraft(db, canam);
+		expect(await linesOf(id)).toEqual([]);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 2,
+		});
+		// Only the knife is new; the blade keeps the 2 set by hand.
+		expect(await addSuggestions(db, id, now)).toBe(1);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([2, 6]);
+		expect(await addSuggestions(db, id, now)).toBe(0);
+
+		await markSent(db, { purchaseOrderId: id, sentTo: null });
+		await expect(addSuggestions(db, id, now)).rejects.toThrow(/is sent/);
 	});
 
 	test("refuses tool sets and empty POs", async () => {

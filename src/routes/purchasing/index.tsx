@@ -24,7 +24,7 @@ export const Route = createFileRoute("/purchasing/")({
 });
 
 function Purchasing() {
-	const { suggestions, open, done } = Route.useLoaderData();
+	const { suggestions, open, done, suppliers } = Route.useLoaderData();
 	const ready = suggestions.filter((s) => s.ready);
 	const waiting = suggestions.filter((s) => !s.ready);
 	const nothing =
@@ -34,9 +34,12 @@ function Purchasing() {
 		<Page
 			title="Purchase orders"
 			actions={
-				<Button asChild variant="outline" size="sm">
-					<Link to="/purchasing/suppliers">Suppliers</Link>
-				</Button>
+				<>
+					<Button asChild variant="outline" size="sm">
+						<Link to="/purchasing/suppliers">Suppliers</Link>
+					</Button>
+					<NewPurchaseOrder suppliers={suppliers} />
+				</>
 			}
 		>
 			{nothing ? (
@@ -60,7 +63,7 @@ function Purchasing() {
 					)}
 					{waiting.length > 0 && (
 						<Card
-							title="Below the supplier's minimum"
+							title="Below the spend threshold"
 							aside="Order these with the next PO, or wait until they add up"
 							flush
 						>
@@ -75,6 +78,53 @@ function Purchasing() {
 				</>
 			)}
 		</Page>
+	);
+}
+
+// Starts a blank draft for any supplier; "Add what needs reordering" on the
+// draft fills it in. A supplier with a draft already opens that one.
+function NewPurchaseOrder({
+	suppliers,
+}: {
+	suppliers: PurchasingList["suppliers"];
+}) {
+	const navigate = useNavigate();
+	const [busy, setBusy] = useState(false);
+
+	async function create(supplierId: number) {
+		setBusy(true);
+		try {
+			const id = await createDraft({
+				data: { supplierId, fromSuggestions: false },
+			});
+			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err));
+			setBusy(false);
+		}
+	}
+
+	return (
+		<label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 font-semibold text-primary-foreground hover:bg-[#1a1a1a]">
+			<Plus className="size-4" />
+			{busy ? "Opening…" : "New PO"}
+			<select
+				value=""
+				disabled={busy}
+				aria-label="New PO for supplier"
+				onChange={(e) => e.target.value && create(Number(e.target.value))}
+				className="absolute inset-0 cursor-pointer opacity-0"
+			>
+				<option value="" disabled>
+					Pick a supplier
+				</option>
+				{suppliers.map((s) => (
+					<option key={s.id} value={s.id}>
+						{s.name}
+					</option>
+				))}
+			</select>
+		</label>
 	);
 }
 
@@ -132,7 +182,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 							<div className="text-xs whitespace-nowrap text-muted-foreground">
 								{s.ready
 									? s.unpriced > 0 && `+ ${s.unpriced} without a price`
-									: `${formatMoney(short)} short of ${formatMoney(s.minimumOrder)}`}
+									: `${formatMoney(short)} short of the ${formatMoney(s.minimumOrder)} threshold`}
 							</div>
 						</div>
 						<Button

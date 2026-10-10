@@ -15,6 +15,7 @@ import {
 import { renderPurchaseOrder } from "#/purchasing/document";
 import { emailConfigured, sendEmail } from "#/purchasing/email";
 import {
+	addSuggestions,
 	cancelOrder,
 	closeOrder,
 	draftFromSuggestions,
@@ -50,7 +51,7 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
 		const received = receivedByLine(db);
-		const [suggestions, orders] = await Promise.all([
+		const [suggestions, orders, supplierNames] = await Promise.all([
 			suggestPurchases(db),
 			db
 				.select({
@@ -76,6 +77,10 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 				.groupBy(purchaseOrders.id, suppliers.name)
 				.orderBy(desc(purchaseOrders.id))
 				.limit(200),
+			db
+				.select({ id: suppliers.id, name: suppliers.name })
+				.from(suppliers)
+				.orderBy(suppliers.name),
 		]);
 		const open = orders.filter(
 			(o) => o.status === "draft" || o.status === "sent",
@@ -83,7 +88,7 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 		const done = orders
 			.filter((o) => o.status === "closed" || o.status === "cancelled")
 			.slice(0, 30);
-		return { suggestions, open, done };
+		return { suggestions, open, done, suppliers: supplierNames };
 	},
 );
 
@@ -156,7 +161,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const po = await loadOrder(db, data.id);
-		const [onHand, receipts, ownedLocations] = await Promise.all([
+		const [onHand, receipts, ownedLocations, toAdd] = await Promise.all([
 			onHandOf(
 				db,
 				po.lines.map((l) => l.productId),
@@ -188,8 +193,20 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				.from(locations)
 				.where(eq(locations.kind, "owned"))
 				.orderBy(locations.name),
+			// On a draft: suggested products for this supplier not on it yet.
+			po.order.status === "draft"
+				? suggestPurchases(db).then((all) => {
+						const onPo = new Set(po.lines.map((l) => l.productId));
+						return (
+							all
+								.find((s) => s.supplierId === po.supplier.id)
+								?.lines.filter((l) => !onPo.has(l.productId)).length ?? 0
+						);
+					})
+				: 0,
 		]);
 		return {
+			toAdd,
 			...po,
 			lines: po.lines.map((l) => ({
 				...l,
@@ -213,6 +230,11 @@ export const createDraft = createServerFn({ method: "POST" })
 			? openDraft(db, data.supplierId)
 			: draftFromSuggestions(db, data.supplierId);
 	});
+
+// Pulls what needs reordering into a draft, e.g. one started blank.
+export const pullSuggestions = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => addSuggestions(getDb(), data.id));
 
 export const setLine = createServerFn({ method: "POST" })
 	.validator(

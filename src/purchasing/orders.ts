@@ -43,25 +43,38 @@ export async function draftFromSuggestions(
 	supplierId: number,
 	now = new Date(),
 ): Promise<number> {
-	const suggestion = (await suggestPurchases(db, now)).find(
-		(s) => s.supplierId === supplierId,
-	);
+	const id = await openDraft(db, supplierId);
+	await addSuggestions(db, id, now);
+	return id;
+}
+
+// Adds whatever the supplier's products need reordering today to a draft.
+// Lines already on it are left as they are. Returns how many were added.
+export async function addSuggestions(
+	db: Db,
+	purchaseOrderId: number,
+	now = new Date(),
+): Promise<number> {
+	const suggestions = await suggestPurchases(db, now);
 	return db.transaction(async (tx) => {
-		const id = await openDraft(tx, supplierId);
-		if (suggestion && suggestion.lines.length > 0) {
-			await tx
-				.insert(purchaseOrderLines)
-				.values(
-					suggestion.lines.map((l) => ({
-						purchaseOrderId: id,
-						productId: l.productId,
-						quantity: l.quantity,
-						unitCost: l.unitCost,
-					})),
-				)
-				.onConflictDoNothing();
-		}
-		return id;
+		// Locked, so it can't be sent or cancelled while lines go in.
+		const po = await lockOrder(tx, purchaseOrderId, ["draft"]);
+		const lines =
+			suggestions.find((s) => s.supplierId === po.supplierId)?.lines ?? [];
+		if (lines.length === 0) return 0;
+		const added = await tx
+			.insert(purchaseOrderLines)
+			.values(
+				lines.map((l) => ({
+					purchaseOrderId: po.id,
+					productId: l.productId,
+					quantity: l.quantity,
+					unitCost: l.unitCost,
+				})),
+			)
+			.onConflictDoNothing()
+			.returning({ id: purchaseOrderLines.id });
+		return added.length;
 	});
 }
 

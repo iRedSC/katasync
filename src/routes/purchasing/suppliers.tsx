@@ -32,7 +32,7 @@ function Suppliers() {
 							</th>
 							<th className="px-4 py-2 text-right font-medium">Products</th>
 							<th className="px-4 py-2 text-right font-medium">Lead time</th>
-							<th className="px-4 py-2 text-right font-medium">Minimum</th>
+							<th className="px-4 py-2 text-right font-medium">Threshold</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -89,7 +89,7 @@ function Suppliers() {
 			<p className="px-1 text-muted-foreground">
 				A product is reordered once its stock would run out within the lead
 				time, then bought to last the cover days on top. A supplier's suggested
-				PO is ready once it reaches their minimum.
+				PO is ready once its total reaches their spend threshold.
 			</p>
 		</Page>
 	);
@@ -193,7 +193,7 @@ function SupplierForm({
 						className={cn(input, "tabular-nums")}
 					/>
 				</Field>
-				<Field label="Minimum order ($)">
+				<Field label="Spend threshold ($)">
 					<input
 						name="minimumOrder"
 						inputMode="decimal"
