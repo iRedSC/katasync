@@ -106,6 +106,27 @@
       "when": 1791603745852,
       "tag": "0014_shopify_product_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1791643019048,
+      "tag": "0015_count_dates",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791643405625,
+      "tag": "0016_product_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791667790765,
+      "tag": "0017_count_undo",
+      "breakpoints": true
     }
   ]
 }

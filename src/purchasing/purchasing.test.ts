@@ -30,6 +30,7 @@ describe("reorderQuantity", () => {
 		onHand: 0,
 		onOrder: 0,
 		leadTimeDays: 10,
+		safetyDays: 0,
 		coverDays: 20,
 		minimumQuantity: 1,
 	};
@@ -177,9 +178,9 @@ describe("suggestPurchases", () => {
 		await sell(blade, 900, { placedAt: daysAgo(91) });
 
 		const [s] = await suggestPurchases(db, now);
-		// 60 sold over 90 days, for 10 + 20 days: 20 to order.
-		expect(s.lines).toMatchObject([{ sku: "BLADE", sold: 60, quantity: 20 }]);
-		expect(s).toMatchObject({ total: 100, ready: true, draftId: null });
+		// 60 sold over 90 days, for 10 + 20 days plus 5 spare as an A item: 24.
+		expect(s.lines).toMatchObject([{ sku: "BLADE", sold: 60, quantity: 24 }]);
+		expect(s).toMatchObject({ total: 120, ready: true, draftId: null });
 	});
 
 	test("isn't ready below the supplier's minimum, and lists unpriced lines", async () => {
@@ -192,7 +193,8 @@ describe("suggestPurchases", () => {
 
 		const [s] = await suggestPurchases(db, now);
 		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE", "KNIFE"]);
-		expect(s).toMatchObject({ total: 30, unpriced: 1, ready: false });
+		// Blade is an A item: 1 a day for 10 + 20 days plus 5 spare.
+		expect(s).toMatchObject({ total: 35, unpriced: 1, ready: false });
 	});
 });
 
@@ -217,17 +219,19 @@ describe("a PO from draft to received", () => {
 	test("drafts from suggestions without overwriting edits", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		expect(await linesOf(id)).toMatchObject([
-			{ productId: blade, quantity: 30, unitCost: 5 },
+			// 4 every 3 days for 10 + 20 days plus 5 spare (an A item), less
+			// the 10 on hand.
+			{ productId: blade, quantity: 37, unitCost: 5 },
 			// 3 needed, but the supplier sells at least 6.
 			{ productId: knife, quantity: 6, unitCost: 2 },
 		]);
 		await setDraftLine(db, {
 			purchaseOrderId: id,
 			productId: blade,
-			quantity: 35,
+			quantity: 40,
 		});
 		expect(await draftFromSuggestions(db, canam, now)).toBe(id);
-		expect((await linesOf(id))[0].quantity).toBe(35);
+		expect((await linesOf(id))[0].quantity).toBe(40);
 
 		await setDraftLine(db, {
 			purchaseOrderId: id,
@@ -244,12 +248,12 @@ describe("a PO from draft to received", () => {
 			productId: blade,
 			quantity: 2,
 		});
-		// Blade (suggested 30) is short of what's suggested; the knife is new.
+		// Blade (suggested 37) is short of what's suggested; the knife is new.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 1,
 			raised: 1,
 		});
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([30, 6]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([37, 6]);
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 0,
@@ -262,7 +266,7 @@ describe("a PO from draft to received", () => {
 			quantity: 50,
 		});
 		await updateFromSuggestions(db, id, now);
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([30, 50]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([37, 50]);
 
 		await markSent(db, { purchaseOrderId: id, sentTo: null });
 		await expect(updateFromSuggestions(db, id, now)).rejects.toThrow(/is sent/);
@@ -371,13 +375,13 @@ describe("a PO from draft to received", () => {
 			status: "sent",
 			expectedAt: new Date("2026-10-20T12:00:00Z"),
 		});
-		expect((await unitsOnOrder(db)).get(blade)).toBe(30);
+		expect((await unitsOnOrder(db)).get(blade)).toBe(37);
 		// On order now, so nothing more is suggested.
 		expect(await suggestPurchases(db, now)).toEqual([]);
 
 		const [bladeLine, knifeLine] = await linesOf(id);
 		await receive(db, { lineId: bladeLine.id, quantity: 10 });
-		expect((await unitsOnOrder(db)).get(blade)).toBe(20);
+		expect((await unitsOnOrder(db)).get(blade)).toBe(27);
 		const [product] = await db
 			.select()
 			.from(schema.products)
@@ -385,7 +389,7 @@ describe("a PO from draft to received", () => {
 		// 10 on the shelf at $4, 10 more at $5.
 		expect(product.unitCost).toBe(4.5);
 
-		const last = await receive(db, { lineId: bladeLine.id, quantity: 20 });
+		const last = await receive(db, { lineId: bladeLine.id, quantity: 27 });
 		expect(last.closed).toBe(false);
 		const knives = await receive(db, { lineId: knifeLine.id, quantity: 6 });
 		expect(knives.closed).toBe(true);
