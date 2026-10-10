@@ -10,6 +10,7 @@ const MAX = 9999;
 // On a closed PO it only offers the undo.
 export function QuantitySheet({
 	title,
+	unit,
 	canReceive,
 	remaining,
 	lastReceipt,
@@ -19,6 +20,8 @@ export function QuantitySheet({
 	onClose,
 }: {
 	title: string;
+	// What's counted when it isn't one of the product, e.g. "CASE".
+	unit?: string;
 	canReceive: boolean;
 	remaining: number;
 	// Newest receipt that can still be undone for this line.
@@ -132,7 +135,9 @@ export function QuantitySheet({
 							onClick={() => onConfirm(quantity)}
 							className="mt-3 h-16 w-full rounded-2xl bg-[#303030] text-xl font-bold text-white active:bg-[#1a1a1a] disabled:opacity-40"
 						>
-							{valid ? `Receive ${quantity}` : "Pick a number"}
+							{valid
+								? `Receive ${quantity}${unit ? ` ${unit}` : ""}`
+								: "Pick a number"}
 						</button>
 					</>
 				)}

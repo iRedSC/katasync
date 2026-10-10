@@ -441,6 +441,14 @@ export const suppliers = pgTable("suppliers", {
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+// What suppliers sell in, e.g. CASE. Edited in Settings; renames carry over to
+// every product that uses the unit. EACH is one of the product itself, always
+// exists, and can't be renamed or removed. Rules live in src/purchasing/units.ts.
+export const purchaseUnits = pgTable("purchase_units", {
+	name: text().primaryKey(),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 // Who we buy a product from. One supplier per product, so the product is the
 // key. Bundles have no stock to buy; src/purchasing/suppliers.ts refuses them.
 export const productSuppliers = pgTable(
@@ -454,15 +462,27 @@ export const productSuppliers = pgTable(
 			.references(() => suppliers.id),
 		// The supplier's own part number, printed on POs next to ours.
 		supplierSku: text(),
-		// What the supplier charges per unit, USD. Starts each PO line; receiving
-		// updates it to the last price paid.
+		// What they sell it in, and how many of the product one holds: a CASE of
+		// 30. POs are ordered and received in this unit; stock counts the product.
+		unit: text()
+			.notNull()
+			.default("EACH")
+			.references(() => purchaseUnits.name, { onUpdate: "cascade" }),
+		packSize: integer().notNull().default(1),
+		// What the supplier charges per unit above, USD. Starts each PO line;
+		// receiving updates it to the last price paid.
 		cost: numeric({ precision: 12, scale: 4, mode: "number" }),
-		// Smallest quantity they'll sell, e.g. a case of 30.
+		// Fewest units above they'll sell, e.g. 2 cases.
 		minimumQuantity: integer().notNull().default(1),
 	},
 	(t) => [
 		index("product_suppliers_supplier_idx").on(t.supplierId),
 		check("product_suppliers_minimum_positive", sql`${t.minimumQuantity} > 0`),
+		check("product_suppliers_pack_size_positive", sql`${t.packSize} > 0`),
+		check(
+			"product_suppliers_each_is_one",
+			sql`${t.unit} <> 'EACH' or ${t.packSize} = 1`,
+		),
 	],
 );
 
@@ -519,18 +539,26 @@ export const purchaseOrderLines = pgTable(
 		productId: integer()
 			.notNull()
 			.references(() => products.id),
+		// The supplier's unit when the line was made (a CASE of 30). Copied rather
+		// than referenced, so a sent PO never changes meaning; a draft's lines
+		// follow the product's unit (src/purchasing/units.ts).
+		unit: text().notNull().default("EACH"),
+		packSize: integer().notNull().default(1),
+		// How many of `unit`. Receiving puts quantity × packSize on the shelf.
 		quantity: integer().notNull(),
-		// USD per unit. Null when nobody knows the price yet.
+		// USD per `unit`. Null when nobody knows the price yet.
 		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 	},
 	(t) => [
 		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),
 		check("purchase_order_lines_quantity_positive", sql`${t.quantity} > 0`),
+		check("purchase_order_lines_pack_size_positive", sql`${t.packSize} > 0`),
 	],
 );
 
 // Each time units of a line are received, and each undo (a negative quantity
-// pointing at the receipt it reverses). A line's received count is the sum.
+// pointing at the receipt it reverses). Counted in the line's unit, like its
+// quantity. A line's received count is the sum.
 // batchId is the ledger batch that put the units on the shelf.
 export const purchaseOrderReceipts = pgTable(
 	"purchase_order_receipts",

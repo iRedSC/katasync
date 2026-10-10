@@ -17,12 +17,14 @@ import {
 // Sales from this many days back set each product's daily demand.
 export const DEMAND_DAYS = 90;
 
-// How many to order of one product, or 0 to leave it off the PO.
+// How many of the supplier's unit to order, or 0 to leave it off the PO.
+// Demand, stock, and what's on order count the product itself; packSize is how
+// many of it one unit holds.
 //
 // A product needs ordering once what's on the shelf and on order would run out
 // before a PO sent today arrives (leadTimeDays). It's then topped up to last
-// coverDays past arrival, and to at least the supplier's minimum quantity.
-// Oversold stock (negative onHand) is always bought back.
+// coverDays past arrival, rounded up to whole units, and to at least the
+// supplier's minimum. Oversold stock (negative onHand) is always bought back.
 export function reorderQuantity(p: {
 	dailyDemand: number;
 	onHand: number;
@@ -30,6 +32,7 @@ export function reorderQuantity(p: {
 	leadTimeDays: number;
 	coverDays: number;
 	minimumQuantity: number;
+	packSize: number;
 }): number {
 	const position = p.onHand + p.onOrder;
 	const reorderPoint = p.dailyDemand * p.leadTimeDays;
@@ -37,7 +40,7 @@ export function reorderQuantity(p: {
 	const target = Math.ceil(p.dailyDemand * (p.leadTimeDays + p.coverDays));
 	const need = target - position;
 	if (need <= 0) return 0;
-	return Math.max(need, p.minimumQuantity);
+	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
 }
 
 export type SuggestedLine = {
@@ -47,6 +50,10 @@ export type SuggestedLine = {
 	variantName: string | null;
 	imageUrl: string | null;
 	supplierSku: string | null;
+	// What it's ordered in. quantity and unitCost are per unit; onHand,
+	// onOrder, and sold count the product.
+	unit: string;
+	packSize: number;
 	onHand: number;
 	onOrder: number;
 	// Units sold over DEMAND_DAYS, counting tool sets as their parts.
@@ -90,6 +97,8 @@ export async function suggestPurchases(
 				supplierSku: productSuppliers.supplierSku,
 				cost: productSuppliers.cost,
 				minimumQuantity: productSuppliers.minimumQuantity,
+				unit: productSuppliers.unit,
+				packSize: productSuppliers.packSize,
 				supplierId: suppliers.id,
 				supplierName: suppliers.name,
 				leadTimeDays: suppliers.leadTimeDays,
@@ -119,6 +128,7 @@ export async function suggestPurchases(
 			leadTimeDays: p.leadTimeDays,
 			coverDays: p.coverDays,
 			minimumQuantity: p.minimumQuantity,
+			packSize: p.packSize,
 		});
 		if (quantity === 0) continue;
 
@@ -137,7 +147,8 @@ export async function suggestPurchases(
 			bySupplier.set(p.supplierId, s);
 		}
 		// The supplier's price if we know it, else what we last valued it at.
-		const unitCost = p.cost ?? p.productCost;
+		const unitCost =
+			p.cost ?? (p.productCost === null ? null : p.productCost * p.packSize);
 		s.lines.push({
 			productId: p.productId,
 			sku: p.sku,
@@ -145,6 +156,8 @@ export async function suggestPurchases(
 			variantName: p.variantName,
 			imageUrl: p.imageUrl,
 			supplierSku: p.supplierSku,
+			unit: p.unit,
+			packSize: p.packSize,
 			...line,
 			quantity,
 			unitCost,
@@ -209,7 +222,8 @@ async function ownedOnHand(db: Db) {
 	return new Map(rows.map((r) => [r.productId, r.onHand]));
 }
 
-// Units on sent POs that haven't arrived yet. Drafts aren't on order.
+// How many of each product are on sent POs and haven't arrived yet, counting
+// the product itself (2 cases of 30 is 60). Drafts aren't on order.
 export async function unitsOnOrder(db: Db, productIds?: number[]) {
 	const received = db
 		.select({
@@ -222,7 +236,7 @@ export async function unitsOnOrder(db: Db, productIds?: number[]) {
 	const rows = await db
 		.select({
 			productId: purchaseOrderLines.productId,
-			units: sql<number>`sum(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0))::int`,
+			units: sql<number>`sum(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`,
 		})
 		.from(purchaseOrderLines)
 		.innerJoin(

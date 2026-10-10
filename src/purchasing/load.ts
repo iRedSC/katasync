@@ -53,6 +53,13 @@ export async function loadOrder(db: Db, poId: number) {
 			imageUrl: products.imageUrl,
 			barcode: products.barcode,
 			supplierSku: productSuppliers.supplierSku,
+			unit: purchaseOrderLines.unit,
+			packSize: purchaseOrderLines.packSize,
+			// Who the product is bought from now, and the fewest they sell. A
+			// draft's MOQ / UOM can be changed here only when that's this PO's
+			// supplier.
+			linkSupplierId: productSuppliers.supplierId,
+			minimumQuantity: productSuppliers.minimumQuantity,
 			quantity: purchaseOrderLines.quantity,
 			unitCost: purchaseOrderLines.unitCost,
 			received: sql<number>`coalesce(${received.units}, 0)::int`,
@@ -94,6 +101,8 @@ export async function documentFor(db: Db, poId: number) {
 				sku: l.sku,
 				supplierSku: l.supplierSku,
 				description: l.variantName ? `${l.name} (${l.variantName})` : l.name,
+				unit: l.unit,
+				packSize: l.packSize,
 				quantity: l.quantity,
 				unitCost: l.unitCost,
 			})),

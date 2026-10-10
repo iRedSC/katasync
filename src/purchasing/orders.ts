@@ -12,6 +12,7 @@ import {
 } from "#/db/schema";
 import { postMovements, undoBatch } from "#/inventory/ledger";
 import { type SuggestedLine, suggestPurchases } from "#/purchasing/reorder";
+import { perPack } from "#/purchasing/units";
 
 // Every change to a PO goes through here. Each one locks the PO's row first,
 // so two people receiving the same box can't both count it.
@@ -91,6 +92,8 @@ export async function updateFromSuggestions(
 				added.map((l) => ({
 					purchaseOrderId: po.id,
 					productId: l.productId,
+					unit: l.unit,
+					packSize: l.packSize,
 					quantity: l.quantity,
 					unitCost: l.unitCost,
 				})),
@@ -143,8 +146,9 @@ export async function openDraft(db: Db, supplierId: number): Promise<number> {
 }
 
 // Sets how many of a product a draft orders, adding the line if needed. 0
-// removes it. Leaving out unitCost keeps the line's price, or starts a new line
-// at the supplier's price.
+// removes it. A new line is in the supplier's unit (EACH when the product has
+// no supplier). Leaving out unitCost keeps the line's price, or starts a new
+// line at the supplier's price.
 export async function setDraftLine(
 	db: Db,
 	input: {
@@ -176,6 +180,8 @@ export async function setDraftLine(
 				sku: products.sku,
 				productCost: products.unitCost,
 				supplierCost: productSuppliers.cost,
+				unit: productSuppliers.unit,
+				packSize: productSuppliers.packSize,
 			})
 			.from(products)
 			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
@@ -185,16 +191,22 @@ export async function setDraftLine(
 			throw new PurchaseOrderError(
 				`${product.sku} is a tool set; order its parts instead`,
 			);
+		const packSize = product.packSize ?? 1;
 		await tx
 			.insert(purchaseOrderLines)
 			.values({
 				purchaseOrderId: po.id,
 				productId: input.productId,
+				unit: product.unit ?? "EACH",
+				packSize,
 				quantity: input.quantity,
 				unitCost:
 					input.unitCost !== undefined
 						? input.unitCost
-						: (product.supplierCost ?? product.productCost),
+						: (product.supplierCost ??
+							(product.productCost === null
+								? null
+								: product.productCost * packSize)),
 			})
 			.onConflictDoUpdate({
 				target: [
@@ -286,9 +298,9 @@ export async function markSent(
 	});
 }
 
-// What arrived for one line. Puts it on the shelf at the PO's location and
-// folds its price into the product's average cost. Closes the PO once every
-// line has arrived in full.
+// What arrived for one line, in the line's unit: 2 cases of 30 puts 60 on the
+// shelf at the PO's location. Folds its price into the product's average cost.
+// Closes the PO once every line has arrived in full.
 export async function receive(
 	db: Db,
 	input: { lineId: number; quantity: number },
@@ -319,7 +331,7 @@ export async function receive(
 				{
 					productId: line.productId,
 					locationId: po.locationId,
-					delta: input.quantity,
+					delta: input.quantity * line.packSize,
 					reason: "receipt",
 				},
 			],
@@ -333,8 +345,8 @@ export async function receive(
 			await averageInCost(tx, {
 				productId: line.productId,
 				onHandBefore: before,
-				quantity: input.quantity,
-				unitCost: line.unitCost,
+				quantity: input.quantity * line.packSize,
+				unitCost: line.unitCost / line.packSize,
 			});
 		}
 		const closed = await closeIfComplete(tx, po.id);
@@ -471,9 +483,10 @@ async function ownedOnHand(db: Db, productId: number) {
 	return row.onHand;
 }
 
-// Weighted average of what's on the shelf and what just arrived. Oversold
-// units (negative stock) have no cost to average in, so they count as none.
-// The supplier's price becomes the last price paid.
+// Weighted average of what's on the shelf and what just arrived, per one of
+// the product. Oversold units (negative stock) have no cost to average in, so
+// they count as none. The supplier's price becomes the last price paid, in
+// whatever unit the product is bought in now.
 export function averageCost(p: {
 	oldCost: number | null;
 	onHandBefore: number;
@@ -503,10 +516,15 @@ async function averageInCost(
 		.update(products)
 		.set({ unitCost: Math.round(cost * 10_000) / 10_000 })
 		.where(eq(products.id, p.productId));
-	await db
-		.update(productSuppliers)
-		.set({ cost: p.unitCost })
+	const [link] = await db
+		.select({ packSize: productSuppliers.packSize })
+		.from(productSuppliers)
 		.where(eq(productSuppliers.productId, p.productId));
+	if (link)
+		await db
+			.update(productSuppliers)
+			.set({ cost: perPack(p.unitCost, 1, link.packSize) })
+			.where(eq(productSuppliers.productId, p.productId));
 }
 
 // The PO a ledger batch belongs to, when it's a receipt or a receipt's undo.
