@@ -14,6 +14,7 @@ import { Route as CountsRouteImport } from './routes/counts'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as McpRouteImport } from './routes/mcp'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StockRouteImport } from './routes/stock'
@@ -53,6 +54,11 @@ const ListingsRoute = ListingsRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -137,6 +143,7 @@ export interface FileRoutesByFullPath {
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
+  '/mcp': typeof McpRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -159,6 +166,7 @@ export interface FileRoutesByTo {
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
+  '/mcp': typeof McpRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -182,6 +190,7 @@ export interface FileRoutesById {
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
+  '/mcp': typeof McpRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -206,6 +215,7 @@ export interface FileRouteTypes {
     | '/diagnostics'
     | '/listings'
     | '/login'
+    | '/mcp'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -228,6 +238,7 @@ export interface FileRouteTypes {
     | '/diagnostics'
     | '/listings'
     | '/login'
+    | '/mcp'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -250,6 +261,7 @@ export interface FileRouteTypes {
     | '/diagnostics'
     | '/listings'
     | '/login'
+    | '/mcp'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -273,6 +285,7 @@ export interface RootRouteChildren {
   DiagnosticsRoute: typeof DiagnosticsRoute
   ListingsRoute: typeof ListingsRoute
   LoginRoute: typeof LoginRoute
+  McpRoute: typeof McpRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   StockRoute: typeof StockRoute
@@ -325,6 +338,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -441,6 +461,7 @@ const rootRouteChildren: RootRouteChildren = {
   DiagnosticsRoute: DiagnosticsRoute,
   ListingsRoute: ListingsRoute,
   LoginRoute: LoginRoute,
+  McpRoute: McpRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   StockRoute: StockRoute,

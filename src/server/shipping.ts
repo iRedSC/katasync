@@ -4,9 +4,9 @@ import { and, eq, isNull } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import { locations, orders, packages, shipments } from "#/db/schema";
+import { createBoxes, updateBox } from "#/shipping/boxes";
 import { sendTracking, voidShipment, withOrderLock } from "#/shipping/handoff";
 import {
-	freePackagePin,
 	orderForShipping,
 	rankRates,
 	serviceHistory,
@@ -18,9 +18,6 @@ import {
 	getRates,
 	shippoIsTest,
 } from "#/shipping/shippo";
-
-const MM_PER_INCH = 25.4;
-const GRAMS_PER_OUNCE = 28.349523125;
 
 export const listPackages = createServerFn({ method: "GET" }).handler(
 	async () => getDb().select().from(packages).orderBy(packages.pin),
@@ -34,52 +31,10 @@ const boxFields = {
 	weightOz: "number >= 0",
 } as const;
 
-// Boxes are entered in inches and ounces, the units on the tape measure and
-// scale, and stored in millimeters and grams like everything else.
-function boxValues(data: {
-	name: string;
-	lengthIn: number;
-	widthIn: number;
-	heightIn: number;
-	weightOz: number;
-}) {
-	return {
-		name: data.name.trim(),
-		lengthMm: Math.round(data.lengthIn * MM_PER_INCH),
-		widthMm: Math.round(data.widthIn * MM_PER_INCH),
-		heightMm: Math.round(data.heightIn * MM_PER_INCH),
-		weightGrams: Math.round(data.weightOz * GRAMS_PER_OUNCE),
-	};
-}
-
-// Says which box already has a pin, rather than a database error.
-async function refuseTakenPin(pin: number, exceptId?: number) {
-	const [taken] = await getDb()
-		.select({ id: packages.id, name: packages.name })
-		.from(packages)
-		.where(eq(packages.pin, pin));
-	if (taken && taken.id !== exceptId) {
-		throw new Error(`Pin ${pin} is already ${taken.name}`);
-	}
-}
-
 export const savePackage = createServerFn({ method: "POST" })
 	.validator(type({ ...boxFields, "pin?": "1 <= number.integer <= 999" }))
-	.handler(async ({ data }) => {
-		const db = getDb();
-		if (data.pin) await refuseTakenPin(data.pin);
-		const [saved] = await db
-			.insert(packages)
-			.values({
-				...boxValues(data),
-				pin: data.pin ?? (await freePackagePin(db)),
-			})
-			.returning();
-		return saved;
-	});
+	.handler(async ({ data }) => (await createBoxes(getDb(), [data]))[0]);
 
-// Everything about a box can change, its pin included. Past labels keep
-// pointing at it.
 export const updatePackage = createServerFn({ method: "POST" })
 	.validator(
 		type({
@@ -88,15 +43,7 @@ export const updatePackage = createServerFn({ method: "POST" })
 			pin: "1 <= number.integer <= 999",
 		}),
 	)
-	.handler(async ({ data }) => {
-		await refuseTakenPin(data.pin, data.id);
-		const [saved] = await getDb()
-			.update(packages)
-			.set({ ...boxValues(data), pin: data.pin })
-			.where(eq(packages.id, data.id))
-			.returning();
-		return saved;
-	});
+	.handler(async ({ data: { id, ...box } }) => updateBox(getDb(), id, box));
 
 export const deletePackage = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))
