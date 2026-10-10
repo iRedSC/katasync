@@ -24,13 +24,15 @@ const files = {
 		"2,Knife,,'05-158,USD,MMC,True,,,1,Per Unit,0.0000,0.0000,1,",
 		"3,Set,,SET,USD,MMC,True,,,1,Per Unit,10.0000,0.0000,1,",
 		"4,Gone,,GONE,USD,MMC,True,,,1,Per Unit,1.0000,0.0000,1,",
+		"5,Sponge,,SPONGE,USD,MMC,True,,,1,Per Unit,140.2500,0.0000,1,",
 	].join("\n"),
 };
 
 const catalog = new Map([
-	["ROLLER", "simple"],
-	["05-158", "simple"],
-	["SET", "bundle"],
+	["ROLLER", { kind: "simple", unitCost: 200 }],
+	["05-158", { kind: "simple", unitCost: null }],
+	["SET", { kind: "bundle", unitCost: null }],
+	["SPONGE", { kind: "simple", unitCost: 2 }],
 ] as const);
 
 describe("planSupplierImport", () => {
@@ -63,12 +65,21 @@ describe("planSupplierImport", () => {
 				cost: null,
 				minimumQuantity: 1,
 			},
+			// A case price, so it's left for the product's own cost.
+			{
+				sku: "SPONGE",
+				supplierCode: "MMC",
+				supplierSku: null,
+				cost: null,
+				minimumQuantity: 1,
+			},
 		]);
 		expect(plan.warnings).toEqual([
 			'CANAM: minimum order set to $1500 from its notes ("Free Shipping Min - $1500")',
 			"No email for MMC; their POs can't be sent until one is added",
 			"Skipped 1 links to SKUs katasync doesn't have: GONE",
 			"Skipped 1 links to tool sets, which are bought as their parts: SET",
+			"Ignored 1 supplier prices over twice or under half the product's cost, probably case prices: SPONGE ($140.25 vs $2)",
 		]);
 	});
 
@@ -96,11 +107,12 @@ test("applySupplierImport writes suppliers and links once", async () => {
 	const db = await createTestDb();
 	const roller = await createProduct(db, "ROLLER", "simple");
 	await createProduct(db, "05-158", "simple");
+	await createProduct(db, "SPONGE", "simple");
 	const plan = planSupplierImport(files, catalog);
 
 	expect(await applySupplierImport(db, plan)).toEqual({
 		suppliers: 2,
-		links: 2,
+		links: 3,
 	});
 	const links = await db.select().from(schema.productSuppliers);
 	expect(links.find((l) => l.productId === roller)).toMatchObject({

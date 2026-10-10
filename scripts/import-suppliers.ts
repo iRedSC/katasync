@@ -31,9 +31,15 @@ try {
 }
 const db = getDb();
 const catalog = new Map(
-	(await db.select({ sku: products.sku, kind: products.kind }).from(products)).map(
-		(p) => [p.sku, p.kind],
-	),
+	(
+		await db
+			.select({
+				sku: products.sku,
+				kind: products.kind,
+				unitCost: products.unitCost,
+			})
+			.from(products)
+	).map(({ sku, ...p }) => [sku, p]),
 );
 
 const plan = planSupplierImport(

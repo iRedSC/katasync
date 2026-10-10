@@ -52,11 +52,14 @@ export type SupplierImportPlan = {
 	warnings: string[];
 };
 
-// `catalog` is every product's SKU and kind, so links can be checked before
-// anything is written.
+// `catalog` is every product by SKU, so links can be checked before anything
+// is written.
 export function planSupplierImport(
 	files: { suppliers: string; links: string },
-	catalog: Map<string, "simple" | "kit" | "bundle">,
+	catalog: Map<
+		string,
+		{ kind: "simple" | "kit" | "bundle"; unitCost: number | null }
+	>,
 ): SupplierImportPlan {
 	const supplierRows = readCsv(files.suppliers, supplierRow, "suppliers.csv");
 	const linkRows = readCsv(files.links, linkRow, "primary-suppliers.csv");
@@ -101,6 +104,7 @@ export function planSupplierImport(
 	const links: SupplierImportPlan["links"] = [];
 	const seen = new Set<string>();
 	const skipped = { bundle: [] as string[], unknown: [] as string[] };
+	const casePriced: string[] = [];
 	for (const r of linkRows) {
 		const sku = r.sku.trim().replace(/^'/, "");
 		if (r.is_primary !== "True") {
@@ -116,23 +120,33 @@ export function planSupplierImport(
 			continue;
 		}
 		seen.add(sku);
-		const kind = catalog.get(sku);
-		if (!kind) {
+		const product = catalog.get(sku);
+		if (!product) {
 			skipped.unknown.push(sku);
 			continue;
 		}
-		if (kind === "bundle") {
+		if (product.kind === "bundle") {
 			skipped.bundle.push(sku);
 			continue;
 		}
-		const cost = Number(r.cost);
+		// A zero cost in Sumtracker means nobody entered one.
+		let cost: number | null = Number(r.cost) > 0 ? Number(r.cost) : null;
+		// Some prices are for a whole case (a $140 "each" sponge that costs $2).
+		// POs are in units, so those fall back to the product's own cost.
+		if (
+			cost !== null &&
+			product.unitCost !== null &&
+			Math.max(cost / product.unitCost, product.unitCost / cost) > 2
+		) {
+			casePriced.push(`${sku} ($${cost} vs $${product.unitCost})`);
+			cost = null;
+		}
 		const moq = Number(r.moq);
 		links.push({
 			sku,
 			supplierCode: r.supplier_code,
 			supplierSku: r.supplier_sku.trim() || null,
-			// A zero cost in Sumtracker means nobody entered one.
-			cost: cost > 0 ? cost : null,
+			cost,
 			minimumQuantity: Number.isInteger(moq) && moq > 0 ? moq : 1,
 		});
 	}
@@ -143,6 +157,11 @@ export function planSupplierImport(
 	if (skipped.bundle.length > 0)
 		warnings.push(
 			`Skipped ${skipped.bundle.length} links to tool sets, which are bought as their parts: ${skipped.bundle.join(", ")}`,
+		);
+
+	if (casePriced.length > 0)
+		warnings.push(
+			`Ignored ${casePriced.length} supplier prices over twice or under half the product's cost, probably case prices: ${casePriced.join(", ")}`,
 		);
 
 	if (errors.length > 0)
