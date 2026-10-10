@@ -5,6 +5,7 @@ import {
 	ClipboardList,
 	LayoutDashboard,
 	Link2,
+	ListChecks,
 	Package,
 	Settings,
 	Truck,
@@ -44,6 +45,13 @@ export const pages = [
 		label: "Inventory history",
 		icon: ArrowLeftRight,
 		keys: "g i",
+		parent: "/products",
+	},
+	{
+		to: "/counts",
+		label: "Cycle counts",
+		icon: ListChecks,
+		keys: "g n",
 		parent: "/products",
 	},
 	{

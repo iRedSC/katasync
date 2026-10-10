@@ -9,18 +9,10 @@ import { type } from "arktype";
 // a POST with a JSON body; a refusal answers 400 { error } for the page to
 // show.
 
-// The longest browsers keep a cookie. The session's own expiry (90 days
-// since last use) is what really ends it.
-const COOKIE_MAX_AGE = 400 * 86_400;
-
-const cookie = (token: string, maxAge: number) =>
-	`katasync_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
-
-const signedIn = (token: string) =>
-	Response.json(
-		{ ok: true },
-		{ headers: { "Set-Cookie": cookie(token, COOKIE_MAX_AGE) } },
-	);
+// The cookie is built in src/auth/sessions.ts, which is imported inside the
+// handler to keep it out of the browser bundle.
+const withCookie = (setCookie: string) =>
+	Response.json({ ok: true }, { headers: { "Set-Cookie": setCookie } });
 
 // The browser's WebAuthn answer is checked by the WebAuthn library itself.
 const setupBody = type({ setupToken: "string > 0" });
@@ -60,32 +52,27 @@ export const Route = createFileRoute("/api/auth/$")({
 						}
 						case "register/verify": {
 							const b = parse(registerBody, json);
-							return signedIn(
-								await auth.finishRegistration(db, {
-									setupToken: b.setupToken,
-									name: b.name,
-									response: b.response as RegistrationResponseJSON,
-								}),
-							);
+							const token = await auth.finishRegistration(db, {
+								setupToken: b.setupToken,
+								name: b.name,
+								response: b.response as RegistrationResponseJSON,
+							});
+							return withCookie(sessions.sessionCookie(token));
 						}
 						case "login/options":
 							return Response.json(await auth.authenticationOptions(db));
 						case "login/verify": {
 							const b = parse(loginBody, json);
-							return signedIn(
-								await auth.finishAuthentication(
-									db,
-									b.response as AuthenticationResponseJSON,
-								),
+							const token = await auth.finishAuthentication(
+								db,
+								b.response as AuthenticationResponseJSON,
 							);
+							return withCookie(sessions.sessionCookie(token));
 						}
 						case "logout": {
 							const token = cookieValue(request, sessions.SESSION_COOKIE);
 							if (token) await sessions.endSession(db, token);
-							return Response.json(
-								{ ok: true },
-								{ headers: { "Set-Cookie": cookie("", 0) } },
-							);
+							return withCookie(sessions.sessionCookie("", 0));
 						}
 						default:
 							return new Response("Not found", { status: 404 });

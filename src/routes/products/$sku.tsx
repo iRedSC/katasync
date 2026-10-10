@@ -9,7 +9,14 @@ import {
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { CountDialog } from "#/components/count-dialog";
-import { Badge, Banner, Card, Page, type Tone } from "#/components/page";
+import {
+	AbcBadge,
+	Badge,
+	Banner,
+	Card,
+	Page,
+	type Tone,
+} from "#/components/page";
 import { MovementTable, ProductImage, ProductName } from "#/components/product";
 import { SupplierCard } from "#/components/supplier-card";
 import { Button } from "#/components/ui/button";
@@ -85,6 +92,17 @@ function ProductPage() {
 									<p className="text-muted-foreground">{p.variantName}</p>
 								)}
 								<p className="text-muted-foreground">{p.sku}</p>
+								{d.abc && (
+									<p className="mt-1 flex items-center gap-2 text-muted-foreground">
+										<AbcBadge abc={d.abc.abc} />
+										<span>
+											{formatShare(d.abc.share)} of{" "}
+											{d.abc.days >= 365 ? "yearly" : `${d.abc.days}-day`} sales
+											value · #{formatCount(d.abc.rank)} of{" "}
+											{formatCount(d.abc.of)}
+										</span>
+									</p>
+								)}
 							</div>
 						</div>
 					</Card>
@@ -438,4 +456,10 @@ function InsureToggle({ sku, insure }: { sku: string; insure: boolean }) {
 			Insure when shipped
 		</label>
 	);
+}
+
+// Small shares keep a decimal so they don't all read as 0%.
+function formatShare(share: number) {
+	const pct = share * 100;
+	return `${pct >= 10 ? Math.round(pct) : pct.toFixed(1)}%`;
 }
