@@ -31,7 +31,7 @@ describe("parseWord", () => {
 			value: "sale",
 			exclude: false,
 		});
-		expect(parseWord("!#sale")).toMatchObject({ field: "tag", exclude: true });
+		expect(parseWord("#!sale")).toMatchObject({ field: "tag", exclude: true });
 		expect(parseWord("@box")).toMatchObject({ field: "type" });
 		expect(parseWord("$uline")).toMatchObject({ field: "vendor" });
 		expect(parseWord("%draft")).toMatchObject({ field: "status" });
@@ -45,10 +45,11 @@ describe("parseWord", () => {
 	test("plain words and a lone ! are search text", () => {
 		expect(parseWord("box")).toBeNull();
 		expect(parseWord("!box")).toBeNull();
+		expect(parseWord("!#sale")).toBeNull();
 	});
 
 	test("spell writes back what parseWord reads", () => {
-		for (const word of ["#a", "!#a", "@b", "!$c", "%d", "!!e"]) {
+		for (const word of ["#a", "#!a", "@b", "$!c", "%d", "!!e"]) {
 			const f = parseWord(word);
 			expect(f && spell(f)).toBe(word);
 		}
@@ -82,8 +83,8 @@ describe("matches", () => {
 	});
 
 	test("exclusions", () => {
-		expect(run("!#clearance")).toBe(false);
-		expect(run("!$acme")).toBe(true);
+		expect(run("#!clearance")).toBe(false);
+		expect(run("$!acme")).toBe(true);
 		expect(run("!!12x9")).toBe(false);
 		expect(run("!!round")).toBe(true);
 	});

@@ -165,7 +165,7 @@ function Products() {
 							setShown(PAGE);
 						}}
 						counts={facetValues}
-						placeholder="Search, or filter: #tag @type $vendor %status, ! to exclude"
+						placeholder="Search, or filter: #tag @type $vendor %status, #!tag to exclude"
 						onKeyDown={(e) => {
 							if (e.key === "Enter") open(filtered[selected]);
 							if (e.key === "ArrowDown") {

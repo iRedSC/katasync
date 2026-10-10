@@ -2,7 +2,7 @@
 // word starting with a sigil filters instead:
 //
 //   #tag   @type   $vendor   %status
-//   !#tag  !@type  !$vendor  !%status   exclude
+//   #!tag  @!type  $!vendor  %!status   exclude
 //   !!word                              exclude titles containing word
 //
 // Several filters on one field match any of them (#a #b: tagged a or b);
@@ -36,10 +36,10 @@ const SIGIL_OF = Object.fromEntries(
 	Object.entries(SIGILS).map(([sigil, field]) => [field, sigil]),
 ) as Record<Exclude<Field, "title">, string>;
 
-// The typed form of a filter, e.g. "!#clearance" or "!!refurb".
+// The typed form of a filter, e.g. "#!clearance" or "!!refurb".
 export function spell(f: Pick<Filter, "field" | "value" | "exclude">) {
 	if (f.field === "title") return `!!${f.value}`;
-	return `${f.exclude ? "!" : ""}${SIGIL_OF[f.field]}${f.value}`;
+	return `${SIGIL_OF[f.field]}${f.exclude ? "!" : ""}${f.value}`;
 }
 
 // One typed word as a filter, or null when it's plain search text. A bare
@@ -54,11 +54,10 @@ export function parseWord(word: string): Filter | null {
 			exact: false,
 		};
 	}
-	const exclude = word.startsWith("!");
-	const rest = exclude ? word.slice(1) : word;
-	const field = SIGILS[rest[0] as keyof typeof SIGILS];
+	const field = SIGILS[word[0] as keyof typeof SIGILS];
 	if (!field) return null;
-	return { field, value: rest.slice(1), exclude, exact: false };
+	const exclude = word[1] === "!";
+	return { field, value: word.slice(exclude ? 2 : 1), exclude, exact: false };
 }
 
 export function parseQuery(text: string) {
