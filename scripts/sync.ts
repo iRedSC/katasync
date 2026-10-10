@@ -57,7 +57,6 @@ const channels = [
 	{
 		name: "tiktok",
 		every: 2 * MINUTE,
-		env: ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "TIKTOK_REFRESH_TOKEN"],
 		run: async () => {
 			const listings = Date.now() - tiktokListingsAt >= 30 * MINUTE;
 			const result = await syncTiktok(getDb(), { listings });

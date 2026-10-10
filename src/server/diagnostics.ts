@@ -20,6 +20,8 @@ export const countDiagnosticsAttention = createServerFn({
 
 export const runConnectionCheck = createServerFn({ method: "POST" })
 	.validator(
-		type({ target: "'shopify' | 'ebay' | 'amazon' | 'shippo' | 'email'" }),
+		type({
+			target: "'shopify' | 'ebay' | 'amazon' | 'tiktok' | 'shippo' | 'email'",
+		}),
 	)
 	.handler(async ({ data }) => runCheck(data.target));
