@@ -114,7 +114,11 @@ export async function tiktokRates(
 	return (await quote(orderId, await shopCipher(), parcel)).rates;
 }
 
-const createdData = type({ package_id: "string" });
+const createdData = type({
+	package_id: "string",
+	// The service TikTok used, with its price.
+	"shipping_service_info?": { "price?": "string" },
+});
 const packageDetail = type({
 	// PROCESSING until the carrier has it; RTS (ready to ship) once shipped.
 	"package_status?": "string",
@@ -139,7 +143,7 @@ export async function tiktokBuyLabel(
 	if (!rate)
 		throw new Error("TikTok no longer offers that service; price again");
 
-	const { package_id: packageId } = createdData.assert(
+	const created = createdData.assert(
 		await tiktokApi(
 			"/fulfillment/202309/packages",
 			{ shop_cipher: cipher },
@@ -152,7 +156,14 @@ export async function tiktokBuyLabel(
 		),
 	);
 
-	return { packageId, rate };
+	const charged = Number(created.shipping_service_info?.price);
+	return {
+		packageId: created.package_id,
+		rate:
+			Number.isFinite(charged) && charged > 0
+				? { ...rate, cost: charged }
+				: rate,
+	};
 }
 
 // Marks a package ready to ship, handed over the way TikTok has the shop set
