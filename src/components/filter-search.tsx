@@ -18,17 +18,19 @@ const LABEL: Record<Field, string> = {
 	title: "title lacks",
 };
 
-// "not tag", "vendor", "title lacks": what a chip or suggestion filters on.
-function label(f: Pick<Filter, "field" | "exclude">) {
+// "not tag", "and vendor", "title lacks": what a chip or suggestion filters on.
+function label(f: Pick<Filter, "field" | "exclude" | "and">) {
+	const and = f.and ? "and " : "";
 	return f.exclude && f.field !== "title"
-		? `not ${LABEL[f.field]}`
-		: LABEL[f.field];
+		? `${and}not ${LABEL[f.field]}`
+		: `${and}${LABEL[f.field]}`;
 }
 
 // A search box that turns filters into chips. Typing "#cl" suggests tags
-// containing "cl"; Tab locks the highlighted one in as a chip. Backspace in an
-// empty box removes the last chip. Keys it doesn't use (Enter, arrows when
-// nothing is suggested) go to onKeyDown, so the list below can use them.
+// containing "cl"; Tab or Enter locks the highlighted one in as a chip.
+// Backspace in an empty box removes the last chip. Keys it doesn't use (Enter
+// with no filter being typed, arrows when nothing is suggested) go to
+// onKeyDown, so the list below can use them.
 export function FilterSearch({
 	inputRef,
 	text,
@@ -70,7 +72,7 @@ export function FilterSearch({
 	}
 
 	function keyDown(e: KeyboardEvent<HTMLInputElement>) {
-		if (e.key === "Tab" && typing) {
+		if ((e.key === "Tab" || e.key === "Enter") && typing) {
 			const pick = suggestions[highlight]?.value ?? typing.value;
 			if (pick !== "") {
 				e.preventDefault();

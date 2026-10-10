@@ -4,9 +4,11 @@
 //   #tag   @type   $vendor   %status
 //   #!tag  @!type  $!vendor  %!status   exclude
 //   !!word                              exclude titles containing word
+//   +#tag                               and, with the last chip on that field
 //
-// Several filters on one field match any of them (#a #b: tagged a or b);
-// different fields must all match. Exclusions all apply.
+// Several filters on one field match any of them (#a #b: tagged a or b),
+// unless + joins them (#a +#b: tagged a and b; #a #b +#c: a, or b and c).
+// Different fields must all match. Exclusions all apply.
 //
 // A filter still being typed matches by substring, so the list narrows live.
 // Locking it in (Tab on a suggestion) makes it a chip that matches exactly.
@@ -17,6 +19,9 @@ export type Filter = {
 	field: Field;
 	value: string;
 	exclude: boolean;
+	// Joined to the previous filter on the same field with AND instead of OR.
+	// Exclusions all apply anyway, so it changes nothing for them.
+	and: boolean;
 	// Chips match the whole value; words still being typed match a part.
 	exact: boolean;
 };
@@ -36,28 +41,38 @@ const SIGIL_OF = Object.fromEntries(
 	Object.entries(SIGILS).map(([sigil, field]) => [field, sigil]),
 ) as Record<Exclude<Field, "title">, string>;
 
-// The typed form of a filter, e.g. "#!clearance" or "!!refurb".
-export function spell(f: Pick<Filter, "field" | "value" | "exclude">) {
-	if (f.field === "title") return `!!${f.value}`;
-	return `${SIGIL_OF[f.field]}${f.exclude ? "!" : ""}${f.value}`;
+// The typed form of a filter, e.g. "#!clearance", "+@box", or "!!refurb".
+export function spell(f: Pick<Filter, "field" | "value" | "exclude" | "and">) {
+	const and = f.and ? "+" : "";
+	if (f.field === "title") return `${and}!!${f.value}`;
+	return `${and}${SIGIL_OF[f.field]}${f.exclude ? "!" : ""}${f.value}`;
 }
 
 // One typed word as a filter, or null when it's plain search text. A bare
 // sigil ("#") is a filter with an empty value: it matches everything but
 // tells autocomplete which field to suggest.
-export function parseWord(word: string): Filter | null {
+export function parseWord(typed: string): Filter | null {
+	const and = typed.startsWith("+");
+	const word = and ? typed.slice(1) : typed;
 	if (word.startsWith("!!")) {
 		return {
 			field: "title",
 			value: word.slice(2),
 			exclude: true,
+			and,
 			exact: false,
 		};
 	}
 	const field = SIGILS[word[0] as keyof typeof SIGILS];
 	if (!field) return null;
 	const exclude = word[1] === "!";
-	return { field, value: word.slice(exclude ? 2 : 1), exclude, exact: false };
+	return {
+		field,
+		value: word.slice(exclude ? 2 : 1),
+		exclude,
+		and,
+		exact: false,
+	};
 }
 
 export function parseQuery(text: string) {
@@ -66,6 +81,8 @@ export function parseQuery(text: string) {
 	for (const word of text.split(/\s+/).filter(Boolean)) {
 		const filter = parseWord(word);
 		if (filter) filters.push(filter);
+		// A lone + is the start of "+#tag"; searching for it would empty the list.
+		else if (word === "+") continue;
 		else words.push(word.toLowerCase());
 	}
 	return { filters, words };
@@ -84,12 +101,22 @@ export function matches(facets: Facets, filters: Filter[], words: string[]) {
 
 	const active = filters.filter((f) => f.value !== "");
 	if (active.some((f) => f.exclude && hits(facets[f.field], f))) return false;
-	const wanted = new Map<Field, Filter[]>();
+	// Per field, a list of alternatives; each alternative is filters that
+	// must all match. + adds to the last alternative instead of starting one.
+	const wanted = new Map<Field, Filter[][]>();
 	for (const f of active) {
-		if (!f.exclude) wanted.set(f.field, [...(wanted.get(f.field) ?? []), f]);
+		if (f.exclude) continue;
+		const alternatives = wanted.get(f.field) ?? [];
+		const last = alternatives.at(-1);
+		if (f.and && last) last.push(f);
+		else alternatives.push([f]);
+		wanted.set(f.field, alternatives);
 	}
-	for (const [field, fs] of wanted) {
-		if (!fs.some((f) => hits(facets[field], f))) return false;
+	for (const [field, alternatives] of wanted) {
+		const ok = alternatives.some((all) =>
+			all.every((f) => hits(facets[field], f)),
+		);
+		if (!ok) return false;
 	}
 	return true;
 }

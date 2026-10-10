@@ -22,7 +22,13 @@ function facets(extra: Partial<Facets> = {}): Facets {
 	};
 }
 
-const chip = (f: Omit<Filter, "exact">): Filter => ({ ...f, exact: true });
+const chip = (
+	f: Omit<Filter, "exact" | "and"> & { and?: boolean },
+): Filter => ({
+	and: false,
+	...f,
+	exact: true,
+});
 
 describe("parseWord", () => {
 	test("reads each sigil, with and without !", () => {
@@ -49,7 +55,7 @@ describe("parseWord", () => {
 	});
 
 	test("spell writes back what parseWord reads", () => {
-		for (const word of ["#a", "#!a", "@b", "$!c", "%d", "!!e"]) {
+		for (const word of ["#a", "#!a", "@b", "$!c", "%d", "!!e", "+#f", "+!!g"]) {
 			const f = parseWord(word);
 			expect(f && spell(f)).toBe(word);
 		}
@@ -80,6 +86,21 @@ describe("matches", () => {
 	test("same field is any-of, different fields are all-of", () => {
 		expect(run("#nope #boxes")).toBe(true);
 		expect(run("#boxes $nope")).toBe(false);
+	});
+
+	test("+ joins a filter to the last one on its field with AND", () => {
+		expect(run("#clearance +#boxes")).toBe(true);
+		expect(run("#clearance +#nope")).toBe(false);
+		// a, or (b and c)
+		expect(run("#clearance #nope +#nada")).toBe(true);
+		expect(run("#nope #clearance +#nada")).toBe(false);
+		// Another field in between doesn't break the join.
+		expect(run("#nope $uline +#nada")).toBe(false);
+		expect(run("#clearance $uline +#boxes")).toBe(true);
+	});
+
+	test("a lone + while typing filters nothing", () => {
+		expect(run("#clearance +")).toBe(true);
 	});
 
 	test("exclusions", () => {
