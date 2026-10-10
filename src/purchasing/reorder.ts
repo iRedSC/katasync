@@ -192,9 +192,8 @@ async function ownedOnHand(db: Db) {
 	return new Map(rows.map((r) => [r.productId, r.onHand]));
 }
 
-// Units on sent POs that haven't arrived yet. Drafts aren't on order.
-export async function unitsOnOrder(db: Db, productIds?: number[]) {
-	const received = db
+const receivedByLine = (db: Db) =>
+	db
 		.select({
 			lineId: purchaseOrderReceipts.lineId,
 			units: sql<number>`sum(${purchaseOrderReceipts.quantity})`.as("units"),
@@ -202,6 +201,10 @@ export async function unitsOnOrder(db: Db, productIds?: number[]) {
 		.from(purchaseOrderReceipts)
 		.groupBy(purchaseOrderReceipts.lineId)
 		.as("received");
+
+// Units on sent POs that haven't arrived yet. Drafts aren't on order.
+export async function unitsOnOrder(db: Db, productIds?: number[]) {
+	const received = receivedByLine(db);
 	const rows = await db
 		.select({
 			productId: purchaseOrderLines.productId,
@@ -225,17 +228,56 @@ export async function unitsOnOrder(db: Db, productIds?: number[]) {
 	return new Map(rows.map((r) => [r.productId, r.units]));
 }
 
-// A products that will run out before a PO sent today could arrive, counting
-// what's already on order. Products without a supplier use the default lead
-// time, since they still have to come from somewhere.
+// Unreceived units on sent POs with the day each is due, soonest first. A PO
+// without an expected date is due its supplier's lead time after it was sent.
+// Ones already past due aren't coming on any day we can plan around, so they
+// are left out.
+async function arrivingUnits(db: Db, now: Date) {
+	const received = receivedByLine(db);
+	const rows = await db
+		.select({
+			productId: purchaseOrderLines.productId,
+			units: sql<number>`greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0)::int`,
+			expectedAt: purchaseOrders.expectedAt,
+			sentAt: purchaseOrders.sentAt,
+			leadTimeDays: suppliers.leadTimeDays,
+		})
+		.from(purchaseOrderLines)
+		.innerJoin(
+			purchaseOrders,
+			eq(purchaseOrders.id, purchaseOrderLines.purchaseOrderId),
+		)
+		.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
+		.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
+		.where(eq(purchaseOrders.status, "sent"));
+
+	const byProduct = new Map<number, { units: number; arrivesAt: number }[]>();
+	for (const r of rows) {
+		const arrivesAt =
+			r.expectedAt?.getTime() ??
+			(r.sentAt ?? now).getTime() + r.leadTimeDays * 86_400_000;
+		if (r.units === 0 || arrivesAt < now.getTime()) continue;
+		const list = byProduct.get(r.productId) ?? [];
+		list.push({ units: r.units, arrivesAt });
+		byProduct.set(r.productId, list);
+	}
+	for (const list of byProduct.values())
+		list.sort((a, b) => a.arrivesAt - b.arrivesAt);
+	return byProduct;
+}
+
+// A products that will run out before a PO sent today could arrive. Units on
+// order only count if they land before the shelf empties. Products without a
+// supplier use the default lead time, since they still have to come from
+// somewhere.
 const DEFAULT_LEAD_TIME_DAYS = 14;
 export async function aItemsAtRisk(db: Db, now = new Date()) {
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [abc, sold, onHand, onOrder] = await Promise.all([
+	const [abc, sold, onHand, arriving] = await Promise.all([
 		abcClasses(db, now),
 		soldSince(db, since, { includeFba: false }),
 		ownedOnHand(db),
-		unitsOnOrder(db),
+		arrivingUnits(db, now),
 	]);
 	const aIds = [...abc.classes]
 		.filter(([, c]) => c.abc === "A")
@@ -259,7 +301,13 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 		.flatMap((p) => {
 			const dailyDemand = (sold.get(p.id) ?? 0) / DEMAND_DAYS;
 			if (dailyDemand === 0) return [];
-			const position = (onHand.get(p.id) ?? 0) + (onOrder.get(p.id) ?? 0);
+			// Each PO extends the stock only if it arrives before it runs out.
+			let position = onHand.get(p.id) ?? 0;
+			for (const po of arriving.get(p.id) ?? []) {
+				const daysAway = (po.arrivesAt - now.getTime()) / 86_400_000;
+				if (daysAway * dailyDemand > position) break;
+				position += po.units;
+			}
 			const leadTimeDays = p.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
 			if (position >= dailyDemand * leadTimeDays) return [];
 			return [
@@ -268,7 +316,7 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 					name: p.name,
 					variantName: p.variantName,
 					imageUrl: p.imageUrl,
-					// Days until the shelf and what's on order run out.
+					// Days until the shelf and the POs that land in time run out.
 					daysLeft: Math.max(0, Math.floor(position / dailyDemand)),
 					leadTimeDays,
 				},

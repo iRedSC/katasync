@@ -206,4 +206,70 @@ describe("with a database", () => {
 		});
 		expect(await aItemsAtRisk(db, now)).toEqual([]);
 	});
+
+	describe("units on order", () => {
+		// 1 a day, 5 on hand: the shelf is empty in 5 days.
+		async function fastWithSentPo(
+			dates: { expectedAt: Date | null; sentAt?: Date },
+			lead = 14,
+		) {
+			const fast = await product("FAST", 10);
+			await sell(fast, 90, { fulfilledByChannel: false });
+			await postMovements(db, {
+				lines: [
+					{
+						productId: fast,
+						locationId: warehouse,
+						delta: 5,
+						reason: "opening_balance",
+					},
+				],
+			});
+			const [supplier] = await db
+				.insert(schema.suppliers)
+				.values({ name: "Acme", code: "ACME", leadTimeDays: lead })
+				.returning();
+			const [po] = await db
+				.insert(schema.purchaseOrders)
+				.values({
+					supplierId: supplier.id,
+					locationId: warehouse,
+					status: "sent",
+					sentAt: dates.sentAt ?? daysAgo(1),
+					expectedAt: dates.expectedAt,
+				})
+				.returning();
+			await db.insert(schema.purchaseOrderLines).values({
+				purchaseOrderId: po.id,
+				productId: fast,
+				quantity: 100,
+			});
+		}
+		const daysAhead = (n: number) => daysAgo(-n);
+
+		test("ignores a PO that arrives after the shelf runs out", async () => {
+			await fastWithSentPo({ expectedAt: daysAhead(14) });
+			expect(await aItemsAtRisk(db, now)).toMatchObject([
+				{ sku: "FAST", daysLeft: 5 },
+			]);
+		});
+
+		test("counts a PO that arrives in time", async () => {
+			await fastWithSentPo({ expectedAt: daysAhead(3) });
+			expect(await aItemsAtRisk(db, now)).toEqual([]);
+		});
+
+		test("ignores a PO that is already overdue", async () => {
+			await fastWithSentPo({ expectedAt: daysAgo(2) });
+			expect(await aItemsAtRisk(db, now)).toMatchObject([
+				{ sku: "FAST", daysLeft: 5 },
+			]);
+		});
+
+		test("dates a PO with no expected date from the supplier's lead time", async () => {
+			// Sent a day ago with 3 days of lead time: lands in 2 days.
+			await fastWithSentPo({ expectedAt: null }, 3);
+			expect(await aItemsAtRisk(db, now)).toEqual([]);
+		});
+	});
 });
