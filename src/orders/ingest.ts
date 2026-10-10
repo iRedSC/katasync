@@ -53,7 +53,9 @@ export type IngestStore = { id: number; stockFrom: Date | null };
 // Saves an order and keeps stock in step with it, safely re-runnable:
 // - Lines on orders placed at or after the store's stockFrom take stock once,
 //   recorded on the line so a re-sync never takes it again.
-// - A cancelled order gives back exactly what its lines took.
+// - A cancelled order gives back exactly what its lines took, and a line
+//   whose quantity changed gives it back and takes the new quantity. Channels
+//   report a fully cancelled line with quantity 0 rather than dropping it.
 // - Lines that can't be matched to a product are saved without moving stock
 //   and reported, so one unknown SKU doesn't stop the sync. Lines with no
 //   SKU are custom items and aren't reported.
@@ -117,7 +119,20 @@ export async function ingestOrder(
 				}
 				continue;
 			}
-			if (!takesStock || row.saleBatchId) continue;
+			// A quantity that changed after the line took stock (a unit cancelled
+			// on the channel) gives that stock back, then the line takes what's
+			// left below.
+			if (row.saleBatchId && existing && existing.quantity !== line.quantity) {
+				if (!(await isUndone(tx, row.saleBatchId))) {
+					await undoBatch(tx, row.saleBatchId);
+				}
+				await tx
+					.update(orderLines)
+					.set({ saleBatchId: null })
+					.where(eq(orderLines.id, row.id));
+				row.saleBatchId = null;
+			}
+			if (!takesStock || row.saleBatchId || row.quantity === 0) continue;
 			if (row.productId === null) {
 				// No SKU means a custom item (a one-off charge, a special order):
 				// nothing to take from stock, nothing to flag.
@@ -183,7 +198,7 @@ export async function takeStock(
 
 // The listing mapping decides first. Before listings have synced, an exact SKU
 // or alias match is enough.
-async function resolveProduct(
+export async function resolveProduct(
 	db: Db,
 	storeId: number,
 	line: ChannelOrder["lines"][number],
