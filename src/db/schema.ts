@@ -190,18 +190,27 @@ export const channel = pgEnum("channel", [
 
 // One connected seller account on a channel. A second Shopify store or another
 // Amazon marketplace is another row.
-export const stores = pgTable("stores", {
-	id: integer().primaryKey().generatedAlwaysAsIdentity(),
-	channel: channel().notNull(),
-	name: text().notNull().unique(),
-	// Orders placed at or after this time take stock from the ledger. Earlier
-	// orders are kept for history only, because the opening balances already
-	// reflect them. Null means this store's orders never move stock.
-	stockFrom: timestamp({ withTimezone: true }),
-	// Sync resumes from the newest order update seen so far.
-	ordersSyncedThrough: timestamp({ withTimezone: true }),
-	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+export const stores = pgTable(
+	"stores",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		channel: channel().notNull(),
+		name: text().notNull().unique(),
+		// The store whose listings become products when no product has their
+		// SKU yet. Other stores' listings only match. At most one.
+		primary: boolean().notNull().default(false),
+		// Orders placed at or after this time take stock from the ledger. Earlier
+		// orders are kept for history only, because the opening balances already
+		// reflect them. Null means this store's orders never move stock.
+		stockFrom: timestamp({ withTimezone: true }),
+		// Sync resumes from the newest order update seen so far.
+		ordersSyncedThrough: timestamp({ withTimezone: true }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex("stores_one_primary").on(t.primary).where(sql`${t.primary}`),
+	],
+);
 
 // `fba` listings are stocked and shipped by Amazon; we never push their quantity.
 export const listingFulfillment = pgEnum("listing_fulfillment", [

@@ -10,6 +10,7 @@ import {
 	getListingsForProducts,
 	getUnmappedListings,
 	mapListing,
+	matchListings,
 	syncListings,
 } from "./listings";
 
@@ -176,5 +177,55 @@ describe("createProductFromListing", () => {
 		await expect(createProductFromListing(db, id)).rejects.toThrow(
 			/match the listing/,
 		);
+	});
+});
+
+describe("matchListings", () => {
+	const makePrimary = (id: number) =>
+		db
+			.update(schema.stores)
+			.set({ primary: true })
+			.where(eq(schema.stores.id, id));
+
+	test("the primary store's new SKUs become products the others match", async () => {
+		await makePrimary(shopify);
+		await syncListings(db, shopify, [
+			listing("v1", { externalSku: "KNIFE-5", title: "Knife - Default Title" }),
+			listing("v2", { externalSku: null, title: "Custom repair" }),
+		]);
+		await syncListings(db, amazon, [
+			listing("KNIFE-5"),
+			listing("ONLY-ON-AMAZON"),
+		]);
+
+		const result = await matchListings(db);
+		expect(result.created).toBe(1);
+
+		const [knife] = await db
+			.select()
+			.from(schema.products)
+			.where(eq(schema.products.sku, "KNIFE-5"));
+		expect(knife.name).toBe("Knife");
+		expect((await getListing(shopify, "v1")).productId).toBe(knife.id);
+		expect((await getListing(amazon, "KNIFE-5")).productId).toBe(knife.id);
+		// Not the primary's: matched only, never created.
+		expect((await getListing(amazon, "ONLY-ON-AMAZON")).productId).toBeNull();
+		// No SKU: a custom item, left alone.
+		expect((await getListing(shopify, "v2")).productId).toBeNull();
+	});
+
+	test("without a primary store nothing is created", async () => {
+		await syncListings(db, shopify, [listing("NEW-1")]);
+		expect((await matchListings(db)).created).toBe(0);
+		expect((await getListing(shopify, "NEW-1")).productId).toBeNull();
+	});
+
+	test("an existing product is matched, not duplicated", async () => {
+		await makePrimary(shopify);
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await syncListings(db, shopify, [listing("WRENCH")]);
+		const result = await matchListings(db);
+		expect(result.created).toBe(0);
+		expect((await getListing(shopify, "WRENCH")).productId).toBe(wrench);
 	});
 });

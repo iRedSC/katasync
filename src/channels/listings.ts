@@ -149,6 +149,48 @@ export async function autoMapListings(db: Db): Promise<number[]> {
 	});
 }
 
+// Everything a listings sync does to connect listings to products: match by
+// SKU, then give each of the primary store's still-unmatched listings a
+// product of its own, then match again so other stores' listings with those
+// SKUs land on the new products. Listings with no SKU are custom items and
+// stay alone. Returns the listings now mapped (for catching up past orders)
+// and the SKUs that couldn't become products.
+export async function matchListings(
+	db: Db,
+): Promise<{ mapped: number[]; created: number; skipped: string[] }> {
+	const first = await autoMapListings(db);
+	const pending = await db
+		.select({ id: listings.id, sku: listings.externalSku })
+		.from(listings)
+		.innerJoin(stores, eq(stores.id, listings.storeId))
+		.where(
+			and(
+				eq(stores.primary, true),
+				isNull(listings.productId),
+				isNotNull(listings.externalSku),
+			),
+		)
+		.orderBy(listings.id);
+	const created: number[] = [];
+	const skipped: string[] = [];
+	for (const listing of pending) {
+		try {
+			await createProductFromListing(db, listing.id);
+			created.push(listing.id);
+		} catch (err) {
+			// Usually the same SKU in other capitals; a person decides.
+			if (!(err instanceof LedgerError)) throw err;
+			skipped.push(`${listing.sku}: ${err.message}`);
+		}
+	}
+	const second = created.length > 0 ? await autoMapListings(db) : [];
+	return {
+		mapped: [...first, ...created, ...second],
+		created: created.length,
+		skipped,
+	};
+}
+
 // Turns a listing for something not yet in the catalog into a product,
 // filled in from the listing, and maps the listing to it.
 export async function createProductFromListing(db: Db, listingId: number) {

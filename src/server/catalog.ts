@@ -1,7 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
-import { createProductFromListing, mapListing } from "#/channels/listings";
+import {
+	createProductFromListing,
+	mapListing,
+	matchListings,
+} from "#/channels/listings";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
@@ -321,6 +325,30 @@ export const listLocations = createServerFn({ method: "GET" }).handler(
 export const listStores = createServerFn({ method: "GET" }).handler(async () =>
 	getDb().select().from(stores).orderBy(stores.name),
 );
+
+// Makes one store the primary (or none, with id null), then lets its
+// unmatched listings become products right away instead of on the next sync.
+export const setPrimaryStore = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0 | null" }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		await db.transaction(async (tx) => {
+			await tx
+				.update(stores)
+				.set({ primary: false })
+				.where(eq(stores.primary, true));
+			if (data.id) {
+				await tx
+					.update(stores)
+					.set({ primary: true })
+					.where(eq(stores.id, data.id));
+			}
+		});
+		if (!data.id) return { created: 0, skipped: [] as string[] };
+		const matched = await matchListings(db);
+		await applyListingsToOrders(db, matched.mapped, await shippingLocation(db));
+		return { created: matched.created, skipped: matched.skipped };
+	});
 
 // Listings that need a product, most-sold first so the ones that matter come
 // up top. Listings without a SKU are custom products and never appear.

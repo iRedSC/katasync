@@ -4,7 +4,7 @@ import type { Db } from "#/db/client";
 import { locations } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
-import { autoMapListings, cleanTitle, syncListings } from "./listings";
+import { cleanTitle, matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
 const API_VERSION = "2026-10";
@@ -292,9 +292,11 @@ export async function syncShopify(
 		} while (cursor);
 	if (options.listings) await syncShipFrom(db);
 	const locationId = await shippingLocation(db);
-	const mapped = options.listings ? await autoMapListings(db) : [];
+	const matched = options.listings
+		? await matchListings(db)
+		: { mapped: [], created: 0, skipped: [] };
 	// Orders that sold a newly matched listing pick up the product now.
-	const caughtUp = await applyListingsToOrders(db, mapped, locationId);
+	const caughtUp = await applyListingsToOrders(db, matched.mapped, locationId);
 
 	const since =
 		store.ordersSyncedThrough ??
@@ -309,9 +311,10 @@ export async function syncShopify(
 	return {
 		store: store.name,
 		variants,
-		mapped: mapped.length,
+		mapped: matched.mapped.length,
+		created: matched.created,
 		orders: result.count,
-		problems: [...caughtUp.problems, ...result.problems],
+		problems: [...matched.skipped, ...caughtUp.problems, ...result.problems],
 	};
 }
 

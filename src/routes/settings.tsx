@@ -3,7 +3,7 @@ import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
-import { listLocations, listStores } from "#/server/catalog";
+import { listLocations, listStores, setPrimaryStore } from "#/server/catalog";
 import {
 	deletePackage,
 	listPackages,
@@ -41,9 +41,14 @@ function Settings() {
 						return (
 							<Item key={c.id} label={c.name}>
 								{connected.length > 0 ? (
-									<Badge tone="success">
-										{connected.map((s) => s.name).join(", ")}
-									</Badge>
+									<span className="flex items-center gap-2">
+										{connected.map((s) => (
+											<PrimaryToggle key={s.id} store={s} />
+										))}
+										<Badge tone="success">
+											{connected.map((s) => s.name).join(", ")}
+										</Badge>
+									</span>
 								) : (
 									<Badge>Not connected</Badge>
 								)}
@@ -51,6 +56,10 @@ function Settings() {
 						);
 					})}
 				</ul>
+				<p className="border-t px-4 py-3 text-muted-foreground">
+					The primary store's listings become products when no product has their
+					SKU yet. Other stores' listings only match.
+				</p>
 			</Card>
 			<Card title="Locations" flush>
 				<ul>
@@ -289,5 +298,55 @@ function BoxForm({
 				Cancel
 			</Button>
 		</form>
+	);
+}
+
+type Store = Awaited<ReturnType<typeof listStores>>[number];
+
+function PrimaryToggle({ store }: { store: Store }) {
+	const router = useRouter();
+	const [busy, setBusy] = useState(false);
+
+	async function set(id: number | null) {
+		setBusy(true);
+		try {
+			const r = await setPrimaryStore({ data: { id } });
+			router.invalidate();
+			toast.success(
+				id === null
+					? "No primary store"
+					: `${store.name} is primary. ${r.created === 1 ? "1 product" : `${r.created} products`} created from its listings.`,
+				r.skipped.length > 0
+					? {
+							description: `${r.skipped.length} left for you on Listings: ${r.skipped.slice(0, 3).join("; ")}`,
+						}
+					: undefined,
+			);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err));
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	return store.primary ? (
+		<button
+			type="button"
+			disabled={busy}
+			onClick={() => set(null)}
+			className="group"
+			title="Click to unset"
+		>
+			<Badge tone="info">Primary</Badge>
+		</button>
+	) : (
+		<Button
+			size="sm"
+			variant="ghost"
+			disabled={busy}
+			onClick={() => set(store.id)}
+		>
+			{busy ? "Creating products…" : "Make primary"}
+		</Button>
 	);
 }
