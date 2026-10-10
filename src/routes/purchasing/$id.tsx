@@ -8,7 +8,7 @@ import { Download, Mail, Smartphone } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Banner, Card, Page } from "#/components/page";
-import { ProductImage, ProductName } from "#/components/product";
+import { ProductImage } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import {
 	cityLine,
@@ -112,7 +112,6 @@ function PurchaseOrderPage() {
 
 	return (
 		<Page
-			narrow
 			back={{ to: "/purchasing" }}
 			title={
 				<span className="flex items-center gap-2">
@@ -174,7 +173,7 @@ function PurchaseOrderPage() {
 				</Banner>
 			)}
 
-			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+			<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
 				<div className="flex min-w-0 flex-col gap-4">
 					<Card flush>
 						<LineTable detail={d} />
@@ -379,9 +378,17 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 										params={{ sku: l.sku }}
 										className="block hover:underline"
 									>
-										<ProductName name={l.name} variantName={l.variantName} />
+										{/* Wraps instead of cutting off: on a PO the full name matters. */}
+										<span className="line-clamp-2 font-medium">
+											{l.name}
+											{l.variantName && (
+												<span className="ml-1.5 rounded-md bg-[#f1f1f1] px-1.5 text-xs font-normal text-muted-foreground">
+													{l.variantName}
+												</span>
+											)}
+										</span>
 									</Link>
-									<div className="truncate text-xs text-muted-foreground">
+									<div className="text-xs text-muted-foreground">
 										{l.sku}
 										{l.supplierSku && ` · theirs ${l.supplierSku}`}
 									</div>
@@ -678,7 +685,7 @@ function OtherActions({
 						disabled={busy || d.lines.length === 0}
 						onClick={onSent}
 					>
-						Mark as sent (ordered by phone or online)
+						Mark as sent
 					</Button>
 				)}
 				{po.status === "sent" && received > 0 && (
