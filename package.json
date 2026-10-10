@@ -20,7 +20,8 @@
     "db:studio": "drizzle-kit studio",
     "import:sumtracker": "tsx scripts/import-sumtracker.ts",
     "import:suppliers": "tsx scripts/import-suppliers.ts",
-    "sync": "tsx scripts/sync.ts"
+    "sync": "tsx scripts/sync.ts",
+    "auth:setup-link": "tsx scripts/auth-setup-link.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
@@ -28,6 +29,8 @@
     "@neon/env": "^1.5.3",
     "@number-flow/react": "^0.6.2",
     "@react-pdf/renderer": "^4.9.0",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-query": "5.104.1",
     "@tanstack/react-router": "1.170.41",
@@ -43,6 +46,7 @@
     "lucide-react": "^0.577.0",
     "nitro": "3.0.260610-beta",
     "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
     "radix-ui": "^1.7.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -57,6 +61,7 @@
     "@tanstack/router-cli": "^1.132.0",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.1",

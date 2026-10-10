@@ -626,3 +626,54 @@ export const purchaseOrderReceipts = pgTable(
 		),
 	],
 );
+
+// Sign-in. katasync has one shared company account, so there are no users:
+// each phone or computer gets its own passkey, named so a lost one can be
+// removed. Rules live in src/auth/.
+export const passkeys = pgTable("passkeys", {
+	// The credential ID the browser reports, base64url.
+	id: text().primaryKey(),
+	// COSE public key, base64url.
+	publicKey: text().notNull(),
+	// Signature counter. Synced passkeys (iCloud, Google) always report 0.
+	counter: bigint({ mode: "number" }).notNull().default(0),
+	transports: text().array().notNull().default(sql`'{}'::text[]`),
+	// What device it's on, e.g. "Warehouse iPhone".
+	name: text().notNull(),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	lastUsedAt: timestamp({ withTimezone: true }),
+});
+
+// A signed-in browser. The cookie holds a random token; only its SHA-256 is
+// stored, so a database leak can't sign anyone in. Removing a passkey signs
+// out the browsers it signed in.
+export const sessions = pgTable(
+	"sessions",
+	{
+		tokenHash: text().primaryKey(),
+		passkeyId: text()
+			.notNull()
+			.references(() => passkeys.id, { onDelete: "cascade" }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		// Pushed forward as the browser keeps being used.
+		expiresAt: timestamp({ withTimezone: true }).notNull(),
+	},
+	(t) => [index("sessions_passkey_idx").on(t.passkeyId)],
+);
+
+// A one-time link that lets a new device create a passkey. Made by a signed-in
+// device or by `pnpm auth:setup-link` on the server. Stored hashed, like
+// sessions.
+export const setupLinks = pgTable("setup_links", {
+	tokenHash: text().primaryKey(),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+	usedAt: timestamp({ withTimezone: true }),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// A WebAuthn challenge waiting for its answer. Each is used once, so a
+// captured sign-in can't be replayed.
+export const authChallenges = pgTable("auth_challenges", {
+	challenge: text().primaryKey(),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+});

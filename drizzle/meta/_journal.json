@@ -127,6 +127,13 @@
       "when": 1791645350120,
       "tag": "0017_line_minimum",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791648123966,
+      "tag": "0018_auth",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,13 @@ Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Tr
 
 `pnpm test` runs against an in-memory Postgres (PGlite) and needs no database.
 
+## Signing in
+
+Everyone shares one company account; each phone or computer signs in with its own passkey (Settings, then Devices). The dev server skips sign-in.
+
+- `AUTH_ORIGIN` is the address katasync is opened at, e.g. `https://katasync.example.com`. Passkeys belong to that address, so changing it means adding every device again.
+- `pnpm auth:setup-link` prints a one-time link for adding a device: the first one, or when every device has lost its passkey.
+
 ## Schema changes
 
 Edit `src/db/schema.ts`, then `pnpm db:generate` and commit the new file in `drizzle/`. For SQL that Drizzle can't express (triggers, functions), use `pnpm db:generate --custom --name <name>`.

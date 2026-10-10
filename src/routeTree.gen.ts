@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as ListingsRouteImport } from './routes/listings'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StockRouteImport } from './routes/stock'
 import { Route as OrdersIndexRouteImport } from './routes/orders/index'
 import { Route as OrdersIdRouteImport } from './routes/orders/$id'
@@ -24,6 +26,7 @@ import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
+import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -41,9 +44,19 @@ const ListingsRoute = ListingsRouteImport.update({
   path: '/listings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StockRoute = StockRouteImport.update({
@@ -101,6 +114,11 @@ const ReceiveIdRoute = ReceiveIdRouteImport.update({
   path: '/receive/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
+  id: '/api/auth/$',
+  path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
   id: '/purchasing/pdf/$id',
   path: '/purchasing/pdf/$id',
@@ -111,7 +129,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
+  '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
@@ -123,13 +143,16 @@ export interface FileRoutesByFullPath {
   '/products/': typeof ProductsIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
+  '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
@@ -141,6 +164,7 @@ export interface FileRoutesByTo {
   '/products': typeof ProductsIndexRoute
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesById {
@@ -148,7 +172,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
+  '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
@@ -160,6 +186,7 @@ export interface FileRoutesById {
   '/products/': typeof ProductsIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRouteTypes {
@@ -168,7 +195,9 @@ export interface FileRouteTypes {
     | '/'
     | '/diagnostics'
     | '/listings'
+    | '/login'
     | '/settings'
+    | '/setup'
     | '/stock'
     | '/orders/$id'
     | '/print/invoices'
@@ -180,13 +209,16 @@ export interface FileRouteTypes {
     | '/products/'
     | '/purchasing/'
     | '/receive/'
+    | '/api/auth/$'
     | '/purchasing/pdf/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/diagnostics'
     | '/listings'
+    | '/login'
     | '/settings'
+    | '/setup'
     | '/stock'
     | '/orders/$id'
     | '/print/invoices'
@@ -198,13 +230,16 @@ export interface FileRouteTypes {
     | '/products'
     | '/purchasing'
     | '/receive'
+    | '/api/auth/$'
     | '/purchasing/pdf/$id'
   id:
     | '__root__'
     | '/'
     | '/diagnostics'
     | '/listings'
+    | '/login'
     | '/settings'
+    | '/setup'
     | '/stock'
     | '/orders/$id'
     | '/print/invoices'
@@ -216,6 +251,7 @@ export interface FileRouteTypes {
     | '/products/'
     | '/purchasing/'
     | '/receive/'
+    | '/api/auth/$'
     | '/purchasing/pdf/$id'
   fileRoutesById: FileRoutesById
 }
@@ -223,7 +259,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
   ListingsRoute: typeof ListingsRoute
+  LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
+  SetupRoute: typeof SetupRoute
   StockRoute: typeof StockRoute
   OrdersIdRoute: typeof OrdersIdRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
@@ -235,6 +273,7 @@ export interface RootRouteChildren {
   ProductsIndexRoute: typeof ProductsIndexRoute
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
+  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
 }
 
@@ -261,11 +300,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ListingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/stock': {
@@ -345,6 +398,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReceiveIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/auth/$': {
+      id: '/api/auth/$'
+      path: '/api/auth/$'
+      fullPath: '/api/auth/$'
+      preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/purchasing/pdf/$id': {
       id: '/purchasing/pdf/$id'
       path: '/purchasing/pdf/$id'
@@ -359,7 +419,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DiagnosticsRoute: DiagnosticsRoute,
   ListingsRoute: ListingsRoute,
+  LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
+  SetupRoute: SetupRoute,
   StockRoute: StockRoute,
   OrdersIdRoute: OrdersIdRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
@@ -371,6 +433,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProductsIndexRoute: ProductsIndexRoute,
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
+  ApiAuthSplatRoute: ApiAuthSplatRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
 }
 export const routeTree = rootRouteImport
@@ -378,10 +441,11 @@ export const routeTree = rootRouteImport
   ._addFileTypes<FileRouteTypes>()
 
 import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
+import type { startInstance } from './start.ts'
 declare module '@tanstack/react-start' {
   interface Register {
     ssr: true
     router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
   }
 }

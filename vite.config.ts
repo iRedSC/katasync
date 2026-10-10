@@ -20,7 +20,16 @@ const config = defineConfig({
   // Bound to 127.0.0.1 so it doesn't clash with tailscale serve's listener on
   // the same port.
   server: { host: '127.0.0.1', allowedHosts: ['.ts.net'] },
-  plugins: [nitro(), tailwindcss(), tanstackStart(), viteReact()],
+  plugins: [
+    nitro({
+      // Left as a package rather than bundled: its certificate library needs
+      // reflect-metadata loaded first, and bundling reorders that.
+      traceDeps: ['@simplewebauthn/server*'],
+    }),
+    tailwindcss(),
+    tanstackStart(),
+    viteReact(),
+  ],
 })
 
 export default config
