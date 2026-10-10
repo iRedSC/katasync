@@ -296,7 +296,7 @@ export async function applySumtrackerImport(
 	});
 }
 
-function readCsv<T>(
+export function readCsv<T>(
 	text: string,
 	schema: (data: unknown) => T | type.errors,
 	file: string,
@@ -320,7 +320,7 @@ function cleanBarcode(raw: string) {
 	return raw.trim().replace(/^'/, "") || null;
 }
 
-function chunks<T>(items: T[], size: number): T[][] {
+export function chunks<T>(items: T[], size: number): T[][] {
 	const out: T[][] = [];
 	for (let i = 0; i < items.length; i += size)
 		out.push(items.slice(i, i + size));
