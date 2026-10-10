@@ -1,0 +1,664 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+import { shippingLocation } from "#/channels/stores";
+import type { Db } from "#/db/client";
+import {
+	listings,
+	locations,
+	packages,
+	productSuppliers,
+	products,
+	purchaseOrders,
+} from "#/db/schema";
+import { type CheckTarget, runCheck } from "#/diagnostics/checks";
+import { diagnosticsOverview } from "#/diagnostics/overview";
+import { recordCount, undoBatch } from "#/inventory/ledger";
+import { matchListing, productFromListing } from "#/orders/remap";
+import { loadOrder } from "#/purchasing/load";
+import {
+	cancelOrder,
+	draftFromSuggestions,
+	openDraft,
+	PurchaseOrderError,
+	purchaseOrderOfBatch,
+	setDraftLine,
+	updateDraft,
+} from "#/purchasing/orders";
+import { suggestPurchases } from "#/purchasing/reorder";
+import {
+	setProductSupplier,
+	supplierByRef,
+	updateSupplier,
+} from "#/purchasing/suppliers";
+import {
+	addUnit,
+	listUnits,
+	renameUnit,
+	setLineTerms,
+	setPurchaseUnit,
+} from "#/purchasing/units";
+import { createBoxes, updateBox } from "#/shipping/boxes";
+import { describeSchema, MAX_ROWS, readOnlyQuery } from "./query";
+
+// katasync as MCP tools: read anything, change the catalog, draft POs, and
+// count stock. Sending POs, buying labels, and anything else that reaches
+// suppliers, carriers, or money stays in the app. Server only.
+
+const INSTRUCTIONS = `katasync runs inventory, purchasing, and order sync for East Coast Drywall Tools, selling on Shopify (which also relays TikTok Shop), Amazon, and eBay.
+
+How things count:
+- Products are identified by SKU. Kinds: simple, kit (pre-assembled, own stock), bundle (a "tool set": no stock of its own, sold as its parts).
+- Stock: use the owned_stock view (product_id, sku, on_hand). It leaves out Amazon's FBA stock, which isn't ours to ship. Negative means oversold.
+- Sales: use the sales_units view (product_id, order_id, store_id, placed_at, units). Tool sets count as their parts; cancelled and FBA orders are left out. Join stores for the channel.
+- Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
+- Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.
+- POs: draft, sent, closed, cancelled. Each supplier has at most one draft; tools that add lines put them on it, creating it if needed. Nothing here sends a PO: the user reviews and sends drafts in the app.
+
+Use describe_schema before writing SQL. Prefer reorder_suggestions for "what should we order": it accounts for lead time, what's already on order, and minimums. When a request is ambiguous about quantities, say which interpretation you used.`;
+
+const json = (data: unknown) => ({
+	content: [{ type: "text" as const, text: JSON.stringify(data, null, 1) }],
+});
+
+const READ = { readOnlyHint: true, openWorldHint: false } as const;
+const WRITE = {
+	readOnlyHint: false,
+	destructiveHint: false,
+	openWorldHint: false,
+} as const;
+
+async function productBySku(db: Db, sku: string) {
+	const [product] = await db
+		.select({ id: products.id, sku: products.sku, kind: products.kind })
+		.from(products)
+		.where(eq(products.sku, sku.trim()));
+	if (!product) throw new PurchaseOrderError(`No product with SKU ${sku}`);
+	return product;
+}
+
+async function ownedLocation(db: Db, name?: string) {
+	if (name) {
+		const [found] = await db
+			.select({ id: locations.id, kind: locations.kind })
+			.from(locations)
+			.where(eq(locations.name, name));
+		if (found?.kind !== "owned")
+			throw new PurchaseOrderError(`No location of ours called ${name}`);
+		return found.id;
+	}
+	const only = await shippingLocation(db);
+	if (only === null)
+		throw new PurchaseOrderError("There are several locations; name one");
+	return only;
+}
+
+async function draftOrder(db: Db, id: number) {
+	const [po] = await db
+		.select({ status: purchaseOrders.status })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, id));
+	if (!po) throw new PurchaseOrderError(`No PO ${id}`);
+	if (po.status !== "draft")
+		throw new PurchaseOrderError(`PO ${id} is ${po.status}, not a draft`);
+}
+
+const unitTerms = {
+	unit: z.string().describe("Purchase unit name, e.g. EACH or CASE"),
+	pack_size: z
+		.number()
+		.int()
+		.positive()
+		.describe("How many of the product one unit holds; 1 for EACH"),
+	minimum: z
+		.number()
+		.int()
+		.positive()
+		.describe("Fewest units the supplier sells"),
+};
+
+const boxShape = {
+	name: z.string().optional().describe("Defaults to its size, e.g. 3 × 3 × 6"),
+	length_in: z.number().positive(),
+	width_in: z.number().positive(),
+	height_in: z.number().positive(),
+	weight_oz: z.number().min(0).describe("The empty box"),
+};
+
+export function buildServer(db: Db) {
+	const server = new McpServer(
+		{ name: "katasync", version: "1.0.0" },
+		{ instructions: INSTRUCTIONS },
+	);
+
+	// Reading
+
+	server.registerTool(
+		"describe_schema",
+		{
+			description:
+				"Every table and view the query tool can read, with columns and types.",
+			annotations: READ,
+		},
+		async () => json(await describeSchema(db)),
+	);
+
+	server.registerTool(
+		"query",
+		{
+			description: `Runs one read-only SQL SELECT (Postgres) and returns its rows. Writes are refused. Up to ${MAX_ROWS} rows.`,
+			inputSchema: {
+				sql: z.string(),
+				limit: z.number().int().min(1).max(MAX_ROWS).optional(),
+			},
+			annotations: READ,
+		},
+		async ({ sql, limit }) => json(await readOnlyQuery(db, sql, limit)),
+	);
+
+	server.registerTool(
+		"sync_status",
+		{
+			description:
+				"Health of order sync per channel (Shopify, eBay, Amazon): last good sync, the exact latest error, a hint for known causes, problems in the latest pass, and recent passes. Also whether the sync worker runs, labels whose tracking didn't reach a marketplace, and sold SKUs matching no product. With check, also runs a live step-by-step connection check.",
+			inputSchema: {
+				check: z
+					.enum(["shopify", "ebay", "amazon", "shippo", "email"])
+					.optional()
+					.describe("Run a live connection check of this service"),
+			},
+			annotations: { ...READ, openWorldHint: true },
+		},
+		async ({ check }) =>
+			json({
+				...(await diagnosticsOverview(db)),
+				...(check ? { check: await runCheck(check as CheckTarget) } : {}),
+			}),
+	);
+
+	server.registerTool(
+		"reorder_suggestions",
+		{
+			description:
+				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Accounts for lead time, cover days, minimums, and open POs.",
+			inputSchema: {
+				supplier: z.string().optional().describe("Code or name"),
+			},
+			annotations: READ,
+		},
+		async ({ supplier }) => {
+			const all = await suggestPurchases(db);
+			if (!supplier) return json(all);
+			const { id } = await supplierByRef(db, supplier);
+			return json(all.filter((s) => s.supplierId === id));
+		},
+	);
+
+	server.registerTool(
+		"get_purchase_order",
+		{
+			description:
+				"A PO with its supplier, delivery location, and lines (unit, pack size, minimum, quantity, price, received).",
+			inputSchema: { id: z.number().int().positive() },
+			annotations: READ,
+		},
+		async ({ id }) => json(await loadOrder(db, id)),
+	);
+
+	server.registerTool(
+		"list_purchase_units",
+		{
+			description:
+				"The units products can be bought in, and how many products use each.",
+			annotations: READ,
+		},
+		async () => json(await listUnits(db)),
+	);
+
+	// Draft POs
+
+	server.registerTool(
+		"set_draft_po_lines",
+		{
+			description:
+				"Sets how many of each product the draft POs order, putting each on its supplier's draft (made if needed). Quantity is in the product's purchase unit (see product_suppliers); 0 takes it off. A line already on the draft is set to the new quantity, not added to. Products without a supplier, tool sets, and unknown SKUs are skipped and reported.",
+			inputSchema: {
+				lines: z
+					.array(
+						z.object({
+							sku: z.string(),
+							quantity: z.number().int().min(0),
+							unit_cost: z
+								.number()
+								.min(0)
+								.optional()
+								.describe(
+									"Per purchase unit; omitted keeps or uses the supplier's price",
+								),
+						}),
+					)
+					.min(1),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ lines }) => {
+			const drafts = new Map<
+				number,
+				{ po: number; supplier: string; set: unknown[] }
+			>();
+			const skipped: { sku: string; reason: string }[] = [];
+			for (const line of lines) {
+				try {
+					const product = await productBySku(db, line.sku);
+					const [link] = await db
+						.select({
+							supplierId: productSuppliers.supplierId,
+							unit: productSuppliers.unit,
+							packSize: productSuppliers.packSize,
+							minimum: productSuppliers.minimumQuantity,
+						})
+						.from(productSuppliers)
+						.where(eq(productSuppliers.productId, product.id));
+					if (!link) {
+						skipped.push({ sku: line.sku, reason: "no supplier set" });
+						continue;
+					}
+					const po = await openDraft(db, link.supplierId);
+					await setDraftLine(db, {
+						purchaseOrderId: po,
+						productId: product.id,
+						quantity: line.quantity,
+						...(line.unit_cost !== undefined
+							? { unitCost: line.unit_cost }
+							: {}),
+					});
+					let draft = drafts.get(po);
+					if (!draft) {
+						const { supplier } = await loadOrder(db, po);
+						draft = { po, supplier: supplier.name, set: [] };
+						drafts.set(po, draft);
+					}
+					draft.set.push({
+						sku: product.sku,
+						quantity: line.quantity,
+						unit: link.unit,
+						packSize: link.packSize,
+						...(line.quantity > 0 && line.quantity < link.minimum
+							? { warning: `below the supplier's minimum of ${link.minimum}` }
+							: {}),
+					});
+				} catch (error) {
+					skipped.push({
+						sku: line.sku,
+						reason: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+			return json({ drafts: [...drafts.values()], skipped });
+		},
+	);
+
+	server.registerTool(
+		"draft_po_from_suggestions",
+		{
+			description:
+				"Brings a supplier's draft PO up to date with reorder_suggestions, creating it if needed: adds suggested products and raises short lines. Never lowers or removes a line.",
+			inputSchema: { supplier: z.string().describe("Code or name") },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ supplier }) => {
+			const { id } = await supplierByRef(db, supplier);
+			const po = await draftFromSuggestions(db, id);
+			return json(await loadOrder(db, po));
+		},
+	);
+
+	server.registerTool(
+		"set_po_line_terms",
+		{
+			description:
+				"Changes the unit, pack size, and minimum of one line on a draft PO. The quantity and price convert to keep the same number of items. With make_default, the product's supplier default changes too.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				sku: z.string(),
+				...unitTerms,
+				make_default: z.boolean().default(false),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sku, unit, pack_size, minimum, make_default }) => {
+			const product = await productBySku(db, sku);
+			await setLineTerms(db, {
+				purchaseOrderId: po,
+				productId: product.id,
+				unit: unit.toUpperCase(),
+				packSize: pack_size,
+				minimumQuantity: minimum,
+				makeDefault: make_default,
+			});
+			return json(await loadOrder(db, po));
+		},
+	);
+
+	server.registerTool(
+		"edit_draft_po",
+		{
+			description:
+				"Changes a draft PO's notes (printed on it) or where it's delivered.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				notes: z.string().nullable().optional(),
+				location: z
+					.string()
+					.optional()
+					.describe("One of our locations, by name"),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, notes, location }) => {
+			await updateDraft(db, {
+				purchaseOrderId: po,
+				...(notes !== undefined ? { notes } : {}),
+				...(location ? { locationId: await ownedLocation(db, location) } : {}),
+			});
+			return json(await loadOrder(db, po));
+		},
+	);
+
+	server.registerTool(
+		"delete_draft_po",
+		{
+			description:
+				"Deletes a draft PO. Only drafts; sent POs are managed in the app.",
+			inputSchema: { po: z.number().int().positive() },
+			annotations: { ...WRITE, destructiveHint: true },
+		},
+		async ({ po }) => {
+			await draftOrder(db, po);
+			await cancelOrder(db, po);
+			return json({ deleted: po });
+		},
+	);
+
+	// Catalog and setup
+
+	server.registerTool(
+		"set_product_supplier",
+		{
+			description:
+				"Sets who a product is bought from, their part number, and their price per purchase unit. supplier null removes it. Omitted fields keep their value.",
+			inputSchema: {
+				sku: z.string(),
+				supplier: z.string().nullable().describe("Code or name; null removes"),
+				supplier_sku: z.string().nullable().optional(),
+				cost: z.number().min(0).nullable().optional(),
+			},
+			annotations: WRITE,
+		},
+		async ({ sku, supplier, supplier_sku, cost }) => {
+			const product = await productBySku(db, sku);
+			await setProductSupplier(db, {
+				productId: product.id,
+				supplierId:
+					supplier === null ? null : (await supplierByRef(db, supplier)).id,
+				...(supplier_sku !== undefined ? { supplierSku: supplier_sku } : {}),
+				...(cost !== undefined ? { cost } : {}),
+			});
+			const [link] = await db
+				.select()
+				.from(productSuppliers)
+				.where(eq(productSuppliers.productId, product.id));
+			return json(link ?? { sku, supplier: null });
+		},
+	);
+
+	server.registerTool(
+		"set_purchase_unit",
+		{
+			description:
+				"Sets the default unit, pack size, and minimum a product is bought in. Its supplier price converts to the new size, and draft lines still on the old default follow.",
+			inputSchema: { sku: z.string(), ...unitTerms },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku, unit, pack_size, minimum }) => {
+			const product = await productBySku(db, sku);
+			await setPurchaseUnit(db, {
+				productId: product.id,
+				unit: unit.toUpperCase(),
+				packSize: pack_size,
+				minimumQuantity: minimum,
+			});
+			return json({ sku, unit: unit.toUpperCase(), pack_size, minimum });
+		},
+	);
+
+	server.registerTool(
+		"add_purchase_unit",
+		{
+			description: "Adds a unit products can be bought in, e.g. ROLL.",
+			inputSchema: { name: z.string() },
+			annotations: WRITE,
+		},
+		async ({ name }) => json({ added: await addUnit(db, name) }),
+	);
+
+	server.registerTool(
+		"rename_purchase_unit",
+		{
+			description:
+				"Renames a purchase unit everywhere it's used, including drafts. Sent POs keep the old name.",
+			inputSchema: { from: z.string(), to: z.string() },
+			annotations: WRITE,
+		},
+		async ({ from, to }) =>
+			json({ renamed: await renameUnit(db, from.toUpperCase(), to) }),
+	);
+
+	server.registerTool(
+		"update_supplier",
+		{
+			description:
+				"Changes a supplier's details. Only given fields change. lead_time_days: days from sending a PO to delivery. cover_days: days of sales each PO should cover. minimum_order: spend (USD) at which a suggested PO counts as ready.",
+			inputSchema: {
+				supplier: z.string().describe("Code or name"),
+				name: z.string().optional(),
+				contact_name: z.string().nullable().optional(),
+				email: z.string().email().nullable().optional(),
+				phone: z.string().nullable().optional(),
+				payment_terms: z.string().nullable().optional(),
+				notes: z.string().nullable().optional().describe("For us only"),
+				po_notes: z
+					.string()
+					.nullable()
+					.optional()
+					.describe("Printed on every PO"),
+				lead_time_days: z.number().int().min(1).max(365).optional(),
+				cover_days: z.number().int().min(1).max(365).optional(),
+				minimum_order: z.number().min(0).optional(),
+			},
+			annotations: WRITE,
+		},
+		async (input) => {
+			const { id } = await supplierByRef(db, input.supplier);
+			await updateSupplier(db, id, {
+				name: input.name,
+				contactName: input.contact_name,
+				email: input.email,
+				phone: input.phone,
+				paymentTerms: input.payment_terms,
+				notes: input.notes,
+				poNotes: input.po_notes,
+				leadTimeDays: input.lead_time_days,
+				coverDays: input.cover_days,
+				minimumOrder: input.minimum_order,
+			});
+			return json({ updated: input.supplier });
+		},
+	);
+
+	server.registerTool(
+		"create_boxes",
+		{
+			description:
+				"Adds shipping boxes for quick ship, all or none. Sizes in inches, empty weight in ounces. A pin is 1 to 999; left out, the lowest free pin is used.",
+			inputSchema: {
+				boxes: z
+					.array(
+						z.object({
+							pin: z.number().int().min(1).max(999).optional(),
+							...boxShape,
+						}),
+					)
+					.min(1),
+			},
+			annotations: WRITE,
+		},
+		async ({ boxes }) => {
+			const saved = await createBoxes(
+				db,
+				boxes.map((b) => ({
+					name: b.name ?? `${b.length_in} × ${b.width_in} × ${b.height_in}`,
+					lengthIn: b.length_in,
+					widthIn: b.width_in,
+					heightIn: b.height_in,
+					weightOz: b.weight_oz,
+					pin: b.pin,
+				})),
+			);
+			return json(saved.map((b) => ({ pin: b.pin, name: b.name })));
+		},
+	);
+
+	server.registerTool(
+		"update_box",
+		{
+			description:
+				"Changes a shipping box, found by its pin. Only given fields change; new_pin moves it to another pin.",
+			inputSchema: {
+				pin: z.number().int().min(1).max(999),
+				new_pin: z.number().int().min(1).max(999).optional(),
+				...z.object(boxShape).partial().shape,
+			},
+			annotations: WRITE,
+		},
+		async (input) => {
+			const [box] = await db
+				.select()
+				.from(packages)
+				.where(eq(packages.pin, input.pin));
+			if (!box) throw new PurchaseOrderError(`No box with pin ${input.pin}`);
+			const inches = (mm: number) => mm / 25.4;
+			const saved = await updateBox(db, box.id, {
+				name: input.name ?? box.name,
+				lengthIn: input.length_in ?? inches(box.lengthMm),
+				widthIn: input.width_in ?? inches(box.widthMm),
+				heightIn: input.height_in ?? inches(box.heightMm),
+				weightOz: input.weight_oz ?? box.weightGrams / 28.349523125,
+				pin: input.new_pin ?? box.pin,
+			});
+			return json({ pin: saved.pin, name: saved.name });
+		},
+	);
+
+	server.registerTool(
+		"match_listing",
+		{
+			description:
+				"Matches a channel listing (listings.id) to the product it sells, then lets past orders of it take their stock. To make a new product from the listing instead, leave out sku.",
+			inputSchema: {
+				listing_id: z.number().int().positive(),
+				sku: z.string().optional(),
+			},
+			annotations: WRITE,
+		},
+		async ({ listing_id, sku }) => {
+			const [listing] = await db
+				.select({ id: listings.id })
+				.from(listings)
+				.where(eq(listings.id, listing_id));
+			if (!listing) throw new PurchaseOrderError(`No listing ${listing_id}`);
+			return json(
+				sku
+					? await matchListing(db, listing_id, sku)
+					: await productFromListing(db, listing_id),
+			);
+		},
+	);
+
+	server.registerTool(
+		"set_insure_when_shipped",
+		{
+			description:
+				"Whether quick ship always offers insurance for orders holding this product.",
+			inputSchema: { sku: z.string(), insure: z.boolean() },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku, insure }) => {
+			const product = await productBySku(db, sku);
+			await db
+				.update(products)
+				.set({ insureWhenShipped: insure })
+				.where(eq(products.id, product.id));
+			return json({ sku, insure });
+		},
+	);
+
+	// Stock
+
+	server.registerTool(
+		"record_count",
+		{
+			description:
+				"Records how many of a product are on the shelf. The difference from what katasync thinks is booked as an adjustment (returns its batch_id for undo_stock_change). Tool sets can't be counted; count their parts.",
+			inputSchema: {
+				sku: z.string(),
+				counted: z.number().int(),
+				reason: z.enum(["count", "damaged", "found", "other"]).default("count"),
+				note: z.string().optional(),
+				location: z
+					.string()
+					.optional()
+					.describe("Needed only when there are several of our locations"),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku, counted, reason, note, location }) => {
+			const product = await productBySku(db, sku);
+			const labels = {
+				count: "Counted",
+				damaged: "Damaged",
+				found: "Found",
+				other: "Other",
+			};
+			const result = await recordCount(db, {
+				productId: product.id,
+				locationId: await ownedLocation(db, location),
+				counted,
+				note: [labels[reason], note?.trim(), "via Claude"]
+					.filter(Boolean)
+					.join(": "),
+			});
+			return json({ sku, ...result });
+		},
+	);
+
+	server.registerTool(
+		"undo_stock_change",
+		{
+			description:
+				"Reverses a stock change (a ledger batch, e.g. from record_count) by posting its opposite. Receipts on a PO must be undone in the app.",
+			inputSchema: { batch_id: z.string().uuid() },
+			annotations: WRITE,
+		},
+		async ({ batch_id }) => {
+			const po = await purchaseOrderOfBatch(db, batch_id);
+			if (po !== null)
+				throw new PurchaseOrderError(
+					`This came in on PO ${po}. Undo it on the PO in the app.`,
+				);
+			return json(await undoBatch(db, batch_id));
+		},
+	);
+
+	return server;
+}

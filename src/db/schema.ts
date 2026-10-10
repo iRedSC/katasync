@@ -9,6 +9,7 @@ import {
 	numeric,
 	pgEnum,
 	pgTable,
+	pgView,
 	primaryKey,
 	smallint,
 	text,
@@ -677,3 +678,33 @@ export const authChallenges = pgTable("auth_challenges", {
 	challenge: text().primaryKey(),
 	expiresAt: timestamp({ withTimezone: true }).notNull(),
 });
+
+// Lets a program (an MCP client like Claude) use katasync's /mcp endpoint.
+// Shown once when made; only its SHA-256 is stored, like sessions.
+export const apiTokens = pgTable("api_tokens", {
+	tokenHash: text().primaryKey(),
+	// Who or what holds it, e.g. "Claude on the office PC".
+	name: text().notNull(),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	lastUsedAt: timestamp({ withTimezone: true }),
+});
+
+// Views defined in drizzle/0020_reporting_views.sql, so every report counts
+// stock and sales the same way.
+
+// Stock on our own shelves per stocked product (Amazon's FBA stock left out).
+export const ownedStock = pgView("owned_stock", {
+	productId: integer().notNull(),
+	sku: text().notNull(),
+	onHand: integer().notNull(),
+}).existing();
+
+// Units that left our shelves, per order line: tool sets as their parts,
+// without cancelled or FBA orders, or lines not matched to a product.
+export const salesUnits = pgView("sales_units", {
+	productId: integer().notNull(),
+	orderId: integer().notNull(),
+	storeId: integer().notNull(),
+	placedAt: timestamp({ withTimezone: true }).notNull(),
+	units: integer().notNull(),
+}).existing();

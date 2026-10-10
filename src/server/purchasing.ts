@@ -35,6 +35,10 @@ import {
 } from "#/purchasing/orders";
 import { suggestPurchases } from "#/purchasing/reorder";
 import {
+	setProductSupplier as setProductSupplierLink,
+	updateSupplier as updateSupplierDetails,
+} from "#/purchasing/suppliers";
+import {
 	addUnit,
 	deleteUnit,
 	listUnits,
@@ -354,22 +358,9 @@ export const updateSupplier = createServerFn({ method: "POST" })
 			minimumOrder: "number >= 0",
 		}),
 	)
-	.handler(async ({ data: { id: supplierId, ...values } }) => {
-		const blank = (v: string | null) => v?.trim() || null;
-		await getDb()
-			.update(suppliers)
-			.set({
-				...values,
-				name: values.name.trim(),
-				contactName: blank(values.contactName),
-				email: blank(values.email),
-				phone: blank(values.phone),
-				paymentTerms: blank(values.paymentTerms),
-				notes: blank(values.notes),
-				poNotes: blank(values.poNotes),
-			})
-			.where(eq(suppliers.id, supplierId));
-	});
+	.handler(async ({ data: { id: supplierId, ...values } }) =>
+		updateSupplierDetails(getDb(), supplierId, values),
+	);
 
 // Who a product comes from, for its product page. Null when no supplier.
 export const getProductSupplier = createServerFn({ method: "GET" })
@@ -424,40 +415,9 @@ export const setProductSupplier = createServerFn({ method: "POST" })
 			supplierId: "number.integer > 0 | null",
 			"supplierSku?": "string | null",
 			"cost?": "number >= 0 | null",
-			"minimumQuantity?": "number.integer > 0",
 		}),
 	)
-	.handler(async ({ data }) => {
-		const db = getDb();
-		if (data.supplierId === null) {
-			await db
-				.delete(productSuppliers)
-				.where(eq(productSuppliers.productId, data.productId));
-			return;
-		}
-		const [product] = await db
-			.select({ kind: products.kind })
-			.from(products)
-			.where(eq(products.id, data.productId));
-		if (product?.kind === "bundle")
-			throw new PurchaseOrderError(
-				"Tool sets are bought as their parts; set suppliers on those",
-			);
-		const values = {
-			supplierId: data.supplierId,
-			...(data.supplierSku !== undefined
-				? { supplierSku: data.supplierSku?.trim() || null }
-				: {}),
-			...(data.cost !== undefined ? { cost: data.cost } : {}),
-			...(data.minimumQuantity !== undefined
-				? { minimumQuantity: data.minimumQuantity }
-				: {}),
-		};
-		await db
-			.insert(productSuppliers)
-			.values({ productId: data.productId, ...values })
-			.onConflictDoUpdate({ target: productSuppliers.productId, set: values });
-	});
+	.handler(async ({ data }) => setProductSupplierLink(getDb(), data));
 
 // What a product is bought in (CASE of 30) and the fewest the supplier sells.
 export const setProductPurchaseUnit = createServerFn({ method: "POST" })

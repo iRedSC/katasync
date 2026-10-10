@@ -9,6 +9,7 @@ import {
 	SETUP_LINK_MINUTES,
 	sessionFor,
 } from "#/auth/sessions";
+import { createApiToken, listApiTokens, revokeApiToken } from "#/auth/tokens";
 import { passkeyName } from "#/auth/webauthn";
 import { getDb } from "#/db/client";
 import { passkeys } from "#/db/schema";
@@ -65,3 +66,21 @@ export const createDeviceLink = createServerFn({ method: "POST" }).handler(
 		};
 	},
 );
+
+// Tokens for MCP clients like Claude. The token itself is only returned here,
+// once.
+export const listTokens = createServerFn({ method: "GET" }).handler(async () =>
+	listApiTokens(getDb()),
+);
+
+export const createToken = createServerFn({ method: "POST" })
+	.validator(type({ name: "string" }))
+	.handler(async ({ data }) => {
+		const token = await createApiToken(getDb(), data.name);
+		const origin = process.env.AUTH_ORIGIN ?? new URL(getRequest().url).origin;
+		return { token, endpoint: `${origin}/mcp` };
+	});
+
+export const revokeToken = createServerFn({ method: "POST" })
+	.validator(type({ id: "string > 0" }))
+	.handler(async ({ data }) => revokeApiToken(getDb(), data.id));

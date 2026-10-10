@@ -24,6 +24,10 @@ Everyone shares one company account; each phone or computer signs in with its ow
 - `AUTH_ORIGIN` is the address katasync is opened at, e.g. `https://katasync.example.com`. Passkeys belong to that address, so changing it means adding every device again.
 - `pnpm auth:setup-link` prints a one-time link for adding a device: the first one, or when every device has lost its passkey.
 
+## Claude (MCP)
+
+`/mcp` is an MCP server (Streamable HTTP, stateless) for Claude and other MCP clients. Make a token in Settings; it shows the `claude mcp add` command to run. Claude can read anything (including read-only SQL), draft POs, change the catalog and setup, and count stock. Sending POs and buying labels stay in the app. Tools live in `src/mcp/server.ts`; the counting rules they rely on are the `owned_stock` and `sales_units` views.
+
 ## Schema changes
 
 Edit `src/db/schema.ts`, then `pnpm db:generate` and commit the new file in `drizzle/`. For SQL that Drizzle can't express (triggers, functions), use `pnpm db:generate --custom --name <name>`.

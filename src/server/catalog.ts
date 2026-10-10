@@ -1,11 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
-import {
-	createProductFromListing,
-	mapListing,
-	matchListings,
-} from "#/channels/listings";
+import { matchListings } from "#/channels/listings";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
@@ -23,7 +19,11 @@ import {
 } from "#/db/schema";
 import { getAvailability, getBundleBlockers } from "#/inventory/availability";
 import { recordCount as recordShelfCount, undoBatch } from "#/inventory/ledger";
-import { applyListingsToOrders } from "#/orders/remap";
+import {
+	applyListingsToOrders,
+	matchListing as matchListingToSku,
+	productFromListing,
+} from "#/orders/remap";
 import { purchaseOrderOfBatch } from "#/purchasing/orders";
 
 async function ownedLocationIds() {
@@ -464,35 +464,14 @@ export const listUnmappedListings = createServerFn({ method: "GET" }).handler(
 // Matches a listing to an existing product, then catches up past orders.
 export const matchListing = createServerFn({ method: "POST" })
 	.validator(type({ listingId: "number.integer > 0", sku: "string > 0" }))
-	.handler(async ({ data }) => {
-		const db = getDb();
-		const [product] = await db
-			.select({ id: products.id, sku: products.sku })
-			.from(products)
-			.where(eq(products.sku, data.sku));
-		if (!product) throw new Error(`No product ${data.sku}`);
-		await mapListing(db, data.listingId, product.id);
-		const caughtUp = await applyListingsToOrders(
-			db,
-			[data.listingId],
-			await shippingLocation(db),
-		);
-		return { sku: product.sku, ordersUpdated: caughtUp.lines };
-	});
+	.handler(async ({ data }) =>
+		matchListingToSku(getDb(), data.listingId, data.sku),
+	);
 
 // Creates the product a listing is selling, filled in from the listing.
 export const createListingProduct = createServerFn({ method: "POST" })
 	.validator(type({ listingId: "number.integer > 0" }))
-	.handler(async ({ data }) => {
-		const db = getDb();
-		const product = await createProductFromListing(db, data.listingId);
-		const caughtUp = await applyListingsToOrders(
-			db,
-			[data.listingId],
-			await shippingLocation(db),
-		);
-		return { sku: product.sku, ordersUpdated: caughtUp.lines };
-	});
+	.handler(async ({ data }) => productFromListing(getDb(), data.listingId));
 
 // Records what someone counted on the shelf. The app works out the change, and
 // the location when there's only one.

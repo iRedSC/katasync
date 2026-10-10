@@ -3,9 +3,10 @@ import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { DevicesCard } from "#/components/devices-card";
 import { Badge, Card, Page } from "#/components/page";
+import { TokensCard } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
 import { channelNames } from "#/lib/format";
-import { listDevices } from "#/server/auth";
+import { listDevices, listTokens } from "#/server/auth";
 import { listLocations, listStores, setPrimaryStore } from "#/server/catalog";
 import {
 	addPurchaseUnit,
@@ -22,14 +23,16 @@ import {
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
-		const [locations, stores, boxes, units, devices] = await Promise.all([
-			listLocations(),
-			listStores(),
-			listPackages(),
-			listPurchaseUnits(),
-			listDevices(),
-		]);
-		return { locations, stores, boxes, units, devices };
+		const [locations, stores, boxes, units, devices, tokens] =
+			await Promise.all([
+				listLocations(),
+				listStores(),
+				listPackages(),
+				listPurchaseUnits(),
+				listDevices(),
+				listTokens(),
+			]);
+		return { locations, stores, boxes, units, devices, tokens };
 	},
 	component: Settings,
 });
@@ -40,7 +43,8 @@ const channels = Object.entries(channelNames).map(([id, name]) => ({
 }));
 
 function Settings() {
-	const { locations, stores, boxes, units, devices } = Route.useLoaderData();
+	const { locations, stores, boxes, units, devices, tokens } =
+		Route.useLoaderData();
 	return (
 		<Page title="Settings" narrow>
 			<Card title="Sales channels" flush>
@@ -86,6 +90,7 @@ function Settings() {
 				</ul>
 			</Card>
 			<DevicesCard devices={devices} />
+			<TokensCard tokens={tokens} />
 			<Boxes boxes={boxes} />
 			<Units units={units} />
 			<Card title="Label printing">

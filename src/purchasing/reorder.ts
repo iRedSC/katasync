@@ -1,15 +1,13 @@
-import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
-	orderLines,
-	orders,
-	productComponents,
 	productSuppliers,
 	products,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
+	salesUnits,
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
@@ -179,33 +177,18 @@ export async function suggestPurchases(
 	);
 }
 
-// Units sold per stocked product since a date. Tool sets count as their parts,
-// since that's what leaves the shelf. Amazon's own (FBA) shipments are left
-// out: they never take our stock.
+// Units sold per stocked product since a date, counted by the sales_units
+// view (drizzle/0020_reporting_views.sql): tool sets as their parts, without
+// cancelled or Amazon-shipped (FBA) orders.
 async function soldSince(db: Db, since: Date) {
 	const rows = await db
 		.select({
-			productId: sql<number>`coalesce(${productComponents.componentProductId}, ${orderLines.productId})`,
-			units: sql<number>`sum(${orderLines.quantity} * coalesce(${productComponents.quantity}, 1))::int`,
+			productId: salesUnits.productId,
+			units: sql<number>`sum(${salesUnits.units})::int`,
 		})
-		.from(orderLines)
-		.innerJoin(orders, eq(orders.id, orderLines.orderId))
-		.innerJoin(products, eq(products.id, orderLines.productId))
-		.leftJoin(
-			productComponents,
-			and(
-				eq(productComponents.parentProductId, orderLines.productId),
-				eq(products.kind, "bundle"),
-			),
-		)
-		.where(
-			and(
-				gte(orders.placedAt, since),
-				isNull(orders.cancelledAt),
-				eq(orders.fulfilledByChannel, false),
-			),
-		)
-		.groupBy(sql`1`);
+		.from(salesUnits)
+		.where(gte(salesUnits.placedAt, since))
+		.groupBy(salesUnits.productId);
 	return new Map(rows.map((r) => [r.productId, r.units]));
 }
 
