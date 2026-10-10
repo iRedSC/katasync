@@ -226,8 +226,27 @@ export async function setPurchaseUnit(
 	const { productId, ...terms } = input;
 	return db.transaction(async (tx) => {
 		await checkTerms(tx, terms);
+		// Draft POs first, lowest id first, then the supplier row: the order
+		// setLineTerms takes them in, so two saves can't each hold what the other
+		// wants. The terms are read once the supplier row is ours.
+		await tx
+			.select({ id: purchaseOrders.id })
+			.from(purchaseOrders)
+			.where(
+				and(
+					eq(purchaseOrders.status, "draft"),
+					inArray(
+						purchaseOrders.id,
+						tx
+							.select({ id: purchaseOrderLines.purchaseOrderId })
+							.from(purchaseOrderLines)
+							.where(eq(purchaseOrderLines.productId, productId)),
+					),
+				),
+			)
+			.orderBy(asc(purchaseOrders.id))
+			.for("update");
 		const old = await setDefaultTerms(tx, productId, terms);
-		// Locked like every other draft change (see lockOrder in orders.ts).
 		const lines = await tx
 			.select({
 				id: purchaseOrderLines.id,

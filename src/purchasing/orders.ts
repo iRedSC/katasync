@@ -12,7 +12,6 @@ import {
 } from "#/db/schema";
 import { postMovements, undoBatch } from "#/inventory/ledger";
 import { type SuggestedLine, suggestPurchases } from "#/purchasing/reorder";
-import { perPack } from "#/purchasing/units";
 
 // Every change to a PO goes through here. Each one locks the PO's row first,
 // so two people receiving the same box can't both count it.
@@ -527,15 +526,15 @@ async function averageInCost(
 		.update(products)
 		.set({ unitCost: Math.round(cost * 10_000) / 10_000 })
 		.where(eq(products.id, p.productId));
-	const [link] = await db
-		.select({ packSize: productSuppliers.packSize })
-		.from(productSuppliers)
+	// One statement, so the pack size it multiplies by is the row's current one
+	// even if a new default is being saved at the same time. Same rounding as
+	// perPack.
+	await db
+		.update(productSuppliers)
+		.set({
+			cost: sql`round(${p.unitCost}::numeric * ${productSuppliers.packSize}, 4)`,
+		})
 		.where(eq(productSuppliers.productId, p.productId));
-	if (link)
-		await db
-			.update(productSuppliers)
-			.set({ cost: perPack(p.unitCost, 1, link.packSize) })
-			.where(eq(productSuppliers.productId, p.productId));
 }
 
 // The PO a ledger batch belongs to, when it's a receipt or a receipt's undo.

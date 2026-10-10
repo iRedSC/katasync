@@ -1,4 +1,6 @@
+import type { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/pglite";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
@@ -615,6 +617,70 @@ describe("buying in packs", () => {
 		).rejects.toThrow(/another supplier/);
 		// Nothing changed, the line included.
 		expect((await linesOf(po))[0]).toMatchObject({ unit: "EACH", quantity: 5 });
+	});
+
+	// PGlite has one connection, so a race can't be staged. These pin the
+	// statements that keep it from happening.
+	function logged() {
+		const queries: string[] = [];
+		const client = (db as unknown as { $client: PGlite }).$client;
+		const logging = drizzle(client, {
+			schema,
+			casing: "snake_case",
+			logger: { logQuery: (query) => queries.push(query) },
+		});
+		return { logging, queries };
+	}
+
+	test("receiving converts the cost in the one statement that reads the pack size", async () => {
+		await setPurchaseUnit(db, {
+			productId: blade,
+			unit: "CASE",
+			packSize: 12,
+			minimumQuantity: 1,
+		});
+		const id = await draftFromSuggestions(db, canam, now);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 3,
+			unitCost: 36,
+		});
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		const [line] = await linesOf(id);
+
+		const { logging, queries } = logged();
+		await receive(logging, { lineId: line.id, quantity: 1 });
+
+		expect(
+			queries.filter((q) => /^select .* from "product_suppliers"/.test(q)),
+		).toEqual([]);
+		const writes = queries.filter((q) =>
+			q.startsWith('update "product_suppliers"'),
+		);
+		expect(writes).toHaveLength(1);
+		expect(writes[0]).toContain('"pack_size"');
+	});
+
+	test("a default change locks draft POs, lowest first, before the supplier row", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		const { logging, queries } = logged();
+		await setPurchaseUnit(logging, {
+			productId: blade,
+			unit: "CASE",
+			packSize: 12,
+			minimumQuantity: 1,
+		});
+
+		const locks = queries.filter((q) => q.endsWith("for update"));
+		const poLock = locks.findIndex((q) => q.includes('from "purchase_orders"'));
+		const supplierLock = locks.findIndex((q) =>
+			q.includes('from "product_suppliers"'),
+		);
+		expect(poLock).toBeGreaterThanOrEqual(0);
+		expect(poLock).toBeLessThan(supplierLock);
+		expect(locks[poLock]).toContain('order by "purchase_orders"."id"');
+		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 3 });
 	});
 
 	test("EACH holds one, and the unit list guards what's in use", async () => {
