@@ -359,10 +359,12 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 				<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
 					<th className="px-4 py-2 font-medium">Product</th>
 					{draft && (
-						<th className="px-2 py-2 text-right font-medium">On hand</th>
+						<th className="px-4 py-2 text-right font-medium whitespace-nowrap">
+							On hand
+						</th>
 					)}
-					<th className="px-2 py-2 text-right font-medium">Qty</th>
-					<th className="px-2 py-2 text-right font-medium">Price</th>
+					<th className="px-3 py-2 text-right font-medium">Qty</th>
+					<th className="px-3 py-2 text-right font-medium">Price</th>
 					<th className="px-4 py-2 text-right font-medium">Amount</th>
 					{!draft && (
 						<th className="px-4 py-2 text-right font-medium">Received</th>
@@ -401,14 +403,14 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 						{draft && (
 							<td
 								className={cn(
-									"px-2 py-2 text-right tabular-nums",
+									"px-4 py-2 text-right tabular-nums",
 									l.onHand < 0 ? "text-critical-text" : "text-muted-foreground",
 								)}
 							>
 								{formatCount(l.onHand)}
 							</td>
 						)}
-						<td className="px-2 py-2 text-right tabular-nums">
+						<td className="px-3 py-2 text-right font-semibold tabular-nums">
 							{draft ? (
 								<DraftField
 									key={`q${l.quantity}`}
@@ -420,7 +422,7 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 								formatCount(l.quantity)
 							)}
 						</td>
-						<td className="px-2 py-2 text-right tabular-nums">
+						<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
 							{draft ? (
 								<DraftField
 									key={`c${l.unitCost}`}
@@ -458,8 +460,14 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 const field =
 	"h-8 rounded-lg border border-input bg-white px-2 text-right tabular-nums outline-none focus:border-ring";
 
+// Quantity reads as a bold number on a soft fill, so the column scans at a
+// glance; it turns into a normal field when focused.
+const quantityField =
+	"h-9 w-16 rounded-lg border border-transparent bg-[#f1f1f1] px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none hover:bg-[#e8e8e8] focus:border-ring focus:bg-white";
+
 // Quantity or price on a draft line. Saves on Enter or leaving the field; a
-// quantity of 0 takes the line off. Escape puts the old value back.
+// quantity of 0 takes the line off. Escape puts the old value back. Price is
+// plain text with a dotted underline until clicked, since it rarely changes.
 function DraftField({
 	line,
 	purchaseOrderId,
@@ -475,8 +483,10 @@ function DraftField({
 			? String(line.quantity)
 			: (line.unitCost?.toFixed(2) ?? "");
 	const [value, setValue] = useState(initial);
+	const [editing, setEditing] = useState(name === "quantity");
 
 	function save() {
+		if (name === "unitCost") setEditing(false);
 		if (value.trim() === initial) return;
 		const n = Number(value);
 		if (value.trim() !== "" && !(Number.isFinite(n) && n >= 0)) {
@@ -503,10 +513,28 @@ function DraftField({
 		);
 	}
 
+	if (!editing)
+		return (
+			<button
+				type="button"
+				onClick={() => setEditing(true)}
+				title="Change the price"
+				className={cn(
+					"cursor-text border-b border-dotted border-[#b5b5b5] leading-tight hover:border-foreground",
+					line.unitCost === null && "text-muted-foreground",
+				)}
+			>
+				{line.unitCost === null ? "Add price" : formatMoney(line.unitCost)}
+			</button>
+		);
+
 	return (
 		<input
 			value={value}
 			disabled={busy}
+			// biome-ignore lint/a11y/noAutofocus: price opens to type into it
+			autoFocus={name === "unitCost"}
+			onFocus={(e) => name === "unitCost" && e.currentTarget.select()}
 			inputMode={name === "quantity" ? "numeric" : "decimal"}
 			placeholder={name === "unitCost" ? "Price?" : undefined}
 			aria-label={
@@ -518,10 +546,11 @@ function DraftField({
 				if (e.key === "Enter") e.currentTarget.blur();
 				if (e.key === "Escape") {
 					setValue(initial);
+					if (name === "unitCost") setEditing(false);
 					e.stopPropagation();
 				}
 			}}
-			className={cn(field, name === "quantity" ? "w-16" : "w-20")}
+			className={name === "quantity" ? quantityField : cn(field, "w-20")}
 		/>
 	);
 }
