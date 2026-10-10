@@ -7,6 +7,7 @@ import {
 import { FileText, Mail, Smartphone } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
+import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Button } from "#/components/ui/button";
@@ -463,7 +464,7 @@ const field =
 // Quantity reads as a bold number on a soft fill, so the column scans at a
 // glance; it turns into a normal field when focused.
 const quantityField =
-	"h-9 w-16 rounded-lg border border-transparent bg-[#f1f1f1] px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none hover:bg-[#e8e8e8] focus:border-ring focus:bg-white";
+	"h-9 w-16 cursor-pointer rounded-lg border border-transparent bg-[#f1f1f1] px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none hover:bg-[#e8e8e8] focus:cursor-text focus:border-ring focus:bg-white";
 
 // Quantity or price on a draft line. Saves on Enter or leaving the field; a
 // quantity of 0 takes the line off. Escape puts the old value back. Price is
@@ -484,6 +485,41 @@ function DraftField({
 			: (line.unitCost?.toFixed(2) ?? "");
 	const [value, setValue] = useState(initial);
 	const [editing, setEditing] = useState(name === "quantity");
+	const router = useRouter();
+	const scrub = useNumberLine({
+		value: line.quantity,
+		disabled: busy || name !== "quantity",
+		onCommit: (next) => {
+			setValue(String(next));
+			saveQuantity(next);
+		},
+	});
+
+	// 0 takes the line off; Undo puts it back as it was, price included.
+	async function saveQuantity(quantity: number) {
+		const r = await run(() =>
+			setLine({
+				data: { purchaseOrderId, productId: line.productId, quantity },
+			}),
+		);
+		if (r && quantity === 0)
+			toast(`Took ${line.sku} off this PO`, {
+				action: {
+					label: "Undo",
+					onClick: async () => {
+						await setLine({
+							data: {
+								purchaseOrderId,
+								productId: line.productId,
+								quantity: line.quantity,
+								unitCost: line.unitCost,
+							},
+						});
+						router.invalidate();
+					},
+				},
+			});
+	}
 
 	function save() {
 		if (name === "unitCost") setEditing(false);
@@ -494,21 +530,18 @@ function DraftField({
 			setValue(initial);
 			return;
 		}
+		if (name === "quantity") {
+			saveQuantity(Math.round(n));
+			return;
+		}
 		run(() =>
 			setLine({
-				data:
-					name === "quantity"
-						? {
-								purchaseOrderId,
-								productId: line.productId,
-								quantity: Math.round(n),
-							}
-						: {
-								purchaseOrderId,
-								productId: line.productId,
-								quantity: line.quantity,
-								unitCost: value.trim() === "" ? null : n,
-							},
+				data: {
+					purchaseOrderId,
+					productId: line.productId,
+					quantity: line.quantity,
+					unitCost: value.trim() === "" ? null : n,
+				},
 			}),
 		);
 	}
@@ -528,9 +561,9 @@ function DraftField({
 			</button>
 		);
 
-	return (
+	const input = (
 		<input
-			value={value}
+			value={scrub.dragging ? String(scrub.shown) : value}
 			disabled={busy}
 			// biome-ignore lint/a11y/noAutofocus: price opens to type into it
 			autoFocus={name === "unitCost"}
@@ -550,8 +583,21 @@ function DraftField({
 					e.stopPropagation();
 				}
 			}}
-			className={name === "quantity" ? quantityField : cn(field, "w-20")}
+			className={
+				name === "quantity"
+					? cn(quantityField, scrub.dragging && "cursor-ew-resize select-none")
+					: cn(field, "w-20")
+			}
+			{...(name === "quantity" ? scrub.handlers : {})}
 		/>
+	);
+	if (name !== "quantity") return input;
+	return (
+		// Drag sideways to step the number; a click still types into it.
+		<span className="inline-block" title="Type, or drag sideways">
+			{input}
+			{scrub.line}
+		</span>
 	);
 }
 
