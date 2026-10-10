@@ -135,7 +135,8 @@ async function checkTerms(db: Db, t: UnitTerms) {
 
 // Puts a draft line in new terms. The quantity and price convert so they
 // still mean the same number of the product: 60 EACH becomes 2 CASE of 30.
-// Quantities round up.
+// Quantities round up to whole units, then up to the new minimum, so 30 EACH
+// in a CASE of 12 with a minimum of 4 becomes 4 CASE rather than 3.
 async function convertLine(
 	db: Db,
 	line: {
@@ -150,7 +151,10 @@ async function convertLine(
 		.update(purchaseOrderLines)
 		.set({
 			...t,
-			quantity: Math.ceil((line.quantity * line.packSize) / t.packSize),
+			quantity: Math.max(
+				Math.ceil((line.quantity * line.packSize) / t.packSize),
+				t.minimumQuantity,
+			),
 			unitCost:
 				line.unitCost === null
 					? null
