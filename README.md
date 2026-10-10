@@ -1,4 +1,4 @@
-<img src="assets/logo.png" width="64" alt="">
+<img src="assets/logo.svg" width="64" alt="">
 
 # katasync
 

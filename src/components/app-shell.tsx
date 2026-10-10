@@ -35,7 +35,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 					<Menu className="size-5" />
 				</button>
 				<Link to="/" className="flex items-center gap-2 md:w-[13rem] md:pl-1">
-					<img src="/logo.png" alt="" className="size-7 object-contain" />
+					<img src="/logo.svg" alt="" className="size-7 object-contain" />
 					<span className="text-sm font-semibold">katasync</span>
 				</Link>
 				<button
