@@ -6,14 +6,16 @@ import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { getDashboard } from "#/server/catalog";
 import { countOrdersToShip } from "#/server/orders";
+import { countPosReady } from "#/server/purchasing";
 
 export const Route = createFileRoute("/")({
 	loader: async () => {
-		const [dashboard, toShip] = await Promise.all([
+		const [dashboard, toShip, posReady] = await Promise.all([
 			getDashboard(),
 			countOrdersToShip(),
+			countPosReady(),
 		]);
-		return { ...dashboard, toShip };
+		return { ...dashboard, toShip, posReady };
 	},
 	component: Home,
 });
@@ -28,8 +30,8 @@ function Home() {
 					<Stat label="Open orders" value={d.toShip} link={{ to: "/orders" }} />
 					<Stat
 						label="POs ready"
+						value={d.posReady}
 						link={{ to: "/purchasing" }}
-						pending="Waiting on purchasing"
 					/>
 					<Stat
 						label="Oversold"

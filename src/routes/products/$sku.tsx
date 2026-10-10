@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { CountDialog } from "#/components/count-dialog";
 import { Badge, Banner, Card, Page, type Tone } from "#/components/page";
 import { MovementTable, ProductImage, ProductName } from "#/components/product";
+import { SupplierCard } from "#/components/supplier-card";
 import { Button } from "#/components/ui/button";
 import { channelName, formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
@@ -20,9 +21,18 @@ import {
 	type ProductDetail,
 	setInsureWhenShipped,
 } from "#/server/catalog";
+import { getProductSupplier } from "#/server/purchasing";
 
 export const Route = createFileRoute("/products/$sku")({
-	loader: ({ params }) => getProductDetail({ data: { sku: params.sku } }),
+	loader: async ({ params }) => {
+		const detail = await getProductDetail({ data: { sku: params.sku } });
+		return {
+			...detail,
+			supplier: await getProductSupplier({
+				data: { productId: detail.product.id },
+			}),
+		};
+	},
 	component: ProductPage,
 });
 
@@ -213,6 +223,8 @@ function ProductPage() {
 					</Card>
 
 					<Details d={d} />
+
+					{canCount && <SupplierCard productId={p.id} data={d.supplier} />}
 
 					{d.group && d.variants.length > 1 && (
 						<Card title="Variants">

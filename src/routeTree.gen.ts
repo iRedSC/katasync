@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ListingsRouteImport } from './routes/listings'
-import { Route as PurchasingRouteImport } from './routes/purchasing'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StockRouteImport } from './routes/stock'
 import { Route as OrdersIndexRouteImport } from './routes/orders/index'
@@ -19,6 +18,12 @@ import { Route as OrdersIdRouteImport } from './routes/orders/$id'
 import { Route as PrintInvoicesRouteImport } from './routes/print/invoices'
 import { Route as ProductsIndexRouteImport } from './routes/products/index'
 import { Route as ProductsSkuRouteImport } from './routes/products/$sku'
+import { Route as PurchasingIndexRouteImport } from './routes/purchasing/index'
+import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
+import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
+import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
+import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
+import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,11 +33,6 @@ const IndexRoute = IndexRouteImport.update({
 const ListingsRoute = ListingsRouteImport.update({
   id: '/listings',
   path: '/listings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PurchasingRoute = PurchasingRouteImport.update({
-  id: '/purchasing',
-  path: '/purchasing',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -70,94 +70,159 @@ const ProductsSkuRoute = ProductsSkuRouteImport.update({
   path: '/products/$sku',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PurchasingIndexRoute = PurchasingIndexRouteImport.update({
+  id: '/purchasing/',
+  path: '/purchasing/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PurchasingIdRoute = PurchasingIdRouteImport.update({
+  id: '/purchasing/$id',
+  path: '/purchasing/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PurchasingSuppliersRoute = PurchasingSuppliersRouteImport.update({
+  id: '/purchasing/suppliers',
+  path: '/purchasing/suppliers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReceiveIndexRoute = ReceiveIndexRouteImport.update({
+  id: '/receive/',
+  path: '/receive/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReceiveIdRoute = ReceiveIdRouteImport.update({
+  id: '/receive/$id',
+  path: '/receive/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
+  id: '/purchasing/pdf/$id',
+  path: '/purchasing/pdf/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/listings': typeof ListingsRoute
-  '/purchasing': typeof PurchasingRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/purchasing/$id': typeof PurchasingIdRoute
+  '/purchasing/suppliers': typeof PurchasingSuppliersRoute
+  '/receive/$id': typeof ReceiveIdRoute
   '/orders/': typeof OrdersIndexRoute
   '/products/': typeof ProductsIndexRoute
+  '/purchasing/': typeof PurchasingIndexRoute
+  '/receive/': typeof ReceiveIndexRoute
+  '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/listings': typeof ListingsRoute
-  '/purchasing': typeof PurchasingRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/purchasing/$id': typeof PurchasingIdRoute
+  '/purchasing/suppliers': typeof PurchasingSuppliersRoute
+  '/receive/$id': typeof ReceiveIdRoute
   '/orders': typeof OrdersIndexRoute
   '/products': typeof ProductsIndexRoute
+  '/purchasing': typeof PurchasingIndexRoute
+  '/receive': typeof ReceiveIndexRoute
+  '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/listings': typeof ListingsRoute
-  '/purchasing': typeof PurchasingRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/purchasing/$id': typeof PurchasingIdRoute
+  '/purchasing/suppliers': typeof PurchasingSuppliersRoute
+  '/receive/$id': typeof ReceiveIdRoute
   '/orders/': typeof OrdersIndexRoute
   '/products/': typeof ProductsIndexRoute
+  '/purchasing/': typeof PurchasingIndexRoute
+  '/receive/': typeof ReceiveIndexRoute
+  '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/listings'
-    | '/purchasing'
     | '/settings'
     | '/stock'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
+    | '/purchasing/$id'
+    | '/purchasing/suppliers'
+    | '/receive/$id'
     | '/orders/'
     | '/products/'
+    | '/purchasing/'
+    | '/receive/'
+    | '/purchasing/pdf/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/listings'
-    | '/purchasing'
     | '/settings'
     | '/stock'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
+    | '/purchasing/$id'
+    | '/purchasing/suppliers'
+    | '/receive/$id'
     | '/orders'
     | '/products'
+    | '/purchasing'
+    | '/receive'
+    | '/purchasing/pdf/$id'
   id:
     | '__root__'
     | '/'
     | '/listings'
-    | '/purchasing'
     | '/settings'
     | '/stock'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
+    | '/purchasing/$id'
+    | '/purchasing/suppliers'
+    | '/receive/$id'
     | '/orders/'
     | '/products/'
+    | '/purchasing/'
+    | '/receive/'
+    | '/purchasing/pdf/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ListingsRoute: typeof ListingsRoute
-  PurchasingRoute: typeof PurchasingRoute
   SettingsRoute: typeof SettingsRoute
   StockRoute: typeof StockRoute
   OrdersIdRoute: typeof OrdersIdRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
+  PurchasingIdRoute: typeof PurchasingIdRoute
+  PurchasingSuppliersRoute: typeof PurchasingSuppliersRoute
+  ReceiveIdRoute: typeof ReceiveIdRoute
   OrdersIndexRoute: typeof OrdersIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
+  PurchasingIndexRoute: typeof PurchasingIndexRoute
+  ReceiveIndexRoute: typeof ReceiveIndexRoute
+  PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -174,13 +239,6 @@ declare module '@tanstack/react-router' {
       path: '/listings'
       fullPath: '/listings'
       preLoaderRoute: typeof ListingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/purchasing': {
-      id: '/purchasing'
-      path: '/purchasing'
-      fullPath: '/purchasing'
-      preLoaderRoute: typeof PurchasingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -232,20 +290,67 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProductsSkuRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/purchasing/': {
+      id: '/purchasing/'
+      path: '/purchasing'
+      fullPath: '/purchasing/'
+      preLoaderRoute: typeof PurchasingIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchasing/$id': {
+      id: '/purchasing/$id'
+      path: '/purchasing/$id'
+      fullPath: '/purchasing/$id'
+      preLoaderRoute: typeof PurchasingIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchasing/suppliers': {
+      id: '/purchasing/suppliers'
+      path: '/purchasing/suppliers'
+      fullPath: '/purchasing/suppliers'
+      preLoaderRoute: typeof PurchasingSuppliersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/receive/': {
+      id: '/receive/'
+      path: '/receive'
+      fullPath: '/receive/'
+      preLoaderRoute: typeof ReceiveIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/receive/$id': {
+      id: '/receive/$id'
+      path: '/receive/$id'
+      fullPath: '/receive/$id'
+      preLoaderRoute: typeof ReceiveIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchasing/pdf/$id': {
+      id: '/purchasing/pdf/$id'
+      path: '/purchasing/pdf/$id'
+      fullPath: '/purchasing/pdf/$id'
+      preLoaderRoute: typeof PurchasingPdfIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ListingsRoute: ListingsRoute,
-  PurchasingRoute: PurchasingRoute,
   SettingsRoute: SettingsRoute,
   StockRoute: StockRoute,
   OrdersIdRoute: OrdersIdRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
   ProductsSkuRoute: ProductsSkuRoute,
+  PurchasingIdRoute: PurchasingIdRoute,
+  PurchasingSuppliersRoute: PurchasingSuppliersRoute,
+  ReceiveIdRoute: ReceiveIdRoute,
   OrdersIndexRoute: OrdersIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
+  PurchasingIndexRoute: PurchasingIndexRoute,
+  ReceiveIndexRoute: ReceiveIndexRoute,
+  PurchasingPdfIdRoute: PurchasingPdfIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
