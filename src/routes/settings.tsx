@@ -8,7 +8,7 @@ import {
 	deletePackage,
 	listPackages,
 	savePackage,
-	setPackageWeight,
+	updatePackage,
 } from "#/server/shipping";
 
 export const Route = createFileRoute("/settings")({
@@ -84,30 +84,25 @@ function Item({ label, children }: { label: string; children: ReactNode }) {
 
 type Box = Awaited<ReturnType<typeof listPackages>>[number];
 const inches = (mm: number) => Math.round((mm / 25.4) * 10) / 10;
+const ounces = (g: number) => Math.round((g / 28.349523125) * 10) / 10;
 
 // The boxes quick ship knows by pin. Typing a box's pin fills in its size
-// and empty weight.
+// and empty weight. Any box can be edited, pin included.
 function Boxes({ boxes }: { boxes: Box[] }) {
 	const router = useRouter();
 	const [adding, setAdding] = useState(false);
+	const [editing, setEditing] = useState<number | null>(null);
 
-	async function add(e: FormEvent<HTMLFormElement>) {
-		e.preventDefault();
-		const f = new FormData(e.currentTarget);
-		const n = (key: string) => Number(f.get(key));
+	async function save(values: BoxValues, box?: Box) {
 		try {
-			const saved = await savePackage({
-				data: {
-					name: String(f.get("name")),
-					lengthIn: n("length"),
-					widthIn: n("width"),
-					heightIn: n("height"),
-					weightOz: n("weight") || 0,
-					...(f.get("pin") ? { pin: n("pin") } : {}),
-				},
-			});
+			const saved = box
+				? await updatePackage({
+						data: { ...values, id: box.id, pin: values.pin ?? box.pin },
+					})
+				: await savePackage({ data: values });
 			toast.success(`Saved ${saved.name} as pin ${saved.pin}`);
 			setAdding(false);
+			setEditing(null);
 			router.invalidate();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : String(err));
@@ -115,13 +110,15 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 	}
 
 	async function remove(box: Box) {
-		await deletePackage({ data: { id: box.id } });
-		router.invalidate();
-		toast.success(`Removed ${box.name}`);
+		try {
+			await deletePackage({ data: { id: box.id } });
+			router.invalidate();
+			toast.success(`Removed ${box.name}`);
+		} catch {
+			toast.error(`${box.name} is on past labels, so it can't be removed`);
+		}
 	}
 
-	const field =
-		"h-9 rounded-lg border border-input px-2 tabular-nums outline-none focus:border-ring";
 	return (
 		<Card
 			title="Boxes"
@@ -141,128 +138,156 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 				</p>
 			)}
 			<ul>
-				{boxes.map((b) => (
-					<li
-						key={b.id}
-						className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
-					>
-						<span className="w-12 font-mono text-base font-bold">{b.pin}</span>
-						<span className="flex-1 font-medium">{b.name}</span>
-						<span className="text-muted-foreground tabular-nums">
-							{inches(b.lengthMm)} × {inches(b.widthMm)} × {inches(b.heightMm)}{" "}
-							in
-						</span>
-						<EmptyWeight box={b} />
-						<Button size="sm" variant="ghost" onClick={() => remove(b)}>
-							Remove
-						</Button>
-					</li>
-				))}
+				{boxes.map((b) =>
+					editing === b.id ? (
+						<li key={b.id} className="border-t first:border-t-0">
+							<BoxForm
+								box={b}
+								onSave={(values) => save(values, b)}
+								onCancel={() => setEditing(null)}
+							/>
+						</li>
+					) : (
+						<li
+							key={b.id}
+							className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
+						>
+							<span className="w-12 font-mono text-base font-bold">
+								{b.pin}
+							</span>
+							<span className="flex-1 font-medium">{b.name}</span>
+							<span className="text-muted-foreground tabular-nums">
+								{inches(b.lengthMm)} × {inches(b.widthMm)} ×{" "}
+								{inches(b.heightMm)} in
+							</span>
+							<span className="w-20 text-right text-muted-foreground tabular-nums">
+								{b.weightGrams ? `${ounces(b.weightGrams)} oz` : "No weight"}
+							</span>
+							<Button
+								size="sm"
+								variant="ghost"
+								onClick={() => setEditing(b.id)}
+							>
+								Edit
+							</Button>
+							<Button size="sm" variant="ghost" onClick={() => remove(b)}>
+								Remove
+							</Button>
+						</li>
+					),
+				)}
 			</ul>
 			{adding && (
-				<form
-					onSubmit={add}
-					className="flex flex-wrap items-end gap-2 border-t px-4 py-3"
-				>
-					<label className="flex flex-1 flex-col gap-1">
-						<span className="text-muted-foreground">Name</span>
-						{/* biome-ignore lint/a11y/noAutofocus: opened to type this */}
-						<input name="name" required autoFocus className={field} />
-					</label>
-					{(["length", "width", "height"] as const).map((d) => (
-						<label key={d} className="flex w-16 flex-col gap-1">
-							<span className="text-muted-foreground capitalize">{d}</span>
-							<input
-								name={d}
-								required
-								inputMode="decimal"
-								placeholder="in"
-								className={field}
-							/>
-						</label>
-					))}
-					<label className="flex w-20 flex-col gap-1">
-						<span className="text-muted-foreground">Empty wt</span>
-						<input
-							name="weight"
-							inputMode="decimal"
-							placeholder="oz"
-							className={field}
-						/>
-					</label>
-					<label className="flex w-16 flex-col gap-1">
-						<span className="text-muted-foreground">Pin</span>
-						<input
-							name="pin"
-							inputMode="numeric"
-							maxLength={3}
-							placeholder="auto"
-							className={field}
-						/>
-					</label>
-					<Button type="submit" size="sm">
-						Save
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						onClick={() => setAdding(false)}
-					>
-						Cancel
-					</Button>
-				</form>
+				<div className="border-t">
+					<BoxForm
+						onSave={(values) => save(values)}
+						onCancel={() => setAdding(false)}
+					/>
+				</div>
 			)}
 		</Card>
 	);
 }
 
-// Click to set a box's empty weight; Enter saves, Escape cancels.
-function EmptyWeight({ box }: { box: Box }) {
-	const router = useRouter();
-	const ounces = Math.round((box.weightGrams / 28.349523125) * 10) / 10;
-	const [editing, setEditing] = useState(false);
-	const [value, setValue] = useState(String(ounces || ""));
+type BoxValues = {
+	name: string;
+	lengthIn: number;
+	widthIn: number;
+	heightIn: number;
+	weightOz: number;
+	pin?: number;
+};
 
-	async function save() {
-		const weightOz = Number(value) || 0;
-		await setPackageWeight({ data: { id: box.id, weightOz } });
-		setEditing(false);
-		router.invalidate();
-		toast.success(
-			weightOz
-				? `${box.name} weighs ${weightOz} oz empty`
-				: `${box.name} has no weight`,
-		);
+// Adding a new box, or editing one (filled in with its current values).
+// Escape cancels.
+function BoxForm({
+	box,
+	onSave,
+	onCancel,
+}: {
+	box?: Box;
+	onSave: (values: BoxValues) => void;
+	onCancel: () => void;
+}) {
+	function submit(e: FormEvent<HTMLFormElement>) {
+		e.preventDefault();
+		const f = new FormData(e.currentTarget);
+		const n = (key: string) => Number(f.get(key));
+		onSave({
+			name: String(f.get("name")),
+			lengthIn: n("length"),
+			widthIn: n("width"),
+			heightIn: n("height"),
+			weightOz: n("weight") || 0,
+			...(f.get("pin") ? { pin: n("pin") } : {}),
+		});
 	}
 
-	if (editing) {
-		return (
-			<input
-				// biome-ignore lint/a11y/noAutofocus: opened to type this
-				autoFocus
-				inputMode="decimal"
-				aria-label={`${box.name} empty weight in ounces`}
-				value={value}
-				placeholder="oz"
-				onFocus={(e) => e.target.select()}
-				onChange={(e) => setValue(e.target.value.replace(/[^\d.]/g, ""))}
-				onKeyDown={(e) => {
-					if (e.key === "Enter") save();
-					if (e.key === "Escape") setEditing(false);
-				}}
-				onBlur={() => setEditing(false)}
-				className="h-8 w-20 rounded-lg border border-input px-2 text-right tabular-nums outline-none focus:border-ring"
-			/>
-		);
-	}
+	const field =
+		"h-9 rounded-lg border border-input px-2 tabular-nums outline-none focus:border-ring";
+	const sides = {
+		length: box && inches(box.lengthMm),
+		width: box && inches(box.widthMm),
+		height: box && inches(box.heightMm),
+	};
 	return (
-		<button
-			type="button"
-			onClick={() => setEditing(true)}
-			className="w-20 text-right text-muted-foreground tabular-nums hover:text-foreground hover:underline"
+		<form
+			onSubmit={submit}
+			onKeyDown={(e) => e.key === "Escape" && onCancel()}
+			className="flex flex-wrap items-end gap-2 px-4 py-3"
 		>
-			{ounces ? `${ounces} oz` : "No weight"}
-		</button>
+			<label className="flex flex-1 flex-col gap-1">
+				<span className="text-muted-foreground">Name</span>
+				<input
+					name="name"
+					required
+					// biome-ignore lint/a11y/noAutofocus: opened to type this
+					autoFocus
+					defaultValue={box?.name}
+					className={field}
+				/>
+			</label>
+			{(["length", "width", "height"] as const).map((d) => (
+				<label key={d} className="flex w-16 flex-col gap-1">
+					<span className="text-muted-foreground capitalize">{d}</span>
+					<input
+						name={d}
+						required
+						inputMode="decimal"
+						placeholder="in"
+						defaultValue={sides[d]}
+						className={field}
+					/>
+				</label>
+			))}
+			<label className="flex w-20 flex-col gap-1">
+				<span className="text-muted-foreground">Empty wt</span>
+				<input
+					name="weight"
+					inputMode="decimal"
+					placeholder="oz"
+					defaultValue={box?.weightGrams ? ounces(box.weightGrams) : undefined}
+					className={field}
+				/>
+			</label>
+			<label className="flex w-16 flex-col gap-1">
+				<span className="text-muted-foreground">Pin</span>
+				<input
+					name="pin"
+					inputMode="numeric"
+					maxLength={3}
+					placeholder="auto"
+					defaultValue={box?.pin}
+					required={!!box}
+					className={field}
+				/>
+			</label>
+			<Button type="submit" size="sm">
+				Save
+			</Button>
+			<Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+				Cancel
+			</Button>
+		</form>
 	);
 }
