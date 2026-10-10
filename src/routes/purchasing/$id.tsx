@@ -30,11 +30,11 @@ import {
 	editDraft,
 	getPurchaseOrder,
 	type PurchaseOrderDetail,
-	pullSuggestions,
 	receiveLine,
 	sendPurchaseOrder,
 	setLine,
 	undoPurchaseReceipt,
+	updateDraftFromSuggestions,
 } from "#/server/purchasing";
 
 export const Route = createFileRoute("/purchasing/$id")({
@@ -163,25 +163,10 @@ function PurchaseOrderPage() {
 			<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
 				<div className="flex min-w-0 flex-col gap-4">
 					<Card flush>
+						{draft && <FrozenBar detail={d} />}
 						<LineTable detail={d} />
 						<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
 							{draft && <AddLine purchaseOrderId={po.id} />}
-							{draft && d.toAdd > 0 && (
-								<Button
-									size="sm"
-									variant="outline"
-									disabled={busy}
-									onClick={() =>
-										run(
-											() => pullSuggestions({ data: { id: po.id } }),
-											(n) =>
-												`Added ${n} ${n === 1 ? "product" : "products"} that need reordering`,
-										)
-									}
-								>
-									Add what needs reordering ({d.toAdd})
-								</Button>
-							)}
 							<span className="text-muted-foreground">
 								{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
 								{unpriced > 0 && `, ${unpriced} without a price`}
@@ -342,6 +327,54 @@ function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 	);
 }
 
+// A draft doesn't change by itself after it's made. When today's
+// suggestions have moved on, this says how, and Update brings them in: new
+// products added, short quantities raised. Nothing is lowered.
+function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
+	const { busy, run } = useAction();
+	const { added, raised } = d.changes;
+	if (added + raised === 0) return null;
+	const parts = [
+		added > 0 && `${formatCount(added)} new`,
+		raised > 0 &&
+			`${formatCount(raised)} ${raised === 1 ? "needs" : "need"} more`,
+	].filter(Boolean);
+	return (
+		<div className="flex items-center gap-3 border-b bg-info-surface px-4 py-2.5">
+			<p className="min-w-0 flex-1">
+				<span className="font-medium">
+					Reorder needs changed: {parts.join(", ")}.
+				</span>{" "}
+				<span className="text-muted-foreground">
+					This draft stays as it is until you update it.
+				</span>
+			</p>
+			<Button
+				size="sm"
+				variant="outline"
+				disabled={busy}
+				onClick={() =>
+					run(
+						() => updateDraftFromSuggestions({ data: { id: d.order.id } }),
+						(r) =>
+							r.added + r.raised === 0
+								? "Already up to date"
+								: [
+										r.added > 0 && `added ${r.added}`,
+										r.raised > 0 && `raised ${r.raised}`,
+									]
+										.filter(Boolean)
+										.join(" and ")
+										.replace(/^./, (c) => c.toUpperCase()),
+					)
+				}
+			>
+				Update
+			</Button>
+		</div>
+	);
+}
+
 type Line = PurchaseOrderDetail["lines"][number];
 
 function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
@@ -350,8 +383,7 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 	if (d.lines.length === 0)
 		return (
 			<p className="px-4 py-6 text-center text-muted-foreground">
-				Nothing on this PO yet. Add a product by SKU below, or what needs
-				reordering.
+				Nothing on this PO yet. Add a product by SKU below.
 			</p>
 		);
 	return (

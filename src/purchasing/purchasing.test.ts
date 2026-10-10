@@ -6,7 +6,6 @@ import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
 import {
-	addSuggestions,
 	averageCost,
 	cancelOrder,
 	closeOrder,
@@ -16,6 +15,7 @@ import {
 	receive,
 	setDraftLine,
 	undoReceipt,
+	updateFromSuggestions,
 } from "./orders";
 import { reorderQuantity, suggestPurchases, unitsOnOrder } from "./reorder";
 
@@ -235,21 +235,35 @@ describe("a PO from draft to received", () => {
 		expect(await linesOf(id)).toHaveLength(1);
 	});
 
-	test("a blank PO pulls in what needs reordering, once", async () => {
+	test("a frozen draft updates on request: adds new, raises short, never lowers", async () => {
 		const id = await openDraft(db, canam);
-		expect(await linesOf(id)).toEqual([]);
 		await setDraftLine(db, {
 			purchaseOrderId: id,
 			productId: blade,
 			quantity: 2,
 		});
-		// Only the knife is new; the blade keeps the 2 set by hand.
-		expect(await addSuggestions(db, id, now)).toBe(1);
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([2, 6]);
-		expect(await addSuggestions(db, id, now)).toBe(0);
+		// Blade (suggested 30) is short of what's suggested; the knife is new.
+		expect(await updateFromSuggestions(db, id, now)).toEqual({
+			added: 1,
+			raised: 1,
+		});
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([30, 6]);
+		expect(await updateFromSuggestions(db, id, now)).toEqual({
+			added: 0,
+			raised: 0,
+		});
+
+		// More than suggested stays as set.
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: knife,
+			quantity: 50,
+		});
+		await updateFromSuggestions(db, id, now);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([30, 50]);
 
 		await markSent(db, { purchaseOrderId: id, sentTo: null });
-		await expect(addSuggestions(db, id, now)).rejects.toThrow(/is sent/);
+		await expect(updateFromSuggestions(db, id, now)).rejects.toThrow(/is sent/);
 	});
 
 	test("refuses tool sets and empty POs", async () => {

@@ -15,9 +15,9 @@ import {
 import { emailConfigured, sendEmail } from "#/purchasing/email";
 import { documentFor, loadOrder, receivedByLine } from "#/purchasing/load";
 import {
-	addSuggestions,
 	cancelOrder,
 	closeOrder,
+	draftChanges,
 	draftFromSuggestions,
 	markSent,
 	openDraft,
@@ -26,6 +26,7 @@ import {
 	setDraftLine,
 	undoReceipt,
 	updateDraft,
+	updateFromSuggestions,
 } from "#/purchasing/orders";
 import { suggestPurchases } from "#/purchasing/reorder";
 
@@ -109,7 +110,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const po = await loadOrder(db, data.id);
-		const [onHand, receipts, ownedLocations, toAdd] = await Promise.all([
+		const [onHand, receipts, ownedLocations, changes] = await Promise.all([
 			onHandOf(
 				db,
 				po.lines.map((l) => l.productId),
@@ -141,20 +142,19 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				.from(locations)
 				.where(eq(locations.kind, "owned"))
 				.orderBy(locations.name),
-			// On a draft: suggested products for this supplier not on it yet.
+			// On a draft: how today's suggestions differ from it (see draftChanges).
 			po.order.status === "draft"
 				? suggestPurchases(db).then((all) => {
-						const onPo = new Set(po.lines.map((l) => l.productId));
-						return (
-							all
-								.find((s) => s.supplierId === po.supplier.id)
-								?.lines.filter((l) => !onPo.has(l.productId)).length ?? 0
+						const c = draftChanges(
+							po.lines,
+							all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
 						);
+						return { added: c.added.length, raised: c.raised.length };
 					})
-				: 0,
+				: { added: 0, raised: 0 },
 		]);
 		return {
-			toAdd,
+			changes,
 			...po,
 			lines: po.lines.map((l) => ({
 				...l,
@@ -179,10 +179,10 @@ export const createDraft = createServerFn({ method: "POST" })
 			: draftFromSuggestions(db, data.supplierId);
 	});
 
-// Pulls what needs reordering into a draft, e.g. one started blank.
-export const pullSuggestions = createServerFn({ method: "POST" })
+// Brings a frozen draft up to date with what needs reordering today.
+export const updateDraftFromSuggestions = createServerFn({ method: "POST" })
 	.validator(id)
-	.handler(async ({ data }) => addSuggestions(getDb(), data.id));
+	.handler(async ({ data }) => updateFromSuggestions(getDb(), data.id));
 
 export const setLine = createServerFn({ method: "POST" })
 	.validator(

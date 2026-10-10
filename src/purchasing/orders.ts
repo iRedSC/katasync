@@ -11,7 +11,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { postMovements, undoBatch } from "#/inventory/ledger";
-import { suggestPurchases } from "#/purchasing/reorder";
+import { type SuggestedLine, suggestPurchases } from "#/purchasing/reorder";
 
 // Every change to a PO goes through here. Each one locks the PO's row first,
 // so two people receiving the same box can't both count it.
@@ -37,44 +37,75 @@ async function lockOrder(db: Db, id: number, allowed: Status[]) {
 }
 
 // Opens the supplier's draft with today's suggestions in it, creating it if
-// there isn't one. Lines already on the draft are left as they are.
+// there isn't one.
 export async function draftFromSuggestions(
 	db: Db,
 	supplierId: number,
 	now = new Date(),
 ): Promise<number> {
 	const id = await openDraft(db, supplierId);
-	await addSuggestions(db, id, now);
+	await updateFromSuggestions(db, id, now);
 	return id;
 }
 
-// Adds whatever the supplier's products need reordering today to a draft.
-// Lines already on it are left as they are. Returns how many were added.
-export async function addSuggestions(
+// How today's suggestions differ from a draft. A draft is frozen once made:
+// these are what "Update" would apply. New products are added, and lines the
+// suggestion now wants more of are raised. Nothing is lowered or removed, so
+// a quantity set by hand is never undone.
+export function draftChanges(
+	draft: { productId: number; quantity: number }[],
+	suggested: SuggestedLine[],
+) {
+	const onDraft = new Map(draft.map((l) => [l.productId, l.quantity]));
+	return {
+		added: suggested.filter((l) => !onDraft.has(l.productId)),
+		raised: suggested.filter((l) => {
+			const quantity = onDraft.get(l.productId);
+			return quantity !== undefined && l.quantity > quantity;
+		}),
+	};
+}
+
+// Applies draftChanges to a draft. Returns how many lines it added and raised.
+export async function updateFromSuggestions(
 	db: Db,
 	purchaseOrderId: number,
 	now = new Date(),
-): Promise<number> {
+): Promise<{ added: number; raised: number }> {
 	const suggestions = await suggestPurchases(db, now);
 	return db.transaction(async (tx) => {
-		// Locked, so it can't be sent or cancelled while lines go in.
+		// Locked, so it can't be sent or cancelled while lines change.
 		const po = await lockOrder(tx, purchaseOrderId, ["draft"]);
-		const lines =
+		const suggested =
 			suggestions.find((s) => s.supplierId === po.supplierId)?.lines ?? [];
-		if (lines.length === 0) return 0;
-		const added = await tx
-			.insert(purchaseOrderLines)
-			.values(
-				lines.map((l) => ({
+		const current = await tx
+			.select({
+				productId: purchaseOrderLines.productId,
+				quantity: purchaseOrderLines.quantity,
+			})
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
+		const { added, raised } = draftChanges(current, suggested);
+		if (added.length > 0)
+			await tx.insert(purchaseOrderLines).values(
+				added.map((l) => ({
 					purchaseOrderId: po.id,
 					productId: l.productId,
 					quantity: l.quantity,
 					unitCost: l.unitCost,
 				})),
-			)
-			.onConflictDoNothing()
-			.returning({ id: purchaseOrderLines.id });
-		return added.length;
+			);
+		for (const l of raised)
+			await tx
+				.update(purchaseOrderLines)
+				.set({ quantity: l.quantity })
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, po.id),
+						eq(purchaseOrderLines.productId, l.productId),
+					),
+				);
+		return { added: added.length, raised: raised.length };
 	});
 }
 
