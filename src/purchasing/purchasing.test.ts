@@ -5,6 +5,7 @@ import * as schema from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
+import { supplierRows } from "./load";
 import {
 	averageCost,
 	cancelOrder,
@@ -12,6 +13,7 @@ import {
 	draftFromSuggestions,
 	markSent,
 	openDraft,
+	purchaseOrderOfBatch,
 	receive,
 	setDraftLine,
 	undoReceipt,
@@ -296,6 +298,70 @@ describe("a PO from draft to received", () => {
 			}),
 		).rejects.toThrow("email down");
 		expect((await getPo(id)).status).toBe("draft");
+	});
+
+	test("sends what's on the PO at the moment it's locked", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		const sentTo = await markSent(db, {
+			purchaseOrderId: id,
+			now,
+			// deliver reads through the locked transaction it's given.
+			deliver: async (tx) => {
+				const lines = await tx
+					.select()
+					.from(schema.purchaseOrderLines)
+					.where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+				expect(lines).toHaveLength(2);
+				return "orders@canam.example";
+			},
+		});
+		expect(sentTo).toBe("orders@canam.example");
+		expect((await getPo(id)).sentTo).toBe("orders@canam.example");
+	});
+
+	test("knows which PO a receipt's ledger batch belongs to", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		const [line] = await linesOf(id);
+		const { receiptId } = await receive(db, { lineId: line.id, quantity: 1 });
+		const [receipt] = await db
+			.select()
+			.from(schema.purchaseOrderReceipts)
+			.where(eq(schema.purchaseOrderReceipts.id, receiptId));
+		expect(await purchaseOrderOfBatch(db, receipt.batchId)).toBe(id);
+
+		await undoReceipt(db, receiptId);
+		const [undo] = await db
+			.select()
+			.from(schema.purchaseOrderReceipts)
+			.where(eq(schema.purchaseOrderReceipts.undoesId, receiptId));
+		expect(await purchaseOrderOfBatch(db, undo.batchId)).toBe(id);
+
+		const { batchId } = await postMovements(db, {
+			lines: [
+				{
+					productId: blade,
+					locationId: warehouse,
+					delta: 1,
+					reason: "adjustment",
+				},
+			],
+		});
+		expect(await purchaseOrderOfBatch(db, batchId)).toBeNull();
+	});
+
+	test("counts each supplier's products and POs on order", async () => {
+		// A second supplier, so ids differ from the PO's and a wrong join shows.
+		await db.insert(schema.suppliers).values({ code: "AAA", name: "Aardvark" });
+		const id = await draftFromSuggestions(db, canam, now);
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		const rows = await supplierRows(db);
+		expect(
+			rows.map((r) => [r.supplier.code, r.products, r.openOrders]),
+		).toEqual([
+			["AAA", 0, 0],
+			["CANAM", 2, 1],
+		]);
 	});
 
 	test("receives in parts, averages cost, closes when complete, undoes", async () => {
