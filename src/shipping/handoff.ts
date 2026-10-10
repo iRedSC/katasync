@@ -5,6 +5,7 @@ import type { Db } from "#/db/client";
 import { orderLines, orders, shipments, stores } from "#/db/schema";
 import { assignOrderPins } from "./pins";
 import { refundLabel } from "./shippo";
+import { tiktokShipPackage } from "./tiktok";
 
 // The outside calls, passed in so tests can stand in for Shopify, eBay, and
 // Shippo.
@@ -13,6 +14,7 @@ export type Outside = {
 	shopifyCancel: typeof shopifyCancelFulfillment;
 	ebayFulfill: typeof ebayFulfill;
 	refund: typeof refundLabel;
+	tiktokShip: typeof tiktokShipPackage;
 };
 
 export const live: Outside = {
@@ -20,12 +22,14 @@ export const live: Outside = {
 	shopifyCancel: shopifyCancelFulfillment,
 	ebayFulfill,
 	refund: refundLabel,
+	tiktokShip: tiktokShipPackage,
 };
 
 // The channels katasync sends tracking to, by the name people use.
 const trackingChannels: Record<string, string> = {
 	shopify: "Shopify",
 	ebay: "eBay",
+	tiktok: "TikTok",
 };
 
 async function load(db: Db, shipmentId: number) {
@@ -90,7 +94,10 @@ export async function sendTracking(
 		await orderOf(db, shipmentId),
 		async (tx) => {
 			const { shipment, order, channel } = await load(tx, shipmentId);
-			const name = trackingChannels[channel] ?? channel;
+			// A TikTok label is TikTok's own; what's left is telling TikTok the
+			// box is ready for pickup.
+			const to = shipment.provider === "tiktok" ? "tiktok" : channel;
+			const name = trackingChannels[to] ?? to;
 			if (shipment.voidedAt) throw new Error("This label was voided");
 			if (shipment.channelSentAt) {
 				return { sent: true, message: `Tracking already sent to ${name}` };
@@ -99,7 +106,7 @@ export async function sendTracking(
 			if (shipment.test) {
 				return { sent: false, message: `Test label, so ${name} wasn't told` };
 			}
-			if (!(channel in trackingChannels)) {
+			if (!(to in trackingChannels)) {
 				return {
 					sent: false,
 					message: `${name} orders are shipped on ${name}`,
@@ -108,10 +115,20 @@ export async function sendTracking(
 
 			let fulfillmentId: string | null;
 			try {
-				if (!shipment.trackingNumber) {
+				if (to === "tiktok") {
+					// TikTok has its own label's tracking already; katasync just
+					// records it.
+					const shipped = await outside.tiktokShip(shipment.externalId);
+					fulfillmentId = shipped.id;
+					if (shipped.trackingNumber && !shipment.trackingNumber) {
+						await tx
+							.update(shipments)
+							.set({ trackingNumber: shipped.trackingNumber })
+							.where(eq(shipments.id, shipment.id));
+					}
+				} else if (!shipment.trackingNumber) {
 					throw new Error("The label has no tracking number");
-				}
-				if (channel === "shopify") {
+				} else if (channel === "shopify") {
 					fulfillmentId = await outside.shopifyFulfill(order.externalId, {
 						company: shipment.carrier,
 						number: shipment.trackingNumber,
@@ -158,7 +175,10 @@ export async function sendTracking(
 				.where(eq(orders.id, order.id));
 			return {
 				sent: true,
-				message: `Tracking sent to ${name}; the customer is emailed`,
+				message:
+					to === "tiktok"
+						? "Ready for pickup on TikTok; TikTok tells the customer"
+						: `Tracking sent to ${name}; the customer is emailed`,
 			};
 		},
 	);
@@ -183,6 +203,11 @@ export async function voidShipment(
 		async (tx) => {
 			const { shipment, order, channel } = await load(tx, shipmentId);
 			if (shipment.voidedAt) throw new Error("This label is already voided");
+			if (shipment.provider === "tiktok") {
+				throw new Error(
+					"TikTok labels can't be voided from katasync; cancel it in TikTok Seller Center",
+				);
+			}
 
 			const { status: refundStatus } = await outside.refund(
 				shipment.externalId,

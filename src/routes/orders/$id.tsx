@@ -25,6 +25,7 @@ import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
 import { getOrder, type OrderDetail } from "#/server/orders";
 import { resendTracking, voidLabel } from "#/server/shipping";
+import { labelPath } from "#/shipping/label-path";
 
 export const Route = createFileRoute("/orders/$id")({
 	loader: ({ params }) => getOrder({ data: { id: Number(params.id) } }),
@@ -46,6 +47,8 @@ function OrderPage() {
 	// Shippable here: still to ship (it has a pin), not a marketplace label,
 	// and no live label yet.
 	const pin = order.pin;
+	// One live label per order; voided ones stay listed under Labels.
+	const liveLabel = labels.find((l) => l.voidedAt === null);
 	const canShip =
 		pin !== null && !external && !labels.some((l) => l.voidedAt === null);
 	const ship = () => pin !== null && openQuickShip(pin);
@@ -86,6 +89,18 @@ function OrderPage() {
 							Print invoice
 						</a>
 					</Button>
+					{liveLabel && (
+						<Button asChild size="sm" variant="outline">
+							<a
+								href={labelPath(liveLabel.id)}
+								target="_blank"
+								rel="noreferrer"
+							>
+								<Printer />
+								Reprint label
+							</a>
+						</Button>
+					)}
 					{external && (
 						<Button asChild size="sm">
 							<a href={external.url} target="_blank" rel="noreferrer">
@@ -300,7 +315,7 @@ function LabelRow({
 			{!l.voidedAt && (
 				<div className="flex flex-wrap gap-2">
 					<Button asChild size="sm" variant="outline">
-						<a href={l.labelUrl} target="_blank" rel="noreferrer">
+						<a href={labelPath(l.id)} target="_blank" rel="noreferrer">
 							Print
 						</a>
 					</Button>
@@ -320,7 +335,12 @@ function LabelRow({
 							Send tracking
 						</Button>
 					)}
-					{confirm ? (
+					{/* TikTok has no API to cancel its labels. */}
+					{l.provider === "tiktok" ? (
+						<span className="self-center text-xs text-muted-foreground">
+							Cancel in TikTok Seller Center
+						</span>
+					) : confirm ? (
 						<Button
 							size="sm"
 							variant="destructive"

@@ -127,6 +127,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				trackingNumber: shipments.trackingNumber,
 				trackingUrl: shipments.trackingUrl,
 				labelUrl: shipments.labelUrl,
+				provider: shipments.provider,
 				test: shipments.test,
 				channelSentAt: shipments.channelSentAt,
 				channelError: shipments.channelError,

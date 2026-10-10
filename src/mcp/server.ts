@@ -171,10 +171,10 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 		"sync_status",
 		{
 			description:
-				"Health of order sync per channel (Shopify, eBay, Amazon): last good sync, the exact latest error, a hint for known causes, problems in the latest pass, and recent passes. Also whether the sync worker runs, labels whose tracking didn't reach a marketplace, and sold SKUs matching no product. With check, also runs a live step-by-step connection check.",
+				"Health of order sync per channel (Shopify, eBay, Amazon, TikTok): last good sync, the exact latest error, a hint for known causes, problems in the latest pass, and recent passes. Also whether the sync worker runs, labels whose tracking didn't reach a marketplace, and sold SKUs matching no product. With check, also runs a live step-by-step connection check.",
 			inputSchema: {
 				check: z
-					.enum(["shopify", "ebay", "amazon", "shippo", "email"])
+					.enum(["shopify", "ebay", "amazon", "tiktok", "shippo", "email"])
 					.optional()
 					.describe("Run a live connection check of this service"),
 			},

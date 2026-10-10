@@ -5,6 +5,7 @@ import {
 	accessToken as ebayAccessToken,
 } from "#/channels/ebay";
 import { shopifyQuery } from "#/channels/shopify";
+import { tiktokApi } from "#/channels/tiktok";
 import { errorText } from "./runs";
 
 // Live, step-by-step checks of each outside service katasync depends on.
@@ -16,6 +17,7 @@ export const channelEnv = {
 	shopify: ["SHOPIFY_STORE_DOMAIN", "SHOPIFY_ADMIN_TOKEN"],
 	ebay: ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_REFRESH_TOKEN"],
 	amazon: ["AMAZON_CLIENT_ID", "AMAZON_CLIENT_SECRET", "AMAZON_REFRESH_TOKEN"],
+	tiktok: ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "TIKTOK_REFRESH_TOKEN"],
 } as const;
 
 export type SyncedChannel = keyof typeof channelEnv;
@@ -183,6 +185,19 @@ async function checkAmazon(s: Steps) {
 	});
 }
 
+async function checkTiktok(s: Steps) {
+	await needEnv(s, channelEnv.tiktok);
+	// Signs in with the refresh token and lists the shops the app may use.
+	await s.step("Authorized shops", async () => {
+		const { shops } = type({
+			shops: type({ name: "string", region: "string" }).array(),
+		}).assert(await tiktokApi("/authorization/202309/shops", {}));
+		const us = shops.find((shop) => shop.region === "US");
+		if (!us) throw new Error("No US shop is authorized for this app");
+		return us.name;
+	});
+}
+
 async function checkShippo(s: Steps) {
 	await needEnv(s, ["SHIPPO_API_KEY"]);
 	await s.step("Key and carriers", async () => {
@@ -245,6 +260,7 @@ const checks: Record<CheckTarget, (s: Steps) => Promise<void>> = {
 	shopify: checkShopify,
 	ebay: checkEbay,
 	amazon: checkAmazon,
+	tiktok: checkTiktok,
 	shippo: checkShippo,
 	email: checkEmail,
 };

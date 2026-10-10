@@ -3,9 +3,11 @@ import { type } from "arktype";
 import { and, eq, isNull } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
-import { locations, orders, packages, shipments } from "#/db/schema";
+import { locations, orders, packages, shipments, stores } from "#/db/schema";
+import { labelSource } from "#/orders/fulfillment";
 import { createBoxes, updateBox } from "#/shipping/boxes";
 import { sendTracking, voidShipment, withOrderLock } from "#/shipping/handoff";
+import { labelPdf } from "#/shipping/label-file";
 import {
 	orderForShipping,
 	rankRates,
@@ -18,6 +20,7 @@ import {
 	getRates,
 	shippoIsTest,
 } from "#/shipping/shippo";
+import { tiktokBuyLabel, tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
 export const listPackages = createServerFn({ method: "GET" }).handler(
 	async () => getDb().select().from(packages).orderBy(packages.pin),
@@ -116,28 +119,58 @@ async function addresses(
 	};
 }
 
-// Prices for this box and weight, most likely choice first.
+// Who sells this order's label, and the marketplace order it's bought for.
+async function labelSeller(orderId: number) {
+	const [o] = await getDb()
+		.select({
+			channel: stores.channel,
+			salesChannel: orders.salesChannel,
+			marketplaceOrderId: orders.marketplaceOrderId,
+		})
+		.from(orders)
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.where(eq(orders.id, orderId));
+	if (!o) throw new Error(`No order ${orderId}`);
+	const source = labelSource(o);
+	return {
+		source,
+		tiktokId: source === "tiktok" ? tiktokOrderId(o.marketplaceOrderId) : "",
+	};
+}
+
+// Prices for this box and weight, most likely choice first. TikTok orders
+// get TikTok's own services; everything else gets Shippo's carriers.
 export const quickShipRates = createServerFn({ method: "POST" })
 	.validator(type({ ...parcel, contentsKey: "string" }))
 	.handler(async ({ data }) => {
-		const { from, to } = await addresses(data.orderId);
-		const { rates, notes } = await getRates({
-			from,
-			to,
-			parcel: data,
-			insureAmount: data.insureAmount,
-		});
+		const seller = await labelSeller(data.orderId);
+		const { rates, notes, test } =
+			seller.source === "tiktok"
+				? {
+						rates: await tiktokRates(seller.tiktokId, data),
+						notes: [],
+						test: false,
+					}
+				: {
+						...(await getRates({
+							...(await addresses(data.orderId)),
+							parcel: data,
+							insureAmount: data.insureAmount,
+						})),
+						test: shippoIsTest(),
+					};
 		const history = await serviceHistory(
 			getDb(),
 			data.contentsKey,
 			data.packageId,
 		);
-		return { rates: rankRates(rates, history), notes, test: shippoIsTest() };
+		return { rates: rankRates(rates, history), notes, test };
 	});
 
-// Buys the chosen label, records it, and sends the tracking to the order's
-// marketplace. The rate is read back from Shippo, so the recorded cost and
-// service are Shippo's, not the browser's. One live label per order: the
+// Buys the chosen label (from TikTok for TikTok orders, else Shippo),
+// records it, and sends the tracking to the order's marketplace. The rate is
+// read back from the seller, so the recorded cost and service are theirs,
+// not the browser's. One live label per order: the
 // check and the purchase hold the order's lock, so a double press or two
 // people can't buy twice. (A second box means voiding first, until
 // multi-box shipments exist.)
@@ -158,18 +191,46 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 					`This order already has a ${existing.serviceName} label. Void it on the order page to buy a new one.`,
 				);
 			}
+			const box = {
+				orderId: data.orderId,
+				packageId: data.packageId ?? null,
+				contentsKey: data.contentsKey,
+				lengthMm: data.lengthMm,
+				widthMm: data.widthMm,
+				heightMm: data.heightMm,
+				weightGrams: data.weightGrams,
+			};
+			const seller = await labelSeller(data.orderId);
+			if (seller.source === "tiktok") {
+				// A package TikTok already made for this order is recorded, not
+				// bought again (a retry after a lost response).
+				const label = await tiktokBuyLabel(seller.tiktokId, data, data.rateId);
+				const [row] = await tx
+					.insert(shipments)
+					.values({
+						...box,
+						provider: "tiktok",
+						carrier: label.rate.carrier,
+						service: label.rate.service,
+						serviceName: label.rate.serviceName,
+						cost: label.rate.cost,
+						insuredAmount: null,
+						trackingNumber: null,
+						trackingUrl: null,
+						// TikTok's links expire; label-file.ts fetches by package.
+						labelUrl: null,
+						externalId: label.packageId,
+						test: false,
+					})
+					.returning();
+				return row;
+			}
 			const rate = await getRate(data.rateId);
 			const label = await buyLabel(data.rateId);
 			const [row] = await tx
 				.insert(shipments)
 				.values({
-					orderId: data.orderId,
-					packageId: data.packageId,
-					contentsKey: data.contentsKey,
-					lengthMm: data.lengthMm,
-					widthMm: data.widthMm,
-					heightMm: data.heightMm,
-					weightGrams: data.weightGrams,
+					...box,
 					provider: "shippo",
 					carrier: rate.carrier,
 					service: rate.service,
@@ -185,7 +246,11 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 				.returning();
 			return row;
 		});
-		return { ...saved, handoff: await sendTracking(db, saved.id) };
+		const handoff = await sendTracking(db, saved.id);
+		// Saved now so reprints never depend on the provider. A failure here
+		// is retried on the first print.
+		await labelPdf(db, saved.id).catch(() => {});
+		return { ...saved, handoff };
 	});
 
 // Tries sending a label's tracking to the marketplace again.

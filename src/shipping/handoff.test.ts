@@ -15,6 +15,7 @@ function fakes(overrides: Partial<Outside> = {}): Outside {
 		shopifyCancel: vi.fn(async () => {}),
 		ebayFulfill: vi.fn(async () => "ebay-f-1"),
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
+		tiktokShip: vi.fn(async (id: string) => ({ id, trackingNumber: "TT1" })),
 		...overrides,
 	};
 }
@@ -87,6 +88,34 @@ const label = async (id: number) =>
 
 describe("sendTracking", () => {
 	beforeEach(() => setUp("shopify"));
+
+	test("a TikTok label is marked ready on TikTok, which has the tracking", async () => {
+		const outside = fakes();
+		const id = await addLabel({
+			provider: "tiktok",
+			externalId: "1157817232461763469",
+			trackingNumber: null,
+		});
+		const result = await sendTracking(db, id, outside);
+
+		expect(result.sent).toBe(true);
+		expect(outside.tiktokShip).toHaveBeenCalledWith("1157817232461763469");
+		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
+		expect(await label(id)).toMatchObject({
+			trackingNumber: "TT1",
+			channelFulfillmentId: "1157817232461763469",
+		});
+		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+	});
+
+	test("a TikTok label can't be voided from here", async () => {
+		const outside = fakes();
+		const id = await addLabel({ provider: "tiktok", externalId: "115" });
+		await expect(voidShipment(db, id, outside)).rejects.toThrow(
+			"Seller Center",
+		);
+		expect(outside.refund).not.toHaveBeenCalled();
+	});
 
 	test("marks the order shipped on Shopify and here", async () => {
 		const outside = fakes();

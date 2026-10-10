@@ -13,6 +13,7 @@ import { parseArgs } from "node:util";
 import { syncAmazon } from "#/channels/amazon";
 import { syncEbay } from "#/channels/ebay";
 import { backfillShopify, syncShopify } from "#/channels/shopify";
+import { syncTiktok } from "#/channels/tiktok";
 import { getDb } from "#/db/client";
 import { channelEnv } from "#/diagnostics/checks";
 import { recordSyncRun } from "#/diagnostics/runs";
@@ -34,6 +35,7 @@ const { values } = parseArgs({
 
 const MINUTE = 60 * 1000;
 let shopifyListingsAt = 0;
+let tiktokListingsAt = 0;
 
 const channels = [
 	{
@@ -51,6 +53,16 @@ const channels = [
 		name: "ebay",
 		every: 2 * MINUTE,
 		run: () => syncEbay(getDb()),
+	},
+	{
+		name: "tiktok",
+		every: 2 * MINUTE,
+		run: async () => {
+			const listings = Date.now() - tiktokListingsAt >= 30 * MINUTE;
+			const result = await syncTiktok(getDb(), { listings });
+			if (listings) tiktokListingsAt = Date.now();
+			return result;
+		},
 	},
 	{
 		// Amazon allows about one order-list call a minute.

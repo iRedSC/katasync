@@ -176,6 +176,13 @@
       "when": 1791671869806,
       "tag": "0024_mcp_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791672157063,
+      "tag": "0025_saved_labels",
+      "breakpoints": true
     }
   ]
 }
