@@ -235,7 +235,7 @@ describe("tiktokToChannelOrder", () => {
 			...extra,
 		});
 
-	test("units of one SKU become one line, cancelled units drop out", () => {
+	test("units of one SKU become one line, a cancelled one stays at 0", () => {
 		const o = tiktokToChannelOrder(order());
 		expect(o).toMatchObject({
 			salesChannel: "TikTok",
@@ -253,6 +253,15 @@ describe("tiktokToChannelOrder", () => {
 				title: "Wrench",
 				quantity: 2,
 				unitPrice: 18,
+			},
+			// Kept at 0, so a line that already took stock gives it back.
+			{
+				externalId: "1730",
+				listingExternalId: "1730",
+				sku: null,
+				title: "Blade - Large",
+				quantity: 0,
+				unitPrice: 9,
 			},
 		]);
 	});
