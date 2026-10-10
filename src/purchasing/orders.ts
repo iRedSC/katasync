@@ -156,13 +156,17 @@ export async function openDraft(db: Db, supplierId: number): Promise<number> {
 // Sets how many of a product a draft orders, adding the line if needed. 0
 // removes it. A new line is in the supplier's unit (EACH when the product has
 // no supplier). Leaving out unitCost keeps the line's price, or starts a new
-// line at the supplier's price.
+// line at the supplier's price. With inItems, quantity counts single items and
+// rounds up to whole packs of the line's pack size, read under the same lock
+// as the write so a change to the terms can't slip in between. Returns the
+// line's terms and the quantity it ended up with, in its unit.
 export async function setDraftLine(
 	db: Db,
 	input: {
 		purchaseOrderId: number;
 		productId: number;
 		quantity: number;
+		inItems?: boolean;
 		unitCost?: number | null;
 	},
 ) {
@@ -178,10 +182,6 @@ export async function setDraftLine(
 			eq(purchaseOrderLines.purchaseOrderId, po.id),
 			eq(purchaseOrderLines.productId, input.productId),
 		);
-		if (input.quantity === 0) {
-			await tx.delete(purchaseOrderLines).where(where);
-			return;
-		}
 		const [product] = await tx
 			.select({
 				kind: products.kind,
@@ -196,27 +196,46 @@ export async function setDraftLine(
 			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
 			.where(eq(products.id, input.productId));
 		if (!product) throw new PurchaseOrderError("That product doesn't exist");
+		// A line already on the draft keeps its own terms; a new one starts
+		// with the supplier's.
+		const [existing] = await tx
+			.select({
+				unit: purchaseOrderLines.unit,
+				packSize: purchaseOrderLines.packSize,
+				minimumQuantity: purchaseOrderLines.minimumQuantity,
+			})
+			.from(purchaseOrderLines)
+			.where(where);
+		const terms = existing ?? {
+			unit: product.unit ?? "EACH",
+			packSize: product.packSize ?? 1,
+			minimumQuantity: product.minimumQuantity ?? 1,
+		};
+		const quantity = input.inItems
+			? Math.ceil(input.quantity / terms.packSize)
+			: input.quantity;
+		if (quantity === 0) {
+			await tx.delete(purchaseOrderLines).where(where);
+			return { ...terms, quantity };
+		}
 		if (product.kind === "bundle")
 			throw new PurchaseOrderError(
 				`${product.sku} is a tool set; order its parts instead`,
 			);
-		const packSize = product.packSize ?? 1;
 		await tx
 			.insert(purchaseOrderLines)
 			.values({
 				purchaseOrderId: po.id,
 				productId: input.productId,
-				unit: product.unit ?? "EACH",
-				packSize,
-				minimumQuantity: product.minimumQuantity ?? 1,
-				quantity: input.quantity,
+				...terms,
+				quantity,
 				unitCost:
 					input.unitCost !== undefined
 						? input.unitCost
 						: (product.supplierCost ??
 							(product.productCost === null
 								? null
-								: product.productCost * packSize)),
+								: product.productCost * terms.packSize)),
 			})
 			.onConflictDoUpdate({
 				target: [
@@ -224,10 +243,11 @@ export async function setDraftLine(
 					purchaseOrderLines.productId,
 				],
 				set: {
-					quantity: input.quantity,
+					quantity,
 					...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
 				},
 			});
+		return { ...terms, quantity };
 	});
 }
 

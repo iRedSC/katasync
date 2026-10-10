@@ -74,9 +74,9 @@ export const listTokens = createServerFn({ method: "GET" }).handler(async () =>
 );
 
 export const createToken = createServerFn({ method: "POST" })
-	.validator(type({ name: "string" }))
+	.validator(type({ name: "string", canWrite: "boolean" }))
 	.handler(async ({ data }) => {
-		const token = await createApiToken(getDb(), data.name);
+		const token = await createApiToken(getDb(), data.name, data.canWrite);
 		const origin = process.env.AUTH_ORIGIN ?? new URL(getRequest().url).origin;
 		return { token, endpoint: `${origin}/mcp` };
 	});

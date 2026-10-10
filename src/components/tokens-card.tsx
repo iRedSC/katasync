@@ -1,7 +1,7 @@
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
-import { Card } from "#/components/page";
+import { Badge, Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import { formatDay } from "#/lib/format";
 import { createToken, type listTokens, revokeToken } from "#/server/auth";
@@ -22,9 +22,11 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 
 	async function create(e: FormEvent<HTMLFormElement>) {
 		e.preventDefault();
-		const name = String(new FormData(e.currentTarget).get("name") ?? "");
+		const form = new FormData(e.currentTarget);
+		const name = String(form.get("name") ?? "");
+		const canWrite = form.get("access") === "write";
 		try {
-			setMade(await createToken({ data: { name } }));
+			setMade(await createToken({ data: { name, canWrite } }));
 			setNaming(false);
 			await router.invalidate();
 		} catch (err) {
@@ -70,6 +72,15 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 						onKeyDown={(e) => e.key === "Escape" && setNaming(false)}
 						className="h-8 flex-1 rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
 					/>
+					<select
+						name="access"
+						aria-label="What it can do"
+						defaultValue="write"
+						className="h-8 rounded-lg border border-input bg-white px-2"
+					>
+						<option value="write">Can make changes</option>
+						<option value="read">Read only</option>
+					</select>
 					<Button type="submit" size="sm">
 						Make
 					</Button>
@@ -133,7 +144,10 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 							key={t.id}
 							className="flex items-center gap-3 border-t px-4 py-3"
 						>
-							<span className="flex-1 font-medium">{t.name}</span>
+							<span className="flex flex-1 items-center gap-2 font-medium">
+								{t.name}
+								{!t.canWrite && <Badge>Read only</Badge>}
+							</span>
 							<span className="text-muted-foreground">
 								{t.lastUsedAt
 									? `Last used ${formatDay(t.lastUsedAt)}`

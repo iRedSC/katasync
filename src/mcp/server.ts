@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { shippingLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
@@ -9,11 +9,19 @@ import {
 	packages,
 	productSuppliers,
 	products,
+	purchaseOrderLines,
 } from "#/db/schema";
 import { type CheckTarget, runCheck } from "#/diagnostics/checks";
 import { diagnosticsOverview } from "#/diagnostics/overview";
-import { recordCount, undoBatch } from "#/inventory/ledger";
+import {
+	assembleKits,
+	disassembleKits,
+	recordCount,
+	undoBatch,
+} from "#/inventory/ledger";
+import { setRecipe } from "#/inventory/recipes";
 import { matchListing, productFromListing } from "#/orders/remap";
+import { updateProductDetails } from "#/products/details";
 import { loadOrder } from "#/purchasing/load";
 import {
 	cancelOrder,
@@ -21,7 +29,9 @@ import {
 	openDraft,
 	PurchaseOrderError,
 	purchaseOrderOfBatch,
+	receive,
 	setDraftLine,
+	undoReceipt,
 	updateDraft,
 } from "#/purchasing/orders";
 import { suggestPurchases } from "#/purchasing/reorder";
@@ -52,9 +62,21 @@ How things count:
 - Sales: use the sales_units view (product_id, order_id, store_id, placed_at, units). Tool sets count as their parts; cancelled and FBA orders are left out. Join stores for the channel.
 - Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
 - Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.
-- POs: draft, sent, closed, cancelled. Each supplier has at most one draft; tools that add lines put them on it, creating it if needed. Nothing here sends a PO: the user reviews and sends drafts in the app.
+- POs: draft, sent, closed, cancelled. Each supplier has at most one draft; tools that add lines put them on it, creating it if needed. Nothing here sends a PO: the user reviews and sends drafts in the app. Sent POs can be received here.
+- Stock and receiving changes can be undone (undo_stock_change, undo_po_receipt). Every change you make is logged and shown to the user.
 
 Use describe_schema before writing SQL. Prefer reorder_suggestions for "what should we order": it accounts for lead time, what's already on order, and minimums. When a request is ambiguous about quantities, say which interpretation you used.`;
+
+// Tools that only read. /mcp logs calls to every other tool, so a new write
+// tool is logged even if this list isn't updated.
+export const READ_TOOLS = new Set([
+	"describe_schema",
+	"query",
+	"sync_status",
+	"reorder_suggestions",
+	"get_purchase_order",
+	"list_purchase_units",
+]);
 
 const json = (data: unknown) => ({
 	content: [{ type: "text" as const, text: JSON.stringify(data, null, 1) }],
@@ -114,7 +136,7 @@ const boxShape = {
 	weight_oz: z.number().min(0).describe("The empty box"),
 };
 
-export function buildServer(db: Db) {
+export function buildServer(db: Db, access: { canWrite: boolean }) {
 	const server = new McpServer(
 		{ name: "katasync", version: "1.0.0" },
 		{ instructions: INSTRUCTIONS },
@@ -204,14 +226,26 @@ export function buildServer(db: Db) {
 		async () => json(await listUnits(db)),
 	);
 
+	if (access.canWrite) registerWriteTools(server, db);
+	return server;
+}
+
+// Tools that change things. Only tokens allowed to write get them, and
+// src/routes/mcp.ts logs every call to them.
+function registerWriteTools(server: McpServer, db: Db) {
 	// Draft POs
 
 	server.registerTool(
 		"set_draft_po_lines",
 		{
 			description:
-				"Sets how many of each product the draft POs order, putting each on its supplier's draft (made if needed). Quantity is in the product's purchase unit (see product_suppliers); 0 takes it off. A line already on the draft is set to the new quantity, not added to. Products without a supplier, tool sets, and unknown SKUs are skipped and reported.",
+				"Sets how many of each product the draft POs order, putting each on its supplier's draft (made if needed). Say whether quantities count single items or the product's purchase unit (e.g. CASE of 12): items are rounded up to whole units, and the result says what that came to. 0 takes a line off. A line already on the draft is set to the new quantity, not added to. Products without a supplier, tool sets, and unknown SKUs are skipped and reported.",
 			inputSchema: {
+				quantity_in: z
+					.enum(["items", "purchase_unit"])
+					.describe(
+						"items: single pieces, as stock and sales count them. purchase_unit: the unit the supplier sells in.",
+					),
 				lines: z
 					.array(
 						z.object({
@@ -230,7 +264,7 @@ export function buildServer(db: Db) {
 			},
 			annotations: { ...WRITE, idempotentHint: true },
 		},
-		async ({ lines }) => {
+		async ({ quantity_in, lines }) => {
 			const drafts = new Map<
 				number,
 				{ po: number; supplier: string; set: unknown[] }
@@ -240,12 +274,7 @@ export function buildServer(db: Db) {
 				try {
 					const product = await productBySku(db, line.sku);
 					const [link] = await db
-						.select({
-							supplierId: productSuppliers.supplierId,
-							unit: productSuppliers.unit,
-							packSize: productSuppliers.packSize,
-							minimum: productSuppliers.minimumQuantity,
-						})
+						.select({ supplierId: productSuppliers.supplierId })
 						.from(productSuppliers)
 						.where(eq(productSuppliers.productId, product.id));
 					if (!link) {
@@ -253,10 +282,14 @@ export function buildServer(db: Db) {
 						continue;
 					}
 					const po = await openDraft(db, link.supplierId);
-					await setDraftLine(db, {
+					// A line already on the draft may be in its own unit (set on
+					// just this PO); quantities count in that. Read under the PO's
+					// lock, so the result is what was written.
+					const { quantity, ...terms } = await setDraftLine(db, {
 						purchaseOrderId: po,
 						productId: product.id,
 						quantity: line.quantity,
+						inItems: quantity_in === "items",
 						...(line.unit_cost !== undefined
 							? { unitCost: line.unit_cost }
 							: {}),
@@ -269,11 +302,14 @@ export function buildServer(db: Db) {
 					}
 					draft.set.push({
 						sku: product.sku,
-						quantity: line.quantity,
-						unit: link.unit,
-						packSize: link.packSize,
-						...(line.quantity > 0 && line.quantity < link.minimum
-							? { warning: `below the supplier's minimum of ${link.minimum}` }
+						quantity,
+						unit: terms.unit,
+						packSize: terms.packSize,
+						items: quantity * terms.packSize,
+						...(quantity > 0 && quantity < terms.minimumQuantity
+							? {
+									warning: `below the supplier's minimum of ${terms.minimumQuantity}`,
+								}
 							: {}),
 					});
 				} catch (error) {
@@ -648,5 +684,159 @@ export function buildServer(db: Db) {
 		},
 	);
 
-	return server;
+	// Products and kits
+
+	server.registerTool(
+		"update_product",
+		{
+			description:
+				"Changes a product's details. Only given fields change; null clears one. unit_cost is USD per single item (receiving POs averages it automatically). Weight in ounces and size in inches are what labels are bought with.",
+			inputSchema: {
+				sku: z.string(),
+				name: z.string().optional(),
+				variant_name: z
+					.string()
+					.nullable()
+					.optional()
+					.describe("Only for products in a group, e.g. 12 x 9 x 2"),
+				category: z.string().nullable().optional(),
+				barcode: z.string().nullable().optional(),
+				unit_cost: z.number().min(0).nullable().optional(),
+				weight_oz: z.number().positive().nullable().optional(),
+				length_in: z.number().positive().nullable().optional(),
+				width_in: z.number().positive().nullable().optional(),
+				height_in: z.number().positive().nullable().optional(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku, ...input }) => {
+			const product = await productBySku(db, sku);
+			return json(
+				await updateProductDetails(db, product.id, {
+					name: input.name,
+					variantName: input.variant_name,
+					category: input.category,
+					barcode: input.barcode,
+					unitCost: input.unit_cost,
+					weightOz: input.weight_oz,
+					lengthIn: input.length_in,
+					widthIn: input.width_in,
+					heightIn: input.height_in,
+				}),
+			);
+		},
+	);
+
+	server.registerTool(
+		"set_components",
+		{
+			description:
+				"Replaces what a kit (pre-assembled) or tool set (bundle) is made of. Kits hold simple products; tool sets hold simple products or kits.",
+			inputSchema: {
+				sku: z.string(),
+				components: z
+					.array(
+						z.object({
+							sku: z.string(),
+							quantity: z.number().int().positive(),
+						}),
+					)
+					.min(1),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku, components }) => {
+			const parent = await productBySku(db, sku);
+			const parts = [];
+			for (const c of components)
+				parts.push({
+					productId: (await productBySku(db, c.sku)).id,
+					quantity: c.quantity,
+				});
+			await setRecipe(db, parent.id, parts);
+			return json({ sku, components });
+		},
+	);
+
+	for (const [name, direction] of [
+		["assemble_kits", "assemble"],
+		["disassemble_kits", "disassemble"],
+	] as const)
+		server.registerTool(
+			name,
+			{
+				description:
+					direction === "assemble"
+						? "Builds kits from their parts on the shelf: the parts' stock goes down and the kit's goes up. Fails, changing nothing, if a part would go below zero. Returns a batch_id for undo_stock_change."
+						: "Takes kits apart back into their parts, e.g. to free a part for an order. Returns a batch_id for undo_stock_change.",
+				inputSchema: {
+					sku: z.string().describe("The kit"),
+					quantity: z.number().int().positive(),
+					location: z
+						.string()
+						.optional()
+						.describe("Needed only when there are several of our locations"),
+				},
+				annotations: WRITE,
+			},
+			async ({ sku, quantity, location }) => {
+				const kit = await productBySku(db, sku);
+				const input = {
+					kitProductId: kit.id,
+					quantity,
+					locationId: await ownedLocation(db, location),
+					reference: "via Claude",
+				};
+				return json(
+					direction === "assemble"
+						? await assembleKits(db, input)
+						: await disassembleKits(db, input),
+				);
+			},
+		);
+
+	// Receiving
+
+	server.registerTool(
+		"receive_po_line",
+		{
+			description:
+				"Records what arrived for one product on a sent PO, in the line's unit (2 cases of 12 puts 24 on the shelf). Updates the product's average cost and closes the PO once everything has arrived. Returns a receipt_id for undo_po_receipt.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				sku: z.string(),
+				quantity: z.number().int().positive(),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sku, quantity }) => {
+			const product = await productBySku(db, sku);
+			const [line] = await db
+				.select({ id: purchaseOrderLines.id })
+				.from(purchaseOrderLines)
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, po),
+						eq(purchaseOrderLines.productId, product.id),
+					),
+				);
+			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
+			const result = await receive(db, { lineId: line.id, quantity });
+			return json({ po, sku, quantity, ...result });
+		},
+	);
+
+	server.registerTool(
+		"undo_po_receipt",
+		{
+			description:
+				"Takes a receipt back off the shelf, e.g. one recorded by mistake. Reopens the PO if that leaves something short.",
+			inputSchema: { receipt_id: z.number().int().positive() },
+			annotations: WRITE,
+		},
+		async ({ receipt_id }) => {
+			await undoReceipt(db, receipt_id);
+			return json({ undone: receipt_id });
+		},
+	);
 }

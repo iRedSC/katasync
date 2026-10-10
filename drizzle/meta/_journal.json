@@ -169,6 +169,13 @@
       "when": 1791671669691,
       "tag": "0023_reporting_views",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791671869806,
+      "tag": "0024_mcp_calls",
+      "breakpoints": true
     }
   ]
 }

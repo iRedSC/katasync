@@ -9,11 +9,13 @@ import { AuthError, hashToken, newToken } from "./sessions";
 // Marks tokens so a leaked one is recognizable (e.g. by secret scanners).
 const PREFIX = "ks_";
 
-export async function createApiToken(db: Db, rawName: string) {
+export async function createApiToken(db: Db, rawName: string, canWrite = true) {
 	const name = rawName.trim().replace(/\s+/g, " ");
 	if (name === "") throw new AuthError("Say what the token is for");
 	const token = `${PREFIX}${newToken()}`;
-	await db.insert(apiTokens).values({ tokenHash: hashToken(token), name });
+	await db
+		.insert(apiTokens)
+		.values({ tokenHash: hashToken(token), name, canWrite });
 	return token;
 }
 
@@ -41,6 +43,7 @@ export function listApiTokens(db: Db) {
 			// The hash identifies a token without revealing it.
 			id: apiTokens.tokenHash,
 			name: apiTokens.name,
+			canWrite: apiTokens.canWrite,
 			createdAt: apiTokens.createdAt,
 			lastUsedAt: apiTokens.lastUsedAt,
 		})
