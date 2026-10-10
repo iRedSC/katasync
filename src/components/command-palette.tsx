@@ -130,15 +130,15 @@ export function CommandPalette() {
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogContent className="overflow-hidden p-0" showCloseButton={false}>
+			<DialogContent
+				className="overflow-hidden p-0 sm:max-w-2xl"
+				showCloseButton={false}
+			>
 				<DialogTitle className="sr-only">Find</DialogTitle>
 				<DialogDescription className="sr-only">
 					Find a product or page
 				</DialogDescription>
-				<Command
-					shouldFilter={false}
-					className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-item]]:px-3 [&_[cmdk-item]]:py-2.5"
-				>
+				<Command shouldFilter={false}>
 					<CommandInput
 						placeholder="Find a product or page…"
 						value={query}

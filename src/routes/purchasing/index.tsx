@@ -9,7 +9,22 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
+import {
+	Command,
+	CommandEmpty,
+	CommandGroup,
+	CommandInput,
+	CommandItem,
+	CommandList,
+} from "#/components/ui/command";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogTitle,
+} from "#/components/ui/dialog";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
+import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import { purchaseOrderStatus } from "#/purchasing/status";
 import {
@@ -26,9 +41,7 @@ export const Route = createFileRoute("/purchasing/")({
 function Purchasing() {
 	const { suggestions, open, done, suppliers } = Route.useLoaderData();
 	const ready = suggestions.filter((s) => s.ready);
-	const waiting = suggestions.filter((s) => !s.ready);
-	const nothing =
-		suggestions.length === 0 && open.length === 0 && done.length === 0;
+	const nothing = ready.length === 0 && open.length === 0 && done.length === 0;
 
 	return (
 		<Page
@@ -61,15 +74,6 @@ function Purchasing() {
 							<OrderTable rows={open} />
 						</Card>
 					)}
-					{waiting.length > 0 && (
-						<Card
-							title="Below the spend threshold"
-							aside="Order these with the next PO, or wait until they add up"
-							flush
-						>
-							<SuggestionList rows={waiting} />
-						</Card>
-					)}
 					{done.length > 0 && (
 						<Card title="Done" flush>
 							<OrderTable rows={done} />
@@ -82,14 +86,18 @@ function Purchasing() {
 }
 
 // Starts a blank draft for any supplier; "Add what needs reordering" on the
-// draft fills it in. A supplier with a draft already opens that one.
+// draft fills it in. A supplier with a draft already opens that one. Picked
+// like the Find palette: type a few letters, Enter.
 function NewPurchaseOrder({
 	suppliers,
 }: {
 	suppliers: PurchasingList["suppliers"];
 }) {
 	const navigate = useNavigate();
+	const [open, setOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
+
+	useHotkeys({ n: () => setOpen(true) });
 
 	async function create(supplierId: number) {
 		setBusy(true);
@@ -97,34 +105,52 @@ function NewPurchaseOrder({
 			const id = await createDraft({
 				data: { supplierId, fromSuggestions: false },
 			});
+			setOpen(false);
 			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : String(err));
+		} finally {
 			setBusy(false);
 		}
 	}
 
 	return (
-		<label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 font-semibold text-primary-foreground hover:bg-[#1a1a1a]">
-			<Plus className="size-4" />
-			{busy ? "Opening…" : "New PO"}
-			<select
-				value=""
-				disabled={busy}
-				aria-label="New PO for supplier"
-				onChange={(e) => e.target.value && create(Number(e.target.value))}
-				className="absolute inset-0 cursor-pointer opacity-0"
-			>
-				<option value="" disabled>
-					Pick a supplier
-				</option>
-				{suppliers.map((s) => (
-					<option key={s.id} value={s.id}>
-						{s.name}
-					</option>
-				))}
-			</select>
-		</label>
+		<>
+			<Button size="sm" onClick={() => setOpen(true)}>
+				<Plus />
+				New PO
+				<kbd className="text-xs opacity-60">N</kbd>
+			</Button>
+			<Dialog open={open} onOpenChange={setOpen}>
+				<DialogContent
+					className="overflow-hidden p-0 sm:max-w-2xl"
+					showCloseButton={false}
+				>
+					<DialogTitle className="sr-only">New PO</DialogTitle>
+					<DialogDescription className="sr-only">
+						Pick the supplier this PO is for.
+					</DialogDescription>
+					<Command>
+						<CommandInput placeholder="New PO for which supplier?" />
+						<CommandList>
+							<CommandEmpty>No supplier by that name.</CommandEmpty>
+							<CommandGroup heading="Suppliers">
+								{suppliers.map((s) => (
+									<CommandItem
+										key={s.id}
+										value={s.name}
+										disabled={busy}
+										onSelect={() => create(s.id)}
+									>
+										{s.name}
+									</CommandItem>
+								))}
+							</CommandGroup>
+						</CommandList>
+					</Command>
+				</DialogContent>
+			</Dialog>
+		</>
 	);
 }
 
@@ -152,7 +178,6 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 	return (
 		<ul>
 			{rows.map((s) => {
-				const short = s.minimumOrder - s.total;
 				// The products the PO is mostly for, so the row says something.
 				const top = [...s.lines]
 					.sort((a, b) => b.sold - a.sold)
@@ -180,14 +205,11 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 								{formatMoney(s.total)}
 							</div>
 							<div className="text-xs whitespace-nowrap text-muted-foreground">
-								{s.ready
-									? s.unpriced > 0 && `+ ${s.unpriced} without a price`
-									: `${formatMoney(short)} short of the ${formatMoney(s.minimumOrder)} threshold`}
+								{s.unpriced > 0 && `+ ${s.unpriced} without a price`}
 							</div>
 						</div>
 						<Button
 							size="sm"
-							variant={s.ready ? "default" : "outline"}
 							disabled={busy !== null}
 							onClick={() => open(s)}
 							className="w-28"
