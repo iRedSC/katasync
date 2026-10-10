@@ -35,25 +35,29 @@ function Settings() {
 	return (
 		<Page title="Settings" narrow>
 			<Card title="Sales channels" flush>
+				{/* Fixed columns, so the primary controls line up whatever the
+				    store names' lengths. */}
 				<ul>
 					{channels.map((c) => {
 						const connected = stores.filter((s) => s.channel === c.id);
-						return (
-							<Item key={c.id} label={c.name}>
-								{connected.length > 0 ? (
-									<span className="flex items-center gap-2">
-										{connected.map((s) => (
-											<PrimaryToggle key={s.id} store={s} />
-										))}
-										<Badge tone="success">
-											{connected.map((s) => s.name).join(", ")}
-										</Badge>
-									</span>
-								) : (
-									<Badge>Not connected</Badge>
-								)}
-							</Item>
-						);
+						return (connected.length > 0 ? connected : [null]).map((s) => (
+							<li
+								key={s?.id ?? c.id}
+								className="grid grid-cols-[8rem_minmax(0,1fr)_8.5rem] items-center gap-3 border-t px-4 py-3 first:border-t-0"
+							>
+								<span className="font-medium">{c.name}</span>
+								<span className="truncate">
+									{s ? (
+										<Badge tone="success">{s.name}</Badge>
+									) : (
+										<Badge>Not connected</Badge>
+									)}
+								</span>
+								<span className="flex justify-end">
+									{s && <PrimaryToggle store={s} />}
+								</span>
+							</li>
+						));
 					})}
 				</ul>
 				<p className="border-t px-4 py-3 text-muted-foreground">
@@ -330,15 +334,16 @@ function PrimaryToggle({ store }: { store: Store }) {
 	}
 
 	return store.primary ? (
-		<button
-			type="button"
+		// Same box as the Make primary button, so both line up.
+		<Button
+			size="sm"
+			variant="ghost"
 			disabled={busy}
 			onClick={() => set(null)}
-			className="group"
 			title="Click to unset"
 		>
 			<Badge tone="info">Primary</Badge>
-		</button>
+		</Button>
 	) : (
 		<Button
 			size="sm"
