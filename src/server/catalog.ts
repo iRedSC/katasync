@@ -24,6 +24,7 @@ import {
 import { getAvailability, getBundleBlockers } from "#/inventory/availability";
 import { recordCount as recordShelfCount, undoBatch } from "#/inventory/ledger";
 import { applyListingsToOrders } from "#/orders/remap";
+import { purchaseOrderOfBatch } from "#/purchasing/orders";
 
 async function ownedLocationIds() {
 	const rows = await getDb()
@@ -464,7 +465,12 @@ export const recordCount = createServerFn({ method: "POST" })
 export const undoMovement = createServerFn({ method: "POST" })
 	.validator(type({ batchId: "string.uuid" }))
 	.handler(async ({ data }) => {
-		await undoBatch(getDb(), data.batchId);
+		const db = getDb();
+		// A PO receipt undone here would leave the PO thinking it arrived.
+		const po = await purchaseOrderOfBatch(db, data.batchId);
+		if (po !== null)
+			throw new Error(`This came in on PO ${po}. Undo it on the PO instead.`);
+		await undoBatch(db, data.batchId);
 	});
 
 export type ProductRow = Awaited<ReturnType<typeof listProducts>>[number];

@@ -13,7 +13,12 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { emailConfigured, sendEmail } from "#/purchasing/email";
-import { documentFor, loadOrder, receivedByLine } from "#/purchasing/load";
+import {
+	documentFor,
+	loadOrder,
+	receivedByLine,
+	supplierRows,
+} from "#/purchasing/load";
 import {
 	cancelOrder,
 	closeOrder,
@@ -236,18 +241,19 @@ export const sendPurchaseOrder = createServerFn({ method: "POST" })
 			await markSent(db, { purchaseOrderId: data.id, sentTo: null });
 			return { sentTo: null };
 		}
-		const { po, pdf, filename } = await documentFor(db, data.id);
-		const to = po.supplier.email;
-		if (!to)
-			throw new PurchaseOrderError(
-				`${po.supplier.name} has no email. Add one in Suppliers, or mark it sent.`,
-			);
-		const from = po.location.shipFromName ?? po.location.name;
-		await markSent(db, {
+		const sentTo = await markSent(db, {
 			purchaseOrderId: data.id,
-			sentTo: to,
-			deliver: () =>
-				sendEmail({
+			// Built inside the send, with the PO locked, so the email matches
+			// exactly what's saved as sent.
+			deliver: async (tx) => {
+				const { po, pdf, filename } = await documentFor(tx, data.id);
+				const to = po.supplier.email;
+				if (!to)
+					throw new PurchaseOrderError(
+						`${po.supplier.name} has no email. Add one in Suppliers, or mark it sent.`,
+					);
+				const from = po.location.shipFromName ?? po.location.name;
+				await sendEmail({
 					to,
 					subject: `Purchase order ${data.id} from ${from}`,
 					text: [
@@ -261,9 +267,11 @@ export const sendPurchaseOrder = createServerFn({ method: "POST" })
 						from,
 					].join("\n"),
 					attachment: { filename, content: pdf },
-				}),
+				});
+				return to;
+			},
 		});
-		return { sentTo: to };
+		return { sentTo };
 	});
 
 export const receiveLine = createServerFn({ method: "POST" })
@@ -312,17 +320,7 @@ export const listReceivable = createServerFn({ method: "GET" }).handler(
 );
 
 export const listSuppliers = createServerFn({ method: "GET" }).handler(
-	async () => {
-		const db = getDb();
-		return db
-			.select({
-				supplier: suppliers,
-				products: sql<number>`(select count(*) from ${productSuppliers} where ${productSuppliers.supplierId} = ${suppliers.id})::int`,
-				openOrders: sql<number>`(select count(*) from ${purchaseOrders} where ${purchaseOrders.supplierId} = ${suppliers.id} and ${purchaseOrders.status} = 'sent')::int`,
-			})
-			.from(suppliers)
-			.orderBy(suppliers.name);
-	},
+	async () => supplierRows(getDb()),
 );
 
 export type SupplierRow = Awaited<ReturnType<typeof listSuppliers>>[number];

@@ -100,3 +100,18 @@ export async function documentFor(db: Db, poId: number) {
 		}),
 	};
 }
+
+// Every supplier with how many products it supplies and its POs on order.
+export function supplierRows(db: Db) {
+	return db
+		.select({
+			supplier: suppliers,
+			// Written out in full: in a one-table select Drizzle leaves column
+			// names unqualified, so a subquery's supplier_id would compare
+			// against its own table's id instead of the supplier's.
+			products: sql<number>`(select count(*) from product_suppliers ps where ps.supplier_id = "suppliers"."id")::int`,
+			openOrders: sql<number>`(select count(*) from purchase_orders po where po.supplier_id = "suppliers"."id" and po.status = 'sent')::int`,
+		})
+		.from(suppliers)
+		.orderBy(suppliers.name);
+}

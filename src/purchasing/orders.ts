@@ -241,18 +241,20 @@ export async function updateDraft(
 	});
 }
 
-// Puts a draft on order. `deliver` runs inside the transaction once the PO is
-// checked, so if emailing it fails the PO stays a draft. sentTo is where it
-// went, or null when it was ordered some other way (phone, their website).
+// Puts a draft on order. sentTo is where it went, or null when it was ordered
+// some other way (phone, their website). `deliver`, when given, sends it and
+// returns the address it went to. It runs inside the transaction with the PO
+// locked and gets that transaction, so what it sends is exactly what's saved
+// as sent; if it fails, the PO stays a draft.
 export async function markSent(
 	db: Db,
 	input: {
 		purchaseOrderId: number;
-		sentTo: string | null;
+		sentTo?: string | null;
 		now?: Date;
-		deliver?: () => Promise<void>;
+		deliver?: (tx: Db) => Promise<string>;
 	},
-) {
+): Promise<string | null> {
 	const now = input.now ?? new Date();
 	return db.transaction(async (tx) => {
 		const po = await lockOrder(tx, input.purchaseOrderId, ["draft"]);
@@ -266,18 +268,21 @@ export async function markSent(
 			.select({ leadTimeDays: suppliers.leadTimeDays })
 			.from(suppliers)
 			.where(eq(suppliers.id, po.supplierId));
-		await input.deliver?.();
+		const sentTo = input.deliver
+			? await input.deliver(tx)
+			: (input.sentTo ?? null);
 		await tx
 			.update(purchaseOrders)
 			.set({
 				status: "sent",
 				sentAt: now,
-				sentTo: input.sentTo,
+				sentTo,
 				expectedAt: new Date(
 					now.getTime() + supplier.leadTimeDays * 86_400_000,
 				),
 			})
 			.where(eq(purchaseOrders.id, po.id));
+		return sentTo;
 	});
 }
 
@@ -299,6 +304,13 @@ export async function receive(
 			.where(eq(purchaseOrderLines.id, input.lineId));
 		if (!line) throw new PurchaseOrderError("That line doesn't exist");
 		const po = await lockOrder(tx, line.purchaseOrderId, ["sent"]);
+		// Receipts of this product on other POs wait here, so each one averages
+		// its price against stock and cost the last one left.
+		await tx
+			.select({ id: products.id })
+			.from(products)
+			.where(eq(products.id, line.productId))
+			.for("update");
 
 		const before = await ownedOnHand(tx, line.productId);
 		const { batchId } = await postMovements(tx, {
@@ -495,4 +507,21 @@ async function averageInCost(
 		.update(productSuppliers)
 		.set({ cost: p.unitCost })
 		.where(eq(productSuppliers.productId, p.productId));
+}
+
+// The PO a ledger batch belongs to, when it's a receipt or a receipt's undo.
+// Those must be undone on the PO, so its receipts and status stay right.
+export async function purchaseOrderOfBatch(
+	db: Db,
+	batchId: string,
+): Promise<number | null> {
+	const [row] = await db
+		.select({ id: purchaseOrderLines.purchaseOrderId })
+		.from(purchaseOrderReceipts)
+		.innerJoin(
+			purchaseOrderLines,
+			eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
+		)
+		.where(eq(purchaseOrderReceipts.batchId, batchId));
+	return row?.id ?? null;
 }
