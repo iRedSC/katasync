@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+	type AnyPgColumn,
 	bigint,
 	boolean,
 	check,
@@ -394,5 +395,161 @@ export const shipments = pgTable(
 	(t) => [
 		index("shipments_order_idx").on(t.orderId),
 		index("shipments_contents_idx").on(t.contentsKey, t.createdAt),
+	],
+);
+
+// A company we buy from. `code` is the short name Sumtracker used, e.g. "CANAM".
+export const suppliers = pgTable("suppliers", {
+	id: integer().primaryKey().generatedAlwaysAsIdentity(),
+	code: text().notNull().unique(),
+	name: text().notNull(),
+	contactName: text(),
+	// Where POs are emailed.
+	email: text(),
+	phone: text(),
+	address1: text(),
+	address2: text(),
+	city: text(),
+	region: text(),
+	postalCode: text(),
+	country: text(),
+	paymentTerms: text(),
+	// For us only, e.g. "Free shipping over $1500".
+	notes: text(),
+	// Printed on every PO sent to them.
+	poNotes: text(),
+	// Days from sending a PO to it arriving. Stock is reordered early enough to
+	// last that long.
+	leadTimeDays: integer().notNull().default(14),
+	// Days of sales each PO should cover once it arrives. Longer means bigger,
+	// rarer orders.
+	coverDays: integer().notNull().default(30),
+	// A suggested PO counts as ready once its total reaches this, e.g. their
+	// free-shipping minimum. 0 means ready as soon as anything needs ordering.
+	minimumOrder: numeric({ precision: 12, scale: 2, mode: "number" })
+		.notNull()
+		.default(0),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// Who we buy a product from. One supplier per product, so the product is the
+// key. Bundles have no stock to buy; src/purchasing/suppliers.ts refuses them.
+export const productSuppliers = pgTable(
+	"product_suppliers",
+	{
+		productId: integer()
+			.primaryKey()
+			.references(() => products.id),
+		supplierId: integer()
+			.notNull()
+			.references(() => suppliers.id),
+		// The supplier's own part number, printed on POs next to ours.
+		supplierSku: text(),
+		// What the supplier charges per unit, USD. Starts each PO line; receiving
+		// updates it to the last price paid.
+		cost: numeric({ precision: 12, scale: 4, mode: "number" }),
+		// Smallest quantity they'll sell, e.g. a case of 30.
+		minimumQuantity: integer().notNull().default(1),
+	},
+	(t) => [
+		index("product_suppliers_supplier_idx").on(t.supplierId),
+		check(
+			"product_suppliers_minimum_positive",
+			sql`${t.minimumQuantity} > 0`,
+		),
+	],
+);
+
+// draft: still being edited; not on order yet.
+// sent: emailed to the supplier. Stays sent while partly received.
+// closed: everything arrived, or we stopped waiting for the rest.
+// cancelled: never sent, or sent and called off before anything arrived.
+export const purchaseOrderStatus = pgEnum("purchase_order_status", [
+	"draft",
+	"sent",
+	"closed",
+	"cancelled",
+]);
+
+// Shown as "PO 1001". Rules live in src/purchasing/orders.ts.
+export const purchaseOrders = pgTable(
+	"purchase_orders",
+	{
+		id: integer()
+			.primaryKey()
+			.generatedAlwaysAsIdentity({ startWith: 1001 }),
+		supplierId: integer()
+			.notNull()
+			.references(() => suppliers.id),
+		status: purchaseOrderStatus().notNull().default("draft"),
+		// Where it's delivered and received into.
+		locationId: integer()
+			.notNull()
+			.references(() => locations.id),
+		// Printed on this PO, under the supplier's standing PO notes.
+		notes: text(),
+		sentAt: timestamp({ withTimezone: true }),
+		// The address it was emailed to, in case the supplier's email changes.
+		sentTo: text(),
+		// When we expect it: sent date plus the supplier's lead time.
+		expectedAt: timestamp({ withTimezone: true }),
+		closedAt: timestamp({ withTimezone: true }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_orders_supplier_idx").on(t.supplierId),
+		// One draft per supplier, so suggestions have one place to go.
+		uniqueIndex("purchase_orders_one_draft")
+			.on(t.supplierId)
+			.where(sql`${t.status} = 'draft'`),
+	],
+);
+
+export const purchaseOrderLines = pgTable(
+	"purchase_order_lines",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id),
+		productId: integer()
+			.notNull()
+			.references(() => products.id),
+		quantity: integer().notNull(),
+		// USD per unit. Null when nobody knows the price yet.
+		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
+	},
+	(t) => [
+		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),
+		check("purchase_order_lines_quantity_positive", sql`${t.quantity} > 0`),
+	],
+);
+
+// Each time units of a line are received, and each undo (a negative quantity
+// pointing at the receipt it reverses). A line's received count is the sum.
+// batchId is the ledger batch that put the units on the shelf.
+export const purchaseOrderReceipts = pgTable(
+	"purchase_order_receipts",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		lineId: integer()
+			.notNull()
+			.references(() => purchaseOrderLines.id),
+		quantity: integer().notNull(),
+		batchId: uuid().notNull().unique(),
+		// Set on an undo row: the receipt it reverses. Unique, so a receipt can
+		// only be undone once.
+		undoesId: integer()
+			.unique()
+			.references((): AnyPgColumn => purchaseOrderReceipts.id),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_order_receipts_line_idx").on(t.lineId),
+		check("purchase_order_receipts_quantity_nonzero", sql`${t.quantity} <> 0`),
+		check(
+			"purchase_order_receipts_undo_is_negative",
+			sql`(${t.undoesId} is null) = (${t.quantity} > 0)`,
+		),
 	],
 );
