@@ -103,7 +103,11 @@ test("minimumFromNotes reads Sumtracker's free-text minimums", () => {
 	expect(minimumFromNotes("Call Linda before ordering")).toBeNull();
 });
 
-test("applySupplierImport writes suppliers and links once", async () => {
+// First test in the file to build a database, which can take a few seconds
+// when the whole suite runs at once.
+test("applySupplierImport writes suppliers and links once", {
+	timeout: 20_000,
+}, async () => {
 	const db = await createTestDb();
 	const roller = await createProduct(db, "ROLLER", "simple");
 	await createProduct(db, "05-158", "simple");
