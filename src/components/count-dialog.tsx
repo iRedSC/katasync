@@ -66,7 +66,11 @@ export function CountDialog({
 			setCounted("");
 			await router.invalidate();
 			const { batchId } = result;
-			if (batchId) {
+			if (!batchId) {
+				toast.success("Count confirmed. Nothing changed.", {
+					description: name,
+				});
+			} else {
 				toast.success(
 					`Count saved. ${formatCount(result.onHand)} on the shelf.`,
 					{
@@ -129,7 +133,7 @@ export function CountDialog({
 							{delta === null ? (
 								<>We think there are {formatCount(current)}</>
 							) : delta === 0 ? (
-								<>Matches what we think. Nothing to change.</>
+								<>Matches what we think. Saving marks it counted.</>
 							) : (
 								<>
 									<span
@@ -167,9 +171,9 @@ export function CountDialog({
 							type="submit"
 							size="lg"
 							className="w-full"
-							disabled={delta === null || delta === 0 || saving}
+							disabled={delta === null || saving}
 						>
-							Save count
+							{delta === 0 ? "Confirm count" : "Save count"}
 						</Button>
 					</DialogFooter>
 				</form>

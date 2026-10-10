@@ -1,5 +1,5 @@
 {
-  "id": "34c342ba-0fda-47dc-9dac-010c9ef4fe90",
+  "id": "e65edef9-1d4b-4bf6-a5b3-dce75851ab42",
   "prevId": "cba3c3a2-3315-4aca-8217-8f6eb6e93b59",
   "version": "7",
   "dialect": "postgresql",
@@ -1077,20 +1077,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "unit": {
-          "name": "unit",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'EACH'"
-        },
-        "pack_size": {
-          "name": "pack_size",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
         "cost": {
           "name": "cost",
           "type": "numeric(12, 4)",
@@ -1148,19 +1134,6 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "product_suppliers_unit_purchase_units_name_fk": {
-          "name": "product_suppliers_unit_purchase_units_name_fk",
-          "tableFrom": "product_suppliers",
-          "tableTo": "purchase_units",
-          "columnsFrom": [
-            "unit"
-          ],
-          "columnsTo": [
-            "name"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1170,14 +1143,6 @@
         "product_suppliers_minimum_positive": {
           "name": "product_suppliers_minimum_positive",
           "value": "\"product_suppliers\".\"minimum_quantity\" > 0"
-        },
-        "product_suppliers_pack_size_positive": {
-          "name": "product_suppliers_pack_size_positive",
-          "value": "\"product_suppliers\".\"pack_size\" > 0"
-        },
-        "product_suppliers_each_is_one": {
-          "name": "product_suppliers_each_is_one",
-          "value": "\"product_suppliers\".\"unit\" <> 'EACH' or \"product_suppliers\".\"pack_size\" = 1"
         }
       },
       "isRLSEnabled": false
@@ -1388,20 +1353,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "unit": {
-          "name": "unit",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'EACH'"
-        },
-        "pack_size": {
-          "name": "pack_size",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
         "quantity": {
           "name": "quantity",
           "type": "integer",
@@ -1460,10 +1411,6 @@
         "purchase_order_lines_quantity_positive": {
           "name": "purchase_order_lines_quantity_positive",
           "value": "\"purchase_order_lines\".\"quantity\" > 0"
-        },
-        "purchase_order_lines_pack_size_positive": {
-          "name": "purchase_order_lines_pack_size_positive",
-          "value": "\"purchase_order_lines\".\"pack_size\" > 0"
         }
       },
       "isRLSEnabled": false
@@ -1742,32 +1689,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.purchase_units": {
-      "name": "purchase_units",
-      "schema": "",
-      "columns": {
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.shipments": {
       "name": "shipments",
       "schema": "",
@@ -2037,6 +1958,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "last_counted_at": {
+          "name": "last_counted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},

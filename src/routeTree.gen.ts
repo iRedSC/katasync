@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CountsRouteImport } from './routes/counts'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -29,6 +30,11 @@ import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CountsRoute = CountsRouteImport.update({
+  id: '/counts',
+  path: '/counts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DiagnosticsRoute = DiagnosticsRouteImport.update({
@@ -109,6 +115,7 @@ const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
@@ -127,6 +134,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
@@ -146,6 +154,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/counts'
     | '/diagnostics'
     | '/listings'
     | '/settings'
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/counts'
     | '/diagnostics'
     | '/listings'
     | '/settings'
@@ -202,6 +213,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/counts'
     | '/diagnostics'
     | '/listings'
     | '/settings'
@@ -221,6 +233,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CountsRoute: typeof CountsRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
   ListingsRoute: typeof ListingsRoute
   SettingsRoute: typeof SettingsRoute
@@ -245,6 +258,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/counts': {
+      id: '/counts'
+      path: '/counts'
+      fullPath: '/counts'
+      preLoaderRoute: typeof CountsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/diagnostics': {
@@ -357,6 +377,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CountsRoute: CountsRoute,
   DiagnosticsRoute: DiagnosticsRoute,
   ListingsRoute: ListingsRoute,
   SettingsRoute: SettingsRoute,
@@ -376,12 +397,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

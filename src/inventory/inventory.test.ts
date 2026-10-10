@@ -413,4 +413,61 @@ describe("undoBatch", () => {
 		expect(await onHand(wrench, warehouse)).toBe(5);
 		await expect(undoBatch(db, batchId)).rejects.toThrow(/Already undone/);
 	});
+
+	describe("a count's date", () => {
+		const lastCountedAt = async (productId: number) => {
+			const [row] = await db
+				.select({ at: schema.stockLevels.lastCountedAt })
+				.from(schema.stockLevels)
+				.where(sql`${schema.stockLevels.productId} = ${productId}`);
+			return row.at;
+		};
+		const count = async (productId: number, counted: number) => {
+			const { batchId } = await recordCount(db, {
+				productId,
+				locationId: warehouse,
+				counted,
+				note: "Counted",
+			});
+			return batchId;
+		};
+
+		test("goes back to never counted when the first count is undone", async () => {
+			const wrench = await sku("WRENCH", "simple");
+			await receive(wrench, warehouse, 5);
+			const batchId = await count(wrench, 2);
+			expect(await lastCountedAt(wrench)).toBeInstanceOf(Date);
+
+			if (!batchId) throw new Error("expected a batch");
+			await undoBatch(db, batchId);
+			expect(await lastCountedAt(wrench)).toBeNull();
+		});
+
+		test("goes back to the earlier count when a later one is undone", async () => {
+			const wrench = await sku("WRENCH", "simple");
+			await receive(wrench, warehouse, 5);
+			const first = await count(wrench, 4);
+			const firstAt = await lastCountedAt(wrench);
+			const second = await count(wrench, 2);
+			expect(await lastCountedAt(wrench)).not.toEqual(firstAt);
+
+			if (!first || !second) throw new Error("expected batches");
+			await undoBatch(db, second);
+			expect(await lastCountedAt(wrench)).toEqual(firstAt);
+		});
+
+		test("stays as it is when a later count replaced it", async () => {
+			const wrench = await sku("WRENCH", "simple");
+			await receive(wrench, warehouse, 5);
+			const first = await count(wrench, 2);
+			// This one matches, so it posts nothing but still marks the shelf counted.
+			await count(wrench, 2);
+			const laterAt = await lastCountedAt(wrench);
+
+			if (!first) throw new Error("expected a batch");
+			await undoBatch(db, first);
+			expect(await onHand(wrench, warehouse)).toBe(5);
+			expect(await lastCountedAt(wrench)).toEqual(laterAt);
+		});
+	});
 });

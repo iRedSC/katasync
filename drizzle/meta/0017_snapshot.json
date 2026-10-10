@@ -1,6 +1,6 @@
 {
-  "id": "dc1fdef2-0c43-4234-98c7-fe1340baef80",
-  "prevId": "cf01256c-54d9-46e7-9cd1-8c1356de5535",
+  "id": "a09db5a9-6ede-4d97-a9f6-3f0173ea92c5",
+  "prevId": "7e477194-4466-41a0-b4d3-6b138b94d7e4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1077,20 +1077,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "unit": {
-          "name": "unit",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'EACH'"
-        },
-        "pack_size": {
-          "name": "pack_size",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
         "cost": {
           "name": "cost",
           "type": "numeric(12, 4)",
@@ -1148,19 +1134,6 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "product_suppliers_unit_purchase_units_name_fk": {
-          "name": "product_suppliers_unit_purchase_units_name_fk",
-          "tableFrom": "product_suppliers",
-          "tableTo": "purchase_units",
-          "columnsFrom": [
-            "unit"
-          ],
-          "columnsTo": [
-            "name"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1170,16 +1143,79 @@
         "product_suppliers_minimum_positive": {
           "name": "product_suppliers_minimum_positive",
           "value": "\"product_suppliers\".\"minimum_quantity\" > 0"
-        },
-        "product_suppliers_pack_size_positive": {
-          "name": "product_suppliers_pack_size_positive",
-          "value": "\"product_suppliers\".\"pack_size\" > 0"
-        },
-        "product_suppliers_each_is_one": {
-          "name": "product_suppliers_each_is_one",
-          "value": "\"product_suppliers\".\"unit\" <> 'EACH' or \"product_suppliers\".\"pack_size\" = 1"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.product_views": {
+      "name": "product_views",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "product_views_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "filters": {
+          "name": "filters",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sort": {
+          "name": "sort",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'name'"
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "product_views_name_unique": {
+          "name": "product_views_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.products": {
@@ -1388,27 +1424,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "unit": {
-          "name": "unit",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'EACH'"
-        },
-        "pack_size": {
-          "name": "pack_size",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "minimum_quantity": {
-          "name": "minimum_quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
         "quantity": {
           "name": "quantity",
           "type": "integer",
@@ -1467,14 +1482,6 @@
         "purchase_order_lines_quantity_positive": {
           "name": "purchase_order_lines_quantity_positive",
           "value": "\"purchase_order_lines\".\"quantity\" > 0"
-        },
-        "purchase_order_lines_pack_size_positive": {
-          "name": "purchase_order_lines_pack_size_positive",
-          "value": "\"purchase_order_lines\".\"pack_size\" > 0"
-        },
-        "purchase_order_lines_minimum_positive": {
-          "name": "purchase_order_lines_minimum_positive",
-          "value": "\"purchase_order_lines\".\"minimum_quantity\" > 0"
         }
       },
       "isRLSEnabled": false
@@ -1753,32 +1760,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.purchase_units": {
-      "name": "purchase_units",
-      "schema": "",
-      "columns": {
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.shipments": {
       "name": "shipments",
       "schema": "",
@@ -2026,6 +2007,77 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.stock_counts": {
+      "name": "stock_counts",
+      "schema": "",
+      "columns": {
+        "batch_id": {
+          "name": "batch_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "counted_at": {
+          "name": "counted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "previous_counted_at": {
+          "name": "previous_counted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "stock_counts_product_id_products_id_fk": {
+          "name": "stock_counts_product_id_products_id_fk",
+          "tableFrom": "stock_counts",
+          "tableTo": "products",
+          "columnsFrom": [
+            "product_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "stock_counts_location_id_locations_id_fk": {
+          "name": "stock_counts_location_id_locations_id_fk",
+          "tableFrom": "stock_counts",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.stock_levels": {
       "name": "stock_levels",
       "schema": "",
@@ -2048,6 +2100,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "last_counted_at": {
+          "name": "last_counted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -2333,176 +2391,6 @@
           ]
         }
       },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.sync_issues": {
-      "name": "sync_issues",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "sync_issues_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reference": {
-          "name": "reference",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "message": {
-          "name": "message",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "sync_issues_run_idx": {
-          "name": "sync_issues_run_idx",
-          "columns": [
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "sync_issues_run_id_sync_runs_id_fk": {
-          "name": "sync_issues_run_id_sync_runs_id_fk",
-          "tableFrom": "sync_issues",
-          "tableTo": "sync_runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.sync_runs": {
-      "name": "sync_runs",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "sync_runs_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "channel": {
-          "name": "channel",
-          "type": "channel",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "finished_at": {
-          "name": "finished_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "orders": {
-          "name": "orders",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "problems": {
-          "name": "problems",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "sync_runs_channel_started_idx": {
-          "name": "sync_runs_channel_started_idx",
-          "columns": [
-            {
-              "expression": "channel",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "started_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
