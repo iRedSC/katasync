@@ -28,9 +28,13 @@ const AUTH_TABLES = [
 	"auth_challenges",
 ];
 
-// Functions that change the session or reach outside the database.
+// Functions that change the session, reach outside the database, or signal
+// other connections (the app's own role may end its own backends).
 const FORBIDDEN_FUNCTIONS = [
 	"set_config",
+	"pg_terminate_backend",
+	"pg_cancel_backend",
+	"pg_reload_conf",
 	"dblink\\w*",
 	"pg_read_\\w+",
 	"pg_ls_\\w+",

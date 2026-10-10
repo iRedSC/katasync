@@ -100,6 +100,7 @@ describe("read-only queries", () => {
 			"select count(*) from auth_challenges",
 			"select pg_read_file('/etc/passwd')",
 			"select * from dblink('host=elsewhere', 'select 1') as t(a int)",
+			"select pg_terminate_backend(pid) from pg_stat_activity",
 		])
 			await expect(readOnlyQuery(text)).rejects.toThrow(/isn't available/);
 		expect(opened).toBe(0);
