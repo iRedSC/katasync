@@ -154,7 +154,7 @@ function TermsForm({
 		>
 			<div className="grid grid-cols-[1fr_5rem] gap-2">
 				<div className="flex flex-col gap-1">
-					<span className="flex items-center justify-between text-xs text-muted-foreground">
+					<span className="flex items-center gap-1.5 text-xs text-muted-foreground">
 						Unit
 						{!adding && (
 							<button
@@ -244,24 +244,22 @@ function TermsForm({
 				<Button type="submit" size="sm" disabled={busy || adding}>
 					Save
 				</Button>
-				{saving.saveDefault !== undefined || saving.noDefaultReason ? (
-					<Button
+				<Button type="button" size="sm" variant="ghost" onClick={onDone}>
+					Cancel
+				</Button>
+				{(saving.saveDefault || saving.noDefaultReason) && (
+					<button
 						type="button"
-						size="sm"
-						variant="outline"
 						disabled={busy || adding || !saving.saveDefault}
 						title={
 							saving.noDefaultReason ??
 							"Also use these for this product on future POs"
 						}
 						onClick={() => saving.saveDefault && submit(saving.saveDefault)}
+						className="ml-auto text-xs text-link hover:underline disabled:text-muted-foreground disabled:no-underline"
 					>
 						Set default
-					</Button>
-				) : (
-					<Button type="button" size="sm" variant="ghost" onClick={onDone}>
-						Cancel
-					</Button>
+					</button>
 				)}
 			</div>
 		</form>
