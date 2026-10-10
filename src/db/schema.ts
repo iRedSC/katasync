@@ -6,6 +6,7 @@ import {
 	check,
 	index,
 	integer,
+	jsonb,
 	numeric,
 	pgEnum,
 	pgTable,
@@ -178,9 +179,28 @@ export const stockLevels = pgTable(
 			.notNull()
 			.references(() => locations.id),
 		onHand: integer().notNull().default(0),
+		// When someone last counted this shelf, even if the count matched and
+		// nothing moved. Null means never. Drives the cycle count list.
+		lastCountedAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [primaryKey({ columns: [t.productId, t.locationId] })],
 );
+
+// One row per count that changed stock, keyed by its movement batch. Undoing
+// the batch puts previousCountedAt back on the shelf. A count that matched
+// posts no movements, so there is nothing to undo and no row.
+export const stockCounts = pgTable("stock_counts", {
+	batchId: uuid().primaryKey(),
+	productId: integer()
+		.notNull()
+		.references(() => products.id),
+	locationId: integer()
+		.notNull()
+		.references(() => locations.id),
+	// The same transaction time recordCount wrote to stock_levels.lastCountedAt.
+	countedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	previousCountedAt: timestamp({ withTimezone: true }),
+});
 
 export const channel = pgEnum("channel", [
 	"shopify",
@@ -626,3 +646,15 @@ export const purchaseOrderReceipts = pgTable(
 		),
 	],
 );
+
+// Saved product searches, shown as tabs on the products page. Shared by
+// everyone, since the team signs in as one account. `filters` holds search
+// chips (src/products/search.ts Filter[]); `sort` is a src/products/views.ts Sort.
+export const productViews = pgTable("product_views", {
+	id: integer().primaryKey().generatedAlwaysAsIdentity(),
+	name: text().notNull().unique(),
+	filters: jsonb().notNull(),
+	sort: text().notNull().default("name"),
+	position: integer().notNull().default(0),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
