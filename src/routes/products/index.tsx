@@ -119,7 +119,12 @@ function sorted(products: ProductRow[], sort: Sort) {
 function Products() {
 	const { products, abcDays, unpriced, views } = Route.useLoaderData();
 	const search = Route.useSearch();
-	const filters = search.filters ?? [];
+	// The router hands back a new array on every render, so key it by content:
+	// otherwise each render would count as a change, resetting the selection
+	// and scrolling back to the top.
+	const filtersKey = JSON.stringify(search.filters ?? []);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by content on purpose
+	const filters = useMemo(() => search.filters ?? [], [filtersKey]);
 	const sort = search.sort ?? "name";
 	const current = { filters, sort };
 	const navigate = useNavigate();
