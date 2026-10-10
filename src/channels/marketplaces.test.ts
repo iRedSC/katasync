@@ -197,7 +197,11 @@ describe("tiktokToChannelOrder", () => {
 				region_code: "US",
 				district_info: [
 					{ address_level_name: "Country", address_name: "United States" },
-					{ address_level_name: "State", address_name: "DE" },
+					{
+						address_level_name: "State",
+						address_name: "Delaware",
+						iso_code: "DE",
+					},
 					{ address_level_name: "City", address_name: "Dover" },
 				],
 			},

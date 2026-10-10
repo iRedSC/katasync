@@ -16,7 +16,8 @@ import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 // US apps still call the global host; open-api.us.tiktokglobalshop.com is a
 // dead 404.
 const API = "https://open-api.tiktokglobalshop.com";
-const AUTH = "https://auth.tiktok-shops.com/api/v2/token/get";
+// Refreshing has its own path; /token/get only trades an authorization code.
+const AUTH = "https://auth.tiktok-shops.com/api/v2/token/refresh";
 const STORE_NAME = "TikTok Shop";
 
 function credentials() {
@@ -59,9 +60,9 @@ let cachedToken: { value: string; expiresAt: number } | undefined;
 // Set when the refresh token is close to expiring, so every sync says so.
 let refreshWarning: string | null = null;
 
-// Trades the refresh token for an access token. The refresh token stays the
-// same until it expires, so sharing it with profit-margarine is safe; when it
-// runs out, the shop has to authorize the app again.
+// Trades the refresh token for an access token. TikTok hands back a new
+// refresh token every time, but earlier ones keep working until they expire
+// (decades out), so the stored one can be shared with profit-margarine.
 async function accessToken() {
 	if (cachedToken && cachedToken.expiresAt > Date.now() + 5 * 60_000) {
 		return cachedToken.value;
@@ -81,12 +82,6 @@ async function accessToken() {
 		);
 	}
 	const data = tokenData.assert(unwrap(await response.json(), "login"));
-	if (data.refresh_token !== refreshToken) {
-		// If TikTok ever starts rotating it, the stored one stops working.
-		console.warn(
-			"TikTok issued a new refresh token; update TIKTOK_REFRESH_TOKEN",
-		);
-	}
 	const daysLeft =
 		(data.refresh_token_expire_in * 1000 - Date.now()) / 86_400_000;
 	refreshWarning =
@@ -199,6 +194,8 @@ export const tiktokOrder = type({
 		"district_info?": type({
 			address_level_name: "string",
 			address_name: "string",
+			// "TX" for a state, like Shopify's province code.
+			"iso_code?": "string",
 		}).array(),
 	},
 	line_items: type({
@@ -240,12 +237,12 @@ export function tiktokToChannelOrder(
 ): ChannelOrder {
 	const fbt = order.fulfillment_type === "FULFILLMENT_BY_TIKTOK";
 	const address = order.recipient_address;
-	const district = (level: string) =>
-		shown(
-			address?.district_info?.find(
-				(d) => d.address_level_name.toLowerCase() === level,
-			)?.address_name,
+	const district = (level: string) => {
+		const found = address?.district_info?.find(
+			(d) => d.address_level_name.toLowerCase() === level,
 		);
+		return shown(found?.iso_code || found?.address_name);
+	};
 	// TikTok lists every unit as its own line item; one line per SKU reads
 	// like the other channels and stays stable if a unit is cancelled.
 	const bySku = new Map<string, ChannelOrder["lines"][number]>();
