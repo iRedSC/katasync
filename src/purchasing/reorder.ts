@@ -54,6 +54,7 @@ export type SuggestedLine = {
 	// onOrder, and sold count the product.
 	unit: string;
 	packSize: number;
+	minimumQuantity: number;
 	onHand: number;
 	onOrder: number;
 	// Units sold over DEMAND_DAYS, counting tool sets as their parts.
@@ -158,6 +159,7 @@ export async function suggestPurchases(
 			supplierSku: p.supplierSku,
 			unit: p.unit,
 			packSize: p.packSize,
+			minimumQuantity: p.minimumQuantity,
 			...line,
 			quantity,
 			unitCost,

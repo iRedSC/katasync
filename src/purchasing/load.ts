@@ -55,11 +55,10 @@ export async function loadOrder(db: Db, poId: number) {
 			supplierSku: productSuppliers.supplierSku,
 			unit: purchaseOrderLines.unit,
 			packSize: purchaseOrderLines.packSize,
-			// Who the product is bought from now, and the fewest they sell. A
-			// draft's MOQ / UOM can be changed here only when that's this PO's
-			// supplier.
+			minimumQuantity: purchaseOrderLines.minimumQuantity,
+			// Who the product is bought from now. A line's terms can become the
+			// product's default only on that supplier's PO.
 			linkSupplierId: productSuppliers.supplierId,
-			minimumQuantity: productSuppliers.minimumQuantity,
 			quantity: purchaseOrderLines.quantity,
 			unitCost: purchaseOrderLines.unitCost,
 			received: sql<number>`coalesce(${received.units}, 0)::int`,

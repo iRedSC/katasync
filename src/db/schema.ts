@@ -574,11 +574,13 @@ export const purchaseOrderLines = pgTable(
 		productId: integer()
 			.notNull()
 			.references(() => products.id),
-		// The supplier's unit when the line was made (a CASE of 30). Copied rather
-		// than referenced, so a sent PO never changes meaning; a draft's lines
-		// follow the product's unit (src/purchasing/units.ts).
+		// What this PO orders in (a CASE of 30), and the fewest the supplier
+		// sells. Copied from the product's supplier defaults when the line is
+		// made; changing them here changes only this PO unless they're also set
+		// as the default (src/purchasing/units.ts).
 		unit: text().notNull().default("EACH"),
 		packSize: integer().notNull().default(1),
+		minimumQuantity: integer().notNull().default(1),
 		// How many of `unit`. Receiving puts quantity × packSize on the shelf.
 		quantity: integer().notNull(),
 		// USD per `unit`. Null when nobody knows the price yet.
@@ -588,6 +590,10 @@ export const purchaseOrderLines = pgTable(
 		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),
 		check("purchase_order_lines_quantity_positive", sql`${t.quantity} > 0`),
 		check("purchase_order_lines_pack_size_positive", sql`${t.packSize} > 0`),
+		check(
+			"purchase_order_lines_minimum_positive",
+			sql`${t.minimumQuantity} > 0`,
+		),
 	],
 );
 

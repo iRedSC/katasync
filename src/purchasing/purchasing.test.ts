@@ -25,6 +25,7 @@ import {
 	deleteUnit,
 	listUnits,
 	renameUnit,
+	setLineTerms,
 	setPurchaseUnit,
 } from "./units";
 
@@ -519,6 +520,101 @@ describe("buying in packs", () => {
 			minimumQuantity: 1,
 		});
 		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 3 });
+	});
+
+	test("terms set on one PO stay on that PO unless made the default", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		const terms = { unit: "CASE", packSize: 12, minimumQuantity: 2 };
+		await setLineTerms(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			...terms,
+			makeDefault: false,
+		});
+		expect(await linesOf(id)).toMatchObject([
+			{ ...terms, quantity: 3, unitCost: 24 },
+		]);
+		const [link] = await db.select().from(schema.productSuppliers);
+		expect(link).toMatchObject({ unit: "EACH", packSize: 1, cost: 2 });
+		// 30 wanted is 3 cases: already enough, though the units differ.
+		expect(await updateFromSuggestions(db, id, now)).toEqual({
+			added: 0,
+			raised: 0,
+		});
+		// A default change leaves a line with its own terms alone.
+		await setPurchaseUnit(db, {
+			productId: blade,
+			unit: "BOX",
+			packSize: 6,
+			minimumQuantity: 1,
+		});
+		expect((await linesOf(id))[0]).toMatchObject(terms);
+
+		await setLineTerms(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			unit: "PACK",
+			packSize: 4,
+			minimumQuantity: 5,
+			makeDefault: true,
+		});
+		const [after] = await db.select().from(schema.productSuppliers);
+		// $2 each was $12 a box of 6; a pack of 4 is $8.
+		expect(after).toMatchObject({
+			unit: "PACK",
+			packSize: 4,
+			minimumQuantity: 5,
+			cost: 8,
+		});
+		expect((await linesOf(id))[0]).toMatchObject({ unit: "PACK", quantity: 9 });
+	});
+
+	test("raises a line in its own unit, rounding up", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await setLineTerms(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			unit: "CASE",
+			packSize: 12,
+			minimumQuantity: 1,
+			makeDefault: false,
+		});
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 1,
+		});
+		// 30 wanted, 12 on the PO: raised to 3 cases.
+		expect(await updateFromSuggestions(db, id, now)).toEqual({
+			added: 0,
+			raised: 1,
+		});
+		expect((await linesOf(id))[0].quantity).toBe(3);
+	});
+
+	test("only the product's own supplier's PO can set its default", async () => {
+		const [{ id: other }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "OTHER", name: "Other" })
+			.returning();
+		const po = await openDraft(db, other);
+		await setDraftLine(db, {
+			purchaseOrderId: po,
+			productId: blade,
+			quantity: 5,
+		});
+		await expect(
+			setLineTerms(db, {
+				purchaseOrderId: po,
+				productId: blade,
+				unit: "CASE",
+				packSize: 12,
+				minimumQuantity: 1,
+				makeDefault: true,
+			}),
+		).rejects.toThrow(/another supplier/);
+		// Nothing changed, the line included.
+		expect((await linesOf(po))[0]).toMatchObject({ unit: "EACH", quantity: 5 });
 	});
 
 	test("EACH holds one, and the unit list guards what's in use", async () => {

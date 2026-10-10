@@ -25,7 +25,7 @@ type Status = (typeof purchaseOrders.$inferSelect)["status"];
 
 export const poName = (id: number) => `PO ${id}`;
 
-async function lockOrder(db: Db, id: number, allowed: Status[]) {
+export async function lockOrder(db: Db, id: number, allowed: Status[]) {
 	const [po] = await db
 		.select()
 		.from(purchaseOrders)
@@ -52,18 +52,25 @@ export async function draftFromSuggestions(
 // How today's suggestions differ from a draft. A draft is frozen once made:
 // these are what "Update" would apply. New products are added, and lines the
 // suggestion now wants more of are raised. Nothing is lowered or removed, so
-// a quantity set by hand is never undone.
+// a quantity set by hand is never undone. A line may be in a different unit
+// from the suggestion (set on just this PO), so amounts compare as the product
+// itself, and a raise is in the line's unit, rounded up.
 export function draftChanges(
-	draft: { productId: number; quantity: number }[],
+	draft: { productId: number; quantity: number; packSize: number }[],
 	suggested: SuggestedLine[],
 ) {
-	const onDraft = new Map(draft.map((l) => [l.productId, l.quantity]));
+	const onDraft = new Map(draft.map((l) => [l.productId, l]));
+	const raised: (SuggestedLine & { raiseTo: number })[] = [];
+	for (const l of suggested) {
+		const line = onDraft.get(l.productId);
+		if (!line) continue;
+		const want = l.quantity * l.packSize;
+		if (want > line.quantity * line.packSize)
+			raised.push({ ...l, raiseTo: Math.ceil(want / line.packSize) });
+	}
 	return {
 		added: suggested.filter((l) => !onDraft.has(l.productId)),
-		raised: suggested.filter((l) => {
-			const quantity = onDraft.get(l.productId);
-			return quantity !== undefined && l.quantity > quantity;
-		}),
+		raised,
 	};
 }
 
@@ -83,6 +90,7 @@ export async function updateFromSuggestions(
 			.select({
 				productId: purchaseOrderLines.productId,
 				quantity: purchaseOrderLines.quantity,
+				packSize: purchaseOrderLines.packSize,
 			})
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
@@ -94,6 +102,7 @@ export async function updateFromSuggestions(
 					productId: l.productId,
 					unit: l.unit,
 					packSize: l.packSize,
+					minimumQuantity: l.minimumQuantity,
 					quantity: l.quantity,
 					unitCost: l.unitCost,
 				})),
@@ -101,7 +110,7 @@ export async function updateFromSuggestions(
 		for (const l of raised)
 			await tx
 				.update(purchaseOrderLines)
-				.set({ quantity: l.quantity })
+				.set({ quantity: l.raiseTo })
 				.where(
 					and(
 						eq(purchaseOrderLines.purchaseOrderId, po.id),
@@ -182,6 +191,7 @@ export async function setDraftLine(
 				supplierCost: productSuppliers.cost,
 				unit: productSuppliers.unit,
 				packSize: productSuppliers.packSize,
+				minimumQuantity: productSuppliers.minimumQuantity,
 			})
 			.from(products)
 			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
@@ -199,6 +209,7 @@ export async function setDraftLine(
 				productId: input.productId,
 				unit: product.unit ?? "EACH",
 				packSize,
+				minimumQuantity: product.minimumQuantity ?? 1,
 				quantity: input.quantity,
 				unitCost:
 					input.unitCost !== undefined

@@ -34,6 +34,7 @@ import {
 	receiveLine,
 	sendPurchaseOrder,
 	setLine,
+	setPurchaseLineTerms,
 	undoPurchaseReceipt,
 	updateDraftFromSuggestions,
 } from "#/server/purchasing";
@@ -439,21 +440,39 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 						<td className="px-3 py-2">
 							<PurchaseUnitCell
 								label={l.sku}
-								value={{
-									productId: l.productId,
-									unit: l.unit,
-									packSize: l.packSize,
-									// A sent PO shows what it went out with; the minimum is
-									// the supplier's today.
-									minimumQuantity: draft ? (l.minimumQuantity ?? 1) : 1,
-									cost: l.unitCost,
+								value={l}
+								cost={l.unitCost}
+								units={draft ? d.units : undefined}
+								saving={{
+									save: (terms) =>
+										setPurchaseLineTerms({
+											data: {
+												purchaseOrderId: d.order.id,
+												productId: l.productId,
+												...terms,
+												makeDefault: false,
+											},
+										}),
+									// Only the product's own supplier's terms can change here.
+									...(l.linkSupplierId === d.supplier.id
+										? {
+												saveDefault: (terms) =>
+													setPurchaseLineTerms({
+														data: {
+															purchaseOrderId: d.order.id,
+															productId: l.productId,
+															...terms,
+															makeDefault: true,
+														},
+													}),
+											}
+										: {
+												noDefaultReason:
+													l.linkSupplierId === null
+														? "This product has no supplier yet; set one on its page"
+														: "This product is bought from another supplier",
+											}),
 								}}
-								// Only the product's own supplier's terms can change here.
-								units={
-									draft && l.linkSupplierId === d.supplier.id
-										? d.units
-										: undefined
-								}
 							/>
 						</td>
 						{draft && (

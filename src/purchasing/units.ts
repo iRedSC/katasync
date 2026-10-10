@@ -7,7 +7,7 @@ import {
 	purchaseOrders,
 	purchaseUnits,
 } from "#/db/schema";
-import { PurchaseOrderError } from "#/purchasing/orders";
+import { lockOrder, PurchaseOrderError } from "#/purchasing/orders";
 
 // The units suppliers sell in, and which one each product is bought in.
 // Stock always counts the product itself; a unit only changes how POs are
@@ -107,56 +107,126 @@ export async function deleteUnit(db: Db, name: string) {
 export const perPack = (perOld: number, oldPack: number, newPack: number) =>
 	Math.round((perOld / oldPack) * newPack * 10_000) / 10_000;
 
-// Sets what a product is bought in and the fewest the supplier sells. When
-// the pack size changes, the supplier's price and any draft lines are
-// converted so they still mean the same number of the product: a draft for
-// 60 EACH becomes 2 CASE of 30. Draft quantities round up.
-export async function setPurchaseUnit(
-	db: Db,
-	input: {
-		productId: number;
-		unit: string;
-		packSize: number;
-		minimumQuantity: number;
-	},
-) {
-	const { productId, unit, packSize, minimumQuantity } = input;
-	if (!Number.isInteger(packSize) || packSize < 1)
+export type UnitTerms = {
+	unit: string;
+	packSize: number;
+	minimumQuantity: number;
+};
+
+async function checkTerms(db: Db, t: UnitTerms) {
+	if (!Number.isInteger(t.packSize) || t.packSize < 1)
 		throw new PurchaseOrderError(
-			`Pack size must be a whole number, got ${packSize}`,
+			`Pack size must be a whole number, got ${t.packSize}`,
 		);
-	if (unit === EACH && packSize !== 1)
+	if (t.unit === EACH && t.packSize !== 1)
 		throw new PurchaseOrderError(
 			"EACH is one of the product; pick a unit like CASE for packs",
 		);
-	if (!Number.isInteger(minimumQuantity) || minimumQuantity < 1)
+	if (!Number.isInteger(t.minimumQuantity) || t.minimumQuantity < 1)
 		throw new PurchaseOrderError(
-			`Minimum must be a whole number, got ${minimumQuantity}`,
+			`Minimum must be a whole number, got ${t.minimumQuantity}`,
 		);
+	const [known] = await db
+		.select({ name: purchaseUnits.name })
+		.from(purchaseUnits)
+		.where(eq(purchaseUnits.name, t.unit));
+	if (!known) throw new PurchaseOrderError(`${t.unit} isn't a unit`);
+}
+
+// Puts a draft line in new terms. The quantity and price convert so they
+// still mean the same number of the product: 60 EACH becomes 2 CASE of 30.
+// Quantities round up.
+async function convertLine(
+	db: Db,
+	line: {
+		id: number;
+		quantity: number;
+		packSize: number;
+		unitCost: number | null;
+	},
+	t: UnitTerms,
+) {
+	await db
+		.update(purchaseOrderLines)
+		.set({
+			...t,
+			quantity: Math.ceil((line.quantity * line.packSize) / t.packSize),
+			unitCost:
+				line.unitCost === null
+					? null
+					: perPack(line.unitCost, line.packSize, t.packSize),
+		})
+		.where(eq(purchaseOrderLines.id, line.id));
+}
+
+// Sets the supplier's default terms for a product, converting its price to
+// the new pack size.
+async function setDefaultTerms(db: Db, productId: number, t: UnitTerms) {
+	const [link] = await db
+		.select()
+		.from(productSuppliers)
+		.where(eq(productSuppliers.productId, productId))
+		.for("update");
+	if (!link) throw new PurchaseOrderError("Set who it's bought from first");
+	await db
+		.update(productSuppliers)
+		.set({
+			...t,
+			cost:
+				link.cost === null
+					? null
+					: perPack(link.cost, link.packSize, t.packSize),
+		})
+		.where(eq(productSuppliers.productId, productId));
+	return link;
+}
+
+// Changes what one draft PO orders a product in, and the minimum shown on
+// it. With makeDefault, the product's supplier gets the same terms, so later
+// POs start from them; only the product's own supplier's PO can do that.
+export async function setLineTerms(
+	db: Db,
+	input: UnitTerms & {
+		purchaseOrderId: number;
+		productId: number;
+		makeDefault: boolean;
+	},
+) {
+	const { purchaseOrderId, productId, makeDefault, ...terms } = input;
 	return db.transaction(async (tx) => {
-		const [link] = await tx
+		const po = await lockOrder(tx, purchaseOrderId, ["draft"]);
+		await checkTerms(tx, terms);
+		const [line] = await tx
 			.select()
-			.from(productSuppliers)
-			.where(eq(productSuppliers.productId, productId))
-			.for("update");
-		if (!link) throw new PurchaseOrderError("Set who it's bought from first");
-		const [known] = await tx
-			.select({ name: purchaseUnits.name })
-			.from(purchaseUnits)
-			.where(eq(purchaseUnits.name, unit));
-		if (!known) throw new PurchaseOrderError(`${unit} isn't a unit`);
+			.from(purchaseOrderLines)
+			.where(
+				and(
+					eq(purchaseOrderLines.purchaseOrderId, po.id),
+					eq(purchaseOrderLines.productId, productId),
+				),
+			);
+		if (!line) throw new PurchaseOrderError("That product isn't on this PO");
+		await convertLine(tx, line, terms);
+		if (!makeDefault) return;
+		const link = await setDefaultTerms(tx, productId, terms);
+		if (link.supplierId !== po.supplierId)
+			throw new PurchaseOrderError(
+				"This product is bought from another supplier, so its default can't be set here",
+			);
+	});
+}
 
-		const oldPack = link.packSize;
-		await tx
-			.update(productSuppliers)
-			.set({
-				unit,
-				packSize,
-				minimumQuantity,
-				cost: link.cost === null ? null : perPack(link.cost, oldPack, packSize),
-			})
-			.where(eq(productSuppliers.productId, productId));
-
+// Sets the supplier's default terms for a product, e.g. from its product
+// page. Draft lines still on the old default follow it; a draft line given
+// its own terms keeps them.
+export async function setPurchaseUnit(
+	db: Db,
+	input: UnitTerms & { productId: number },
+) {
+	const { productId, ...terms } = input;
+	return db.transaction(async (tx) => {
+		await checkTerms(tx, terms);
+		const old = await setDefaultTerms(tx, productId, terms);
 		// Locked like every other draft change (see lockOrder in orders.ts).
 		const lines = await tx
 			.select({
@@ -174,22 +244,13 @@ export async function setPurchaseUnit(
 				and(
 					eq(purchaseOrderLines.productId, productId),
 					eq(purchaseOrders.status, "draft"),
+					eq(purchaseOrderLines.unit, old.unit),
+					eq(purchaseOrderLines.packSize, old.packSize),
+					eq(purchaseOrderLines.minimumQuantity, old.minimumQuantity),
 				),
 			)
 			.for("update");
-		for (const line of lines)
-			await tx
-				.update(purchaseOrderLines)
-				.set({
-					unit,
-					packSize,
-					quantity: Math.ceil((line.quantity * line.packSize) / packSize),
-					unitCost:
-						line.unitCost === null
-							? null
-							: perPack(line.unitCost, line.packSize, packSize),
-				})
-				.where(eq(purchaseOrderLines.id, line.id));
+		for (const line of lines) await convertLine(tx, line, terms);
 	});
 }
 

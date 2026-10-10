@@ -39,6 +39,7 @@ import {
 	deleteUnit,
 	listUnits,
 	renameUnit,
+	setLineTerms,
 	setPurchaseUnit,
 } from "#/purchasing/units";
 
@@ -469,6 +470,21 @@ export const setProductPurchaseUnit = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => setPurchaseUnit(getDb(), data));
+
+// What one draft PO orders a product in, and its minimum. makeDefault also
+// makes them the product's supplier default.
+export const setPurchaseLineTerms = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			purchaseOrderId: "number.integer > 0",
+			productId: "number.integer > 0",
+			unit: "string > 0",
+			packSize: "number.integer > 0",
+			minimumQuantity: "number.integer > 0",
+			makeDefault: "boolean",
+		}),
+	)
+	.handler(async ({ data }) => setLineTerms(getDb(), data));
 
 export const listPurchaseUnits = createServerFn({ method: "GET" }).handler(
 	async () => listUnits(getDb()),

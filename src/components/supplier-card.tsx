@@ -9,6 +9,7 @@ import {
 	type getProductSupplier,
 	listSuppliers,
 	type SupplierRow,
+	setProductPurchaseUnit,
 	setProductSupplier,
 } from "#/server/purchasing";
 
@@ -57,8 +58,13 @@ export function SupplierCard({
 					<dd>
 						<PurchaseUnitCell
 							label="this product"
-							value={{ productId, ...link }}
+							value={link}
+							cost={link.cost}
 							units={units.map((u) => u.name)}
+							saving={{
+								save: (terms) =>
+									setProductPurchaseUnit({ data: { productId, ...terms } }),
+							}}
 						/>
 					</dd>
 					<dt className="text-muted-foreground">Price</dt>
