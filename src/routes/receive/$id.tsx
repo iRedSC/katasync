@@ -73,7 +73,8 @@ function ReceivePurchaseOrder() {
 			});
 			navigator.vibrate?.(10);
 			setSheetLineId(null);
-			toast.success(`Received ${quantity} × ${productName(line)}`, {
+			const unit = line.packSize === 1 ? "" : ` ${line.unit}`;
+			toast.success(`Received ${quantity}${unit} × ${productName(line)}`, {
 				duration: 8000,
 				action: {
 					label: "Undo",
@@ -165,6 +166,7 @@ function ReceivePurchaseOrder() {
 				<QuantitySheet
 					key={sheetLine.id}
 					title={productName(sheetLine)}
+					unit={sheetLine.packSize === 1 ? undefined : sheetLine.unit}
 					canReceive={open}
 					remaining={Math.max(sheetLine.quantity - sheetLine.received, 0)}
 					lastReceipt={

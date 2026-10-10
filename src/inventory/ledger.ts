@@ -5,6 +5,7 @@ import {
 	movements,
 	productComponents,
 	products,
+	stockCounts,
 	stockLevels,
 } from "#/db/schema";
 
@@ -292,7 +293,10 @@ export async function recordCount(
 			})
 			.onConflictDoNothing();
 		const [level] = await tx
-			.select({ onHand: stockLevels.onHand })
+			.select({
+				onHand: stockLevels.onHand,
+				lastCountedAt: stockLevels.lastCountedAt,
+			})
 			.from(stockLevels)
 			.where(
 				and(
@@ -301,6 +305,15 @@ export async function recordCount(
 				),
 			)
 			.for("update");
+		await tx
+			.update(stockLevels)
+			.set({ lastCountedAt: sql`now()` })
+			.where(
+				and(
+					eq(stockLevels.productId, input.productId),
+					eq(stockLevels.locationId, input.locationId),
+				),
+			);
 		const delta = input.counted - level.onHand;
 		if (delta === 0) return { delta, onHand: level.onHand, batchId: null };
 		const result = await postMovements(tx, {
@@ -314,6 +327,12 @@ export async function recordCount(
 				},
 			],
 		});
+		await tx.insert(stockCounts).values({
+			batchId: result.batchId,
+			productId: input.productId,
+			locationId: input.locationId,
+			previousCountedAt: level.lastCountedAt,
+		});
 		return {
 			delta,
 			onHand: result.levels[0].onHand,
@@ -323,7 +342,8 @@ export async function recordCount(
 }
 
 // Reverses an earlier operation by posting its exact opposite, since movements
-// are never edited. Each batch can be undone once.
+// are never edited. Each batch can be undone once. Undoing a count also puts
+// back the shelf's previous count date, unless a later count has replaced it.
 export async function undoBatch(db: Db, batchId: string) {
 	return db.transaction(async (tx) => {
 		const original = await tx
@@ -338,7 +358,7 @@ export async function undoBatch(db: Db, batchId: string) {
 			.where(eq(movements.reference, reference))
 			.limit(1);
 		if (already) throw new LedgerError("Already undone");
-		return postMovements(tx, {
+		const result = await postMovements(tx, {
 			reference,
 			note: original[0].note ? `Undo: ${original[0].note}` : "Undo",
 			lines: original.map((m) => ({
@@ -348,5 +368,19 @@ export async function undoBatch(db: Db, batchId: string) {
 				reason: m.reason,
 			})),
 		});
+		// Matching on countedAt leaves the shelf alone if anything counted it since.
+		await tx
+			.update(stockLevels)
+			.set({ lastCountedAt: stockCounts.previousCountedAt })
+			.from(stockCounts)
+			.where(
+				and(
+					eq(stockCounts.batchId, batchId),
+					eq(stockLevels.productId, stockCounts.productId),
+					eq(stockLevels.locationId, stockCounts.locationId),
+					eq(stockLevels.lastCountedAt, stockCounts.countedAt),
+				),
+			);
+		return result;
 	});
 }

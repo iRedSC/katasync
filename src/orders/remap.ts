@@ -1,6 +1,8 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { createProductFromListing, mapListing } from "#/channels/listings";
+import { shippingLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
-import { listings, orderLines, orders, stores } from "#/db/schema";
+import { listings, orderLines, orders, products, stores } from "#/db/schema";
 import { costOf, orderTakesStock, takeStock } from "./ingest";
 
 // After listings get a product, catch up the orders that already sold them:
@@ -57,4 +59,33 @@ export async function applyListingsToOrders(
 		}
 		return { lines: pending.length, problems };
 	});
+}
+
+// Matches a listing to an existing product by SKU, then catches up the orders
+// that already sold it.
+export async function matchListing(db: Db, listingId: number, sku: string) {
+	const [product] = await db
+		.select({ id: products.id, sku: products.sku })
+		.from(products)
+		.where(eq(products.sku, sku));
+	if (!product) throw new Error(`No product ${sku}`);
+	await mapListing(db, listingId, product.id);
+	const caughtUp = await applyListingsToOrders(
+		db,
+		[listingId],
+		await shippingLocation(db),
+	);
+	return { sku: product.sku, ordersUpdated: caughtUp.lines };
+}
+
+// Creates the product a listing is selling, filled in from the listing, then
+// catches up its orders.
+export async function productFromListing(db: Db, listingId: number) {
+	const product = await createProductFromListing(db, listingId);
+	const caughtUp = await applyListingsToOrders(
+		db,
+		[listingId],
+		await shippingLocation(db),
+	);
+	return { sku: product.sku, ordersUpdated: caughtUp.lines };
 }

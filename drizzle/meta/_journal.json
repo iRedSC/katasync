@@ -110,8 +110,78 @@
     {
       "idx": 15,
       "version": "7",
-      "when": 1791647637637,
-      "tag": "0015_saved_labels",
+      "when": 1791643019048,
+      "tag": "0015_count_dates",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791643405625,
+      "tag": "0016_product_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791667790765,
+      "tag": "0017_count_undo",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791671032304,
+      "tag": "0018_purchase_units",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791671033304,
+      "tag": "0019_sync_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791671034304,
+      "tag": "0020_line_minimum",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791671456616,
+      "tag": "0021_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791671668691,
+      "tag": "0022_api_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791671669691,
+      "tag": "0023_reporting_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791671869806,
+      "tag": "0024_mcp_calls",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791672157063,
+      "tag": "0025_saved_labels",
       "breakpoints": true
     }
   ]

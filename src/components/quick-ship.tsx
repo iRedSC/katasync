@@ -140,7 +140,7 @@ export function QuickShip() {
 			pending = quickShipRates({
 				data: {
 					orderId: found.order.id,
-					packageId: box?.id,
+					packageId: box?.id ?? null,
 					...dims,
 					weightGrams: grams,
 					insureAmount: insure,
@@ -252,7 +252,7 @@ export function QuickShip() {
 			quickShipBuy({
 				data: {
 					orderId: found.order.id,
-					packageId: box?.id,
+					packageId: box?.id ?? null,
 					...dims,
 					weightGrams,
 					insureAmount,

@@ -1,9 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
 import {
+	Activity,
 	ArrowLeftRight,
 	ClipboardList,
 	LayoutDashboard,
 	Link2,
+	ListChecks,
 	Package,
 	Settings,
 	Truck,
@@ -46,6 +48,13 @@ export const pages = [
 		parent: "/products",
 	},
 	{
+		to: "/counts",
+		label: "Cycle counts",
+		icon: ListChecks,
+		keys: "g n",
+		parent: "/products",
+	},
+	{
 		to: "/listings",
 		label: "Listings",
 		icon: Link2,
@@ -58,6 +67,13 @@ export const pages = [
 		icon: ClipboardList,
 		keys: "g b",
 		parent: "/products",
+	},
+	{
+		to: "/diagnostics",
+		label: "Diagnostics",
+		icon: Activity,
+		keys: "g d",
+		parent: null,
 	},
 	{
 		to: "/settings",

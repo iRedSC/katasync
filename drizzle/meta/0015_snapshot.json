@@ -1,5 +1,5 @@
 {
-  "id": "14914ff3-7a3f-4cd6-a8bd-39e678e6c57a",
+  "id": "e65edef9-1d4b-4bf6-a5b3-dce75851ab42",
   "prevId": "cba3c3a2-3315-4aca-8217-8f6eb6e93b59",
   "version": "7",
   "dialect": "postgresql",
@@ -1804,13 +1804,7 @@
           "name": "label_url",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
-        },
-        "label_pdf": {
-          "name": "label_pdf",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "external_id": {
           "name": "external_id",
@@ -1964,6 +1958,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "last_counted_at": {
+          "name": "last_counted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},

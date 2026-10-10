@@ -1,4 +1,5 @@
 import { Check, ImageOff } from "lucide-react";
+import { formatUnit } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { holdable, useLongPress } from "./use-long-press";
@@ -30,6 +31,8 @@ export function LineRow({
 	onHold: () => void;
 }) {
 	const remaining = Math.max(line.quantity - line.received, 0);
+	// Counted in what the supplier ships: cases, when it comes in cases.
+	const unit = line.packSize === 1 ? "" : ` ${line.unit}`;
 	const done = remaining === 0 || !canReceive;
 	const press = useLongPress({
 		disabled: busy,
@@ -64,9 +67,16 @@ export function LineRow({
 						{line.sku}
 					</p>
 				</div>
-				<p className="shrink-0 text-2xl font-bold tabular-nums">
-					{line.received} / {line.quantity}
-				</p>
+				<div className="shrink-0 text-right">
+					<p className="text-2xl font-bold tabular-nums">
+						{line.received} / {line.quantity}
+					</p>
+					{line.packSize !== 1 && (
+						<p className="text-base font-semibold text-muted-foreground">
+							{formatUnit(line.unit, line.packSize)}
+						</p>
+					)}
+				</div>
 			</div>
 
 			{!locked && (
@@ -90,12 +100,12 @@ export function LineRow({
 								Done
 							</>
 						) : (
-							`${remaining} never came`
+							`${remaining}${unit} never came`
 						)
 					) : receiving ? (
 						"Receiving…"
 					) : (
-						`Receive ${remaining}`
+						`Receive ${remaining}${unit}`
 					)}
 				</button>
 			)}

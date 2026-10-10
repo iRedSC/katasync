@@ -15,7 +15,9 @@ const LABEL: Record<Field, string> = {
 	type: "type",
 	vendor: "vendor",
 	status: "status",
+	class: "class",
 	title: "title lacks",
+	inventory: "inventory",
 };
 
 // "not tag", "and vendor", "title lacks": what a chip or suggestion filters on.
@@ -193,7 +195,9 @@ export function FilterSearch({
 						<p className="px-3 py-1.5 text-muted-foreground">
 							{typing.field === "title"
 								? `Tab to hide titles containing “${typing.value}”`
-								: `No ${LABEL[typing.field]} is “${typing.value}”. Tab to lock it in anyway.`}
+								: typing.field === "inventory"
+									? `Tab to keep inventory ${typing.value}`
+									: `No ${LABEL[typing.field]} is “${typing.value}”. Tab to lock it in anyway.`}
 						</p>
 					)}
 				</div>

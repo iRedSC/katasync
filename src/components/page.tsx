@@ -198,6 +198,40 @@ export function Badge({
 	);
 }
 
+const abcColors = {
+	A: "bg-abc-a-fill text-abc-a-text",
+	B: "bg-abc-b-fill text-abc-b-text",
+	C: "bg-abc-c-fill text-abc-c-text",
+} as const;
+
+// A product's ABC class. Products that can't be classed show a dash.
+export function AbcBadge({
+	abc,
+	title,
+}: {
+	abc: "A" | "B" | "C" | null;
+	title?: string;
+}) {
+	if (abc === null) {
+		return (
+			<span className="text-muted-foreground" title={title}>
+				—
+			</span>
+		);
+	}
+	return (
+		<span
+			title={title}
+			className={cn(
+				"inline-flex h-5 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-semibold",
+				abcColors[abc],
+			)}
+		>
+			{abc}
+		</span>
+	);
+}
+
 // For features whose backend isn't built yet.
 export function EmptyState({
 	icon: Icon,

@@ -20,7 +20,18 @@ const config = defineConfig({
   // Bound to 127.0.0.1 so it doesn't clash with tailscale serve's listener on
   // the same port.
   server: { host: '127.0.0.1', allowedHosts: ['.ts.net'] },
-  plugins: [nitro(), tailwindcss(), tanstackStart(), viteReact()],
+  plugins: [
+    nitro({
+      // Left as packages rather than bundled. SimpleWebAuthn's certificate
+      // library needs reflect-metadata loaded first, and bundling reorders
+      // that. react-pdf loads its fonts through package imports
+      // (#standard-fonts/...) that only resolve inside its own package.
+      traceDeps: ['@simplewebauthn/server*', '@react-pdf/renderer*', '@react-pdf/font*', 'pdfkit*'],
+    }),
+    tailwindcss(),
+    tanstackStart(),
+    viteReact(),
+  ],
 })
 
 export default config

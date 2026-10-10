@@ -27,7 +27,10 @@ const graphqlResponse = type({
 });
 
 // Calls the Admin GraphQL API, waiting and retrying when Shopify throttles.
-async function shopifyQuery(query: string, variables: Record<string, unknown>) {
+export async function shopifyQuery(
+	query: string,
+	variables: Record<string, unknown>,
+) {
 	const { domain, token } = credentials();
 	for (let attempt = 1; ; attempt++) {
 		const response = await fetch(

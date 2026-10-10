@@ -1,0 +1,162 @@
+import {
+	type AuthenticationResponseJSON,
+	type AuthenticatorTransport,
+	generateAuthenticationOptions,
+	generateRegistrationOptions,
+	type RegistrationResponseJSON,
+	verifyAuthenticationResponse,
+	verifyRegistrationResponse,
+} from "@simplewebauthn/server";
+import { and, eq } from "drizzle-orm";
+import type { Db } from "#/db/client";
+import { passkeys } from "#/db/schema";
+import {
+	AuthError,
+	checkSetupLink,
+	consumeChallenge,
+	createSession,
+	saveChallenge,
+	useSetupLink,
+} from "./sessions";
+
+// Creating a passkey on a new device, and signing in with one. Server only.
+
+// Passkeys belong to one domain: the address katasync is opened at. Ones made
+// on another address (the Tailscale dev server, say) don't work here.
+export function relyingParty() {
+	const origin = process.env.AUTH_ORIGIN;
+	if (!origin)
+		throw new AuthError(
+			"Set AUTH_ORIGIN to the address katasync is opened at, e.g. https://katasync.example.com",
+		);
+	return { origin, id: new URL(origin).hostname, name: "katasync" };
+}
+
+// Every passkey belongs to the one company account.
+const ACCOUNT_ID = new TextEncoder().encode("katasync-company");
+
+export function passkeyName(raw: string) {
+	const name = raw.trim().replace(/\s+/g, " ");
+	if (name === "") throw new AuthError("Name this device");
+	if (name.length > 40) throw new AuthError("Keep the name under 40");
+	return name;
+}
+
+export async function registrationOptions(db: Db, setupToken: string) {
+	await checkSetupLink(db, setupToken);
+	const rp = relyingParty();
+	const existing = await db
+		.select({ id: passkeys.id, transports: passkeys.transports })
+		.from(passkeys);
+	const options = await generateRegistrationOptions({
+		rpName: rp.name,
+		rpID: rp.id,
+		userID: ACCOUNT_ID,
+		userName: "katasync",
+		userDisplayName: "Company account",
+		attestationType: "none",
+		// A device that already has a passkey here doesn't get a second one.
+		excludeCredentials: existing.map((p) => ({
+			id: p.id,
+			transports: p.transports as AuthenticatorTransport[],
+		})),
+		authenticatorSelection: {
+			residentKey: "required",
+			userVerification: "preferred",
+		},
+	});
+	await saveChallenge(db, options.challenge);
+	return options;
+}
+
+// Saves the new device's passkey, uses up the setup link, and signs the
+// device in. Returns the session token for its cookie.
+export async function finishRegistration(
+	db: Db,
+	input: {
+		setupToken: string;
+		name: string;
+		response: RegistrationResponseJSON;
+	},
+) {
+	const name = passkeyName(input.name);
+	const rp = relyingParty();
+	const result = await verifyRegistrationResponse({
+		response: input.response,
+		expectedChallenge: (challenge) => consumeChallenge(db, challenge),
+		expectedOrigin: rp.origin,
+		expectedRPID: rp.id,
+		requireUserVerification: false,
+	});
+	if (!result.verified)
+		throw new AuthError("The passkey couldn't be verified; try again");
+	const { credential } = result.registrationInfo;
+	return db.transaction(async (tx) => {
+		await useSetupLink(tx, input.setupToken);
+		await tx.insert(passkeys).values({
+			id: credential.id,
+			publicKey: Buffer.from(credential.publicKey).toString("base64url"),
+			counter: credential.counter,
+			transports: credential.transports ?? [],
+			name,
+		});
+		return createSession(tx, credential.id);
+	});
+}
+
+// Any of the account's passkeys may answer, so none are listed.
+export async function authenticationOptions(db: Db) {
+	const options = await generateAuthenticationOptions({
+		rpID: relyingParty().id,
+		userVerification: "preferred",
+	});
+	await saveChallenge(db, options.challenge);
+	return options;
+}
+
+// Checks a sign-in and returns the session token for its cookie.
+export async function finishAuthentication(
+	db: Db,
+	response: AuthenticationResponseJSON,
+) {
+	const [passkey] = await db
+		.select()
+		.from(passkeys)
+		.where(eq(passkeys.id, response.id));
+	if (!passkey)
+		throw new AuthError(
+			"This passkey was removed from katasync. Ask a signed-in device for a setup link.",
+		);
+	const rp = relyingParty();
+	const result = await verifyAuthenticationResponse({
+		response,
+		expectedChallenge: (challenge) => consumeChallenge(db, challenge),
+		expectedOrigin: rp.origin,
+		expectedRPID: rp.id,
+		credential: {
+			id: passkey.id,
+			publicKey: new Uint8Array(Buffer.from(passkey.publicKey, "base64url")),
+			counter: passkey.counter,
+			transports: passkey.transports as AuthenticatorTransport[],
+		},
+		requireUserVerification: false,
+	});
+	if (!result.verified) throw new AuthError("Sign-in couldn't be verified");
+	// Only move the counter on from the value we verified against. If another
+	// sign-in got there first, this one is refused rather than rolling the
+	// counter back, which would hide a cloned passkey. Passkeys that always
+	// report 0 write 0 over 0 and match every time.
+	const updated = await db
+		.update(passkeys)
+		.set({
+			counter: result.authenticationInfo.newCounter,
+			lastUsedAt: new Date(),
+		})
+		.where(
+			and(eq(passkeys.id, passkey.id), eq(passkeys.counter, passkey.counter)),
+		)
+		.returning({ id: passkeys.id });
+	if (updated.length === 0)
+		throw new AuthError("Sign-in couldn't be verified; try again");
+	return createSession(db, passkey.id);
+}

@@ -7,9 +7,11 @@ import {
 	customType,
 	index,
 	integer,
+	jsonb,
 	numeric,
 	pgEnum,
 	pgTable,
+	pgView,
 	primaryKey,
 	smallint,
 	text,
@@ -186,9 +188,28 @@ export const stockLevels = pgTable(
 			.notNull()
 			.references(() => locations.id),
 		onHand: integer().notNull().default(0),
+		// When someone last counted this shelf, even if the count matched and
+		// nothing moved. Null means never. Drives the cycle count list.
+		lastCountedAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [primaryKey({ columns: [t.productId, t.locationId] })],
 );
+
+// One row per count that changed stock, keyed by its movement batch. Undoing
+// the batch puts previousCountedAt back on the shelf. A count that matched
+// posts no movements, so there is nothing to undo and no row.
+export const stockCounts = pgTable("stock_counts", {
+	batchId: uuid().primaryKey(),
+	productId: integer()
+		.notNull()
+		.references(() => products.id),
+	locationId: integer()
+		.notNull()
+		.references(() => locations.id),
+	// The same transaction time recordCount wrote to stock_levels.lastCountedAt.
+	countedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	previousCountedAt: timestamp({ withTimezone: true }),
+});
 
 export const channel = pgEnum("channel", [
 	"shopify",
@@ -348,6 +369,41 @@ export const orderLines = pgTable(
 	],
 );
 
+// One pass of one channel's order sync (scripts/sync.ts), for Diagnostics.
+// finishedAt is null while it runs, or if the worker died mid-pass. error is
+// why the whole pass failed; problems counts single orders that went wrong
+// (see syncIssues). Rules live in src/diagnostics/runs.ts.
+export const syncRuns = pgTable(
+	"sync_runs",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		channel: channel().notNull(),
+		startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		finishedAt: timestamp({ withTimezone: true }),
+		orders: integer().notNull().default(0),
+		problems: integer().notNull().default(0),
+		error: text(),
+	},
+	(t) => [index("sync_runs_channel_started_idx").on(t.channel, t.startedAt)],
+);
+
+// What went wrong with one order in a run, e.g. "#5536" / "no product for
+// KNIFE-5". Capped per run so a systemic failure can't flood the table; the
+// run's problems count stays exact.
+export const syncIssues = pgTable(
+	"sync_issues",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		runId: integer()
+			.notNull()
+			.references(() => syncRuns.id, { onDelete: "cascade" }),
+		// The order or SKU it's about, when there is one.
+		reference: text(),
+		message: text().notNull(),
+	},
+	(t) => [index("sync_issues_run_idx").on(t.runId)],
+);
+
 // A box we ship in, with its own short pin (1 to 999) for quick ship.
 export const packages = pgTable(
 	"packages",
@@ -454,6 +510,14 @@ export const suppliers = pgTable("suppliers", {
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+// What suppliers sell in, e.g. CASE. Edited in Settings; renames carry over to
+// every product that uses the unit. EACH is one of the product itself, always
+// exists, and can't be renamed or removed. Rules live in src/purchasing/units.ts.
+export const purchaseUnits = pgTable("purchase_units", {
+	name: text().primaryKey(),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 // Who we buy a product from. One supplier per product, so the product is the
 // key. Bundles have no stock to buy; src/purchasing/suppliers.ts refuses them.
 export const productSuppliers = pgTable(
@@ -467,15 +531,27 @@ export const productSuppliers = pgTable(
 			.references(() => suppliers.id),
 		// The supplier's own part number, printed on POs next to ours.
 		supplierSku: text(),
-		// What the supplier charges per unit, USD. Starts each PO line; receiving
-		// updates it to the last price paid.
+		// What they sell it in, and how many of the product one holds: a CASE of
+		// 30. POs are ordered and received in this unit; stock counts the product.
+		unit: text()
+			.notNull()
+			.default("EACH")
+			.references(() => purchaseUnits.name, { onUpdate: "cascade" }),
+		packSize: integer().notNull().default(1),
+		// What the supplier charges per unit above, USD. Starts each PO line;
+		// receiving updates it to the last price paid.
 		cost: numeric({ precision: 12, scale: 4, mode: "number" }),
-		// Smallest quantity they'll sell, e.g. a case of 30.
+		// Fewest units above they'll sell, e.g. 2 cases.
 		minimumQuantity: integer().notNull().default(1),
 	},
 	(t) => [
 		index("product_suppliers_supplier_idx").on(t.supplierId),
 		check("product_suppliers_minimum_positive", sql`${t.minimumQuantity} > 0`),
+		check("product_suppliers_pack_size_positive", sql`${t.packSize} > 0`),
+		check(
+			"product_suppliers_each_is_one",
+			sql`${t.unit} <> 'EACH' or ${t.packSize} = 1`,
+		),
 	],
 );
 
@@ -532,18 +608,32 @@ export const purchaseOrderLines = pgTable(
 		productId: integer()
 			.notNull()
 			.references(() => products.id),
+		// What this PO orders in (a CASE of 30), and the fewest the supplier
+		// sells. Copied from the product's supplier defaults when the line is
+		// made; changing them here changes only this PO unless they're also set
+		// as the default (src/purchasing/units.ts).
+		unit: text().notNull().default("EACH"),
+		packSize: integer().notNull().default(1),
+		minimumQuantity: integer().notNull().default(1),
+		// How many of `unit`. Receiving puts quantity × packSize on the shelf.
 		quantity: integer().notNull(),
-		// USD per unit. Null when nobody knows the price yet.
+		// USD per `unit`. Null when nobody knows the price yet.
 		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 	},
 	(t) => [
 		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),
 		check("purchase_order_lines_quantity_positive", sql`${t.quantity} > 0`),
+		check("purchase_order_lines_pack_size_positive", sql`${t.packSize} > 0`),
+		check(
+			"purchase_order_lines_minimum_positive",
+			sql`${t.minimumQuantity} > 0`,
+		),
 	],
 );
 
 // Each time units of a line are received, and each undo (a negative quantity
-// pointing at the receipt it reverses). A line's received count is the sum.
+// pointing at the receipt it reverses). Counted in the line's unit, like its
+// quantity. A line's received count is the sum.
 // batchId is the ledger batch that put the units on the shelf.
 export const purchaseOrderReceipts = pgTable(
 	"purchase_order_receipts",
@@ -570,3 +660,116 @@ export const purchaseOrderReceipts = pgTable(
 		),
 	],
 );
+
+// Sign-in. katasync has one shared company account, so there are no users:
+// each phone or computer gets its own passkey, named so a lost one can be
+// removed. Rules live in src/auth/.
+export const passkeys = pgTable("passkeys", {
+	// The credential ID the browser reports, base64url.
+	id: text().primaryKey(),
+	// COSE public key, base64url.
+	publicKey: text().notNull(),
+	// Signature counter. Synced passkeys (iCloud, Google) always report 0.
+	counter: bigint({ mode: "number" }).notNull().default(0),
+	transports: text().array().notNull().default(sql`'{}'::text[]`),
+	// What device it's on, e.g. "Warehouse iPhone".
+	name: text().notNull(),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	lastUsedAt: timestamp({ withTimezone: true }),
+});
+
+// A signed-in browser. The cookie holds a random token; only its SHA-256 is
+// stored, so a database leak can't sign anyone in. Removing a passkey signs
+// out the browsers it signed in.
+export const sessions = pgTable(
+	"sessions",
+	{
+		tokenHash: text().primaryKey(),
+		passkeyId: text()
+			.notNull()
+			.references(() => passkeys.id, { onDelete: "cascade" }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		// Pushed forward as the browser keeps being used.
+		expiresAt: timestamp({ withTimezone: true }).notNull(),
+	},
+	(t) => [index("sessions_passkey_idx").on(t.passkeyId)],
+);
+
+// A one-time link that lets a new device create a passkey. Made by a signed-in
+// device or by `pnpm auth:setup-link` on the server. Stored hashed, like
+// sessions.
+export const setupLinks = pgTable("setup_links", {
+	tokenHash: text().primaryKey(),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+	usedAt: timestamp({ withTimezone: true }),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// A WebAuthn challenge waiting for its answer. Each is used once, so a
+// captured sign-in can't be replayed.
+export const authChallenges = pgTable("auth_challenges", {
+	challenge: text().primaryKey(),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+});
+
+// Lets a program (an MCP client like Claude) use katasync's /mcp endpoint.
+// Shown once when made; only its SHA-256 is stored, like sessions.
+export const apiTokens = pgTable("api_tokens", {
+	tokenHash: text().primaryKey(),
+	// Who or what holds it, e.g. "Claude on the office PC".
+	name: text().notNull(),
+	// A read-only token only gets the tools that read.
+	canWrite: boolean().notNull().default(true),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	lastUsedAt: timestamp({ withTimezone: true }),
+});
+
+// Views defined in drizzle/0020_reporting_views.sql, so every report counts
+// stock and sales the same way.
+
+// Stock on our own shelves per stocked product (Amazon's FBA stock left out).
+export const ownedStock = pgView("owned_stock", {
+	productId: integer().notNull(),
+	sku: text().notNull(),
+	onHand: integer().notNull(),
+}).existing();
+
+// Units that left our shelves, per order line: tool sets as their parts,
+// without cancelled or FBA orders, or lines not matched to a product.
+export const salesUnits = pgView("sales_units", {
+	productId: integer().notNull(),
+	orderId: integer().notNull(),
+	storeId: integer().notNull(),
+	placedAt: timestamp({ withTimezone: true }).notNull(),
+	units: integer().notNull(),
+}).existing();
+
+// Every change made through /mcp: which token, which tool, what it was asked,
+// and how it went. Shown on Diagnostics, so a change Claude made can be found.
+// Reads aren't kept. Written by src/routes/mcp.ts.
+export const mcpCalls = pgTable(
+	"mcp_calls",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		tokenName: text().notNull(),
+		tool: text().notNull(),
+		arguments: jsonb().notNull(),
+		ok: boolean().notNull(),
+		// The tool's answer or error, cut short.
+		result: text().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index("mcp_calls_created_idx").on(t.createdAt)],
+);
+
+// Saved product searches, shown as tabs on the products page. Shared by
+// everyone, since the team signs in as one account. `filters` holds search
+// chips (src/products/search.ts Filter[]); `sort` is a src/products/views.ts Sort.
+export const productViews = pgTable("product_views", {
+	id: integer().primaryKey().generatedAlwaysAsIdentity(),
+	name: text().notNull().unique(),
+	filters: jsonb().notNull(),
+	sort: text().notNull().default("name"),
+	position: integer().notNull().default(0),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});

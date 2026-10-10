@@ -11,7 +11,7 @@ let cachedToken: { value: string; expiresAt: number } | undefined;
 
 // Trades the long-lived refresh token for a 1-hour access token. Amazon's
 // refresh token doesn't change when used, so sharing it is safe.
-async function accessToken() {
+export async function accessToken() {
 	if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
 		return cachedToken.value;
 	}
@@ -49,7 +49,7 @@ async function accessToken() {
 
 // GETs an SP-API path, waiting and retrying when Amazon says to slow down.
 // Order lists allow about one call a minute once the burst is spent.
-async function spApi(path: string): Promise<unknown> {
+export async function spApi(path: string): Promise<unknown> {
 	for (let attempt = 1; ; attempt++) {
 		const response = await fetch(`${ENDPOINT}${path}`, {
 			headers: { "x-amz-access-token": await accessToken() },

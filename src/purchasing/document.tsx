@@ -6,6 +6,7 @@ import {
 	Text,
 	View,
 } from "@react-pdf/renderer";
+import { formatUnit } from "#/lib/format";
 
 // The PO as the supplier sees it: a one-column letter-size PDF, emailed as an
 // attachment. Built from plain data so it can be rendered anywhere on the
@@ -25,6 +26,8 @@ export type PurchaseOrderDocument = {
 		sku: string;
 		supplierSku: string | null;
 		description: string;
+		unit: string;
+		packSize: number;
 		quantity: number;
 		unitCost: number | null;
 	}[];
@@ -74,7 +77,8 @@ const s = StyleSheet.create({
 	},
 	sku: { width: 90 },
 	desc: { flex: 1, paddingRight: 8 },
-	num: { width: 50, textAlign: "right" },
+	num: { width: 40, textAlign: "right" },
+	unit: { width: 70, paddingLeft: 6 },
 	money: { width: 70, textAlign: "right" },
 	total: {
 		flexDirection: "row",
@@ -132,6 +136,7 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 					{theirSkus && <Text style={[s.sku, s.bold]}>Your SKU</Text>}
 					<Text style={[s.desc, s.bold]}>Item</Text>
 					<Text style={[s.num, s.bold]}>Qty</Text>
+					<Text style={[s.unit, s.bold]}>Unit</Text>
 					<Text style={[s.money, s.bold]}>Unit price</Text>
 					<Text style={[s.money, s.bold]}>Amount</Text>
 				</View>
@@ -143,6 +148,7 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 							<Text style={s.muted}>Our SKU {l.sku}</Text>
 						</View>
 						<Text style={s.num}>{l.quantity}</Text>
+						<Text style={s.unit}>{formatUnit(l.unit, l.packSize)}</Text>
 						<Text style={s.money}>
 							{l.unitCost === null ? "Please quote" : money(l.unitCost)}
 						</Text>

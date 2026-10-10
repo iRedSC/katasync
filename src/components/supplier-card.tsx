@@ -2,12 +2,14 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "#/components/page";
+import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import {
 	type getProductSupplier,
 	listSuppliers,
 	type SupplierRow,
+	setProductPurchaseUnit,
 	setProductSupplier,
 } from "#/server/purchasing";
 
@@ -23,7 +25,7 @@ export function SupplierCard({
 	data: ProductSupplier;
 }) {
 	const [editing, setEditing] = useState(false);
-	const { link, open } = data;
+	const { link, open, units } = data;
 
 	return (
 		<Card
@@ -52,14 +54,26 @@ export function SupplierCard({
 					<dd className="truncate font-medium">{link.supplierName}</dd>
 					<dt className="text-muted-foreground">Their SKU</dt>
 					<dd className="truncate">{link.supplierSku ?? "—"}</dd>
+					<dt className="text-muted-foreground">Bought in</dt>
+					<dd>
+						<PurchaseUnitCell
+							label="this product"
+							value={link}
+							cost={link.cost}
+							units={units.map((u) => u.name)}
+							saving={{
+								save: (terms) =>
+									setProductPurchaseUnit({ data: { productId, ...terms } }),
+							}}
+						/>
+					</dd>
 					<dt className="text-muted-foreground">Price</dt>
-					<dd className="tabular-nums">{formatMoney(link.cost)}</dd>
-					{link.minimumQuantity > 1 && (
-						<>
-							<dt className="text-muted-foreground">Sold in</dt>
-							<dd>at least {formatCount(link.minimumQuantity)}</dd>
-						</>
-					)}
+					<dd className="tabular-nums">
+						{formatMoney(link.cost)}
+						{link.cost !== null && link.unit !== "EACH" && (
+							<span className="text-muted-foreground"> per {link.unit}</span>
+						)}
+					</dd>
 				</dl>
 			) : (
 				<p className="text-muted-foreground">
@@ -78,7 +92,8 @@ export function SupplierCard({
 								PO {po.id}
 							</Link>
 							<span className="text-muted-foreground">
-								{formatCount(po.quantity)}{" "}
+								{formatCount(po.quantity)}
+								{po.packSize !== 1 && ` ${po.unit}`}{" "}
 								{po.status === "draft"
 									? "in draft"
 									: po.expectedAt
@@ -124,7 +139,6 @@ function SupplierForm({
 					...(supplierId && {
 						supplierSku: String(f.get("supplierSku") ?? ""),
 						cost: cost === "" ? null : Number(cost),
-						minimumQuantity: Number(f.get("minimumQuantity")) || 1,
 					}),
 				},
 			});
@@ -162,22 +176,13 @@ function SupplierForm({
 				defaultValue={link?.supplierSku ?? ""}
 				className={input}
 			/>
-			<div className="grid grid-cols-2 gap-2">
-				<input
-					name="cost"
-					inputMode="decimal"
-					placeholder="Price each"
-					defaultValue={link?.cost ?? ""}
-					className={input}
-				/>
-				<input
-					name="minimumQuantity"
-					inputMode="numeric"
-					placeholder="Min qty"
-					defaultValue={link?.minimumQuantity ?? 1}
-					className={input}
-				/>
-			</div>
+			<input
+				name="cost"
+				inputMode="decimal"
+				placeholder={`Price per ${link?.unit ?? "EACH"}`}
+				defaultValue={link?.cost ?? ""}
+				className={input}
+			/>
 			<div className="flex gap-2">
 				<Button type="submit" size="sm" disabled={busy || suppliers === null}>
 					Save

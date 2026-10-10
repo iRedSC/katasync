@@ -24,7 +24,7 @@ type Status = (typeof purchaseOrders.$inferSelect)["status"];
 
 export const poName = (id: number) => `PO ${id}`;
 
-async function lockOrder(db: Db, id: number, allowed: Status[]) {
+export async function lockOrder(db: Db, id: number, allowed: Status[]) {
 	const [po] = await db
 		.select()
 		.from(purchaseOrders)
@@ -51,18 +51,25 @@ export async function draftFromSuggestions(
 // How today's suggestions differ from a draft. A draft is frozen once made:
 // these are what "Update" would apply. New products are added, and lines the
 // suggestion now wants more of are raised. Nothing is lowered or removed, so
-// a quantity set by hand is never undone.
+// a quantity set by hand is never undone. A line may be in a different unit
+// from the suggestion (set on just this PO), so amounts compare as the product
+// itself, and a raise is in the line's unit, rounded up.
 export function draftChanges(
-	draft: { productId: number; quantity: number }[],
+	draft: { productId: number; quantity: number; packSize: number }[],
 	suggested: SuggestedLine[],
 ) {
-	const onDraft = new Map(draft.map((l) => [l.productId, l.quantity]));
+	const onDraft = new Map(draft.map((l) => [l.productId, l]));
+	const raised: (SuggestedLine & { raiseTo: number })[] = [];
+	for (const l of suggested) {
+		const line = onDraft.get(l.productId);
+		if (!line) continue;
+		const want = l.quantity * l.packSize;
+		if (want > line.quantity * line.packSize)
+			raised.push({ ...l, raiseTo: Math.ceil(want / line.packSize) });
+	}
 	return {
 		added: suggested.filter((l) => !onDraft.has(l.productId)),
-		raised: suggested.filter((l) => {
-			const quantity = onDraft.get(l.productId);
-			return quantity !== undefined && l.quantity > quantity;
-		}),
+		raised,
 	};
 }
 
@@ -82,6 +89,7 @@ export async function updateFromSuggestions(
 			.select({
 				productId: purchaseOrderLines.productId,
 				quantity: purchaseOrderLines.quantity,
+				packSize: purchaseOrderLines.packSize,
 			})
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
@@ -91,6 +99,9 @@ export async function updateFromSuggestions(
 				added.map((l) => ({
 					purchaseOrderId: po.id,
 					productId: l.productId,
+					unit: l.unit,
+					packSize: l.packSize,
+					minimumQuantity: l.minimumQuantity,
 					quantity: l.quantity,
 					unitCost: l.unitCost,
 				})),
@@ -98,7 +109,7 @@ export async function updateFromSuggestions(
 		for (const l of raised)
 			await tx
 				.update(purchaseOrderLines)
-				.set({ quantity: l.quantity })
+				.set({ quantity: l.raiseTo })
 				.where(
 					and(
 						eq(purchaseOrderLines.purchaseOrderId, po.id),
@@ -143,14 +154,19 @@ export async function openDraft(db: Db, supplierId: number): Promise<number> {
 }
 
 // Sets how many of a product a draft orders, adding the line if needed. 0
-// removes it. Leaving out unitCost keeps the line's price, or starts a new line
-// at the supplier's price.
+// removes it. A new line is in the supplier's unit (EACH when the product has
+// no supplier). Leaving out unitCost keeps the line's price, or starts a new
+// line at the supplier's price. With inItems, quantity counts single items and
+// rounds up to whole packs of the line's pack size, read under the same lock
+// as the write so a change to the terms can't slip in between. Returns the
+// line's terms and the quantity it ended up with, in its unit.
 export async function setDraftLine(
 	db: Db,
 	input: {
 		purchaseOrderId: number;
 		productId: number;
 		quantity: number;
+		inItems?: boolean;
 		unitCost?: number | null;
 	},
 ) {
@@ -166,21 +182,42 @@ export async function setDraftLine(
 			eq(purchaseOrderLines.purchaseOrderId, po.id),
 			eq(purchaseOrderLines.productId, input.productId),
 		);
-		if (input.quantity === 0) {
-			await tx.delete(purchaseOrderLines).where(where);
-			return;
-		}
 		const [product] = await tx
 			.select({
 				kind: products.kind,
 				sku: products.sku,
 				productCost: products.unitCost,
 				supplierCost: productSuppliers.cost,
+				unit: productSuppliers.unit,
+				packSize: productSuppliers.packSize,
+				minimumQuantity: productSuppliers.minimumQuantity,
 			})
 			.from(products)
 			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
 			.where(eq(products.id, input.productId));
 		if (!product) throw new PurchaseOrderError("That product doesn't exist");
+		// A line already on the draft keeps its own terms; a new one starts
+		// with the supplier's.
+		const [existing] = await tx
+			.select({
+				unit: purchaseOrderLines.unit,
+				packSize: purchaseOrderLines.packSize,
+				minimumQuantity: purchaseOrderLines.minimumQuantity,
+			})
+			.from(purchaseOrderLines)
+			.where(where);
+		const terms = existing ?? {
+			unit: product.unit ?? "EACH",
+			packSize: product.packSize ?? 1,
+			minimumQuantity: product.minimumQuantity ?? 1,
+		};
+		const quantity = input.inItems
+			? Math.ceil(input.quantity / terms.packSize)
+			: input.quantity;
+		if (quantity === 0) {
+			await tx.delete(purchaseOrderLines).where(where);
+			return { ...terms, quantity };
+		}
 		if (product.kind === "bundle")
 			throw new PurchaseOrderError(
 				`${product.sku} is a tool set; order its parts instead`,
@@ -190,11 +227,15 @@ export async function setDraftLine(
 			.values({
 				purchaseOrderId: po.id,
 				productId: input.productId,
-				quantity: input.quantity,
+				...terms,
+				quantity,
 				unitCost:
 					input.unitCost !== undefined
 						? input.unitCost
-						: (product.supplierCost ?? product.productCost),
+						: (product.supplierCost ??
+							(product.productCost === null
+								? null
+								: product.productCost * terms.packSize)),
 			})
 			.onConflictDoUpdate({
 				target: [
@@ -202,10 +243,11 @@ export async function setDraftLine(
 					purchaseOrderLines.productId,
 				],
 				set: {
-					quantity: input.quantity,
+					quantity,
 					...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
 				},
 			});
+		return { ...terms, quantity };
 	});
 }
 
@@ -286,9 +328,9 @@ export async function markSent(
 	});
 }
 
-// What arrived for one line. Puts it on the shelf at the PO's location and
-// folds its price into the product's average cost. Closes the PO once every
-// line has arrived in full.
+// What arrived for one line, in the line's unit: 2 cases of 30 puts 60 on the
+// shelf at the PO's location. Folds its price into the product's average cost.
+// Closes the PO once every line has arrived in full.
 export async function receive(
 	db: Db,
 	input: { lineId: number; quantity: number },
@@ -319,7 +361,7 @@ export async function receive(
 				{
 					productId: line.productId,
 					locationId: po.locationId,
-					delta: input.quantity,
+					delta: input.quantity * line.packSize,
 					reason: "receipt",
 				},
 			],
@@ -333,8 +375,8 @@ export async function receive(
 			await averageInCost(tx, {
 				productId: line.productId,
 				onHandBefore: before,
-				quantity: input.quantity,
-				unitCost: line.unitCost,
+				quantity: input.quantity * line.packSize,
+				unitCost: line.unitCost / line.packSize,
 			});
 		}
 		const closed = await closeIfComplete(tx, po.id);
@@ -398,10 +440,17 @@ export async function closeOrder(db: Db, id: number, now = new Date()) {
 	});
 }
 
-// Calls a PO off. Once anything has arrived, close it instead.
-export async function cancelOrder(db: Db, id: number, now = new Date()) {
+// Calls a PO off. Once anything has arrived, close it instead. `allowed` is
+// checked under the lock, so a caller limiting itself to drafts can't cancel a
+// PO that was sent a moment ago.
+export async function cancelOrder(
+	db: Db,
+	id: number,
+	now = new Date(),
+	allowed: Status[] = ["draft", "sent"],
+) {
 	return db.transaction(async (tx) => {
-		await lockOrder(tx, id, ["draft", "sent"]);
+		await lockOrder(tx, id, allowed);
 		const [{ received }] = await tx
 			.select({
 				received: sql<number>`coalesce(sum(${purchaseOrderReceipts.quantity}), 0)::int`,
@@ -471,9 +520,10 @@ async function ownedOnHand(db: Db, productId: number) {
 	return row.onHand;
 }
 
-// Weighted average of what's on the shelf and what just arrived. Oversold
-// units (negative stock) have no cost to average in, so they count as none.
-// The supplier's price becomes the last price paid.
+// Weighted average of what's on the shelf and what just arrived, per one of
+// the product. Oversold units (negative stock) have no cost to average in, so
+// they count as none. The supplier's price becomes the last price paid, in
+// whatever unit the product is bought in now.
 export function averageCost(p: {
 	oldCost: number | null;
 	onHandBefore: number;
@@ -503,9 +553,14 @@ async function averageInCost(
 		.update(products)
 		.set({ unitCost: Math.round(cost * 10_000) / 10_000 })
 		.where(eq(products.id, p.productId));
+	// One statement, so the pack size it multiplies by is the row's current one
+	// even if a new default is being saved at the same time. Same rounding as
+	// perPack.
 	await db
 		.update(productSuppliers)
-		.set({ cost: p.unitCost })
+		.set({
+			cost: sql`round(${p.unitCost}::numeric * ${productSuppliers.packSize}, 4)`,
+		})
 		.where(eq(productSuppliers.productId, p.productId));
 }
 

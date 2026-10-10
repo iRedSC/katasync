@@ -1,0 +1,1 @@
+ALTER TABLE "stock_levels" ADD COLUMN IF NOT EXISTS "last_counted_at" timestamp with time zone;
