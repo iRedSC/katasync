@@ -81,3 +81,16 @@ export function formatPhone(phone: string) {
 		? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
 		: phone;
 }
+
+// What a person calls each channel. A store's own name is its account name
+// (Shopify's is the company), so lists say the channel instead.
+export const channelNames: Record<string, string> = {
+	shopify: "Shopify",
+	amazon: "Amazon",
+	ebay: "eBay",
+	tiktok: "TikTok Shop",
+};
+
+export function channelName(channel: string) {
+	return channelNames[channel] ?? channel;
+}

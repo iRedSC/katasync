@@ -3,6 +3,7 @@ import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
+import { channelNames } from "#/lib/format";
 import { listLocations, listStores, setPrimaryStore } from "#/server/catalog";
 import {
 	deletePackage,
@@ -23,12 +24,10 @@ export const Route = createFileRoute("/settings")({
 	component: Settings,
 });
 
-const channels = [
-	{ id: "shopify", name: "Shopify" },
-	{ id: "amazon", name: "Amazon" },
-	{ id: "ebay", name: "eBay" },
-	{ id: "tiktok", name: "TikTok Shop" },
-] as const;
+const channels = Object.entries(channelNames).map(([id, name]) => ({
+	id,
+	name,
+}));
 
 function Settings() {
 	const { locations, stores, boxes } = Route.useLoaderData();

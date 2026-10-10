@@ -3,7 +3,12 @@ import { ExternalLink, PackageCheck, Printer } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
-import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
+import {
+	channelName,
+	formatCount,
+	formatMoney,
+	formatOrderDate,
+} from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import { externalFulfillment } from "#/orders/fulfillment";
@@ -177,7 +182,7 @@ function Orders() {
 											)}
 										</td>
 										<td className="hidden px-4 py-2.5 lg:table-cell">
-											<Badge>{o.salesChannel ?? o.store}</Badge>
+											<Badge>{o.salesChannel ?? channelName(o.channel)}</Badge>
 										</td>
 										<td className="px-4 py-2.5 text-right tabular-nums">
 											{formatMoney(o.total)}

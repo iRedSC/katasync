@@ -12,7 +12,7 @@ import { CountDialog } from "#/components/count-dialog";
 import { Badge, Banner, Card, Page, type Tone } from "#/components/page";
 import { MovementTable, ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
-import { formatCount, formatMoney } from "#/lib/format";
+import { channelName, formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import {
@@ -274,7 +274,7 @@ function ProductPage() {
 										key={`${l.store}-${l.externalId}`}
 										className="flex justify-between gap-2"
 									>
-										<span>{l.store}</span>
+										<span>{channelName(l.channel)}</span>
 										{l.fulfillment === "fba" && (
 											<Badge>Fulfilled by Amazon</Badge>
 										)}

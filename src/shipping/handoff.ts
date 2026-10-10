@@ -22,7 +22,8 @@ export const live: Outside = {
 	refund: refundLabel,
 };
 
-const channelNames: Record<string, string> = {
+// The channels katasync sends tracking to, by the name people use.
+const trackingChannels: Record<string, string> = {
 	shopify: "Shopify",
 	ebay: "eBay",
 };
@@ -89,7 +90,7 @@ export async function sendTracking(
 		await orderOf(db, shipmentId),
 		async (tx) => {
 			const { shipment, order, channel } = await load(tx, shipmentId);
-			const name = channelNames[channel] ?? channel;
+			const name = trackingChannels[channel] ?? channel;
 			if (shipment.voidedAt) throw new Error("This label was voided");
 			if (shipment.channelSentAt) {
 				return { sent: true, message: `Tracking already sent to ${name}` };
@@ -98,7 +99,7 @@ export async function sendTracking(
 			if (shipment.test) {
 				return { sent: false, message: `Test label, so ${name} wasn't told` };
 			}
-			if (!(channel in channelNames)) {
+			if (!(channel in trackingChannels)) {
 				return {
 					sent: false,
 					message: `${name} orders are shipped on ${name}`,

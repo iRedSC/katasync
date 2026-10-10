@@ -18,7 +18,7 @@ import {
 	DialogDescription,
 	DialogTitle,
 } from "#/components/ui/dialog";
-import { formatCount } from "#/lib/format";
+import { channelName, formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import {
@@ -110,7 +110,7 @@ function Listings() {
 										<div className="truncate font-medium">{l.title}</div>
 										<div className="flex gap-2 text-xs text-muted-foreground">
 											<span>{l.externalSku}</span>
-											<span>{l.store}</span>
+											<span>{channelName(l.channel)}</span>
 										</div>
 									</div>
 									{l.unitsSold > 0 && (

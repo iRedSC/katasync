@@ -13,6 +13,7 @@ import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
 import { Button } from "#/components/ui/button";
 import {
+	channelName,
 	cityLine,
 	formatCount,
 	formatMoney,
@@ -116,7 +117,8 @@ function OrderPage() {
 			}
 		>
 			<p className="-mt-3 text-muted-foreground">
-				{formatOrderDate(order.placedAt)} on {order.salesChannel ?? order.store}
+				{formatOrderDate(order.placedAt)} on{" "}
+				{order.salesChannel ?? channelName(order.channel)}
 			</p>
 
 			{unmatched.length > 0 && (
@@ -188,7 +190,7 @@ function OrderPage() {
 									<LabelRow
 										key={l.id}
 										label={l}
-										channel={order.salesChannel ?? order.store}
+										channel={channelName(order.channel)}
 									/>
 								))}
 							</ul>
