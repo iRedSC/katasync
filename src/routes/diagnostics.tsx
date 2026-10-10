@@ -138,6 +138,7 @@ function DiagnosticsPage() {
 			<TrackingCard handoffs={d.handoffs} />
 			<UnmappedCard rows={d.unmapped} />
 			<ServicesCard services={d.services} />
+			<ClaudeCard calls={d.claude} />
 		</Page>
 	);
 }
@@ -619,6 +620,66 @@ function HintBlock({ hint }: { hint: Hint }) {
 		<div className="rounded-lg border border-info-border bg-info-surface p-3">
 			<p className="font-medium">{hint.title}</p>
 			<p className="text-muted-foreground">{hint.action}</p>
+		</div>
+	);
+}
+
+// What Claude changed through /mcp, newest first. Arguments are what it
+// asked for; the result is what katasync answered.
+function ClaudeCard({ calls }: { calls: Diagnostics["claude"] }) {
+	const [open, setOpen] = useState<number | null>(null);
+	return (
+		<div id="claude" className="scroll-mt-16">
+			<Card title="Changes made by Claude" flush>
+				{calls.length === 0 ? (
+					<p className="px-4 pb-4 text-muted-foreground">
+						None yet. Changes made through Claude (MCP) are listed here.
+					</p>
+				) : (
+					<ul>
+						{calls.map((c) => (
+							<li key={c.id} className="border-t">
+								<button
+									type="button"
+									onClick={() => setOpen(open === c.id ? null : c.id)}
+									className="grid w-full grid-cols-[9rem_10rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2 text-left hover:bg-[#f7f7f7]"
+								>
+									<span className="whitespace-nowrap text-muted-foreground">
+										{formatDateTime(c.createdAt)}
+									</span>
+									<span className="truncate font-mono text-xs">{c.tool}</span>
+									<span className="truncate font-mono text-xs text-muted-foreground">
+										{c.arguments}
+									</span>
+									<Badge tone={c.ok ? "success" : "critical"}>
+										{c.ok ? "Done" : "Failed"}
+									</Badge>
+								</button>
+								{open === c.id && (
+									<div className="flex flex-col gap-2 px-4 pb-3">
+										<p className="text-xs text-muted-foreground">
+											With the token {c.tokenName}
+										</p>
+										<pre className="max-h-48 overflow-auto rounded-lg bg-[#f7f7f7] p-2 font-mono text-xs break-words whitespace-pre-wrap">
+											{JSON.stringify(JSON.parse(c.arguments), null, 1)}
+										</pre>
+										<pre
+											className={cn(
+												"max-h-48 overflow-auto rounded-lg p-2 font-mono text-xs break-words whitespace-pre-wrap",
+												c.ok
+													? "bg-[#f7f7f7]"
+													: "bg-critical-surface text-critical-text",
+											)}
+										>
+											{c.result}
+										</pre>
+									</div>
+								)}
+							</li>
+						))}
+					</ul>
+				)}
+			</Card>
 		</div>
 	);
 }

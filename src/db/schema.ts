@@ -6,6 +6,7 @@ import {
 	check,
 	index,
 	integer,
+	jsonb,
 	numeric,
 	pgEnum,
 	pgTable,
@@ -685,6 +686,8 @@ export const apiTokens = pgTable("api_tokens", {
 	tokenHash: text().primaryKey(),
 	// Who or what holds it, e.g. "Claude on the office PC".
 	name: text().notNull(),
+	// A read-only token only gets the tools that read.
+	canWrite: boolean().notNull().default(true),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	lastUsedAt: timestamp({ withTimezone: true }),
 });
@@ -708,3 +711,21 @@ export const salesUnits = pgView("sales_units", {
 	placedAt: timestamp({ withTimezone: true }).notNull(),
 	units: integer().notNull(),
 }).existing();
+
+// Every change made through /mcp: which token, which tool, what it was asked,
+// and how it went. Shown on Diagnostics, so a change Claude made can be found.
+// Reads aren't kept. Written by src/routes/mcp.ts.
+export const mcpCalls = pgTable(
+	"mcp_calls",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		tokenName: text().notNull(),
+		tool: text().notNull(),
+		arguments: jsonb().notNull(),
+		ok: boolean().notNull(),
+		// The tool's answer or error, cut short.
+		result: text().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index("mcp_calls_created_idx").on(t.createdAt)],
+);

@@ -1,6 +1,7 @@
 import { and, desc, eq, isNotNull, isNull, max, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	mcpCalls,
 	orderLines,
 	orders,
 	shipments,
@@ -28,10 +29,20 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 			channelOverview(db, c, now),
 		),
 	);
-	const [[{ lastStartedAt }], handoffs, unmapped] = await Promise.all([
+	const [[{ lastStartedAt }], handoffs, unmapped, claude] = await Promise.all([
 		db.select({ lastStartedAt: max(syncRuns.startedAt) }).from(syncRuns),
 		failedHandoffs(db),
 		unmappedSkus(db),
+		// Changes made through /mcp (see src/mcp/log.ts).
+		db
+			.select()
+			.from(mcpCalls)
+			.orderBy(desc(mcpCalls.createdAt), desc(mcpCalls.id))
+			.limit(50)
+			// As text: arguments can be any JSON.
+			.then((rows) =>
+				rows.map((r) => ({ ...r, arguments: JSON.stringify(r.arguments) })),
+			),
 	]);
 	const shippoKey = process.env.SHIPPO_API_KEY;
 	return {
@@ -42,6 +53,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 		channels,
 		handoffs,
 		unmapped,
+		claude,
 		services: {
 			shippo: {
 				configured: Boolean(shippoKey),

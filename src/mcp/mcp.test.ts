@@ -5,8 +5,9 @@ import { checkApiToken, createApiToken, revokeApiToken } from "#/auth/tokens";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
+import { logCalls } from "./log";
 import { describeSchema, readOnlyQuery } from "./query";
-import { buildServer } from "./server";
+import { buildServer, READ_TOOLS } from "./server";
 
 let db: Db;
 let blade: number;
@@ -78,9 +79,13 @@ test("API tokens work until revoked, and only their hash is kept", async () => {
 });
 
 describe("over MCP", () => {
+	let canWrite = true;
+	beforeEach(() => {
+		canWrite = true;
+	});
 	// One stateless request, as /mcp handles it.
 	async function call(method: string, params: Record<string, unknown> = {}) {
-		const server = buildServer(db);
+		const server = buildServer(db, { canWrite });
 		const transport = new WebStandardStreamableHTTPServerTransport({
 			sessionIdGenerator: undefined,
 			enableJsonResponse: true,
@@ -126,6 +131,15 @@ describe("over MCP", () => {
 			destructiveHint: true,
 		});
 		expect(byName.has("send_purchase_order")).toBe(false);
+		// /mcp logs every tool not listed as reading; the list must be right.
+		const reading = tools
+			.filter(
+				(t: { annotations: { readOnlyHint?: boolean } }) =>
+					t.annotations.readOnlyHint,
+			)
+			.map((t: { name: string }) => t.name)
+			.sort();
+		expect(reading).toEqual([...READ_TOOLS].sort());
 	});
 
 	test("puts lines on each supplier's draft and reports what it skipped", async () => {
@@ -141,6 +155,7 @@ describe("over MCP", () => {
 		});
 		await createProduct(db, "LOOSE", "simple");
 		const { data } = await tool("set_draft_po_lines", {
+			quantity_in: "purchase_unit",
 			lines: [
 				{ sku: "BLADE", quantity: 3 },
 				{ sku: "LOOSE", quantity: 1 },
@@ -194,5 +209,153 @@ describe("over MCP", () => {
 			.from(schema.stockLevels)
 			.where(eq(schema.stockLevels.productId, blade));
 		expect(level.onHand).toBe(0);
+	});
+
+	test("a read-only token gets only the reading tools", async () => {
+		canWrite = false;
+		const { tools } = await call("tools/list");
+		expect(tools.map((t: { name: string }) => t.name).sort()).toEqual(
+			[...READ_TOOLS].sort(),
+		);
+		const tried = await call("tools/call", {
+			name: "record_count",
+			arguments: { sku: "BLADE", counted: 1 },
+		});
+		expect(tried.isError).toBe(true);
+	});
+
+	test("orders items as whole packs, in a line's own unit if it has one", async () => {
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		await db.insert(schema.productSuppliers).values({
+			productId: blade,
+			supplierId: canam,
+			unit: "CASE",
+			packSize: 12,
+			cost: 24,
+		});
+		const first = await tool("set_draft_po_lines", {
+			quantity_in: "items",
+			lines: [{ sku: "BLADE", quantity: 30 }],
+		});
+		expect(first.data.drafts[0].set[0]).toMatchObject({
+			quantity: 3,
+			unit: "CASE",
+			items: 36,
+		});
+		// This PO buys it in boxes of 6 instead.
+		await tool("set_po_line_terms", {
+			po: first.data.drafts[0].po,
+			sku: "BLADE",
+			unit: "BOX",
+			pack_size: 6,
+			minimum: 1,
+		});
+		const again = await tool("set_draft_po_lines", {
+			quantity_in: "items",
+			lines: [{ sku: "BLADE", quantity: 30 }],
+		});
+		expect(again.data.drafts[0].set[0]).toMatchObject({
+			quantity: 5,
+			unit: "BOX",
+			items: 30,
+		});
+	});
+
+	test("changes product details, kit parts, and builds kits", async () => {
+		const kit = await createProduct(db, "KIT", "kit");
+		const product = await tool("update_product", {
+			sku: "BLADE",
+			unit_cost: 1.5,
+			weight_oz: 2,
+			barcode: "123",
+		});
+		expect(product.data).toMatchObject({
+			unitCost: 1.5,
+			weightGrams: 57,
+			barcode: "123",
+		});
+		const dupe = await tool("update_product", { sku: "KIT", barcode: "123" });
+		expect(dupe.data).toMatch(/already on BLADE/);
+
+		await tool("set_components", {
+			sku: "KIT",
+			components: [{ sku: "BLADE", quantity: 2 }],
+		});
+		await tool("record_count", { sku: "BLADE", counted: 4 });
+		const built = await tool("assemble_kits", { sku: "KIT", quantity: 2 });
+		expect(built.isError).toBe(false);
+		const short = await tool("assemble_kits", { sku: "KIT", quantity: 1 });
+		expect(short.isError).toBe(true);
+		const levels = await db.select().from(schema.stockLevels);
+		expect(
+			Object.fromEntries(levels.map((l) => [l.productId, l.onHand])),
+		).toEqual({ [blade]: 0, [kit]: 2 });
+	});
+
+	test("receives a sent PO in its unit and undoes it", async () => {
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		const [location] = await db.select().from(schema.locations);
+		const [po] = await db
+			.insert(schema.purchaseOrders)
+			.values({ supplierId: canam, locationId: location.id, status: "sent" })
+			.returning();
+		await db.insert(schema.purchaseOrderLines).values({
+			purchaseOrderId: po.id,
+			productId: blade,
+			unit: "CASE",
+			packSize: 12,
+			quantity: 2,
+		});
+		const got = await tool("receive_po_line", {
+			po: po.id,
+			sku: "BLADE",
+			quantity: 1,
+		});
+		expect(got.data).toMatchObject({ closed: false });
+		const [level] = await db.select().from(schema.stockLevels);
+		expect(level.onHand).toBe(12);
+		await tool("undo_po_receipt", { receipt_id: got.data.receiptId });
+		const [after] = await db.select().from(schema.stockLevels);
+		expect(after.onHand).toBe(0);
+	});
+});
+
+test("logs calls to changing tools, not reads", async () => {
+	const request = [
+		{
+			jsonrpc: "2.0",
+			id: 1,
+			method: "tools/call",
+			params: { name: "query", arguments: { sql: "select 1" } },
+		},
+		{
+			jsonrpc: "2.0",
+			id: 2,
+			method: "tools/call",
+			params: { name: "record_count", arguments: { sku: "X", counted: 1 } },
+		},
+		{ jsonrpc: "2.0", id: 3, method: "tools/list" },
+	];
+	const response = [
+		{ id: 1, result: { content: [{ text: "rows" }] } },
+		{
+			id: 2,
+			result: { isError: true, content: [{ text: "No product with SKU X" }] },
+		},
+	];
+	expect(await logCalls(db, "Claude", request, response)).toBe(1);
+	const [row] = await db.select().from(schema.mcpCalls);
+	expect(row).toMatchObject({
+		tokenName: "Claude",
+		tool: "record_count",
+		arguments: { sku: "X", counted: 1 },
+		ok: false,
+		result: "No product with SKU X",
 	});
 });
