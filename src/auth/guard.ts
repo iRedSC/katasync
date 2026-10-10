@@ -1,5 +1,5 @@
 import { type Db, getDb } from "#/db/client";
-import { SESSION_COOKIE, sessionFor } from "./sessions";
+import { SESSION_COOKIE, sessionCookie, sessionFor } from "./sessions";
 
 // Decides, for every request, whether it may go ahead without a session.
 // Server only; src/start.ts runs it, except on the dev server.
@@ -33,15 +33,21 @@ export function cookieValue(request: Request, name: string) {
 }
 
 // Signed-out pages go to sign-in and come back after; anything else (a server
-// function, the PO PDF) is refused.
+// function, the PO PDF) is refused. When a request renews the session,
+// `onRenew` gets the Set-Cookie value to send with the response.
 export async function guard(
 	request: Request,
 	db: Db = getDb(),
+	onRenew?: (setCookie: string) => void,
 ): Promise<Response | null> {
 	const url = new URL(request.url);
 	if (isPublic(url.pathname)) return null;
 	const token = cookieValue(request, SESSION_COOKIE);
-	if (token && (await sessionFor(db, token))) return null;
+	const session = token ? await sessionFor(db, token) : null;
+	if (token && session) {
+		if (session.renewed) onRenew?.(sessionCookie(token));
+		return null;
+	}
 	if (
 		request.method === "GET" &&
 		request.headers.get("accept")?.includes("text/html")

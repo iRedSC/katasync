@@ -18,6 +18,11 @@ const RENEW_AFTER = DAY;
 
 export const SESSION_COOKIE = "katasync_session";
 
+// The cookie lives as long as the session does, so it's set again whenever
+// the session is renewed. A maxAge of 0 clears it.
+export const sessionCookie = (token: string, maxAge = SESSION_DAYS * 86_400) =>
+	`${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+
 export const newToken = () => randomBytes(32).toString("base64url");
 export const hashToken = (token: string) =>
 	createHash("sha256").update(token).digest("base64url");
@@ -38,7 +43,8 @@ export async function createSession(
 }
 
 // The session a cookie's token belongs to, or null when it's unknown or
-// expired. Renews it while it's in use.
+// expired. Renews it while it's in use; `renewed` tells the caller to send the
+// browser a fresh cookie.
 export async function sessionFor(db: Db, token: string, now = new Date()) {
 	const tokenHash = hashToken(token);
 	const [session] = await db
@@ -46,13 +52,15 @@ export async function sessionFor(db: Db, token: string, now = new Date()) {
 		.from(sessions)
 		.where(and(eq(sessions.tokenHash, tokenHash), gt(sessions.expiresAt, now)));
 	if (!session) return null;
-	const renewed = new Date(now.getTime() + SESSION_DAYS * DAY);
-	if (renewed.getTime() - session.expiresAt.getTime() > RENEW_AFTER)
+	const expiresAt = new Date(now.getTime() + SESSION_DAYS * DAY);
+	const renewed =
+		expiresAt.getTime() - session.expiresAt.getTime() > RENEW_AFTER;
+	if (renewed)
 		await db
 			.update(sessions)
-			.set({ expiresAt: renewed })
+			.set({ expiresAt })
 			.where(eq(sessions.tokenHash, tokenHash));
-	return session;
+	return { ...session, renewed };
 }
 
 export async function endSession(db: Db, token: string) {

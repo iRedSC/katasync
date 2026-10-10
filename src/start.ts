@@ -8,8 +8,29 @@ import { createMiddleware, createStart } from "@tanstack/react-start";
 // without the cookie a request is refused.
 const signedIn = createMiddleware().server(async ({ request, next }) => {
 	if (import.meta.env.DEV) return next();
-	const { guard } = await import("#/auth/guard");
-	return (await guard(request)) ?? next();
+	const [{ guard }, { getDb }] = await Promise.all([
+		import("#/auth/guard"),
+		import("#/db/client"),
+	]);
+	const renewed: { cookie?: string } = {};
+	const refused = await guard(request, getDb(), (setCookie) => {
+		renewed.cookie = setCookie;
+	});
+	if (refused) return refused;
+	const result = await next();
+	if (!renewed.cookie) return result;
+	// The session was renewed, so the cookie's lifetime moves with it. The
+	// headers of a response from elsewhere may be read-only, so copy it.
+	const headers = new Headers(result.response.headers);
+	headers.append("Set-Cookie", renewed.cookie);
+	return {
+		...result,
+		response: new Response(result.response.body, {
+			status: result.response.status,
+			statusText: result.response.statusText,
+			headers,
+		}),
+	};
 });
 
 export const startInstance = createStart(() => ({
