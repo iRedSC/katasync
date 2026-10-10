@@ -286,7 +286,7 @@ function Products() {
 							chips={filters}
 							onChips={(next) => setSearch({ filters: next })}
 							counts={facetValues}
-							placeholder="Search, or filter: #tag @type $vendor %status ^class <3 inventory"
+							placeholder="Search, or filter: #tag @type $vendor %status ^class >=3 inventory"
 							onKeyDown={(e) => {
 								if (e.key === "Enter") open(filtered[selected]);
 								if (e.key === "ArrowDown") {

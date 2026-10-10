@@ -15,7 +15,7 @@ import { SORTS, type Sort } from "#/products/views";
 const FIELDS: { field: Field; label: string; typed: string }[] = [
 	{ field: "status", label: "Status", typed: "%" },
 	{ field: "class", label: "Class", typed: "^" },
-	{ field: "inventory", label: "Inventory", typed: "<3" },
+	{ field: "inventory", label: "Inventory", typed: ">=3" },
 	{ field: "type", label: "Type", typed: "@" },
 	{ field: "vendor", label: "Vendor", typed: "$" },
 	{ field: "tag", label: "Tag", typed: "#" },
