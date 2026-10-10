@@ -40,14 +40,13 @@ const orderDetail = type({
 	orders: type({
 		id: "string",
 		status: "string",
+		// Packages already made for the order, however they were bought.
+		"packages?": type({ id: "string" }).array(),
 		line_items: type({ id: "string", "display_status?": "string" }).array(),
 	}).array(),
 });
 
-// The unit line items a label covers: every one not cancelled. Only orders
-// TikTok still waits on can get a label; one bought in Seller Center
-// already moved the order on.
-async function lineItemsToShip(orderId: string, cipher: string) {
+async function orderOf(orderId: string, cipher: string) {
 	const [order] = orderDetail.assert(
 		await tiktokApi("/order/202309/orders", {
 			shop_cipher: cipher,
@@ -55,6 +54,14 @@ async function lineItemsToShip(orderId: string, cipher: string) {
 		}),
 	).orders;
 	if (!order) throw new Error(`TikTok has no order ${orderId}`);
+	return order;
+}
+
+// The unit line items a label covers: every one not cancelled. Only orders
+// TikTok still waits on can get a label; one bought in Seller Center
+// already moved the order on.
+async function lineItemsToShip(orderId: string, cipher: string) {
+	const order = await orderOf(orderId, cipher);
 	if (order.status !== "AWAITING_SHIPMENT") {
 		throw new Error(
 			`TikTok shows this order as ${order.status.toLowerCase().replaceAll("_", " ")}, so it can't take a new label`,
@@ -120,6 +127,7 @@ const createdData = type({
 	"shipping_service_info?": { "price?": "string" },
 });
 const packageDetail = type({
+	"shipping_provider_name?": "string",
 	// PROCESSING until the carrier has it; RTS (ready to ship) once shipped.
 	"package_status?": "string",
 	"package_sub_status?": "string",
@@ -132,12 +140,38 @@ const documentData = type({ doc_url: "string", "tracking_number?": "string" });
 // package is the step that costs money. Telling TikTok it's ready to ship,
 // and picking up the tracking number, is the handoff's job
 // (tiktokShipPackage), so a failure there can be retried.
+//
+// If TikTok already has a package for the order (a purchase whose response
+// was lost, or a label bought in Seller Center), that package is returned
+// as recovered instead of buying another. TikTok doesn't say what it cost
+// here, so the recovered rate is 0 and the real charge is in Seller Center.
 export async function tiktokBuyLabel(
 	orderId: string,
 	parcel: Parcel,
 	serviceId: string,
 ) {
 	const cipher = await shopCipher();
+	const [bought] = (await orderOf(orderId, cipher)).packages ?? [];
+	if (bought) {
+		const pkg = packageDetail.assert(
+			await tiktokApi(`/fulfillment/202309/packages/${bought.id}`, {
+				shop_cipher: cipher,
+			}),
+		);
+		const carrier = pkg.shipping_provider_name ?? "TikTok";
+		return {
+			packageId: bought.id,
+			recovered: true,
+			rate: {
+				id: serviceId,
+				carrier,
+				service: "Recovered",
+				serviceName: `${carrier} (already bought on TikTok)`,
+				cost: 0,
+				days: null,
+			},
+		};
+	}
 	const { lineItemIds, rates } = await quote(orderId, cipher, parcel);
 	const rate = rates.find((r) => r.id === serviceId);
 	if (!rate)
@@ -159,6 +193,7 @@ export async function tiktokBuyLabel(
 	const charged = Number(created.shipping_service_info?.price);
 	return {
 		packageId: created.package_id,
+		recovered: false,
 		rate:
 			Number.isFinite(charged) && charged > 0
 				? { ...rate, cost: charged }

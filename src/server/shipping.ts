@@ -255,6 +255,8 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 			};
 			const seller = await labelSeller(data.orderId);
 			if (seller.source === "tiktok") {
+				// A package TikTok already made for this order is recorded, not
+				// bought again (a retry after a lost response).
 				const label = await tiktokBuyLabel(seller.tiktokId, data, data.rateId);
 				const [row] = await tx
 					.insert(shipments)
