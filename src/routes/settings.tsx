@@ -6,6 +6,12 @@ import { Button } from "#/components/ui/button";
 import { channelNames } from "#/lib/format";
 import { listLocations, listStores, setPrimaryStore } from "#/server/catalog";
 import {
+	addPurchaseUnit,
+	deletePurchaseUnit,
+	listPurchaseUnits,
+	renamePurchaseUnit,
+} from "#/server/purchasing";
+import {
 	deletePackage,
 	listPackages,
 	savePackage,
@@ -14,12 +20,13 @@ import {
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
-		const [locations, stores, boxes] = await Promise.all([
+		const [locations, stores, boxes, units] = await Promise.all([
 			listLocations(),
 			listStores(),
 			listPackages(),
+			listPurchaseUnits(),
 		]);
-		return { locations, stores, boxes };
+		return { locations, stores, boxes, units };
 	},
 	component: Settings,
 });
@@ -30,7 +37,7 @@ const channels = Object.entries(channelNames).map(([id, name]) => ({
 }));
 
 function Settings() {
-	const { locations, stores, boxes } = Route.useLoaderData();
+	const { locations, stores, boxes, units } = Route.useLoaderData();
 	return (
 		<Page title="Settings" narrow>
 			<Card title="Sales channels" flush>
@@ -76,6 +83,7 @@ function Settings() {
 				</ul>
 			</Card>
 			<Boxes boxes={boxes} />
+			<Units units={units} />
 			<Card title="Label printing">
 				<p className="text-muted-foreground">
 					Not set up yet. Each packing computer needs QZ Tray.
@@ -352,5 +360,157 @@ function PrimaryToggle({ store }: { store: Store }) {
 		>
 			{busy ? "Creating products…" : "Make primary"}
 		</Button>
+	);
+}
+
+type Unit = Awaited<ReturnType<typeof listPurchaseUnits>>[number];
+
+// What suppliers sell in, offered when setting a product's MOQ / UOM. A
+// rename carries over to every product in that unit; a unit in use can't be
+// removed.
+function Units({ units }: { units: Unit[] }) {
+	const router = useRouter();
+	const [renaming, setRenaming] = useState<string | null>(null);
+	const [adding, setAdding] = useState(false);
+
+	async function act(work: () => Promise<unknown>, done: string) {
+		try {
+			await work();
+			await router.invalidate();
+			toast.success(done);
+			return true;
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err));
+			return false;
+		}
+	}
+
+	return (
+		<div id="units">
+			<Card
+				title="Purchase units"
+				flush
+				aside={
+					!adding && (
+						<Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+							Add unit
+						</Button>
+					)
+				}
+			>
+				<ul>
+					{units.map((u) =>
+						renaming === u.name ? (
+							<li key={u.name} className="border-t first:border-t-0">
+								<UnitNameForm
+									initial={u.name}
+									onSave={async (to) =>
+										(await act(
+											() => renamePurchaseUnit({ data: { from: u.name, to } }),
+											`Renamed ${u.name}`,
+										)) && setRenaming(null)
+									}
+									onCancel={() => setRenaming(null)}
+								/>
+							</li>
+						) : (
+							<li
+								key={u.name}
+								className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
+							>
+								<span className="flex-1 font-medium">{u.name}</span>
+								<span className="text-muted-foreground">
+									{u.name === "EACH"
+										? "One of the product"
+										: u.products === 0
+											? "Not used"
+											: `${u.products} ${u.products === 1 ? "product" : "products"}`}
+								</span>
+								{u.name !== "EACH" && (
+									<>
+										<Button
+											size="sm"
+											variant="ghost"
+											onClick={() => setRenaming(u.name)}
+										>
+											Rename
+										</Button>
+										<Button
+											size="sm"
+											variant="ghost"
+											disabled={u.products > 0}
+											title={
+												u.products > 0
+													? "Change the products bought in it first"
+													: undefined
+											}
+											onClick={() =>
+												act(
+													() => deletePurchaseUnit({ data: { name: u.name } }),
+													`Removed ${u.name}`,
+												)
+											}
+										>
+											Remove
+										</Button>
+									</>
+								)}
+							</li>
+						),
+					)}
+				</ul>
+				{adding && (
+					<div className="border-t">
+						<UnitNameForm
+							initial=""
+							onSave={async (name) =>
+								(await act(
+									() => addPurchaseUnit({ data: { name } }),
+									`Added ${name.trim().toUpperCase()}`,
+								)) && setAdding(false)
+							}
+							onCancel={() => setAdding(false)}
+						/>
+					</div>
+				)}
+			</Card>
+		</div>
+	);
+}
+
+function UnitNameForm({
+	initial,
+	onSave,
+	onCancel,
+}: {
+	initial: string;
+	onSave: (name: string) => void;
+	onCancel: () => void;
+}) {
+	const [name, setName] = useState(initial);
+	return (
+		<form
+			className="flex items-center gap-2 px-4 py-3"
+			onSubmit={(e) => {
+				e.preventDefault();
+				onSave(name);
+			}}
+			onKeyDown={(e) => e.key === "Escape" && onCancel()}
+		>
+			<input
+				value={name}
+				// biome-ignore lint/a11y/noAutofocus: opened to type a name
+				autoFocus
+				placeholder="e.g. CASE, BAG, ROLL"
+				onChange={(e) => setName(e.target.value)}
+				className="h-8 flex-1 rounded-lg border border-input bg-white px-2 uppercase outline-none focus:border-ring"
+			/>
+			<Button type="submit" size="sm" disabled={name.trim() === ""}>
+				Save
+			</Button>
+			<Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+				Cancel
+			</Button>
+		</form>
 	);
 }

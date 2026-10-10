@@ -34,6 +34,14 @@ import {
 	updateFromSuggestions,
 } from "#/purchasing/orders";
 import { suggestPurchases } from "#/purchasing/reorder";
+import {
+	addUnit,
+	deleteUnit,
+	listUnits,
+	renameUnit,
+	setLineTerms,
+	setPurchaseUnit,
+} from "#/purchasing/units";
 
 const id = type({ id: "number.integer > 0" });
 
@@ -54,8 +62,9 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 					closedAt: purchaseOrders.closedAt,
 					createdAt: purchaseOrders.createdAt,
 					lines: sql<number>`count(${purchaseOrderLines.id})::int`,
-					ordered: sql<number>`coalesce(sum(${purchaseOrderLines.quantity}), 0)::int`,
-					received: sql<number>`coalesce(sum(least(coalesce(${received.units}, 0), ${purchaseOrderLines.quantity})), 0)::int`,
+					// Counted in the product itself, so cases and eaches add up.
+					ordered: sql<number>`coalesce(sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize}), 0)::int`,
+					received: sql<number>`coalesce(sum(least(coalesce(${received.units}, 0), ${purchaseOrderLines.quantity}) * ${purchaseOrderLines.packSize}), 0)::int`,
 					total: sql<number>`coalesce(sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.unitCost}), 0)::float`,
 				})
 				.from(purchaseOrders)
@@ -115,49 +124,51 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const po = await loadOrder(db, data.id);
-		const [onHand, receipts, ownedLocations, changes] = await Promise.all([
-			onHandOf(
-				db,
-				po.lines.map((l) => l.productId),
-			),
-			// The latest receipts that can still be undone.
-			db
-				.select({
-					id: purchaseOrderReceipts.id,
-					lineId: purchaseOrderReceipts.lineId,
-					quantity: purchaseOrderReceipts.quantity,
-					createdAt: purchaseOrderReceipts.createdAt,
-				})
-				.from(purchaseOrderReceipts)
-				.innerJoin(
-					purchaseOrderLines,
-					eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
-				)
-				.where(
-					and(
-						eq(purchaseOrderLines.purchaseOrderId, data.id),
-						isNull(purchaseOrderReceipts.undoesId),
-						sql`not exists (select 1 from ${purchaseOrderReceipts} u where u.undoes_id = ${purchaseOrderReceipts.id})`,
-					),
-				)
-				.orderBy(desc(purchaseOrderReceipts.id))
-				.limit(50),
-			db
-				.select({ id: locations.id, name: locations.name })
-				.from(locations)
-				.where(eq(locations.kind, "owned"))
-				.orderBy(locations.name),
-			// On a draft: how today's suggestions differ from it (see draftChanges).
-			po.order.status === "draft"
-				? suggestPurchases(db).then((all) => {
-						const c = draftChanges(
-							po.lines,
-							all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
-						);
-						return { added: c.added.length, raised: c.raised.length };
+		const [onHand, receipts, ownedLocations, changes, units] =
+			await Promise.all([
+				onHandOf(
+					db,
+					po.lines.map((l) => l.productId),
+				),
+				// The latest receipts that can still be undone.
+				db
+					.select({
+						id: purchaseOrderReceipts.id,
+						lineId: purchaseOrderReceipts.lineId,
+						quantity: purchaseOrderReceipts.quantity,
+						createdAt: purchaseOrderReceipts.createdAt,
 					})
-				: { added: 0, raised: 0 },
-		]);
+					.from(purchaseOrderReceipts)
+					.innerJoin(
+						purchaseOrderLines,
+						eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
+					)
+					.where(
+						and(
+							eq(purchaseOrderLines.purchaseOrderId, data.id),
+							isNull(purchaseOrderReceipts.undoesId),
+							sql`not exists (select 1 from ${purchaseOrderReceipts} u where u.undoes_id = ${purchaseOrderReceipts.id})`,
+						),
+					)
+					.orderBy(desc(purchaseOrderReceipts.id))
+					.limit(50),
+				db
+					.select({ id: locations.id, name: locations.name })
+					.from(locations)
+					.where(eq(locations.kind, "owned"))
+					.orderBy(locations.name),
+				// On a draft: how today's suggestions differ from it (see draftChanges).
+				po.order.status === "draft"
+					? suggestPurchases(db).then((all) => {
+							const c = draftChanges(
+								po.lines,
+								all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
+							);
+							return { added: c.added.length, raised: c.raised.length };
+						})
+					: { added: 0, raised: 0 },
+				listUnits(db).then((all) => all.map((u) => u.name)),
+			]);
 		return {
 			changes,
 			...po,
@@ -167,6 +178,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			})),
 			receipts,
 			locations: ownedLocations,
+			units,
 			emailConfigured: emailConfigured(),
 		};
 	});
@@ -303,8 +315,8 @@ export const listReceivable = createServerFn({ method: "GET" }).handler(
 				supplierName: suppliers.name,
 				expectedAt: purchaseOrders.expectedAt,
 				lines: sql<number>`count(*)::int`,
-				ordered: sql<number>`sum(${purchaseOrderLines.quantity})::int`,
-				received: sql<number>`coalesce(sum(least(coalesce(${received.units}, 0), ${purchaseOrderLines.quantity})), 0)::int`,
+				ordered: sql<number>`sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize})::int`,
+				received: sql<number>`coalesce(sum(least(coalesce(${received.units}, 0), ${purchaseOrderLines.quantity}) * ${purchaseOrderLines.packSize}), 0)::int`,
 			})
 			.from(purchaseOrders)
 			.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
@@ -370,6 +382,8 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 				supplierName: suppliers.name,
 				supplierSku: productSuppliers.supplierSku,
 				cost: productSuppliers.cost,
+				unit: productSuppliers.unit,
+				packSize: productSuppliers.packSize,
 				minimumQuantity: productSuppliers.minimumQuantity,
 			})
 			.from(productSuppliers)
@@ -380,6 +394,8 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 				id: purchaseOrders.id,
 				status: purchaseOrders.status,
 				quantity: purchaseOrderLines.quantity,
+				unit: purchaseOrderLines.unit,
+				packSize: purchaseOrderLines.packSize,
 				expectedAt: purchaseOrders.expectedAt,
 			})
 			.from(purchaseOrderLines)
@@ -397,7 +413,7 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 				),
 			)
 			.orderBy(purchaseOrders.id);
-		return { link: link ?? null, open };
+		return { link: link ?? null, open, units: await listUnits(db) };
 	});
 
 // Sets or changes who a product comes from. supplierId null removes it.
@@ -442,3 +458,46 @@ export const setProductSupplier = createServerFn({ method: "POST" })
 			.values({ productId: data.productId, ...values })
 			.onConflictDoUpdate({ target: productSuppliers.productId, set: values });
 	});
+
+// What a product is bought in (CASE of 30) and the fewest the supplier sells.
+export const setProductPurchaseUnit = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			productId: "number.integer > 0",
+			unit: "string > 0",
+			packSize: "number.integer > 0",
+			minimumQuantity: "number.integer > 0",
+		}),
+	)
+	.handler(async ({ data }) => setPurchaseUnit(getDb(), data));
+
+// What one draft PO orders a product in, and its minimum. makeDefault also
+// makes them the product's supplier default.
+export const setPurchaseLineTerms = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			purchaseOrderId: "number.integer > 0",
+			productId: "number.integer > 0",
+			unit: "string > 0",
+			packSize: "number.integer > 0",
+			minimumQuantity: "number.integer > 0",
+			makeDefault: "boolean",
+		}),
+	)
+	.handler(async ({ data }) => setLineTerms(getDb(), data));
+
+export const listPurchaseUnits = createServerFn({ method: "GET" }).handler(
+	async () => listUnits(getDb()),
+);
+
+export const addPurchaseUnit = createServerFn({ method: "POST" })
+	.validator(type({ name: "string" }))
+	.handler(async ({ data }) => addUnit(getDb(), data.name));
+
+export const renamePurchaseUnit = createServerFn({ method: "POST" })
+	.validator(type({ from: "string > 0", to: "string" }))
+	.handler(async ({ data }) => renameUnit(getDb(), data.from, data.to));
+
+export const deletePurchaseUnit = createServerFn({ method: "POST" })
+	.validator(type({ name: "string > 0" }))
+	.handler(async ({ data }) => deleteUnit(getDb(), data.name));

@@ -7,12 +7,15 @@
 //                            one-time import of Shopify orders placed in the
 //                            last 365 days that the regular sync hasn't seen
 //
-// A channel without credentials in the environment is skipped.
+// A channel without credentials in the environment is skipped. Every pass is
+// recorded for Diagnostics (/diagnostics).
 import { parseArgs } from "node:util";
 import { syncAmazon } from "#/channels/amazon";
 import { syncEbay } from "#/channels/ebay";
 import { backfillShopify, syncShopify } from "#/channels/shopify";
 import { getDb } from "#/db/client";
+import { channelEnv } from "#/diagnostics/checks";
+import { recordSyncRun } from "#/diagnostics/runs";
 import { assignOrderPins } from "#/shipping/pins";
 
 try {
@@ -36,7 +39,6 @@ const channels = [
 	{
 		name: "shopify",
 		every: 2 * MINUTE,
-		env: ["SHOPIFY_STORE_DOMAIN", "SHOPIFY_ADMIN_TOKEN"],
 		run: async () => {
 			// Listings change rarely; refresh them every 30 minutes.
 			const listings = Date.now() - shopifyListingsAt >= 30 * MINUTE;
@@ -48,22 +50,21 @@ const channels = [
 	{
 		name: "ebay",
 		every: 2 * MINUTE,
-		env: ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_REFRESH_TOKEN"],
 		run: () => syncEbay(getDb()),
 	},
 	{
 		// Amazon allows about one order-list call a minute.
 		name: "amazon",
 		every: 5 * MINUTE,
-		env: ["AMAZON_CLIENT_ID", "AMAZON_CLIENT_SECRET", "AMAZON_REFRESH_TOKEN"],
 		run: () => syncAmazon(getDb()),
 	},
-].filter((c) => !values.only || c.name === values.only);
+] as const;
+const selected = channels.filter((c) => !values.only || c.name === values.only);
 
 async function pass(channel: (typeof channels)[number]) {
 	const started = Date.now();
 	try {
-		const result = await channel.run();
+		const result = await recordSyncRun(getDb(), channel.name, channel.run);
 		const seconds = ((Date.now() - started) / 1000).toFixed(1);
 		console.log(
 			`${new Date().toISOString()} ${result.store}: ${result.orders} orders in ${seconds}s`,
@@ -92,8 +93,8 @@ if (values["shopify-history"]) {
 	process.exit(0);
 }
 
-const ready = channels.filter((c) => {
-	const missing = c.env.filter((name) => !process.env[name]);
+const ready = selected.filter((c) => {
+	const missing = channelEnv[c.name].filter((name) => !process.env[name]);
 	if (missing.length > 0) console.log(`Skipping ${c.name}: set ${missing.join(", ")}`);
 	return missing.length === 0;
 });

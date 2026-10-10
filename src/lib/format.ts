@@ -99,3 +99,9 @@ export const channelNames: Record<string, string> = {
 export function channelName(channel: string) {
 	return channelNames[channel] ?? channel;
 }
+
+// What a PO line is ordered in: "EACH", or "CASE of 30" when one unit holds
+// several of the product.
+export function formatUnit(unit: string, packSize: number) {
+	return packSize === 1 ? unit : `${unit} of ${formatCount(packSize)}`;
+}

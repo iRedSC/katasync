@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
+import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { Button } from "#/components/ui/button";
 import {
 	cityLine,
@@ -33,6 +34,7 @@ import {
 	receiveLine,
 	sendPurchaseOrder,
 	setLine,
+	setPurchaseLineTerms,
 	undoPurchaseReceipt,
 	updateDraftFromSuggestions,
 } from "#/server/purchasing";
@@ -73,9 +75,10 @@ function PurchaseOrderPage() {
 	const { busy, run } = useAction();
 	const po = d.order;
 	const draft = po.status === "draft";
-	const ordered = d.lines.reduce((n, l) => n + l.quantity, 0);
+	// Counted in the product itself, so 2 cases of 12 are 24.
+	const ordered = d.lines.reduce((n, l) => n + l.quantity * l.packSize, 0);
 	const received = d.lines.reduce(
-		(n, l) => n + Math.min(l.received, l.quantity),
+		(n, l) => n + Math.min(l.received, l.quantity) * l.packSize,
 		0,
 	);
 	const status = purchaseOrderStatus({ ...po, ordered, received });
@@ -391,6 +394,7 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 			<thead>
 				<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
 					<th className="px-4 py-2 font-medium">Product</th>
+					<th className="px-3 py-2 font-medium whitespace-nowrap">MOQ / UOM</th>
 					{draft && (
 						<th className="px-4 py-2 text-right font-medium whitespace-nowrap">
 							On hand
@@ -432,6 +436,49 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 									</div>
 								</div>
 							</div>
+						</td>
+						<td className="px-3 py-2">
+							<PurchaseUnitCell
+								label={l.sku}
+								value={l}
+								cost={l.unitCost}
+								units={draft ? d.units : undefined}
+								saving={{
+									save: (terms) =>
+										setPurchaseLineTerms({
+											data: {
+												purchaseOrderId: d.order.id,
+												productId: l.productId,
+												...terms,
+												makeDefault: false,
+											},
+										}),
+									// Only the product's own supplier's terms can change here.
+									...(l.linkSupplierId === d.supplier.id
+										? {
+												current: {
+													unit: l.defaultUnit ?? "EACH",
+													packSize: l.defaultPackSize ?? 1,
+													minimumQuantity: l.defaultMinimum ?? 1,
+												},
+												saveDefault: (terms) =>
+													setPurchaseLineTerms({
+														data: {
+															purchaseOrderId: d.order.id,
+															productId: l.productId,
+															...terms,
+															makeDefault: true,
+														},
+													}),
+											}
+										: {
+												noDefaultReason:
+													l.linkSupplierId === null
+														? "This product has no supplier yet; set one on its page"
+														: "This product is bought from another supplier",
+											}),
+								}}
+							/>
 						</td>
 						{draft && (
 							<td
@@ -688,7 +735,8 @@ function ReceiveField({ line }: { line: Line }) {
 		if (!valid) return;
 		const r = await run(
 			() => receiveLine({ data: { lineId: line.id, quantity: n } }),
-			() => `Received ${formatCount(n)} × ${line.sku}`,
+			() =>
+				`Received ${formatCount(n)}${line.packSize === 1 ? "" : ` ${line.unit}`} × ${line.sku}`,
 		);
 		if (r) setValue(String(Math.max(remaining - n, 1)));
 	}
@@ -707,7 +755,7 @@ function ReceiveField({ line }: { line: Line }) {
 			<input
 				value={value}
 				inputMode="numeric"
-				aria-label={`Units of ${line.sku} received`}
+				aria-label={`${line.unit} of ${line.sku} received`}
 				onChange={(e) => setValue(e.target.value)}
 				className={cn(field, "w-14")}
 			/>
@@ -786,8 +834,9 @@ function Receipts({ detail: d }: { detail: PurchaseOrderDetail }) {
 							<span className="min-w-0 flex-1 truncate">
 								<span className="font-semibold tabular-nums">
 									{formatCount(r.quantity)}
-								</span>{" "}
-								× {line?.name ?? "?"}
+								</span>
+								{line && line.packSize !== 1 && ` ${line.unit}`} ×{" "}
+								{line?.name ?? "?"}
 							</span>
 							<Button
 								size="sm"
@@ -796,7 +845,8 @@ function Receipts({ detail: d }: { detail: PurchaseOrderDetail }) {
 								onClick={() =>
 									run(
 										() => undoPurchaseReceipt({ data: { id: r.id } }),
-										() => `Took ${formatCount(r.quantity)} back off the shelf`,
+										() =>
+											`Took ${formatCount(r.quantity * (line?.packSize ?? 1))} back off the shelf`,
 									)
 								}
 							>
