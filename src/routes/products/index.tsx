@@ -1,12 +1,19 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FilterSearch } from "#/components/filter-search";
 import { AbcBadge, Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import { formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
+import {
+	type Facets,
+	facetCounts,
+	matches,
+	parseQuery,
+	type Filter as SearchFilter,
+} from "#/products/search";
 import { listProducts, type ProductRow } from "#/server/catalog";
 
 // Saved views, shown as tabs like Shopify's product index.
@@ -44,6 +51,25 @@ export const Route = createFileRoute("/products/")({
 
 const PAGE = 100;
 
+// What the search language can filter each product on. Status covers both
+// Shopify's (active, draft, archived) and the problems the Status column shows.
+function facetsOf(p: ProductRow): Facets {
+	const title = p.variantName ? `${p.name} ${p.variantName}` : p.name;
+	const status = p.status ? [p.status.toLowerCase()] : [];
+	if ((p.onHand ?? 0) < 0) status.push("oversold");
+	else if (p.kind === "bundle" && p.available === 0)
+		status.push("missing parts");
+	else if (p.available === 0) status.push("sold out");
+	return {
+		text: [p.sku, title, p.category ?? ""],
+		title: [title],
+		tag: p.tags,
+		type: p.category ? [p.category] : [],
+		vendor: p.vendor ? [p.vendor] : [],
+		status,
+	};
+}
+
 function Products() {
 	const { products, abcDays, unpriced } = Route.useLoaderData();
 	const { show = "all" } = Route.useSearch();
@@ -51,6 +77,7 @@ function Products() {
 	const search = useRef<HTMLInputElement>(null);
 	const list = useRef<HTMLTableSectionElement>(null);
 	const [query, setQuery] = useState("");
+	const [chips, setChips] = useState<SearchFilter[]>([]);
 	const [shown, setShown] = useState(PAGE);
 	const [selected, setSelected] = useState(0);
 
@@ -65,23 +92,21 @@ function Products() {
 		[products],
 	);
 
+	const facets = useMemo(() => products.map(facetsOf), [products]);
+	const facetValues = useMemo(() => facetCounts(facets), [facets]);
 	const filtered = useMemo(() => {
-		const q = query.trim().toLowerCase();
-		const matches = products.filter(
-			(p) =>
-				filters[show].test(p) &&
-				(q === "" ||
-					p.sku.toLowerCase().includes(q) ||
-					p.name.toLowerCase().includes(q) ||
-					p.category?.toLowerCase().includes(q)),
+		const q = parseQuery(query);
+		const all = [...chips, ...q.filters];
+		const found = products.filter(
+			(p, i) => filters[show].test(p) && matches(facets[i], all, q.words),
 		);
 		return byValue(show)
-			? matches.sort((a, b) => (a.abcRank ?? 0) - (b.abcRank ?? 0))
-			: matches;
-	}, [products, query, show]);
+			? found.sort((a, b) => (a.abcRank ?? 0) - (b.abcRank ?? 0))
+			: found;
+	}, [products, facets, query, chips, show]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the list changes
-	useEffect(() => setSelected(0), [query, show]);
+	useEffect(() => setSelected(0), [query, chips, show]);
 	useEffect(() => {
 		list.current
 			?.querySelector(`[data-index="${selected}"]`)
@@ -99,7 +124,10 @@ function Products() {
 		Enter: () => open(filtered[selected]),
 		Escape: () => {
 			if (document.activeElement === search.current) search.current?.blur();
-			else if (query) setQuery("");
+			else if (query || chips.length) {
+				setQuery("");
+				setChips([]);
+			}
 		},
 	});
 
@@ -151,33 +179,32 @@ function Products() {
 					))}
 				</div>
 				<div className="border-b p-2">
-					<div className="relative">
-						<Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
-						<input
-							ref={search}
-							placeholder="Search by name or SKU"
-							className="h-8 w-full rounded-lg border border-[#8a8a8a] bg-white pr-10 pl-8 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-							value={query}
-							onChange={(e) => {
-								setQuery(e.target.value);
-								setShown(PAGE);
-							}}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") open(filtered[selected]);
-								if (e.key === "ArrowDown") {
-									e.preventDefault();
-									setSelected((i) => Math.min(i + 1, last));
-								}
-								if (e.key === "ArrowUp") {
-									e.preventDefault();
-									setSelected((i) => Math.max(i - 1, 0));
-								}
-							}}
-						/>
-						<kbd className="absolute top-1.5 right-2 rounded border bg-[#f7f7f7] px-1.5 text-xs text-muted-foreground">
-							/
-						</kbd>
-					</div>
+					<FilterSearch
+						inputRef={search}
+						text={query}
+						onText={(text) => {
+							setQuery(text);
+							setShown(PAGE);
+						}}
+						chips={chips}
+						onChips={(next) => {
+							setChips(next);
+							setShown(PAGE);
+						}}
+						counts={facetValues}
+						placeholder="Search, or filter: #tag @type $vendor %status, #!tag to exclude"
+						onKeyDown={(e) => {
+							if (e.key === "Enter") open(filtered[selected]);
+							if (e.key === "ArrowDown") {
+								e.preventDefault();
+								setSelected((i) => Math.min(i + 1, last));
+							}
+							if (e.key === "ArrowUp") {
+								e.preventDefault();
+								setSelected((i) => Math.max(i - 1, 0));
+							}
+						}}
+					/>
 				</div>
 
 				<table className="w-full">

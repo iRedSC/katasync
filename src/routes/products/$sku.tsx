@@ -400,7 +400,13 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 function Details({ d }: { d: ProductDetail }) {
 	const p = d.product;
 	const rows: [string, ReactNode][] = [];
-	if (p.category) rows.push(["Type", p.category]);
+	// Type, vendor, and tags come from Shopify when we don't have our own.
+	const type = p.category ?? d.listings.find((l) => l.productType)?.productType;
+	const vendor = d.listings.find((l) => l.vendor)?.vendor;
+	const tags = [...new Set(d.listings.flatMap((l) => l.tags))].sort();
+	if (type) rows.push(["Type", type]);
+	if (vendor) rows.push(["Vendor", vendor]);
+	if (tags.length > 0) rows.push(["Tags", tags.join(", ")]);
 	if (p.unitCost !== null) rows.push(["Cost", formatMoney(p.unitCost)]);
 	if (p.barcode) rows.push(["Barcode", p.barcode]);
 	if (p.weightGrams) rows.push(["Weight", `${formatCount(p.weightGrams)} g`]);

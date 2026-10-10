@@ -1,1 +1,0 @@
-ALTER TABLE "stock_levels" ADD COLUMN "last_counted_at" timestamp with time zone;

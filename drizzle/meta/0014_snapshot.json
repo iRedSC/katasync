@@ -1,5 +1,5 @@
 {
-  "id": "21f75505-4659-4114-be08-1a8315ffa95e",
+  "id": "cba3c3a2-3315-4aca-8217-8f6eb6e93b59",
   "prevId": "339fb2ed-06ee-4e05-8e26-b342840b923e",
   "version": "7",
   "dialect": "postgresql",
@@ -56,6 +56,31 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'merchant'"
+        },
+        "tags": {
+          "name": "tags",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "product_type": {
+          "name": "product_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vendor": {
+          "name": "vendor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "product_id": {
           "name": "product_id",
@@ -1933,12 +1958,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
-        },
-        "last_counted_at": {
-          "name": "last_counted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
