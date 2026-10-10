@@ -98,7 +98,8 @@ export function AddFilter({
 	);
 }
 
-// Every value of one field, most common first, narrowed by what's typed.
+// Every value of one field, most common first, narrowed by what's typed. All
+// of them: a few hundred rows is cheap, and a cut-off list looks complete.
 function ValueList({
 	values,
 	onAdd,
@@ -110,8 +111,7 @@ function ValueList({
 	const [exclude, setExclude] = useState(false);
 	const shown = [...values]
 		.filter(([v]) => v.toLowerCase().includes(q.toLowerCase()))
-		.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-		.slice(0, 50);
+		.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 	return (
 		<>
 			{values.size > 8 && (
