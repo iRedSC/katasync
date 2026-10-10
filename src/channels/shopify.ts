@@ -190,6 +190,12 @@ const variantsPage = type({
 			id: "string",
 			sku: "string | null",
 			displayName: "string",
+			product: {
+				tags: "string[]",
+				productType: "string",
+				vendor: "string",
+				status: "string",
+			},
 		}).array(),
 	},
 });
@@ -198,7 +204,7 @@ const VARIANTS_QUERY = `
 query Variants($cursor: String) {
 	productVariants(first: 250, after: $cursor) {
 		pageInfo { hasNextPage endCursor }
-		nodes { id sku displayName }
+		nodes { id sku displayName product { tags productType vendor status } }
 	}
 }`;
 
@@ -284,6 +290,10 @@ export async function syncShopify(
 					externalSku: v.sku || null,
 					title: cleanTitle(v.displayName),
 					fulfillment: "merchant" as const,
+					tags: v.product.tags,
+					productType: v.product.productType || null,
+					vendor: v.product.vendor || null,
+					status: v.product.status,
 				})),
 			);
 			cursor = page.productVariants.pageInfo.hasNextPage
