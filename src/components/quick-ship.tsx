@@ -559,20 +559,19 @@ function PackageStep({
 }) {
 	const [value, setValue] = useState(current ? String(current.pin) : "");
 	const [custom, setCustom] = useState(!current && dims !== null);
-	const [typed, setTyped] = useState(
+	const [sides, setSides] = useState(
 		dims
-			? `${inches(dims.lengthMm)} ${inches(dims.widthMm)} ${inches(dims.heightMm)}`
-			: "",
+			? [dims.lengthMm, dims.widthMm, dims.heightMm].map((mm) =>
+					String(inches(mm)),
+				)
+			: [],
 	);
 	const match = boxes.find((b) => String(b.pin) === value);
-	const parts = typed
-		.split(/[\s×xX,]+/)
-		.map(Number)
-		.filter((n) => n > 0);
+	const parts = sides.map(Number).filter((n) => n > 0);
 
-	function submit() {
-		if (custom && parts.length === 3) {
-			const [l, w, h] = parts.map((n) => Math.round(n * MM_PER_INCH));
+	function submit(final = parts) {
+		if (custom && final.length === 3) {
+			const [l, w, h] = final.map((n) => Math.round(n * MM_PER_INCH));
 			onChoose({ box: null, dims: { lengthMm: l, widthMm: w, heightMm: h } });
 		} else if (!custom && match) {
 			onChoose({ box: match, dims: match });
@@ -594,15 +593,10 @@ function PackageStep({
 				</button>
 			</div>
 			{custom ? (
-				<input
-					// biome-ignore lint/a11y/noAutofocus: the step exists to type this
-					autoFocus
-					value={typed}
-					placeholder="12 9 4"
-					onFocus={(e) => e.target.select()}
-					onChange={(e) => setTyped(e.target.value)}
-					onKeyDown={(e) => e.key === "Enter" && submit()}
-					className={cn(bigInput, "text-5xl placeholder:text-[#e3e3e3]")}
+				<SizeInput
+					sides={sides}
+					onSides={setSides}
+					onSubmit={(final) => submit(final)}
 				/>
 			) : (
 				<input
@@ -630,7 +624,9 @@ function PackageStep({
 					parts.length === 3 ? (
 						<span className="font-semibold">{parts.join(" × ")} in</span>
 					) : (
-						<span className="text-muted-foreground">Length, width, height</span>
+						<span className="text-muted-foreground">
+							Length <Key>Space</Key> width <Key>Space</Key> height
+						</span>
 					)
 				) : match ? (
 					<span>
@@ -645,6 +641,81 @@ function PackageStep({
 					<span className="text-critical-text">No box has that pin</span>
 				) : null}
 			</div>
+		</div>
+	);
+}
+
+const SIDE_LETTERS = ["L", "W", "H"];
+
+// Length, width, height in one box: space locks in a number and labels it
+// (40 becomes 40L), backspace on an empty spot reopens the last one, Enter
+// takes all three.
+function SizeInput({
+	sides,
+	onSides,
+	onSubmit,
+}: {
+	sides: string[];
+	onSides: (sides: string[]) => void;
+	onSubmit: (final: number[]) => void;
+}) {
+	const [typing, setTyping] = useState("");
+	const input = useRef<HTMLInputElement>(null);
+	const done = sides.length === 3;
+
+	function lockIn() {
+		if (Number(typing) > 0 && !done) {
+			onSides([...sides, typing]);
+			setTyping("");
+		}
+	}
+
+	return (
+		// biome-ignore lint/a11y/useKeyWithClickEvents: clicking just focuses the real input inside
+		// biome-ignore lint/a11y/noStaticElementInteractions: same
+		<div
+			onClick={() => input.current?.focus()}
+			className="flex h-24 w-full cursor-text items-center justify-center gap-5 rounded-xl border-2 border-input bg-white text-6xl font-bold tabular-nums focus-within:border-[#303030]"
+		>
+			{sides.map((side, i) => (
+				<span key={SIDE_LETTERS[i]}>
+					{side}
+					<span className="ml-0.5 text-2xl font-semibold text-[#b5b5b5]">
+						{SIDE_LETTERS[i]}
+					</span>
+				</span>
+			))}
+			<input
+				ref={input}
+				// biome-ignore lint/a11y/noAutofocus: the step exists to type this
+				autoFocus
+				inputMode="decimal"
+				aria-label="Box size in inches"
+				value={typing}
+				onChange={(e) => setTyping(e.target.value.replace(/[^\d.]/g, ""))}
+				onKeyDown={(e) => {
+					if ([" ", "x", "X", ","].includes(e.key)) {
+						e.preventDefault();
+						lockIn();
+					}
+					if (e.key === "Backspace" && typing === "" && sides.length > 0) {
+						e.preventDefault();
+						setTyping(sides[sides.length - 1]);
+						onSides(sides.slice(0, -1));
+					}
+					if (e.key === "Enter") {
+						const final = [...sides, ...(Number(typing) > 0 ? [typing] : [])]
+							.map(Number)
+							.filter((n) => n > 0);
+						if (final.length === 3) onSubmit(final);
+					}
+				}}
+				style={{ width: `${Math.max(typing.length, 1)}ch` }}
+				className={cn(
+					"bg-transparent outline-none",
+					done && typing === "" && "w-0",
+				)}
+			/>
 		</div>
 	);
 }
