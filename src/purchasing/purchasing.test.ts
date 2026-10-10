@@ -569,6 +569,64 @@ describe("buying in packs", () => {
 		expect((await linesOf(id))[0]).toMatchObject({ unit: "PACK", quantity: 9 });
 	});
 
+	test("a line set in items converts with the terms it's written with", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await setLineTerms(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			unit: "CASE",
+			packSize: 12,
+			minimumQuantity: 2,
+			makeDefault: false,
+		});
+		// 25 items is 3 cases of 12, not 25 or 2.
+		expect(
+			await setDraftLine(db, {
+				purchaseOrderId: id,
+				productId: blade,
+				quantity: 25,
+				inItems: true,
+			}),
+		).toEqual({ unit: "CASE", packSize: 12, minimumQuantity: 2, quantity: 3 });
+		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 3 });
+
+		// Terms changed in between are used by the next call.
+		await setLineTerms(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			unit: "BOX",
+			packSize: 6,
+			minimumQuantity: 1,
+			makeDefault: false,
+		});
+		const { quantity } = await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 24,
+			inItems: true,
+		});
+		expect(quantity).toBe(4);
+		expect((await linesOf(id))[0]).toMatchObject({ unit: "BOX", quantity: 4 });
+
+		// A new line starts with the supplier's terms; no items removes it.
+		const knife = await createProduct(db, "KNIFE", "simple");
+		await supply(knife, 2);
+		const added = await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: knife,
+			quantity: 7,
+			inItems: true,
+		});
+		expect(added).toMatchObject({ unit: "EACH", packSize: 1, quantity: 7 });
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: knife,
+			quantity: 0,
+			inItems: true,
+		});
+		expect(await linesOf(id)).toHaveLength(1);
+	});
+
 	test("raises a line in its own unit, rounding up", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		await setLineTerms(db, {

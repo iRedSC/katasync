@@ -285,12 +285,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 				try {
 					const product = await productBySku(db, line.sku);
 					const [link] = await db
-						.select({
-							supplierId: productSuppliers.supplierId,
-							unit: productSuppliers.unit,
-							packSize: productSuppliers.packSize,
-							minimum: productSuppliers.minimumQuantity,
-						})
+						.select({ supplierId: productSuppliers.supplierId })
 						.from(productSuppliers)
 						.where(eq(productSuppliers.productId, product.id));
 					if (!link) {
@@ -299,29 +294,13 @@ function registerWriteTools(server: McpServer, db: Db) {
 					}
 					const po = await openDraft(db, link.supplierId);
 					// A line already on the draft may be in its own unit (set on
-					// just this PO); quantities count in that.
-					const [onDraft] = await db
-						.select({
-							unit: purchaseOrderLines.unit,
-							packSize: purchaseOrderLines.packSize,
-							minimum: purchaseOrderLines.minimumQuantity,
-						})
-						.from(purchaseOrderLines)
-						.where(
-							and(
-								eq(purchaseOrderLines.purchaseOrderId, po),
-								eq(purchaseOrderLines.productId, product.id),
-							),
-						);
-					const terms = onDraft ?? link;
-					const quantity =
-						quantity_in === "items"
-							? Math.ceil(line.quantity / terms.packSize)
-							: line.quantity;
-					await setDraftLine(db, {
+					// just this PO); quantities count in that. Read under the PO's
+					// lock, so the result is what was written.
+					const { quantity, ...terms } = await setDraftLine(db, {
 						purchaseOrderId: po,
 						productId: product.id,
-						quantity,
+						quantity: line.quantity,
+						inItems: quantity_in === "items",
 						...(line.unit_cost !== undefined
 							? { unitCost: line.unit_cost }
 							: {}),
@@ -338,8 +317,10 @@ function registerWriteTools(server: McpServer, db: Db) {
 						unit: terms.unit,
 						packSize: terms.packSize,
 						items: quantity * terms.packSize,
-						...(quantity > 0 && quantity < terms.minimum
-							? { warning: `below the supplier's minimum of ${terms.minimum}` }
+						...(quantity > 0 && quantity < terms.minimumQuantity
+							? {
+									warning: `below the supplier's minimum of ${terms.minimumQuantity}`,
+								}
 							: {}),
 					});
 				} catch (error) {
