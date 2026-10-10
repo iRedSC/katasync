@@ -141,17 +141,21 @@ const documentData = type({ doc_url: "string", "tracking_number?": "string" });
 // and picking up the tracking number, is the handoff's job
 // (tiktokShipPackage), so a failure there can be retried.
 //
-// If TikTok already has a package for the order (a purchase whose response
-// was lost, or a label bought in Seller Center), that package is returned
-// as recovered instead of buying another. TikTok doesn't say what it cost
-// here, so the recovered rate is 0 and the real charge is in Seller Center.
+// If the order has already moved past AWAITING_SHIPMENT with a package (a
+// purchase whose response was lost, or a label bought in Seller Center), that
+// package is returned as recovered instead of buying another. An order still
+// awaiting shipment always buys, even if TikTok lists a package for it.
+// TikTok doesn't say what a recovered label cost, so its rate is 0 and the
+// real charge is in Seller Center.
 export async function tiktokBuyLabel(
 	orderId: string,
 	parcel: Parcel,
 	serviceId: string,
 ) {
 	const cipher = await shopCipher();
-	const [bought] = (await orderOf(orderId, cipher)).packages ?? [];
+	const order = await orderOf(orderId, cipher);
+	const [bought] =
+		order.status === "AWAITING_SHIPMENT" ? [] : (order.packages ?? []);
 	if (bought) {
 		const pkg = packageDetail.assert(
 			await tiktokApi(`/fulfillment/202309/packages/${bought.id}`, {
