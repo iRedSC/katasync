@@ -8,6 +8,11 @@ export type ChannelListing = {
 	externalSku: string | null;
 	title: string;
 	fulfillment: "merchant" | "fba";
+	// Shopify's product filing; see the listings table.
+	tags?: string[];
+	productType?: string | null;
+	vendor?: string | null;
+	status?: string | null;
 };
 
 // Records what a channel currently lists. Updates listing details but never
@@ -44,6 +49,10 @@ export async function syncListings(
 					externalSku: sql`excluded.external_sku`,
 					title: sql`excluded.title`,
 					fulfillment: sql`excluded.fulfillment`,
+					tags: sql`excluded.tags`,
+					productType: sql`excluded.product_type`,
+					vendor: sql`excluded.vendor`,
+					status: sql`excluded.status`,
 					updatedAt: sql`now()`,
 				},
 			});

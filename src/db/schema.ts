@@ -240,6 +240,14 @@ export const listings = pgTable(
 		externalSku: text(),
 		title: text().notNull(),
 		fulfillment: listingFulfillment().notNull().default("merchant"),
+		// What the channel files the listing under, for filtering products.
+		// Shopify sets these per product, so every variant repeats them; other
+		// channels leave them empty. Status is Shopify's ACTIVE, DRAFT, or
+		// ARCHIVED.
+		tags: text().array().notNull().default(sql`'{}'::text[]`),
+		productType: text(),
+		vendor: text(),
+		status: text(),
 		// Null until someone maps it.
 		productId: integer().references(() => products.id),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
