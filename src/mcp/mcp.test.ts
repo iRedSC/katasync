@@ -1,11 +1,11 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import { checkApiToken, createApiToken, revokeApiToken } from "#/auth/tokens";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
-import { describeSchema, readOnlyQuery } from "./query";
+import { describeSchema, readOnlyQuery as run } from "./query";
 import { buildServer } from "./server";
 
 let db: Db;
@@ -19,41 +19,90 @@ beforeEach(async () => {
 });
 
 describe("read-only queries", () => {
+	// Stands in for a connection of its own: the test database, counting opens
+	// and closes the way withOwnConnection would.
+	let opened = 0;
+	let closed = 0;
+	beforeEach(() => {
+		opened = 0;
+		closed = 0;
+	});
+	const readOnlyQuery = (text: string, limit?: number) =>
+		run(text, limit, async (use) => {
+			opened++;
+			try {
+				return await use(db);
+			} finally {
+				closed++;
+			}
+		});
+
 	test("return rows and say when they were cut off", async () => {
 		await createProduct(db, "KNIFE", "simple");
-		const all = await readOnlyQuery(
-			db,
-			"select sku from products order by sku;",
-		);
+		const all = await readOnlyQuery("select sku from products order by sku;");
 		expect(all).toEqual({
 			rows: [{ sku: "BLADE" }, { sku: "KNIFE" }],
 			truncated: false,
 		});
-		const one = await readOnlyQuery(
-			db,
-			"select sku from products -- comment",
-			1,
-		);
+		const one = await readOnlyQuery("select sku from products -- comment", 1);
 		expect(one.truncated).toBe(true);
 	});
 
 	test("can't write, even smuggled after the select", async () => {
 		await expect(
-			readOnlyQuery(db, "delete from products returning *"),
+			readOnlyQuery("delete from products returning *"),
 		).rejects.toThrow();
 		await expect(
 			readOnlyQuery(
-				db,
 				"select 1) q; delete from products; select * from (select 1",
 			),
 		).rejects.toThrow();
 		await expect(
 			readOnlyQuery(
-				db,
 				"with gone as (delete from products returning *) select * from gone",
 			),
 		).rejects.toThrow();
 		expect(await db.select().from(schema.products)).toHaveLength(1);
+	});
+
+	test("each query gets a connection of its own, closed afterwards", async () => {
+		await readOnlyQuery("select 1");
+		await expect(readOnlyQuery("select * from nope")).rejects.toThrow();
+		expect({ opened, closed }).toEqual({ opened: 2, closed: 2 });
+	});
+
+	test("can't change the session for whoever uses the connection next", async () => {
+		const searchPath = async () =>
+			(
+				(await db.execute(sql`show search_path`)) as unknown as {
+					rows: { search_path: string }[];
+				}
+			).rows[0].search_path;
+		const before = await searchPath();
+		for (const text of [
+			"select set_config('search_path', 'pg_catalog', false)",
+			"select \"SET_CONFIG\"('search_path', 'pg_catalog', false)",
+			"select pg_catalog.set_config('search_path', 'pg_catalog', false)",
+		])
+			await expect(readOnlyQuery(text)).rejects.toThrow(/isn't available/);
+		expect(await searchPath()).toBe(before);
+		expect((await readOnlyQuery("select sku from products")).rows).toHaveLength(
+			1,
+		);
+	});
+
+	test("refuses sign-in tables and file or remote functions", async () => {
+		for (const text of [
+			"select * from sessions",
+			"select token_hash from api_tokens",
+			"select * from public.passkeys",
+			'select * from "setup_links"',
+			"select count(*) from auth_challenges",
+			"select pg_read_file('/etc/passwd')",
+			"select * from dblink('host=elsewhere', 'select 1') as t(a int)",
+		])
+			await expect(readOnlyQuery(text)).rejects.toThrow(/isn't available/);
+		expect(opened).toBe(0);
 	});
 
 	test("the schema lists tables and views but not sign-in bookkeeping", async () => {
@@ -165,6 +214,36 @@ describe("over MCP", () => {
 		]);
 		const [line] = await db.select().from(schema.purchaseOrderLines);
 		expect(line).toMatchObject({ productId: blade, quantity: 3, unitCost: 2 });
+	});
+
+	test("deletes a draft PO but never a sent one", async () => {
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		const [{ id: locationId }] = await db.select().from(schema.locations);
+		const [draft] = await db
+			.insert(schema.purchaseOrders)
+			.values({ supplierId: canam, locationId, status: "draft" })
+			.returning();
+		const [sent] = await db
+			.insert(schema.purchaseOrders)
+			.values({ supplierId: canam, locationId, status: "sent" })
+			.returning();
+		const refused = await tool("delete_draft_po", { po: sent.id });
+		expect(refused).toMatchObject({ isError: true });
+		expect(refused.data).toMatch(/is sent/);
+		const deleted = await tool("delete_draft_po", { po: draft.id });
+		expect(deleted.data).toEqual({ deleted: draft.id });
+		const status = async (id: number) =>
+			(
+				await db
+					.select()
+					.from(schema.purchaseOrders)
+					.where(eq(schema.purchaseOrders.id, id))
+			)[0].status;
+		expect(await status(sent.id)).toBe("sent");
+		expect(await status(draft.id)).toBe("cancelled");
 	});
 
 	test("creates boxes all or none", async () => {

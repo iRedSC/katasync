@@ -421,10 +421,17 @@ export async function closeOrder(db: Db, id: number, now = new Date()) {
 	});
 }
 
-// Calls a PO off. Once anything has arrived, close it instead.
-export async function cancelOrder(db: Db, id: number, now = new Date()) {
+// Calls a PO off. Once anything has arrived, close it instead. `allowed` is
+// checked under the lock, so a caller limiting itself to drafts can't cancel a
+// PO that was sent a moment ago.
+export async function cancelOrder(
+	db: Db,
+	id: number,
+	now = new Date(),
+	allowed: Status[] = ["draft", "sent"],
+) {
 	return db.transaction(async (tx) => {
-		await lockOrder(tx, id, ["draft", "sent"]);
+		await lockOrder(tx, id, allowed);
 		const [{ received }] = await tx
 			.select({
 				received: sql<number>`coalesce(sum(${purchaseOrderReceipts.quantity}), 0)::int`,

@@ -1,10 +1,12 @@
 import { sql } from "drizzle-orm";
-import type { Db } from "#/db/client";
+import { type Db, withOwnConnection } from "#/db/client";
 
 // Ad hoc SQL for the MCP query tool. Safe to hand to a model: Postgres itself
 // refuses writes in a read-only transaction, the statement is sent with a
 // parameter so Postgres takes exactly one statement (a "; delete ..." can't
-// ride along), and a time limit stops runaway queries.
+// ride along), a time limit stops runaway queries, and it runs on a
+// connection of its own so nothing it does to the session reaches the app's
+// pool. That connection is the boundary; the checks below are a second line.
 
 export class QueryError extends Error {
 	name = "QueryError";
@@ -16,21 +18,55 @@ const TIMEOUT = "15s";
 // Both Postgres drivers katasync uses (pg, PGlite) answer execute with rows.
 type Rows = { rows: Record<string, unknown>[] };
 
-export async function readOnlyQuery(db: Db, text: string, limit = 200) {
+// Sign-in bookkeeping: hashes, public keys, and live session ids. Hidden from
+// describe_schema and refused by name in queries.
+const AUTH_TABLES = [
+	"sessions",
+	"passkeys",
+	"api_tokens",
+	"setup_links",
+	"auth_challenges",
+];
+
+// Functions that change the session or reach outside the database.
+const FORBIDDEN_FUNCTIONS = [
+	"set_config",
+	"dblink\\w*",
+	"pg_read_\\w+",
+	"pg_ls_\\w+",
+	"pg_stat_file",
+	"lo_(import|export|get|open|put|from_bytea)",
+];
+
+const REFUSED = new RegExp(
+	`\\b(${[...AUTH_TABLES, ...FORBIDDEN_FUNCTIONS].join("|")})\\b`,
+	"i",
+);
+
+export async function readOnlyQuery(
+	text: string,
+	limit = 200,
+	connect = withOwnConnection,
+) {
 	const statement = text.trim().replace(/;\s*$/, "");
 	if (statement === "") throw new QueryError("Give a SELECT to run");
 	if (!(Number.isInteger(limit) && limit >= 1 && limit <= MAX_ROWS))
 		throw new QueryError(`limit is 1 to ${MAX_ROWS}`);
-	return db.transaction(async (tx) => {
-		await tx.execute(sql`set transaction read only`);
-		await tx.execute(sql.raw(`set local statement_timeout = '${TIMEOUT}'`));
-		// The newline ends a trailing -- comment before the wrapper.
-		const result = (await tx.execute(
-			sql`select * from (${sql.raw(statement)}\n) as q limit ${limit + 1}`,
-		)) as unknown as Rows;
-		const rows = result.rows.slice(0, limit).map(plain);
-		return { rows, truncated: result.rows.length > limit };
-	});
+	const refused = REFUSED.exec(statement)?.[1];
+	if (refused)
+		throw new QueryError(`${refused} isn't available to the query tool`);
+	return connect((db) =>
+		db.transaction(async (tx) => {
+			await tx.execute(sql`set transaction read only`);
+			await tx.execute(sql.raw(`set local statement_timeout = '${TIMEOUT}'`));
+			// The newline ends a trailing -- comment before the wrapper.
+			const result = (await tx.execute(
+				sql`select * from (${sql.raw(statement)}\n) as q limit ${limit + 1}`,
+			)) as unknown as Rows;
+			const rows = result.rows.slice(0, limit).map(plain);
+			return { rows, truncated: result.rows.length > limit };
+		}),
+	);
 }
 
 // JSON-friendly values: dates as ISO strings, big integers as numbers.
@@ -69,15 +105,6 @@ export async function describeSchema(db: Db) {
 			`${r.column_name} ${r.data_type}${r.is_nullable === "YES" ? "" : " not null"}`,
 		);
 	}
-	// Sign-in bookkeeping only holds hashes and public keys, so it's harmless,
-	// but it's noise for questions about the business.
-	for (const hidden of [
-		"sessions",
-		"passkeys",
-		"api_tokens",
-		"setup_links",
-		"auth_challenges",
-	])
-		tables.delete(hidden);
+	for (const hidden of AUTH_TABLES) tables.delete(hidden);
 	return Object.fromEntries(tables);
 }

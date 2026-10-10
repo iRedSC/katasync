@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 import * as schema from "./schema";
 
 // Works for both node-postgres in the app and PGlite in tests.
@@ -18,4 +18,21 @@ export function getDb(): Db {
 		});
 	}
 	return db;
+}
+
+// A connection of its own, closed afterwards. For running SQL we don't write:
+// whatever it changes on the session (set_config, advisory locks) goes away
+// with the connection instead of reaching the shared pool.
+export async function withOwnConnection<T>(
+	use: (db: Db) => Promise<T>,
+): Promise<T> {
+	const connectionString = process.env.DATABASE_URL;
+	if (!connectionString) throw new Error("DATABASE_URL is not set");
+	const client = new Client({ connectionString });
+	await client.connect();
+	try {
+		return await use(drizzle(client, { schema, casing: "snake_case" }));
+	} finally {
+		await client.end();
+	}
 }

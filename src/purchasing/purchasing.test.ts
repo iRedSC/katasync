@@ -428,6 +428,17 @@ describe("a PO from draft to received", () => {
 		).rejects.toThrow(/is closed/);
 	});
 
+	test("a draft-only cancel is checked under the lock, so a sent PO stays sent", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await markSent(db, { purchaseOrderId: id, sentTo: null });
+		await expect(cancelOrder(db, id, now, ["draft"])).rejects.toThrow(
+			/is sent/,
+		);
+		expect((await getPo(id)).status).toBe("sent");
+		await cancelOrder(db, id);
+		expect((await getPo(id)).status).toBe("cancelled");
+	});
+
 	test("can't receive a draft; a cancelled draft frees the slot", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		const [line] = await linesOf(id);

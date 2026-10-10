@@ -9,7 +9,6 @@ import {
 	packages,
 	productSuppliers,
 	products,
-	purchaseOrders,
 } from "#/db/schema";
 import { type CheckTarget, runCheck } from "#/diagnostics/checks";
 import { diagnosticsOverview } from "#/diagnostics/overview";
@@ -93,16 +92,6 @@ async function ownedLocation(db: Db, name?: string) {
 	return only;
 }
 
-async function draftOrder(db: Db, id: number) {
-	const [po] = await db
-		.select({ status: purchaseOrders.status })
-		.from(purchaseOrders)
-		.where(eq(purchaseOrders.id, id));
-	if (!po) throw new PurchaseOrderError(`No PO ${id}`);
-	if (po.status !== "draft")
-		throw new PurchaseOrderError(`PO ${id} is ${po.status}, not a draft`);
-}
-
 const unitTerms = {
 	unit: z.string().describe("Purchase unit name, e.g. EACH or CASE"),
 	pack_size: z
@@ -153,7 +142,7 @@ export function buildServer(db: Db) {
 			},
 			annotations: READ,
 		},
-		async ({ sql, limit }) => json(await readOnlyQuery(db, sql, limit)),
+		async ({ sql, limit }) => json(await readOnlyQuery(sql, limit)),
 	);
 
 	server.registerTool(
@@ -374,8 +363,7 @@ export function buildServer(db: Db) {
 			annotations: { ...WRITE, destructiveHint: true },
 		},
 		async ({ po }) => {
-			await draftOrder(db, po);
-			await cancelOrder(db, po);
+			await cancelOrder(db, po, new Date(), ["draft"]);
 			return json({ deleted: po });
 		},
 	);
