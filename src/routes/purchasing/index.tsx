@@ -178,15 +178,20 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 	// Same columns as the PO tables below, so the page reads as one list.
 	// Clicking a row opens the supplier's draft, creating it if needed.
 	return (
-		<table className="w-full">
+		<table className="w-full table-fixed">
+			<Columns />
 			<thead>
 				<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+					<th className="px-4 py-2 font-medium">PO</th>
 					<th className="px-4 py-2 font-medium">Supplier</th>
 					<th className="px-4 py-2 font-medium">Status</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
 						Products
 					</th>
 					<th className="px-4 py-2 text-right font-medium">Total</th>
+					<th className="hidden px-4 py-2 font-medium md:table-cell">
+						Expected
+					</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -199,8 +204,15 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 							busy !== null && "cursor-wait",
 						)}
 					>
-						<td className="w-full max-w-0 px-4 py-2.5">
-							<div className="truncate font-semibold">{s.supplierName}</div>
+						<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
+							{s.draftId ? (
+								`PO ${s.draftId}`
+							) : (
+								<span className="font-normal text-muted-foreground">New</span>
+							)}
+						</td>
+						<td className="px-4 py-2.5">
+							<div className="truncate">{s.supplierName}</div>
 						</td>
 						<td className="px-4 py-2.5 whitespace-nowrap">
 							{busy === s.supplierId ? (
@@ -212,12 +224,17 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 							)}
 						</td>
 						<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-							{formatCount(s.lines.length)}{" "}
-							{s.lines.length === 1 ? "product" : "products"}
-							{s.unpriced > 0 && `, ${s.unpriced} unpriced`}
+							<div className="truncate">
+								{formatCount(s.lines.length)}{" "}
+								{s.lines.length === 1 ? "product" : "products"}
+								{s.unpriced > 0 && `, ${s.unpriced} unpriced`}
+							</div>
 						</td>
 						<td className="px-4 py-2.5 text-right tabular-nums">
 							{formatMoney(s.total)}
+						</td>
+						<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
+							—
 						</td>
 					</tr>
 				))}
@@ -228,10 +245,26 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 
 type OrderRow = PurchasingList["open"][number];
 
+// Every table on this page shares these widths, so their columns line up
+// down the page whatever the contents. Supplier takes what's left.
+function Columns() {
+	return (
+		<colgroup>
+			<col className="w-24" />
+			<col />
+			<col className="w-40" />
+			<col className="hidden w-52 md:table-column" />
+			<col className="w-28" />
+			<col className="hidden w-32 md:table-column" />
+		</colgroup>
+	);
+}
+
 function OrderTable({ rows }: { rows: OrderRow[] }) {
 	const navigate = useNavigate();
 	return (
-		<table className="w-full">
+		<table className="w-full table-fixed">
+			<Columns />
 			<thead>
 				<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
 					<th className="px-4 py-2 font-medium">PO</th>
@@ -263,7 +296,7 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 							<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
 								PO {o.id}
 							</td>
-							<td className="w-full max-w-0 px-4 py-2.5">
+							<td className="px-4 py-2.5">
 								<div className="truncate">{o.supplierName}</div>
 							</td>
 							<td className="px-4 py-2.5">
