@@ -6,6 +6,7 @@ import { getDb } from "#/db/client";
 import { locations, orders, packages, shipments, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
 import { sendTracking, voidShipment, withOrderLock } from "#/shipping/handoff";
+import { labelPdf } from "#/shipping/label-file";
 import {
 	freePackagePin,
 	orderForShipping,
@@ -19,12 +20,7 @@ import {
 	getRates,
 	shippoIsTest,
 } from "#/shipping/shippo";
-import {
-	tiktokBuyLabel,
-	tiktokLabelPath,
-	tiktokOrderId,
-	tiktokRates,
-} from "#/shipping/tiktok";
+import { tiktokBuyLabel, tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
 const MM_PER_INCH = 25.4;
 const GRAMS_PER_OUNCE = 28.349523125;
@@ -272,7 +268,8 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 						insuredAmount: null,
 						trackingNumber: null,
 						trackingUrl: null,
-						labelUrl: tiktokLabelPath(label.packageId),
+						// TikTok's links expire; label-file.ts fetches by package.
+						labelUrl: null,
 						externalId: label.packageId,
 						test: false,
 					})
@@ -300,7 +297,11 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 				.returning();
 			return row;
 		});
-		return { ...saved, handoff: await sendTracking(db, saved.id) };
+		const handoff = await sendTracking(db, saved.id);
+		// Saved now so reprints never depend on the provider. A failure here
+		// is retried on the first print.
+		await labelPdf(db, saved.id).catch(() => {});
+		return { ...saved, handoff };
 	});
 
 // Tries sending a label's tracking to the marketplace again.

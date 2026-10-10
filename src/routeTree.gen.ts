@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StockRouteImport } from './routes/stock'
+import { Route as LabelsIdRouteImport } from './routes/labels/$id'
 import { Route as OrdersIndexRouteImport } from './routes/orders/index'
 import { Route as OrdersIdRouteImport } from './routes/orders/$id'
 import { Route as PrintInvoicesRouteImport } from './routes/print/invoices'
@@ -23,7 +24,6 @@ import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
-import { Route as LabelsTiktokPackageIdRouteImport } from './routes/labels/tiktok.$packageId'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -44,6 +44,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const StockRoute = StockRouteImport.update({
   id: '/stock',
   path: '/stock',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LabelsIdRoute = LabelsIdRouteImport.update({
+  id: '/labels/$id',
+  path: '/labels/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrdersIndexRoute = OrdersIndexRouteImport.update({
@@ -96,11 +101,6 @@ const ReceiveIdRoute = ReceiveIdRouteImport.update({
   path: '/receive/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LabelsTiktokPackageIdRoute = LabelsTiktokPackageIdRouteImport.update({
-  id: '/labels/tiktok/$packageId',
-  path: '/labels/tiktok/$packageId',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
   id: '/purchasing/pdf/$id',
   path: '/purchasing/pdf/$id',
@@ -112,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
+  '/labels/$id': typeof LabelsIdRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -122,7 +123,6 @@ export interface FileRoutesByFullPath {
   '/products/': typeof ProductsIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
-  '/labels/tiktok/$packageId': typeof LabelsTiktokPackageIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesByTo {
@@ -130,6 +130,7 @@ export interface FileRoutesByTo {
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
+  '/labels/$id': typeof LabelsIdRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -140,7 +141,6 @@ export interface FileRoutesByTo {
   '/products': typeof ProductsIndexRoute
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
-  '/labels/tiktok/$packageId': typeof LabelsTiktokPackageIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesById {
@@ -149,6 +149,7 @@ export interface FileRoutesById {
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
+  '/labels/$id': typeof LabelsIdRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -159,7 +160,6 @@ export interface FileRoutesById {
   '/products/': typeof ProductsIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
-  '/labels/tiktok/$packageId': typeof LabelsTiktokPackageIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRouteTypes {
@@ -169,6 +169,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/settings'
     | '/stock'
+    | '/labels/$id'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -179,7 +180,6 @@ export interface FileRouteTypes {
     | '/products/'
     | '/purchasing/'
     | '/receive/'
-    | '/labels/tiktok/$packageId'
     | '/purchasing/pdf/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -187,6 +187,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/settings'
     | '/stock'
+    | '/labels/$id'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -197,7 +198,6 @@ export interface FileRouteTypes {
     | '/products'
     | '/purchasing'
     | '/receive'
-    | '/labels/tiktok/$packageId'
     | '/purchasing/pdf/$id'
   id:
     | '__root__'
@@ -205,6 +205,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/settings'
     | '/stock'
+    | '/labels/$id'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -215,7 +216,6 @@ export interface FileRouteTypes {
     | '/products/'
     | '/purchasing/'
     | '/receive/'
-    | '/labels/tiktok/$packageId'
     | '/purchasing/pdf/$id'
   fileRoutesById: FileRoutesById
 }
@@ -224,6 +224,7 @@ export interface RootRouteChildren {
   ListingsRoute: typeof ListingsRoute
   SettingsRoute: typeof SettingsRoute
   StockRoute: typeof StockRoute
+  LabelsIdRoute: typeof LabelsIdRoute
   OrdersIdRoute: typeof OrdersIdRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
@@ -234,7 +235,6 @@ export interface RootRouteChildren {
   ProductsIndexRoute: typeof ProductsIndexRoute
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
-  LabelsTiktokPackageIdRoute: typeof LabelsTiktokPackageIdRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
 }
 
@@ -266,6 +266,13 @@ declare module '@tanstack/react-router' {
       path: '/stock'
       fullPath: '/stock'
       preLoaderRoute: typeof StockRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/labels/$id': {
+      id: '/labels/$id'
+      path: '/labels/$id'
+      fullPath: '/labels/$id'
+      preLoaderRoute: typeof LabelsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/orders/': {
@@ -338,13 +345,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReceiveIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/labels/tiktok/$packageId': {
-      id: '/labels/tiktok/$packageId'
-      path: '/labels/tiktok/$packageId'
-      fullPath: '/labels/tiktok/$packageId'
-      preLoaderRoute: typeof LabelsTiktokPackageIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/purchasing/pdf/$id': {
       id: '/purchasing/pdf/$id'
       path: '/purchasing/pdf/$id'
@@ -360,6 +360,7 @@ const rootRouteChildren: RootRouteChildren = {
   ListingsRoute: ListingsRoute,
   SettingsRoute: SettingsRoute,
   StockRoute: StockRoute,
+  LabelsIdRoute: LabelsIdRoute,
   OrdersIdRoute: OrdersIdRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
   ProductsSkuRoute: ProductsSkuRoute,
@@ -370,7 +371,6 @@ const rootRouteChildren: RootRouteChildren = {
   ProductsIndexRoute: ProductsIndexRoute,
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
-  LabelsTiktokPackageIdRoute: LabelsTiktokPackageIdRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
 }
 export const routeTree = rootRouteImport

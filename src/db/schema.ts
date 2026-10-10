@@ -4,6 +4,7 @@ import {
 	bigint,
 	boolean,
 	check,
+	customType,
 	index,
 	integer,
 	numeric,
@@ -17,6 +18,13 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
+
+// Raw bytes, for files kept in the database (label PDFs).
+const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
+	dataType: () => "bytea",
+	// node-postgres returns a Buffer, PGlite (tests) a plain Uint8Array.
+	fromDriver: (value) => Buffer.from(value),
+});
 
 // `owned` locations are ours to pick from. `fba` stock is Amazon's: we only
 // mirror what Amazon reports and never route orders to it.
@@ -384,7 +392,12 @@ export const shipments = pgTable(
 		insuredAmount: numeric({ precision: 12, scale: 2, mode: "number" }),
 		trackingNumber: text(),
 		trackingUrl: text(),
-		labelUrl: text().notNull(),
+		// The provider's own link to the label. TikTok's expire in a day, so
+		// TikTok labels have none and are fetched by package ID.
+		labelUrl: text(),
+		// The label PDF itself, saved when bought (or on first print), so a
+		// reprint never depends on the provider. Served at /labels/<id>.
+		labelPdf: bytea(),
 		externalId: text().notNull().unique(),
 		// Bought with a test key: a sample label that can't actually ship.
 		test: boolean().notNull(),

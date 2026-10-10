@@ -25,6 +25,7 @@ import {
 	savePackage,
 	voidLabel,
 } from "#/server/shipping";
+import { labelPath } from "#/shipping/label-path";
 import type { Rate } from "#/shipping/shippo";
 
 const MM_PER_INCH = 25.4;
@@ -263,7 +264,7 @@ export function QuickShip() {
 		if (!result) return;
 		setBought(result);
 		setStep("done");
-		window.open(result.labelUrl, "_blank");
+		window.open(labelPath(result.id), "_blank");
 		router.invalidate();
 	}
 
@@ -1118,7 +1119,7 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 						Next order
 					</button>
 					<a
-						href={bought.labelUrl}
+						href={labelPath(bought.id)}
 						target="_blank"
 						rel="noreferrer"
 						className="text-lg text-link hover:underline"

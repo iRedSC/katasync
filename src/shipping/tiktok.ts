@@ -190,8 +190,8 @@ export async function tiktokShipPackage(packageId: string) {
 	return { id: packageId, trackingNumber };
 }
 
-// The label PDF for a package. TikTok's link expires after about a day, so
-// it's fetched fresh each time rather than stored.
+// The label PDF link for a package. It expires after about a day; katasync
+// saves the PDF itself (label-file.ts).
 export async function tiktokLabel(packageId: string) {
 	const data = documentData.assert(
 		await tiktokApi(
@@ -207,8 +207,3 @@ export async function tiktokLabel(packageId: string) {
 	);
 	return { url: data.doc_url, trackingNumber: data.tracking_number || null };
 }
-
-// Where katasync keeps a TikTok label: its own route, which fetches a fresh
-// link from TikTok on every open.
-export const tiktokLabelPath = (packageId: string) =>
-	`/labels/tiktok/${encodeURIComponent(packageId)}`;
