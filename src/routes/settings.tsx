@@ -4,7 +4,12 @@ import { toast } from "sonner";
 import { Badge, Card, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import { listLocations, listStores } from "#/server/catalog";
-import { deletePackage, listPackages, savePackage } from "#/server/shipping";
+import {
+	deletePackage,
+	listPackages,
+	savePackage,
+	setPackageWeight,
+} from "#/server/shipping";
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
@@ -147,6 +152,7 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 							{inches(b.lengthMm)} × {inches(b.widthMm)} × {inches(b.heightMm)}{" "}
 							in
 						</span>
+						<EmptyWeight box={b} />
 						<Button size="sm" variant="ghost" onClick={() => remove(b)}>
 							Remove
 						</Button>
@@ -208,5 +214,55 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 				</form>
 			)}
 		</Card>
+	);
+}
+
+// Click to set a box's empty weight; Enter saves, Escape cancels.
+function EmptyWeight({ box }: { box: Box }) {
+	const router = useRouter();
+	const ounces = Math.round((box.weightGrams / 28.349523125) * 10) / 10;
+	const [editing, setEditing] = useState(false);
+	const [value, setValue] = useState(String(ounces || ""));
+
+	async function save() {
+		const weightOz = Number(value) || 0;
+		await setPackageWeight({ data: { id: box.id, weightOz } });
+		setEditing(false);
+		router.invalidate();
+		toast.success(
+			weightOz
+				? `${box.name} weighs ${weightOz} oz empty`
+				: `${box.name} has no weight`,
+		);
+	}
+
+	if (editing) {
+		return (
+			<input
+				// biome-ignore lint/a11y/noAutofocus: opened to type this
+				autoFocus
+				inputMode="decimal"
+				aria-label={`${box.name} empty weight in ounces`}
+				value={value}
+				placeholder="oz"
+				onFocus={(e) => e.target.select()}
+				onChange={(e) => setValue(e.target.value.replace(/[^\d.]/g, ""))}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") save();
+					if (e.key === "Escape") setEditing(false);
+				}}
+				onBlur={() => setEditing(false)}
+				className="h-8 w-20 rounded-lg border border-input px-2 text-right tabular-nums outline-none focus:border-ring"
+			/>
+		);
+	}
+	return (
+		<button
+			type="button"
+			onClick={() => setEditing(true)}
+			className="w-20 text-right text-muted-foreground tabular-nums hover:text-foreground hover:underline"
+		>
+			{ounces ? `${ounces} oz` : "No weight"}
+		</button>
 	);
 }

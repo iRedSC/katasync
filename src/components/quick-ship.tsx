@@ -22,6 +22,7 @@ import {
 	quickShipBuy,
 	quickShipLookup,
 	quickShipRates,
+	savePackage,
 	voidLabel,
 } from "#/server/shipping";
 import type { Rate } from "#/shipping/shippo";
@@ -358,6 +359,7 @@ export function QuickShip() {
 								current={box}
 								dims={dims}
 								onChoose={choosePackage}
+								onSaved={(saved) => setBoxes((list) => [...list, saved])}
 							/>
 						)}
 
@@ -551,13 +553,18 @@ function PackageStep({
 	current,
 	dims,
 	onChoose,
+	onSaved,
 }: {
 	boxes: Box[];
 	current: Box | null;
 	dims: Dims | null;
 	onChoose: (choice: { box: Box | null; dims: Dims }) => void;
+	onSaved: (box: Box) => void;
 }) {
 	const [value, setValue] = useState(current ? String(current.pin) : "");
+	const [saveError, setSaveError] = useState<string | null>(null);
+	// The side being typed but not locked in yet, for the hint below.
+	const [typing, setTyping] = useState("");
 	const [custom, setCustom] = useState(!current && dims !== null);
 	const [sides, setSides] = useState(
 		dims
@@ -567,10 +574,32 @@ function PackageStep({
 			: [],
 	);
 	const match = boxes.find((b) => String(b.pin) === value);
-	const parts = sides.map(Number).filter((n) => n > 0);
+	const parts = [...sides, typing].map(Number).filter((n) => n > 0);
 
-	function submit(final = parts) {
-		if (custom && final.length === 3) {
+	async function submit(final = parts) {
+		if (custom && final.length === 4) {
+			// A fourth number is a pin: save this size as a box (no empty
+			// weight; add one in Settings if it matters) and ship in it.
+			const [l, w, h, pin] = final;
+			const taken = boxes.find((b) => b.pin === pin);
+			if (taken) return setSaveError(`Pin ${pin} is already ${taken.name}`);
+			try {
+				const saved = await savePackage({
+					data: {
+						name: `${l} × ${w} × ${h}`,
+						lengthIn: l,
+						widthIn: w,
+						heightIn: h,
+						weightOz: 0,
+						pin,
+					},
+				});
+				onSaved(saved);
+				onChoose({ box: saved, dims: saved });
+			} catch (err) {
+				setSaveError(err instanceof Error ? err.message : String(err));
+			}
+		} else if (custom && final.length === 3) {
 			const [l, w, h] = final.map((n) => Math.round(n * MM_PER_INCH));
 			onChoose({ box: null, dims: { lengthMm: l, widthMm: w, heightMm: h } });
 		} else if (!custom && match) {
@@ -595,7 +624,11 @@ function PackageStep({
 			{custom ? (
 				<SizeInput
 					sides={sides}
-					onSides={setSides}
+					onSides={(next) => {
+						setSides(next);
+						setSaveError(null);
+					}}
+					onTyping={setTyping}
 					onSubmit={(final) => submit(final)}
 				/>
 			) : (
@@ -629,9 +662,25 @@ function PackageStep({
 				/>
 			)}
 			<div className="flex h-8 items-center justify-center text-lg">
-				{custom ? (
-					parts.length === 3 ? (
-						<span className="font-semibold">{parts.join(" × ")} in</span>
+				{custom && saveError ? (
+					<span className="text-critical-text">{saveError}</span>
+				) : custom ? (
+					parts.length === 4 ? (
+						<span>
+							Saves as box <span className="font-semibold">{parts[3]}</span>
+							<span className="text-muted-foreground">
+								{" "}
+								· {parts.slice(0, 3).join(" × ")} in
+							</span>
+						</span>
+					) : parts.length === 3 ? (
+						<span>
+							<span className="font-semibold">{parts.join(" × ")} in</span>
+							<span className="text-muted-foreground">
+								{" "}
+								· <Key>Space</Key> and a pin saves it as a box
+							</span>
+						</span>
 					) : (
 						<span className="text-muted-foreground">
 							Length <Key>Space</Key> width <Key>Space</Key> height
@@ -655,7 +704,8 @@ function PackageStep({
 	);
 }
 
-const SIDE_LETTERS = ["L", "W", "H"];
+// The fourth number, if typed, saves the size as a box under that pin.
+const SIDE_LETTERS = ["L", "W", "H", "PIN"];
 
 // Length, width, height in one box: space locks in a number and labels it
 // (40 becomes 40L), backspace on an empty spot reopens the last one, Enter
@@ -663,15 +713,22 @@ const SIDE_LETTERS = ["L", "W", "H"];
 function SizeInput({
 	sides,
 	onSides,
+	onTyping,
 	onSubmit,
 }: {
 	sides: string[];
 	onSides: (sides: string[]) => void;
+	onTyping: (typing: string) => void;
 	onSubmit: (final: number[]) => void;
 }) {
-	const [typing, setTyping] = useState("");
+	const [typing, setTypingHere] = useState("");
+	const setTyping = (text: string) => {
+		setTypingHere(text);
+		onTyping(text);
+	};
 	const input = useRef<HTMLInputElement>(null);
-	const done = sides.length === 3;
+	const done = sides.length === 4;
+	const onPin = sides.length === 3;
 
 	function lockIn() {
 		if (Number(typing) > 0 && !done) {
@@ -704,7 +761,13 @@ function SizeInput({
 					inputMode="decimal"
 					aria-label="Box size in inches"
 					value={typing}
-					onChange={(e) => setTyping(e.target.value.replace(/[^\d.]/g, ""))}
+					onChange={(e) =>
+						setTyping(
+							onPin
+								? e.target.value.replace(/\D/g, "").slice(0, 3)
+								: e.target.value.replace(/[^\d.]/g, ""),
+						)
+					}
 					onKeyDown={(e) => {
 						if ([" ", "x", "X", ","].includes(e.key)) {
 							e.preventDefault();
@@ -719,7 +782,7 @@ function SizeInput({
 							const final = [...sides, ...(Number(typing) > 0 ? [typing] : [])]
 								.map(Number)
 								.filter((n) => n > 0);
-							if (final.length === 3) onSubmit(final);
+							if (final.length >= 3) onSubmit(final);
 						}
 					}}
 					// Exactly as wide as what's typed, so the letter hugs the number.

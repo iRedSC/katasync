@@ -55,6 +55,17 @@ export const savePackage = createServerFn({ method: "POST" })
 		return saved;
 	});
 
+// A box's own weight, added to the items' weight when quick ship guesses.
+// Boxes saved from quick ship start without one.
+export const setPackageWeight = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", weightOz: "number >= 0" }))
+	.handler(async ({ data }) => {
+		await getDb()
+			.update(packages)
+			.set({ weightGrams: Math.round(data.weightOz * GRAMS_PER_OUNCE) })
+			.where(eq(packages.id, data.id));
+	});
+
 export const deletePackage = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))
 	.handler(async ({ data }) => {
