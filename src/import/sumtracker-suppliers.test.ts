@@ -98,14 +98,15 @@ describe("planSupplierImport", () => {
 				cost: 24,
 				minimumQuantity: 2,
 			},
-			// A pack size that isn't a number falls back to EACH, keeping the cost.
+			// A pack size that isn't a number falls back to EACH, and the price for
+			// that pack goes with it.
 			{
 				sku: "TAPE",
 				supplierCode: "MMC",
 				supplierSku: null,
 				unit: "EACH",
 				packSize: 1,
-				cost: 5,
+				cost: null,
 				minimumQuantity: 1,
 			},
 			{
@@ -121,7 +122,8 @@ describe("planSupplierImport", () => {
 		expect(plan.warnings).toEqual([
 			'CANAM: minimum order set to $1500 from its notes ("Free Shipping Min - $1500")',
 			"No email for MMC; their POs can't be sent until one is added",
-			'TAPE: pack size "twelve" isn\'t a whole number of 1 or more; bought in EACH instead',
+			'TAPE: pack size "twelve" isn\'t a whole number from 1 to 2147483647; bought in EACH instead',
+			"TAPE: ignored the supplier price $5, which was for a pack that couldn't be read",
 			"Skipped 1 links to SKUs katasync doesn't have: GONE",
 			"Skipped 1 links to tool sets, which are bought as their parts: SET",
 			"Ignored 1 supplier prices over twice or under half the product's cost, probably case prices: SPONGE ($140.25 vs $2)",
@@ -162,21 +164,82 @@ describe("planSupplierImport", () => {
 				"Units used, added if katasync doesn't have them yet: PACK",
 			],
 		});
-		// A unit with no pack size can't be priced, so it's EACH.
+		// A unit with no pack size can't be priced, so it's EACH without the price.
 		expect(first("Case", "")).toMatchObject({
 			...each,
+			cost: null,
 			warnings: [
-				'ROLLER: pack size "" isn\'t a whole number of 1 or more; bought in EACH instead',
+				'ROLLER: pack size "" isn\'t a whole number from 1 to 2147483647; bought in EACH instead',
+				"ROLLER: ignored the supplier price $200, which was for a pack that couldn't be read",
 			],
 		});
-		expect(first("Case", "2.5").warnings).toHaveLength(1);
+		expect(first("Case", "2.5").warnings).toHaveLength(2);
+		// A pack the database can't hold fails the whole import at apply time.
+		expect(first("Case", "2147483647")).toMatchObject({
+			unit: "CASE",
+			packSize: 2147483647,
+		});
+		expect(first("Case", "2147483648")).toMatchObject({
+			...each,
+			cost: null,
+			warnings: [
+				expect.stringContaining("from 1 to 2147483647"),
+				expect.stringContaining("ignored the supplier price"),
+			],
+		});
+		expect(first("Each", "2147483647")).toMatchObject({
+			unit: "PACK",
+			packSize: 2147483647,
+		});
+		expect(first("Each", "2147483648")).toMatchObject({
+			...each,
+			cost: null,
+			warnings: [
+				expect.stringContaining("from 1 to 2147483647"),
+				expect.stringContaining("ignored the supplier price"),
+			],
+		});
+		// A bad unit name keeps a good pack size under PACK, and its price.
 		expect(first("A unit name over twenty characters", "2")).toMatchObject({
-			unit: "EACH",
-			warnings: [expect.stringContaining("too long")],
+			unit: "PACK",
+			packSize: 2,
+			cost: 200,
+			warnings: [
+				expect.stringContaining("too long"),
+				"Units used, added if katasync doesn't have them yet: PACK",
+			],
+		});
+		// With no pack to keep, the unit and its price are both unknown.
+		expect(first("A unit name over twenty characters", "")).toMatchObject({
+			...each,
+			cost: null,
+			warnings: [
+				expect.stringContaining("too long"),
+				expect.stringContaining("ignored the supplier price"),
+			],
 		});
 		// A case price is checked against the whole case, not one product.
 		expect(first("Case", "12", "2400")).toMatchObject({ cost: 2400 });
 		expect(first("Case", "12", "200").cost).toBeNull();
+	});
+
+	test("drops the supplier price when the pack is unreadable, even with no catalog cost", () => {
+		// "05-158" has no cost in the catalog, so nothing else would catch it.
+		const plan = planSupplierImport(
+			{
+				...files,
+				links: `${linksHeader}\n2,Knife,,'05-158,USD,MMC,True,,Case,twelve,Per Unit,24.0000,0.0000,1,`,
+			},
+			catalog,
+		);
+		expect(plan.links).toEqual([
+			expect.objectContaining({
+				sku: "05-158",
+				unit: "EACH",
+				packSize: 1,
+				cost: null,
+			}),
+		]);
 	});
 
 	test("fails on a link to a supplier that isn't in the file", () => {

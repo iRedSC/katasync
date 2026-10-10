@@ -69,18 +69,25 @@ export type SupplierImportPlan = {
 // export fills in when nobody picked a unit).
 const EACH_NAMES = new Set([EACH, "UNIT", "PCS", "PER UNIT"]);
 
+// The largest pack size the database column holds.
+const MAX_PACK_SIZE = 2_147_483_647;
+
 // Reads a link's unit and pack size. Anything that can't be a real unit falls
 // back to EACH with a warning, so a bad cell never blocks the import or
-// silently prices a case as one product.
+// silently prices a case as one product. `fellBack` says the supplier's price
+// was for terms that were thrown away.
 function purchaseTerms(
 	sku: string,
 	uom: string,
 	packSize: string,
 	warnings: string[],
 ) {
-	const each = { unit: EACH, packSize: 1 };
+	const each = { unit: EACH, packSize: 1, fellBack: false };
+	const fallback = { ...each, fellBack: true };
 	const blank = packSize.trim() === "";
 	const count = blank ? 1 : Number(packSize);
+	const wholePack =
+		Number.isInteger(count) && count >= 1 && count <= MAX_PACK_SIZE;
 
 	let unit: string | null = null;
 	if (uom.trim() !== "") {
@@ -88,27 +95,34 @@ function purchaseTerms(
 			unit = unitName(uom);
 		} catch (e) {
 			if (!(e instanceof PurchaseOrderError)) throw e;
+			// The pack is still known, just not what it comes in.
+			if (wholePack && count > 1) {
+				warnings.push(
+					`${sku}: ${e.message}; bought in PACK of ${count} instead`,
+				);
+				return { unit: "PACK", packSize: count, fellBack: false };
+			}
 			warnings.push(`${sku}: ${e.message}; bought in EACH instead`);
-			return each;
+			return fallback;
 		}
 	}
 
 	if (unit === null || EACH_NAMES.has(unit)) {
 		if (blank || count <= 1) return each;
-		if (Number.isInteger(count)) {
+		if (wholePack) {
 			// EACH is always one of the product, so a pack needs its own unit.
 			warnings.push(
 				`${sku}: ${uom.trim() || EACH} with a pack size of ${count}; bought in PACK of ${count}`,
 			);
-			return { unit: "PACK", packSize: count };
+			return { unit: "PACK", packSize: count, fellBack: false };
 		}
-	} else if (!blank && Number.isInteger(count) && count >= 1) {
-		return { unit, packSize: count };
+	} else if (!blank && wholePack) {
+		return { unit, packSize: count, fellBack: false };
 	}
 	warnings.push(
-		`${sku}: pack size "${packSize.trim()}" isn't a whole number of 1 or more; bought in EACH instead`,
+		`${sku}: pack size "${packSize.trim()}" isn't a whole number from 1 to ${MAX_PACK_SIZE}; bought in EACH instead`,
 	);
-	return each;
+	return fallback;
 }
 
 // `catalog` is every product by SKU, so links can be checked before anything
@@ -188,9 +202,22 @@ export function planSupplierImport(
 			skipped.bundle.push(sku);
 			continue;
 		}
-		const { unit, packSize } = purchaseTerms(sku, r.uom, r.pack_size, warnings);
+		const { unit, packSize, fellBack } = purchaseTerms(
+			sku,
+			r.uom,
+			r.pack_size,
+			warnings,
+		);
 		// A zero cost in Sumtracker means nobody entered one.
 		let cost: number | null = Number(r.cost) > 0 ? Number(r.cost) : null;
+		// Per EACH, a price for a pack nobody could read would price every
+		// product at the whole pack's price.
+		if (fellBack && cost !== null) {
+			warnings.push(
+				`${sku}: ignored the supplier price $${cost}, which was for a pack that couldn't be read`,
+			);
+			cost = null;
+		}
 		// The cost is per unit, so it should be near the product's cost times
 		// the pack size. Some are far off (a $140 "each" sponge that costs $2:
 		// a case price filed under EACH). POs are in units, so those fall back
