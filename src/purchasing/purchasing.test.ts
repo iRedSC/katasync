@@ -582,18 +582,18 @@ describe("buying in packs", () => {
 
 	test("a converted line is raised to the new minimum", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
-		expect(await linesOf(id)).toMatchObject([{ unit: "EACH", quantity: 30 }]);
+		expect(await linesOf(id)).toMatchObject([{ unit: "EACH", quantity: 37 }]);
 		await setLineTerms(db, {
 			purchaseOrderId: id,
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
-			minimumQuantity: 4,
+			minimumQuantity: 5,
 			makeDefault: false,
 		});
-		// 30 blades are 3 cases, but the supplier won't sell fewer than 4.
+		// 37 blades are 4 cases, but the supplier won't sell fewer than 5.
 		expect(await linesOf(id)).toMatchObject([
-			{ unit: "CASE", packSize: 12, quantity: 4, minimumQuantity: 4 },
+			{ unit: "CASE", packSize: 12, quantity: 5, minimumQuantity: 5 },
 		]);
 	});
 
