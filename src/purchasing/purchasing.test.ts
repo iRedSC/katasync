@@ -461,9 +461,10 @@ describe("buying in packs", () => {
 
 	test("changing the unit converts the price and draft lines", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
-		// 120 sold in 90 days, 10 on hand: 30 each to order.
+		// 120 sold in 90 days for 10 + 20 days plus 5 spare (an A item), 10 on
+		// hand: 37 each to order.
 		expect(await linesOf(id)).toMatchObject([
-			{ unit: "EACH", packSize: 1, quantity: 30, unitCost: 2 },
+			{ unit: "EACH", packSize: 1, quantity: 37, unitCost: 2 },
 		]);
 		await setPurchaseUnit(db, {
 			productId: blade,
@@ -471,9 +472,9 @@ describe("buying in packs", () => {
 			packSize: 12,
 			minimumQuantity: 1,
 		});
-		// 30 blades round up to 3 cases of 12, at 12 × $2.
+		// 37 blades round up to 4 cases of 12, at 12 × $2.
 		expect(await linesOf(id)).toMatchObject([
-			{ unit: "CASE", packSize: 12, quantity: 3, unitCost: 24 },
+			{ unit: "CASE", packSize: 12, quantity: 4, unitCost: 24 },
 		]);
 		const [link] = await db.select().from(schema.productSuppliers);
 		expect(link).toMatchObject({ unit: "CASE", packSize: 12, cost: 24 });
@@ -538,11 +539,11 @@ describe("buying in packs", () => {
 			makeDefault: false,
 		});
 		expect(await linesOf(id)).toMatchObject([
-			{ ...terms, quantity: 3, unitCost: 24 },
+			{ ...terms, quantity: 4, unitCost: 24 },
 		]);
 		const [link] = await db.select().from(schema.productSuppliers);
 		expect(link).toMatchObject({ unit: "EACH", packSize: 1, cost: 2 });
-		// 30 wanted is 3 cases: already enough, though the units differ.
+		// 37 wanted is 4 cases: already enough, though the units differ.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 0,
@@ -572,7 +573,11 @@ describe("buying in packs", () => {
 			minimumQuantity: 5,
 			cost: 8,
 		});
-		expect((await linesOf(id))[0]).toMatchObject({ unit: "PACK", quantity: 9 });
+		// 4 cases of 12 is 48, or 12 packs of 4.
+		expect((await linesOf(id))[0]).toMatchObject({
+			unit: "PACK",
+			quantity: 12,
+		});
 	});
 
 	test("raises a line in its own unit, rounding up", async () => {
@@ -590,12 +595,12 @@ describe("buying in packs", () => {
 			productId: blade,
 			quantity: 1,
 		});
-		// 30 wanted, 12 on the PO: raised to 3 cases.
+		// 37 wanted, 12 on the PO: raised to 4 cases.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 1,
 		});
-		expect((await linesOf(id))[0].quantity).toBe(3);
+		expect((await linesOf(id))[0].quantity).toBe(4);
 	});
 
 	test("only the product's own supplier's PO can set its default", async () => {
@@ -684,7 +689,7 @@ describe("buying in packs", () => {
 		expect(poLock).toBeGreaterThanOrEqual(0);
 		expect(poLock).toBeLessThan(supplierLock);
 		expect(locks[poLock]).toContain('order by "purchase_orders"."id"');
-		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 3 });
+		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 4 });
 	});
 
 	test("EACH holds one, and the unit list guards what's in use", async () => {
