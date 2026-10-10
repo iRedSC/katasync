@@ -17,7 +17,9 @@ function facets(extra: Partial<Facets> = {}): Facets {
 		type: ["Flat Box"],
 		vendor: ["Uline"],
 		status: ["active"],
+		class: ["A"],
 		title: ["Flat Box 12x9"],
+		inventory: 5,
 		...extra,
 	};
 }
@@ -139,5 +141,33 @@ describe("suggest", () => {
 		expect(
 			suggest(counts, parseWord("#") as Filter, picked).map((s) => s.value),
 		).not.toContain("Boxes");
+	});
+});
+
+describe("class and inventory", () => {
+	test("^ filters on class, ^! leaves a class out", () => {
+		expect(parseWord("^a")).toMatchObject({ field: "class", value: "a" });
+		const { filters } = parseQuery("^!c");
+		expect(matches(facets(), filters, [])).toBe(true);
+		expect(matches(facets({ class: ["C"] }), filters, [])).toBe(false);
+		expect(matches(facets({ class: [] }), parseQuery("^A").filters, [])).toBe(
+			false,
+		);
+	});
+
+	test("comparisons filter on inventory and stack into a range", () => {
+		const at = (n: number, q: string) =>
+			matches(facets({ inventory: n }), parseQuery(q).filters, []);
+		expect(at(2, "<3")).toBe(true);
+		expect(at(3, "<3")).toBe(false);
+		expect(at(3, "<=3")).toBe(true);
+		expect(at(3, "=3")).toBe(true);
+		expect(at(4, ">=3")).toBe(true);
+		expect(at(-1, "<0")).toBe(true);
+		expect(at(5, ">2 <10")).toBe(true);
+		expect(at(12, ">2 <10")).toBe(false);
+		// Half typed: matches everything until there's a number.
+		expect(at(99, "<")).toBe(true);
+		expect(spell(parseWord("<=3") as Filter)).toBe("<=3");
 	});
 });

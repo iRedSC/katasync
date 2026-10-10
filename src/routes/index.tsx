@@ -4,6 +4,7 @@ import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { statusSearch } from "#/products/views";
 import { getDashboard } from "#/server/catalog";
 import { countDiagnosticsAttention } from "#/server/diagnostics";
 import { countOrdersToShip } from "#/server/orders";
@@ -39,7 +40,10 @@ function Home() {
 						label="Oversold"
 						value={d.oversold.length}
 						tone={d.oversold.length > 0 ? "critical" : undefined}
-						link={{ to: "/products", search: { show: "oversold" } }}
+						link={{
+							to: "/products",
+							search: statusSearch("oversold", "inventory"),
+						}}
 					/>
 					<Stat label="Monthly profit" pending="Waiting on profit app" />
 				</dl>
@@ -61,7 +65,7 @@ function Home() {
 					title={`${formatCount(d.blockedBundles)} of ${formatCount(d.bundles)} tool sets can't be sold`}
 					action={{
 						label: "Review tool sets",
-						link: { to: "/products", search: { show: "blocked" } },
+						link: { to: "/products", search: statusSearch("missing parts") },
 					}}
 				>
 					Each is missing a part. The parts blocking the most sets are below.
@@ -69,6 +73,33 @@ function Home() {
 			)}
 
 			<div className="grid gap-4 lg:grid-cols-2">
+				{d.atRisk.length > 0 && (
+					<Card
+						title={`${formatCount(d.atRisk.length)} A ${d.atRisk.length === 1 ? "item" : "items"} running out`}
+						aside={
+							<Link to="/purchasing" className="text-link hover:underline">
+								Purchase orders
+							</Link>
+						}
+						flush
+					>
+						<p className="px-4 pb-2 text-muted-foreground">
+							Top sellers that will run out before a new PO could arrive, even
+							counting what's on order.
+						</p>
+						<ul>
+							{d.atRisk.slice(0, 6).map((r) => (
+								<ProductRow key={r.sku} {...r}>
+									<Badge tone={r.daysLeft === 0 ? "critical" : "warning"}>
+										{r.daysLeft === 0
+											? "Out now"
+											: `${r.daysLeft} ${r.daysLeft === 1 ? "day" : "days"} left`}
+									</Badge>
+								</ProductRow>
+							))}
+						</ul>
+					</Card>
+				)}
 				{d.blockers.length > 0 && (
 					<Card title="Missing parts holding up tool sets" flush>
 						<ul>
@@ -88,7 +119,7 @@ function Home() {
 						aside={
 							<Link
 								to="/products"
-								search={{ show: "oversold" }}
+								search={statusSearch("oversold", "inventory")}
 								className="text-link hover:underline"
 							>
 								View all {d.oversold.length}
