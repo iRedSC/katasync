@@ -644,7 +644,8 @@ function PackageStep({
 					</span>
 				) : boxes.length === 0 ? (
 					<span className="text-muted-foreground">
-						No saved boxes yet. Type the length and press Space for a custom size.
+						No saved boxes yet. Type the length and press Space for a custom
+						size.
 					</span>
 				) : value ? (
 					<span className="text-critical-text">No box has that pin</span>
@@ -694,37 +695,42 @@ function SizeInput({
 					</span>
 				</span>
 			))}
-			<input
-				ref={input}
-				// biome-ignore lint/a11y/noAutofocus: the step exists to type this
-				autoFocus
-				inputMode="decimal"
-				aria-label="Box size in inches"
-				value={typing}
-				onChange={(e) => setTyping(e.target.value.replace(/[^\d.]/g, ""))}
-				onKeyDown={(e) => {
-					if ([" ", "x", "X", ","].includes(e.key)) {
-						e.preventDefault();
-						lockIn();
-					}
-					if (e.key === "Backspace" && typing === "" && sides.length > 0) {
-						e.preventDefault();
-						setTyping(sides[sides.length - 1]);
-						onSides(sides.slice(0, -1));
-					}
-					if (e.key === "Enter") {
-						const final = [...sides, ...(Number(typing) > 0 ? [typing] : [])]
-							.map(Number)
-							.filter((n) => n > 0);
-						if (final.length === 3) onSubmit(final);
-					}
-				}}
-				style={{ width: `${Math.max(typing.length, 1)}ch` }}
-				className={cn(
-					"bg-transparent outline-none",
-					done && typing === "" && "w-0",
+			{/* The side being typed shows its letter right after the cursor. */}
+			<span className="inline-flex items-baseline">
+				<input
+					ref={input}
+					// biome-ignore lint/a11y/noAutofocus: the step exists to type this
+					autoFocus
+					inputMode="decimal"
+					aria-label="Box size in inches"
+					value={typing}
+					onChange={(e) => setTyping(e.target.value.replace(/[^\d.]/g, ""))}
+					onKeyDown={(e) => {
+						if ([" ", "x", "X", ","].includes(e.key)) {
+							e.preventDefault();
+							lockIn();
+						}
+						if (e.key === "Backspace" && typing === "" && sides.length > 0) {
+							e.preventDefault();
+							setTyping(sides[sides.length - 1]);
+							onSides(sides.slice(0, -1));
+						}
+						if (e.key === "Enter") {
+							const final = [...sides, ...(Number(typing) > 0 ? [typing] : [])]
+								.map(Number)
+								.filter((n) => n > 0);
+							if (final.length === 3) onSubmit(final);
+						}
+					}}
+					// Exactly as wide as what's typed, so the letter hugs the number.
+					className="min-w-[0.15em] bg-transparent outline-none [field-sizing:content]"
+				/>
+				{!done && (
+					<span className="ml-0.5 text-2xl font-semibold text-[#b5b5b5]">
+						{SIDE_LETTERS[sides.length]}
+					</span>
 				)}
-			/>
+			</span>
 		</div>
 	);
 }
