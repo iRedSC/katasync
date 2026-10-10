@@ -1,8 +1,15 @@
 import { type } from "arktype";
 import { count, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { productSuppliers, products, suppliers } from "#/db/schema";
+import {
+	productSuppliers,
+	products,
+	purchaseUnits,
+	suppliers,
+} from "#/db/schema";
 import { chunks, readCsv } from "#/import/sumtracker";
+import { PurchaseOrderError } from "#/purchasing/orders";
+import { EACH, unitName } from "#/purchasing/units";
 
 // One-time import of Sumtracker's suppliers.csv and primary-suppliers.csv into
 // a catalog that already has its products. Build the plan first, review its
@@ -35,6 +42,8 @@ const linkRow = type({
 	supplier_code: "string > 0",
 	is_primary: "'True' | 'False'",
 	supplier_sku: "string",
+	uom: "string",
+	pack_size: "string",
 	cost: "string",
 	moq: "string",
 	"+": "delete",
@@ -46,11 +55,61 @@ export type SupplierImportPlan = {
 		sku: string;
 		supplierCode: string;
 		supplierSku: string | null;
+		unit: string;
+		packSize: number;
+		// Per unit, not per product.
 		cost: number | null;
+		// Counted in the unit.
 		minimumQuantity: number;
 	}[];
 	warnings: string[];
 };
+
+// What Sumtracker calls one of the product itself ("Per Unit" is what its
+// export fills in when nobody picked a unit).
+const EACH_NAMES = new Set([EACH, "UNIT", "PCS", "PER UNIT"]);
+
+// Reads a link's unit and pack size. Anything that can't be a real unit falls
+// back to EACH with a warning, so a bad cell never blocks the import or
+// silently prices a case as one product.
+function purchaseTerms(
+	sku: string,
+	uom: string,
+	packSize: string,
+	warnings: string[],
+) {
+	const each = { unit: EACH, packSize: 1 };
+	const blank = packSize.trim() === "";
+	const count = blank ? 1 : Number(packSize);
+
+	let unit: string | null = null;
+	if (uom.trim() !== "") {
+		try {
+			unit = unitName(uom);
+		} catch (e) {
+			if (!(e instanceof PurchaseOrderError)) throw e;
+			warnings.push(`${sku}: ${e.message}; bought in EACH instead`);
+			return each;
+		}
+	}
+
+	if (unit === null || EACH_NAMES.has(unit)) {
+		if (blank || count <= 1) return each;
+		if (Number.isInteger(count)) {
+			// EACH is always one of the product, so a pack needs its own unit.
+			warnings.push(
+				`${sku}: ${uom.trim() || EACH} with a pack size of ${count}; bought in PACK of ${count}`,
+			);
+			return { unit: "PACK", packSize: count };
+		}
+	} else if (!blank && Number.isInteger(count) && count >= 1) {
+		return { unit, packSize: count };
+	}
+	warnings.push(
+		`${sku}: pack size "${packSize.trim()}" isn't a whole number of 1 or more; bought in EACH instead`,
+	);
+	return each;
+}
 
 // `catalog` is every product by SKU, so links can be checked before anything
 // is written.
@@ -129,23 +188,29 @@ export function planSupplierImport(
 			skipped.bundle.push(sku);
 			continue;
 		}
+		const { unit, packSize } = purchaseTerms(sku, r.uom, r.pack_size, warnings);
 		// A zero cost in Sumtracker means nobody entered one.
 		let cost: number | null = Number(r.cost) > 0 ? Number(r.cost) : null;
-		// Some prices are for a whole case (a $140 "each" sponge that costs $2).
-		// POs are in units, so those fall back to the product's own cost.
-		if (
-			cost !== null &&
-			product.unitCost !== null &&
-			Math.max(cost / product.unitCost, product.unitCost / cost) > 2
-		) {
-			casePriced.push(`${sku} ($${cost} vs $${product.unitCost})`);
-			cost = null;
+		// The cost is per unit, so it should be near the product's cost times
+		// the pack size. Some are far off (a $140 "each" sponge that costs $2:
+		// a case price filed under EACH). POs are in units, so those fall back
+		// to the product's own cost.
+		if (cost !== null && product.unitCost !== null) {
+			const expected = product.unitCost * packSize;
+			if (Math.max(cost / expected, expected / cost) > 2) {
+				casePriced.push(
+					`${sku} ($${cost} vs $${Math.round(expected * 10_000) / 10_000})`,
+				);
+				cost = null;
+			}
 		}
 		const moq = Number(r.moq);
 		links.push({
 			sku,
 			supplierCode: r.supplier_code,
 			supplierSku: r.supplier_sku.trim() || null,
+			unit,
+			packSize,
 			cost,
 			minimumQuantity: Number.isInteger(moq) && moq > 0 ? moq : 1,
 		});
@@ -162,6 +227,14 @@ export function planSupplierImport(
 	if (casePriced.length > 0)
 		warnings.push(
 			`Ignored ${casePriced.length} supplier prices over twice or under half the product's cost, probably case prices: ${casePriced.join(", ")}`,
+		);
+
+	const units = [...new Set(links.map((l) => l.unit))].filter(
+		(u) => u !== EACH,
+	);
+	if (units.length > 0)
+		warnings.push(
+			`Units used, added if katasync doesn't have them yet: ${units.join(", ")}`,
 		);
 
 	if (errors.length > 0)
@@ -193,6 +266,19 @@ export async function applySupplierImport(db: Db, plan: SupplierImportPlan) {
 		const rows = await tx.insert(suppliers).values(plan.suppliers).returning();
 		const supplierIds = new Map(rows.map((s) => [s.code, s.id]));
 
+		// Links point at units, so the ones the export uses must exist first.
+		const wanted = [...new Set(plan.links.map((l) => l.unit))].filter(
+			(u) => u !== EACH,
+		);
+		const created =
+			wanted.length === 0
+				? []
+				: await tx
+						.insert(purchaseUnits)
+						.values(wanted.map((name) => ({ name })))
+						.onConflictDoNothing()
+						.returning({ name: purchaseUnits.name });
+
 		const productIds = new Map<string, number>();
 		for (const chunk of chunks(plan.links, 500)) {
 			const found = await tx
@@ -218,12 +304,18 @@ export async function applySupplierImport(db: Db, plan: SupplierImportPlan) {
 						productId,
 						supplierId,
 						supplierSku: l.supplierSku,
+						unit: l.unit,
+						packSize: l.packSize,
 						cost: l.cost,
 						minimumQuantity: l.minimumQuantity,
 					};
 				}),
 			);
 		}
-		return { suppliers: rows.length, links: plan.links.length };
+		return {
+			suppliers: rows.length,
+			links: plan.links.length,
+			unitsCreated: created.map((u) => u.name).sort(),
+		};
 	});
 }
