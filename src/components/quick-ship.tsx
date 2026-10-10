@@ -589,7 +589,7 @@ function PackageStep({
 					className="text-link hover:underline"
 					onClick={() => setCustom((c) => !c)}
 				>
-					{custom ? "Use a saved box" : "Custom size (C)"}
+					{custom ? "Use a saved box" : "Custom size (C or Space)"}
 				</button>
 			</div>
 			{custom ? (
@@ -612,7 +612,16 @@ function PackageStep({
 						}
 						setValue(e.target.value.replace(/\D/g, ""));
 					}}
-					onKeyDown={(e) => e.key === "Enter" && submit()}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") submit();
+						// Space means this is a size, not a pin: what's typed so far
+						// becomes the length.
+						if (e.key === " ") {
+							e.preventDefault();
+							setSides(Number(value) > 0 ? [value] : []);
+							setCustom(true);
+						}
+					}}
 					className={cn(
 						bigInput,
 						"tracking-[0.4em] placeholder:text-[#e3e3e3]",
@@ -635,7 +644,7 @@ function PackageStep({
 					</span>
 				) : boxes.length === 0 ? (
 					<span className="text-muted-foreground">
-						No saved boxes yet. Press C for a custom size.
+						No saved boxes yet. Type the length and press Space for a custom size.
 					</span>
 				) : value ? (
 					<span className="text-critical-text">No box has that pin</span>
