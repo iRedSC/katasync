@@ -1,58 +1,83 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+	createFileRoute,
+	useNavigate,
+	useRouter,
+} from "@tanstack/react-router";
+import { type } from "arktype";
+import { Pencil } from "lucide-react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
 import { AbcBadge, Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import {
 	type Facets,
+	type Filter,
 	facetCounts,
 	matches,
 	parseQuery,
-	type Filter as SearchFilter,
 } from "#/products/search";
+import {
+	filtersType,
+	type Sort,
+	sameSearch,
+	sortType,
+	type View,
+} from "#/products/views";
 import { listProducts, type ProductRow } from "#/server/catalog";
+import { deleteView, listViews, saveView } from "#/server/views";
 
-// Saved views, shown as tabs like Shopify's product index.
-const filters = {
-	all: { label: "All", test: () => true },
-	oversold: {
-		label: "Oversold",
-		test: (p: ProductRow) => (p.onHand ?? 0) < 0,
-	},
-	blocked: {
-		label: "Tool sets missing parts",
-		test: (p: ProductRow) => p.kind === "bundle" && p.available === 0,
-	},
-	out: {
-		label: "Sold out",
-		test: (p: ProductRow) => p.kind !== "bundle" && p.available === 0,
-	},
-	bundles: { label: "Tool sets", test: (p: ProductRow) => p.kind === "bundle" },
-	a: { label: "A items", test: (p: ProductRow) => p.abc === "A" },
-	b: { label: "B items", test: (p: ProductRow) => p.abc === "B" },
-	c: { label: "C items", test: (p: ProductRow) => p.abc === "C" },
-} as const;
-type Filter = keyof typeof filters;
-// ABC tabs list the most valuable first instead of by name.
-const byValue = (show: Filter) => show === "a" || show === "b" || show === "c";
+// The URL holds the chips and sort, so links (like Home's "Oversold") and the
+// back button work. `view` is the saved view they came from, so it can be
+// updated. Anything malformed is dropped rather than failing the page.
+type Search = { view?: number; filters?: Filter[]; sort?: Sort };
 
 export const Route = createFileRoute("/products/")({
-	validateSearch: (search: Record<string, unknown>): { show?: Filter } =>
-		typeof search.show === "string" && search.show in filters
-			? { show: search.show as Filter }
-			: {},
-	loader: () => listProducts(),
+	validateSearch: (search: Record<string, unknown>): Search => {
+		const filters = filtersType(search.filters);
+		const sort = sortType(search.sort);
+		return {
+			view:
+				typeof search.view === "number" && search.view > 0
+					? search.view
+					: undefined,
+			filters:
+				filters instanceof type.errors || filters.length === 0
+					? undefined
+					: filters,
+			sort: sort instanceof type.errors || sort === "name" ? undefined : sort,
+		};
+	},
+	loader: async () => {
+		const [products, views] = await Promise.all([listProducts(), listViews()]);
+		return { ...products, views };
+	},
 	component: Products,
 });
 
 const PAGE = 100;
 
-// What the search language can filter each product on. Status covers both
-// Shopify's (active, draft, archived) and the problems the Status column shows.
+// The number the Inventory column shows: what's on the shelf when oversold,
+// otherwise what can be sold or built.
+function stock(p: ProductRow) {
+	return (p.onHand ?? 0) < 0 ? (p.onHand ?? 0) : p.available;
+}
+
+// What the search language can filter each product on. Status covers
+// Shopify's (active, draft, archived), the problems the Status column shows,
+// and whether it's a tool set or kit.
 function facetsOf(p: ProductRow): Facets {
 	const title = p.variantName ? `${p.name} ${p.variantName}` : p.name;
 	const status = p.status ? [p.status.toLowerCase()] : [];
@@ -60,6 +85,8 @@ function facetsOf(p: ProductRow): Facets {
 	else if (p.kind === "bundle" && p.available === 0)
 		status.push("missing parts");
 	else if (p.available === 0) status.push("sold out");
+	if (p.kind === "bundle") status.push("tool set");
+	if (p.kind === "kit") status.push("kit");
 	return {
 		text: [p.sku, title, p.category ?? ""],
 		title: [title],
@@ -67,46 +94,74 @@ function facetsOf(p: ProductRow): Facets {
 		type: p.category ? [p.category] : [],
 		vendor: p.vendor ? [p.vendor] : [],
 		status,
+		class: p.abc ? [p.abc] : [],
+		inventory: stock(p),
 	};
 }
 
+// Name order comes from the server; the rest re-sort from it, so ties stay
+// in name order.
+function sorted(products: ProductRow[], sort: Sort) {
+	const by = {
+		name: () => products,
+		"-name": () => [...products].reverse(),
+		inventory: () => [...products].sort((a, b) => stock(a) - stock(b)),
+		"-inventory": () => [...products].sort((a, b) => stock(b) - stock(a)),
+		// Unclassed products go last.
+		value: () =>
+			[...products].sort(
+				(a, b) => (a.abcRank ?? Infinity) - (b.abcRank ?? Infinity),
+			),
+	};
+	return by[sort]();
+}
+
 function Products() {
-	const { products, abcDays, unpriced } = Route.useLoaderData();
-	const { show = "all" } = Route.useSearch();
+	const { products, abcDays, unpriced, views } = Route.useLoaderData();
+	const search = Route.useSearch();
+	const filters = search.filters ?? [];
+	const sort = search.sort ?? "name";
+	const current = { filters, sort };
 	const navigate = useNavigate();
-	const search = useRef<HTMLInputElement>(null);
+	const router = useRouter();
+	const input = useRef<HTMLInputElement>(null);
 	const list = useRef<HTMLTableSectionElement>(null);
 	const [query, setQuery] = useState("");
-	const [chips, setChips] = useState<SearchFilter[]>([]);
 	const [shown, setShown] = useState(PAGE);
 	const [selected, setSelected] = useState(0);
+	const [editing, setEditing] = useState<"new" | View | null>(null);
 
-	const counts = useMemo(
-		() =>
-			Object.fromEntries(
-				Object.entries(filters).map(([key, f]) => [
-					key,
-					products.filter(f.test).length,
-				]),
-			) as Record<Filter, number>,
-		[products],
-	);
+	// The tab to highlight: the view these came from, else any view that
+	// matches exactly, else All when nothing is filtered.
+	const plain = filters.length === 0 && sort === "name";
+	const fromView = views.find((v) => v.id === search.view);
+	const active =
+		fromView ?? (plain ? undefined : views.find((v) => sameSearch(v, current)));
+	const changed = active ? !sameSearch(active, current) : !plain;
 
 	const facets = useMemo(() => products.map(facetsOf), [products]);
 	const facetValues = useMemo(() => facetCounts(facets), [facets]);
+	const counts = useMemo(
+		() =>
+			new Map(
+				views.map((v) => [
+					v.id,
+					facets.filter((f) => matches(f, v.filters, [])).length,
+				]),
+			),
+		[views, facets],
+	);
 	const filtered = useMemo(() => {
 		const q = parseQuery(query);
-		const all = [...chips, ...q.filters];
-		const found = products.filter(
-			(p, i) => filters[show].test(p) && matches(facets[i], all, q.words),
+		const all = [...filters, ...q.filters];
+		return sorted(
+			products.filter((_, i) => matches(facets[i], all, q.words)),
+			sort,
 		);
-		return byValue(show)
-			? found.sort((a, b) => (a.abcRank ?? 0) - (b.abcRank ?? 0))
-			: found;
-	}, [products, facets, query, chips, show]);
+	}, [products, facets, query, filters, sort]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the list changes
-	useEffect(() => setSelected(0), [query, chips, show]);
+	useEffect(() => setSelected(0), [query, filters, sort]);
 	useEffect(() => {
 		list.current
 			?.querySelector(`[data-index="${selected}"]`)
@@ -117,23 +172,41 @@ function Products() {
 	const open = (p: ProductRow | undefined) =>
 		p && navigate({ to: "/products/$sku", params: { sku: p.sku } });
 
+	// Chip and sort changes replace the history entry instead of piling up.
+	function setSearch(next: Partial<{ filters: Filter[]; sort: Sort }>) {
+		setShown(PAGE);
+		navigate({
+			to: "/products",
+			search: { ...search, ...next },
+			replace: true,
+		});
+	}
+	function showView(v: View | null) {
+		setQuery("");
+		setShown(PAGE);
+		navigate({
+			to: "/products",
+			search: v ? { view: v.id, filters: v.filters, sort: v.sort } : {},
+		});
+	}
+
 	useHotkeys({
-		"/": () => search.current?.focus(),
+		"/": () => input.current?.focus(),
 		j: () => setSelected((i) => Math.min(i + 1, last)),
 		k: () => setSelected((i) => Math.max(i - 1, 0)),
 		Enter: () => open(filtered[selected]),
 		Escape: () => {
-			if (document.activeElement === search.current) search.current?.blur();
-			else if (query || chips.length) {
-				setQuery("");
-				setChips([]);
-			}
+			if (document.activeElement === input.current) input.current?.blur();
+			else if (query) setQuery("");
 		},
 	});
 
+	const aboutValue =
+		sort === "value" || filters.some((f) => f.field === "class");
+
 	return (
 		<Page title="Products">
-			{byValue(show) && unpriced > 0 && (
+			{aboutValue && unpriced > 0 && (
 				<Banner
 					tone="warning"
 					title={`${formatCount(unpriced)} sold ${unpriced === 1 ? "product needs a cost" : "products need a cost"} to get a class`}
@@ -142,69 +215,96 @@ function Products() {
 					dash in the Class column are left out until they have one.
 				</Banner>
 			)}
-			{byValue(show) && (
+			{aboutValue && (
 				<p className="-mt-1 text-muted-foreground">
 					A is the products carrying the first 80% of the money spent on stock,
 					B the next 15%, C the rest. Based on{" "}
 					{abcDays >= 365
 						? "the last 12 months"
 						: `${formatCount(abcDays)} days`}{" "}
-					of sales, most valuable first.
+					of sales.
 				</p>
 			)}
 			<Card flush>
-				<div className="flex flex-wrap gap-1 border-b p-2">
-					{(Object.keys(filters) as Filter[]).map((key) => (
-						<button
-							key={key}
-							type="button"
-							onClick={() =>
-								navigate({
-									to: "/products",
-									search: key === "all" ? {} : { show: key },
-								})
-							}
-							className={cn(
-								"inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 font-medium",
-								show === key
-									? "bg-[#e3e3e3] text-foreground"
-									: "text-muted-foreground hover:bg-[#f1f1f1] hover:text-foreground",
-							)}
-						>
-							{filters[key].label}
-							<span className="tabular-nums text-muted-foreground">
-								{formatCount(counts[key])}
-							</span>
-						</button>
-					))}
-				</div>
-				<div className="border-b p-2">
-					<FilterSearch
-						inputRef={search}
-						text={query}
-						onText={(text) => {
-							setQuery(text);
-							setShown(PAGE);
-						}}
-						chips={chips}
-						onChips={(next) => {
-							setChips(next);
-							setShown(PAGE);
-						}}
-						counts={facetValues}
-						placeholder="Search, or filter: #tag @type $vendor %status, #!tag to exclude"
-						onKeyDown={(e) => {
-							if (e.key === "Enter") open(filtered[selected]);
-							if (e.key === "ArrowDown") {
-								e.preventDefault();
-								setSelected((i) => Math.min(i + 1, last));
-							}
-							if (e.key === "ArrowUp") {
-								e.preventDefault();
-								setSelected((i) => Math.max(i - 1, 0));
-							}
-						}}
+				<div className="flex flex-wrap items-center gap-1 border-b p-2">
+					<Tab
+						label="All"
+						count={products.length}
+						active={!active && plain}
+						onClick={() => showView(null)}
 					/>
+					{views.map((v) => (
+						<Tab
+							key={v.id}
+							label={v.name}
+							count={counts.get(v.id) ?? 0}
+							active={active?.id === v.id}
+							changed={active?.id === v.id && changed}
+							onClick={() => showView(v)}
+							onEdit={
+								active?.id === v.id && !changed
+									? () => setEditing(v)
+									: undefined
+							}
+						/>
+					))}
+					{changed && (
+						<div className="ml-auto flex gap-1">
+							{active && (
+								<Button
+									size="sm"
+									variant="ghost"
+									onClick={() => showView(active)}
+								>
+									Undo changes
+								</Button>
+							)}
+							{active && (
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => updateView(active)}
+								>
+									Save
+								</Button>
+							)}
+							<Button size="sm" onClick={() => setEditing("new")}>
+								{active ? "Save as new view" : "Save view"}
+							</Button>
+						</div>
+					)}
+				</div>
+				<div className="flex items-start gap-1 border-b p-2">
+					<div className="min-w-0 flex-1">
+						<FilterSearch
+							inputRef={input}
+							text={query}
+							onText={(text) => {
+								setQuery(text);
+								setShown(PAGE);
+							}}
+							chips={filters}
+							onChips={(next) => setSearch({ filters: next })}
+							counts={facetValues}
+							placeholder="Search, or filter: #tag @type $vendor %status ^class <3 inventory"
+							onKeyDown={(e) => {
+								if (e.key === "Enter") open(filtered[selected]);
+								if (e.key === "ArrowDown") {
+									e.preventDefault();
+									setSelected((i) => Math.min(i + 1, last));
+								}
+								if (e.key === "ArrowUp") {
+									e.preventDefault();
+									setSelected((i) => Math.max(i - 1, 0));
+								}
+							}}
+						/>
+					</div>
+					<AddFilter
+						counts={facetValues}
+						onAdd={(f) => setSearch({ filters: [...filters, f] })}
+					/>
+					<SortMenu sort={sort} onSort={(s) => setSearch({ sort: s })} />
 				</div>
 
 				<table className="w-full">
@@ -287,7 +387,177 @@ function Products() {
 					</div>
 				)}
 			</Card>
+
+			{editing && (
+				<ViewDialog
+					key={editing === "new" ? "new" : editing.id}
+					view={editing === "new" ? null : editing}
+					search={current}
+					onClose={() => setEditing(null)}
+					onSaved={(id) => {
+						setEditing(null);
+						navigate({ to: "/products", search: { view: id, ...current } });
+					}}
+					onDeleted={() => {
+						setEditing(null);
+						showView(null);
+					}}
+				/>
+			)}
 		</Page>
+	);
+
+	async function updateView(v: View) {
+		await saveView({ data: { id: v.id, name: v.name, ...current } });
+		await router.invalidate();
+		toast.success(`Saved “${v.name}”`, {
+			action: {
+				label: "Undo",
+				onClick: async () => {
+					await saveView({ data: v });
+					await router.invalidate();
+				},
+			},
+		});
+	}
+}
+
+function Tab({
+	label,
+	count,
+	active,
+	changed = false,
+	onClick,
+	onEdit,
+}: {
+	label: string;
+	count: number;
+	active: boolean;
+	changed?: boolean;
+	onClick: () => void;
+	onEdit?: () => void;
+}) {
+	return (
+		<span
+			className={cn(
+				"inline-flex h-7 items-center rounded-lg font-medium",
+				active
+					? "bg-[#e3e3e3] text-foreground"
+					: "text-muted-foreground hover:bg-[#f1f1f1] hover:text-foreground",
+			)}
+		>
+			<button
+				type="button"
+				onClick={onClick}
+				className="inline-flex h-full items-center gap-1.5 px-2.5"
+			>
+				{label}
+				{changed ? (
+					<span className="text-xs text-muted-foreground">edited</span>
+				) : (
+					<span className="tabular-nums text-muted-foreground">
+						{formatCount(count)}
+					</span>
+				)}
+			</button>
+			{onEdit && (
+				<button
+					type="button"
+					onClick={onEdit}
+					aria-label={`Rename or delete ${label}`}
+					className="-ml-1.5 mr-1 rounded p-1 text-muted-foreground hover:bg-[#d4d4d4] hover:text-foreground"
+				>
+					<Pencil className="size-3" />
+				</button>
+			)}
+		</span>
+	);
+}
+
+// Names a new view, or renames or deletes an existing one.
+function ViewDialog({
+	view,
+	search,
+	onClose,
+	onSaved,
+	onDeleted,
+}: {
+	view: View | null;
+	search: { filters: Filter[]; sort: Sort };
+	onClose: () => void;
+	onSaved: (id: number) => void;
+	onDeleted: () => void;
+}) {
+	const router = useRouter();
+	const [name, setName] = useState(view?.name ?? "");
+	const [error, setError] = useState<string | null>(null);
+	const [saving, setSaving] = useState(false);
+
+	async function submit(e: FormEvent) {
+		e.preventDefault();
+		setSaving(true);
+		setError(null);
+		try {
+			const { id } = await saveView({
+				data: view ? { ...view, name } : { name, ...search },
+			});
+			await router.invalidate();
+			onSaved(id);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setSaving(false);
+		}
+	}
+
+	async function remove() {
+		if (!view) return;
+		await deleteView({ data: { id: view.id } });
+		await router.invalidate();
+		onDeleted();
+		toast(`Deleted “${view.name}”`, {
+			action: {
+				label: "Undo",
+				onClick: async () => {
+					const { id: _, ...rest } = view;
+					await saveView({ data: rest });
+					await router.invalidate();
+				},
+			},
+		});
+	}
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && onClose()}>
+			<DialogContent className="sm:max-w-sm">
+				<form onSubmit={submit} className="flex flex-col gap-4">
+					<DialogHeader>
+						<DialogTitle>{view ? "Edit view" : "Save view"}</DialogTitle>
+					</DialogHeader>
+					<input
+						// biome-ignore lint/a11y/noAutofocus: naming is all this dialog asks
+						autoFocus
+						value={name}
+						onChange={(e) => setName(e.target.value)}
+						placeholder="Name, e.g. Low stock A items"
+						className="h-9 rounded-lg border border-[#8a8a8a] px-3 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+					/>
+					{error && <p className="text-critical-text">{error}</p>}
+					<DialogFooter className="sm:justify-between">
+						{view ? (
+							<Button type="button" variant="ghost" onClick={remove}>
+								Delete view
+							</Button>
+						) : (
+							<span />
+						)}
+						<Button type="submit" disabled={!name.trim() || saving}>
+							Save
+						</Button>
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
 	);
 }
 
@@ -305,7 +575,7 @@ function Inventory({ product: p }: { product: ProductRow }) {
 	if ((p.onHand ?? 0) < 0) {
 		return (
 			<span className="font-medium text-critical-text">
-				{formatCount(p.onHand ?? 0)} in stock
+				{formatCount(stock(p))} in stock
 			</span>
 		);
 	}

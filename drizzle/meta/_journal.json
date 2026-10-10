@@ -113,6 +113,13 @@
       "when": 1791643019048,
       "tag": "0015_count_dates",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791643405625,
+      "tag": "0016_product_views",
+      "breakpoints": true
     }
   ]
 }

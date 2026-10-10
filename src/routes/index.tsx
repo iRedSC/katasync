@@ -4,6 +4,7 @@ import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { statusSearch } from "#/products/views";
 import { getDashboard } from "#/server/catalog";
 import { countOrdersToShip } from "#/server/orders";
 import { countPosReady } from "#/server/purchasing";
@@ -37,7 +38,10 @@ function Home() {
 						label="Oversold"
 						value={d.oversold.length}
 						tone={d.oversold.length > 0 ? "critical" : undefined}
-						link={{ to: "/products", search: { show: "oversold" } }}
+						link={{
+							to: "/products",
+							search: statusSearch("oversold", "inventory"),
+						}}
 					/>
 					<Stat label="Monthly profit" pending="Waiting on profit app" />
 				</dl>
@@ -49,7 +53,7 @@ function Home() {
 					title={`${formatCount(d.blockedBundles)} of ${formatCount(d.bundles)} tool sets can't be sold`}
 					action={{
 						label: "Review tool sets",
-						link: { to: "/products", search: { show: "blocked" } },
+						link: { to: "/products", search: statusSearch("missing parts") },
 					}}
 				>
 					Each is missing a part. The parts blocking the most sets are below.
@@ -103,7 +107,7 @@ function Home() {
 						aside={
 							<Link
 								to="/products"
-								search={{ show: "oversold" }}
+								search={statusSearch("oversold", "inventory")}
 								className="text-link hover:underline"
 							>
 								View all {d.oversold.length}

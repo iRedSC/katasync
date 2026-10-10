@@ -6,6 +6,7 @@ import {
 	check,
 	index,
 	integer,
+	jsonb,
 	numeric,
 	pgEnum,
 	pgTable,
@@ -560,3 +561,15 @@ export const purchaseOrderReceipts = pgTable(
 		),
 	],
 );
+
+// Saved product searches, shown as tabs on the products page. Shared by
+// everyone, since the team signs in as one account. `filters` holds search
+// chips (src/products/search.ts Filter[]); `sort` is a src/products/views.ts Sort.
+export const productViews = pgTable("product_views", {
+	id: integer().primaryKey().generatedAlwaysAsIdentity(),
+	name: text().notNull().unique(),
+	filters: jsonb().notNull(),
+	sort: text().notNull().default("name"),
+	position: integer().notNull().default(0),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
