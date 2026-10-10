@@ -1,0 +1,202 @@
+import NumberFlow from "@number-flow/react";
+import { useRouter } from "@tanstack/react-router";
+import { type FormEvent, useState } from "react";
+import { toast } from "sonner";
+import { Button } from "#/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "#/components/ui/dialog";
+import { formatCount } from "#/lib/format";
+import { cn } from "#/lib/utils";
+import { recordCount, undoMovement } from "#/server/catalog";
+
+const reasons = [
+	{ value: "count", label: "Counted" },
+	{ value: "damaged", label: "Damaged" },
+	{ value: "found", label: "Found more" },
+	{ value: "other", label: "Other" },
+] as const;
+
+// Type what's on the shelf; the app works out the change. Location is only
+// asked for when there's more than one.
+export function CountDialog({
+	open,
+	onOpenChange,
+	sku,
+	name,
+	locations,
+	onHandByLocation,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	sku: string;
+	name: string;
+	locations: { id: number; name: string }[];
+	onHandByLocation: Map<string, number>;
+}) {
+	const router = useRouter();
+	const [locationId, setLocationId] = useState(locations[0]?.id);
+	const location = locations.find((l) => l.id === locationId);
+	const current = onHandByLocation.get(location?.name ?? "") ?? 0;
+	const [counted, setCounted] = useState("");
+	const [reason, setReason] =
+		useState<(typeof reasons)[number]["value"]>("count");
+	const [error, setError] = useState<string | null>(null);
+	const [saving, setSaving] = useState(false);
+
+	const value = counted === "" ? null : Number(counted);
+	const delta =
+		value === null || !Number.isInteger(value) ? null : value - current;
+
+	async function submit(e: FormEvent) {
+		e.preventDefault();
+		if (value === null || !Number.isInteger(value)) return;
+		setSaving(true);
+		setError(null);
+		try {
+			const result = await recordCount({
+				data: { sku, counted: value, reason, locationId },
+			});
+			onOpenChange(false);
+			setCounted("");
+			await router.invalidate();
+			const { batchId } = result;
+			if (batchId) {
+				toast.success(
+					`Count saved. ${formatCount(result.onHand)} on the shelf.`,
+					{
+						description: name,
+						// Long enough to notice a mistake and reach Undo.
+						duration: 10_000,
+						action: {
+							label: "Undo",
+							onClick: async () => {
+								await undoMovement({ data: { batchId } });
+								await router.invalidate();
+								toast("Count undone", { description: name });
+							},
+						},
+					},
+				);
+			}
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setSaving(false);
+		}
+	}
+
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent className="sm:max-w-md">
+				<form onSubmit={submit} className="flex flex-col gap-6">
+					<DialogHeader>
+						<DialogTitle>How many are on the shelf?</DialogTitle>
+						<DialogDescription className="truncate">{name}</DialogDescription>
+					</DialogHeader>
+
+					{locations.length > 1 && (
+						<div className="flex flex-wrap gap-2">
+							{locations.map((l) => (
+								<Chip
+									key={l.id}
+									active={l.id === locationId}
+									onClick={() => setLocationId(l.id)}
+								>
+									{l.name}
+								</Chip>
+							))}
+						</div>
+					)}
+
+					<div className="flex flex-col items-center gap-2">
+						<input
+							autoFocus
+							inputMode="numeric"
+							value={counted}
+							onChange={(e) =>
+								setCounted(e.target.value.replace(/[^\d-]/g, ""))
+							}
+							placeholder={String(current)}
+							className="w-full bg-transparent text-center text-6xl font-semibold tabular-nums outline-none placeholder:text-muted-foreground/30"
+						/>
+						<p className="text-muted-foreground">
+							{delta === null ? (
+								<>We think there are {formatCount(current)}</>
+							) : delta === 0 ? (
+								<>Matches what we think. Nothing to change.</>
+							) : (
+								<>
+									<span
+										className={cn(
+											"font-semibold tabular-nums",
+											delta < 0 ? "text-critical-text" : "text-success-text",
+										)}
+									>
+										<NumberFlow
+											value={delta}
+											format={{ signDisplay: "always" }}
+										/>
+									</span>{" "}
+									from the {formatCount(current)} we think there are
+								</>
+							)}
+						</p>
+					</div>
+
+					<div className="flex flex-wrap justify-center gap-2">
+						{reasons.map((r) => (
+							<Chip
+								key={r.value}
+								active={r.value === reason}
+								onClick={() => setReason(r.value)}
+							>
+								{r.label}
+							</Chip>
+						))}
+					</div>
+
+					{error && <p className="text-center text-critical-text">{error}</p>}
+					<DialogFooter>
+						<Button
+							type="submit"
+							size="lg"
+							className="w-full"
+							disabled={delta === null || delta === 0 || saving}
+						>
+							Save count
+						</Button>
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function Chip({
+	active,
+	onClick,
+	children,
+}: {
+	active: boolean;
+	onClick: () => void;
+	children: React.ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={cn(
+				"h-7 rounded-lg px-3 font-medium transition-colors",
+				active ? "bg-[#303030] text-white" : "bg-[#f1f1f1] hover:bg-[#e3e3e3]",
+			)}
+		>
+			{children}
+		</button>
+	);
+}
