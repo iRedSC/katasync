@@ -73,3 +73,11 @@ export function cityLine(
 	const place = [region, zip].filter(Boolean).join(" ");
 	return [city, place].filter(Boolean).join(", ");
 }
+
+// US numbers as (717) 766-0608; anything else as given.
+export function formatPhone(phone: string) {
+	const digits = phone.replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+	return digits.length === 10
+		? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+		: phone;
+}

@@ -5,13 +5,20 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Printer, Truck } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
+import { openQuickShip } from "#/components/quick-ship";
 import { Button } from "#/components/ui/button";
-import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
+import {
+	cityLine,
+	formatCount,
+	formatMoney,
+	formatOrderDate,
+	formatPhone,
+} from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
@@ -24,7 +31,7 @@ export const Route = createFileRoute("/orders/$id")({
 });
 
 function OrderPage() {
-	const { order, lines, labels } = Route.useLoaderData();
+	const { order, lines, labels, adminUrl } = Route.useLoaderData();
 	const router = useRouter();
 	const navigate = useNavigate();
 	const canGoBack = useCanGoBack();
@@ -35,10 +42,23 @@ function OrderPage() {
 		(l) => l.productSku === null && l.sku !== null,
 	);
 	const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
+	// Shippable here: still to ship (it has a pin), not a marketplace label,
+	// and no live label yet.
+	const pin = order.pin;
+	const canShip =
+		pin !== null && !external && !labels.some((l) => l.voidedAt === null);
+	const ship = () => pin !== null && openQuickShip(pin);
+	const address = [
+		order.shipAddress1,
+		order.shipAddress2,
+		cityLine(order.shipCity, order.shipRegion, order.shipPostalCode),
+		order.shipCountry,
+	].filter(Boolean);
 
 	useHotkeys({
 		Escape: () =>
 			canGoBack ? router.history.back() : navigate({ to: "/orders" }),
+		...(canShip ? { s: ship } : {}),
 	});
 
 	return (
@@ -46,15 +66,42 @@ function OrderPage() {
 			narrow
 			back={{ to: "/orders" }}
 			actions={
-				external && (
-					<Button asChild size="sm">
-						<a href={external.url} target="_blank" rel="noreferrer">
-							{status.label === "Fulfill externally" ? "Fulfill" : "View"} on{" "}
-							{external.name}
-							<ExternalLink />
+				<>
+					{adminUrl && (
+						<Button asChild size="sm" variant="ghost">
+							<a href={adminUrl.url} target="_blank" rel="noreferrer">
+								Open in {adminUrl.name}
+								<ExternalLink />
+							</a>
+						</Button>
+					)}
+					<Button asChild size="sm" variant="outline">
+						<a
+							href={`/print/invoices?id=${order.id}`}
+							target="_blank"
+							rel="noreferrer"
+						>
+							<Printer />
+							Print invoice
 						</a>
 					</Button>
-				)
+					{external && (
+						<Button asChild size="sm">
+							<a href={external.url} target="_blank" rel="noreferrer">
+								{status.label === "Fulfill externally" ? "Fulfill" : "View"} on{" "}
+								{external.name}
+								<ExternalLink />
+							</a>
+						</Button>
+					)}
+					{canShip && (
+						<Button size="sm" onClick={ship}>
+							<Truck />
+							Ship
+							<kbd className="ml-1 rounded bg-white/15 px-1 text-xs">S</kbd>
+						</Button>
+					)}
+				</>
 			}
 			title={
 				<span className="flex items-center gap-2">
@@ -149,11 +196,16 @@ function OrderPage() {
 					)}
 					<Card title="Ship to">
 						<p className="font-medium">{order.customerName ?? "No name"}</p>
-						<p className="text-muted-foreground">
-							{[order.shipCity, order.shipRegion, order.shipCountry]
-								.filter(Boolean)
-								.join(", ") || "No shipping address"}
-						</p>
+						{address.length > 0 ? (
+							address.map((l) => <p key={l}>{l}</p>)
+						) : (
+							<p className="text-muted-foreground">No shipping address</p>
+						)}
+						{order.shipPhone && (
+							<p className="mt-2 text-muted-foreground">
+								{formatPhone(order.shipPhone)}
+							</p>
+						)}
 					</Card>
 				</div>
 			</div>

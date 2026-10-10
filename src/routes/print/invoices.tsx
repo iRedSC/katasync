@@ -1,12 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { cityLine, formatMoney } from "#/lib/format";
+import { cityLine, formatMoney, formatPhone } from "#/lib/format";
 import { listInvoices } from "#/server/orders";
 
-// One letter-size invoice per order still to ship, in pin order. Opens the
-// print dialog on its own.
+// One letter-size invoice per order still to ship, in pin order, or just
+// one order's with ?id=. Opens the print dialog on its own.
 export const Route = createFileRoute("/print/invoices")({
-	loader: () => listInvoices(),
+	validateSearch: (search: Record<string, unknown>): { id?: number } =>
+		Number(search.id) > 0 ? { id: Number(search.id) } : {},
+	loaderDeps: ({ search }) => ({ id: search.id }),
+	loader: ({ deps }) => listInvoices({ data: deps.id ? { id: deps.id } : {} }),
 	head: () => ({ meta: [{ title: "Invoices" }] }),
 	component: Invoices,
 });
@@ -167,14 +170,6 @@ function Invoice({
 			</footer>
 		</article>
 	);
-}
-
-// US numbers as (717) 766-0608; anything else as given.
-function formatPhone(phone: string) {
-	const digits = phone.replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
-	return digits.length === 10
-		? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
-		: phone;
 }
 
 // "2 : 4 : 20" is order pin, box pin, and ounces; X where quick ship has

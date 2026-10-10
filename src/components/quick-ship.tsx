@@ -45,6 +45,12 @@ const size = (d: Dims) =>
 const bigInput =
 	"h-24 w-full rounded-xl border-2 border-input bg-white text-center text-6xl font-bold tabular-nums outline-none focus:border-[#303030] disabled:opacity-60";
 
+// Opens quick ship already on this order, past the pin step (the order
+// page's Ship button).
+export function openQuickShip(pin: number) {
+	window.dispatchEvent(new CustomEvent("quick-ship", { detail: pin }));
+}
+
 // Ctrl+Space anywhere: order pin, box pin, weight, (insurance), service.
 // Enter moves forward, Escape steps back. The order loads as the third
 // digit is typed, and prices load while the weight is still on screen, so
@@ -97,8 +103,17 @@ export function QuickShip() {
 				});
 			}
 		}
+		function onOpen(e: Event) {
+			reset();
+			setOpen(true);
+			choosePinRef.current((e as CustomEvent<number>).detail);
+		}
 		window.addEventListener("keydown", onKeyDown);
-		return () => window.removeEventListener("keydown", onKeyDown);
+		window.addEventListener("quick-ship", onOpen);
+		return () => {
+			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("quick-ship", onOpen);
+		};
 	}, []);
 
 	useEffect(() => {
@@ -177,11 +192,19 @@ export function QuickShip() {
 		if (result === undefined) return;
 		if (result === null) return setError(`No order to ship has pin ${pin}`);
 		setFound(result);
-		const lastBox = boxes.find((b) => b.id === result.last?.packageId) ?? null;
+		// Opened straight onto an order, the boxes may still be loading.
+		const known = boxes.length > 0 ? boxes : await listPackages();
+		if (boxes.length === 0) setBoxes(known);
+		const lastBox = known.find((b) => b.id === result.last?.packageId) ?? null;
 		setBox(lastBox);
 		setDims(result.last ?? lastBox);
 		setStep("package");
 	}
+
+	// The listener above is set up once; this keeps it calling the current
+	// choosePin.
+	const choosePinRef = useRef(choosePin);
+	choosePinRef.current = choosePin;
 
 	function choosePackage(next: { box: Box | null; dims: Dims }) {
 		if (!found) return;

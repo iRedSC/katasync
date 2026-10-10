@@ -85,11 +85,16 @@ export const getOrder = createServerFn({ method: "GET" })
 				fulfillmentStatus: orders.fulfillmentStatus,
 				financialStatus: orders.financialStatus,
 				customerName: orders.customerName,
+				shipAddress1: orders.shipAddress1,
+				shipAddress2: orders.shipAddress2,
 				shipCity: orders.shipCity,
 				shipRegion: orders.shipRegion,
+				shipPostalCode: orders.shipPostalCode,
 				shipCountry: orders.shipCountry,
+				shipPhone: orders.shipPhone,
 				total: orders.total,
 				shippingCharged: orders.shippingCharged,
+				externalId: orders.externalId,
 				store: stores.name,
 				channel: stores.channel,
 			})
@@ -132,13 +137,39 @@ export const getOrder = createServerFn({ method: "GET" })
 			.from(shipments)
 			.where(eq(shipments.orderId, data.id))
 			.orderBy(shipments.createdAt);
-		return { order, lines, labels };
+		return { order, lines, labels, adminUrl: adminUrl(order) };
 	});
+
+// The order's page in its own admin, for anything katasync doesn't do.
+// Amazon and TikTok orders already link there to fulfill.
+function adminUrl(order: { channel: string; externalId: string }) {
+	if (order.channel === "shopify") {
+		const handle = process.env.SHOPIFY_STORE_DOMAIN?.replace(
+			".myshopify.com",
+			"",
+		);
+		const id = order.externalId.split("/").pop();
+		return handle && id
+			? {
+					name: "Shopify",
+					url: `https://admin.shopify.com/store/${handle}/orders/${id}`,
+				}
+			: null;
+	}
+	if (order.channel === "ebay") {
+		return {
+			name: "eBay",
+			url: `https://www.ebay.com/mesh/ord/details?orderid=${encodeURIComponent(order.externalId)}`,
+		};
+	}
+	return null;
+}
 
 // Everything the invoices for orders still to ship print, in pin order so
 // the stack matches what packers type.
-export const listInvoices = createServerFn({ method: "GET" }).handler(
-	async () => {
+export const listInvoices = createServerFn({ method: "GET" })
+	.validator(type({ "id?": "number.integer > 0" }))
+	.handler(async ({ data }) => {
 		const db = getDb();
 		const locationId = await shippingLocation(db);
 		const [from] = locationId
@@ -162,7 +193,8 @@ export const listInvoices = createServerFn({ method: "GET" }).handler(
 				shippingCharged: orders.shippingCharged,
 			})
 			.from(orders)
-			.where(needsShipping)
+			// One order's invoice, or every order still to ship.
+			.where(data.id ? eq(orders.id, data.id) : needsShipping)
 			.orderBy(asc(orders.pin), asc(orders.placedAt));
 		const lines = toShip.length
 			? await db
@@ -219,8 +251,7 @@ export const listInvoices = createServerFn({ method: "GET" }).handler(
 				};
 			}),
 		};
-	},
-);
+	});
 
 export type OrderRow = Awaited<ReturnType<typeof listOrders>>[number];
 export type OrderDetail = Awaited<ReturnType<typeof getOrder>>;
