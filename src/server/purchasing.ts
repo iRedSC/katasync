@@ -12,8 +12,8 @@ import {
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
-import { renderPurchaseOrder } from "#/purchasing/document";
 import { emailConfigured, sendEmail } from "#/purchasing/email";
+import { documentFor, loadOrder, receivedByLine } from "#/purchasing/load";
 import {
 	addSuggestions,
 	cancelOrder,
@@ -22,7 +22,6 @@ import {
 	markSent,
 	openDraft,
 	PurchaseOrderError,
-	poName,
 	receive,
 	setDraftLine,
 	undoReceipt,
@@ -31,20 +30,6 @@ import {
 import { suggestPurchases } from "#/purchasing/reorder";
 
 const id = type({ id: "number.integer > 0" });
-
-// Units received per line, net of undos.
-function receivedByLine(db: Db) {
-	return db
-		.select({
-			lineId: purchaseOrderReceipts.lineId,
-			units: sql<number>`sum(${purchaseOrderReceipts.quantity})::int`.as(
-				"units",
-			),
-		})
-		.from(purchaseOrderReceipts)
-		.groupBy(purchaseOrderReceipts.lineId)
-		.as("received");
-}
 
 // Today's suggestions, and every PO still open plus the latest finished ones.
 export const listPurchasing = createServerFn({ method: "GET" }).handler(
@@ -98,43 +83,6 @@ export type PurchasingList = Awaited<ReturnType<typeof listPurchasing>>;
 export const countPosReady = createServerFn({ method: "GET" }).handler(
 	async () => (await suggestPurchases(getDb())).filter((s) => s.ready).length,
 );
-
-async function loadOrder(db: Db, poId: number) {
-	const [po] = await db
-		.select({
-			order: purchaseOrders,
-			supplier: suppliers,
-			location: locations,
-		})
-		.from(purchaseOrders)
-		.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
-		.innerJoin(locations, eq(locations.id, purchaseOrders.locationId))
-		.where(eq(purchaseOrders.id, poId));
-	if (!po) throw new PurchaseOrderError(`${poName(poId)} doesn't exist`);
-
-	const received = receivedByLine(db);
-	const lines = await db
-		.select({
-			id: purchaseOrderLines.id,
-			productId: products.id,
-			sku: products.sku,
-			name: products.name,
-			variantName: products.variantName,
-			imageUrl: products.imageUrl,
-			barcode: products.barcode,
-			supplierSku: productSuppliers.supplierSku,
-			quantity: purchaseOrderLines.quantity,
-			unitCost: purchaseOrderLines.unitCost,
-			received: sql<number>`coalesce(${received.units}, 0)::int`,
-		})
-		.from(purchaseOrderLines)
-		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
-		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-		.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
-		.where(eq(purchaseOrderLines.purchaseOrderId, poId))
-		.orderBy(products.name, products.variantName);
-	return { ...po, lines };
-}
 
 // Owned stock for each product, so a draft shows what's already on the shelf.
 async function onHandOf(db: Db, productIds: number[]) {
@@ -276,49 +224,6 @@ export const addLineBySku = createServerFn({ method: "POST" })
 			productId: product.id,
 			quantity: product.minimum ?? 1,
 		});
-	});
-
-async function documentFor(db: Db, poId: number) {
-	const po = await loadOrder(db, poId);
-	const notes = [po.supplier.poNotes, po.order.notes].filter((n): n is string =>
-		Boolean(n),
-	);
-	return {
-		po,
-		filename: `${poName(poId).replace(" ", "-")}.pdf`,
-		pdf: await renderPurchaseOrder({
-			id: poId,
-			date: po.order.sentAt ?? new Date(),
-			buyer: {
-				name: po.location.shipFromName ?? po.location.name,
-				address1: po.location.address1,
-				address2: po.location.address2,
-				city: po.location.city,
-				region: po.location.region,
-				postalCode: po.location.postalCode,
-				country: po.location.country,
-				phone: po.location.phone,
-				email: process.env.PO_EMAIL_REPLY_TO ?? po.location.email,
-			},
-			supplier: po.supplier,
-			notes,
-			lines: po.lines.map((l) => ({
-				sku: l.sku,
-				supplierSku: l.supplierSku,
-				description: l.variantName ? `${l.name} (${l.variantName})` : l.name,
-				quantity: l.quantity,
-				unitCost: l.unitCost,
-			})),
-		}),
-	};
-}
-
-// The PDF to look at or print. Base64, since server functions return JSON.
-export const getPurchaseOrderPdf = createServerFn({ method: "GET" })
-	.validator(id)
-	.handler(async ({ data }) => {
-		const { pdf, filename } = await documentFor(getDb(), data.id);
-		return { filename, base64: pdf.toString("base64") };
 	});
 
 // Emails the PO to the supplier and puts it on order. With `email: false` it's

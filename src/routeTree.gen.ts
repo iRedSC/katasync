@@ -23,6 +23,7 @@ import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
+import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -94,6 +95,11 @@ const ReceiveIdRoute = ReceiveIdRouteImport.update({
   path: '/receive/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
+  id: '/purchasing/pdf/$id',
+  path: '/purchasing/pdf/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/products/': typeof ProductsIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/products': typeof ProductsIndexRoute
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
+  '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/products/': typeof ProductsIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/products/'
     | '/purchasing/'
     | '/receive/'
+    | '/purchasing/pdf/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/products'
     | '/purchasing'
     | '/receive'
+    | '/purchasing/pdf/$id'
   id:
     | '__root__'
     | '/'
@@ -193,6 +204,7 @@ export interface FileRouteTypes {
     | '/products/'
     | '/purchasing/'
     | '/receive/'
+    | '/purchasing/pdf/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -210,6 +222,7 @@ export interface RootRouteChildren {
   ProductsIndexRoute: typeof ProductsIndexRoute
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
+  PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -312,6 +325,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReceiveIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/purchasing/pdf/$id': {
+      id: '/purchasing/pdf/$id'
+      path: '/purchasing/pdf/$id'
+      fullPath: '/purchasing/pdf/$id'
+      preLoaderRoute: typeof PurchasingPdfIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -330,6 +350,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProductsIndexRoute: ProductsIndexRoute,
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
+  PurchasingPdfIdRoute: PurchasingPdfIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

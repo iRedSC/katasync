@@ -4,7 +4,7 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { Download, Mail, Smartphone } from "lucide-react";
+import { FileText, Mail, Smartphone } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Banner, Card, Page } from "#/components/page";
@@ -28,7 +28,6 @@ import {
 	closePurchaseOrder,
 	editDraft,
 	getPurchaseOrder,
-	getPurchaseOrderPdf,
 	type PurchaseOrderDetail,
 	pullSuggestions,
 	receiveLine,
@@ -85,23 +84,6 @@ function PurchaseOrderPage() {
 
 	useHotkeys({ Escape: () => navigate({ to: "/purchasing" }) });
 
-	async function downloadPdf() {
-		await run(async () => {
-			const { base64, filename } = await getPurchaseOrderPdf({
-				data: { id: po.id },
-			});
-			const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-			const url = URL.createObjectURL(
-				new Blob([bytes], { type: "application/pdf" }),
-			);
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = filename;
-			a.click();
-			URL.revokeObjectURL(url);
-		});
-	}
-
 	const send = (email: boolean) =>
 		run(
 			() => sendPurchaseOrder({ data: { id: po.id, email } }),
@@ -122,15 +104,18 @@ function PurchaseOrderPage() {
 			}
 			actions={
 				<>
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={busy || d.lines.length === 0}
-						onClick={downloadPdf}
-					>
-						<Download />
-						PDF
-					</Button>
+					{d.lines.length > 0 && (
+						<Button asChild variant="outline" size="sm">
+							<a
+								href={`/purchasing/pdf/${po.id}`}
+								target="_blank"
+								rel="noreferrer"
+							>
+								<FileText />
+								PDF
+							</a>
+						</Button>
+					)}
 					{po.status === "sent" && (
 						<Button asChild variant="outline" size="sm">
 							<Link to="/receive/$id" params={{ id: String(po.id) }}>

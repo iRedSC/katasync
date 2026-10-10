@@ -175,60 +175,54 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 		}
 	}
 
+	// Same columns as the PO tables below, so the page reads as one list.
+	// Clicking a row opens the supplier's draft, creating it if needed.
 	return (
-		<ul>
-			{rows.map((s) => {
-				// The products the PO is mostly for, so the row says something.
-				const top = [...s.lines]
-					.sort((a, b) => b.sold - a.sold)
-					.slice(0, 3)
-					.map((l) => l.name);
-				return (
-					<li
+		<table className="w-full">
+			<thead>
+				<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+					<th className="px-4 py-2 font-medium">Supplier</th>
+					<th className="px-4 py-2 font-medium">Status</th>
+					<th className="hidden px-4 py-2 font-medium md:table-cell">
+						Products
+					</th>
+					<th className="px-4 py-2 text-right font-medium">Total</th>
+				</tr>
+			</thead>
+			<tbody>
+				{rows.map((s) => (
+					<tr
 						key={s.supplierId}
-						className="flex items-center gap-4 border-t px-4 py-3 first:border-t-0"
+						onClick={() => busy === null && open(s)}
+						className={cn(
+							"cursor-pointer border-t first:border-t-0 hover:bg-[#f7f7f7]",
+							busy !== null && "cursor-wait",
+						)}
 					>
-						<div className="min-w-0 flex-1">
-							<div className="flex items-center gap-2">
-								<span className="font-semibold">{s.supplierName}</span>
-								{s.draftId && <Badge tone="info">Draft open</Badge>}
-							</div>
-							<div className="truncate text-muted-foreground">
-								{formatCount(s.lines.length)}{" "}
-								{s.lines.length === 1 ? "product" : "products"}:{" "}
-								{top.join(", ")}
-								{s.lines.length > 3 && ", …"}
-							</div>
-						</div>
-						<div className="text-right">
-							<div className="font-semibold tabular-nums">
-								{formatMoney(s.total)}
-							</div>
-							<div className="text-xs whitespace-nowrap text-muted-foreground">
-								{s.unpriced > 0 && `+ ${s.unpriced} without a price`}
-							</div>
-						</div>
-						<Button
-							size="sm"
-							disabled={busy !== null}
-							onClick={() => open(s)}
-							className="w-28"
-						>
+						<td className="w-full max-w-0 px-4 py-2.5">
+							<div className="truncate font-semibold">{s.supplierName}</div>
+						</td>
+						<td className="px-4 py-2.5 whitespace-nowrap">
 							{busy === s.supplierId ? (
-								"Opening…"
+								<span className="text-muted-foreground">Opening…</span>
 							) : s.draftId ? (
-								"Open draft"
+								<Badge tone="info">Draft open</Badge>
 							) : (
-								<>
-									<Plus />
-									Create PO
-								</>
+								<Badge tone="success">Ready</Badge>
 							)}
-						</Button>
-					</li>
-				);
-			})}
-		</ul>
+						</td>
+						<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
+							{formatCount(s.lines.length)}{" "}
+							{s.lines.length === 1 ? "product" : "products"}
+							{s.unpriced > 0 && `, ${s.unpriced} unpriced`}
+						</td>
+						<td className="px-4 py-2.5 text-right tabular-nums">
+							{formatMoney(s.total)}
+						</td>
+					</tr>
+				))}
+			</tbody>
+		</table>
 	);
 }
 
