@@ -8,10 +8,17 @@ const REACH = 10;
 const STEP_PX = 14;
 // Movement before a press counts as a drag rather than a click into the field.
 const SLOP_PX = 5;
+// Past the end of the line the number keeps going on its own: this many steps
+// a second, plus one more for every few pixels further out.
+const SCRUB_BASE_RATE = 6;
+const SCRUB_PX_PER_RATE = 6;
+
+type Anchor = { x: number; y: number };
 
 // Drag sideways on an element to change a whole number by up to REACH either
-// way; let go and drag again to go further. Never below 0. A plain click is
-// left alone, so the element can still be typed into.
+// way. Hold past either end and it scrubs: the line slides and the number
+// keeps moving, faster the further out. Never below 0. A plain click is left
+// alone, so the element can still be typed into.
 //
 // Spread `handlers` onto the element and render `line` anywhere; it floats
 // under the element, outside any card that would clip it.
@@ -26,22 +33,67 @@ export function useNumberLine({
 }) {
 	const drag = useRef<{
 		x: number;
+		dx: number;
 		start: number;
+		// How far scrubbing has slid the line, in steps (fractional while moving).
+		shift: number;
 		active: boolean;
 		// Where the line hangs: under the middle of the element.
-		anchor: { x: number; y: number };
+		anchor: Anchor;
+		frame: number | null;
+		lastTime: number;
 	} | null>(null);
 	const [preview, setPreview] = useState<{
 		start: number;
 		value: number;
-		anchor: { x: number; y: number };
+		anchor: Anchor;
 	} | null>(null);
 
-	const valueAt = (start: number, dx: number) =>
-		Math.min(
-			Math.max(start + Math.round(dx / STEP_PX), Math.max(0, start - REACH)),
-			start + REACH,
-		);
+	// The line's center after scrubbing, and the value under the pointer on it.
+	const read = (d: NonNullable<typeof drag.current>) => {
+		const center = Math.max(0, d.start + Math.round(d.shift));
+		const lo = Math.max(0, center - REACH);
+		const hi = center + REACH;
+		const raw = center + Math.round(d.dx / STEP_PX);
+		return { center, value: Math.min(Math.max(raw, lo), hi), raw, lo, hi };
+	};
+
+	const show = (d: NonNullable<typeof drag.current>) => {
+		const r = read(d);
+		setPreview({ start: r.center, value: r.value, anchor: d.anchor });
+	};
+
+	// How far past an end the pointer is, signed, or 0 when on the line. Below
+	// the low end only counts while the line can still go lower.
+	const overshoot = (d: NonNullable<typeof drag.current>) => {
+		const px = Math.abs(d.dx) - REACH * STEP_PX;
+		if (px <= 0) return 0;
+		if (d.dx < 0 && read(d).lo === 0) return 0;
+		return Math.sign(d.dx) * px;
+	};
+
+	const tick = (time: number) => {
+		const d = drag.current;
+		if (!d) return;
+		const over = overshoot(d);
+		if (over === 0) {
+			d.frame = null;
+			return;
+		}
+		const seconds = Math.min((time - d.lastTime) / 1000, 0.1);
+		const rate = SCRUB_BASE_RATE + Math.abs(over) / SCRUB_PX_PER_RATE;
+		d.shift += Math.sign(over) * rate * seconds;
+		d.lastTime = time;
+		show(d);
+		d.frame = requestAnimationFrame(tick);
+	};
+
+	const stop = () => {
+		const d = drag.current;
+		if (d?.frame != null) cancelAnimationFrame(d.frame);
+		drag.current = null;
+		setPreview(null);
+	};
 
 	const handlers = {
 		onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
@@ -49,17 +101,21 @@ export function useNumberLine({
 			const r = e.currentTarget.getBoundingClientRect();
 			drag.current = {
 				x: e.clientX,
+				dx: 0,
 				start: value,
+				shift: 0,
 				active: false,
 				anchor: { x: r.left + r.width / 2, y: r.bottom },
+				frame: null,
+				lastTime: 0,
 			};
 		},
 		onPointerMove: (e: React.PointerEvent<HTMLElement>) => {
 			const d = drag.current;
 			if (!d) return;
-			const dx = e.clientX - d.x;
+			d.dx = e.clientX - d.x;
 			if (!d.active) {
-				if (Math.abs(dx) < SLOP_PX) return;
+				if (Math.abs(d.dx) < SLOP_PX) return;
 				d.active = true;
 				// Keep getting moves if the pointer leaves the field. It can be gone
 				// already (a lifted finger), and the drag still works without it.
@@ -71,24 +127,25 @@ export function useNumberLine({
 				window.getSelection()?.removeAllRanges();
 			}
 			e.preventDefault();
-			setPreview({
-				start: d.start,
-				value: valueAt(d.start, dx),
-				anchor: d.anchor,
-			});
+			show(d);
+			if (overshoot(d) !== 0 && d.frame === null) {
+				d.lastTime = performance.now();
+				d.frame = requestAnimationFrame(tick);
+			}
 		},
 		onPointerUp: (e: React.PointerEvent<HTMLElement>) => {
 			const d = drag.current;
-			drag.current = null;
-			if (!d?.active) return;
-			const next = valueAt(d.start, e.clientX - d.x);
-			setPreview(null);
-			if (next !== d.start) onCommit(next);
+			if (!d?.active) {
+				stop();
+				return;
+			}
+			d.dx = e.clientX - d.x;
+			const next = read(d).value;
+			const start = d.start;
+			stop();
+			if (next !== start) onCommit(next);
 		},
-		onPointerCancel: () => {
-			drag.current = null;
-			setPreview(null);
-		},
+		onPointerCancel: stop,
 	};
 
 	return {
