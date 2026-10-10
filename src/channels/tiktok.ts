@@ -1,10 +1,11 @@
 import { createHmac } from "node:crypto";
 import { type } from "arktype";
-import { and, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, like, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { orders } from "#/db/schema";
+import { listings, orderLines, orders } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
+import { needsShipping } from "#/orders/to-ship";
 import { matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
@@ -329,7 +330,9 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	const since =
 		store.ordersSyncedThrough ?? new Date(Date.now() - FIRST_SYNC_DAYS * DAY);
 	const startedAt = new Date();
-	let count = 0;
+	// Orders changed since the last pass, plus relayed orders still open, so
+	// those move over even if TikTok hasn't touched them lately.
+	const ids = new Set(await openRelayed(db, store.id));
 	let pageToken: string | undefined;
 	do {
 		const page = searchPage.assert(
@@ -348,55 +351,133 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 				},
 			),
 		);
-		const ids = (page.orders ?? []).map((o) => o.id);
-		const owned = await ownedElsewhere(db, store.id, ids);
-		const fresh = ids.filter((id) => !owned.has(id));
-		if (fresh.length > 0) {
-			const details = detailPage.assert(
-				await tiktokApi("/order/202309/orders", {
-					shop_cipher: cipher,
-					ids: fresh.join(","),
-				}),
-			);
-			for (const order of details.orders ?? []) {
-				const result = await ingestOrder(
-					db,
-					store,
-					tiktokToChannelOrder(order),
-					locationId,
-				);
-				problems.push(...result.problems);
-				count++;
-			}
-		}
+		for (const o of page.orders ?? []) ids.add(o.id);
 		pageToken = page.next_page_token || undefined;
 	} while (pageToken);
+
+	let count = 0;
+	const all = [...ids];
+	// TikTok returns at most 50 orders per detail call.
+	for (let i = 0; i < all.length; i += 50) {
+		const details = detailPage.assert(
+			await tiktokApi("/order/202309/orders", {
+				shop_cipher: cipher,
+				ids: all.slice(i, i + 50).join(","),
+			}),
+		);
+		for (const raw of details.orders ?? []) {
+			const order = tiktokToChannelOrder(raw);
+			problems.push(...(await takeOver(db, store.id, order)));
+			const result = await ingestOrder(db, store, order, locationId);
+			problems.push(...result.problems);
+			count++;
+		}
+	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
 	if (refreshWarning) problems.push(refreshWarning);
 	return { store: store.name, orders: count, problems };
 }
 
-// TikTok orders already saved from another store: the ones Shopify relayed
-// before katasync talked to TikTok directly. They stay with Shopify, which
-// keeps updating them, rather than being saved twice.
-async function ownedElsewhere(db: Db, storeId: number, ids: string[]) {
-	if (ids.length === 0) return new Set<string>();
+// TikTok orders Shopify relayed that still need shipping.
+async function openRelayed(db: Db, storeId: number) {
 	const rows = await db
 		.select({ marketplaceOrderId: orders.marketplaceOrderId })
 		.from(orders)
 		.where(
 			and(
-				inArray(
-					orders.marketplaceOrderId,
-					ids.map((id) => `tiktok:${id}`),
-				),
 				ne(orders.storeId, storeId),
+				like(orders.marketplaceOrderId, "tiktok:%"),
+				needsShipping,
 			),
 		);
-	return new Set(
-		rows.map((r) => (r.marketplaceOrderId ?? "").slice("tiktok:".length)),
-	);
+	return rows.map((r) => (r.marketplaceOrderId ?? "").slice("tiktok:".length));
+}
+
+// Moves an order Shopify relayed over to the TikTok store, so TikTok's own
+// status (a label bought, a cancellation) decides it from now on. Its lines
+// are re-keyed to TikTok's by SKU, or by product when the SKUs differ, so
+// stock they already took isn't taken again. Pin and stock history stay.
+// Returns lines that couldn't be matched; those keep the stock they took.
+export async function takeOver(
+	db: Db,
+	storeId: number,
+	order: ChannelOrder,
+): Promise<string[]> {
+	return db.transaction(async (tx) => {
+		const [existing] = await tx
+			.select({ id: orders.id, name: orders.name })
+			.from(orders)
+			.where(
+				and(
+					eq(orders.marketplaceOrderId, order.marketplaceOrderId ?? ""),
+					ne(orders.storeId, storeId),
+				),
+			);
+		if (!existing) return [];
+		await tx
+			.update(orders)
+			.set({ storeId, externalId: order.externalId })
+			.where(eq(orders.id, existing.id));
+
+		const listingIds = order.lines.flatMap((l) =>
+			l.listingExternalId ? [l.listingExternalId] : [],
+		);
+		const productOf = new Map(
+			listingIds.length === 0
+				? []
+				: (
+						await tx
+							.select({
+								externalId: listings.externalId,
+								productId: listings.productId,
+							})
+							.from(listings)
+							.where(
+								and(
+									eq(listings.storeId, storeId),
+									inArray(listings.externalId, listingIds),
+								),
+							)
+					).map((l) => [l.externalId, l.productId]),
+		);
+		const sameSku = (a: string | null, b: string | null) =>
+			a !== null &&
+			b !== null &&
+			a.trim().toLowerCase() === b.trim().toLowerCase();
+
+		const problems: string[] = [];
+		const claimed = new Set<string>();
+		const lines = await tx
+			.select()
+			.from(orderLines)
+			.where(eq(orderLines.orderId, existing.id));
+		for (const line of lines) {
+			const open = order.lines.filter((l) => !claimed.has(l.externalId));
+			const match =
+				open.find((l) => sameSku(l.sku, line.sku)) ??
+				open.find(
+					(l) =>
+						line.productId !== null &&
+						productOf.get(l.listingExternalId ?? "") === line.productId,
+				);
+			if (!match) {
+				problems.push(
+					`${existing.name}: ${line.title} isn't on the TikTok order`,
+				);
+				continue;
+			}
+			claimed.add(match.externalId);
+			await tx
+				.update(orderLines)
+				.set({
+					externalId: match.externalId,
+					listingExternalId: match.listingExternalId,
+				})
+				.where(eq(orderLines.id, line.id));
+		}
+		return problems;
+	});
 }
 
 const productsPage = type({

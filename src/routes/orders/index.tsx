@@ -108,7 +108,8 @@ function Orders() {
 							: "Orders show up here once a store syncs."}
 					</EmptyState>
 				) : (
-					<table className="w-full">
+					// No cell wraps; the customer column takes what's left and truncates.
+					<table className="w-full whitespace-nowrap">
 						<thead>
 							<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
 								{view === "ship" && (
@@ -192,7 +193,7 @@ function Orders() {
 											{formatCount(o.items)} {o.items === 1 ? "item" : "items"}
 										</td>
 										<td className="px-4 py-2.5">
-											<div className="flex flex-wrap gap-1.5">
+											<div className="flex gap-1.5">
 												<Badge tone={status.tone}>{status.label}</Badge>
 												{o.unmatched > 0 && (
 													<Badge tone="critical">Unknown product</Badge>
