@@ -453,10 +453,7 @@ export const productSuppliers = pgTable(
 	},
 	(t) => [
 		index("product_suppliers_supplier_idx").on(t.supplierId),
-		check(
-			"product_suppliers_minimum_positive",
-			sql`${t.minimumQuantity} > 0`,
-		),
+		check("product_suppliers_minimum_positive", sql`${t.minimumQuantity} > 0`),
 	],
 );
 
@@ -475,9 +472,7 @@ export const purchaseOrderStatus = pgEnum("purchase_order_status", [
 export const purchaseOrders = pgTable(
 	"purchase_orders",
 	{
-		id: integer()
-			.primaryKey()
-			.generatedAlwaysAsIdentity({ startWith: 1001 }),
+		id: integer().primaryKey().generatedAlwaysAsIdentity({ startWith: 1001 }),
 		supplierId: integer()
 			.notNull()
 			.references(() => suppliers.id),

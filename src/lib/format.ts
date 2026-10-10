@@ -64,6 +64,11 @@ export function formatOrderDate(value: Date | string) {
 	return `${day} at ${time.format(date)}`;
 }
 
+// "Oct 20", for dates where the time doesn't matter.
+export function formatDay(value: Date | string) {
+	return monthDay.format(new Date(value));
+}
+
 // "Mechanicsburg, PA 17055", leaving out whatever is missing.
 export function cityLine(
 	city: string | null,
