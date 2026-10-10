@@ -3,8 +3,8 @@
 @import '@fontsource-variable/inter';
 
 /* Modeled on the Shopify admin (Polaris light tokens, @shopify/polaris-tokens
-   9.x). Flat colors only: no gradients, no glows. The logo's violet is the one
-   brand touch (top bar mark, charts). Status always pairs color with a word. */
+   9.x). Flat colors only: no gradients, no glows. Violet is the one brand touch
+   (charts). Status always pairs color with a word. */
 :root {
   --background: #f1f1f1;
   --foreground: #303030;
