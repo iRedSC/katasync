@@ -6,6 +6,7 @@ import {
 	planAmazonWindows,
 } from "./amazon";
 import { ebayOrder, ebayToChannelOrder } from "./ebay";
+import { tiktokOrder, tiktokToChannelOrder } from "./tiktok";
 
 describe("amazonToChannelOrder", () => {
 	const order = (extra: Record<string, unknown> = {}) =>
@@ -177,5 +178,110 @@ describe("planAmazonWindows", () => {
 		expect(planAmazonWindows(now - 10 * 60 * 1000, now)).toEqual([
 			{ from: now - 10 * 60 * 1000, until: now, advancesCursor: true },
 		]);
+	});
+});
+
+describe("tiktokToChannelOrder", () => {
+	const order = (extra: Record<string, unknown> = {}) =>
+		tiktokOrder.assert({
+			id: "577000000000000001",
+			status: "AWAITING_SHIPMENT",
+			create_time: 1791460800,
+			update_time: 1791464400,
+			fulfillment_type: "FULFILLMENT_BY_SELLER",
+			payment: { total_amount: "41.50", shipping_fee: "5.50" },
+			recipient_address: {
+				name: "J***n D***",
+				address_line1: "1** M*** St",
+				postal_code: "19901",
+				region_code: "US",
+				district_info: [
+					{ address_level_name: "Country", address_name: "United States" },
+					{ address_level_name: "State", address_name: "DE" },
+					{ address_level_name: "City", address_name: "Dover" },
+				],
+			},
+			line_items: [
+				{
+					id: "a",
+					sku_id: "1729",
+					seller_sku: "WRENCH",
+					product_name: "Wrench",
+					sku_name: "Default",
+					sale_price: "18.00",
+				},
+				{
+					id: "b",
+					sku_id: "1729",
+					seller_sku: "WRENCH",
+					product_name: "Wrench",
+					sku_name: "Default",
+					sale_price: "18.00",
+				},
+				{
+					id: "c",
+					sku_id: "1730",
+					product_name: "Blade",
+					sku_name: "Large",
+					sale_price: "9.00",
+					display_status: "CANCELLED",
+				},
+			],
+			...extra,
+		});
+
+	test("units of one SKU become one line, cancelled units drop out", () => {
+		const o = tiktokToChannelOrder(order());
+		expect(o).toMatchObject({
+			salesChannel: "TikTok",
+			marketplaceOrderId: "tiktok:577000000000000001",
+			fulfillmentStatus: "UNFULFILLED",
+			fulfilledByChannel: false,
+			total: 41.5,
+			shippingCharged: 5.5,
+		});
+		expect(o.lines).toEqual([
+			{
+				externalId: "1729",
+				listingExternalId: "1729",
+				sku: "WRENCH",
+				title: "Wrench",
+				quantity: 2,
+				unitPrice: 18,
+			},
+		]);
+	});
+
+	test("masked buyer details are dropped, the rest kept", () => {
+		const o = tiktokToChannelOrder(order());
+		expect(o).toMatchObject({
+			customerName: null,
+			shipAddress1: null,
+			shipCity: "Dover",
+			shipRegion: "DE",
+			shipPostalCode: "19901",
+			shipCountry: "US",
+		});
+	});
+
+	test("an order TikTok ships from its warehouse never takes our stock", () => {
+		const o = tiktokToChannelOrder(
+			order({ fulfillment_type: "FULFILLMENT_BY_TIKTOK" }),
+		);
+		expect(o.fulfilledByChannel).toBe(true);
+		expect(o.fulfillmentStatus).toBe("FULFILLMENT_NOT_REQUIRED");
+	});
+
+	test("a cancelled order is marked cancelled at its cancel time", () => {
+		const o = tiktokToChannelOrder(
+			order({ status: "CANCELLED", cancel_time: 1791462000 }),
+		);
+		expect(o.cancelledAt).toEqual(new Date(1791462000 * 1000));
+	});
+
+	test("an unpaid order waits for payment", () => {
+		const o = tiktokToChannelOrder(order({ status: "UNPAID" }));
+		expect(o.fulfillmentStatus).toBe("AWAITING_PAYMENT");
+		expect(o.financialStatus).toBe("PENDING");
 	});
 });

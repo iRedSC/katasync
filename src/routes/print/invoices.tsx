@@ -96,17 +96,21 @@ function Invoice({
 				</div>
 			</header>
 
-			<section>
-				<p className="text-[9pt] font-semibold tracking-wide text-[#616161] uppercase">
-					Ship to
-				</p>
-				<p className="text-[13pt] font-semibold">
-					{o.customerName ?? "Customer"}
-				</p>
-				{shipTo.map((l) => (
-					<p key={l}>{l}</p>
-				))}
-			</section>
+			{/* Amazon and TikTok hide the street when they sell the label; the
+			    label carries the address, so the invoice leaves it off. */}
+			{o.shipAddress1 && (
+				<section>
+					<p className="text-[9pt] font-semibold tracking-wide text-[#616161] uppercase">
+						Ship to
+					</p>
+					<p className="text-[13pt] font-semibold">
+						{o.customerName ?? "Customer"}
+					</p>
+					{shipTo.map((l) => (
+						<p key={l}>{l}</p>
+					))}
+				</section>
+			)}
 
 			<table className="w-full border-collapse">
 				<thead>

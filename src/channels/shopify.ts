@@ -1,7 +1,7 @@
 import { type } from "arktype";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { locations } from "#/db/schema";
+import { locations, orders, stores } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
 import { cleanTitle, matchListings, syncListings } from "./listings";
@@ -355,11 +355,23 @@ async function ingestMatching(
 	let count = 0;
 	const problems: string[] = [];
 	let cursor: string | null = null;
+	const tiktokDirect = await hasTiktokStore(db);
 	do {
 		const page = ordersPage.assert(
 			await shopifyQuery(ORDERS_QUERY, { cursor, query: search }),
 		);
+		const relayed = tiktokDirect
+			? await savedOrders(
+					db,
+					store.id,
+					page.orders.nodes.map((o) => o.id),
+				)
+			: null;
 		for (const o of page.orders.nodes) {
+			if (!newest || o.updatedAt > newest) newest = o.updatedAt;
+			// Once katasync syncs TikTok itself, new TikTok orders come from
+			// there. Ones Shopify relayed earlier stay here and keep updating.
+			if (relayed && tiktokOrderId(o.tags) && !relayed.has(o.id)) continue;
 			// Big orders have more lines than fit in one page; fetch the rest.
 			const order = o.lineItems.pageInfo.hasNextPage
 				? {
@@ -380,7 +392,6 @@ async function ingestMatching(
 				locationId,
 			);
 			problems.push(...result.problems);
-			if (!newest || o.updatedAt > newest) newest = o.updatedAt;
 			count++;
 		}
 		cursor = page.orders.pageInfo.hasNextPage
@@ -388,6 +399,26 @@ async function ingestMatching(
 			: null;
 	} while (cursor);
 	return { count, newest, problems };
+}
+
+// The TikTok store exists once a direct TikTok sync has reached TikTok.
+async function hasTiktokStore(db: Db) {
+	const [row] = await db
+		.select({ id: stores.id })
+		.from(stores)
+		.where(eq(stores.channel, "tiktok"))
+		.limit(1);
+	return Boolean(row);
+}
+
+// Which of these Shopify order IDs this store has already saved.
+async function savedOrders(db: Db, storeId: number, ids: string[]) {
+	if (ids.length === 0) return new Set<string>();
+	const rows = await db
+		.select({ externalId: orders.externalId })
+		.from(orders)
+		.where(and(eq(orders.storeId, storeId), inArray(orders.externalId, ids)));
+	return new Set(rows.map((r) => r.externalId));
 }
 
 // Shopify's TikTok channel tags each order "TikTokOrderID:<id>".

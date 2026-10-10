@@ -15,7 +15,8 @@ export function labelSource(order: {
 	salesChannel: string | null;
 }): LabelSource {
 	if (order.channel === "amazon") return "amazon";
-	if (order.salesChannel === "TikTok") return "tiktok";
+	if (order.channel === "tiktok" || order.salesChannel === "TikTok")
+		return "tiktok";
 	return "shippo";
 }
 

@@ -13,7 +13,7 @@ Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Tr
 3. `pnpm db:migrate`
 4. `pnpm dev` (http://127.0.0.1:3000). To reach it from other devices: `tailscale serve --bg --https=3000 http://127.0.0.1:3000`.
 
-`pnpm sync --watch` pulls orders from every channel whose credentials are in `.env.local` (Shopify, which also relays TikTok Shop; Amazon; eBay). Quote values that contain `#`, like eBay refresh tokens, or they get cut off.
+`pnpm sync --watch` pulls orders from every channel whose credentials are in `.env.local` (Shopify; TikTok Shop; Amazon; eBay). Once TikTok has synced, Shopify stops importing the TikTok orders its TikTok channel relays. Quote values that contain `#`, like eBay refresh tokens, or they get cut off.
 
 `pnpm test` runs against an in-memory Postgres (PGlite) and needs no database.
 

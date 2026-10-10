@@ -49,6 +49,9 @@ describe("needsInsurance and labelSource", () => {
 		expect(labelSource({ channel: "shopify", salesChannel: "TikTok" })).toBe(
 			"tiktok",
 		);
+		expect(labelSource({ channel: "tiktok", salesChannel: null })).toBe(
+			"tiktok",
+		);
 		expect(labelSource({ channel: "ebay", salesChannel: null })).toBe("shippo");
 	});
 });
