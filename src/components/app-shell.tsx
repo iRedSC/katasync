@@ -19,8 +19,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 	useEffect(() => setNavOpen(false), [pathname]);
 
 	// Print pages are the paper itself: no bars, no nav. The receiving app is
-	// its own full-screen phone app.
-	if (pathname.startsWith("/print") || pathname.startsWith("/receive"))
+	// its own full-screen phone app. Signing in comes before the app.
+	if (
+		pathname.startsWith("/print") ||
+		pathname.startsWith("/receive") ||
+		pathname === "/login" ||
+		pathname === "/setup"
+	)
 		return children;
 
 	return (
