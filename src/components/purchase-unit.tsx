@@ -23,6 +23,8 @@ export type SaveTerms = {
 	saveDefault?: (terms: PurchaseTerms) => Promise<unknown>;
 	// Why Set default is unavailable, when it is.
 	noDefaultReason?: string;
+	// The product's default now, so the form can say when it's on it.
+	current?: PurchaseTerms;
 };
 
 // MOQ and UOM in one cell: "CASE of 12" over "min 2". Click to change both in
@@ -247,19 +249,26 @@ function TermsForm({
 				<Button type="button" size="sm" variant="ghost" onClick={onDone}>
 					Cancel
 				</Button>
-				{(saving.saveDefault || saving.noDefaultReason) && (
-					<button
-						type="button"
-						disabled={busy || adding || !saving.saveDefault}
-						title={
-							saving.noDefaultReason ??
-							"Also use these for this product on future POs"
-						}
-						onClick={() => saving.saveDefault && submit(saving.saveDefault)}
-						className="ml-auto text-xs text-link hover:underline disabled:text-muted-foreground disabled:no-underline"
-					>
-						Set default
-					</button>
+				{saving.saveDefault &&
+				saving.current?.unit === unit &&
+				saving.current.packSize === packSize &&
+				String(saving.current.minimumQuantity) === minimum.trim() ? (
+					<span className="ml-auto text-xs text-muted-foreground">Default</span>
+				) : (
+					(saving.saveDefault || saving.noDefaultReason) && (
+						<button
+							type="button"
+							disabled={busy || adding || !saving.saveDefault}
+							title={
+								saving.noDefaultReason ??
+								"Also use these for this product on future POs"
+							}
+							onClick={() => saving.saveDefault && submit(saving.saveDefault)}
+							className="ml-auto text-xs text-link hover:underline disabled:text-muted-foreground disabled:no-underline"
+						>
+							Set default
+						</button>
+					)
 				)}
 			</div>
 		</form>

@@ -59,6 +59,9 @@ export async function loadOrder(db: Db, poId: number) {
 			// Who the product is bought from now. A line's terms can become the
 			// product's default only on that supplier's PO.
 			linkSupplierId: productSuppliers.supplierId,
+			defaultUnit: productSuppliers.unit,
+			defaultPackSize: productSuppliers.packSize,
+			defaultMinimum: productSuppliers.minimumQuantity,
 			quantity: purchaseOrderLines.quantity,
 			unitCost: purchaseOrderLines.unitCost,
 			received: sql<number>`coalesce(${received.units}, 0)::int`,

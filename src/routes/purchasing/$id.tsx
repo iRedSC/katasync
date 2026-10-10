@@ -456,6 +456,11 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 									// Only the product's own supplier's terms can change here.
 									...(l.linkSupplierId === d.supplier.id
 										? {
+												current: {
+													unit: l.defaultUnit ?? "EACH",
+													packSize: l.defaultPackSize ?? 1,
+													minimumQuantity: l.defaultMinimum ?? 1,
+												},
 												saveDefault: (terms) =>
 													setPurchaseLineTerms({
 														data: {
