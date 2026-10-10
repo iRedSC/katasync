@@ -4,8 +4,8 @@ import { createPortal } from "react-dom";
 import { cn } from "#/lib/utils";
 
 // How far one drag can move a number, and how many pixels make one step.
-const REACH = 10;
-const STEP_PX = 14;
+const REACH = 5;
+const STEP_PX = 28;
 // Movement before a press counts as a drag rather than a click into the field.
 const SLOP_PX = 5;
 // Past the end of the line the number keeps going on its own: this many steps
@@ -185,7 +185,8 @@ function NumberLine({
 			{ticks.map((n) => {
 				const left = (n - lo) * STEP_PX + 16;
 				const current = n === value;
-				const major = n === start || n % 5 === 0;
+				// Steps are wide enough to label every one; the start stands out.
+				const major = n === start;
 				return (
 					<div
 						key={n}
@@ -207,18 +208,16 @@ function NumberLine({
 								)}
 							/>
 						) : (
-							(major || current) && (
-								<span
-									className={cn(
-										"mt-1 text-[0.6875rem] leading-none tabular-nums",
-										current
-											? "font-bold text-foreground"
-											: "text-muted-foreground",
-									)}
-								>
-									{n}
-								</span>
-							)
+							<span
+								className={cn(
+									"mt-1 text-[0.6875rem] leading-none tabular-nums",
+									current
+										? "font-bold text-foreground"
+										: "text-muted-foreground",
+								)}
+							>
+								{n}
+							</span>
 						)}
 					</div>
 				);
