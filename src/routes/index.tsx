@@ -57,6 +57,33 @@ function Home() {
 			)}
 
 			<div className="grid gap-4 lg:grid-cols-2">
+				{d.atRisk.length > 0 && (
+					<Card
+						title={`${formatCount(d.atRisk.length)} A ${d.atRisk.length === 1 ? "item" : "items"} running out`}
+						aside={
+							<Link to="/purchasing" className="text-link hover:underline">
+								Purchase orders
+							</Link>
+						}
+						flush
+					>
+						<p className="px-4 pb-2 text-muted-foreground">
+							Top sellers that will run out before a new PO could arrive, even
+							counting what's on order.
+						</p>
+						<ul>
+							{d.atRisk.slice(0, 6).map((r) => (
+								<ProductRow key={r.sku} {...r}>
+									<Badge tone={r.daysLeft === 0 ? "critical" : "warning"}>
+										{r.daysLeft === 0
+											? "Out now"
+											: `${r.daysLeft} ${r.daysLeft === 1 ? "day" : "days"} left`}
+									</Badge>
+								</ProductRow>
+							))}
+						</ul>
+					</Card>
+				)}
 				{d.blockers.length > 0 && (
 					<Card title="Missing parts holding up tool sets" flush>
 						<ul>

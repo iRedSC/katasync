@@ -301,6 +301,15 @@ export async function recordCount(
 				),
 			)
 			.for("update");
+		await tx
+			.update(stockLevels)
+			.set({ lastCountedAt: sql`now()` })
+			.where(
+				and(
+					eq(stockLevels.productId, input.productId),
+					eq(stockLevels.locationId, input.locationId),
+				),
+			);
 		const delta = input.counted - level.onHand;
 		if (delta === 0) return { delta, onHand: level.onHand, batchId: null };
 		const result = await postMovements(tx, {

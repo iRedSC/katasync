@@ -178,6 +178,9 @@ export const stockLevels = pgTable(
 			.notNull()
 			.references(() => locations.id),
 		onHand: integer().notNull().default(0),
+		// When someone last counted this shelf, even if the count matched and
+		// nothing moved. Null means never. Drives the cycle count list.
+		lastCountedAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [primaryKey({ columns: [t.productId, t.locationId] })],
 );

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CountsRouteImport } from './routes/counts'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StockRouteImport } from './routes/stock'
@@ -28,6 +29,11 @@ import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CountsRoute = CountsRouteImport.update({
+  id: '/counts',
+  path: '/counts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ListingsRoute = ListingsRouteImport.update({
@@ -103,6 +109,7 @@ const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
@@ -120,6 +127,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
@@ -138,6 +146,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/listings': typeof ListingsRoute
   '/settings': typeof SettingsRoute
   '/stock': typeof StockRoute
@@ -157,6 +166,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/counts'
     | '/listings'
     | '/settings'
     | '/stock'
@@ -174,6 +184,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/counts'
     | '/listings'
     | '/settings'
     | '/stock'
@@ -191,6 +202,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/counts'
     | '/listings'
     | '/settings'
     | '/stock'
@@ -209,6 +221,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CountsRoute: typeof CountsRoute
   ListingsRoute: typeof ListingsRoute
   SettingsRoute: typeof SettingsRoute
   StockRoute: typeof StockRoute
@@ -232,6 +245,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/counts': {
+      id: '/counts'
+      path: '/counts'
+      fullPath: '/counts'
+      preLoaderRoute: typeof CountsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/listings': {
@@ -337,6 +357,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CountsRoute: CountsRoute,
   ListingsRoute: ListingsRoute,
   SettingsRoute: SettingsRoute,
   StockRoute: StockRoute,

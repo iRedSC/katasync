@@ -1,10 +1,7 @@
-import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
-	orderLines,
-	orders,
-	productComponents,
 	productSuppliers,
 	products,
 	purchaseOrderLines,
@@ -13,6 +10,8 @@ import {
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
+import { type AbcClass, abcClasses } from "#/inventory/abc";
+import { soldSince } from "#/inventory/sales";
 
 // Sales from this many days back set each product's daily demand.
 export const DEMAND_DAYS = 90;
@@ -20,25 +19,34 @@ export const DEMAND_DAYS = 90;
 // How many to order of one product, or 0 to leave it off the PO.
 //
 // A product needs ordering once what's on the shelf and on order would run out
-// before a PO sent today arrives (leadTimeDays). It's then topped up to last
-// coverDays past arrival, and to at least the supplier's minimum quantity.
-// Oversold stock (negative onHand) is always bought back.
+// before a PO sent today arrives (leadTimeDays), with safetyDays to spare. It's
+// then topped up to last coverDays past that, and to at least the supplier's
+// minimum quantity. Oversold stock (negative onHand) is always bought back.
 export function reorderQuantity(p: {
 	dailyDemand: number;
 	onHand: number;
 	onOrder: number;
 	leadTimeDays: number;
+	safetyDays: number;
 	coverDays: number;
 	minimumQuantity: number;
 }): number {
 	const position = p.onHand + p.onOrder;
-	const reorderPoint = p.dailyDemand * p.leadTimeDays;
+	const reorderPoint = p.dailyDemand * (p.leadTimeDays + p.safetyDays);
 	if (position >= reorderPoint && position >= 0) return 0;
-	const target = Math.ceil(p.dailyDemand * (p.leadTimeDays + p.coverDays));
+	const target = Math.ceil(
+		p.dailyDemand * (p.leadTimeDays + p.safetyDays + p.coverDays),
+	);
 	const need = target - position;
 	if (need <= 0) return 0;
 	return Math.max(need, p.minimumQuantity);
 }
+
+// A items carry this share of their lead time as spare stock, since running
+// out of them costs the most. B and C carry none.
+const A_SAFETY = 0.5;
+export const safetyDays = (abc: AbcClass | null, leadTimeDays: number) =>
+	abc === "A" ? Math.ceil(leadTimeDays * A_SAFETY) : 0;
 
 export type SuggestedLine = {
 	productId: number;
@@ -75,8 +83,8 @@ export async function suggestPurchases(
 	now = new Date(),
 ): Promise<SupplierSuggestion[]> {
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [sold, onHand, onOrder, linked, drafts] = await Promise.all([
-		soldSince(db, since),
+	const [sold, onHand, onOrder, linked, drafts, abc] = await Promise.all([
+		soldSince(db, since, { includeFba: false }),
 		ownedOnHand(db),
 		unitsOnOrder(db),
 		db
@@ -104,6 +112,7 @@ export async function suggestPurchases(
 			.select({ id: purchaseOrders.id, supplierId: purchaseOrders.supplierId })
 			.from(purchaseOrders)
 			.where(eq(purchaseOrders.status, "draft")),
+		abcClasses(db, now),
 	]);
 
 	const bySupplier = new Map<number, SupplierSuggestion>();
@@ -117,6 +126,10 @@ export async function suggestPurchases(
 			...line,
 			dailyDemand: line.sold / DEMAND_DAYS,
 			leadTimeDays: p.leadTimeDays,
+			safetyDays: safetyDays(
+				abc.classes.get(p.productId)?.abc ?? null,
+				p.leadTimeDays,
+			),
 			coverDays: p.coverDays,
 			minimumQuantity: p.minimumQuantity,
 		});
@@ -162,36 +175,6 @@ export async function suggestPurchases(
 	return result.sort(
 		(a, b) => Number(b.ready) - Number(a.ready) || b.total - a.total,
 	);
-}
-
-// Units sold per stocked product since a date. Tool sets count as their parts,
-// since that's what leaves the shelf. Amazon's own (FBA) shipments are left
-// out: they never take our stock.
-async function soldSince(db: Db, since: Date) {
-	const rows = await db
-		.select({
-			productId: sql<number>`coalesce(${productComponents.componentProductId}, ${orderLines.productId})`,
-			units: sql<number>`sum(${orderLines.quantity} * coalesce(${productComponents.quantity}, 1))::int`,
-		})
-		.from(orderLines)
-		.innerJoin(orders, eq(orders.id, orderLines.orderId))
-		.innerJoin(products, eq(products.id, orderLines.productId))
-		.leftJoin(
-			productComponents,
-			and(
-				eq(productComponents.parentProductId, orderLines.productId),
-				eq(products.kind, "bundle"),
-			),
-		)
-		.where(
-			and(
-				gte(orders.placedAt, since),
-				isNull(orders.cancelledAt),
-				eq(orders.fulfilledByChannel, false),
-			),
-		)
-		.groupBy(sql`1`);
-	return new Map(rows.map((r) => [r.productId, r.units]));
 }
 
 // On hand across our own locations. Negative (oversold) stays negative, so it
@@ -240,4 +223,56 @@ export async function unitsOnOrder(db: Db, productIds?: number[]) {
 		)
 		.groupBy(purchaseOrderLines.productId);
 	return new Map(rows.map((r) => [r.productId, r.units]));
+}
+
+// A products that will run out before a PO sent today could arrive, counting
+// what's already on order. Products without a supplier use the default lead
+// time, since they still have to come from somewhere.
+const DEFAULT_LEAD_TIME_DAYS = 14;
+export async function aItemsAtRisk(db: Db, now = new Date()) {
+	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
+	const [abc, sold, onHand, onOrder] = await Promise.all([
+		abcClasses(db, now),
+		soldSince(db, since, { includeFba: false }),
+		ownedOnHand(db),
+		unitsOnOrder(db),
+	]);
+	const aIds = [...abc.classes]
+		.filter(([, c]) => c.abc === "A")
+		.map(([id]) => id);
+	if (aIds.length === 0) return [];
+	const rows = await db
+		.select({
+			id: products.id,
+			sku: products.sku,
+			name: products.name,
+			variantName: products.variantName,
+			imageUrl: products.imageUrl,
+			leadTimeDays: suppliers.leadTimeDays,
+		})
+		.from(products)
+		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+		.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+		.where(inArray(products.id, aIds));
+
+	return rows
+		.flatMap((p) => {
+			const dailyDemand = (sold.get(p.id) ?? 0) / DEMAND_DAYS;
+			if (dailyDemand === 0) return [];
+			const position = (onHand.get(p.id) ?? 0) + (onOrder.get(p.id) ?? 0);
+			const leadTimeDays = p.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
+			if (position >= dailyDemand * leadTimeDays) return [];
+			return [
+				{
+					sku: p.sku,
+					name: p.name,
+					variantName: p.variantName,
+					imageUrl: p.imageUrl,
+					// Days until the shelf and what's on order run out.
+					daysLeft: Math.max(0, Math.floor(position / dailyDemand)),
+					leadTimeDays,
+				},
+			];
+		})
+		.sort((a, b) => a.daysLeft - b.daysLeft);
 }

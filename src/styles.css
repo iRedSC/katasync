@@ -54,6 +54,15 @@
   --info-icon: #0094d5;
   --info-border: #a8d8ff;
 
+  /* ABC classes. Not statuses, so they get their own fills: lime for A, the
+     info blue for B, the plain badge gray for C. */
+  --abc-a-fill: #d9f59a;
+  --abc-a-text: #384500;
+  --abc-b-fill: #d5ebff;
+  --abc-b-text: #003a5a;
+  --abc-c-fill: #e3e3e3;
+  --abc-c-text: #303030;
+
   color-scheme: light;
 }
 
@@ -102,6 +111,12 @@
   --color-info-text: var(--info-text);
   --color-info-icon: var(--info-icon);
   --color-info-border: var(--info-border);
+  --color-abc-a-fill: var(--abc-a-fill);
+  --color-abc-a-text: var(--abc-a-text);
+  --color-abc-b-fill: var(--abc-b-fill);
+  --color-abc-b-text: var(--abc-b-text);
+  --color-abc-c-fill: var(--abc-c-fill);
+  --color-abc-c-text: var(--abc-c-text);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

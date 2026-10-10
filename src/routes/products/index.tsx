@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Card, Page } from "#/components/page";
+import { AbcBadge, Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import { formatCount } from "#/lib/format";
@@ -25,8 +25,13 @@ const filters = {
 		test: (p: ProductRow) => p.kind !== "bundle" && p.available === 0,
 	},
 	bundles: { label: "Tool sets", test: (p: ProductRow) => p.kind === "bundle" },
+	a: { label: "A items", test: (p: ProductRow) => p.abc === "A" },
+	b: { label: "B items", test: (p: ProductRow) => p.abc === "B" },
+	c: { label: "C items", test: (p: ProductRow) => p.abc === "C" },
 } as const;
 type Filter = keyof typeof filters;
+// ABC tabs list the most valuable first instead of by name.
+const byValue = (show: Filter) => show === "a" || show === "b" || show === "c";
 
 export const Route = createFileRoute("/products/")({
 	validateSearch: (search: Record<string, unknown>): { show?: Filter } =>
@@ -40,7 +45,7 @@ export const Route = createFileRoute("/products/")({
 const PAGE = 100;
 
 function Products() {
-	const products = Route.useLoaderData();
+	const { products, abcDays, unpriced } = Route.useLoaderData();
 	const { show = "all" } = Route.useSearch();
 	const navigate = useNavigate();
 	const search = useRef<HTMLInputElement>(null);
@@ -62,7 +67,7 @@ function Products() {
 
 	const filtered = useMemo(() => {
 		const q = query.trim().toLowerCase();
-		return products.filter(
+		const matches = products.filter(
 			(p) =>
 				filters[show].test(p) &&
 				(q === "" ||
@@ -70,6 +75,9 @@ function Products() {
 					p.name.toLowerCase().includes(q) ||
 					p.category?.toLowerCase().includes(q)),
 		);
+		return byValue(show)
+			? matches.sort((a, b) => (a.abcRank ?? 0) - (b.abcRank ?? 0))
+			: matches;
 	}, [products, query, show]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the list changes
@@ -97,6 +105,25 @@ function Products() {
 
 	return (
 		<Page title="Products">
+			{byValue(show) && unpriced > 0 && (
+				<Banner
+					tone="warning"
+					title={`${formatCount(unpriced)} sold ${unpriced === 1 ? "product needs a cost" : "products need a cost"} to get a class`}
+				>
+					Classes rank products by units sold times cost. Products showing a
+					dash in the Class column are left out until they have one.
+				</Banner>
+			)}
+			{byValue(show) && (
+				<p className="-mt-1 text-muted-foreground">
+					A is the products carrying the first 80% of the money spent on stock,
+					B the next 15%, C the rest. Based on{" "}
+					{abcDays >= 365
+						? "the last 12 months"
+						: `${formatCount(abcDays)} days`}{" "}
+					of sales, most valuable first.
+				</p>
+			)}
 			<Card flush>
 				<div className="flex flex-wrap gap-1 border-b p-2">
 					{(Object.keys(filters) as Filter[]).map((key) => (
@@ -157,6 +184,7 @@ function Products() {
 					<thead>
 						<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
 							<th className="px-4 py-2 font-medium">Product</th>
+							<th className="px-2 py-2 text-center font-medium">Class</th>
 							<th className="hidden px-4 py-2 font-medium md:table-cell">
 								Status
 							</th>
@@ -192,6 +220,19 @@ function Products() {
 											</div>
 										</div>
 									</div>
+								</td>
+								<td className="px-2 py-2 text-center">
+									{/* Tool sets are classed through their parts. */}
+									{p.kind !== "bundle" && (
+										<AbcBadge
+											abc={p.abc}
+											title={
+												p.abcRank !== null
+													? `#${formatCount(p.abcRank)} by value`
+													: "Needs a cost to get a class"
+											}
+										/>
+									)}
 								</td>
 								<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
 									<RowStatus product={p} />
