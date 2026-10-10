@@ -178,10 +178,12 @@ function Products() {
 									i === selected ? "bg-[#f1f1f1]" : "hover:bg-[#f7f7f7]",
 								)}
 							>
-								<td className="px-4 py-2">
+								{/* Takes the width the other columns leave, so long names end
+								    in "…" instead of pushing them off the card. */}
+								<td className="w-full max-w-0 px-4 py-2">
 									<div className="flex items-center gap-3">
 										<ProductImage src={p.imageUrl} />
-										<div className="min-w-0">
+										<div className="min-w-0 flex-1">
 											<ProductName name={p.name} variantName={p.variantName} />
 											<div className="flex gap-2 text-xs text-muted-foreground">
 												<span>{p.sku}</span>
@@ -191,13 +193,13 @@ function Products() {
 										</div>
 									</div>
 								</td>
-								<td className="hidden px-4 py-2 md:table-cell">
+								<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
 									<RowStatus product={p} />
 								</td>
 								<td className="px-4 py-2 whitespace-nowrap">
 									<Inventory product={p} />
 								</td>
-								<td className="hidden px-4 py-2 text-muted-foreground lg:table-cell">
+								<td className="hidden px-4 py-2 whitespace-nowrap text-muted-foreground lg:table-cell">
 									{p.category ?? ""}
 								</td>
 							</tr>

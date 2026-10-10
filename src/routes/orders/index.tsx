@@ -170,12 +170,13 @@ function Orders() {
 										<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
 											{formatOrderDate(o.placedAt)}
 										</td>
-										<td className="px-4 py-2.5">
+										{/* Takes the leftover width; long names end in "…". */}
+										<td className="w-full max-w-0 px-4 py-2.5">
 											<div className="truncate">
 												{o.customerName ?? "No name"}
 											</div>
 											{o.shipCity && (
-												<div className="text-xs text-muted-foreground">
+												<div className="truncate text-xs text-muted-foreground">
 													{o.shipCity}
 													{o.shipRegion && `, ${o.shipRegion}`}
 												</div>
