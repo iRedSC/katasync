@@ -1125,7 +1125,12 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 					>
 						Open label again
 					</a>
-					{voiding === "ask" ? (
+					{/* TikTok has no API to cancel its labels. */}
+					{bought.provider === "tiktok" ? (
+						<span className="text-lg text-muted-foreground">
+							Cancel in TikTok Seller Center
+						</span>
+					) : voiding === "ask" ? (
 						<button
 							type="button"
 							onClick={confirmVoid}

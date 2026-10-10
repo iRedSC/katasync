@@ -320,7 +320,12 @@ function LabelRow({
 							Send tracking
 						</Button>
 					)}
-					{confirm ? (
+					{/* TikTok has no API to cancel its labels. */}
+					{l.provider === "tiktok" ? (
+						<span className="self-center text-xs text-muted-foreground">
+							Cancel in TikTok Seller Center
+						</span>
+					) : confirm ? (
 						<Button
 							size="sm"
 							variant="destructive"

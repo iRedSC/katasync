@@ -114,7 +114,7 @@ export function signRequest(
 		.digest("hex");
 }
 
-async function tiktokApi(
+export async function tiktokApi(
 	path: string,
 	query: Record<string, string>,
 	body?: Record<string, unknown>,
@@ -159,7 +159,7 @@ const shopsData = type({
 let cachedCipher: string | undefined;
 
 // Calls about a shop need its cipher. The app is authorized for one US shop.
-async function shopCipher() {
+export async function shopCipher() {
 	if (cachedCipher) return cachedCipher;
 	const { shops } = shopsData.assert(
 		await tiktokApi("/authorization/202309/shops", {}),

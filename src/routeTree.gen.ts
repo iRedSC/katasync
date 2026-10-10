@@ -23,6 +23,7 @@ import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
+import { Route as LabelsTiktokPackageIdRouteImport } from './routes/labels/tiktok.$packageId'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -95,6 +96,11 @@ const ReceiveIdRoute = ReceiveIdRouteImport.update({
   path: '/receive/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LabelsTiktokPackageIdRoute = LabelsTiktokPackageIdRouteImport.update({
+  id: '/labels/tiktok/$packageId',
+  path: '/labels/tiktok/$packageId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
   id: '/purchasing/pdf/$id',
   path: '/purchasing/pdf/$id',
@@ -116,6 +122,7 @@ export interface FileRoutesByFullPath {
   '/products/': typeof ProductsIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/labels/tiktok/$packageId': typeof LabelsTiktokPackageIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesByTo {
@@ -133,6 +140,7 @@ export interface FileRoutesByTo {
   '/products': typeof ProductsIndexRoute
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
+  '/labels/tiktok/$packageId': typeof LabelsTiktokPackageIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRoutesById {
@@ -151,6 +159,7 @@ export interface FileRoutesById {
   '/products/': typeof ProductsIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/labels/tiktok/$packageId': typeof LabelsTiktokPackageIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
 }
 export interface FileRouteTypes {
@@ -170,6 +179,7 @@ export interface FileRouteTypes {
     | '/products/'
     | '/purchasing/'
     | '/receive/'
+    | '/labels/tiktok/$packageId'
     | '/purchasing/pdf/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -187,6 +197,7 @@ export interface FileRouteTypes {
     | '/products'
     | '/purchasing'
     | '/receive'
+    | '/labels/tiktok/$packageId'
     | '/purchasing/pdf/$id'
   id:
     | '__root__'
@@ -204,6 +215,7 @@ export interface FileRouteTypes {
     | '/products/'
     | '/purchasing/'
     | '/receive/'
+    | '/labels/tiktok/$packageId'
     | '/purchasing/pdf/$id'
   fileRoutesById: FileRoutesById
 }
@@ -222,6 +234,7 @@ export interface RootRouteChildren {
   ProductsIndexRoute: typeof ProductsIndexRoute
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
+  LabelsTiktokPackageIdRoute: typeof LabelsTiktokPackageIdRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
 }
 
@@ -325,6 +338,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReceiveIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/labels/tiktok/$packageId': {
+      id: '/labels/tiktok/$packageId'
+      path: '/labels/tiktok/$packageId'
+      fullPath: '/labels/tiktok/$packageId'
+      preLoaderRoute: typeof LabelsTiktokPackageIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/purchasing/pdf/$id': {
       id: '/purchasing/pdf/$id'
       path: '/purchasing/pdf/$id'
@@ -350,6 +370,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProductsIndexRoute: ProductsIndexRoute,
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
+  LabelsTiktokPackageIdRoute: LabelsTiktokPackageIdRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
 }
 export const routeTree = rootRouteImport

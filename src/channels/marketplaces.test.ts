@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { toTiktokParcel } from "#/shipping/tiktok";
 import {
 	amazonItem,
 	amazonOrder,
@@ -287,5 +288,26 @@ describe("tiktokToChannelOrder", () => {
 		const o = tiktokToChannelOrder(order({ status: "UNPAID" }));
 		expect(o.fulfillmentStatus).toBe("AWAITING_PAYMENT");
 		expect(o.financialStatus).toBe("PENDING");
+	});
+});
+
+describe("toTiktokParcel", () => {
+	test("sends pounds and inches as TikTok's decimal strings", () => {
+		expect(
+			toTiktokParcel({
+				lengthMm: 330,
+				widthMm: 330,
+				heightMm: 76,
+				weightGrams: 454,
+			}),
+		).toEqual({
+			weight: { value: "1.00", unit: "POUND" },
+			dimension: {
+				length: "12.99",
+				width: "12.99",
+				height: "2.99",
+				unit: "INCH",
+			},
+		});
 	});
 });

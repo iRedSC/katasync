@@ -1,6 +1,7 @@
 // Where an order's label comes from. Marketplaces that sell their own labels
-// keep that protection (Amazon's A-to-z, TikTok's shipping), so those orders
-// are fulfilled on the marketplace; Shippo covers the rest in katasync.
+// keep that protection (Amazon's A-to-z, TikTok's shipping). TikTok's are
+// bought from katasync; Amazon's still on Seller Central until katasync can
+// buy them. Shippo covers the rest.
 // Free of server imports, so pages and the quick ship modal share it.
 export type LabelSource = "shippo" | "amazon" | "tiktok";
 
@@ -33,14 +34,6 @@ export function externalFulfillment(
 			url: id
 				? `https://sellercentral.amazon.com/orders-v3/order/${encodeURIComponent(id)}`
 				: "https://sellercentral.amazon.com/orders-v3",
-		};
-	}
-	if (source === "tiktok") {
-		return {
-			name: "TikTok",
-			url: id
-				? `https://seller-us.tiktok.com/order/detail?order_no=${encodeURIComponent(id)}`
-				: "https://seller-us.tiktok.com/order",
 		};
 	}
 	return null;

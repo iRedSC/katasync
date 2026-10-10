@@ -57,7 +57,7 @@ describe("needsInsurance and labelSource", () => {
 });
 
 describe("externalFulfillment", () => {
-	test("links Amazon and TikTok orders to their marketplace page", () => {
+	test("links Amazon orders to their marketplace page", () => {
 		expect(
 			externalFulfillment({
 				channel: "amazon",
@@ -67,15 +67,14 @@ describe("externalFulfillment", () => {
 		).toBe(
 			"https://sellercentral.amazon.com/orders-v3/order/111-2557110-8817016",
 		);
+		// TikTok labels are bought in katasync now.
 		expect(
 			externalFulfillment({
 				channel: "shopify",
 				salesChannel: "TikTok",
 				marketplaceOrderId: "tiktok:5770000000000001",
-			})?.url,
-		).toBe(
-			"https://seller-us.tiktok.com/order/detail?order_no=5770000000000001",
-		);
+			}),
+		).toBeNull();
 		expect(
 			externalFulfillment({
 				channel: "shopify",

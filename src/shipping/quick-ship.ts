@@ -89,7 +89,10 @@ export async function orderForShipping(db: Db, pin: number) {
 		contentsKey: key,
 		labelSource: labelSource(order),
 		external: externalFulfillment(order),
-		insure: needsInsurance({ total: order.total, lines }),
+		// TikTok's labels come with TikTok's own shipping protection.
+		insure:
+			labelSource(order) !== "tiktok" &&
+			needsInsurance({ total: order.total, lines }),
 		// The box and weight these contents shipped in last time, if ever.
 		last: last ?? null,
 		// The items' own weights, when every one is known; the box is added
