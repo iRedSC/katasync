@@ -340,6 +340,41 @@ export const orderLines = pgTable(
 	],
 );
 
+// One pass of one channel's order sync (scripts/sync.ts), for Diagnostics.
+// finishedAt is null while it runs, or if the worker died mid-pass. error is
+// why the whole pass failed; problems counts single orders that went wrong
+// (see syncIssues). Rules live in src/diagnostics/runs.ts.
+export const syncRuns = pgTable(
+	"sync_runs",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		channel: channel().notNull(),
+		startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		finishedAt: timestamp({ withTimezone: true }),
+		orders: integer().notNull().default(0),
+		problems: integer().notNull().default(0),
+		error: text(),
+	},
+	(t) => [index("sync_runs_channel_started_idx").on(t.channel, t.startedAt)],
+);
+
+// What went wrong with one order in a run, e.g. "#5536" / "no product for
+// KNIFE-5". Capped per run so a systemic failure can't flood the table; the
+// run's problems count stays exact.
+export const syncIssues = pgTable(
+	"sync_issues",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		runId: integer()
+			.notNull()
+			.references(() => syncRuns.id, { onDelete: "cascade" }),
+		// The order or SKU it's about, when there is one.
+		reference: text(),
+		message: text().notNull(),
+	},
+	(t) => [index("sync_issues_run_idx").on(t.runId)],
+);
+
 // A box we ship in, with its own short pin (1 to 999) for quick ship.
 export const packages = pgTable(
 	"packages",

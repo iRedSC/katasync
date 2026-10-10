@@ -5,17 +5,19 @@ import { ProductImage, ProductName } from "#/components/product";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { getDashboard } from "#/server/catalog";
+import { countDiagnosticsAttention } from "#/server/diagnostics";
 import { countOrdersToShip } from "#/server/orders";
 import { countPosReady } from "#/server/purchasing";
 
 export const Route = createFileRoute("/")({
 	loader: async () => {
-		const [dashboard, toShip, posReady] = await Promise.all([
+		const [dashboard, toShip, posReady, attention] = await Promise.all([
 			getDashboard(),
 			countOrdersToShip(),
 			countPosReady(),
+			countDiagnosticsAttention(),
 		]);
-		return { ...dashboard, toShip, posReady };
+		return { ...dashboard, toShip, posReady, attention };
 	},
 	component: Home,
 });
@@ -42,6 +44,16 @@ function Home() {
 					<Stat label="Monthly profit" pending="Waiting on profit app" />
 				</dl>
 			</Card>
+
+			{d.attention > 0 && (
+				<Banner
+					tone="critical"
+					title={`${formatCount(d.attention)} ${d.attention === 1 ? "thing needs" : "things need"} attention in Diagnostics`}
+					action={{ label: "Open Diagnostics", link: { to: "/diagnostics" } }}
+				>
+					Order sync or tracking isn't working as it should.
+				</Banner>
+			)}
 
 			{d.blockedBundles > 0 && (
 				<Banner

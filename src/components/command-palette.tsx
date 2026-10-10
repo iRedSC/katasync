@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import {
+	Activity,
 	ArrowLeftRight,
 	ClipboardList,
 	LayoutDashboard,
@@ -58,6 +59,13 @@ export const pages = [
 		icon: ClipboardList,
 		keys: "g b",
 		parent: "/products",
+	},
+	{
+		to: "/diagnostics",
+		label: "Diagnostics",
+		icon: Activity,
+		keys: "g d",
+		parent: null,
 	},
 	{
 		to: "/settings",

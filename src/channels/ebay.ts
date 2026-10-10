@@ -4,7 +4,7 @@ import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
 // eBay US through the Sell Fulfillment API.
-const API = "https://api.ebay.com";
+export const API = "https://api.ebay.com";
 // Must be scopes the user granted; eBay rejects a refresh that asks for
 // more. The token is shared with profit-margarine, which was granted these
 // plus sell.fulfillment.readonly. sell.fulfillment marks orders shipped;
@@ -20,7 +20,7 @@ let cachedToken: { value: string; expiresAt: number } | undefined;
 
 // Trades the refresh token for a 2-hour access token. eBay's refresh token
 // doesn't change when used, so sharing it is safe.
-async function accessToken() {
+export async function accessToken() {
 	if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
 		return cachedToken.value;
 	}
