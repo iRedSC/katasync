@@ -12,7 +12,6 @@ import {
 } from "#/db/schema";
 import { postMovements, undoBatch } from "#/inventory/ledger";
 import { type SuggestedLine, suggestPurchases } from "#/purchasing/reorder";
-import { perPack } from "#/purchasing/units";
 
 // Every change to a PO goes through here. Each one locks the PO's row first,
 // so two people receiving the same box can't both count it.
@@ -441,10 +440,17 @@ export async function closeOrder(db: Db, id: number, now = new Date()) {
 	});
 }
 
-// Calls a PO off. Once anything has arrived, close it instead.
-export async function cancelOrder(db: Db, id: number, now = new Date()) {
+// Calls a PO off. Once anything has arrived, close it instead. `allowed` is
+// checked under the lock, so a caller limiting itself to drafts can't cancel a
+// PO that was sent a moment ago.
+export async function cancelOrder(
+	db: Db,
+	id: number,
+	now = new Date(),
+	allowed: Status[] = ["draft", "sent"],
+) {
 	return db.transaction(async (tx) => {
-		await lockOrder(tx, id, ["draft", "sent"]);
+		await lockOrder(tx, id, allowed);
 		const [{ received }] = await tx
 			.select({
 				received: sql<number>`coalesce(sum(${purchaseOrderReceipts.quantity}), 0)::int`,
@@ -547,15 +553,15 @@ async function averageInCost(
 		.update(products)
 		.set({ unitCost: Math.round(cost * 10_000) / 10_000 })
 		.where(eq(products.id, p.productId));
-	const [link] = await db
-		.select({ packSize: productSuppliers.packSize })
-		.from(productSuppliers)
+	// One statement, so the pack size it multiplies by is the row's current one
+	// even if a new default is being saved at the same time. Same rounding as
+	// perPack.
+	await db
+		.update(productSuppliers)
+		.set({
+			cost: sql`round(${p.unitCost}::numeric * ${productSuppliers.packSize}, 4)`,
+		})
 		.where(eq(productSuppliers.productId, p.productId));
-	if (link)
-		await db
-			.update(productSuppliers)
-			.set({ cost: perPack(p.unitCost, 1, link.packSize) })
-			.where(eq(productSuppliers.productId, p.productId));
 }
 
 // The PO a ledger batch belongs to, when it's a receipt or a receipt's undo.

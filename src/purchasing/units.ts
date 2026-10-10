@@ -135,7 +135,8 @@ async function checkTerms(db: Db, t: UnitTerms) {
 
 // Puts a draft line in new terms. The quantity and price convert so they
 // still mean the same number of the product: 60 EACH becomes 2 CASE of 30.
-// Quantities round up.
+// Quantities round up to whole units, then up to the new minimum, so 30 EACH
+// in a CASE of 12 with a minimum of 4 becomes 4 CASE rather than 3.
 async function convertLine(
 	db: Db,
 	line: {
@@ -150,7 +151,10 @@ async function convertLine(
 		.update(purchaseOrderLines)
 		.set({
 			...t,
-			quantity: Math.ceil((line.quantity * line.packSize) / t.packSize),
+			quantity: Math.max(
+				Math.ceil((line.quantity * line.packSize) / t.packSize),
+				t.minimumQuantity,
+			),
 			unitCost:
 				line.unitCost === null
 					? null
@@ -226,8 +230,27 @@ export async function setPurchaseUnit(
 	const { productId, ...terms } = input;
 	return db.transaction(async (tx) => {
 		await checkTerms(tx, terms);
+		// Draft POs first, lowest id first, then the supplier row: the order
+		// setLineTerms takes them in, so two saves can't each hold what the other
+		// wants. The terms are read once the supplier row is ours.
+		await tx
+			.select({ id: purchaseOrders.id })
+			.from(purchaseOrders)
+			.where(
+				and(
+					eq(purchaseOrders.status, "draft"),
+					inArray(
+						purchaseOrders.id,
+						tx
+							.select({ id: purchaseOrderLines.purchaseOrderId })
+							.from(purchaseOrderLines)
+							.where(eq(purchaseOrderLines.productId, productId)),
+					),
+				),
+			)
+			.orderBy(asc(purchaseOrders.id))
+			.for("update");
 		const old = await setDefaultTerms(tx, productId, terms);
-		// Locked like every other draft change (see lockOrder in orders.ts).
 		const lines = await tx
 			.select({
 				id: purchaseOrderLines.id,

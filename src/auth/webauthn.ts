@@ -7,7 +7,7 @@ import {
 	verifyAuthenticationResponse,
 	verifyRegistrationResponse,
 } from "@simplewebauthn/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { passkeys } from "#/db/schema";
 import {
@@ -142,12 +142,21 @@ export async function finishAuthentication(
 		requireUserVerification: false,
 	});
 	if (!result.verified) throw new AuthError("Sign-in couldn't be verified");
-	await db
+	// Only move the counter on from the value we verified against. If another
+	// sign-in got there first, this one is refused rather than rolling the
+	// counter back, which would hide a cloned passkey. Passkeys that always
+	// report 0 write 0 over 0 and match every time.
+	const updated = await db
 		.update(passkeys)
 		.set({
 			counter: result.authenticationInfo.newCounter,
 			lastUsedAt: new Date(),
 		})
-		.where(eq(passkeys.id, passkey.id));
+		.where(
+			and(eq(passkeys.id, passkey.id), eq(passkeys.counter, passkey.counter)),
+		)
+		.returning({ id: passkeys.id });
+	if (updated.length === 0)
+		throw new AuthError("Sign-in couldn't be verified; try again");
 	return createSession(db, passkey.id);
 }

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CountsRouteImport } from './routes/counts'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as LoginRouteImport } from './routes/login'
@@ -33,6 +34,11 @@ import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CountsRoute = CountsRouteImport.update({
+  id: '/counts',
+  path: '/counts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DiagnosticsRoute = DiagnosticsRouteImport.update({
@@ -133,6 +139,7 @@ const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
@@ -155,6 +162,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
@@ -178,6 +186,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
@@ -202,6 +211,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/counts'
     | '/diagnostics'
     | '/listings'
     | '/login'
@@ -224,6 +234,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/counts'
     | '/diagnostics'
     | '/listings'
     | '/login'
@@ -246,6 +257,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/counts'
     | '/diagnostics'
     | '/listings'
     | '/login'
@@ -269,6 +281,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CountsRoute: typeof CountsRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
   ListingsRoute: typeof ListingsRoute
   LoginRoute: typeof LoginRoute
@@ -297,6 +310,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/counts': {
+      id: '/counts'
+      path: '/counts'
+      fullPath: '/counts'
+      preLoaderRoute: typeof CountsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/diagnostics': {
@@ -437,6 +457,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CountsRoute: CountsRoute,
   DiagnosticsRoute: DiagnosticsRoute,
   ListingsRoute: ListingsRoute,
   LoginRoute: LoginRoute,

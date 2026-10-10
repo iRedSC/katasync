@@ -48,13 +48,22 @@ export async function signOut() {
 	await post("logout");
 }
 
-// Where to go after signing in: only a path on this site.
-export function safeNext(next: unknown) {
-	return typeof next === "string" &&
-		next.startsWith("/") &&
-		!next.startsWith("//")
-		? next
-		: "/";
+// Where to go after signing in: only a path on this site. Parsed the way the
+// browser will, since it reads "/\evil.example" as "//evil.example" and drops
+// tabs and newlines.
+export function safeNext(next: unknown, origin = window.location.origin) {
+	if (typeof next !== "string") return "/";
+	let url: URL;
+	try {
+		url = new URL(next, origin);
+	} catch {
+		return "/";
+	}
+	if (url.origin !== origin) return "/";
+	const path = url.pathname + url.search + url.hash;
+	// "/.//evil.example" stays on this site but normalizes to a path that
+	// starts "//", which the browser would take for another site.
+	return path.startsWith("//") ? "/" : path;
 }
 
 // A starting name for this device's passkey, edited before saving.

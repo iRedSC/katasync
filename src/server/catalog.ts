@@ -17,6 +17,7 @@ import {
 	stockLevels,
 	stores,
 } from "#/db/schema";
+import { abcClasses, isCountDue } from "#/inventory/abc";
 import { getAvailability, getBundleBlockers } from "#/inventory/availability";
 import { recordCount as recordShelfCount, undoBatch } from "#/inventory/ledger";
 import {
@@ -25,6 +26,7 @@ import {
 	productFromListing,
 } from "#/orders/remap";
 import { purchaseOrderOfBatch } from "#/purchasing/orders";
+import { aItemsAtRisk } from "#/purchasing/reorder";
 
 async function ownedLocationIds() {
 	const rows = await getDb()
@@ -54,7 +56,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			.from(products)
 			.leftJoin(productGroups, eq(productGroups.id, products.groupId))
 			.orderBy(products.name, products.variantName);
-		const [available, onHandRows, filing] = await Promise.all([
+		const [available, onHandRows, filing, abc] = await Promise.all([
 			ownedLocationIds().then((owned) =>
 				getAvailability(
 					db,
@@ -84,22 +86,31 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				.where(
 					and(eq(stores.channel, "shopify"), isNotNull(listings.productId)),
 				),
+			abcClasses(db),
 		]);
 		const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
 		const shopify = shopifyFiling(filing);
-		return rows.map((r) => {
-			const s = shopify.get(r.id);
-			return {
-				...r,
-				// Our own type wins; Shopify's fills in where we have none.
-				category: r.category ?? s?.productType ?? null,
-				tags: s ? [...s.tags].sort() : [],
-				vendor: s?.vendor ?? null,
-				status: s?.status ?? null,
-				onHand: r.kind === "bundle" ? null : (onHand.get(r.id) ?? 0),
-				available: available.get(r.id) ?? 0,
-			};
-		});
+		return {
+			products: rows.map((r) => {
+				const s = shopify.get(r.id);
+				const c = abc.classes.get(r.id);
+				return {
+					...r,
+					// Our own type wins; Shopify's fills in where we have none.
+					category: r.category ?? s?.productType ?? null,
+					tags: s ? [...s.tags].sort() : [],
+					vendor: s?.vendor ?? null,
+					status: s?.status ?? null,
+					onHand: r.kind === "bundle" ? null : (onHand.get(r.id) ?? 0),
+					available: available.get(r.id) ?? 0,
+					abc: c?.abc ?? null,
+					// 1 is the most value. Null for tool sets and unpriced products.
+					abcRank: c?.rank ?? null,
+				};
+			}),
+			abcDays: abc.days,
+			unpriced: abc.unpriced,
+		};
 	},
 );
 
@@ -262,11 +273,15 @@ export const getProductDetail = createServerFn({ method: "GET" })
 		]);
 
 		// The product and its parts in one availability lookup.
-		const availability = await getAvailability(
-			db,
-			[product.id, ...components.map((c) => c.id)],
-			ownedLocations.map((l) => l.id),
-		);
+		const [availability, abc] = await Promise.all([
+			getAvailability(
+				db,
+				[product.id, ...components.map((c) => c.id)],
+				ownedLocations.map((l) => l.id),
+			),
+			abcClasses(db),
+		]);
+		const rank = abc.classes.get(product.id);
 
 		return {
 			product,
@@ -282,6 +297,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			listings: productListings,
 			history,
 			available: availability.get(product.id) ?? 0,
+			abc: rank ? { ...rank, of: abc.classes.size, days: abc.days } : null,
 			// Where a count could be recorded. One location means nobody has to pick.
 			locations: ownedLocations,
 		};
@@ -292,7 +308,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 export const getDashboard = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
-		const [oversold, blockers, [{ bundles }]] = await Promise.all([
+		const [oversold, blockers, [{ bundles }], atRisk] = await Promise.all([
 			db
 				.select({
 					sku: products.sku,
@@ -310,6 +326,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(
 				.select({ bundles: sql<number>`count(*)::int` })
 				.from(products)
 				.where(eq(products.kind, "bundle")),
+			aItemsAtRisk(db),
 		]);
 
 		const top = blockers.slice(0, 6);
@@ -342,6 +359,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(
 			}),
 			blockedBundles: new Set(blockers.flatMap((b) => b.blocks)).size,
 			bundles,
+			atRisk,
 		};
 	},
 );
@@ -522,7 +540,48 @@ export const undoMovement = createServerFn({ method: "POST" })
 		await undoBatch(db, data.batchId);
 	});
 
-export type ProductRow = Awaited<ReturnType<typeof listProducts>>[number];
+// Shelves due for a cycle count: A monthly, B quarterly, C yearly, and any
+// never counted. A first, then the longest since a count.
+export const listCountsDue = createServerFn({ method: "GET" }).handler(
+	async () => {
+		const db = getDb();
+		const now = new Date();
+		const [shelves, abc] = await Promise.all([
+			db
+				.select({
+					productId: products.id,
+					sku: products.sku,
+					name: products.name,
+					variantName: products.variantName,
+					imageUrl: products.imageUrl,
+					locationId: locations.id,
+					location: locations.name,
+					onHand: stockLevels.onHand,
+					lastCountedAt: stockLevels.lastCountedAt,
+				})
+				.from(stockLevels)
+				.innerJoin(products, eq(products.id, stockLevels.productId))
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(eq(locations.kind, "owned")),
+			abcClasses(db, now),
+		]);
+		const order = { A: 0, B: 1, C: 2 };
+		return shelves
+			.map((s) => ({ ...s, abc: abc.classes.get(s.productId)?.abc ?? null }))
+			.filter((s) => isCountDue(s.abc, s.lastCountedAt, now))
+			.sort(
+				(a, b) =>
+					order[a.abc ?? "C"] - order[b.abc ?? "C"] ||
+					(a.lastCountedAt?.getTime() ?? 0) -
+						(b.lastCountedAt?.getTime() ?? 0) ||
+					a.sku.localeCompare(b.sku),
+			);
+	},
+);
+
+export type ProductRow = Awaited<
+	ReturnType<typeof listProducts>
+>["products"][number];
 export type ProductDetail = Awaited<ReturnType<typeof getProductDetail>>;
 
 // Quick ship asks about insurance for any order holding this product.

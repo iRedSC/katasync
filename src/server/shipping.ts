@@ -57,7 +57,7 @@ export const quickShipLookup = createServerFn({ method: "GET" })
 
 const parcel = {
 	orderId: "number.integer > 0",
-	"packageId?": "number.integer > 0",
+	packageId: "number.integer > 0 | null",
 	lengthMm: "number.integer > 0",
 	widthMm: "number.integer > 0",
 	heightMm: "number.integer > 0",
@@ -130,7 +130,7 @@ export const quickShipRates = createServerFn({ method: "POST" })
 		const history = await serviceHistory(
 			getDb(),
 			data.contentsKey,
-			data.packageId ?? null,
+			data.packageId,
 		);
 		return { rates: rankRates(rates, history), notes, test: shippoIsTest() };
 	});
@@ -164,7 +164,7 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 				.insert(shipments)
 				.values({
 					orderId: data.orderId,
-					packageId: data.packageId ?? null,
+					packageId: data.packageId,
 					contentsKey: data.contentsKey,
 					lengthMm: data.lengthMm,
 					widthMm: data.widthMm,
