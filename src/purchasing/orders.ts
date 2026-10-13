@@ -6,6 +6,7 @@ import {
 	productSuppliers,
 	products,
 	purchaseOrderLines,
+	purchaseOrderMovedParts,
 	purchaseOrderReceipts,
 	purchaseOrders,
 	stockLevels,
@@ -80,15 +81,15 @@ export function draftChanges(
 	return { added, raised };
 }
 
-// How many single items of each part a draft's tool set lines come to. Kits
-// on a PO are bought whole, so only sets count.
+// How many single items of each part a draft's tool set lines come to,
+// leaving out parts moved to another supplier's draft. Kits on a PO are bought
+// whole, so only sets count.
 export async function partsOfSets(
 	db: Db,
 	purchaseOrderId: number,
 ): Promise<Map<number, number>> {
 	const rows = await db
 		.select({
-			setSku: products.sku,
 			productId: productComponents.componentProductId,
 			items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
 		})
@@ -98,10 +99,21 @@ export async function partsOfSets(
 			productComponents,
 			eq(productComponents.parentProductId, purchaseOrderLines.productId),
 		)
+		.leftJoin(
+			purchaseOrderMovedParts,
+			and(
+				eq(purchaseOrderMovedParts.lineId, purchaseOrderLines.id),
+				eq(
+					purchaseOrderMovedParts.productId,
+					productComponents.componentProductId,
+				),
+			),
+		)
 		.where(
 			and(
 				eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
 				eq(products.kind, "bundle"),
+				isNull(purchaseOrderMovedParts.lineId),
 			),
 		);
 	const parts = new Map<number, number>();
@@ -115,7 +127,7 @@ export async function partsOfSets(
 // receiving only ever see things that are bought and shelved.
 async function splitSets(db: Db, purchaseOrderId: number) {
 	const sets = await db
-		.select({ id: purchaseOrderLines.id, sku: products.sku })
+		.select({ id: purchaseOrderLines.id })
 		.from(purchaseOrderLines)
 		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
 		.where(
@@ -126,46 +138,116 @@ async function splitSets(db: Db, purchaseOrderId: number) {
 		);
 	if (sets.length === 0) return;
 	const parts = await partsOfSets(db, purchaseOrderId);
-	if (parts.size === 0)
-		throw new PurchaseOrderError(
-			`${sets.map((s) => s.sku).join(", ")} has no parts to order`,
-		);
 	await db.delete(purchaseOrderLines).where(
 		inArray(
 			purchaseOrderLines.id,
 			sets.map((s) => s.id),
 		),
 	);
-	for (const [productId, items] of parts) {
-		const [line] = await db
+	for (const [productId, items] of parts)
+		await addItems(db, purchaseOrderId, productId, items);
+}
+
+// Moves one part of a draft's tool set line to the draft of the supplier the
+// part is bought from, opening one if there isn't one. This PO's set then
+// leaves the part out. Moves what the set needs right now; changing the set's
+// quantity later doesn't change what was moved. Returns the draft it went to.
+export async function movePartToSupplier(
+	db: Db,
+	input: { lineId: number; productId: number },
+): Promise<number> {
+	const [link] = await db
+		.select({ supplierId: productSuppliers.supplierId, sku: products.sku })
+		.from(products)
+		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+		.where(eq(products.id, input.productId));
+	if (!link) throw new PurchaseOrderError("That product doesn't exist");
+	if (link.supplierId === null)
+		throw new PurchaseOrderError(
+			`${link.sku} has no supplier yet; set one on its page`,
+		);
+	const target = await openDraft(db, link.supplierId);
+	return db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		if (!found) throw new PurchaseOrderError("That line doesn't exist");
+		if (found.purchaseOrderId === target)
+			throw new PurchaseOrderError(
+				`${link.sku} is already bought from this PO's supplier`,
+			);
+		// Lowest first, so two moves between the same drafts can't deadlock.
+		for (const id of [found.purchaseOrderId, target].sort((a, b) => a - b))
+			await lockOrder(tx, id, ["draft"]);
+		// Read under the lock, so it's the quantity the set has now.
+		const [part] = await tx
 			.select({
-				id: purchaseOrderLines.id,
-				quantity: purchaseOrderLines.quantity,
-				packSize: purchaseOrderLines.packSize,
+				items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
 			})
 			.from(purchaseOrderLines)
+			.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+			.innerJoin(
+				productComponents,
+				eq(productComponents.parentProductId, purchaseOrderLines.productId),
+			)
 			.where(
 				and(
-					eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
-					eq(purchaseOrderLines.productId, productId),
+					eq(purchaseOrderLines.id, input.lineId),
+					eq(products.kind, "bundle"),
+					eq(productComponents.componentProductId, input.productId),
 				),
 			);
-		if (line) {
-			await db
-				.update(purchaseOrderLines)
-				.set({ quantity: line.quantity + Math.ceil(items / line.packSize) })
-				.where(eq(purchaseOrderLines.id, line.id));
-			continue;
-		}
-		const { terms, unitCost } = await newLine(db, productId);
-		await db.insert(purchaseOrderLines).values({
-			purchaseOrderId,
-			productId,
-			...terms,
-			quantity: Math.ceil(items / terms.packSize),
-			unitCost,
-		});
+		if (!part)
+			throw new PurchaseOrderError(`${link.sku} isn't part of that set`);
+		const moved = await tx
+			.insert(purchaseOrderMovedParts)
+			.values(input)
+			.onConflictDoNothing()
+			.returning();
+		if (moved.length === 0)
+			throw new PurchaseOrderError(`${link.sku} was already moved`);
+		await addItems(tx, target, input.productId, part.items);
+		return target;
+	});
+}
+
+// Adds single items of a product to a draft: onto its line in that line's
+// unit, rounded up to whole units, or as a new line in the supplier's unit.
+async function addItems(
+	db: Db,
+	purchaseOrderId: number,
+	productId: number,
+	items: number,
+) {
+	const [line] = await db
+		.select({
+			id: purchaseOrderLines.id,
+			quantity: purchaseOrderLines.quantity,
+			packSize: purchaseOrderLines.packSize,
+		})
+		.from(purchaseOrderLines)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
+				eq(purchaseOrderLines.productId, productId),
+			),
+		);
+	if (line) {
+		await db
+			.update(purchaseOrderLines)
+			.set({ quantity: line.quantity + Math.ceil(items / line.packSize) })
+			.where(eq(purchaseOrderLines.id, line.id));
+		return;
 	}
+	const { terms, unitCost } = await newLine(db, productId);
+	await db.insert(purchaseOrderLines).values({
+		purchaseOrderId,
+		productId,
+		...terms,
+		quantity: Math.ceil(items / terms.packSize),
+		unitCost,
+	});
 }
 
 // Applies draftChanges to a draft. Returns how many lines it added and raised.

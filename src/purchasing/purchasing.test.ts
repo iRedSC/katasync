@@ -7,7 +7,7 @@ import * as schema from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
-import { supplierRows } from "./load";
+import { setPartsOf, supplierRows } from "./load";
 import {
 	addDraftLine,
 	averageCost,
@@ -15,6 +15,7 @@ import {
 	closeOrder,
 	draftFromSuggestions,
 	markSent,
+	movePartToSupplier,
 	openDraft,
 	purchaseOrderOfBatch,
 	receive,
@@ -399,6 +400,101 @@ describe("a PO from draft to received", () => {
 		]);
 	});
 
+	test("a set part bought elsewhere moves to its supplier's draft", async () => {
+		const [{ id: other }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
+			.returning();
+		const handle = await createProduct(db, "HANDLE", "simple");
+		await db
+			.insert(schema.productSuppliers)
+			.values({ productId: handle, supplierId: other, cost: 1 });
+		const set = await createProduct(db, "SET", "bundle");
+		await setRecipe(db, set, [
+			{ productId: blade, quantity: 2 },
+			{ productId: handle, quantity: 1 },
+		]);
+		const id = await openDraft(db, canam);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 3,
+		});
+		const [setLine] = await linesOf(id);
+		expect(await setPartsOf(db, id)).toMatchObject([
+			{ sku: "BLADE", items: 6, supplierId: canam, moved: false },
+			{ sku: "HANDLE", items: 3, supplierId: other, moved: false },
+		]);
+
+		const to = await movePartToSupplier(db, {
+			lineId: setLine.id,
+			productId: handle,
+		});
+		expect(to).not.toBe(id);
+		expect(await linesOf(to)).toMatchObject([
+			{ productId: handle, quantity: 3, unitCost: 1 },
+		]);
+		await expect(
+			movePartToSupplier(db, { lineId: setLine.id, productId: handle }),
+		).rejects.toThrow(/already moved/);
+		await expect(
+			movePartToSupplier(db, { lineId: setLine.id, productId: blade }),
+		).rejects.toThrow(/already bought from this PO's supplier/);
+
+		// Moving again goes to the same draft.
+		const set2 = await createProduct(db, "SET2", "bundle");
+		await setRecipe(db, set2, [{ productId: handle, quantity: 2 }]);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set2,
+			quantity: 1,
+		});
+		const set2Line = (await linesOf(id)).find((l) => l.productId === set2);
+		expect(
+			await movePartToSupplier(db, {
+				lineId: set2Line?.id ?? 0,
+				productId: handle,
+			}),
+		).toBe(to);
+		expect((await linesOf(to))[0].quantity).toBe(5);
+
+		await markSent(db, { purchaseOrderId: id, sentTo: null });
+		expect(await linesOf(id)).toMatchObject([
+			{ productId: blade, quantity: 6 },
+		]);
+	});
+
+	test("a set's part adds onto a line in cases, rounded up", async () => {
+		const set = await createProduct(db, "SET", "bundle");
+		await setRecipe(db, set, [{ productId: knife, quantity: 1 }]);
+		const id = await draftFromSuggestions(db, canam, now);
+		await setLineTerms(db, {
+			purchaseOrderId: id,
+			productId: knife,
+			unit: "CASE",
+			packSize: 12,
+			minimumQuantity: 1,
+			makeDefault: false,
+		});
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: knife,
+			quantity: 3,
+		});
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 3,
+		});
+		expect(
+			(await setPartsOf(db, id)).map((p) => [p.items, p.unit, p.packSize]),
+		).toEqual([[3, "CASE", 12]]);
+
+		await markSent(db, { purchaseOrderId: id, sentTo: null });
+		const knifeLine = (await linesOf(id)).find((l) => l.productId === knife);
+		expect(knifeLine).toMatchObject({ unit: "CASE", quantity: 4 });
+	});
+
 	test("suggestions count parts already coming in a set", async () => {
 		const set = await createProduct(db, "SET", "bundle");
 		await setRecipe(db, set, [
@@ -707,7 +803,7 @@ describe("buying in packs", () => {
 		// A default change leaves a line with its own terms alone.
 		await setPurchaseUnit(db, {
 			productId: blade,
-			unit: "BOX",
+			unit: "CASE",
 			packSize: 6,
 			minimumQuantity: 1,
 		});
@@ -778,7 +874,7 @@ describe("buying in packs", () => {
 		await setLineTerms(db, {
 			purchaseOrderId: id,
 			productId: blade,
-			unit: "BOX",
+			unit: "CASE",
 			packSize: 6,
 			minimumQuantity: 1,
 			makeDefault: false,
@@ -790,7 +886,7 @@ describe("buying in packs", () => {
 			inItems: true,
 		});
 		expect(quantity).toBe(4);
-		expect((await linesOf(id))[0]).toMatchObject({ unit: "BOX", quantity: 4 });
+		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 4 });
 
 		// A new line starts with the supplier's terms; no items removes it.
 		const knife = await createProduct(db, "KNIFE", "simple");
