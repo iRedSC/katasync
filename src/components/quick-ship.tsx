@@ -966,9 +966,14 @@ function RatesStep({
 }) {
 	const [selected, setSelected] = useState(0);
 	const list = useRef<HTMLDivElement>(null);
+	const options = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (rates) list.current?.focus();
 	}, [rates]);
+	// Only five services fit; keep the arrow-key choice visible as it scrolls.
+	useEffect(() => {
+		options.current?.children[selected]?.scrollIntoView({ block: "nearest" });
+	}, [selected]);
 
 	if (!rates) {
 		return (
@@ -1006,41 +1011,46 @@ function RatesStep({
 				</p>
 				{rates.test && <Badge tone="info">Test labels</Badge>}
 			</div>
-			{rates.list.map((r, i) => (
-				<button
-					key={r.id}
-					type="button"
-					disabled={busy}
-					onMouseMove={() => setSelected(i)}
-					onClick={() => onBuy(r)}
-					className={cn(
-						"flex h-16 items-center justify-between rounded-xl border-2 px-5 text-left",
-						i === selected
-							? "border-[#303030] bg-[#303030] text-white"
-							: "border-[#e3e3e3] hover:bg-[#f7f7f7]",
-						busy && i !== selected && "opacity-40",
-					)}
-				>
-					<span className="min-w-0">
-						<span className="block truncate text-lg font-semibold">
-							{r.serviceName}
-						</span>
-						{r.days !== null && (
-							<span
-								className={
-									i === selected ? "text-white/70" : "text-muted-foreground"
-								}
-							>
-								{r.days} {r.days === 1 ? "day" : "days"}
-							</span>
+			<div
+				ref={options}
+				className="flex max-h-[22rem] flex-col gap-2 overflow-y-auto"
+			>
+				{rates.list.map((r, i) => (
+					<button
+						key={r.id}
+						type="button"
+						disabled={busy}
+						onMouseMove={() => setSelected(i)}
+						onClick={() => onBuy(r)}
+						className={cn(
+							"flex h-16 shrink-0 items-center justify-between rounded-xl border-2 px-5 text-left",
+							i === selected
+								? "border-[#303030] bg-[#303030] text-white"
+								: "border-[#e3e3e3] hover:bg-[#f7f7f7]",
+							busy && i !== selected && "opacity-40",
 						)}
-					</span>
-					<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">
-						{busy && i === selected && <Spinner />}
-						{formatMoney(r.cost)}
-					</span>
-				</button>
-			))}
+					>
+						<span className="min-w-0">
+							<span className="block truncate text-lg font-semibold">
+								{r.serviceName}
+							</span>
+							{r.days !== null && (
+								<span
+									className={
+										i === selected ? "text-white/70" : "text-muted-foreground"
+									}
+								>
+									{r.days} {r.days === 1 ? "day" : "days"}
+								</span>
+							)}
+						</span>
+						<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">
+							{busy && i === selected && <Spinner />}
+							{formatMoney(r.cost)}
+						</span>
+					</button>
+				))}
+			</div>
 		</div>
 	);
 }
