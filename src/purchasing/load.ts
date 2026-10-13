@@ -48,6 +48,8 @@ export async function loadOrder(db: Db, poId: number) {
 			id: purchaseOrderLines.id,
 			productId: products.id,
 			sku: products.sku,
+			// A tool set only appears on drafts; sending splits it into parts.
+			kind: products.kind,
 			name: products.name,
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,

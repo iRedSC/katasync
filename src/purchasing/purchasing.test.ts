@@ -354,12 +354,95 @@ describe("a PO from draft to received", () => {
 		expect(await openDraft(db, canam)).toBe(id);
 	});
 
-	test("refuses tool sets and empty POs", async () => {
+	test("a tool set is its own line until sent, then becomes its parts", async () => {
+		const handle = await createProduct(db, "HANDLE", "simple");
+		await db
+			.update(schema.products)
+			.set({ unitCost: 3 })
+			.where(eq(schema.products.id, handle));
+		const set = await createProduct(db, "SET", "bundle");
+		await setRecipe(db, set, [
+			{ productId: blade, quantity: 2 },
+			{ productId: handle, quantity: 1 },
+		]);
+		const id = await draftFromSuggestions(db, canam, now);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 3,
+		});
+		expect((await linesOf(id)).map((l) => l.productId)).toEqual([
+			blade,
+			knife,
+			set,
+		]);
+
+		await markSent(db, {
+			purchaseOrderId: id,
+			now,
+			deliver: async (tx) => {
+				// The supplier is sent the parts, not the set.
+				const lines = await tx
+					.select()
+					.from(schema.purchaseOrderLines)
+					.where(eq(schema.purchaseOrderLines.purchaseOrderId, id));
+				expect(lines.map((l) => l.productId)).not.toContain(set);
+				return "orders@canam.example";
+			},
+		});
+		expect(await linesOf(id)).toMatchObject([
+			// 37 suggested plus 2 in each of 3 sets.
+			{ productId: blade, quantity: 43 },
+			{ productId: knife, quantity: 6 },
+			// Not on the draft before: a new line, at the product's own cost.
+			{ productId: handle, quantity: 3, unit: "EACH", unitCost: 3 },
+		]);
+	});
+
+	test("suggestions count parts already coming in a set", async () => {
+		const set = await createProduct(db, "SET", "bundle");
+		await setRecipe(db, set, [
+			{ productId: blade, quantity: 2 },
+			{ productId: knife, quantity: 1 },
+		]);
+		const id = await openDraft(db, canam);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 4,
+		});
+		// 8 blades and 4 knives in the sets: 29 more blades (37 suggested), and
+		// 2 knives rounded up to the supplier's 6.
+		expect(await updateFromSuggestions(db, id, now)).toEqual({
+			added: 2,
+			raised: 0,
+		});
+		expect(await linesOf(id)).toMatchObject([
+			{ productId: blade, quantity: 29 },
+			{ productId: knife, quantity: 6 },
+			{ productId: set, quantity: 4 },
+		]);
+
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 20,
+		});
+		expect(await updateFromSuggestions(db, id, now)).toEqual({
+			added: 0,
+			raised: 0,
+		});
+	});
+
+	test("refuses a set with no parts, and empty POs", async () => {
 		const set = await createProduct(db, "SET", "bundle");
 		const id = await draftFromSuggestions(db, canam, now);
 		await expect(
 			setDraftLine(db, { purchaseOrderId: id, productId: set, quantity: 1 }),
-		).rejects.toThrow(/order its parts/);
+		).rejects.toThrow(/no parts yet/);
+		await expect(
+			addDraftLine(db, { purchaseOrderId: id, productId: set, quantity: 1 }),
+		).rejects.toThrow(/no parts yet/);
 
 		for (const l of await linesOf(id))
 			await setDraftLine(db, {

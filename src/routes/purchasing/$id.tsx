@@ -433,6 +433,7 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 									<div className="text-xs text-muted-foreground">
 										{l.sku}
 										{l.supplierSku && ` · theirs ${l.supplierSku}`}
+										{l.kind === "bundle" && " · Set, sent as its parts"}
 									</div>
 								</div>
 							</div>
@@ -487,7 +488,7 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 									l.onHand < 0 ? "text-critical-text" : "text-muted-foreground",
 								)}
 							>
-								{formatCount(l.onHand)}
+								{l.kind === "bundle" ? "—" : formatCount(l.onHand)}
 							</td>
 						)}
 						<td className="px-3 py-2 text-right font-semibold tabular-nums">

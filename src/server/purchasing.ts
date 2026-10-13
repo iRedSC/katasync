@@ -28,6 +28,7 @@ import {
 	markSent,
 	openDraft,
 	PurchaseOrderError,
+	partsOfSets,
 	receive,
 	removeAddedLine,
 	setDraftLine,
@@ -165,13 +166,16 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 					.orderBy(locations.name),
 				// On a draft: how today's suggestions differ from it (see draftChanges).
 				po.order.status === "draft"
-					? suggestPurchases(db).then((all) => {
-							const c = draftChanges(
-								po.lines,
-								all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
-							);
-							return { added: c.added.length, raised: c.raised.length };
-						})
+					? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
+							([all, fromSets]) => {
+								const c = draftChanges(
+									po.lines,
+									all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
+									fromSets,
+								);
+								return { added: c.added.length, raised: c.raised.length };
+							},
+						)
 					: { added: 0, raised: 0 },
 				listUnits(db).then((all) => all.map((u) => u.name)),
 			]);
