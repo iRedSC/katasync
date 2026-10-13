@@ -83,6 +83,16 @@ const servicesData = type({
 	}).array(),
 });
 
+// TikTok writes label prices as "$7.69", unlike the plain numbers on orders.
+// A price it can't read stops the sale rather than passing as free.
+export function labelPrice(price: string) {
+	const value = Number(price.replace(/[$,]/g, ""));
+	if (!price.trim() || !Number.isFinite(value)) {
+		throw new Error(`TikTok gave an unreadable label price: ${price}`);
+	}
+	return value;
+}
+
 function toRate(
 	s: NonNullable<(typeof servicesData.infer)["shipping_services"]>,
 ) {
@@ -92,10 +102,12 @@ function toRate(
 		// The name, not the ID, so quick ship's "picked this last time" ranking
 		// survives TikTok renumbering services.
 		service: r.name,
-		serviceName: r.shipping_provider_name
-			? `${r.shipping_provider_name} ${r.name}`
-			: r.name,
-		cost: Number(r.price) || 0,
+		// TikTok's names already lead with the carrier ("UPS® Ground").
+		serviceName:
+			r.shipping_provider_name && !r.name.startsWith(r.shipping_provider_name)
+				? `${r.shipping_provider_name} ${r.name}`
+				: r.name,
+		cost: labelPrice(r.price),
 		days: r.latest_delivery_days ?? null,
 	}));
 }
@@ -194,7 +206,11 @@ export async function tiktokBuyLabel(
 		),
 	);
 
-	const charged = Number(created.shipping_service_info?.price);
+	// The label is bought by now, so a price TikTok left out or garbled
+	// falls back to the quote rather than throwing.
+	const charged = Number(
+		created.shipping_service_info?.price?.replace(/[$,]/g, ""),
+	);
 	return {
 		packageId: created.package_id,
 		recovered: false,
