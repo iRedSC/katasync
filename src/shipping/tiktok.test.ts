@@ -6,7 +6,7 @@ vi.mock("#/channels/tiktok", () => ({
 }));
 
 import { tiktokApi } from "#/channels/tiktok";
-import { tiktokBuyLabel } from "./tiktok";
+import { labelPrice, tiktokBuyLabel } from "./tiktok";
 
 const parcel = {
 	lengthMm: 300,
@@ -69,7 +69,7 @@ describe("tiktokBuyLabel", () => {
 			}
 			if (path?.endsWith("/shipping_services/query")) {
 				return {
-					shipping_services: [{ id: "svc-1", name: "Ground", price: "6.10" }],
+					shipping_services: [{ id: "svc-1", name: "Ground", price: "$6.10" }],
 				};
 			}
 			if (path === "/fulfillment/202309/packages") {
@@ -99,13 +99,13 @@ describe("tiktokBuyLabel", () => {
 			}
 			if (path?.endsWith("/shipping_services/query")) {
 				return {
-					shipping_services: [{ id: "svc-1", name: "Ground", price: "6.10" }],
+					shipping_services: [{ id: "svc-1", name: "Ground", price: "$6.10" }],
 				};
 			}
 			if (path === "/fulfillment/202309/packages") {
 				return {
 					package_id: "pkg-2",
-					shipping_service_info: { price: "6.25" },
+					shipping_service_info: { price: "$6.25" },
 				};
 			}
 			return undefined;
@@ -118,5 +118,18 @@ describe("tiktokBuyLabel", () => {
 			recovered: false,
 			rate: { cost: 6.25 },
 		});
+	});
+});
+
+describe("labelPrice", () => {
+	test("reads TikTok's dollar strings", () => {
+		expect(labelPrice("$7.69")).toBe(7.69);
+		expect(labelPrice("$1,204.50")).toBe(1204.5);
+		expect(labelPrice("5")).toBe(5);
+	});
+
+	test("refuses a price it can't read instead of calling it free", () => {
+		expect(() => labelPrice("")).toThrow();
+		expect(() => labelPrice("USD seven")).toThrow();
 	});
 });
