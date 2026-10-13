@@ -3,6 +3,7 @@ import {
 	Activity,
 	ArrowLeftRight,
 	ClipboardList,
+	Factory,
 	LayoutDashboard,
 	Link2,
 	ListChecks,
@@ -28,24 +29,35 @@ import {
 } from "#/components/ui/dialog";
 import { useHotkeys } from "#/lib/hotkeys";
 import { listProductIndex } from "#/server/catalog";
+import type { NavCounts } from "#/server/nav";
 
-// Navigation, Shopify-style: inventory pages sit under Products.
+// The sidebar holds only the places staff go to do work, each with a count of
+// what's waiting there (a key of NavCounts). Admin tools sit under Settings.
+// A page with a parent shows under it while you're in that section.
 export const pages = [
-	{ to: "/", label: "Home", icon: LayoutDashboard, keys: "g h", parent: null },
-	{ to: "/orders", label: "Orders", icon: Truck, keys: "g o", parent: null },
+	{
+		to: "/",
+		label: "Home",
+		icon: LayoutDashboard,
+		keys: "g h",
+		parent: null,
+		count: null,
+	},
+	{
+		to: "/orders",
+		label: "Orders",
+		icon: Truck,
+		keys: "g o",
+		parent: null,
+		count: "toShip",
+	},
 	{
 		to: "/products",
 		label: "Products",
 		icon: Package,
 		keys: "g p",
 		parent: null,
-	},
-	{
-		to: "/stock",
-		label: "Inventory history",
-		icon: ArrowLeftRight,
-		keys: "g i",
-		parent: "/products",
+		count: null,
 	},
 	{
 		to: "/counts",
@@ -53,27 +65,23 @@ export const pages = [
 		icon: ListChecks,
 		keys: "g n",
 		parent: "/products",
-	},
-	{
-		to: "/listings",
-		label: "Listings",
-		icon: Link2,
-		keys: "g l",
-		parent: "/products",
+		count: "countsDue",
 	},
 	{
 		to: "/purchasing",
 		label: "Purchase orders",
 		icon: ClipboardList,
 		keys: "g b",
-		parent: "/products",
+		parent: null,
+		count: "posReady",
 	},
 	{
-		to: "/diagnostics",
-		label: "Diagnostics",
-		icon: Activity,
-		keys: "g d",
-		parent: null,
+		to: "/purchasing/suppliers",
+		label: "Suppliers",
+		icon: Factory,
+		keys: "g v",
+		parent: "/purchasing",
+		count: null,
 	},
 	{
 		to: "/settings",
@@ -81,8 +89,40 @@ export const pages = [
 		icon: Settings,
 		keys: "g s",
 		parent: null,
+		count: null,
 	},
-] as const;
+	{
+		to: "/diagnostics",
+		label: "Diagnostics",
+		icon: Activity,
+		keys: "g d",
+		parent: "/settings",
+		count: "attention",
+	},
+	{
+		to: "/listings",
+		label: "Unmatched listings",
+		icon: Link2,
+		keys: "g l",
+		parent: "/settings",
+		count: "unmatched",
+	},
+	{
+		to: "/stock",
+		label: "Inventory history",
+		icon: ArrowLeftRight,
+		keys: "g i",
+		parent: "/settings",
+		count: null,
+	},
+] as const satisfies readonly {
+	to: string;
+	label: string;
+	icon: unknown;
+	keys: string;
+	parent: string | null;
+	count: keyof NavCounts | null;
+}[];
 
 // Opens the palette from anywhere, e.g. a button.
 export function openFind() {

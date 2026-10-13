@@ -3,7 +3,7 @@ import { type } from "arktype";
 import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { matchListings } from "#/channels/listings";
 import { shippingLocation } from "#/channels/stores";
-import { getDb } from "#/db/client";
+import { type Db, getDb } from "#/db/client";
 import {
 	listings,
 	locations,
@@ -439,8 +439,11 @@ export const setPrimaryStore = createServerFn({ method: "POST" })
 		return { created: matched.created, skipped: matched.skipped };
 	});
 
+// Listings without a SKU are custom products and never need one.
+const unmapped = sql`${listings.productId} is null and ${listings.externalSku} is not null`;
+
 // Listings that need a product, most-sold first so the ones that matter come
-// up top. Listings without a SKU are custom products and never appear.
+// up top.
 export const listUnmappedListings = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const sold = getDb()
@@ -472,12 +475,18 @@ export const listUnmappedListings = createServerFn({ method: "GET" }).handler(
 					eq(sold.listingExternalId, listings.externalId),
 				),
 			)
-			.where(
-				sql`${listings.productId} is null and ${listings.externalSku} is not null`,
-			)
+			.where(unmapped)
 			.orderBy(sql`coalesce(${sold.units}, 0) desc`, listings.title);
 	},
 );
+
+export async function countUnmappedListings(db: Db) {
+	const [{ count }] = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(listings)
+		.where(unmapped);
+	return count;
+}
 
 // Matches a listing to an existing product, then catches up past orders.
 export const matchListing = createServerFn({ method: "POST" })
@@ -542,42 +551,42 @@ export const undoMovement = createServerFn({ method: "POST" })
 
 // Shelves due for a cycle count: A monthly, B quarterly, C yearly, and any
 // never counted. A first, then the longest since a count.
-export const listCountsDue = createServerFn({ method: "GET" }).handler(
-	async () => {
-		const db = getDb();
-		const now = new Date();
-		const [shelves, abc] = await Promise.all([
-			db
-				.select({
-					productId: products.id,
-					sku: products.sku,
-					name: products.name,
-					variantName: products.variantName,
-					imageUrl: products.imageUrl,
-					locationId: locations.id,
-					location: locations.name,
-					onHand: stockLevels.onHand,
-					lastCountedAt: stockLevels.lastCountedAt,
-				})
-				.from(stockLevels)
-				.innerJoin(products, eq(products.id, stockLevels.productId))
-				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-				.where(eq(locations.kind, "owned")),
-			abcClasses(db, now),
-		]);
-		const order = { A: 0, B: 1, C: 2 };
-		return shelves
-			.map((s) => ({ ...s, abc: abc.classes.get(s.productId)?.abc ?? null }))
-			.filter((s) => isCountDue(s.abc, s.lastCountedAt, now))
-			.sort(
-				(a, b) =>
-					order[a.abc ?? "C"] - order[b.abc ?? "C"] ||
-					(a.lastCountedAt?.getTime() ?? 0) -
-						(b.lastCountedAt?.getTime() ?? 0) ||
-					a.sku.localeCompare(b.sku),
-			);
-	},
+export const listCountsDue = createServerFn({ method: "GET" }).handler(() =>
+	countsDue(getDb()),
 );
+
+export async function countsDue(db: Db) {
+	const now = new Date();
+	const [shelves, abc] = await Promise.all([
+		db
+			.select({
+				productId: products.id,
+				sku: products.sku,
+				name: products.name,
+				variantName: products.variantName,
+				imageUrl: products.imageUrl,
+				locationId: locations.id,
+				location: locations.name,
+				onHand: stockLevels.onHand,
+				lastCountedAt: stockLevels.lastCountedAt,
+			})
+			.from(stockLevels)
+			.innerJoin(products, eq(products.id, stockLevels.productId))
+			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+			.where(eq(locations.kind, "owned")),
+		abcClasses(db, now),
+	]);
+	const order = { A: 0, B: 1, C: 2 };
+	return shelves
+		.map((s) => ({ ...s, abc: abc.classes.get(s.productId)?.abc ?? null }))
+		.filter((s) => isCountDue(s.abc, s.lastCountedAt, now))
+		.sort(
+			(a, b) =>
+				order[a.abc ?? "C"] - order[b.abc ?? "C"] ||
+				(a.lastCountedAt?.getTime() ?? 0) - (b.lastCountedAt?.getTime() ?? 0) ||
+				a.sku.localeCompare(b.sku),
+		);
+}
 
 export type ProductRow = Awaited<
 	ReturnType<typeof listProducts>

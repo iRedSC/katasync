@@ -1,14 +1,31 @@
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useLoaderData, useLocation } from "@tanstack/react-router";
 import { Menu, Search } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, Suspense, use, useEffect, useState } from "react";
 import { openFind, pages } from "#/components/command-palette";
 import { cn } from "#/lib/utils";
+import type { NavCounts } from "#/server/nav";
+
+type NavPage = (typeof pages)[number];
 
 const top = pages.filter((p) => p.parent === null && p.to !== "/settings");
 const settings = pages.find((p) => p.to === "/settings");
 const childrenOf = (to: string) => pages.filter((p) => p.parent === to);
-const isActive = (to: string, pathname: string) =>
+const matches = (to: string, pathname: string) =>
 	to === "/" ? pathname === "/" : pathname.startsWith(to);
+// A section is active while you're on it, but not on a sub-page that has its
+// own nav item (Purchase orders stays unlit on Suppliers).
+const isActive = (to: string, pathname: string) =>
+	matches(to, pathname) && !childrenOf(to).some((k) => matches(k.to, pathname));
+const inSection = (to: string, pathname: string) =>
+	matches(to, pathname) || childrenOf(to).some((k) => matches(k.to, pathname));
+
+// Print pages are the paper itself: no bars, no nav. The receiving app is
+// its own full-screen phone app. Signing in comes before the app.
+export const isBare = (pathname: string) =>
+	pathname.startsWith("/print") ||
+	pathname.startsWith("/receive") ||
+	pathname === "/login" ||
+	pathname === "/setup";
 
 // The Shopify-admin frame: a dark top bar with search, a gray left nav, and
 // the page on a light gray background.
@@ -17,16 +34,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 	const pathname = useLocation({ select: (l) => l.pathname });
 	// biome-ignore lint/correctness/useExhaustiveDependencies: close the mobile nav after navigating
 	useEffect(() => setNavOpen(false), [pathname]);
+	const { navCounts } = useLoaderData({ from: "__root__" });
 
-	// Print pages are the paper itself: no bars, no nav. The receiving app is
-	// its own full-screen phone app. Signing in comes before the app.
-	if (
-		pathname.startsWith("/print") ||
-		pathname.startsWith("/receive") ||
-		pathname === "/login" ||
-		pathname === "/setup"
-	)
-		return children;
+	if (isBare(pathname)) return children;
 
 	return (
 		<div className="flex min-h-svh flex-col">
@@ -62,30 +72,15 @@ export function AppShell({ children }: { children: ReactNode }) {
 						navOpen ? "flex" : "hidden",
 					)}
 				>
-					<ul className="flex flex-col gap-0.5">
-						{top.map((p) => {
-							const kids = childrenOf(p.to);
-							// Like Shopify, a section's sub-pages show while you're in it.
-							const open =
-								isActive(p.to, pathname) ||
-								kids.some((k) => isActive(k.to, pathname));
-							return (
-								<li key={p.to}>
-									<NavItem {...p} pathname={pathname} />
-									{open && kids.length > 0 && (
-										<ul className="mt-0.5 flex flex-col gap-0.5">
-											{kids.map((k) => (
-												<li key={k.to}>
-													<NavItem {...k} pathname={pathname} child />
-												</li>
-											))}
-										</ul>
-									)}
-								</li>
-							);
-						})}
-					</ul>
-					{settings && <NavItem {...settings} pathname={pathname} />}
+					<NavSection items={top} pathname={pathname} counts={navCounts} />
+					{settings && (
+						<NavSection
+							items={[settings]}
+							pathname={pathname}
+							counts={navCounts}
+							flagHidden
+						/>
+					)}
 				</nav>
 				<main className="min-w-0 flex-1">{children}</main>
 			</div>
@@ -93,14 +88,67 @@ export function AppShell({ children }: { children: ReactNode }) {
 	);
 }
 
-function NavItem({
-	to,
-	label,
-	icon: Icon,
-	keys,
+function NavSection({
+	items,
 	pathname,
+	counts,
+	flagHidden = false,
+}: {
+	items: NavPage[];
+	pathname: string;
+	counts: Promise<NavCounts | null> | null;
+	flagHidden?: boolean;
+}) {
+	return (
+		<ul className="flex flex-col gap-0.5">
+			{items.map((p) => {
+				const kids = childrenOf(p.to);
+				// Like Shopify, a section's sub-pages show while you're in it.
+				const open = inSection(p.to, pathname);
+				return (
+					<li key={p.to}>
+						<NavItem
+							page={p}
+							pathname={pathname}
+							counts={counts}
+							// Closed Settings still says when one of its tools has a
+							// problem. Routine work (counts due) doesn't get a dot.
+							hidden={open || !flagHidden ? [] : kids}
+						/>
+						{open && kids.length > 0 && (
+							<ul className="mt-0.5 flex flex-col gap-0.5">
+								{kids.map((k) => (
+									<li key={k.to}>
+										<NavItem
+											page={k}
+											pathname={pathname}
+											counts={counts}
+											child
+										/>
+									</li>
+								))}
+							</ul>
+						)}
+					</li>
+				);
+			})}
+		</ul>
+	);
+}
+
+function NavItem({
+	page: { to, label, icon: Icon, keys, count },
+	pathname,
+	counts,
+	hidden = [],
 	child = false,
-}: (typeof pages)[number] & { pathname: string; child?: boolean }) {
+}: {
+	page: NavPage;
+	pathname: string;
+	counts: Promise<NavCounts | null> | null;
+	hidden?: NavPage[];
+	child?: boolean;
+}) {
 	const active = isActive(to, pathname);
 	return (
 		<Link
@@ -117,7 +165,40 @@ function NavItem({
 					className={cn("size-4", active ? "text-[#303030]" : "text-[#4a4a4a]")}
 				/>
 			)}
-			{label}
+			<span className="flex-1 truncate">{label}</span>
+			{counts && (
+				<Suspense>
+					<Waiting
+						counts={counts}
+						own={count}
+						hidden={hidden.flatMap((k) => (k.count ? [k.count] : []))}
+					/>
+				</Suspense>
+			)}
 		</Link>
 	);
+}
+
+// The item's own count as a pill, or a dot when only its hidden sub-pages
+// have something waiting.
+function Waiting({
+	counts,
+	own,
+	hidden,
+}: {
+	counts: Promise<NavCounts | null>;
+	own: keyof NavCounts | null;
+	hidden: (keyof NavCounts)[];
+}) {
+	const c = use(counts);
+	if (!c) return null;
+	if (own && c[own] > 0)
+		return (
+			<span className="rounded-md bg-[#e3e3e3] px-1.5 text-xs font-medium tabular-nums">
+				{c[own] > 999 ? "999+" : c[own]}
+			</span>
+		);
+	if (hidden.some((k) => c[k] > 0))
+		return <span className="size-1.5 rounded-full bg-critical-icon" />;
+	return null;
 }
