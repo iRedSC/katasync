@@ -14,13 +14,6 @@ export const ABC_DAYS = 365;
 const A_SHARE = 0.8;
 const B_SHARE = 0.95;
 
-// How often each class's shelves get counted.
-export const COUNT_EVERY_DAYS: Record<AbcClass, number> = {
-	A: 30,
-	B: 90,
-	C: 365,
-};
-
 export type AbcRank = {
 	abc: AbcClass;
 	// 1 is the most value.
@@ -113,16 +106,4 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 		unpriced,
 		days: Math.max(0, Math.min(ABC_DAYS, history)),
 	};
-}
-
-// A shelf is due once its class's interval has passed since the last count,
-// or right away if it was never counted. Unclassed products count yearly.
-export function isCountDue(
-	abc: AbcClass | null,
-	lastCountedAt: Date | null,
-	now: Date,
-): boolean {
-	if (lastCountedAt === null) return true;
-	const every = COUNT_EVERY_DAYS[abc ?? "C"] * 86_400_000;
-	return now.getTime() - lastCountedAt.getTime() >= every;
 }

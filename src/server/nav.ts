@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getDb } from "#/db/client";
 import { diagnosticsAttention } from "#/diagnostics/overview";
-import { countsDue, countUnmappedListings } from "#/server/catalog";
+import { countCountsDue, countUnmappedListings } from "#/server/catalog";
 import { countOrdersToShip } from "#/server/orders";
 import { countPosReady } from "#/server/purchasing";
 
@@ -13,11 +13,11 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 		const [toShip, posReady, due, unmatched, attention] = await Promise.all([
 			countOrdersToShip(),
 			countPosReady(),
-			countsDue(db),
+			countCountsDue(db),
 			countUnmappedListings(db),
 			diagnosticsAttention(db),
 		]);
-		return { toShip, posReady, countsDue: due.length, unmatched, attention };
+		return { toShip, posReady, countsDue: due, unmatched, attention };
 	},
 );
 

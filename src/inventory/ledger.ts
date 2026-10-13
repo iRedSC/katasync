@@ -260,6 +260,43 @@ function assertPositiveInteger(quantity: number) {
 	}
 }
 
+// Puts shelves on the cycle count list. Asking again for one already on it
+// moves its request time but keeps it there. Tool sets have no shelf of their
+// own; ask for their parts.
+export async function requestCounts(
+	db: Db,
+	input: { productIds: number[]; locationId: number },
+) {
+	if (input.productIds.length === 0) return 0;
+	const bundles = await db
+		.select({ sku: products.sku })
+		.from(products)
+		.where(
+			and(inArray(products.id, input.productIds), eq(products.kind, "bundle")),
+		);
+	if (bundles.length > 0)
+		throw new LedgerError(
+			`Tool sets can't be counted; ask for their parts: ${bundles.map((b) => b.sku).join(", ")}`,
+		);
+	const rows = await db
+		.insert(stockLevels)
+		.values(
+			// One row per shelf, or Postgres refuses to update it twice.
+			[...new Set(input.productIds)].map((productId) => ({
+				productId,
+				locationId: input.locationId,
+				onHand: 0,
+				countRequestedAt: sql`now()`,
+			})),
+		)
+		.onConflictDoUpdate({
+			target: [stockLevels.productId, stockLevels.locationId],
+			set: { countRequestedAt: sql`now()` },
+		})
+		.returning({ productId: stockLevels.productId });
+	return rows.length;
+}
+
 // Records what someone counted on the shelf as a correction for the
 // difference. Returns the change, which is 0 (and records nothing) when the
 // count matches. Runs in one transaction with the row locked, so a sale landing

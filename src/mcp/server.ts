@@ -17,6 +17,7 @@ import {
 	assembleKits,
 	disassembleKits,
 	recordCount,
+	requestCounts,
 	undoBatch,
 } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
@@ -63,6 +64,7 @@ How things count:
 - Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
 - Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.
 - POs: draft, sent, closed, cancelled. Each supplier has at most one draft; tools that add lines put them on it, creating it if needed. Nothing here sends a PO: the user reviews and sends drafts in the app. Sent POs can be received here.
+- Cycle counts only happen when asked for: request_counts puts shelves on the staff's count list, and a count clears them. Ask when stock looks wrong, e.g. oversold or not matching what a channel reports.
 - Stock and receiving changes can be undone (undo_stock_change, undo_po_receipt). Every change you make is logged and shown to the user.
 
 Use describe_schema before writing SQL. Prefer reorder_suggestions for "what should we order": it accounts for lead time, what's already on order, and minimums. When a request is ambiguous about quantities, say which interpretation you used.`;
@@ -663,6 +665,31 @@ function registerWriteTools(server: McpServer, db: Db) {
 					.join(": "),
 			});
 			return json({ sku, ...result });
+		},
+	);
+
+	server.registerTool(
+		"request_counts",
+		{
+			description:
+				"Puts shelves on the staff's cycle count list. Each stays there until someone counts it. Asking for one already on the list keeps it there. Tool sets can't be counted; ask for their parts. Returns how many shelves are now requested.",
+			inputSchema: {
+				skus: z.array(z.string()).min(1),
+				location: z
+					.string()
+					.optional()
+					.describe("Needed only when there are several of our locations"),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ skus, location }) => {
+			const productIds = [];
+			for (const sku of skus) productIds.push((await productBySku(db, sku)).id);
+			const requested = await requestCounts(db, {
+				productIds,
+				locationId: await ownedLocation(db, location),
+			});
+			return json({ requested });
 		},
 	);
 

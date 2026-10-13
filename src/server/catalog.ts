@@ -17,7 +17,7 @@ import {
 	stockLevels,
 	stores,
 } from "#/db/schema";
-import { abcClasses, isCountDue } from "#/inventory/abc";
+import { abcClasses } from "#/inventory/abc";
 import { getAvailability, getBundleBlockers } from "#/inventory/availability";
 import { recordCount as recordShelfCount, undoBatch } from "#/inventory/ledger";
 import {
@@ -549,43 +549,58 @@ export const undoMovement = createServerFn({ method: "POST" })
 		await undoBatch(db, data.batchId);
 	});
 
-// Shelves due for a cycle count: A monthly, B quarterly, C yearly, and any
-// never counted. A first, then the longest since a count.
-export const listCountsDue = createServerFn({ method: "GET" }).handler(() =>
-	countsDue(getDb()),
+// A shelf is due once someone asks for a count, until a count lands after
+// the request.
+const countDue = and(
+	isNotNull(stockLevels.countRequestedAt),
+	sql`(${stockLevels.lastCountedAt} is null or ${stockLevels.lastCountedAt} < ${stockLevels.countRequestedAt})`,
+	eq(locations.kind, "owned"),
 );
 
-export async function countsDue(db: Db) {
-	const now = new Date();
-	const [shelves, abc] = await Promise.all([
-		db
-			.select({
-				productId: products.id,
-				sku: products.sku,
-				name: products.name,
-				variantName: products.variantName,
-				imageUrl: products.imageUrl,
-				locationId: locations.id,
-				location: locations.name,
-				onHand: stockLevels.onHand,
-				lastCountedAt: stockLevels.lastCountedAt,
-			})
-			.from(stockLevels)
-			.innerJoin(products, eq(products.id, stockLevels.productId))
-			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(eq(locations.kind, "owned")),
-		abcClasses(db, now),
-	]);
-	const order = { A: 0, B: 1, C: 2 };
-	return shelves
-		.map((s) => ({ ...s, abc: abc.classes.get(s.productId)?.abc ?? null }))
-		.filter((s) => isCountDue(s.abc, s.lastCountedAt, now))
-		.sort(
-			(a, b) =>
-				order[a.abc ?? "C"] - order[b.abc ?? "C"] ||
-				(a.lastCountedAt?.getTime() ?? 0) - (b.lastCountedAt?.getTime() ?? 0) ||
-				a.sku.localeCompare(b.sku),
-		);
+// Shelves due for a cycle count, A first, then the longest waiting.
+export const listCountsDue = createServerFn({ method: "GET" }).handler(
+	async () => {
+		const db = getDb();
+		const [shelves, abc] = await Promise.all([
+			db
+				.select({
+					productId: products.id,
+					sku: products.sku,
+					name: products.name,
+					variantName: products.variantName,
+					imageUrl: products.imageUrl,
+					locationId: locations.id,
+					location: locations.name,
+					onHand: stockLevels.onHand,
+					lastCountedAt: stockLevels.lastCountedAt,
+					countRequestedAt: stockLevels.countRequestedAt,
+				})
+				.from(stockLevels)
+				.innerJoin(products, eq(products.id, stockLevels.productId))
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(countDue),
+			abcClasses(db),
+		]);
+		const order = { A: 0, B: 1, C: 2 };
+		return shelves
+			.map((s) => ({ ...s, abc: abc.classes.get(s.productId)?.abc ?? null }))
+			.sort(
+				(a, b) =>
+					order[a.abc ?? "C"] - order[b.abc ?? "C"] ||
+					(a.countRequestedAt?.getTime() ?? 0) -
+						(b.countRequestedAt?.getTime() ?? 0) ||
+					a.sku.localeCompare(b.sku),
+			);
+	},
+);
+
+export async function countCountsDue(db: Db) {
+	const [{ count }] = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(stockLevels)
+		.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+		.where(countDue);
+	return count;
 }
 
 export type ProductRow = Awaited<

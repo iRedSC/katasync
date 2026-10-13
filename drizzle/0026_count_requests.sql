@@ -1,0 +1,1 @@
+ALTER TABLE "stock_levels" ADD COLUMN "count_requested_at" timestamp with time zone;
