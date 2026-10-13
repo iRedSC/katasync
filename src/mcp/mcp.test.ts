@@ -291,6 +291,27 @@ describe("over MCP", () => {
 		expect(level.onHand).toBe(0);
 	});
 
+	test("requested counts stay due until counted, and come back on undo", async () => {
+		const due = async () =>
+			(
+				await db
+					.select({
+						requested: schema.stockLevels.countRequestedAt,
+						counted: schema.stockLevels.lastCountedAt,
+					})
+					.from(schema.stockLevels)
+					.where(eq(schema.stockLevels.productId, blade))
+			).filter((l) => l.requested && (!l.counted || l.counted < l.requested))
+				.length;
+		const asked = await tool("request_counts", { skus: ["BLADE", "BLADE"] });
+		expect(asked.data).toEqual({ requested: 1 });
+		expect(await due()).toBe(1);
+		const counted = await tool("record_count", { sku: "BLADE", counted: 3 });
+		expect(await due()).toBe(0);
+		await tool("undo_stock_change", { batch_id: counted.data.batchId });
+		expect(await due()).toBe(1);
+	});
+
 	test("a read-only token gets only the reading tools", async () => {
 		canWrite = false;
 		const { tools } = await call("tools/list");

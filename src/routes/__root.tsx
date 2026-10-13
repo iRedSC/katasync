@@ -5,9 +5,10 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { Toaster } from "sonner";
-import { AppShell } from "#/components/app-shell";
+import { AppShell, isBare } from "#/components/app-shell";
 import { CommandPalette } from "#/components/command-palette";
 import { QuickShip } from "#/components/quick-ship";
+import { getNavCounts } from "#/server/nav";
 import appCss from "../styles.css?url";
 
 interface MyRouterContext {
@@ -26,6 +27,15 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 			{ rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
 		],
 	}),
+	// The sidebar's counts, deferred so they never hold up a page. They
+	// refresh with every router.invalidate(), so they follow staff's actions.
+	// Pages without the sidebar skip them; signing in reloads the whole page.
+	loader: ({ location }) => ({
+		navCounts: isBare(location.pathname)
+			? null
+			: getNavCounts().catch(() => null),
+	}),
+	staleTime: 30_000,
 	shellComponent: RootDocument,
 	errorComponent: ({ error }) => (
 		<div className="mx-auto flex max-w-md flex-col items-center gap-3 py-32 text-center">

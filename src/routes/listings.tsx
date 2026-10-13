@@ -80,7 +80,7 @@ function Listings() {
 	});
 
 	return (
-		<Page title="Listings">
+		<Page title="Unmatched listings">
 			{rows.length === 0 ? (
 				<Card>
 					<EmptyState icon={Link2} title="Every listing has a product">

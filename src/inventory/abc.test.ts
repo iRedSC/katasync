@@ -6,7 +6,7 @@ import { postMovements, recordCount } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { aItemsAtRisk, safetyDays } from "#/purchasing/reorder";
 import { createProduct, createTestDb } from "#/test/db";
-import { abcClasses, classify, isCountDue } from "./abc";
+import { abcClasses, classify } from "./abc";
 
 const now = new Date("2026-10-10T12:00:00Z");
 const daysAgo = (n: number) => new Date(now.getTime() - n * 86_400_000);
@@ -38,18 +38,6 @@ describe("classify", () => {
 	test("unsold products are C, and nothing sold means all C", () => {
 		expect(classes(classify(rows(100, 0)))).toEqual(["A", "C"]);
 		expect(classes(classify(rows(0, 0)))).toEqual(["C", "C"]);
-	});
-});
-
-describe("isCountDue", () => {
-	test("A monthly, B quarterly, C and unclassed yearly, never counted now", () => {
-		expect(isCountDue("A", daysAgo(29), now)).toBe(false);
-		expect(isCountDue("A", daysAgo(30), now)).toBe(true);
-		expect(isCountDue("B", daysAgo(89), now)).toBe(false);
-		expect(isCountDue("B", daysAgo(90), now)).toBe(true);
-		expect(isCountDue("C", daysAgo(364), now)).toBe(false);
-		expect(isCountDue(null, daysAgo(365), now)).toBe(true);
-		expect(isCountDue("C", null, now)).toBe(true);
 	});
 });
 

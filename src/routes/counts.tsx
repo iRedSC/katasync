@@ -17,8 +17,8 @@ export const Route = createFileRoute("/counts")({
 
 type Shelf = Awaited<ReturnType<typeof listCountsDue>>[number];
 
-// Shelves due for counting, most valuable first: A every month, B every
-// quarter, C every year. A count that matches still clears it.
+// Shelves someone asked to have counted, most valuable first. A count that
+// matches still clears it.
 function CycleCounts() {
 	const shelves = Route.useLoaderData();
 	const list = useRef<HTMLTableSectionElement>(null);
@@ -47,8 +47,8 @@ function CycleCounts() {
 	return (
 		<Page title="Cycle counts">
 			<p className="-mt-2 text-muted-foreground">
-				A items are counted every month, B every quarter, C every year. Count
-				the top of the list first.
+				Shelves someone asked to have counted, most valuable first. Count the
+				top of the list first.
 			</p>
 			<Card
 				flush
@@ -74,7 +74,7 @@ function CycleCounts() {
 			>
 				{shelves.length === 0 ? (
 					<EmptyState icon={ListChecks} title="Every shelf is counted">
-						New ones come due as their month, quarter, or year runs out.
+						Shelves show up here when someone asks for a count.
 					</EmptyState>
 				) : (
 					<table className="w-full">

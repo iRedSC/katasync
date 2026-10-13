@@ -392,7 +392,7 @@ function UnmappedCard({ rows }: { rows: Diagnostics["unmapped"] }) {
 				aside={
 					rows.length > 0 && (
 						<Link to="/listings" className="text-link hover:underline">
-							Match on Listings
+							Match listings
 						</Link>
 					)
 				}
