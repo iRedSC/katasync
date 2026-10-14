@@ -9,7 +9,6 @@ import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Banner, Card, Page } from "#/components/page";
-import { printLabels } from "#/components/print-labels";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
 import { ReturnDialog } from "#/components/return-dialog";
@@ -25,9 +24,9 @@ import {
 import { useHotkeys } from "#/lib/hotkeys";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
+import { printLabels } from "#/printing/qz-client";
 import { getOrder, type OrderDetail } from "#/server/orders";
 import { resendTracking, voidLabel } from "#/server/shipping";
-import { labelPath } from "#/shipping/label-path";
 
 export const Route = createFileRoute("/orders/$id")({
 	loader: ({ params }) => getOrder({ data: { id: Number(params.id) } }),
@@ -102,15 +101,14 @@ function OrderPage() {
 							Print invoice
 						</a>
 					</Button>
-					{/* Several boxes print one by one from Shipments below. */}
-					{liveBoxes.length === 1 && (
+					{liveBoxes.length > 0 && (
 						<Button
 							size="sm"
 							variant="outline"
-							onClick={() => printLabels([liveBoxes[0].id])}
+							onClick={() => printLabels(liveBoxes.map((box) => box.id))}
 						>
 							<Printer />
-							Reprint label
+							Reprint {liveBoxes.length > 1 ? "labels" : "label"}
 						</Button>
 					)}
 					{external && (
@@ -407,14 +405,13 @@ function SendRow({
 							</a>
 						)}
 						{!b.voidedAt && (
-							<a
-								href={labelPath(b.id)}
-								target="_blank"
-								rel="noreferrer"
+							<button
+								type="button"
+								onClick={() => printLabels([b.id])}
 								className="text-link hover:underline"
 							>
 								Print
-							</a>
+							</button>
 						)}
 					</li>
 				))}

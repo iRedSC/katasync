@@ -802,6 +802,23 @@ export const mcpLogin = pgTable(
 	(t) => [check("mcp_login_single", sql`${t.id} = 1`)],
 );
 
+// The one key pair katasync signs QZ Tray print requests with, made the first
+// time it's needed (src/printing/qz.ts). Packing computers trust the
+// certificate through the setup script, so replacing it means running that
+// script on each of them again.
+export const qzCertificate = pgTable(
+	"qz_certificate",
+	{
+		id: smallint().primaryKey().default(1),
+		// PEM.
+		certificate: text().notNull(),
+		// PKCS#8 PEM. Never sent to a browser.
+		privateKey: text().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [check("qz_certificate_single", sql`${t.id} = 1`)],
+);
+
 // Views defined in drizzle/0020_reporting_views.sql, so every report counts
 // stock and sales the same way.
 

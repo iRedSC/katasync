@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { DevicesCard } from "#/components/devices-card";
+import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
 import { TokensCard } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
@@ -93,11 +94,7 @@ function Settings() {
 			<TokensCard tokens={tokens} />
 			<Boxes boxes={boxes} />
 			<Units units={units} />
-			<Card title="Label printing">
-				<p className="text-muted-foreground">
-					Not set up yet. Each packing computer needs QZ Tray.
-				</p>
-			</Card>
+			<LabelPrintingCard />
 		</Page>
 	);
 }

@@ -521,11 +521,11 @@ async function ingestNode(
 		: o;
 	// Units refunded or removed only matter once we know whether they
 	// shipped, so only those orders cost the extra call.
-	const shipped = order.lineItems.nodes.some(
-		(l) => l.currentQuantity < l.quantity,
-	)
-		? await shippedUnits(o.id)
-		: null;
+	const shipped =
+		!order.cancelledAt &&
+		order.lineItems.nodes.some((l) => l.currentQuantity < l.quantity)
+			? await shippedUnits(o.id)
+			: null;
 	const remaining = shipped ? await remainingUnits(o.id) : null;
 	return ingestOrder(
 		db,

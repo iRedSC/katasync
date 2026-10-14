@@ -14,11 +14,11 @@ import {
 } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
-import { printLabels } from "#/components/print-labels";
 import { ProductImage } from "#/components/product";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { printLabels } from "#/printing/qz-client";
 import {
 	listPackages,
 	quickShipBuy,
@@ -1398,8 +1398,6 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 				{bought.test && (
 					<Badge tone="info">Test label: it won't ship anything</Badge>
 				)}
-				{/* Every box's label. Only the first opens by itself (browsers
-				    allow one new tab per key press), so the rest are links. */}
 				<ul className="flex flex-col gap-1">
 					{bought.boxes.map((b, i) => (
 						<li key={b.id} className="flex items-center justify-center gap-3">
@@ -1408,14 +1406,9 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 									href={labelPath(b.id)}
 									target="_blank"
 									rel="noreferrer"
-									className={cn(
-										"text-lg hover:underline",
-										i === 0
-											? "text-muted-foreground"
-											: "font-semibold text-link",
-									)}
+									className="text-lg text-link hover:underline"
 								>
-									{i === 0 ? "Box 1 (opened)" : `Print box ${i + 1}`}
+									Open box {i + 1} PDF
 								</a>
 							)}
 							{b.trackingNumber && (
@@ -1440,16 +1433,13 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 					>
 						Next order
 					</button>
-					{!many && bought.boxes[0] && (
-						<a
-							href={labelPath(bought.boxes[0].id)}
-							target="_blank"
-							rel="noreferrer"
-							className="text-lg text-link hover:underline"
-						>
-							Open label again
-						</a>
-					)}
+					<button
+						type="button"
+						onClick={() => printLabels(bought.boxes.map((box) => box.id))}
+						className="text-lg text-link hover:underline"
+					>
+						Print again
+					</button>
 					{/* TikTok has no API to cancel its labels. */}
 					{bought.provider === "tiktok" ? (
 						<span className="text-lg text-muted-foreground">

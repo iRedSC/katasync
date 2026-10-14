@@ -1,6 +1,6 @@
 {
-  "id": "36a9d1c3-d955-4d2a-aa31-ed37fcbba2c8",
-  "prevId": "af1b9762-8d17-460b-96e7-7c89ce776c0c",
+  "id": "af1b9762-8d17-460b-96e7-7c89ce776c0c",
+  "prevId": "5393b5fe-4581-4255-9825-d88fb72396cc",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2489,6 +2489,12 @@
           "name": "dispatch_id",
           "type": "integer",
           "primaryKey": false,
+          "notNull": false
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
           "notNull": true
         },
         "package_id": {
@@ -2496,6 +2502,12 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
+        },
+        "contents_key": {
+          "name": "contents_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "length_mm": {
           "name": "length_mm",
@@ -2593,6 +2605,24 @@
           "primaryKey": false,
           "notNull": true
         },
+        "channel_sent_at": {
+          "name": "channel_sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "channel_fulfillment_id": {
+          "name": "channel_fulfillment_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "channel_error": {
+          "name": "channel_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "voided_at": {
           "name": "voided_at",
           "type": "timestamp with time zone",
@@ -2614,11 +2644,32 @@
         }
       },
       "indexes": {
-        "shipments_dispatch_idx": {
-          "name": "shipments_dispatch_idx",
+        "shipments_order_idx": {
+          "name": "shipments_order_idx",
           "columns": [
             {
-              "expression": "dispatch_id",
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "shipments_contents_idx": {
+          "name": "shipments_contents_idx",
+          "columns": [
+            {
+              "expression": "contents_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2637,6 +2688,19 @@
           "tableTo": "dispatches",
           "columnsFrom": [
             "dispatch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "shipments_order_id_orders_id_fk": {
+          "name": "shipments_order_id_orders_id_fk",
+          "tableFrom": "shipments",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
           ],
           "columnsTo": [
             "id"
@@ -3234,6 +3298,50 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.qz_certificate": {
+      "name": "qz_certificate",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "certificate": {
+          "name": "certificate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "private_key": {
+          "name": "private_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "qz_certificate_single": {
+          "name": "qz_certificate_single",
+          "value": "\"qz_certificate\".\"id\" = 1"
+        }
+      },
       "isRLSEnabled": false
     }
   },
