@@ -17,6 +17,8 @@ In production, Vercel Cron runs each channel's sync on the schedules in `vercel.
 
 Shopify and TikTok also send order webhooks to `/api/webhooks/<channel>` (`src/channels/webhooks.ts`), so orders arrive in seconds; the crons stay as the safety net, and eBay and Amazon run on them alone. Set `SHOPIFY_WEBHOOK_SECRET` to the client secret of the Shopify app behind `SHOPIFY_ADMIN_TOKEN`, then run `pnpm webhooks https://<katasync address>` once with production credentials to subscribe. Run it bare to see where each channel sends now.
 
+Webhooks only speed things up; cron is authoritative. If orders go back to taking minutes, run `pnpm webhooks` bare to check the subscriptions; failures are logged, and Shopify emails the app's developer address.
+
 `pnpm test` runs against an in-memory Postgres (PGlite) and needs no database.
 
 ## Signing in

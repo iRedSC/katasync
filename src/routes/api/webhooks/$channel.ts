@@ -4,11 +4,19 @@ import { waitUntil } from "@vercel/functions";
 // Order webhooks (src/channels/webhooks.ts) at /api/webhooks/shopify and
 // /api/webhooks/tiktok. Answers as soon as the signature checks out, since
 // Shopify gives up after 5 seconds and TikTok after 3, then reads the order
-// in the background, after any running sync pass of that channel finishes.
+// in the background. If a sync pass or another webhook holds the channel, it
+// drops the order instead of waiting; the next cron pass reads it anyway.
 
 export const Route = createFileRoute("/api/webhooks/$channel")({
 	server: {
 		handlers: {
+			// Without it the sign-in guard, which lets every method through here,
+			// would hand a signed-out GET to the app's pages.
+			GET: () =>
+				new Response("Method Not Allowed", {
+					status: 405,
+					headers: { Allow: "POST" },
+				}),
 			POST: async ({ request, params }) => {
 				const channel = params.channel;
 				if (channel !== "shopify" && channel !== "tiktok")
@@ -33,7 +41,15 @@ export const Route = createFileRoute("/api/webhooks/$channel")({
 							import("#/channels/sync"),
 							import("#/db/client"),
 						]);
-						await ingestWebhookOrder(getDb(), channel, result.orderId);
+						const done = await ingestWebhookOrder(
+							getDb(),
+							channel,
+							result.orderId,
+						);
+						if (!done)
+							console.log(
+								`${channel} webhook for ${result.orderId}: busy, cron will pick it up`,
+							);
 					})().catch((error) =>
 						console.error(`${channel} webhook for ${result.orderId}:`, error),
 					),
