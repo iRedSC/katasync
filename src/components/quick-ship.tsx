@@ -12,6 +12,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
@@ -467,7 +468,7 @@ function OrderSummary({ found }: { found: Found }) {
 					{found.labelsBought > 0 && (
 						<Badge tone="warning">Already has a label</Badge>
 					)}
-					<Badge>{o.salesChannel ?? o.channel}</Badge>
+					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
 				</div>
 			</div>
 			<ul className="flex flex-col gap-2">

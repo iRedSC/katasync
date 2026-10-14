@@ -1,10 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ExternalLink, PackageCheck, Printer } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { ChannelBadge } from "#/components/channel-badge";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import {
-	channelName,
 	formatCount,
 	formatMoney,
 	formatOrderDate,
@@ -184,7 +184,10 @@ function Orders() {
 											)}
 										</td>
 										<td className="hidden px-4 py-2.5 lg:table-cell">
-											<Badge>{o.salesChannel ?? channelName(o.channel)}</Badge>
+											<ChannelBadge
+												channel={o.channel}
+												salesChannel={o.salesChannel}
+											/>
 										</td>
 										<td className="px-4 py-2.5 text-right tabular-nums">
 											{formatMoney(o.total)}
