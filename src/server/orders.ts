@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, or, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
@@ -12,7 +12,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { cityLine } from "#/lib/format";
-import { needsShipping } from "#/orders/to-ship";
+import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { contentsKey } from "#/shipping/contents";
 import { lastPackedFor } from "#/shipping/quick-ship";
 
@@ -41,32 +41,38 @@ export const listOrders = createServerFn({ method: "GET" })
 			.from(orderLines)
 			.groupBy(orderLines.orderId)
 			.as("line_stats");
-		return getDb()
-			.select({
-				id: orders.id,
-				name: orders.name,
-				pin: orders.pin,
-				salesChannel: orders.salesChannel,
-				marketplaceOrderId: orders.marketplaceOrderId,
-				placedAt: orders.placedAt,
-				cancelledAt: orders.cancelledAt,
-				fulfillmentStatus: orders.fulfillmentStatus,
-				financialStatus: orders.financialStatus,
-				customerName: orders.customerName,
-				shipCity: orders.shipCity,
-				shipRegion: orders.shipRegion,
-				total: orders.total,
-				store: stores.name,
-				channel: stores.channel,
-				items: sql<number>`coalesce(${lineStats.items}, 0)`,
-				unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
-			})
-			.from(orders)
-			.innerJoin(stores, eq(stores.id, orders.storeId))
-			.leftJoin(lineStats, eq(lineStats.orderId, orders.id))
-			.where(data.view === "ship" ? needsShipping : undefined)
-			.orderBy(desc(orders.placedAt))
-			.limit(data.view === "ship" ? 500 : 200);
+		return (
+			getDb()
+				.select({
+					id: orders.id,
+					name: orders.name,
+					pin: orders.pin,
+					salesChannel: orders.salesChannel,
+					marketplaceOrderId: orders.marketplaceOrderId,
+					placedAt: orders.placedAt,
+					cancelledAt: orders.cancelledAt,
+					fulfillmentStatus: orders.fulfillmentStatus,
+					financialStatus: orders.financialStatus,
+					customerName: orders.customerName,
+					shipCity: orders.shipCity,
+					shipRegion: orders.shipRegion,
+					total: orders.total,
+					store: stores.name,
+					channel: stores.channel,
+					items: sql<number>`coalesce(${lineStats.items}, 0)`,
+					unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
+					labelToVoid,
+				})
+				.from(orders)
+				.innerJoin(stores, eq(stores.id, orders.storeId))
+				.leftJoin(lineStats, eq(lineStats.orderId, orders.id))
+				// A cancelled order with a live label stays in view until it's voided.
+				.where(
+					data.view === "ship" ? or(needsShipping, labelToVoid) : undefined,
+				)
+				.orderBy(desc(orders.placedAt))
+				.limit(data.view === "ship" ? 500 : 200)
+		);
 	});
 
 export const getOrder = createServerFn({ method: "GET" })
@@ -97,6 +103,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				externalId: orders.externalId,
 				store: stores.name,
 				channel: stores.channel,
+				labelToVoid,
 			})
 			.from(orders)
 			.innerJoin(stores, eq(stores.id, orders.storeId))

@@ -136,6 +136,18 @@ function OrderPage() {
 				{order.salesChannel ?? channelName(order.channel)}
 			</p>
 
+			{order.labelToVoid && liveLabel && (
+				<Banner
+					tone="critical"
+					title={`${order.cancelledAt ? "Cancelled" : "Refunded"} after its label was bought`}
+				>
+					Don't ship this box.{" "}
+					{liveLabel.provider === "tiktok"
+						? "Cancel the label in TikTok Seller Center."
+						: `Void the ${liveLabel.serviceName} label to get ${formatMoney(liveLabel.cost)} back.`}
+				</Banner>
+			)}
+
 			{unmatched.length > 0 && (
 				<Banner
 					tone="critical"
@@ -157,7 +169,9 @@ function OrderPage() {
 								className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
 							>
 								<ProductImage src={l.imageUrl} className="size-10" />
-								<div className="min-w-0 flex-1">
+								<div
+									className={`min-w-0 flex-1 ${l.quantity === 0 ? "text-muted-foreground" : ""}`}
+								>
 									{l.productSku ? (
 										<Link
 											to="/products/$sku"
@@ -171,6 +185,7 @@ function OrderPage() {
 									)}
 									<div className="flex gap-2 text-xs text-muted-foreground">
 										<span>{l.sku ?? "No SKU"}</span>
+										{l.quantity === 0 && <Badge>Cancelled</Badge>}
 										{l.productSku === null && l.sku !== null && (
 											<Badge tone="critical">Unknown product</Badge>
 										)}

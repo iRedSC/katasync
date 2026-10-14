@@ -5,6 +5,7 @@ import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import { locations, orders, packages, shipments, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
+import { needsShipping } from "#/orders/to-ship";
 import { createBoxes, updateBox } from "#/shipping/boxes";
 import { sendTracking, voidShipment, withOrderLock } from "#/shipping/handoff";
 import { labelPdf } from "#/shipping/label-file";
@@ -179,6 +180,17 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const saved = await withOrderLock(db, data.orderId, async (tx) => {
+			// The order can be cancelled or refunded while it's being packed;
+			// the last sync decides.
+			const [order] = await tx
+				.select({ name: orders.name, needsShipping })
+				.from(orders)
+				.where(eq(orders.id, data.orderId));
+			if (!order?.needsShipping) {
+				throw new Error(
+					`${order?.name ?? "This order"} no longer needs shipping (cancelled, refunded, or shipped elsewhere). Don't ship it.`,
+				);
+			}
 			const [existing] = await tx
 				.select({ serviceName: shipments.serviceName })
 				.from(shipments)

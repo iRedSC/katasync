@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { labelToVoid } from "#/orders/to-ship";
 import { createTestDb } from "#/test/db";
 import { type Outside, sendTracking, voidShipment } from "./handoff";
 import { assignOrderPins } from "./pins";
@@ -136,6 +137,28 @@ describe("sendTracking", () => {
 		);
 		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
 		expect((await order()).pin).toBeNull();
+	});
+
+	test("a cancelled order's label is flagged to void, never sent", async () => {
+		const outside = fakes();
+		const id = await addLabel();
+		await db
+			.update(schema.orders)
+			.set({ cancelledAt: new Date() })
+			.where(eq(schema.orders.id, orderId));
+		const flagged = async () =>
+			(
+				await db
+					.select({ labelToVoid })
+					.from(schema.orders)
+					.where(eq(schema.orders.id, orderId))
+			)[0].labelToVoid;
+
+		expect((await sendTracking(db, id, outside)).sent).toBe(false);
+		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
+		expect(await flagged()).toBe(true);
+		await voidShipment(db, id, outside);
+		expect(await flagged()).toBe(false);
 	});
 
 	test("never sends a test label's fake tracking", async () => {

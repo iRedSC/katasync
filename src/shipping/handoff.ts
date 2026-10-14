@@ -40,6 +40,7 @@ async function load(db: Db, shipmentId: number) {
 				id: orders.id,
 				externalId: orders.externalId,
 				fulfillmentStatus: orders.fulfillmentStatus,
+				cancelledAt: orders.cancelledAt,
 			},
 			channel: stores.channel,
 		})
@@ -101,6 +102,13 @@ export async function sendTracking(
 			if (shipment.voidedAt) throw new Error("This label was voided");
 			if (shipment.channelSentAt) {
 				return { sent: true, message: `Tracking already sent to ${name}` };
+			}
+			// Telling the customer it shipped would be wrong; the box stays here.
+			if (order.cancelledAt) {
+				return {
+					sent: false,
+					message: "The order was cancelled; void the label instead",
+				};
 			}
 			// A test label's tracking number is fake; customers must never get it.
 			if (shipment.test) {
