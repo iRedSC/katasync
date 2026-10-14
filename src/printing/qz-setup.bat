@@ -1,7 +1,8 @@
 <# :
 @echo off
 rem Sets up label printing for katasync on this computer: installs QZ Tray if
-rem it's missing, makes it trust katasync, and restarts it. Safe to run again.
+rem it's missing, makes it trust katasync, locks it down to what katasync
+rem uses, and restarts it. Safe to run again.
 rem The batch part only starts PowerShell on this same file; the rest is
 rem PowerShell, which skips this block as a comment.
 set "KATASYNC_SETUP=%~f0"
@@ -17,26 +18,57 @@ $certificate = @'
 KATASYNC_CERTIFICATE
 '@
 
-# Run as admin (the script starts itself this way): install QZ Tray, write
-# the certificate into its folder, and stop it so it reads the certificate.
+# Run as admin (the script starts itself this way): install QZ Tray, set its
+# properties, write the certificate into its folder, and stop it so it reads
+# them.
 if ($env:KATASYNC_STEP -eq 'admin') {
 	try {
 		if (-not (Test-Path "$qz\qz-tray.exe")) {
-			Write-Host 'Downloading QZ Tray...'
-			[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+			# A version we've checked, matched by hash, so a changed or newer
+			# release on GitHub can't slip in. To move to a newer one, take the
+			# SHA-256s from its release page.
+			$version = '2.3.0'
 			$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x86_64' }
-			$release = Invoke-RestMethod 'https://api.github.com/repos/qzind/tray/releases/latest'
-			$asset = $release.assets | Where-Object { $_.name -like "*-$arch.exe" } | Select-Object -First 1
-			if (-not $asset) { throw "Couldn't find QZ Tray $($release.name) for $arch on GitHub." }
-			$installer = Join-Path $env:TEMP $asset.name
-			Invoke-WebRequest $asset.browser_download_url -OutFile $installer -UseBasicParsing
-			Write-Host "Installing QZ Tray $($release.name)..."
-			# Waits for the installer only: -Wait would also wait for the QZ Tray
-			# it starts, which keeps running.
-			(Start-Process $installer -ArgumentList '/S' -PassThru).WaitForExit()
-			Remove-Item $installer
+			$sha256 = @{
+				'x86_64' = '7a44a50f679f0a1dab6679e6c22158dd335511074f5fcc1b208b6f9caf711ba7'
+				'arm64' = '10e308b91d84b637520eb36096cb6814b33a66f3cabc317ce776253e759babc8'
+			}[$arch]
+			# A new folder in Program Files, which only admins can write to from
+			# the moment it exists, so nothing else on the computer can swap the
+			# installer between download and run.
+			$stage = Join-Path $env:ProgramFiles "katasync-setup-$([guid]::NewGuid())"
+			New-Item -ItemType Directory -Path $stage | Out-Null
+			try {
+				$installer = Join-Path $stage "qz-tray-$version-$arch.exe"
+				Write-Host "Downloading QZ Tray $version..."
+				[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+				Invoke-WebRequest "https://github.com/qzind/tray/releases/download/v$version/qz-tray-$version-$arch.exe" -OutFile $installer -UseBasicParsing
+				if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $sha256) {
+					throw "The QZ Tray download isn't the one katasync expects. Nothing was installed."
+				}
+				Write-Host "Installing QZ Tray $version..."
+				# Waits for the installer only: -Wait would also wait for the QZ Tray
+				# it starts, which keeps running.
+				(Start-Process $installer -ArgumentList '/S' -PassThru).WaitForExit()
+			} finally {
+				Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+			}
 			if (-not (Test-Path "$qz\qz-tray.exe")) { throw "QZ Tray didn't install." }
 		}
+		# katasync only needs QZ to print to this computer's printers, so turn
+		# off what it doesn't use: listening beyond this computer, reading and
+		# writing files, and printing to a web address.
+		$properties = "$qz\qz-tray.properties"
+		$locked = [ordered]@{
+			'security.wss.host' = '127.0.0.1'
+			'security.file.enabled' = 'false'
+			'security.print.tohost' = 'false'
+		}
+		$kept = if (Test-Path $properties) {
+			Get-Content $properties | Where-Object { ($_ -split '=', 2)[0].Trim() -notin $locked.Keys }
+		} else { @() }
+		$lines = @($kept) + @($locked.Keys | ForEach-Object { "$_=$($locked[$_])" })
+		Set-Content -Path $properties -Value $lines -Encoding Ascii
 		Get-Process | Where-Object { $_.Path -like "$qz\*" } | Stop-Process -Force
 		Set-Content -Path "$qz\override.crt" -Value $certificate -Encoding Ascii
 		exit 0
@@ -61,7 +93,7 @@ try {
 
 	# Allowing ahead of time skips QZ's "Allow katasync?" question on the
 	# first print. If it doesn't take, QZ asks once instead.
-	$file = Join-Path $env:TEMP 'katasync-qz.crt'
+	$file = Join-Path $env:TEMP "katasync-$([guid]::NewGuid()).crt"
 	Set-Content -Path $file -Value $certificate -Encoding Ascii
 	$allowed = $false
 	if (Test-Path "$qz\qz-tray-console.exe") {
