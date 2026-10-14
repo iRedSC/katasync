@@ -590,10 +590,13 @@ export async function shopifyCancelFulfillment(fulfillmentId: string) {
 // Shippo's carrier token ("usps"), not the name Shopify shows ("USPS"). So
 // each shipped label is also listed on the order, one entry per tracking
 // number: metafield katasync.shippo_tracking, type json, value
-// [{ "number": "9400...", "carrier": "usps" }]. Needs write_orders.
+// [{ "number": "9400...", "carrier": "usps", "url": "https://..." }]. url is
+// the carrier's own tracking page, null when Shippo gave none; the shipping
+// email links to the storefront's page instead. Needs write_orders.
 export const shippoTrackingList = type({
 	number: "string",
 	carrier: "string",
+	"url?": "string | null",
 }).array();
 export type ShippoTracking = typeof shippoTrackingList.infer;
 

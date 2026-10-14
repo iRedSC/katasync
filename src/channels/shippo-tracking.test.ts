@@ -71,6 +71,19 @@ describe("the order's shippo_tracking metafield", () => {
 		});
 	});
 
+	test("keeps the carrier's own link, and replaces an entry from before links were kept", async () => {
+		const shopify = fakeShopify('[{"number":"940","carrier":"usps"}]');
+		await shopifySaveShippoTracking("gid://shopify/Order/9", {
+			number: "940",
+			carrier: "usps",
+			url: "https://tools.usps.com/x",
+		});
+		expect(shopify.written()).toMatchObject({
+			value:
+				'[{"number":"940","carrier":"usps","url":"https://tools.usps.com/x"}]',
+		});
+	});
+
 	test("a repeat save writes nothing", async () => {
 		const shopify = fakeShopify('[{"number":"940","carrier":"usps"}]');
 		await shopifySaveShippoTracking("gid://shopify/Order/9", {

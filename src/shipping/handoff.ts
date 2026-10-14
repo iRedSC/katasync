@@ -11,6 +11,7 @@ import { orderLines, orders, shipments, stores } from "#/db/schema";
 import { assignOrderPins } from "./pins";
 import { refundLabel } from "./shippo";
 import { tiktokShipPackage } from "./tiktok";
+import { storefrontTrackingUrl } from "./tracking-link";
 
 // The outside calls, passed in so tests can stand in for Shopify, eBay, and
 // Shippo.
@@ -152,7 +153,11 @@ export async function sendTracking(
 					fulfillmentId = await outside.shopifyFulfill(order.externalId, {
 						company: shipment.carrier,
 						number: shipment.trackingNumber,
-						url: shipment.trackingUrl,
+						// The email's tracking link: the storefront's page, which
+						// has the carrier's link too.
+						url:
+							(await storefrontTrackingUrl(order.externalId)) ??
+							shipment.trackingUrl,
 					});
 				} else {
 					const lines = await tx
@@ -191,6 +196,7 @@ export async function sendTracking(
 				const entry = {
 					number: shipment.trackingNumber,
 					carrier: shipment.carrierToken,
+					url: shipment.trackingUrl,
 				};
 				try {
 					await outside.shopifySaveTracking(order.externalId, entry);
@@ -256,6 +262,7 @@ export async function retryStorefrontTracking(
 				await outside.shopifySaveTracking(order.externalId, {
 					number: shipment.trackingNumber,
 					carrier: shipment.carrierToken,
+					url: shipment.trackingUrl,
 				});
 			}
 		} catch (err) {

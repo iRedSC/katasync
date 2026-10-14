@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
@@ -125,7 +126,24 @@ describe("sendTracking", () => {
 		expect(outside.refund).not.toHaveBeenCalled();
 	});
 
+	test("the shipping email links to the storefront's signed tracking page", async () => {
+		vi.stubEnv("TRACKING_LINK_SECRET", "test-secret");
+		vi.stubEnv("STOREFRONT_ORIGIN", "https://shop.example/");
+		const outside = fakes();
+		await sendTracking(db, await addLabel(), outside);
+		expect(outside.shopifyFulfill).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			expect.objectContaining({
+				url: `https://shop.example/track/9/${createHmac("sha256", "test-secret").update("track:9").digest("base64url")}`,
+			}),
+		);
+		vi.unstubAllEnvs();
+	});
+
 	test("marks the order shipped on Shopify and here", async () => {
+		// Without the storefront set up, the email keeps the carrier's link.
+		vi.stubEnv("TRACKING_LINK_SECRET", "");
+		const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const outside = fakes();
 		const id = await addLabel();
 		const result = await sendTracking(db, id, outside);
@@ -144,6 +162,11 @@ describe("sendTracking", () => {
 		);
 		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
 		expect((await order()).pin).toBeNull();
+		expect(warned).toHaveBeenCalledWith(
+			expect.stringContaining("TRACKING_LINK_SECRET isn't set"),
+		);
+		warned.mockRestore();
+		vi.unstubAllEnvs();
 	});
 
 	test("lists the label's Shippo carrier token on the order for the storefront", async () => {
@@ -151,7 +174,11 @@ describe("sendTracking", () => {
 		await sendTracking(db, await addLabel(), outside);
 		expect(outside.shopifySaveTracking).toHaveBeenCalledWith(
 			"gid://shopify/Order/9",
-			{ number: "9400100000000000000000", carrier: "usps" },
+			{
+				number: "9400100000000000000000",
+				carrier: "usps",
+				url: "https://tools.usps.com/x",
+			},
 		);
 	});
 
@@ -342,7 +369,11 @@ describe("retryStorefrontTracking", () => {
 		expect(result.sent).toBe(true);
 		expect(outside.shopifySaveTracking).toHaveBeenCalledWith(
 			"gid://shopify/Order/9",
-			{ number: "9400100000000000000000", carrier: "usps" },
+			{
+				number: "9400100000000000000000",
+				carrier: "usps",
+				url: "https://tools.usps.com/x",
+			},
 		);
 		expect((await label(id)).storefrontTrackingError).toBeNull();
 	});
