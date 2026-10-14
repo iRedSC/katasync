@@ -393,18 +393,18 @@ describe("retryStorefrontTracking", () => {
 		expect((await label(id)).storefrontTrackingError).toBeNull();
 	});
 
-	test("another refusal keeps the note", async () => {
+	test("another refusal, a timeout included, replaces the note with the new reason", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 		const outside = fakes({
 			shopifySaveTracking: vi.fn(async () => {
-				throw new Error("Access denied");
+				throw new Error("Shopify didn't answer within 5000ms");
 			}),
 		});
 		const id = await addLabel({ storefrontTrackingError: "not saved" });
 		const result = await retryStorefrontTracking(db, id, outside);
-		expect(result).toEqual({
-			sent: false,
-			message: "Shopify refused again: Access denied",
-		});
-		expect((await label(id)).storefrontTrackingError).toBe("not saved");
+		expect(result.sent).toBe(false);
+		expect(result.message).toContain("didn't answer within 5000ms");
+		expect((await label(id)).storefrontTrackingError).toBe(result.message);
+		logged.mockRestore();
 	});
 });

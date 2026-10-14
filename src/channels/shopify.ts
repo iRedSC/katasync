@@ -27,34 +27,52 @@ const graphqlResponse = type({
 });
 
 // Calls the Admin GraphQL API, waiting and retrying when Shopify throttles.
+// With timeoutMs, gives up once that long has passed, throttle waits
+// included.
 export async function shopifyQuery(
 	query: string,
 	variables: Record<string, unknown>,
+	{ timeoutMs }: { timeoutMs?: number } = {},
 ) {
 	const { domain, token } = credentials();
+	const deadline = timeoutMs
+		? Date.now() + timeoutMs
+		: Number.POSITIVE_INFINITY;
 	for (let attempt = 1; ; attempt++) {
-		const response = await fetch(
-			`https://${domain}/admin/api/${API_VERSION}/graphql.json`,
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Shopify-Access-Token": token,
+		let body: typeof graphqlResponse.infer;
+		try {
+			const response = await fetch(
+				`https://${domain}/admin/api/${API_VERSION}/graphql.json`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"X-Shopify-Access-Token": token,
+					},
+					body: JSON.stringify({ query, variables }),
+					signal: timeoutMs
+						? AbortSignal.timeout(Math.max(1, deadline - Date.now()))
+						: undefined,
 				},
-				body: JSON.stringify({ query, variables }),
-			},
-		);
-		if (!response.ok) {
-			throw new Error(
-				`Shopify answered ${response.status}: ${await response.text()}`,
 			);
+			if (!response.ok) {
+				throw new Error(
+					`Shopify answered ${response.status}: ${await response.text()}`,
+				);
+			}
+			body = graphqlResponse.assert(await response.json());
+		} catch (err) {
+			if (err instanceof Error && err.name === "TimeoutError") {
+				throw new Error(`Shopify didn't answer within ${timeoutMs}ms`);
+			}
+			throw err;
 		}
-		const body = graphqlResponse.assert(await response.json());
 		const throttled = body.errors?.some(
 			(e) => e.extensions?.code === "THROTTLED",
 		);
-		if (throttled && attempt < 6) {
-			await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+		const wait = 2000 * attempt;
+		if (throttled && attempt < 6 && Date.now() + wait < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, wait));
 			continue;
 		}
 		if (body.errors?.length) {
@@ -608,6 +626,10 @@ const shippoTrackingRead = type({
 
 const metafieldsSaved = type({ metafieldsSet: { userErrors } });
 
+// Each call gives up after this long. The fulfillment already went through,
+// so a slow Shopify is noted rather than waited on.
+const SHIPPO_TRACKING_TIMEOUT_MS = 5000;
+
 // Reads the list, changes it, and writes it back only if Shopify still has
 // what was read, so a concurrent edit fails instead of being lost.
 async function changeShippoTracking(
@@ -618,6 +640,7 @@ async function changeShippoTracking(
 		await shopifyQuery(
 			'query($id: ID!) { order(id: $id) { metafield(namespace: "katasync", key: "shippo_tracking") { value compareDigest } } }',
 			{ id: orderId },
+			{ timeoutMs: SHIPPO_TRACKING_TIMEOUT_MS },
 		),
 	);
 	if (!order) throw new Error("Shopify has no such order");
@@ -641,6 +664,7 @@ async function changeShippoTracking(
 					},
 				],
 			},
+			{ timeoutMs: SHIPPO_TRACKING_TIMEOUT_MS },
 		),
 	);
 	if (metafieldsSet.userErrors.length > 0) {

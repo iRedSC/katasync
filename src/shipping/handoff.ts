@@ -185,36 +185,12 @@ export async function sendTracking(
 					message: `Tracking didn't reach ${name}: ${why}`,
 				};
 			}
-			// Best-effort: the customer is emailed and the order shipped either
-			// way, so a failure is only noted for someone to fix by hand.
-			let storefrontTrackingError: string | null = null;
-			if (
-				channel === "shopify" &&
-				shipment.carrierToken &&
-				shipment.trackingNumber
-			) {
-				const entry = {
-					number: shipment.trackingNumber,
-					carrier: shipment.carrierToken,
-					url: shipment.trackingUrl,
-				};
-				try {
-					await outside.shopifySaveTracking(order.externalId, entry);
-				} catch (err) {
-					storefrontTrackingError = storefrontNote(
-						order.externalId,
-						`Add ${JSON.stringify(entry)} to`,
-						err,
-					);
-				}
-			}
 			await tx
 				.update(shipments)
 				.set({
 					channelSentAt: new Date(),
 					channelFulfillmentId: fulfillmentId,
 					channelError: null,
-					storefrontTrackingError,
 				})
 				.where(eq(shipments.id, shipment.id));
 			// Shipped now, not on the next sync: off To ship.
@@ -222,21 +198,75 @@ export async function sendTracking(
 				.update(orders)
 				.set({ fulfillmentStatus: "FULFILLED" })
 				.where(eq(orders.id, order.id));
-			const sentMessage =
-				to === "tiktok"
-					? "Ready for pickup on TikTok; TikTok tells the customer"
-					: `Tracking sent to ${name}; the customer is emailed`;
 			return {
 				sent: true,
-				message: storefrontTrackingError
-					? `${sentMessage}. ${storefrontTrackingError}`
-					: sentMessage,
+				message:
+					to === "tiktok"
+						? "Ready for pickup on TikTok; TikTok tells the customer"
+						: `Tracking sent to ${name}; the customer is emailed`,
 			};
 		},
 	);
 	// Frees the shipped order's pin (or none, if nothing changed).
 	if (result.sent) await assignOrderPins(db);
+	// Only once shipped is committed: a slow or failed write can't hold up
+	// or undo it.
+	if (result.sent) {
+		const note = await updateStorefrontTracking(db, shipmentId, outside);
+		if (note) return { ...result, message: `${result.message}. ${note}` };
+	}
 	return result;
+}
+
+// Brings the storefront's katasync.shippo_tracking entry for a Shopify
+// Shippo label in line with the label: listed while live, gone once voided.
+// Best-effort and run after the send or void has committed: the customer
+// was emailed either way, so a failure (Shopify calls give up after 5s) is
+// only kept on the shipment, shown on the order and Diagnostics, for a fix
+// by hand. Takes the order's lock so it can't interleave with a void.
+// Returns the note, or null when the storefront is up to date.
+async function updateStorefrontTracking(
+	db: Db,
+	shipmentId: number,
+	outside: Outside,
+): Promise<string | null> {
+	return withOrderLock(db, await orderOf(db, shipmentId), async (tx) => {
+		const { shipment, order, channel } = await load(tx, shipmentId);
+		if (
+			channel !== "shopify" ||
+			!shipment.carrierToken ||
+			!shipment.trackingNumber ||
+			shipment.test
+		) {
+			return null;
+		}
+		const entry = {
+			number: shipment.trackingNumber,
+			carrier: shipment.carrierToken,
+			url: shipment.trackingUrl,
+		};
+		let note: string | null = null;
+		try {
+			if (shipment.voidedAt) {
+				await outside.shopifyRemoveTracking(order.externalId, entry.number);
+			} else {
+				await outside.shopifySaveTracking(order.externalId, entry);
+			}
+		} catch (err) {
+			note = storefrontNote(
+				order.externalId,
+				shipment.voidedAt
+					? `Remove tracking ${entry.number} from`
+					: `Add ${JSON.stringify(entry)} to`,
+				err,
+			);
+		}
+		await tx
+			.update(shipments)
+			.set({ storefrontTrackingError: note })
+			.where(eq(shipments.id, shipmentId));
+		return note;
+	});
 }
 
 // Tries the storefront's katasync.shippo_tracking entry again after a
@@ -247,39 +277,18 @@ export async function retryStorefrontTracking(
 	shipmentId: number,
 	outside: Outside = live,
 ): Promise<Handoff> {
-	return withOrderLock(db, await orderOf(db, shipmentId), async (tx) => {
-		const { shipment, order } = await load(tx, shipmentId);
-		if (!shipment.carrierToken || !shipment.trackingNumber) {
-			throw new Error("This label has nothing for the storefront");
-		}
-		try {
-			if (shipment.voidedAt) {
-				await outside.shopifyRemoveTracking(
-					order.externalId,
-					shipment.trackingNumber,
-				);
-			} else {
-				await outside.shopifySaveTracking(order.externalId, {
-					number: shipment.trackingNumber,
-					carrier: shipment.carrierToken,
-					url: shipment.trackingUrl,
-				});
-			}
-		} catch (err) {
-			const why = err instanceof Error ? err.message : String(err);
-			return { sent: false, message: `Shopify refused again: ${why}` };
-		}
-		await tx
-			.update(shipments)
-			.set({ storefrontTrackingError: null })
-			.where(eq(shipments.id, shipmentId));
-		return {
-			sent: true,
-			message: shipment.voidedAt
-				? "The storefront no longer lists this label"
-				: "The storefront's tracking page has this label",
-		};
-	});
+	const { shipment } = await load(db, shipmentId);
+	if (!shipment.carrierToken || !shipment.trackingNumber) {
+		throw new Error("This label has nothing for the storefront");
+	}
+	const note = await updateStorefrontTracking(db, shipmentId, outside);
+	if (note) return { sent: false, message: note };
+	return {
+		sent: true,
+		message: shipment.voidedAt
+			? "The storefront no longer lists this label"
+			: "The storefront's tracking page has this label",
+	};
 }
 
 export type Voided = { refundStatus: string; notes: string[] };
@@ -330,33 +339,6 @@ export async function voidShipment(
 					);
 				}
 			}
-			// Checked even if sending looked failed: the entry may have been
-			// saved before an error.
-			if (
-				channel === "shopify" &&
-				shipment.carrierToken &&
-				shipment.trackingNumber &&
-				!shipment.test
-			) {
-				let storefrontTrackingError: string | null = null;
-				try {
-					await outside.shopifyRemoveTracking(
-						order.externalId,
-						shipment.trackingNumber,
-					);
-				} catch (err) {
-					storefrontTrackingError = storefrontNote(
-						order.externalId,
-						`Remove tracking ${shipment.trackingNumber} from`,
-						err,
-					);
-					notes.push(storefrontTrackingError);
-				}
-				await tx
-					.update(shipments)
-					.set({ storefrontTrackingError })
-					.where(eq(shipments.id, shipmentId));
-			}
 			if (shipment.channelSentAt && channel === "ebay") {
 				notes.push(
 					"eBay keeps the old tracking number; it can't be removed from here. Correct it in Seller Hub if this order isn't reshipped.",
@@ -375,5 +357,9 @@ export async function voidShipment(
 		},
 	);
 	await assignOrderPins(db);
+	// After the void commits. Checked even if sending looked failed: the
+	// entry may have been saved before an error.
+	const note = await updateStorefrontTracking(db, shipmentId, outside);
+	if (note) result.notes.push(note);
 	return result;
 }

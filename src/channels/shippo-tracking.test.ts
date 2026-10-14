@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { getRate } from "#/shipping/shippo";
 import {
+	shopifyQuery,
 	shopifyRemoveShippoTracking,
 	shopifySaveShippoTracking,
 } from "./shopify";
@@ -138,4 +139,19 @@ describe("getRate", () => {
 		});
 		expect(urls[1]).toBe("https://api.goshippo.com/carrier_accounts/acct1");
 	});
+});
+
+test("a Shopify call with a timeout gives up instead of hanging", async () => {
+	vi.stubGlobal(
+		"fetch",
+		(_url: string, init: RequestInit) =>
+			new Promise((_, reject) =>
+				init.signal?.addEventListener("abort", () =>
+					reject(init.signal?.reason),
+				),
+			),
+	);
+	await expect(
+		shopifyQuery("{ shop { name } }", {}, { timeoutMs: 50 }),
+	).rejects.toThrow("Shopify didn't answer within 50ms");
 });
