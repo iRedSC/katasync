@@ -281,6 +281,7 @@ export function QuickShip() {
 	// choosePin.
 	const choosePinRef = useRef(choosePin);
 	choosePinRef.current = choosePin;
+	const choosePackageRef = useRef((_: { box: Box | null; dims: Dims }) => {});
 
 	// Adds or removes another order to the same address from this box. Only
 	// while choosing the first box: the contents decide the boxes.
@@ -305,7 +306,9 @@ export function QuickShip() {
 	}
 
 	function choosePackage(next: { box: Box | null; dims: Dims }) {
-		if (!plan || busy) return;
+		// A box saved after leaving the step, or while new contents load,
+		// doesn't count.
+		if (!plan || busy || step !== "package") return;
 		setBox(next.box);
 		setDims(next.dims);
 		// Weight starts from this box's weight last time these contents
@@ -321,6 +324,8 @@ export function QuickShip() {
 		setDraftGrams(grams);
 		setStep("weight");
 	}
+
+	choosePackageRef.current = choosePackage;
 
 	// + on the weight step: this box is done, on to the next.
 	function anotherBox(grams: number) {
@@ -519,12 +524,15 @@ export function QuickShip() {
 						!external &&
 						found.liveDispatchId === null && (
 							<PackageStep
-								// A fresh step for each box, starting from its suggestion.
-								key={packed.length}
+								// A fresh step for each box, and again when orders join or
+								// leave the box, starting from that box's suggestion.
+								key={`${packed.length}:${plan?.orderIds.join(",")}`}
 								boxes={boxes}
 								current={box}
 								dims={dims}
-								onChoose={choosePackage}
+								// Through the ref: saving a custom box finishes later, and
+								// must reach the current choosePackage, not this render's.
+								onChoose={(next) => choosePackageRef.current(next)}
 								onSaved={(saved) => setBoxes((list) => [...list, saved])}
 							/>
 						)}
@@ -1217,6 +1225,9 @@ function RatesStep({
 	onBuy: (quote: Rate) => void;
 }) {
 	const [selected, setSelected] = useState(0);
+	// New prices start from the top, so the choice is always in the list.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset on each new list
+	useEffect(() => setSelected(0), [rates]);
 	const list = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (rates) list.current?.focus();
@@ -1251,7 +1262,8 @@ function RatesStep({
 					setSelected((i) => Math.min(i + 1, rates.list.length - 1));
 				}
 				if (e.key === "ArrowUp") setSelected((i) => Math.max(i - 1, 0));
-				if (e.key === "Enter") onBuy(rates.list[selected]);
+				const quote = rates.list[selected];
+				if (e.key === "Enter" && quote) onBuy(quote);
 			}}
 		>
 			<div className="flex items-baseline justify-between">

@@ -170,7 +170,7 @@ function OrderPage() {
 						? "Cancel the label in TikTok Seller Center."
 						: `Void the ${liveBoxes[0].serviceName} ${liveBoxes.length > 1 ? "labels" : "label"} to get ${formatMoney(liveBoxes.reduce((sum, b) => sum + b.cost, 0))} back.`}
 					{liveSend.shippedWith.length > 0 &&
-						` The box also holds ${liveSend.shippedWith.map((o) => o.name).join(", ")}; voiding puts ${liveSend.shippedWith.length === 1 ? "it" : "them"} back on To ship to pack again without this order.`}
+						` This shipment also holds ${liveSend.shippedWith.map((o) => o.name).join(", ")}; voiding puts ${liveSend.shippedWith.length === 1 ? "it" : "them"} back on To ship to pack again without this order.`}
 				</Banner>
 			)}
 
@@ -375,7 +375,7 @@ function SendRow({
 			</div>
 			{d.shippedWith.length > 0 && (
 				<p>
-					Shipped in one box with{" "}
+					Shipped together with{" "}
 					{d.shippedWith.map((o, i) => (
 						<span key={o.id}>
 							{i > 0 && ", "}
