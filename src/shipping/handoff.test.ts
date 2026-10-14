@@ -13,6 +13,8 @@ function fakes(overrides: Partial<Outside> = {}): Outside {
 	return {
 		shopifyFulfill: vi.fn(async () => "gid://shopify/Fulfillment/1"),
 		shopifyCancel: vi.fn(async () => {}),
+		shopifySaveTracking: vi.fn(async () => {}),
+		shopifyRemoveTracking: vi.fn(async () => {}),
 		ebayFulfill: vi.fn(async () => "ebay-f-1"),
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokShip: vi.fn(async (id: string) => ({ id, trackingNumber: "TT1" })),
@@ -63,6 +65,7 @@ async function addLabel(
 			weightGrams: 600,
 			provider: "shippo",
 			carrier: "USPS",
+			carrierToken: "usps",
 			service: "usps_ground_advantage",
 			serviceName: "USPS Ground Advantage",
 			cost: 7.08,
@@ -138,6 +141,48 @@ describe("sendTracking", () => {
 		expect((await order()).pin).toBeNull();
 	});
 
+	test("lists the label's Shippo carrier token on the order for the storefront", async () => {
+		const outside = fakes();
+		await sendTracking(db, await addLabel(), outside);
+		expect(outside.shopifySaveTracking).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			{ number: "9400100000000000000000", carrier: "usps" },
+		);
+	});
+
+	test("a label bought before the token was kept still ships, unlisted", async () => {
+		const outside = fakes();
+		const result = await sendTracking(
+			db,
+			await addLabel({ carrierToken: null }),
+			outside,
+		);
+		expect(result.sent).toBe(true);
+		expect(outside.shopifySaveTracking).not.toHaveBeenCalled();
+	});
+
+	test("if the storefront entry isn't saved, a retry saves it without a second fulfillment", async () => {
+		const outside = fakes({
+			shopifySaveTracking: vi
+				.fn()
+				.mockRejectedValueOnce(new Error("Access denied"))
+				.mockResolvedValue(undefined),
+		});
+		const id = await addLabel();
+		const first = await sendTracking(db, id, outside);
+		expect(first.sent).toBe(false);
+		expect(first.message).toContain("the customer was emailed");
+		expect((await label(id)).channelSentAt).toBeNull();
+
+		const retry = await sendTracking(db, id, outside);
+		expect(retry.sent).toBe(true);
+		expect(outside.shopifySaveTracking).toHaveBeenCalledTimes(2);
+		// The fake stands in for shopifyFulfill returning the earlier one.
+		expect((await label(id)).channelFulfillmentId).toBe(
+			"gid://shopify/Fulfillment/1",
+		);
+	});
+
 	test("never sends a test label's fake tracking", async () => {
 		const outside = fakes();
 		const result = await sendTracking(
@@ -198,6 +243,10 @@ describe("voidShipment", () => {
 		expect(outside.shopifyCancel).toHaveBeenCalledWith(
 			"gid://shopify/Fulfillment/1",
 		);
+		expect(outside.shopifyRemoveTracking).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			"9400100000000000000000",
+		);
 		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
 		expect((await order()).pin).not.toBeNull();
 
@@ -250,5 +299,21 @@ describe("voidShipment", () => {
 		const result = await voidShipment(db, id, outside);
 		expect(result.notes[0]).toContain("Shopify still shows it shipped");
 		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+	});
+
+	test("if the storefront entry can't be removed, the void still goes through and says so", async () => {
+		const outside = fakes({
+			shopifyRemoveTracking: vi.fn(async () => {
+				throw new Error("nope");
+			}),
+		});
+		const id = await addLabel();
+		await sendTracking(db, id, outside);
+		const result = await voidShipment(db, id, outside);
+		expect(result.notes).toContainEqual(
+			expect.stringContaining("katasync.shippo_tracking"),
+		);
+		expect((await label(id)).voidedAt).not.toBeNull();
+		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
 	});
 });

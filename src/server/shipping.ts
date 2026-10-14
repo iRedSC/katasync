@@ -233,6 +233,7 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 					...box,
 					provider: "shippo",
 					carrier: rate.carrier,
+					carrierToken: rate.carrierToken,
 					service: rate.service,
 					serviceName: rate.serviceName,
 					cost: rate.cost,

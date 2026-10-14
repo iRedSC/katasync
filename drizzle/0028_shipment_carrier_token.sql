@@ -1,0 +1,1 @@
+ALTER TABLE "shipments" ADD COLUMN "carrier_token" text;

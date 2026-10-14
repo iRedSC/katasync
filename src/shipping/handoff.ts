@@ -1,6 +1,11 @@
 import { eq, sql } from "drizzle-orm";
 import { ebayFulfill } from "#/channels/ebay";
-import { shopifyCancelFulfillment, shopifyFulfill } from "#/channels/shopify";
+import {
+	shopifyCancelFulfillment,
+	shopifyFulfill,
+	shopifyRemoveShippoTracking,
+	shopifySaveShippoTracking,
+} from "#/channels/shopify";
 import type { Db } from "#/db/client";
 import { orderLines, orders, shipments, stores } from "#/db/schema";
 import { assignOrderPins } from "./pins";
@@ -12,6 +17,8 @@ import { tiktokShipPackage } from "./tiktok";
 export type Outside = {
 	shopifyFulfill: typeof shopifyFulfill;
 	shopifyCancel: typeof shopifyCancelFulfillment;
+	shopifySaveTracking: typeof shopifySaveShippoTracking;
+	shopifyRemoveTracking: typeof shopifyRemoveShippoTracking;
 	ebayFulfill: typeof ebayFulfill;
 	refund: typeof refundLabel;
 	tiktokShip: typeof tiktokShipPackage;
@@ -20,6 +27,8 @@ export type Outside = {
 export const live: Outside = {
 	shopifyFulfill,
 	shopifyCancel: shopifyCancelFulfillment,
+	shopifySaveTracking: shopifySaveShippoTracking,
+	shopifyRemoveTracking: shopifyRemoveShippoTracking,
 	ebayFulfill,
 	refund: refundLabel,
 	tiktokShip: tiktokShipPackage,
@@ -134,6 +143,21 @@ export async function sendTracking(
 						number: shipment.trackingNumber,
 						url: shipment.trackingUrl,
 					});
+					// After the fulfillment, which is safe to repeat, so a retry
+					// redoes both without emailing the customer twice.
+					if (shipment.carrierToken) {
+						await outside
+							.shopifySaveTracking(order.externalId, {
+								number: shipment.trackingNumber,
+								carrier: shipment.carrierToken,
+							})
+							.catch((err) => {
+								const why = err instanceof Error ? err.message : String(err);
+								throw new Error(
+									`the customer was emailed, but the storefront's tracking entry wasn't saved: ${why}`,
+								);
+							});
+					}
 				} else {
 					const lines = await tx
 						.select({
@@ -232,6 +256,26 @@ export async function voidShipment(
 					const why = err instanceof Error ? err.message : String(err);
 					notes.push(
 						`Shopify still shows it shipped (${why}). Cancel the fulfillment in Shopify.`,
+					);
+				}
+			}
+			// Checked even if sending looked failed: the entry may have been
+			// saved before an error.
+			if (
+				channel === "shopify" &&
+				shipment.carrierToken &&
+				shipment.trackingNumber &&
+				!shipment.test
+			) {
+				try {
+					await outside.shopifyRemoveTracking(
+						order.externalId,
+						shipment.trackingNumber,
+					);
+				} catch (err) {
+					const why = err instanceof Error ? err.message : String(err);
+					notes.push(
+						`The storefront still lists tracking ${shipment.trackingNumber} (${why}). Remove it from the order's katasync.shippo_tracking metafield in Shopify.`,
 					);
 				}
 			}

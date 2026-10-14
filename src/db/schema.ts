@@ -445,6 +445,10 @@ export const shipments = pgTable(
 		// "shippo" for now; Amazon and TikTok labels come later.
 		provider: text().notNull(),
 		carrier: text().notNull(),
+		// Shippo's carrier token, e.g. "usps": what Shippo's tracking API
+		// takes, saved to the Shopify order for the storefront's tracking page.
+		// Null for TikTok labels and Shippo labels bought before it was kept.
+		carrierToken: text(),
 		// The provider's service code, e.g. Shippo's "usps_ground_advantage".
 		service: text().notNull(),
 		serviceName: text().notNull(),
