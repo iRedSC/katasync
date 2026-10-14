@@ -48,7 +48,7 @@ describe("QZ Tray certificate", () => {
 describe("QZ request signing", async () => {
 	const { certificate, privateKey } = await makeCertificate();
 	const now = 1_792_000_000_000;
-	const request = (call: string, params: object, timestamp = now) =>
+	const request = (call: string, params: object | null, timestamp = now) =>
 		JSON.stringify({ call, params, timestamp });
 	const pdf = { type: "pixel", format: "pdf", flavor: "base64", data: "JVBE" };
 	const label = (printer: object, data: object[] = [pdf]) =>

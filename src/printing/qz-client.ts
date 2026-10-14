@@ -73,7 +73,12 @@ function setUpQz(mod: Qz) {
 	qz.security.setSignatureAlgorithm("SHA512");
 	// Hand the server the request itself rather than its hash, so it can
 	// check what it signs. The server hashes it the way QZ would.
-	qz.api.setSha256Type((request: string) => request);
+	// (Its types are wrong: qz-tray.js passes the request and uses what's
+	// returned, see _qz.tools.hash.)
+	const passThrough = (request: string) => request;
+	qz.api.setSha256Type(
+		passThrough as unknown as Parameters<Qz["api"]["setSha256Type"]>[0],
+	);
 	qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
 		signQzRequest({ data: toSign }).then(resolve, reject);
 	});
