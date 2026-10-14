@@ -30,6 +30,16 @@ Everyone shares one company account; each phone or computer signs in with its ow
 - `AUTH_ORIGIN` is the address katasync is opened at, e.g. `https://katasync.example.com`. Passkeys belong to that address, so changing it means adding every device again.
 - `pnpm auth:setup-link` prints a one-time link for adding a device: the first one, or when every device has lost its passkey.
 
+## Label printing
+
+Labels print through QZ Tray on each packing computer. katasync makes its own QZ certificate the first time it's needed and keeps it in the database (`src/printing/qz.ts`). Settings, then Label printing, downloads a Windows script with that certificate in it: it installs QZ Tray 2.3.0 if it's missing or older (checked by hash), makes it trust katasync, turns off the QZ features katasync doesn't use, and restarts it. Run it again after reinstalling QZ Tray. The server only signs QZ requests that list printers or print a PDF to a named printer.
+
+The dev server doesn't sign QZ requests or hand out the setup script, since it skips sign-in and its database may hold a copy of production's key. To print from dev, set `QZ_DEV_PRINTING=1`: it then uses a certificate of its own in `.qz-dev-certificate.json`, so a computer set up from dev trusts only dev.
+
+**Replacing the certificate**, if the key may have leaked (a database copy, backup, or Neon branch got out, or someone with database access left): run `delete from qz_certificate` on the production database, then run the setup script from Settings again on every packing computer. The next print makes a new key; the script puts the new certificate in place of the old one, so QZ stops trusting the old key. Copies of the old key in older branches and backups are useless after that. Until a computer is set up again, its prints fail.
+
+Each computer then picks its label printer in Settings; the choice is kept in that browser. Labels (4x6 PDFs from Shippo and TikTok) go straight to it, signed by the server (`src/server/printing.ts`, `src/printing/qz-client.ts`). The saved printer name must match an installed printer exactly; a renamed or missing printer is never silently replaced. Without a printer picked, labels open as PDFs in a new tab, as on phones. A failed print says why and offers the PDF. Use Test print on the packing computer to verify its Windows setup, driver, and physical 4x6 output.
+
 ## Claude (MCP)
 
 `/mcp` is an MCP server (Streamable HTTP, stateless) for Claude and other MCP clients. Make a token in Settings; it shows the `claude mcp add` command to run. Claude can read anything (including read-only SQL), draft POs, receive sent ones, change products and the setup, count stock, ask staff for cycle counts, and build kits; a read-only token gets only the reading tools. Every change it makes is listed on Diagnostics. Sending POs and buying labels stay in the app. Tools live in `src/mcp/server.ts`; the counting rules they rely on are the `owned_stock` and `sales_units` views.

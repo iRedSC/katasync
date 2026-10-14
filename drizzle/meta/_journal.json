@@ -211,6 +211,13 @@
       "when": 1792000977954,
       "tag": "0029_storefront_tracking_error",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792003340079,
+      "tag": "0030_qz_certificate",
+      "breakpoints": true
     }
   ]
 }

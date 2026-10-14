@@ -23,6 +23,9 @@ importers:
       '@number-flow/react':
         specifier: ^0.6.2
         version: 0.6.2(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@peculiar/x509':
+        specifier: ^2.1.0
+        version: 2.1.0
       '@react-pdf/renderer':
         specifier: ^4.9.0
         version: 4.9.0(react@19.3.0)
@@ -83,6 +86,9 @@ importers:
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
+      qz-tray:
+        specifier: ^2.3.0
+        version: 2.3.0
       radix-ui:
         specifier: ^1.7.0
         version: 1.7.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -92,6 +98,9 @@ importers:
       react-dom:
         specifier: ^19.2.0
         version: 19.3.0(react@19.3.0)
+      reflect-metadata:
+        specifier: ^0.2.2
+        version: 0.2.2
       sonner:
         specifier: ^2.0.8
         version: 2.0.8(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -126,6 +135,9 @@ importers:
       '@types/qrcode':
         specifier: ^1.5.6
         version: 1.5.6
+      '@types/qz-tray':
+        specifier: ^2.2.2
+        version: 2.2.2
       '@types/react':
         specifier: ^19.2.0
         version: 19.3.0
@@ -2098,6 +2110,9 @@ packages:
   '@types/qrcode@1.5.6':
     resolution: {integrity: sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw==}
 
+  '@types/qz-tray@2.2.2':
+    resolution: {integrity: sha512-/a0wZ5ZMd4kvD3KgafoXY07DVXd7JkEWOAoJQNf1Gvygb32y8cyxeHlfM93ic8NNGLC9bHMKxrafRyFFPsgASg==}
+
   '@types/react-dom@19.3.0':
     resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
     peerDependencies:
@@ -3302,6 +3317,9 @@ packages:
 
   queue@6.0.2:
     resolution: {integrity: sha512-iHZWu+q3IdFZFX36ro/lKBkSvfkztY5Y7HMiPlOUjhupPcG2JMfst2KKEpu5XndviX/3UhFbRngUPNKtgvtZiA==}
+
+  qz-tray@2.3.0:
+    resolution: {integrity: sha512-hviWThaaUHdjSTjs1q7D8ow8F7l1iBUhbM3J+sOL2DgkTlXO5DmxQewMdirdQgnUQAuaiSzVB9wIhiltOn1aaQ==}
 
   radix-ui@1.7.0:
     resolution: {integrity: sha512-x+z5TV2v6u0QpAQ4dQfNMcvtIdSQ1Op2oqBEyfDXjNldRZbMTP+hcjr5Iie31bep81Axeioa+70Ww7pZDzTEQQ==}
@@ -5869,6 +5887,8 @@ snapshots:
     dependencies:
       '@types/node': 22.20.5
 
+  '@types/qz-tray@2.2.2': {}
+
   '@types/react-dom@19.3.0(@types/react@19.3.0)':
     dependencies:
       '@types/react': 19.3.0
@@ -6910,6 +6930,8 @@ snapshots:
   queue@6.0.2:
     dependencies:
       inherits: 2.0.4
+
+  qz-tray@2.3.0: {}
 
   radix-ui@1.7.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:

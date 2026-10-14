@@ -13,3 +13,4 @@ __unconfig*
 todos.json
 .vercel
 .neon
+.qz-dev-certificate.json
