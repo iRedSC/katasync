@@ -971,9 +971,11 @@ function RatesStep({
 		if (rates) list.current?.focus();
 	}, [rates]);
 	// Only five services fit; keep the arrow-key choice visible as it scrolls.
-	useEffect(() => {
-		options.current?.children[selected]?.scrollIntoView({ block: "nearest" });
-	}, [selected]);
+	// Hover also selects, so scrolling here (not on every change) keeps the list still under the mouse.
+	function moveTo(i: number) {
+		setSelected(i);
+		options.current?.children[i]?.scrollIntoView({ block: "nearest" });
+	}
 
 	if (!rates) {
 		return (
@@ -999,9 +1001,13 @@ function RatesStep({
 			className="flex flex-col gap-2 outline-none"
 			onKeyDown={(e) => {
 				if (e.key === "ArrowDown") {
-					setSelected((i) => Math.min(i + 1, rates.list.length - 1));
+					e.preventDefault();
+					moveTo(Math.min(selected + 1, rates.list.length - 1));
 				}
-				if (e.key === "ArrowUp") setSelected((i) => Math.max(i - 1, 0));
+				if (e.key === "ArrowUp") {
+					e.preventDefault();
+					moveTo(Math.max(selected - 1, 0));
+				}
 				if (e.key === "Enter") onBuy(rates.list[selected]);
 			}}
 		>
