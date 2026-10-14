@@ -204,6 +204,13 @@
       "when": 1792000578111,
       "tag": "0028_shipment_carrier_token",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792000977954,
+      "tag": "0029_storefront_tracking_error",
+      "breakpoints": true
     }
   ]
 }

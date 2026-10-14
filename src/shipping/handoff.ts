@@ -86,6 +86,17 @@ async function orderOf(db: Db, shipmentId: number) {
 	return row.orderId;
 }
 
+// Logs a failed katasync.shippo_tracking write loudly and returns the note
+// shown on the shipment.
+function storefrontNote(orderId: string, fix: string, err: unknown) {
+	const why = err instanceof Error ? err.message : String(err);
+	console.error(
+		`STOREFRONT TRACKING NOT UPDATED for ${orderId}: ${fix} katasync.shippo_tracking.`,
+		err,
+	);
+	return `The storefront's tracking page isn't up to date (${why}). ${fix} the order's katasync.shippo_tracking metafield in Shopify.`;
+}
+
 export type Handoff = { sent: boolean; message: string };
 
 // Tells the order's marketplace it shipped, with tracking, so the customer
@@ -143,21 +154,6 @@ export async function sendTracking(
 						number: shipment.trackingNumber,
 						url: shipment.trackingUrl,
 					});
-					// After the fulfillment, which is safe to repeat, so a retry
-					// redoes both without emailing the customer twice.
-					if (shipment.carrierToken) {
-						await outside
-							.shopifySaveTracking(order.externalId, {
-								number: shipment.trackingNumber,
-								carrier: shipment.carrierToken,
-							})
-							.catch((err) => {
-								const why = err instanceof Error ? err.message : String(err);
-								throw new Error(
-									`the customer was emailed, but the storefront's tracking entry wasn't saved: ${why}`,
-								);
-							});
-					}
 				} else {
 					const lines = await tx
 						.select({
@@ -184,12 +180,35 @@ export async function sendTracking(
 					message: `Tracking didn't reach ${name}: ${why}`,
 				};
 			}
+			// Best-effort: the customer is emailed and the order shipped either
+			// way, so a failure is only noted for someone to fix by hand.
+			let storefrontTrackingError: string | null = null;
+			if (
+				channel === "shopify" &&
+				shipment.carrierToken &&
+				shipment.trackingNumber
+			) {
+				const entry = {
+					number: shipment.trackingNumber,
+					carrier: shipment.carrierToken,
+				};
+				try {
+					await outside.shopifySaveTracking(order.externalId, entry);
+				} catch (err) {
+					storefrontTrackingError = storefrontNote(
+						order.externalId,
+						`Add ${JSON.stringify(entry)} to`,
+						err,
+					);
+				}
+			}
 			await tx
 				.update(shipments)
 				.set({
 					channelSentAt: new Date(),
 					channelFulfillmentId: fulfillmentId,
 					channelError: null,
+					storefrontTrackingError,
 				})
 				.where(eq(shipments.id, shipment.id));
 			// Shipped now, not on the next sync: off To ship.
@@ -197,12 +216,15 @@ export async function sendTracking(
 				.update(orders)
 				.set({ fulfillmentStatus: "FULFILLED" })
 				.where(eq(orders.id, order.id));
+			const sentMessage =
+				to === "tiktok"
+					? "Ready for pickup on TikTok; TikTok tells the customer"
+					: `Tracking sent to ${name}; the customer is emailed`;
 			return {
 				sent: true,
-				message:
-					to === "tiktok"
-						? "Ready for pickup on TikTok; TikTok tells the customer"
-						: `Tracking sent to ${name}; the customer is emailed`,
+				message: storefrontTrackingError
+					? `${sentMessage}. ${storefrontTrackingError}`
+					: sentMessage,
 			};
 		},
 	);
@@ -267,17 +289,24 @@ export async function voidShipment(
 				shipment.trackingNumber &&
 				!shipment.test
 			) {
+				let storefrontTrackingError: string | null = null;
 				try {
 					await outside.shopifyRemoveTracking(
 						order.externalId,
 						shipment.trackingNumber,
 					);
 				} catch (err) {
-					const why = err instanceof Error ? err.message : String(err);
-					notes.push(
-						`The storefront still lists tracking ${shipment.trackingNumber} (${why}). Remove it from the order's katasync.shippo_tracking metafield in Shopify.`,
+					storefrontTrackingError = storefrontNote(
+						order.externalId,
+						`Remove tracking ${shipment.trackingNumber} from`,
+						err,
 					);
+					notes.push(storefrontTrackingError);
 				}
+				await tx
+					.update(shipments)
+					.set({ storefrontTrackingError })
+					.where(eq(shipments.id, shipmentId));
 			}
 			if (shipment.channelSentAt && channel === "ebay") {
 				notes.push(

@@ -161,26 +161,29 @@ describe("sendTracking", () => {
 		expect(outside.shopifySaveTracking).not.toHaveBeenCalled();
 	});
 
-	test("if the storefront entry isn't saved, a retry saves it without a second fulfillment", async () => {
+	test("if the storefront entry isn't saved, the order still ships and the label says so", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 		const outside = fakes({
-			shopifySaveTracking: vi
-				.fn()
-				.mockRejectedValueOnce(new Error("Access denied"))
-				.mockResolvedValue(undefined),
+			shopifySaveTracking: vi.fn(async () => {
+				throw new Error("Access denied");
+			}),
 		});
 		const id = await addLabel();
-		const first = await sendTracking(db, id, outside);
-		expect(first.sent).toBe(false);
-		expect(first.message).toContain("the customer was emailed");
-		expect((await label(id)).channelSentAt).toBeNull();
+		const result = await sendTracking(db, id, outside);
 
-		const retry = await sendTracking(db, id, outside);
-		expect(retry.sent).toBe(true);
-		expect(outside.shopifySaveTracking).toHaveBeenCalledTimes(2);
-		// The fake stands in for shopifyFulfill returning the earlier one.
-		expect((await label(id)).channelFulfillmentId).toBe(
-			"gid://shopify/Fulfillment/1",
+		expect(result.sent).toBe(true);
+		expect(result.message).toContain("katasync.shippo_tracking");
+		expect(await label(id)).toMatchObject({
+			channelError: null,
+			storefrontTrackingError: expect.stringContaining("Access denied"),
+		});
+		expect((await label(id)).channelSentAt).not.toBeNull();
+		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+		expect(logged).toHaveBeenCalledWith(
+			expect.stringContaining("STOREFRONT TRACKING NOT UPDATED"),
+			expect.any(Error),
 		);
+		logged.mockRestore();
 	});
 
 	test("never sends a test label's fake tracking", async () => {
@@ -302,6 +305,7 @@ describe("voidShipment", () => {
 	});
 
 	test("if the storefront entry can't be removed, the void still goes through and says so", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 		const outside = fakes({
 			shopifyRemoveTracking: vi.fn(async () => {
 				throw new Error("nope");
@@ -314,6 +318,11 @@ describe("voidShipment", () => {
 			expect.stringContaining("katasync.shippo_tracking"),
 		);
 		expect((await label(id)).voidedAt).not.toBeNull();
+		expect((await label(id)).storefrontTrackingError).toContain(
+			"Remove tracking 9400100000000000000000",
+		);
 		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect(logged).toHaveBeenCalled();
+		logged.mockRestore();
 	});
 });

@@ -471,6 +471,11 @@ export const shipments = pgTable(
 		channelSentAt: timestamp({ withTimezone: true }),
 		channelFulfillmentId: text(),
 		channelError: text(),
+		// Why the storefront's katasync.shippo_tracking entry for this label
+		// couldn't be saved (or, once voided, removed), so someone fixes the
+		// metafield by hand. Never holds up the handoff: Shopify already has
+		// the tracking, and the storefront falls back to the carrier link.
+		storefrontTrackingError: text(),
 		// Voiding asks the provider for the postage back. Refunds can take
 		// days (USPS); refundStatus is the provider's word on it.
 		voidedAt: timestamp({ withTimezone: true }),
