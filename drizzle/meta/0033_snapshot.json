@@ -1,6 +1,6 @@
 {
-  "id": "71deab04-076c-48d6-b611-455064e2894b",
-  "prevId": "72881577-d8a4-466c-bafe-cbaa0840685f",
+  "id": "36a9d1c3-d955-4d2a-aa31-ed37fcbba2c8",
+  "prevId": "af1b9762-8d17-460b-96e7-7c89ce776c0c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -107,12 +107,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "reversed_at": {
-          "name": "reversed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -200,12 +194,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "bought_at": {
-          "name": "bought_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -2623,6 +2611,18 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "carrier_token": {
+          "name": "carrier_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "storefront_tracking_error": {
+          "name": "storefront_tracking_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {

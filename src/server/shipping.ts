@@ -7,7 +7,11 @@ import { labelSource } from "#/orders/fulfillment";
 import { shipAddresses } from "#/shipping/addresses";
 import { createBoxes, updateBox } from "#/shipping/boxes";
 import { buyDispatch, MAX_BOXES } from "#/shipping/buy";
-import { sendTracking, voidDispatch } from "#/shipping/handoff";
+import {
+	retryStorefrontTracking,
+	sendTracking,
+	voidDispatch,
+} from "#/shipping/handoff";
 import { labelPdf } from "#/shipping/label-file";
 import {
 	combineRates,
@@ -178,6 +182,10 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 export const resendTracking = createServerFn({ method: "POST" })
 	.validator(type({ dispatchId: "number.integer > 0" }))
 	.handler(async ({ data }) => sendTracking(getDb(), data.dispatchId));
+
+export const retryStorefront = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(async ({ data }) => retryStorefrontTracking(getDb(), data.id));
 
 // Voids every box of a dispatch.
 export const voidLabel = createServerFn({ method: "POST" })

@@ -1,6 +1,6 @@
 {
-  "id": "5393b5fe-4581-4255-9825-d88fb72396cc",
-  "prevId": "90eea3b1-e673-4a67-97c4-fc87153660de",
+  "id": "1755fe82-3087-4ee5-99c2-34303c5c66bc",
+  "prevId": "dd380afb-b364-49f1-8b5c-e5f87229bf79",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -748,106 +748,6 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.order_returns": {
-      "name": "order_returns",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "order_returns_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "order_line_id": {
-          "name": "order_line_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "quantity": {
-          "name": "quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "restocked": {
-          "name": "restocked",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "batch_id": {
-          "name": "batch_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "order_returns_line_idx": {
-          "name": "order_returns_line_idx",
-          "columns": [
-            {
-              "expression": "order_line_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "order_returns_order_line_id_order_lines_id_fk": {
-          "name": "order_returns_order_line_id_order_lines_id_fk",
-          "tableFrom": "order_returns",
-          "tableTo": "order_lines",
-          "columnsFrom": [
-            "order_line_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "order_returns_quantity_positive": {
-          "name": "order_returns_quantity_positive",
-          "value": "\"order_returns\".\"quantity\" > 0"
-        },
-        "order_returns_restocked_has_batch": {
-          "name": "order_returns_restocked_has_batch",
-          "value": "\"order_returns\".\"restocked\" = (\"order_returns\".\"batch_id\" is not null)"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.orders": {
@@ -2380,6 +2280,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "carrier_token": {
+          "name": "carrier_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "service": {
           "name": "service",
           "type": "text",
@@ -2454,6 +2360,12 @@
         },
         "channel_error": {
           "name": "channel_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "storefront_tracking_error": {
+          "name": "storefront_tracking_error",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -3120,50 +3032,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.qz_certificate": {
-      "name": "qz_certificate",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "smallint",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "certificate": {
-          "name": "certificate",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "private_key": {
-          "name": "private_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "qz_certificate_single": {
-          "name": "qz_certificate_single",
-          "value": "\"qz_certificate\".\"id\" = 1"
-        }
-      },
       "isRLSEnabled": false
     }
   },

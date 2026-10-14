@@ -31,21 +31,23 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 			channelOverview(db, c, now),
 		),
 	);
-	const [[{ lastStartedAt }], handoffs, unmapped, claude] = await Promise.all([
-		db.select({ lastStartedAt: max(syncRuns.startedAt) }).from(syncRuns),
-		failedHandoffs(db),
-		unmappedSkus(db),
-		// Changes made through /mcp (see src/mcp/log.ts).
-		db
-			.select()
-			.from(mcpCalls)
-			.orderBy(desc(mcpCalls.createdAt), desc(mcpCalls.id))
-			.limit(50)
-			// As text: arguments can be any JSON.
-			.then((rows) =>
-				rows.map((r) => ({ ...r, arguments: JSON.stringify(r.arguments) })),
-			),
-	]);
+	const [[{ lastStartedAt }], handoffs, storefrontTracking, unmapped, claude] =
+		await Promise.all([
+			db.select({ lastStartedAt: max(syncRuns.startedAt) }).from(syncRuns),
+			failedHandoffs(db),
+			storefrontTrackingFailures(db),
+			unmappedSkus(db),
+			// Changes made through /mcp (see src/mcp/log.ts).
+			db
+				.select()
+				.from(mcpCalls)
+				.orderBy(desc(mcpCalls.createdAt), desc(mcpCalls.id))
+				.limit(50)
+				// As text: arguments can be any JSON.
+				.then((rows) =>
+					rows.map((r) => ({ ...r, arguments: JSON.stringify(r.arguments) })),
+				),
+		]);
 	const shippoKey = process.env.SHIPPO_API_KEY;
 	return {
 		worker: {
@@ -54,6 +56,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 		},
 		channels,
 		handoffs,
+		storefrontTracking,
 		unmapped,
 		claude,
 		services: {
@@ -168,6 +171,32 @@ function failedHandoffs(db: Db) {
 		.limit(50);
 }
 
+// Labels whose katasync.shippo_tracking entry on the Shopify order couldn't
+// be saved or, once voided, removed. The customer was emailed either way;
+// the storefront's tracking page is wrong until someone fixes it. Voided
+// labels count too: the storefront would still show them.
+function storefrontTrackingFailures(db: Db) {
+	return db
+		.selectDistinctOn([shipments.id], {
+			shipmentId: shipments.id,
+			orderId: orders.id,
+			orderName: orders.name,
+			trackingNumber: shipments.trackingNumber,
+			voided: sql<boolean>`${shipments.voidedAt} is not null`,
+			error: sql<string>`${shipments.storefrontTrackingError}`,
+			createdAt: shipments.createdAt,
+		})
+		.from(shipments)
+		.innerJoin(
+			dispatchOrders,
+			eq(dispatchOrders.dispatchId, shipments.dispatchId),
+		)
+		.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
+		.where(isNotNull(shipments.storefrontTrackingError))
+		.orderBy(desc(shipments.id), orders.id)
+		.limit(50);
+}
+
 // SKUs sold that match no product. `missed` counts orders that should have
 // taken stock and didn't; the rest are history from before the store's
 // stockFrom, or shipped by the marketplace.
@@ -204,6 +233,9 @@ export async function diagnosticsAttention(db: Db, now = new Date()) {
 		(c) => c.health === "failing" || (o.worker.alive && c.health === "stale"),
 	);
 	return (
-		(o.worker.alive ? 0 : 1) + stuck.length + (o.handoffs.length > 0 ? 1 : 0)
+		(o.worker.alive ? 0 : 1) +
+		stuck.length +
+		(o.handoffs.length > 0 ? 1 : 0) +
+		(o.storefrontTracking.length > 0 ? 1 : 0)
 	);
 }

@@ -413,6 +413,9 @@ function SendRow({
 								Print
 							</button>
 						)}
+						{b.storefrontTrackingError && (
+							<p className="text-warning-text">{b.storefrontTrackingError}</p>
+						)}
 					</li>
 				))}
 			</ul>

@@ -1,5 +1,5 @@
 {
-  "id": "90eea3b1-e673-4a67-97c4-fc87153660de",
+  "id": "dd380afb-b364-49f1-8b5c-e5f87229bf79",
   "prevId": "64a0aee7-7d77-4149-93ff-d57ef7f75af6",
   "version": "7",
   "dialect": "postgresql",
@@ -2099,50 +2099,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.qz_certificate": {
-      "name": "qz_certificate",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "smallint",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "certificate": {
-          "name": "certificate",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "private_key": {
-          "name": "private_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "qz_certificate_single": {
-          "name": "qz_certificate_single",
-          "value": "\"qz_certificate\".\"id\" = 1"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.sessions": {
       "name": "sessions",
       "schema": "",
@@ -2323,6 +2279,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "carrier_token": {
+          "name": "carrier_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "service": {
           "name": "service",

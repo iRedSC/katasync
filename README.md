@@ -19,6 +19,8 @@ Shopify and TikTok also send order webhooks to `/api/webhooks/<channel>` (`src/c
 
 Webhooks only speed things up; cron is authoritative. If orders go back to taking minutes, run `pnpm webhooks` bare to check the subscriptions; failures are logged, and Shopify emails the app's developer address.
 
+Shopify's shipping email links to the storefront's tracking page (`src/shipping/tracking-link.ts`). Set `STOREFRONT_ORIGIN` (e.g. `https://eastcoastdrywall.com`) and `TRACKING_LINK_SECRET`, the same secret the storefront checks links with. Without them the email links to the carrier, and a warning is logged on each shipment.
+
 `pnpm test` runs against an in-memory Postgres (PGlite) and needs no database.
 
 ## Signing in
@@ -45,6 +47,8 @@ Each computer then picks its label printer in Settings; the choice is kept in th
 ## Schema changes
 
 Edit `src/db/schema.ts`, then `pnpm db:generate` and commit the new file in `drizzle/`. For SQL that Drizzle can't express (triggers, functions), use `pnpm db:generate --custom --name <name>`.
+
+The dispatch cutover (`0031` through `0035`) requires a coordinated deployment. Back up the database first, stop old packing and sync processes, apply migrations using the direct connection, then deploy the dispatch-aware app before resuming work. `0033` removes the old shipment order and handoff columns after copying their data into dispatches; an old app cannot safely use that schema. A rollback requires restoring both the database and app, not just reverting the code.
 
 ## Inventory model
 

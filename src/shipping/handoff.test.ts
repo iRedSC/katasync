@@ -1,22 +1,36 @@
 import { and, eq } from "drizzle-orm";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { labelToVoid } from "#/orders/to-ship";
 import { addDispatch, createTestDb } from "#/test/db";
 import { memoryLocker } from "./dispatch";
-import { type Outside, sendTracking, voidDispatch } from "./handoff";
+import {
+	type Outside,
+	retryStorefrontTracking,
+	sendTracking,
+	voidDispatch,
+} from "./handoff";
 import { assignOrderPins } from "./pins";
 
 let db: Db;
 let storeId: number;
 let orderId: number;
 
+beforeEach(() => {
+	vi.stubEnv("TRACKING_LINK_SECRET", "test-tracking-secret");
+	vi.stubEnv("STOREFRONT_ORIGIN", "https://storefront.example.com");
+});
+
+afterEach(() => vi.unstubAllEnvs());
+
 function fakes(overrides: Partial<Outside> = {}): Outside {
 	return {
 		lock: memoryLocker(),
 		shopifyFulfill: vi.fn(async () => "gid://shopify/Fulfillment/1"),
 		shopifyCancel: vi.fn(async () => {}),
+		shopifySaveTracking: vi.fn(async () => {}),
+		shopifyRemoveTracking: vi.fn(async () => {}),
 		ebayFulfill: vi.fn(async () => "ebay-f-1"),
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokShip: vi.fn(async (id: string) => ({ id, trackingNumber: "TT1" })),
@@ -129,7 +143,12 @@ describe("sendTracking", () => {
 			{
 				company: "USPS",
 				boxes: [
-					{ number: "9400100000000000000000", url: "https://tools.usps.com/x" },
+					{
+						number: "9400100000000000000000",
+						url: expect.stringContaining(
+							"https://storefront.example.com/track/9/",
+						),
+					},
 				],
 			},
 		);
@@ -154,6 +173,54 @@ describe("sendTracking", () => {
 				],
 			}),
 		);
+	});
+
+	test("every combined box's storefront entry follows committed tracking and voids", async () => {
+		const other = await addOrder("10", "shopify");
+		const dispatchId = await ship(
+			[
+				{ carrierToken: "usps" },
+				{ carrierToken: "usps", trackingNumber: "BOX-2" },
+			],
+			[orderId, other],
+		);
+		const outside = fakes({
+			shopifySaveTracking: vi.fn(async () => {
+				expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
+				expect((await orderRow(other)).fulfillmentStatus).toBe("FULFILLED");
+			}),
+			shopifyRemoveTracking: vi.fn(async () => {
+				expect(
+					(await boxesOf(dispatchId)).every((box) => box.voidedAt !== null),
+				).toBe(true);
+			}),
+		});
+		await sendTracking(db, dispatchId, outside);
+		expect(outside.shopifySaveTracking).toHaveBeenCalledTimes(4);
+		await voidDispatch(db, dispatchId, outside);
+		expect(outside.shopifyRemoveTracking).toHaveBeenCalledTimes(4);
+	});
+
+	test("a storefront failure cannot undo shipping and can be retried", async () => {
+		const dispatchId = await ship([{ carrierToken: "usps" }]);
+		const outside = fakes({
+			shopifySaveTracking: vi.fn(async () => {
+				throw new Error("metafield denied");
+			}),
+		});
+		const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const result = await sendTracking(db, dispatchId, outside);
+			expect(result.sent).toBe(true);
+			expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
+			const [box] = await boxesOf(dispatchId);
+			expect(box.storefrontTrackingError).toContain("metafield denied");
+			const retry = await retryStorefrontTracking(db, box.id, fakes());
+			expect(retry.sent).toBe(true);
+			expect((await boxesOf(dispatchId))[0].storefrontTrackingError).toBeNull();
+		} finally {
+			errorLog.mockRestore();
+		}
 	});
 
 	test("refunded and voided orders never send their bought tracking", async () => {

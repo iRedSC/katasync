@@ -1,6 +1,11 @@
 import { and, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import { ebayFulfill } from "#/channels/ebay";
-import { shopifyCancelFulfillment, shopifyFulfill } from "#/channels/shopify";
+import {
+	shopifyCancelFulfillment,
+	shopifyFulfill,
+	shopifyRemoveShippoTracking,
+	shopifySaveShippoTracking,
+} from "#/channels/shopify";
 import type { Db } from "#/db/client";
 import {
 	dispatches,
@@ -14,6 +19,7 @@ import { lockOnOwnConnection, type OrderLocker, ordersOf } from "./dispatch";
 import { assignOrderPins } from "./pins";
 import { refundLabel } from "./shippo";
 import { tiktokShipPackage } from "./tiktok";
+import { storefrontTrackingUrl } from "./tracking-link";
 
 // The outside calls, passed in so tests can stand in for Shopify, eBay, and
 // Shippo.
@@ -21,6 +27,8 @@ export type Outside = {
 	lock: OrderLocker;
 	shopifyFulfill: typeof shopifyFulfill;
 	shopifyCancel: typeof shopifyCancelFulfillment;
+	shopifySaveTracking: typeof shopifySaveShippoTracking;
+	shopifyRemoveTracking: typeof shopifyRemoveShippoTracking;
 	ebayFulfill: typeof ebayFulfill;
 	refund: typeof refundLabel;
 	tiktokShip: typeof tiktokShipPackage;
@@ -30,6 +38,8 @@ export const live: Outside = {
 	lock: lockOnOwnConnection,
 	shopifyFulfill,
 	shopifyCancel: shopifyCancelFulfillment,
+	shopifySaveTracking: shopifySaveShippoTracking,
+	shopifyRemoveTracking: shopifyRemoveShippoTracking,
 	ebayFulfill,
 	refund: refundLabel,
 	tiktokShip: tiktokShipPackage,
@@ -126,9 +136,17 @@ export async function sendTracking(
 	);
 	// Frees the shipped orders' pins (or none, if nothing changed).
 	if (outcome.some((r) => r.newly)) await assignOrderPins(db);
+	const notes: string[] = [];
+	if (outcome.some((result) => result.sent)) {
+		const { boxes } = await load(db, dispatchId);
+		for (const box of boxes) {
+			const note = await updateStorefrontTracking(db, box.id, outside);
+			if (note) notes.push(note);
+		}
+	}
 	return {
 		sent: outcome.every((r) => r.sent),
-		message: outcome.map((r) => r.message).join(". "),
+		message: [...outcome.map((r) => r.message), ...notes].join(". "),
 	};
 }
 
@@ -192,11 +210,12 @@ async function tell(
 		} else if (boxes.some((b) => !b.trackingNumber)) {
 			throw new Error("The label has no tracking number");
 		} else if (channel === "shopify") {
+			const storefrontUrl = await storefrontTrackingUrl(order.externalId);
 			fulfillmentId = await outside.shopifyFulfill(order.externalId, {
 				company: boxes[0].carrier,
 				boxes: boxes.map((b) => ({
 					number: b.trackingNumber as string,
-					url: b.trackingUrl,
+					url: storefrontUrl ?? b.trackingUrl,
 				})),
 			});
 		} else {
@@ -396,7 +415,80 @@ export async function voidDispatch(
 		},
 	);
 	await assignOrderPins(db);
+	const { boxes } = await load(db, dispatchId);
+	for (const box of boxes) {
+		const note = await updateStorefrontTracking(db, box.id, outside);
+		if (note) result.notes.push(note);
+	}
 	return result;
+}
+
+async function updateStorefrontTracking(
+	db: Db,
+	shipmentId: number,
+	outside: Outside,
+): Promise<string | null> {
+	const [shipment] = await db
+		.select()
+		.from(shipments)
+		.where(eq(shipments.id, shipmentId));
+	if (!shipment) throw new Error(`No shipment ${shipmentId}`);
+	return outside.lock(await ordersOf(db, shipment.dispatchId), async () => {
+		const { boxes, members } = await load(db, shipment.dispatchId);
+		const box = boxes.find((candidate) => candidate.id === shipmentId);
+		if (!box || !box.carrierToken || !box.trackingNumber || box.test)
+			return null;
+		const entry = {
+			number: box.trackingNumber,
+			carrier: box.carrierToken,
+			url: box.trackingUrl,
+		};
+		const notes: string[] = [];
+		for (const { order, channel, handoff } of members) {
+			if (channel !== "shopify" || (!box.voidedAt && !handoff.channelSentAt))
+				continue;
+			try {
+				if (box.voidedAt)
+					await outside.shopifyRemoveTracking(order.externalId, entry.number);
+				else await outside.shopifySaveTracking(order.externalId, entry);
+			} catch (error) {
+				const why = error instanceof Error ? error.message : String(error);
+				const fix = box.voidedAt
+					? `Remove tracking ${entry.number} from`
+					: `Add ${JSON.stringify(entry)} to`;
+				console.error(
+					`STOREFRONT TRACKING NOT UPDATED for ${order.externalId}: ${fix} katasync.shippo_tracking.`,
+					error,
+				);
+				notes.push(
+					`${order.name}: The storefront's tracking page isn't up to date (${why}). ${fix} the order's katasync.shippo_tracking metafield in Shopify.`,
+				);
+			}
+		}
+		const note = notes.length > 0 ? notes.join(". ") : null;
+		await db
+			.update(shipments)
+			.set({ storefrontTrackingError: note })
+			.where(eq(shipments.id, shipmentId));
+		return note;
+	});
+}
+
+export async function retryStorefrontTracking(
+	db: Db,
+	shipmentId: number,
+	outside: Outside = live,
+): Promise<Handoff> {
+	const [shipment] = await db
+		.select()
+		.from(shipments)
+		.where(eq(shipments.id, shipmentId));
+	if (!shipment || !shipment.carrierToken || !shipment.trackingNumber)
+		throw new Error("This label has nothing for the storefront");
+	const note = await updateStorefrontTracking(db, shipmentId, outside);
+	return note
+		? { sent: false, message: note }
+		: { sent: true, message: "The storefront's tracking entry is up to date" };
 }
 
 // One word for several boxes' refunds when they agree, else each.

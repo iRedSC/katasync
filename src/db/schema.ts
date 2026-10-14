@@ -515,6 +515,7 @@ export const shipments = pgTable(
 		// "shippo" for now; Amazon and TikTok labels come later.
 		provider: text().notNull(),
 		carrier: text().notNull(),
+		carrierToken: text(),
 		// The provider's service code, e.g. Shippo's "usps_ground_advantage".
 		service: text().notNull(),
 		serviceName: text().notNull(),
@@ -531,6 +532,7 @@ export const shipments = pgTable(
 		externalId: text().notNull().unique(),
 		// Bought with a test key: a sample label that can't actually ship.
 		test: boolean().notNull(),
+		storefrontTrackingError: text(),
 		// Voiding asks the provider for the postage back. Refunds can take
 		// days (USPS); refundStatus is the provider's word on it.
 		voidedAt: timestamp({ withTimezone: true }),

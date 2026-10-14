@@ -10,8 +10,8 @@ import {
 } from "./dispatch";
 import {
 	buyLabel,
+	getRate,
 	getRates,
-	type Rate,
 	refundLabel,
 	shippoIsTest,
 } from "./shippo";
@@ -22,6 +22,7 @@ import { tiktokBuyLabel, tiktokOrderId } from "./tiktok";
 export type BuyOutside = {
 	lock: OrderLocker;
 	getRates: typeof getRates;
+	getRate: typeof getRate;
 	buyLabel: typeof buyLabel;
 	refund: typeof refundLabel;
 	tiktokBuy: typeof tiktokBuyLabel;
@@ -31,6 +32,7 @@ export type BuyOutside = {
 export const liveBuy: BuyOutside = {
 	lock: lockOnOwnConnection,
 	getRates,
+	getRate,
 	buyLabel,
 	refund: refundLabel,
 	tiktokBuy: tiktokBuyLabel,
@@ -159,6 +161,7 @@ export async function buyDispatch(
 						...box,
 						provider: "shippo",
 						carrier: rate.carrier,
+						carrierToken: rate.carrierToken ?? null,
 						service: rate.service,
 						serviceName: rate.serviceName,
 						cost: rate.cost,
@@ -227,26 +230,35 @@ async function quoteEach(
 	boxes: BoxPlan[],
 	choice: ServiceChoice,
 	outside: BuyOutside,
-): Promise<Rate[]> {
+): Promise<Awaited<ReturnType<typeof getRate>>[]> {
 	const where = await shipAddresses(db, orderId);
 	const quoted = await Promise.all(
 		boxes.map((b) =>
 			outside.getRates({ ...where, parcel: b, insureAmount: b.insureAmount }),
 		),
 	);
-	return quoted.map(({ rates }, i) => {
-		const [rate] = rates
-			.filter(
-				(r) => r.carrier === choice.carrier && r.service === choice.service,
-			)
-			.sort((a, b) => a.cost - b.cost);
-		if (!rate) {
-			throw new Error(
-				`${choice.carrier} no longer offers that service${boxes.length > 1 ? ` for box ${i + 1}` : ""}; price again`,
-			);
-		}
-		return rate;
-	});
+	return Promise.all(
+		quoted.map(async ({ rates }, i) => {
+			const [rate] = rates
+				.filter(
+					(r) => r.carrier === choice.carrier && r.service === choice.service,
+				)
+				.sort((a, b) => a.cost - b.cost);
+			if (!rate) {
+				throw new Error(
+					`${choice.carrier} no longer offers that service${boxes.length > 1 ? ` for box ${i + 1}` : ""}; price again`,
+				);
+			}
+			const confirmed = await outside.getRate(rate.id);
+			if (
+				confirmed.carrier !== choice.carrier ||
+				confirmed.service !== choice.service
+			) {
+				throw new Error("The quoted service changed; price again");
+			}
+			return confirmed;
+		}),
+	);
 }
 
 // Saves a bought label. If saving fails, the label is refunded so no money

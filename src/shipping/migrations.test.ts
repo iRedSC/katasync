@@ -6,7 +6,13 @@ test("dispatch migrations preserve existing labels and handoffs", async () => {
 	const client = new PGlite();
 	try {
 		const migrations = readMigrationFiles({ migrationsFolder: "drizzle" });
-		for (const migration of migrations.slice(0, 29)) {
+		const dispatchStart = migrations.findIndex((migration) =>
+			migration.sql.some((statement) =>
+				statement.includes('CREATE TABLE "dispatches"'),
+			),
+		);
+		if (dispatchStart < 0) throw new Error("Dispatch migration not found");
+		for (const migration of migrations.slice(0, dispatchStart)) {
 			for (const statement of migration.sql) await client.exec(statement);
 		}
 		const { rows: stores } = await client.query<{ id: number }>(
@@ -20,7 +26,7 @@ test("dispatch migrations preserve existing labels and handoffs", async () => {
 			"insert into shipments (id, order_id, contents_key, length_mm, width_mm, height_mm, weight_grams, provider, carrier, service, service_name, cost, external_id, test, channel_sent_at, channel_fulfillment_id, label_pdf, created_at) overriding system value values (17, $1, 'WRENCH×2', 300, 200, 100, 600, 'shippo', 'USPS', 'ground', 'Ground', 7, 'tx-old', false, '2026-10-12T12:00:00Z', 'fulfillment-old', decode('0102ff', 'hex'), '2026-10-12T11:00:00Z')",
 			[orders[0].id],
 		);
-		for (const migration of migrations.slice(29)) {
+		for (const migration of migrations.slice(dispatchStart)) {
 			for (const statement of migration.sql) await client.exec(statement);
 		}
 		const { rows: labels } = await client.query<{

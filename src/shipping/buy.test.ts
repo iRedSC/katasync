@@ -74,6 +74,15 @@ function fakes(overrides: Partial<BuyOutside> = {}): BuyOutside {
 				trackingUrl: null,
 			};
 		}),
+		getRate: vi.fn(async (rateId: string) => ({
+			id: rateId,
+			carrier: "USPS",
+			carrierToken: "usps",
+			service: "ground",
+			serviceName: "USPS Ground Advantage",
+			cost: 7,
+			days: 3,
+		})),
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokBuy: vi.fn(),
 		isTest: () => false,
@@ -154,6 +163,7 @@ describe("buyDispatch", () => {
 		expect(outside.buyLabel).not.toHaveBeenCalledWith("browser-rate");
 		const saved = await boxesOf(bought.dispatchId);
 		expect(saved.map((x) => x.service)).toEqual(["ground", "ground"]);
+		expect(saved.map((box) => box.carrierToken)).toEqual(["usps", "usps"]);
 		expect((await dispatchOf(bought.dispatchId)).boughtAt).not.toBeNull();
 		const members = await db
 			.select()
@@ -206,6 +216,25 @@ describe("buyDispatch", () => {
 				outside,
 			),
 		).rejects.toThrow("price again");
+		expect(outside.buyLabel).not.toHaveBeenCalled();
+	});
+
+	test("a mismatched confirmed rate stops before any label is bought", async () => {
+		const orderId = await addOrder("#1");
+		const outside = fakes({
+			getRate: vi.fn(async (rateId: string) => ({
+				id: rateId,
+				carrier: "USPS",
+				carrierToken: "usps",
+				service: "priority",
+				serviceName: "Priority",
+				cost: 10,
+				days: 2,
+			})),
+		});
+		await expect(buy([orderId], [box()], outside)).rejects.toThrow(
+			"quoted service changed",
+		);
 		expect(outside.buyLabel).not.toHaveBeenCalled();
 	});
 
