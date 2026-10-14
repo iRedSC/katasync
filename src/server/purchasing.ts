@@ -20,6 +20,7 @@ import {
 	supplierRows,
 } from "#/purchasing/load";
 import {
+	addDraftLine,
 	cancelOrder,
 	closeOrder,
 	draftChanges,
@@ -28,6 +29,7 @@ import {
 	openDraft,
 	PurchaseOrderError,
 	receive,
+	removeAddedLine,
 	setDraftLine,
 	undoReceipt,
 	updateDraft,
@@ -246,6 +248,57 @@ export const addLineBySku = createServerFn({ method: "POST" })
 			quantity: product.minimum ?? 1,
 		});
 	});
+
+// Puts a product on its supplier's draft, starting one if needed. Without a
+// quantity it's the fewest the supplier sells. A product already on the draft
+// is left as it is and comes back with added false. Says where it went, and
+// the line as added, which is what undo needs.
+export const addToPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			productId: "number.integer > 0",
+			"quantity?": "number.integer > 0",
+		}),
+	)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [link] = await db
+			.select({
+				supplierId: productSuppliers.supplierId,
+				supplierName: suppliers.name,
+				minimum: productSuppliers.minimumQuantity,
+			})
+			.from(productSuppliers)
+			.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+			.where(eq(productSuppliers.productId, data.productId));
+		if (!link)
+			throw new PurchaseOrderError("Set this product's supplier first");
+		const purchaseOrderId = await openDraft(db, link.supplierId);
+		const { added, line } = await addDraftLine(db, {
+			purchaseOrderId,
+			productId: data.productId,
+			quantity: data.quantity ?? link.minimum,
+		});
+		return { added, purchaseOrderId, supplierName: link.supplierName, line };
+	});
+
+// Undoes addToPurchaseOrder. Returns false, changing nothing, when the line
+// has been changed or removed since.
+export const undoAddToPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			purchaseOrderId: "number.integer > 0",
+			line: {
+				id: "number.integer > 0",
+				unit: "string",
+				packSize: "number.integer > 0",
+				minimumQuantity: "number.integer > 0",
+				quantity: "number.integer > 0",
+				unitCost: "number | null",
+			},
+		}),
+	)
+	.handler(async ({ data }) => removeAddedLine(getDb(), data));
 
 // Emails the PO to the supplier and puts it on order. With `email: false` it's
 // only marked sent, for orders placed by phone or on the supplier's website.

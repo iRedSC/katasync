@@ -10,10 +10,12 @@ import {
 } from "./availability";
 import {
 	assembleKits,
+	cancelCountRequests,
 	disassembleKits,
 	postMovements,
 	recordCount,
 	recordSale,
+	requestCounts,
 	undoBatch,
 } from "./ledger";
 import { setRecipe } from "./recipes";
@@ -394,6 +396,61 @@ describe("recordCount", () => {
 				note: "x",
 			}),
 		).rejects.toThrow(/count their parts/);
+	});
+});
+
+describe("count requests", () => {
+	async function requested(productId: number, locationId: number) {
+		const [row] = await db
+			.select({
+				at: sql<string | null>`${schema.stockLevels.countRequestedAt}::text`,
+			})
+			.from(schema.stockLevels)
+			.where(
+				sql`${schema.stockLevels.productId} = ${productId} and ${schema.stockLevels.locationId} = ${locationId}`,
+			);
+		return row?.at;
+	}
+
+	test("asking again keeps a shelf's place in the queue", async () => {
+		const wrench = await sku("WRENCH", "simple");
+		const ask = () =>
+			requestCounts(db, { productIds: [wrench], locationId: warehouse });
+		const [first] = await ask();
+		expect(first).toMatchObject({ productId: wrench, locationId: warehouse });
+		expect(await ask()).toEqual([]);
+		expect(await requested(wrench, warehouse)).toBe(first.requestedAt);
+	});
+
+	test("an old undo can't clear a newer request", async () => {
+		const wrench = await sku("WRENCH", "simple");
+		const ask = () =>
+			requestCounts(db, { productIds: [wrench], locationId: warehouse });
+		const old = await ask();
+		await recordCount(db, {
+			productId: wrench,
+			locationId: warehouse,
+			counted: 2,
+			note: "Counted",
+		});
+		const again = await ask();
+		expect(again).toHaveLength(1);
+		expect(again[0].requestedAt).not.toBe(old[0].requestedAt);
+
+		expect(await cancelCountRequests(db, old)).toBe(0);
+		expect(await requested(wrench, warehouse)).toBe(again[0].requestedAt);
+		expect(await cancelCountRequests(db, again)).toBe(1);
+		expect(await requested(wrench, warehouse)).toBeNull();
+	});
+
+	test("undo leaves the shelf a request created", async () => {
+		const wrench = await sku("WRENCH", "simple");
+		const asked = await requestCounts(db, {
+			productIds: [wrench],
+			locationId: garage,
+		});
+		expect(await cancelCountRequests(db, asked)).toBe(1);
+		expect(await requested(wrench, garage)).toBeNull();
 	});
 });
 
