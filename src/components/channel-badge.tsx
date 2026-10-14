@@ -1,5 +1,6 @@
 import { channelName } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { isShopifyRelayedTiktok } from "#/orders/fulfillment";
 
 // Logo paths from Simple Icons (CC0), drawn in a 24x24 box. eBay's is a
 // wordmark, so it crops to the letters and draws wider to stay legible.
@@ -37,15 +38,22 @@ const brands = {
 
 type Brand = keyof typeof brands;
 
+// Shopify's own storefronts. A missing source is still Shopify's own order.
+const shopifySources = new Set(["Online Store", "Point of Sale"]);
+
 // A relayed sale wears the marketplace it was placed on (a Shopify order from
-// TikTok Shop is TikTok's); anything else Shopify relays, like Online Store or
-// Point of Sale, stays Shopify's.
-function brandOf(channel: string, salesChannel: string | null): Brand | null {
-	const label = salesChannel?.toLowerCase() ?? "";
-	for (const b of ["tiktok", "amazon", "ebay"] as const) {
-		if (label.includes(b)) return b;
-	}
-	return channel in brands ? (channel as Brand) : null;
+// TikTok Shop is TikTok's). Shopify's own storefronts stay Shopify's, and any
+// other source, like Draft Orders or an app, gets the plain gray chip.
+export function brandOf(
+	channel: string,
+	salesChannel: string | null,
+): Brand | null {
+	if (channel === "amazon" || channel === "ebay" || channel === "tiktok")
+		return channel;
+	if (channel !== "shopify") return null;
+	if (isShopifyRelayedTiktok({ salesChannel })) return "tiktok";
+	if (!salesChannel || shopifySources.has(salesChannel)) return "shopify";
+	return null;
 }
 
 // Where an order was placed, e.g. "Amazon FBA" or "Online Store", with the

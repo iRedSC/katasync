@@ -11,12 +11,19 @@ type OrderRef = {
 	marketplaceOrderId: string | null;
 };
 
+// A TikTok Shop sale that reached katasync through Shopify.
+export function isShopifyRelayedTiktok(order: {
+	salesChannel: string | null;
+}): boolean {
+	return order.salesChannel === "TikTok";
+}
+
 export function labelSource(order: {
 	channel: string;
 	salesChannel: string | null;
 }): LabelSource {
 	if (order.channel === "amazon") return "amazon";
-	if (order.channel === "tiktok" || order.salesChannel === "TikTok")
+	if (order.channel === "tiktok" || isShopifyRelayedTiktok(order))
 		return "tiktok";
 	return "shippo";
 }
