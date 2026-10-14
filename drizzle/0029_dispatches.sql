@@ -27,3 +27,6 @@ SELECT setval(pg_get_serial_sequence('dispatches', 'id'), coalesce((SELECT max("
 UPDATE "shipments" SET "dispatch_id" = "id";--> statement-breakpoint
 INSERT INTO "dispatch_orders" ("dispatch_id", "order_id", "channel_sent_at", "channel_fulfillment_id", "channel_error")
 	SELECT "id", "order_id", "channel_sent_at", "channel_fulfillment_id", "channel_error" FROM "shipments";
+--> statement-breakpoint
+-- Readable by the MCP query tool (see 0027_mcp_role.sql).
+GRANT SELECT ON "dispatches", "dispatch_orders" TO katasync_mcp;

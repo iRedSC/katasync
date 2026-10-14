@@ -12,6 +12,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
 import { printLabels } from "#/components/print-labels";
 import { ProductImage } from "#/components/product";
@@ -658,7 +659,7 @@ function OrderSummary({
 					{found.liveDispatchId !== null && (
 						<Badge tone="warning">Already has a label</Badge>
 					)}
-					<Badge>{o.salesChannel ?? o.channel}</Badge>
+					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
 				</div>
 			</div>
 			<ul className="flex flex-col gap-2">
@@ -1229,9 +1230,16 @@ function RatesStep({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset on each new list
 	useEffect(() => setSelected(0), [rates]);
 	const list = useRef<HTMLDivElement>(null);
+	const options = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (rates) list.current?.focus();
 	}, [rates]);
+	// Only five services fit; keep the arrow-key choice visible as it scrolls.
+	// Hover also selects, so scrolling here (not on every change) keeps the list still under the mouse.
+	function moveTo(i: number) {
+		setSelected(i);
+		options.current?.children[i]?.scrollIntoView({ block: "nearest" });
+	}
 
 	if (!rates) {
 		return (
@@ -1259,9 +1267,13 @@ function RatesStep({
 			className="flex flex-col gap-2 outline-none"
 			onKeyDown={(e) => {
 				if (e.key === "ArrowDown") {
-					setSelected((i) => Math.min(i + 1, rates.list.length - 1));
+					e.preventDefault();
+					moveTo(Math.min(selected + 1, rates.list.length - 1));
 				}
-				if (e.key === "ArrowUp") setSelected((i) => Math.max(i - 1, 0));
+				if (e.key === "ArrowUp") {
+					e.preventDefault();
+					moveTo(Math.max(selected - 1, 0));
+				}
 				const quote = rates.list[selected];
 				if (e.key === "Enter" && quote) onBuy(quote);
 			}}
@@ -1278,41 +1290,46 @@ function RatesStep({
 				</p>
 				{rates.test && <Badge tone="info">Test labels</Badge>}
 			</div>
-			{rates.list.map((r, i) => (
-				<button
-					key={r.id}
-					type="button"
-					disabled={busy}
-					onMouseMove={() => setSelected(i)}
-					onClick={() => onBuy(r)}
-					className={cn(
-						"flex h-16 items-center justify-between rounded-xl border-2 px-5 text-left",
-						i === selected
-							? "border-[#303030] bg-[#303030] text-white"
-							: "border-[#e3e3e3] hover:bg-[#f7f7f7]",
-						busy && i !== selected && "opacity-40",
-					)}
-				>
-					<span className="min-w-0">
-						<span className="block truncate text-lg font-semibold">
-							{r.serviceName}
-						</span>
-						{r.days !== null && (
-							<span
-								className={
-									i === selected ? "text-white/70" : "text-muted-foreground"
-								}
-							>
-								{r.days} {r.days === 1 ? "day" : "days"}
-							</span>
+			<div
+				ref={options}
+				className="flex max-h-[22rem] flex-col gap-2 overflow-y-auto"
+			>
+				{rates.list.map((r, i) => (
+					<button
+						key={r.id}
+						type="button"
+						disabled={busy}
+						onMouseMove={() => setSelected(i)}
+						onClick={() => onBuy(r)}
+						className={cn(
+							"flex h-16 shrink-0 items-center justify-between rounded-xl border-2 px-5 text-left",
+							i === selected
+								? "border-[#303030] bg-[#303030] text-white"
+								: "border-[#e3e3e3] hover:bg-[#f7f7f7]",
+							busy && i !== selected && "opacity-40",
 						)}
-					</span>
-					<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">
-						{busy && i === selected && <Spinner />}
-						{formatMoney(r.cost)}
-					</span>
-				</button>
-			))}
+					>
+						<span className="min-w-0">
+							<span className="block truncate text-lg font-semibold">
+								{r.serviceName}
+							</span>
+							{r.days !== null && (
+								<span
+									className={
+										i === selected ? "text-white/70" : "text-muted-foreground"
+									}
+								>
+									{r.days} {r.days === 1 ? "day" : "days"}
+								</span>
+							)}
+						</span>
+						<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">
+							{busy && i === selected && <Spinner />}
+							{formatMoney(r.cost)}
+						</span>
+					</button>
+				))}
+			</div>
 		</div>
 	);
 }

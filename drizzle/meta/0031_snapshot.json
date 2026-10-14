@@ -1,6 +1,6 @@
 {
-  "id": "71deab04-076c-48d6-b611-455064e2894b",
-  "prevId": "72881577-d8a4-466c-bafe-cbaa0840685f",
+  "id": "72881577-d8a4-466c-bafe-cbaa0840685f",
+  "prevId": "36a9d1c3-d955-4d2a-aa31-ed37fcbba2c8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -105,12 +105,6 @@
         "channel_error": {
           "name": "channel_error",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reversed_at": {
-          "name": "reversed_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         }
@@ -590,6 +584,44 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.mcp_login": {
+      "name": "mcp_login",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "mcp_login_single": {
+          "name": "mcp_login_single",
+          "value": "\"mcp_login\".\"id\" = 1"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.movements": {

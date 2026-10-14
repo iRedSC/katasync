@@ -10,4 +10,6 @@ CREATE TABLE "order_returns" (
 );
 --> statement-breakpoint
 ALTER TABLE "order_returns" ADD CONSTRAINT "order_returns_order_line_id_order_lines_id_fk" FOREIGN KEY ("order_line_id") REFERENCES "public"."order_lines"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "order_returns_line_idx" ON "order_returns" USING btree ("order_line_id");
+CREATE INDEX "order_returns_line_idx" ON "order_returns" USING btree ("order_line_id");--> statement-breakpoint
+-- Readable by the MCP query tool (see 0027_mcp_role.sql).
+GRANT SELECT ON "order_returns" TO katasync_mcp;

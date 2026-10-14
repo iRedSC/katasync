@@ -1,5 +1,5 @@
 {
-  "id": "5393b5fe-4581-4255-9825-d88fb72396cc",
+  "id": "64a0aee7-7d77-4149-93ff-d57ef7f75af6",
   "prevId": "8577365f-c6cf-4cbd-b1a9-f16a5132509f",
   "version": "7",
   "dialect": "postgresql",
@@ -421,6 +421,44 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.mcp_login": {
+      "name": "mcp_login",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "mcp_login_single": {
+          "name": "mcp_login_single",
+          "value": "\"mcp_login\".\"id\" = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.movements": {
       "name": "movements",
       "schema": "",
@@ -710,106 +748,6 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.order_returns": {
-      "name": "order_returns",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "order_returns_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "order_line_id": {
-          "name": "order_line_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "quantity": {
-          "name": "quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "restocked": {
-          "name": "restocked",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "batch_id": {
-          "name": "batch_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "order_returns_line_idx": {
-          "name": "order_returns_line_idx",
-          "columns": [
-            {
-              "expression": "order_line_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "order_returns_order_line_id_order_lines_id_fk": {
-          "name": "order_returns_order_line_id_order_lines_id_fk",
-          "tableFrom": "order_returns",
-          "tableTo": "order_lines",
-          "columnsFrom": [
-            "order_line_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "order_returns_quantity_positive": {
-          "name": "order_returns_quantity_positive",
-          "value": "\"order_returns\".\"quantity\" > 0"
-        },
-        "order_returns_restocked_has_batch": {
-          "name": "order_returns_restocked_has_batch",
-          "value": "\"order_returns\".\"restocked\" = (\"order_returns\".\"batch_id\" is not null)"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.orders": {

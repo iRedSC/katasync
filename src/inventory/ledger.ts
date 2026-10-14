@@ -288,14 +288,16 @@ function assertPositiveInteger(quantity: number) {
 	}
 }
 
-// Puts shelves on the cycle count list. Asking again for one already on it
-// moves its request time but keeps it there. Tool sets have no shelf of their
-// own; ask for their parts.
+// Puts shelves on the cycle count list. A shelf already waiting keeps its
+// request time, and so its place in the queue. Returns the shelves this call
+// put on the list, each with its exact request time (as text, since a Date
+// drops the microseconds), which is what cancelCountRequests takes. Tool sets
+// have no shelf of their own; ask for their parts.
 export async function requestCounts(
 	db: Db,
 	input: { productIds: number[]; locationId: number },
 ) {
-	if (input.productIds.length === 0) return 0;
+	if (input.productIds.length === 0) return [];
 	const bundles = await db
 		.select({ sku: products.sku })
 		.from(products)
@@ -306,7 +308,7 @@ export async function requestCounts(
 		throw new LedgerError(
 			`Tool sets can't be counted; ask for their parts: ${bundles.map((b) => b.sku).join(", ")}`,
 		);
-	const rows = await db
+	return db
 		.insert(stockLevels)
 		.values(
 			// One row per shelf, or Postgres refuses to update it twice.
@@ -320,9 +322,42 @@ export async function requestCounts(
 		.onConflictDoUpdate({
 			target: [stockLevels.productId, stockLevels.locationId],
 			set: { countRequestedAt: sql`now()` },
+			// Only shelves not already waiting. Two requests at once queue on
+			// the row, and the second sees the first's, so only one adds it.
+			setWhere: sql`${stockLevels.countRequestedAt} is null or ${stockLevels.lastCountedAt} >= ${stockLevels.countRequestedAt}`,
 		})
-		.returning({ productId: stockLevels.productId });
-	return rows.length;
+		.returning({
+			productId: stockLevels.productId,
+			locationId: stockLevels.locationId,
+			requestedAt: sql<string>`${stockLevels.countRequestedAt}::text`,
+		});
+}
+
+// Takes back requests made by requestCounts. Each comes off only if its
+// request time is unchanged, so an old undo can't clear a newer request.
+// Returns how many came off. A shelf row the request created stays, empty.
+export async function cancelCountRequests(
+	db: Db,
+	requests: { productId: number; locationId: number; requestedAt: string }[],
+) {
+	return db.transaction(async (tx) => {
+		let cancelled = 0;
+		for (const r of requests) {
+			const rows = await tx
+				.update(stockLevels)
+				.set({ countRequestedAt: null })
+				.where(
+					and(
+						eq(stockLevels.productId, r.productId),
+						eq(stockLevels.locationId, r.locationId),
+						sql`${stockLevels.countRequestedAt} = ${r.requestedAt}::timestamptz`,
+					),
+				)
+				.returning({ productId: stockLevels.productId });
+			cancelled += rows.length;
+		}
+		return cancelled;
+	});
 }
 
 // Records what someone counted on the shelf as a correction for the

@@ -68,72 +68,75 @@ export async function shopifyQuery(
 
 const money = type({ shopMoney: { amount: "string.numeric.parse" } });
 
-const ordersPage = type({
-	orders: {
+const orderNode = type({
+	id: "string",
+	name: "string",
+	sourceName: "string | null",
+	tags: "string[]",
+	app: type({ name: "string" }).or("null"),
+	channelInformation: type({
+		channelDefinition: type({ channelName: "string" }).or("null"),
+	}).or("null"),
+	createdAt: "string.date.iso.parse",
+	updatedAt: "string.date.iso.parse",
+	cancelledAt: "string.date.iso.parse | null",
+	displayFulfillmentStatus: "string",
+	displayFinancialStatus: "string | null",
+	totalPriceSet: money,
+	totalShippingPriceSet: money,
+	shippingAddress: type({
+		name: "string | null",
+		address1: "string | null",
+		address2: "string | null",
+		city: "string | null",
+		provinceCode: "string | null",
+		zip: "string | null",
+		countryCodeV2: "string | null",
+		phone: "string | null",
+	}).or("null"),
+	lineItems: {
 		pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
 		nodes: type({
 			id: "string",
+			sku: "string | null",
 			name: "string",
-			sourceName: "string | null",
-			tags: "string[]",
-			app: type({ name: "string" }).or("null"),
-			channelInformation: type({
-				channelDefinition: type({ channelName: "string" }).or("null"),
-			}).or("null"),
-			createdAt: "string.date.iso.parse",
-			updatedAt: "string.date.iso.parse",
-			cancelledAt: "string.date.iso.parse | null",
-			displayFulfillmentStatus: "string",
-			displayFinancialStatus: "string | null",
-			totalPriceSet: money,
-			totalShippingPriceSet: money,
-			shippingAddress: type({
-				name: "string | null",
-				address1: "string | null",
-				address2: "string | null",
-				city: "string | null",
-				provinceCode: "string | null",
-				zip: "string | null",
-				countryCodeV2: "string | null",
-				phone: "string | null",
-			}).or("null"),
-			lineItems: {
-				pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
-				nodes: type({
-					id: "string",
-					sku: "string | null",
-					name: "string",
-					quantity: "number.integer",
-					currentQuantity: "number.integer",
-					variant: type({ id: "string" }).or("null"),
-					discountedUnitPriceAfterAllDiscountsSet: money,
-				}).array(),
-			},
+			quantity: "number.integer",
+			currentQuantity: "number.integer",
+			variant: type({ id: "string" }).or("null"),
+			discountedUnitPriceAfterAllDiscountsSet: money,
 		}).array(),
 	},
 });
+
+const ordersPage = type({
+	orders: {
+		pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
+		nodes: orderNode.array(),
+	},
+});
+
+const ORDER_FIELDS = `
+	id name createdAt updatedAt cancelledAt sourceName tags
+	app { name }
+	channelInformation { channelDefinition { channelName } }
+	displayFulfillmentStatus displayFinancialStatus
+	totalPriceSet { shopMoney { amount } }
+	totalShippingPriceSet { shopMoney { amount } }
+	shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 phone }
+	lineItems(first: 30) {
+		pageInfo { hasNextPage endCursor }
+		nodes {
+			id sku name quantity currentQuantity
+			variant { id }
+			discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
+		}
+	}`;
 
 const ORDERS_QUERY = `
 query Orders($cursor: String, $query: String) {
 	orders(first: 25, after: $cursor, sortKey: UPDATED_AT, query: $query) {
 		pageInfo { hasNextPage endCursor }
-		nodes {
-			id name createdAt updatedAt cancelledAt sourceName tags
-			app { name }
-			channelInformation { channelDefinition { channelName } }
-			displayFulfillmentStatus displayFinancialStatus
-			totalPriceSet { shopMoney { amount } }
-			totalShippingPriceSet { shopMoney { amount } }
-			shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 phone }
-			lineItems(first: 30) {
-				pageInfo { hasNextPage endCursor }
-				nodes {
-					id sku name quantity currentQuantity
-					variant { id }
-					discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
-				}
-			}
-		}
+		nodes { ${ORDER_FIELDS} }
 	}
 }`;
 
@@ -410,35 +413,8 @@ async function ingestMatching(
 		);
 		for (const o of page.orders.nodes) {
 			if (!newest || o.updatedAt > newest) newest = o.updatedAt;
-			// Once katasync syncs TikTok itself, TikTok orders come from there;
-			// the TikTok sync takes over the ones Shopify relayed earlier.
-			if (tiktokDirect && tiktokOrderId(o.tags)) continue;
-			// Big orders have more lines than fit in one page; fetch the rest.
-			const order = o.lineItems.pageInfo.hasNextPage
-				? {
-						...o,
-						lineItems: {
-							...o.lineItems,
-							nodes: [
-								...o.lineItems.nodes,
-								...(await remainingLines(o.id, o.lineItems.pageInfo.endCursor)),
-							],
-						},
-					}
-				: o;
-			// Units refunded or removed only matter once we know whether they
-			// shipped, so only those orders cost the extra call.
-			const shipped = order.lineItems.nodes.some(
-				(l) => l.currentQuantity < l.quantity,
-			)
-				? await shippedUnits(o.id)
-				: null;
-			const result = await ingestOrder(
-				db,
-				store,
-				shopifyToChannelOrder(order, shipped),
-				locationId,
-			);
+			const result = await ingestNode(db, store, o, locationId, tiktokDirect);
+			if (!result) continue;
 			problems.push(...result.problems);
 			count++;
 		}
@@ -447,6 +423,70 @@ async function ingestMatching(
 			: null;
 	} while (cursor);
 	return { count, newest, problems };
+}
+
+// One order as Shopify sent it. Null when it's a TikTok order: once
+// katasync syncs TikTok itself, TikTok orders come from there, and the TikTok
+// sync takes over the ones Shopify relayed earlier.
+async function ingestNode(
+	db: Db,
+	store: Awaited<ReturnType<typeof ensureStore>>,
+	o: typeof orderNode.infer,
+	locationId: number | null,
+	tiktokDirect: boolean,
+) {
+	if (tiktokDirect && tiktokOrderId(o.tags)) return null;
+	// Big orders have more lines than fit in one page; fetch the rest.
+	const order = o.lineItems.pageInfo.hasNextPage
+		? {
+				...o,
+				lineItems: {
+					...o.lineItems,
+					nodes: [
+						...o.lineItems.nodes,
+						...(await remainingLines(o.id, o.lineItems.pageInfo.endCursor)),
+					],
+				},
+			}
+		: o;
+	// Units refunded or removed only matter once we know whether they
+	// shipped, so only those orders cost the extra call.
+	const shipped = order.lineItems.nodes.some(
+		(l) => l.currentQuantity < l.quantity,
+	)
+		? await shippedUnits(o.id)
+		: null;
+	return ingestOrder(
+		db,
+		store,
+		shopifyToChannelOrder(order, shipped),
+		locationId,
+	);
+}
+
+// One order by id, for a webhook. Read straight from the order rather than
+// through search, which lags a few seconds behind new orders. It doesn't
+// move the sync cursor; the next pass sees the order again and reports any
+// problems with it on Diagnostics.
+export async function ingestShopifyOrder(db: Db, orderId: string) {
+	const { shop, order } = type({
+		shop: { name: "string" },
+		order: orderNode.or("null"),
+	}).assert(
+		await shopifyQuery(
+			`query Order($id: ID!) { shop { name } order(id: $id) { ${ORDER_FIELDS} } }`,
+			{ id: orderId },
+		),
+	);
+	if (!order) return;
+	const store = await ensureStore(db, "shopify", shop.name);
+	await ingestNode(
+		db,
+		store,
+		order,
+		await shippingLocation(db),
+		await hasTiktokStore(db),
+	);
 }
 
 // The TikTok store exists once a direct TikTok sync has reached TikTok.
@@ -465,7 +505,7 @@ function tiktokOrderId(tags: string[]) {
 	return tag ? `tiktok:${tag.slice("TikTokOrderID:".length)}` : null;
 }
 
-export type ShopifyOrder = (typeof ordersPage.infer.orders.nodes)[number];
+export type ShopifyOrder = typeof orderNode.infer;
 
 // `shipped` is units shipped per line ID, needed when any line has refunded
 // or removed units (see shopifyLineQuantity).

@@ -276,10 +276,10 @@ describe("tiktokToChannelOrder", () => {
 		]);
 	});
 
-	test("masked buyer details are dropped, the rest kept", () => {
+	test("a masked name is kept, a masked street is dropped", () => {
 		const o = tiktokToChannelOrder(order());
 		expect(o).toMatchObject({
-			customerName: null,
+			customerName: "J***n D***",
 			shipAddress1: null,
 			shipCity: "Dover",
 			shipRegion: "DE",

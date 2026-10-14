@@ -789,6 +789,19 @@ export const apiTokens = pgTable("api_tokens", {
 	lastUsedAt: timestamp({ withTimezone: true }),
 });
 
+// The password of katasync_mcp, the login the MCP query tool connects as, set
+// the first time it's needed (src/mcp/query.ts). The role and what it may
+// read are in drizzle/0027_mcp_role.sql.
+export const mcpLogin = pgTable(
+	"mcp_login",
+	{
+		id: smallint().primaryKey().default(1),
+		password: text().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [check("mcp_login_single", sql`${t.id} = 1`)],
+);
+
 // Views defined in drizzle/0020_reporting_views.sql, so every report counts
 // stock and sales the same way.
 
