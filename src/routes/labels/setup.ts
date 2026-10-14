@@ -6,9 +6,8 @@ export const Route = createFileRoute("/labels/setup")({
 	server: {
 		handlers: {
 			GET: async () => {
-				const [{ getQzCertificate, qzSetupScript }, { getDb }] =
-					await Promise.all([import("#/printing/qz"), import("#/db/client")]);
-				const { certificate } = await getQzCertificate(getDb());
+				const { qzKeys, qzSetupScript } = await import("#/printing/qz");
+				const { certificate } = await qzKeys();
 				return new Response(qzSetupScript(certificate), {
 					headers: {
 						"Content-Type": "application/octet-stream",

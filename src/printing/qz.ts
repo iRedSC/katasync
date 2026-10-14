@@ -1,8 +1,9 @@
 import "reflect-metadata";
 import { createHash, createSign } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
 import * as x509 from "@peculiar/x509";
 import { type } from "arktype";
-import type { Db } from "#/db/client";
+import { type Db, getDb } from "#/db/client";
 import { qzCertificate } from "#/db/schema";
 import setupScript from "./qz-setup.bat?raw";
 
@@ -22,6 +23,33 @@ export async function getQzCertificate(db: Db) {
 		.onConflictDoNothing();
 	const [made] = await db.select().from(qzCertificate);
 	return made;
+}
+
+type QzKeys = { certificate: string; privateKey: string };
+let devKeys: Promise<QzKeys> | undefined;
+
+// The key pair to sign with. The dev server skips sign-in (src/start.ts) and
+// its database may be a copy of production's, so it won't use the saved one.
+// Printing from dev needs QZ_DEV_PRINTING=1, and then gets a certificate of
+// its own, kept in .qz-dev-certificate.json; a computer set up from dev
+// trusts only that.
+export async function qzKeys(): Promise<QzKeys> {
+	if (!import.meta.env.DEV) return getQzCertificate(getDb());
+	if (process.env.QZ_DEV_PRINTING !== "1")
+		throw new Error(
+			"Label printing is off on the dev server. Set QZ_DEV_PRINTING=1 to print with a dev-only certificate.",
+		);
+	devKeys ??= (async () => {
+		const file = ".qz-dev-certificate.json";
+		try {
+			return JSON.parse(await readFile(file, "utf8")) as QzKeys;
+		} catch {
+			const made = await makeCertificate();
+			await writeFile(file, JSON.stringify(made), { mode: 0o600 });
+			return made;
+		}
+	})();
+	return devKeys;
 }
 
 // QZ wants RSA 2048. Valid for 30 years, since replacing it means running
