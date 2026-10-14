@@ -6,12 +6,14 @@ import { getDb } from "#/db/client";
 import {
 	locations,
 	orderLines,
+	orderReturns,
 	orders,
 	products,
 	shipments,
 	stores,
 } from "#/db/schema";
 import { cityLine } from "#/lib/format";
+import { receiveReturn, undoReturns } from "#/orders/returns";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { contentsKey } from "#/shipping/contents";
 import { lastPackedFor } from "#/shipping/quick-ship";
@@ -89,6 +91,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				placedAt: orders.placedAt,
 				cancelledAt: orders.cancelledAt,
 				fulfillmentStatus: orders.fulfillmentStatus,
+				fulfilledByChannel: orders.fulfilledByChannel,
 				financialStatus: orders.financialStatus,
 				customerName: orders.customerName,
 				shipAddress1: orders.shipAddress1,
@@ -118,6 +121,9 @@ export const getOrder = createServerFn({ method: "GET" })
 				unitPrice: orderLines.unitPrice,
 				unitCost: orderLines.unitCost,
 				tookStock: sql<boolean>`${orderLines.saleBatchId} is not null`,
+				// Units received back, and how many of those went on the shelf.
+				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
+				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and ${orderReturns.restocked}), 0)::int`,
 				productSku: products.sku,
 				productName: products.name,
 				imageUrl: products.imageUrl,
@@ -172,6 +178,23 @@ function adminUrl(order: { channel: string; externalId: string }) {
 	}
 	return null;
 }
+
+export const receiveOrderReturn = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			orderId: "number.integer > 0",
+			lines: type({
+				lineId: "number.integer > 0",
+				quantity: "number.integer >= 0",
+			}).array(),
+			restock: "boolean",
+		}),
+	)
+	.handler(({ data }) => receiveReturn(getDb(), data));
+
+export const undoOrderReturn = createServerFn({ method: "POST" })
+	.validator(type({ ids: "(number.integer > 0)[]" }))
+	.handler(({ data }) => undoReturns(getDb(), data.ids));
 
 // Everything the invoices for orders still to ship print, in pin order so
 // the stack matches what packers type.

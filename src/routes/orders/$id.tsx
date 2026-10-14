@@ -5,12 +5,13 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { ExternalLink, Printer, Truck } from "lucide-react";
+import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
+import { ReturnDialog } from "#/components/return-dialog";
 import { Button } from "#/components/ui/button";
 import {
 	channelName,
@@ -52,6 +53,17 @@ function OrderPage() {
 	const canShip =
 		pin !== null && !external && !labels.some((l) => l.voidedAt === null);
 	const ship = () => pin !== null && openQuickShip(pin);
+	// Returns come back here once something has shipped from our shelf.
+	const returnable = lines
+		.map((l) => ({ ...l, left: l.quantity - l.returned }))
+		.filter((l) => l.left > 0);
+	const canReturn =
+		!order.fulfilledByChannel &&
+		!order.cancelledAt &&
+		(order.fulfillmentStatus === "FULFILLED" ||
+			order.fulfillmentStatus === "PARTIALLY_FULFILLED") &&
+		returnable.length > 0;
+	const [returning, setReturning] = useState(false);
 	const address = [
 		order.shipAddress1,
 		order.shipAddress2,
@@ -63,6 +75,7 @@ function OrderPage() {
 		Escape: () =>
 			canGoBack ? router.history.back() : navigate({ to: "/orders" }),
 		...(canShip ? { s: ship } : {}),
+		...(canReturn ? { r: () => setReturning(true) } : {}),
 	});
 
 	return (
@@ -108,6 +121,17 @@ function OrderPage() {
 								{external.name}
 								<ExternalLink />
 							</a>
+						</Button>
+					)}
+					{canReturn && (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => setReturning(true)}
+						>
+							<Undo2 />
+							Receive return
+							<kbd className="ml-1 rounded bg-black/5 px-1 text-xs">R</kbd>
 						</Button>
 					)}
 					{canShip && (
@@ -160,6 +184,16 @@ function OrderPage() {
 				</Banner>
 			)}
 
+			{returning && (
+				<ReturnDialog
+					open
+					onOpenChange={setReturning}
+					orderId={order.id}
+					orderName={order.name}
+					lines={returnable}
+				/>
+			)}
+
 			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
 				<Card title="Items" flush>
 					<ul>
@@ -186,6 +220,16 @@ function OrderPage() {
 									<div className="flex gap-2 text-xs text-muted-foreground">
 										<span>{l.sku ?? "No SKU"}</span>
 										{l.quantity === 0 && <Badge>Cancelled</Badge>}
+										{l.restocked > 0 && (
+											<Badge tone="info">
+												{formatCount(l.restocked)} returned to shelf
+											</Badge>
+										)}
+										{l.returned > l.restocked && (
+											<Badge>
+												{formatCount(l.returned - l.restocked)} returned damaged
+											</Badge>
+										)}
 										{l.productSku === null && l.sku !== null && (
 											<Badge tone="critical">Unknown product</Badge>
 										)}

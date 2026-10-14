@@ -373,6 +373,32 @@ export const orderLines = pgTable(
 	],
 );
 
+// Units a customer sent back, received against the line they were sold on.
+// Restocked units went back on the shelf through the movement in batchId;
+// the rest were written off as damaged and moved nothing. Undoing a return
+// reverses its batch and deletes the row. Rules live in src/orders/returns.ts.
+export const orderReturns = pgTable(
+	"order_returns",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		orderLineId: integer()
+			.notNull()
+			.references(() => orderLines.id),
+		quantity: integer().notNull(),
+		restocked: boolean().notNull(),
+		batchId: uuid(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check("order_returns_quantity_positive", sql`${t.quantity} > 0`),
+		check(
+			"order_returns_restocked_has_batch",
+			sql`${t.restocked} = (${t.batchId} is not null)`,
+		),
+		index("order_returns_line_idx").on(t.orderLineId),
+	],
+);
+
 // One pass of one channel's order sync (scripts/sync.ts), for Diagnostics.
 // finishedAt is null while it runs, or if the worker died mid-pass. error is
 // why the whole pass failed; problems counts single orders that went wrong
