@@ -13,20 +13,31 @@ import {
 	productAliases,
 	productComponents,
 	productGroups,
+	productSuppliers,
 	products,
 	stockLevels,
 	stores,
+	suppliers,
 } from "#/db/schema";
 import { abcClasses } from "#/inventory/abc";
 import { getAvailability, getBundleBlockers } from "#/inventory/availability";
-import { recordCount as recordShelfCount, undoBatch } from "#/inventory/ledger";
+import {
+	recordCount as recordShelfCount,
+	requestCounts,
+	undoBatch,
+} from "#/inventory/ledger";
 import {
 	applyListingsToOrders,
 	matchListing as matchListingToSku,
 	productFromListing,
 } from "#/orders/remap";
 import { purchaseOrderOfBatch } from "#/purchasing/orders";
-import { aItemsAtRisk } from "#/purchasing/reorder";
+import {
+	aItemsAtRisk,
+	draftLines,
+	reorderNeeds,
+	unitsOnOrder,
+} from "#/purchasing/reorder";
 
 async function ownedLocationIds() {
 	const rows = await getDb()
@@ -52,48 +63,59 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				imageUrl: products.imageUrl,
 				unitCost: products.unitCost,
 				group: productGroups.name,
+				supplierId: suppliers.id,
+				supplierName: suppliers.name,
 			})
 			.from(products)
 			.leftJoin(productGroups, eq(productGroups.id, products.groupId))
+			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
 			.orderBy(products.name, products.variantName);
-		const [available, onHandRows, filing, abc] = await Promise.all([
-			ownedLocationIds().then((owned) =>
-				getAvailability(
-					db,
-					rows.map((r) => r.id),
-					owned,
+		const ranked = abcClasses(db);
+		const [available, onHandRows, filing, abc, onOrder, drafts, needs] =
+			await Promise.all([
+				ownedLocationIds().then((owned) =>
+					getAvailability(
+						db,
+						rows.map((r) => r.id),
+						owned,
+					),
 				),
-			),
-			db
-				.select({
-					productId: stockLevels.productId,
-					onHand: sql<number>`sum(${stockLevels.onHand})::int`,
-				})
-				.from(stockLevels)
-				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-				.where(eq(locations.kind, "owned"))
-				.groupBy(stockLevels.productId),
-			db
-				.select({
-					productId: listings.productId,
-					tags: listings.tags,
-					productType: listings.productType,
-					vendor: listings.vendor,
-					status: listings.status,
-				})
-				.from(listings)
-				.innerJoin(stores, eq(stores.id, listings.storeId))
-				.where(
-					and(eq(stores.channel, "shopify"), isNotNull(listings.productId)),
-				),
-			abcClasses(db),
-		]);
+				db
+					.select({
+						productId: stockLevels.productId,
+						onHand: sql<number>`sum(${stockLevels.onHand})::int`,
+					})
+					.from(stockLevels)
+					.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+					.where(eq(locations.kind, "owned"))
+					.groupBy(stockLevels.productId),
+				db
+					.select({
+						productId: listings.productId,
+						tags: listings.tags,
+						productType: listings.productType,
+						vendor: listings.vendor,
+						status: listings.status,
+					})
+					.from(listings)
+					.innerJoin(stores, eq(stores.id, listings.storeId))
+					.where(
+						and(eq(stores.channel, "shopify"), isNotNull(listings.productId)),
+					),
+				ranked,
+				unitsOnOrder(db),
+				draftLines(db),
+				ranked.then((abc) => reorderNeeds(db, new Date(), abc)),
+			]);
 		const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
+		const need = new Map(needs.map((n) => [n.productId, n]));
 		const shopify = shopifyFiling(filing);
 		return {
-			products: rows.map((r) => {
+			products: rows.map(({ supplierId, supplierName, ...r }) => {
 				const s = shopify.get(r.id);
 				const c = abc.classes.get(r.id);
+				const n = need.get(r.id);
 				return {
 					...r,
 					// Our own type wins; Shopify's fills in where we have none.
@@ -106,6 +128,19 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 					abc: c?.abc ?? null,
 					// 1 is the most value. Null for tool sets and unpriced products.
 					abcRank: c?.rank ?? null,
+					supplier:
+						supplierId === null || supplierName === null
+							? null
+							: { id: supplierId, name: supplierName },
+					// Units on sent POs that haven't arrived.
+					onOrder: onOrder.get(r.id) ?? 0,
+					// Its line on the supplier's open draft, in the line's unit.
+					draft: drafts.get(r.id) ?? null,
+					// What to order today, in the supplier's unit. Null when stock
+					// and what's on order last until a PO sent now would arrive.
+					reorder: n
+						? { quantity: n.quantity, unit: n.unit, packSize: n.packSize }
+						: null,
 				};
 			}),
 			abcDays: abc.days,
@@ -556,6 +591,52 @@ const countDue = and(
 	sql`(${stockLevels.lastCountedAt} is null or ${stockLevels.lastCountedAt} < ${stockLevels.countRequestedAt})`,
 	eq(locations.kind, "owned"),
 );
+
+// Puts a product on the count list at every shelf of ours holding it, or our
+// first location when none does yet. Returns the shelves that weren't already
+// waiting, so undo takes off only those.
+export const requestCount = createServerFn({ method: "POST" })
+	.validator(type({ productId: "number.integer > 0" }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const shelf = (where: Parameters<typeof and>[0]) =>
+			db
+				.select({ locationId: stockLevels.locationId })
+				.from(stockLevels)
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(and(eq(stockLevels.productId, data.productId), where));
+		const [held, due, owned] = await Promise.all([
+			shelf(eq(locations.kind, "owned")),
+			shelf(countDue),
+			ownedLocationIds(),
+		]);
+		if (owned.length === 0) throw new Error("Add a location first");
+		const at =
+			held.length > 0 ? held.map((h) => h.locationId) : [Math.min(...owned)];
+		for (const locationId of at)
+			await requestCounts(db, { productIds: [data.productId], locationId });
+		return at.filter((id) => !due.some((d) => d.locationId === id));
+	});
+
+export const cancelCountRequest = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			productId: "number.integer > 0",
+			locationIds: "number.integer > 0 []",
+		}),
+	)
+	.handler(async ({ data }) => {
+		if (data.locationIds.length === 0) return;
+		await getDb()
+			.update(stockLevels)
+			.set({ countRequestedAt: null })
+			.where(
+				and(
+					eq(stockLevels.productId, data.productId),
+					inArray(stockLevels.locationId, data.locationIds),
+				),
+			);
+	});
 
 // Shelves due for a cycle count, A first, then the longest waiting.
 export const listCountsDue = createServerFn({ method: "GET" }).handler(

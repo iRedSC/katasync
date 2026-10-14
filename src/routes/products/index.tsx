@@ -4,7 +4,15 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import { type } from "arktype";
-import { Pencil } from "lucide-react";
+import {
+	ClipboardList,
+	Copy,
+	ExternalLink,
+	FileText,
+	PackagePlus,
+	Pencil,
+	Truck,
+} from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
@@ -13,13 +21,20 @@ import { AbcBadge, Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "#/components/ui/context-menu";
+import {
 	Dialog,
 	DialogContent,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
-import { formatCount } from "#/lib/format";
+import { formatCount, formatUnit } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import {
@@ -36,7 +51,13 @@ import {
 	sortType,
 	type View,
 } from "#/products/views";
-import { listProducts, type ProductRow } from "#/server/catalog";
+import {
+	cancelCountRequest,
+	listProducts,
+	type ProductRow,
+	requestCount,
+} from "#/server/catalog";
+import { addToPurchaseOrder, setLine } from "#/server/purchasing";
 import { deleteView, listViews, saveView } from "#/server/views";
 
 // The URL holds the chips and sort, so links (like Home's "Oversold") and the
@@ -87,6 +108,10 @@ function facetsOf(p: ProductRow): Facets {
 	else if (p.available === 0) status.push("sold out");
 	if (p.kind === "bundle") status.push("tool set");
 	if (p.kind === "kit") status.push("kit");
+	if (p.reorder) status.push("needs ordering");
+	if (p.draft) status.push("on a draft");
+	if (p.onOrder > 0) status.push("on order");
+	if (!p.supplier && p.kind !== "bundle") status.push("no supplier");
 	return {
 		text: [p.sku, title, p.category ?? ""],
 		title: [title],
@@ -200,6 +225,12 @@ function Products() {
 		j: () => setSelected((i) => Math.min(i + 1, last)),
 		k: () => setSelected((i) => Math.max(i - 1, 0)),
 		Enter: () => open(filtered[selected]),
+		a: () => {
+			const p = filtered[selected];
+			const action = p && orderAction(p);
+			if (action?.kind === "add") addToPo(p);
+			else if (action) toast(action.why);
+		},
 		Escape: () => {
 			if (document.activeElement === input.current) input.current?.blur();
 			else if (query) setQuery("");
@@ -321,63 +352,92 @@ function Products() {
 								Status
 							</th>
 							<th className="px-4 py-2 font-medium">Inventory</th>
+							<th className="hidden px-4 py-2 text-right font-medium md:table-cell">
+								On order
+							</th>
+							<th className="hidden px-4 py-2 font-medium md:table-cell">
+								Reorder
+							</th>
 							<th className="hidden px-4 py-2 font-medium lg:table-cell">
 								Type
 							</th>
 						</tr>
 					</thead>
-					<tbody ref={list}>
-						{filtered.slice(0, shown).map((p, i) => (
-							<tr
-								key={p.id}
-								data-index={i}
-								onClick={() => open(p)}
-								onMouseMove={() => setSelected(i)}
-								className={cn(
-									"cursor-pointer border-t first:border-t-0",
-									i === selected ? "bg-[#f1f1f1]" : "hover:bg-[#f7f7f7]",
-								)}
-							>
-								{/* Takes the width the other columns leave, so long names end
+					{/* One menu for the whole list: right-clicking a row selects it,
+					    and the menu acts on the selected product. */}
+					<ContextMenu>
+						<ContextMenuTrigger asChild>
+							<tbody ref={list}>
+								{filtered.slice(0, shown).map((p, i) => (
+									<tr
+										key={p.id}
+										data-index={i}
+										onClick={() => open(p)}
+										onMouseMove={() => setSelected(i)}
+										onContextMenu={() => setSelected(i)}
+										className={cn(
+											"cursor-pointer border-t first:border-t-0",
+											i === selected ? "bg-[#f1f1f1]" : "hover:bg-[#f7f7f7]",
+										)}
+									>
+										{/* Takes the width the other columns leave, so long names end
 								    in "…" instead of pushing them off the card. */}
-								<td className="w-full max-w-0 px-4 py-2">
-									<div className="flex items-center gap-3">
-										<ProductImage src={p.imageUrl} />
-										<div className="min-w-0 flex-1">
-											<ProductName name={p.name} variantName={p.variantName} />
-											<div className="flex gap-2 text-xs text-muted-foreground">
-												<span>{p.sku}</span>
-												{p.kind === "bundle" && <span>Tool set</span>}
-												{p.kind === "kit" && <span>Kit</span>}
+										<td className="w-full max-w-0 px-4 py-2">
+											<div className="flex items-center gap-3">
+												<ProductImage src={p.imageUrl} />
+												<div className="min-w-0 flex-1">
+													<ProductName
+														name={p.name}
+														variantName={p.variantName}
+													/>
+													<div className="flex gap-2 text-xs text-muted-foreground">
+														<span>{p.sku}</span>
+														{p.kind === "bundle" && <span>Tool set</span>}
+														{p.kind === "kit" && <span>Kit</span>}
+													</div>
+												</div>
 											</div>
-										</div>
-									</div>
-								</td>
-								<td className="px-2 py-2 text-center">
-									{/* Tool sets are classed through their parts. */}
-									{p.kind !== "bundle" && (
-										<AbcBadge
-											abc={p.abc}
-											title={
-												p.abcRank !== null
-													? `#${formatCount(p.abcRank)} by value`
-													: "Needs a cost to get a class"
-											}
-										/>
-									)}
-								</td>
-								<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
-									<RowStatus product={p} />
-								</td>
-								<td className="px-4 py-2 whitespace-nowrap">
-									<Inventory product={p} />
-								</td>
-								<td className="hidden px-4 py-2 whitespace-nowrap text-muted-foreground lg:table-cell">
-									{p.category ?? ""}
-								</td>
-							</tr>
-						))}
-					</tbody>
+										</td>
+										<td className="px-2 py-2 text-center">
+											{/* Tool sets are classed through their parts. */}
+											{p.kind !== "bundle" && (
+												<AbcBadge
+													abc={p.abc}
+													title={
+														p.abcRank !== null
+															? `#${formatCount(p.abcRank)} by value`
+															: "Needs a cost to get a class"
+													}
+												/>
+											)}
+										</td>
+										<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
+											<RowStatus product={p} />
+										</td>
+										<td className="px-4 py-2 whitespace-nowrap">
+											<Inventory product={p} />
+										</td>
+										<td className="hidden px-4 py-2 text-right whitespace-nowrap tabular-nums md:table-cell">
+											{p.onOrder > 0 ? formatCount(p.onOrder) : ""}
+										</td>
+										<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
+											<Reorder product={p} />
+										</td>
+										<td className="hidden px-4 py-2 whitespace-nowrap text-muted-foreground lg:table-cell">
+											{p.category ?? ""}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</ContextMenuTrigger>
+						{filtered[selected] && (
+							<RowMenu
+								product={filtered[selected]}
+								onOpen={open}
+								onAddToPo={addToPo}
+							/>
+						)}
+					</ContextMenu>
 				</table>
 				{filtered.length === 0 && (
 					<p className="py-16 text-center text-muted-foreground">
@@ -411,6 +471,35 @@ function Products() {
 			)}
 		</Page>
 	);
+
+	async function addToPo(p: ProductRow) {
+		try {
+			const line = await addToPurchaseOrder({
+				data: { productId: p.id, quantity: p.reorder?.quantity },
+			});
+			await router.invalidate();
+			toast.success(
+				`Added ${orderQuantity(line)} to PO ${line.purchaseOrderId} (${line.supplierName})`,
+				{
+					action: {
+						label: "Undo",
+						onClick: async () => {
+							await setLine({
+								data: {
+									purchaseOrderId: line.purchaseOrderId,
+									productId: p.id,
+									quantity: 0,
+								},
+							});
+							await router.invalidate();
+						},
+					},
+				},
+			);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err));
+		}
+	}
 
 	async function updateView(v: View) {
 		await saveView({ data: { id: v.id, name: v.name, ...current } });
@@ -588,5 +677,137 @@ function Inventory({ product: p }: { product: ProductRow }) {
 			{formatCount(p.available)}{" "}
 			{p.kind === "bundle" ? "can be built" : "in stock"}
 		</span>
+	);
+}
+
+// "12", or "2 CASE of 30" when the supplier sells in packs.
+function orderQuantity(q: {
+	quantity: number;
+	unit: string;
+	packSize: number;
+}) {
+	return q.unit === "EACH"
+		? formatCount(q.quantity)
+		: `${formatCount(q.quantity)} ${formatUnit(q.unit, q.packSize)}`;
+}
+
+// What putting this product on a PO means right now. Tool sets are ordered
+// through their parts, so they get nothing.
+function orderAction(p: ProductRow) {
+	if (p.kind === "bundle") return null;
+	if (p.draft)
+		return {
+			kind: "draft" as const,
+			why: `Already on PO ${p.draft.purchaseOrderId}`,
+		};
+	if (!p.supplier)
+		return { kind: "no supplier" as const, why: "Set a supplier first" };
+	return { kind: "add" as const, why: "", supplier: p.supplier.name };
+}
+
+// The suggested order, or the line already waiting on a draft.
+function Reorder({ product: p }: { product: ProductRow }) {
+	if (p.draft) {
+		return (
+			<span className="text-muted-foreground">
+				{orderQuantity(p.draft)} on PO {p.draft.purchaseOrderId}
+			</span>
+		);
+	}
+	if (p.reorder) {
+		return <span className="font-medium">{orderQuantity(p.reorder)}</span>;
+	}
+	return null;
+}
+
+function RowMenu({
+	product: p,
+	onOpen,
+	onAddToPo,
+}: {
+	product: ProductRow;
+	onOpen: (p: ProductRow) => void;
+	onAddToPo: (p: ProductRow) => void;
+}) {
+	const navigate = useNavigate();
+	const action = orderAction(p);
+	const url = `/products/${encodeURIComponent(p.sku)}`;
+
+	async function askForCount() {
+		try {
+			const added = await requestCount({ data: { productId: p.id } });
+			if (added.length === 0) {
+				toast(`${p.sku} is already on the count list`);
+				return;
+			}
+			toast.success(`Added ${p.sku} to the count list`, {
+				action: {
+					label: "Undo",
+					onClick: () =>
+						cancelCountRequest({
+							data: { productId: p.id, locationIds: added },
+						}),
+				},
+			});
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err));
+		}
+	}
+
+	return (
+		<ContextMenuContent>
+			<ContextMenuItem onSelect={() => onOpen(p)} shortcut="↵">
+				<FileText />
+				Open
+			</ContextMenuItem>
+			<ContextMenuItem onSelect={() => window.open(url, "_blank")}>
+				<ExternalLink />
+				Open in new tab
+			</ContextMenuItem>
+			{action && <ContextMenuSeparator />}
+			{action?.kind === "add" && (
+				<ContextMenuItem onSelect={() => onAddToPo(p)} shortcut="A">
+					<PackagePlus />
+					{p.reorder
+						? `Add ${orderQuantity(p.reorder)} to ${action.supplier} PO`
+						: `Add to ${action.supplier} PO`}
+				</ContextMenuItem>
+			)}
+			{action?.kind === "draft" && p.draft && (
+				<ContextMenuItem
+					onSelect={() =>
+						navigate({
+							to: "/purchasing/$id",
+							params: { id: String(p.draft?.purchaseOrderId) },
+						})
+					}
+				>
+					<Truck />
+					Open PO {p.draft.purchaseOrderId}
+				</ContextMenuItem>
+			)}
+			{action?.kind === "no supplier" && (
+				<ContextMenuItem onSelect={() => onOpen(p)}>
+					<PackagePlus />
+					Set a supplier to order it
+				</ContextMenuItem>
+			)}
+			{p.kind !== "bundle" && (
+				<ContextMenuItem onSelect={askForCount}>
+					<ClipboardList />
+					Ask for a count
+				</ContextMenuItem>
+			)}
+			<ContextMenuSeparator />
+			<ContextMenuItem
+				onSelect={async () => {
+					await navigator.clipboard.writeText(p.sku);
+					toast(`Copied ${p.sku}`);
+				}}
+			>
+				<Copy />
+				Copy SKU
+			</ContextMenuItem>
+		</ContextMenuContent>
 	);
 }

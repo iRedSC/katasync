@@ -247,6 +247,38 @@ export const addLineBySku = createServerFn({ method: "POST" })
 		});
 	});
 
+// Puts a product on its supplier's draft, starting one if needed. Without a
+// quantity it's the fewest the supplier sells. Says where it went, so the
+// caller can show it and undo it.
+export const addToPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			productId: "number.integer > 0",
+			"quantity?": "number.integer > 0",
+		}),
+	)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [link] = await db
+			.select({
+				supplierId: productSuppliers.supplierId,
+				supplierName: suppliers.name,
+				minimum: productSuppliers.minimumQuantity,
+			})
+			.from(productSuppliers)
+			.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+			.where(eq(productSuppliers.productId, data.productId));
+		if (!link)
+			throw new PurchaseOrderError("Set this product's supplier first");
+		const purchaseOrderId = await openDraft(db, link.supplierId);
+		const line = await setDraftLine(db, {
+			purchaseOrderId,
+			productId: data.productId,
+			quantity: data.quantity ?? link.minimum,
+		});
+		return { purchaseOrderId, supplierName: link.supplierName, ...line };
+	});
+
 // Emails the PO to the supplier and puts it on order. With `email: false` it's
 // only marked sent, for orders placed by phone or on the supplier's website.
 export const sendPurchaseOrder = createServerFn({ method: "POST" })
