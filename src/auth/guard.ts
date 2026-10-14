@@ -6,7 +6,8 @@ import { SESSION_COOKIE, sessionCookie, sessionFor } from "./sessions";
 
 // Reachable while signed out: the sign-in and setup pages, their API, and
 // the files those pages load. /mcp checks its own API token instead, and
-// /api/cron/ the CRON_SECRET Vercel Cron sends.
+// /api/cron/ the CRON_SECRET Vercel Cron sends, and /api/webhooks/ the
+// channel's signature.
 const PUBLIC_PATHS = new Set([
 	"/mcp",
 	"/login",
@@ -23,6 +24,7 @@ export function isPublic(pathname: string) {
 		PUBLIC_PATHS.has(pathname) ||
 		pathname.startsWith("/api/auth/") ||
 		pathname.startsWith("/api/cron/") ||
+		pathname.startsWith("/api/webhooks/") ||
 		pathname.startsWith("/assets/")
 	);
 }

@@ -4,7 +4,8 @@ import { createFileRoute } from "@tanstack/react-router";
 // One sync pass of a channel, called by Vercel Cron on the schedules in
 // vercel.json. `?listings=1` also refreshes the channel's listings. Vercel
 // signs each call with `Authorization: Bearer $CRON_SECRET`; anything else is
-// refused. A pass still running from the last call makes this one skip.
+// refused. Skips if the channel stays locked for 30 seconds, by a pass still
+// running from the last call or a webhook.
 
 function fromVercel(request: Request) {
 	const secret = process.env.CRON_SECRET;
@@ -43,7 +44,9 @@ export const Route = createFileRoute("/api/cron/sync/$channel")({
 				const listings = new URL(request.url).searchParams.has("listings");
 				const result = await syncPassAlone(getDb(), channel, { listings });
 				if (!result)
-					return Response.json({ skipped: "the last pass is still running" });
+					return Response.json({
+						skipped: "another pass or webhook held the channel for 30s",
+					});
 				// A failed pass is recorded for Diagnostics by recordSyncRun and
 				// thrown, so the cron shows as failed in Vercel too.
 				return Response.json({
