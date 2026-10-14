@@ -359,6 +359,7 @@ describe("voidDispatch", () => {
 
 		const first = await voidDispatch(db, id, outside);
 		expect(first.notes[0]).toContain("1 of 2 labels weren't refunded");
+		expect(first.remaining).toBe(1);
 		const [a, b] = await boxesOf(id);
 		expect(a.voidedAt).not.toBeNull();
 		expect(b.voidedAt).toBeNull();

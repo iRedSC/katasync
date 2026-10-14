@@ -285,7 +285,7 @@ export function QuickShip() {
 	// Adds or removes another order to the same address from this box. Only
 	// while choosing the first box: the contents decide the boxes.
 	async function toggleCompanion(id?: number) {
-		if (!found || !plan || packed.length > 0) return;
+		if (!found || !plan || packed.length > 0 || busy) return;
 		const chosen = new Set(plan.orderIds.slice(1));
 		const ids = id === undefined ? found.companions.map((c) => c.id) : [id];
 		const adding = ids.some((i) => !chosen.has(i));
@@ -294,14 +294,18 @@ export function QuickShip() {
 			found.order.id,
 			...found.companions.map((c) => c.id).filter((i) => chosen.has(i)),
 		];
+		// busy holds the box step until the new contents are known, so the box
+		// and prices are never for the old plan.
 		const next = await run(() => planFor(orderIds));
 		if (!next) return;
 		setPlan(next);
-		suggestBox(next, 0);
+		setRates(null);
+		latest.current++;
+		if (next.last) suggestBox(next, 0);
 	}
 
 	function choosePackage(next: { box: Box | null; dims: Dims }) {
-		if (!plan) return;
+		if (!plan || busy) return;
 		setBox(next.box);
 		setDims(next.dims);
 		// Weight starts from this box's weight last time these contents
@@ -380,10 +384,16 @@ export function QuickShip() {
 		if (!result) return;
 		router.invalidate();
 		if (result.failed) {
-			// Prices may be spent; ask again so the next press buys fresh.
-			setError(result.failed);
+			// A label still live blocks buying again; it has to be voided.
+			if (result.boxes.length > 0) {
+				setRates(null);
+				return setError(result.failed);
+			}
+			// Everything was refunded: show fresh prices to try again, keeping
+			// the explanation on screen.
 			priced.current.clear();
-			return showRates(list, insureAmount);
+			await showRates(list, insureAmount);
+			return setError(result.failed);
 		}
 		setBought(result);
 		setStep("done");
@@ -1311,6 +1321,10 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 			const result = await voidLabel({
 				data: { dispatchId: bought.dispatchId },
 			});
+			// Some refunds refused: stay here so voiding can be tried again.
+			if (result.remaining > 0) {
+				return setVoidError(result.notes.join(" "));
+			}
 			setVoided(
 				[
 					`${many ? "Labels" : "Label"} voided, refund ${result.refundStatus.toLowerCase()}.`,

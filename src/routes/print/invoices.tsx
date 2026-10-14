@@ -181,6 +181,11 @@ function Invoice({
 						<p className="text-[13pt] font-bold tabular-nums">
 							{packLine(o.pin, o.boxPin, o.weightGrams)}
 						</p>
+						{o.boxes > 1 && (
+							<p className="text-[11pt] font-bold">
+								Box 1 of {o.boxes} last time
+							</p>
+						)}
 					</div>
 				)}
 			</footer>

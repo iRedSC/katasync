@@ -103,14 +103,15 @@ function OrderPage() {
 							Print invoice
 						</a>
 					</Button>
-					{liveBoxes.length > 0 && (
+					{/* Several boxes print one by one from Shipments below. */}
+					{liveBoxes.length === 1 && (
 						<Button
 							size="sm"
 							variant="outline"
-							onClick={() => printLabels(liveBoxes.map((b) => b.id))}
+							onClick={() => printLabels([liveBoxes[0].id])}
 						>
 							<Printer />
-							{liveBoxes.length > 1 ? "Reprint labels" : "Reprint label"}
+							Reprint label
 						</Button>
 					)}
 					{external && (
@@ -455,6 +456,8 @@ function SendRow({
 							onClick={() =>
 								act(async () => {
 									const r = await voidLabel({ data: { dispatchId: d.id } });
+									// Some refunds refused: say so as a failure; Void stays.
+									if (r.remaining > 0) throw new Error(r.notes.join(" "));
 									return [
 										`Voided, refund ${r.refundStatus.toLowerCase()}.`,
 										...r.notes,

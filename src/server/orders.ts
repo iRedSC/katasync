@@ -18,7 +18,12 @@ import { cityLine } from "#/lib/format";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { contentsKey } from "#/shipping/contents";
-import { addressKey, companionsOf, whyNotTogether } from "#/shipping/dispatch";
+import {
+	addressKey,
+	companionsOf,
+	liveDispatches,
+	whyNotTogether,
+} from "#/shipping/dispatch";
 import { lastPackedFor } from "#/shipping/quick-ship";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
@@ -312,6 +317,13 @@ export const listInvoices = createServerFn({ method: "GET" })
 		// Other orders to the same address that can share the box, so the
 		// packer gathers them before typing the pin.
 		const shipsWith = new Map<number, { name: string; pin: number | null }[]>();
+		// Orders already holding a label can't join another box.
+		const live = data.id
+			? []
+			: await liveDispatches(
+					db,
+					toShip.map((o) => o.id),
+				);
 		for (const o of toShip) {
 			const others = data.id
 				? await companionsOf(db, o)
@@ -320,7 +332,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 							c.id !== o.id &&
 							addressKey(c) !== null &&
 							addressKey(c) === addressKey(o) &&
-							whyNotTogether([o, c], []) === null,
+							whyNotTogether([o, c], live) === null,
 					);
 			shipsWith.set(
 				o.id,
@@ -350,6 +362,9 @@ export const listInvoices = createServerFn({ method: "GET" })
 					// What quick ship will suggest: the box and weight these exact
 					// contents went out in last time, else the items' own weight.
 					boxPin: last?.boxPin ?? null,
+					// How many boxes these contents took last time; the box and
+					// weight above are the first one's.
+					boxes: last?.boxes ?? 1,
 					weightGrams:
 						last?.weightGrams ??
 						(own.every((l) => l.weightGrams !== null)

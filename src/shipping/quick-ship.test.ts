@@ -5,7 +5,7 @@ import * as schema from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { addDispatch, createProduct, createTestDb } from "#/test/db";
 import { contentsKey } from "./contents";
-import { addressKey, whyNotTogether } from "./dispatch";
+import { addressKey, companionsOf, whyNotTogether } from "./dispatch";
 import { assignOrderPins } from "./pins";
 import {
 	combineRates,
@@ -265,6 +265,23 @@ describe("with a database", () => {
 		shipCountry: "US",
 	};
 
+	const candidate = async (id: number) => {
+		const [o] = await db
+			.select()
+			.from(schema.orders)
+			.where(eq(schema.orders.id, id));
+		return { ...o, channel: "shopify", needsShipping: true };
+	};
+
+	test("postal codes match however they're written", async () => {
+		const canada = { ...address, shipCountry: "CA" };
+		const a = await addOrder("#1", { ...canada, shipPostalCode: "K1A 0B1" });
+		await addOrder("#2", { ...canada, shipPostalCode: "k1a0b1" });
+		expect(
+			(await companionsOf(db, await candidate(a))).map((c) => c.name),
+		).toEqual(["#2"]);
+	});
+
 	test("offers other orders to the same address to share the box", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		const a = await addOrder("#1", address);
@@ -290,6 +307,11 @@ describe("with a database", () => {
 
 		const found = await orderForShipping(db, await pinOf(a));
 		expect(found?.companions.map((c) => c.name)).toEqual(["#2"]);
+		// An order already holding a label is offered nothing, and isn't
+		// offered to others.
+		expect(await companionsOf(db, { ...(await candidate(labelled)) })).toEqual(
+			[],
+		);
 		expect(found?.companions[0]).toMatchObject({ items: 1 });
 
 		const together = await shipmentPlan(db, [a, b]);
@@ -340,6 +362,16 @@ describe("addressKey and whyNotTogether", () => {
 		expect(
 			whyNotTogether([order(1), order(2, { salesChannel: "TikTok" })], []),
 		).toContain("TikTok");
+		// Not even two TikTok orders: TikTok combines them itself.
+		expect(
+			whyNotTogether(
+				[
+					order(1, { salesChannel: "TikTok" }),
+					order(2, { salesChannel: "TikTok" }),
+				],
+				[],
+			),
+		).toContain("Seller Center");
 		expect(whyNotTogether([order(1, { channel: "amazon" })], [])).toContain(
 			"Amazon",
 		);

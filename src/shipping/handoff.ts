@@ -255,7 +255,13 @@ const sameMember = (member: Member) =>
 		eq(dispatchOrders.orderId, member.handoff.orderId),
 	);
 
-export type Voided = { refundStatus: string; notes: string[] };
+// remaining: labels still live because their refund was refused; voiding
+// again retries them.
+export type Voided = {
+	refundStatus: string;
+	notes: string[];
+	remaining: number;
+};
 
 // Voids a dispatch: asks for every box's postage back, takes the tracking
 // back off each order's marketplace where it can, and returns the orders to
@@ -299,7 +305,11 @@ export async function voidDispatch(
 					notes.push(
 						`${liveBoxes.length - i} of ${liveBoxes.length} labels weren't refunded (${why}); they're still live. Void again to retry.`,
 					);
-					return { refundStatus: summary(statuses), notes };
+					return {
+						refundStatus: summary(statuses),
+						notes,
+						remaining: liveBoxes.length - i,
+					};
 				}
 			}
 
@@ -338,7 +348,7 @@ export async function voidDispatch(
 					notes.push(`${label}The order is back on To ship`);
 				}
 			}
-			return { refundStatus: summary(statuses), notes };
+			return { refundStatus: summary(statuses), notes, remaining: 0 };
 		},
 	);
 	await assignOrderPins(db);

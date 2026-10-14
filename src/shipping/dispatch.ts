@@ -156,9 +156,10 @@ export function whyNotTogether(
 		const external = externalFulfillment(o);
 		if (external) return `${o.name} ships on ${external.name}'s own label`;
 	}
-	const sources = new Set(list.map((o) => labelSource(o)));
-	if (sources.size > 1) {
-		return "TikTok orders ship on TikTok's labels, so they can't share a box with other orders";
+	// TikTok sells one label per order package; combining happens in Seller
+	// Center.
+	if (list.length > 1 && list.some((o) => labelSource(o) === "tiktok")) {
+		return "TikTok orders ship on TikTok's labels, one order per box. Combine TikTok orders in TikTok Seller Center.";
 	}
 	if (list.length > 1) {
 		const keys = new Set(list.map(addressKey));
@@ -191,7 +192,9 @@ export async function assertTogether(db: Db, orderIds: number[]) {
 export async function companionsOf(db: Db, order: Candidate) {
 	const key = addressKey(order);
 	if (!key || !order.shipPostalCode) return [];
-	const zip5 = order.shipPostalCode.trim().slice(0, 5);
+	// The postal code's start, compared the way addressKey compares it.
+	const zipStart = (zip: unknown) =>
+		sql`left(regexp_replace(lower(${zip}), '[[:space:]]', '', 'g'), 5)`;
 	const nearby = await db
 		.select(candidateFields)
 		.from(orders)
@@ -200,14 +203,11 @@ export async function companionsOf(db: Db, order: Candidate) {
 			and(
 				ne(orders.id, order.id),
 				needsShipping,
-				sql`left(trim(${orders.shipPostalCode}), 5) = ${zip5}`,
+				sql`${zipStart(orders.shipPostalCode)} = ${zipStart(order.shipPostalCode)}`,
 			),
 		)
 		.orderBy(orders.placedAt);
-	const live = await liveDispatches(
-		db,
-		nearby.map((o) => o.id),
-	);
+	const live = await liveDispatches(db, [order.id, ...nearby.map((o) => o.id)]);
 	return nearby.filter(
 		(o) => addressKey(o) === key && whyNotTogether([order, o], live) === null,
 	);
