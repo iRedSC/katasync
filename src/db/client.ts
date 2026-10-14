@@ -29,6 +29,9 @@ export async function withOwnConnection<T>(
 	const connectionString = process.env.DATABASE_URL;
 	if (!connectionString) throw new Error("DATABASE_URL is not set");
 	const client = new Client({ connectionString });
+	// A dropped connection fails its next query instead of crashing the
+	// process with an unhandled error event.
+	client.on("error", () => {});
 	await client.connect();
 	try {
 		return await use(drizzle(client, { schema, casing: "snake_case" }));

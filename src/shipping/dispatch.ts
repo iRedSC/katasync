@@ -24,6 +24,11 @@ export type OrderLocker = <T>(
 export const lockOnOwnConnection: OrderLocker = (orderIds, work) =>
 	withOwnConnection((lockDb) =>
 		lockDb.transaction(async (tx) => {
+			// The transaction sits idle while labels are bought. Neon ends idle
+			// ones after 5 minutes; a Vercel function can't outlive 15.
+			await tx.execute(
+				sql`set local idle_in_transaction_session_timeout = '15min'`,
+			);
 			for (const id of sortedIds(orderIds)) {
 				await tx.execute(
 					sql`select pg_advisory_xact_lock(hashtext('order-labels'), ${id})`,

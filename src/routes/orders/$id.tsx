@@ -423,6 +423,26 @@ function SendRow({
 			{d.channelError && !d.channelSentAt && d.live && (
 				<p className="text-critical-text">{d.channelError}</p>
 			)}
+			{!d.live && d.unfinishedVoid && (
+				<div className="flex flex-wrap items-center gap-2">
+					<span className="text-critical-text">
+						Voiding didn't finish for this order.
+					</span>
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={busy}
+						onClick={() =>
+							act(async () => {
+								const r = await voidLabel({ data: { dispatchId: d.id } });
+								return r.notes.join(" ") || "Voiding finished";
+							})
+						}
+					>
+						Finish voiding
+					</Button>
+				</div>
+			)}
 			{d.live && (
 				<div className="flex flex-wrap gap-2">
 					{sendable && !d.channelSentAt && !test && (

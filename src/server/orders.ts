@@ -147,6 +147,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				dispatchId: dispatchOrders.dispatchId,
 				channelSentAt: dispatchOrders.channelSentAt,
 				channelError: dispatchOrders.channelError,
+				reversedAt: dispatchOrders.reversedAt,
 				boughtAt: dispatches.boughtAt,
 			})
 			.from(dispatchOrders)
@@ -201,6 +202,8 @@ export const getOrder = createServerFn({ method: "GET" })
 				channelError: h.channelError,
 				// False when a box failed part way: void only, never send.
 				complete: h.boughtAt !== null,
+				// Voided, but taking it back for this order didn't finish.
+				unfinishedVoid: h.reversedAt === null,
 				boxes: own,
 				live: own.some((b) => b.voidedAt === null),
 				shippedWith: others.filter((o) => o.dispatchId === h.dispatchId),

@@ -487,6 +487,10 @@ export const dispatchOrders = pgTable(
 		channelSentAt: timestamp({ withTimezone: true }),
 		channelFulfillmentId: text(),
 		channelError: text(),
+		// When voiding finished for this order: tracking taken back off its
+		// marketplace where possible, and the order back on To ship. Null on a
+		// voided dispatch means voiding again resumes this order.
+		reversedAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [
 		primaryKey({ columns: [t.dispatchId, t.orderId] }),

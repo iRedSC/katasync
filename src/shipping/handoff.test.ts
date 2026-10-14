@@ -385,6 +385,30 @@ describe("voidDispatch", () => {
 		expect((await orderRow(other)).fulfillmentStatus).toBe("UNFULFILLED");
 	});
 
+	test("a Shopify cancel that failed is finished by voiding again", async () => {
+		const failing = fakes({
+			shopifyCancel: vi.fn(async () => {
+				throw new Error("nope");
+			}),
+		});
+		const id = await ship();
+		await sendTracking(db, id, failing);
+		await voidDispatch(db, id, failing);
+		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
+		expect((await handoffOf(id)).reversedAt).toBeNull();
+
+		// No labels left to refund; this only finishes taking it back.
+		const outside = fakes();
+		const result = await voidDispatch(db, id, outside);
+		expect(outside.refund).not.toHaveBeenCalled();
+		expect(result.notes).toContain("Shopify shows the order unshipped again");
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect((await handoffOf(id)).reversedAt).not.toBeNull();
+		await expect(voidDispatch(db, id, outside)).rejects.toThrow(
+			"already voided",
+		);
+	});
+
 	test("if Shopify won't cancel, the order isn't put back", async () => {
 		const outside = fakes({
 			shopifyCancel: vi.fn(async () => {

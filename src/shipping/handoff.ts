@@ -200,19 +200,23 @@ async function tell(
 			.where(sameMember(member));
 		return done(false, `Tracking didn't reach ${name}: ${why}`);
 	}
-	await db
-		.update(dispatchOrders)
-		.set({
-			channelSentAt: new Date(),
-			channelFulfillmentId: fulfillmentId,
-			channelError: null,
-		})
-		.where(sameMember(member));
-	// Shipped now, not on the next sync: off To ship.
-	await db
-		.update(orders)
-		.set({ fulfillmentStatus: "FULFILLED" })
-		.where(eq(orders.id, order.id));
+	// Recorded together, so a retry never finds it sent while the order is
+	// still on To ship.
+	await db.transaction(async (tx) => {
+		await tx
+			.update(dispatchOrders)
+			.set({
+				channelSentAt: new Date(),
+				channelFulfillmentId: fulfillmentId,
+				channelError: null,
+			})
+			.where(sameMember(member));
+		// Shipped now, not on the next sync: off To ship.
+		await tx
+			.update(orders)
+			.set({ fulfillmentStatus: "FULFILLED" })
+			.where(eq(orders.id, order.id));
+	});
 	return done(
 		true,
 		to === "tiktok"
@@ -268,7 +272,9 @@ export type Voided = {
 // To ship. Each box is refunded on its own: a refused refund leaves that box
 // (and so the dispatch) live, keeps the boxes already refunded voided, and
 // voiding again retries just what's left. The orders only go back once
-// every box is voided.
+// every box is voided. Each order's reversal is recorded when it finishes,
+// so a void that stopped part way (or a Shopify cancel that failed) is
+// finished by voiding again.
 export async function voidDispatch(
 	db: Db,
 	dispatchId: number,
@@ -279,7 +285,8 @@ export async function voidDispatch(
 		async () => {
 			const { boxes, members } = await load(db, dispatchId);
 			const liveBoxes = boxes.filter((b) => !b.voidedAt);
-			if (liveBoxes.length === 0) {
+			const pending = members.filter((m) => !m.handoff.reversedAt);
+			if (liveBoxes.length === 0 && pending.length === 0) {
 				throw new Error("This label is already voided");
 			}
 			if (liveBoxes.some((b) => b.provider === "tiktok")) {
@@ -299,7 +306,7 @@ export async function voidDispatch(
 						.set({ voidedAt: new Date(), refundStatus: status })
 						.where(eq(shipments.id, box.id));
 				} catch (err) {
-					// Nothing refunded yet: nothing changed, so just say why.
+					// Nothing refunded this time: nothing changed, so just say why.
 					if (i === 0) throw err;
 					const why = err instanceof Error ? err.message : String(err);
 					notes.push(
@@ -313,7 +320,8 @@ export async function voidDispatch(
 				}
 			}
 
-			for (const { order, channel, handoff } of members) {
+			for (const member of pending) {
+				const { order, channel, handoff } = member;
 				// Whether the marketplace now agrees the order isn't shipped.
 				let backToShip = !handoff.channelSentAt;
 				const label = members.length > 1 ? `${order.name}: ` : "";
@@ -328,7 +336,7 @@ export async function voidDispatch(
 					} catch (err) {
 						const why = err instanceof Error ? err.message : String(err);
 						notes.push(
-							`${label}Shopify still shows it shipped (${why}). Cancel the fulfillment in Shopify.`,
+							`${label}Shopify still shows it shipped (${why}). Void again to retry, or cancel the fulfillment in Shopify.`,
 						);
 					}
 				}
@@ -338,13 +346,22 @@ export async function voidDispatch(
 					);
 					backToShip = true;
 				}
+				if (!backToShip) continue;
 				// One live dispatch per order, so voiding it means nothing has
-				// shipped.
-				if (backToShip && order.fulfillmentStatus === "FULFILLED") {
-					await db
-						.update(orders)
-						.set({ fulfillmentStatus: "UNFULFILLED" })
-						.where(eq(orders.id, order.id));
+				// shipped. Recorded together with the order going back.
+				await db.transaction(async (tx) => {
+					if (order.fulfillmentStatus === "FULFILLED") {
+						await tx
+							.update(orders)
+							.set({ fulfillmentStatus: "UNFULFILLED" })
+							.where(eq(orders.id, order.id));
+					}
+					await tx
+						.update(dispatchOrders)
+						.set({ reversedAt: new Date() })
+						.where(sameMember(member));
+				});
+				if (order.fulfillmentStatus === "FULFILLED") {
 					notes.push(`${label}The order is back on To ship`);
 				}
 			}
