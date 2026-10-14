@@ -4,11 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
-import {
-	formatCount,
-	formatMoney,
-	formatOrderDate,
-} from "#/lib/format";
+import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import { externalFulfillment } from "#/orders/fulfillment";
