@@ -21,7 +21,7 @@ import {
 	sessionFor,
 	useSetupLink,
 } from "./sessions";
-import { finishAuthentication, passkeyName } from "./webauthn";
+import { finishAuthentication, passkeyName, relyingParty } from "./webauthn";
 
 // Checking a real signature needs a real authenticator, so the library's
 // verdict is faked; what's tested is what katasync does with it.
@@ -205,6 +205,21 @@ describe("safeNext", () => {
 			42,
 		])
 			expect(safeNext(next, origin), JSON.stringify(next)).toBe("/");
+	});
+});
+
+describe("relyingParty", () => {
+	test("keeps only the origin of AUTH_ORIGIN", () => {
+		vi.stubEnv("AUTH_ORIGIN", " https://katasync.test/ ");
+		expect(relyingParty()).toMatchObject({
+			origin: "https://katasync.test",
+			id: "katasync.test",
+		});
+	});
+
+	test("explains an address without https://", () => {
+		vi.stubEnv("AUTH_ORIGIN", "katasync.test");
+		expect(() => relyingParty()).toThrow(/full address with https:\/\//);
 	});
 });
 
