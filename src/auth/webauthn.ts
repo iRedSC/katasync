@@ -24,12 +24,23 @@ import {
 // Passkeys belong to one domain: the address katasync is opened at. Ones made
 // on another address (the Tailscale dev server, say) don't work here.
 export function relyingParty() {
-	const origin = process.env.AUTH_ORIGIN;
-	if (!origin)
+	const setting = process.env.AUTH_ORIGIN?.trim();
+	const example = "e.g. https://katasync.example.com";
+	if (!setting)
 		throw new AuthError(
-			"Set AUTH_ORIGIN to the address katasync is opened at, e.g. https://katasync.example.com",
+			`Set AUTH_ORIGIN to the address katasync is opened at, ${example}`,
 		);
-	return { origin, id: new URL(origin).hostname, name: "katasync" };
+	// The browser reports a bare origin, so a trailing slash or path in the
+	// setting would fail every check. Keep only the origin.
+	let url: URL;
+	try {
+		url = new URL(setting);
+	} catch {
+		throw new AuthError(
+			`AUTH_ORIGIN needs to be a full address with https://, ${example}`,
+		);
+	}
+	return { origin: url.origin, id: url.hostname, name: "katasync" };
 }
 
 // Every passkey belongs to the one company account.
