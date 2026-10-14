@@ -748,6 +748,7 @@ function RowMenu({
 	onAddToPo: (p: ProductRow) => void;
 }) {
 	const navigate = useNavigate();
+	const router = useRouter();
 	const action = orderAction(p);
 	const url = `/products/${encodeURIComponent(p.sku)}`;
 
@@ -761,10 +762,20 @@ function RowMenu({
 			toast.success(`Added ${p.sku} to the count list`, {
 				action: {
 					label: "Undo",
-					onClick: () =>
-						cancelCountRequest({
-							data: { productId: p.id, locationIds: added },
-						}),
+					onClick: async () => {
+						try {
+							const cancelled = await cancelCountRequest({
+								data: { requests: added },
+							});
+							await router.invalidate();
+							if (cancelled < added.length)
+								toast(
+									`${p.sku}'s count request changed since, so it's left as is`,
+								);
+						} catch (err) {
+							toast.error(err instanceof Error ? err.message : String(err));
+						}
+					},
 				},
 			});
 		} catch (err) {

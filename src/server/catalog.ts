@@ -22,6 +22,7 @@ import {
 import { abcClasses } from "#/inventory/abc";
 import { getAvailability, getBundleBlockers } from "#/inventory/availability";
 import {
+	cancelCountRequests,
 	recordCount as recordShelfCount,
 	requestCounts,
 	undoBatch,
@@ -593,50 +594,52 @@ const countDue = and(
 );
 
 // Puts a product on the count list at every shelf of ours holding it, or our
-// first location when none does yet. Returns the shelves that weren't already
-// waiting, so undo takes off only those.
+// first location when none does yet. Returns the shelves this put on the list,
+// leaving out any already waiting, so undo takes off only those.
 export const requestCount = createServerFn({ method: "POST" })
 	.validator(type({ productId: "number.integer > 0" }))
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const shelf = (where: Parameters<typeof and>[0]) =>
+		const [held, owned] = await Promise.all([
 			db
 				.select({ locationId: stockLevels.locationId })
 				.from(stockLevels)
 				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-				.where(and(eq(stockLevels.productId, data.productId), where));
-		const [held, due, owned] = await Promise.all([
-			shelf(eq(locations.kind, "owned")),
-			shelf(countDue),
+				.where(
+					and(
+						eq(stockLevels.productId, data.productId),
+						eq(locations.kind, "owned"),
+					),
+				),
 			ownedLocationIds(),
 		]);
 		if (owned.length === 0) throw new Error("Add a location first");
 		const at =
 			held.length > 0 ? held.map((h) => h.locationId) : [Math.min(...owned)];
+		const added = [];
 		for (const locationId of at)
-			await requestCounts(db, { productIds: [data.productId], locationId });
-		return at.filter((id) => !due.some((d) => d.locationId === id));
+			added.push(
+				...(await requestCounts(db, {
+					productIds: [data.productId],
+					locationId,
+				})),
+			);
+		return added;
 	});
 
+// Undoes requestCount. Returns how many requests came off; any that were
+// counted and asked for again since stay.
 export const cancelCountRequest = createServerFn({ method: "POST" })
 	.validator(
 		type({
-			productId: "number.integer > 0",
-			locationIds: "number.integer > 0 []",
+			requests: type({
+				productId: "number.integer > 0",
+				locationId: "number.integer > 0",
+				requestedAt: "string > 0",
+			}).array(),
 		}),
 	)
-	.handler(async ({ data }) => {
-		if (data.locationIds.length === 0) return;
-		await getDb()
-			.update(stockLevels)
-			.set({ countRequestedAt: null })
-			.where(
-				and(
-					eq(stockLevels.productId, data.productId),
-					inArray(stockLevels.locationId, data.locationIds),
-				),
-			);
-	});
+	.handler(async ({ data }) => cancelCountRequests(getDb(), data.requests));
 
 // Shelves due for a cycle count, A first, then the longest waiting.
 export const listCountsDue = createServerFn({ method: "GET" }).handler(
