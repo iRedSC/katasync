@@ -4,6 +4,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { labelToVoid } from "#/orders/to-ship";
 import { addDispatch, createTestDb } from "#/test/db";
+import { memoryLocker } from "./dispatch";
 import { type Outside, sendTracking, voidDispatch } from "./handoff";
 import { assignOrderPins } from "./pins";
 
@@ -13,6 +14,7 @@ let orderId: number;
 
 function fakes(overrides: Partial<Outside> = {}): Outside {
 	return {
+		lock: memoryLocker(),
 		shopifyFulfill: vi.fn(async () => "gid://shopify/Fulfillment/1"),
 		shopifyCancel: vi.fn(async () => {}),
 		ebayFulfill: vi.fn(async () => "ebay-f-1"),
@@ -206,6 +208,25 @@ describe("sendTracking", () => {
 		expect(await flagged()).toBe(true);
 		await voidDispatch(db, id, outside);
 		expect(await flagged()).toBe(false);
+	});
+
+	test("a shipment missing a box, or with one voided, never sends tracking", async () => {
+		const outside = fakes();
+		const { dispatchId: incomplete } = await addDispatch(db, {
+			orderIds: [orderId],
+			bought: false,
+		});
+		await expect(sendTracking(db, incomplete, outside)).rejects.toThrow(
+			"Not every box",
+		);
+		await voidDispatch(db, incomplete, outside);
+
+		const partly = await ship([{}, { voidedAt: new Date() }]);
+		await expect(sendTracking(db, partly, outside)).rejects.toThrow(
+			"Some labels in this shipment were voided",
+		);
+		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
 	});
 
 	test("never sends a test label's fake tracking", async () => {

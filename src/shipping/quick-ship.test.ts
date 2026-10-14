@@ -358,7 +358,7 @@ describe("combineRates", () => {
 
 	test("one box is just its rates", () => {
 		expect(combineRates([[rate("a", "ground", 7)]])).toEqual([
-			{ ...rate("a", "ground", 7), rateIds: ["a"] },
+			rate("a", "ground", 7),
 		]);
 	});
 
@@ -375,7 +375,6 @@ describe("combineRates", () => {
 				serviceName: "USPS ground",
 				cost: 15.3,
 				days: 5,
-				rateIds: ["a1", "b1"],
 			},
 		]);
 	});

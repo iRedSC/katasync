@@ -3,13 +3,14 @@ import { ebayFulfill } from "#/channels/ebay";
 import { shopifyCancelFulfillment, shopifyFulfill } from "#/channels/shopify";
 import type { Db } from "#/db/client";
 import {
+	dispatches,
 	dispatchOrders,
 	orderLines,
 	orders,
 	shipments,
 	stores,
 } from "#/db/schema";
-import { ordersOf, withOrderLocks } from "./dispatch";
+import { lockOnOwnConnection, type OrderLocker, ordersOf } from "./dispatch";
 import { assignOrderPins } from "./pins";
 import { refundLabel } from "./shippo";
 import { tiktokShipPackage } from "./tiktok";
@@ -17,6 +18,7 @@ import { tiktokShipPackage } from "./tiktok";
 // The outside calls, passed in so tests can stand in for Shopify, eBay, and
 // Shippo.
 export type Outside = {
+	lock: OrderLocker;
 	shopifyFulfill: typeof shopifyFulfill;
 	shopifyCancel: typeof shopifyCancelFulfillment;
 	ebayFulfill: typeof ebayFulfill;
@@ -25,6 +27,7 @@ export type Outside = {
 };
 
 export const live: Outside = {
+	lock: lockOnOwnConnection,
 	shopifyFulfill,
 	shopifyCancel: shopifyCancelFulfillment,
 	ebayFulfill,
@@ -42,6 +45,10 @@ const trackingChannels: Record<string, string> = {
 type Box = typeof shipments.$inferSelect;
 
 async function load(db: Db, dispatchId: number) {
+	const [dispatch] = await db
+		.select()
+		.from(dispatches)
+		.where(eq(dispatches.id, dispatchId));
 	const boxes = await db
 		.select()
 		.from(shipments)
@@ -64,10 +71,10 @@ async function load(db: Db, dispatchId: number) {
 		.innerJoin(stores, eq(stores.id, orders.storeId))
 		.where(eq(dispatchOrders.dispatchId, dispatchId))
 		.orderBy(orders.id);
-	if (boxes.length === 0 || members.length === 0) {
+	if (!dispatch || boxes.length === 0 || members.length === 0) {
 		throw new Error(`No dispatch ${dispatchId}`);
 	}
-	return { boxes, members };
+	return { dispatch, boxes, members };
 }
 
 type Member = Awaited<ReturnType<typeof load>>["members"][number];
@@ -85,16 +92,27 @@ export async function sendTracking(
 	dispatchId: number,
 	outside: Outside = live,
 ): Promise<Handoff> {
-	const outcome = await withOrderLocks(
-		db,
+	const outcome = await outside.lock(
 		await ordersOf(db, dispatchId),
-		async (tx) => {
-			const { boxes, members } = await load(tx, dispatchId);
+		async () => {
+			const { dispatch, boxes, members } = await load(db, dispatchId);
 			const liveBoxes = boxes.filter((b) => !b.voidedAt);
 			if (liveBoxes.length === 0) throw new Error("This label was voided");
+			// Telling a marketplace it shipped with only some of its boxes
+			// would be wrong; such a shipment can only be voided.
+			if (!dispatch.boughtAt) {
+				throw new Error(
+					"Not every box in this shipment was bought. Void it and ship again.",
+				);
+			}
+			if (liveBoxes.length < boxes.length) {
+				throw new Error(
+					"Some labels in this shipment were voided. Void the rest and ship again.",
+				);
+			}
 			const results: (Handoff & { newly: boolean })[] = [];
 			for (const member of members) {
-				const result = await tell(tx, member, liveBoxes, outside);
+				const result = await tell(db, member, liveBoxes, outside);
 				// With several orders, each message says which one it's about.
 				results.push(
 					members.length > 1
@@ -115,7 +133,7 @@ export async function sendTracking(
 
 // Tells one order's marketplace.
 async function tell(
-	tx: Db,
+	db: Db,
 	member: Member,
 	boxes: Box[],
 	outside: Outside,
@@ -155,7 +173,7 @@ async function tell(
 				const shipped = await outside.tiktokShip(box.externalId);
 				fulfillmentId ??= shipped.id;
 				if (shipped.trackingNumber && !box.trackingNumber) {
-					await tx
+					await db
 						.update(shipments)
 						.set({ trackingNumber: shipped.trackingNumber })
 						.where(eq(shipments.id, box.id));
@@ -172,17 +190,17 @@ async function tell(
 				})),
 			});
 		} else {
-			fulfillmentId = await tellEbay(tx, order, boxes, outside);
+			fulfillmentId = await tellEbay(db, order, boxes, outside);
 		}
 	} catch (err) {
 		const why = err instanceof Error ? err.message : String(err);
-		await tx
+		await db
 			.update(dispatchOrders)
 			.set({ channelError: why })
 			.where(sameMember(member));
 		return done(false, `Tracking didn't reach ${name}: ${why}`);
 	}
-	await tx
+	await db
 		.update(dispatchOrders)
 		.set({
 			channelSentAt: new Date(),
@@ -191,7 +209,7 @@ async function tell(
 		})
 		.where(sameMember(member));
 	// Shipped now, not on the next sync: off To ship.
-	await tx
+	await db
 		.update(orders)
 		.set({ fulfillmentStatus: "FULFILLED" })
 		.where(eq(orders.id, order.id));
@@ -210,12 +228,12 @@ async function tell(
 // changed once made. So a multi-box order sends every line once, with the
 // first box's tracking; the other boxes' numbers stay in katasync.
 async function tellEbay(
-	tx: Db,
+	db: Db,
 	order: Member["order"],
 	boxes: Box[],
 	outside: Outside,
 ) {
-	const lines = await tx
+	const lines = await db
 		.select({
 			lineItemId: orderLines.externalId,
 			quantity: orderLines.quantity,
@@ -250,11 +268,10 @@ export async function voidDispatch(
 	dispatchId: number,
 	outside: Outside = live,
 ): Promise<Voided> {
-	const result = await withOrderLocks(
-		db,
+	const result = await outside.lock(
 		await ordersOf(db, dispatchId),
-		async (tx) => {
-			const { boxes, members } = await load(tx, dispatchId);
+		async () => {
+			const { boxes, members } = await load(db, dispatchId);
 			const liveBoxes = boxes.filter((b) => !b.voidedAt);
 			if (liveBoxes.length === 0) {
 				throw new Error("This label is already voided");
@@ -271,7 +288,7 @@ export async function voidDispatch(
 				try {
 					const { status } = await outside.refund(box.externalId);
 					statuses.push(status);
-					await tx
+					await db
 						.update(shipments)
 						.set({ voidedAt: new Date(), refundStatus: status })
 						.where(eq(shipments.id, box.id));
@@ -314,7 +331,7 @@ export async function voidDispatch(
 				// One live dispatch per order, so voiding it means nothing has
 				// shipped.
 				if (backToShip && order.fulfillmentStatus === "FULFILLED") {
-					await tx
+					await db
 						.update(orders)
 						.set({ fulfillmentStatus: "UNFULFILLED" })
 						.where(eq(orders.id, order.id));

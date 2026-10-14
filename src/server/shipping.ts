@@ -1,10 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { eq } from "drizzle-orm";
-import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
-import { locations, orders, packages, stores } from "#/db/schema";
+import { orders, packages, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
+import { shipAddresses } from "#/shipping/addresses";
 import { createBoxes, updateBox } from "#/shipping/boxes";
 import { buyDispatch, MAX_BOXES } from "#/shipping/buy";
 import { sendTracking, voidDispatch } from "#/shipping/handoff";
@@ -16,7 +16,7 @@ import {
 	serviceHistory,
 	shipmentPlan,
 } from "#/shipping/quick-ship";
-import { type Address, getRates, shippoIsTest } from "#/shipping/shippo";
+import { getRates, shippoIsTest } from "#/shipping/shippo";
 import { tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
 export const listPackages = createServerFn({ method: "GET" }).handler(
@@ -75,57 +75,6 @@ const send = {
 	contentsKey: "string",
 } as const;
 
-// The ship-to and ship-from addresses for an order, or why a label can't be
-// made yet.
-async function addresses(
-	orderId: number,
-): Promise<{ from: Address; to: Address }> {
-	const db = getDb();
-	const [o] = await db.select().from(orders).where(eq(orders.id, orderId));
-	if (!o) throw new Error(`No order ${orderId}`);
-	if (!o.shipAddress1 || !o.shipCity || !o.shipPostalCode || !o.shipCountry) {
-		throw new Error(`${o.name} has no full shipping address`);
-	}
-	const locationId = await shippingLocation(db);
-	const [from] = locationId
-		? await db.select().from(locations).where(eq(locations.id, locationId))
-		: [];
-	if (
-		!from?.address1 ||
-		!from.city ||
-		!from.postalCode ||
-		!from.country ||
-		!from.email
-	) {
-		throw new Error(
-			"The warehouse has no ship-from address or email yet; both come from Shopify (primary location and store contact email)",
-		);
-	}
-	return {
-		from: {
-			name: from.shipFromName ?? from.name,
-			street1: from.address1,
-			street2: from.address2,
-			city: from.city,
-			state: from.region ?? "",
-			zip: from.postalCode,
-			country: from.country,
-			phone: from.phone,
-			email: from.email,
-		},
-		to: {
-			name: o.customerName ?? "Customer",
-			street1: o.shipAddress1,
-			street2: o.shipAddress2,
-			city: o.shipCity,
-			state: o.shipRegion ?? "",
-			zip: o.shipPostalCode,
-			country: o.shipCountry,
-			phone: o.shipPhone,
-		},
-	};
-}
-
 // Prices for every box, one line per service offered for all of them, most
 // likely choice first. TikTok orders get TikTok's own services (one order,
 // one box); everything else gets Shippo's carriers. The orders share one
@@ -163,7 +112,7 @@ export const quickShipRates = createServerFn({ method: "POST" })
 				),
 			];
 		} else {
-			const where = await addresses(data.orderIds[0]);
+			const where = await shipAddresses(db, data.orderIds[0]);
 			const priced = await Promise.all(
 				data.boxes.map((b) =>
 					getRates({ ...where, parcel: b, insureAmount: b.insureAmount }),
@@ -188,9 +137,13 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			...send,
-			boxes: type({ ...box, rateId: "string > 0" })
-				.array()
-				.atLeastLength(1),
+			boxes: type(box).array().atLeastLength(1),
+			// Which service, not which rate: the server prices every box again.
+			choice: {
+				carrier: "string > 0",
+				service: "string > 0",
+				id: "string > 0",
+			},
 		}),
 	)
 	.handler(async ({ data }) => {

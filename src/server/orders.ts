@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
+	dispatches,
 	dispatchOrders,
 	locations,
 	orderLines,
@@ -137,8 +138,14 @@ export const getOrder = createServerFn({ method: "GET" })
 		// Every dispatch this order went out in (or will): its boxes, this
 		// order's tracking handoff, and any other orders in the same box.
 		const handoffs = await db
-			.select()
+			.select({
+				dispatchId: dispatchOrders.dispatchId,
+				channelSentAt: dispatchOrders.channelSentAt,
+				channelError: dispatchOrders.channelError,
+				boughtAt: dispatches.boughtAt,
+			})
 			.from(dispatchOrders)
+			.innerJoin(dispatches, eq(dispatches.id, dispatchOrders.dispatchId))
 			.where(eq(dispatchOrders.orderId, data.id))
 			.orderBy(dispatchOrders.dispatchId);
 		const ids = handoffs.map((h) => h.dispatchId);
@@ -178,12 +185,17 @@ export const getOrder = createServerFn({ method: "GET" })
 					)
 					.orderBy(orders.id)
 			: [];
-		const sends = handoffs.map((h) => {
+		// A purchase whose first box failed leaves a dispatch with no boxes;
+		// there's nothing to show for it.
+		const sends = handoffs.flatMap((h) => {
 			const own = boxes.filter((b) => b.dispatchId === h.dispatchId);
+			if (own.length === 0) return [];
 			return {
 				id: h.dispatchId,
 				channelSentAt: h.channelSentAt,
 				channelError: h.channelError,
+				// False when a box failed part way: void only, never send.
+				complete: h.boughtAt !== null,
 				boxes: own,
 				live: own.some((b) => b.voidedAt === null),
 				shippedWith: others.filter((o) => o.dispatchId === h.dispatchId),

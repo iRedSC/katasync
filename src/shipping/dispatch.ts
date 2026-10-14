@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
-import type { Db } from "#/db/client";
+import { type Db, withOwnConnection } from "#/db/client";
 import { dispatchOrders, orders, shipments, stores } from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { needsShipping } from "#/orders/to-ship";
@@ -7,26 +7,61 @@ import { needsShipping } from "#/orders/to-ship";
 // The rules for what can go out together. A dispatch is one send to one
 // address: one or more boxes, for one or more orders (see schema.ts).
 
-// Buying, sending, and voiding take turns per order, holding the locks across
-// the outside calls, so a double press or two people can't buy twice, refund
-// twice, or send tracking for a label being voided. Several orders lock in id
-// order, so two combined dispatches can't deadlock. A crash mid-way rolls back
-// with the transaction.
-export async function withOrderLocks<T>(
-	db: Db,
+// Buying, sending, and voiding take turns per order, holding the locks
+// across the outside calls, so a double press or two people can't buy twice,
+// refund twice, or send tracking for a label being voided. Passed in with the
+// other outside calls so tests can stand in for it.
+export type OrderLocker = <T>(
 	orderIds: number[],
-	work: (tx: Db) => Promise<T>,
-): Promise<T> {
-	const ids = [...new Set(orderIds)].sort((a, b) => a - b);
-	return db.transaction(async (tx) => {
+	work: () => Promise<T>,
+) => Promise<T>;
+
+// The locks are held by a transaction on a connection of its own, so the
+// work itself writes through the shared pool and each write commits as it
+// happens: a label that was paid for is never rolled back by a later
+// failure. Several orders lock in id order, so two combined dispatches can't
+// deadlock. The lock goes when that transaction ends, however the work ends.
+export const lockOnOwnConnection: OrderLocker = (orderIds, work) =>
+	withOwnConnection((lockDb) =>
+		lockDb.transaction(async (tx) => {
+			for (const id of sortedIds(orderIds)) {
+				await tx.execute(
+					sql`select pg_advisory_xact_lock(hashtext('order-labels'), ${id})`,
+				);
+			}
+			return work();
+		}),
+	);
+
+// The same turn-taking within one process, for tests: PGlite has a single
+// session, so it can't hold locks for another connection.
+export function memoryLocker(): OrderLocker {
+	const tails = new Map<number, Promise<unknown>>();
+	return async (orderIds, work) => {
+		const ids = sortedIds(orderIds);
+		const releases: (() => void)[] = [];
 		for (const id of ids) {
-			await tx.execute(
-				sql`select pg_advisory_xact_lock(hashtext('order-labels'), ${id})`,
+			const before = tails.get(id) ?? Promise.resolve();
+			let release = () => {};
+			const mine = new Promise<void>((r) => {
+				release = r;
+			});
+			tails.set(
+				id,
+				before.then(() => mine),
 			);
+			await before;
+			releases.push(release);
 		}
-		return work(tx);
-	});
+		try {
+			return await work();
+		} finally {
+			for (const release of releases) release();
+		}
+	};
 }
+
+const sortedIds = (ids: number[]) => [...new Set(ids)].sort((a, b) => a - b);
 
 // The orders a dispatch was bought for.
 export async function ordersOf(db: Db, dispatchId: number) {

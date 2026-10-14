@@ -341,18 +341,22 @@ function SendRow({
 		}
 	}
 
+	// Sending tracking needs every box bought and none voided.
+	const sendable = d.complete && live.length === d.boxes.length;
 	const state = !d.live
 		? {
 				tone: undefined,
 				text: `Voided · refund ${(first?.refundStatus ?? "requested").toLowerCase()}`,
 			}
-		: test
-			? { tone: "info" as const, text: "Test label" }
-			: d.channelSentAt
-				? { tone: "success" as const, text: `Tracking sent to ${channel}` }
-				: d.channelError
-					? { tone: "critical" as const, text: "Tracking not sent" }
-					: { tone: "warning" as const, text: "Tracking not sent yet" };
+		: !sendable
+			? { tone: "critical" as const, text: "Incomplete, void it" }
+			: test
+				? { tone: "info" as const, text: "Test label" }
+				: d.channelSentAt
+					? { tone: "success" as const, text: `Tracking sent to ${channel}` }
+					: d.channelError
+						? { tone: "critical" as const, text: "Tracking not sent" }
+						: { tone: "warning" as const, text: "Tracking not sent yet" };
 
 	return (
 		<li className="flex flex-col gap-2 border-t px-4 py-3 first:border-t-0">
@@ -420,7 +424,7 @@ function SendRow({
 			)}
 			{d.live && (
 				<div className="flex flex-wrap gap-2">
-					{!d.channelSentAt && !test && (
+					{sendable && !d.channelSentAt && !test && (
 						<Button
 							size="sm"
 							variant="outline"

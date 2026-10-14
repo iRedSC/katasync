@@ -461,6 +461,10 @@ export const dispatches = pgTable(
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity(),
 		contentsKey: text().notNull(),
+		// When every planned box's label was bought. Null while buying, or
+		// when a box failed part way: such a dispatch never sends tracking,
+		// it can only be voided.
+		boughtAt: timestamp({ withTimezone: true }),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [index("dispatches_contents_idx").on(t.contentsKey, t.createdAt)],

@@ -41,6 +41,8 @@ export async function addDispatch(
 		orderIds: number[];
 		contentsKey?: string;
 		createdAt?: Date;
+		// False for a purchase that stopped part way.
+		bought?: boolean;
 		boxes?: Partial<typeof schema.shipments.$inferInsert>[];
 	},
 ) {
@@ -48,6 +50,7 @@ export async function addDispatch(
 		.insert(schema.dispatches)
 		.values({
 			contentsKey: input.contentsKey ?? "WRENCH×2",
+			boughtAt: input.bought === false ? null : (input.createdAt ?? new Date()),
 			...(input.createdAt ? { createdAt: input.createdAt } : {}),
 		})
 		.returning();

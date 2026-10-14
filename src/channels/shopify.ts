@@ -550,9 +550,9 @@ const fulfillmentCreated = type({
 
 // Marks everything still open on the order as shipped with this tracking
 // (one number per box), and has Shopify email the customer. Returns
-// Shopify's fulfillment id, which voiding needs. Safe to repeat: if one of
-// these tracking numbers is already on the order (an earlier try got
-// through), that fulfillment is returned instead of a second one. Needs
+// Shopify's fulfillment id, which voiding needs. Safe to repeat: if these
+// tracking numbers are already on the order (an earlier try got through),
+// that fulfillment is returned instead of a second one. Needs
 // write_merchant_managed_fulfillment_orders.
 export async function shopifyFulfill(
 	orderId: string,
@@ -570,12 +570,20 @@ export async function shopifyFulfill(
 		),
 	);
 	if (!order) throw new Error("Shopify has no such order");
-	const already = order.fulfillments.find(
-		(f) =>
-			f.status !== "CANCELLED" &&
-			f.trackingInfo.some((t) => t.number && numbers.includes(t.number)),
-	);
-	if (already) return already.id;
+	// Only a fulfillment carrying every one of these numbers is this
+	// shipment sent before; one carrying just some was made another way and
+	// needs a person to look.
+	for (const f of order.fulfillments) {
+		if (f.status === "CANCELLED") continue;
+		const has = new Set(f.trackingInfo.map((t) => t.number));
+		const matching = numbers.filter((n) => has.has(n));
+		if (matching.length === numbers.length) return f.id;
+		if (matching.length > 0) {
+			throw new Error(
+				`Shopify already has a fulfillment with ${matching.join(", ")} but not ${numbers.filter((n) => !has.has(n)).join(", ")}; fix it in Shopify`,
+			);
+		}
+	}
 	const open = order.fulfillmentOrders.nodes.filter((f) =>
 		["OPEN", "IN_PROGRESS"].includes(f.status),
 	);

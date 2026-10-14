@@ -28,7 +28,8 @@ import {
 	voidLabel,
 } from "#/server/shipping";
 import { labelPath } from "#/shipping/label-path";
-import type { Quote, ShipmentPlan } from "#/shipping/quick-ship";
+import type { ShipmentPlan } from "#/shipping/quick-ship";
+import type { Rate } from "#/shipping/shippo";
 
 const MM_PER_INCH = 25.4;
 const GRAMS_PER_OUNCE = 28.349523125;
@@ -41,7 +42,7 @@ type Dims = { lengthMm: number; widthMm: number; heightMm: number };
 // A box already packed and weighed, before buying.
 type Packed = { box: Box | null; dims: Dims; weightGrams: number };
 type Step = "pin" | "package" | "weight" | "insure" | "rates" | "done";
-type Rates = { list: Quote[]; notes: string[]; test: boolean };
+type Rates = { list: Rate[]; notes: string[]; test: boolean };
 type Bought = Awaited<ReturnType<typeof quickShipBuy>>;
 
 const inches = (mm: number) => Math.round((mm / MM_PER_INCH) * 10) / 10;
@@ -353,7 +354,7 @@ export function QuickShip() {
 		if (result && mine === latest.current) setRates(result);
 	}
 
-	async function buy(quote: Quote) {
+	async function buy(quote: Rate) {
 		const list = allBoxes(weightGrams);
 		if (!plan || list.length === 0 || busy) return;
 		const parts = splitInsurance(insureAmount, list.length);
@@ -367,8 +368,12 @@ export function QuickShip() {
 						...p.dims,
 						weightGrams: p.weightGrams,
 						insureAmount: parts[i],
-						rateId: quote.rateIds[i],
 					})),
+					choice: {
+						carrier: quote.carrier,
+						service: quote.service,
+						id: quote.id,
+					},
 				},
 			}),
 		);
@@ -1199,7 +1204,7 @@ function RatesStep({
 	rates: Rates | null;
 	boxes: number;
 	busy: boolean;
-	onBuy: (quote: Quote) => void;
+	onBuy: (quote: Rate) => void;
 }) {
 	const [selected, setSelected] = useState(0);
 	const list = useRef<HTMLDivElement>(null);

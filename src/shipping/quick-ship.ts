@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	dispatches,
@@ -158,7 +158,8 @@ async function lastBoxes(db: Db, key: string) {
 	const [latest] = await db
 		.select({ id: dispatches.id })
 		.from(dispatches)
-		.where(eq(dispatches.contentsKey, key))
+		// A purchase that stopped part way isn't a good example.
+		.where(and(eq(dispatches.contentsKey, key), isNotNull(dispatches.boughtAt)))
 		.orderBy(desc(dispatches.createdAt), desc(dispatches.id))
 		.limit(1);
 	if (!latest) return null;
@@ -175,19 +176,17 @@ async function lastBoxes(db: Db, key: string) {
 		.orderBy(asc(shipments.id));
 }
 
-// One service's price for every box together. rateIds holds each box's own
-// rate, in box order, so buying uses exactly what was priced.
-export type Quote = Omit<Rate, "id"> & { id: string; rateIds: string[] };
-
 // Turns each box's rates into one price per service: only services offered
 // for every box, costs added up, the slowest box's days. With one box this
-// is just that box's rates.
-export function combineRates(perBox: Rate[][]): Quote[] {
+// is just that box's rates. Buying prices each box again (see buyDispatch),
+// so only the service is taken from here.
+export function combineRates(perBox: Rate[][]): Rate[] {
 	if (perBox.length === 0) return [];
 	const keyOf = (r: Rate) => `${r.carrier}|${r.service}`;
-	const quotes: Quote[] = [];
+	const quotes = new Map<string, Rate>();
 	for (const first of perBox[0]) {
 		const key = keyOf(first);
+		if (quotes.has(key)) continue;
 		const matches = perBox.map((rates) =>
 			rates
 				.filter((r) => keyOf(r) === key)
@@ -195,10 +194,10 @@ export function combineRates(perBox: Rate[][]): Quote[] {
 				.at(0),
 		);
 		if (matches.some((m) => m === undefined)) continue;
-		if (quotes.some((q) => keyOf(q as Rate) === key)) continue;
 		const found = matches as Rate[];
 		const days = found.map((m) => m.days);
-		quotes.push({
+		quotes.set(key, {
+			// One box: its own rate (TikTok buys by this service id).
 			id: found.map((m) => m.id).join("+"),
 			carrier: first.carrier,
 			service: first.service,
@@ -207,10 +206,9 @@ export function combineRates(perBox: Rate[][]): Quote[] {
 			days: days.some((d) => d === null)
 				? null
 				: Math.max(...(days as number[])),
-			rateIds: found.map((m) => m.id),
 		});
 	}
-	return quotes;
+	return [...quotes.values()];
 }
 
 export type ServiceHistory = {
@@ -278,7 +276,12 @@ export async function lastPackedFor(db: Db, keys: string[]) {
 		.from(dispatches)
 		.innerJoin(shipments, eq(shipments.dispatchId, dispatches.id))
 		.leftJoin(packages, eq(packages.id, shipments.packageId))
-		.where(inArray(dispatches.contentsKey, keys))
+		.where(
+			and(
+				inArray(dispatches.contentsKey, keys),
+				isNotNull(dispatches.boughtAt),
+			),
+		)
 		.orderBy(
 			dispatches.contentsKey,
 			desc(dispatches.createdAt),

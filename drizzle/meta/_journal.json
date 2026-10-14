@@ -211,6 +211,13 @@
       "when": 1791988785031,
       "tag": "0029_shipments_in_dispatches",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791996213747,
+      "tag": "0030_dispatch_bought_at",
+      "breakpoints": true
     }
   ]
 }
