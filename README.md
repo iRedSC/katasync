@@ -4,7 +4,7 @@
 
 Inventory, purchasing, and order fulfillment for Shopify, Amazon, eBay, and TikTok Shop. Replaces Sumtracker.
 
-Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Trigger.dev for background jobs.
+Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Vercel Cron for syncing.
 
 ## Setup
 
@@ -13,7 +13,7 @@ Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Tr
 3. `pnpm db:migrate`
 4. `pnpm dev` (http://127.0.0.1:3000). To reach it from other devices: `tailscale serve --bg --https=3000 http://127.0.0.1:3000`.
 
-`pnpm sync --watch` pulls orders from every channel whose credentials are in `.env.local` (Shopify; TikTok Shop; Amazon; eBay). Once TikTok has synced, Shopify stops importing the TikTok orders its TikTok channel relays. Quote values that contain `#`, like eBay refresh tokens, or they get cut off.
+In production, Vercel Cron runs each channel's sync on the schedules in `vercel.json` (`src/routes/api/cron/sync.$channel.ts`); set `CRON_SECRET` in Vercel to a random string of 16+ characters. Locally, `pnpm sync --watch` pulls orders from every channel whose credentials are in `.env.local` (Shopify; TikTok Shop; Amazon; eBay). Once TikTok has synced, Shopify stops importing the TikTok orders its TikTok channel relays. Quote values that contain `#`, like eBay refresh tokens, or they get cut off.
 
 `pnpm test` runs against an in-memory Postgres (PGlite) and needs no database.
 

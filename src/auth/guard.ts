@@ -5,7 +5,8 @@ import { SESSION_COOKIE, sessionCookie, sessionFor } from "./sessions";
 // Server only; src/start.ts runs it, except on the dev server.
 
 // Reachable while signed out: the sign-in and setup pages, their API, and
-// the files those pages load. /mcp checks its own API token instead.
+// the files those pages load. /mcp checks its own API token instead, and
+// /api/cron/ the CRON_SECRET Vercel Cron sends.
 const PUBLIC_PATHS = new Set([
 	"/mcp",
 	"/login",
@@ -21,6 +22,7 @@ export function isPublic(pathname: string) {
 	return (
 		PUBLIC_PATHS.has(pathname) ||
 		pathname.startsWith("/api/auth/") ||
+		pathname.startsWith("/api/cron/") ||
 		pathname.startsWith("/assets/")
 	);
 }
