@@ -14,6 +14,13 @@ exit /b %errorlevel%
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $qz = Join-Path $env:ProgramFiles 'QZ Tray'
+function Get-QzVersion {
+	if (Test-Path "$qz\qz-tray.exe") {
+		$reportedVersion = (Get-Item "$qz\qz-tray.exe").VersionInfo.ProductVersion
+		if ($reportedVersion -match '^(\d+\.\d+\.\d+)') { return [version]$Matches[1] }
+	}
+	return [version]'0.0.0'
+}
 $certificate = @'
 KATASYNC_CERTIFICATE
 '@
@@ -23,11 +30,12 @@ KATASYNC_CERTIFICATE
 # them.
 if ($env:KATASYNC_STEP -eq 'admin') {
 	try {
-		if (-not (Test-Path "$qz\qz-tray.exe")) {
+		$version = '2.3.0'
+		$installedVersion = Get-QzVersion
+		if ($installedVersion -lt [version]$version) {
 			# A version we've checked, matched by hash, so a changed or newer
 			# release on GitHub can't slip in. To move to a newer one, take the
 			# SHA-256s from its release page.
-			$version = '2.3.0'
 			$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x86_64' }
 			$sha256 = @{
 				'x86_64' = '7a44a50f679f0a1dab6679e6c22158dd335511074f5fcc1b208b6f9caf711ba7'
@@ -49,11 +57,13 @@ if ($env:KATASYNC_STEP -eq 'admin') {
 				Write-Host "Installing QZ Tray $version..."
 				# Waits for the installer only: -Wait would also wait for the QZ Tray
 				# it starts, which keeps running.
-				(Start-Process $installer -ArgumentList '/S' -PassThru).WaitForExit()
+				$installProcess = Start-Process $installer -ArgumentList '/S' -PassThru
+				$installProcess.WaitForExit()
+				if ($installProcess.ExitCode -ne 0) { throw "QZ Tray installer failed with exit code $($installProcess.ExitCode)." }
 			} finally {
 				Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 			}
-			if (-not (Test-Path "$qz\qz-tray.exe")) { throw "QZ Tray didn't install." }
+			if ((Get-QzVersion) -lt [version]$version) { throw "QZ Tray $version didn't install." }
 		}
 		# katasync only needs QZ to print to this computer's printers, so turn
 		# off what it doesn't use: listening beyond this computer, reading and

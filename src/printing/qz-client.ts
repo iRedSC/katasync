@@ -36,6 +36,23 @@ export function useLabelPrinter() {
 type Qz = typeof import("qz-tray");
 let loading: Promise<Qz> | null = null;
 let connecting: Promise<void> | null = null;
+let signingError: unknown = null;
+let requestTail: Promise<unknown> = Promise.resolve();
+
+function qzRequest<Result>(use: (qz: Qz) => Promise<Result>): Promise<Result> {
+	const pending = requestTail.then(async () => {
+		signingError = null;
+		try {
+			return await use(await qzConnected());
+		} catch (error) {
+			throw signingError ?? error;
+		} finally {
+			signingError = null;
+		}
+	});
+	requestTail = pending.catch(() => {});
+	return pending;
+}
 
 // QZ Tray, connected. Loaded and told how to sign once; reconnects if QZ
 // was restarted since. QZ reports the socket active before it has the
@@ -80,15 +97,19 @@ function setUpQz(mod: Qz) {
 		passThrough as unknown as Parameters<Qz["api"]["setSha256Type"]>[0],
 	);
 	qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
-		signQzRequest({ data: toSign }).then(resolve, reject);
+		signQzRequest({ data: toSign }).then(resolve, (error: unknown) => {
+			signingError = error;
+			reject(message(error));
+		});
 	});
 	return qz;
 }
 
 export async function qzPrinters(): Promise<string[]> {
-	const qz = await qzConnected();
-	const found = await qz.printers.find();
-	return Array.isArray(found) ? found : [found];
+	return qzRequest(async (qz) => {
+		const found = await qz.printers.find();
+		return Array.isArray(found) ? found : [found];
+	});
 }
 
 // Prints a label, or opens it when this computer has no label printer. A
@@ -97,24 +118,48 @@ export function printLabel(shipmentId: number) {
 	return printPdf(labelPath(shipmentId), "Label");
 }
 
+export function printLabels(shipmentIds: number[]) {
+	return printPdfs(shipmentIds.map(labelPath), "Labels");
+}
+
 export async function printPdf(path: string, what: string) {
+	return printPdfs([path], what);
+}
+
+async function printPdfs(paths: string[], what: string) {
+	const [first] = paths;
+	if (first === undefined) return;
 	const printer = labelPrinter();
-	const open = () => window.open(path, "_blank");
+	const open = () => window.open(first, "_blank");
 	if (!printer) return void open();
 	try {
-		const qz = await qzConnected();
-		const response = await fetch(path);
-		if (!response.ok) throw new Error(await response.text());
-		const data = toBase64(await response.arrayBuffer());
-		// Our labels are 4x6 PDFs (Shippo's PDF_4x6, TikTok's A6).
-		const config = qz.configs.create(printer, {
-			size: { width: 4, height: 6 },
-			units: "in",
-			colorType: "blackwhite",
+		await qzRequest(async (qz) => {
+			const found = await qz.printers.find();
+			const printers = Array.isArray(found) ? found : [found];
+			if (!printers.includes(printer)) {
+				throw new Error(
+					`Printer "${printer}" was not found; choose a printer in Settings`,
+				);
+			}
+			const data = await Promise.all(
+				paths.map(async (path) => {
+					const response = await fetch(path);
+					if (!response.ok) throw new Error(await response.text());
+					return {
+						type: "pixel" as const,
+						format: "pdf" as const,
+						flavor: "base64" as const,
+						data: toBase64(await response.arrayBuffer()),
+					};
+				}),
+			);
+			const config = qz.configs.create(printer, {
+				size: { width: 4, height: 6 },
+				units: "in",
+				colorType: "blackwhite",
+			});
+			await qz.print(config, data);
 		});
-		await qz.print(config, [
-			{ type: "pixel", format: "pdf", flavor: "base64", data },
-		]);
 		toast.success(`${what} sent to ${printer}`);
 	} catch (err) {
 		toast.error(`${what} didn't print on ${printer}: ${message(err)}`, {
