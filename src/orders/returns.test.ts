@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { postMovements } from "#/inventory/ledger";
+import { postMovements, recordSale } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
 import { receiveReturn, undoReturns } from "./returns";
@@ -55,6 +55,35 @@ async function shippedOrder(
 			unitPrice: 20,
 		})
 		.returning();
+	if (
+		productId !== null &&
+		!extra.cancelledAt &&
+		!extra.fulfilledByChannel &&
+		(!extra.fulfillmentStatus || extra.fulfillmentStatus === "FULFILLED")
+	) {
+		const { batchId } = await recordSale(db, {
+			productId,
+			quantity,
+			locationId: warehouse,
+			reference: `sale:${line.id}`,
+		});
+		const sold = await db
+			.select()
+			.from(schema.movements)
+			.where(eq(schema.movements.batchId, batchId));
+		await postMovements(db, {
+			lines: sold.map((movement) => ({
+				productId: movement.productId,
+				locationId: movement.locationId,
+				delta: -movement.delta,
+				reason: "opening_balance",
+			})),
+		});
+		await db
+			.update(schema.orderLines)
+			.set({ saleBatchId: batchId })
+			.where(eq(schema.orderLines.id, line.id));
+	}
 	return line.id;
 }
 
@@ -148,6 +177,38 @@ describe("receiveReturn", () => {
 		});
 		expect(await onHand(handle)).toBe(1);
 		expect(await onHand(blade)).toBe(3);
+	});
+
+	test("a returned bundle uses its sold recipe after the recipe changes", async () => {
+		const original = await createProduct(db, "ORIGINAL", "simple");
+		const replacement = await createProduct(db, "REPLACEMENT", "simple");
+		const bundle = await createProduct(db, "BUNDLE", "bundle");
+		await setRecipe(db, bundle, [{ productId: original, quantity: 3 }]);
+		const lineId = await shippedOrder(bundle, 2);
+		await setRecipe(db, bundle, [{ productId: replacement, quantity: 1 }]);
+		await receiveReturn(db, {
+			orderId,
+			lines: [{ lineId, quantity: 1 }],
+			restock: true,
+		});
+		expect(await onHand(original)).toBe(3);
+		expect(await onHand(replacement)).toBe(0);
+	});
+
+	test("a partially shipped order cannot return its unshipped units", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const lineId = await shippedOrder(wrench, 3, {
+			fulfillmentStatus: "PARTIALLY_FULFILLED",
+		});
+		await expect(
+			receiveReturn(db, {
+				orderId,
+				lines: [{ lineId, quantity: 3 }],
+				restock: true,
+			}),
+		).rejects.toThrow("remaining items");
+		expect(await onHand(wrench)).toBe(0);
+		expect(await db.select().from(schema.orderReturns)).toEqual([]);
 	});
 
 	test("refuses orders whose stock never left or already came back", async () => {

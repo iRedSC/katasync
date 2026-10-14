@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
@@ -288,6 +288,31 @@ describe("buyDispatch", () => {
 		expect(await db.select().from(schema.shipments)).toEqual([]);
 		// The order is free to try again.
 		expect((await buy([a], [box()])).failed).toBeNull();
+	});
+
+	test("a later label failing to save refunds every bought box", async () => {
+		const orderId = await addOrder("#1");
+		await db.execute(
+			sql`create function fail_second_box() returns trigger language plpgsql as $$ begin if new.weight_grams = 900 then raise exception 'save failed'; end if; return new; end $$`,
+		);
+		await db.execute(
+			sql`create trigger fail_second_box before insert on shipments for each row execute function fail_second_box()`,
+		);
+		const outside = fakes();
+		const result = await buy(
+			[orderId],
+			[box(), box({ weightGrams: 900 })],
+			outside,
+		);
+		expect(result.failed).toContain("couldn't be saved");
+		expect(outside.refund).toHaveBeenCalledTimes(2);
+		expect(result.boxes).toHaveLength(1);
+		expect(result.boxes[0].voidedAt).not.toBeNull();
+		const [handoff] = await db
+			.select()
+			.from(schema.dispatchOrders)
+			.where(eq(schema.dispatchOrders.dispatchId, result.dispatchId));
+		expect(handoff.reversedAt).not.toBeNull();
 	});
 
 	test("TikTok orders stay one order, one box", async () => {

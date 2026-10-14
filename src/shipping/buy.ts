@@ -170,6 +170,7 @@ export async function buyDispatch(
 						test: outside.isTest(),
 					};
 				}
+				bought.push(await record(db, row, outside));
 			} catch (err) {
 				// Nothing bought yet: nothing to keep, so the empty dispatch
 				// stays behind unused (it never counts as live).
@@ -177,6 +178,12 @@ export async function buyDispatch(
 				const why = err instanceof Error ? err.message : String(err);
 				const after = await refundAll(db, bought, outside);
 				const stillLive = after.filter((b) => !b.voidedAt).length;
+				if (stillLive === 0) {
+					await db
+						.update(dispatchOrders)
+						.set({ reversedAt: new Date() })
+						.where(eq(dispatchOrders.dispatchId, dispatchId));
+				}
 				return {
 					dispatchId,
 					boxes: after,
@@ -187,7 +194,6 @@ export async function buyDispatch(
 					}`,
 				};
 			}
-			bought.push(await record(db, row, outside));
 		}
 		await db
 			.update(dispatches)

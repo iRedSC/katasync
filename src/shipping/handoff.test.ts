@@ -156,6 +156,20 @@ describe("sendTracking", () => {
 		);
 	});
 
+	test("refunded and voided orders never send their bought tracking", async () => {
+		const id = await ship();
+		const outside = fakes();
+		for (const financialStatus of ["REFUNDED", "VOIDED"]) {
+			await db
+				.update(schema.orders)
+				.set({ financialStatus })
+				.where(eq(schema.orders.id, orderId));
+			expect((await sendTracking(db, id, outside)).sent).toBe(false);
+		}
+		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
+	});
+
 	test("a combined box tells each order, and one refusal doesn't stop the other", async () => {
 		const other = await addOrder("10", "shopify");
 		await assignOrderPins(db);
@@ -322,6 +336,36 @@ describe("voidDispatch", () => {
 		]);
 		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
 		expect(outside.refund).toHaveBeenCalledTimes(1);
+	});
+
+	test("finishing an aborted purchase never unships its successful replacement", async () => {
+		const old = await addDispatch(db, {
+			orderIds: [orderId],
+			bought: false,
+			boxes: [{ voidedAt: new Date() }],
+		});
+		const newer = await ship();
+		await sendTracking(db, newer, fakes());
+		await voidDispatch(db, old.dispatchId, fakes());
+		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
+		expect((await handoffOf(newer)).channelSentAt).not.toBeNull();
+	});
+
+	test("finishing a historical fulfillment void preserves a newer shipment", async () => {
+		const old = await ship();
+		await sendTracking(db, old, fakes());
+		await db
+			.update(schema.shipments)
+			.set({ voidedAt: new Date() })
+			.where(eq(schema.shipments.dispatchId, old));
+		await db
+			.update(schema.orders)
+			.set({ fulfillmentStatus: "UNFULFILLED" })
+			.where(eq(schema.orders.id, orderId));
+		const newer = await ship();
+		await sendTracking(db, newer, fakes());
+		await voidDispatch(db, old, fakes());
+		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
 	});
 
 	test("a voided label's tracking is never sent", async () => {

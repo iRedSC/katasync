@@ -61,8 +61,7 @@ function OrderPage() {
 	const canReturn =
 		!order.fulfilledByChannel &&
 		!order.cancelledAt &&
-		(order.fulfillmentStatus === "FULFILLED" ||
-			order.fulfillmentStatus === "PARTIALLY_FULFILLED") &&
+		order.fulfillmentStatus === "FULFILLED" &&
 		returnable.length > 0;
 	const [returning, setReturning] = useState(false);
 	const address = [

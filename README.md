@@ -47,3 +47,5 @@ Edit `src/db/schema.ts`, then `pnpm db:generate` and commit the new file in `dri
 - **Stores** are connected seller accounts (a channel plus a name). **Listings** are what each store sells, each mapped to one product. A multi-pack is a bundle product. FBA listings must map to a simple product or kit, since Amazon stocks physical units.
 
 All stock changes go through `src/inventory/ledger.ts`. Mapping rules live in `src/channels/listings.ts`.
+
+Returns are received only after an order is fully shipped. Partially shipped orders do not yet have per-line shipped counts, so receiving their returns is blocked rather than restocking units still awaiting shipment. Bundle returns use the components recorded in the original sale, not the current recipe; historical bundles without a recorded sale must have their returned parts counted individually.

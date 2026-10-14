@@ -9,7 +9,7 @@ export class ReturnError extends Error {
 }
 
 // Statuses where something has left the building and can come back.
-const shipped = ["FULFILLED", "PARTIALLY_FULFILLED"];
+const shipped = ["FULFILLED"];
 
 // Receives units a customer sent back. Restocked units go back on the
 // shipping location's shelf; written-off ones (damaged) are only recorded.
@@ -46,7 +46,11 @@ export async function receiveReturn(
 			);
 		}
 		if (!shipped.includes(order.fulfillmentStatus)) {
-			throw new ReturnError(`${order.name} hasn't shipped yet`);
+			throw new ReturnError(
+				order.fulfillmentStatus === "PARTIALLY_FULFILLED"
+					? "Receive returns after the remaining items ship or are cancelled"
+					: `${order.name} hasn't shipped yet`,
+			);
 		}
 		const locationId = input.restock ? await shippingLocation(tx) : null;
 		if (input.restock && locationId === null) {
@@ -60,6 +64,7 @@ export async function receiveReturn(
 				sku: orderLines.sku,
 				title: orderLines.title,
 				quantity: orderLines.quantity,
+				saleBatchId: orderLines.saleBatchId,
 				// The outer table is named: in a one-table select Drizzle leaves
 				// it off, and the subquery would compare its own columns.
 				returned: sql<number>`coalesce((
@@ -104,6 +109,9 @@ export async function receiveReturn(
 					quantity: want.quantity,
 					locationId,
 					reference: `return:${order.id}:${line.id}`,
+					sale: line.saleBatchId
+						? { batchId: line.saleBatchId, quantity: line.quantity }
+						: null,
 				}));
 			}
 			const [row] = await tx

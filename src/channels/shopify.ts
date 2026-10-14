@@ -234,6 +234,76 @@ async function shippedUnits(orderId: string) {
 	return shipped;
 }
 
+const remainingOrdersPage = type({
+	order: {
+		fulfillmentOrders: {
+			pageInfo: { hasNextPage: "boolean", endCursor: "string | null" },
+			nodes: type({ id: "string", status: "string" }).array(),
+		},
+	},
+});
+
+const remainingItemsPage = type({
+	node: {
+		lineItems: {
+			pageInfo: { hasNextPage: "boolean", endCursor: "string | null" },
+			nodes: type({
+				remainingQuantity: "number.integer >= 0",
+				lineItem: { id: "string" },
+			}).array(),
+		},
+	},
+});
+
+async function remainingUnits(orderId: string) {
+	const remaining = new Map<string, number>();
+	let orderCursor: string | null = null;
+	do {
+		const { order } = remainingOrdersPage.assert(
+			await shopifyQuery(
+				`query($id: ID!, $cursor: String) {
+				order(id: $id) { fulfillmentOrders(first: 50, after: $cursor) {
+					pageInfo { hasNextPage endCursor } nodes { id status }
+				} }
+			}`,
+				{ id: orderId, cursor: orderCursor },
+			),
+		);
+		for (const fulfillment of order.fulfillmentOrders.nodes) {
+			if (fulfillment.status === "CANCELLED" || fulfillment.status === "CLOSED")
+				continue;
+			let lineCursor: string | null = null;
+			do {
+				const { node } = remainingItemsPage.assert(
+					await shopifyQuery(
+						`query($id: ID!, $cursor: String) {
+						node(id: $id) { ... on FulfillmentOrder { lineItems(first: 100, after: $cursor) {
+							pageInfo { hasNextPage endCursor } nodes { remainingQuantity lineItem { id } }
+						} } }
+					}`,
+						{ id: fulfillment.id, cursor: lineCursor },
+					),
+				);
+				for (const item of node.lineItems.nodes) {
+					const id = item.lineItem.id;
+					remaining.set(id, (remaining.get(id) ?? 0) + item.remainingQuantity);
+				}
+				lineCursor = node.lineItems.pageInfo.hasNextPage
+					? node.lineItems.pageInfo.endCursor
+					: null;
+				if (node.lineItems.pageInfo.hasNextPage && !lineCursor)
+					throw new Error("Shopify omitted the remaining-items cursor");
+			} while (lineCursor);
+		}
+		orderCursor = order.fulfillmentOrders.pageInfo.hasNextPage
+			? order.fulfillmentOrders.pageInfo.endCursor
+			: null;
+		if (order.fulfillmentOrders.pageInfo.hasNextPage && !orderCursor)
+			throw new Error("Shopify omitted the fulfillment-orders cursor");
+	} while (orderCursor);
+	return remaining;
+}
+
 const variantsPage = type({
 	productVariants: {
 		pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
@@ -456,10 +526,11 @@ async function ingestNode(
 	)
 		? await shippedUnits(o.id)
 		: null;
+	const remaining = shipped ? await remainingUnits(o.id) : null;
 	return ingestOrder(
 		db,
 		store,
-		shopifyToChannelOrder(order, shipped),
+		shopifyToChannelOrder(order, shipped, remaining),
 		locationId,
 	);
 }
@@ -512,6 +583,7 @@ export type ShopifyOrder = typeof orderNode.infer;
 export function shopifyToChannelOrder(
 	o: ShopifyOrder,
 	shipped: Map<string, number> | null,
+	remaining: Map<string, number> | null,
 ): ChannelOrder {
 	return {
 		externalId: o.id,
@@ -542,7 +614,7 @@ export function shopifyToChannelOrder(
 			listingExternalId: l.variant?.id ?? null,
 			sku: l.sku || null,
 			title: l.name,
-			quantity: shopifyLineQuantity(o, l, shipped),
+			quantity: shopifyLineQuantity(o, l, shipped, remaining),
 			unitPrice: l.discountedUnitPriceAfterAllDiscountsSet.shopMoney.amount,
 		})),
 	};
@@ -558,9 +630,15 @@ export function shopifyLineQuantity(
 	o: Pick<ShopifyOrder, "cancelledAt">,
 	l: { id: string; quantity: number; currentQuantity: number },
 	shipped: Map<string, number> | null,
+	remaining: Map<string, number> | null,
 ) {
 	if (o.cancelledAt || l.currentQuantity >= l.quantity) return l.quantity;
-	return Math.max(l.currentQuantity, shipped?.get(l.id) ?? 0);
+	if (!shipped || !remaining)
+		throw new Error("Shopify fulfillment quantities are unavailable");
+	return Math.min(
+		l.quantity,
+		(shipped.get(l.id) ?? 0) + (remaining.get(l.id) ?? 0),
+	);
 }
 
 const userErrors = type({

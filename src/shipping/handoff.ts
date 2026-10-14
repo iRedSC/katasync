@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import { ebayFulfill } from "#/channels/ebay";
 import { shopifyCancelFulfillment, shopifyFulfill } from "#/channels/shopify";
 import type { Db } from "#/db/client";
@@ -63,6 +63,7 @@ async function load(db: Db, dispatchId: number) {
 				externalId: orders.externalId,
 				fulfillmentStatus: orders.fulfillmentStatus,
 				cancelledAt: orders.cancelledAt,
+				financialStatus: orders.financialStatus,
 			},
 			channel: stores.channel,
 		})
@@ -154,6 +155,15 @@ async function tell(
 	// Telling the customer it shipped would be wrong; the box stays here.
 	if (order.cancelledAt) {
 		return done(false, "The order was cancelled; void the label instead");
+	}
+	if (
+		order.financialStatus === "REFUNDED" ||
+		order.financialStatus === "VOIDED"
+	) {
+		return done(
+			false,
+			"The order was refunded or voided; void the label instead",
+		);
 	}
 	// A test label's tracking number is fake; customers must never get it.
 	if (boxes.some((b) => b.test)) {
@@ -347,10 +357,27 @@ export async function voidDispatch(
 					backToShip = true;
 				}
 				if (!backToShip) continue;
+				let putBack = false;
 				// One live dispatch per order, so voiding it means nothing has
 				// shipped. Recorded together with the order going back.
 				await db.transaction(async (tx) => {
-					if (order.fulfillmentStatus === "FULFILLED") {
+					const [newer] = await tx
+						.select({ dispatchId: dispatchOrders.dispatchId })
+						.from(dispatchOrders)
+						.where(
+							and(
+								eq(dispatchOrders.orderId, order.id),
+								gt(dispatchOrders.dispatchId, dispatchId),
+								isNotNull(dispatchOrders.channelSentAt),
+								isNull(dispatchOrders.reversedAt),
+							),
+						)
+						.limit(1);
+					putBack =
+						handoff.channelSentAt !== null &&
+						!newer &&
+						order.fulfillmentStatus === "FULFILLED";
+					if (putBack) {
 						await tx
 							.update(orders)
 							.set({ fulfillmentStatus: "UNFULFILLED" })
@@ -361,7 +388,7 @@ export async function voidDispatch(
 						.set({ reversedAt: new Date() })
 						.where(sameMember(member));
 				});
-				if (order.fulfillmentStatus === "FULFILLED") {
+				if (putBack) {
 					notes.push(`${label}The order is back on To ship`);
 				}
 			}
