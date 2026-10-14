@@ -93,9 +93,21 @@ function Settings() {
 			<TokensCard tokens={tokens} />
 			<Boxes boxes={boxes} />
 			<Units units={units} />
-			<Card title="Label printing">
+			<Card
+				title="Label printing"
+				aside={
+					<Button asChild size="sm" variant="outline">
+						<a href="/labels/setup" download>
+							Download setup
+						</a>
+					</Button>
+				}
+			>
 				<p className="text-muted-foreground">
-					Not set up yet. Each packing computer needs QZ Tray.
+					On each Windows packing computer, download the setup, open it, and
+					click Yes. It installs QZ Tray if needed and lets katasync print
+					without asking. If the browser or Windows warns about the file, choose
+					Keep, then Run.
 				</p>
 			</Card>
 		</Page>
