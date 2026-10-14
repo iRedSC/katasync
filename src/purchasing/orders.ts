@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -182,20 +182,7 @@ export async function setDraftLine(
 			eq(purchaseOrderLines.purchaseOrderId, po.id),
 			eq(purchaseOrderLines.productId, input.productId),
 		);
-		const [product] = await tx
-			.select({
-				kind: products.kind,
-				sku: products.sku,
-				productCost: products.unitCost,
-				supplierCost: productSuppliers.cost,
-				unit: productSuppliers.unit,
-				packSize: productSuppliers.packSize,
-				minimumQuantity: productSuppliers.minimumQuantity,
-			})
-			.from(products)
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-			.where(eq(products.id, input.productId));
-		if (!product) throw new PurchaseOrderError("That product doesn't exist");
+		const product = await newLine(tx, input.productId);
 		// A line already on the draft keeps its own terms; a new one starts
 		// with the supplier's.
 		const [existing] = await tx
@@ -206,11 +193,7 @@ export async function setDraftLine(
 			})
 			.from(purchaseOrderLines)
 			.where(where);
-		const terms = existing ?? {
-			unit: product.unit ?? "EACH",
-			packSize: product.packSize ?? 1,
-			minimumQuantity: product.minimumQuantity ?? 1,
-		};
+		const terms = existing ?? product.terms;
 		const quantity = input.inItems
 			? Math.ceil(input.quantity / terms.packSize)
 			: input.quantity;
@@ -218,10 +201,7 @@ export async function setDraftLine(
 			await tx.delete(purchaseOrderLines).where(where);
 			return { ...terms, quantity };
 		}
-		if (product.kind === "bundle")
-			throw new PurchaseOrderError(
-				`${product.sku} is a tool set; order its parts instead`,
-			);
+		refuseToolSet(product);
 		await tx
 			.insert(purchaseOrderLines)
 			.values({
@@ -230,12 +210,7 @@ export async function setDraftLine(
 				...terms,
 				quantity,
 				unitCost:
-					input.unitCost !== undefined
-						? input.unitCost
-						: (product.supplierCost ??
-							(product.productCost === null
-								? null
-								: product.productCost * terms.packSize)),
+					input.unitCost !== undefined ? input.unitCost : product.unitCost,
 			})
 			.onConflictDoUpdate({
 				target: [
@@ -248,6 +223,134 @@ export async function setDraftLine(
 				},
 			});
 		return { ...terms, quantity };
+	});
+}
+
+// What a new line for the product starts with: the supplier's terms (EACH
+// when it has no supplier) and price.
+async function newLine(tx: Db, productId: number) {
+	const [product] = await tx
+		.select({
+			kind: products.kind,
+			sku: products.sku,
+			productCost: products.unitCost,
+			supplierCost: productSuppliers.cost,
+			unit: productSuppliers.unit,
+			packSize: productSuppliers.packSize,
+			minimumQuantity: productSuppliers.minimumQuantity,
+		})
+		.from(products)
+		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+		.where(eq(products.id, productId));
+	if (!product) throw new PurchaseOrderError("That product doesn't exist");
+	const packSize = product.packSize ?? 1;
+	return {
+		kind: product.kind,
+		sku: product.sku,
+		terms: {
+			unit: product.unit ?? "EACH",
+			packSize,
+			minimumQuantity: product.minimumQuantity ?? 1,
+		},
+		unitCost:
+			product.supplierCost ??
+			(product.productCost === null ? null : product.productCost * packSize),
+	};
+}
+
+function refuseToolSet(product: { kind: string; sku: string }) {
+	if (product.kind === "bundle")
+		throw new PurchaseOrderError(
+			`${product.sku} is a tool set; order its parts instead`,
+		);
+}
+
+// Everything about a line someone can change. Undoing an add compares all of
+// it, so an edit made since is never thrown away.
+const lineFields = {
+	id: purchaseOrderLines.id,
+	unit: purchaseOrderLines.unit,
+	packSize: purchaseOrderLines.packSize,
+	minimumQuantity: purchaseOrderLines.minimumQuantity,
+	quantity: purchaseOrderLines.quantity,
+	unitCost: purchaseOrderLines.unitCost,
+};
+export type AddedLine = {
+	id: number;
+	unit: string;
+	packSize: number;
+	minimumQuantity: number;
+	quantity: number;
+	unitCost: number | null;
+};
+
+// Puts a product on a draft at the supplier's terms and price, unless it's
+// already there. A line already on the draft is never changed: it comes back
+// with added false, so the caller can say where it is. Two adds at once
+// queue on the PO's lock, so only one of them adds.
+export async function addDraftLine(
+	db: Db,
+	input: { purchaseOrderId: number; productId: number; quantity: number },
+): Promise<{ added: boolean; line: AddedLine }> {
+	if (!Number.isInteger(input.quantity) || input.quantity <= 0)
+		throw new PurchaseOrderError(
+			`Quantity must be a whole number above 0, got ${input.quantity}`,
+		);
+	return db.transaction(async (tx) => {
+		const po = await lockOrder(tx, input.purchaseOrderId, ["draft"]);
+		const [existing] = await tx
+			.select(lineFields)
+			.from(purchaseOrderLines)
+			.where(
+				and(
+					eq(purchaseOrderLines.purchaseOrderId, po.id),
+					eq(purchaseOrderLines.productId, input.productId),
+				),
+			);
+		if (existing) return { added: false, line: existing };
+		const product = await newLine(tx, input.productId);
+		refuseToolSet(product);
+		const [line] = await tx
+			.insert(purchaseOrderLines)
+			.values({
+				purchaseOrderId: po.id,
+				productId: input.productId,
+				...product.terms,
+				quantity: input.quantity,
+				unitCost: product.unitCost,
+			})
+			.returning(lineFields);
+		return { added: true, line };
+	});
+}
+
+// Undoes addDraftLine: takes the line off only if it's still exactly as
+// added. Returns false, leaving it alone, when someone has changed it since.
+// The draft stays even if the add started it; an empty draft is harmless.
+export async function removeAddedLine(
+	db: Db,
+	input: { purchaseOrderId: number; line: AddedLine },
+): Promise<boolean> {
+	const { line } = input;
+	return db.transaction(async (tx) => {
+		await lockOrder(tx, input.purchaseOrderId, ["draft"]);
+		const removed = await tx
+			.delete(purchaseOrderLines)
+			.where(
+				and(
+					eq(purchaseOrderLines.id, line.id),
+					eq(purchaseOrderLines.purchaseOrderId, input.purchaseOrderId),
+					eq(purchaseOrderLines.unit, line.unit),
+					eq(purchaseOrderLines.packSize, line.packSize),
+					eq(purchaseOrderLines.minimumQuantity, line.minimumQuantity),
+					eq(purchaseOrderLines.quantity, line.quantity),
+					line.unitCost === null
+						? isNull(purchaseOrderLines.unitCost)
+						: eq(purchaseOrderLines.unitCost, line.unitCost),
+				),
+			)
+			.returning({ id: purchaseOrderLines.id });
+		return removed.length > 0;
 	});
 }
 

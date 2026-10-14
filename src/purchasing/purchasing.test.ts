@@ -9,6 +9,7 @@ import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
 import { supplierRows } from "./load";
 import {
+	addDraftLine,
 	averageCost,
 	cancelOrder,
 	closeOrder,
@@ -17,6 +18,7 @@ import {
 	openDraft,
 	purchaseOrderOfBatch,
 	receive,
+	removeAddedLine,
 	setDraftLine,
 	undoReceipt,
 	updateFromSuggestions,
@@ -290,6 +292,66 @@ describe("a PO from draft to received", () => {
 
 		await markSent(db, { purchaseOrderId: id, sentTo: null });
 		await expect(updateFromSuggestions(db, id, now)).rejects.toThrow(/is sent/);
+	});
+
+	test("adding never changes a line already there; only one of two adds lands", async () => {
+		const id = await openDraft(db, canam);
+		const [first, second] = await Promise.all([
+			addDraftLine(db, { purchaseOrderId: id, productId: blade, quantity: 5 }),
+			addDraftLine(db, { purchaseOrderId: id, productId: blade, quantity: 9 }),
+		]);
+		expect([first.added, second.added].sort()).toEqual([false, true]);
+		const kept = first.added ? first : second;
+		expect(await linesOf(id)).toMatchObject([
+			{ productId: blade, quantity: kept.line.quantity, unitCost: 5 },
+		]);
+		const other = first.added ? second : first;
+		expect(other.line).toEqual(kept.line);
+	});
+
+	test("undoing an add leaves the line alone if it's been changed since", async () => {
+		const id = await openDraft(db, canam);
+		const { line } = await addDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 5,
+		});
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 5,
+			unitCost: 6,
+		});
+		expect(await removeAddedLine(db, { purchaseOrderId: id, line })).toBe(
+			false,
+		);
+		expect(await linesOf(id)).toMatchObject([{ quantity: 5, unitCost: 6 }]);
+
+		const knifeAdd = await addDraftLine(db, {
+			purchaseOrderId: id,
+			productId: knife,
+			quantity: 6,
+		});
+		expect(
+			await removeAddedLine(db, { purchaseOrderId: id, line: knifeAdd.line }),
+		).toBe(true);
+		expect(await linesOf(id)).toHaveLength(1);
+		// Once it's gone, a second undo finds nothing to take off.
+		expect(
+			await removeAddedLine(db, { purchaseOrderId: id, line: knifeAdd.line }),
+		).toBe(false);
+	});
+
+	test("undoing an add leaves the draft it started", async () => {
+		const id = await openDraft(db, canam);
+		const { line } = await addDraftLine(db, {
+			purchaseOrderId: id,
+			productId: knife,
+			quantity: 6,
+		});
+		expect(await removeAddedLine(db, { purchaseOrderId: id, line })).toBe(true);
+		expect(await linesOf(id)).toEqual([]);
+		expect(await openDraft(db, canam)).toBe(id);
 	});
 
 	test("refuses tool sets and empty POs", async () => {

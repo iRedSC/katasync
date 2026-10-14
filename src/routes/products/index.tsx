@@ -57,7 +57,10 @@ import {
 	type ProductRow,
 	requestCount,
 } from "#/server/catalog";
-import { addToPurchaseOrder, setLine } from "#/server/purchasing";
+import {
+	addToPurchaseOrder,
+	undoAddToPurchaseOrder,
+} from "#/server/purchasing";
 import { deleteView, listViews, saveView } from "#/server/views";
 
 // The URL holds the chips and sort, so links (like Home's "Oversold") and the
@@ -225,11 +228,15 @@ function Products() {
 		j: () => setSelected((i) => Math.min(i + 1, last)),
 		k: () => setSelected((i) => Math.max(i - 1, 0)),
 		Enter: () => open(filtered[selected]),
+		// Orders what's suggested. Adding a product that doesn't need it takes
+		// the menu, so a stray key press can't start a PO.
 		a: () => {
 			const p = filtered[selected];
 			const action = p && orderAction(p);
-			if (action?.kind === "add") addToPo(p);
-			else if (action) toast(action.why);
+			if (action?.kind !== "add") {
+				if (action) toast(action.why);
+			} else if (p.reorder) addToPo(p);
+			else toast(`${p.sku} doesn't need ordering`);
 		},
 		Escape: () => {
 			if (document.activeElement === input.current) input.current?.blur();
@@ -474,24 +481,35 @@ function Products() {
 
 	async function addToPo(p: ProductRow) {
 		try {
-			const line = await addToPurchaseOrder({
-				data: { productId: p.id, quantity: p.reorder?.quantity },
-			});
+			const { added, purchaseOrderId, supplierName, line } =
+				await addToPurchaseOrder({
+					data: { productId: p.id, quantity: p.reorder?.quantity },
+				});
 			await router.invalidate();
+			if (!added) {
+				toast(
+					`${p.sku} is already on PO ${purchaseOrderId}: ${orderQuantity(line)}`,
+				);
+				return;
+			}
 			toast.success(
-				`Added ${orderQuantity(line)} to PO ${line.purchaseOrderId} (${line.supplierName})`,
+				`Added ${orderQuantity(line)} to PO ${purchaseOrderId} (${supplierName})`,
 				{
 					action: {
 						label: "Undo",
 						onClick: async () => {
-							await setLine({
-								data: {
-									purchaseOrderId: line.purchaseOrderId,
-									productId: p.id,
-									quantity: 0,
-								},
-							});
-							await router.invalidate();
+							try {
+								const undone = await undoAddToPurchaseOrder({
+									data: { purchaseOrderId, line },
+								});
+								await router.invalidate();
+								if (!undone)
+									toast(
+										`${p.sku} on PO ${purchaseOrderId} changed since, so it's left as is`,
+									);
+							} catch (err) {
+								toast.error(err instanceof Error ? err.message : String(err));
+							}
 						},
 					},
 				},
@@ -766,7 +784,10 @@ function RowMenu({
 			</ContextMenuItem>
 			{action && <ContextMenuSeparator />}
 			{action?.kind === "add" && (
-				<ContextMenuItem onSelect={() => onAddToPo(p)} shortcut="A">
+				<ContextMenuItem
+					onSelect={() => onAddToPo(p)}
+					shortcut={p.reorder ? "A" : undefined}
+				>
 					<PackagePlus />
 					{p.reorder
 						? `Add ${orderQuantity(p.reorder)} to ${action.supplier} PO`
