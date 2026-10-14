@@ -99,6 +99,7 @@ describe("read-only queries", () => {
 			"select * from public.passkeys",
 			'select * from "setup_links"',
 			"select count(*) from auth_challenges",
+			"select private_key from qz_certificate",
 			"select pg_read_file('/etc/passwd')",
 			"select * from dblink('host=elsewhere', 'select 1') as t(a int)",
 			"select pg_terminate_backend(pid) from pg_stat_activity",
@@ -113,6 +114,7 @@ describe("read-only queries", () => {
 		expect(tables.owned_stock.kind).toBe("view");
 		expect(tables.sales_units.columns).toContain("units integer");
 		expect(tables.sessions).toBeUndefined();
+		expect(tables.qz_certificate).toBeUndefined();
 	});
 });
 

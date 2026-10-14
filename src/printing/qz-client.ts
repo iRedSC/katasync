@@ -38,7 +38,8 @@ let loading: Promise<Qz> | null = null;
 let connecting: Promise<void> | null = null;
 
 // QZ Tray, connected. Loaded and told how to sign once; reconnects if QZ
-// was restarted since.
+// was restarted since. QZ reports the socket active before it has the
+// certificate, so a connection still being made is always waited for.
 export async function qzConnected(): Promise<Qz> {
 	loading ??= import("qz-tray").then((mod) => {
 		// A CommonJS module: Vite puts it on `default`.
@@ -53,8 +54,8 @@ export async function qzConnected(): Promise<Qz> {
 		return qz;
 	});
 	const qz = await loading;
-	if (!qz.websocket.isActive()) {
-		connecting ??= qz.websocket
+	if (!connecting && !qz.websocket.isActive())
+		connecting = qz.websocket
 			.connect({ retries: 1, delay: 1 })
 			.catch((err: unknown) => {
 				throw new Error(
@@ -64,8 +65,7 @@ export async function qzConnected(): Promise<Qz> {
 			.finally(() => {
 				connecting = null;
 			});
-		await connecting;
-	}
+	await connecting;
 	return qz;
 }
 

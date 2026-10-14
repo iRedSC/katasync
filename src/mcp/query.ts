@@ -18,14 +18,16 @@ const TIMEOUT = "15s";
 // Both Postgres drivers katasync uses (pg, PGlite) answer execute with rows.
 type Rows = { rows: Record<string, unknown>[] };
 
-// Sign-in bookkeeping: hashes, public keys, and live session ids. Hidden from
-// describe_schema and refused by name in queries.
-const AUTH_TABLES = [
+// Sign-in bookkeeping (hashes, public keys, live session ids) and the key
+// QZ Tray print jobs are signed with. Hidden from describe_schema and refused
+// by name in queries.
+const SECRET_TABLES = [
 	"sessions",
 	"passkeys",
 	"api_tokens",
 	"setup_links",
 	"auth_challenges",
+	"qz_certificate",
 ];
 
 // Functions that change the session, reach outside the database, or signal
@@ -43,7 +45,7 @@ const FORBIDDEN_FUNCTIONS = [
 ];
 
 const REFUSED = new RegExp(
-	`\\b(${[...AUTH_TABLES, ...FORBIDDEN_FUNCTIONS].join("|")})\\b`,
+	`\\b(${[...SECRET_TABLES, ...FORBIDDEN_FUNCTIONS].join("|")})\\b`,
 	"i",
 );
 
@@ -109,6 +111,6 @@ export async function describeSchema(db: Db) {
 			`${r.column_name} ${r.data_type}${r.is_nullable === "YES" ? "" : " not null"}`,
 		);
 	}
-	for (const hidden of AUTH_TABLES) tables.delete(hidden);
+	for (const hidden of SECRET_TABLES) tables.delete(hidden);
 	return Object.fromEntries(tables);
 }
