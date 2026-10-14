@@ -122,6 +122,7 @@ export async function tiktokApi(
 	path: string,
 	query: Record<string, string>,
 	body?: Record<string, unknown>,
+	method = body ? "POST" : "GET",
 ): Promise<unknown> {
 	const { appKey, secret } = credentials();
 	const bodyText = body ? JSON.stringify(body) : "";
@@ -135,7 +136,7 @@ export async function tiktokApi(
 		const response = await fetch(
 			`${API}${path}?${new URLSearchParams(signed)}`,
 			{
-				method: body ? "POST" : "GET",
+				method,
 				headers: {
 					"Content-Type": "application/json",
 					"x-tts-access-token": await accessToken(),
@@ -376,20 +377,45 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 			}),
 		);
 		for (const raw of details.orders ?? []) {
-			const order = tiktokToChannelOrder(raw);
-			const taken = await takeOver(db, store.id, order);
-			problems.push(...taken.problems);
-			// Still on Shopify: ingesting it here would take its stock twice.
-			if (!taken.moved) continue;
-			const result = await ingestOrder(db, store, order, locationId);
+			const result = await ingestDetail(db, store, raw, locationId);
 			problems.push(...result.problems);
-			count++;
+			if (result.ingested) count++;
 		}
 	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
 	if (refreshWarning) problems.push(refreshWarning);
 	return { store: store.name, orders: count, problems };
+}
+
+async function ingestDetail(
+	db: Db,
+	store: Awaited<ReturnType<typeof ensureStore>>,
+	raw: typeof tiktokOrder.infer,
+	locationId: number | null,
+) {
+	const order = tiktokToChannelOrder(raw);
+	const taken = await takeOver(db, store.id, order);
+	// Still on Shopify: ingesting it here would take its stock twice.
+	if (!taken.moved) return { ingested: false, problems: taken.problems };
+	const result = await ingestOrder(db, store, order, locationId);
+	return { ingested: true, problems: [...taken.problems, ...result.problems] };
+}
+
+// One order by id, for a webhook. It doesn't move the sync cursor; the next
+// pass sees the order again and reports any problems with it on Diagnostics.
+export async function ingestTiktokOrder(db: Db, orderId: string) {
+	const cipher = await shopCipher();
+	const store = await ensureStore(db, "tiktok", STORE_NAME);
+	const details = detailPage.assert(
+		await tiktokApi("/order/202309/orders", {
+			shop_cipher: cipher,
+			ids: orderId,
+		}),
+	);
+	const locationId = await shippingLocation(db);
+	for (const raw of details.orders ?? [])
+		await ingestDetail(db, store, raw, locationId);
 }
 
 // TikTok orders Shopify relayed that still need shipping.

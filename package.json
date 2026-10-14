@@ -21,6 +21,7 @@
     "import:sumtracker": "tsx scripts/import-sumtracker.ts",
     "import:suppliers": "tsx scripts/import-suppliers.ts",
     "sync": "tsx scripts/sync.ts",
+    "webhooks": "tsx scripts/webhooks.ts",
     "auth:setup-link": "tsx scripts/auth-setup-link.ts"
   },
   "dependencies": {
@@ -38,6 +39,7 @@
     "@tanstack/react-router-ssr-query": "1.167.3",
     "@tanstack/react-start": "1.168.60",
     "@tanstack/react-table": "9.2.8",
+    "@vercel/functions": "^3.10.1",
     "arktype": "^2.2.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
