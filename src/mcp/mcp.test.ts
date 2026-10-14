@@ -8,6 +8,8 @@ import { createProduct, createTestDb } from "#/test/db";
 import { logCalls } from "./log";
 import {
 	describeSchema,
+	MCP_ROLE,
+	mcpConnectionString,
 	mcpPassword,
 	readOnlyQuery as run,
 	SECRET_TABLES,
@@ -140,16 +142,34 @@ describe("read-only queries", () => {
 		expect((await asMcp("select sku from products")).rows).toHaveLength(1);
 	});
 
-	test("katasync_mcp has no grant on any secret table", async () => {
-		const can = async (table: string) =>
-			(
-				(await db.execute(
-					sql`select has_table_privilege('katasync_mcp', ${table}, 'select') as can`,
-				)) as unknown as { rows: { can: boolean }[] }
-			).rows[0].can;
+	test("katasync_mcp can read every table and view but the secret ones", async () => {
+		// A new table needs GRANT SELECT ... TO katasync_mcp in its migration,
+		// or its name in SECRET_TABLES.
+		const { rows } = (await db.execute(sql`
+			select c.relname as name, has_table_privilege('katasync_mcp', c.oid, 'select') as can
+			from pg_class c join pg_namespace n on n.oid = c.relnamespace
+			where n.nspname = 'public' and c.relkind in ('r', 'v', 'm', 'p')
+			order by c.relname
+		`)) as unknown as { rows: { name: string; can: boolean }[] };
+		expect(rows.length).toBeGreaterThan(SECRET_TABLES.length);
+		expect(rows.map((r) => [r.name, r.can])).toEqual(
+			rows.map((r) => [r.name, !SECRET_TABLES.includes(r.name)]),
+		);
 		for (const table of SECRET_TABLES)
-			expect(await can(table), table).toBe(false);
-		expect(await can("products")).toBe(true);
+			expect(rows.map((r) => r.name)).toContain(table);
+	});
+
+	test("logs in as katasync_mcp even when DATABASE_URL names a user in its query", () => {
+		const url = new URL(
+			mcpConnectionString(
+				"postgresql://owner:secret@db.example/neondb?user=owner&password=secret&sslmode=require",
+				"abc123",
+			),
+		);
+		expect([url.username, url.password]).toEqual([MCP_ROLE, "abc123"]);
+		expect(url.searchParams.has("user")).toBe(false);
+		expect(url.searchParams.has("password")).toBe(false);
+		expect(url.searchParams.get("sslmode")).toBe("require");
 	});
 
 	test("the katasync_mcp password is made once and kept", async () => {

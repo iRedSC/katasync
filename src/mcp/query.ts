@@ -23,9 +23,9 @@ const TIMEOUT = "15s";
 type Rows = { rows: Record<string, unknown>[] };
 
 // Sign-in bookkeeping (hashes, public keys, live session ids) and the query
-// tool's own password. katasync_mcp has no grant on them (see
-// drizzle/0027_mcp_role.sql); they're also hidden from describe_schema and
-// refused by name in queries.
+// tool's own password. katasync_mcp has a grant on every other table and view
+// and none on these (see drizzle/0027_mcp_role.sql); they're also hidden from
+// describe_schema and refused by name in queries.
 export const SECRET_TABLES = [
 	"sessions",
 	"passkeys",
@@ -82,20 +82,40 @@ export async function readOnlyQuery(
 
 export const MCP_ROLE = "katasync_mcp";
 
-// A connection of its own, logged in as katasync_mcp.
+// A connection of its own, logged in as katasync_mcp, and checked to be.
 export async function withMcpConnection<T>(
 	use: (db: Db) => Promise<T>,
 ): Promise<T> {
 	// getDb first: it says clearly when DATABASE_URL is missing.
 	const password = await mcpPassword(getDb());
-	const url = new URL(process.env.DATABASE_URL ?? "");
+	const url = mcpConnectionString(process.env.DATABASE_URL ?? "", password);
+	return withOwnConnection(async (db) => {
+		const { rows } = (await db.execute(
+			sql`select session_user as who`,
+		)) as unknown as { rows: { who: string }[] };
+		if (rows[0]?.who !== MCP_ROLE)
+			throw new Error(
+				`The query tool logged in as ${rows[0]?.who}, not ${MCP_ROLE}`,
+			);
+		return use(db);
+	}, url);
+}
+
+// DATABASE_URL with katasync_mcp's login in place of the owner's. pg lets
+// ?user= and ?password= override the ones before the @, so those go too.
+export function mcpConnectionString(databaseUrl: string, password: string) {
+	const url = new URL(databaseUrl);
 	url.username = MCP_ROLE;
 	url.password = password;
-	return withOwnConnection(use, url.toString());
+	url.searchParams.delete("user");
+	url.searchParams.delete("password");
+	return url.toString();
 }
 
 // The role's password, made and set the first time. Two first callers can't
 // set different ones: the second waits on the first's insert, then reads it.
+// Roles belong to the whole server, so two databases on one server would
+// fight over it; on Neon each branch has its own.
 export async function mcpPassword(db: Db) {
 	const [kept] = await db.select().from(mcpLogin);
 	if (kept) return kept.password;
