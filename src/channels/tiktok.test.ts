@@ -263,3 +263,14 @@ describe("TikTok cancellations through ingestion", () => {
 		expect(await onHand()).toBe(8);
 	});
 });
+
+test("a masked TikTok buyer name is kept, a masked address is not", () => {
+	const order = tiktokOrder.assert({
+		...detail("AWAITING_SHIPMENT", ["TO_SHIP"]),
+		recipient_address: { name: "D*****", address_line1: "1** M*** St" },
+	});
+	expect(tiktokToChannelOrder(order)).toMatchObject({
+		customerName: "D*****",
+		shipAddress1: null,
+	});
+});
