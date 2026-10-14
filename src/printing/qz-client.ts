@@ -41,20 +41,11 @@ let connecting: Promise<void> | null = null;
 // was restarted since. QZ reports the socket active before it has the
 // certificate, so a connection still being made is always waited for.
 export async function qzConnected(): Promise<Qz> {
-	loading ??= import("qz-tray").then((mod) => {
-		// A CommonJS module: Vite puts it on `default`.
-		const qz = (mod as Qz & { default?: Qz }).default ?? mod;
-		qz.security.setCertificatePromise((resolve, reject) => {
-			qzCertificateText().then(resolve, reject);
-		});
-		qz.security.setSignatureAlgorithm("SHA512");
-		// Hand the server the request itself rather than its hash, so it can
-		// check what it signs. The server hashes it the way QZ would.
-		qz.api.setSha256Type((request: string) => request);
-		qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
-			signQzRequest({ data: toSign }).then(resolve, reject);
-		});
-		return qz;
+	loading ??= import("qz-tray").then(setUpQz, (err: unknown) => {
+		// Tried again next time (say, a chunk gone after a deploy) instead of
+		// being remembered until the page reloads.
+		loading = null;
+		throw err;
 	});
 	const qz = await loading;
 	if (!connecting && !qz.websocket.isActive())
@@ -69,6 +60,23 @@ export async function qzConnected(): Promise<Qz> {
 				connecting = null;
 			});
 	await connecting;
+	return qz;
+}
+
+// Tells a freshly loaded qz-tray where its certificate and signatures come from.
+function setUpQz(mod: Qz) {
+	// A CommonJS module: Vite puts it on `default`.
+	const qz = (mod as Qz & { default?: Qz }).default ?? mod;
+	qz.security.setCertificatePromise((resolve, reject) => {
+		qzCertificateText().then(resolve, reject);
+	});
+	qz.security.setSignatureAlgorithm("SHA512");
+	// Hand the server the request itself rather than its hash, so it can
+	// check what it signs. The server hashes it the way QZ would.
+	qz.api.setSha256Type((request: string) => request);
+	qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
+		signQzRequest({ data: toSign }).then(resolve, reject);
+	});
 	return qz;
 }
 
