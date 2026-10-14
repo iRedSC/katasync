@@ -6,7 +6,12 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { logCalls } from "./log";
-import { describeSchema, readOnlyQuery as run } from "./query";
+import {
+	describeSchema,
+	mcpPassword,
+	readOnlyQuery as run,
+	SECRET_TABLES,
+} from "./query";
 import { buildServer, READ_TOOLS } from "./server";
 
 let db: Db;
@@ -105,6 +110,52 @@ describe("read-only queries", () => {
 		])
 			await expect(readOnlyQuery(text)).rejects.toThrow(/isn't available/);
 		expect(opened).toBe(0);
+	});
+
+	test("as katasync_mcp, can't read a secret table however the query is spelled", async () => {
+		const asMcp = (text: string) =>
+			run(text, undefined, async (use) => {
+				await db.execute(sql`set session authorization katasync_mcp`);
+				try {
+					return await use(db);
+				} finally {
+					await db.execute(sql`reset session authorization`);
+				}
+			});
+		await createApiToken(db, "Claude");
+		const escaped = 'select token_hash from U&"api\\005ftokens"';
+		// The name check alone misses it: as the owner it reads the hash.
+		expect((await readOnlyQuery(escaped)).rows).toHaveLength(1);
+		for (const text of [
+			escaped,
+			"select query_to_xml('select token_hash from api_'||'tokens', true, false, '')",
+			// Switching role back first doesn't help: katasync_mcp isn't a member.
+			`select * from (select U&"set\\005fconfig"('role', 'postgres', true) a,
+				query_to_xml('select * from sess'||'ions', true, false, '') b) q`,
+			`select U&"set\\005fconfig"('role', 'postgres', true)`,
+		])
+			await expect(asMcp(text)).rejects.toMatchObject({
+				cause: { message: expect.stringMatching(/permission denied/) },
+			});
+		expect((await asMcp("select sku from products")).rows).toHaveLength(1);
+	});
+
+	test("katasync_mcp has no grant on any secret table", async () => {
+		const can = async (table: string) =>
+			(
+				(await db.execute(
+					sql`select has_table_privilege('katasync_mcp', ${table}, 'select') as can`,
+				)) as unknown as { rows: { can: boolean }[] }
+			).rows[0].can;
+		for (const table of SECRET_TABLES)
+			expect(await can(table), table).toBe(false);
+		expect(await can("products")).toBe(true);
+	});
+
+	test("the katasync_mcp password is made once and kept", async () => {
+		const first = await mcpPassword(db);
+		expect(first).toMatch(/^[0-9a-f]{64}$/);
+		expect(await mcpPassword(db)).toBe(first);
 	});
 
 	test("the schema lists tables and views but not sign-in bookkeeping", async () => {

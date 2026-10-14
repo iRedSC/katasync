@@ -25,8 +25,8 @@ export function getDb(): Db {
 // with the connection instead of reaching the shared pool.
 export async function withOwnConnection<T>(
 	use: (db: Db) => Promise<T>,
+	connectionString = process.env.DATABASE_URL,
 ): Promise<T> {
-	const connectionString = process.env.DATABASE_URL;
 	if (!connectionString) throw new Error("DATABASE_URL is not set");
 	const client = new Client({ connectionString });
 	await client.connect();
