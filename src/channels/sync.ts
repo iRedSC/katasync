@@ -40,18 +40,27 @@ export async function syncPass(
 
 // The same pass, unless one of this channel is already running anywhere: a
 // slow pass would otherwise overlap the next cron and import the same orders
-// twice at once. The lock lives on a connection of its own, so it is released
-// when the pass ends or the function dies.
+// twice at once. The lock is held by a transaction on a connection of its own
+// and released when that transaction ends, however the pass ends. Not a
+// session lock: DATABASE_URL goes through Neon's pooler, which keeps the
+// server connection, and a session lock with it, after the client closes.
 export async function syncPassAlone(
 	db: Db,
 	channel: SyncedChannel,
 	options: { listings: boolean },
 ) {
-	return withOwnConnection(async (lockDb) => {
-		const result = (await lockDb.execute(
-			sql`select pg_try_advisory_lock(hashtext('sync'), hashtext(${channel})) as locked`,
-		)) as unknown as { rows: { locked: boolean }[] };
-		if (!result.rows[0].locked) return null;
-		return syncPass(db, channel, options);
-	});
+	return withOwnConnection((lockDb) =>
+		lockDb.transaction(async (tx) => {
+			// The transaction sits idle for the whole pass. Neon ends idle ones
+			// after 5 minutes; a Vercel function can't outlive 15.
+			await tx.execute(
+				sql`set local idle_in_transaction_session_timeout = '15min'`,
+			);
+			const result = (await tx.execute(
+				sql`select pg_try_advisory_xact_lock(hashtext('sync-pass'), hashtext(${channel})) as locked`,
+			)) as unknown as { rows: { locked: boolean }[] };
+			if (!result.rows[0].locked) return null;
+			return syncPass(db, channel, options);
+		}),
+	);
 }
