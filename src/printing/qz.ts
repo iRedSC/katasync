@@ -1,5 +1,7 @@
 import "reflect-metadata";
+import { createHash, createSign } from "node:crypto";
 import * as x509 from "@peculiar/x509";
+import { type } from "arktype";
 import type { Db } from "#/db/client";
 import { qzCertificate } from "#/db/schema";
 import setupScript from "./qz-setup.bat?raw";
@@ -60,6 +62,62 @@ export async function makeCertificate() {
 		certificate: certificate.toString("pem"),
 		privateKey: x509.PemConverter.encode(privateKey, "PRIVATE KEY"),
 	};
+}
+
+// The only QZ requests katasync signs: listing printers, and printing PDFs to
+// a printer by name. A signature lets a page on a packing computer use QZ
+// without asking, so signing anything else (raw sockets, serial, USB and HID
+// devices, files, or printing to a file or another host) would hand that to
+// whoever holds a session.
+const printerList = type({
+	call: "'printers.find'",
+	params: { "+": "reject", "query?": "string" },
+	timestamp: "number",
+});
+const pdfPrint = type({
+	call: "'print'",
+	params: {
+		"+": "reject",
+		printer: { "+": "reject", name: "string" },
+		options: "object",
+		data: type({
+			"+": "reject",
+			type: "'pixel'",
+			format: "'pdf'",
+			flavor: "'base64'",
+			data: "string",
+			"options?": "object",
+		})
+			.array()
+			.atLeastLength(1),
+	},
+	timestamp: "number",
+});
+const qzRequest = printerList.or(pdfPrint);
+
+export class QzRequestError extends Error {
+	name = "QzRequestError";
+}
+
+// QZ hands over each request as JSON (qz.api.setSha256Type in qz-client.ts
+// passes it through instead of hashing it) and checks the signature against
+// the SHA-256 hex of that exact text, so it's hashed as it came, never
+// re-serialized. SHA512 to match setSignatureAlgorithm there.
+export function qzSignature(
+	request: string,
+	privateKey: string,
+	now = Date.now(),
+) {
+	const parsed = qzRequest(JSON.parse(request));
+	if (parsed instanceof type.errors)
+		throw new QzRequestError(`katasync only signs printing: ${parsed.summary}`);
+	// So a signature made now can't be saved and used much later.
+	if (Math.abs(now - parsed.timestamp) > 60_000)
+		throw new QzRequestError(
+			"This computer's clock is more than a minute off; set it right and try again",
+		);
+	const hash = createHash("sha256").update(request).digest("hex");
+	return createSign("SHA512").update(hash).sign(privateKey, "base64");
 }
 
 // The Windows setup script with the certificate filled in. cmd needs CRLF.

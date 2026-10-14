@@ -48,6 +48,9 @@ export async function qzConnected(): Promise<Qz> {
 			qzCertificateText().then(resolve, reject);
 		});
 		qz.security.setSignatureAlgorithm("SHA512");
+		// Hand the server the request itself rather than its hash, so it can
+		// check what it signs. The server hashes it the way QZ would.
+		qz.api.setSha256Type((request: string) => request);
 		qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
 			signQzRequest({ data: toSign }).then(resolve, reject);
 		});

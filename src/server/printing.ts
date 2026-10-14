@@ -1,8 +1,7 @@
-import { createSign } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
-import { getQzCertificate } from "#/printing/qz";
+import { getQzCertificate, qzSignature } from "#/printing/qz";
 
 // What the browser hands QZ Tray so it trusts the request: the certificate,
 // and a signature for each request made with the key, which stays here.
@@ -12,10 +11,11 @@ export const qzCertificateText = createServerFn({ method: "GET" }).handler(
 	async () => (await getQzCertificate(getDb())).certificate,
 );
 
-// QZ asks for SHA512 (set in src/printing/qz-client.ts), base64.
+// The request itself, checked before it's signed (qzSignature). It carries
+// the label as base64, so it's allowed to be big, but not unboundedly.
 export const signQzRequest = createServerFn({ method: "POST" })
-	.validator(type("string"))
+	.validator(type("string <= 10000000"))
 	.handler(async ({ data }) => {
 		const { privateKey } = await getQzCertificate(getDb());
-		return createSign("SHA512").update(data).sign(privateKey, "base64");
+		return qzSignature(data, privateKey);
 	});
