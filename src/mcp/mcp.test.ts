@@ -6,7 +6,14 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { logCalls } from "./log";
-import { describeSchema, readOnlyQuery as run } from "./query";
+import {
+	describeSchema,
+	MCP_ROLE,
+	mcpConnectionString,
+	mcpPassword,
+	readOnlyQuery as run,
+	SECRET_TABLES,
+} from "./query";
 import { buildServer, READ_TOOLS } from "./server";
 
 let db: Db;
@@ -106,6 +113,70 @@ describe("read-only queries", () => {
 		])
 			await expect(readOnlyQuery(text)).rejects.toThrow(/isn't available/);
 		expect(opened).toBe(0);
+	});
+
+	test("as katasync_mcp, can't read a secret table however the query is spelled", async () => {
+		const asMcp = (text: string) =>
+			run(text, undefined, async (use) => {
+				await db.execute(sql`set session authorization katasync_mcp`);
+				try {
+					return await use(db);
+				} finally {
+					await db.execute(sql`reset session authorization`);
+				}
+			});
+		await createApiToken(db, "Claude");
+		const escaped = 'select token_hash from U&"api\\005ftokens"';
+		// The name check alone misses it: as the owner it reads the hash.
+		expect((await readOnlyQuery(escaped)).rows).toHaveLength(1);
+		for (const text of [
+			escaped,
+			"select query_to_xml('select token_hash from api_'||'tokens', true, false, '')",
+			// Switching role back first doesn't help: katasync_mcp isn't a member.
+			`select * from (select U&"set\\005fconfig"('role', 'postgres', true) a,
+				query_to_xml('select * from sess'||'ions', true, false, '') b) q`,
+			`select U&"set\\005fconfig"('role', 'postgres', true)`,
+		])
+			await expect(asMcp(text)).rejects.toMatchObject({
+				cause: { message: expect.stringMatching(/permission denied/) },
+			});
+		expect((await asMcp("select sku from products")).rows).toHaveLength(1);
+	});
+
+	test("katasync_mcp can read every table and view but the secret ones", async () => {
+		// A new table needs GRANT SELECT ... TO katasync_mcp in its migration,
+		// or its name in SECRET_TABLES.
+		const { rows } = (await db.execute(sql`
+			select c.relname as name, has_table_privilege('katasync_mcp', c.oid, 'select') as can
+			from pg_class c join pg_namespace n on n.oid = c.relnamespace
+			where n.nspname = 'public' and c.relkind in ('r', 'v', 'm', 'p')
+			order by c.relname
+		`)) as unknown as { rows: { name: string; can: boolean }[] };
+		expect(rows.length).toBeGreaterThan(SECRET_TABLES.length);
+		expect(rows.map((r) => [r.name, r.can])).toEqual(
+			rows.map((r) => [r.name, !SECRET_TABLES.includes(r.name)]),
+		);
+		for (const table of SECRET_TABLES)
+			expect(rows.map((r) => r.name)).toContain(table);
+	});
+
+	test("logs in as katasync_mcp even when DATABASE_URL names a user in its query", () => {
+		const url = new URL(
+			mcpConnectionString(
+				"postgresql://owner:secret@db.example/neondb?user=owner&password=secret&sslmode=require",
+				"abc123",
+			),
+		);
+		expect([url.username, url.password]).toEqual([MCP_ROLE, "abc123"]);
+		expect(url.searchParams.has("user")).toBe(false);
+		expect(url.searchParams.has("password")).toBe(false);
+		expect(url.searchParams.get("sslmode")).toBe("require");
+	});
+
+	test("the katasync_mcp password is made once and kept", async () => {
+		const first = await mcpPassword(db);
+		expect(first).toMatch(/^[0-9a-f]{64}$/);
+		expect(await mcpPassword(db)).toBe(first);
 	});
 
 	test("the schema lists tables and views but not sign-in bookkeeping", async () => {

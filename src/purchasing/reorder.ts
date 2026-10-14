@@ -10,7 +10,7 @@ import {
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
-import { type AbcClass, abcClasses } from "#/inventory/abc";
+import { type AbcClass, type AbcResult, abcClasses } from "#/inventory/abc";
 import { soldSince } from "#/inventory/sales";
 
 // Sales from this many days back set each product's daily demand.
@@ -85,14 +85,22 @@ export type SupplierSuggestion = {
 	draftId: number | null;
 };
 
-// What each supplier should be sent today. Computed fresh from sales, stock,
-// and open POs rather than stored, so it never goes stale.
-export async function suggestPurchases(
+// One product that needs ordering, with the supplier it comes from.
+export type ReorderNeed = SuggestedLine & {
+	supplierId: number;
+	supplierName: string;
+	minimumOrder: number;
+};
+
+// Every product with a supplier that needs ordering today, in name order.
+// Pass `abc` when the caller already has it, to skip ranking twice.
+export async function reorderNeeds(
 	db: Db,
 	now = new Date(),
-): Promise<SupplierSuggestion[]> {
+	abc?: AbcResult,
+): Promise<ReorderNeed[]> {
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [sold, onHand, onOrder, linked, drafts, abc] = await Promise.all([
+	const [sold, onHand, onOrder, linked, classes] = await Promise.all([
 		soldSince(db, since, { includeFba: false }),
 		ownedOnHand(db),
 		unitsOnOrder(db),
@@ -119,15 +127,10 @@ export async function suggestPurchases(
 			.innerJoin(products, eq(products.id, productSuppliers.productId))
 			.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
 			.orderBy(products.name, products.variantName),
-		db
-			.select({ id: purchaseOrders.id, supplierId: purchaseOrders.supplierId })
-			.from(purchaseOrders)
-			.where(eq(purchaseOrders.status, "draft")),
-		abcClasses(db, now),
+		abc ?? abcClasses(db, now),
 	]);
 
-	const bySupplier = new Map<number, SupplierSuggestion>();
-	for (const p of linked) {
+	return linked.flatMap((p) => {
 		const line = {
 			sold: sold.get(p.productId) ?? 0,
 			onHand: onHand.get(p.productId) ?? 0,
@@ -138,48 +141,72 @@ export async function suggestPurchases(
 			dailyDemand: line.sold / DEMAND_DAYS,
 			leadTimeDays: p.leadTimeDays,
 			safetyDays: safetyDays(
-				abc.classes.get(p.productId)?.abc ?? null,
+				classes.classes.get(p.productId)?.abc ?? null,
 				p.leadTimeDays,
 			),
 			coverDays: p.coverDays,
 			minimumQuantity: p.minimumQuantity,
 			packSize: p.packSize,
 		});
-		if (quantity === 0) continue;
-
-		let s = bySupplier.get(p.supplierId);
-		if (!s) {
-			s = {
+		if (quantity === 0) return [];
+		return [
+			{
+				productId: p.productId,
+				sku: p.sku,
+				name: p.name,
+				variantName: p.variantName,
+				imageUrl: p.imageUrl,
+				supplierSku: p.supplierSku,
+				unit: p.unit,
+				packSize: p.packSize,
+				minimumQuantity: p.minimumQuantity,
+				...line,
+				quantity,
+				// The supplier's price if we know it, else what we last valued it at.
+				unitCost:
+					p.cost ??
+					(p.productCost === null ? null : p.productCost * p.packSize),
 				supplierId: p.supplierId,
 				supplierName: p.supplierName,
 				minimumOrder: p.minimumOrder,
+			},
+		];
+	});
+}
+
+// What each supplier should be sent today. Computed fresh from sales, stock,
+// and open POs rather than stored, so it never goes stale.
+export async function suggestPurchases(
+	db: Db,
+	now = new Date(),
+): Promise<SupplierSuggestion[]> {
+	const [needs, drafts] = await Promise.all([
+		reorderNeeds(db, now),
+		db
+			.select({ id: purchaseOrders.id, supplierId: purchaseOrders.supplierId })
+			.from(purchaseOrders)
+			.where(eq(purchaseOrders.status, "draft")),
+	]);
+
+	const bySupplier = new Map<number, SupplierSuggestion>();
+	for (const { supplierId, supplierName, minimumOrder, ...line } of needs) {
+		let s = bySupplier.get(supplierId);
+		if (!s) {
+			s = {
+				supplierId,
+				supplierName,
+				minimumOrder,
 				lines: [],
 				total: 0,
 				unpriced: 0,
 				ready: false,
-				draftId: drafts.find((d) => d.supplierId === p.supplierId)?.id ?? null,
+				draftId: drafts.find((d) => d.supplierId === supplierId)?.id ?? null,
 			};
-			bySupplier.set(p.supplierId, s);
+			bySupplier.set(supplierId, s);
 		}
-		// The supplier's price if we know it, else what we last valued it at.
-		const unitCost =
-			p.cost ?? (p.productCost === null ? null : p.productCost * p.packSize);
-		s.lines.push({
-			productId: p.productId,
-			sku: p.sku,
-			name: p.name,
-			variantName: p.variantName,
-			imageUrl: p.imageUrl,
-			supplierSku: p.supplierSku,
-			unit: p.unit,
-			packSize: p.packSize,
-			minimumQuantity: p.minimumQuantity,
-			...line,
-			quantity,
-			unitCost,
-		});
-		if (unitCost === null) s.unpriced++;
-		else s.total += quantity * unitCost;
+		s.lines.push(line);
+		if (line.unitCost === null) s.unpriced++;
+		else s.total += line.quantity * line.unitCost;
 	}
 
 	const result = [...bySupplier.values()];
@@ -243,6 +270,27 @@ export async function unitsOnOrder(db: Db, productIds?: number[]) {
 		)
 		.groupBy(purchaseOrderLines.productId);
 	return new Map(rows.map((r) => [r.productId, r.units]));
+}
+
+// Each product's line on an open draft. A product has one supplier, so one
+// draft; if it moved suppliers with a draft still open, the newest PO wins.
+export async function draftLines(db: Db) {
+	const rows = await db
+		.select({
+			productId: purchaseOrderLines.productId,
+			purchaseOrderId: purchaseOrders.id,
+			quantity: purchaseOrderLines.quantity,
+			unit: purchaseOrderLines.unit,
+			packSize: purchaseOrderLines.packSize,
+		})
+		.from(purchaseOrderLines)
+		.innerJoin(
+			purchaseOrders,
+			eq(purchaseOrders.id, purchaseOrderLines.purchaseOrderId),
+		)
+		.where(eq(purchaseOrders.status, "draft"))
+		.orderBy(purchaseOrders.id);
+	return new Map(rows.map(({ productId, ...line }) => [productId, line]));
 }
 
 // Unreceived products on sent POs, counted like unitsOnOrder, with the day

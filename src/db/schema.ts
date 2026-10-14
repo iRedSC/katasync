@@ -728,6 +728,19 @@ export const apiTokens = pgTable("api_tokens", {
 	lastUsedAt: timestamp({ withTimezone: true }),
 });
 
+// The password of katasync_mcp, the login the MCP query tool connects as, set
+// the first time it's needed (src/mcp/query.ts). The role and what it may
+// read are in drizzle/0027_mcp_role.sql.
+export const mcpLogin = pgTable(
+	"mcp_login",
+	{
+		id: smallint().primaryKey().default(1),
+		password: text().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [check("mcp_login_single", sql`${t.id} = 1`)],
+);
+
 // The one key pair katasync signs QZ Tray print requests with, made the first
 // time it's needed (src/printing/qz.ts). Packing computers trust the
 // certificate through the setup script, so replacing it means running that

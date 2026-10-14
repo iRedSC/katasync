@@ -1,12 +1,16 @@
+import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { type Db, withOwnConnection } from "#/db/client";
+import { type Db, getDb, withOwnConnection } from "#/db/client";
+import { mcpLogin } from "#/db/schema";
 
-// Ad hoc SQL for the MCP query tool. Safe to hand to a model: Postgres itself
-// refuses writes in a read-only transaction, the statement is sent with a
-// parameter so Postgres takes exactly one statement (a "; delete ..." can't
-// ride along), a time limit stops runaway queries, and it runs on a
-// connection of its own so nothing it does to the session reaches the app's
-// pool. That connection is the boundary; the checks below are a second line.
+// Ad hoc SQL for the MCP query tool. Safe to hand to a model: it connects as
+// katasync_mcp, a login that can't read the secret tables (Postgres enforces
+// that, whatever the query text says), Postgres refuses writes in a read-only
+// transaction, the statement is sent with a parameter so Postgres takes
+// exactly one statement (a "; delete ..." can't ride along), a time limit
+// stops runaway queries, and the connection is its own, so nothing it does to
+// the session reaches the app's pool. The login and the connection are the
+// boundary; the checks below only give clearer errors.
 
 export class QueryError extends Error {
 	name = "QueryError";
@@ -18,15 +22,18 @@ const TIMEOUT = "15s";
 // Both Postgres drivers katasync uses (pg, PGlite) answer execute with rows.
 type Rows = { rows: Record<string, unknown>[] };
 
-// Sign-in bookkeeping (hashes, public keys, live session ids) and the key
-// QZ Tray print jobs are signed with. Hidden from describe_schema and refused
-// by name in queries.
-const SECRET_TABLES = [
+// Sign-in bookkeeping (hashes, public keys, live session ids), the key QZ
+// Tray print jobs are signed with, and the query tool's own password.
+// katasync_mcp has a grant on every other table and view and none on these
+// (see drizzle/0027_mcp_role.sql); they're also hidden from describe_schema
+// and refused by name in queries.
+export const SECRET_TABLES = [
 	"sessions",
 	"passkeys",
 	"api_tokens",
 	"setup_links",
 	"auth_challenges",
+	"mcp_login",
 	"qz_certificate",
 ];
 
@@ -52,7 +59,7 @@ const REFUSED = new RegExp(
 export async function readOnlyQuery(
 	text: string,
 	limit = 200,
-	connect = withOwnConnection,
+	connect: typeof withMcpConnection = withMcpConnection,
 ) {
 	const statement = text.trim().replace(/;\s*$/, "");
 	if (statement === "") throw new QueryError("Give a SELECT to run");
@@ -73,6 +80,63 @@ export async function readOnlyQuery(
 			return { rows, truncated: result.rows.length > limit };
 		}),
 	);
+}
+
+export const MCP_ROLE = "katasync_mcp";
+
+// A connection of its own, logged in as katasync_mcp, and checked to be.
+export async function withMcpConnection<T>(
+	use: (db: Db) => Promise<T>,
+): Promise<T> {
+	// getDb first: it says clearly when DATABASE_URL is missing.
+	const password = await mcpPassword(getDb());
+	const url = mcpConnectionString(process.env.DATABASE_URL ?? "", password);
+	return withOwnConnection(async (db) => {
+		const { rows } = (await db.execute(
+			sql`select session_user as who`,
+		)) as unknown as { rows: { who: string }[] };
+		if (rows[0]?.who !== MCP_ROLE)
+			throw new Error(
+				`The query tool logged in as ${rows[0]?.who}, not ${MCP_ROLE}`,
+			);
+		return use(db);
+	}, url);
+}
+
+// DATABASE_URL with katasync_mcp's login in place of the owner's. pg lets
+// ?user= and ?password= override the ones before the @, so those go too.
+export function mcpConnectionString(databaseUrl: string, password: string) {
+	const url = new URL(databaseUrl);
+	url.username = MCP_ROLE;
+	url.password = password;
+	url.searchParams.delete("user");
+	url.searchParams.delete("password");
+	return url.toString();
+}
+
+// The role's password, made and set the first time. Two first callers can't
+// set different ones: the second waits on the first's insert, then reads it.
+// Roles belong to the whole server, so two databases on one server would
+// fight over it; on Neon each branch has its own.
+export async function mcpPassword(db: Db) {
+	const [kept] = await db.select().from(mcpLogin);
+	if (kept) return kept.password;
+	return db.transaction(async (tx) => {
+		const [made] = await tx
+			.insert(mcpLogin)
+			.values({ password: randomBytes(32).toString("hex") })
+			.onConflictDoNothing()
+			.returning();
+		if (!made) {
+			const [other] = await tx.select().from(mcpLogin);
+			return other.password;
+		}
+		// Hex, so safe to put in the statement.
+		await tx.execute(
+			sql.raw(`alter role ${MCP_ROLE} password '${made.password}'`),
+		);
+		return made.password;
+	});
 }
 
 // JSON-friendly values: dates as ISO strings, big integers as numbers.

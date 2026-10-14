@@ -685,11 +685,11 @@ function registerWriteTools(server: McpServer, db: Db) {
 		async ({ skus, location }) => {
 			const productIds = [];
 			for (const sku of skus) productIds.push((await productBySku(db, sku)).id);
-			const requested = await requestCounts(db, {
+			await requestCounts(db, {
 				productIds,
 				locationId: await ownedLocation(db, location),
 			});
-			return json({ requested });
+			return json({ requested: new Set(productIds).size });
 		},
 	);
 

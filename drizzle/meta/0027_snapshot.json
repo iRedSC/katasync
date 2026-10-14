@@ -1,5 +1,5 @@
 {
-  "id": "47e1d558-97fd-4df2-b088-fb4c93da88cd",
+  "id": "64a0aee7-7d77-4149-93ff-d57ef7f75af6",
   "prevId": "8577365f-c6cf-4cbd-b1a9-f16a5132509f",
   "version": "7",
   "dialect": "postgresql",
@@ -419,6 +419,44 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.mcp_login": {
+      "name": "mcp_login",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "mcp_login_single": {
+          "name": "mcp_login_single",
+          "value": "\"mcp_login\".\"id\" = 1"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.movements": {
@@ -2059,50 +2097,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.qz_certificate": {
-      "name": "qz_certificate",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "smallint",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "certificate": {
-          "name": "certificate",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "private_key": {
-          "name": "private_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "qz_certificate_single": {
-          "name": "qz_certificate_single",
-          "value": "\"qz_certificate\".\"id\" = 1"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.sessions": {
