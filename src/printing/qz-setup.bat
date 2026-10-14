@@ -102,6 +102,16 @@ try {
 	}
 	Remove-Item $file
 
+	# QZ reads this person's own preferences before its install-wide ones, so
+	# file access goes off here too. Each person who prints needs this run.
+	$prefsDir = Join-Path $env:APPDATA 'qz'
+	New-Item -ItemType Directory -Path $prefsDir -Force | Out-Null
+	$prefs = Join-Path $prefsDir 'prefs.properties'
+	$kept = if (Test-Path $prefs) {
+		Get-Content $prefs | Where-Object { ($_ -split '=', 2)[0].Trim() -ne 'security.file.enabled' }
+	} else { @() }
+	Set-Content -Path $prefs -Value (@($kept) + 'security.file.enabled=false') -Encoding Ascii
+
 	Start-Process "$qz\qz-tray.exe"
 	Write-Host ''
 	Write-Host 'Done. Label printing is set up on this computer.' -ForegroundColor Green
