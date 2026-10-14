@@ -20,6 +20,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StockRouteImport } from './routes/stock'
 import { Route as LabelsIdRouteImport } from './routes/labels/$id'
 import { Route as LabelsSetupRouteImport } from './routes/labels/setup'
+import { Route as LabelsTestRouteImport } from './routes/labels/test'
 import { Route as OrdersIndexRouteImport } from './routes/orders/index'
 import { Route as OrdersIdRouteImport } from './routes/orders/$id'
 import { Route as PrintInvoicesRouteImport } from './routes/print/invoices'
@@ -87,6 +88,11 @@ const LabelsIdRoute = LabelsIdRouteImport.update({
 const LabelsSetupRoute = LabelsSetupRouteImport.update({
   id: '/labels/setup',
   path: '/labels/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LabelsTestRoute = LabelsTestRouteImport.update({
+  id: '/labels/test',
+  path: '/labels/test',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrdersIndexRoute = OrdersIndexRouteImport.update({
@@ -167,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/stock': typeof StockRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
+  '/labels/test': typeof LabelsTestRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -193,6 +200,7 @@ export interface FileRoutesByTo {
   '/stock': typeof StockRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
+  '/labels/test': typeof LabelsTestRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -220,6 +228,7 @@ export interface FileRoutesById {
   '/stock': typeof StockRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
+  '/labels/test': typeof LabelsTestRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -248,6 +257,7 @@ export interface FileRouteTypes {
     | '/stock'
     | '/labels/$id'
     | '/labels/setup'
+    | '/labels/test'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -274,6 +284,7 @@ export interface FileRouteTypes {
     | '/stock'
     | '/labels/$id'
     | '/labels/setup'
+    | '/labels/test'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -300,6 +311,7 @@ export interface FileRouteTypes {
     | '/stock'
     | '/labels/$id'
     | '/labels/setup'
+    | '/labels/test'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -327,6 +339,7 @@ export interface RootRouteChildren {
   StockRoute: typeof StockRoute
   LabelsIdRoute: typeof LabelsIdRoute
   LabelsSetupRoute: typeof LabelsSetupRoute
+  LabelsTestRoute: typeof LabelsTestRoute
   OrdersIdRoute: typeof OrdersIdRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
@@ -419,6 +432,13 @@ declare module '@tanstack/react-router' {
       path: '/labels/setup'
       fullPath: '/labels/setup'
       preLoaderRoute: typeof LabelsSetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/labels/test': {
+      id: '/labels/test'
+      path: '/labels/test'
+      fullPath: '/labels/test'
+      preLoaderRoute: typeof LabelsTestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/orders/': {
@@ -527,6 +547,7 @@ const rootRouteChildren: RootRouteChildren = {
   StockRoute: StockRoute,
   LabelsIdRoute: LabelsIdRoute,
   LabelsSetupRoute: LabelsSetupRoute,
+  LabelsTestRoute: LabelsTestRoute,
   OrdersIdRoute: OrdersIdRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
   ProductsSkuRoute: ProductsSkuRoute,

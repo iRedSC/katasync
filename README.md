@@ -28,6 +28,8 @@ Everyone shares one company account; each phone or computer signs in with its ow
 
 Labels print through QZ Tray on each packing computer. katasync makes its own QZ certificate the first time it's needed and keeps it in the database (`src/printing/qz.ts`). Settings, then Label printing, downloads a Windows script with that certificate in it: it installs QZ Tray if it's missing, makes it trust katasync, and restarts it. Run it again after reinstalling QZ Tray. Dev and production have separate databases, so separate certificates.
 
+Each computer then picks its label printer in Settings; the choice is kept in that browser. Labels (4x6 PDFs from Shippo and TikTok) go straight to it, signed by the server (`src/server/printing.ts`, `src/printing/qz-client.ts`). Without a printer picked, labels open as PDFs in a new tab, as on phones. A failed print says why and offers the PDF.
+
 ## Claude (MCP)
 
 `/mcp` is an MCP server (Streamable HTTP, stateless) for Claude and other MCP clients. Make a token in Settings; it shows the `claude mcp add` command to run. Claude can read anything (including read-only SQL), draft POs, receive sent ones, change products and the setup, count stock, ask staff for cycle counts, and build kits; a read-only token gets only the reading tools. Every change it makes is listed on Diagnostics. Sending POs and buying labels stay in the app. Tools live in `src/mcp/server.ts`; the counting rules they rely on are the `owned_stock` and `sales_units` views.

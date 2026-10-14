@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { DevicesCard } from "#/components/devices-card";
+import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
 import { TokensCard } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
@@ -93,23 +94,7 @@ function Settings() {
 			<TokensCard tokens={tokens} />
 			<Boxes boxes={boxes} />
 			<Units units={units} />
-			<Card
-				title="Label printing"
-				aside={
-					<Button asChild size="sm" variant="outline">
-						<a href="/labels/setup" download>
-							Download setup
-						</a>
-					</Button>
-				}
-			>
-				<p className="text-muted-foreground">
-					On each Windows packing computer, download the setup, open it, and
-					click Yes. It installs QZ Tray if needed and lets katasync print
-					without asking. If the browser or Windows warns about the file, choose
-					Keep, then Run.
-				</p>
-			</Card>
+			<LabelPrintingCard />
 		</Page>
 	);
 }

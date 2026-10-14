@@ -18,6 +18,7 @@ import { ProductImage } from "#/components/product";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { printLabel } from "#/printing/qz-client";
 import {
 	listPackages,
 	quickShipBuy,
@@ -26,7 +27,6 @@ import {
 	savePackage,
 	voidLabel,
 } from "#/server/shipping";
-import { labelPath } from "#/shipping/label-path";
 import type { Rate } from "#/shipping/shippo";
 
 const MM_PER_INCH = 25.4;
@@ -265,7 +265,7 @@ export function QuickShip() {
 		if (!result) return;
 		setBought(result);
 		setStep("done");
-		window.open(labelPath(result.id), "_blank");
+		printLabel(result.id);
 		router.invalidate();
 	}
 
@@ -1135,14 +1135,13 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 					>
 						Next order
 					</button>
-					<a
-						href={labelPath(bought.id)}
-						target="_blank"
-						rel="noreferrer"
+					<button
+						type="button"
+						onClick={() => printLabel(bought.id)}
 						className="text-lg text-link hover:underline"
 					>
-						Open label again
-					</a>
+						Print again
+					</button>
 					{/* TikTok has no API to cancel its labels. */}
 					{bought.provider === "tiktok" ? (
 						<span className="text-lg text-muted-foreground">

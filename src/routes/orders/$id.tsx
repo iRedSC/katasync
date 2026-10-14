@@ -23,6 +23,7 @@ import {
 import { useHotkeys } from "#/lib/hotkeys";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
+import { printLabel } from "#/printing/qz-client";
 import { getOrder, type OrderDetail } from "#/server/orders";
 import { resendTracking, voidLabel } from "#/server/shipping";
 import { labelPath } from "#/shipping/label-path";
@@ -90,15 +91,13 @@ function OrderPage() {
 						</a>
 					</Button>
 					{liveLabel && (
-						<Button asChild size="sm" variant="outline">
-							<a
-								href={labelPath(liveLabel.id)}
-								target="_blank"
-								rel="noreferrer"
-							>
-								<Printer />
-								Reprint label
-							</a>
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => printLabel(liveLabel.id)}
+						>
+							<Printer />
+							Reprint label
 						</Button>
 					)}
 					{external && (
