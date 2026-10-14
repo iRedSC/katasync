@@ -6,7 +6,12 @@ import { getDb } from "#/db/client";
 import { locations, orders, packages, shipments, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
 import { createBoxes, updateBox } from "#/shipping/boxes";
-import { sendTracking, voidShipment, withOrderLock } from "#/shipping/handoff";
+import {
+	retryStorefrontTracking,
+	sendTracking,
+	voidShipment,
+	withOrderLock,
+} from "#/shipping/handoff";
 import { labelPdf } from "#/shipping/label-file";
 import {
 	orderForShipping,
@@ -233,6 +238,7 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 					...box,
 					provider: "shippo",
 					carrier: rate.carrier,
+					carrierToken: rate.carrierToken,
 					service: rate.service,
 					serviceName: rate.serviceName,
 					cost: rate.cost,
@@ -257,6 +263,12 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 export const resendTracking = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))
 	.handler(async ({ data }) => sendTracking(getDb(), data.id));
+
+// Tries saving (or, once voided, removing) a label's storefront tracking
+// entry again.
+export const retryStorefront = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(async ({ data }) => retryStorefrontTracking(getDb(), data.id));
 
 export const voidLabel = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))

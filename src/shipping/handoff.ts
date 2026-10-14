@@ -1,17 +1,25 @@
 import { eq, sql } from "drizzle-orm";
 import { ebayFulfill } from "#/channels/ebay";
-import { shopifyCancelFulfillment, shopifyFulfill } from "#/channels/shopify";
+import {
+	shopifyCancelFulfillment,
+	shopifyFulfill,
+	shopifyRemoveShippoTracking,
+	shopifySaveShippoTracking,
+} from "#/channels/shopify";
 import type { Db } from "#/db/client";
 import { orderLines, orders, shipments, stores } from "#/db/schema";
 import { assignOrderPins } from "./pins";
 import { refundLabel } from "./shippo";
 import { tiktokShipPackage } from "./tiktok";
+import { storefrontTrackingUrl } from "./tracking-link";
 
 // The outside calls, passed in so tests can stand in for Shopify, eBay, and
 // Shippo.
 export type Outside = {
 	shopifyFulfill: typeof shopifyFulfill;
 	shopifyCancel: typeof shopifyCancelFulfillment;
+	shopifySaveTracking: typeof shopifySaveShippoTracking;
+	shopifyRemoveTracking: typeof shopifyRemoveShippoTracking;
 	ebayFulfill: typeof ebayFulfill;
 	refund: typeof refundLabel;
 	tiktokShip: typeof tiktokShipPackage;
@@ -20,6 +28,8 @@ export type Outside = {
 export const live: Outside = {
 	shopifyFulfill,
 	shopifyCancel: shopifyCancelFulfillment,
+	shopifySaveTracking: shopifySaveShippoTracking,
+	shopifyRemoveTracking: shopifyRemoveShippoTracking,
 	ebayFulfill,
 	refund: refundLabel,
 	tiktokShip: tiktokShipPackage,
@@ -77,6 +87,17 @@ async function orderOf(db: Db, shipmentId: number) {
 	return row.orderId;
 }
 
+// Logs a failed katasync.shippo_tracking write loudly and returns the note
+// shown on the shipment.
+function storefrontNote(orderId: string, fix: string, err: unknown) {
+	const why = err instanceof Error ? err.message : String(err);
+	console.error(
+		`STOREFRONT TRACKING NOT UPDATED for ${orderId}: ${fix} katasync.shippo_tracking.`,
+		err,
+	);
+	return `The storefront's tracking page isn't up to date (${why}). ${fix} the order's katasync.shippo_tracking metafield in Shopify.`;
+}
+
 export type Handoff = { sent: boolean; message: string };
 
 // Tells the order's marketplace it shipped, with tracking, so the customer
@@ -132,7 +153,11 @@ export async function sendTracking(
 					fulfillmentId = await outside.shopifyFulfill(order.externalId, {
 						company: shipment.carrier,
 						number: shipment.trackingNumber,
-						url: shipment.trackingUrl,
+						// The email's tracking link: the storefront's page, which
+						// has the carrier's link too.
+						url:
+							(await storefrontTrackingUrl(order.externalId)) ??
+							shipment.trackingUrl,
 					});
 				} else {
 					const lines = await tx
@@ -184,7 +209,86 @@ export async function sendTracking(
 	);
 	// Frees the shipped order's pin (or none, if nothing changed).
 	if (result.sent) await assignOrderPins(db);
+	// Only once shipped is committed: a slow or failed write can't hold up
+	// or undo it.
+	if (result.sent) {
+		const note = await updateStorefrontTracking(db, shipmentId, outside);
+		if (note) return { ...result, message: `${result.message}. ${note}` };
+	}
 	return result;
+}
+
+// Brings the storefront's katasync.shippo_tracking entry for a Shopify
+// Shippo label in line with the label: listed while live, gone once voided.
+// Best-effort and run after the send or void has committed: the customer
+// was emailed either way, so a failure (Shopify calls give up after 5s) is
+// only kept on the shipment, shown on the order and Diagnostics, for a fix
+// by hand. Takes the order's lock so it can't interleave with a void.
+// Returns the note, or null when the storefront is up to date.
+async function updateStorefrontTracking(
+	db: Db,
+	shipmentId: number,
+	outside: Outside,
+): Promise<string | null> {
+	return withOrderLock(db, await orderOf(db, shipmentId), async (tx) => {
+		const { shipment, order, channel } = await load(tx, shipmentId);
+		if (
+			channel !== "shopify" ||
+			!shipment.carrierToken ||
+			!shipment.trackingNumber ||
+			shipment.test
+		) {
+			return null;
+		}
+		const entry = {
+			number: shipment.trackingNumber,
+			carrier: shipment.carrierToken,
+			url: shipment.trackingUrl,
+		};
+		let note: string | null = null;
+		try {
+			if (shipment.voidedAt) {
+				await outside.shopifyRemoveTracking(order.externalId, entry.number);
+			} else {
+				await outside.shopifySaveTracking(order.externalId, entry);
+			}
+		} catch (err) {
+			note = storefrontNote(
+				order.externalId,
+				shipment.voidedAt
+					? `Remove tracking ${entry.number} from`
+					: `Add ${JSON.stringify(entry)} to`,
+				err,
+			);
+		}
+		await tx
+			.update(shipments)
+			.set({ storefrontTrackingError: note })
+			.where(eq(shipments.id, shipmentId));
+		return note;
+	});
+}
+
+// Tries the storefront's katasync.shippo_tracking entry again after a
+// failure: saved for a shipped label, removed for a voided one. Clears the
+// note when Shopify has it right, including after a fix by hand.
+export async function retryStorefrontTracking(
+	db: Db,
+	shipmentId: number,
+	outside: Outside = live,
+): Promise<Handoff> {
+	const { shipment } = await load(db, shipmentId);
+	if (!shipment.carrierToken || !shipment.trackingNumber) {
+		throw new Error("This label has nothing for the storefront");
+	}
+	const note = await updateStorefrontTracking(db, shipmentId, outside);
+	if (note) return { sent: false, message: note };
+	return {
+		sent: true,
+		message: shipment.voidedAt
+			? "The storefront no longer lists this label"
+			: "The storefront's tracking page has this label",
+	};
 }
 
 export type Voided = { refundStatus: string; notes: string[] };
@@ -253,5 +357,9 @@ export async function voidShipment(
 		},
 	);
 	await assignOrderPins(db);
+	// After the void commits. Checked even if sending looked failed: the
+	// entry may have been saved before an error.
+	const note = await updateStorefrontTracking(db, shipmentId, outside);
+	if (note) result.notes.push(note);
 	return result;
 }

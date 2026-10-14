@@ -22,7 +22,7 @@ import {
 	getDiagnostics,
 	runConnectionCheck,
 } from "#/server/diagnostics";
-import { resendTracking } from "#/server/shipping";
+import { resendTracking, retryStorefront } from "#/server/shipping";
 
 export const Route = createFileRoute("/diagnostics")({
 	loader: () => getDiagnostics(),
@@ -106,6 +106,19 @@ function DiagnosticsPage() {
 						detail="Labels whose tracking reached the marketplace"
 					/>
 					<SummaryRow
+						href="#storefront-tracking"
+						name="Storefront tracking"
+						status={
+							d.storefrontTracking.length > 0
+								? {
+										label: `${d.storefrontTracking.length} to fix`,
+										tone: "warning",
+									}
+								: { label: "Up to date", tone: "success" }
+						}
+						detail="Shippo carriers listed on Shopify orders for the tracking page"
+					/>
+					<SummaryRow
 						href="#unmapped"
 						name="Unmatched SKUs"
 						status={
@@ -136,6 +149,7 @@ function DiagnosticsPage() {
 				<ChannelCard key={c.channel} data={c} />
 			))}
 			<TrackingCard handoffs={d.handoffs} />
+			<StorefrontTrackingCard rows={d.storefrontTracking} />
 			<UnmappedCard rows={d.unmapped} />
 			<ServicesCard services={d.services} />
 			<ClaudeCard calls={d.claude} />
@@ -675,6 +689,76 @@ function ClaudeCard({ calls }: { calls: Diagnostics["claude"] }) {
 										</pre>
 									</div>
 								)}
+							</li>
+						))}
+					</ul>
+				)}
+			</Card>
+		</div>
+	);
+}
+
+function StorefrontTrackingCard({
+	rows,
+}: {
+	rows: Diagnostics["storefrontTracking"];
+}) {
+	const router = useRouter();
+	const [busy, setBusy] = useState<number | null>(null);
+
+	async function retry(shipmentId: number) {
+		setBusy(shipmentId);
+		try {
+			const r = await retryStorefront({ data: { id: shipmentId } });
+			if (r.sent) toast.success(r.message);
+			else toast.error(r.message);
+			await router.invalidate();
+		} catch (err) {
+			toast.error(errorMessage(err));
+		} finally {
+			setBusy(null);
+		}
+	}
+
+	return (
+		<div id="storefront-tracking" className="scroll-mt-16">
+			<Card title="Storefront tracking" flush>
+				{rows.length === 0 ? (
+					<p className="px-4 pb-4 text-muted-foreground">
+						Every Shopify order lists its Shippo labels for the tracking page.
+					</p>
+				) : (
+					<ul>
+						{rows.map((r) => (
+							<li
+								key={r.shipmentId}
+								className="flex items-start gap-3 border-t px-4 py-3"
+							>
+								<div className="min-w-0 flex-1">
+									<Link
+										to="/orders/$id"
+										params={{ id: String(r.orderId) }}
+										className="font-medium hover:underline"
+									>
+										{r.orderName}
+									</Link>{" "}
+									<span className="text-muted-foreground">
+										{r.voided ? "voided label" : "label"}{" "}
+										{formatDateTime(r.createdAt)}
+										{r.trackingNumber && ` · ${r.trackingNumber}`}
+									</span>
+									<p className="mt-1 text-xs break-words text-warning-text">
+										{r.error}
+									</p>
+								</div>
+								<Button
+									size="sm"
+									variant="outline"
+									disabled={busy !== null}
+									onClick={() => retry(r.shipmentId)}
+								>
+									{busy === r.shipmentId ? "Saving…" : "Retry"}
+								</Button>
 							</li>
 						))}
 					</ul>

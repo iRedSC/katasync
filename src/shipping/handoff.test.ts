@@ -1,9 +1,15 @@
+import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
-import { type Outside, sendTracking, voidShipment } from "./handoff";
+import {
+	type Outside,
+	retryStorefrontTracking,
+	sendTracking,
+	voidShipment,
+} from "./handoff";
 import { assignOrderPins } from "./pins";
 
 let db: Db;
@@ -13,6 +19,8 @@ function fakes(overrides: Partial<Outside> = {}): Outside {
 	return {
 		shopifyFulfill: vi.fn(async () => "gid://shopify/Fulfillment/1"),
 		shopifyCancel: vi.fn(async () => {}),
+		shopifySaveTracking: vi.fn(async () => {}),
+		shopifyRemoveTracking: vi.fn(async () => {}),
 		ebayFulfill: vi.fn(async () => "ebay-f-1"),
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokShip: vi.fn(async (id: string) => ({ id, trackingNumber: "TT1" })),
@@ -63,6 +71,7 @@ async function addLabel(
 			weightGrams: 600,
 			provider: "shippo",
 			carrier: "USPS",
+			carrierToken: "usps",
 			service: "usps_ground_advantage",
 			serviceName: "USPS Ground Advantage",
 			cost: 7.08,
@@ -117,7 +126,24 @@ describe("sendTracking", () => {
 		expect(outside.refund).not.toHaveBeenCalled();
 	});
 
+	test("the shipping email links to the storefront's signed tracking page", async () => {
+		vi.stubEnv("TRACKING_LINK_SECRET", "test-secret");
+		vi.stubEnv("STOREFRONT_ORIGIN", "https://shop.example/");
+		const outside = fakes();
+		await sendTracking(db, await addLabel(), outside);
+		expect(outside.shopifyFulfill).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			expect.objectContaining({
+				url: `https://shop.example/track/9/${createHmac("sha256", "test-secret").update("track:9").digest("base64url")}`,
+			}),
+		);
+		vi.unstubAllEnvs();
+	});
+
 	test("marks the order shipped on Shopify and here", async () => {
+		// Without the storefront set up, the email keeps the carrier's link.
+		vi.stubEnv("TRACKING_LINK_SECRET", "");
+		const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const outside = fakes();
 		const id = await addLabel();
 		const result = await sendTracking(db, id, outside);
@@ -136,6 +162,60 @@ describe("sendTracking", () => {
 		);
 		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
 		expect((await order()).pin).toBeNull();
+		expect(warned).toHaveBeenCalledWith(
+			expect.stringContaining("TRACKING_LINK_SECRET isn't set"),
+		);
+		warned.mockRestore();
+		vi.unstubAllEnvs();
+	});
+
+	test("lists the label's Shippo carrier token on the order for the storefront", async () => {
+		const outside = fakes();
+		await sendTracking(db, await addLabel(), outside);
+		expect(outside.shopifySaveTracking).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			{
+				number: "9400100000000000000000",
+				carrier: "usps",
+				url: "https://tools.usps.com/x",
+			},
+		);
+	});
+
+	test("a label bought before the token was kept still ships, unlisted", async () => {
+		const outside = fakes();
+		const result = await sendTracking(
+			db,
+			await addLabel({ carrierToken: null }),
+			outside,
+		);
+		expect(result.sent).toBe(true);
+		expect(outside.shopifySaveTracking).not.toHaveBeenCalled();
+	});
+
+	test("if the storefront entry isn't saved, the order still ships and the label says so", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+		const outside = fakes({
+			shopifySaveTracking: vi.fn(async () => {
+				throw new Error("Access denied");
+			}),
+		});
+		const id = await addLabel();
+		const result = await sendTracking(db, id, outside);
+
+		expect(result.sent).toBe(true);
+		expect(result.message).toContain("katasync.shippo_tracking");
+		expect(await label(id)).toMatchObject({
+			channelError: null,
+			storefrontTrackingError: expect.stringContaining("Access denied"),
+		});
+		expect((await label(id)).channelSentAt).not.toBeNull();
+		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+		expect(logged).toHaveBeenCalledWith(
+			expect.stringContaining("STOREFRONT TRACKING NOT UPDATED"),
+			expect.any(Error),
+		);
+		logged.mockRestore();
 	});
 
 	test("never sends a test label's fake tracking", async () => {
@@ -198,6 +278,10 @@ describe("voidShipment", () => {
 		expect(outside.shopifyCancel).toHaveBeenCalledWith(
 			"gid://shopify/Fulfillment/1",
 		);
+		expect(outside.shopifyRemoveTracking).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			"9400100000000000000000",
+		);
 		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
 		expect((await order()).pin).not.toBeNull();
 
@@ -250,5 +334,77 @@ describe("voidShipment", () => {
 		const result = await voidShipment(db, id, outside);
 		expect(result.notes[0]).toContain("Shopify still shows it shipped");
 		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+	});
+
+	test("if the storefront entry can't be removed, the void still goes through and says so", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+		const outside = fakes({
+			shopifyRemoveTracking: vi.fn(async () => {
+				throw new Error("nope");
+			}),
+		});
+		const id = await addLabel();
+		await sendTracking(db, id, outside);
+		const result = await voidShipment(db, id, outside);
+		expect(result.notes).toContainEqual(
+			expect.stringContaining("katasync.shippo_tracking"),
+		);
+		expect((await label(id)).voidedAt).not.toBeNull();
+		expect((await label(id)).storefrontTrackingError).toContain(
+			"Remove tracking 9400100000000000000000",
+		);
+		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect(logged).toHaveBeenCalled();
+		logged.mockRestore();
+	});
+});
+
+describe("retryStorefrontTracking", () => {
+	beforeEach(() => setUp("shopify"));
+
+	test("saves a shipped label's entry and clears the note", async () => {
+		const outside = fakes();
+		const id = await addLabel({ storefrontTrackingError: "not saved" });
+		const result = await retryStorefrontTracking(db, id, outside);
+		expect(result.sent).toBe(true);
+		expect(outside.shopifySaveTracking).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			{
+				number: "9400100000000000000000",
+				carrier: "usps",
+				url: "https://tools.usps.com/x",
+			},
+		);
+		expect((await label(id)).storefrontTrackingError).toBeNull();
+	});
+
+	test("removes a voided label's entry instead", async () => {
+		const outside = fakes();
+		const id = await addLabel({
+			storefrontTrackingError: "not removed",
+			voidedAt: new Date(),
+		});
+		await retryStorefrontTracking(db, id, outside);
+		expect(outside.shopifyRemoveTracking).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			"9400100000000000000000",
+		);
+		expect(outside.shopifySaveTracking).not.toHaveBeenCalled();
+		expect((await label(id)).storefrontTrackingError).toBeNull();
+	});
+
+	test("another refusal, a timeout included, replaces the note with the new reason", async () => {
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+		const outside = fakes({
+			shopifySaveTracking: vi.fn(async () => {
+				throw new Error("Shopify didn't answer within 5000ms");
+			}),
+		});
+		const id = await addLabel({ storefrontTrackingError: "not saved" });
+		const result = await retryStorefrontTracking(db, id, outside);
+		expect(result.sent).toBe(false);
+		expect(result.message).toContain("didn't answer within 5000ms");
+		expect((await label(id)).storefrontTrackingError).toBe(result.message);
+		logged.mockRestore();
 	});
 });
