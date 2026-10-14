@@ -32,6 +32,7 @@ import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/sup
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
 
@@ -150,6 +151,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
+  id: '/api/webhooks/$channel',
+  path: '/api/webhooks/$channel',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
   id: '/purchasing/pdf/$id',
   path: '/purchasing/pdf/$id',
@@ -185,6 +191,7 @@ export interface FileRoutesByFullPath {
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
@@ -212,6 +219,7 @@ export interface FileRoutesByTo {
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
@@ -240,6 +248,7 @@ export interface FileRoutesById {
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
@@ -269,6 +278,7 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
+    | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/api/cron/sync/$channel'
   fileRoutesByTo: FileRoutesByTo
@@ -296,6 +306,7 @@ export interface FileRouteTypes {
     | '/purchasing'
     | '/receive'
     | '/api/auth/$'
+    | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/api/cron/sync/$channel'
   id:
@@ -323,6 +334,7 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
+    | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/api/cron/sync/$channel'
   fileRoutesById: FileRoutesById
@@ -351,6 +363,7 @@ export interface RootRouteChildren {
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
   ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
 }
@@ -518,6 +531,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/webhooks/$channel': {
+      id: '/api/webhooks/$channel'
+      path: '/api/webhooks/$channel'
+      fullPath: '/api/webhooks/$channel'
+      preLoaderRoute: typeof ApiWebhooksChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/purchasing/pdf/$id': {
       id: '/purchasing/pdf/$id'
       path: '/purchasing/pdf/$id'
@@ -559,6 +579,7 @@ const rootRouteChildren: RootRouteChildren = {
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
   ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,
 }

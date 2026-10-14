@@ -118,6 +118,7 @@ describe("guard", () => {
 			"/setup",
 			"/api/auth/login/options",
 			"/api/cron/sync/shopify",
+			"/api/webhooks/shopify",
 			"/logo.svg",
 			"/assets/main-abc.js",
 		])
