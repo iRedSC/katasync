@@ -125,6 +125,40 @@ describe("ingestOrder", () => {
 		expect(await onHand(wrench)).toBe(10);
 	});
 
+	test("units cancelled from a line give back just their stock", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, 10);
+		await ingestOrder(db, store(), order(), warehouse);
+		const [line] = order().lines;
+		for (const quantity of [1, 0]) {
+			await ingestOrder(
+				db,
+				store(),
+				order({ lines: [{ ...line, quantity }] }),
+				warehouse,
+			);
+			expect(await onHand(wrench)).toBe(10 - quantity);
+		}
+	});
+
+	test("a line already cancelled when first seen isn't saved", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, 10);
+		const [line] = order().lines;
+		const { orderId } = await ingestOrder(
+			db,
+			store(),
+			order({ lines: [{ ...line, quantity: 0 }] }),
+			warehouse,
+		);
+		const saved = await db
+			.select()
+			.from(schema.orderLines)
+			.where(eq(schema.orderLines.orderId, orderId));
+		expect(saved).toEqual([]);
+		expect(await onHand(wrench)).toBe(10);
+	});
+
 	test("a tool set takes its parts and records their combined cost", async () => {
 		const handle = await createProduct(db, "HANDLE", "simple");
 		const blade = await createProduct(db, "BLADE", "simple");

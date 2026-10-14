@@ -104,6 +104,7 @@ const ordersPage = type({
 					sku: "string | null",
 					name: "string",
 					quantity: "number.integer",
+					currentQuantity: "number.integer",
 					variant: type({ id: "string" }).or("null"),
 					discountedUnitPriceAfterAllDiscountsSet: money,
 				}).array(),
@@ -127,7 +128,7 @@ query Orders($cursor: String, $query: String) {
 			lineItems(first: 30) {
 				pageInfo { hasNextPage endCursor }
 				nodes {
-					id sku name quantity
+					id sku name quantity currentQuantity
 					variant { id }
 					discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
 				}
@@ -141,6 +142,7 @@ const lineItem = type({
 	sku: "string | null",
 	name: "string",
 	quantity: "number.integer",
+	currentQuantity: "number.integer",
 	variant: type({ id: "string" }).or("null"),
 	discountedUnitPriceAfterAllDiscountsSet: money,
 });
@@ -160,7 +162,7 @@ query Lines($id: ID!, $cursor: String) {
 		lineItems(first: 100, after: $cursor) {
 			pageInfo { hasNextPage endCursor }
 			nodes {
-				id sku name quantity
+				id sku name quantity currentQuantity
 				variant { id }
 				discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
 			}
@@ -184,6 +186,49 @@ async function remainingLines(
 			: null;
 	}
 	return lines;
+}
+
+const shippedPage = type({
+	order: {
+		fulfillments: type({
+			status: "string",
+			fulfillmentLineItems: {
+				nodes: type({
+					quantity: "number.integer",
+					lineItem: { id: "string" },
+				}).array(),
+			},
+		}).array(),
+	},
+});
+
+const SHIPPED_QUERY = `
+query Shipped($id: ID!) {
+	order(id: $id) {
+		fulfillments(first: 10) {
+			status
+			fulfillmentLineItems(first: 50) { nodes { quantity lineItem { id } } }
+		}
+	}
+}`;
+
+// Fulfillments that never went out.
+const notShipped = new Set(["CANCELLED", "ERROR", "FAILURE"]);
+
+// Units of each line that have shipped, by line ID.
+async function shippedUnits(orderId: string) {
+	const page = shippedPage.assert(
+		await shopifyQuery(SHIPPED_QUERY, { id: orderId }),
+	);
+	const shipped = new Map<string, number>();
+	for (const f of page.order.fulfillments) {
+		if (notShipped.has(f.status)) continue;
+		for (const item of f.fulfillmentLineItems.nodes) {
+			const id = item.lineItem.id;
+			shipped.set(id, (shipped.get(id) ?? 0) + item.quantity);
+		}
+	}
+	return shipped;
 }
 
 const variantsPage = type({
@@ -381,10 +426,17 @@ async function ingestMatching(
 						},
 					}
 				: o;
+			// Units refunded or removed only matter once we know whether they
+			// shipped, so only those orders cost the extra call.
+			const shipped = order.lineItems.nodes.some(
+				(l) => l.currentQuantity < l.quantity,
+			)
+				? await shippedUnits(o.id)
+				: null;
 			const result = await ingestOrder(
 				db,
 				store,
-				toChannelOrder(order),
+				shopifyToChannelOrder(order, shipped),
 				locationId,
 			);
 			problems.push(...result.problems);
@@ -413,8 +465,13 @@ function tiktokOrderId(tags: string[]) {
 	return tag ? `tiktok:${tag.slice("TikTokOrderID:".length)}` : null;
 }
 
-function toChannelOrder(
-	o: (typeof ordersPage.infer.orders.nodes)[number],
+export type ShopifyOrder = (typeof ordersPage.infer.orders.nodes)[number];
+
+// `shipped` is units shipped per line ID, needed when any line has refunded
+// or removed units (see shopifyLineQuantity).
+export function shopifyToChannelOrder(
+	o: ShopifyOrder,
+	shipped: Map<string, number> | null,
 ): ChannelOrder {
 	return {
 		externalId: o.id,
@@ -445,10 +502,25 @@ function toChannelOrder(
 			listingExternalId: l.variant?.id ?? null,
 			sku: l.sku || null,
 			title: l.name,
-			quantity: l.quantity,
+			quantity: shopifyLineQuantity(o, l, shipped),
 			unitPrice: l.discountedUnitPriceAfterAllDiscountsSet.shopMoney.amount,
 		})),
 	};
+}
+
+// Units that leave our stock. Shopify's `quantity` never changes and its
+// `currentQuantity` drops on every refund, shipped or not. A unit refunded or
+// removed before it shipped never leaves, so its stock comes back; one
+// refunded after shipping stays sold until the return is received. A
+// cancelled order keeps what it was placed with, since cancelling gives
+// everything back anyway.
+export function shopifyLineQuantity(
+	o: Pick<ShopifyOrder, "cancelledAt">,
+	l: { id: string; quantity: number; currentQuantity: number },
+	shipped: Map<string, number> | null,
+) {
+	if (o.cancelledAt || l.currentQuantity >= l.quantity) return l.quantity;
+	return Math.max(l.currentQuantity, shipped?.get(l.id) ?? 0);
 }
 
 const userErrors = type({

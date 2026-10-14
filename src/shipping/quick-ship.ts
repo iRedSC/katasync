@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	orderLines,
@@ -62,7 +62,8 @@ export async function orderForShipping(db: Db, pin: number) {
 		})
 		.from(orderLines)
 		.leftJoin(products, eq(products.id, orderLines.productId))
-		.where(eq(orderLines.orderId, order.id))
+		// A cancelled line stays at 0; there's nothing of it to pack.
+		.where(and(eq(orderLines.orderId, order.id), gt(orderLines.quantity, 0)))
 		.orderBy(orderLines.id);
 
 	const key = contentsKey(lines);

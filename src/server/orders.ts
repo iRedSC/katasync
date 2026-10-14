@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
@@ -212,9 +212,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 					.from(orderLines)
 					.leftJoin(products, eq(products.id, orderLines.productId))
 					.where(
-						inArray(
-							orderLines.orderId,
-							toShip.map((o) => o.id),
+						and(
+							inArray(
+								orderLines.orderId,
+								toShip.map((o) => o.id),
+							),
+							gt(orderLines.quantity, 0),
 						),
 					)
 					.orderBy(orderLines.id)
