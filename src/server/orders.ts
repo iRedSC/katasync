@@ -131,6 +131,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				test: shipments.test,
 				channelSentAt: shipments.channelSentAt,
 				channelError: shipments.channelError,
+				storefrontTrackingError: shipments.storefrontTrackingError,
 				voidedAt: shipments.voidedAt,
 				refundStatus: shipments.refundStatus,
 				createdAt: shipments.createdAt,

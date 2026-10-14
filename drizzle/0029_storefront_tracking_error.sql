@@ -1,0 +1,1 @@
+ALTER TABLE "shipments" ADD COLUMN "storefront_tracking_error" text;

@@ -311,6 +311,9 @@ function LabelRow({
 			{l.channelError && !l.channelSentAt && !l.voidedAt && (
 				<p className="text-critical-text">{l.channelError}</p>
 			)}
+			{l.storefrontTrackingError && (
+				<p className="text-warning-text">{l.storefrontTrackingError}</p>
+			)}
 			{!l.voidedAt && (
 				<div className="flex flex-wrap gap-2">
 					<Button asChild size="sm" variant="outline">

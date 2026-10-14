@@ -69,6 +69,18 @@ async function shippo(path: string, body: unknown): Promise<unknown> {
 	return json;
 }
 
+async function shippoGet(path: string): Promise<unknown> {
+	const response = await fetch(`${API}${path}`, {
+		headers: { Authorization: `ShippoToken ${apiKey()}` },
+	});
+	if (!response.ok) {
+		throw new Error(
+			`Shippo answered ${response.status}: ${await response.text()}`,
+		);
+	}
+	return response.json();
+}
+
 const message = type({ "text?": "string" });
 
 const shipmentResponse = type({
@@ -135,25 +147,32 @@ const rateResponse = type({
 	object_id: "string",
 	amount: "string.numeric.parse",
 	provider: "string",
+	carrier_account: "string",
 	servicelevel: { name: "string", token: "string" },
 	"estimated_days?": "number | null",
 });
 
+const carrierAccountResponse = type({ carrier: "string" });
+
 // Reads a rate back from Shippo, so what gets recorded is what Shippo will
 // charge, not whatever the browser sent.
-export async function getRate(rateId: string): Promise<Rate> {
-	const response = await fetch(`${API}/rates/${encodeURIComponent(rateId)}`, {
-		headers: { Authorization: `ShippoToken ${apiKey()}` },
-	});
-	if (!response.ok) {
-		throw new Error(
-			`Shippo answered ${response.status}: ${await response.text()}`,
-		);
-	}
-	const r = rateResponse.assert(await response.json());
+export async function getRate(
+	rateId: string,
+): Promise<Rate & { carrierToken: string }> {
+	const r = rateResponse.assert(
+		await shippoGet(`/rates/${encodeURIComponent(rateId)}`),
+	);
+	// The rate only names the carrier for display ("USPS"); the token
+	// Shippo's tracking API takes ("usps") is on the carrier account.
+	const account = carrierAccountResponse.assert(
+		await shippoGet(
+			`/carrier_accounts/${encodeURIComponent(r.carrier_account)}`,
+		),
+	);
 	return {
 		id: r.object_id,
 		carrier: r.provider,
+		carrierToken: account.carrier,
 		service: r.servicelevel.token,
 		serviceName: `${r.provider} ${r.servicelevel.name}`,
 		cost: r.amount,

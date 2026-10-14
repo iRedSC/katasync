@@ -108,6 +108,8 @@ async function checkShopify(s: Steps) {
 				"no read_all_orders, so orders older than 60 days can't be read",
 			!scopes.some((s) => s.includes("fulfillment")) &&
 				"no fulfillment scope, so tracking can't be sent to Shopify",
+			!scopes.includes("write_orders") &&
+				"no write_orders, so the storefront tracking page can't get Shippo carriers",
 		].filter(Boolean);
 		const granted = `Granted: ${scopes.join(", ")}`;
 		return warnings.length > 0
