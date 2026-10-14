@@ -31,3 +31,54 @@ export async function createProduct(
 		.returning();
 	return row.id;
 }
+
+// A shipment of these orders, as if quick ship bought it: one dispatch with
+// a label per box. Each box starts as a sent-nowhere USPS label; pass
+// overrides per box. Returns the dispatch and its boxes' ids.
+export async function addDispatch(
+	db: Db,
+	input: {
+		orderIds: number[];
+		contentsKey?: string;
+		createdAt?: Date;
+		boxes?: Partial<typeof schema.shipments.$inferInsert>[];
+	},
+) {
+	const [dispatch] = await db
+		.insert(schema.dispatches)
+		.values({
+			contentsKey: input.contentsKey ?? "WRENCH×2",
+			...(input.createdAt ? { createdAt: input.createdAt } : {}),
+		})
+		.returning();
+	await db
+		.insert(schema.dispatchOrders)
+		.values(
+			input.orderIds.map((orderId) => ({ dispatchId: dispatch.id, orderId })),
+		);
+	const boxes = await db
+		.insert(schema.shipments)
+		.values(
+			(input.boxes ?? [{}]).map((box, i) => ({
+				dispatchId: dispatch.id,
+				lengthMm: 300,
+				widthMm: 200,
+				heightMm: 100,
+				weightGrams: 600,
+				provider: "shippo",
+				carrier: "USPS",
+				service: "usps_ground_advantage",
+				serviceName: "USPS Ground Advantage",
+				cost: 7.08,
+				trackingNumber: `940010000000000000000${i}`,
+				trackingUrl: "https://tools.usps.com/x",
+				labelUrl: "https://example.com/label.pdf",
+				externalId: `tx-${dispatch.id}-${i}-${Math.random()}`,
+				test: false,
+				...(input.createdAt ? { createdAt: input.createdAt } : {}),
+				...box,
+			})),
+		)
+		.returning({ id: schema.shipments.id });
+	return { dispatchId: dispatch.id, boxIds: boxes.map((b) => b.id) };
+}

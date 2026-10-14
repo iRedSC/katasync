@@ -548,15 +548,21 @@ const fulfillmentCreated = type({
 	},
 });
 
-// Marks everything still open on the order as shipped with this tracking,
-// and has Shopify email the customer. Returns Shopify's fulfillment id,
-// which voiding needs. Safe to repeat: if this tracking number is already
-// on the order (an earlier try got through), that fulfillment is returned
-// instead of a second one. Needs write_merchant_managed_fulfillment_orders.
+// Marks everything still open on the order as shipped with this tracking
+// (one number per box), and has Shopify email the customer. Returns
+// Shopify's fulfillment id, which voiding needs. Safe to repeat: if one of
+// these tracking numbers is already on the order (an earlier try got
+// through), that fulfillment is returned instead of a second one. Needs
+// write_merchant_managed_fulfillment_orders.
 export async function shopifyFulfill(
 	orderId: string,
-	tracking: { company: string; number: string; url: string | null },
+	tracking: {
+		company: string;
+		boxes: { number: string; url: string | null }[];
+	},
 ) {
+	if (tracking.boxes.length === 0) throw new Error("No tracking to send");
+	const numbers = tracking.boxes.map((b) => b.number);
 	const { order } = openFulfillmentOrders.assert(
 		await shopifyQuery(
 			"query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 20) { nodes { id status } } fulfillments(first: 50) { id status trackingInfo { number } } } }",
@@ -567,7 +573,7 @@ export async function shopifyFulfill(
 	const already = order.fulfillments.find(
 		(f) =>
 			f.status !== "CANCELLED" &&
-			f.trackingInfo.some((t) => t.number === tracking.number),
+			f.trackingInfo.some((t) => t.number && numbers.includes(t.number)),
 	);
 	if (already) return already.id;
 	const open = order.fulfillmentOrders.nodes.filter((f) =>
@@ -586,8 +592,12 @@ export async function shopifyFulfill(
 					})),
 					trackingInfo: {
 						company: tracking.company,
-						number: tracking.number,
-						...(tracking.url ? { url: tracking.url } : {}),
+						numbers,
+						// Shopify pairs urls with numbers by position, so every box
+						// needs one or none do.
+						...(tracking.boxes.every((b) => b.url)
+							? { urls: tracking.boxes.map((b) => b.url) }
+							: {}),
 					},
 					notifyCustomer: true,
 				},

@@ -113,6 +113,25 @@ describe("receiveReturn", () => {
 		expect(await onHand(wrench)).toBe(1);
 	});
 
+	test("each line counts only its own returns", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		// Two lines first, so line and return ids don't line up by chance.
+		await shippedOrder(wrench, 2);
+		const lineId = await shippedOrder(wrench, 2);
+		await receiveReturn(db, {
+			orderId,
+			lines: [{ lineId, quantity: 1 }],
+			restock: false,
+		});
+		await expect(
+			receiveReturn(db, {
+				orderId,
+				lines: [{ lineId, quantity: 2 }],
+				restock: false,
+			}),
+		).rejects.toThrow("Only 1 of WRENCH");
+	});
+
 	test("a returned tool set goes back as its parts", async () => {
 		const handle = await createProduct(db, "HANDLE", "simple");
 		const blade = await createProduct(db, "BLADE", "simple");

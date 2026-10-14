@@ -1,9 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, asc, desc, eq, gt, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
+	dispatchOrders,
 	locations,
 	orderLines,
 	orderReturns,
@@ -16,6 +17,7 @@ import { cityLine } from "#/lib/format";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { contentsKey } from "#/shipping/contents";
+import { addressKey, companionsOf, whyNotTogether } from "#/shipping/dispatch";
 import { lastPackedFor } from "#/shipping/quick-ship";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
@@ -132,26 +134,62 @@ export const getOrder = createServerFn({ method: "GET" })
 			.leftJoin(products, eq(products.id, orderLines.productId))
 			.where(eq(orderLines.orderId, data.id))
 			.orderBy(orderLines.id);
-		const labels = await db
-			.select({
-				id: shipments.id,
-				serviceName: shipments.serviceName,
-				cost: shipments.cost,
-				trackingNumber: shipments.trackingNumber,
-				trackingUrl: shipments.trackingUrl,
-				labelUrl: shipments.labelUrl,
-				provider: shipments.provider,
-				test: shipments.test,
-				channelSentAt: shipments.channelSentAt,
-				channelError: shipments.channelError,
-				voidedAt: shipments.voidedAt,
-				refundStatus: shipments.refundStatus,
-				createdAt: shipments.createdAt,
-			})
-			.from(shipments)
-			.where(eq(shipments.orderId, data.id))
-			.orderBy(shipments.createdAt);
-		return { order, lines, labels, adminUrl: adminUrl(order) };
+		// Every dispatch this order went out in (or will): its boxes, this
+		// order's tracking handoff, and any other orders in the same box.
+		const handoffs = await db
+			.select()
+			.from(dispatchOrders)
+			.where(eq(dispatchOrders.orderId, data.id))
+			.orderBy(dispatchOrders.dispatchId);
+		const ids = handoffs.map((h) => h.dispatchId);
+		const boxes = ids.length
+			? await db
+					.select({
+						id: shipments.id,
+						dispatchId: shipments.dispatchId,
+						serviceName: shipments.serviceName,
+						cost: shipments.cost,
+						trackingNumber: shipments.trackingNumber,
+						trackingUrl: shipments.trackingUrl,
+						provider: shipments.provider,
+						test: shipments.test,
+						voidedAt: shipments.voidedAt,
+						refundStatus: shipments.refundStatus,
+						createdAt: shipments.createdAt,
+					})
+					.from(shipments)
+					.where(inArray(shipments.dispatchId, ids))
+					.orderBy(shipments.id)
+			: [];
+		const others = ids.length
+			? await db
+					.select({
+						dispatchId: dispatchOrders.dispatchId,
+						id: orders.id,
+						name: orders.name,
+					})
+					.from(dispatchOrders)
+					.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
+					.where(
+						and(
+							inArray(dispatchOrders.dispatchId, ids),
+							ne(dispatchOrders.orderId, data.id),
+						),
+					)
+					.orderBy(orders.id)
+			: [];
+		const sends = handoffs.map((h) => {
+			const own = boxes.filter((b) => b.dispatchId === h.dispatchId);
+			return {
+				id: h.dispatchId,
+				channelSentAt: h.channelSentAt,
+				channelError: h.channelError,
+				boxes: own,
+				live: own.some((b) => b.voidedAt === null),
+				shippedWith: others.filter((o) => o.dispatchId === h.dispatchId),
+			};
+		});
+		return { order, lines, sends, adminUrl: adminUrl(order) };
 	});
 
 // The order's page in its own admin, for anything katasync doesn't do.
@@ -222,8 +260,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 				shipCountry: orders.shipCountry,
 				total: orders.total,
 				shippingCharged: orders.shippingCharged,
+				channel: stores.channel,
+				marketplaceOrderId: orders.marketplaceOrderId,
+				needsShipping,
 			})
 			.from(orders)
+			.innerJoin(stores, eq(stores.id, orders.storeId))
 			// One order's invoice, or every order still to ship.
 			.where(data.id ? eq(orders.id, data.id) : needsShipping)
 			.orderBy(asc(orders.pin), asc(orders.placedAt));
@@ -255,6 +297,24 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const linesOf = (id: number) => lines.filter((l) => l.orderId === id);
 		const keys = new Map(toShip.map((o) => [o.id, contentsKey(linesOf(o.id))]));
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
+		// Other orders to the same address that can share the box, so the
+		// packer gathers them before typing the pin.
+		const shipsWith = new Map<number, { name: string; pin: number | null }[]>();
+		for (const o of toShip) {
+			const others = data.id
+				? await companionsOf(db, o)
+				: toShip.filter(
+						(c) =>
+							c.id !== o.id &&
+							addressKey(c) !== null &&
+							addressKey(c) === addressKey(o) &&
+							whyNotTogether([o, c], []) === null,
+					);
+			shipsWith.set(
+				o.id,
+				others.map((c) => ({ name: c.name, pin: c.pin })),
+			);
+		}
 		return {
 			from: from
 				? {
@@ -274,6 +334,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 				return {
 					...o,
 					lines: own,
+					shipsWith: shipsWith.get(o.id) ?? [],
 					// What quick ship will suggest: the box and weight these exact
 					// contents went out in last time, else the items' own weight.
 					boxPin: last?.boxPin ?? null,

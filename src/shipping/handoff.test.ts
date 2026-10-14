@@ -1,13 +1,14 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { labelToVoid } from "#/orders/to-ship";
-import { createTestDb } from "#/test/db";
-import { type Outside, sendTracking, voidShipment } from "./handoff";
+import { addDispatch, createTestDb } from "#/test/db";
+import { type Outside, sendTracking, voidDispatch } from "./handoff";
 import { assignOrderPins } from "./pins";
 
 let db: Db;
+let storeId: number;
 let orderId: number;
 
 function fakes(overrides: Partial<Outside> = {}): Outside {
@@ -21,18 +22,13 @@ function fakes(overrides: Partial<Outside> = {}): Outside {
 	};
 }
 
-async function setUp(channel: "shopify" | "ebay") {
-	db = await createTestDb();
-	const [store] = await db
-		.insert(schema.stores)
-		.values({ channel, name: channel })
-		.returning();
-	[{ id: orderId }] = await db
+async function addOrder(name: string, channel: "shopify" | "ebay") {
+	const [row] = await db
 		.insert(schema.orders)
 		.values({
-			storeId: store.id,
-			externalId: channel === "shopify" ? "gid://shopify/Order/9" : "12-34",
-			name: "#9",
+			storeId,
+			externalId: channel === "shopify" ? `gid://shopify/Order/${name}` : name,
+			name,
 			placedAt: new Date(),
 			fulfillmentStatus: "UNFULFILLED",
 			total: 30,
@@ -40,79 +36,81 @@ async function setUp(channel: "shopify" | "ebay") {
 		})
 		.returning();
 	await db.insert(schema.orderLines).values({
-		orderId,
-		externalId: "line-1",
+		orderId: row.id,
+		externalId: `line-${name}`,
 		sku: "WRENCH",
 		title: "Wrench",
 		quantity: 2,
 		unitPrice: 15,
 	});
-	await assignOrderPins(db);
-}
-
-async function addLabel(
-	extra: Partial<typeof schema.shipments.$inferInsert> = {},
-) {
-	const [row] = await db
-		.insert(schema.shipments)
-		.values({
-			orderId,
-			contentsKey: "WRENCH×2",
-			lengthMm: 300,
-			widthMm: 200,
-			heightMm: 100,
-			weightGrams: 600,
-			provider: "shippo",
-			carrier: "USPS",
-			service: "usps_ground_advantage",
-			serviceName: "USPS Ground Advantage",
-			cost: 7.08,
-			trackingNumber: "9400100000000000000000",
-			trackingUrl: "https://tools.usps.com/x",
-			labelUrl: "https://example.com/label.pdf",
-			externalId: `tx-${Math.random()}`,
-			test: false,
-			...extra,
-		})
-		.returning();
 	return row.id;
 }
 
-const order = async () =>
+async function setUp(channel: "shopify" | "ebay") {
+	db = await createTestDb();
+	[{ id: storeId }] = await db
+		.insert(schema.stores)
+		.values({ channel, name: channel })
+		.returning();
+	orderId = await addOrder("9", channel);
+	await assignOrderPins(db);
+}
+
+// One box for the order by default.
+const ship = (
+	boxes?: Partial<typeof schema.shipments.$inferInsert>[],
+	orderIds = [orderId],
+) => addDispatch(db, { orderIds, boxes }).then((d) => d.dispatchId);
+
+const orderRow = async (id = orderId) =>
+	(await db.select().from(schema.orders).where(eq(schema.orders.id, id)))[0];
+const handoffOf = async (dispatchId: number, id = orderId) =>
 	(
-		await db.select().from(schema.orders).where(eq(schema.orders.id, orderId))
+		await db
+			.select()
+			.from(schema.dispatchOrders)
+			.where(
+				and(
+					eq(schema.dispatchOrders.dispatchId, dispatchId),
+					eq(schema.dispatchOrders.orderId, id),
+				),
+			)
 	)[0];
-const label = async (id: number) =>
-	(
-		await db.select().from(schema.shipments).where(eq(schema.shipments.id, id))
-	)[0];
+const boxesOf = (dispatchId: number) =>
+	db
+		.select()
+		.from(schema.shipments)
+		.where(eq(schema.shipments.dispatchId, dispatchId))
+		.orderBy(schema.shipments.id);
 
 describe("sendTracking", () => {
 	beforeEach(() => setUp("shopify"));
 
 	test("a TikTok label is marked ready on TikTok, which has the tracking", async () => {
 		const outside = fakes();
-		const id = await addLabel({
-			provider: "tiktok",
-			externalId: "1157817232461763469",
-			trackingNumber: null,
-		});
+		const id = await ship([
+			{
+				provider: "tiktok",
+				externalId: "1157817232461763469",
+				trackingNumber: null,
+			},
+		]);
 		const result = await sendTracking(db, id, outside);
 
 		expect(result.sent).toBe(true);
 		expect(outside.tiktokShip).toHaveBeenCalledWith("1157817232461763469");
 		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
-		expect(await label(id)).toMatchObject({
-			trackingNumber: "TT1",
-			channelFulfillmentId: "1157817232461763469",
-		});
-		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+		expect((await boxesOf(id))[0].trackingNumber).toBe("TT1");
+		expect((await handoffOf(id)).channelFulfillmentId).toBe(
+			"1157817232461763469",
+		);
+		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
 	});
 
 	test("a TikTok label can't be voided from here", async () => {
 		const outside = fakes();
-		const id = await addLabel({ provider: "tiktok", externalId: "115" });
-		await expect(voidShipment(db, id, outside)).rejects.toThrow(
+		const id = await ship([{ provider: "tiktok", externalId: "115" }]);
+		await expect(voidDispatch(db, id, outside)).rejects.toThrow(
 			"Seller Center",
 		);
 		expect(outside.refund).not.toHaveBeenCalled();
@@ -120,7 +118,7 @@ describe("sendTracking", () => {
 
 	test("marks the order shipped on Shopify and here", async () => {
 		const outside = fakes();
-		const id = await addLabel();
+		const id = await ship();
 		const result = await sendTracking(db, id, outside);
 
 		expect(result.sent).toBe(true);
@@ -128,20 +126,69 @@ describe("sendTracking", () => {
 			"gid://shopify/Order/9",
 			{
 				company: "USPS",
-				number: "9400100000000000000000",
-				url: "https://tools.usps.com/x",
+				boxes: [
+					{ number: "9400100000000000000000", url: "https://tools.usps.com/x" },
+				],
 			},
 		);
-		expect((await label(id)).channelFulfillmentId).toBe(
+		expect((await handoffOf(id)).channelFulfillmentId).toBe(
 			"gid://shopify/Fulfillment/1",
 		);
-		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
-		expect((await order()).pin).toBeNull();
+		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
+		expect((await orderRow()).pin).toBeNull();
+	});
+
+	test("every box's tracking goes to Shopify in one fulfillment", async () => {
+		const outside = fakes();
+		const id = await ship([{}, { trackingNumber: "9400B" }]);
+		await sendTracking(db, id, outside);
+		expect(outside.shopifyFulfill).toHaveBeenCalledTimes(1);
+		expect(outside.shopifyFulfill).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			expect.objectContaining({
+				boxes: [
+					expect.objectContaining({ number: "9400100000000000000000" }),
+					expect.objectContaining({ number: "9400B" }),
+				],
+			}),
+		);
+	});
+
+	test("a combined box tells each order, and one refusal doesn't stop the other", async () => {
+		const other = await addOrder("10", "shopify");
+		await assignOrderPins(db);
+		const outside = fakes({
+			shopifyFulfill: vi.fn(async (externalId: string) => {
+				if (externalId.endsWith("/10")) throw new Error("Access denied");
+				return "gid://shopify/Fulfillment/1";
+			}),
+		});
+		const id = await ship(undefined, [orderId, other]);
+		const result = await sendTracking(db, id, outside);
+
+		expect(result.sent).toBe(false);
+		expect(result.message).toContain("10: Tracking didn't reach Shopify");
+		expect((await handoffOf(id)).channelSentAt).not.toBeNull();
+		expect((await handoffOf(id, other)).channelError).toBe("Access denied");
+		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
+		expect((await orderRow(other)).fulfillmentStatus).toBe("UNFULFILLED");
+
+		// The retry only tells the order that wasn't told.
+		const retry = fakes();
+		expect((await sendTracking(db, id, retry)).sent).toBe(true);
+		expect(retry.shopifyFulfill).toHaveBeenCalledTimes(1);
+		expect(retry.shopifyFulfill).toHaveBeenCalledWith(
+			"gid://shopify/Order/10",
+			expect.anything(),
+		);
 	});
 
 	test("a cancelled order's label is flagged to void, never sent", async () => {
 		const outside = fakes();
-		const id = await addLabel();
+		// Another order shipped first, so this order's ids and its
+		// dispatch's don't line up by chance.
+		await ship(undefined, [await addOrder("8", "shopify")]);
+		const id = await ship();
 		await db
 			.update(schema.orders)
 			.set({ cancelledAt: new Date() })
@@ -157,7 +204,7 @@ describe("sendTracking", () => {
 		expect((await sendTracking(db, id, outside)).sent).toBe(false);
 		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
 		expect(await flagged()).toBe(true);
-		await voidShipment(db, id, outside);
+		await voidDispatch(db, id, outside);
 		expect(await flagged()).toBe(false);
 	});
 
@@ -165,12 +212,12 @@ describe("sendTracking", () => {
 		const outside = fakes();
 		const result = await sendTracking(
 			db,
-			await addLabel({ test: true }),
+			await ship([{ test: true }]),
 			outside,
 		);
 		expect(result.sent).toBe(false);
 		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
-		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
 	});
 
 	test("a refusal is recorded and the order stays to ship", async () => {
@@ -179,15 +226,15 @@ describe("sendTracking", () => {
 				throw new Error("Access denied");
 			}),
 		});
-		const id = await addLabel();
+		const id = await ship();
 		const result = await sendTracking(db, id, outside);
 		expect(result).toEqual({
 			sent: false,
 			message: "Tracking didn't reach Shopify: Access denied",
 		});
-		expect((await label(id)).channelError).toBe("Access denied");
-		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
-		expect((await order()).pin).not.toBeNull();
+		expect((await handoffOf(id)).channelError).toBe("Access denied");
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect((await orderRow()).pin).not.toBeNull();
 	});
 });
 
@@ -196,35 +243,50 @@ describe("sendTracking on eBay", () => {
 
 	test("sends every line with its quantity", async () => {
 		const outside = fakes();
-		await sendTracking(db, await addLabel(), outside);
+		await sendTracking(db, await ship(), outside);
 		expect(outside.ebayFulfill).toHaveBeenCalledWith(
-			"12-34",
+			"9",
 			expect.objectContaining({
-				lineItems: [{ lineItemId: "line-1", quantity: 2 }],
+				lineItems: [{ lineItemId: "line-9", quantity: 2 }],
 				carrier: "USPS",
 				trackingNumber: "9400100000000000000000",
 			}),
 		);
 	});
+
+	test("several boxes still send each line once, with the first box's number", async () => {
+		const outside = fakes();
+		const result = await sendTracking(
+			db,
+			await ship([{}, { trackingNumber: "9400B" }]),
+			outside,
+		);
+		expect(outside.ebayFulfill).toHaveBeenCalledTimes(1);
+		expect(outside.ebayFulfill).toHaveBeenCalledWith(
+			"9",
+			expect.objectContaining({ trackingNumber: "9400100000000000000000" }),
+		);
+		expect(result.message).toContain("one number");
+	});
 });
 
-describe("voidShipment", () => {
+describe("voidDispatch", () => {
 	beforeEach(() => setUp("shopify"));
 
 	test("refunds once, cancels on Shopify, and puts the order back", async () => {
 		const outside = fakes();
-		const id = await addLabel();
+		const id = await ship();
 		await sendTracking(db, id, outside);
 
-		const result = await voidShipment(db, id, outside);
+		const result = await voidDispatch(db, id, outside);
 		expect(result.refundStatus).toBe("QUEUED");
 		expect(outside.shopifyCancel).toHaveBeenCalledWith(
 			"gid://shopify/Fulfillment/1",
 		);
-		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
-		expect((await order()).pin).not.toBeNull();
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect((await orderRow()).pin).not.toBeNull();
 
-		await expect(voidShipment(db, id, outside)).rejects.toThrow(
+		await expect(voidDispatch(db, id, outside)).rejects.toThrow(
 			"already voided",
 		);
 		expect(outside.refund).toHaveBeenCalledTimes(1);
@@ -232,10 +294,10 @@ describe("voidShipment", () => {
 
 	test("two voids at once refund only once", async () => {
 		const outside = fakes();
-		const id = await addLabel();
+		const id = await ship();
 		const results = await Promise.allSettled([
-			voidShipment(db, id, outside),
-			voidShipment(db, id, outside),
+			voidDispatch(db, id, outside),
+			voidDispatch(db, id, outside),
 		]);
 		expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
 		expect(outside.refund).toHaveBeenCalledTimes(1);
@@ -243,8 +305,8 @@ describe("voidShipment", () => {
 
 	test("a voided label's tracking is never sent", async () => {
 		const outside = fakes();
-		const id = await addLabel();
-		await voidShipment(db, id, outside);
+		const id = await ship();
+		await voidDispatch(db, id, outside);
 		await expect(sendTracking(db, id, outside)).rejects.toThrow("voided");
 		expect(outside.shopifyFulfill).not.toHaveBeenCalled();
 	});
@@ -255,11 +317,50 @@ describe("voidShipment", () => {
 				throw new Error("already scanned");
 			}),
 		});
-		const id = await addLabel();
-		await expect(voidShipment(db, id, outside)).rejects.toThrow(
+		const id = await ship();
+		await expect(voidDispatch(db, id, outside)).rejects.toThrow(
 			"already scanned",
 		);
-		expect((await label(id)).voidedAt).toBeNull();
+		expect((await boxesOf(id))[0].voidedAt).toBeNull();
+	});
+
+	test("a box refused partway keeps the rest voided and is retried alone", async () => {
+		let calls = 0;
+		const outside = fakes({
+			refund: vi.fn(async () => {
+				calls++;
+				if (calls === 2) throw new Error("already scanned");
+				return { status: "QUEUED" };
+			}),
+		});
+		const id = await ship([{}, {}]);
+		await sendTracking(db, id, fakes());
+
+		const first = await voidDispatch(db, id, outside);
+		expect(first.notes[0]).toContain("1 of 2 labels weren't refunded");
+		const [a, b] = await boxesOf(id);
+		expect(a.voidedAt).not.toBeNull();
+		expect(b.voidedAt).toBeNull();
+		// Still shipped: one box is live.
+		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
+
+		await voidDispatch(db, id, outside);
+		expect(outside.refund).toHaveBeenCalledTimes(3);
+		expect((await boxesOf(id)).every((x) => x.voidedAt)).toBe(true);
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
+	});
+
+	test("voiding a combined box puts every order back", async () => {
+		const other = await addOrder("10", "shopify");
+		const outside = fakes();
+		const id = await ship(undefined, [orderId, other]);
+		await sendTracking(db, id, outside);
+		const result = await voidDispatch(db, id, outside);
+		expect(outside.shopifyCancel).toHaveBeenCalledTimes(2);
+		expect(
+			result.notes.filter((n) => n.includes("back on To ship")),
+		).toHaveLength(2);
+		expect((await orderRow(other)).fulfillmentStatus).toBe("UNFULFILLED");
 	});
 
 	test("if Shopify won't cancel, the order isn't put back", async () => {
@@ -268,10 +369,10 @@ describe("voidShipment", () => {
 				throw new Error("nope");
 			}),
 		});
-		const id = await addLabel();
+		const id = await ship();
 		await sendTracking(db, id, outside);
-		const result = await voidShipment(db, id, outside);
+		const result = await voidDispatch(db, id, outside);
 		expect(result.notes[0]).toContain("Shopify still shows it shipped");
-		expect((await order()).fulfillmentStatus).toBe("FULFILLED");
+		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
 	});
 });

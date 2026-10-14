@@ -1,6 +1,8 @@
 import { and, desc, eq, isNotNull, isNull, max, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	dispatches,
+	dispatchOrders,
 	mcpCalls,
 	orderLines,
 	orders,
@@ -135,31 +137,34 @@ async function channelOverview(db: Db, channel: SyncedChannel, now: Date) {
 	};
 }
 
-// Labels whose tracking never reached the marketplace, so the customer
+// Orders whose tracking never reached the marketplace, so the customer
 // wasn't told and the order may still show unshipped there.
 function failedHandoffs(db: Db) {
 	return db
 		.select({
-			shipmentId: shipments.id,
+			dispatchId: dispatchOrders.dispatchId,
 			orderId: orders.id,
 			orderName: orders.name,
 			channel: stores.channel,
-			trackingNumber: shipments.trackingNumber,
-			error: shipments.channelError,
-			createdAt: shipments.createdAt,
+			trackingNumber: sql<
+				string | null
+			>`(select string_agg(${shipments.trackingNumber}, ', ' order by ${shipments.id}) from ${shipments} where ${shipments.dispatchId} = ${dispatchOrders.dispatchId} and ${shipments.voidedAt} is null)`,
+			error: dispatchOrders.channelError,
+			createdAt: dispatches.createdAt,
 		})
-		.from(shipments)
-		.innerJoin(orders, eq(orders.id, shipments.orderId))
+		.from(dispatchOrders)
+		.innerJoin(dispatches, eq(dispatches.id, dispatchOrders.dispatchId))
+		.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
 		.innerJoin(stores, eq(stores.id, orders.storeId))
 		.where(
 			and(
-				isNotNull(shipments.channelError),
-				isNull(shipments.channelSentAt),
-				isNull(shipments.voidedAt),
-				eq(shipments.test, false),
+				isNotNull(dispatchOrders.channelError),
+				isNull(dispatchOrders.channelSentAt),
+				// Live, and not a test: a live box that isn't a test label.
+				sql`exists (select 1 from ${shipments} where ${shipments.dispatchId} = ${dispatchOrders.dispatchId} and ${shipments.voidedAt} is null and not ${shipments.test})`,
 			),
 		)
-		.orderBy(desc(shipments.createdAt))
+		.orderBy(desc(dispatches.createdAt))
 		.limit(50);
 }
 

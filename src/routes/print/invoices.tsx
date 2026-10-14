@@ -167,9 +167,21 @@ function Invoice({
 			<footer className="mt-auto flex items-end justify-between gap-6">
 				<p className="text-[#616161]">Thank you for your order.</p>
 				{o.pin !== null && (
-					<p className="text-[13pt] font-bold tabular-nums">
-						{packLine(o.pin, o.boxPin, o.weightGrams)}
-					</p>
+					<div className="text-right">
+						{o.shipsWith.length > 0 && (
+							<p className="text-[11pt] font-bold">
+								Ships with{" "}
+								{o.shipsWith
+									.map((c) =>
+										c.pin === null ? c.name : `${c.name} (${c.pin})`,
+									)
+									.join(", ")}
+							</p>
+						)}
+						<p className="text-[13pt] font-bold tabular-nums">
+							{packLine(o.pin, o.boxPin, o.weightGrams)}
+						</p>
+					</div>
 				)}
 			</footer>
 		</article>

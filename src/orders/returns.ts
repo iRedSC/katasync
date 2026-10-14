@@ -60,9 +60,11 @@ export async function receiveReturn(
 				sku: orderLines.sku,
 				title: orderLines.title,
 				quantity: orderLines.quantity,
+				// The outer table is named: in a one-table select Drizzle leaves
+				// it off, and the subquery would compare its own columns.
 				returned: sql<number>`coalesce((
-					select sum(${orderReturns.quantity}) from ${orderReturns}
-					where ${orderReturns.orderLineId} = ${orderLines.id}
+					select sum(r.quantity) from ${orderReturns} r
+					where r.order_line_id = "order_lines"."id"
 				), 0)::int`,
 			})
 			.from(orderLines)

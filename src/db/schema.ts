@@ -451,19 +451,55 @@ export const packages = pgTable(
 	(t) => [check("packages_pin_range", sql`${t.pin} between 1 and 999`)],
 );
 
-// A label bought for an order. Also what quick ship learns from: the weight
-// the same items shipped at, and which service gets picked for a box.
+// One send to one address: the boxes that went out together, for every
+// order packed into them. One order can be in at most one live dispatch (one
+// with a box not voided). contentsKey is everything in it, merged across
+// orders; quick ship reuses the last dispatch with the same contents.
+// Rules live in src/shipping/dispatch.ts.
+export const dispatches = pgTable(
+	"dispatches",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		contentsKey: text().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index("dispatches_contents_idx").on(t.contentsKey, t.createdAt)],
+);
+
+// The orders in a dispatch, and handing its tracking to each one's
+// marketplace. Sent: when it got there, and the marketplace's id for that
+// fulfillment (Shopify needs it to cancel on void). Not sent: why, shown with
+// a retry. Kept per order because a combined box can reach one marketplace
+// and be refused by another.
+export const dispatchOrders = pgTable(
+	"dispatch_orders",
+	{
+		dispatchId: integer()
+			.notNull()
+			.references(() => dispatches.id),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		channelSentAt: timestamp({ withTimezone: true }),
+		channelFulfillmentId: text(),
+		channelError: text(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.dispatchId, t.orderId] }),
+		index("dispatch_orders_order_idx").on(t.orderId),
+	],
+);
+
+// One box's label, in a dispatch. Also what quick ship learns from: the
+// weight the same items shipped at, and which service gets picked for a box.
 export const shipments = pgTable(
 	"shipments",
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity(),
-		orderId: integer()
+		dispatchId: integer()
 			.notNull()
-			.references(() => orders.id),
+			.references(() => dispatches.id),
 		packageId: integer().references(() => packages.id),
-		// What was in the box, e.g. "HANDLE×1|KNIFE-5×2" (see contentsKey). The
-		// next order with the same contents starts from this box and weight.
-		contentsKey: text().notNull(),
 		lengthMm: integer().notNull(),
 		widthMm: integer().notNull(),
 		heightMm: integer().notNull(),
@@ -487,22 +523,13 @@ export const shipments = pgTable(
 		externalId: text().notNull().unique(),
 		// Bought with a test key: a sample label that can't actually ship.
 		test: boolean().notNull(),
-		// Handing tracking to the marketplace the order came from. Sent: when
-		// it got there, and the marketplace's id for that fulfillment (Shopify
-		// needs it to cancel on void). Not sent: why, shown with a retry.
-		channelSentAt: timestamp({ withTimezone: true }),
-		channelFulfillmentId: text(),
-		channelError: text(),
 		// Voiding asks the provider for the postage back. Refunds can take
 		// days (USPS); refundStatus is the provider's word on it.
 		voidedAt: timestamp({ withTimezone: true }),
 		refundStatus: text(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [
-		index("shipments_order_idx").on(t.orderId),
-		index("shipments_contents_idx").on(t.contentsKey, t.createdAt),
-	],
+	(t) => [index("shipments_dispatch_idx").on(t.dispatchId)],
 );
 
 // A company we buy from. `code` is the short name Sumtracker used, e.g. "CANAM".

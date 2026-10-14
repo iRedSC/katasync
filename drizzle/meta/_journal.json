@@ -197,6 +197,20 @@
       "when": 1791987999386,
       "tag": "0027_order_returns",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791988774125,
+      "tag": "0028_dispatches",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791988785031,
+      "tag": "0029_shipments_in_dispatches",
+      "breakpoints": true
     }
   ]
 }

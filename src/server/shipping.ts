@@ -1,27 +1,23 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
-import { locations, orders, packages, shipments, stores } from "#/db/schema";
+import { locations, orders, packages, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
-import { needsShipping } from "#/orders/to-ship";
 import { createBoxes, updateBox } from "#/shipping/boxes";
-import { sendTracking, voidShipment, withOrderLock } from "#/shipping/handoff";
+import { buyDispatch, MAX_BOXES } from "#/shipping/buy";
+import { sendTracking, voidDispatch } from "#/shipping/handoff";
 import { labelPdf } from "#/shipping/label-file";
 import {
+	combineRates,
 	orderForShipping,
 	rankRates,
 	serviceHistory,
+	shipmentPlan,
 } from "#/shipping/quick-ship";
-import {
-	type Address,
-	buyLabel,
-	getRate,
-	getRates,
-	shippoIsTest,
-} from "#/shipping/shippo";
-import { tiktokBuyLabel, tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
+import { type Address, getRates, shippoIsTest } from "#/shipping/shippo";
+import { tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
 export const listPackages = createServerFn({ method: "GET" }).handler(
 	async () => getDb().select().from(packages).orderBy(packages.pin),
@@ -59,14 +55,24 @@ export const quickShipLookup = createServerFn({ method: "GET" })
 	.validator(type({ pin: "1 <= number.integer <= 999" }))
 	.handler(async ({ data }) => orderForShipping(getDb(), data.pin));
 
-const parcel = {
-	orderId: "number.integer > 0",
+// What's in the box when these orders ship together (the pin's order
+// first), for quick ship to show and price.
+export const quickShipPlan = createServerFn({ method: "GET" })
+	.validator(type({ orderIds: "(number.integer > 0)[] > 0" }))
+	.handler(async ({ data }) => shipmentPlan(getDb(), data.orderIds));
+
+const box = {
 	packageId: "number.integer > 0 | null",
 	lengthMm: "number.integer > 0",
 	widthMm: "number.integer > 0",
 	heightMm: "number.integer > 0",
 	weightGrams: "number.integer > 0",
 	insureAmount: "number > 0 | null",
+} as const;
+
+const send = {
+	orderIds: "(number.integer > 0)[] > 0",
+	contentsKey: "string",
 } as const;
 
 // The ship-to and ship-from addresses for an order, or why a label can't be
@@ -120,156 +126,107 @@ async function addresses(
 	};
 }
 
-// Who sells this order's label, and the marketplace order it's bought for.
-async function labelSeller(orderId: number) {
-	const [o] = await getDb()
-		.select({
-			channel: stores.channel,
-			salesChannel: orders.salesChannel,
-			marketplaceOrderId: orders.marketplaceOrderId,
-		})
-		.from(orders)
-		.innerJoin(stores, eq(stores.id, orders.storeId))
-		.where(eq(orders.id, orderId));
-	if (!o) throw new Error(`No order ${orderId}`);
-	const source = labelSource(o);
-	return {
-		source,
-		tiktokId: source === "tiktok" ? tiktokOrderId(o.marketplaceOrderId) : "",
-	};
-}
-
-// Prices for this box and weight, most likely choice first. TikTok orders
-// get TikTok's own services; everything else gets Shippo's carriers.
+// Prices for every box, one line per service offered for all of them, most
+// likely choice first. TikTok orders get TikTok's own services (one order,
+// one box); everything else gets Shippo's carriers. The orders share one
+// address (checked again when buying), so the first order's is used.
 export const quickShipRates = createServerFn({ method: "POST" })
-	.validator(type({ ...parcel, contentsKey: "string" }))
+	.validator(type({ ...send, boxes: type(box).array().atLeastLength(1) }))
 	.handler(async ({ data }) => {
-		const seller = await labelSeller(data.orderId);
-		const { rates, notes, test } =
-			seller.source === "tiktok"
-				? {
-						rates: await tiktokRates(seller.tiktokId, data),
-						notes: [],
-						test: false,
-					}
-				: {
-						...(await getRates({
-							...(await addresses(data.orderId)),
-							parcel: data,
-							insureAmount: data.insureAmount,
-						})),
-						test: shippoIsTest(),
-					};
+		if (data.boxes.length > MAX_BOXES) {
+			throw new Error(`At most ${MAX_BOXES} boxes in one shipment`);
+		}
+		const db = getDb();
+		const [first] = await db
+			.select({
+				channel: stores.channel,
+				salesChannel: orders.salesChannel,
+				marketplaceOrderId: orders.marketplaceOrderId,
+			})
+			.from(orders)
+			.innerJoin(stores, eq(stores.id, orders.storeId))
+			.where(eq(orders.id, data.orderIds[0]));
+		if (!first) throw new Error(`No order ${data.orderIds[0]}`);
+		let perBox: Awaited<ReturnType<typeof tiktokRates>>[];
+		let notes: string[] = [];
+		let test = false;
+		if (labelSource(first) === "tiktok") {
+			if (data.orderIds.length > 1 || data.boxes.length > 1) {
+				throw new Error(
+					"TikTok orders ship one order to one box on TikTok's label. Combine or split TikTok packages in TikTok Seller Center.",
+				);
+			}
+			perBox = [
+				await tiktokRates(
+					tiktokOrderId(first.marketplaceOrderId),
+					data.boxes[0],
+				),
+			];
+		} else {
+			const where = await addresses(data.orderIds[0]);
+			const priced = await Promise.all(
+				data.boxes.map((b) =>
+					getRates({ ...where, parcel: b, insureAmount: b.insureAmount }),
+				),
+			);
+			perBox = priced.map((p) => p.rates);
+			notes = [...new Set(priced.flatMap((p) => p.notes))];
+			test = shippoIsTest();
+		}
 		const history = await serviceHistory(
-			getDb(),
+			db,
 			data.contentsKey,
-			data.packageId,
+			data.boxes[0].packageId,
 		);
-		return { rates: rankRates(rates, history), notes, test };
+		return { rates: rankRates(combineRates(perBox), history), notes, test };
 	});
 
-// Buys the chosen label (from TikTok for TikTok orders, else Shippo),
-// records it, and sends the tracking to the order's marketplace. The rate is
-// read back from the seller, so the recorded cost and service are theirs,
-// not the browser's. One live label per order: the
-// check and the purchase hold the order's lock, so a double press or two
-// people can't buy twice. (A second box means voiding first, until
-// multi-box shipments exist.)
+// Buys one label per box with the chosen service, as one dispatch for every
+// order in the box, then sends the tracking to each order's marketplace.
+// See buyDispatch for what holds when part of it fails.
 export const quickShipBuy = createServerFn({ method: "POST" })
-	.validator(type({ ...parcel, contentsKey: "string", rateId: "string > 0" }))
+	.validator(
+		type({
+			...send,
+			boxes: type({ ...box, rateId: "string > 0" })
+				.array()
+				.atLeastLength(1),
+		}),
+	)
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const saved = await withOrderLock(db, data.orderId, async (tx) => {
-			// The order can be cancelled or refunded while it's being packed;
-			// the last sync decides.
-			const [order] = await tx
-				.select({ name: orders.name, needsShipping })
-				.from(orders)
-				.where(eq(orders.id, data.orderId));
-			if (!order?.needsShipping) {
-				throw new Error(
-					`${order?.name ?? "This order"} no longer needs shipping (cancelled, refunded, or shipped elsewhere). Don't ship it.`,
-				);
-			}
-			const [existing] = await tx
-				.select({ serviceName: shipments.serviceName })
-				.from(shipments)
-				.where(
-					and(eq(shipments.orderId, data.orderId), isNull(shipments.voidedAt)),
-				)
-				.limit(1);
-			if (existing) {
-				throw new Error(
-					`This order already has a ${existing.serviceName} label. Void it on the order page to buy a new one.`,
-				);
-			}
-			const box = {
-				orderId: data.orderId,
-				packageId: data.packageId ?? null,
-				contentsKey: data.contentsKey,
-				lengthMm: data.lengthMm,
-				widthMm: data.widthMm,
-				heightMm: data.heightMm,
-				weightGrams: data.weightGrams,
-			};
-			const seller = await labelSeller(data.orderId);
-			if (seller.source === "tiktok") {
-				// A package TikTok already made for this order is recorded, not
-				// bought again (a retry after a lost response).
-				const label = await tiktokBuyLabel(seller.tiktokId, data, data.rateId);
-				const [row] = await tx
-					.insert(shipments)
-					.values({
-						...box,
-						provider: "tiktok",
-						carrier: label.rate.carrier,
-						service: label.rate.service,
-						serviceName: label.rate.serviceName,
-						cost: label.rate.cost,
-						insuredAmount: null,
-						trackingNumber: null,
-						trackingUrl: null,
-						// TikTok's links expire; label-file.ts fetches by package.
-						labelUrl: null,
-						externalId: label.packageId,
-						test: false,
-					})
-					.returning();
-				return row;
-			}
-			const rate = await getRate(data.rateId);
-			const label = await buyLabel(data.rateId);
-			const [row] = await tx
-				.insert(shipments)
-				.values({
-					...box,
-					provider: "shippo",
-					carrier: rate.carrier,
-					service: rate.service,
-					serviceName: rate.serviceName,
-					cost: rate.cost,
-					insuredAmount: data.insureAmount,
-					trackingNumber: label.trackingNumber,
-					trackingUrl: label.trackingUrl,
-					labelUrl: label.labelUrl,
-					externalId: label.id,
-					test: shippoIsTest(),
-				})
-				.returning();
-			return row;
-		});
-		const handoff = await sendTracking(db, saved.id);
+		const bought = await buyDispatch(db, data);
+		const handoff = bought.failed
+			? null
+			: await sendTracking(db, bought.dispatchId);
 		// Saved now so reprints never depend on the provider. A failure here
 		// is retried on the first print.
-		await labelPdf(db, saved.id).catch(() => {});
-		return { ...saved, handoff };
+		for (const b of bought.boxes) {
+			if (!b.voidedAt) await labelPdf(db, b.id).catch(() => {});
+		}
+		const live = bought.boxes.filter((b) => !b.voidedAt);
+		return {
+			dispatchId: bought.dispatchId,
+			failed: bought.failed,
+			handoff,
+			boxes: live.map((b) => ({
+				id: b.id,
+				trackingNumber: b.trackingNumber,
+				cost: b.cost,
+			})),
+			serviceName: live[0]?.serviceName ?? null,
+			provider: live[0]?.provider ?? null,
+			test: live.some((b) => b.test),
+			cost: live.reduce((sum, b) => sum + b.cost, 0),
+		};
 	});
 
-// Tries sending a label's tracking to the marketplace again.
+// Tries sending a dispatch's tracking to its orders' marketplaces again.
 export const resendTracking = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0" }))
-	.handler(async ({ data }) => sendTracking(getDb(), data.id));
+	.validator(type({ dispatchId: "number.integer > 0" }))
+	.handler(async ({ data }) => sendTracking(getDb(), data.dispatchId));
 
+// Voids every box of a dispatch.
 export const voidLabel = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0" }))
-	.handler(async ({ data }) => voidShipment(getDb(), data.id));
+	.validator(type({ dispatchId: "number.integer > 0" }))
+	.handler(async ({ data }) => voidDispatch(getDb(), data.dispatchId));
