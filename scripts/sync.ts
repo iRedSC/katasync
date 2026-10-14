@@ -10,14 +10,10 @@
 // A channel without credentials in the environment is skipped. Every pass is
 // recorded for Diagnostics (/diagnostics).
 import { parseArgs } from "node:util";
-import { syncAmazon } from "#/channels/amazon";
-import { syncEbay } from "#/channels/ebay";
-import { backfillShopify, syncShopify } from "#/channels/shopify";
-import { syncTiktok } from "#/channels/tiktok";
+import { backfillShopify } from "#/channels/shopify";
+import { syncPass } from "#/channels/sync";
 import { getDb } from "#/db/client";
 import { channelEnv } from "#/diagnostics/checks";
-import { recordSyncRun } from "#/diagnostics/runs";
-import { assignOrderPins } from "#/shipping/pins";
 
 try {
 	process.loadEnvFile(".env.local");
@@ -34,56 +30,34 @@ const { values } = parseArgs({
 });
 
 const MINUTE = 60 * 1000;
-let shopifyListingsAt = 0;
-let tiktokListingsAt = 0;
 
+// Production runs these on Vercel Cron instead (vercel.json), on the same
+// schedules. Listings change rarely, so they refresh every 30 minutes.
 const channels = [
-	{
-		name: "shopify",
-		every: 2 * MINUTE,
-		run: async () => {
-			// Listings change rarely; refresh them every 30 minutes.
-			const listings = Date.now() - shopifyListingsAt >= 30 * MINUTE;
-			const result = await syncShopify(getDb(), { listings });
-			if (listings) shopifyListingsAt = Date.now();
-			return result;
-		},
-	},
-	{
-		name: "ebay",
-		every: 2 * MINUTE,
-		run: () => syncEbay(getDb()),
-	},
-	{
-		name: "tiktok",
-		every: 2 * MINUTE,
-		run: async () => {
-			const listings = Date.now() - tiktokListingsAt >= 30 * MINUTE;
-			const result = await syncTiktok(getDb(), { listings });
-			if (listings) tiktokListingsAt = Date.now();
-			return result;
-		},
-	},
-	{
-		// Amazon allows about one order-list call a minute.
-		name: "amazon",
-		every: 5 * MINUTE,
-		run: () => syncAmazon(getDb()),
-	},
+	{ name: "shopify", every: 2 * MINUTE, listingsEvery: 30 * MINUTE },
+	{ name: "ebay", every: 2 * MINUTE },
+	{ name: "tiktok", every: 2 * MINUTE, listingsEvery: 30 * MINUTE },
+	// Amazon allows about one order-list call a minute.
+	{ name: "amazon", every: 5 * MINUTE },
 ] as const;
+const listingsAt = new Map<string, number>();
 const selected = channels.filter((c) => !values.only || c.name === values.only);
 
 async function pass(channel: (typeof channels)[number]) {
 	const started = Date.now();
+	const listings =
+		"listingsEvery" in channel &&
+		started - (listingsAt.get(channel.name) ?? 0) >= channel.listingsEvery;
 	try {
-		const result = await recordSyncRun(getDb(), channel.name, channel.run);
+		const result = await syncPass(getDb(), channel.name, { listings });
+		if (listings) listingsAt.set(channel.name, started);
 		const seconds = ((Date.now() - started) / 1000).toFixed(1);
 		console.log(
 			`${new Date().toISOString()} ${result.store}: ${result.orders} orders in ${seconds}s`,
 		);
 		for (const problem of result.problems) console.log(`  ${problem}`);
-		const pinned = await assignOrderPins(getDb());
-		if (pinned > 0) console.log(`  ${pinned} new orders to ship got pins`);
+		if (result.pinned > 0)
+			console.log(`  ${result.pinned} new orders to ship got pins`);
 	} catch (error) {
 		// One channel failing (an outage, an expired token) doesn't stop the rest.
 		console.error(`${new Date().toISOString()} ${channel.name} failed:`, error);

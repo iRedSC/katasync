@@ -31,6 +31,7 @@ import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
+import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -142,6 +143,11 @@ const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
   path: '/purchasing/pdf/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCronSyncChannelRoute = ApiCronSyncChannelRouteImport.update({
+  id: '/api/cron/sync/$channel',
+  path: '/api/cron/sync/$channel',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -166,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
+  '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -190,6 +197,7 @@ export interface FileRoutesByTo {
   '/receive': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
+  '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -215,6 +223,7 @@ export interface FileRoutesById {
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
+  '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -241,6 +250,7 @@ export interface FileRouteTypes {
     | '/receive/'
     | '/api/auth/$'
     | '/purchasing/pdf/$id'
+    | '/api/cron/sync/$channel'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -265,6 +275,7 @@ export interface FileRouteTypes {
     | '/receive'
     | '/api/auth/$'
     | '/purchasing/pdf/$id'
+    | '/api/cron/sync/$channel'
   id:
     | '__root__'
     | '/'
@@ -289,6 +300,7 @@ export interface FileRouteTypes {
     | '/receive/'
     | '/api/auth/$'
     | '/purchasing/pdf/$id'
+    | '/api/cron/sync/$channel'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -314,6 +326,7 @@ export interface RootRouteChildren {
   ReceiveIndexRoute: typeof ReceiveIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
+  ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -472,6 +485,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchasingPdfIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cron/sync/$channel': {
+      id: '/api/cron/sync/$channel'
+      path: '/api/cron/sync/$channel'
+      fullPath: '/api/cron/sync/$channel'
+      preLoaderRoute: typeof ApiCronSyncChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -498,17 +518,8 @@ const rootRouteChildren: RootRouteChildren = {
   ReceiveIndexRoute: ReceiveIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
+  ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
