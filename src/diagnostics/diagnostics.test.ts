@@ -9,7 +9,7 @@ import {
 	type Run,
 	workerAlive,
 } from "./health";
-import { diagnosticsOverview } from "./overview";
+import { diagnosticsAttention, diagnosticsOverview } from "./overview";
 import { MAX_ISSUES_PER_RUN, recordSyncRun, splitProblem } from "./runs";
 
 const now = new Date("2026-10-10T12:00:00Z");
@@ -190,4 +190,67 @@ describe("recording runs", () => {
 			delete process.env.EBAY_REFRESH_TOKEN;
 		}
 	});
+});
+
+test("lists labels whose storefront tracking entry needs fixing, voided or not", async () => {
+	const db = await createTestDb();
+	const [store] = await db
+		.insert(schema.stores)
+		.values({ channel: "shopify", name: "Shopify" })
+		.returning();
+	const [order] = await db
+		.insert(schema.orders)
+		.values({
+			storeId: store.id,
+			externalId: "gid://shopify/Order/9",
+			name: "#9",
+			placedAt: now,
+			fulfillmentStatus: "FULFILLED",
+			total: 30,
+			sourceUpdatedAt: now,
+		})
+		.returning();
+	const label = (
+		n: number,
+		extra: Partial<typeof schema.shipments.$inferInsert>,
+	) => ({
+		orderId: order.id,
+		contentsKey: "WRENCH×1",
+		lengthMm: 300,
+		widthMm: 200,
+		heightMm: 100,
+		weightGrams: 600,
+		provider: "shippo",
+		carrier: "USPS",
+		carrierToken: "usps",
+		service: "usps_ground_advantage",
+		serviceName: "USPS Ground Advantage",
+		cost: 7,
+		trackingNumber: `940${n}`,
+		externalId: `tx-${n}`,
+		test: false,
+		channelSentAt: now,
+		...extra,
+	});
+	const before = await diagnosticsAttention(db, now);
+	await db
+		.insert(schema.shipments)
+		.values([
+			label(1, {}),
+			label(2, { storefrontTrackingError: "not saved" }),
+			label(3, { storefrontTrackingError: "not removed", voidedAt: now }),
+		]);
+
+	const o = await diagnosticsOverview(db, now);
+	expect(
+		o.storefrontTracking.map((r) => [r.trackingNumber, r.voided, r.error]),
+	).toEqual(
+		expect.arrayContaining([
+			["9402", false, "not saved"],
+			["9403", true, "not removed"],
+		]),
+	);
+	expect(o.storefrontTracking).toHaveLength(2);
+	expect(o.handoffs).toHaveLength(0);
+	expect(await diagnosticsAttention(db, now)).toBe(before + 1);
 });

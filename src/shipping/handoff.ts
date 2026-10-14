@@ -233,6 +233,48 @@ export async function sendTracking(
 	return result;
 }
 
+// Tries the storefront's katasync.shippo_tracking entry again after a
+// failure: saved for a shipped label, removed for a voided one. Clears the
+// note when Shopify has it right, including after a fix by hand.
+export async function retryStorefrontTracking(
+	db: Db,
+	shipmentId: number,
+	outside: Outside = live,
+): Promise<Handoff> {
+	return withOrderLock(db, await orderOf(db, shipmentId), async (tx) => {
+		const { shipment, order } = await load(tx, shipmentId);
+		if (!shipment.carrierToken || !shipment.trackingNumber) {
+			throw new Error("This label has nothing for the storefront");
+		}
+		try {
+			if (shipment.voidedAt) {
+				await outside.shopifyRemoveTracking(
+					order.externalId,
+					shipment.trackingNumber,
+				);
+			} else {
+				await outside.shopifySaveTracking(order.externalId, {
+					number: shipment.trackingNumber,
+					carrier: shipment.carrierToken,
+				});
+			}
+		} catch (err) {
+			const why = err instanceof Error ? err.message : String(err);
+			return { sent: false, message: `Shopify refused again: ${why}` };
+		}
+		await tx
+			.update(shipments)
+			.set({ storefrontTrackingError: null })
+			.where(eq(shipments.id, shipmentId));
+		return {
+			sent: true,
+			message: shipment.voidedAt
+				? "The storefront no longer lists this label"
+				: "The storefront's tracking page has this label",
+		};
+	});
+}
+
 export type Voided = { refundStatus: string; notes: string[] };
 
 // Voids a label: asks for the postage back, takes the tracking back off the

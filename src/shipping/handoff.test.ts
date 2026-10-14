@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
-import { type Outside, sendTracking, voidShipment } from "./handoff";
+import {
+	type Outside,
+	retryStorefrontTracking,
+	sendTracking,
+	voidShipment,
+} from "./handoff";
 import { assignOrderPins } from "./pins";
 
 let db: Db;
@@ -324,5 +329,51 @@ describe("voidShipment", () => {
 		expect((await order()).fulfillmentStatus).toBe("UNFULFILLED");
 		expect(logged).toHaveBeenCalled();
 		logged.mockRestore();
+	});
+});
+
+describe("retryStorefrontTracking", () => {
+	beforeEach(() => setUp("shopify"));
+
+	test("saves a shipped label's entry and clears the note", async () => {
+		const outside = fakes();
+		const id = await addLabel({ storefrontTrackingError: "not saved" });
+		const result = await retryStorefrontTracking(db, id, outside);
+		expect(result.sent).toBe(true);
+		expect(outside.shopifySaveTracking).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			{ number: "9400100000000000000000", carrier: "usps" },
+		);
+		expect((await label(id)).storefrontTrackingError).toBeNull();
+	});
+
+	test("removes a voided label's entry instead", async () => {
+		const outside = fakes();
+		const id = await addLabel({
+			storefrontTrackingError: "not removed",
+			voidedAt: new Date(),
+		});
+		await retryStorefrontTracking(db, id, outside);
+		expect(outside.shopifyRemoveTracking).toHaveBeenCalledWith(
+			"gid://shopify/Order/9",
+			"9400100000000000000000",
+		);
+		expect(outside.shopifySaveTracking).not.toHaveBeenCalled();
+		expect((await label(id)).storefrontTrackingError).toBeNull();
+	});
+
+	test("another refusal keeps the note", async () => {
+		const outside = fakes({
+			shopifySaveTracking: vi.fn(async () => {
+				throw new Error("Access denied");
+			}),
+		});
+		const id = await addLabel({ storefrontTrackingError: "not saved" });
+		const result = await retryStorefrontTracking(db, id, outside);
+		expect(result).toEqual({
+			sent: false,
+			message: "Shopify refused again: Access denied",
+		});
+		expect((await label(id)).storefrontTrackingError).toBe("not saved");
 	});
 });
