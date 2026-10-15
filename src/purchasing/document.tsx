@@ -19,6 +19,7 @@ export type PurchaseOrderDocument = {
 	buyer: Address & { email: string | null };
 	supplier: Address & {
 		contactName: string | null;
+		email: string | null;
 		paymentTerms: string | null;
 	};
 	notes: string[];
@@ -105,7 +106,7 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 			<Page size="LETTER" style={s.page}>
 				<View style={s.header}>
 					<View>
-						<Text style={s.title}>Purchase order {po.id}</Text>
+						<Text style={s.title}>PO #{po.id}</Text>
 						<Text style={s.muted}>
 							{po.date.toLocaleDateString("en-US", { dateStyle: "long" })}
 						</Text>
@@ -120,20 +121,23 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 						{po.supplier.contactName && (
 							<Text>Attn: {po.supplier.contactName}</Text>
 						)}
+						{po.supplier.email && <Text>{po.supplier.email}</Text>}
 					</View>
 					<View style={s.party}>
 						<Text style={s.label}>Ship to</Text>
 						<AddressLines address={po.buyer} />
 						{po.buyer.email && <Text>{po.buyer.email}</Text>}
 					</View>
-					<View style={s.party}>
-						<Text style={s.label}>Terms</Text>
-						<Text>{po.supplier.paymentTerms ?? "As agreed"}</Text>
-					</View>
+					{po.supplier.paymentTerms && (
+						<View style={s.party}>
+							<Text style={s.label}>Terms</Text>
+							<Text>{po.supplier.paymentTerms}</Text>
+						</View>
+					)}
 				</View>
 
 				<View style={s.headRow}>
-					{theirSkus && <Text style={[s.sku, s.bold]}>Your SKU</Text>}
+					{theirSkus && <Text style={[s.sku, s.bold]}>Supplier SKU</Text>}
 					<Text style={[s.desc, s.bold]}>Item</Text>
 					<Text style={[s.num, s.bold]}>Qty</Text>
 					<Text style={[s.unit, s.bold]}>Unit</Text>
@@ -143,17 +147,14 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 				{po.lines.map((l) => (
 					<View key={l.sku} style={s.row} wrap={false}>
 						{theirSkus && <Text style={s.sku}>{l.supplierSku ?? "—"}</Text>}
-						<View style={s.desc}>
-							<Text>{l.description}</Text>
-							<Text style={s.muted}>Our SKU {l.sku}</Text>
-						</View>
+						<Text style={s.desc}>{l.description}</Text>
 						<Text style={s.num}>{l.quantity}</Text>
 						<Text style={s.unit}>{formatUnit(l.unit, l.packSize)}</Text>
 						<Text style={s.money}>
-							{l.unitCost === null ? "Please quote" : money(l.unitCost)}
+							{l.unitCost === null ? "—" : money(l.unitCost)}
 						</Text>
 						<Text style={s.money}>
-							{l.unitCost === null ? "" : money(l.unitCost * l.quantity)}
+							{l.unitCost === null ? "—" : money(l.unitCost * l.quantity)}
 						</Text>
 					</View>
 				))}

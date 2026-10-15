@@ -67,6 +67,12 @@ export type SupplierFields = {
 	contactName: string | null;
 	email: string | null;
 	phone: string | null;
+	address1: string | null;
+	address2: string | null;
+	city: string | null;
+	region: string | null;
+	postalCode: string | null;
+	country: string | null;
 	paymentTerms: string | null;
 	notes: string | null;
 	poNotes: string | null;
@@ -104,6 +110,12 @@ export async function updateSupplier(
 			contactName: blank(fields.contactName),
 			email: blank(fields.email),
 			phone: blank(fields.phone),
+			address1: blank(fields.address1),
+			address2: blank(fields.address2),
+			city: blank(fields.city),
+			region: blank(fields.region),
+			postalCode: blank(fields.postalCode),
+			country: blank(fields.country),
 			paymentTerms: blank(fields.paymentTerms),
 			notes: blank(fields.notes),
 			poNotes: blank(fields.poNotes),
