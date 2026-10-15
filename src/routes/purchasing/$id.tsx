@@ -5,12 +5,13 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import { AlertTriangle, FileText, Mail, Smartphone } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
+import { StockRing } from "#/components/stock-ring";
 import { Button } from "#/components/ui/button";
 import {
 	cityLine,
@@ -35,6 +36,7 @@ import {
 	receiveLine,
 	sendPurchaseOrder,
 	setLine,
+	setProductSupplier,
 	setPurchaseLineTerms,
 	undoPurchaseReceipt,
 	updateDraftFromSuggestions,
@@ -401,9 +403,10 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 			<thead>
 				<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
 					<th className="px-4 py-2 font-medium">Product</th>
+					<th className="px-3 py-2 font-medium whitespace-nowrap">Their SKU</th>
 					<th className="px-3 py-2 font-medium whitespace-nowrap">MOQ / UOM</th>
 					{draft && (
-						<th className="px-4 py-2 text-right font-medium whitespace-nowrap">
+						<th className="px-3 py-2 text-center font-medium whitespace-nowrap">
 							On hand
 						</th>
 					)}
@@ -440,11 +443,13 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 										</Link>
 										<div className="text-xs text-muted-foreground">
 											{l.sku}
-											{l.supplierSku && ` · theirs ${l.supplierSku}`}
 											{l.kind === "bundle" && " · Set, sent as its parts"}
 										</div>
 									</div>
 								</div>
+							</td>
+							<td className="px-3 py-2">
+								<SupplierSkuField line={l} supplierId={d.supplier.id} />
 							</td>
 							<td className="px-3 py-2">
 								<PurchaseUnitCell
@@ -490,15 +495,12 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 								/>
 							</td>
 							{draft && (
-								<td
-									className={cn(
-										"px-4 py-2 text-right tabular-nums",
-										l.onHand < 0
-											? "text-critical-text"
-											: "text-muted-foreground",
+								<td className="px-3 py-2 text-center">
+									{l.kind === "bundle" || !l.stockRange ? (
+										<span className="text-muted-foreground">—</span>
+									) : (
+										<StockRing onHand={l.onHand} range={l.stockRange} />
 									)}
-								>
-									{l.kind === "bundle" ? "—" : formatCount(l.onHand)}
 								</td>
 							)}
 							<td className="px-3 py-2 text-right font-semibold tabular-nums">
@@ -516,11 +518,7 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 								{l.kind === "bundle" ? (
 									<span className="text-muted-foreground">As parts</span>
 								) : draft ? (
-									<PriceField
-										key={`c${l.unitCost}`}
-										line={l}
-										purchaseOrderId={d.order.id}
-									/>
+									<PriceField line={l} purchaseOrderId={d.order.id} />
 								) : (
 									formatMoney(l.unitCost)
 								)}
@@ -619,7 +617,7 @@ function SetParts({
 						)}
 					</td>
 					<td
-						colSpan={5}
+						colSpan={6}
 						className="px-4 py-1 text-right text-muted-foreground tabular-nums"
 					>
 						{!p.moved && (
@@ -746,9 +744,85 @@ function QuantityField({
 	);
 }
 
-// A draft line's price: plain text with a dotted underline until clicked,
-// since it rarely changes. Saves on Enter or leaving the field; Escape puts
-// the old price back. Empty means no price yet.
+// Reads as plain text with a dotted underline until clicked, and keeps its
+// size while typing, so editing doesn't push the columns around. Saves on
+// Enter or leaving the field; Escape puts the old text back. Shows what was
+// typed until the saved value comes back.
+function InlineField({
+	shown,
+	initial,
+	placeholder,
+	label,
+	inputMode,
+	className,
+	onSave,
+}: {
+	// What it reads as when not being edited, e.g. "$12.50".
+	shown: string;
+	// What editing starts from, e.g. "12.50". Empty when there's nothing yet.
+	initial: string;
+	placeholder: string;
+	label: string;
+	inputMode?: "decimal" | "text";
+	className?: string;
+	// Resolves to false when the value wasn't saved.
+	onSave: (text: string) => Promise<boolean>;
+}) {
+	const [editing, setEditing] = useState(false);
+	const [value, setValue] = useState(initial);
+	const [pending, setPending] = useState<string | null>(null);
+	const cancelled = useRef(false);
+	// A fresh value from the server ends any pending one.
+	const [lastInitial, setLastInitial] = useState(initial);
+	if (initial !== lastInitial) {
+		setLastInitial(initial);
+		setPending(null);
+	}
+
+	async function finish() {
+		setEditing(false);
+		const text = value.trim();
+		if (cancelled.current || text === initial) {
+			cancelled.current = false;
+			return;
+		}
+		setPending(text);
+		if (!(await onSave(text))) setPending(null);
+	}
+
+	return (
+		<input
+			value={editing ? value : (pending ?? (initial === "" ? "" : shown))}
+			placeholder={placeholder}
+			aria-label={label}
+			inputMode={inputMode}
+			onFocus={(e) => {
+				setValue(pending ?? initial);
+				setEditing(true);
+				const input = e.currentTarget;
+				requestAnimationFrame(() => input.select());
+			}}
+			onChange={(e) => setValue(e.target.value)}
+			onBlur={finish}
+			onKeyDown={(e) => {
+				if (e.key === "Enter") e.currentTarget.blur();
+				if (e.key === "Escape") {
+					cancelled.current = true;
+					e.stopPropagation();
+					e.currentTarget.blur();
+				}
+			}}
+			className={cn(
+				"h-8 cursor-text rounded-md border border-transparent bg-transparent px-1.5 tabular-nums outline-none placeholder:text-muted-foreground",
+				"underline decoration-[#b5b5b5] decoration-dotted underline-offset-4 hover:decoration-foreground",
+				"focus:border-ring focus:bg-white focus:no-underline",
+				className,
+			)}
+		/>
+	);
+}
+
+// A draft line's price. Empty means no price yet.
 function PriceField({
 	line,
 	purchaseOrderId,
@@ -756,68 +830,81 @@ function PriceField({
 	line: Line;
 	purchaseOrderId: number;
 }) {
-	const { busy, run } = useAction();
-	const initial = line.unitCost?.toFixed(2) ?? "";
-	const [value, setValue] = useState(initial);
-	const [editing, setEditing] = useState(false);
-
-	function save() {
-		setEditing(false);
-		if (value.trim() === initial) return;
-		const n = Number(value);
-		if (value.trim() !== "" && !(Number.isFinite(n) && n >= 0)) {
-			toast.error(`"${value}" isn't a price`);
-			setValue(initial);
-			return;
-		}
-		run(() =>
-			setLine({
-				data: {
-					purchaseOrderId,
-					productId: line.productId,
-					quantity: line.quantity,
-					unitCost: value.trim() === "" ? null : n,
-				},
-			}),
-		);
-	}
-
-	if (!editing)
-		return (
-			<button
-				type="button"
-				onClick={() => setEditing(true)}
-				title="Change the price"
-				className={cn(
-					"cursor-text border-b border-dotted border-[#b5b5b5] leading-tight hover:border-foreground",
-					line.unitCost === null && "text-muted-foreground",
-				)}
-			>
-				{line.unitCost === null ? "Add price" : formatMoney(line.unitCost)}
-			</button>
-		);
-
+	const { run } = useAction();
 	return (
-		<input
-			value={value}
-			disabled={busy}
-			// biome-ignore lint/a11y/noAutofocus: opened by a click to type
-			autoFocus
-			onFocus={(e) => e.currentTarget.select()}
+		<InlineField
+			shown={formatMoney(line.unitCost)}
+			initial={line.unitCost?.toFixed(2) ?? ""}
+			placeholder="Add price"
+			label={`Price of ${line.sku}`}
 			inputMode="decimal"
-			placeholder="Price?"
-			aria-label={`Price of ${line.sku}`}
-			onChange={(e) => setValue(e.target.value)}
-			onBlur={save}
-			onKeyDown={(e) => {
-				if (e.key === "Enter") e.currentTarget.blur();
-				if (e.key === "Escape") {
-					setValue(initial);
-					setEditing(false);
-					e.stopPropagation();
+			className="w-24 text-right"
+			onSave={async (text) => {
+				const n = Number(text.replace(/^\$/, ""));
+				if (text !== "" && !(Number.isFinite(n) && n >= 0)) {
+					toast.error(`"${text}" isn't a price`);
+					return false;
 				}
+				const r = await run(() =>
+					setLine({
+						data: {
+							purchaseOrderId,
+							productId: line.productId,
+							quantity: line.quantity,
+							unitCost: text === "" ? null : n,
+						},
+					}),
+				);
+				return r !== null;
 			}}
-			className={cn(field, "w-20")}
+		/>
+	);
+}
+
+// The supplier's part number for the product, kept on the product, so it
+// changes every PO with it. Only this PO's supplier's number can change here.
+function SupplierSkuField({
+	line,
+	supplierId,
+}: {
+	line: Line;
+	supplierId: number;
+}) {
+	const { run } = useAction();
+	if (line.linkSupplierId !== supplierId)
+		return (
+			<span
+				className="px-1.5 text-muted-foreground"
+				title={
+					line.kind === "bundle"
+						? "Sets are bought as their parts"
+						: line.linkSupplierId === null
+							? "This product has no supplier yet; set one on its page"
+							: "This product is bought from another supplier"
+				}
+			>
+				{line.supplierSku ?? "—"}
+			</span>
+		);
+	return (
+		<InlineField
+			shown={line.supplierSku ?? ""}
+			initial={line.supplierSku ?? ""}
+			placeholder="Add"
+			label={`${line.sku}'s supplier SKU`}
+			className="w-32"
+			onSave={async (text) => {
+				const r = await run(() =>
+					setProductSupplier({
+						data: {
+							productId: line.productId,
+							supplierId,
+							supplierSku: text === "" ? null : text,
+						},
+					}),
+				);
+				return r !== null;
+			}}
 		/>
 	);
 }

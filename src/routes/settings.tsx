@@ -4,11 +4,18 @@ import { toast } from "sonner";
 import { DevicesCard } from "#/components/devices-card";
 import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
+import { StockRangeForm } from "#/components/stock-range-form";
 import { TokensCard } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
 import { channelNames } from "#/lib/format";
 import { listDevices, listTokens } from "#/server/auth";
-import { listLocations, listStores, setPrimaryStore } from "#/server/catalog";
+import {
+	getStockDefaults,
+	listLocations,
+	listStores,
+	saveStockDefaults,
+	setPrimaryStore,
+} from "#/server/catalog";
 import {
 	addPurchaseUnit,
 	deletePurchaseUnit,
@@ -24,7 +31,7 @@ import {
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
-		const [locations, stores, boxes, units, devices, tokens] =
+		const [locations, stores, boxes, units, devices, tokens, stockDefaults] =
 			await Promise.all([
 				listLocations(),
 				listStores(),
@@ -32,8 +39,9 @@ export const Route = createFileRoute("/settings")({
 				listPurchaseUnits(),
 				listDevices(),
 				listTokens(),
+				getStockDefaults(),
 			]);
-		return { locations, stores, boxes, units, devices, tokens };
+		return { locations, stores, boxes, units, devices, tokens, stockDefaults };
 	},
 	component: Settings,
 });
@@ -44,7 +52,7 @@ const channels = Object.entries(channelNames).map(([id, name]) => ({
 }));
 
 function Settings() {
-	const { locations, stores, boxes, units, devices, tokens } =
+	const { locations, stores, boxes, units, devices, tokens, stockDefaults } =
 		Route.useLoaderData();
 	return (
 		<Page title="Settings" narrow>
@@ -94,6 +102,19 @@ function Settings() {
 			<TokensCard tokens={tokens} />
 			<Boxes boxes={boxes} />
 			<Units units={units} />
+			<Card title="Stock range">
+				<StockRangeForm
+					value={stockDefaults}
+					onSave={(range) =>
+						// Without defaults to fall back on, the form never saves null.
+						range ? saveStockDefaults({ data: range }) : Promise.resolve()
+					}
+				/>
+				<p className="mt-2 text-muted-foreground">
+					For products without their own, set on the product's page. The on hand
+					ring on a draft PO fills from min to max.
+				</p>
+			</Card>
 			<LabelPrintingCard />
 		</Page>
 	);

@@ -90,6 +90,10 @@ export const products = pgTable(
 		lengthMm: integer(),
 		widthMm: integer(),
 		heightMm: integer(),
+		// How much we like to keep on our own shelves. Both or neither; neither
+		// means the defaults in settings. Shown as the on hand ring on POs.
+		minStock: integer(),
+		maxStock: integer(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
@@ -97,6 +101,10 @@ export const products = pgTable(
 		check(
 			"products_variant_needs_group",
 			sql`${t.variantName} is null or ${t.groupId} is not null`,
+		),
+		check(
+			"products_stock_range",
+			sql`(${t.minStock} is null and ${t.maxStock} is null) or (${t.minStock} is not null and ${t.maxStock} is not null and ${t.minStock} >= 0 and ${t.maxStock} > ${t.minStock})`,
 		),
 	],
 );
@@ -894,3 +902,21 @@ export const productViews = pgTable("product_views", {
 	position: integer().notNull().default(0),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
+
+// Settings that apply across the app. One row, made by its migration.
+export const settings = pgTable(
+	"settings",
+	{
+		id: smallint().primaryKey().default(1),
+		// The stock range for products without their own (products.minStock).
+		defaultMinStock: integer().notNull().default(0),
+		defaultMaxStock: integer().notNull().default(20),
+	},
+	(t) => [
+		check("settings_single", sql`${t.id} = 1`),
+		check(
+			"settings_stock_range",
+			sql`${t.defaultMinStock} >= 0 and ${t.defaultMaxStock} > ${t.defaultMinStock}`,
+		),
+	],
+);

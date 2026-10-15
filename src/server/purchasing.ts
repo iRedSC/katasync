@@ -12,6 +12,7 @@ import {
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
+import { stockRanges } from "#/inventory/stock-range";
 import { emailConfigured, sendEmail } from "#/purchasing/email";
 import {
 	documentFor,
@@ -133,12 +134,11 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const po = await loadOrder(db, data.id);
-		const [onHand, receipts, ownedLocations, changes, units, setParts] =
+		const productIds = po.lines.map((l) => l.productId);
+		const [onHand, ranges, receipts, ownedLocations, changes, units, setParts] =
 			await Promise.all([
-				onHandOf(
-					db,
-					po.lines.map((l) => l.productId),
-				),
+				onHandOf(db, productIds),
+				stockRanges(db, productIds),
 				// The latest receipts that can still be undone.
 				db
 					.select({
@@ -188,6 +188,8 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			lines: po.lines.map((l) => ({
 				...l,
 				onHand: onHand.get(l.productId) ?? 0,
+				// Every line's product has one; ?? only satisfies the Map type.
+				stockRange: ranges.get(l.productId) ?? null,
 			})),
 			setParts,
 			receipts,

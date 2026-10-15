@@ -28,6 +28,11 @@ import {
 	undoBatch,
 } from "#/inventory/ledger";
 import {
+	setProductStockRange,
+	setStockDefaults,
+	stockDefaults,
+} from "#/inventory/stock-range";
+import {
 	applyListingsToOrders,
 	matchListing as matchListingToSku,
 	productFromListing,
@@ -701,3 +706,21 @@ export const setInsureWhenShipped = createServerFn({ method: "POST" })
 			.set({ insureWhenShipped: data.insure })
 			.where(eq(products.sku, data.sku));
 	});
+
+// The stock range products use until they get their own.
+export const getStockDefaults = createServerFn({ method: "GET" }).handler(
+	async () => stockDefaults(getDb()),
+);
+
+const range = type({ min: "number.integer >= 0", max: "number.integer > 0" });
+
+export const saveStockDefaults = createServerFn({ method: "POST" })
+	.validator(range)
+	.handler(async ({ data }) => setStockDefaults(getDb(), data));
+
+// range null puts the product back on the defaults.
+export const saveProductStockRange = createServerFn({ method: "POST" })
+	.validator(type({ productId: "number.integer > 0", range: range.or("null") }))
+	.handler(async ({ data }) =>
+		setProductStockRange(getDb(), data.productId, data.range),
+	);
