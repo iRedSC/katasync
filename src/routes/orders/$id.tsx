@@ -79,7 +79,7 @@ function OrderPage() {
 
 	return (
 		<Page
-			narrow
+			width="narrow"
 			back={{ to: "/orders" }}
 			actions={
 				<>

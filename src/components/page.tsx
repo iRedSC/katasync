@@ -16,20 +16,25 @@ export function Page({
 	title,
 	back,
 	actions,
-	narrow = false,
+	width,
 	children,
 }: {
 	title: ReactNode;
 	back?: LinkProps;
 	actions?: ReactNode;
-	narrow?: boolean;
+	// Narrow for forms and single records, wide for big tables.
+	width?: "narrow" | "wide";
 	children: ReactNode;
 }) {
 	return (
 		<div
 			className={cn(
 				"mx-auto flex w-full flex-col gap-4 px-4 py-5 md:px-6",
-				narrow ? "max-w-[62rem]" : "max-w-[75rem]",
+				width === "narrow"
+					? "max-w-[62rem]"
+					: width === "wide"
+						? "max-w-[100rem]"
+						: "max-w-[75rem]",
 			)}
 		>
 			<header className="flex min-h-9 items-center gap-2">
