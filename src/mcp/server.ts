@@ -491,6 +491,16 @@ function registerWriteTools(server: McpServer, db: Db) {
 				contact_name: z.string().nullable().optional(),
 				email: z.string().email().nullable().optional(),
 				phone: z.string().nullable().optional(),
+				address1: z.string().nullable().optional(),
+				address2: z.string().nullable().optional(),
+				city: z.string().nullable().optional(),
+				region: z.string().nullable().optional().describe("State or province"),
+				postal_code: z.string().nullable().optional(),
+				country: z
+					.string()
+					.nullable()
+					.optional()
+					.describe("Two-letter code, e.g. US"),
 				payment_terms: z.string().nullable().optional(),
 				notes: z.string().nullable().optional().describe("For us only"),
 				po_notes: z
@@ -511,6 +521,12 @@ function registerWriteTools(server: McpServer, db: Db) {
 				contactName: input.contact_name,
 				email: input.email,
 				phone: input.phone,
+				address1: input.address1,
+				address2: input.address2,
+				city: input.city,
+				region: input.region,
+				postalCode: input.postal_code,
+				country: input.country,
 				paymentTerms: input.payment_terms,
 				notes: input.notes,
 				poNotes: input.po_notes,

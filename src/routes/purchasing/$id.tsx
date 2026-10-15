@@ -12,6 +12,7 @@ import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { StockRing } from "#/components/stock-ring";
+import { SupplierDialog } from "#/components/supplier-dialog";
 import { Button } from "#/components/ui/button";
 import {
 	cityLine,
@@ -78,6 +79,7 @@ function PurchaseOrderPage() {
 	const { busy, run } = useAction();
 	const po = d.order;
 	const draft = po.status === "draft";
+	const [editingSupplier, setEditingSupplier] = useState(false);
 	// Counted in the product itself, so 2 cases of 12 are 24.
 	const ordered = d.lines.reduce((n, l) => n + l.quantity * l.packSize, 0);
 	const received = d.lines.reduce(
@@ -195,7 +197,18 @@ function PurchaseOrderPage() {
 				</div>
 
 				<div className="flex flex-col gap-4">
-					<Card title="Supplier">
+					<Card
+						title="Supplier"
+						aside={
+							<button
+								type="button"
+								onClick={() => setEditingSupplier(true)}
+								className="text-link hover:underline"
+							>
+								Edit
+							</button>
+						}
+					>
 						<div className="flex flex-col gap-0.5">
 							<span className="font-medium">{d.supplier.name}</span>
 							{d.supplier.contactName && <span>{d.supplier.contactName}</span>}
@@ -222,6 +235,11 @@ function PurchaseOrderPage() {
 							)}
 						</div>
 					</Card>
+					<SupplierDialog
+						supplier={d.supplier}
+						open={editingSupplier}
+						onOpenChange={setEditingSupplier}
+					/>
 
 					<Card title="Delivery">
 						<div className="flex flex-col gap-2">
