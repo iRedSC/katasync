@@ -18,23 +18,30 @@ import { ProductImage } from "#/components/product";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import { printLabel } from "#/printing/qz-client";
+import { printLabels } from "#/printing/qz-client";
 import {
 	listPackages,
 	quickShipBuy,
 	quickShipLookup,
+	quickShipPlan,
 	quickShipRates,
 	savePackage,
 	voidLabel,
 } from "#/server/shipping";
+import { labelPath } from "#/shipping/label-path";
+import type { ShipmentPlan } from "#/shipping/quick-ship";
 import type { Rate } from "#/shipping/shippo";
 
 const MM_PER_INCH = 25.4;
 const GRAMS_PER_OUNCE = 28.349523125;
+// Matches MAX_BOXES in shipping/buy.ts, which the server enforces.
+const MAX_BOXES = 10;
 
 type Found = NonNullable<Awaited<ReturnType<typeof quickShipLookup>>>;
 type Box = Awaited<ReturnType<typeof listPackages>>[number];
 type Dims = { lengthMm: number; widthMm: number; heightMm: number };
+// A box already packed and weighed, before buying.
+type Packed = { box: Box | null; dims: Dims; weightGrams: number };
 type Step = "pin" | "package" | "weight" | "insure" | "rates" | "done";
 type Rates = { list: Rate[]; notes: string[]; test: boolean };
 type Bought = Awaited<ReturnType<typeof quickShipBuy>>;
@@ -43,6 +50,18 @@ const inches = (mm: number) => Math.round((mm / MM_PER_INCH) * 10) / 10;
 const ounces = (grams: number) => (grams / GRAMS_PER_OUNCE).toFixed(1);
 const size = (d: Dims) =>
 	`${inches(d.lengthMm)} × ${inches(d.widthMm)} × ${inches(d.heightMm)}`;
+
+// Splits the insured amount across boxes by cents, the last box taking any
+// leftover cent, so the parts add up to what was chosen.
+function splitInsurance(total: number | null, boxes: number) {
+	if (total === null) return Array<null>(boxes).fill(null);
+	const cents = Math.round(total * 100);
+	const each = Math.floor(cents / boxes);
+	return Array.from(
+		{ length: boxes },
+		(_, i) => (i === boxes - 1 ? cents - each * (boxes - 1) : each) / 100,
+	);
+}
 
 // The big inputs every step types into.
 const bigInput =
@@ -55,9 +74,10 @@ export function openQuickShip(pin: number) {
 }
 
 // Ctrl+Space anywhere: order pin, box pin, weight, (insurance), service.
-// Enter moves forward, Escape steps back. The order loads as the third
-// digit is typed, and prices load while the weight is still on screen, so
-// Enter rarely waits.
+// T on the box step adds other orders to the same address to this box; +
+// on the weight step adds another box. Enter moves forward, Escape steps
+// back. The order loads as the third digit is typed, and prices load while
+// the weight is still on screen, so Enter rarely waits.
 export function QuickShip() {
 	const router = useRouter();
 	const [open, setOpen] = useState(false);
@@ -67,6 +87,10 @@ export function QuickShip() {
 	const [boxes, setBoxes] = useState<Box[]>([]);
 
 	const [found, setFound] = useState<Found | null>(null);
+	// The orders in this box (the pin's order first) and what's in it.
+	const [plan, setPlan] = useState<ShipmentPlan | null>(null);
+	// Boxes finished so far; the one being entered is box/dims/weight below.
+	const [packed, setPacked] = useState<Packed[]>([]);
 	const [box, setBox] = useState<Box | null>(null);
 	const [dims, setDims] = useState<Dims | null>(null);
 	const [weightGrams, setWeightGrams] = useState<number | null>(null);
@@ -75,8 +99,10 @@ export function QuickShip() {
 	const [rates, setRates] = useState<Rates | null>(null);
 	const [bought, setBought] = useState<Bought | null>(null);
 
-	// Lookups and prices already asked for, so asking again is instant.
+	// Lookups, plans, and prices already asked for, so asking again is
+	// instant.
 	const lookups = useRef(new Map<number, Promise<Found | null>>());
+	const plans = useRef(new Map<string, Promise<ShipmentPlan>>());
 	const priced = useRef(new Map<string, Promise<Rates>>());
 	const latest = useRef(0);
 
@@ -84,6 +110,8 @@ export function QuickShip() {
 		setStep("pin");
 		setError(null);
 		setFound(null);
+		setPlan(null);
+		setPacked([]);
 		setBox(null);
 		setDims(null);
 		setWeightGrams(null);
@@ -92,6 +120,7 @@ export function QuickShip() {
 		setRates(null);
 		setBought(null);
 		lookups.current.clear();
+		plans.current.clear();
 		priced.current.clear();
 	}
 
@@ -133,21 +162,42 @@ export function QuickShip() {
 		return pending;
 	}
 
-	function priceFor(grams: number, insure: number | null) {
-		if (!found || !dims) return null;
-		const key = JSON.stringify([box?.id, dims, grams, insure]);
+	function planFor(orderIds: number[]) {
+		const key = orderIds.join(",");
+		let pending = plans.current.get(key);
+		if (!pending) {
+			pending = quickShipPlan({ data: { orderIds } });
+			pending.catch(() => plans.current.delete(key));
+			plans.current.set(key, pending);
+		}
+		return pending;
+	}
+
+	// Every box with its weight, the one being entered last.
+	const allBoxes = (grams: number | null): Packed[] =>
+		dims && grams ? [...packed, { box, dims, weightGrams: grams }] : packed;
+
+	function priceFor(list: Packed[], insure: number | null) {
+		if (!plan || list.length === 0) return null;
+		const parts = splitInsurance(insure, list.length);
+		const data = {
+			orderIds: plan.orderIds,
+			contentsKey: plan.contentsKey,
+			boxes: list.map((p, i) => ({
+				packageId: p.box?.id ?? null,
+				...p.dims,
+				weightGrams: p.weightGrams,
+				insureAmount: parts[i],
+			})),
+		};
+		const key = JSON.stringify(data);
 		let pending = priced.current.get(key);
 		if (!pending) {
-			pending = quickShipRates({
-				data: {
-					orderId: found.order.id,
-					packageId: box?.id ?? null,
-					...dims,
-					weightGrams: grams,
-					insureAmount: insure,
-					contentsKey: found.contentsKey,
-				},
-			}).then((r) => ({ list: r.rates, notes: r.notes, test: r.test }));
+			pending = quickShipRates({ data }).then((r) => ({
+				list: r.rates,
+				notes: r.notes,
+				test: r.test,
+			}));
 			pending.catch(() => priced.current.delete(key));
 			priced.current.set(key, pending);
 		}
@@ -158,14 +208,14 @@ export function QuickShip() {
 	// insurance the next step would suggest.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: priceFor reads the same state
 	useEffect(() => {
-		if (step !== "weight" || !draftGrams || !found) return;
+		if (step !== "weight" || !draftGrams || !plan) return;
 		const timer = setTimeout(() => {
-			priceFor(draftGrams, found.insure ? found.order.total : null)?.catch(
+			priceFor(allBoxes(draftGrams), plan.insure ? plan.total : null)?.catch(
 				() => {},
 			);
 		}, 250);
 		return () => clearTimeout(timer);
-	}, [step, draftGrams, found]);
+	}, [step, draftGrams, plan]);
 
 	async function run<T>(work: () => Promise<T>) {
 		setBusy(true);
@@ -183,24 +233,48 @@ export function QuickShip() {
 	const back = () => {
 		setError(null);
 		if (step === "pin" || step === "done") return setOpen(false);
+		latest.current++;
+		// From a later box's box step, back to the box before's weight.
+		if (step === "package" && packed.length > 0) {
+			const last = packed[packed.length - 1];
+			setPacked(packed.slice(0, -1));
+			setBox(last.box);
+			setDims(last.dims);
+			setWeightGrams(last.weightGrams);
+			setDraftGrams(last.weightGrams);
+			return setStep("weight");
+		}
 		const order: Step[] = ["pin", "package", "weight", "insure", "rates"];
 		let previous = order[order.indexOf(step) - 1];
-		if (previous === "insure" && !found?.insure) previous = "weight";
-		latest.current++;
+		if (previous === "insure" && !plan?.insure) previous = "weight";
 		setStep(previous);
 	};
+
+	// Starts a box from the matching box of the last time these contents
+	// shipped, if there was one.
+	function suggestBox(next: ShipmentPlan, index: number, known = boxes) {
+		const last = next.last?.[index] ?? null;
+		const lastBox = known.find((b) => b.id === last?.packageId) ?? null;
+		setBox(lastBox);
+		setDims(last ?? lastBox);
+	}
 
 	async function choosePin(pin: number) {
 		const result = await run(() => lookUp(pin));
 		if (result === undefined) return;
 		if (result === null) return setError(`No order to ship has pin ${pin}`);
 		setFound(result);
+		setPlan(result.plan);
+		// Ready if T is pressed.
+		if (result.companions.length > 0) {
+			planFor([result.order.id, ...result.companions.map((c) => c.id)]).catch(
+				() => {},
+			);
+		}
 		// Opened straight onto an order, the boxes may still be loading.
 		const known = boxes.length > 0 ? boxes : await listPackages();
 		if (boxes.length === 0) setBoxes(known);
-		const lastBox = known.find((b) => b.id === result.last?.packageId) ?? null;
-		setBox(lastBox);
-		setDims(result.last ?? lastBox);
+		suggestBox(result.plan, 0, known);
 		setStep("package");
 	}
 
@@ -208,37 +282,80 @@ export function QuickShip() {
 	// choosePin.
 	const choosePinRef = useRef(choosePin);
 	choosePinRef.current = choosePin;
+	const choosePackageRef = useRef((_: { box: Box | null; dims: Dims }) => {});
+
+	// Adds or removes another order to the same address from this box. Only
+	// while choosing the first box: the contents decide the boxes.
+	async function toggleCompanion(id?: number) {
+		if (!found || !plan || packed.length > 0 || busy) return;
+		const chosen = new Set(plan.orderIds.slice(1));
+		const ids = id === undefined ? found.companions.map((c) => c.id) : [id];
+		const adding = ids.some((i) => !chosen.has(i));
+		for (const i of ids) adding ? chosen.add(i) : chosen.delete(i);
+		const orderIds = [
+			found.order.id,
+			...found.companions.map((c) => c.id).filter((i) => chosen.has(i)),
+		];
+		// busy holds the box step until the new contents are known, so the box
+		// and prices are never for the old plan.
+		const next = await run(() => planFor(orderIds));
+		if (!next) return;
+		setPlan(next);
+		setRates(null);
+		latest.current++;
+		if (next.last) suggestBox(next, 0);
+	}
 
 	function choosePackage(next: { box: Box | null; dims: Dims }) {
-		if (!found) return;
+		// A box saved after leaving the step, or while new contents load,
+		// doesn't count.
+		if (!plan || busy || step !== "package") return;
 		setBox(next.box);
 		setDims(next.dims);
-		// Weight starts from these exact contents' last shipment, else the
-		// items' known weights plus the empty box.
+		// Weight starts from this box's weight last time these contents
+		// shipped; else, for a single box, the items' known weights plus the
+		// empty box.
+		const last = plan.last?.[packed.length];
 		const grams =
-			found.last?.weightGrams ??
-			(found.itemsWeightGrams === null
-				? null
-				: found.itemsWeightGrams + (next.box?.weightGrams ?? 0));
+			last?.weightGrams ??
+			(packed.length === 0 && plan.itemsWeightGrams !== null
+				? plan.itemsWeightGrams + (next.box?.weightGrams ?? 0)
+				: null);
 		setWeightGrams(grams);
 		setDraftGrams(grams);
 		setStep("weight");
 	}
 
+	choosePackageRef.current = choosePackage;
+
+	// + on the weight step: this box is done, on to the next.
+	function anotherBox(grams: number) {
+		if (!dims || !plan) return;
+		if (packed.length + 1 >= MAX_BOXES) {
+			return setError(`At most ${MAX_BOXES} boxes in one shipment`);
+		}
+		setPacked([...packed, { box, dims, weightGrams: grams }]);
+		suggestBox(plan, packed.length + 1);
+		setWeightGrams(null);
+		setDraftGrams(null);
+		setError(null);
+		setStep("package");
+	}
+
 	function chooseWeight(grams: number) {
-		if (!found) return;
+		if (!plan) return;
 		setWeightGrams(grams);
-		if (found.insure) {
-			setInsureAmount(found.order.total);
+		if (plan.insure) {
+			setInsureAmount(plan.total);
 			setStep("insure");
 		} else {
 			setInsureAmount(null);
-			showRates(grams, null);
+			showRates(allBoxes(grams), null);
 		}
 	}
 
-	async function showRates(grams: number, insure: number | null) {
-		const pending = priceFor(grams, insure);
+	async function showRates(list: Packed[], insure: number | null) {
+		const pending = priceFor(list, insure);
 		if (!pending) return;
 		const mine = ++latest.current;
 		setStep("rates");
@@ -247,47 +364,83 @@ export function QuickShip() {
 		if (result && mine === latest.current) setRates(result);
 	}
 
-	async function buy(rate: Rate) {
-		if (!found || !dims || weightGrams === null || busy) return;
+	async function buy(quote: Rate) {
+		const list = allBoxes(weightGrams);
+		if (!plan || list.length === 0 || busy) return;
+		const parts = splitInsurance(insureAmount, list.length);
 		const result = await run(() =>
 			quickShipBuy({
 				data: {
-					orderId: found.order.id,
-					packageId: box?.id ?? null,
-					...dims,
-					weightGrams,
-					insureAmount,
-					contentsKey: found.contentsKey,
-					rateId: rate.id,
+					orderIds: plan.orderIds,
+					contentsKey: plan.contentsKey,
+					boxes: list.map((p, i) => ({
+						packageId: p.box?.id ?? null,
+						...p.dims,
+						weightGrams: p.weightGrams,
+						insureAmount: parts[i],
+					})),
+					choice: {
+						carrier: quote.carrier,
+						service: quote.service,
+						id: quote.id,
+					},
 				},
 			}),
 		);
 		if (!result) return;
+		router.invalidate();
+		if (result.failed) {
+			// A label still live blocks buying again; it has to be voided.
+			if (result.boxes.length > 0) {
+				setRates(null);
+				return setError(result.failed);
+			}
+			// Everything was refunded: show fresh prices to try again, keeping
+			// the explanation on screen.
+			priced.current.clear();
+			await showRates(list, insureAmount);
+			return setError(result.failed);
+		}
 		setBought(result);
 		setStep("done");
-		printLabel(result.id);
-		router.invalidate();
+		printLabels(result.boxes.map((b) => b.id));
 	}
 
 	const external = found?.external ?? null;
+	const count = packed.length + (dims ? 1 : 0);
 	const steps: { id: Step; label: string; value: string | null }[] = external
 		? [
 				{ id: "pin", label: "Order", value: found?.order.name ?? null },
 				{ id: "package", label: "Ship on", value: external.name },
 			]
 		: [
-				{ id: "pin", label: "Order", value: found?.order.name ?? null },
+				{
+					id: "pin",
+					label: plan && plan.orderIds.length > 1 ? "Orders" : "Order",
+					value: plan?.orderNames.join(" + ") ?? null,
+				},
 				{
 					id: "package",
-					label: "Box",
-					value: box ? box.name : dims ? `${size(dims)} in` : null,
+					label: packed.length > 0 ? `Box ${packed.length + 1}` : "Box",
+					value:
+						packed.length > 0 && step !== "package" && step !== "weight"
+							? `${count} boxes`
+							: box
+								? box.name
+								: dims
+									? `${size(dims)} in`
+									: null,
 				},
 				{
 					id: "weight",
 					label: "Weight",
-					value: weightGrams ? `${ounces(weightGrams)} oz` : null,
+					value: weightGrams
+						? packed.length > 0 && step !== "weight"
+							? `${ounces(packed.reduce((g, p) => g + p.weightGrams, weightGrams))} oz total`
+							: `${ounces(weightGrams)} oz`
+						: null,
 				},
-				...(found?.insure
+				...(plan?.insure
 					? [
 							{
 								id: "insure" as const,
@@ -319,13 +472,28 @@ export function QuickShip() {
 						e.preventDefault();
 						back();
 					}
+					if (
+						(e.key === "t" || e.key === "T") &&
+						step === "package" &&
+						found?.companions.length
+					) {
+						e.preventDefault();
+						toggleCompanion();
+					}
 				}}
 				onEscapeKeyDown={(e) => e.preventDefault()}
 			>
 				<DialogTitle className="sr-only">Quick ship</DialogTitle>
 				<StepStrip steps={steps} current={step} />
 
-				{found && step !== "pin" && <OrderSummary found={found} />}
+				{found && plan && step !== "pin" && (
+					<OrderSummary
+						found={found}
+						plan={plan}
+						canCombine={step === "package" && packed.length === 0}
+						onToggle={toggleCompanion}
+					/>
+				)}
 
 				<div className="flex flex-col gap-4 p-6">
 					{step === "pin" && (
@@ -345,7 +513,7 @@ export function QuickShip() {
 					{step === "package" &&
 						found &&
 						!external &&
-						found.labelsBought > 0 && (
+						found.liveDispatchId !== null && (
 							<Notice tone="info">
 								This order already has a label. To ship it in a different box,
 								void that label on the order page first.
@@ -355,43 +523,55 @@ export function QuickShip() {
 					{step === "package" &&
 						found &&
 						!external &&
-						found.labelsBought === 0 && (
+						found.liveDispatchId === null && (
 							<PackageStep
+								// A fresh step for each box, and again when orders join or
+								// leave the box, starting from that box's suggestion.
+								key={`${packed.length}:${plan?.orderIds.join(",")}`}
 								boxes={boxes}
 								current={box}
 								dims={dims}
-								onChoose={choosePackage}
+								// Through the ref: saving a custom box finishes later, and
+								// must reach the current choosePackage, not this render's.
+								onChoose={(next) => choosePackageRef.current(next)}
 								onSaved={(saved) => setBoxes((list) => [...list, saved])}
 							/>
 						)}
 
 					{step === "weight" && (
 						<WeightStep
+							key={packed.length}
 							initialGrams={weightGrams}
 							hint={
-								found?.last
-									? "Same as last time"
+								plan?.last?.[packed.length]
+									? plan.last.length > 1
+										? `Box ${packed.length + 1} of ${plan.last.length} last time`
+										: "Same as last time"
 									: weightGrams !== null
 										? "Items plus box"
 										: null
 							}
+							// Last time needed more boxes than packed so far.
+							moreBoxes={(plan?.last?.length ?? 0) > packed.length + 1}
 							onDraft={setDraftGrams}
 							onSubmit={chooseWeight}
+							onAnother={anotherBox}
 						/>
 					)}
 
-					{step === "insure" && found && (
+					{step === "insure" && plan && (
 						<InsureStep
-							total={found.order.total}
+							total={plan.total}
+							boxes={count}
 							onSubmit={(amount) => {
 								setInsureAmount(amount);
-								if (weightGrams !== null) showRates(weightGrams, amount);
+								showRates(allBoxes(weightGrams), amount);
 							}}
 						/>
 					)}
 
 					{step === "rates" && !(error && !rates) && (
-						<RatesStep rates={rates} busy={busy} onBuy={buy} />
+						<RatesStep rates={rates} boxes={count} busy={busy} onBuy={buy} />
 					)}
 
 					{step === "done" && bought && (
@@ -449,8 +629,19 @@ function StepStrip({
 	);
 }
 
-function OrderSummary({ found }: { found: Found }) {
+function OrderSummary({
+	found,
+	plan,
+	canCombine,
+	onToggle,
+}: {
+	found: Found;
+	plan: ShipmentPlan;
+	canCombine: boolean;
+	onToggle: (id?: number) => void;
+}) {
 	const o = found.order;
+	const combined = plan.orderIds.length > 1;
 	return (
 		<div className="flex flex-col gap-3 border-b px-6 py-4">
 			<div className="flex items-center justify-between gap-3">
@@ -465,23 +656,72 @@ function OrderSummary({ found }: { found: Found }) {
 					)}
 				</div>
 				<div className="flex shrink-0 gap-1.5">
-					{found.labelsBought > 0 && (
+					{found.liveDispatchId !== null && (
 						<Badge tone="warning">Already has a label</Badge>
 					)}
 					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
 				</div>
 			</div>
 			<ul className="flex flex-col gap-2">
-				{found.lines.map((l) => (
-					<li key={`${l.sku}-${l.title}`} className="flex items-center gap-3">
+				{plan.lines.map((l, i) => (
+					<li
+						// biome-ignore lint/suspicious/noArrayIndexKey: lines never reorder within a plan
+						key={i}
+						className="flex items-center gap-3"
+					>
 						<ProductImage src={l.imageUrl} className="size-12" />
 						<span className="w-12 shrink-0 text-2xl font-bold tabular-nums">
 							{l.quantity}×
 						</span>
-						<span className="min-w-0 truncate text-base">{l.title}</span>
+						<span className="min-w-0 flex-1 truncate text-base">{l.title}</span>
+						{combined && (
+							<span className="shrink-0 text-muted-foreground">
+								{plan.orderNames[plan.orderIds.indexOf(l.orderId)]}
+							</span>
+						)}
 					</li>
 				))}
 			</ul>
+			{found.companions.length > 0 && (
+				<div className="flex flex-col gap-2 rounded-xl border-2 border-info-border bg-info-surface px-4 py-3 text-info-text">
+					<p className="text-lg font-semibold">
+						{found.companions.length === 1
+							? "Another order goes to this address"
+							: `${found.companions.length} more orders go to this address`}
+						{canCombine && (
+							<span className="font-normal">
+								{" "}
+								· <Key>T</Key> ships{" "}
+								{found.companions.length === 1 ? "it" : "them"} in this box
+							</span>
+						)}
+					</p>
+					<ul className="flex flex-col gap-1">
+						{found.companions.map((c) => {
+							const included = plan.orderIds.includes(c.id);
+							return (
+								<li key={c.id}>
+									<label className="flex items-center gap-3 text-base">
+										<input
+											type="checkbox"
+											className="size-5"
+											checked={included}
+											disabled={!canCombine}
+											onChange={() => onToggle(c.id)}
+										/>
+										<span className="font-semibold">{c.name}</span>
+										{c.pin !== null && <span>pin {c.pin}</span>}
+										<span>
+											· {c.customerName ?? "No name"} · {c.items}{" "}
+											{c.items === 1 ? "item" : "items"}
+										</span>
+									</label>
+								</li>
+							);
+						})}
+					</ul>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -537,7 +777,7 @@ function PinStep({
 						<span className="text-muted-foreground">
 							{" "}
 							· {preview.order.customerName ?? "No name"} ·{" "}
-							{preview.lines.reduce((n, l) => n + l.quantity, 0)} items
+							{preview.plan.lines.reduce((n, l) => n + l.quantity, 0)} items
 							{preview.external && ` · ships on ${preview.external.name}`}
 						</span>
 					</span>
@@ -803,13 +1043,17 @@ function SizeInput({
 function WeightStep({
 	initialGrams,
 	hint,
+	moreBoxes,
 	onDraft,
 	onSubmit,
+	onAnother,
 }: {
 	initialGrams: number | null;
 	hint: string | null;
+	moreBoxes: boolean;
 	onDraft: (grams: number | null) => void;
 	onSubmit: (grams: number) => void;
+	onAnother: (grams: number) => void;
 }) {
 	const [unit, setUnit] = useState<"oz" | "lb">("oz");
 	const [value, setValue] = useState(
@@ -860,6 +1104,11 @@ function WeightStep({
 						}
 						const g = grams(value, unit);
 						if (e.key === "Enter" && g) onSubmit(g);
+						// + finishes this box and starts another.
+						if (e.key === "+" || e.key === "=") {
+							e.preventDefault();
+							if (g) onAnother(g);
+						}
 					}}
 					className={cn(bigInput, "pr-24 placeholder:text-[#e3e3e3]")}
 				/>
@@ -872,7 +1121,10 @@ function WeightStep({
 				</button>
 			</div>
 			<p className="text-center text-muted-foreground">
-				<Key>Tab</Key> switches to {unit === "oz" ? "pounds" : "ounces"}
+				<Key>Tab</Key> switches to {unit === "oz" ? "pounds" : "ounces"} ·{" "}
+				<span className={cn(moreBoxes && "font-semibold text-foreground")}>
+					<Key>+</Key> another box
+				</span>
 			</p>
 		</div>
 	);
@@ -880,9 +1132,11 @@ function WeightStep({
 
 function InsureStep({
 	total,
+	boxes,
 	onSubmit,
 }: {
 	total: number;
+	boxes: number;
 	onSubmit: (amount: number | null) => void;
 }) {
 	const [choice, setChoice] = useState(0);
@@ -915,7 +1169,11 @@ function InsureStep({
 				if (e.key === "Enter" && choice !== 1) submit();
 			}}
 		>
-			<p className="text-xl font-semibold">Insure this package?</p>
+			<p className="text-xl font-semibold">
+				{boxes > 1
+					? `Insure these ${boxes} boxes? The amount is split between them.`
+					: "Insure this package?"}
+			</p>
 			{options.map((o, i) => (
 				<button
 					key={o.label}
@@ -958,14 +1216,19 @@ function InsureStep({
 
 function RatesStep({
 	rates,
+	boxes,
 	busy,
 	onBuy,
 }: {
 	rates: Rates | null;
+	boxes: number;
 	busy: boolean;
-	onBuy: (rate: Rate) => void;
+	onBuy: (quote: Rate) => void;
 }) {
 	const [selected, setSelected] = useState(0);
+	// New prices start from the top, so the choice is always in the list.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset on each new list
+	useEffect(() => setSelected(0), [rates]);
 	const list = useRef<HTMLDivElement>(null);
 	const options = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -988,7 +1251,9 @@ function RatesStep({
 	if (rates.list.length === 0) {
 		return (
 			<Notice tone="critical">
-				No services available.
+				{boxes > 1
+					? "No service ships every one of these boxes."
+					: "No services available."}
 				{rates.notes.length > 0 && ` ${rates.notes.join(" ")}`}
 			</Notice>
 		);
@@ -1009,12 +1274,19 @@ function RatesStep({
 					e.preventDefault();
 					moveTo(Math.max(selected - 1, 0));
 				}
-				if (e.key === "Enter") onBuy(rates.list[selected]);
+				const quote = rates.list[selected];
+				if (e.key === "Enter" && quote) onBuy(quote);
 			}}
 		>
 			<div className="flex items-baseline justify-between">
 				<p className="text-xl font-semibold">
-					{busy ? "Buying label…" : "Enter buys the label"}
+					{boxes > 1
+						? busy
+							? `Buying ${boxes} labels…`
+							: `Enter buys ${boxes} labels, one per box`
+						: busy
+							? "Buying label…"
+							: "Enter buys the label"}
 				</p>
 				{rates.test && <Badge tone="info">Test labels</Badge>}
 			</div>
@@ -1068,15 +1340,23 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 	const [voiding, setVoiding] = useState<"ask" | "busy" | null>(null);
 	const [voided, setVoided] = useState<string | null>(null);
 	const [voidError, setVoidError] = useState<string | null>(null);
+	const many = bought.boxes.length > 1;
+	const handoff = bought.handoff;
 
 	async function confirmVoid() {
 		setVoiding("busy");
 		setVoidError(null);
 		try {
-			const result = await voidLabel({ data: { id: bought.id } });
+			const result = await voidLabel({
+				data: { dispatchId: bought.dispatchId },
+			});
+			// Some refunds refused: stay here so voiding can be tried again.
+			if (result.remaining > 0) {
+				return setVoidError(result.notes.join(" "));
+			}
 			setVoided(
 				[
-					`Label voided, refund ${result.refundStatus.toLowerCase()}.`,
+					`${many ? "Labels" : "Label"} voided, refund ${result.refundStatus.toLowerCase()}.`,
 					...result.notes,
 				].join(" "),
 			);
@@ -1090,7 +1370,7 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 	if (voided) {
 		return (
 			<div className="flex flex-col items-center gap-4 py-4 text-center">
-				<p className="text-3xl font-bold">Label voided</p>
+				<p className="text-3xl font-bold">{many ? "Labels" : "Label"} voided</p>
 				<p className="text-lg text-muted-foreground">{voided}</p>
 				<button
 					ref={next}
@@ -1108,7 +1388,9 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 		<div className="flex flex-col gap-3">
 			<div className="flex flex-col items-center gap-3 rounded-xl bg-success-surface px-6 py-8 text-center">
 				<CircleCheck className="size-16 text-success-icon" />
-				<p className="text-4xl font-bold">Label bought</p>
+				<p className="text-4xl font-bold">
+					{many ? `${bought.boxes.length} labels bought` : "Label bought"}
+				</p>
 				<p className="text-xl">
 					{bought.serviceName} ·{" "}
 					<span className="font-semibold">{formatMoney(bought.cost)}</span>
@@ -1116,14 +1398,30 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 				{bought.test && (
 					<Badge tone="info">Test label: it won't ship anything</Badge>
 				)}
-				{bought.trackingNumber && (
-					<p className="font-mono text-muted-foreground">
-						{bought.trackingNumber}
-					</p>
-				)}
-				{bought.handoff.sent && (
+				<ul className="flex flex-col gap-1">
+					{bought.boxes.map((b, i) => (
+						<li key={b.id} className="flex items-center justify-center gap-3">
+							{many && (
+								<a
+									href={labelPath(b.id)}
+									target="_blank"
+									rel="noreferrer"
+									className="text-lg text-link hover:underline"
+								>
+									Open box {i + 1} PDF
+								</a>
+							)}
+							{b.trackingNumber && (
+								<span className="font-mono text-muted-foreground">
+									{b.trackingNumber}
+								</span>
+							)}
+						</li>
+					))}
+				</ul>
+				{handoff?.sent && (
 					<p className="text-lg font-semibold text-success-text">
-						{bought.handoff.message}
+						{handoff.message}
 					</p>
 				)}
 				<div className="mt-2 flex items-center gap-4">
@@ -1137,7 +1435,7 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 					</button>
 					<button
 						type="button"
-						onClick={() => printLabel(bought.id)}
+						onClick={() => printLabels(bought.boxes.map((box) => box.id))}
 						className="text-lg text-link hover:underline"
 					>
 						Print again
@@ -1162,14 +1460,18 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 							onClick={() => setVoiding("ask")}
 							className="text-lg text-muted-foreground hover:underline"
 						>
-							{voiding === "busy" ? "Voiding…" : "Void label"}
+							{voiding === "busy"
+								? "Voiding…"
+								: many
+									? "Void all labels"
+									: "Void label"}
 						</button>
 					)}
 				</div>
 			</div>
-			{!bought.handoff.sent && (
+			{handoff && !handoff.sent && (
 				<Notice tone={bought.test ? "info" : "critical"}>
-					{bought.handoff.message}
+					{handoff.message}
 					{!bought.test &&
 						". Retry from the order page; it stays on To ship until then."}
 				</Notice>

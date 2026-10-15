@@ -132,26 +132,85 @@ export async function recordSale(
 		reference: string;
 	},
 ) {
+	return postUnits(db, { ...input, sign: -1, reason: "sale" });
+}
+
+// A returned unit goes back on the shelf the way it was sold: a bundle as
+// its components, anything else as itself.
+export async function recordReturn(
+	db: Db,
+	input: {
+		productId: number;
+		quantity: number;
+		locationId: number;
+		reference: string;
+		sale: { batchId: string; quantity: number } | null;
+	},
+) {
+	assertPositiveInteger(input.quantity);
+	const sale = input.sale;
+	if (sale) {
+		assertPositiveInteger(sale.quantity);
+		const sold = await db
+			.select()
+			.from(movements)
+			.where(eq(movements.batchId, sale.batchId));
+		if (
+			sold.length === 0 ||
+			sold.some((line) => line.reason !== "sale" || line.delta >= 0)
+		) {
+			throw new LedgerError("The original sale movements are unavailable");
+		}
+		return postMovements(db, {
+			reference: input.reference,
+			lines: sold.map((line) => ({
+				productId: line.productId,
+				locationId: input.locationId,
+				delta: (-line.delta * input.quantity) / sale.quantity,
+				reason: "return",
+			})),
+		});
+	}
+	const product = await getProduct(db, input.productId);
+	if (product.kind === "bundle") {
+		throw new LedgerError(
+			"This bundle has no recorded sale components; count the returned parts individually",
+		);
+	}
+	return postUnits(db, { ...input, sign: 1, reason: "return" });
+}
+
+async function postUnits(
+	db: Db,
+	input: {
+		productId: number;
+		quantity: number;
+		locationId: number;
+		reference: string;
+		sign: 1 | -1;
+		reason: "sale" | "return";
+	},
+) {
 	assertPositiveInteger(input.quantity);
 	return db.transaction(async (tx) => {
 		const sku = await getProduct(tx, input.productId);
-		const taken =
+		const units =
 			sku.kind === "bundle"
 				? (await getRecipe(tx, sku.id)).map((c) => ({
 						productId: c.productId,
 						quantity: c.quantity * input.quantity,
 					}))
 				: [{ productId: sku.id, quantity: input.quantity }];
-		if (taken.length === 0)
+		if (units.length === 0)
 			throw new LedgerError(`Bundle ${sku.sku} has no components`);
 
 		return postMovements(tx, {
 			reference: input.reference,
-			lines: taken.map((t) => ({
-				productId: t.productId,
+			lines: units.map((u) => ({
+				productId: u.productId,
 				locationId: input.locationId,
-				delta: -t.quantity,
-				reason: "sale" as const,
+				delta: input.sign * u.quantity,
+				reason: input.reason,
 			})),
 		});
 	});

@@ -119,6 +119,7 @@ const orderNode = type({
 			sku: "string | null",
 			name: "string",
 			quantity: "number.integer",
+			currentQuantity: "number.integer",
 			variant: type({ id: "string" }).or("null"),
 			discountedUnitPriceAfterAllDiscountsSet: money,
 		}).array(),
@@ -143,7 +144,7 @@ const ORDER_FIELDS = `
 	lineItems(first: 30) {
 		pageInfo { hasNextPage endCursor }
 		nodes {
-			id sku name quantity
+			id sku name quantity currentQuantity
 			variant { id }
 			discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
 		}
@@ -162,6 +163,7 @@ const lineItem = type({
 	sku: "string | null",
 	name: "string",
 	quantity: "number.integer",
+	currentQuantity: "number.integer",
 	variant: type({ id: "string" }).or("null"),
 	discountedUnitPriceAfterAllDiscountsSet: money,
 });
@@ -181,7 +183,7 @@ query Lines($id: ID!, $cursor: String) {
 		lineItems(first: 100, after: $cursor) {
 			pageInfo { hasNextPage endCursor }
 			nodes {
-				id sku name quantity
+				id sku name quantity currentQuantity
 				variant { id }
 				discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } }
 			}
@@ -205,6 +207,119 @@ async function remainingLines(
 			: null;
 	}
 	return lines;
+}
+
+const shippedPage = type({
+	order: {
+		fulfillments: type({
+			status: "string",
+			fulfillmentLineItems: {
+				nodes: type({
+					quantity: "number.integer",
+					lineItem: { id: "string" },
+				}).array(),
+			},
+		}).array(),
+	},
+});
+
+const SHIPPED_QUERY = `
+query Shipped($id: ID!) {
+	order(id: $id) {
+		fulfillments(first: 10) {
+			status
+			fulfillmentLineItems(first: 50) { nodes { quantity lineItem { id } } }
+		}
+	}
+}`;
+
+// Fulfillments that never went out.
+const notShipped = new Set(["CANCELLED", "ERROR", "FAILURE"]);
+
+// Units of each line that have shipped, by line ID.
+async function shippedUnits(orderId: string) {
+	const page = shippedPage.assert(
+		await shopifyQuery(SHIPPED_QUERY, { id: orderId }),
+	);
+	const shipped = new Map<string, number>();
+	for (const f of page.order.fulfillments) {
+		if (notShipped.has(f.status)) continue;
+		for (const item of f.fulfillmentLineItems.nodes) {
+			const id = item.lineItem.id;
+			shipped.set(id, (shipped.get(id) ?? 0) + item.quantity);
+		}
+	}
+	return shipped;
+}
+
+const remainingOrdersPage = type({
+	order: {
+		fulfillmentOrders: {
+			pageInfo: { hasNextPage: "boolean", endCursor: "string | null" },
+			nodes: type({ id: "string", status: "string" }).array(),
+		},
+	},
+});
+
+const remainingItemsPage = type({
+	node: {
+		lineItems: {
+			pageInfo: { hasNextPage: "boolean", endCursor: "string | null" },
+			nodes: type({
+				remainingQuantity: "number.integer >= 0",
+				lineItem: { id: "string" },
+			}).array(),
+		},
+	},
+});
+
+async function remainingUnits(orderId: string) {
+	const remaining = new Map<string, number>();
+	let orderCursor: string | null = null;
+	do {
+		const { order } = remainingOrdersPage.assert(
+			await shopifyQuery(
+				`query($id: ID!, $cursor: String) {
+				order(id: $id) { fulfillmentOrders(first: 50, after: $cursor) {
+					pageInfo { hasNextPage endCursor } nodes { id status }
+				} }
+			}`,
+				{ id: orderId, cursor: orderCursor },
+			),
+		);
+		for (const fulfillment of order.fulfillmentOrders.nodes) {
+			if (fulfillment.status === "CANCELLED" || fulfillment.status === "CLOSED")
+				continue;
+			let lineCursor: string | null = null;
+			do {
+				const { node } = remainingItemsPage.assert(
+					await shopifyQuery(
+						`query($id: ID!, $cursor: String) {
+						node(id: $id) { ... on FulfillmentOrder { lineItems(first: 100, after: $cursor) {
+							pageInfo { hasNextPage endCursor } nodes { remainingQuantity lineItem { id } }
+						} } }
+					}`,
+						{ id: fulfillment.id, cursor: lineCursor },
+					),
+				);
+				for (const item of node.lineItems.nodes) {
+					const id = item.lineItem.id;
+					remaining.set(id, (remaining.get(id) ?? 0) + item.remainingQuantity);
+				}
+				lineCursor = node.lineItems.pageInfo.hasNextPage
+					? node.lineItems.pageInfo.endCursor
+					: null;
+				if (node.lineItems.pageInfo.hasNextPage && !lineCursor)
+					throw new Error("Shopify omitted the remaining-items cursor");
+			} while (lineCursor);
+		}
+		orderCursor = order.fulfillmentOrders.pageInfo.hasNextPage
+			? order.fulfillmentOrders.pageInfo.endCursor
+			: null;
+		if (order.fulfillmentOrders.pageInfo.hasNextPage && !orderCursor)
+			throw new Error("Shopify omitted the fulfillment-orders cursor");
+	} while (orderCursor);
+	return remaining;
 }
 
 const variantsPage = type({
@@ -422,7 +537,20 @@ async function ingestNode(
 				},
 			}
 		: o;
-	return ingestOrder(db, store, toChannelOrder(order), locationId);
+	// Units refunded or removed only matter once we know whether they
+	// shipped, so only those orders cost the extra call.
+	const shipped =
+		!order.cancelledAt &&
+		order.lineItems.nodes.some((l) => l.currentQuantity < l.quantity)
+			? await shippedUnits(o.id)
+			: null;
+	const remaining = shipped ? await remainingUnits(o.id) : null;
+	return ingestOrder(
+		db,
+		store,
+		shopifyToChannelOrder(order, shipped, remaining),
+		locationId,
+	);
 }
 
 // One order by id, for a webhook. Read straight from the order rather than
@@ -466,7 +594,15 @@ function tiktokOrderId(tags: string[]) {
 	return tag ? `tiktok:${tag.slice("TikTokOrderID:".length)}` : null;
 }
 
-function toChannelOrder(o: typeof orderNode.infer): ChannelOrder {
+export type ShopifyOrder = typeof orderNode.infer;
+
+// `shipped` is units shipped per line ID, needed when any line has refunded
+// or removed units (see shopifyLineQuantity).
+export function shopifyToChannelOrder(
+	o: ShopifyOrder,
+	shipped: Map<string, number> | null,
+	remaining: Map<string, number> | null,
+): ChannelOrder {
 	return {
 		externalId: o.id,
 		name: o.name,
@@ -496,10 +632,31 @@ function toChannelOrder(o: typeof orderNode.infer): ChannelOrder {
 			listingExternalId: l.variant?.id ?? null,
 			sku: l.sku || null,
 			title: l.name,
-			quantity: l.quantity,
+			quantity: shopifyLineQuantity(o, l, shipped, remaining),
 			unitPrice: l.discountedUnitPriceAfterAllDiscountsSet.shopMoney.amount,
 		})),
 	};
+}
+
+// Units that leave our stock. Shopify's `quantity` never changes and its
+// `currentQuantity` drops on every refund, shipped or not. A unit refunded or
+// removed before it shipped never leaves, so its stock comes back; one
+// refunded after shipping stays sold until the return is received. A
+// cancelled order keeps what it was placed with, since cancelling gives
+// everything back anyway.
+export function shopifyLineQuantity(
+	o: Pick<ShopifyOrder, "cancelledAt">,
+	l: { id: string; quantity: number; currentQuantity: number },
+	shipped: Map<string, number> | null,
+	remaining: Map<string, number> | null,
+) {
+	if (o.cancelledAt || l.currentQuantity >= l.quantity) return l.quantity;
+	if (!shipped || !remaining)
+		throw new Error("Shopify fulfillment quantities are unavailable");
+	return Math.min(
+		l.quantity,
+		(shipped.get(l.id) ?? 0) + (remaining.get(l.id) ?? 0),
+	);
 }
 
 const userErrors = type({
@@ -527,15 +684,21 @@ const fulfillmentCreated = type({
 	},
 });
 
-// Marks everything still open on the order as shipped with this tracking,
-// and has Shopify email the customer. Returns Shopify's fulfillment id,
-// which voiding needs. Safe to repeat: if this tracking number is already
-// on the order (an earlier try got through), that fulfillment is returned
-// instead of a second one. Needs write_merchant_managed_fulfillment_orders.
+// Marks everything still open on the order as shipped with this tracking
+// (one number per box), and has Shopify email the customer. Returns
+// Shopify's fulfillment id, which voiding needs. Safe to repeat: if these
+// tracking numbers are already on the order (an earlier try got through),
+// that fulfillment is returned instead of a second one. Needs
+// write_merchant_managed_fulfillment_orders.
 export async function shopifyFulfill(
 	orderId: string,
-	tracking: { company: string; number: string; url: string | null },
+	tracking: {
+		company: string;
+		boxes: { number: string; url: string | null }[];
+	},
 ) {
+	if (tracking.boxes.length === 0) throw new Error("No tracking to send");
+	const numbers = tracking.boxes.map((b) => b.number);
 	const { order } = openFulfillmentOrders.assert(
 		await shopifyQuery(
 			"query($id: ID!) { order(id: $id) { fulfillmentOrders(first: 20) { nodes { id status } } fulfillments(first: 50) { id status trackingInfo { number } } } }",
@@ -543,12 +706,20 @@ export async function shopifyFulfill(
 		),
 	);
 	if (!order) throw new Error("Shopify has no such order");
-	const already = order.fulfillments.find(
-		(f) =>
-			f.status !== "CANCELLED" &&
-			f.trackingInfo.some((t) => t.number === tracking.number),
-	);
-	if (already) return already.id;
+	// Only a fulfillment carrying every one of these numbers is this
+	// shipment sent before; one carrying just some was made another way and
+	// needs a person to look.
+	for (const f of order.fulfillments) {
+		if (f.status === "CANCELLED") continue;
+		const has = new Set(f.trackingInfo.map((t) => t.number));
+		const matching = numbers.filter((n) => has.has(n));
+		if (matching.length === numbers.length) return f.id;
+		if (matching.length > 0) {
+			throw new Error(
+				`Shopify already has a fulfillment with ${matching.join(", ")} but not ${numbers.filter((n) => !has.has(n)).join(", ")}; fix it in Shopify`,
+			);
+		}
+	}
 	const open = order.fulfillmentOrders.nodes.filter((f) =>
 		["OPEN", "IN_PROGRESS"].includes(f.status),
 	);
@@ -565,8 +736,12 @@ export async function shopifyFulfill(
 					})),
 					trackingInfo: {
 						company: tracking.company,
-						number: tracking.number,
-						...(tracking.url ? { url: tracking.url } : {}),
+						numbers,
+						// Shopify pairs urls with numbers by position, so every box
+						// needs one or none do.
+						...(tracking.boxes.every((b) => b.url)
+							? { urls: tracking.boxes.map((b) => b.url) }
+							: {}),
 					},
 					notifyCustomer: true,
 				},

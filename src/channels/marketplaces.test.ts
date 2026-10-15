@@ -7,6 +7,7 @@ import {
 	planAmazonWindows,
 } from "./amazon";
 import { ebayOrder, ebayToChannelOrder } from "./ebay";
+import { shopifyLineQuantity } from "./shopify";
 import { tiktokOrder, tiktokToChannelOrder } from "./tiktok";
 
 describe("amazonToChannelOrder", () => {
@@ -60,6 +61,15 @@ describe("amazonToChannelOrder", () => {
 				title: "Wrench",
 				quantity: 2,
 				unitPrice: 18,
+			},
+			// Kept at 0 so ingestion gives back what it took.
+			{
+				externalId: "2",
+				listingExternalId: null,
+				sku: null,
+				title: "Removed",
+				quantity: 0,
+				unitPrice: 0,
 			},
 		]);
 	});
@@ -318,5 +328,59 @@ describe("toTiktokParcel", () => {
 				unit: "INCH",
 			},
 		});
+	});
+});
+
+describe("shopifyLineQuantity", () => {
+	const open = { cancelledAt: null };
+	const line = (quantity: number, currentQuantity: number) => ({
+		id: "L1",
+		quantity,
+		currentQuantity,
+	});
+	const shipped = (units: number) => new Map([["L1", units]]);
+
+	test("a line nobody touched counts in full", () => {
+		expect(shopifyLineQuantity(open, line(2, 2), null, null)).toBe(2);
+	});
+
+	test("a unit removed before shipping no longer leaves stock", () => {
+		expect(shopifyLineQuantity(open, line(2, 1), shipped(0), shipped(1))).toBe(
+			1,
+		);
+	});
+
+	test("a unit refunded after shipping still left stock", () => {
+		expect(shopifyLineQuantity(open, line(2, 1), shipped(2), shipped(0))).toBe(
+			2,
+		);
+		expect(shopifyLineQuantity(open, line(2, 0), shipped(2), shipped(0))).toBe(
+			2,
+		);
+	});
+
+	test("the unshipped rest of a partly shipped line can be cancelled", () => {
+		expect(shopifyLineQuantity(open, line(3, 1), shipped(1), shipped(0))).toBe(
+			1,
+		);
+	});
+
+	test("a cancelled order keeps what it was placed with", () => {
+		const cancelled = { cancelledAt: new Date("2026-10-08T13:00:00Z") };
+		expect(
+			shopifyLineQuantity(cancelled, line(2, 0), shipped(0), shipped(0)),
+		).toBe(2);
+	});
+
+	test("refunding a shipped unit keeps the unshipped rest reserved", () => {
+		expect(shopifyLineQuantity(open, line(3, 2), shipped(1), shipped(2))).toBe(
+			3,
+		);
+	});
+
+	test("cancelling an unshipped unit restores only that unit", () => {
+		expect(shopifyLineQuantity(open, line(3, 2), shipped(1), shipped(1))).toBe(
+			2,
+		);
 	});
 });

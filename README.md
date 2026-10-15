@@ -48,6 +48,8 @@ Each computer then picks its label printer in Settings; the choice is kept in th
 
 Edit `src/db/schema.ts`, then `pnpm db:generate` and commit the new file in `drizzle/`. For SQL that Drizzle can't express (triggers, functions), use `pnpm db:generate --custom --name <name>`.
 
+The dispatch cutover (`0031` through `0035`) requires a coordinated deployment. Back up the database first, stop old packing and sync processes, apply migrations using the direct connection, then deploy the dispatch-aware app before resuming work. `0033` removes the old shipment order and handoff columns after copying their data into dispatches; an old app cannot safely use that schema. A rollback requires restoring both the database and app, not just reverting the code.
+
 ## Inventory model
 
 - **Locations** are `owned` (we pick from them) or `fba` (Amazon's stock, mirrored read-only).
@@ -59,3 +61,5 @@ Edit `src/db/schema.ts`, then `pnpm db:generate` and commit the new file in `dri
 - **Stores** are connected seller accounts (a channel plus a name). **Listings** are what each store sells, each mapped to one product. A multi-pack is a bundle product. FBA listings must map to a simple product or kit, since Amazon stocks physical units.
 
 All stock changes go through `src/inventory/ledger.ts`. Mapping rules live in `src/channels/listings.ts`.
+
+Returns are received only after an order is fully shipped. Partially shipped orders do not yet have per-line shipped counts, so receiving their returns is blocked rather than restocking units still awaiting shipment. Bundle returns use the components recorded in the original sale, not the current recipe; historical bundles without a recorded sale must have their returned parts counted individually.

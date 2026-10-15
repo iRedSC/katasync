@@ -1,19 +1,29 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
+	dispatches,
+	dispatchOrders,
 	locations,
 	orderLines,
+	orderReturns,
 	orders,
 	products,
 	shipments,
 	stores,
 } from "#/db/schema";
 import { cityLine } from "#/lib/format";
-import { needsShipping } from "#/orders/to-ship";
+import { receiveReturn, undoReturns } from "#/orders/returns";
+import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { contentsKey } from "#/shipping/contents";
+import {
+	addressKey,
+	companionsOf,
+	liveDispatches,
+	whyNotTogether,
+} from "#/shipping/dispatch";
 import { lastPackedFor } from "#/shipping/quick-ship";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
@@ -41,32 +51,38 @@ export const listOrders = createServerFn({ method: "GET" })
 			.from(orderLines)
 			.groupBy(orderLines.orderId)
 			.as("line_stats");
-		return getDb()
-			.select({
-				id: orders.id,
-				name: orders.name,
-				pin: orders.pin,
-				salesChannel: orders.salesChannel,
-				marketplaceOrderId: orders.marketplaceOrderId,
-				placedAt: orders.placedAt,
-				cancelledAt: orders.cancelledAt,
-				fulfillmentStatus: orders.fulfillmentStatus,
-				financialStatus: orders.financialStatus,
-				customerName: orders.customerName,
-				shipCity: orders.shipCity,
-				shipRegion: orders.shipRegion,
-				total: orders.total,
-				store: stores.name,
-				channel: stores.channel,
-				items: sql<number>`coalesce(${lineStats.items}, 0)`,
-				unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
-			})
-			.from(orders)
-			.innerJoin(stores, eq(stores.id, orders.storeId))
-			.leftJoin(lineStats, eq(lineStats.orderId, orders.id))
-			.where(data.view === "ship" ? needsShipping : undefined)
-			.orderBy(desc(orders.placedAt))
-			.limit(data.view === "ship" ? 500 : 200);
+		return (
+			getDb()
+				.select({
+					id: orders.id,
+					name: orders.name,
+					pin: orders.pin,
+					salesChannel: orders.salesChannel,
+					marketplaceOrderId: orders.marketplaceOrderId,
+					placedAt: orders.placedAt,
+					cancelledAt: orders.cancelledAt,
+					fulfillmentStatus: orders.fulfillmentStatus,
+					financialStatus: orders.financialStatus,
+					customerName: orders.customerName,
+					shipCity: orders.shipCity,
+					shipRegion: orders.shipRegion,
+					total: orders.total,
+					store: stores.name,
+					channel: stores.channel,
+					items: sql<number>`coalesce(${lineStats.items}, 0)`,
+					unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
+					labelToVoid,
+				})
+				.from(orders)
+				.innerJoin(stores, eq(stores.id, orders.storeId))
+				.leftJoin(lineStats, eq(lineStats.orderId, orders.id))
+				// A cancelled order with a live label stays in view until it's voided.
+				.where(
+					data.view === "ship" ? or(needsShipping, labelToVoid) : undefined,
+				)
+				.orderBy(desc(orders.placedAt))
+				.limit(data.view === "ship" ? 500 : 200)
+		);
 	});
 
 export const getOrder = createServerFn({ method: "GET" })
@@ -83,6 +99,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				placedAt: orders.placedAt,
 				cancelledAt: orders.cancelledAt,
 				fulfillmentStatus: orders.fulfillmentStatus,
+				fulfilledByChannel: orders.fulfilledByChannel,
 				financialStatus: orders.financialStatus,
 				customerName: orders.customerName,
 				shipAddress1: orders.shipAddress1,
@@ -97,6 +114,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				externalId: orders.externalId,
 				store: stores.name,
 				channel: stores.channel,
+				labelToVoid,
 			})
 			.from(orders)
 			.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -111,6 +129,9 @@ export const getOrder = createServerFn({ method: "GET" })
 				unitPrice: orderLines.unitPrice,
 				unitCost: orderLines.unitCost,
 				tookStock: sql<boolean>`${orderLines.saleBatchId} is not null`,
+				// Units received back, and how many of those went on the shelf.
+				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
+				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and ${orderReturns.restocked}), 0)::int`,
 				productSku: products.sku,
 				productName: products.name,
 				imageUrl: products.imageUrl,
@@ -119,27 +140,77 @@ export const getOrder = createServerFn({ method: "GET" })
 			.leftJoin(products, eq(products.id, orderLines.productId))
 			.where(eq(orderLines.orderId, data.id))
 			.orderBy(orderLines.id);
-		const labels = await db
+		// Every dispatch this order went out in (or will): its boxes, this
+		// order's tracking handoff, and any other orders in the same box.
+		const handoffs = await db
 			.select({
-				id: shipments.id,
-				serviceName: shipments.serviceName,
-				cost: shipments.cost,
-				trackingNumber: shipments.trackingNumber,
-				trackingUrl: shipments.trackingUrl,
-				labelUrl: shipments.labelUrl,
-				provider: shipments.provider,
-				test: shipments.test,
-				channelSentAt: shipments.channelSentAt,
-				channelError: shipments.channelError,
-				storefrontTrackingError: shipments.storefrontTrackingError,
-				voidedAt: shipments.voidedAt,
-				refundStatus: shipments.refundStatus,
-				createdAt: shipments.createdAt,
+				dispatchId: dispatchOrders.dispatchId,
+				channelSentAt: dispatchOrders.channelSentAt,
+				channelError: dispatchOrders.channelError,
+				reversedAt: dispatchOrders.reversedAt,
+				boughtAt: dispatches.boughtAt,
 			})
-			.from(shipments)
-			.where(eq(shipments.orderId, data.id))
-			.orderBy(shipments.createdAt);
-		return { order, lines, labels, adminUrl: adminUrl(order) };
+			.from(dispatchOrders)
+			.innerJoin(dispatches, eq(dispatches.id, dispatchOrders.dispatchId))
+			.where(eq(dispatchOrders.orderId, data.id))
+			.orderBy(dispatchOrders.dispatchId);
+		const ids = handoffs.map((h) => h.dispatchId);
+		const boxes = ids.length
+			? await db
+					.select({
+						id: shipments.id,
+						dispatchId: shipments.dispatchId,
+						serviceName: shipments.serviceName,
+						cost: shipments.cost,
+						trackingNumber: shipments.trackingNumber,
+						trackingUrl: shipments.trackingUrl,
+						provider: shipments.provider,
+						test: shipments.test,
+						voidedAt: shipments.voidedAt,
+						refundStatus: shipments.refundStatus,
+						storefrontTrackingError: shipments.storefrontTrackingError,
+						createdAt: shipments.createdAt,
+					})
+					.from(shipments)
+					.where(inArray(shipments.dispatchId, ids))
+					.orderBy(shipments.id)
+			: [];
+		const others = ids.length
+			? await db
+					.select({
+						dispatchId: dispatchOrders.dispatchId,
+						id: orders.id,
+						name: orders.name,
+					})
+					.from(dispatchOrders)
+					.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
+					.where(
+						and(
+							inArray(dispatchOrders.dispatchId, ids),
+							ne(dispatchOrders.orderId, data.id),
+						),
+					)
+					.orderBy(orders.id)
+			: [];
+		// A purchase whose first box failed leaves a dispatch with no boxes;
+		// there's nothing to show for it.
+		const sends = handoffs.flatMap((h) => {
+			const own = boxes.filter((b) => b.dispatchId === h.dispatchId);
+			if (own.length === 0) return [];
+			return {
+				id: h.dispatchId,
+				channelSentAt: h.channelSentAt,
+				channelError: h.channelError,
+				// False when a box failed part way: void only, never send.
+				complete: h.boughtAt !== null,
+				// Voided, but taking it back for this order didn't finish.
+				unfinishedVoid: h.reversedAt === null,
+				boxes: own,
+				live: own.some((b) => b.voidedAt === null),
+				shippedWith: others.filter((o) => o.dispatchId === h.dispatchId),
+			};
+		});
+		return { order, lines, sends, adminUrl: adminUrl(order) };
 	});
 
 // The order's page in its own admin, for anything katasync doesn't do.
@@ -167,6 +238,23 @@ function adminUrl(order: { channel: string; externalId: string }) {
 	return null;
 }
 
+export const receiveOrderReturn = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			orderId: "number.integer > 0",
+			lines: type({
+				lineId: "number.integer > 0",
+				quantity: "number.integer >= 0",
+			}).array(),
+			restock: "boolean",
+		}),
+	)
+	.handler(({ data }) => receiveReturn(getDb(), data));
+
+export const undoOrderReturn = createServerFn({ method: "POST" })
+	.validator(type({ ids: "(number.integer > 0)[]" }))
+	.handler(({ data }) => undoReturns(getDb(), data.ids));
+
 // Everything the invoices for orders still to ship print, in pin order so
 // the stack matches what packers type.
 export const listInvoices = createServerFn({ method: "GET" })
@@ -193,8 +281,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 				shipCountry: orders.shipCountry,
 				total: orders.total,
 				shippingCharged: orders.shippingCharged,
+				channel: stores.channel,
+				marketplaceOrderId: orders.marketplaceOrderId,
+				needsShipping,
 			})
 			.from(orders)
+			.innerJoin(stores, eq(stores.id, orders.storeId))
 			// One order's invoice, or every order still to ship.
 			.where(data.id ? eq(orders.id, data.id) : needsShipping)
 			.orderBy(asc(orders.pin), asc(orders.placedAt));
@@ -213,9 +305,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 					.from(orderLines)
 					.leftJoin(products, eq(products.id, orderLines.productId))
 					.where(
-						inArray(
-							orderLines.orderId,
-							toShip.map((o) => o.id),
+						and(
+							inArray(
+								orderLines.orderId,
+								toShip.map((o) => o.id),
+							),
+							gt(orderLines.quantity, 0),
 						),
 					)
 					.orderBy(orderLines.id)
@@ -223,6 +318,31 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const linesOf = (id: number) => lines.filter((l) => l.orderId === id);
 		const keys = new Map(toShip.map((o) => [o.id, contentsKey(linesOf(o.id))]));
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
+		// Other orders to the same address that can share the box, so the
+		// packer gathers them before typing the pin.
+		const shipsWith = new Map<number, { name: string; pin: number | null }[]>();
+		// Orders already holding a label can't join another box.
+		const live = data.id
+			? []
+			: await liveDispatches(
+					db,
+					toShip.map((o) => o.id),
+				);
+		for (const o of toShip) {
+			const others = data.id
+				? await companionsOf(db, o)
+				: toShip.filter(
+						(c) =>
+							c.id !== o.id &&
+							addressKey(c) !== null &&
+							addressKey(c) === addressKey(o) &&
+							whyNotTogether([o, c], live) === null,
+					);
+			shipsWith.set(
+				o.id,
+				others.map((c) => ({ name: c.name, pin: c.pin })),
+			);
+		}
 		return {
 			from: from
 				? {
@@ -242,9 +362,13 @@ export const listInvoices = createServerFn({ method: "GET" })
 				return {
 					...o,
 					lines: own,
+					shipsWith: shipsWith.get(o.id) ?? [],
 					// What quick ship will suggest: the box and weight these exact
 					// contents went out in last time, else the items' own weight.
 					boxPin: last?.boxPin ?? null,
+					// How many boxes these contents took last time; the box and
+					// weight above are the first one's.
+					boxes: last?.boxes ?? 1,
 					weightGrams:
 						last?.weightGrams ??
 						(own.every((l) => l.weightGrams !== null)

@@ -373,6 +373,32 @@ export const orderLines = pgTable(
 	],
 );
 
+// Units a customer sent back, received against the line they were sold on.
+// Restocked units went back on the shelf through the movement in batchId;
+// the rest were written off as damaged and moved nothing. Undoing a return
+// reverses its batch and deletes the row. Rules live in src/orders/returns.ts.
+export const orderReturns = pgTable(
+	"order_returns",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		orderLineId: integer()
+			.notNull()
+			.references(() => orderLines.id),
+		quantity: integer().notNull(),
+		restocked: boolean().notNull(),
+		batchId: uuid(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check("order_returns_quantity_positive", sql`${t.quantity} > 0`),
+		check(
+			"order_returns_restocked_has_batch",
+			sql`${t.restocked} = (${t.batchId} is not null)`,
+		),
+		index("order_returns_line_idx").on(t.orderLineId),
+	],
+);
+
 // One pass of one channel's order sync (scripts/sync.ts), for Diagnostics.
 // finishedAt is null while it runs, or if the worker died mid-pass. error is
 // why the whole pass failed; problems counts single orders that went wrong
@@ -425,19 +451,63 @@ export const packages = pgTable(
 	(t) => [check("packages_pin_range", sql`${t.pin} between 1 and 999`)],
 );
 
-// A label bought for an order. Also what quick ship learns from: the weight
-// the same items shipped at, and which service gets picked for a box.
+// One send to one address: the boxes that went out together, for every
+// order packed into them. One order can be in at most one live dispatch (one
+// with a box not voided). contentsKey is everything in it, merged across
+// orders; quick ship reuses the last dispatch with the same contents.
+// Rules live in src/shipping/dispatch.ts.
+export const dispatches = pgTable(
+	"dispatches",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		contentsKey: text().notNull(),
+		// When every planned box's label was bought. Null while buying, or
+		// when a box failed part way: such a dispatch never sends tracking,
+		// it can only be voided.
+		boughtAt: timestamp({ withTimezone: true }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index("dispatches_contents_idx").on(t.contentsKey, t.createdAt)],
+);
+
+// The orders in a dispatch, and handing its tracking to each one's
+// marketplace. Sent: when it got there, and the marketplace's id for that
+// fulfillment (Shopify needs it to cancel on void). Not sent: why, shown with
+// a retry. Kept per order because a combined box can reach one marketplace
+// and be refused by another.
+export const dispatchOrders = pgTable(
+	"dispatch_orders",
+	{
+		dispatchId: integer()
+			.notNull()
+			.references(() => dispatches.id),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		channelSentAt: timestamp({ withTimezone: true }),
+		channelFulfillmentId: text(),
+		channelError: text(),
+		// When voiding finished for this order: tracking taken back off its
+		// marketplace where possible, and the order back on To ship. Null on a
+		// voided dispatch means voiding again resumes this order.
+		reversedAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		primaryKey({ columns: [t.dispatchId, t.orderId] }),
+		index("dispatch_orders_order_idx").on(t.orderId),
+	],
+);
+
+// One box's label, in a dispatch. Also what quick ship learns from: the
+// weight the same items shipped at, and which service gets picked for a box.
 export const shipments = pgTable(
 	"shipments",
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity(),
-		orderId: integer()
+		dispatchId: integer()
 			.notNull()
-			.references(() => orders.id),
+			.references(() => dispatches.id),
 		packageId: integer().references(() => packages.id),
-		// What was in the box, e.g. "HANDLE×1|KNIFE-5×2" (see contentsKey). The
-		// next order with the same contents starts from this box and weight.
-		contentsKey: text().notNull(),
 		lengthMm: integer().notNull(),
 		widthMm: integer().notNull(),
 		heightMm: integer().notNull(),
@@ -445,9 +515,6 @@ export const shipments = pgTable(
 		// "shippo" for now; Amazon and TikTok labels come later.
 		provider: text().notNull(),
 		carrier: text().notNull(),
-		// Shippo's carrier token, e.g. "usps": what Shippo's tracking API
-		// takes, saved to the Shopify order for the storefront's tracking page.
-		// Null for TikTok labels and Shippo labels bought before it was kept.
 		carrierToken: text(),
 		// The provider's service code, e.g. Shippo's "usps_ground_advantage".
 		service: text().notNull(),
@@ -465,16 +532,6 @@ export const shipments = pgTable(
 		externalId: text().notNull().unique(),
 		// Bought with a test key: a sample label that can't actually ship.
 		test: boolean().notNull(),
-		// Handing tracking to the marketplace the order came from. Sent: when
-		// it got there, and the marketplace's id for that fulfillment (Shopify
-		// needs it to cancel on void). Not sent: why, shown with a retry.
-		channelSentAt: timestamp({ withTimezone: true }),
-		channelFulfillmentId: text(),
-		channelError: text(),
-		// Why the storefront's katasync.shippo_tracking entry for this label
-		// couldn't be saved (or, once voided, removed), so someone fixes the
-		// metafield by hand. Never holds up the handoff: Shopify already has
-		// the tracking, and the storefront falls back to the carrier link.
 		storefrontTrackingError: text(),
 		// Voiding asks the provider for the postage back. Refunds can take
 		// days (USPS); refundStatus is the provider's word on it.
@@ -482,10 +539,7 @@ export const shipments = pgTable(
 		refundStatus: text(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [
-		index("shipments_order_idx").on(t.orderId),
-		index("shipments_contents_idx").on(t.contentsKey, t.createdAt),
-	],
+	(t) => [index("shipments_dispatch_idx").on(t.dispatchId)],
 );
 
 // A company we buy from. `code` is the short name Sumtracker used, e.g. "CANAM".

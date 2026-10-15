@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	dispatches,
 	orderLines,
 	orders,
 	packages,
@@ -10,6 +11,7 @@ import {
 } from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { contentsKey } from "./contents";
+import { companionsOf, liveDispatches } from "./dispatch";
 import type { Rate } from "./shippo";
 
 // Orders worth more than this get the insurance step even if no item asks
@@ -25,8 +27,8 @@ export function needsInsurance(order: {
 	);
 }
 
-// Everything quick ship shows after a pin: the order, what's in it, and the
-// box and weight these exact contents shipped in last time.
+// Everything quick ship shows after a pin: the order, other orders to the
+// same address that could share the box, and the plan for shipping it alone.
 export async function orderForShipping(db: Db, pin: number) {
 	const [order] = await db
 		.select({
@@ -51,8 +53,66 @@ export async function orderForShipping(db: Db, pin: number) {
 		.where(eq(orders.pin, pin));
 	if (!order) return null;
 
+	const external = externalFulfillment(order);
+	const [live] = await liveDispatches(db, [order.id]);
+	const companions =
+		external || live
+			? []
+			: await companionsOf(db, { ...order, needsShipping: true });
+	const items = companions.length
+		? await db
+				.select({
+					orderId: orderLines.orderId,
+					items: sql<number>`sum(${orderLines.quantity})::int`,
+				})
+				.from(orderLines)
+				.where(
+					inArray(
+						orderLines.orderId,
+						companions.map((c) => c.id),
+					),
+				)
+				.groupBy(orderLines.orderId)
+		: [];
+
+	return {
+		order,
+		labelSource: labelSource(order),
+		external,
+		// The order's live dispatch, if it already has labels.
+		liveDispatchId: live?.dispatchId ?? null,
+		companions: companions.map((c) => ({
+			id: c.id,
+			name: c.name,
+			pin: c.pin,
+			customerName: c.customerName,
+			items: items.find((i) => i.orderId === c.id)?.items ?? 0,
+		})),
+		plan: await shipmentPlan(db, [order.id]),
+	};
+}
+
+// What's in the box for these orders together: their lines, the merged
+// contents key, insurance, and the boxes these exact contents went out in
+// last time.
+export async function shipmentPlan(db: Db, orderIds: number[]) {
+	const members = await db
+		.select({
+			id: orders.id,
+			name: orders.name,
+			total: orders.total,
+			channel: stores.channel,
+			salesChannel: orders.salesChannel,
+		})
+		.from(orders)
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.where(inArray(orders.id, orderIds));
+	if (members.length !== new Set(orderIds).size) {
+		throw new Error("One of these orders no longer exists");
+	}
 	const lines = await db
 		.select({
+			orderId: orderLines.orderId,
 			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 			title: orderLines.title,
 			quantity: orderLines.quantity,
@@ -62,11 +122,48 @@ export async function orderForShipping(db: Db, pin: number) {
 		})
 		.from(orderLines)
 		.leftJoin(products, eq(products.id, orderLines.productId))
-		.where(eq(orderLines.orderId, order.id))
-		.orderBy(orderLines.id);
+		// A cancelled line stays at 0; there's nothing of it to pack.
+		.where(
+			and(inArray(orderLines.orderId, orderIds), gt(orderLines.quantity, 0)),
+		)
+		.orderBy(orderLines.orderId, orderLines.id);
 
 	const key = contentsKey(lines);
-	const [last] = await db
+	const total = members.reduce((sum, o) => sum + o.total, 0);
+	return {
+		// In the order quick ship was given them: the pin's order first.
+		orderIds,
+		orderNames: orderIds.map((id) => members.find((o) => o.id === id)?.name),
+		lines,
+		contentsKey: key,
+		total,
+		// TikTok's labels come with TikTok's own shipping protection.
+		insure:
+			members.every((o) => labelSource(o) !== "tiktok") &&
+			needsInsurance({ total, lines }),
+		// The boxes these contents went out in last time, if ever.
+		last: await lastBoxes(db, key),
+		// The items' own weights, when every one is known; the box is added
+		// once it's chosen.
+		itemsWeightGrams: lines.every((l) => l.weightGrams !== null)
+			? lines.reduce((sum, l) => sum + (l.weightGrams ?? 0) * l.quantity, 0)
+			: null,
+	};
+}
+
+export type ShipmentPlan = Awaited<ReturnType<typeof shipmentPlan>>;
+
+// Every box of the latest dispatch with these contents, first box first.
+async function lastBoxes(db: Db, key: string) {
+	const [latest] = await db
+		.select({ id: dispatches.id })
+		.from(dispatches)
+		// A purchase that stopped part way isn't a good example.
+		.where(and(eq(dispatches.contentsKey, key), isNotNull(dispatches.boughtAt)))
+		.orderBy(desc(dispatches.createdAt), desc(dispatches.id))
+		.limit(1);
+	if (!latest) return null;
+	return db
 		.select({
 			packageId: shipments.packageId,
 			lengthMm: shipments.lengthMm,
@@ -75,33 +172,43 @@ export async function orderForShipping(db: Db, pin: number) {
 			weightGrams: shipments.weightGrams,
 		})
 		.from(shipments)
-		.where(eq(shipments.contentsKey, key))
-		.orderBy(desc(shipments.createdAt))
-		.limit(1);
-	const [{ labels }] = await db
-		.select({ labels: sql<number>`count(*)::int` })
-		.from(shipments)
-		.where(and(eq(shipments.orderId, order.id), isNull(shipments.voidedAt)));
+		.where(eq(shipments.dispatchId, latest.id))
+		.orderBy(asc(shipments.id));
+}
 
-	return {
-		order,
-		lines,
-		contentsKey: key,
-		labelSource: labelSource(order),
-		external: externalFulfillment(order),
-		// TikTok's labels come with TikTok's own shipping protection.
-		insure:
-			labelSource(order) !== "tiktok" &&
-			needsInsurance({ total: order.total, lines }),
-		// The box and weight these contents shipped in last time, if ever.
-		last: last ?? null,
-		// The items' own weights, when every one is known; the box is added
-		// once it's chosen.
-		itemsWeightGrams: lines.every((l) => l.weightGrams !== null)
-			? lines.reduce((sum, l) => sum + (l.weightGrams ?? 0) * l.quantity, 0)
-			: null,
-		labelsBought: labels,
-	};
+// Turns each box's rates into one price per service: only services offered
+// for every box, costs added up, the slowest box's days. With one box this
+// is just that box's rates. Buying prices each box again (see buyDispatch),
+// so only the service is taken from here.
+export function combineRates(perBox: Rate[][]): Rate[] {
+	if (perBox.length === 0) return [];
+	const keyOf = (r: Rate) => `${r.carrier}|${r.service}`;
+	const quotes = new Map<string, Rate>();
+	for (const first of perBox[0]) {
+		const key = keyOf(first);
+		if (quotes.has(key)) continue;
+		const matches = perBox.map((rates) =>
+			rates
+				.filter((r) => keyOf(r) === key)
+				.sort((a, b) => a.cost - b.cost)
+				.at(0),
+		);
+		if (matches.some((m) => m === undefined)) continue;
+		const found = matches as Rate[];
+		const days = found.map((m) => m.days);
+		quotes.set(key, {
+			// One box: its own rate (TikTok buys by this service id).
+			id: found.map((m) => m.id).join("+"),
+			carrier: first.carrier,
+			service: first.service,
+			serviceName: first.serviceName,
+			cost: Math.round(found.reduce((sum, m) => sum + m.cost, 0) * 100) / 100,
+			days: days.some((d) => d === null)
+				? null
+				: Math.max(...(days as number[])),
+		});
+	}
+	return [...quotes.values()];
 }
 
 export type ServiceHistory = {
@@ -112,7 +219,10 @@ export type ServiceHistory = {
 
 // Most likely first: the service these exact contents shipped with before,
 // then what this box usually ships with, then cheapest.
-export function rankRates(rates: Rate[], history: ServiceHistory[]): Rate[] {
+export function rankRates<R extends { service: string; cost: number }>(
+	rates: R[],
+	history: ServiceHistory[],
+): R[] {
 	const score = new Map(
 		history.map((h) => [h.service, h.sameContents * 10 + h.samePackage]),
 	);
@@ -131,13 +241,14 @@ export async function serviceHistory(
 	return db
 		.select({
 			service: shipments.service,
-			sameContents: sql<number>`count(*) filter (where ${shipments.contentsKey} = ${key})::int`,
+			sameContents: sql<number>`count(*) filter (where ${dispatches.contentsKey} = ${key})::int`,
 			samePackage:
 				packageId === null
 					? sql<number>`0`
 					: sql<number>`count(*) filter (where ${shipments.packageId} = ${packageId})::int`,
 		})
 		.from(shipments)
+		.innerJoin(dispatches, eq(dispatches.id, shipments.dispatchId))
 		.groupBy(shipments.service);
 }
 
@@ -151,20 +262,37 @@ export async function freePackagePin(db: Db) {
 }
 
 // The box and weight each set of contents shipped in last time, for
-// printing on invoices. Contents never shipped before are left out.
+// printing on invoices: the first box, and how many there were. Contents
+// never shipped before are left out.
 export async function lastPackedFor(db: Db, keys: string[]) {
 	if (keys.length === 0) return new Map<string, LastPacked>();
 	const rows = await db
-		.selectDistinctOn([shipments.contentsKey], {
-			contentsKey: shipments.contentsKey,
+		.selectDistinctOn([dispatches.contentsKey], {
+			contentsKey: dispatches.contentsKey,
 			boxPin: packages.pin,
 			weightGrams: shipments.weightGrams,
+			boxes: sql<number>`(select count(*) from ${shipments} s where s.dispatch_id = ${dispatches.id})::int`,
 		})
-		.from(shipments)
+		.from(dispatches)
+		.innerJoin(shipments, eq(shipments.dispatchId, dispatches.id))
 		.leftJoin(packages, eq(packages.id, shipments.packageId))
-		.where(inArray(shipments.contentsKey, keys))
-		.orderBy(shipments.contentsKey, desc(shipments.createdAt));
+		.where(
+			and(
+				inArray(dispatches.contentsKey, keys),
+				isNotNull(dispatches.boughtAt),
+			),
+		)
+		.orderBy(
+			dispatches.contentsKey,
+			desc(dispatches.createdAt),
+			desc(dispatches.id),
+			asc(shipments.id),
+		);
 	return new Map(rows.map((r) => [r.contentsKey, r]));
 }
 
-export type LastPacked = { boxPin: number | null; weightGrams: number };
+export type LastPacked = {
+	boxPin: number | null;
+	weightGrams: number;
+	boxes: number;
+};

@@ -10,7 +10,15 @@ export function orderStatus(order: {
 	channel: string;
 	salesChannel: string | null;
 	marketplaceOrderId: string | null;
+	// Cancelled or refunded with a label still live (see to-ship.ts).
+	labelToVoid?: boolean;
 }): { label: string; tone?: Tone } {
+	if (order.labelToVoid) {
+		return {
+			label: `${order.cancelledAt ? "Cancelled" : "Refunded"}, void label`,
+			tone: "critical",
+		};
+	}
 	if (order.cancelledAt) return { label: "Cancelled" };
 	if (order.financialStatus === "REFUNDED") return { label: "Refunded" };
 	switch (order.fulfillmentStatus) {
@@ -18,6 +26,9 @@ export function orderStatus(order: {
 			return { label: "Fulfilled" };
 		case "FULFILLMENT_NOT_REQUIRED":
 			return { label: "No shipping needed" };
+		// Shopify: every item was removed or refunded before shipping.
+		case "RESTOCKED":
+			return { label: "Restocked" };
 		case "PARTIALLY_FULFILLED":
 			return { label: "Partly shipped", tone: "warning" };
 		case "AWAITING_PAYMENT":

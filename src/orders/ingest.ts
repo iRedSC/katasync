@@ -54,8 +54,11 @@ export type IngestStore = { id: number; stockFrom: Date | null };
 // - Lines on orders placed at or after the store's stockFrom take stock once,
 //   recorded on the line so a re-sync never takes it again.
 // - A cancelled order gives back exactly what its lines took, and a line
-//   whose quantity changed gives it back and takes the new quantity. Channels
-//   report a fully cancelled line with quantity 0 rather than dropping it.
+//   whose quantity changed gives it back and takes the new quantity. A line's
+//   quantity is what leaves our stock: units cancelled before shipping don't
+//   count, units refunded after shipping still do (they come back as a
+//   return). Channels report a fully cancelled line with quantity 0 rather
+//   than dropping it.
 // - Lines that can't be matched to a product are saved without moving stock
 //   and reported, so one unknown SKU doesn't stop the sync. Lines with no
 //   SKU are custom items and aren't reported.
@@ -80,7 +83,6 @@ export async function ingestOrder(
 		const takesStock = orderTakesStock(store, order);
 
 		for (const line of lines) {
-			const productId = await resolveProduct(tx, store.id, line);
 			const [existing] = await tx
 				.select()
 				.from(orderLines)
@@ -90,6 +92,9 @@ export async function ingestOrder(
 						eq(orderLines.externalId, line.externalId),
 					),
 				);
+			// A line cancelled before we ever saw it has nothing to remember.
+			if (!existing && line.quantity === 0) continue;
+			const productId = await resolveProduct(tx, store.id, line);
 			const [row] = existing
 				? await tx
 						.update(orderLines)

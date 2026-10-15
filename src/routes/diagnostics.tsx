@@ -335,10 +335,11 @@ function TrackingCard({ handoffs }: { handoffs: Diagnostics["handoffs"] }) {
 	const router = useRouter();
 	const [busy, setBusy] = useState<number | null>(null);
 
-	async function retry(shipmentId: number) {
-		setBusy(shipmentId);
+	// Retrying a dispatch retries every order in it that wasn't told.
+	async function retry(dispatchId: number) {
+		setBusy(dispatchId);
 		try {
-			const r = await resendTracking({ data: { id: shipmentId } });
+			const r = await resendTracking({ data: { dispatchId } });
 			if (r.sent) toast.success(r.message);
 			else toast.error(r.message);
 			await router.invalidate();
@@ -360,7 +361,7 @@ function TrackingCard({ handoffs }: { handoffs: Diagnostics["handoffs"] }) {
 					<ul>
 						{handoffs.map((h) => (
 							<li
-								key={h.shipmentId}
+								key={`${h.dispatchId}-${h.orderId}`}
 								className="flex items-start gap-3 border-t px-4 py-3"
 							>
 								<div className="min-w-0 flex-1">
@@ -384,9 +385,9 @@ function TrackingCard({ handoffs }: { handoffs: Diagnostics["handoffs"] }) {
 									size="sm"
 									variant="outline"
 									disabled={busy !== null}
-									onClick={() => retry(h.shipmentId)}
+									onClick={() => retry(h.dispatchId)}
 								>
-									{busy === h.shipmentId ? "Sending…" : "Retry"}
+									{busy === h.dispatchId ? "Sending…" : "Retry"}
 								</Button>
 							</li>
 						))}

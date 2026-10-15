@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { createTestDb } from "#/test/db";
+import { addDispatch, createTestDb } from "#/test/db";
 import { labelPdf } from "./label-file";
 
 let db: Db;
@@ -25,25 +25,19 @@ beforeEach(async () => {
 			sourceUpdatedAt: new Date(),
 		})
 		.returning();
-	[{ id: shipmentId }] = await db
-		.insert(schema.shipments)
-		.values({
-			orderId: order.id,
-			contentsKey: "X×1",
-			lengthMm: 1,
-			widthMm: 1,
-			heightMm: 1,
-			weightGrams: 1,
-			provider: "shippo",
-			carrier: "USPS",
-			service: "usps_ground_advantage",
-			serviceName: "USPS Ground Advantage",
-			cost: 5,
-			labelUrl: "https://shippo.example/label.pdf",
-			externalId: "tx1",
-			test: false,
-		})
-		.returning();
+	({
+		boxIds: [shipmentId],
+	} = await addDispatch(db, {
+		orderIds: [order.id],
+		contentsKey: "X×1",
+		boxes: [
+			{
+				cost: 5,
+				labelUrl: "https://shippo.example/label.pdf",
+				externalId: "tx1",
+			},
+		],
+	}));
 });
 
 afterEach(() => vi.unstubAllGlobals());

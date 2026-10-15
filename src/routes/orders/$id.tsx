@@ -5,12 +5,13 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { ExternalLink, Printer, Truck } from "lucide-react";
+import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
+import { ReturnDialog } from "#/components/return-dialog";
 import { Button } from "#/components/ui/button";
 import {
 	channelName,
@@ -23,10 +24,9 @@ import {
 import { useHotkeys } from "#/lib/hotkeys";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
-import { printLabel } from "#/printing/qz-client";
+import { printLabels } from "#/printing/qz-client";
 import { getOrder, type OrderDetail } from "#/server/orders";
 import { resendTracking, voidLabel } from "#/server/shipping";
-import { labelPath } from "#/shipping/label-path";
 
 export const Route = createFileRoute("/orders/$id")({
 	loader: ({ params }) => getOrder({ data: { id: Number(params.id) } }),
@@ -34,7 +34,7 @@ export const Route = createFileRoute("/orders/$id")({
 });
 
 function OrderPage() {
-	const { order, lines, labels, adminUrl } = Route.useLoaderData();
+	const { order, lines, sends, adminUrl } = Route.useLoaderData();
 	const router = useRouter();
 	const navigate = useNavigate();
 	const canGoBack = useCanGoBack();
@@ -48,11 +48,21 @@ function OrderPage() {
 	// Shippable here: still to ship (it has a pin), not a marketplace label,
 	// and no live label yet.
 	const pin = order.pin;
-	// One live label per order; voided ones stay listed under Labels.
-	const liveLabel = labels.find((l) => l.voidedAt === null);
-	const canShip =
-		pin !== null && !external && !labels.some((l) => l.voidedAt === null);
+	// One live shipment per order; voided ones stay listed under Shipments.
+	const liveSend = sends.find((d) => d.live);
+	const liveBoxes = liveSend?.boxes.filter((b) => b.voidedAt === null) ?? [];
+	const canShip = pin !== null && !external && !liveSend;
 	const ship = () => pin !== null && openQuickShip(pin);
+	// Returns come back here once something has shipped from our shelf.
+	const returnable = lines
+		.map((l) => ({ ...l, left: l.quantity - l.returned }))
+		.filter((l) => l.left > 0);
+	const canReturn =
+		!order.fulfilledByChannel &&
+		!order.cancelledAt &&
+		order.fulfillmentStatus === "FULFILLED" &&
+		returnable.length > 0;
+	const [returning, setReturning] = useState(false);
 	const address = [
 		order.shipAddress1,
 		order.shipAddress2,
@@ -64,6 +74,7 @@ function OrderPage() {
 		Escape: () =>
 			canGoBack ? router.history.back() : navigate({ to: "/orders" }),
 		...(canShip ? { s: ship } : {}),
+		...(canReturn ? { r: () => setReturning(true) } : {}),
 	});
 
 	return (
@@ -90,14 +101,14 @@ function OrderPage() {
 							Print invoice
 						</a>
 					</Button>
-					{liveLabel && (
+					{liveBoxes.length > 0 && (
 						<Button
 							size="sm"
 							variant="outline"
-							onClick={() => printLabel(liveLabel.id)}
+							onClick={() => printLabels(liveBoxes.map((box) => box.id))}
 						>
 							<Printer />
-							Reprint label
+							Reprint {liveBoxes.length > 1 ? "labels" : "label"}
 						</Button>
 					)}
 					{external && (
@@ -107,6 +118,17 @@ function OrderPage() {
 								{external.name}
 								<ExternalLink />
 							</a>
+						</Button>
+					)}
+					{canReturn && (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => setReturning(true)}
+						>
+							<Undo2 />
+							Receive return
+							<kbd className="ml-1 rounded bg-black/5 px-1 text-xs">R</kbd>
 						</Button>
 					)}
 					{canShip && (
@@ -135,6 +157,20 @@ function OrderPage() {
 				{order.salesChannel ?? channelName(order.channel)}
 			</p>
 
+			{order.labelToVoid && liveSend && liveBoxes.length > 0 && (
+				<Banner
+					tone="critical"
+					title={`${order.cancelledAt ? "Cancelled" : "Refunded"} after its label was bought`}
+				>
+					Don't ship this box.{" "}
+					{liveBoxes[0].provider === "tiktok"
+						? "Cancel the label in TikTok Seller Center."
+						: `Void the ${liveBoxes[0].serviceName} ${liveBoxes.length > 1 ? "labels" : "label"} to get ${formatMoney(liveBoxes.reduce((sum, b) => sum + b.cost, 0))} back.`}
+					{liveSend.shippedWith.length > 0 &&
+						` This shipment also holds ${liveSend.shippedWith.map((o) => o.name).join(", ")}; voiding puts ${liveSend.shippedWith.length === 1 ? "it" : "them"} back on To ship to pack again without this order.`}
+				</Banner>
+			)}
+
 			{unmatched.length > 0 && (
 				<Banner
 					tone="critical"
@@ -147,6 +183,16 @@ function OrderPage() {
 				</Banner>
 			)}
 
+			{returning && (
+				<ReturnDialog
+					open
+					onOpenChange={setReturning}
+					orderId={order.id}
+					orderName={order.name}
+					lines={returnable}
+				/>
+			)}
+
 			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
 				<Card title="Items" flush>
 					<ul>
@@ -156,7 +202,9 @@ function OrderPage() {
 								className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
 							>
 								<ProductImage src={l.imageUrl} className="size-10" />
-								<div className="min-w-0 flex-1">
+								<div
+									className={`min-w-0 flex-1 ${l.quantity === 0 ? "text-muted-foreground" : ""}`}
+								>
 									{l.productSku ? (
 										<Link
 											to="/products/$sku"
@@ -170,6 +218,17 @@ function OrderPage() {
 									)}
 									<div className="flex gap-2 text-xs text-muted-foreground">
 										<span>{l.sku ?? "No SKU"}</span>
+										{l.quantity === 0 && <Badge>Cancelled</Badge>}
+										{l.restocked > 0 && (
+											<Badge tone="info">
+												{formatCount(l.restocked)} returned to shelf
+											</Badge>
+										)}
+										{l.returned > l.restocked && (
+											<Badge>
+												{formatCount(l.returned - l.restocked)} returned damaged
+											</Badge>
+										)}
 										{l.productSku === null && l.sku !== null && (
 											<Badge tone="critical">Unknown product</Badge>
 										)}
@@ -197,13 +256,13 @@ function OrderPage() {
 				</Card>
 
 				<div className="flex flex-col gap-4">
-					{labels.length > 0 && (
-						<Card title="Labels" flush>
+					{sends.length > 0 && (
+						<Card title="Shipments" flush>
 							<ul>
-								{labels.map((l) => (
-									<LabelRow
-										key={l.id}
-										label={l}
+								{sends.map((d) => (
+									<SendRow
+										key={d.id}
+										send={d}
 										channel={channelName(order.channel)}
 									/>
 								))}
@@ -250,18 +309,22 @@ function Line({
 	);
 }
 
-// One bought label: where its tracking stands, with a retry when it didn't
-// reach the marketplace and a two-step void.
-function LabelRow({
-	label: l,
+// One shipment: its boxes' labels, where this order's tracking stands, the
+// other orders packed with it, a retry when tracking didn't reach the
+// marketplace, and a two-step void of every box.
+function SendRow({
+	send: d,
 	channel,
 }: {
-	label: OrderDetail["labels"][number];
+	send: OrderDetail["sends"][number];
 	channel: string;
 }) {
 	const router = useRouter();
 	const [confirm, setConfirm] = useState(false);
 	const [busy, setBusy] = useState(false);
+	const live = d.boxes.filter((b) => b.voidedAt === null);
+	const first = d.boxes[0];
+	const test = d.boxes.some((b) => b.test);
 
 	async function act(work: () => Promise<string>) {
 		setBusy(true);
@@ -276,59 +339,121 @@ function LabelRow({
 		}
 	}
 
-	const state = l.voidedAt
+	// Sending tracking needs every box bought and none voided.
+	const sendable = d.complete && live.length === d.boxes.length;
+	const state = !d.live
 		? {
 				tone: undefined,
-				text: `Voided · refund ${(l.refundStatus ?? "requested").toLowerCase()}`,
+				text: `Voided · refund ${(first?.refundStatus ?? "requested").toLowerCase()}`,
 			}
-		: l.test
-			? { tone: "info" as const, text: "Test label" }
-			: l.channelSentAt
-				? { tone: "success" as const, text: `Tracking sent to ${channel}` }
-				: l.channelError
-					? { tone: "critical" as const, text: "Tracking not sent" }
-					: { tone: "warning" as const, text: "Tracking not sent yet" };
+		: !sendable
+			? { tone: "critical" as const, text: "Incomplete, void it" }
+			: test
+				? { tone: "info" as const, text: "Test label" }
+				: d.channelSentAt
+					? { tone: "success" as const, text: `Tracking sent to ${channel}` }
+					: d.channelError
+						? { tone: "critical" as const, text: "Tracking not sent" }
+						: { tone: "warning" as const, text: "Tracking not sent yet" };
 
 	return (
 		<li className="flex flex-col gap-2 border-t px-4 py-3 first:border-t-0">
 			<div className="flex items-start justify-between gap-2">
-				<div className={l.voidedAt ? "text-muted-foreground line-through" : ""}>
-					<p className="font-medium">{l.serviceName}</p>
-					<p className="tabular-nums">{formatMoney(l.cost)}</p>
+				<div className={d.live ? "" : "text-muted-foreground line-through"}>
+					<p className="font-medium">
+						{first?.serviceName}
+						{d.boxes.length > 1 && ` · ${d.boxes.length} boxes`}
+					</p>
+					<p className="tabular-nums">
+						{formatMoney(d.boxes.reduce((sum, b) => sum + b.cost, 0))}
+					</p>
 				</div>
 				<Badge tone={state.tone}>{state.text}</Badge>
 			</div>
-			{l.trackingNumber && (
-				<a
-					href={l.trackingUrl ?? undefined}
-					target="_blank"
-					rel="noreferrer"
-					className="font-mono text-xs text-link hover:underline"
-				>
-					{l.trackingNumber}
-				</a>
+			{d.shippedWith.length > 0 && (
+				<p>
+					Shipped together with{" "}
+					{d.shippedWith.map((o, i) => (
+						<span key={o.id}>
+							{i > 0 && ", "}
+							<Link
+								to="/orders/$id"
+								params={{ id: String(o.id) }}
+								className="font-medium text-link hover:underline"
+							>
+								{o.name}
+							</Link>
+						</span>
+					))}
+				</p>
 			)}
-			{l.channelError && !l.channelSentAt && !l.voidedAt && (
-				<p className="text-critical-text">{l.channelError}</p>
+			<ul className="flex flex-col gap-1">
+				{d.boxes.map((b, i) => (
+					<li
+						key={b.id}
+						className={`flex items-center gap-2 text-xs ${b.voidedAt ? "text-muted-foreground line-through" : ""}`}
+					>
+						{d.boxes.length > 1 && <span>Box {i + 1}</span>}
+						{b.trackingNumber && (
+							<a
+								href={b.trackingUrl ?? undefined}
+								target="_blank"
+								rel="noreferrer"
+								className="font-mono text-link hover:underline"
+							>
+								{b.trackingNumber}
+							</a>
+						)}
+						{!b.voidedAt && (
+							<button
+								type="button"
+								onClick={() => printLabels([b.id])}
+								className="text-link hover:underline"
+							>
+								Print
+							</button>
+						)}
+						{b.storefrontTrackingError && (
+							<p className="text-warning-text">{b.storefrontTrackingError}</p>
+						)}
+					</li>
+				))}
+			</ul>
+			{d.channelError && !d.channelSentAt && d.live && (
+				<p className="text-critical-text">{d.channelError}</p>
 			)}
-			{l.storefrontTrackingError && (
-				<p className="text-warning-text">{l.storefrontTrackingError}</p>
-			)}
-			{!l.voidedAt && (
-				<div className="flex flex-wrap gap-2">
-					<Button asChild size="sm" variant="outline">
-						<a href={labelPath(l.id)} target="_blank" rel="noreferrer">
-							Print
-						</a>
+			{!d.live && d.unfinishedVoid && (
+				<div className="flex flex-wrap items-center gap-2">
+					<span className="text-critical-text">
+						Voiding didn't finish for this order.
+					</span>
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={busy}
+						onClick={() =>
+							act(async () => {
+								const r = await voidLabel({ data: { dispatchId: d.id } });
+								return r.notes.join(" ") || "Voiding finished";
+							})
+						}
+					>
+						Finish voiding
 					</Button>
-					{!l.channelSentAt && !l.test && (
+				</div>
+			)}
+			{d.live && (
+				<div className="flex flex-wrap gap-2">
+					{sendable && !d.channelSentAt && !test && (
 						<Button
 							size="sm"
 							variant="outline"
 							disabled={busy}
 							onClick={() =>
 								act(async () => {
-									const r = await resendTracking({ data: { id: l.id } });
+									const r = await resendTracking({
+										data: { dispatchId: d.id },
+									});
 									if (!r.sent) throw new Error(r.message);
 									return r.message;
 								})
@@ -338,7 +463,7 @@ function LabelRow({
 						</Button>
 					)}
 					{/* TikTok has no API to cancel its labels. */}
-					{l.provider === "tiktok" ? (
+					{live.some((b) => b.provider === "tiktok") ? (
 						<span className="self-center text-xs text-muted-foreground">
 							Cancel in TikTok Seller Center
 						</span>
@@ -349,7 +474,9 @@ function LabelRow({
 							disabled={busy}
 							onClick={() =>
 								act(async () => {
-									const r = await voidLabel({ data: { id: l.id } });
+									const r = await voidLabel({ data: { dispatchId: d.id } });
+									// Some refunds refused: say so as a failure; Void stays.
+									if (r.remaining > 0) throw new Error(r.notes.join(" "));
 									return [
 										`Voided, refund ${r.refundStatus.toLowerCase()}.`,
 										...r.notes,
@@ -357,7 +484,9 @@ function LabelRow({
 								})
 							}
 						>
-							Void and refund {formatMoney(l.cost)}?
+							Void and refund{" "}
+							{formatMoney(live.reduce((sum, b) => sum + b.cost, 0))}
+							{d.shippedWith.length > 0 && " for every order in the box"}?
 						</Button>
 					) : (
 						<Button
@@ -366,7 +495,7 @@ function LabelRow({
 							disabled={busy}
 							onClick={() => setConfirm(true)}
 						>
-							Void
+							{live.length > 1 ? "Void all labels" : "Void"}
 						</Button>
 					)}
 				</div>

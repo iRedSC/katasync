@@ -157,19 +157,21 @@ export function amazonToChannelOrder(
 			0,
 		),
 		sourceUpdatedAt: order.LastUpdateDate,
-		lines: items
-			.filter((i) => i.QuantityOrdered > 0)
-			.map((i) => ({
-				externalId: i.OrderItemId,
-				listingExternalId: i.SellerSKU ?? null,
-				sku: i.SellerSKU ?? null,
-				title: i.Title,
-				quantity: i.QuantityOrdered,
-				// ItemPrice covers every unit; promotions come off separately.
-				unitPrice:
-					(amount(i.ItemPrice) - amount(i.PromotionDiscount)) /
-					i.QuantityOrdered,
-			})),
+		// A cancelled item stays at 0 rather than being dropped, so ingestion
+		// gives back the stock it took.
+		lines: items.map((i) => ({
+			externalId: i.OrderItemId,
+			listingExternalId: i.SellerSKU ?? null,
+			sku: i.SellerSKU ?? null,
+			title: i.Title,
+			quantity: i.QuantityOrdered,
+			// ItemPrice covers every unit; promotions come off separately.
+			unitPrice:
+				i.QuantityOrdered > 0
+					? (amount(i.ItemPrice) - amount(i.PromotionDiscount)) /
+						i.QuantityOrdered
+					: 0,
+		})),
 	};
 }
 

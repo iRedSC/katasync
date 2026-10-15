@@ -1,7 +1,8 @@
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { createTestDb } from "#/test/db";
+import { addDispatch, createTestDb } from "#/test/db";
 import {
 	channelHealth,
 	groupIssues,
@@ -214,8 +215,6 @@ test("lists labels whose storefront tracking entry needs fixing, voided or not",
 		n: number,
 		extra: Partial<typeof schema.shipments.$inferInsert>,
 	) => ({
-		orderId: order.id,
-		contentsKey: "WRENCH×1",
 		lengthMm: 300,
 		widthMm: 200,
 		heightMm: 100,
@@ -229,17 +228,21 @@ test("lists labels whose storefront tracking entry needs fixing, voided or not",
 		trackingNumber: `940${n}`,
 		externalId: `tx-${n}`,
 		test: false,
-		channelSentAt: now,
 		...extra,
 	});
 	const before = await diagnosticsAttention(db, now);
-	await db
-		.insert(schema.shipments)
-		.values([
+	const dispatch = await addDispatch(db, {
+		orderIds: [order.id],
+		boxes: [
 			label(1, {}),
 			label(2, { storefrontTrackingError: "not saved" }),
 			label(3, { storefrontTrackingError: "not removed", voidedAt: now }),
-		]);
+		],
+	});
+	await db
+		.update(schema.dispatchOrders)
+		.set({ channelSentAt: now })
+		.where(eq(schema.dispatchOrders.dispatchId, dispatch.dispatchId));
 
 	const o = await diagnosticsOverview(db, now);
 	expect(

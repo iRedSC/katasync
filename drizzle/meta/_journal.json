@@ -218,6 +218,41 @@
       "when": 1792003340079,
       "tag": "0030_qz_certificate",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792003515794,
+      "tag": "0031_order_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792003515795,
+      "tag": "0032_dispatches",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792003515796,
+      "tag": "0033_shipments_in_dispatches",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792003515797,
+      "tag": "0034_dispatch_bought_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792003515798,
+      "tag": "0035_dispatch_reversed_at",
+      "breakpoints": true
     }
   ]
 }
