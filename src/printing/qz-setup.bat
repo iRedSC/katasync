@@ -14,10 +14,15 @@ exit /b %errorlevel%
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $qz = Join-Path $env:ProgramFiles 'QZ Tray'
+# qz-tray.exe carries no version info, so this reads the version QZ's
+# installer records in Windows' list of installed programs.
 function Get-QzVersion {
 	if (Test-Path "$qz\qz-tray.exe") {
-		$reportedVersion = (Get-Item "$qz\qz-tray.exe").VersionInfo.ProductVersion
-		if ($reportedVersion -match '^(\d+\.\d+\.\d+)') { return [version]$Matches[1] }
+		$installed = Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+			Where-Object { $_.DisplayName -like 'QZ Tray*' }
+		foreach ($entry in $installed) {
+			if ("$($entry.DisplayVersion)" -match '^(\d+\.\d+\.\d+)') { return [version]$Matches[1] }
+		}
 	}
 	return [version]'0.0.0'
 }
