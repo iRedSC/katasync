@@ -1,3 +1,4 @@
+import { LoaderCircle } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { cn } from "#/lib/utils";
@@ -26,14 +27,18 @@ export function AddressInput({
 	const [options, setOptions] = useState<PlaceSuggestion[]>([]);
 	const [active, setActive] = useState(0);
 	const [open, setOpen] = useState(false);
+	// From the first keystroke, debounce included, so the list shows at once.
+	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const session = useRef(crypto.randomUUID());
 
 	useEffect(() => {
 		if (query.trim().length < 3) {
 			setOptions([]);
+			setLoading(false);
 			return;
 		}
+		setLoading(true);
 		let current = true;
 		const timer = setTimeout(async () => {
 			try {
@@ -46,6 +51,8 @@ export function AddressInput({
 				setError(null);
 			} catch (err) {
 				if (current) setError(err instanceof Error ? err.message : String(err));
+			} finally {
+				if (current) setLoading(false);
 			}
 		}, 250);
 		return () => {
@@ -69,7 +76,24 @@ export function AddressInput({
 		session.current = crypto.randomUUID();
 	}
 
-	const showing = open && options.length > 0;
+	const typed = query.trim();
+	// Open while typing, even before there's anything to pick, so it's clear
+	// the field searches.
+	const listOpen = open && typed !== "";
+	// Options from the last search stay hidden, and unpickable, while the next
+	// one runs.
+	const showing = listOpen && !loading && options.length > 0;
+	const status =
+		typed.length < 3
+			? "Keep typing to search addresses and businesses"
+			: loading
+				? "Searching…"
+				: error
+					? null
+					: options.length === 0
+						? "No matches"
+						: null;
+	const visible = listOpen && (status !== null || showing);
 	return (
 		<div className="relative">
 			<input
@@ -77,7 +101,7 @@ export function AddressInput({
 				defaultValue={defaultValue}
 				autoComplete="off"
 				role="combobox"
-				aria-expanded={showing}
+				aria-expanded={visible}
 				aria-controls={listId}
 				aria-activedescendant={showing ? `${listId}-${active}` : undefined}
 				onChange={(e) => {
@@ -86,28 +110,44 @@ export function AddressInput({
 				}}
 				onBlur={() => setOpen(false)}
 				onKeyDown={(e) => {
-					if (!showing) return;
-					if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+					if (!visible) return;
+					if (e.key === "Escape") {
+						// The dialog leaves Esc alone while this list is open.
+						setOpen(false);
+					} else if (!showing) {
+						// Not a submit while the list is up with nothing to pick.
+						if (e.key === "Enter") e.preventDefault();
+					} else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 						e.preventDefault();
 						const step = e.key === "ArrowDown" ? 1 : -1;
 						setActive((i) => (i + step + options.length) % options.length);
 					} else if (e.key === "Enter") {
 						e.preventDefault();
 						pick(options[active]);
-					} else if (e.key === "Escape") {
-						// The dialog leaves Esc alone while this list is open.
-						setOpen(false);
 					}
 				}}
-				className={className}
+				className={cn(className, "pr-7")}
 			/>
-			{showing && (
+			{loading && (
+				<LoaderCircle
+					aria-hidden
+					className="pointer-events-none absolute top-2 right-2 size-4 animate-spin text-muted-foreground"
+				/>
+			)}
+			{visible && (
 				<ul
 					id={listId}
 					role="listbox"
+					aria-busy={loading}
 					className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded-lg border bg-white shadow-lg"
 				>
-					{options.map((o, i) => (
+					{status && (
+						<li className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground">
+							{loading && <LoaderCircle className="size-3.5 animate-spin" />}
+							{status}
+						</li>
+					)}
+					{showing && options.map((o, i) => (
 						<li
 							key={o.placeId}
 							id={`${listId}-${i}`}
