@@ -18,6 +18,7 @@ import {
 	type Tone,
 } from "#/components/page";
 import { MovementTable, ProductImage, ProductName } from "#/components/product";
+import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
 import { Button } from "#/components/ui/button";
 import { channelName, formatCount, formatMoney } from "#/lib/format";
@@ -25,7 +26,9 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import {
 	getProductDetail,
+	getStockDefaults,
 	type ProductDetail,
+	saveProductStockRange,
 	setInsureWhenShipped,
 } from "#/server/catalog";
 import { getProductSupplier } from "#/server/purchasing";
@@ -33,12 +36,11 @@ import { getProductSupplier } from "#/server/purchasing";
 export const Route = createFileRoute("/products/$sku")({
 	loader: async ({ params }) => {
 		const detail = await getProductDetail({ data: { sku: params.sku } });
-		return {
-			...detail,
-			supplier: await getProductSupplier({
-				data: { productId: detail.product.id },
-			}),
-		};
+		const [supplier, stockDefaults] = await Promise.all([
+			getProductSupplier({ data: { productId: detail.product.id } }),
+			getStockDefaults(),
+		]);
+		return { ...detail, supplier, stockDefaults };
 	},
 	component: ProductPage,
 });
@@ -220,6 +222,19 @@ function ProductPage() {
 									))}
 								</tbody>
 							</table>
+							<div className="border-t px-4 py-3">
+								<StockRangeForm
+									value={
+										p.minStock !== null && p.maxStock !== null
+											? { min: p.minStock, max: p.maxStock }
+											: null
+									}
+									defaults={d.stockDefaults}
+									onSave={(range) =>
+										saveProductStockRange({ data: { productId: p.id, range } })
+									}
+								/>
+							</div>
 						</Card>
 					)}
 

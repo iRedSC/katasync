@@ -260,6 +260,13 @@
       "when": 1792076955227,
       "tag": "0036_set_moved_parts",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792082611343,
+      "tag": "0037_stock_range",
+      "breakpoints": true
     }
   ]
 }
