@@ -55,7 +55,7 @@ function Settings() {
 	const { locations, stores, boxes, units, devices, tokens, stockDefaults } =
 		Route.useLoaderData();
 	return (
-		<Page title="Settings" narrow>
+		<Page title="Settings" width="narrow">
 			<Card title="Sales channels" flush>
 				{/* Fixed columns, so the primary controls line up whatever the
 				    store names' lengths. */}

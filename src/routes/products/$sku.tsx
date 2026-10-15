@@ -63,7 +63,7 @@ function ProductPage() {
 
 	return (
 		<Page
-			narrow
+			width="narrow"
 			back={{ to: "/products" }}
 			title={
 				<span className="flex items-center gap-2">

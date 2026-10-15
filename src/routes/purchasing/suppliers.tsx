@@ -21,7 +21,7 @@ function Suppliers() {
 	const [editing, setEditing] = useState<number | null>(null);
 
 	return (
-		<Page title="Suppliers" back={{ to: "/purchasing" }} narrow>
+		<Page title="Suppliers" back={{ to: "/purchasing" }} width="narrow">
 			<Card flush>
 				<table className="w-full">
 					<thead>

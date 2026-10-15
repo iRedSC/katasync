@@ -106,6 +106,7 @@ function PurchaseOrderPage() {
 
 	return (
 		<Page
+			width="wide"
 			back={{ to: "/purchasing" }}
 			title={
 				<span className="flex items-center gap-2">
@@ -170,7 +171,9 @@ function PurchaseOrderPage() {
 				</Banner>
 			)}
 
-			<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+			{/* The lines need the width, so the side cards only sit beside them on
+			    wide screens. */}
+			<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
 				<div className="flex min-w-0 flex-col gap-4">
 					<Card flush>
 						{draft && <FrozenBar detail={d} />}
@@ -179,7 +182,7 @@ function PurchaseOrderPage() {
 							{draft && <AddLine purchaseOrderId={po.id} />}
 							<span className="text-muted-foreground">
 								{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
-								{unpriced > 0 && `, ${unpriced} without a price`}
+								{unpriced > 0 && `, ${unpriced} without a cost`}
 								{sets > 0 &&
 									`, plus ${sets === 1 ? "a set" : `${sets} sets`} priced as parts when sent`}
 							</span>
@@ -399,154 +402,161 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 			</p>
 		);
 	return (
-		<table className="w-full">
-			<thead>
-				<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
-					<th className="px-4 py-2 font-medium">Product</th>
-					<th className="px-3 py-2 font-medium whitespace-nowrap">Their SKU</th>
-					<th className="px-3 py-2 font-medium whitespace-nowrap">MOQ / UOM</th>
-					{draft && (
-						<th className="px-3 py-2 text-center font-medium whitespace-nowrap">
-							On hand
+		// Scrolls sideways rather than squeeze a column when there's no room.
+		<div className="overflow-x-auto">
+			<table className="w-full [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
+				<thead>
+					<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+						<th className="px-4 py-2 font-medium">Product</th>
+						<th className="px-3 py-2 font-medium whitespace-nowrap">
+							Their SKU
 						</th>
-					)}
-					<th className="px-3 py-2 text-right font-medium">Qty</th>
-					<th className="px-3 py-2 text-right font-medium">Price</th>
-					<th className="px-4 py-2 text-right font-medium">Amount</th>
-					{!draft && (
-						<th className="px-4 py-2 text-right font-medium">Received</th>
-					)}
-				</tr>
-			</thead>
-			<tbody>
-				{d.lines.map((l) => (
-					<Fragment key={l.id}>
-						<tr className="border-t first:border-t-0">
-							<td className="w-full max-w-0 px-4 py-2">
-								<div className="flex items-center gap-3">
-									<ProductImage src={l.imageUrl} />
-									<div className="min-w-0">
-										<Link
-											to="/products/$sku"
-											params={{ sku: l.sku }}
-											className="block hover:underline"
-										>
-											{/* Wraps instead of cutting off: on a PO the full name matters. */}
-											<span className="line-clamp-2 font-medium">
-												{l.name}
-												{l.variantName && (
-													<span className="ml-1.5 rounded-md bg-[#f1f1f1] px-1.5 text-xs font-normal text-muted-foreground">
-														{l.variantName}
-													</span>
-												)}
-											</span>
-										</Link>
-										<div className="text-xs text-muted-foreground">
-											{l.sku}
-											{l.kind === "bundle" && " · Set, sent as its parts"}
+						<th className="px-3 py-2 font-medium whitespace-nowrap">
+							MOQ / UOM
+						</th>
+						{draft && (
+							<th className="px-3 py-2 text-center font-medium whitespace-nowrap">
+								On hand
+							</th>
+						)}
+						<th className="px-3 py-2 text-right font-medium">Qty</th>
+						<th className="px-3 py-2 text-right font-medium">Cost</th>
+						<th className="px-4 py-2 text-right font-medium">Amount</th>
+						{!draft && (
+							<th className="px-4 py-2 text-right font-medium">Received</th>
+						)}
+					</tr>
+				</thead>
+				<tbody>
+					{d.lines.map((l) => (
+						<Fragment key={l.id}>
+							<tr className="border-t first:border-t-0">
+								<td className="w-full px-4 py-2 whitespace-normal!">
+									<div className="flex min-w-72 items-center gap-3">
+										<ProductImage src={l.imageUrl} />
+										<div className="min-w-0">
+											<Link
+												to="/products/$sku"
+												params={{ sku: l.sku }}
+												className="block hover:underline"
+											>
+												{/* Wraps instead of cutting off: on a PO the full name matters. */}
+												<span className="line-clamp-2 font-medium">
+													{l.name}
+													{l.variantName && (
+														<span className="ml-1.5 rounded-md bg-[#f1f1f1] px-1.5 text-xs font-normal text-muted-foreground">
+															{l.variantName}
+														</span>
+													)}
+												</span>
+											</Link>
+											<div className="text-xs text-muted-foreground">
+												{l.sku}
+												{l.kind === "bundle" && " · Set, sent as its parts"}
+											</div>
 										</div>
 									</div>
-								</div>
-							</td>
-							<td className="px-3 py-2">
-								<SupplierSkuField line={l} supplierId={d.supplier.id} />
-							</td>
-							<td className="px-3 py-2">
-								<PurchaseUnitCell
-									label={l.sku}
-									value={l}
-									cost={l.unitCost}
-									units={draft ? d.units : undefined}
-									saving={{
-										save: (terms) =>
-											setPurchaseLineTerms({
-												data: {
-													purchaseOrderId: d.order.id,
-													productId: l.productId,
-													...terms,
-													makeDefault: false,
-												},
-											}),
-										// Only the product's own supplier's terms can change here.
-										...(l.linkSupplierId === d.supplier.id
-											? {
-													current: {
-														unit: l.defaultUnit ?? "EACH",
-														packSize: l.defaultPackSize ?? 1,
-														minimumQuantity: l.defaultMinimum ?? 1,
+								</td>
+								<td className="px-3 py-2">
+									<SupplierSkuField line={l} supplierId={d.supplier.id} />
+								</td>
+								<td className="px-3 py-2">
+									<PurchaseUnitCell
+										label={l.sku}
+										value={l}
+										cost={l.unitCost}
+										units={draft ? d.units : undefined}
+										saving={{
+											save: (terms) =>
+												setPurchaseLineTerms({
+													data: {
+														purchaseOrderId: d.order.id,
+														productId: l.productId,
+														...terms,
+														makeDefault: false,
 													},
-													saveDefault: (terms) =>
-														setPurchaseLineTerms({
-															data: {
-																purchaseOrderId: d.order.id,
-																productId: l.productId,
-																...terms,
-																makeDefault: true,
-															},
-														}),
-												}
-											: {
-													noDefaultReason:
-														l.linkSupplierId === null
-															? "This product has no supplier yet; set one on its page"
-															: "This product is bought from another supplier",
 												}),
-									}}
-								/>
-							</td>
-							{draft && (
-								<td className="px-3 py-2 text-center">
-									{l.kind === "bundle" || !l.stockRange ? (
-										<span className="text-muted-foreground">—</span>
-									) : (
-										<StockRing onHand={l.onHand} range={l.stockRange} />
-									)}
-								</td>
-							)}
-							<td className="px-3 py-2 text-right font-semibold tabular-nums">
-								{draft ? (
-									<QuantityField
-										key={`q${l.quantity}`}
-										line={l}
-										purchaseOrderId={d.order.id}
+											// Only the product's own supplier's terms can change here.
+											...(l.linkSupplierId === d.supplier.id
+												? {
+														current: {
+															unit: l.defaultUnit ?? "EACH",
+															packSize: l.defaultPackSize ?? 1,
+															minimumQuantity: l.defaultMinimum ?? 1,
+														},
+														saveDefault: (terms) =>
+															setPurchaseLineTerms({
+																data: {
+																	purchaseOrderId: d.order.id,
+																	productId: l.productId,
+																	...terms,
+																	makeDefault: true,
+																},
+															}),
+													}
+												: {
+														noDefaultReason:
+															l.linkSupplierId === null
+																? "This product has no supplier yet; set one on its page"
+																: "This product is bought from another supplier",
+													}),
+										}}
 									/>
-								) : (
-									formatCount(l.quantity)
+								</td>
+								{draft && (
+									<td className="px-3 py-2 text-center">
+										{l.kind === "bundle" || !l.stockRange ? (
+											<span className="text-muted-foreground">—</span>
+										) : (
+											<StockRing onHand={l.onHand} range={l.stockRange} />
+										)}
+									</td>
 								)}
-							</td>
-							<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
-								{l.kind === "bundle" ? (
-									<span className="text-muted-foreground">As parts</span>
-								) : draft ? (
-									<PriceField line={l} purchaseOrderId={d.order.id} />
-								) : (
-									formatMoney(l.unitCost)
-								)}
-							</td>
-							<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
-								{l.unitCost === null
-									? "—"
-									: formatMoney(l.unitCost * l.quantity)}
-							</td>
-							{!draft && (
-								<td className="px-4 py-2 text-right whitespace-nowrap">
-									{receiving && l.received < l.quantity ? (
-										<ReceiveField line={l} />
+								<td className="px-3 py-2 text-right font-semibold tabular-nums">
+									{draft ? (
+										<QuantityField
+											key={`q${l.quantity}`}
+											line={l}
+											purchaseOrderId={d.order.id}
+										/>
 									) : (
-										<Badge
-											tone={l.received >= l.quantity ? "success" : undefined}
-										>
-											{formatCount(l.received)} of {formatCount(l.quantity)}
-										</Badge>
+										formatCount(l.quantity)
 									)}
 								</td>
-							)}
-						</tr>
-						{l.kind === "bundle" && <SetParts detail={d} line={l} />}
-					</Fragment>
-				))}
-			</tbody>
-		</table>
+								<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+									{l.kind === "bundle" ? (
+										<span className="text-muted-foreground">As parts</span>
+									) : draft ? (
+										<PriceField line={l} purchaseOrderId={d.order.id} />
+									) : (
+										formatMoney(l.unitCost)
+									)}
+								</td>
+								<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
+									{l.unitCost === null
+										? "—"
+										: formatMoney(l.unitCost * l.quantity)}
+								</td>
+								{!draft && (
+									<td className="px-4 py-2 text-right whitespace-nowrap">
+										{receiving && l.received < l.quantity ? (
+											<ReceiveField line={l} />
+										) : (
+											<Badge
+												tone={l.received >= l.quantity ? "success" : undefined}
+											>
+												{formatCount(l.received)} of {formatCount(l.quantity)}
+											</Badge>
+										)}
+									</td>
+								)}
+							</tr>
+							{l.kind === "bundle" && <SetParts detail={d} line={l} />}
+						</Fragment>
+					))}
+				</tbody>
+			</table>
+		</div>
 	);
 }
 
@@ -744,16 +754,18 @@ function QuantityField({
 	);
 }
 
-// Reads as plain text with a dotted underline until clicked, and keeps its
-// size while typing, so editing doesn't push the columns around. Saves on
-// Enter or leaving the field; Escape puts the old text back. Shows what was
-// typed until the saved value comes back.
+// Reads as text with a dotted underline, like everything else that can be
+// changed, until clicked. Its box is a fixed size either way, so editing
+// doesn't push the columns around. Saves on Enter or leaving the field;
+// Escape puts the old text back. Shows what was typed until the saved value
+// comes back.
 function InlineField({
 	shown,
 	initial,
 	placeholder,
 	label,
 	inputMode,
+	align = "left",
 	className,
 	onSave,
 }: {
@@ -764,7 +776,9 @@ function InlineField({
 	placeholder: string;
 	label: string;
 	inputMode?: "decimal" | "text";
-	className?: string;
+	align?: "left" | "right";
+	// Sets the width.
+	className: string;
 	// Resolves to false when the value wasn't saved.
 	onSave: (text: string) => Promise<boolean>;
 }) {
@@ -790,39 +804,60 @@ function InlineField({
 		if (!(await onSave(text))) setPending(null);
 	}
 
+	const text = pending ?? (initial === "" ? "" : shown);
 	return (
-		<input
-			value={editing ? value : (pending ?? (initial === "" ? "" : shown))}
-			placeholder={placeholder}
-			aria-label={label}
-			inputMode={inputMode}
-			onFocus={(e) => {
-				setValue(pending ?? initial);
-				setEditing(true);
-				const input = e.currentTarget;
-				requestAnimationFrame(() => input.select());
-			}}
-			onChange={(e) => setValue(e.target.value)}
-			onBlur={finish}
-			onKeyDown={(e) => {
-				if (e.key === "Enter") e.currentTarget.blur();
-				if (e.key === "Escape") {
-					cancelled.current = true;
-					e.stopPropagation();
-					e.currentTarget.blur();
-				}
-			}}
+		<span
 			className={cn(
-				"h-8 cursor-text rounded-md border border-transparent bg-transparent px-1.5 tabular-nums outline-none placeholder:text-muted-foreground",
-				"underline decoration-[#b5b5b5] decoration-dotted underline-offset-4 hover:decoration-foreground",
-				"focus:border-ring focus:bg-white focus:no-underline",
+				"relative inline-flex h-8 items-center px-1.5 align-middle",
+				align === "right" && "justify-end",
 				className,
 			)}
-		/>
+		>
+			{editing ? (
+				<input
+					value={value}
+					// biome-ignore lint/a11y/noAutofocus: opened by a click to type
+					autoFocus
+					onFocus={(e) => e.currentTarget.select()}
+					placeholder={placeholder}
+					aria-label={label}
+					inputMode={inputMode}
+					onChange={(e) => setValue(e.target.value)}
+					onBlur={finish}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") e.currentTarget.blur();
+						if (e.key === "Escape") {
+							cancelled.current = true;
+							e.stopPropagation();
+							e.currentTarget.blur();
+						}
+					}}
+					className={cn(
+						"absolute inset-0 w-full rounded-md border border-ring bg-white px-[5px] tabular-nums outline-none",
+						align === "right" && "text-right",
+					)}
+				/>
+			) : (
+				<button
+					type="button"
+					aria-label={label}
+					onClick={() => {
+						setValue(pending ?? initial);
+						setEditing(true);
+					}}
+					className={cn(
+						"max-w-full cursor-text truncate border-b border-dotted border-[#b5b5b5] leading-tight tabular-nums hover:border-foreground",
+						text === "" && "text-muted-foreground",
+					)}
+				>
+					{text === "" ? placeholder : text}
+				</button>
+			)}
+		</span>
 	);
 }
 
-// A draft line's price. Empty means no price yet.
+// A draft line's cost per unit. Empty means no cost yet.
 function PriceField({
 	line,
 	purchaseOrderId,
@@ -835,14 +870,15 @@ function PriceField({
 		<InlineField
 			shown={formatMoney(line.unitCost)}
 			initial={line.unitCost?.toFixed(2) ?? ""}
-			placeholder="Add price"
-			label={`Price of ${line.sku}`}
+			placeholder="Add cost"
+			label={`Cost of ${line.sku}`}
 			inputMode="decimal"
-			className="w-24 text-right"
+			align="right"
+			className="w-24"
 			onSave={async (text) => {
 				const n = Number(text.replace(/^\$/, ""));
 				if (text !== "" && !(Number.isFinite(n) && n >= 0)) {
-					toast.error(`"${text}" isn't a price`);
+					toast.error(`"${text}" isn't a cost`);
 					return false;
 				}
 				const r = await run(() =>
