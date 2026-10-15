@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -102,9 +102,13 @@ export async function partsOfSets(
 		.leftJoin(
 			purchaseOrderMovedParts,
 			and(
-				eq(purchaseOrderMovedParts.lineId, purchaseOrderLines.id),
 				eq(
-					purchaseOrderMovedParts.productId,
+					purchaseOrderMovedParts.purchaseOrderId,
+					purchaseOrderLines.purchaseOrderId,
+				),
+				eq(purchaseOrderMovedParts.setProductId, purchaseOrderLines.productId),
+				eq(
+					purchaseOrderMovedParts.partProductId,
 					productComponents.componentProductId,
 				),
 			),
@@ -113,7 +117,7 @@ export async function partsOfSets(
 			and(
 				eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
 				eq(products.kind, "bundle"),
-				isNull(purchaseOrderMovedParts.lineId),
+				isNull(purchaseOrderMovedParts.purchaseOrderId),
 			),
 		);
 	const parts = new Map<number, number>();
@@ -183,6 +187,7 @@ export async function movePartToSupplier(
 		// Read under the lock, so it's the quantity the set has now.
 		const [part] = await tx
 			.select({
+				setProductId: purchaseOrderLines.productId,
 				items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
 			})
 			.from(purchaseOrderLines)
@@ -202,7 +207,11 @@ export async function movePartToSupplier(
 			throw new PurchaseOrderError(`${link.sku} isn't part of that set`);
 		const moved = await tx
 			.insert(purchaseOrderMovedParts)
-			.values(input)
+			.values({
+				purchaseOrderId: found.purchaseOrderId,
+				setProductId: part.setProductId,
+				partProductId: input.productId,
+			})
 			.onConflictDoNothing()
 			.returning();
 		if (moved.length === 0)
@@ -384,6 +393,10 @@ export async function setDraftLine(
 			return { ...terms, quantity };
 		}
 		await refuseEmptySet(tx, input.productId, product);
+		if (product.kind === "bundle" && input.unitCost != null)
+			throw new PurchaseOrderError(
+				`${product.sku} is a tool set; it's priced as its parts when sent`,
+			);
 		await tx
 			.insert(purchaseOrderLines)
 			.values({
@@ -435,9 +448,15 @@ async function newLine(tx: Db, productId: number) {
 			packSize,
 			minimumQuantity: product.minimumQuantity ?? 1,
 		},
+		// A tool set has no price of its own: sending replaces it with its
+		// parts, each at its own price.
 		unitCost:
-			product.supplierCost ??
-			(product.productCost === null ? null : product.productCost * packSize),
+			product.kind === "bundle"
+				? null
+				: (product.supplierCost ??
+					(product.productCost === null
+						? null
+						: product.productCost * packSize)),
 	};
 }
 
@@ -542,6 +561,24 @@ export async function removeAddedLine(
 					line.unitCost === null
 						? isNull(purchaseOrderLines.unitCost)
 						: eq(purchaseOrderLines.unitCost, line.unitCost),
+					// Moving one of a set's parts is a change too.
+					notExists(
+						tx
+							.select({ id: purchaseOrderMovedParts.partProductId })
+							.from(purchaseOrderMovedParts)
+							.where(
+								and(
+									eq(
+										purchaseOrderMovedParts.purchaseOrderId,
+										input.purchaseOrderId,
+									),
+									eq(
+										purchaseOrderMovedParts.setProductId,
+										purchaseOrderLines.productId,
+									),
+								),
+							),
+					),
 				),
 			)
 			.returning({ id: purchaseOrderLines.id });

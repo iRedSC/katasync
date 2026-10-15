@@ -84,7 +84,11 @@ function PurchaseOrderPage() {
 	);
 	const status = purchaseOrderStatus({ ...po, ordered, received });
 	const total = d.lines.reduce((n, l) => n + l.quantity * (l.unitCost ?? 0), 0);
-	const unpriced = d.lines.filter((l) => l.unitCost === null).length;
+	// Tool sets are priced as their parts when sent, so they're counted apart.
+	const sets = d.lines.filter((l) => l.kind === "bundle").length;
+	const unpriced = d.lines.filter(
+		(l) => l.unitCost === null && l.kind !== "bundle",
+	).length;
 	const canEmail = d.emailConfigured && Boolean(d.supplier.email);
 
 	useHotkeys({ Escape: () => navigate({ to: "/purchasing" }) });
@@ -174,6 +178,8 @@ function PurchaseOrderPage() {
 							<span className="text-muted-foreground">
 								{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
 								{unpriced > 0 && `, ${unpriced} without a price`}
+								{sets > 0 &&
+									`, plus ${sets === 1 ? "a set" : `${sets} sets`} priced as parts when sent`}
 							</span>
 							<span className="font-semibold tabular-nums">
 								{formatMoney(total)}
@@ -507,7 +513,9 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 								)}
 							</td>
 							<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
-								{draft ? (
+								{l.kind === "bundle" ? (
+									<span className="text-muted-foreground">As parts</span>
+								) : draft ? (
 									<PriceField
 										key={`c${l.unitCost}`}
 										line={l}

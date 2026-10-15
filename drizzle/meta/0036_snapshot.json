@@ -1,5 +1,5 @@
 {
-  "id": "5087f535-c06e-48ed-b87a-b510af6db87d",
+  "id": "9fc4e842-9ca4-4043-8bc0-9f021d708746",
   "prevId": "71deab04-076c-48d6-b611-455064e2894b",
   "version": "7",
   "dialect": "postgresql",
@@ -2074,14 +2074,20 @@
       "name": "purchase_order_moved_parts",
       "schema": "",
       "columns": {
-        "line_id": {
-          "name": "line_id",
+        "purchase_order_id": {
+          "name": "purchase_order_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "product_id": {
-          "name": "product_id",
+        "set_product_id": {
+          "name": "set_product_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "part_product_id": {
+          "name": "part_product_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
@@ -2089,12 +2095,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "purchase_order_moved_parts_line_id_purchase_order_lines_id_fk": {
-          "name": "purchase_order_moved_parts_line_id_purchase_order_lines_id_fk",
+        "purchase_order_moved_parts_purchase_order_id_purchase_orders_id_fk": {
+          "name": "purchase_order_moved_parts_purchase_order_id_purchase_orders_id_fk",
           "tableFrom": "purchase_order_moved_parts",
-          "tableTo": "purchase_order_lines",
+          "tableTo": "purchase_orders",
           "columnsFrom": [
-            "line_id"
+            "purchase_order_id"
           ],
           "columnsTo": [
             "id"
@@ -2102,12 +2108,25 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "purchase_order_moved_parts_product_id_products_id_fk": {
-          "name": "purchase_order_moved_parts_product_id_products_id_fk",
+        "purchase_order_moved_parts_set_product_id_products_id_fk": {
+          "name": "purchase_order_moved_parts_set_product_id_products_id_fk",
           "tableFrom": "purchase_order_moved_parts",
           "tableTo": "products",
           "columnsFrom": [
-            "product_id"
+            "set_product_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "purchase_order_moved_parts_part_product_id_products_id_fk": {
+          "name": "purchase_order_moved_parts_part_product_id_products_id_fk",
+          "tableFrom": "purchase_order_moved_parts",
+          "tableTo": "products",
+          "columnsFrom": [
+            "part_product_id"
           ],
           "columnsTo": [
             "id"
@@ -2117,11 +2136,12 @@
         }
       },
       "compositePrimaryKeys": {
-        "purchase_order_moved_parts_line_id_product_id_pk": {
-          "name": "purchase_order_moved_parts_line_id_product_id_pk",
+        "purchase_order_moved_parts_purchase_order_id_set_product_id_part_product_id_pk": {
+          "name": "purchase_order_moved_parts_purchase_order_id_set_product_id_part_product_id_pk",
           "columns": [
-            "line_id",
-            "product_id"
+            "purchase_order_id",
+            "set_product_id",
+            "part_product_id"
           ]
         }
       },

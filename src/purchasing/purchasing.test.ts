@@ -464,6 +464,75 @@ describe("a PO from draft to received", () => {
 		]);
 	});
 
+	test("a set has no price of its own, and a moved part stays moved", async () => {
+		const [{ id: other }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
+			.returning();
+		const handle = await createProduct(db, "HANDLE", "simple");
+		await db
+			.insert(schema.productSuppliers)
+			.values({ productId: handle, supplierId: other, cost: 1 });
+		const set = await createProduct(db, "SET", "bundle");
+		await db
+			.update(schema.products)
+			.set({ unitCost: 50 })
+			.where(eq(schema.products.id, set));
+		await setRecipe(db, set, [
+			{ productId: blade, quantity: 2 },
+			{ productId: handle, quantity: 1 },
+		]);
+		const id = await openDraft(db, canam);
+		await expect(
+			setDraftLine(db, {
+				purchaseOrderId: id,
+				productId: set,
+				quantity: 1,
+				unitCost: 100,
+			}),
+		).rejects.toThrow(/priced as its parts/);
+		const { line } = await addDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 1,
+		});
+		expect(line.unitCost).toBeNull();
+
+		const to = await movePartToSupplier(db, {
+			lineId: line.id,
+			productId: handle,
+		});
+		// Moving a part changed the set, so undoing the add leaves it.
+		expect(await removeAddedLine(db, { purchaseOrderId: id, line })).toBe(
+			false,
+		);
+
+		// Taking the set off and putting it back (Undo) keeps the part moved,
+		// so it isn't ordered from both suppliers.
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 0,
+		});
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 1,
+			unitCost: null,
+		});
+		expect(await setPartsOf(db, id)).toMatchObject([
+			{ sku: "BLADE", moved: false },
+			{ sku: "HANDLE", moved: true },
+		]);
+		await markSent(db, { purchaseOrderId: id, sentTo: null });
+		expect(await linesOf(id)).toMatchObject([
+			{ productId: blade, quantity: 2 },
+		]);
+		expect(await linesOf(to)).toMatchObject([
+			{ productId: handle, quantity: 1 },
+		]);
+	});
+
 	test("a set's part adds onto a line in cases, rounded up", async () => {
 		const set = await createProduct(db, "SET", "bundle");
 		await setRecipe(db, set, [{ productId: knife, quantity: 1 }]);

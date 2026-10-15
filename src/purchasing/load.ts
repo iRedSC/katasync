@@ -97,7 +97,7 @@ export async function setPartsOf(db: Db, poId: number) {
 			items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
 			supplierId: productSuppliers.supplierId,
 			supplierName: suppliers.name,
-			moved: sql<boolean>`${purchaseOrderMovedParts.lineId} is not null`,
+			moved: sql<boolean>`${purchaseOrderMovedParts.purchaseOrderId} is not null`,
 			unit: sql<string>`coalesce(${partLine.unit}, ${productSuppliers.unit}, 'EACH')`,
 			packSize: sql<number>`coalesce(${partLine.packSize}, ${productSuppliers.packSize}, 1)::int`,
 		})
@@ -113,8 +113,9 @@ export async function setPartsOf(db: Db, poId: number) {
 		.leftJoin(
 			purchaseOrderMovedParts,
 			and(
-				eq(purchaseOrderMovedParts.lineId, purchaseOrderLines.id),
-				eq(purchaseOrderMovedParts.productId, part.id),
+				eq(purchaseOrderMovedParts.purchaseOrderId, poId),
+				eq(purchaseOrderMovedParts.setProductId, purchaseOrderLines.productId),
+				eq(purchaseOrderMovedParts.partProductId, part.id),
 			),
 		)
 		.leftJoin(
