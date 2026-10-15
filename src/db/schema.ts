@@ -698,6 +698,30 @@ export const purchaseOrderLines = pgTable(
 	],
 );
 
+// Parts of a draft's tool set that were moved to the draft of the supplier
+// they're bought from, so this PO's set no longer orders them. Keyed by the
+// set rather than its line, so taking the set off and Undo keeps them moved.
+// Rules live in src/purchasing/orders.ts.
+export const purchaseOrderMovedParts = pgTable(
+	"purchase_order_moved_parts",
+	{
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id, { onDelete: "cascade" }),
+		setProductId: integer()
+			.notNull()
+			.references(() => products.id),
+		partProductId: integer()
+			.notNull()
+			.references(() => products.id),
+	},
+	(t) => [
+		primaryKey({
+			columns: [t.purchaseOrderId, t.setProductId, t.partProductId],
+		}),
+	],
+);
+
 // Each time units of a line are received, and each undo (a negative quantity
 // pointing at the receipt it reverses). Counted in the line's unit, like its
 // quantity. A line's received count is the sum.

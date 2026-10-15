@@ -1,10 +1,12 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
+	productComponents,
 	productSuppliers,
 	products,
 	purchaseOrderLines,
+	purchaseOrderMovedParts,
 	purchaseOrderReceipts,
 	purchaseOrders,
 	stockLevels,
@@ -53,24 +55,208 @@ export async function draftFromSuggestions(
 // suggestion now wants more of are raised. Nothing is lowered or removed, so
 // a quantity set by hand is never undone. A line may be in a different unit
 // from the suggestion (set on just this PO), so amounts compare as the product
-// itself, and a raise is in the line's unit, rounded up.
+// itself, and a raise is in the line's unit, rounded up. fromSets is what the
+// draft's tool sets will add of each part when it's sent (partsOfSets), so a
+// part already coming in a set isn't ordered twice.
 export function draftChanges(
 	draft: { productId: number; quantity: number; packSize: number }[],
 	suggested: SuggestedLine[],
+	fromSets: Map<number, number> = new Map(),
 ) {
 	const onDraft = new Map(draft.map((l) => [l.productId, l]));
+	const added: SuggestedLine[] = [];
 	const raised: (SuggestedLine & { raiseTo: number })[] = [];
 	for (const l of suggested) {
+		const want = l.quantity * l.packSize - (fromSets.get(l.productId) ?? 0);
 		const line = onDraft.get(l.productId);
-		if (!line) continue;
-		const want = l.quantity * l.packSize;
-		if (want > line.quantity * line.packSize)
+		if (!line) {
+			if (want > 0)
+				added.push({
+					...l,
+					quantity: Math.max(Math.ceil(want / l.packSize), l.minimumQuantity),
+				});
+		} else if (want > line.quantity * line.packSize)
 			raised.push({ ...l, raiseTo: Math.ceil(want / line.packSize) });
 	}
-	return {
-		added: suggested.filter((l) => !onDraft.has(l.productId)),
-		raised,
-	};
+	return { added, raised };
+}
+
+// How many single items of each part a draft's tool set lines come to,
+// leaving out parts moved to another supplier's draft. Kits on a PO are bought
+// whole, so only sets count.
+export async function partsOfSets(
+	db: Db,
+	purchaseOrderId: number,
+): Promise<Map<number, number>> {
+	const rows = await db
+		.select({
+			productId: productComponents.componentProductId,
+			items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
+		})
+		.from(purchaseOrderLines)
+		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+		.innerJoin(
+			productComponents,
+			eq(productComponents.parentProductId, purchaseOrderLines.productId),
+		)
+		.leftJoin(
+			purchaseOrderMovedParts,
+			and(
+				eq(
+					purchaseOrderMovedParts.purchaseOrderId,
+					purchaseOrderLines.purchaseOrderId,
+				),
+				eq(purchaseOrderMovedParts.setProductId, purchaseOrderLines.productId),
+				eq(
+					purchaseOrderMovedParts.partProductId,
+					productComponents.componentProductId,
+				),
+			),
+		)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
+				eq(products.kind, "bundle"),
+				isNull(purchaseOrderMovedParts.purchaseOrderId),
+			),
+		);
+	const parts = new Map<number, number>();
+	for (const r of rows)
+		parts.set(r.productId, (parts.get(r.productId) ?? 0) + r.items);
+	return parts;
+}
+
+// Replaces a draft's tool set lines with their parts, added onto the parts'
+// own lines when the draft has them. Runs as it's sent, so the supplier and
+// receiving only ever see things that are bought and shelved.
+async function splitSets(db: Db, purchaseOrderId: number) {
+	const sets = await db
+		.select({ id: purchaseOrderLines.id })
+		.from(purchaseOrderLines)
+		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
+				eq(products.kind, "bundle"),
+			),
+		);
+	if (sets.length === 0) return;
+	const parts = await partsOfSets(db, purchaseOrderId);
+	await db.delete(purchaseOrderLines).where(
+		inArray(
+			purchaseOrderLines.id,
+			sets.map((s) => s.id),
+		),
+	);
+	for (const [productId, items] of parts)
+		await addItems(db, purchaseOrderId, productId, items);
+}
+
+// Moves one part of a draft's tool set line to the draft of the supplier the
+// part is bought from, opening one if there isn't one. This PO's set then
+// leaves the part out. Moves what the set needs right now; changing the set's
+// quantity later doesn't change what was moved. Returns the draft it went to.
+export async function movePartToSupplier(
+	db: Db,
+	input: { lineId: number; productId: number },
+): Promise<number> {
+	const [link] = await db
+		.select({ supplierId: productSuppliers.supplierId, sku: products.sku })
+		.from(products)
+		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+		.where(eq(products.id, input.productId));
+	if (!link) throw new PurchaseOrderError("That product doesn't exist");
+	if (link.supplierId === null)
+		throw new PurchaseOrderError(
+			`${link.sku} has no supplier yet; set one on its page`,
+		);
+	const target = await openDraft(db, link.supplierId);
+	return db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		if (!found) throw new PurchaseOrderError("That line doesn't exist");
+		if (found.purchaseOrderId === target)
+			throw new PurchaseOrderError(
+				`${link.sku} is already bought from this PO's supplier`,
+			);
+		// Lowest first, so two moves between the same drafts can't deadlock.
+		for (const id of [found.purchaseOrderId, target].sort((a, b) => a - b))
+			await lockOrder(tx, id, ["draft"]);
+		// Read under the lock, so it's the quantity the set has now.
+		const [part] = await tx
+			.select({
+				setProductId: purchaseOrderLines.productId,
+				items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
+			})
+			.from(purchaseOrderLines)
+			.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+			.innerJoin(
+				productComponents,
+				eq(productComponents.parentProductId, purchaseOrderLines.productId),
+			)
+			.where(
+				and(
+					eq(purchaseOrderLines.id, input.lineId),
+					eq(products.kind, "bundle"),
+					eq(productComponents.componentProductId, input.productId),
+				),
+			);
+		if (!part)
+			throw new PurchaseOrderError(`${link.sku} isn't part of that set`);
+		const moved = await tx
+			.insert(purchaseOrderMovedParts)
+			.values({
+				purchaseOrderId: found.purchaseOrderId,
+				setProductId: part.setProductId,
+				partProductId: input.productId,
+			})
+			.onConflictDoNothing()
+			.returning();
+		if (moved.length === 0)
+			throw new PurchaseOrderError(`${link.sku} was already moved`);
+		await addItems(tx, target, input.productId, part.items);
+		return target;
+	});
+}
+
+// Adds single items of a product to a draft: onto its line in that line's
+// unit, rounded up to whole units, or as a new line in the supplier's unit.
+async function addItems(
+	db: Db,
+	purchaseOrderId: number,
+	productId: number,
+	items: number,
+) {
+	const [line] = await db
+		.select({
+			id: purchaseOrderLines.id,
+			quantity: purchaseOrderLines.quantity,
+			packSize: purchaseOrderLines.packSize,
+		})
+		.from(purchaseOrderLines)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
+				eq(purchaseOrderLines.productId, productId),
+			),
+		);
+	if (line) {
+		await db
+			.update(purchaseOrderLines)
+			.set({ quantity: line.quantity + Math.ceil(items / line.packSize) })
+			.where(eq(purchaseOrderLines.id, line.id));
+		return;
+	}
+	const { terms, unitCost } = await newLine(db, productId);
+	await db.insert(purchaseOrderLines).values({
+		purchaseOrderId,
+		productId,
+		...terms,
+		quantity: Math.ceil(items / terms.packSize),
+		unitCost,
+	});
 }
 
 // Applies draftChanges to a draft. Returns how many lines it added and raised.
@@ -93,7 +279,11 @@ export async function updateFromSuggestions(
 			})
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
-		const { added, raised } = draftChanges(current, suggested);
+		const { added, raised } = draftChanges(
+			current,
+			suggested,
+			await partsOfSets(tx, po.id),
+		);
 		if (added.length > 0)
 			await tx.insert(purchaseOrderLines).values(
 				added.map((l) => ({
@@ -159,7 +349,8 @@ export async function openDraft(db: Db, supplierId: number): Promise<number> {
 // line at the supplier's price. With inItems, quantity counts single items and
 // rounds up to whole packs of the line's pack size, read under the same lock
 // as the write so a change to the terms can't slip in between. Returns the
-// line's terms and the quantity it ended up with, in its unit.
+// line's terms and the quantity it ended up with, in its unit. A tool set gets
+// its own line here and is split into its parts when the PO is sent.
 export async function setDraftLine(
 	db: Db,
 	input: {
@@ -201,7 +392,11 @@ export async function setDraftLine(
 			await tx.delete(purchaseOrderLines).where(where);
 			return { ...terms, quantity };
 		}
-		refuseToolSet(product);
+		await refuseEmptySet(tx, input.productId, product);
+		if (product.kind === "bundle" && input.unitCost != null)
+			throw new PurchaseOrderError(
+				`${product.sku} is a tool set; it's priced as its parts when sent`,
+			);
 		await tx
 			.insert(purchaseOrderLines)
 			.values({
@@ -209,6 +404,7 @@ export async function setDraftLine(
 				productId: input.productId,
 				...terms,
 				quantity,
+				// A new line's terms are the supplier's, so its price is too.
 				unitCost:
 					input.unitCost !== undefined ? input.unitCost : product.unitCost,
 			})
@@ -252,16 +448,34 @@ async function newLine(tx: Db, productId: number) {
 			packSize,
 			minimumQuantity: product.minimumQuantity ?? 1,
 		},
+		// A tool set has no price of its own: sending replaces it with its
+		// parts, each at its own price.
 		unitCost:
-			product.supplierCost ??
-			(product.productCost === null ? null : product.productCost * packSize),
+			product.kind === "bundle"
+				? null
+				: (product.supplierCost ??
+					(product.productCost === null
+						? null
+						: product.productCost * packSize)),
 	};
 }
 
-function refuseToolSet(product: { kind: string; sku: string }) {
-	if (product.kind === "bundle")
+// A tool set goes on a draft as its own line and becomes its parts when the PO
+// is sent, so it needs parts to become.
+async function refuseEmptySet(
+	tx: Db,
+	productId: number,
+	product: { kind: string; sku: string },
+) {
+	if (product.kind !== "bundle") return;
+	const [part] = await tx
+		.select({ id: productComponents.componentProductId })
+		.from(productComponents)
+		.where(eq(productComponents.parentProductId, productId))
+		.limit(1);
+	if (!part)
 		throw new PurchaseOrderError(
-			`${product.sku} is a tool set; order its parts instead`,
+			`${product.sku} is a tool set with no parts yet; add them on its page`,
 		);
 }
 
@@ -309,7 +523,7 @@ export async function addDraftLine(
 			);
 		if (existing) return { added: false, line: existing };
 		const product = await newLine(tx, input.productId);
-		refuseToolSet(product);
+		await refuseEmptySet(tx, input.productId, product);
 		const [line] = await tx
 			.insert(purchaseOrderLines)
 			.values({
@@ -347,6 +561,24 @@ export async function removeAddedLine(
 					line.unitCost === null
 						? isNull(purchaseOrderLines.unitCost)
 						: eq(purchaseOrderLines.unitCost, line.unitCost),
+					// Moving one of a set's parts is a change too.
+					notExists(
+						tx
+							.select({ id: purchaseOrderMovedParts.partProductId })
+							.from(purchaseOrderMovedParts)
+							.where(
+								and(
+									eq(
+										purchaseOrderMovedParts.purchaseOrderId,
+										input.purchaseOrderId,
+									),
+									eq(
+										purchaseOrderMovedParts.setProductId,
+										purchaseOrderLines.productId,
+									),
+								),
+							),
+					),
 				),
 			)
 			.returning({ id: purchaseOrderLines.id });
@@ -403,6 +635,7 @@ export async function markSent(
 	const now = input.now ?? new Date();
 	return db.transaction(async (tx) => {
 		const po = await lockOrder(tx, input.purchaseOrderId, ["draft"]);
+		await splitSets(tx, po.id);
 		const lines = await tx
 			.select({ id: purchaseOrderLines.id })
 			.from(purchaseOrderLines)

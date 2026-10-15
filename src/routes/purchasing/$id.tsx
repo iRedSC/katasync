@@ -4,8 +4,8 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { FileText, Mail, Smartphone } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { AlertTriangle, FileText, Mail, Smartphone } from "lucide-react";
+import { Fragment, type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page } from "#/components/page";
@@ -30,6 +30,7 @@ import {
 	closePurchaseOrder,
 	editDraft,
 	getPurchaseOrder,
+	moveSetPart,
 	type PurchaseOrderDetail,
 	receiveLine,
 	sendPurchaseOrder,
@@ -83,7 +84,11 @@ function PurchaseOrderPage() {
 	);
 	const status = purchaseOrderStatus({ ...po, ordered, received });
 	const total = d.lines.reduce((n, l) => n + l.quantity * (l.unitCost ?? 0), 0);
-	const unpriced = d.lines.filter((l) => l.unitCost === null).length;
+	// Tool sets are priced as their parts when sent, so they're counted apart.
+	const sets = d.lines.filter((l) => l.kind === "bundle").length;
+	const unpriced = d.lines.filter(
+		(l) => l.unitCost === null && l.kind !== "bundle",
+	).length;
 	const canEmail = d.emailConfigured && Boolean(d.supplier.email);
 
 	useHotkeys({ Escape: () => navigate({ to: "/purchasing" }) });
@@ -173,6 +178,8 @@ function PurchaseOrderPage() {
 							<span className="text-muted-foreground">
 								{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
 								{unpriced > 0 && `, ${unpriced} without a price`}
+								{sets > 0 &&
+									`, plus ${sets === 1 ? "a set" : `${sets} sets`} priced as parts when sent`}
 							</span>
 							<span className="font-semibold tabular-nums">
 								{formatMoney(total)}
@@ -410,129 +417,222 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 			</thead>
 			<tbody>
 				{d.lines.map((l) => (
-					<tr key={l.id} className="border-t first:border-t-0">
-						<td className="w-full max-w-0 px-4 py-2">
-							<div className="flex items-center gap-3">
-								<ProductImage src={l.imageUrl} />
-								<div className="min-w-0">
-									<Link
-										to="/products/$sku"
-										params={{ sku: l.sku }}
-										className="block hover:underline"
-									>
-										{/* Wraps instead of cutting off: on a PO the full name matters. */}
-										<span className="line-clamp-2 font-medium">
-											{l.name}
-											{l.variantName && (
-												<span className="ml-1.5 rounded-md bg-[#f1f1f1] px-1.5 text-xs font-normal text-muted-foreground">
-													{l.variantName}
-												</span>
-											)}
-										</span>
-									</Link>
-									<div className="text-xs text-muted-foreground">
-										{l.sku}
-										{l.supplierSku && ` · theirs ${l.supplierSku}`}
+					<Fragment key={l.id}>
+						<tr className="border-t first:border-t-0">
+							<td className="w-full max-w-0 px-4 py-2">
+								<div className="flex items-center gap-3">
+									<ProductImage src={l.imageUrl} />
+									<div className="min-w-0">
+										<Link
+											to="/products/$sku"
+											params={{ sku: l.sku }}
+											className="block hover:underline"
+										>
+											{/* Wraps instead of cutting off: on a PO the full name matters. */}
+											<span className="line-clamp-2 font-medium">
+												{l.name}
+												{l.variantName && (
+													<span className="ml-1.5 rounded-md bg-[#f1f1f1] px-1.5 text-xs font-normal text-muted-foreground">
+														{l.variantName}
+													</span>
+												)}
+											</span>
+										</Link>
+										<div className="text-xs text-muted-foreground">
+											{l.sku}
+											{l.supplierSku && ` · theirs ${l.supplierSku}`}
+											{l.kind === "bundle" && " · Set, sent as its parts"}
+										</div>
 									</div>
 								</div>
-							</div>
-						</td>
-						<td className="px-3 py-2">
-							<PurchaseUnitCell
-								label={l.sku}
-								value={l}
-								cost={l.unitCost}
-								units={draft ? d.units : undefined}
-								saving={{
-									save: (terms) =>
-										setPurchaseLineTerms({
-											data: {
-												purchaseOrderId: d.order.id,
-												productId: l.productId,
-												...terms,
-												makeDefault: false,
-											},
-										}),
-									// Only the product's own supplier's terms can change here.
-									...(l.linkSupplierId === d.supplier.id
-										? {
-												current: {
-													unit: l.defaultUnit ?? "EACH",
-													packSize: l.defaultPackSize ?? 1,
-													minimumQuantity: l.defaultMinimum ?? 1,
+							</td>
+							<td className="px-3 py-2">
+								<PurchaseUnitCell
+									label={l.sku}
+									value={l}
+									cost={l.unitCost}
+									units={draft ? d.units : undefined}
+									saving={{
+										save: (terms) =>
+											setPurchaseLineTerms({
+												data: {
+													purchaseOrderId: d.order.id,
+													productId: l.productId,
+													...terms,
+													makeDefault: false,
 												},
-												saveDefault: (terms) =>
-													setPurchaseLineTerms({
-														data: {
-															purchaseOrderId: d.order.id,
-															productId: l.productId,
-															...terms,
-															makeDefault: true,
-														},
-													}),
-											}
-										: {
-												noDefaultReason:
-													l.linkSupplierId === null
-														? "This product has no supplier yet; set one on its page"
-														: "This product is bought from another supplier",
 											}),
-								}}
-							/>
-						</td>
-						{draft && (
-							<td
-								className={cn(
-									"px-4 py-2 text-right tabular-nums",
-									l.onHand < 0 ? "text-critical-text" : "text-muted-foreground",
-								)}
-							>
-								{formatCount(l.onHand)}
+										// Only the product's own supplier's terms can change here.
+										...(l.linkSupplierId === d.supplier.id
+											? {
+													current: {
+														unit: l.defaultUnit ?? "EACH",
+														packSize: l.defaultPackSize ?? 1,
+														minimumQuantity: l.defaultMinimum ?? 1,
+													},
+													saveDefault: (terms) =>
+														setPurchaseLineTerms({
+															data: {
+																purchaseOrderId: d.order.id,
+																productId: l.productId,
+																...terms,
+																makeDefault: true,
+															},
+														}),
+												}
+											: {
+													noDefaultReason:
+														l.linkSupplierId === null
+															? "This product has no supplier yet; set one on its page"
+															: "This product is bought from another supplier",
+												}),
+									}}
+								/>
 							</td>
-						)}
-						<td className="px-3 py-2 text-right font-semibold tabular-nums">
-							{draft ? (
-								<QuantityField
-									key={`q${l.quantity}`}
-									line={l}
-									purchaseOrderId={d.order.id}
-								/>
-							) : (
-								formatCount(l.quantity)
+							{draft && (
+								<td
+									className={cn(
+										"px-4 py-2 text-right tabular-nums",
+										l.onHand < 0
+											? "text-critical-text"
+											: "text-muted-foreground",
+									)}
+								>
+									{l.kind === "bundle" ? "—" : formatCount(l.onHand)}
+								</td>
 							)}
-						</td>
-						<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
-							{draft ? (
-								<PriceField
-									key={`c${l.unitCost}`}
-									line={l}
-									purchaseOrderId={d.order.id}
-								/>
-							) : (
-								formatMoney(l.unitCost)
-							)}
-						</td>
-						<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
-							{l.unitCost === null ? "—" : formatMoney(l.unitCost * l.quantity)}
-						</td>
-						{!draft && (
-							<td className="px-4 py-2 text-right whitespace-nowrap">
-								{receiving && l.received < l.quantity ? (
-									<ReceiveField line={l} />
+							<td className="px-3 py-2 text-right font-semibold tabular-nums">
+								{draft ? (
+									<QuantityField
+										key={`q${l.quantity}`}
+										line={l}
+										purchaseOrderId={d.order.id}
+									/>
 								) : (
-									<Badge
-										tone={l.received >= l.quantity ? "success" : undefined}
-									>
-										{formatCount(l.received)} of {formatCount(l.quantity)}
-									</Badge>
+									formatCount(l.quantity)
 								)}
 							</td>
-						)}
-					</tr>
+							<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+								{l.kind === "bundle" ? (
+									<span className="text-muted-foreground">As parts</span>
+								) : draft ? (
+									<PriceField
+										key={`c${l.unitCost}`}
+										line={l}
+										purchaseOrderId={d.order.id}
+									/>
+								) : (
+									formatMoney(l.unitCost)
+								)}
+							</td>
+							<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
+								{l.unitCost === null
+									? "—"
+									: formatMoney(l.unitCost * l.quantity)}
+							</td>
+							{!draft && (
+								<td className="px-4 py-2 text-right whitespace-nowrap">
+									{receiving && l.received < l.quantity ? (
+										<ReceiveField line={l} />
+									) : (
+										<Badge
+											tone={l.received >= l.quantity ? "success" : undefined}
+										>
+											{formatCount(l.received)} of {formatCount(l.quantity)}
+										</Badge>
+									)}
+								</td>
+							)}
+						</tr>
+						{l.kind === "bundle" && <SetParts detail={d} line={l} />}
+					</Fragment>
 				))}
 			</tbody>
 		</table>
 	);
+}
+
+// A set's parts, under its line on a draft. Sending puts them on this PO,
+// except parts moved to their own supplier's draft. A part bought from
+// another supplier is flagged with a button to move it there.
+function SetParts({
+	detail: d,
+	line,
+}: {
+	detail: PurchaseOrderDetail;
+	line: Line;
+}) {
+	const { busy, run } = useAction();
+	return d.setParts
+		.filter((p) => p.lineId === line.id)
+		.map((p) => {
+			const elsewhere =
+				!p.moved && p.supplierId !== null && p.supplierId !== d.supplier.id;
+			const units = Math.ceil(p.items / p.packSize);
+			const extra = units * p.packSize - p.items;
+			return (
+				<tr key={p.productId} className="text-xs">
+					<td className="max-w-0 py-1 pr-4 pl-[4.25rem]">
+						<div
+							className={cn(
+								"truncate",
+								p.moved && "line-through text-muted-foreground",
+							)}
+						>
+							{p.name}
+							{p.variantName && ` (${p.variantName})`}
+							<span className="text-muted-foreground"> · {p.sku}</span>
+						</div>
+						{p.moved ? (
+							<div className="text-muted-foreground">
+								Moved to {p.supplierName}'s draft
+							</div>
+						) : elsewhere ? (
+							<div className="flex items-center gap-2 text-warning-text">
+								<AlertTriangle className="size-3.5 shrink-0" />
+								Bought from {p.supplierName}
+								<Button
+									size="sm"
+									variant="outline"
+									className="h-6 px-2 text-xs"
+									disabled={busy}
+									onClick={() =>
+										run(
+											() =>
+												moveSetPart({
+													data: { lineId: line.id, productId: p.productId },
+												}),
+											(po) => `Moved ${p.sku} to PO ${po}`,
+										)
+									}
+								>
+									Move to {p.supplierName}
+								</Button>
+							</div>
+						) : (
+							p.supplierId === null && (
+								<div className="flex items-center gap-2 text-warning-text">
+									<AlertTriangle className="size-3.5 shrink-0" />
+									No supplier yet; set one on its page
+								</div>
+							)
+						)}
+					</td>
+					<td
+						colSpan={5}
+						className="px-4 py-1 text-right text-muted-foreground tabular-nums"
+					>
+						{!p.moved && (
+							<>
+								{formatCount(p.items)} needed
+								{p.packSize > 1 &&
+									`, adds ${formatCount(units)} ${p.unit} of ${p.packSize}${extra > 0 ? ` (${formatCount(extra)} extra)` : ""}`}
+							</>
+						)}
+					</td>
+				</tr>
+			);
+		});
 }
 
 const field =

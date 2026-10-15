@@ -1,10 +1,13 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
 	locations,
+	productComponents,
 	productSuppliers,
 	products,
 	purchaseOrderLines,
+	purchaseOrderMovedParts,
 	purchaseOrderReceipts,
 	purchaseOrders,
 	suppliers,
@@ -48,6 +51,8 @@ export async function loadOrder(db: Db, poId: number) {
 			id: purchaseOrderLines.id,
 			productId: products.id,
 			sku: products.sku,
+			// A tool set only appears on drafts; sending splits it into parts.
+			kind: products.kind,
 			name: products.name,
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,
@@ -73,6 +78,57 @@ export async function loadOrder(db: Db, poId: number) {
 		.where(eq(purchaseOrderLines.purchaseOrderId, poId))
 		.orderBy(products.name, products.variantName);
 	return { ...po, lines };
+}
+
+// The parts of a draft's tool set lines, for showing under each set: how many
+// single items it needs, who the part is bought from, whether it was moved to
+// that supplier's draft, and the unit it will land in when sent (its line on
+// this PO, else the supplier's unit), which may round it up.
+export async function setPartsOf(db: Db, poId: number) {
+	const part = alias(products, "part");
+	const partLine = alias(purchaseOrderLines, "part_line");
+	return db
+		.select({
+			lineId: purchaseOrderLines.id,
+			productId: part.id,
+			sku: part.sku,
+			name: part.name,
+			variantName: part.variantName,
+			items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
+			supplierId: productSuppliers.supplierId,
+			supplierName: suppliers.name,
+			moved: sql<boolean>`${purchaseOrderMovedParts.purchaseOrderId} is not null`,
+			unit: sql<string>`coalesce(${partLine.unit}, ${productSuppliers.unit}, 'EACH')`,
+			packSize: sql<number>`coalesce(${partLine.packSize}, ${productSuppliers.packSize}, 1)::int`,
+		})
+		.from(purchaseOrderLines)
+		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+		.innerJoin(
+			productComponents,
+			eq(productComponents.parentProductId, purchaseOrderLines.productId),
+		)
+		.innerJoin(part, eq(part.id, productComponents.componentProductId))
+		.leftJoin(productSuppliers, eq(productSuppliers.productId, part.id))
+		.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+		.leftJoin(
+			purchaseOrderMovedParts,
+			and(
+				eq(purchaseOrderMovedParts.purchaseOrderId, poId),
+				eq(purchaseOrderMovedParts.setProductId, purchaseOrderLines.productId),
+				eq(purchaseOrderMovedParts.partProductId, part.id),
+			),
+		)
+		.leftJoin(
+			partLine,
+			and(eq(partLine.purchaseOrderId, poId), eq(partLine.productId, part.id)),
+		)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, poId),
+				eq(products.kind, "bundle"),
+			),
+		)
+		.orderBy(part.name, part.variantName);
 }
 
 export async function documentFor(db: Db, poId: number) {

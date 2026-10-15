@@ -17,6 +17,7 @@ import {
 	documentFor,
 	loadOrder,
 	receivedByLine,
+	setPartsOf,
 	supplierRows,
 } from "#/purchasing/load";
 import {
@@ -26,8 +27,10 @@ import {
 	draftChanges,
 	draftFromSuggestions,
 	markSent,
+	movePartToSupplier,
 	openDraft,
 	PurchaseOrderError,
+	partsOfSets,
 	receive,
 	removeAddedLine,
 	setDraftLine,
@@ -130,7 +133,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const po = await loadOrder(db, data.id);
-		const [onHand, receipts, ownedLocations, changes, units] =
+		const [onHand, receipts, ownedLocations, changes, units, setParts] =
 			await Promise.all([
 				onHandOf(
 					db,
@@ -165,15 +168,19 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 					.orderBy(locations.name),
 				// On a draft: how today's suggestions differ from it (see draftChanges).
 				po.order.status === "draft"
-					? suggestPurchases(db).then((all) => {
-							const c = draftChanges(
-								po.lines,
-								all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
-							);
-							return { added: c.added.length, raised: c.raised.length };
-						})
+					? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
+							([all, fromSets]) => {
+								const c = draftChanges(
+									po.lines,
+									all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
+									fromSets,
+								);
+								return { added: c.added.length, raised: c.raised.length };
+							},
+						)
 					: { added: 0, raised: 0 },
 				listUnits(db).then((all) => all.map((u) => u.name)),
+				po.order.status === "draft" ? setPartsOf(db, data.id) : [],
 			]);
 		return {
 			changes,
@@ -182,6 +189,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				...l,
 				onHand: onHand.get(l.productId) ?? 0,
 			})),
+			setParts,
 			receipts,
 			locations: ownedLocations,
 			units,
@@ -217,6 +225,13 @@ export const setLine = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => setDraftLine(getDb(), data));
+
+// Moves one part of a set on a draft to its own supplier's draft.
+export const moveSetPart = createServerFn({ method: "POST" })
+	.validator(
+		type({ lineId: "number.integer > 0", productId: "number.integer > 0" }),
+	)
+	.handler(async ({ data }) => movePartToSupplier(getDb(), data));
 
 export const editDraft = createServerFn({ method: "POST" })
 	.validator(
