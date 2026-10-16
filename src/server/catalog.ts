@@ -27,7 +27,6 @@ import {
 	requestCounts,
 	undoBatch,
 } from "#/inventory/ledger";
-import { soldSince } from "#/inventory/sales";
 import {
 	defaultMinStock,
 	defaultRanges,
@@ -43,8 +42,8 @@ import {
 import { purchaseOrderOfBatch } from "#/purchasing/orders";
 import {
 	aItemsAtRisk,
-	DEMAND_DAYS,
 	draftLines,
+	loadPlan,
 	reorderNeeds,
 	unitsOnOrder,
 } from "#/purchasing/reorder";
@@ -83,6 +82,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
 			.orderBy(products.name, products.variantName);
 		const ranked = abcClasses(db);
+		const plan = loadPlan(db, new Date(), ranked);
 		const ids = rows.map((r) => r.id);
 		const [
 			available,
@@ -94,7 +94,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			needs,
 			shelves,
 			ranges,
-			sold,
+			planned,
 			components,
 			setSupplier,
 		] = await Promise.all([
@@ -124,7 +124,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			ranked,
 			unitsOnOrder(db),
 			draftLines(db),
-			ranked.then((abc) => reorderNeeds(db, new Date(), abc)),
+			reorderNeeds(db, new Date(), plan),
 			// Counts across our own shelves: the oldest, null when any shelf
 			// was never counted, and whether one is waiting to be counted.
 			db
@@ -140,10 +140,8 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
 				.where(eq(locations.kind, "owned"))
 				.groupBy(stockLevels.productId),
-			ranked.then((abc) => stockRanges(db, ids, abc)),
-			soldSince(db, new Date(Date.now() - DEMAND_DAYS * 86_400_000), {
-				includeFba: false,
-			}),
+			stockRanges(db, ids, plan),
+			plan,
 			db
 				.select({
 					setId: productComponents.parentProductId,
@@ -194,7 +192,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				lastCountedAt: counted.get(r.id)?.oldest ?? null,
 				countRequested: counted.get(r.id)?.requested ?? false,
 				// Units a day over the reorder window, as reorder sizes them.
-				dailyDemand: (sold.get(r.id) ?? 0) / DEMAND_DAYS,
+				dailyDemand: planned.forecasts.get(r.id)?.dailyDemand ?? 0,
 			};
 		});
 		// A tool set reads like any product: its class from its own sales

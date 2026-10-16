@@ -11,6 +11,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { cn } from "#/lib/utils";
+import { type LeadTime, MIN_MEASURED_POS } from "#/purchasing/forecast";
 import type { PlaceAddress } from "#/server/places";
 import { type SupplierRow, updateSupplier } from "#/server/purchasing";
 
@@ -24,10 +25,13 @@ const input =
 // Cancel or Esc still close it.
 export function SupplierDialog({
 	supplier,
+	leadTime,
 	open,
 	onOpenChange,
 }: {
 	supplier: Supplier;
+	// What reorder plans on, so the form can say when it isn't the typed one.
+	leadTime: LeadTime;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
@@ -75,6 +79,7 @@ export function SupplierDialog({
 					// Fresh fields each time it opens.
 					key={String(open)}
 					s={supplier}
+					leadTime={leadTime}
 					onDirty={(d) => {
 						setDirty(d);
 						if (!d) setBlocked(false);
@@ -89,11 +94,13 @@ export function SupplierDialog({
 
 function SupplierForm({
 	s,
+	leadTime,
 	onDirty,
 	blocked,
 	onDone,
 }: {
 	s: Supplier;
+	leadTime: LeadTime;
 	onDirty: (dirty: boolean) => void;
 	blocked: boolean;
 	onDone: () => void;
@@ -236,6 +243,11 @@ function SupplierForm({
 						defaultValue={s.leadTimeDays}
 						className={cn(input, "tabular-nums")}
 					/>
+					<span className="text-xs text-muted-foreground">
+						{leadTime.measured
+							? `Reorder uses ${leadTime.measured.days}, measured from the last ${leadTime.measured.pos} POs`
+							: `Used until ${MIN_MEASURED_POS} POs arrive, then measured`}
+					</span>
 				</Field>
 				<Field label="Cover (days)">
 					<input

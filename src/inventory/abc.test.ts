@@ -4,7 +4,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { postMovements, recordCount } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
-import { aItemsAtRisk, safetyDays } from "#/purchasing/reorder";
+import { aItemsAtRisk } from "#/purchasing/reorder";
 import { createProduct, createTestDb } from "#/test/db";
 import { abcClasses, classify } from "./abc";
 
@@ -41,12 +41,6 @@ describe("classify", () => {
 	});
 });
 
-test("safety stock goes to A items only", () => {
-	expect(safetyDays("A", 15)).toBe(8);
-	expect(safetyDays("B", 15)).toBe(0);
-	expect(safetyDays(null, 15)).toBe(0);
-});
-
 describe("with a database", () => {
 	let db: Db;
 	let warehouse: number;
@@ -57,6 +51,7 @@ describe("with a database", () => {
 		productId: number,
 		quantity: number,
 		extra: Partial<typeof schema.orders.$inferInsert> = {},
+		unitPrice = 100,
 	) {
 		const n = ++orderCount;
 		const [order] = await db
@@ -78,7 +73,7 @@ describe("with a database", () => {
 			productId,
 			title: "x",
 			quantity,
-			unitPrice: 1,
+			unitPrice,
 		});
 	}
 
@@ -105,7 +100,7 @@ describe("with a database", () => {
 			.returning();
 	});
 
-	test("values tool sets through their parts, counts FBA, skips cancelled", async () => {
+	test("ranks by margin, sets earning for their parts; counts FBA, skips cancelled", async () => {
 		const blade = await product("BLADE", 10);
 		const handle = await product("HANDLE", 1);
 		const set = await createProduct(db, "SET", "bundle");
@@ -115,17 +110,34 @@ describe("with a database", () => {
 		await sell(blade, 5, { fulfilledByChannel: true });
 		await sell(blade, 100, { cancelledAt: now });
 		await sell(blade, 1, { placedAt: daysAgo(400) });
-		await sell(handle, 3);
+		await sell(handle, 3, {}, 2); // $3 margin: C beside the blade's
 
 		const { classes, days } = await abcClasses(db, now);
 		expect(classes.get(blade)).toMatchObject({ abc: "A", units: 15 });
-		expect(classes.get(blade)?.value).toBe(150);
+		// Margin: $500 of its own sales (FBA counts) and the sets' $500, all of
+		// it the blade's, less 15 blades at $10.
+		expect(classes.get(blade)?.value).toBe(850);
 		expect(classes.get(handle)?.abc).toBe("C");
 		expect(classes.has(set)).toBe(false);
 		expect(days).toBe(365);
 	});
 
-	test("ranks tool sets among themselves by their own sales", async () => {
+	test("a set that can't be costed leaves its parts' margin alone", async () => {
+		const blade = await product("BLADE", 10);
+		const noCost = await product("NOCOST-PART", null);
+		const set = await createProduct(db, "SET", "bundle");
+		await setRecipe(db, set, [
+			{ productId: blade, quantity: 1 },
+			{ productId: noCost, quantity: 1 },
+		]);
+		await sell(blade, 10, {}, 20); // $100 margin of its own
+		await sell(set, 100, {}, 50); // can't be split, so it doesn't count
+
+		const { classes } = await abcClasses(db, now);
+		expect(classes.get(blade)).toMatchObject({ abc: "A", value: 100 });
+	});
+
+	test("ranks tool sets among themselves by their own margin", async () => {
 		const blade = await product("BLADE", 10);
 		const pump = await product("PUMP", 300);
 		const big = await createProduct(db, "BIG", "bundle");
@@ -139,12 +151,12 @@ describe("with a database", () => {
 		await setRecipe(db, small, [{ productId: blade, quantity: 1 }]);
 		await setRecipe(db, unpricedSet, [{ productId: noCost, quantity: 1 }]);
 
-		await sell(big, 2); // 2 x 320 = 640
-		await sell(small, 20); // 20 x 10 = 200
+		await sell(big, 2, {}, 500); // 2 x (500 - 320) = 360 margin
+		await sell(small, 20, {}, 15); // 20 x (15 - 10) = 100
 		await sell(unpricedSet, 1);
 
 		const { sets, classes, unpriced } = await abcClasses(db, now);
-		expect(sets.get(big)).toMatchObject({ abc: "A", rank: 1, value: 640 });
+		expect(sets.get(big)).toMatchObject({ abc: "A", rank: 1, value: 360 });
 		expect(sets.get(small)).toMatchObject({ rank: 2, units: 20 });
 		expect(sets.has(unpricedSet)).toBe(false);
 		expect(classes.has(big)).toBe(false);

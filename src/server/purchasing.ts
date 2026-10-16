@@ -15,6 +15,7 @@ import {
 } from "#/db/schema";
 import { stockRanges } from "#/inventory/stock-range";
 import { emailConfigured, sendEmail } from "#/purchasing/email";
+import { type LeadTime, leadTimes } from "#/purchasing/forecast";
 import {
 	documentFor,
 	loadOrder,
@@ -159,6 +160,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			ownedLocations,
 			changes,
 			units,
+			lead,
 			amendments,
 			recommended,
 		] = await Promise.all([
@@ -208,6 +210,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 					)
 				: { added: 0, raised: 0 },
 			listUnits(db).then((all) => all.map((u) => u.name)),
+			leadTimes(db, [po.supplier.id]),
 			// Changes made after sending, for the timeline.
 			db
 				.select({
@@ -239,6 +242,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				: [],
 		]);
 		return {
+			leadTime: leadTimeOf(lead, po.supplier.id),
 			changes,
 			...po,
 			lines: po.lines.map((l) => ({
@@ -604,9 +608,24 @@ export const listReceivable = createServerFn({ method: "GET" }).handler(
 	},
 );
 
+// Each supplier with the lead time reorder plans on.
 export const listSuppliers = createServerFn({ method: "GET" }).handler(
-	async () => supplierRows(getDb()),
+	async () => {
+		const db = getDb();
+		const [rows, lead] = await Promise.all([supplierRows(db), leadTimes(db)]);
+		return rows.map((r) => ({
+			...r,
+			leadTime: leadTimeOf(lead, r.supplier.id),
+		}));
+	},
 );
+
+// leadTimes answers for every supplier it's asked about.
+function leadTimeOf(lead: Map<number, LeadTime>, supplierId: number) {
+	const l = lead.get(supplierId);
+	if (!l) throw new Error(`No lead time for supplier ${supplierId}`);
+	return l;
+}
 
 export type SupplierRow = Awaited<ReturnType<typeof listSuppliers>>[number];
 

@@ -138,7 +138,7 @@ test("days left at the sales rate", () => {
 });
 
 describe("default max from the forecast", () => {
-	const p = { leadTimeDays: 14, safetyDays: 0, coverDays: 30 };
+	const p = { leadTimeDays: 14, safetyStock: 0, coverDays: 30 };
 
 	test("is what a reorder tops up to", () => {
 		// 0.5 a day over 14 + 30 days.

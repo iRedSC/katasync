@@ -13,7 +13,7 @@ export const Route = createFileRoute("/purchasing/suppliers")({
 function Suppliers() {
 	const rows = Route.useLoaderData();
 	const [editing, setEditing] = useState<number | null>(null);
-	const supplier = rows.find((r) => r.supplier.id === editing)?.supplier;
+	const supplier = rows.find((r) => r.supplier.id === editing);
 
 	return (
 		<Page title="Suppliers" back={{ to: "/purchasing" }} width="narrow">
@@ -59,7 +59,20 @@ function Suppliers() {
 									{formatCount(r.products)}
 								</td>
 								<td className="px-4 py-2.5 text-right whitespace-nowrap tabular-nums">
-									{r.supplier.leadTimeDays} days
+									<span
+										title={
+											r.leadTime.measured
+												? `Measured from the last ${r.leadTime.measured.pos} POs; typed in as ${r.leadTime.configured}`
+												: "Typed in; measured once enough POs arrive"
+										}
+									>
+										{r.leadTime.days} days
+										{r.leadTime.measured && (
+											<span className="ml-1 text-xs text-muted-foreground">
+												measured
+											</span>
+										)}
+									</span>
 								</td>
 								<td className="px-4 py-2.5 text-right tabular-nums">
 									{r.supplier.minimumOrder > 0
@@ -73,15 +86,18 @@ function Suppliers() {
 			</Card>
 			{supplier && (
 				<SupplierDialog
-					supplier={supplier}
+					supplier={supplier.supplier}
+					leadTime={supplier.leadTime}
 					open
 					onOpenChange={(open) => !open && setEditing(null)}
 				/>
 			)}
 			<p className="px-1 text-muted-foreground">
-				A product is reordered once its stock would run out within the lead
-				time, then bought to last the cover days on top. A supplier's suggested
-				PO is ready once its total reaches their spend threshold.
+				A product is reordered once its stock would run out within the lead time
+				plus a safety margin, then bought to last the cover days on top. Lead
+				times are measured from deliveries once a supplier has 3 received POs. A
+				supplier's suggested PO is ready once its total reaches their spend
+				threshold.
 			</p>
 		</Page>
 	);

@@ -36,3 +36,32 @@ export async function soldSince(
 		.groupBy(sql`1`);
 	return new Map(rows.map((r) => [r.productId, r.units]));
 }
+
+// soldSince for reorder (no FBA), per UTC day: day is YYYY-MM-DD. Same
+// counting, so a day's units add up to soldSince's.
+export async function soldByDay(db: Db, since: Date) {
+	return db
+		.select({
+			productId: sql<number>`coalesce(${productComponents.componentProductId}, ${orderLines.productId})`,
+			day: sql<string>`to_char(${orders.placedAt} at time zone 'UTC', 'YYYY-MM-DD')`,
+			units: sql<number>`sum(${orderLines.quantity} * coalesce(${productComponents.quantity}, 1))::int`,
+		})
+		.from(orderLines)
+		.innerJoin(orders, eq(orders.id, orderLines.orderId))
+		.innerJoin(products, eq(products.id, orderLines.productId))
+		.leftJoin(
+			productComponents,
+			and(
+				eq(productComponents.parentProductId, orderLines.productId),
+				eq(products.kind, "bundle"),
+			),
+		)
+		.where(
+			and(
+				gte(orders.placedAt, since),
+				isNull(orders.cancelledAt),
+				eq(orders.fulfilledByChannel, false),
+			),
+		)
+		.groupBy(sql`1`, sql`2`);
+}
