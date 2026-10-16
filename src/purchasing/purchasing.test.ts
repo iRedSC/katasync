@@ -7,27 +7,30 @@ import * as schema from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
-import { loadOrder, printedLines, setPartsOf, supplierRows } from "./load";
+import { loadOrder, printedLines, supplierRows } from "./load";
 import {
 	addDraftLine,
 	addLine,
+	addSetToOtherDrafts,
 	amendLine,
 	averageCost,
 	cancelOrder,
 	closeOrder,
 	draftFromSuggestions,
 	markSent,
-	movePartToSupplier,
 	openDraft,
 	purchaseOrderOfBatch,
 	receive,
 	receiveExtra,
 	removeAddedLine,
 	setDraftLine,
+	setPartsOf,
+	skipSetPart,
 	undoReceipt,
 	updateFromSuggestions,
 } from "./orders";
 import { reorderQuantity, suggestPurchases, unitsOnOrder } from "./reorder";
+import { partState } from "./sets";
 import {
 	addUnit,
 	deleteUnit,
@@ -364,6 +367,10 @@ describe("a PO from draft to received", () => {
 			.update(schema.products)
 			.set({ unitCost: 3 })
 			.where(eq(schema.products.id, handle));
+		// No price from Canam, so it's the product's own cost.
+		await db
+			.insert(schema.productSuppliers)
+			.values({ productId: handle, supplierId: canam });
 		const set = await createProduct(db, "SET", "bundle");
 		await setRecipe(db, set, [
 			{ productId: blade, quantity: 2 },
@@ -403,7 +410,42 @@ describe("a PO from draft to received", () => {
 		]);
 	});
 
-	test("a set part bought elsewhere moves to its supplier's draft", async () => {
+	test("a set orders only its parts bought from the PO's supplier", async () => {
+		const [{ id: other }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
+			.returning();
+		const handle = await createProduct(db, "HANDLE", "simple");
+		await db
+			.insert(schema.productSuppliers)
+			.values({ productId: handle, supplierId: other, cost: 1 });
+		const loose = await createProduct(db, "LOOSE", "simple");
+		const set = await createProduct(db, "SET", "bundle");
+		await setRecipe(db, set, [
+			{ productId: blade, quantity: 2 },
+			{ productId: handle, quantity: 1 },
+			{ productId: loose, quantity: 1 },
+		]);
+		const id = await openDraft(db, canam);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: set,
+			quantity: 3,
+		});
+		const parts = await setPartsOf(db, id);
+		expect(parts.map((p) => [p.sku, partState(p, 3, canam)])).toEqual([
+			["BLADE", { kind: "here" }],
+			["HANDLE", { kind: "short", covered: 0, noSupplier: false }],
+			["LOOSE", { kind: "short", covered: 0, noSupplier: true }],
+		]);
+
+		await markSent(db, { purchaseOrderId: id, sentTo: null });
+		expect(await linesOf(id)).toMatchObject([
+			{ productId: blade, quantity: 6 },
+		]);
+	});
+
+	test("a set goes on its other suppliers' drafts, counting what's sent", async () => {
 		const [{ id: other }] = await db
 			.insert(schema.suppliers)
 			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
@@ -424,58 +466,63 @@ describe("a PO from draft to received", () => {
 			quantity: 3,
 		});
 		const [setLine] = await linesOf(id);
-		expect(await setPartsOf(db, id)).toMatchObject([
-			{ sku: "BLADE", items: 6, supplierId: canam, moved: false },
-			{ sku: "HANDLE", items: 3, supplierId: other, moved: false },
-		]);
+		const handleState = async () => {
+			const p = (await setPartsOf(db, id)).find((p) => p.sku === "HANDLE");
+			const [line] = await linesOf(id);
+			return p && partState(p, line.quantity, canam);
+		};
 
-		const to = await movePartToSupplier(db, {
-			lineId: setLine.id,
+		const [added] = await addSetToOtherDrafts(db, { lineId: setLine.id });
+		expect(added).toMatchObject({ supplierName: "Other", sets: 3 });
+		const to = added.purchaseOrderId;
+		expect(await linesOf(to)).toMatchObject([{ productId: set, quantity: 3 }]);
+		expect(await handleState()).toEqual({ kind: "covered", covered: 3 });
+
+		// Only Other's PO orders the handle, so only there can it be skipped.
+		await expect(
+			skipSetPart(db, { lineId: setLine.id, productId: handle, skipped: true }),
+		).rejects.toThrow(/bought from Other; skip it on their PO/);
+
+		// Skipped on their draft, it's missing here again; adding orders it
+		// there again without adding more sets.
+		const [theirLine] = await linesOf(to);
+		await skipSetPart(db, {
+			lineId: theirLine.id,
 			productId: handle,
+			skipped: true,
 		});
-		expect(to).not.toBe(id);
-		expect(await linesOf(to)).toMatchObject([
-			{ productId: handle, quantity: 3, unitCost: 1 },
+		expect(await handleState()).toEqual({
+			kind: "short",
+			covered: 0,
+			noSupplier: false,
+		});
+		expect(await addSetToOtherDrafts(db, { lineId: setLine.id })).toEqual([
+			{ purchaseOrderId: to, supplierName: "Other", sets: 3 },
 		]);
-		await expect(
-			movePartToSupplier(db, { lineId: setLine.id, productId: handle }),
-		).rejects.toThrow(/already moved/);
-		await expect(
-			movePartToSupplier(db, { lineId: setLine.id, productId: blade }),
-		).rejects.toThrow(/already bought from this PO's supplier/);
+		expect(await handleState()).toEqual({ kind: "covered", covered: 3 });
 
-		// Moving again goes to the same draft.
-		const set2 = await createProduct(db, "SET2", "bundle");
-		await setRecipe(db, set2, [{ productId: handle, quantity: 2 }]);
+		// More sets here raise theirs to match, not by as many again.
 		await setDraftLine(db, {
 			purchaseOrderId: id,
-			productId: set2,
-			quantity: 1,
+			productId: set,
+			quantity: 5,
 		});
-		const set2Line = (await linesOf(id)).find((l) => l.productId === set2);
-		expect(
-			await movePartToSupplier(db, {
-				lineId: set2Line?.id ?? 0,
-				productId: handle,
-			}),
-		).toBe(to);
-		expect((await linesOf(to))[0].quantity).toBe(5);
+		expect(await handleState()).toMatchObject({ kind: "short", covered: 3 });
+		await addSetToOtherDrafts(db, { lineId: setLine.id });
+		expect(await linesOf(to)).toMatchObject([{ productId: set, quantity: 5 }]);
 
-		await markSent(db, { purchaseOrderId: id, sentTo: null });
-		expect(await linesOf(id)).toMatchObject([
-			{ productId: blade, quantity: 6 },
+		// Once theirs is sent, its sets still count.
+		await markSent(db, { purchaseOrderId: to, sentTo: null });
+		expect(await linesOf(to)).toMatchObject([
+			{ productId: handle, quantity: 5 },
 		]);
+		expect(await handleState()).toEqual({ kind: "covered", covered: 5 });
+		await expect(
+			addSetToOtherDrafts(db, { lineId: setLine.id }),
+		).rejects.toThrow(/already on order/);
 	});
 
-	test("a set has no price of its own, and a moved part stays moved", async () => {
-		const [{ id: other }] = await db
-			.insert(schema.suppliers)
-			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
-			.returning();
-		const handle = await createProduct(db, "HANDLE", "simple");
-		await db
-			.insert(schema.productSuppliers)
-			.values({ productId: handle, supplierId: other, cost: 1 });
+	test("a set has no price of its own, and a skipped part stays skipped", async () => {
 		const set = await createProduct(db, "SET", "bundle");
 		await db
 			.update(schema.products)
@@ -483,7 +530,7 @@ describe("a PO from draft to received", () => {
 			.where(eq(schema.products.id, set));
 		await setRecipe(db, set, [
 			{ productId: blade, quantity: 2 },
-			{ productId: handle, quantity: 1 },
+			{ productId: knife, quantity: 1 },
 		]);
 		const id = await openDraft(db, canam);
 		await expect(
@@ -501,17 +548,20 @@ describe("a PO from draft to received", () => {
 		});
 		expect(line.unitCost).toBeNull();
 
-		const to = await movePartToSupplier(db, {
+		await skipSetPart(db, {
 			lineId: line.id,
-			productId: handle,
+			productId: knife,
+			skipped: true,
 		});
-		// Moving a part changed the set, so undoing the add leaves it.
+		await expect(
+			skipSetPart(db, { lineId: line.id, productId: set, skipped: true }),
+		).rejects.toThrow(/isn't part of SET/);
+		// Skipping a part changed the set, so undoing the add leaves it.
 		expect(await removeAddedLine(db, { purchaseOrderId: id, line })).toBe(
 			false,
 		);
 
-		// Taking the set off and putting it back (Undo) keeps the part moved,
-		// so it isn't ordered from both suppliers.
+		// Taking the set off and putting it back (Undo) keeps the part skipped.
 		await setDraftLine(db, {
 			purchaseOrderId: id,
 			productId: set,
@@ -520,19 +570,27 @@ describe("a PO from draft to received", () => {
 		await setDraftLine(db, {
 			purchaseOrderId: id,
 			productId: set,
-			quantity: 1,
+			quantity: 2,
 			unitCost: null,
 		});
-		expect(await setPartsOf(db, id)).toMatchObject([
-			{ sku: "BLADE", moved: false },
-			{ sku: "HANDLE", moved: true },
+		const [setLine] = await linesOf(id);
+		expect((await setPartsOf(db, id)).map((p) => [p.sku, p.skipped])).toEqual([
+			["BLADE", false],
+			["KNIFE", true],
 		]);
+		await skipSetPart(db, {
+			lineId: setLine.id,
+			productId: blade,
+			skipped: true,
+		});
+		await skipSetPart(db, {
+			lineId: setLine.id,
+			productId: knife,
+			skipped: false,
+		});
 		await markSent(db, { purchaseOrderId: id, sentTo: null });
 		expect(await linesOf(id)).toMatchObject([
-			{ productId: blade, quantity: 2 },
-		]);
-		expect(await linesOf(to)).toMatchObject([
-			{ productId: handle, quantity: 1 },
+			{ productId: knife, quantity: 2 },
 		]);
 	});
 
@@ -559,8 +617,8 @@ describe("a PO from draft to received", () => {
 			quantity: 3,
 		});
 		expect(
-			(await setPartsOf(db, id)).map((p) => [p.items, p.unit, p.packSize]),
-		).toEqual([[3, "CASE", 12]]);
+			(await setPartsOf(db, id)).map((p) => [p.perSet, p.unit, p.packSize]),
+		).toEqual([[1, "CASE", 12]]);
 
 		await markSent(db, { purchaseOrderId: id, sentTo: null });
 		const knifeLine = (await linesOf(id)).find((l) => l.productId === knife);

@@ -753,11 +753,13 @@ export const purchaseOrderLines = pgTable(
 	],
 );
 
-// Parts of a draft's tool set that were moved to the draft of the supplier
-// they're bought from, so this PO's set no longer orders them. Keyed by the
-// set rather than its line, so taking the set off and Undo keeps them moved.
-// Rules live in src/purchasing/orders.ts.
-export const purchaseOrderMovedParts = pgTable(
+// Parts of a draft's tool set that this PO leaves out, skipped by hand (e.g.
+// there's stock already). A set only orders the parts bought from the PO's
+// supplier anyway; skipping also stops a part counting as missing. Rows from
+// before skipping existed are parts moved to their supplier's draft. Keyed by
+// the set rather than its line, so taking the set off and Undo keeps them
+// skipped. Rules live in src/purchasing/orders.ts.
+export const purchaseOrderSkippedParts = pgTable(
 	"purchase_order_moved_parts",
 	{
 		purchaseOrderId: integer()
@@ -816,6 +818,27 @@ export const purchaseOrderAmendments = pgTable(
 				else ${t.quantityBefore} is null and ${t.quantityAfter} is null
 			end`,
 		),
+	],
+);
+
+// How many of each tool set a PO had when it was sent, since sending splits
+// a set into its parts. A set on several suppliers' POs gets each one's parts
+// from that supplier, so this is how a draft knows its set's other parts are
+// already on order.
+export const purchaseOrderSentSets = pgTable(
+	"purchase_order_sent_sets",
+	{
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id, { onDelete: "cascade" }),
+		setProductId: integer()
+			.notNull()
+			.references(() => products.id),
+		sets: integer().notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.purchaseOrderId, t.setProductId] }),
+		check("purchase_order_sent_sets_positive", sql`${t.sets} > 0`),
 	],
 );
 
