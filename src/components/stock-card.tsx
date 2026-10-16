@@ -9,6 +9,7 @@ import { AbcBadge, Badge, type Tone } from "./page";
 import { ProductImage } from "./product";
 import { fillColor, rangeFill } from "./stock-ring";
 import { Button } from "./ui/button";
+import { VelocityGauge } from "./velocity-gauge";
 
 export type StockState = {
 	trust: Trust;
@@ -44,21 +45,18 @@ const ABC_OUTLINE = {
 export function StockCard({
 	product: p,
 	state,
-	index,
-	selected,
 	now,
 	onOpen,
-	onSelect,
+	onMenu,
 	onOrder,
 	onCount,
 }: {
 	product: ProductRow;
 	state: StockState;
-	index: number;
-	selected: boolean;
 	now: Date;
 	onOpen: () => void;
-	onSelect: () => void;
+	// Right-click: points the shared menu at this product.
+	onMenu: () => void;
 	onOrder: () => void;
 	onCount: () => void;
 }) {
@@ -68,15 +66,12 @@ export function StockCard({
 		<div
 			role="button"
 			tabIndex={-1}
-			data-index={index}
 			onClick={onOpen}
 			onKeyDown={(e) => e.key === "Enter" && onOpen()}
-			onMouseMove={onSelect}
-			onContextMenu={onSelect}
+			onContextMenu={onMenu}
 			className={cn(
 				"flex cursor-pointer flex-col gap-2.5 rounded-xl bg-card p-3 text-left",
 				p.abc ? ABC_OUTLINE[p.abc] : "shadow-card",
-				selected && "outline-2 outline-offset-2 outline-faint",
 			)}
 		>
 			<div className="grid grid-cols-2 gap-3">
@@ -111,6 +106,11 @@ export function StockCard({
 					}
 				/>
 				{badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
+				{p.why && (
+					<span className="-my-2 ml-auto">
+						<VelocityGauge why={p.why} onPo={p.draft ?? undefined} />
+					</span>
+				)}
 			</div>
 			{/* Trust and the step share the foot, wrapping before they'd overflow. */}
 			<div className="mt-auto flex min-h-8 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-t pt-2.5">

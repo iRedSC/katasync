@@ -1,11 +1,5 @@
 import NumberFlow from "@number-flow/react";
-import {
-	createFileRoute,
-	Link,
-	useCanGoBack,
-	useNavigate,
-	useRouter,
-} from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { CountDialog } from "#/components/count-dialog";
@@ -16,6 +10,7 @@ import {
 	Card,
 	Page,
 	type Tone,
+	useBack,
 } from "#/components/page";
 import { MovementTable, ProductImage, ProductName } from "#/components/product";
 import { StockRangeForm } from "#/components/stock-range-form";
@@ -49,17 +44,14 @@ export const Route = createFileRoute("/products/$sku")({
 function ProductPage() {
 	const d = Route.useLoaderData();
 	const p = d.product;
-	const router = useRouter();
-	const navigate = useNavigate();
-	const canGoBack = useCanGoBack();
+	const goBack = useBack({ to: "/products" });
 	const [counting, setCounting] = useState(false);
 	const canCount = p.kind !== "bundle";
 	const verdict = getVerdict(d);
 
 	useHotkeys({
 		c: () => canCount && setCounting(true),
-		Escape: () =>
-			canGoBack ? router.history.back() : navigate({ to: "/products" }),
+		Escape: goBack,
 	});
 
 	return (

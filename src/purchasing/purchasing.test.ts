@@ -31,10 +31,13 @@ import {
 } from "./orders";
 import {
 	daysUntilReorder,
+	explainReorder,
 	recommendedAdditions,
+	reorderBreakdown,
 	reorderQuantity,
 	suggestPurchases,
 	unitsOnOrder,
+	velocityRanks,
 } from "./reorder";
 import { partState } from "./sets";
 import {
@@ -117,6 +120,88 @@ describe("reorderQuantity", () => {
 		expect(daysUntilReorder({ ...base, onHand: 9 })).toBeNull();
 		expect(daysUntilReorder({ ...base, dailyDemand: 0 })).toBeNull();
 	});
+});
+
+describe("explainReorder", () => {
+	const base = {
+		dailyDemand: 1,
+		onHand: 0,
+		onOrder: 0,
+		leadTimeDays: 10,
+		safetyStock: 4,
+		coverDays: 20,
+		minStock: 0,
+		minimumQuantity: 1,
+		packSize: 1,
+	};
+	const context = {
+		inStockDays: 90,
+		rank: 0.5,
+		leadTime: { days: 10, from: "supplier" as const, pos: 0 },
+		abc: "B" as const,
+		purchase: { unit: "EACH", packSize: 1, minimumQuantity: 1 },
+	};
+
+	test("breaks the aim into parts that add up to it", () => {
+		const why = explainReorder({ ...base, dailyDemand: 0.73 }, context);
+		if (why.aim.kind !== "forecast") throw new Error("expected forecast");
+		const { restock, safetyStock, cover, total } = why.aim;
+		expect(restock + safetyStock + cover).toBe(total);
+		expect(why.orderBelow).toBe(restock + safetyStock);
+	});
+
+	test("orders what reorderQuantity orders, and says why it's rounded", () => {
+		const input = { ...base, onHand: 5, onOrder: 3, packSize: 12 };
+		const why = explainReorder(input, {
+			...context,
+			purchase: { unit: "CASE", packSize: 12, minimumQuantity: 1 },
+		});
+		// Aim 34, have 8: short 26, so 3 cases of 12.
+		expect(why.verdict).toEqual({
+			kind: "order",
+			quantity: reorderQuantity(input),
+			units: 36,
+			roundedUp: "pack",
+		});
+		expect(
+			explainReorder({ ...base, minimumQuantity: 50 }, context).verdict,
+		).toMatchObject({ quantity: 50, roundedUp: "minimum" });
+	});
+
+	test("waits, or does nothing, when stock covers the reorder point", () => {
+		expect(explainReorder({ ...base, onHand: 20 }, context).verdict).toEqual({
+			kind: "later",
+			days: 6,
+		});
+		expect(
+			explainReorder({ ...base, dailyDemand: 0, safetyStock: 0 }, context)
+				.verdict,
+		).toEqual({ kind: "idle" });
+	});
+
+	test("lets min stock set the aim when it's more than sales call for", () => {
+		const why = explainReorder({ ...base, minStock: 50 }, context);
+		expect(why.aim).toEqual({ kind: "min", total: 50, forecast: 34 });
+		expect(why.orderBelow).toBe(50);
+	});
+});
+
+test("velocityRanks spreads selling products from 0 to 1, ties sharing", () => {
+	const f = (dailyDemand: number) => ({
+		dailyDemand,
+		dailySd: 0,
+		inStockDays: 90,
+	});
+	const ranks = velocityRanks(
+		new Map([
+			[1, f(0)],
+			[2, f(1)],
+			[3, f(2)],
+			[4, f(2)],
+			[5, f(5)],
+		]),
+	);
+	expect(Object.fromEntries(ranks)).toEqual({ 2: 0, 3: 1 / 3, 4: 1 / 3, 5: 1 });
 });
 
 test("averageCost weighs what's on the shelf against what arrived", () => {
@@ -298,6 +383,35 @@ describe("suggestPurchases", () => {
 			.where(eq(schema.suppliers.id, canam));
 		[s] = await suggestPurchases(db, now);
 		expect(s.readiness).toBe("waiting");
+	});
+});
+
+describe("reorderBreakdown", () => {
+	test("explains products without a supplier, but never orders them", async () => {
+		const blade = await createProduct(db, "BLADE", "simple");
+		const loose = await createProduct(db, "LOOSE", "simple");
+		await supply(blade, 1);
+		await sell(blade, 90);
+		await sell(loose, 90);
+
+		const all = await reorderBreakdown(db, { now });
+		const of = (id: number) => all.find((b) => b.line.productId === id);
+		expect(of(blade)?.why).toMatchObject({
+			purchase: { unit: "EACH", packSize: 1 },
+			leadTime: { from: "supplier" },
+			verdict: { kind: "order" },
+		});
+		expect(of(loose)?.supplier).toBeNull();
+		expect(of(loose)?.why).toMatchObject({
+			purchase: null,
+			leadTime: { days: 14, from: "default" },
+			verdict: { kind: "order" },
+		});
+		const [s] = await suggestPurchases(db, now);
+		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE"]);
+
+		const only = await reorderBreakdown(db, { now, productIds: [loose] });
+		expect(only.map((b) => b.line.sku)).toEqual(["LOOSE"]);
 	});
 });
 

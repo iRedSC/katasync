@@ -1,14 +1,8 @@
-import {
-	createFileRoute,
-	Link,
-	useCanGoBack,
-	useNavigate,
-	useRouter,
-} from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Badge, Banner, Card, Page } from "#/components/page";
+import { Badge, Banner, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
 import { ReturnDialog } from "#/components/return-dialog";
@@ -35,9 +29,7 @@ export const Route = createFileRoute("/orders/$id")({
 
 function OrderPage() {
 	const { order, lines, sends, adminUrl } = Route.useLoaderData();
-	const router = useRouter();
-	const navigate = useNavigate();
-	const canGoBack = useCanGoBack();
+	const goBack = useBack({ to: "/orders" });
 	const status = orderStatus(order);
 	const external = externalFulfillment(order);
 	// No SKU means a custom item; only real SKUs need matching.
@@ -71,8 +63,7 @@ function OrderPage() {
 	].filter(Boolean);
 
 	useHotkeys({
-		Escape: () =>
-			canGoBack ? router.history.back() : navigate({ to: "/orders" }),
+		Escape: goBack,
 		...(canShip ? { s: ship } : {}),
 		...(canReturn ? { r: () => setReturning(true) } : {}),
 	});

@@ -45,7 +45,11 @@ import {
 	updateDraft,
 	updateFromSuggestions,
 } from "#/purchasing/orders";
-import { recommendedAdditions, suggestPurchases } from "#/purchasing/reorder";
+import {
+	recommendedAdditions,
+	reorderBreakdown,
+	suggestPurchases,
+} from "#/purchasing/reorder";
 import {
 	setProductSupplier as setProductSupplierLink,
 	setSuppliers,
@@ -163,6 +167,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			lead,
 			amendments,
 			recommended,
+			whys,
 		] = await Promise.all([
 			onHandOf(db, productIds),
 			stockRanges(db, productIds),
@@ -241,6 +246,10 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 						),
 					)
 				: [],
+			// Why reorder wants what it does of each, for the velocity gauge.
+			reorderBreakdown(db, { productIds }).then(
+				(all) => new Map(all.map((b) => [b.line.productId, b.why])),
+			),
 		]);
 		return {
 			leadTime: leadTimeOf(lead, po.supplier.id),
@@ -251,11 +260,14 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				onHand: onHand.get(l.productId) ?? 0,
 				// Every line's product has one; ?? only satisfies the Map type.
 				stockRange: ranges.get(l.productId) ?? null,
+				// Null for tool sets: they're ordered as their parts.
+				why: whys.get(l.productId) ?? null,
 			})),
 			setParts: setParts.map((p) => ({
 				...p,
 				onHand: onHand.get(p.productId) ?? 0,
 				stockRange: ranges.get(p.productId) ?? null,
+				why: whys.get(p.productId) ?? null,
 			})),
 			recommended,
 			receipts,

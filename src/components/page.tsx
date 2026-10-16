@@ -1,4 +1,10 @@
-import { Link, type LinkProps } from "@tanstack/react-router";
+import {
+	Link,
+	type LinkProps,
+	useCanGoBack,
+	useNavigate,
+	useRouter,
+} from "@tanstack/react-router";
 import {
 	AlertCircle,
 	AlertTriangle,
@@ -12,6 +18,16 @@ import { cn } from "#/lib/utils";
 
 // Building blocks: Page, Card, Banner, Badge.
 
+// Going back returns to wherever the user came from (a PO, a filtered list),
+// as it was. `fallback` is only for a page opened fresh, with nothing before
+// it in the app.
+export function useBack(fallback: LinkProps) {
+	const router = useRouter();
+	const navigate = useNavigate();
+	const canGoBack = useCanGoBack();
+	return () => (canGoBack ? router.history.back() : navigate(fallback));
+}
+
 export function Page({
 	title,
 	back,
@@ -20,6 +36,7 @@ export function Page({
 	children,
 }: {
 	title: ReactNode;
+	// Where the arrow goes when there's no history to go back through.
 	back?: LinkProps;
 	actions?: ReactNode;
 	// Narrow for forms and single records, wide for big tables.
@@ -38,20 +55,32 @@ export function Page({
 			)}
 		>
 			<header className="flex min-h-9 items-center gap-2">
-				{back && (
-					<Link
-						{...back}
-						className="rounded-lg p-1.5 text-muted-foreground hover:bg-surface-strong"
-						aria-label="Back"
-					>
-						<ArrowLeft className="size-4" />
-					</Link>
-				)}
+				{back && <BackLink fallback={back} />}
 				<h1 className="min-w-0 flex-1 truncate text-xl font-bold">{title}</h1>
 				{actions && <div className="flex items-center gap-2">{actions}</div>}
 			</header>
 			{children}
 		</div>
+	);
+}
+
+// A real link to the fallback, so it still opens in a new tab, but a plain
+// click goes back through history instead.
+function BackLink({ fallback }: { fallback: LinkProps }) {
+	const goBack = useBack(fallback);
+	return (
+		<Link
+			{...fallback}
+			onClick={(e) => {
+				if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+				e.preventDefault();
+				goBack();
+			}}
+			className="rounded-lg p-1.5 text-muted-foreground hover:bg-surface-strong"
+			aria-label="Back"
+		>
+			<ArrowLeft className="size-4" />
+		</Link>
 	);
 }
 

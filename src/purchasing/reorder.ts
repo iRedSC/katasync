@@ -20,6 +20,7 @@ import {
 	type LeadTime,
 	leadTimes,
 	NO_FORECAST,
+	SERVICE_LEVELS,
 	safetyStock,
 } from "#/purchasing/forecast";
 
@@ -158,6 +159,138 @@ function fillToMax(p: ReorderInput, max: number) {
 export const DEFAULT_LEAD_TIME_DAYS = 14;
 export const DEFAULT_COVER_DAYS = 30;
 
+// What reorder decided for one product, in the pieces a person can check.
+// The parts of `aim` add up to `aim.total` exactly, so a breakdown built from
+// them never disagrees with the quantity.
+export type ReorderWhy = {
+	// Units a day while in stock, over inStockDays of the last DEMAND_DAYS.
+	dailyDemand: number;
+	inStockDays: number;
+	// Share of selling products it outsells, 0 to 1. Null when it hasn't sold.
+	rank: number | null;
+	leadTime: {
+		days: number;
+		// measured: from the supplier's last `pos` deliveries. supplier: what
+		// its settings say. default: no supplier, so DEFAULT_LEAD_TIME_DAYS.
+		from: "measured" | "supplier" | "default";
+		pos: number;
+	};
+	coverDays: number;
+	abc: AbcClass | null;
+	// How sure the safety stock makes us of not running out, 0 to 1.
+	serviceShare: number;
+	onHand: number;
+	onOrder: number;
+	// What a reorder tops shelf plus on order up to.
+	aim:
+		| {
+				kind: "forecast";
+				// Sold while a PO sent today is on its way.
+				restock: number;
+				safetyStock: number;
+				// Sold over coverDays after it lands.
+				cover: number;
+				total: number;
+		  }
+		// Min stock is more than the forecast's aim, so it is the aim.
+		| { kind: "min"; total: number; forecast: number };
+	minStock: number;
+	// Reorder happens once shelf plus on order is below this.
+	orderBelow: number;
+	// What it's bought in. Null without a supplier: it can't be ordered yet.
+	purchase: { unit: string; packSize: number; minimumQuantity: number } | null;
+	verdict:
+		| {
+				kind: "order";
+				// In the supplier's unit; `units` counts the product.
+				quantity: number;
+				units: number;
+				// Why units is more than the shortfall, if it is.
+				roundedUp: "pack" | "minimum" | null;
+		  }
+		| { kind: "later"; days: number }
+		// No sales and nothing below min: nothing will ever need ordering.
+		| { kind: "idle" };
+};
+
+// Explains reorderQuantity's answer for `p` using the same functions, so the
+// two can't drift apart.
+export function explainReorder(
+	p: ReorderInput,
+	context: {
+		inStockDays: number;
+		rank: number | null;
+		leadTime: ReorderWhy["leadTime"];
+		abc: AbcClass | null;
+		purchase: ReorderWhy["purchase"];
+	},
+): ReorderWhy {
+	const forecastAim = stockTarget(p);
+	// Rounded the way reorderPoint compares: whole units under it reorder.
+	const restock = Math.ceil(p.dailyDemand * p.leadTimeDays);
+	const aim: ReorderWhy["aim"] =
+		p.minStock > forecastAim
+			? { kind: "min", total: p.minStock, forecast: forecastAim }
+			: {
+					kind: "forecast",
+					restock,
+					safetyStock: p.safetyStock,
+					cover: forecastAim - restock - p.safetyStock,
+					total: forecastAim,
+				};
+	const quantity = reorderQuantity(p);
+	const days = daysUntilReorder(p);
+	const shortfall = aim.total - (p.onHand + p.onOrder);
+	const verdict: ReorderWhy["verdict"] =
+		quantity > 0
+			? {
+					kind: "order",
+					quantity,
+					units: quantity * p.packSize,
+					roundedUp:
+						quantity === p.minimumQuantity &&
+						p.minimumQuantity > Math.ceil(shortfall / p.packSize)
+							? "minimum"
+							: quantity * p.packSize > shortfall
+								? "pack"
+								: null,
+				}
+			: days === null
+				? { kind: "idle" }
+				: { kind: "later", days };
+	return {
+		dailyDemand: p.dailyDemand,
+		inStockDays: context.inStockDays,
+		rank: context.rank,
+		leadTime: context.leadTime,
+		coverDays: p.coverDays,
+		abc: context.abc,
+		serviceShare: SERVICE_LEVELS[context.abc ?? "C"].share,
+		onHand: p.onHand,
+		onOrder: p.onOrder,
+		aim,
+		minStock: p.minStock,
+		orderBelow: Math.ceil(reorderPoint(p)),
+		purchase: context.purchase,
+		verdict,
+	};
+}
+
+// Each selling product's share of selling products it outsells, 0 to 1:
+// the fastest is 1, the slowest 0. Ties share the lower share.
+export function velocityRanks(forecasts: Map<number, Forecast>) {
+	const selling = [...forecasts]
+		.filter(([, f]) => f.dailyDemand > 0)
+		.sort(([, a], [, b]) => a.dailyDemand - b.dailyDemand);
+	const ranks = new Map<number, number>();
+	let below = 0;
+	selling.forEach(([id, f], i) => {
+		if (i > 0 && f.dailyDemand > selling[i - 1][1].dailyDemand) below = i;
+		ranks.set(id, selling.length === 1 ? 1 : below / (selling.length - 1));
+	});
+	return ranks;
+}
+
 export type SuggestedLine = {
 	productId: number;
 	sku: string;
@@ -234,15 +367,26 @@ type Supplier = {
 // One product that needs ordering, with the supplier it comes from.
 export type ReorderNeed = SuggestedLine & Supplier;
 
-// Every product with a supplier, as reorder sees it today, in name order.
-// Pass `plan` when the caller already has one, to skip loading it twice.
-async function reorderPlans(db: Db, now: Date, plan?: Plan | Promise<Plan>) {
+// Every product as reorder sees it today, in name order, with why. Products
+// without a supplier plan on the defaults and have no supplier fields.
+// `productIds` limits it to those products. Pass `plan` when the caller
+// already has one, to skip loading it twice.
+export async function reorderBreakdown(
+	db: Db,
+	options: {
+		now?: Date;
+		plan?: Plan | Promise<Plan>;
+		productIds?: number[];
+	} = {},
+) {
+	const { now = new Date(), productIds } = options;
+	if (productIds?.length === 0) return [];
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [sold, onHand, onOrder, defaultMin, linked, planned, counted] =
+	const [sold, onHand, onOrder, defaultMin, rows, planned, counted] =
 		await Promise.all([
 			soldSince(db, since, { includeFba: false }),
 			ownedOnHand(db),
-			unitsOnOrder(db),
+			unitsOnOrder(db, productIds),
 			// Read here rather than from inventory/stock-range, which imports this
 			// file.
 			db
@@ -274,11 +418,12 @@ async function reorderPlans(db: Db, now: Date, plan?: Plan | Promise<Plan>) {
 					minimumOrder: suppliers.minimumOrder,
 					criticalThreshold: suppliers.criticalThreshold,
 				})
-				.from(productSuppliers)
-				.innerJoin(products, eq(products.id, productSuppliers.productId))
-				.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+				.from(products)
+				.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+				.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+				.where(productIds ? inArray(products.id, productIds) : undefined)
 				.orderBy(products.name, products.variantName),
-			plan ?? loadPlan(db, now),
+			options.plan ?? loadPlan(db, now),
 			// Products counted on any of our own shelves, ever.
 			db
 				.selectDistinct({ productId: stockLevels.productId })
@@ -292,53 +437,85 @@ async function reorderPlans(db: Db, now: Date, plan?: Plan | Promise<Plan>) {
 				)
 				.then((rows) => new Set(rows.map((r) => r.productId))),
 		]);
+	const ranks = velocityRanks(planned.forecasts);
 
-	return linked.map((p) => {
+	return rows.map((p) => {
 		const rank = planned.abc.classes.get(p.productId);
 		const abcClass = rank?.abc ?? null;
+		// The joins make these all null together, or none.
+		const supplier: Supplier | null =
+			p.supplierId === null ||
+			p.supplierName === null ||
+			p.minimumOrder === null ||
+			p.criticalThreshold === null
+				? null
+				: {
+						supplierId: p.supplierId,
+						supplierName: p.supplierName,
+						minimumOrder: p.minimumOrder,
+						criticalThreshold: p.criticalThreshold,
+					};
+		const purchase =
+			supplier && p.unit !== null && p.packSize !== null
+				? {
+						unit: p.unit,
+						packSize: p.packSize,
+						minimumQuantity: p.minimumQuantity ?? 1,
+					}
+				: null;
 		const stock = {
 			sold: sold.get(p.productId) ?? 0,
 			onHand: onHand.get(p.productId) ?? 0,
 			onOrder: onOrder.get(p.productId) ?? 0,
 		};
+		const terms = purchase ?? { unit: "EACH", packSize: 1, minimumQuantity: 1 };
 		const input: ReorderInput = {
 			...stock,
 			...planFor(planned, p.productId, p.supplierId),
-			coverDays: p.coverDays,
+			coverDays: p.coverDays ?? DEFAULT_COVER_DAYS,
 			minStock: p.minStock ?? defaultMin,
-			minimumQuantity: p.minimumQuantity,
-			packSize: p.packSize,
+			minimumQuantity: terms.minimumQuantity,
+			packSize: terms.packSize,
 		};
-		// Its own max, else the one its forecast gives (as stockRanges does).
-		const max =
-			p.minStock !== null && p.maxStock !== null
-				? p.maxStock
-				: forecastMax(defaultMin, input);
-		const need: ReorderNeed = {
+		const line: SuggestedLine = {
 			productId: p.productId,
 			sku: p.sku,
 			name: p.name,
 			variantName: p.variantName,
 			imageUrl: p.imageUrl,
 			supplierSku: p.supplierSku,
-			unit: p.unit,
-			packSize: p.packSize,
-			minimumQuantity: p.minimumQuantity,
+			...terms,
 			...stock,
 			quantity: reorderQuantity(input),
 			// The supplier's price if we know it, else what we last valued it at.
 			unitCost:
-				p.cost ?? (p.productCost === null ? null : p.productCost * p.packSize),
+				p.cost ??
+				(p.productCost === null ? null : p.productCost * terms.packSize),
 			critical: isCritical(p.markedCritical, abcClass),
-			supplierId: p.supplierId,
-			supplierName: p.supplierName,
-			minimumOrder: p.minimumOrder,
-			criticalThreshold: p.criticalThreshold,
 		};
+		const lead =
+			p.supplierId === null ? undefined : planned.leadTimes.get(p.supplierId);
+		const why = explainReorder(input, {
+			inStockDays: planned.forecasts.get(p.productId)?.inStockDays ?? 0,
+			rank: ranks.get(p.productId) ?? null,
+			leadTime: {
+				days: input.leadTimeDays,
+				from: lead?.measured ? "measured" : lead ? "supplier" : "default",
+				pos: lead?.measured?.pos ?? 0,
+			},
+			abc: abcClass,
+			purchase,
+		});
 		return {
-			need,
+			line,
+			supplier,
 			input,
-			max,
+			why,
+			// Its own max, else the one its forecast gives (as stockRanges does).
+			max:
+				p.minStock !== null && p.maxStock !== null
+					? p.maxStock
+					: forecastMax(defaultMin, input),
 			ordersItself: ordersItself(p.markedCritical, abcClass),
 			// A C item nobody has sold or counted in a year is dead stock, or
 			// was never really stocked: nothing to recommend. Unpriced products
@@ -356,8 +533,15 @@ export async function reorderNeeds(
 	now = new Date(),
 	plan?: Plan | Promise<Plan>,
 ): Promise<ReorderNeed[]> {
-	const plans = await reorderPlans(db, now, plan);
-	return plans.flatMap(({ need }) => (need.quantity > 0 ? [need] : []));
+	return needsOf(await reorderBreakdown(db, { now, plan }));
+}
+
+export function needsOf(
+	breakdown: Awaited<ReturnType<typeof reorderBreakdown>>,
+): ReorderNeed[] {
+	return breakdown.flatMap(({ line, supplier }) =>
+		supplier && line.quantity > 0 ? [{ ...line, ...supplier }] : [],
+	);
 }
 
 export type RecommendedLine = SuggestedLine & {
@@ -366,32 +550,34 @@ export type RecommendedLine = SuggestedLine & {
 	due: "now" | number;
 };
 
+type Breakdown = Awaited<ReturnType<typeof reorderBreakdown>>[number];
+
 // A supplier's products worth adding to its PO, each at the quantity that
 // fills it to its max. First the ones that need ordering today but don't go
 // on POs by themselves; then the ones that don't need ordering yet but will
 // before its next PO would (within its cover days), soonest first, since
 // ordering them now saves a second shipment. Products in `except` (already on
-// the draft) and dormant C items (see reorderPlans) are left out.
+// the draft) and dormant C items (see reorderBreakdown) are left out.
 export async function recommendedAdditions(
 	db: Db,
 	supplierId: number,
 	except: Set<number>,
 	now = new Date(),
 ): Promise<RecommendedLine[]> {
-	const plans = await reorderPlans(db, now);
+	const plans = await reorderBreakdown(db, { now });
 	return plans
 		.flatMap((plan): RecommendedLine[] => {
-			const { need, input } = plan;
+			const { line, supplier, input } = plan;
 			if (
-				need.supplierId !== supplierId ||
-				except.has(need.productId) ||
+				supplier?.supplierId !== supplierId ||
+				except.has(line.productId) ||
 				plan.dormant
 			)
 				return [];
 			const due = recommendedDue(plan);
 			const quantity = fillToMax(input, plan.max);
 			if (due === null || quantity === 0) return [];
-			return [{ ...suggestedLine(need), quantity, due }];
+			return [{ ...line, quantity, due }];
 		})
 		.sort((a, b) => dueOrder(a.due) - dueOrder(b.due));
 }
@@ -399,31 +585,16 @@ export async function recommendedAdditions(
 // When a product is due, if that makes it worth recommending: now if it
 // needs ordering but its PO won't take it by itself, else within cover days.
 function recommendedDue({
-	need,
+	line,
 	input,
 	ordersItself,
-}: {
-	need: ReorderNeed;
-	input: ReorderInput;
-	ordersItself: boolean;
-}): RecommendedLine["due"] | null {
-	if (need.quantity > 0) return ordersItself ? null : "now";
+}: Breakdown): RecommendedLine["due"] | null {
+	if (line.quantity > 0) return ordersItself ? null : "now";
 	const days = daysUntilReorder(input);
 	return days === null || days > input.coverDays ? null : days;
 }
 
 const dueOrder = (due: RecommendedLine["due"]) => (due === "now" ? -1 : due);
-
-// A need without its supplier's fields.
-function suggestedLine({
-	supplierId: _,
-	supplierName: __,
-	minimumOrder: ___,
-	criticalThreshold: ____,
-	...line
-}: ReorderNeed): SuggestedLine {
-	return line;
-}
 
 // What each supplier should be sent today: what needs ordering among the
 // products that go on POs by themselves (see ordersItself). Computed fresh from sales, stock,
@@ -432,8 +603,8 @@ export async function suggestPurchases(
 	db: Db,
 	now = new Date(),
 ): Promise<SupplierSuggestion[]> {
-	const [plans, drafts] = await Promise.all([
-		reorderPlans(db, now),
+	const [breakdown, drafts] = await Promise.all([
+		reorderBreakdown(db, { now }),
 		db
 			.select({ id: purchaseOrders.id, supplierId: purchaseOrders.supplierId })
 			.from(purchaseOrders)
@@ -447,9 +618,7 @@ export async function suggestPurchases(
 		minimumOrder,
 		criticalThreshold,
 		...line
-	} of plans.flatMap((p) =>
-		p.ordersItself && p.need.quantity > 0 ? [p.need] : [],
-	)) {
+	} of needsOf(breakdown.filter((p) => p.ordersItself))) {
 		let s = bySupplier.get(supplierId);
 		if (!s) {
 			s = {
