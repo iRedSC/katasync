@@ -52,7 +52,9 @@ export function SupplierDialog({
 					setBlocked(true);
 					if (!matchMedia("(prefers-reduced-motion: reduce)").matches)
 						content.current?.animate(
-							[0, -6, 6, -4, 4, 0].map((x) => ({ transform: `translateX(${x}px)` })),
+							[0, -6, 6, -4, 4, 0].map((x) => ({
+								transform: `translateX(${x}px)`,
+							})),
 							{ duration: 300 },
 						);
 				}}
@@ -142,6 +144,7 @@ function SupplierForm({
 					leadTimeDays: Number(str("leadTimeDays")),
 					coverDays: Number(str("coverDays")),
 					minimumOrder: Number(str("minimumOrder") || 0),
+					criticalThreshold: Number(str("criticalThreshold")),
 				},
 			});
 			await router.invalidate();
@@ -162,12 +165,7 @@ function SupplierForm({
 			className="grid gap-3 md:grid-cols-2"
 		>
 			<Field label="Name">
-				<input
-					name="name"
-					required
-					defaultValue={s.name}
-							className={input}
-				/>
+				<input name="name" required defaultValue={s.name} className={input} />
 			</Field>
 			<Field label="Contact">
 				<input
@@ -207,7 +205,11 @@ function SupplierForm({
 					<input name="city" defaultValue={s.city ?? ""} className={input} />
 				</Field>
 				<Field label="State">
-					<input name="region" defaultValue={s.region ?? ""} className={input} />
+					<input
+						name="region"
+						defaultValue={s.region ?? ""}
+						className={input}
+					/>
 				</Field>
 				<Field label="ZIP">
 					<input
@@ -225,7 +227,7 @@ function SupplierForm({
 					/>
 				</Field>
 			</div>
-			<div className="grid grid-cols-3 gap-3 md:col-span-2">
+			<div className="grid grid-cols-2 gap-3 md:col-span-2 md:grid-cols-4">
 				<Field label="Lead time (days)">
 					<input
 						name="leadTimeDays"
@@ -250,6 +252,16 @@ function SupplierForm({
 						inputMode="decimal"
 						defaultValue={s.minimumOrder || ""}
 						placeholder="None"
+						className={cn(input, "tabular-nums")}
+					/>
+				</Field>
+				<Field label="Critical threshold">
+					<input
+						name="criticalThreshold"
+						required
+						inputMode="numeric"
+						defaultValue={s.criticalThreshold}
+						title="Critical products needing ordering that make a PO ready, whatever its total"
 						className={cn(input, "tabular-nums")}
 					/>
 				</Field>
