@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { Filter, ListField } from "#/products/search";
@@ -11,6 +11,8 @@ export type RailGroup = {
 	values: readonly string[] | null;
 	// What a value reads as, when not just itself capitalized.
 	label?: (value: string) => string;
+	// A line under the group saying what its values mean.
+	note?: ReactNode;
 };
 
 const SHORT = 6;
@@ -21,11 +23,14 @@ const SHORT = 6;
 // products picking that value would show, given everything else picked.
 export function FacetRail({
 	groups,
+	notes = {},
 	counts,
 	filters,
 	onFilters,
 }: {
 	groups: RailGroup[];
+	// Notes known only at render time, by field; they follow the group's own.
+	notes?: Partial<Record<ListField, ReactNode>>;
 	counts: Map<ListField, Map<string, number>>;
 	filters: Filter[];
 	onFilters: (next: Filter[]) => void;
@@ -57,6 +62,7 @@ export function FacetRail({
 				<Group
 					key={g.field + g.title}
 					group={g}
+					note={notes[g.field]}
 					counts={counts.get(g.field) ?? new Map()}
 					pickedValues={filters
 						.filter((f) => f.field === g.field && !f.exclude)
@@ -71,12 +77,14 @@ export function FacetRail({
 
 function Group({
 	group: g,
+	note,
 	counts,
 	pickedValues,
 	picked,
 	onToggle,
 }: {
 	group: RailGroup;
+	note?: ReactNode;
 	counts: Map<string, number>;
 	// Picked values with no products left still need a box to untick.
 	pickedValues: string[];
@@ -84,9 +92,10 @@ function Group({
 	onToggle: (value: string) => void;
 }) {
 	const [all, setAll] = useState(false);
-	// Fixed lists keep their order; open lists sort by count. Values with no
-	// products drop out unless picked, so a pick can always be undone here.
-	const values = (
+	// Fixed lists keep their order and every value, so the choices don't
+	// jump around; open lists sort by count and drop values with no products
+	// unless picked, so a pick can always be undone here.
+	const values =
 		g.values ??
 		[
 			...new Set([
@@ -98,11 +107,12 @@ function Group({
 						),
 				),
 			]),
-		].sort(
-			(a, b) =>
-				(counts.get(b) ?? 0) - (counts.get(a) ?? 0) || a.localeCompare(b),
-		)
-	).filter((v) => (counts.get(v) ?? 0) > 0 || picked(v));
+		]
+			.sort(
+				(a, b) =>
+					(counts.get(b) ?? 0) - (counts.get(a) ?? 0) || a.localeCompare(b),
+			)
+			.filter((v) => (counts.get(v) ?? 0) > 0 || picked(v));
 	if (values.length === 0) return null;
 	// Picked values stay visible even when the list is cut short.
 	const shown = all ? values : values.filter((v, i) => i < SHORT || picked(v));
@@ -114,7 +124,12 @@ function Group({
 			<ul className="flex flex-col">
 				{shown.map((v) => (
 					<li key={v}>
-						<label className="flex h-7 cursor-pointer items-center gap-2 rounded-lg px-1.5 hover:bg-surface">
+						<label
+							className={cn(
+								"flex h-7 cursor-pointer items-center gap-2 rounded-lg px-1.5 hover:bg-surface",
+								!counts.get(v) && !picked(v) && "text-muted-foreground",
+							)}
+						>
 							<input
 								type="checkbox"
 								checked={picked(v)}
@@ -143,6 +158,11 @@ function Group({
 					{all ? "Show fewer" : `Show all ${formatCount(values.length)}`}
 				</button>
 			) : null}
+			{(g.note || note) && (
+				<p className="mt-1.5 px-1.5 text-xs leading-4 text-muted-foreground">
+					{g.note} {note}
+				</p>
+			)}
 		</section>
 	);
 }

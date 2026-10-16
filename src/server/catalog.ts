@@ -48,6 +48,7 @@ import {
 	reorderNeeds,
 	unitsOnOrder,
 } from "#/purchasing/reorder";
+import { setSuppliers } from "#/purchasing/suppliers";
 
 async function ownedLocationIds() {
 	const rows = await getDb()
@@ -94,6 +95,8 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			shelves,
 			ranges,
 			sold,
+			components,
+			setSupplier,
 		] = await Promise.all([
 			ownedLocationIds().then((owned) => getAvailability(db, ids, owned)),
 			db
@@ -141,51 +144,90 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			soldSince(db, new Date(Date.now() - DEMAND_DAYS * 86_400_000), {
 				includeFba: false,
 			}),
+			db
+				.select({
+					setId: productComponents.parentProductId,
+					partId: productComponents.componentProductId,
+				})
+				.from(productComponents),
+			setSuppliers(db),
 		]);
 		const counted = new Map(shelves.map((s) => [s.productId, s]));
 		const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
 		const need = new Map(needs.map((n) => [n.productId, n]));
 		const shopify = shopifyFiling(filing);
+		const listed = rows.map(({ supplierId, supplierName, ...r }) => {
+			const s = shopify.get(r.id);
+			const c = abc.classes.get(r.id);
+			const n = need.get(r.id);
+			const range = ranges.get(r.id);
+			// stockRanges answers for every product it's asked about.
+			if (!range) throw new Error(`No stock range for ${r.sku}`);
+			return {
+				...r,
+				// Our own type wins; Shopify's fills in where we have none.
+				category: r.category ?? s?.productType ?? null,
+				tags: s ? [...s.tags].sort() : [],
+				vendor: s?.vendor ?? null,
+				status: s?.status ?? null,
+				onHand: r.kind === "bundle" ? null : (onHand.get(r.id) ?? 0),
+				available: available.get(r.id) ?? 0,
+				abc: c?.abc ?? null,
+				// 1 is the most value. Null for tool sets and unpriced products.
+				abcRank: c?.rank ?? null,
+				supplier:
+					supplierId === null || supplierName === null
+						? null
+						: { id: supplierId, name: supplierName },
+				// Units on sent POs that haven't arrived.
+				onOrder: onOrder.get(r.id) ?? 0,
+				// Its line on the supplier's open draft, in the line's unit.
+				draft: drafts.get(r.id) ?? null,
+				// What to order today, in the supplier's unit. Null when stock
+				// and what's on order last until a PO sent now would arrive.
+				reorder: n
+					? { quantity: n.quantity, unit: n.unit, packSize: n.packSize }
+					: null,
+				// How much we like to keep, its own or the defaults.
+				range,
+				// The oldest count across our shelves; null if any never was.
+				lastCountedAt: counted.get(r.id)?.oldest ?? null,
+				countRequested: counted.get(r.id)?.requested ?? false,
+				// Units a day over the reorder window, as reorder sizes them.
+				dailyDemand: (sold.get(r.id) ?? 0) / DEMAND_DAYS,
+			};
+		});
+		// A tool set reads like any product: its class from its own sales
+		// (abc.sets), counted once all its parts are, ordered from the supplier
+		// of most of its parts, one at a time once none can be built.
+		const byId = new Map(listed.map((p) => [p.id, p]));
+		const partsOf = new Map<number, number[]>();
+		for (const c of components)
+			partsOf.set(c.setId, [...(partsOf.get(c.setId) ?? []), c.partId]);
 		return {
-			products: rows.map(({ supplierId, supplierName, ...r }) => {
-				const s = shopify.get(r.id);
-				const c = abc.classes.get(r.id);
-				const n = need.get(r.id);
-				const range = ranges.get(r.id);
-				// stockRanges answers for every product it's asked about.
-				if (!range) throw new Error(`No stock range for ${r.sku}`);
+			products: listed.map((p) => {
+				if (p.kind !== "bundle") return p;
+				const parts = (partsOf.get(p.id) ?? []).flatMap((id) => {
+					const part = byId.get(id);
+					return part ? [part] : [];
+				});
+				const counts = parts.map((part) => part.lastCountedAt);
+				const supplier = setSupplier.get(p.id) ?? null;
+				const c = abc.sets.get(p.id);
 				return {
-					...r,
-					// Our own type wins; Shopify's fills in where we have none.
-					category: r.category ?? s?.productType ?? null,
-					tags: s ? [...s.tags].sort() : [],
-					vendor: s?.vendor ?? null,
-					status: s?.status ?? null,
-					onHand: r.kind === "bundle" ? null : (onHand.get(r.id) ?? 0),
-					available: available.get(r.id) ?? 0,
+					...p,
 					abc: c?.abc ?? null,
-					// 1 is the most value. Null for tool sets and unpriced products.
 					abcRank: c?.rank ?? null,
-					supplier:
-						supplierId === null || supplierName === null
+					lastCountedAt:
+						counts.length === 0 || counts.some((at) => at === null)
 							? null
-							: { id: supplierId, name: supplierName },
-					// Units on sent POs that haven't arrived.
-					onOrder: onOrder.get(r.id) ?? 0,
-					// Its line on the supplier's open draft, in the line's unit.
-					draft: drafts.get(r.id) ?? null,
-					// What to order today, in the supplier's unit. Null when stock
-					// and what's on order last until a PO sent now would arrive.
-					reorder: n
-						? { quantity: n.quantity, unit: n.unit, packSize: n.packSize }
-						: null,
-					// How much we like to keep, its own or the defaults.
-					range,
-					// The oldest count across our shelves; null if any never was.
-					lastCountedAt: counted.get(r.id)?.oldest ?? null,
-					countRequested: counted.get(r.id)?.requested ?? false,
-					// Units a day over the reorder window, as reorder sizes them.
-					dailyDemand: (sold.get(r.id) ?? 0) / DEMAND_DAYS,
+							: new Date(Math.min(...counts.map((at) => at?.getTime() ?? 0))),
+					countRequested: parts.some((part) => part.countRequested),
+					supplier,
+					reorder:
+						p.available === 0 && supplier
+							? { quantity: 1, unit: "EACH", packSize: 1 }
+							: null,
 				};
 			}),
 			abcDays: abc.days,
@@ -361,7 +403,9 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			),
 			abcClasses(db),
 		]);
-		const rank = abc.classes.get(product.id);
+		// Tool sets rank among themselves (see AbcResult.sets).
+		const ranking = product.kind === "bundle" ? abc.sets : abc.classes;
+		const rank = ranking.get(product.id);
 
 		return {
 			product,
@@ -377,7 +421,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			listings: productListings,
 			history,
 			available: availability.get(product.id) ?? 0,
-			abc: rank ? { ...rank, of: abc.classes.size, days: abc.days } : null,
+			abc: rank ? { ...rank, of: ranking.size, days: abc.days } : null,
 			// Where a count could be recorded. One location means nobody has to pick.
 			locations: ownedLocations,
 		};
@@ -644,32 +688,45 @@ export const requestCount = createServerFn({ method: "POST" })
 	.validator(type({ productId: "number.integer > 0" }))
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const [held, owned] = await Promise.all([
-			db
-				.select({ locationId: stockLevels.locationId })
-				.from(stockLevels)
-				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-				.where(
-					and(
-						eq(stockLevels.productId, data.productId),
-						eq(locations.kind, "owned"),
-					),
-				),
-			ownedLocationIds(),
-		]);
-		if (owned.length === 0) throw new Error("Add a location first");
-		const at =
-			held.length > 0 ? held.map((h) => h.locationId) : [Math.min(...owned)];
+		// A tool set has no shelf of its own, so counting it means its parts.
+		const parts = await db
+			.select({ id: productComponents.componentProductId })
+			.from(productComponents)
+			.where(eq(productComponents.parentProductId, data.productId));
 		const added = [];
-		for (const locationId of at)
-			added.push(
-				...(await requestCounts(db, {
-					productIds: [data.productId],
-					locationId,
-				})),
-			);
+		for (const productId of parts.length > 0
+			? parts.map((p) => p.id)
+			: [data.productId])
+			added.push(...(await requestShelfCounts(db, productId)));
 		return added;
 	});
+
+// Puts each of our shelves holding the product on the count list, or the
+// first one when none holds it yet.
+async function requestShelfCounts(db: Db, productId: number) {
+	const [held, owned] = await Promise.all([
+		db
+			.select({ locationId: stockLevels.locationId })
+			.from(stockLevels)
+			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+			.where(
+				and(eq(stockLevels.productId, productId), eq(locations.kind, "owned")),
+			),
+		ownedLocationIds(),
+	]);
+	if (owned.length === 0) throw new Error("Add a location first");
+	const at =
+		held.length > 0 ? held.map((h) => h.locationId) : [Math.min(...owned)];
+	const added = [];
+	for (const locationId of at)
+		added.push(
+			...(await requestCounts(db, {
+				productIds: [productId],
+				locationId,
+			})),
+		);
+	return added;
+}
 
 // Undoes requestCount. Returns how many requests came off; any that were
 // counted and asked for again since stay.

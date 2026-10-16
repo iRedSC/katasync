@@ -42,6 +42,7 @@ import {
 import { suggestPurchases } from "#/purchasing/reorder";
 import {
 	setProductSupplier as setProductSupplierLink,
+	setSuppliers,
 	updateSupplier as updateSupplierDetails,
 } from "#/purchasing/suppliers";
 import {
@@ -288,15 +289,24 @@ export const addToPurchaseOrder = createServerFn({ method: "POST" })
 			.from(productSuppliers)
 			.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
 			.where(eq(productSuppliers.productId, data.productId));
-		if (!link)
-			throw new PurchaseOrderError("Set this product's supplier first");
-		const purchaseOrderId = await openDraft(db, link.supplierId);
+		// A tool set goes to the supplier of most of its parts, one at a time.
+		const order =
+			link ??
+			(await setSuppliers(db, [data.productId]).then((m) => {
+				const s = m.get(data.productId);
+				return s && { supplierId: s.id, supplierName: s.name, minimum: 1 };
+			}));
+		if (!order)
+			throw new PurchaseOrderError(
+				"Set this product's supplier first (for a tool set, its parts')",
+			);
+		const purchaseOrderId = await openDraft(db, order.supplierId);
 		const { added, line } = await addDraftLine(db, {
 			purchaseOrderId,
 			productId: data.productId,
-			quantity: data.quantity ?? link.minimum,
+			quantity: data.quantity ?? order.minimum,
 		});
-		return { added, purchaseOrderId, supplierName: link.supplierName, line };
+		return { added, purchaseOrderId, supplierName: order.supplierName, line };
 	});
 
 // Undoes addToPurchaseOrder. Returns false, changing nothing, when the line
