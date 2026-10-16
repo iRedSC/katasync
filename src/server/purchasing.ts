@@ -44,7 +44,7 @@ import {
 	updateDraft,
 	updateFromSuggestions,
 } from "#/purchasing/orders";
-import { suggestPurchases } from "#/purchasing/reorder";
+import { recommendedAdditions, suggestPurchases } from "#/purchasing/reorder";
 import {
 	setProductSupplier as setProductSupplierLink,
 	setSuppliers,
@@ -110,9 +110,12 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 
 export type PurchasingList = Awaited<ReturnType<typeof listPurchasing>>;
 
-// "POs ready" on Home: suppliers whose suggested order reached their minimum.
+// "POs ready" on Home: suppliers whose suggested order reached their minimum,
+// or has enough critical products in it.
 export const countPosReady = createServerFn({ method: "GET" }).handler(
-	async () => (await suggestPurchases(getDb())).filter((s) => s.ready).length,
+	async () =>
+		(await suggestPurchases(getDb())).filter((s) => s.readiness !== "waiting")
+			.length,
 );
 
 // Owned stock for each product, so a draft shows what's already on the shelf.
@@ -157,6 +160,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			changes,
 			units,
 			amendments,
+			recommended,
 		] = await Promise.all([
 			onHandOf(db, productIds),
 			stockRanges(db, productIds),
@@ -222,6 +226,17 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				.where(eq(purchaseOrderAmendments.purchaseOrderId, data.id))
 				.orderBy(desc(purchaseOrderAmendments.id))
 				.limit(200),
+			// On a draft: what else from this supplier will need ordering before
+			// its next PO, leaving out what's on it already, sets' parts too.
+			po.order.status === "draft"
+				? partsOfSets(db, data.id).then((fromSets) =>
+						recommendedAdditions(
+							db,
+							po.supplier.id,
+							new Set([...productIds, ...fromSets.keys()]),
+						),
+					)
+				: [],
 		]);
 		return {
 			changes,
@@ -237,6 +252,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				onHand: onHand.get(p.productId) ?? 0,
 				stockRange: ranges.get(p.productId) ?? null,
 			})),
+			recommended,
 			receipts,
 			amendments,
 			locations: ownedLocations,
@@ -262,6 +278,18 @@ export const createDraft = createServerFn({ method: "POST" })
 export const updateDraftFromSuggestions = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) => updateFromSuggestions(getDb(), data.id));
+
+// Puts a recommended addition on the draft at the quantity recommended. A
+// product that got onto the draft meanwhile is left as it is.
+export const addRecommended = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			purchaseOrderId: "number.integer > 0",
+			productId: "number.integer > 0",
+			quantity: "number.integer > 0",
+		}),
+	)
+	.handler(async ({ data }) => addDraftLine(getDb(), data));
 
 export const setLine = createServerFn({ method: "POST" })
 	.validator(
@@ -603,6 +631,7 @@ export const updateSupplier = createServerFn({ method: "POST" })
 			leadTimeDays: "1 <= number.integer <= 365",
 			coverDays: "1 <= number.integer <= 365",
 			minimumOrder: "number >= 0",
+			criticalThreshold: "number.integer >= 1",
 		}),
 	)
 	.handler(async ({ data: { id: supplierId, ...values } }) =>

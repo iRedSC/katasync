@@ -84,6 +84,7 @@ export type SupplierFields = {
 	leadTimeDays: number;
 	coverDays: number;
 	minimumOrder: number;
+	criticalThreshold: number;
 };
 
 // Changes any of a supplier's details. Blank text is stored as nothing.
@@ -105,6 +106,14 @@ export async function updateSupplier(
 	if (fields.minimumOrder !== undefined && !(fields.minimumOrder >= 0))
 		throw new PurchaseOrderError(
 			`Minimum order can't be ${fields.minimumOrder}`,
+		);
+	const threshold = fields.criticalThreshold;
+	if (
+		threshold !== undefined &&
+		!(Number.isInteger(threshold) && threshold >= 1)
+	)
+		throw new PurchaseOrderError(
+			`Critical products to send must be a whole number from 1, got ${threshold}`,
 		);
 	if (fields.name !== undefined && fields.name.trim() === "")
 		throw new PurchaseOrderError("A supplier needs a name");

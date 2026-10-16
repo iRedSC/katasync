@@ -29,7 +29,13 @@ import {
 	undoReceipt,
 	updateFromSuggestions,
 } from "./orders";
-import { reorderQuantity, suggestPurchases, unitsOnOrder } from "./reorder";
+import {
+	daysUntilReorder,
+	recommendedAdditions,
+	reorderQuantity,
+	suggestPurchases,
+	unitsOnOrder,
+} from "./reorder";
 import { partState } from "./sets";
 import {
 	addUnit,
@@ -51,6 +57,7 @@ describe("reorderQuantity", () => {
 		leadTimeDays: 10,
 		safetyDays: 0,
 		coverDays: 20,
+		minStock: 0,
 		minimumQuantity: 1,
 		packSize: 1,
 	};
@@ -83,6 +90,26 @@ describe("reorderQuantity", () => {
 	test("buys back oversold stock even with no recent sales", () => {
 		expect(reorderQuantity({ ...base, dailyDemand: 0, onHand: -2 })).toBe(2);
 		expect(reorderQuantity({ ...base, dailyDemand: 0 })).toBe(0);
+	});
+
+	test("orders back up to min stock, even with no recent sales", () => {
+		expect(reorderQuantity({ ...base, dailyDemand: 0, minStock: 3 })).toBe(3);
+		expect(
+			reorderQuantity({ ...base, dailyDemand: 0, minStock: 3, onHand: 2 }),
+		).toBe(1);
+		expect(
+			reorderQuantity({ ...base, dailyDemand: 0, minStock: 3, onHand: 3 }),
+		).toBe(0);
+		// Min above the usual reorder point raises it: 15 on hand lasts the lead
+		// time, but not past min.
+		expect(reorderQuantity({ ...base, minStock: 20, onHand: 15 })).toBe(15);
+	});
+
+	test("counts days until it needs ordering", () => {
+		expect(daysUntilReorder({ ...base, onHand: 15 })).toBe(5);
+		expect(daysUntilReorder({ ...base, onHand: 10 })).toBe(0);
+		expect(daysUntilReorder({ ...base, onHand: 9 })).toBeNull();
+		expect(daysUntilReorder({ ...base, dailyDemand: 0 })).toBeNull();
 	});
 });
 
@@ -209,7 +236,11 @@ describe("suggestPurchases", () => {
 		const [s] = await suggestPurchases(db, now);
 		// 60 sold over 90 days, for 10 + 20 days plus 5 spare as an A item: 24.
 		expect(s.lines).toMatchObject([{ sku: "BLADE", sold: 60, quantity: 24 }]);
-		expect(s).toMatchObject({ total: 120, ready: true, draftId: null });
+		expect(s).toMatchObject({
+			total: 120,
+			readiness: "minimum",
+			draftId: null,
+		});
 	});
 
 	test("isn't ready below the supplier's minimum, and lists unpriced lines", async () => {
@@ -223,7 +254,62 @@ describe("suggestPurchases", () => {
 		const [s] = await suggestPurchases(db, now);
 		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE", "KNIFE"]);
 		// Blade is an A item: 1 a day for 10 + 20 days plus 5 spare.
-		expect(s).toMatchObject({ total: 35, unpriced: 1, ready: false });
+		expect(s).toMatchObject({ total: 35, unpriced: 1, readiness: "waiting" });
+	});
+
+	test("is ready below the minimum once enough critical products need it", async () => {
+		const blade = await createProduct(db, "BLADE", "simple");
+		const knife = await createProduct(db, "KNIFE", "simple");
+		await supply(blade, 1);
+		await supply(knife, 1);
+		await sell(blade, 90); // an A item, so critical
+		await stock(knife, -1);
+
+		let [s] = await suggestPurchases(db, now);
+		expect(s).toMatchObject({ critical: 1, readiness: "waiting" });
+
+		await db
+			.update(schema.products)
+			.set({ critical: true })
+			.where(eq(schema.products.id, knife));
+		[s] = await suggestPurchases(db, now);
+		expect(s).toMatchObject({ critical: 2, readiness: "critical" });
+
+		await db
+			.update(schema.suppliers)
+			.set({ criticalThreshold: 3 })
+			.where(eq(schema.suppliers.id, canam));
+		[s] = await suggestPurchases(db, now);
+		expect(s.readiness).toBe("waiting");
+	});
+});
+
+describe("recommendedAdditions", () => {
+	test("lists what will need ordering within cover days, soonest first", async () => {
+		const soon = await createProduct(db, "SOON", "simple");
+		const later = await createProduct(db, "LATER", "simple");
+		const far = await createProduct(db, "FAR", "simple");
+		const now_ = await createProduct(db, "NOW", "simple");
+		const onDraft = await createProduct(db, "ONDRAFT", "simple");
+		for (const id of [soon, later, far, now_, onDraft]) await supply(id, 2);
+		// Each sells 1 a day; lead time is 10, cover 20.
+		for (const id of [soon, later, far, now_, onDraft]) await sell(id, 90);
+		await stock(soon, 18);
+		await stock(later, 25);
+		await stock(far, 40);
+		await stock(now_, 5);
+		await stock(onDraft, 12);
+
+		const r = await recommendedAdditions(db, canam, new Set([onDraft]), now);
+		// All are A items, so 5 days spare: the reorder point is 15 and a top-up
+		// goes to 35. NOW needs ordering today, so it's a suggestion instead; FAR
+		// lasts past cover.
+		expect(
+			r.map((l) => [l.sku, l.daysUntilReorder, l.quantity, l.critical]),
+		).toEqual([
+			["SOON", 3, 17, true],
+			["LATER", 10, 10, true],
+		]);
 	});
 });
 
@@ -371,6 +457,8 @@ describe("a PO from draft to received", () => {
 		await db
 			.insert(schema.productSuppliers)
 			.values({ productId: handle, supplierId: canam });
+		// At its min stock, so it isn't suggested by itself.
+		await stock(handle, 1);
 		const set = await createProduct(db, "SET", "bundle");
 		await setRecipe(db, set, [
 			{ productId: blade, quantity: 2 },

@@ -487,7 +487,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 		"update_supplier",
 		{
 			description:
-				"Changes a supplier's details. Only given fields change. lead_time_days: days from sending a PO to delivery. cover_days: days of sales each PO should cover. minimum_order: spend (USD) at which a suggested PO counts as ready.",
+				"Changes a supplier's details. Only given fields change. lead_time_days: days from sending a PO to delivery. cover_days: days of sales each PO should cover. minimum_order: spend (USD) at which a suggested PO counts as ready. critical_threshold: how many critical products (marked critical, or A items) needing ordering make it ready whatever the spend.",
 			inputSchema: {
 				supplier: z.string().describe("Code or name"),
 				name: z.string().optional(),
@@ -514,6 +514,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 				lead_time_days: z.number().int().min(1).max(365).optional(),
 				cover_days: z.number().int().min(1).max(365).optional(),
 				minimum_order: z.number().min(0).optional(),
+				critical_threshold: z.number().int().min(1).optional(),
 			},
 			annotations: WRITE,
 		},
@@ -536,6 +537,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 				leadTimeDays: input.lead_time_days,
 				coverDays: input.cover_days,
 				minimumOrder: input.minimum_order,
+				criticalThreshold: input.critical_threshold,
 			});
 			return json({ updated: input.supplier });
 		},

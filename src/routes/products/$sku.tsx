@@ -29,6 +29,7 @@ import {
 	getProductDetail,
 	type ProductDetail,
 	saveProductStockRange,
+	setCritical,
 	setInsureWhenShipped,
 } from "#/server/catalog";
 import { getProductSupplier } from "#/server/purchasing";
@@ -440,7 +441,14 @@ function Details({ d }: { d: ProductDetail }) {
 					))}
 				</dl>
 			)}
-			<InsureToggle sku={p.sku} insure={p.insureWhenShipped} />
+			<div className="flex flex-col gap-2">
+				<InsureToggle sku={p.sku} insure={p.insureWhenShipped} />
+				<CriticalToggle
+					productId={p.id}
+					critical={p.critical}
+					isA={d.abc?.abc === "A"}
+				/>
+			</div>
 		</Card>
 	);
 }
@@ -469,6 +477,51 @@ function InsureToggle({ sku, insure }: { sku: string; insure: boolean }) {
 				className="size-4 accent-primary"
 			/>
 			Insure when shipped
+		</label>
+	);
+}
+
+// A items are critical already, so the box is checked and grayed out for
+// them, with the reason on hover.
+function CriticalToggle({
+	productId,
+	critical,
+	isA,
+}: {
+	productId: number;
+	critical: boolean;
+	isA: boolean;
+}) {
+	const router = useRouter();
+	async function set(next: boolean) {
+		await setCritical({ data: { productId, critical: next } });
+		router.invalidate();
+		toast.success(next ? "Marked critical" : "No longer critical", {
+			action: {
+				label: "Undo",
+				onClick: async () => {
+					await setCritical({ data: { productId, critical: !next } });
+					router.invalidate();
+				},
+			},
+		});
+	}
+	return (
+		<label
+			className={cn(
+				"flex items-center gap-2",
+				isA ? "cursor-default text-muted-foreground" : "cursor-pointer",
+			)}
+			title={isA ? "A items are always critical" : undefined}
+		>
+			<input
+				type="checkbox"
+				checked={critical || isA}
+				disabled={isA}
+				onChange={(e) => set(e.target.checked)}
+				className="size-4 accent-primary"
+			/>
+			Critical
 		</label>
 	);
 }
