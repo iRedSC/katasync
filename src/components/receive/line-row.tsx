@@ -66,6 +66,17 @@ export function LineRow({
 					<p className="truncate font-mono text-xs text-muted-foreground">
 						{line.sku}
 					</p>
+					{line.sentQuantity === null ? (
+						<p className="text-sm font-semibold text-warning-text">
+							Added after sending
+						</p>
+					) : (
+						line.sentQuantity !== line.quantity && (
+							<p className="text-sm font-semibold text-warning-text">
+								Ordered {line.sentQuantity}
+							</p>
+						)
+					)}
 				</div>
 				<div className="shrink-0 text-right">
 					<p className="text-2xl font-bold tabular-nums">
@@ -94,7 +105,9 @@ export function LineRow({
 					)}
 				>
 					{done ? (
-						remaining === 0 ? (
+						line.quantity === 0 && line.received === 0 ? (
+							"None came"
+						) : remaining === 0 ? (
 							<>
 								<Check className="size-7" strokeWidth={3} />
 								Done

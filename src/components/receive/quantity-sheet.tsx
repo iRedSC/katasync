@@ -6,16 +6,20 @@ import { holdable } from "./use-long-press";
 const MAX = 9999;
 
 // Bottom sheet for receiving a different amount than what's left: -/+, a
-// number pad, and a confirm button. Over-shipping is allowed, so only a warning.
-// On a closed PO it only offers the undo.
+// number pad, and a confirm button. More than ordered is kept, and the PO
+// then expects it. Less asks whether the rest is still coming; 0 says none
+// came. None of it reaches the supplier. On a closed PO it only offers the
+// undo. `extra` is a product that isn't on the PO yet.
 export function QuantitySheet({
 	title,
 	unit,
 	canReceive,
 	remaining,
+	extra = false,
 	lastReceipt,
 	busy,
 	onConfirm,
+	onNoneCame,
 	onUndo,
 	onClose,
 }: {
@@ -24,10 +28,14 @@ export function QuantitySheet({
 	unit?: string;
 	canReceive: boolean;
 	remaining: number;
+	extra?: boolean;
 	// Newest receipt that can still be undone for this line.
 	lastReceipt: number | null;
 	busy: boolean;
-	onConfirm: (quantity: number) => void;
+	// last: nothing more of it is coming.
+	onConfirm: (quantity: number, last: boolean) => void;
+	// Stop waiting for what's left without receiving any.
+	onNoneCame?: () => void;
 	onUndo: () => void;
 	onClose: () => void;
 }) {
@@ -45,13 +53,16 @@ export function QuantitySheet({
 		setQuantity((q) => Math.min((typed ? q : 0) * 10 + d, MAX));
 		setTyped(true);
 	};
+	const canStop = Boolean(onNoneCame) && remaining > 0;
 	const step = (by: number) => {
-		setQuantity((q) => Math.min(Math.max(q + by, 1), MAX));
+		setQuantity((q) => Math.min(Math.max(q + by, canStop ? 0 : 1), MAX));
 		setTyped(false);
 	};
 
-	const valid = quantity >= 1;
-	const over = quantity > remaining;
+	const valid = quantity >= 1 || (quantity === 0 && canStop);
+	const over = !extra && quantity > remaining;
+	const short = quantity >= 1 && quantity < remaining;
+	const u = unit ? ` ${unit}` : "";
 
 	return (
 		<div className="fixed inset-0 z-50 flex flex-col justify-end">
@@ -93,11 +104,13 @@ export function QuantitySheet({
 						</div>
 						<p
 							className={cn(
-								"h-6 text-center text-base font-semibold text-warning-text",
-								!over && "invisible",
+								"min-h-6 text-center text-base font-semibold text-warning-text",
+								!(over || extra) && "invisible",
 							)}
 						>
-							More than ordered
+							{extra
+								? "Not on the PO, so it's added. The supplier isn't told."
+								: "More than ordered. The PO keeps the extra."}
 						</p>
 
 						<div className="mt-1 grid grid-cols-3 gap-2">
@@ -132,13 +145,30 @@ export function QuantitySheet({
 						<button
 							type="button"
 							disabled={!valid || busy}
-							onClick={() => onConfirm(quantity)}
+							onClick={() =>
+								quantity === 0 ? onNoneCame?.() : onConfirm(quantity, false)
+							}
 							className="mt-3 h-16 w-full rounded-2xl bg-primary text-xl font-bold text-white active:bg-primary-hover disabled:opacity-40"
 						>
-							{valid
-								? `Receive ${quantity}${unit ? ` ${unit}` : ""}`
-								: "Pick a number"}
+							{!valid
+								? "Pick a number"
+								: quantity === 0
+									? "None came, stop waiting"
+									: short
+										? `Receive ${quantity}${u}, rest still coming`
+										: `Receive ${quantity}${u}`}
 						</button>
+						{short && (
+							<button
+								type="button"
+								disabled={busy}
+								onClick={() => onConfirm(quantity, true)}
+								className="mt-2 h-16 w-full rounded-2xl bg-surface text-xl font-bold active:bg-surface-strong disabled:opacity-40"
+							>
+								Receive {quantity}
+								{u}, that's all they sent
+							</button>
+						)}
 					</>
 				)}
 
