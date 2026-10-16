@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { type Db, getDb } from "#/db/client";
 import {
 	locations,
@@ -31,13 +31,14 @@ import {
 	closeOrder,
 	deleteDraft,
 	draftChanges,
-	draftFromSuggestions,
 	markSent,
 	openDraft,
+	openSuggested,
 	PurchaseOrderError,
 	partsOfSets,
 	receive,
 	receiveExtra,
+	refreshSuggested,
 	removeAddedLine,
 	setDraftLine,
 	setPartsOf,
@@ -97,6 +98,8 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 					eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
 				)
 				.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
+				// Suggested POs show as their suggestion, under Ready to order.
+				.where(ne(purchaseOrders.status, "suggested"))
 				.groupBy(purchaseOrders.id, suppliers.name)
 				.orderBy(desc(purchaseOrders.id))
 				.limit(200),
@@ -105,15 +108,17 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 				.from(suppliers)
 				.orderBy(suppliers.name),
 		]);
-		const open = orders.filter(
-			(o) => o.status === "draft" || o.status === "sent",
-		);
+		// Open: drafts still being put together. Incoming: sent, waiting on
+		// deliveries.
+		const open = orders.filter((o) => o.status === "draft");
+		const incoming = orders.filter((o) => o.status === "sent");
 		const done = orders
 			.filter((o) => o.status === "closed" || o.status === "cancelled")
 			.slice(0, 30);
 		return {
 			ready: readyToOrder(suggestions),
 			open,
+			incoming,
 			done,
 			suppliers: supplierNames,
 		};
@@ -151,9 +156,12 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 	.validator(id)
 	.handler(async ({ data }) => {
 		const db = getDb();
+		// A suggested PO shows today's suggestion, not the one it was opened with.
+		await refreshSuggested(db, data.id);
 		const po = await loadOrder(db, data.id);
-		const setParts =
-			po.order.status === "draft" ? await setPartsOf(db, data.id) : [];
+		const unsent =
+			po.order.status === "draft" || po.order.status === "suggested";
+		const setParts = unsent ? await setPartsOf(db, data.id) : [];
 		// A set's parts show their stock too.
 		const productIds = [
 			...new Set([
@@ -206,6 +214,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				.where(eq(locations.kind, "owned"))
 				.orderBy(locations.name),
 			// On a draft: how today's suggestions differ from it (see draftChanges).
+			// A suggested PO is the suggestion.
 			po.order.status === "draft"
 				? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
 						([all, fromSets]) => {
@@ -241,7 +250,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			// On a draft: what else from this supplier is worth adding (see
 			// recommendedAdditions), leaving out what's on it already, sets'
 			// parts too.
-			po.order.status === "draft"
+			unsent
 				? partsOfSets(db, data.id).then((fromSets) =>
 						recommendedAdditions(
 							db,
@@ -284,16 +293,15 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 
 export type PurchaseOrderDetail = Awaited<ReturnType<typeof getPurchaseOrder>>;
 
+// Starts a blank draft for a supplier, or opens the one they have.
 export const createDraft = createServerFn({ method: "POST" })
-	.validator(
-		type({ supplierId: "number.integer > 0", "fromSuggestions?": "boolean" }),
-	)
-	.handler(async ({ data }) => {
-		const db = getDb();
-		return data.fromSuggestions === false
-			? openDraft(db, data.supplierId)
-			: draftFromSuggestions(db, data.supplierId);
-	});
+	.validator(type({ supplierId: "number.integer > 0" }))
+	.handler(async ({ data }) => openDraft(getDb(), data.supplierId));
+
+// Opens a supplier's suggestion as a PO without making it a draft yet.
+export const openSuggestedPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(type({ supplierId: "number.integer > 0" }))
+	.handler(async ({ data }) => openSuggested(getDb(), data.supplierId));
 
 // Brings a frozen draft up to date with what needs reordering today.
 export const updateDraftFromSuggestions = createServerFn({ method: "POST" })

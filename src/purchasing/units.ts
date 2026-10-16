@@ -7,7 +7,7 @@ import {
 	purchaseOrders,
 	purchaseUnits,
 } from "#/db/schema";
-import { lockOrder, PurchaseOrderError } from "#/purchasing/orders";
+import { lockForEdit, PurchaseOrderError } from "#/purchasing/orders";
 
 // The units suppliers sell in, and which one each product is bought in.
 // Stock always counts the product itself; a unit only changes how POs are
@@ -198,7 +198,7 @@ export async function setLineTerms(
 ) {
 	const { purchaseOrderId, productId, makeDefault, ...terms } = input;
 	return db.transaction(async (tx) => {
-		const po = await lockOrder(tx, purchaseOrderId, ["draft"]);
+		const po = await lockForEdit(tx, purchaseOrderId);
 		await checkTerms(tx, terms);
 		const [line] = await tx
 			.select()

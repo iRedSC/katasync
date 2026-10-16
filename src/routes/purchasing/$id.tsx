@@ -72,6 +72,10 @@ export const Route = createFileRoute("/purchasing/$id")({
 	component: PurchaseOrderPage,
 });
 
+// Not sent yet: lines are edited as a draft's are.
+const isUnsent = (status: PurchaseOrderDetail["order"]["status"]) =>
+	status === "draft" || status === "suggested";
+
 const errorText = (err: unknown) =>
 	err instanceof Error ? err.message : String(err);
 
@@ -102,7 +106,9 @@ function PurchaseOrderPage() {
 	const goBack = useBack({ to: "/purchasing" });
 	const { busy, run } = useAction();
 	const po = d.order;
-	const draft = po.status === "draft";
+	// A suggested PO works like a draft; its first change makes it one.
+	const draft = isUnsent(po.status);
+	const suggested = po.status === "suggested";
 	// Sent and closed POs can still change, without telling the supplier.
 	const editable = po.status !== "cancelled";
 	const [editingSupplier, setEditingSupplier] = useState(false);
@@ -173,6 +179,14 @@ function PurchaseOrderPage() {
 			</div>
 		</>
 	);
+
+	// Says so when a change turns the suggestion into a draft.
+	const wasSuggested = useRef(suggested);
+	useEffect(() => {
+		if (wasSuggested.current && po.status === "draft")
+			toast.success(`Saved as draft PO ${po.id}`);
+		wasSuggested.current = po.status === "suggested";
+	}, [po.status, po.id]);
 
 	useHotkeys({
 		Escape: goBack,
@@ -294,7 +308,7 @@ function PurchaseOrderPage() {
 					{draft ? (
 						<>
 							<Card flush>
-								<FrozenBar detail={d} />
+								{suggested ? <SuggestedBar /> : <FrozenBar detail={d} />}
 								{lineTable(d.lines)}
 								{totals}
 							</Card>
@@ -492,7 +506,7 @@ function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 			po.status === "cancelled" ? "Cancelled" : "Closed",
 			formatDay(po.closedAt),
 		]);
-	if (po.status === "draft")
+	if (isUnsent(po.status))
 		rows.push([
 			"Lead time",
 			`${d.supplier.leadTimeDays} days, so about ${formatDay(new Date(Date.now() + d.supplier.leadTimeDays * 86_400_000))}`,
@@ -506,6 +520,16 @@ function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 				</div>
 			))}
 		</dl>
+	);
+}
+
+// A suggested PO isn't saved as anything yet: it shows today's suggestion
+// and becomes a draft with the first change.
+function SuggestedBar() {
+	return (
+		<div className="border-b bg-subtle px-4 py-2.5 text-sm text-muted-foreground">
+			Today's suggestion. It's saved as a draft when you change anything.
+		</div>
 	);
 }
 
@@ -708,7 +732,7 @@ function LineTable({
 	// A quantity opened by focus is done; enter says it was left with Enter.
 	onQuantityDone: (enter: boolean) => void;
 }) {
-	const draft = d.order.status === "draft";
+	const draft = isUnsent(d.order.status);
 	const receiving = d.order.status === "sent";
 	const editable = d.order.status !== "cancelled";
 	const wasSent = d.order.sentAt !== null;
@@ -2036,7 +2060,7 @@ function OtherActions({
 	return (
 		<Card title="More">
 			<div className="flex flex-col items-start gap-1">
-				{po.status === "draft" && (
+				{isUnsent(po.status) && (
 					<Button
 						variant="ghost"
 						size="sm"
@@ -2062,7 +2086,8 @@ function OtherActions({
 						Close, the rest isn't coming
 					</Button>
 				)}
-				{received === 0 && (
+				{/* A suggested PO isn't saved, so there's nothing to delete. */}
+				{received === 0 && po.status !== "suggested" && (
 					<Button
 						variant="ghost"
 						size="sm"

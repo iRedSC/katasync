@@ -677,11 +677,14 @@ export const productSuppliers = pgTable(
 	],
 );
 
+// suggested: today's reorder suggestion, opened to look at. It follows the
+// suggestion until its first change makes it a draft.
 // draft: still being edited; not on order yet.
 // sent: emailed to the supplier. Stays sent while partly received.
 // closed: everything arrived, or we stopped waiting for the rest.
 // cancelled: never sent, or sent and called off before anything arrived.
 export const purchaseOrderStatus = pgEnum("purchase_order_status", [
+	"suggested",
 	"draft",
 	"sent",
 	"closed",
@@ -713,10 +716,12 @@ export const purchaseOrders = pgTable(
 	},
 	(t) => [
 		index("purchase_orders_supplier_idx").on(t.supplierId),
-		// One draft per supplier, so suggestions have one place to go.
+		// One draft per supplier, so suggestions have one place to go. A
+		// suggested PO holds the same place. Written as the statuses it isn't,
+		// since the migration adding "suggested" can't name it yet.
 		uniqueIndex("purchase_orders_one_draft")
 			.on(t.supplierId)
-			.where(sql`${t.status} = 'draft'`),
+			.where(sql`${t.status} not in ('sent', 'closed', 'cancelled')`),
 	],
 );
 

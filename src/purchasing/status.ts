@@ -4,7 +4,7 @@ import type { Tone } from "#/components/page";
 // arrived. "Late" is a sent PO past its expected date.
 export function purchaseOrderStatus(
 	po: {
-		status: "draft" | "sent" | "closed" | "cancelled";
+		status: "suggested" | "draft" | "sent" | "closed" | "cancelled";
 		expectedAt: Date | string | null;
 		ordered: number;
 		received: number;
@@ -12,6 +12,8 @@ export function purchaseOrderStatus(
 	now = new Date(),
 ): { label: string; tone?: Tone } {
 	switch (po.status) {
+		case "suggested":
+			return { label: "Suggested", tone: "success" };
 		case "draft":
 			return { label: "Draft", tone: "info" };
 		case "cancelled":
