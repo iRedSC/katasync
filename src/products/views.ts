@@ -1,19 +1,59 @@
 import { type } from "arktype";
 import { FIELDS, type Filter } from "#/products/search";
+import {
+	DATE,
+	NUMBER,
+	parseSort,
+	type Sort,
+	type SortColumns,
+	spellSort,
+	TEXT,
+} from "#/products/sort";
 
-// How the product list can be ordered. Only the sort button sets this; the
-// search language has no way to type it.
-export const SORTS = {
-	name: "Name, A to Z",
-	"-name": "Name, Z to A",
-	inventory: "Inventory, lowest first",
-	"-inventory": "Inventory, highest first",
-	value: "Most valuable first",
-	runout: "Runs out soonest",
-} as const;
-export type Sort = keyof typeof SORTS;
+// Every column the product list can sort on, typed as ^key in the search box.
+// Keys are one lowercase word so they're quick to type.
+export const PRODUCT_SORTS = {
+	name: { label: "Name", ...TEXT },
+	sku: { label: "SKU", ...TEXT },
+	class: { label: "Class", asc: "A first", desc: "C first" },
+	inventory: { label: "Inventory", ...NUMBER },
+	onhand: { label: "On hand", ...NUMBER },
+	available: { label: "Available", ...NUMBER },
+	onorder: { label: "On order", ...NUMBER },
+	velocity: { label: "Sold a month", ...NUMBER },
+	reorder: { label: "To reorder", ...NUMBER },
+	runout: { label: "Runs out", asc: "soonest first", desc: "latest first" },
+	min: { label: "Min stock", ...NUMBER },
+	max: { label: "Max stock", ...NUMBER },
+	cost: { label: "Cost", ...NUMBER },
+	worth: { label: "Stock worth", ...NUMBER },
+	counted: { label: "Last counted", ...DATE },
+	type: { label: "Type", ...TEXT },
+	vendor: { label: "Vendor", ...TEXT },
+	supplier: { label: "Supplier", ...TEXT },
+} as const satisfies SortColumns<string>;
+export type ProductSortKey = keyof typeof PRODUCT_SORTS;
+export type ProductSort = Sort<ProductSortKey>;
 
-export const sortType = type.enumerated(...(Object.keys(SORTS) as Sort[]));
+// A product sort as it travels through the URL and the database, e.g.
+// "class,-velocity". Only spellProductSort makes one, so an unchecked string
+// can't pass for it. Empty is name order, which is how the server sends them.
+export type SortText = string & { readonly __spelled: unique symbol };
+
+export function spellProductSort(sort: ProductSort): SortText {
+	const text = spellSort(sort);
+	return (text === "name" ? "" : text) as SortText;
+}
+
+// Before every column could sort, "value" meant most valuable first: class.
+export function parseProductSort(text: string): ProductSort {
+	return parseSort(text === "value" ? "class" : text, PRODUCT_SORTS);
+}
+
+// Any string in, a clean SortText out: unknown columns are dropped.
+export const sortType = type("string").pipe((s) =>
+	spellProductSort(parseProductSort(s)),
+);
 
 // Search chips as they travel through the URL and the database.
 export const filtersType = type({
@@ -24,12 +64,17 @@ export const filtersType = type({
 	exact: "boolean",
 }).array();
 
-export type View = { id: number; name: string; filters: Filter[]; sort: Sort };
+export type View = {
+	id: number;
+	name: string;
+	filters: Filter[];
+	sort: SortText;
+};
 
 // Same chips in the same order and the same sort.
 export function sameSearch(
-	a: { filters: Filter[]; sort: Sort },
-	b: { filters: Filter[]; sort: Sort },
+	a: { filters: Filter[]; sort: SortText },
+	b: { filters: Filter[]; sort: SortText },
 ) {
 	return (
 		a.sort === b.sort &&
@@ -47,7 +92,7 @@ export function sameSearch(
 }
 
 // A link to products with one status chip, e.g. Home's "Oversold".
-export function statusSearch(status: string, sort: Sort = "name") {
+export function statusSearch(status: string, sort: ProductSort = []) {
 	return {
 		filters: [
 			{
@@ -58,6 +103,6 @@ export function statusSearch(status: string, sort: Sort = "name") {
 				exact: true,
 			},
 		] satisfies Filter[],
-		sort,
+		sort: spellProductSort(sort),
 	};
 }

@@ -148,14 +148,26 @@ describe("suggest", () => {
 });
 
 describe("class and inventory", () => {
-	test("^ filters on class, ^! leaves a class out", () => {
-		expect(parseWord("^a")).toMatchObject({ field: "class", value: "a" });
-		const { filters } = parseQuery("^!c");
+	test("* filters on class, *! leaves a class out", () => {
+		expect(parseWord("*a")).toMatchObject({ field: "class", value: "a" });
+		const { filters } = parseQuery("*!c");
 		expect(matches(facets(), filters, [])).toBe(true);
 		expect(matches(facets({ class: ["C"] }), filters, [])).toBe(false);
-		expect(matches(facets({ class: [] }), parseQuery("^A").filters, [])).toBe(
+		expect(matches(facets({ class: [] }), parseQuery("*A").filters, [])).toBe(
 			false,
 		);
+	});
+
+	test("^ is a sort, not a filter or search text", () => {
+		expect(parseWord("^cost")).toBeNull();
+		expect(parseQuery("box ^!cost ^name")).toEqual({
+			filters: [],
+			words: ["box"],
+			sorts: [
+				{ value: "cost", desc: true },
+				{ value: "name", desc: false },
+			],
+		});
 	});
 
 	test("& filters on supplier and ~ on trust, and they combine", () => {

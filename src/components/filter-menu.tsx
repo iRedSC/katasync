@@ -1,4 +1,10 @@
-import { ArrowUpDown, Check, ChevronLeft, ListFilter } from "lucide-react";
+import {
+	ArrowDown,
+	ArrowUp,
+	ArrowUpDown,
+	ChevronLeft,
+	ListFilter,
+} from "lucide-react";
 import { type FormEvent, useState } from "react";
 import {
 	Popover,
@@ -8,13 +14,18 @@ import {
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { Field, Filter, facetCounts } from "#/products/search";
-import { SORTS, type Sort } from "#/products/views";
+import {
+	describeTerm,
+	type Sort,
+	type SortColumns,
+	type SortTerm,
+} from "#/products/sort";
 
 // The fields the filter button offers, in the order shown. Each says how to
 // type it, so the menu also teaches the search language.
 const FIELDS: { field: Field; label: string; typed: string }[] = [
 	{ field: "status", label: "Status", typed: "%" },
-	{ field: "class", label: "Class", typed: "^" },
+	{ field: "class", label: "Class", typed: "*" },
 	{ field: "trust", label: "Trust", typed: "~" },
 	{ field: "supplier", label: "Supplier", typed: "&" },
 	{ field: "inventory", label: "Inventory", typed: ">=3" },
@@ -266,44 +277,95 @@ function TextForm({
 	);
 }
 
-export function SortMenu({
+// Sorts by one column by picking it; picking the column already leading
+// flips it. Several columns at once are typed: ^class ^!velocity.
+export function SortMenu<K extends string>({
 	sort,
 	onSort,
+	columns,
 }: {
-	sort: Sort;
-	onSort: (sort: Sort) => void;
+	sort: Sort<K>;
+	onSort: (sort: Sort<K>) => void;
+	columns: SortColumns<K>;
 }) {
 	const [open, setOpen] = useState(false);
+	const lead = sort[0];
+	const title = lead
+		? `Sort: ${sort.map((t) => describeTerm(t, columns)).join(", then ")}`
+		: "Sort";
+	function pick(term: SortTerm<K>) {
+		onSort([term]);
+		setOpen(false);
+	}
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
 			<PopoverTrigger
-				className={iconButton}
-				aria-label={`Sort: ${SORTS[sort]}`}
-				title={`Sort: ${SORTS[sort]}`}
+				className={cn(iconButton, lead && "text-foreground")}
+				aria-label={title}
+				title={title}
 			>
 				<ArrowUpDown className="size-4" />
 			</PopoverTrigger>
-			<PopoverContent className="w-56">
-				<p className="px-2 py-1 text-xs font-medium text-muted-foreground">
-					Sort by
-				</p>
-				<ul>
-					{(Object.keys(SORTS) as Sort[]).map((s) => (
-						<li key={s}>
-							<button
-								type="button"
-								onClick={() => {
-									onSort(s);
-									setOpen(false);
-								}}
-								className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-surface"
-							>
-								<Check className={cn("size-4", s !== sort && "invisible")} />
-								{SORTS[s]}
-							</button>
-						</li>
-					))}
+			<PopoverContent className="w-72">
+				<div className="flex items-center justify-between px-2 py-1">
+					<p className="text-xs font-medium text-muted-foreground">Sort by</p>
+					{lead && (
+						<button
+							type="button"
+							onClick={() => {
+								onSort([]);
+								setOpen(false);
+							}}
+							className="text-xs text-link hover:underline"
+						>
+							Back to name order
+						</button>
+					)}
+				</div>
+				<ul className="max-h-80 overflow-y-auto">
+					{(Object.keys(columns) as K[]).map((key) => {
+						const at = sort.findIndex((t) => t.key === key);
+						const term = sort[at];
+						const c = columns[key];
+						return (
+							<li key={key} className="flex items-center gap-1">
+								<span className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2">
+									<span className="w-3 text-center text-xs tabular-nums text-muted-foreground">
+										{at >= 0 && sort.length > 1 ? at + 1 : ""}
+									</span>
+									<span className={cn("truncate", term && "font-medium")}>
+										{c.label}
+									</span>
+								</span>
+								{([false, true] as const).map((desc) => {
+									const Arrow = desc ? ArrowDown : ArrowUp;
+									const on = term?.desc === desc;
+									return (
+										<button
+											key={String(desc)}
+											type="button"
+											title={`${c.label}, ${desc ? c.desc : c.asc}`}
+											aria-label={`${c.label}, ${desc ? c.desc : c.asc}`}
+											aria-pressed={on}
+											onClick={() => pick({ key, desc })}
+											className={cn(
+												"inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface",
+												on &&
+													"bg-primary text-primary-foreground hover:bg-primary",
+											)}
+										>
+											<Arrow className="size-4" />
+										</button>
+									);
+								})}
+							</li>
+						);
+					})}
 				</ul>
+				<p className="border-t px-2 pt-2 pb-1 text-xs text-muted-foreground">
+					Type <kbd>^cost</kbd> for lowest first, <kbd>^!cost</kbd> for highest.
+					Several sort chips break ties in order.
+				</p>
 			</PopoverContent>
 		</Popover>
 	);

@@ -23,6 +23,7 @@ import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page, useBack } from "#/components/page";
+import { BrowseProducts, type BrowseRow } from "#/components/po-browse";
 import { cancelWithUndo } from "#/components/po-cancel";
 import {
 	ProductPicker,
@@ -183,6 +184,7 @@ function PurchaseOrderPage() {
 	const editable = po.status !== "cancelled";
 	const [editingSupplier, setEditingSupplier] = useState(false);
 	const picker = useRef<HTMLInputElement>(null);
+	const [browsing, setBrowsing] = useState(false);
 	// The line just added or picked, so it scrolls into view with its
 	// quantity open. The nonce reopens it when picked again.
 	const [focus, setFocus] = useState<LineFocus | null>(null);
@@ -234,6 +236,7 @@ function PurchaseOrderPage() {
 					sent={!draft}
 					busy={busy}
 					onPick={pick}
+					onBrowse={() => setBrowsing(true)}
 				/>
 			)}
 			<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
@@ -290,6 +293,22 @@ function PurchaseOrderPage() {
 		setFocus({ lineId: r.value.lineId, nonce: Date.now() });
 		return true;
 	}
+
+	// From Browse, which stays open to add more: no line opens behind it.
+	// Once the page reloads, the row says it's on this PO.
+	const addFromBrowse = (row: BrowseRow) =>
+		run(
+			() =>
+				addProductToPurchaseOrder({
+					data: { purchaseOrderId: po.id, productId: row.id },
+				}),
+			(r) =>
+				!r.added
+					? `${row.sku} is already on this PO`
+					: draft
+						? `Added ${row.sku}`
+						: `Added ${row.sku}. The supplier isn't told.`,
+		);
 
 	const send = (email: boolean) =>
 		run(
@@ -468,6 +487,17 @@ function PurchaseOrderPage() {
 							)}
 						</div>
 					</Card>
+					<BrowseProducts
+						purchaseOrderId={po.id}
+						supplierName={d.supplier.name}
+						sent={!draft}
+						open={browsing && editable}
+						onOpenChange={setBrowsing}
+						onPo={new Map(d.lines.map((l) => [l.productId, l.id]))}
+						busy={busy}
+						onAdd={addFromBrowse}
+						onGoToLine={(lineId) => setFocus({ lineId, nonce: Date.now() })}
+					/>
 					<SupplierDialog
 						supplier={d.supplier}
 						leadTime={d.leadTime}
@@ -861,6 +891,9 @@ function recommendedLine(
 		onHand: r.onHand,
 		stockRange: r.stockRange,
 		why: r.why,
+		// The reload says what today's suggestion wants; until then, nothing.
+		wants: null,
+		locked: false,
 	};
 }
 

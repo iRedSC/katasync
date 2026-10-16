@@ -22,7 +22,7 @@ import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
 import { AbcBadge, Badge, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
-import { StockCard, type StockState } from "#/components/stock-card";
+import { StockCard } from "#/components/stock-card";
 import { Button } from "#/components/ui/button";
 import {
 	ContextMenu,
@@ -39,31 +39,30 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { VelocityGauge } from "#/components/velocity-gauge";
-import {
-	daysLeft,
-	levelOf,
-	nextStepOf,
-	trustOf,
-} from "#/inventory/stock-state";
 import { copyText } from "#/lib/copy";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { facetsOf, sortValuesOf, stateOf, stock } from "#/products/rows";
 import {
-	type Facets,
 	type Filter,
 	facetCounts,
 	type ListField,
 	matches,
 	parseQuery,
 } from "#/products/search";
+import { isColumn, sortRows, withTerm } from "#/products/sort";
 import {
 	filtersType,
-	type Sort,
+	PRODUCT_SORTS,
+	type ProductSort,
+	parseProductSort,
+	type SortText,
 	sameSearch,
 	sortType,
+	spellProductSort,
 	type View,
 } from "#/products/views";
 import {
@@ -111,7 +110,7 @@ function patchViews(change: (views: View[]) => View[]): Patch {
 type Search = {
 	view?: number;
 	filters?: Filter[];
-	sort?: Sort;
+	sort?: SortText;
 	q?: string;
 	layout?: "table";
 };
@@ -119,7 +118,7 @@ type Search = {
 export const Route = createFileRoute("/products/")({
 	validateSearch: (search: Record<string, unknown>): Search => {
 		const filters = filtersType(search.filters);
-		const sort = sortType(search.sort);
+		const sort = sortType(String(search.sort ?? ""));
 		return {
 			view:
 				typeof search.view === "number" && search.view > 0
@@ -129,7 +128,7 @@ export const Route = createFileRoute("/products/")({
 				filters instanceof type.errors || filters.length === 0
 					? undefined
 					: filters,
-			sort: sort instanceof type.errors || sort === "name" ? undefined : sort,
+			sort: sort instanceof type.errors || sort === "" ? undefined : sort,
 			// The URL parser turns "?q=12" into a number, so take it back.
 			q:
 				(typeof search.q === "string" || typeof search.q === "number") &&
@@ -144,61 +143,6 @@ export const Route = createFileRoute("/products/")({
 });
 
 const PAGE = 100;
-
-// The number the Inventory column shows: what's on the shelf when oversold,
-// otherwise what can be sold or built.
-function stock(p: ProductRow) {
-	return (p.onHand ?? 0) < 0 ? (p.onHand ?? 0) : p.available;
-}
-
-// Trust, level, and next step, worked out once per product per load.
-function stateOf(p: ProductRow, now: Date): StockState {
-	const input = {
-		...p,
-		hasSupplier: p.supplier !== null,
-	};
-	const trust = trustOf(input, now);
-	return {
-		trust,
-		level: levelOf(input),
-		step: nextStepOf(input, trust),
-		daysLeft: daysLeft(p.onHand, p.dailyDemand),
-	};
-}
-
-// What the search language can filter each product on. Status covers
-// Shopify's (active, draft, archived), the stock level unless healthy, and
-// whether it's a tool set or kit.
-function facetsOf(p: ProductRow, state: StockState): Facets {
-	const title = p.variantName ? `${p.name} ${p.variantName}` : p.name;
-	const status = p.status ? [p.status.toLowerCase()] : [];
-	if (state.level !== "healthy") status.push(state.level);
-	if (p.kind === "bundle") status.push("tool set");
-	if (p.kind === "kit") status.push("kit");
-	if (p.reorder) status.push("needs ordering");
-	if (p.draft) status.push("on a draft");
-	if (p.onOrder > 0) status.push("on order");
-	if (!p.supplier && p.kind !== "bundle") status.push("no supplier");
-	const trust =
-		state.trust.kind === "counted"
-			? ["counted"]
-			: state.trust.requested
-				? ["uncounted", "count requested"]
-				: ["uncounted"];
-	return {
-		text: [p.sku, title, p.category ?? ""],
-		title: [title],
-		tag: p.tags,
-		type: p.category ? [p.category] : [],
-		vendor: p.vendor ? [p.vendor] : [],
-		status,
-		class: p.abc ? [p.abc] : [],
-		supplier: p.supplier ? [p.supplier.name] : [],
-		trust,
-		inventory: stock(p),
-		velocity: p.dailyDemand * 30,
-	};
-}
 
 // The rail's groups, in the order a reorder pass goes: what's wrong, whether
 // the number can be trusted, whether it's worth it, then who sells it.
@@ -233,30 +177,6 @@ const RAIL: RailGroup[] = [
 	{ title: "Type", field: "type", values: null },
 ];
 
-// Name order comes from the server; the rest re-sort from it, so ties stay
-// in name order.
-function sorted(
-	products: ProductRow[],
-	sort: Sort,
-	state: Map<number, StockState>,
-) {
-	const left = (p: ProductRow) => state.get(p.id)?.daysLeft ?? Infinity;
-	const by = {
-		name: () => products,
-		"-name": () => [...products].reverse(),
-		inventory: () => [...products].sort((a, b) => stock(a) - stock(b)),
-		"-inventory": () => [...products].sort((a, b) => stock(b) - stock(a)),
-		// Unclassed products go last.
-		value: () =>
-			[...products].sort(
-				(a, b) => (a.abcRank ?? Infinity) - (b.abcRank ?? Infinity),
-			),
-		// Unsold products last, since they aren't running out.
-		runout: () => [...products].sort((a, b) => left(a) - left(b)),
-	};
-	return by[sort]();
-}
-
 // Each history entry gets a fresh list, so back and forward bring back that
 // entry's search text. Typing replaces the entry, so it doesn't remount.
 function Products() {
@@ -274,8 +194,9 @@ function ProductList() {
 	const filtersKey = JSON.stringify(search.filters ?? []);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by content on purpose
 	const filters = useMemo(() => search.filters ?? [], [filtersKey]);
-	const sort = search.sort ?? "name";
-	const current = { filters, sort };
+	const sortText = search.sort ?? spellProductSort([]);
+	const sort = useMemo(() => parseProductSort(sortText), [sortText]);
+	const current = { filters, sort: sortText };
 	const navigate = useNavigate({ from: Route.fullPath });
 	const input = useRef<HTMLInputElement>(null);
 	// The box answers keystrokes from here; the URL keeps a copy for when the
@@ -300,7 +221,7 @@ function ProductList() {
 
 	// The tab to highlight: the view these came from, else any view that
 	// matches exactly, else All when nothing is filtered.
-	const plain = filters.length === 0 && sort === "name";
+	const plain = filters.length === 0 && sort.length === 0;
 	const fromView = views.find((v) => v.id === search.view);
 	const active =
 		fromView ?? (plain ? undefined : views.find((v) => sameSearch(v, current)));
@@ -335,13 +256,22 @@ function ProductList() {
 			),
 		[views, facets],
 	);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stateFor reads state
 	const filtered = useMemo(() => {
 		const q = parseQuery(query);
 		const all = [...filters, ...q.filters];
-		return sorted(
-			products.filter((_, i) => matches(facets[i], all, q.words)),
+		// A sort still being typed applies once it names a column exactly.
+		const by = q.sorts.reduce<ProductSort>(
+			(s, t) =>
+				isColumn(t.value, PRODUCT_SORTS)
+					? withTerm(s, { key: t.value, desc: t.desc })
+					: s,
 			sort,
-			state,
+		);
+		return sortRows(
+			products.filter((_, i) => matches(facets[i], all, q.words)),
+			by,
+			(p) => sortValuesOf(p, stateFor(p)),
 		);
 	}, [products, facets, query, filters, sort, state]);
 	// For each rail group, how many products each value would show given
@@ -369,11 +299,16 @@ function ProductList() {
 		navigate({ to: "/products/$sku", params: { sku: p.sku } });
 
 	// Chip and sort changes replace the history entry instead of piling up.
-	function setSearch(next: Partial<{ filters: Filter[]; sort: Sort }>) {
+	function setSearch(next: Partial<{ filters: Filter[]; sort: ProductSort }>) {
 		setShown(PAGE);
+		const { sort: by, ...rest } = next;
 		navigate({
 			to: "/products",
-			search: (prev) => ({ ...prev, ...next }),
+			search: (prev) => ({
+				...prev,
+				...rest,
+				...(by ? { sort: spellProductSort(by) || undefined } : {}),
+			}),
 			replace: true,
 		});
 	}
@@ -382,7 +317,9 @@ function ProductList() {
 		navigate({
 			to: "/products",
 			search: {
-				...(v ? { view: v.id, filters: v.filters, sort: v.sort } : {}),
+				...(v
+					? { view: v.id, filters: v.filters, sort: v.sort || undefined }
+					: {}),
 				layout: search.layout,
 			},
 		});
@@ -488,14 +425,21 @@ function ProductList() {
 									chips={filters}
 									onChips={(next) => setSearch({ filters: next })}
 									counts={facetValues}
-									placeholder="Search, or filter: #tag @type $vendor %status ^class >=3 inventory"
+									sort={sort}
+									onSort={(s) => setSearch({ sort: s })}
+									columns={PRODUCT_SORTS}
+									placeholder="Search, filter (#tag @type %status *class >=3), or sort (^cost ^!velocity)"
 								/>
 							</div>
 							<AddFilter
 								counts={facetValues}
 								onAdd={(f) => setSearch({ filters: [...filters, f] })}
 							/>
-							<SortMenu sort={sort} onSort={(s) => setSearch({ sort: s })} />
+							<SortMenu
+								sort={sort}
+								onSort={(s) => setSearch({ sort: s })}
+								columns={PRODUCT_SORTS}
+							/>
 						</div>
 					</Card>
 					{search.layout === "table" ? (
@@ -831,7 +775,7 @@ function ViewDialog({
 	onDeleted,
 }: {
 	view: View | null;
-	search: { filters: Filter[]; sort: Sort };
+	search: { filters: Filter[]; sort: SortText };
 	onClose: () => void;
 	onSaved: (id: number) => void;
 	onDeleted: () => void;

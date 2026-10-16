@@ -71,6 +71,7 @@ import {
 	setLineTerms,
 	setPurchaseUnit,
 } from "#/purchasing/units";
+import { listProducts } from "#/server/catalog";
 
 const id = type({ id: "number.integer > 0" });
 
@@ -461,6 +462,45 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 
 export type PurchaseOrderMatch = Awaited<
 	ReturnType<typeof searchForPurchaseOrder>
+>[number];
+
+// Everything bought from this PO's supplier, read as the product list reads
+// it, with what the supplier charges and how they sell it. Browse filters and
+// sorts these in the page, so it takes the whole list at once.
+export const browseForPurchaseOrder = createServerFn({ method: "GET" })
+	.validator(type({ purchaseOrderId: "number.integer > 0" }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [po] = await db
+			.select({ supplierId: purchaseOrders.supplierId })
+			.from(purchaseOrders)
+			.where(eq(purchaseOrders.id, data.purchaseOrderId));
+		if (!po)
+			throw new PurchaseOrderError(`PO ${data.purchaseOrderId} doesn't exist`);
+		const [{ products: all }, terms] = await Promise.all([
+			listProducts(),
+			db
+				.select({
+					productId: productSuppliers.productId,
+					supplierSku: productSuppliers.supplierSku,
+					unit: productSuppliers.unit,
+					packSize: productSuppliers.packSize,
+					cost: productSuppliers.cost,
+					minimumQuantity: productSuppliers.minimumQuantity,
+				})
+				.from(productSuppliers)
+				.where(eq(productSuppliers.supplierId, po.supplierId)),
+		]);
+		const termsOf = new Map(terms.map(({ productId, ...t }) => [productId, t]));
+		// A tool set's supplier is the one most of its parts come from, and it
+		// has no terms of its own.
+		return all
+			.filter((p) => p.supplier?.id === po.supplierId)
+			.map((p) => ({ ...p, terms: termsOf.get(p.id) ?? null }));
+	});
+
+export type BrowseRow = Awaited<
+	ReturnType<typeof browseForPurchaseOrder>
 >[number];
 
 // Adds a product to a PO at the fewest its supplier sells. A product already

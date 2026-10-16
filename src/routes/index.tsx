@@ -42,7 +42,9 @@ function Home() {
 						tone={d.oversold.length > 0 ? "critical" : undefined}
 						link={{
 							to: "/products",
-							search: statusSearch("oversold", "inventory"),
+							search: statusSearch("oversold", [
+								{ key: "inventory", desc: false },
+							]),
 						}}
 					/>
 					<Stat label="Monthly profit" pending="Waiting on profit app" />
@@ -119,7 +121,9 @@ function Home() {
 						aside={
 							<Link
 								to="/products"
-								search={statusSearch("oversold", "inventory")}
+								search={statusSearch("oversold", [
+									{ key: "inventory", desc: false },
+								])}
 								className="text-link hover:underline"
 							>
 								View all {d.oversold.length}
