@@ -1,6 +1,7 @@
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
 import { getContext } from "./integrations/tanstack-query/root-provider";
+import { connectOptimism } from "./lib/optimism";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {
@@ -16,6 +17,8 @@ export function getRouter() {
 	});
 
 	setupRouterSsrQueryIntegration({ router, queryClient: context.queryClient });
+	// Changes show at once; the page reloads once the server has them all.
+	connectOptimism(() => router.invalidate());
 
 	return router;
 }

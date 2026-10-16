@@ -50,6 +50,7 @@ import {
 	formatTime,
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
@@ -89,35 +90,86 @@ export const Route = createFileRoute("/purchasing/$id")({
 const isUnsent = (status: PurchaseOrderDetail["order"]["status"]) =>
 	status === "draft" || status === "suggested";
 
-const errorText = (err: unknown) =>
-	err instanceof Error ? err.message : String(err);
+// The page's data with changes the server hasn't confirmed laid over it.
+const poData = optimistic<PurchaseOrderDetail>("purchase-order");
 
-// Runs a change, reports failures, and reloads the page's data. Resolves to
-// { value } on success and null on failure, since many changes return nothing.
+// Changes the lines a patch matches, on the PO it was made on. A draft's
+// lines match by product, since a suggested PO's lines are made again as it
+// loads; a sent PO's match by line.
+function patchLines(
+	purchaseOrderId: number,
+	match: (l: Line) => boolean,
+	change: (l: Line) => Line | null,
+	{ draftEdit = false } = {},
+): Patch {
+	return poData.patch(purchaseOrderId, (d) => {
+		const lines = d.lines.flatMap((l) => {
+			if (!match(l)) return [l];
+			const next = change(l);
+			return next === null ? [] : [next];
+		});
+		// A suggested PO's first change saves it as a draft.
+		const status =
+			draftEdit && d.order.status === "suggested" ? "draft" : d.order.status;
+		return { ...d, lines, order: { ...d.order, status } };
+	});
+}
+
+// Puts a line back where it was, as it was, unless the PO already has it.
+const putLineBack = (purchaseOrderId: number, line: Line, at: number) =>
+	poData.patch(purchaseOrderId, (d) =>
+		d.lines.some((l) => l.productId === line.productId)
+			? d
+			: {
+					...d,
+					lines: [...d.lines.slice(0, at), line, ...d.lines.slice(at)],
+				},
+	);
+
+// Receiving more than a line expects makes it expect what came.
+const receivedPatch = (purchaseOrderId: number, line: Line, quantity: number) =>
+	patchLines(
+		purchaseOrderId,
+		(l) => l.id === line.id,
+		(l) => {
+			const received = l.received + quantity;
+			return { ...l, received, quantity: Math.max(l.quantity, received) };
+		},
+	);
+
+// Changes go through the optimism engine, in order. `run` waits for the
+// server, for changes whose outcome the page can't guess, such as sending or
+// adding a product; its control stays busy until then. `save` shows its patch
+// at once and doesn't hold anything up. Both resolve to { value } once the
+// server has it and to null once it has failed and said why, since many
+// changes return nothing.
 function useAction() {
-	const router = useRouter();
 	const [busy, setBusy] = useState(false);
-	async function run<T>(fn: () => Promise<T>, success?: (r: T) => string) {
+	async function run<T>(send: () => Promise<T>, success?: (r: T) => string) {
 		setBusy(true);
-		try {
-			const result = await fn();
-			await router.invalidate();
-			if (success) toast.success(success(result));
-			return { value: result };
-		} catch (err) {
-			toast.error(errorText(err));
-			return null;
-		} finally {
-			setBusy(false);
-		}
+		const r = await optimism.change({ send });
+		setBusy(false);
+		if (r && success) toast.success(success(r.value));
+		return r;
 	}
-	return { busy, run };
+	async function save<T>(change: {
+		label: string;
+		patch: Patch | readonly Patch[];
+		send: () => Promise<T>;
+		success?: (r: T) => string;
+	}) {
+		const r = await optimism.change(change);
+		if (r && change.success) toast.success(change.success(r.value));
+		return r;
+	}
+	return { busy, run, save };
 }
 
 function PurchaseOrderPage() {
-	const d = Route.useLoaderData();
+	const loaded = Route.useLoaderData();
+	const d = poData.useData(loaded.order.id, loaded);
 	const goBack = useBack({ to: "/purchasing" });
-	const { busy, run } = useAction();
+	const { busy, run, save } = useAction();
 	const po = d.order;
 	// A suggested PO works like a draft; its first change makes it one.
 	const draft = isUnsent(po.status);
@@ -423,17 +475,20 @@ function PurchaseOrderPage() {
 							{draft && d.locations.length > 1 ? (
 								<select
 									value={po.locationId}
-									disabled={busy}
-									onChange={(e) =>
-										run(() =>
-											editDraft({
-												data: {
-													purchaseOrderId: po.id,
-													locationId: Number(e.target.value),
-												},
-											}),
-										)
-									}
+									onChange={(e) => {
+										const locationId = Number(e.target.value);
+										save({
+											label: "Delivery location",
+											patch: poData.patch(po.id, (data) => ({
+												...data,
+												order: { ...data.order, locationId },
+											})),
+											send: () =>
+												editDraft({
+													data: { purchaseOrderId: po.id, locationId },
+												}),
+										});
+									}}
 									className="h-8 rounded-lg border border-input px-2"
 								>
 									{d.locations.map((l) => (
@@ -464,14 +519,19 @@ function PurchaseOrderPage() {
 								defaultValue={po.notes ?? ""}
 								placeholder="Printed on the PO, e.g. ship by ground"
 								rows={3}
-								onBlur={(e) =>
-									e.target.value !== (po.notes ?? "") &&
-									run(() =>
-										editDraft({
-											data: { purchaseOrderId: po.id, notes: e.target.value },
-										}),
-									)
-								}
+								onBlur={(e) => {
+									const notes = e.target.value;
+									if (notes === (po.notes ?? "")) return;
+									save({
+										label: "Notes on this PO",
+										patch: poData.patch(po.id, (data) => ({
+											...data,
+											order: { ...data.order, notes },
+										})),
+										send: () =>
+											editDraft({ data: { purchaseOrderId: po.id, notes } }),
+									});
+								}}
 								className="w-full rounded-lg border border-input px-2 py-1.5 outline-none focus:border-ring"
 							/>
 						) : (
@@ -966,7 +1026,11 @@ function LineTable({
 												</div>
 											</td>
 											<td className="px-3 py-2">
-												<SupplierSkuField line={l} supplierId={d.supplier.id} />
+												<SupplierSkuField
+													line={l}
+													purchaseOrderId={d.order.id}
+													supplierId={d.supplier.id}
+												/>
 											</td>
 											<td className="px-3 py-2">
 												<PurchaseUnitCell
@@ -1017,6 +1081,7 @@ function LineTable({
 														key={`q${l.quantity}`}
 														line={l}
 														purchaseOrderId={d.order.id}
+														at={d.lines.indexOf(l)}
 														draft={draft}
 														open={focus?.lineId === l.id ? focus.nonce : null}
 														onDone={onQuantityDone}
@@ -1089,7 +1154,10 @@ function LineTable({
 													{l.quantity === 0 && l.received === 0 ? (
 														<Badge>None coming</Badge>
 													) : receiving && l.received < l.quantity ? (
-														<ReceiveField line={l} />
+														<ReceiveField
+															line={l}
+															purchaseOrderId={d.order.id}
+														/>
 													) : (
 														<Badge
 															tone={
@@ -1147,15 +1215,6 @@ function LineMenu({
 	const po = d.order;
 	const url = `/products/${encodeURIComponent(l.sku)}`;
 	const remaining = l.quantity - l.received;
-	const reload = () => router.invalidate();
-
-	async function attempt(work: () => Promise<void>) {
-		try {
-			await work();
-		} catch (err) {
-			toast.error(errorText(err));
-		}
-	}
 
 	return (
 		<ContextMenuContent>
@@ -1183,7 +1242,7 @@ function LineMenu({
 			{po.status === "sent" && remaining > 0 && (
 				<ContextMenuItem
 					shortcut="R"
-					onSelect={() => attempt(() => receiveWithUndo(l, remaining, reload))}
+					onSelect={() => receiveWithUndo(l, remaining, po.id)}
 				>
 					<PackageCheck />
 					Receive the rest ({formatCount(remaining)}
@@ -1193,19 +1252,7 @@ function LineMenu({
 			{po.status === "draft" && (
 				<ContextMenuItem
 					className="text-critical-text [&_svg]:text-critical-text"
-					onSelect={() =>
-						attempt(async () => {
-							await setLine({
-								data: {
-									purchaseOrderId: po.id,
-									productId: l.productId,
-									quantity: 0,
-								},
-							});
-							await reload();
-							offerPutBack(l, po.id, reload);
-						})
-					}
+					onSelect={() => takeOff(l, po.id, d.lines.indexOf(l))}
 				>
 					<Trash2 />
 					Take off this PO
@@ -1220,47 +1267,88 @@ function LineMenu({
 	);
 }
 
+// Takes a line off a draft at once, with Undo once the server has it. `at`
+// is where it sat, so Undo puts it back there.
+async function takeOff(line: Line, purchaseOrderId: number, at: number) {
+	const r = await optimism.change({
+		label: `Taking ${line.sku} off`,
+		patch: patchLines(
+			purchaseOrderId,
+			(l) => l.productId === line.productId,
+			() => null,
+			{ draftEdit: true },
+		),
+		send: () =>
+			setLine({
+				data: { purchaseOrderId, productId: line.productId, quantity: 0 },
+			}),
+	});
+	if (r) offerPutBack(line, purchaseOrderId, at);
+}
+
 // After a draft line is taken off: Undo puts it back as it was.
-function offerPutBack(
-	line: Line,
-	purchaseOrderId: number,
-	reload: () => Promise<void>,
-) {
+function offerPutBack(line: Line, purchaseOrderId: number, at: number) {
 	offerUndo(`Took ${line.sku} off this PO`, {
 		undo: async () => {
-			await setLine({
-				data: {
-					purchaseOrderId,
-					productId: line.productId,
-					quantity: line.quantity,
-					unitCost: line.unitCost,
-				},
+			const r = await optimism.change({
+				label: `Putting ${line.sku} back`,
+				patch: putLineBack(purchaseOrderId, line, at),
+				send: () =>
+					setLine({
+						data: {
+							purchaseOrderId,
+							productId: line.productId,
+							quantity: line.quantity,
+							unitCost: line.unitCost,
+						},
+					}),
 			});
-			await reload();
-			return `${line.sku} back on this PO`;
+			return r && `${line.sku} back on this PO`;
 		},
 	});
 }
 
-// Receives part or all of a sent line, with Undo. Throws when it can't.
+// Receives part or all of a sent line at once, with Undo once the server has
+// it. Resolves to null when it failed and said why.
 async function receiveWithUndo(
 	line: Line,
 	quantity: number,
-	reload: () => Promise<void>,
+	purchaseOrderId: number,
 ) {
-	const { receiptId } = await receiveLine({
-		data: { lineId: line.id, quantity },
+	const r = await optimism.change({
+		label: `Receiving ${line.sku}`,
+		patch: receivedPatch(purchaseOrderId, line, quantity),
+		send: () => receiveLine({ data: { lineId: line.id, quantity } }),
 	});
-	await reload();
+	if (!r) return null;
+	// What the receipt made the line expect, if it raised it.
+	const raisedTo =
+		line.received + quantity > line.quantity ? line.received + quantity : null;
 	const unit = line.packSize === 1 ? "" : ` ${line.unit}`;
 	offerUndo(`Received ${formatCount(quantity)}${unit} × ${line.sku}`, {
 		tone: "success",
 		undo: async () => {
-			await undoPurchaseReceipt({ data: { id: receiptId } });
-			await reload();
-			return `Took back ${formatCount(quantity)}${unit} × ${line.sku}`;
+			const undone = await optimism.change({
+				label: `Taking back ${line.sku}`,
+				// As the server does: a raised line expects what it did before,
+				// unless its quantity has changed since.
+				patch: patchLines(
+					purchaseOrderId,
+					(l) => l.id === line.id,
+					(l) => ({
+						...l,
+						received: l.received - quantity,
+						quantity: l.quantity === raisedTo ? line.quantity : l.quantity,
+					}),
+				),
+				send: () => undoPurchaseReceipt({ data: { id: r.value.receiptId } }),
+			});
+			return (
+				undone && `Took back ${formatCount(quantity)}${unit} × ${line.sku}`
+			);
 		},
 	});
+	return r;
 }
 
 // Under a sent line's quantity or cost, when it has changed since: what the
@@ -1583,12 +1671,14 @@ const quantityBox =
 // number line. On a draft 0 takes the line off, with Undo. On a sent PO it's
 // a change the supplier isn't told about, also with Undo; 0 there means none
 // are coming.
-// onPreview gets the quantity while it's dragged, typed, or saving, and null
-// once the page shows the real one. `open` (a nonce) opens it for typing, and
-// finishing calls onDone.
+// onPreview gets the quantity while it's dragged or typed, and null once the
+// page shows it, which a save does at once. `open` (a nonce) opens it for
+// typing, and finishing calls onDone. `at` is where the line sits, so Undo
+// puts a line taken off back there.
 function QuantityField({
 	line,
 	purchaseOrderId,
+	at,
 	draft,
 	open,
 	onDone,
@@ -1596,17 +1686,16 @@ function QuantityField({
 }: {
 	line: Line;
 	purchaseOrderId: number;
+	at: number;
 	draft: boolean;
 	open: number | null;
 	// enter: it was left with Enter, so go on to the next product.
 	onDone: (enter: boolean) => void;
 	onPreview: (quantity: number | null) => void;
 }) {
-	const { run } = useAction();
-	const router = useRouter();
+	const { save: saveChange } = useAction();
 	const [typing, setTyping] = useState(false);
 	const [text, setText] = useState("");
-	const [saving, setSaving] = useState<number | null>(null);
 	// Opened by `open`, so Enter goes on to the next product.
 	const opened = useRef(false);
 	useEffect(() => {
@@ -1618,31 +1707,42 @@ function QuantityField({
 
 	async function save(quantity: number) {
 		if (quantity === line.quantity) return;
-		setSaving(quantity);
 		if (!draft) {
-			const r = await run(() =>
-				amendPurchaseLine({ data: { lineId: line.id, quantity } }),
-			);
-			setSaving(null);
+			const r = await saveChange({
+				label: `${line.sku}'s quantity`,
+				patch: patchLines(
+					purchaseOrderId,
+					(l) => l.id === line.id,
+					(l) => ({ ...l, quantity }),
+				),
+				send: () => amendPurchaseLine({ data: { lineId: line.id, quantity } }),
+			});
 			if (r)
 				amended({
 					line,
 					result: r.value,
 					summary: `${line.sku} now ${formatCount(quantity)}, was ${formatCount(line.quantity)}`,
 					purchaseOrderId,
-					reload: () => router.invalidate(),
 				});
 			return;
 		}
-		// run resolves after the page reloads, so the real quantity is in.
-		const r = await run(() =>
-			setLine({
-				data: { purchaseOrderId, productId: line.productId, quantity },
-			}),
-		);
-		setSaving(null);
-		if (r && quantity === 0)
-			offerPutBack(line, purchaseOrderId, () => router.invalidate());
+		if (quantity === 0) {
+			takeOff(line, purchaseOrderId, at);
+			return;
+		}
+		saveChange({
+			label: `${line.sku}'s quantity`,
+			patch: patchLines(
+				purchaseOrderId,
+				(l) => l.productId === line.productId,
+				(l) => ({ ...l, quantity }),
+				{ draftEdit: true },
+			),
+			send: () =>
+				setLine({
+					data: { purchaseOrderId, productId: line.productId, quantity },
+				}),
+		});
 	}
 
 	const scrub = useNumberLine({ value: line.quantity, onCommit: save });
@@ -1652,7 +1752,7 @@ function QuantityField({
 		? scrub.shown
 		: typing && /^\d+$/.test(typed)
 			? Number(typed)
-			: saving;
+			: null;
 	// A ref, so a new callback each render doesn't re-run the effect.
 	const report = useRef(onPreview);
 	report.current = onPreview;
@@ -1725,7 +1825,7 @@ function QuantityField({
 					scrub.dragging && "cursor-ew-resize",
 				)}
 			>
-				{scrub.dragging ? scrub.shown : (saving ?? line.quantity)}
+				{scrub.dragging ? scrub.shown : line.quantity}
 			</button>
 			{scrub.line}
 		</>
@@ -1843,32 +1943,40 @@ function amended({
 	result,
 	summary,
 	purchaseOrderId,
-	reload,
 }: {
 	line: Line;
 	result: Awaited<ReturnType<typeof amendPurchaseLine>>;
 	summary: string;
 	purchaseOrderId: number;
-	reload: () => Promise<void>;
 }) {
 	const { was } = result;
-	// Reloads either way, so a half-done undo still shows what's saved.
+	// The engine reloads after a failure too, so a half-done undo still shows
+	// what's saved.
 	const undo = async () => {
-		try {
-			const lineId = result.removed
-				? (
-						await addProductToPurchaseOrder({
-							data: { purchaseOrderId, productId: line.productId },
-						})
-					).lineId
-				: line.id;
-			await amendPurchaseLine({
-				data: { lineId, quantity: was.quantity, unitCost: was.unitCost },
-			});
-		} finally {
-			await reload();
-		}
-		return `${line.sku} back as it was`;
+		const r = await optimism.change({
+			label: `Putting ${line.sku} back`,
+			patch: [
+				putLineBack(purchaseOrderId, line, Number.MAX_SAFE_INTEGER),
+				patchLines(
+					purchaseOrderId,
+					(l) => l.productId === line.productId,
+					(l) => ({ ...l, quantity: was.quantity, unitCost: was.unitCost }),
+				),
+			],
+			send: async () => {
+				const lineId = result.removed
+					? (
+							await addProductToPurchaseOrder({
+								data: { purchaseOrderId, productId: line.productId },
+							})
+						).lineId
+					: line.id;
+				await amendPurchaseLine({
+					data: { lineId, quantity: was.quantity, unitCost: was.unitCost },
+				});
+			},
+		});
+		return r && `${line.sku} back as it was`;
 	};
 	if (result.removed)
 		offerUndo(`Took ${line.sku} off. The supplier isn't told.`, { undo });
@@ -1891,8 +1999,7 @@ function PriceField({
 	purchaseOrderId: number;
 	draft: boolean;
 }) {
-	const { run } = useAction();
-	const router = useRouter();
+	const { save } = useAction();
 	return (
 		<InlineField
 			shown={formatMoney(line.unitCost)}
@@ -1910,30 +2017,46 @@ function PriceField({
 				}
 				const unitCost = text === "" ? null : n;
 				if (!draft) {
-					const r = await run(() =>
-						amendPurchaseLine({ data: { lineId: line.id, unitCost } }),
+					save({
+						label: `Cost of ${line.sku}`,
+						patch: patchLines(
+							purchaseOrderId,
+							(l) => l.id === line.id,
+							(l) => ({ ...l, unitCost }),
+						),
+						send: () =>
+							amendPurchaseLine({ data: { lineId: line.id, unitCost } }),
+					}).then(
+						(r) =>
+							r &&
+							amended({
+								line,
+								result: r.value,
+								summary: `${line.sku} now ${formatMoney(unitCost)}, was ${formatMoney(line.unitCost)}`,
+								purchaseOrderId,
+							}),
 					);
-					if (r)
-						amended({
-							line,
-							result: r.value,
-							summary: `${line.sku} now ${formatMoney(unitCost)}, was ${formatMoney(line.unitCost)}`,
-							purchaseOrderId,
-							reload: () => router.invalidate(),
-						});
-					return r !== null;
+					return true;
 				}
-				const r = await run(() =>
-					setLine({
-						data: {
-							purchaseOrderId,
-							productId: line.productId,
-							quantity: line.quantity,
-							unitCost,
-						},
-					}),
-				);
-				return r !== null;
+				save({
+					label: `Cost of ${line.sku}`,
+					patch: patchLines(
+						purchaseOrderId,
+						(l) => l.productId === line.productId,
+						(l) => ({ ...l, unitCost }),
+						{ draftEdit: true },
+					),
+					send: () =>
+						setLine({
+							data: {
+								purchaseOrderId,
+								productId: line.productId,
+								quantity: line.quantity,
+								unitCost,
+							},
+						}),
+				});
+				return true;
 			}}
 		/>
 	);
@@ -1943,12 +2066,14 @@ function PriceField({
 // changes every PO with it. Only this PO's supplier's number can change here.
 function SupplierSkuField({
 	line,
+	purchaseOrderId,
 	supplierId,
 }: {
 	line: Line;
+	purchaseOrderId: number;
 	supplierId: number;
 }) {
-	const { run } = useAction();
+	const { save } = useAction();
 	if (line.linkSupplierId !== supplierId)
 		return (
 			<span
@@ -1972,16 +2097,20 @@ function SupplierSkuField({
 			label={`${line.sku}'s supplier SKU`}
 			className="w-32"
 			onSave={async (text) => {
-				const r = await run(() =>
-					setProductSupplier({
-						data: {
-							productId: line.productId,
-							supplierId,
-							supplierSku: text === "" ? null : text,
-						},
-					}),
-				);
-				return r !== null;
+				const supplierSku = text === "" ? null : text;
+				save({
+					label: `${line.sku}'s supplier SKU`,
+					patch: patchLines(
+						purchaseOrderId,
+						(l) => l.productId === line.productId,
+						(l) => ({ ...l, supplierSku }),
+					),
+					send: () =>
+						setProductSupplier({
+							data: { productId: line.productId, supplierId, supplierSku },
+						}),
+				});
+				return true;
 			}}
 		/>
 	);
@@ -1989,20 +2118,23 @@ function SupplierSkuField({
 
 // Receive from the desk: the remaining count is filled in, so Enter takes
 // all of it.
-function ReceiveField({ line }: { line: Line }) {
-	const { busy, run } = useAction();
-	const router = useRouter();
+function ReceiveField({
+	line,
+	purchaseOrderId,
+}: {
+	line: Line;
+	purchaseOrderId: number;
+}) {
 	const remaining = line.quantity - line.received;
 	const [value, setValue] = useState(String(remaining));
 	const n = Number(value);
 	const valid = Number.isInteger(n) && n > 0;
 
-	async function submit() {
+	function submit() {
 		if (!valid) return;
-		const r = await run(() =>
-			receiveWithUndo(line, n, () => router.invalidate()),
-		);
-		if (r) setValue(String(Math.max(remaining - n, 1)));
+		// What's left after this, filled in for the next box.
+		setValue(String(Math.max(remaining - n, 1)));
+		receiveWithUndo(line, n, purchaseOrderId);
 	}
 
 	return (
@@ -2023,12 +2155,7 @@ function ReceiveField({ line }: { line: Line }) {
 				onChange={(e) => setValue(e.target.value)}
 				className={cn(field, "w-14")}
 			/>
-			<Button
-				type="submit"
-				size="sm"
-				variant="outline"
-				disabled={busy || !valid}
-			>
+			<Button type="submit" size="sm" variant="outline" disabled={!valid}>
 				Receive
 			</Button>
 		</form>
@@ -2069,7 +2196,7 @@ type TimelineEvent = {
 // Everything that happened to the PO, newest first and grouped by day, like
 // the timeline under a Shopify order. Receipts can be undone from here.
 function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
-	const { busy, run } = useAction();
+	const { save } = useAction();
 	const po = d.order;
 	const lines = new Map(d.lines.map((l) => [l.id, l]));
 	const events: TimelineEvent[] = [
@@ -2167,16 +2294,36 @@ function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 												<Button
 													size="sm"
 													variant="ghost"
-													disabled={busy}
 													onClick={() =>
-														run(
-															() =>
+														save({
+															label: "Taking the receipt back",
+															// Off the timeline too, so it can't be undone twice.
+															patch: poData.patch(po.id, (data) => ({
+																...data,
+																receipts: data.receipts.filter(
+																	(x) => x.id !== receipt.id,
+																),
+																lines: data.lines.map((l) =>
+																	l.id !== receipt.lineId
+																		? l
+																		: {
+																				...l,
+																				received: l.received - receipt.quantity,
+																				quantity:
+																					receipt.quantityBefore !== null &&
+																					l.quantity === receipt.quantityAfter
+																						? receipt.quantityBefore
+																						: l.quantity,
+																			},
+																),
+															})),
+															send: () =>
 																undoPurchaseReceipt({
 																	data: { id: receipt.id },
 																}),
-															() =>
+															success: () =>
 																`Took ${formatCount(receipt.quantity * (line?.packSize ?? 1))} back off the shelf`,
-														)
+														})
 													}
 												>
 													Undo

@@ -2,6 +2,7 @@ import { Link, useLoaderData, useLocation } from "@tanstack/react-router";
 import { Menu, Search } from "lucide-react";
 import { type ReactNode, Suspense, use, useEffect, useState } from "react";
 import { openFind, pages } from "#/components/command-palette";
+import { useSaving } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import type { NavCounts } from "#/server/nav";
 
@@ -62,7 +63,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 					<span className="flex-1">Search</span>
 					<kbd className="rounded bg-white/10 px-1.5 text-xs">⌘ K</kbd>
 				</button>
-				<div className="hidden md:block md:w-[13rem]" />
+				<div className="hidden justify-end md:flex md:w-[13rem]">
+					<Saving />
+				</div>
 			</header>
 
 			<div className="flex flex-1">
@@ -85,6 +88,22 @@ export function AppShell({ children }: { children: ReactNode }) {
 				<main className="min-w-0 flex-1">{children}</main>
 			</div>
 		</div>
+	);
+}
+
+// Changes show before the server has them; this says it's still catching up.
+function Saving() {
+	const saving = useSaving();
+	return (
+		<span
+			aria-live="polite"
+			className={cn(
+				"pr-2 text-xs text-white/60 transition-opacity",
+				saving ? "opacity-100 delay-300" : "opacity-0",
+			)}
+		>
+			Saving…
+		</span>
 	);
 }
 
