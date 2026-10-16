@@ -294,21 +294,41 @@ function PurchaseOrderPage() {
 		return true;
 	}
 
-	// From Browse, which stays open to add more: no line opens behind it.
-	// Once the page reloads, the row says it's on this PO.
-	const addFromBrowse = (row: BrowseRow) =>
-		run(
-			() =>
-				addProductToPurchaseOrder({
+	// From Browse, which stays open to add more, so no line opens behind it.
+	// The line shows at once, as the server will make it, under an id of its
+	// own until the server's comes back; Browse's row flips with it.
+	function addFromBrowse(row: BrowseRow) {
+		const id = ids.provisional();
+		const line = browseLine(row, id, d.supplier.id);
+		return save({
+			label: `Adding ${row.sku}`,
+			patch: poData.patch(po.id, (data) => ({
+				...data,
+				// A suggested PO's first change saves it as a draft.
+				order:
+					data.order.status === "suggested"
+						? { ...data.order, status: "draft" }
+						: data.order,
+				lines: data.lines.some((l) => l.productId === row.id)
+					? data.lines
+					: [...data.lines, line].sort(byName),
+				recommended: data.recommended.filter((x) => x.productId !== row.id),
+			})),
+			send: async () => {
+				const res = await addProductToPurchaseOrder({
 					data: { purchaseOrderId: po.id, productId: row.id },
-				}),
-			(r) =>
+				});
+				ids.confirm(id, res.lineId);
+				return res;
+			},
+			success: (r) =>
 				!r.added
 					? `${row.sku} is already on this PO`
 					: draft
 						? `Added ${row.sku}`
 						: `Added ${row.sku}. The supplier isn't told.`,
-		);
+		});
+	}
 
 	const send = (email: boolean) =>
 		run(
@@ -906,6 +926,49 @@ function recommendedLine(
 	};
 }
 
+// A product from Browse as the line adding it makes: the supplier's fewest,
+// on their terms and price, falling back to ours per unit; a tool set has no
+// price of its own. Nothing received or sent yet.
+function browseLine(row: BrowseRow, id: number, supplierId: number): Line {
+	const t = row.terms;
+	const unit = t?.unit ?? "EACH";
+	const packSize = t?.packSize ?? 1;
+	const minimumQuantity = t?.minimumQuantity ?? 1;
+	return {
+		id,
+		productId: row.id,
+		sku: row.sku,
+		kind: row.kind,
+		name: row.name,
+		variantName: row.variantName,
+		imageUrl: row.imageUrl,
+		// Browse doesn't load barcodes; the reload brings it.
+		barcode: null,
+		supplierSku: t?.supplierSku ?? null,
+		unit,
+		packSize,
+		minimumQuantity,
+		linkSupplierId: supplierId,
+		defaultUnit: unit,
+		defaultPackSize: packSize,
+		defaultMinimum: minimumQuantity,
+		quantity: minimumQuantity,
+		unitCost:
+			row.kind === "bundle"
+				? null
+				: (t?.cost ?? (row.unitCost === null ? null : row.unitCost * packSize)),
+		sentQuantity: null,
+		sentUnitCost: null,
+		received: 0,
+		onHand: row.onHand ?? 0,
+		stockRange: row.range,
+		why: row.why,
+		// The reload says what today's suggestion wants; until then, nothing.
+		wants: null,
+		locked: false,
+	};
+}
+
 type LineFocus = { lineId: number; nonce: number };
 
 // A line that differs from what the supplier was sent, or was added after.
@@ -1063,11 +1126,17 @@ function LineTable({
 								return (
 									<Fragment key={l.id}>
 										<tr
-											ref={focus?.lineId === l.id ? focusedRow : undefined}
+											ref={
+												focus !== null && ids.same(focus.lineId, l.id)
+													? focusedRow
+													: undefined
+											}
 											onContextMenu={() => setMenuFor(l)}
 											className={cn(
 												"border-t transition-colors first:border-t-0",
-												focus?.lineId === l.id && "bg-info-surface",
+												focus !== null &&
+													ids.same(focus.lineId, l.id) &&
+													"bg-info-surface",
 												// Nothing is coming: kept to show the supplier didn't send it.
 												l.quantity === 0 &&
 													l.received === 0 &&
@@ -1218,7 +1287,11 @@ function LineTable({
 															purchaseOrderId={d.order.id}
 															at={d.lines.indexOf(l)}
 															draft={draft}
-															open={focus?.lineId === l.id ? focus.nonce : null}
+															open={
+																focus !== null && ids.same(focus.lineId, l.id)
+																	? focus.nonce
+																	: null
+															}
 															onDone={onQuantityDone}
 															onPreview={previewFor(l.id)}
 														/>
