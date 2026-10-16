@@ -25,7 +25,7 @@ import { matchListing, productFromListing } from "#/orders/remap";
 import { updateProductDetails } from "#/products/details";
 import { loadOrder } from "#/purchasing/load";
 import {
-	cancelOrder,
+	deleteDraft,
 	draftFromSuggestions,
 	openDraft,
 	PurchaseOrderError,
@@ -408,7 +408,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 			annotations: { ...WRITE, destructiveHint: true },
 		},
 		async ({ po }) => {
-			await cancelOrder(db, po, new Date(), ["draft"]);
+			await deleteDraft(db, po);
 			return json({ deleted: po });
 		},
 	);
