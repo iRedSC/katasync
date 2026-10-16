@@ -64,6 +64,11 @@ export function formatOrderDate(value: Date | string) {
 	return `${day} at ${time.format(date)}`;
 }
 
+// "2:08 PM".
+export function formatTime(value: Date | string) {
+	return time.format(new Date(value));
+}
+
 // "Oct 20", for dates where the time doesn't matter.
 export function formatDay(value: Date | string) {
 	return monthDay.format(new Date(value));
