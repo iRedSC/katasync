@@ -1,12 +1,13 @@
 // The product search language. Plain words search name, SKU, and type; a
 // word starting with a sigil filters instead:
 //
-//   #tag   @type   $vendor   %status   ^class   &supplier   ~trust
-//   #!tag  @!type  $!vendor  %!status  ^!class  &!supplier  ~!trust   exclude
+//   #tag   @type   $vendor   %status   *class   &supplier   ~trust
+//   #!tag  @!type  $!vendor  %!status  *!class  &!supplier  ~!trust   exclude
 //   !!word                                       exclude titles containing word
 //   +#tag                                        and, with the last chip on that field
 //   <3  >3  =3  <=3  >=3                         inventory, as the Inventory column shows it
 //   v<3  v>=0.5                                  velocity, units sold a month
+//   ^cost  ^!cost                                sort, see sort.ts
 //
 // Several filters on one field match any of them (#a #b: tagged a or b),
 // unless + joins them (#a +#b: tagged a and b; #a #b +#c: a, or b and c).
@@ -15,6 +16,8 @@
 //
 // A filter still being typed matches by substring, so the list narrows live.
 // Locking it in (Tab on a suggestion) makes it a chip that matches exactly.
+
+import { parseSortWord } from "./sort";
 
 // Every field, in one list so the URL and database checks (views.ts) can't
 // fall behind the search language.
@@ -62,7 +65,7 @@ export const SIGILS = {
 	"@": "type",
 	$: "vendor",
 	"%": "status",
-	"^": "class",
+	"*": "class",
 	"&": "supplier",
 	"~": "trust",
 } as const satisfies Record<string, Exclude<Field, "title" | NumberField>>;
@@ -152,17 +155,22 @@ export function parseWord(typed: string): Filter | null {
 	};
 }
 
+// Sorts typed but not yet locked in come back as `sorts`, for the page to
+// apply once one names a column.
 export function parseQuery(text: string) {
 	const filters: Filter[] = [];
 	const words: string[] = [];
+	const sorts: NonNullable<ReturnType<typeof parseSortWord>>[] = [];
 	for (const word of text.split(/\s+/).filter(Boolean)) {
 		const filter = parseWord(word);
+		const sort = parseSortWord(word);
 		if (filter) filters.push(filter);
+		else if (sort) sorts.push(sort);
 		// A lone + is the start of "+#tag"; searching for it would empty the list.
 		else if (word === "+") continue;
 		else words.push(word.toLowerCase());
 	}
-	return { filters, words };
+	return { filters, words, sorts };
 }
 
 function hits(values: string[], f: Filter) {

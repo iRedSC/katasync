@@ -1,7 +1,8 @@
 import { Command as CommandPrimitive } from "cmdk";
-import { AlertTriangle, Loader2, Search } from "lucide-react";
+import { AlertTriangle, LayoutList, Loader2, Search } from "lucide-react";
 import { type Ref, useEffect, useState } from "react";
 import { ProductImage } from "#/components/product";
+import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import {
@@ -69,13 +70,14 @@ export function matchWarning(
 
 // Adds a product to the PO: type a name, SKU, barcode, or the supplier's SKU,
 // or scan one. Arrows pick, Enter adds. Matches open below the field, inside
-// the card, so nothing clips them.
+// the card, so nothing clips them. Browse opens the supplier's whole list.
 export function ProductPicker({
 	ref,
 	purchaseOrderId,
 	sent,
 	busy,
 	onPick,
+	onBrowse,
 }: {
 	ref?: Ref<HTMLInputElement>;
 	purchaseOrderId: number;
@@ -84,6 +86,7 @@ export function ProductPicker({
 	busy: boolean;
 	// Resolves to true once it's done, which clears the field.
 	onPick: (match: PurchaseOrderMatch) => Promise<boolean>;
+	onBrowse: () => void;
 }) {
 	const [query, setQuery] = useState("");
 	const search = usePurchaseOrderSearch(purchaseOrderId, query);
@@ -128,6 +131,16 @@ export function ProductPicker({
 						/
 					</kbd>
 				)}
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					onClick={onBrowse}
+					title="Everything bought from this supplier, to filter and sort"
+				>
+					<LayoutList />
+					Browse
+				</Button>
 			</div>
 			{query.trim() !== "" && (
 				<CommandPrimitive.List className="max-h-96 overflow-y-auto border-t p-1">

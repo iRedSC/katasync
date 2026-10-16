@@ -4,7 +4,13 @@ import { asc, eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { productViews } from "#/db/schema";
 import type { Filter } from "#/products/search";
-import { filtersType, type Sort, sortType, type View } from "#/products/views";
+import {
+	filtersType,
+	parseProductSort,
+	sortType,
+	spellProductSort,
+	type View,
+} from "#/products/views";
 
 export const listViews = createServerFn({ method: "GET" }).handler(
 	async (): Promise<View[]> => {
@@ -16,7 +22,8 @@ export const listViews = createServerFn({ method: "GET" }).handler(
 			id: r.id,
 			name: r.name,
 			filters: r.filters as Filter[],
-			sort: r.sort as Sort,
+			// Cleaned, so an old spelling or a dropped column reads as today's.
+			sort: spellProductSort(parseProductSort(r.sort)),
 		}));
 	},
 );
