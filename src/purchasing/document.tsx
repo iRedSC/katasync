@@ -6,7 +6,7 @@ import {
 	Text,
 	View,
 } from "@react-pdf/renderer";
-import { formatUnit } from "#/lib/format";
+import { supplierUnit } from "#/lib/format";
 
 // The PO as the supplier sees it: a one-column letter-size PDF, emailed as an
 // attachment. Built from plain data so it can be rendered anywhere on the
@@ -28,7 +28,7 @@ export type PurchaseOrderDocument = {
 		supplierSku: string | null;
 		description: string;
 		unit: string;
-		packSize: number;
+		supplierCount: number;
 		quantity: number;
 		unitCost: number | null;
 	}[];
@@ -149,7 +149,7 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 						{theirSkus && <Text style={s.sku}>{l.supplierSku ?? "—"}</Text>}
 						<Text style={s.desc}>{l.description}</Text>
 						<Text style={s.num}>{l.quantity}</Text>
-						<Text style={s.unit}>{formatUnit(l.unit, l.packSize)}</Text>
+						<Text style={s.unit}>{supplierUnit(l)}</Text>
 						<Text style={s.money}>
 							{l.unitCost === null ? "—" : money(l.unitCost)}
 						</Text>

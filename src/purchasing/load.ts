@@ -57,12 +57,14 @@ export async function loadOrder(db: Db, poId: number) {
 			supplierSku: productSuppliers.supplierSku,
 			unit: purchaseOrderLines.unit,
 			packSize: purchaseOrderLines.packSize,
+			supplierCount: purchaseOrderLines.supplierCount,
 			minimumQuantity: purchaseOrderLines.minimumQuantity,
 			// Who the product is bought from now. A line's terms can become the
 			// product's default only on that supplier's PO.
 			linkSupplierId: productSuppliers.supplierId,
 			defaultUnit: productSuppliers.unit,
 			defaultPackSize: productSuppliers.packSize,
+			defaultSupplierCount: productSuppliers.supplierCount,
 			defaultMinimum: productSuppliers.minimumQuantity,
 			quantity: purchaseOrderLines.quantity,
 			unitCost: purchaseOrderLines.unitCost,
@@ -102,7 +104,7 @@ export function printedLines(
 				supplierSku: l.supplierSku,
 				description: l.variantName ? `${l.name} (${l.variantName})` : l.name,
 				unit: l.unit,
-				packSize: l.packSize,
+				supplierCount: l.supplierCount,
 				...printed,
 			},
 		];

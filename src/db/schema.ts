@@ -660,6 +660,11 @@ export const productSuppliers = pgTable(
 			.default("EACH")
 			.references(() => purchaseUnits.name, { onUpdate: "cascade" }),
 		packSize: integer().notNull().default(1),
+		// How many the supplier says one unit holds, printed on POs: the 5 in
+		// their "PACK of 5". Usually packSize, but differs when what they count
+		// isn't what we stock, e.g. their PACK of 5 is one of our product. Only
+		// ever printed; packSize does all the math.
+		supplierCount: integer().notNull(),
 		// What the supplier charges per unit above, USD. Starts each PO line;
 		// receiving updates it to the last price paid.
 		cost: numeric({ precision: 12, scale: 4, mode: "number" }),
@@ -671,8 +676,12 @@ export const productSuppliers = pgTable(
 		check("product_suppliers_minimum_positive", sql`${t.minimumQuantity} > 0`),
 		check("product_suppliers_pack_size_positive", sql`${t.packSize} > 0`),
 		check(
+			"product_suppliers_supplier_count_positive",
+			sql`${t.supplierCount} > 0`,
+		),
+		check(
 			"product_suppliers_each_is_one",
-			sql`${t.unit} <> 'EACH' or ${t.packSize} = 1`,
+			sql`${t.unit} <> 'EACH' or (${t.packSize} = 1 and ${t.supplierCount} = 1)`,
 		),
 	],
 );
@@ -741,6 +750,8 @@ export const purchaseOrderLines = pgTable(
 		// as the default (src/purchasing/units.ts).
 		unit: text().notNull().default("EACH"),
 		packSize: integer().notNull().default(1),
+		// The count printed on the PO, as on productSuppliers.
+		supplierCount: integer().notNull(),
 		minimumQuantity: integer().notNull().default(1),
 		// How many of `unit` we expect. Receiving puts quantity × packSize on
 		// the shelf. After sending it can still change, when we keep what the
@@ -768,6 +779,10 @@ export const purchaseOrderLines = pgTable(
 			sql`${t.sentUnitCost} is null or ${t.sentQuantity} is not null`,
 		),
 		check("purchase_order_lines_pack_size_positive", sql`${t.packSize} > 0`),
+		check(
+			"purchase_order_lines_supplier_count_positive",
+			sql`${t.supplierCount} > 0`,
+		),
 		check(
 			"purchase_order_lines_minimum_positive",
 			sql`${t.minimumQuantity} > 0`,

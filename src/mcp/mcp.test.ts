@@ -273,6 +273,7 @@ describe("over MCP", () => {
 		await db.insert(schema.productSuppliers).values({
 			productId: blade,
 			supplierId: canam,
+			supplierCount: 1,
 			cost: 2,
 			minimumQuantity: 5,
 		});
@@ -408,6 +409,7 @@ describe("over MCP", () => {
 			supplierId: canam,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			cost: 24,
 		});
 		const first = await tool("set_draft_po_lines", {
@@ -484,6 +486,7 @@ describe("over MCP", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			quantity: 2,
 		});
 		const got = await tool("receive_po_line", {

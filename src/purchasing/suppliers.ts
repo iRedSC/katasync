@@ -63,7 +63,8 @@ export async function setProductSupplier(
 	};
 	await db
 		.insert(productSuppliers)
-		.values({ productId: input.productId, ...values })
+		// A new link starts in EACH, which counts one either way.
+		.values({ productId: input.productId, supplierCount: 1, ...values })
 		.onConflictDoUpdate({ target: productSuppliers.productId, set: values });
 }
 

@@ -17,6 +17,7 @@ export type ReceiveLine = Pick<
 	| "imageUrl"
 	| "unit"
 	| "packSize"
+	| "supplierCount"
 	| "quantity"
 	| "received"
 	| "sentQuantity"
@@ -91,9 +92,9 @@ export function LineRow({
 					<p className="text-2xl font-bold tabular-nums">
 						{line.received} / {line.quantity}
 					</p>
-					{line.packSize !== 1 && (
+					{(line.packSize !== 1 || line.supplierCount !== 1) && (
 						<p className="text-base font-semibold text-muted-foreground">
-							{formatUnit(line.unit, line.packSize)}
+							{formatUnit(line)}
 						</p>
 					)}
 				</div>

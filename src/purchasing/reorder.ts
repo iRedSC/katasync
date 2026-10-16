@@ -198,7 +198,12 @@ export type ReorderWhy = {
 	// Reorder happens once shelf plus on order is below this.
 	orderBelow: number;
 	// What it's bought in. Null without a supplier: it can't be ordered yet.
-	purchase: { unit: string; packSize: number; minimumQuantity: number } | null;
+	purchase: {
+		unit: string;
+		packSize: number;
+		supplierCount: number;
+		minimumQuantity: number;
+	} | null;
 	verdict:
 		| {
 				kind: "order";
@@ -302,6 +307,7 @@ export type SuggestedLine = {
 	// onOrder, and sold count the product.
 	unit: string;
 	packSize: number;
+	supplierCount: number;
 	minimumQuantity: number;
 	onHand: number;
 	onOrder: number;
@@ -424,6 +430,7 @@ export async function reorderBreakdown(
 					minimumQuantity: productSuppliers.minimumQuantity,
 					unit: productSuppliers.unit,
 					packSize: productSuppliers.packSize,
+					supplierCount: productSuppliers.supplierCount,
 					supplierId: suppliers.id,
 					supplierName: suppliers.name,
 					coverDays: suppliers.coverDays,
@@ -468,10 +475,14 @@ export async function reorderBreakdown(
 						criticalThreshold: p.criticalThreshold,
 					};
 		const purchase =
-			supplier && p.unit !== null && p.packSize !== null
+			supplier &&
+			p.unit !== null &&
+			p.packSize !== null &&
+			p.supplierCount !== null
 				? {
 						unit: p.unit,
 						packSize: p.packSize,
+						supplierCount: p.supplierCount,
 						minimumQuantity: p.minimumQuantity ?? 1,
 					}
 				: null;
@@ -480,7 +491,12 @@ export async function reorderBreakdown(
 			onHand: onHand.get(p.productId) ?? 0,
 			onOrder: onOrder.get(p.productId) ?? 0,
 		};
-		const terms = purchase ?? { unit: "EACH", packSize: 1, minimumQuantity: 1 };
+		const terms = purchase ?? {
+			unit: "EACH",
+			packSize: 1,
+			supplierCount: 1,
+			minimumQuantity: 1,
+		};
 		const input: ReorderInput = {
 			...stock,
 			...planFor(planned, p.productId, p.supplierId),
@@ -747,6 +763,7 @@ export async function draftLines(db: Db) {
 			quantity: purchaseOrderLines.quantity,
 			unit: purchaseOrderLines.unit,
 			packSize: purchaseOrderLines.packSize,
+			supplierCount: purchaseOrderLines.supplierCount,
 		})
 		.from(purchaseOrderLines)
 		.innerJoin(

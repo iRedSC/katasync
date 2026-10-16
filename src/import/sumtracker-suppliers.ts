@@ -333,6 +333,8 @@ export async function applySupplierImport(db: Db, plan: SupplierImportPlan) {
 						supplierSku: l.supplierSku,
 						unit: l.unit,
 						packSize: l.packSize,
+						// Sumtracker only has the one pack size.
+						supplierCount: l.packSize,
 						cost: l.cost,
 						minimumQuantity: l.minimumQuantity,
 					};

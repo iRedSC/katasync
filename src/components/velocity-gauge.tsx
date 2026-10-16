@@ -52,6 +52,7 @@ type OnPo = {
 	quantity: number;
 	unit: string;
 	packSize: number;
+	supplierCount: number;
 	purchaseOrderId?: number;
 };
 
@@ -195,7 +196,7 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 		v.kind === "order"
 			? formatOrderQuantity({
 					quantity: v.quantity,
-					...(why.purchase ?? { unit: "EACH", packSize: 1 }),
+					...(why.purchase ?? { unit: "EACH", packSize: 1, supplierCount: 1 }),
 				})
 			: null;
 	const poText = onPo ? formatOrderQuantity(onPo) : null;
@@ -211,7 +212,8 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 			<p className="font-semibold">
 				{v.kind === "order"
 					? why.purchase
-						? `Order ${suggested}${why.purchase.packSize > 1 ? ` (${formatCount(v.units)})` : ""}`
+						? // A count that isn't the supplier's says what it adds already.
+							`Order ${suggested}${why.purchase.packSize > 1 && why.purchase.packSize === why.purchase.supplierCount ? ` (${formatCount(v.units)})` : ""}`
 						: `Order ${formatCount(v.units)} (needs a supplier)`
 					: v.kind === "later"
 						? v.days === 0
@@ -410,7 +412,7 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 						? undefined
 						: v.roundedUp === "minimum"
 							? `Supplier minimum: ${formatOrderQuantity({ quantity: why.purchase.minimumQuantity, ...why.purchase })}`
-							: `Rounded up to ${formatUnit(why.purchase.unit, why.purchase.packSize)}`
+							: `Rounded up to ${formatUnit(why.purchase)}`
 				}
 				value={formatCount(v.units)}
 			/>,

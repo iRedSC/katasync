@@ -29,7 +29,13 @@ export type Level = (typeof LEVELS)[number];
 // ordered: an order sized from a wrong number is wrong too, and those carry
 // the money. C and unclassed products order on the number as it stands.
 export type NextStep =
-	| { kind: "order"; quantity: number; unit: string; packSize: number }
+	| {
+			kind: "order";
+			quantity: number;
+			unit: string;
+			packSize: number;
+			supplierCount: number;
+	  }
 	| { kind: "count" }
 	| { kind: "count requested" }
 	| { kind: "on draft"; purchaseOrderId: number }
@@ -47,7 +53,12 @@ export type StockInput = {
 	countRequested: boolean;
 	hasSupplier: boolean;
 	draft: { purchaseOrderId: number } | null;
-	reorder: { quantity: number; unit: string; packSize: number } | null;
+	reorder: {
+		quantity: number;
+		unit: string;
+		packSize: number;
+		supplierCount: number;
+	} | null;
 };
 
 export function trustOf(p: StockInput, now: Date): Trust {

@@ -105,6 +105,7 @@ function blankLine(match: PurchaseOrderMatch, id: number): ReceiveLine {
 		imageUrl: match.imageUrl,
 		unit: match.unit ?? "EACH",
 		packSize: match.packSize ?? 1,
+		supplierCount: match.supplierCount ?? 1,
 		quantity: 0,
 		received: 0,
 		sentQuantity: null,

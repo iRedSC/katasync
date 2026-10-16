@@ -269,6 +269,7 @@ describe("with a database", () => {
 			await db.insert(schema.purchaseOrderLines).values({
 				purchaseOrderId: po.id,
 				productId: fast,
+				supplierCount: 1,
 				quantity: 100,
 			});
 		}
