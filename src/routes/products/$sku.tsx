@@ -496,7 +496,7 @@ function CriticalToggle({
 	async function set(next: boolean) {
 		await setCritical({ data: { productId, critical: next } });
 		router.invalidate();
-		toast.success(next ? "Marked critical" : "No longer critical", {
+		toast.success(next ? "Marked essential" : "No longer essential", {
 			action: {
 				label: "Undo",
 				onClick: async () => {
@@ -512,7 +512,7 @@ function CriticalToggle({
 				"flex items-center gap-2",
 				isA ? "cursor-default text-muted-foreground" : "cursor-pointer",
 			)}
-			title={isA ? "A items are always critical" : undefined}
+			title={isA ? "A items are always essential" : undefined}
 		>
 			<input
 				type="checkbox"
@@ -521,7 +521,7 @@ function CriticalToggle({
 				onChange={(e) => set(e.target.checked)}
 				className="size-4 accent-primary"
 			/>
-			Critical
+			Essential
 		</label>
 	);
 }

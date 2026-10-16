@@ -267,13 +267,13 @@ function SupplierForm({
 						className={cn(input, "tabular-nums")}
 					/>
 				</Field>
-				<Field label="Critical threshold">
+				<Field label="Essential threshold">
 					<input
 						name="criticalThreshold"
 						required
 						inputMode="numeric"
 						defaultValue={s.criticalThreshold}
-						title="Critical products needing ordering that make a PO ready, whatever its total"
+						title="Essential products needing ordering that make a PO ready, whatever its total"
 						className={cn(input, "tabular-nums")}
 					/>
 				</Field>

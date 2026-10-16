@@ -218,7 +218,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 							{busy === s.supplierId ? (
 								<span className="text-muted-foreground">Opening…</span>
 							) : s.readiness === "critical" ? (
-								<Badge tone="critical">Critical</Badge>
+								<Badge tone="critical">Stockout risk</Badge>
 							) : s.draftId ? (
 								<Badge tone="info">Draft open</Badge>
 							) : (
