@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -128,6 +128,31 @@ export function stockTarget(p: {
 	);
 }
 
+// The lowest default max, so slow sellers still keep a few on the shelf.
+export const MIN_FORECAST_MAX = 5;
+
+// The max a forecast gives: what reorder tops stock up to (see
+// stockTarget). At least MIN_FORECAST_MAX, and always above min.
+export function forecastMax(
+	min: number,
+	p: {
+		dailyDemand: number;
+		leadTimeDays: number;
+		safetyStock: number;
+		coverDays: number;
+	},
+) {
+	return Math.max(min + 1, MIN_FORECAST_MAX, stockTarget(p));
+}
+
+// How many of the supplier's unit fill stock up to max, rounded up to whole
+// units and to at least the supplier's minimum. 0 when it's already there.
+function fillToMax(p: ReorderInput, max: number) {
+	const need = max - (p.onHand + p.onOrder);
+	if (need <= 0) return 0;
+	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
+}
+
 // What products without a supplier forecast with: the suppliers table's own
 // defaults.
 export const DEFAULT_LEAD_TIME_DAYS = 14;
@@ -192,6 +217,13 @@ export function readiness(s: {
 export const isCritical = (marked: boolean, abc: AbcClass | null) =>
 	marked || abc === "A";
 
+// Whether a product that needs ordering goes on its supplier's PO by itself:
+// A and B items, which earn enough to always keep, and anything marked
+// critical. The rest (C items, and unpriced ones that can't be classed) are
+// recommended instead, so someone decides whether they're worth restocking.
+export const ordersItself = (marked: boolean, abc: AbcClass | null) =>
+	marked || abc === "A" || abc === "B";
+
 type Supplier = {
 	supplierId: number;
 	supplierName: string;
@@ -206,7 +238,7 @@ export type ReorderNeed = SuggestedLine & Supplier;
 // Pass `plan` when the caller already has one, to skip loading it twice.
 async function reorderPlans(db: Db, now: Date, plan?: Plan | Promise<Plan>) {
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [sold, onHand, onOrder, defaultMin, linked, planned] =
+	const [sold, onHand, onOrder, defaultMin, linked, planned, counted] =
 		await Promise.all([
 			soldSince(db, since, { includeFba: false }),
 			ownedOnHand(db),
@@ -230,6 +262,7 @@ async function reorderPlans(db: Db, now: Date, plan?: Plan | Promise<Plan>) {
 					productCost: products.unitCost,
 					markedCritical: products.critical,
 					minStock: products.minStock,
+					maxStock: products.maxStock,
 					supplierSku: productSuppliers.supplierSku,
 					cost: productSuppliers.cost,
 					minimumQuantity: productSuppliers.minimumQuantity,
@@ -246,10 +279,23 @@ async function reorderPlans(db: Db, now: Date, plan?: Plan | Promise<Plan>) {
 				.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
 				.orderBy(products.name, products.variantName),
 			plan ?? loadPlan(db, now),
+			// Products counted on any of our own shelves, ever.
+			db
+				.selectDistinct({ productId: stockLevels.productId })
+				.from(stockLevels)
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(
+					and(
+						eq(locations.kind, "owned"),
+						isNotNull(stockLevels.lastCountedAt),
+					),
+				)
+				.then((rows) => new Set(rows.map((r) => r.productId))),
 		]);
 
 	return linked.map((p) => {
-		const abcClass = planned.abc.classes.get(p.productId)?.abc ?? null;
+		const rank = planned.abc.classes.get(p.productId);
+		const abcClass = rank?.abc ?? null;
 		const stock = {
 			sold: sold.get(p.productId) ?? 0,
 			onHand: onHand.get(p.productId) ?? 0,
@@ -263,6 +309,11 @@ async function reorderPlans(db: Db, now: Date, plan?: Plan | Promise<Plan>) {
 			minimumQuantity: p.minimumQuantity,
 			packSize: p.packSize,
 		};
+		// Its own max, else the one its forecast gives (as stockRanges does).
+		const max =
+			p.minStock !== null && p.maxStock !== null
+				? p.maxStock
+				: forecastMax(defaultMin, input);
 		const need: ReorderNeed = {
 			productId: p.productId,
 			sku: p.sku,
@@ -284,7 +335,17 @@ async function reorderPlans(db: Db, now: Date, plan?: Plan | Promise<Plan>) {
 			minimumOrder: p.minimumOrder,
 			criticalThreshold: p.criticalThreshold,
 		};
-		return { need, input };
+		return {
+			need,
+			input,
+			max,
+			ordersItself: ordersItself(p.markedCritical, abcClass),
+			// A C item nobody has sold or counted in a year is dead stock, or
+			// was never really stocked: nothing to recommend. Unpriced products
+			// have no class but did sell, so they stay.
+			dormant:
+				rank?.abc === "C" && rank.units === 0 && !counted.has(p.productId),
+		};
 	});
 }
 
@@ -300,14 +361,17 @@ export async function reorderNeeds(
 }
 
 export type RecommendedLine = SuggestedLine & {
-	// Days until it would need ordering anyway.
-	daysUntilReorder: number;
+	// "now": it needs ordering today but doesn't go on POs by itself (see
+	// ordersItself). Otherwise the days until it would need ordering anyway.
+	due: "now" | number;
 };
 
-// A supplier's products that don't need ordering yet but will before its
-// next PO would (within its cover days), soonest first, each at the top-up a
-// reorder would order. Ordering them now saves a second shipment. Products
-// in `except` (already on the draft) are left out.
+// A supplier's products worth adding to its PO, each at the quantity that
+// fills it to its max. First the ones that need ordering today but don't go
+// on POs by themselves; then the ones that don't need ordering yet but will
+// before its next PO would (within its cover days), soonest first, since
+// ordering them now saves a second shipment. Products in `except` (already on
+// the draft) and dormant C items (see reorderPlans) are left out.
 export async function recommendedAdditions(
 	db: Db,
 	supplierId: number,
@@ -316,16 +380,39 @@ export async function recommendedAdditions(
 ): Promise<RecommendedLine[]> {
 	const plans = await reorderPlans(db, now);
 	return plans
-		.flatMap(({ need, input }): RecommendedLine[] => {
-			if (need.supplierId !== supplierId || except.has(need.productId))
+		.flatMap((plan): RecommendedLine[] => {
+			const { need, input } = plan;
+			if (
+				need.supplierId !== supplierId ||
+				except.has(need.productId) ||
+				plan.dormant
+			)
 				return [];
-			const days = daysUntilReorder(input);
-			const quantity = topUp(input);
-			if (days === null || days > input.coverDays || quantity === 0) return [];
-			return [{ ...suggestedLine(need), quantity, daysUntilReorder: days }];
+			const due = recommendedDue(plan);
+			const quantity = fillToMax(input, plan.max);
+			if (due === null || quantity === 0) return [];
+			return [{ ...suggestedLine(need), quantity, due }];
 		})
-		.sort((a, b) => a.daysUntilReorder - b.daysUntilReorder);
+		.sort((a, b) => dueOrder(a.due) - dueOrder(b.due));
 }
+
+// When a product is due, if that makes it worth recommending: now if it
+// needs ordering but its PO won't take it by itself, else within cover days.
+function recommendedDue({
+	need,
+	input,
+	ordersItself,
+}: {
+	need: ReorderNeed;
+	input: ReorderInput;
+	ordersItself: boolean;
+}): RecommendedLine["due"] | null {
+	if (need.quantity > 0) return ordersItself ? null : "now";
+	const days = daysUntilReorder(input);
+	return days === null || days > input.coverDays ? null : days;
+}
+
+const dueOrder = (due: RecommendedLine["due"]) => (due === "now" ? -1 : due);
 
 // A need without its supplier's fields.
 function suggestedLine({
@@ -338,14 +425,15 @@ function suggestedLine({
 	return line;
 }
 
-// What each supplier should be sent today. Computed fresh from sales, stock,
+// What each supplier should be sent today: what needs ordering among the
+// products that go on POs by themselves (see ordersItself). Computed fresh from sales, stock,
 // and open POs rather than stored, so it never goes stale.
 export async function suggestPurchases(
 	db: Db,
 	now = new Date(),
 ): Promise<SupplierSuggestion[]> {
-	const [needs, drafts] = await Promise.all([
-		reorderNeeds(db, now),
+	const [plans, drafts] = await Promise.all([
+		reorderPlans(db, now),
 		db
 			.select({ id: purchaseOrders.id, supplierId: purchaseOrders.supplierId })
 			.from(purchaseOrders)
@@ -359,7 +447,9 @@ export async function suggestPurchases(
 		minimumOrder,
 		criticalThreshold,
 		...line
-	} of needs) {
+	} of plans.flatMap((p) =>
+		p.ordersItself && p.need.quantity > 0 ? [p.need] : [],
+	)) {
 		let s = bySupplier.get(supplierId);
 		if (!s) {
 			s = {

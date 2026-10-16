@@ -3,11 +3,13 @@ import type { Db } from "#/db/client";
 import { productSuppliers, products, settings, suppliers } from "#/db/schema";
 import {
 	DEFAULT_COVER_DAYS,
+	forecastMax,
 	loadPlan,
 	type Plan,
 	planFor,
-	stockTarget,
 } from "#/purchasing/reorder";
+
+export { forecastMax } from "#/purchasing/reorder";
 
 // How much of a product we like to keep on our own shelves: at least min,
 // at most max. A product without its own range gets a default one: min from
@@ -52,23 +54,6 @@ export async function setProductStockRange(
 		.update(products)
 		.set({ minStock: range?.min ?? null, maxStock: range?.max ?? null })
 		.where(eq(products.id, productId));
-}
-
-// The lowest default max, so slow sellers still keep a few on the shelf.
-export const MIN_FORECAST_MAX = 5;
-
-// The max a forecast gives: what reorder tops stock up to (see
-// stockTarget). At least MIN_FORECAST_MAX, and always above min.
-export function forecastMax(
-	min: number,
-	p: {
-		dailyDemand: number;
-		leadTimeDays: number;
-		safetyStock: number;
-		coverDays: number;
-	},
-) {
-	return Math.max(min + 1, MIN_FORECAST_MAX, stockTarget(p));
 }
 
 // Each product's default range, ignoring any range of its own. Pass `plan`
