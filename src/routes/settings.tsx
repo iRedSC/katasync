@@ -110,8 +110,8 @@ function Settings() {
 				<p className="mt-2 text-muted-foreground">
 					For products without their own range, set on the product's page. Their
 					max comes from their sales: what a reorder tops them up to (lead time,
-					the supplier's cover, and spare stock for A items). The on hand ring
-					on a draft PO fills from min to max.
+					the supplier's cover, and spare stock for A items), at least 5. The on
+					hand ring on a draft PO fills from min to max.
 				</p>
 			</Card>
 			<LabelPrintingCard />

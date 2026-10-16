@@ -56,10 +56,13 @@ export async function setProductStockRange(
 		.where(eq(products.id, productId));
 }
 
+// The lowest default max, so slow sellers still keep a few on the shelf.
+export const MIN_FORECAST_MAX = 5;
+
 // The max a forecast gives: what reorder tops stock up to, from the last
 // DEMAND_DAYS of sales, the supplier's lead time and cover (the suppliers
-// defaults without one), and A items' safety stock. Always above min, so a
-// product that doesn't sell still has a range.
+// defaults without one), and A items' safety stock. At least
+// MIN_FORECAST_MAX, and always above min.
 export function forecastMax(
 	min: number,
 	p: {
@@ -69,7 +72,7 @@ export function forecastMax(
 		coverDays: number;
 	},
 ) {
-	return Math.max(min + 1, stockTarget(p));
+	return Math.max(min + 1, MIN_FORECAST_MAX, stockTarget(p));
 }
 
 // Each product's default range, ignoring any range of its own. Pass `abc`

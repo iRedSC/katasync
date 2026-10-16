@@ -67,7 +67,7 @@ How things count:
 - Cycle counts only happen when asked for: request_counts puts shelves on the staff's count list, and a count clears them. Ask when stock looks wrong, e.g. oversold or not matching what a channel reports.
 - Count accuracy: use the count_history view (one row per shelf count: product_id, sku, location_id, counted_at, expected, counted, drift = counted minus expected, undone). Matched counts are there too (drift 0), so look for products that drift again and again, not one bad count. Leave out undone rows: those were mistakes. History before this log only has the counts that changed stock.
 - The products page treats stock as trusted once every owned shelf was counted in the last 60 days. For A and B items it asks for a count before suggesting an order; C items order on the number as it stands.
-- Each product keeps stock between a min and max: its own (products.min_stock/max_stock), or the defaults: settings.default_min_stock, and a max forecast from the last 90 days of sales over the supplier's lead time plus cover (plus spare for A items).
+- Each product keeps stock between a min and max: its own (products.min_stock/max_stock), or the defaults: settings.default_min_stock, and a max forecast from the last 90 days of sales over the supplier's lead time plus cover (plus spare for A items), at least 5.
 - Stock and receiving changes can be undone (undo_stock_change, undo_po_receipt). Every change you make is logged and shown to the user.
 
 Use describe_schema before writing SQL. Prefer reorder_suggestions for "what should we order": it accounts for lead time, what's already on order, and minimums. When a request is ambiguous about quantities, say which interpretation you used.`;

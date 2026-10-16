@@ -143,7 +143,9 @@ describe("default max from the forecast", () => {
 		expect(forecastMax(1, { ...p, dailyDemand: 0.5 })).toBe(22);
 	});
 
-	test("stays above min when nothing sells", () => {
-		expect(forecastMax(1, { ...p, dailyDemand: 0 })).toBe(2);
+	test("is at least 5 when little sells, and always above min", () => {
+		expect(forecastMax(1, { ...p, dailyDemand: 0 })).toBe(5);
+		expect(forecastMax(1, { ...p, dailyDemand: 0.05 })).toBe(5);
+		expect(forecastMax(8, { ...p, dailyDemand: 0 })).toBe(9);
 	});
 });
