@@ -12,6 +12,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { recordCount, undoMovement } from "#/server/catalog";
 
@@ -71,22 +72,15 @@ export function CountDialog({
 					description: name,
 				});
 			} else {
-				toast.success(
-					`Count saved. ${formatCount(result.onHand)} on the shelf.`,
-					{
-						description: name,
-						// Long enough to notice a mistake and reach Undo.
-						duration: 10_000,
-						action: {
-							label: "Undo",
-							onClick: async () => {
-								await undoMovement({ data: { batchId } });
-								await router.invalidate();
-								toast("Count undone", { description: name });
-							},
-						},
+				offerUndo(`Count saved. ${formatCount(result.onHand)} on the shelf.`, {
+					tone: "success",
+					description: name,
+					undo: async () => {
+						await undoMovement({ data: { batchId } });
+						await router.invalidate();
+						return `Count of ${name} undone`;
 					},
-				);
+				});
 			}
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));

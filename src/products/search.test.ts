@@ -22,6 +22,7 @@ function facets(extra: Partial<Facets> = {}): Facets {
 		trust: ["counted"],
 		title: ["Flat Box 12x9"],
 		inventory: 5,
+		velocity: 2,
 		...extra,
 	};
 }
@@ -182,5 +183,23 @@ describe("class and inventory", () => {
 		// Half typed: matches everything until there's a number.
 		expect(at(99, "<")).toBe(true);
 		expect(spell(parseWord("<=3") as Filter)).toBe("<=3");
+	});
+
+	test("v comparisons filter on velocity, fractions included", () => {
+		const at = (n: number, q: string) =>
+			matches(facets({ velocity: n }), parseQuery(q).filters, []);
+		expect(parseWord("v>=0.5")).toMatchObject({
+			field: "velocity",
+			value: ">=0.5",
+		});
+		expect(at(0.5, "v>=0.5")).toBe(true);
+		expect(at(0.4, "v>=0.5")).toBe(false);
+		expect(at(3, "v>=1 v<=4")).toBe(true);
+		expect(at(5, "v>=1 v<=4")).toBe(false);
+		// Inventory is still its own number.
+		expect(at(3, ">=1 <=4")).toBe(false);
+		// A plain word starting with v is still a word.
+		expect(parseWord("vinyl")).toBeNull();
+		expect(spell(parseWord("v<3") as Filter)).toBe("v<3");
 	});
 });

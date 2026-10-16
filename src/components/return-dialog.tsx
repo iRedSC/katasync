@@ -1,7 +1,6 @@
 import { useRouter } from "@tanstack/react-router";
 import { Minus, Plus } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { toast } from "sonner";
 import { ProductImage } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import {
@@ -13,6 +12,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
+import { offerUndo } from "#/lib/undo";
 import { receiveOrderReturn, undoOrderReturn } from "#/server/orders";
 
 type ReturnLine = {
@@ -69,20 +69,17 @@ export function ReturnDialog({
 			});
 			onOpenChange(false);
 			await router.invalidate();
-			toast.success(
+			offerUndo(
 				restock
 					? `${formatCount(total)} back on the shelf`
 					: `${formatCount(total)} written off as damaged`,
 				{
+					tone: "success",
 					description: `Return on ${orderName}`,
-					duration: 10_000,
-					action: {
-						label: "Undo",
-						onClick: async () => {
-							await undoOrderReturn({ data: { ids } });
-							await router.invalidate();
-							toast("Return undone", { description: orderName });
-						},
+					undo: async () => {
+						await undoOrderReturn({ data: { ids } });
+						await router.invalidate();
+						return `Return on ${orderName} undone`;
 					},
 				},
 			);

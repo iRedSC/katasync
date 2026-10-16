@@ -44,11 +44,12 @@ import {
 	daysLeft,
 	levelOf,
 	nextStepOf,
-	TRUST_DAYS,
 	trustOf,
 } from "#/inventory/stock-state";
+import { copyText } from "#/lib/copy";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
 	type Facets,
@@ -173,6 +174,7 @@ function facetsOf(p: ProductRow, state: StockState): Facets {
 		supplier: p.supplier ? [p.supplier.name] : [],
 		trust,
 		inventory: stock(p),
+		velocity: p.dailyDemand * 30,
 	};
 }
 
@@ -197,7 +199,6 @@ const RAIL: RailGroup[] = [
 		title: "Trust",
 		field: "trust",
 		values: ["counted", "uncounted"],
-		note: `Counted means every shelf was counted in the last ${TRUST_DAYS} days.`,
 	},
 	{
 		title: "Class",
@@ -205,6 +206,7 @@ const RAIL: RailGroup[] = [
 		values: ["A", "B", "C"],
 		label: (v) => `${v} items`,
 	},
+	{ title: "Velocity", field: "velocity", range: true },
 	{ title: "Supplier", field: "supplier", values: null },
 	{ title: "Type", field: "type", values: null },
 ];
@@ -241,7 +243,7 @@ function Products() {
 }
 
 function ProductList() {
-	const { products, abcDays, unpriced, views } = Route.useLoaderData();
+	const { products, views } = Route.useLoaderData();
 	const search = Route.useSearch();
 	// The router hands back a new array on every render, so key it by content:
 	// otherwise each render would count as a change, resetting the selection
@@ -323,7 +325,9 @@ function ProductList() {
 		const q = parseQuery(query);
 		const all = [...filters, ...q.filters];
 		const out = new Map<ListField, Map<string, number>>();
-		for (const { field } of RAIL) {
+		for (const g of RAIL) {
+			if ("range" in g) continue;
+			const { field } = g;
 			const others = all.filter((f) => f.field !== field);
 			const values = new Map<string, number>();
 			for (const f of facets) {
@@ -392,20 +396,6 @@ function ProductList() {
 				<aside className="sticky top-[4.5rem] hidden max-h-[calc(100svh-5.5rem)] w-56 shrink-0 overflow-y-auto overscroll-contain pb-4 lg:block">
 					<FacetRail
 						groups={RAIL}
-						notes={{
-							class: (
-								<>
-									Ranked by margin (sales less cost). A earns the first 80%, B
-									the next 15%, C the rest, over{" "}
-									{abcDays >= 365
-										? "the last 12 months"
-										: `${formatCount(abcDays)} days`}
-									.
-									{unpriced > 0 &&
-										` ${formatCount(unpriced)} sold ${unpriced === 1 ? "product has" : "products have"} no cost, so no class yet.`}
-								</>
-							),
-						}}
 						counts={railCounts}
 						filters={filters}
 						onFilters={(next) => setSearch({ filters: next })}
@@ -670,25 +660,18 @@ function ProductList() {
 				);
 				return;
 			}
-			toast.success(
+			offerUndo(
 				`Added ${formatOrderQuantity(line)} to PO ${purchaseOrderId} (${supplierName})`,
 				{
-					action: {
-						label: "Undo",
-						onClick: async () => {
-							try {
-								const undone = await undoAddToPurchaseOrder({
-									data: { purchaseOrderId, line },
-								});
-								await router.invalidate();
-								if (!undone)
-									toast(
-										`${p.sku} on PO ${purchaseOrderId} changed since, so it's left as is`,
-									);
-							} catch (err) {
-								toast.error(err instanceof Error ? err.message : String(err));
-							}
-						},
+					tone: "success",
+					undo: async () => {
+						const undone = await undoAddToPurchaseOrder({
+							data: { purchaseOrderId, line },
+						});
+						await router.invalidate();
+						return undone
+							? `Took ${p.sku} off PO ${purchaseOrderId}`
+							: `${p.sku} on PO ${purchaseOrderId} changed since, so it's left as is`;
 					},
 				},
 			);
@@ -706,23 +689,16 @@ function ProductList() {
 				return;
 			}
 			await router.invalidate();
-			toast.success(`Added ${p.sku} to the count list`, {
-				action: {
-					label: "Undo",
-					onClick: async () => {
-						try {
-							const cancelled = await cancelCountRequest({
-								data: { requests: added },
-							});
-							await router.invalidate();
-							if (cancelled < added.length)
-								toast(
-									`${p.sku}'s count request changed since, so it's left as is`,
-								);
-						} catch (err) {
-							toast.error(err instanceof Error ? err.message : String(err));
-						}
-					},
+			offerUndo(`Added ${p.sku} to the count list`, {
+				tone: "success",
+				undo: async () => {
+					const cancelled = await cancelCountRequest({
+						data: { requests: added },
+					});
+					await router.invalidate();
+					return cancelled < added.length
+						? `${p.sku}'s count request changed since, so it's left as is`
+						: `Took ${p.sku} off the count list`;
 				},
 			});
 		} catch (err) {
@@ -733,13 +709,12 @@ function ProductList() {
 	async function updateView(v: View) {
 		await saveView({ data: { id: v.id, name: v.name, ...current } });
 		await router.invalidate();
-		toast.success(`Saved “${v.name}”`, {
-			action: {
-				label: "Undo",
-				onClick: async () => {
-					await saveView({ data: v });
-					await router.invalidate();
-				},
+		offerUndo(`Saved “${v.name}”`, {
+			tone: "success",
+			undo: async () => {
+				await saveView({ data: v });
+				await router.invalidate();
+				return `“${v.name}” back as it was`;
 			},
 		});
 	}
@@ -838,14 +813,12 @@ function ViewDialog({
 		await deleteView({ data: { id: view.id } });
 		await router.invalidate();
 		onDeleted();
-		toast(`Deleted “${view.name}”`, {
-			action: {
-				label: "Undo",
-				onClick: async () => {
-					const { id: _, ...rest } = view;
-					await saveView({ data: rest });
-					await router.invalidate();
-				},
+		offerUndo(`Deleted “${view.name}”`, {
+			undo: async () => {
+				const { id: _, ...rest } = view;
+				await saveView({ data: rest });
+				await router.invalidate();
+				return `“${view.name}” is back`;
 			},
 		});
 	}
@@ -1000,12 +973,7 @@ function RowMenu({
 				Count stock
 			</ContextMenuItem>
 			<ContextMenuSeparator />
-			<ContextMenuItem
-				onSelect={async () => {
-					await navigator.clipboard.writeText(p.sku);
-					toast(`Copied ${p.sku}`);
-				}}
-			>
+			<ContextMenuItem onSelect={() => copyText(p.sku)}>
 				<Copy />
 				Copy SKU
 			</ContextMenuItem>

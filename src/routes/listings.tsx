@@ -1,5 +1,5 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { Link2 } from "lucide-react";
+import { Copy, Link2, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
@@ -13,11 +13,19 @@ import {
 	CommandList,
 } from "#/components/ui/command";
 import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "#/components/ui/context-menu";
+import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { copyText } from "#/lib/copy";
 import { channelName, formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
@@ -41,6 +49,7 @@ function Listings() {
 	const [selected, setSelected] = useState(0);
 	const [matching, setMatching] = useState<Listing | null>(null);
 	const [busy, setBusy] = useState<number | null>(null);
+	const [menuFor, setMenuFor] = useState<Listing | null>(null);
 
 	useEffect(() => {
 		setSelected((i) => Math.min(i, Math.max(rows.length - 1, 0)));
@@ -96,48 +105,63 @@ function Listings() {
 						to one you already have. Most-sold first.
 					</p>
 					<Card flush>
-						<ul>
-							{rows.map((l, i) => (
-								<li
-									key={l.id}
-									onMouseMove={() => setSelected(i)}
-									className={cn(
-										"flex items-center gap-4 border-t px-4 py-3 first:border-t-0",
-										i === selected && "bg-surface",
-									)}
-								>
-									<div className="min-w-0 flex-1">
-										<div className="truncate font-medium">{l.title}</div>
-										<div className="flex gap-2 text-xs text-muted-foreground">
-											<span>{l.externalSku}</span>
-											<span>{channelName(l.channel)}</span>
-										</div>
-									</div>
-									{l.unitsSold > 0 && (
-										<Badge tone="warning">
-											{formatCount(l.unitsSold)} sold
-										</Badge>
-									)}
-									<div className="flex shrink-0 gap-2">
-										<Button
-											variant="outline"
-											size="sm"
-											disabled={busy === l.id}
-											onClick={() => setMatching(l)}
+						{/* One menu for the whole list: it acts on the row that was
+						    right-clicked. */}
+						<ContextMenu>
+							<ContextMenuTrigger asChild>
+								<ul>
+									{rows.map((l, i) => (
+										<li
+											key={l.id}
+											onMouseMove={() => setSelected(i)}
+											onContextMenu={() => setMenuFor(l)}
+											className={cn(
+												"flex items-center gap-4 border-t px-4 py-3 first:border-t-0",
+												i === selected && "bg-surface",
+											)}
 										>
-											Match existing
-										</Button>
-										<Button
-											size="sm"
-											disabled={busy === l.id}
-											onClick={() => create(l)}
-										>
-											Create product
-										</Button>
-									</div>
-								</li>
-							))}
-						</ul>
+											<div className="min-w-0 flex-1">
+												<div className="truncate font-medium">{l.title}</div>
+												<div className="flex gap-2 text-xs text-muted-foreground">
+													<span>{l.externalSku}</span>
+													<span>{channelName(l.channel)}</span>
+												</div>
+											</div>
+											{l.unitsSold > 0 && (
+												<Badge tone="warning">
+													{formatCount(l.unitsSold)} sold
+												</Badge>
+											)}
+											<div className="flex shrink-0 gap-2">
+												<Button
+													variant="outline"
+													size="sm"
+													disabled={busy === l.id}
+													onClick={() => setMatching(l)}
+												>
+													Match existing
+												</Button>
+												<Button
+													size="sm"
+													disabled={busy === l.id}
+													onClick={() => create(l)}
+												>
+													Create product
+												</Button>
+											</div>
+										</li>
+									))}
+								</ul>
+							</ContextMenuTrigger>
+							{menuFor && (
+								<ListingMenu
+									listing={menuFor}
+									busy={busy === menuFor.id}
+									onMatch={() => setMatching(menuFor)}
+									onCreate={() => create(menuFor)}
+								/>
+							)}
+						</ContextMenu>
 					</Card>
 					<p className="text-xs text-muted-foreground">
 						Keyboard: J and K to move, C to create, M to match.
@@ -158,6 +182,43 @@ function Listings() {
 				}}
 			/>
 		</Page>
+	);
+}
+
+// The same actions as the row's buttons, plus copying its SKU.
+function ListingMenu({
+	listing,
+	busy,
+	onMatch,
+	onCreate,
+}: {
+	listing: Listing;
+	busy: boolean;
+	onMatch: () => void;
+	onCreate: () => void;
+}) {
+	return (
+		<ContextMenuContent>
+			<ContextMenuItem disabled={busy} onSelect={onMatch} shortcut="M">
+				<Link2 />
+				Match to existing product…
+			</ContextMenuItem>
+			<ContextMenuItem disabled={busy} onSelect={onCreate} shortcut="C">
+				<Plus />
+				Create product
+			</ContextMenuItem>
+			{listing.externalSku && (
+				<>
+					<ContextMenuSeparator />
+					<ContextMenuItem
+						onSelect={() => copyText(listing.externalSku ?? "", "SKU")}
+					>
+						<Copy />
+						Copy listing SKU
+					</ContextMenuItem>
+				</>
+			)}
+		</ContextMenuContent>
 	);
 }
 

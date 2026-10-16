@@ -9,8 +9,9 @@ function isTyping(target: EventTarget | null) {
 }
 
 // Single keys ("j", "/", "Escape") and two-key sequences ("g p"). Ignored while
-// typing in a field, except Escape, and inside any dialog, which owns its own
-// keys (otherwise Enter in quick ship would also open the row behind it). The
+// typing in a field, except Escape, and inside any dialog or open menu, which
+// owns its own keys (otherwise Enter in quick ship would also open the row
+// behind it, and C in a row's menu would also act on the selected row). The
 // latest handlers are always used, so callers can pass inline functions.
 export function useHotkeys(
 	bindings: Record<string, (e: KeyboardEvent) => void>,
@@ -23,8 +24,11 @@ export function useHotkeys(
 		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		function onKeyDown(e: KeyboardEvent) {
-			if (e.metaKey || e.ctrlKey || e.altKey) return;
-			if (e.target instanceof Element && e.target.closest("[role=dialog]")) {
+			if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+			if (
+				e.target instanceof Element &&
+				e.target.closest("[role=dialog], [role=menu]")
+			) {
 				return;
 			}
 			if (e.key !== "Escape" && isTyping(e.target)) return;
