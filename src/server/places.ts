@@ -13,11 +13,15 @@ const api = "https://places.googleapis.com/v1";
 
 function key() {
 	const k = process.env.GOOGLE_MAPS_API_KEY;
-	if (!k) throw new Error("Address lookup isn't set up: add GOOGLE_MAPS_API_KEY");
+	if (!k)
+		throw new Error("Address lookup isn't set up: add GOOGLE_MAPS_API_KEY");
 	return k;
 }
 
-async function google(path: string, init: RequestInit & { fieldMask?: string }) {
+async function google(
+	path: string,
+	init: RequestInit & { fieldMask?: string },
+) {
 	const res = await fetch(`${api}/${path}`, {
 		...init,
 		headers: {

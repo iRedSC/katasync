@@ -1,4 +1,5 @@
-import { and, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, notExists, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -7,14 +8,16 @@ import {
 	products,
 	purchaseOrderAmendments,
 	purchaseOrderLines,
-	purchaseOrderMovedParts,
 	purchaseOrderReceipts,
+	purchaseOrderSentSets,
+	purchaseOrderSkippedParts,
 	purchaseOrders,
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
 import { postMovements, undoBatch } from "#/inventory/ledger";
 import { type SuggestedLine, suggestPurchases } from "#/purchasing/reorder";
+import { partState, setsOf, shortBySupplier } from "#/purchasing/sets";
 
 // Every change to a PO goes through here. Each one locks the PO's row first,
 // so two people receiving the same box can't both count it.
@@ -82,9 +85,9 @@ export function draftChanges(
 	return { added, raised };
 }
 
-// How many single items of each part a draft's tool set lines come to,
-// leaving out parts moved to another supplier's draft. Kits on a PO are bought
-// whole, so only sets count.
+// How many single items of each part a draft's tool set lines come to: the
+// parts bought from the draft's supplier that it doesn't skip. Kits on a PO
+// are bought whole, so only sets count. Matches partState's "here".
 export async function partsOfSets(
 	db: Db,
 	purchaseOrderId: number,
@@ -95,21 +98,35 @@ export async function partsOfSets(
 			items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
 		})
 		.from(purchaseOrderLines)
+		.innerJoin(
+			purchaseOrders,
+			eq(purchaseOrders.id, purchaseOrderLines.purchaseOrderId),
+		)
 		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
 		.innerJoin(
 			productComponents,
 			eq(productComponents.parentProductId, purchaseOrderLines.productId),
 		)
+		.innerJoin(
+			productSuppliers,
+			and(
+				eq(productSuppliers.productId, productComponents.componentProductId),
+				eq(productSuppliers.supplierId, purchaseOrders.supplierId),
+			),
+		)
 		.leftJoin(
-			purchaseOrderMovedParts,
+			purchaseOrderSkippedParts,
 			and(
 				eq(
-					purchaseOrderMovedParts.purchaseOrderId,
+					purchaseOrderSkippedParts.purchaseOrderId,
 					purchaseOrderLines.purchaseOrderId,
 				),
-				eq(purchaseOrderMovedParts.setProductId, purchaseOrderLines.productId),
 				eq(
-					purchaseOrderMovedParts.partProductId,
+					purchaseOrderSkippedParts.setProductId,
+					purchaseOrderLines.productId,
+				),
+				eq(
+					purchaseOrderSkippedParts.partProductId,
 					productComponents.componentProductId,
 				),
 			),
@@ -118,7 +135,7 @@ export async function partsOfSets(
 			and(
 				eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
 				eq(products.kind, "bundle"),
-				isNull(purchaseOrderMovedParts.purchaseOrderId),
+				isNull(purchaseOrderSkippedParts.purchaseOrderId),
 			),
 		);
 	const parts = new Map<number, number>();
@@ -127,12 +144,16 @@ export async function partsOfSets(
 	return parts;
 }
 
-// Replaces a draft's tool set lines with their parts, added onto the parts'
-// own lines when the draft has them. Runs as it's sent, so the supplier and
+// Replaces a draft's tool set lines with the parts it orders (partsOfSets),
+// added onto the parts' own lines when the draft has them. Runs as it's sent, so the supplier and
 // receiving only ever see things that are bought and shelved.
 async function splitSets(db: Db, purchaseOrderId: number) {
 	const sets = await db
-		.select({ id: purchaseOrderLines.id })
+		.select({
+			id: purchaseOrderLines.id,
+			productId: purchaseOrderLines.productId,
+			sets: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize})::int`,
+		})
 		.from(purchaseOrderLines)
 		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
 		.where(
@@ -143,6 +164,14 @@ async function splitSets(db: Db, purchaseOrderId: number) {
 		);
 	if (sets.length === 0) return;
 	const parts = await partsOfSets(db, purchaseOrderId);
+	// Kept, so the set's other suppliers' drafts know these parts are ordered.
+	await db.insert(purchaseOrderSentSets).values(
+		sets.map((s) => ({
+			purchaseOrderId,
+			setProductId: s.productId,
+			sets: s.sets,
+		})),
+	);
 	await db.delete(purchaseOrderLines).where(
 		inArray(
 			purchaseOrderLines.id,
@@ -153,72 +182,344 @@ async function splitSets(db: Db, purchaseOrderId: number) {
 		await addItems(db, purchaseOrderId, productId, items);
 }
 
-// Moves one part of a draft's tool set line to the draft of the supplier the
-// part is bought from, opening one if there isn't one. This PO's set then
-// leaves the part out. Moves what the set needs right now; changing the set's
-// quantity later doesn't change what was moved. Returns the draft it went to.
-export async function movePartToSupplier(
+// The parts of a draft's tool set lines, for showing under each set: how many
+// single items one set needs, who the part is bought from, whether this PO
+// skips it, the unit and price it will land in when sent (its line on this
+// PO, else the supplier's), and which of its supplier's other open POs have
+// the set for it. partState in src/purchasing/sets.ts sorts them out.
+export async function setPartsOf(db: Db, poId: number) {
+	const part = alias(products, "part");
+	const partLine = alias(purchaseOrderLines, "part_line");
+	const rows = await db
+		.select({
+			lineId: purchaseOrderLines.id,
+			setProductId: purchaseOrderLines.productId,
+			productId: part.id,
+			sku: part.sku,
+			name: part.name,
+			variantName: part.variantName,
+			imageUrl: part.imageUrl,
+			supplierSku: productSuppliers.supplierSku,
+			perSet: productComponents.quantity,
+			supplierId: productSuppliers.supplierId,
+			supplierName: suppliers.name,
+			skipped: sql<boolean>`${purchaseOrderSkippedParts.purchaseOrderId} is not null`,
+			unit: sql<string>`coalesce(${partLine.unit}, ${productSuppliers.unit}, 'EACH')`,
+			packSize: sql<number>`coalesce(${partLine.packSize}, ${productSuppliers.packSize}, 1)::int`,
+			minimumQuantity: sql<number>`coalesce(${partLine.minimumQuantity}, ${productSuppliers.minimumQuantity}, 1)::int`,
+			partLineId: partLine.id,
+			lineCost: partLine.unitCost,
+			supplierCost: productSuppliers.cost,
+			productCost: part.unitCost,
+		})
+		.from(purchaseOrderLines)
+		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+		.innerJoin(
+			productComponents,
+			eq(productComponents.parentProductId, purchaseOrderLines.productId),
+		)
+		.innerJoin(part, eq(part.id, productComponents.componentProductId))
+		.leftJoin(productSuppliers, eq(productSuppliers.productId, part.id))
+		.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+		.leftJoin(
+			purchaseOrderSkippedParts,
+			and(
+				eq(purchaseOrderSkippedParts.purchaseOrderId, poId),
+				eq(
+					purchaseOrderSkippedParts.setProductId,
+					purchaseOrderLines.productId,
+				),
+				eq(purchaseOrderSkippedParts.partProductId, part.id),
+			),
+		)
+		.leftJoin(
+			partLine,
+			and(eq(partLine.purchaseOrderId, poId), eq(partLine.productId, part.id)),
+		)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, poId),
+				eq(products.kind, "bundle"),
+			),
+		)
+		.orderBy(part.name, part.variantName);
+	const setIds = [...new Set(rows.map((r) => r.setProductId))];
+	const others =
+		setIds.length === 0 ? [] : await setsElsewhere(db, poId, setIds);
+	const skips =
+		others.length === 0
+			? []
+			: await db
+					.select()
+					.from(purchaseOrderSkippedParts)
+					.where(
+						and(
+							inArray(
+								purchaseOrderSkippedParts.purchaseOrderId,
+								others.map((o) => o.purchaseOrderId),
+							),
+							inArray(purchaseOrderSkippedParts.setProductId, setIds),
+						),
+					);
+	const skippedThere = new Set(
+		skips.map(
+			(s) => `${s.purchaseOrderId}:${s.setProductId}:${s.partProductId}`,
+		),
+	);
+	return rows.map(
+		({ partLineId, lineCost, supplierCost, productCost, ...r }) => ({
+			...r,
+			// What a new line would cost (see newLine), unless it has one already.
+			unitCost:
+				partLineId !== null
+					? lineCost
+					: (supplierCost ??
+						(productCost === null ? null : productCost * r.packSize)),
+			elsewhere: others
+				.filter(
+					(o) =>
+						o.supplierId === r.supplierId &&
+						o.setProductId === r.setProductId &&
+						!skippedThere.has(
+							`${o.purchaseOrderId}:${r.setProductId}:${r.productId}`,
+						),
+				)
+				.map(({ purchaseOrderId, status, sets }) => ({
+					purchaseOrderId,
+					status,
+					sets,
+				})),
+		}),
+	);
+}
+
+// The sets on every other open PO: on drafts as lines, on sent POs as they
+// were when sent.
+async function setsElsewhere(db: Db, poId: number, setIds: number[]) {
+	const [drafts, sent] = await Promise.all([
+		db
+			.select({
+				purchaseOrderId: purchaseOrders.id,
+				supplierId: purchaseOrders.supplierId,
+				setProductId: purchaseOrderLines.productId,
+				sets: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize})::int`,
+			})
+			.from(purchaseOrderLines)
+			.innerJoin(
+				purchaseOrders,
+				eq(purchaseOrders.id, purchaseOrderLines.purchaseOrderId),
+			)
+			.where(
+				and(
+					eq(purchaseOrders.status, "draft"),
+					ne(purchaseOrders.id, poId),
+					inArray(purchaseOrderLines.productId, setIds),
+				),
+			),
+		db
+			.select({
+				purchaseOrderId: purchaseOrders.id,
+				supplierId: purchaseOrders.supplierId,
+				setProductId: purchaseOrderSentSets.setProductId,
+				sets: purchaseOrderSentSets.sets,
+			})
+			.from(purchaseOrderSentSets)
+			.innerJoin(
+				purchaseOrders,
+				eq(purchaseOrders.id, purchaseOrderSentSets.purchaseOrderId),
+			)
+			.where(
+				and(
+					eq(purchaseOrders.status, "sent"),
+					ne(purchaseOrders.id, poId),
+					inArray(purchaseOrderSentSets.setProductId, setIds),
+				),
+			),
+	]);
+	return [
+		...drafts.map((d) => ({ ...d, status: "draft" as const })),
+		...sent.map((s) => ({ ...s, status: "sent" as const })),
+	];
+}
+
+// The draft PO a set line is on, and the line's parts.
+async function setLineParts(db: Db, lineId: number) {
+	const [line] = await db
+		.select({
+			purchaseOrderId: purchaseOrderLines.purchaseOrderId,
+			supplierId: purchaseOrders.supplierId,
+			setProductId: purchaseOrderLines.productId,
+			sku: products.sku,
+			kind: products.kind,
+			quantity: purchaseOrderLines.quantity,
+			packSize: purchaseOrderLines.packSize,
+		})
+		.from(purchaseOrderLines)
+		.innerJoin(
+			purchaseOrders,
+			eq(purchaseOrders.id, purchaseOrderLines.purchaseOrderId),
+		)
+		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+		.where(eq(purchaseOrderLines.id, lineId));
+	if (!line) throw new PurchaseOrderError("That line doesn't exist");
+	if (line.kind !== "bundle")
+		throw new PurchaseOrderError(`${line.sku} isn't a tool set`);
+	const parts = (await setPartsOf(db, line.purchaseOrderId)).filter(
+		(p) => p.lineId === lineId,
+	);
+	return { ...line, sets: setsOf(line), parts };
+}
+
+// Skips one part of a draft's tool set, or orders it again. Only a part
+// bought from the draft's supplier can be skipped: this is the PO that orders
+// it. A skipped part isn't ordered for this PO's set and doesn't count as
+// missing. Old skips of parts bought elsewhere (moves) can still be undone.
+export async function skipSetPart(
 	db: Db,
-	input: { lineId: number; productId: number },
-): Promise<number> {
-	const [link] = await db
-		.select({ supplierId: productSuppliers.supplierId, sku: products.sku })
-		.from(products)
-		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-		.where(eq(products.id, input.productId));
-	if (!link) throw new PurchaseOrderError("That product doesn't exist");
-	if (link.supplierId === null)
-		throw new PurchaseOrderError(
-			`${link.sku} has no supplier yet; set one on its page`,
-		);
-	const target = await openDraft(db, link.supplierId);
+	input: { lineId: number; productId: number; skipped: boolean },
+) {
 	return db.transaction(async (tx) => {
 		const [found] = await tx
 			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.id, input.lineId));
 		if (!found) throw new PurchaseOrderError("That line doesn't exist");
-		if (found.purchaseOrderId === target)
+		await lockOrder(tx, found.purchaseOrderId, ["draft"]);
+		const line = await setLineParts(tx, input.lineId);
+		const part = line.parts.find((p) => p.productId === input.productId);
+		if (!part)
+			throw new PurchaseOrderError(`That product isn't part of ${line.sku}`);
+		// Skipping elsewhere would only hide the part's warning here, while its
+		// supplier's PO still orders it.
+		if (input.skipped && part.supplierId !== line.supplierId)
 			throw new PurchaseOrderError(
-				`${link.sku} is already bought from this PO's supplier`,
+				part.supplierName === null
+					? `${part.sku} has no supplier yet; set one on its page`
+					: `${part.sku} is bought from ${part.supplierName}; skip it on their PO`,
 			);
-		// Lowest first, so two moves between the same drafts can't deadlock.
-		for (const id of [found.purchaseOrderId, target].sort((a, b) => a - b))
+		const key = {
+			purchaseOrderId: line.purchaseOrderId,
+			setProductId: line.setProductId,
+			partProductId: input.productId,
+		};
+		if (input.skipped)
+			await tx
+				.insert(purchaseOrderSkippedParts)
+				.values(key)
+				.onConflictDoNothing();
+		else
+			await tx
+				.delete(purchaseOrderSkippedParts)
+				.where(
+					and(
+						eq(purchaseOrderSkippedParts.purchaseOrderId, key.purchaseOrderId),
+						eq(purchaseOrderSkippedParts.setProductId, key.setProductId),
+						eq(purchaseOrderSkippedParts.partProductId, key.partProductId),
+					),
+				);
+		return part.sku;
+	});
+}
+
+// Puts a draft's tool set on the drafts of the other suppliers its parts are
+// bought from, enough that each of their parts is ordered for every set here
+// (counting what their open POs already have), opening drafts as needed. A
+// part skipped on a supplier's draft is ordered there again, since this asks
+// for it. Returns each draft it changed with how many sets it now has.
+export async function addSetToOtherDrafts(
+	db: Db,
+	input: { lineId: number },
+): Promise<{ purchaseOrderId: number; supplierName: string; sets: number }[]> {
+	const before = await setLineParts(db, input.lineId);
+	const suppliersShort = shortBySupplier(
+		before.parts,
+		before.sets,
+		before.supplierId,
+	);
+	if (suppliersShort.size === 0)
+		throw new PurchaseOrderError(
+			`Every part of ${before.sku} bought elsewhere is already on order`,
+		);
+	const drafts = new Map<number, number>();
+	for (const supplierId of suppliersShort.keys())
+		drafts.set(supplierId, await openDraft(db, supplierId));
+	return db.transaction(async (tx) => {
+		// Lowest first, so two of these at once can't deadlock.
+		for (const id of [before.purchaseOrderId, ...drafts.values()].sort(
+			(a, b) => a - b,
+		))
 			await lockOrder(tx, id, ["draft"]);
-		// Read under the lock, so it's the quantity the set has now.
-		const [part] = await tx
-			.select({
-				setProductId: purchaseOrderLines.productId,
-				items: sql<number>`(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize} * ${productComponents.quantity})::int`,
-			})
-			.from(purchaseOrderLines)
-			.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
-			.innerJoin(
-				productComponents,
-				eq(productComponents.parentProductId, purchaseOrderLines.productId),
-			)
-			.where(
-				and(
-					eq(purchaseOrderLines.id, input.lineId),
-					eq(products.kind, "bundle"),
-					eq(productComponents.componentProductId, input.productId),
+		// Again under the locks, so it's what's on the POs now.
+		const line = await setLineParts(tx, input.lineId);
+		const added = [];
+		for (const [supplierId, draftId] of drafts) {
+			const theirs = line.parts.filter(
+				(p) =>
+					p.supplierId === supplierId &&
+					partState(p, line.sets, line.supplierId).kind === "short",
+			);
+			if (theirs.length === 0) continue;
+			// Enough sets on their draft that each part is ordered for every set
+			// here, with what their other open POs already have.
+			const want = Math.max(
+				...theirs.map(
+					(p) =>
+						line.sets -
+						p.elsewhere
+							.filter((e) => e.purchaseOrderId !== draftId)
+							.reduce((n, e) => n + e.sets, 0),
 				),
 			);
-		if (!part)
-			throw new PurchaseOrderError(`${link.sku} isn't part of that set`);
-		const moved = await tx
-			.insert(purchaseOrderMovedParts)
-			.values({
-				purchaseOrderId: found.purchaseOrderId,
-				setProductId: part.setProductId,
-				partProductId: input.productId,
-			})
-			.onConflictDoNothing()
-			.returning();
-		if (moved.length === 0)
-			throw new PurchaseOrderError(`${link.sku} was already moved`);
-		await addItems(tx, target, input.productId, part.items);
-		return target;
+			const [existing] = await tx
+				.select({
+					id: purchaseOrderLines.id,
+					quantity: purchaseOrderLines.quantity,
+					packSize: purchaseOrderLines.packSize,
+				})
+				.from(purchaseOrderLines)
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, draftId),
+						eq(purchaseOrderLines.productId, line.setProductId),
+					),
+				);
+			let sets = existing ? setsOf(existing) : 0;
+			if (existing && want > sets) {
+				const quantity = Math.ceil(want / existing.packSize);
+				await tx
+					.update(purchaseOrderLines)
+					.set({ quantity })
+					.where(eq(purchaseOrderLines.id, existing.id));
+				sets = quantity * existing.packSize;
+			} else if (!existing) {
+				const { terms } = await newLine(tx, line.setProductId);
+				const quantity = Math.ceil(want / terms.packSize);
+				await tx.insert(purchaseOrderLines).values({
+					purchaseOrderId: draftId,
+					productId: line.setProductId,
+					...terms,
+					quantity,
+					unitCost: null,
+				});
+				sets = quantity * terms.packSize;
+			}
+			await tx.delete(purchaseOrderSkippedParts).where(
+				and(
+					eq(purchaseOrderSkippedParts.purchaseOrderId, draftId),
+					eq(purchaseOrderSkippedParts.setProductId, line.setProductId),
+					inArray(
+						purchaseOrderSkippedParts.partProductId,
+						theirs.map((p) => p.productId),
+					),
+				),
+			);
+			added.push({
+				purchaseOrderId: draftId,
+				supplierName: theirs[0].supplierName ?? "",
+				sets,
+			});
+		}
+		return added;
 	});
 }
 
@@ -596,19 +897,19 @@ export async function removeAddedLine(
 					line.unitCost === null
 						? isNull(purchaseOrderLines.unitCost)
 						: eq(purchaseOrderLines.unitCost, line.unitCost),
-					// Moving one of a set's parts is a change too.
+					// Skipping one of a set's parts is a change too.
 					notExists(
 						tx
-							.select({ id: purchaseOrderMovedParts.partProductId })
-							.from(purchaseOrderMovedParts)
+							.select({ id: purchaseOrderSkippedParts.partProductId })
+							.from(purchaseOrderSkippedParts)
 							.where(
 								and(
 									eq(
-										purchaseOrderMovedParts.purchaseOrderId,
+										purchaseOrderSkippedParts.purchaseOrderId,
 										input.purchaseOrderId,
 									),
 									eq(
-										purchaseOrderMovedParts.setProductId,
+										purchaseOrderSkippedParts.setProductId,
 										purchaseOrderLines.productId,
 									),
 								),
