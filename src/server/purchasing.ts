@@ -29,6 +29,7 @@ import {
 	amendLine,
 	cancelOrder,
 	closeOrder,
+	deleteDraft,
 	draftChanges,
 	draftFromSuggestions,
 	markSent,
@@ -46,6 +47,7 @@ import {
 	updateFromSuggestions,
 } from "#/purchasing/orders";
 import {
+	readyToOrder,
 	recommendedAdditions,
 	reorderBreakdown,
 	suggestPurchases,
@@ -66,7 +68,7 @@ import {
 
 const id = type({ id: "number.integer > 0" });
 
-// Today's suggestions, and every PO still open plus the latest finished ones.
+// Suggestions ready to order, and every PO still open plus the latest finished ones.
 export const listPurchasing = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
@@ -109,18 +111,20 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 		const done = orders
 			.filter((o) => o.status === "closed" || o.status === "cancelled")
 			.slice(0, 30);
-		return { suggestions, open, done, suppliers: supplierNames };
+		return {
+			ready: readyToOrder(suggestions),
+			open,
+			done,
+			suppliers: supplierNames,
+		};
 	},
 );
 
 export type PurchasingList = Awaited<ReturnType<typeof listPurchasing>>;
 
-// "POs ready" on Home: suppliers whose suggested order reached their minimum,
-// or has enough critical products in it.
+// "POs ready" on Home: the same list as "Ready to order".
 export const countPosReady = createServerFn({ method: "GET" }).handler(
-	async () =>
-		(await suggestPurchases(getDb())).filter((s) => s.readiness !== "waiting")
-			.length,
+	async () => readyToOrder(await suggestPurchases(getDb())).length,
 );
 
 // Owned stock for each product, so a draft shows what's already on the shelf.
@@ -593,6 +597,10 @@ export const closePurchaseOrder = createServerFn({ method: "POST" })
 export const cancelPurchaseOrder = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) => cancelOrder(getDb(), data.id));
+
+export const deleteDraftPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => deleteDraft(getDb(), data.id));
 
 // POs waiting on deliveries, for the receiving app.
 export const listReceivable = createServerFn({ method: "GET" }).handler(

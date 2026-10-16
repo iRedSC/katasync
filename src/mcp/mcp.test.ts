@@ -324,15 +324,15 @@ describe("over MCP", () => {
 		expect(refused.data).toMatch(/is sent/);
 		const deleted = await tool("delete_draft_po", { po: draft.id });
 		expect(deleted.data).toEqual({ deleted: draft.id });
-		const status = async (id: number) =>
+		const po = async (id: number) =>
 			(
 				await db
 					.select()
 					.from(schema.purchaseOrders)
 					.where(eq(schema.purchaseOrders.id, id))
-			)[0].status;
-		expect(await status(sent.id)).toBe("sent");
-		expect(await status(draft.id)).toBe("cancelled");
+			)[0];
+		expect((await po(sent.id)).status).toBe("sent");
+		expect(await po(draft.id)).toBeUndefined();
 	});
 
 	test("creates boxes all or none", async () => {

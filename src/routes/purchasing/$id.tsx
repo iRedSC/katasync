@@ -53,6 +53,7 @@ import {
 	amendPurchaseLine,
 	cancelPurchaseOrder,
 	closePurchaseOrder,
+	deleteDraftPurchaseOrder,
 	editDraft,
 	getPurchaseOrder,
 	type PurchaseOrderDetail,
@@ -614,9 +615,7 @@ function Recommended({
 												</Link>
 												<div className="flex items-center gap-2 text-xs text-muted-foreground">
 													{r.sku}
-													{r.critical && (
-														<Badge tone="info">Essential</Badge>
-													)}
+													{r.critical && <Badge tone="info">Essential</Badge>}
 												</div>
 											</div>
 										</div>
@@ -2079,7 +2078,10 @@ function OtherActions({
 							)
 								return;
 							const r = await run(
-								() => cancelPurchaseOrder({ data: { id: po.id } }),
+								() =>
+									po.status === "draft"
+										? deleteDraftPurchaseOrder({ data: { id: po.id } })
+										: cancelPurchaseOrder({ data: { id: po.id } }),
 								() =>
 									po.status === "draft"
 										? "Draft deleted"

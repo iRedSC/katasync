@@ -334,6 +334,16 @@ export type SupplierSuggestion = {
 	draftId: number | null;
 };
 
+// Suggestions to start a PO from: ready, and not already on a draft. Once a
+// supplier has a draft, its suggestion lives there (see draftChanges).
+export function readyToOrder(
+	suggestions: SupplierSuggestion[],
+): Omit<SupplierSuggestion, "draftId">[] {
+	return suggestions
+		.filter((s) => s.readiness !== "waiting" && s.draftId === null)
+		.map(({ draftId: _, ...s }) => s);
+}
+
 export function readiness(s: {
 	total: number;
 	minimumOrder: number;
