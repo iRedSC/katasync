@@ -155,14 +155,17 @@ function NavItem({
 			to={to}
 			title={`${label} (${keys.toUpperCase()})`}
 			className={cn(
-				"flex h-8 items-center gap-2 rounded-lg px-2 text-[0.8125rem] text-[#303030]",
+				"flex h-8 items-center gap-2 rounded-lg px-2 text-[0.8125rem] text-foreground",
 				child ? "pl-8 font-normal" : "font-medium",
-				active ? "bg-white font-semibold" : "hover:bg-[#e3e3e3]",
+				active ? "bg-white font-semibold" : "hover:bg-surface-strong",
 			)}
 		>
 			{!child && (
 				<Icon
-					className={cn("size-4", active ? "text-[#303030]" : "text-[#4a4a4a]")}
+					className={cn(
+						"size-4",
+						active ? "text-foreground" : "text-muted-foreground",
+					)}
 				/>
 			)}
 			<span className="flex-1 truncate">{label}</span>
@@ -194,7 +197,7 @@ function Waiting({
 	if (!c) return null;
 	if (own && c[own] > 0)
 		return (
-			<span className="rounded-md bg-[#e3e3e3] px-1.5 text-xs font-medium tabular-nums">
+			<span className="rounded-md bg-surface-strong px-1.5 text-xs font-medium tabular-nums">
 				{c[own] > 999 ? "999+" : c[own]}
 			</span>
 		);

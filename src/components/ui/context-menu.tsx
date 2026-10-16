@@ -34,7 +34,7 @@ function ContextMenuItem({
 	return (
 		<ContextMenuPrimitive.Item
 			className={cn(
-				"flex h-8 cursor-default items-center gap-2 rounded-lg px-2 outline-none select-none data-[disabled]:text-muted-foreground data-[highlighted]:bg-[#f1f1f1] [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
+				"flex h-8 cursor-default items-center gap-2 rounded-lg px-2 outline-none select-none data-[disabled]:text-muted-foreground data-[highlighted]:bg-surface [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
 				className,
 			)}
 			{...props}

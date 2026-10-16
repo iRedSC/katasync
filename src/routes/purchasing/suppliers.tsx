@@ -20,7 +20,7 @@ function Suppliers() {
 			<Card flush>
 				<table className="w-full">
 					<thead>
-						<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+						<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
 							<th className="px-4 py-2 font-medium">Supplier</th>
 							<th className="hidden px-4 py-2 font-medium md:table-cell">
 								Email
@@ -32,43 +32,41 @@ function Suppliers() {
 					</thead>
 					<tbody>
 						{rows.map((r) => (
-								<tr
-									key={r.supplier.id}
-									onClick={() => setEditing(r.supplier.id)}
-									className="cursor-pointer border-t first:border-t-0 hover:bg-[#f7f7f7]"
-								>
-									<td className="w-full max-w-0 px-4 py-2.5">
-										<div className="flex items-center gap-2">
-											<span className="truncate font-medium">
-												{r.supplier.name}
-											</span>
-											{r.openOrders > 0 && (
-												<Badge>{r.openOrders} on order</Badge>
-											)}
-										</div>
-										<div className="text-xs text-muted-foreground">
-											{r.supplier.code}
-										</div>
-									</td>
-									<td className="hidden px-4 py-2.5 md:table-cell">
-										{r.supplier.email ? (
-											<span className="truncate">{r.supplier.email}</span>
-										) : (
-											<Badge tone="warning">No email</Badge>
-										)}
-									</td>
-									<td className="px-4 py-2.5 text-right tabular-nums">
-										{formatCount(r.products)}
-									</td>
-									<td className="px-4 py-2.5 text-right whitespace-nowrap tabular-nums">
-										{r.supplier.leadTimeDays} days
-									</td>
-									<td className="px-4 py-2.5 text-right tabular-nums">
-										{r.supplier.minimumOrder > 0
-											? formatMoney(r.supplier.minimumOrder)
-											: "—"}
-									</td>
-								</tr>
+							<tr
+								key={r.supplier.id}
+								onClick={() => setEditing(r.supplier.id)}
+								className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
+							>
+								<td className="w-full max-w-0 px-4 py-2.5">
+									<div className="flex items-center gap-2">
+										<span className="truncate font-medium">
+											{r.supplier.name}
+										</span>
+										{r.openOrders > 0 && <Badge>{r.openOrders} on order</Badge>}
+									</div>
+									<div className="text-xs text-muted-foreground">
+										{r.supplier.code}
+									</div>
+								</td>
+								<td className="hidden px-4 py-2.5 md:table-cell">
+									{r.supplier.email ? (
+										<span className="truncate">{r.supplier.email}</span>
+									) : (
+										<Badge tone="warning">No email</Badge>
+									)}
+								</td>
+								<td className="px-4 py-2.5 text-right tabular-nums">
+									{formatCount(r.products)}
+								</td>
+								<td className="px-4 py-2.5 text-right whitespace-nowrap tabular-nums">
+									{r.supplier.leadTimeDays} days
+								</td>
+								<td className="px-4 py-2.5 text-right tabular-nums">
+									{r.supplier.minimumOrder > 0
+										? formatMoney(r.supplier.minimumOrder)
+										: "—"}
+								</td>
+							</tr>
 						))}
 					</tbody>
 				</table>

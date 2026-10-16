@@ -71,7 +71,7 @@ export function ChannelBadge({
 		<span
 			className={cn(
 				"inline-flex h-5 shrink-0 items-center gap-1 rounded-lg px-1.5 text-xs font-medium whitespace-nowrap",
-				b ? b.chip : "bg-[#e3e3e3] text-[#303030]",
+				b ? b.chip : "bg-surface-strong text-foreground",
 			)}
 		>
 			{b && (

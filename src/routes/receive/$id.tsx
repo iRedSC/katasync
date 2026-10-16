@@ -99,7 +99,7 @@ function ReceivePurchaseOrder() {
 				<Link
 					to="/receive"
 					aria-label="Back"
-					className="flex size-14 shrink-0 items-center justify-center rounded-full bg-card shadow-card active:bg-[#e3e3e3]"
+					className="flex size-14 shrink-0 items-center justify-center rounded-full bg-card shadow-card active:bg-surface-strong"
 				>
 					<ArrowLeft className="size-7" />
 				</Link>
@@ -119,7 +119,7 @@ function ReceivePurchaseOrder() {
 					<p className="text-3xl font-bold">All received</p>
 					<Link
 						to="/receive"
-						className="flex h-16 w-full items-center justify-center rounded-2xl bg-[#303030] text-xl font-bold text-white active:bg-[#1a1a1a]"
+						className="flex h-16 w-full items-center justify-center rounded-2xl bg-primary text-xl font-bold text-white active:bg-primary-hover"
 					>
 						Back to list
 					</Link>
@@ -156,7 +156,7 @@ function ReceivePurchaseOrder() {
 				<button
 					type="button"
 					onClick={closeOrder}
-					className="mx-auto mt-8 flex h-12 items-center rounded-xl px-5 text-base font-semibold text-muted-foreground active:bg-[#e3e3e3]"
+					className="mx-auto mt-8 flex h-12 items-center rounded-xl px-5 text-base font-semibold text-muted-foreground active:bg-surface-strong"
 				>
 					Close PO
 				</button>

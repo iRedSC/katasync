@@ -63,7 +63,7 @@ export function PurchaseUnitCell({
 			<Popover.Trigger
 				aria-label={`Minimum and unit for ${label}`}
 				title="Change the minimum or unit"
-				className="cursor-pointer rounded-md border-b border-dotted border-[#b5b5b5] text-left whitespace-nowrap hover:border-foreground"
+				className="cursor-pointer rounded-md border-b border-dotted border-faint text-left whitespace-nowrap hover:border-foreground"
 			>
 				{shown}
 			</Popover.Trigger>
@@ -87,7 +87,7 @@ export function PurchaseUnitCell({
 }
 
 const input =
-	"h-8 w-full rounded-lg border border-input bg-white px-2 outline-none focus:border-ring disabled:bg-[#f7f7f7] disabled:text-muted-foreground";
+	"h-8 w-full rounded-lg border border-input bg-white px-2 outline-none focus:border-ring disabled:bg-subtle disabled:text-muted-foreground";
 
 function TermsForm({
 	value,

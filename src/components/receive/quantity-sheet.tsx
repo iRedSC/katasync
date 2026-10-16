@@ -70,7 +70,7 @@ export function QuantitySheet({
 				aria-label={title}
 				className="relative max-h-svh overflow-y-auto overscroll-contain rounded-t-3xl bg-card px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
 			>
-				<div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-[#e3e3e3]" />
+				<div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-surface-strong" />
 				<p className="truncate text-center text-base font-semibold">{title}</p>
 
 				{canReceive && (
@@ -133,7 +133,7 @@ export function QuantitySheet({
 							type="button"
 							disabled={!valid || busy}
 							onClick={() => onConfirm(quantity)}
-							className="mt-3 h-16 w-full rounded-2xl bg-[#303030] text-xl font-bold text-white active:bg-[#1a1a1a] disabled:opacity-40"
+							className="mt-3 h-16 w-full rounded-2xl bg-primary text-xl font-bold text-white active:bg-primary-hover disabled:opacity-40"
 						>
 							{valid
 								? `Receive ${quantity}${unit ? ` ${unit}` : ""}`
@@ -152,7 +152,7 @@ export function QuantitySheet({
 						type="button"
 						disabled={busy}
 						onClick={onUndo}
-						className="mt-2 flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-muted-foreground active:bg-[#f1f1f1] disabled:opacity-40"
+						className="mt-2 flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-muted-foreground active:bg-surface disabled:opacity-40"
 					>
 						<Undo2 className="size-5" />
 						Undo last receipt ({lastReceipt})
@@ -179,7 +179,7 @@ function StepButton({
 			onClick={onClick}
 			className={cn(
 				holdable,
-				"flex size-16 shrink-0 items-center justify-center rounded-full bg-[#f1f1f1] active:bg-[#e3e3e3]",
+				"flex size-16 shrink-0 items-center justify-center rounded-full bg-surface active:bg-surface-strong",
 			)}
 		>
 			{children}
@@ -205,7 +205,7 @@ function PadKey({
 			onClick={onClick}
 			className={cn(
 				holdable,
-				"flex h-14 items-center justify-center rounded-2xl bg-[#f7f7f7] text-2xl font-semibold active:bg-[#e3e3e3]",
+				"flex h-14 items-center justify-center rounded-2xl bg-subtle text-2xl font-semibold active:bg-surface-strong",
 				className,
 			)}
 		>

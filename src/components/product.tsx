@@ -25,7 +25,7 @@ export function ProductImage({
 		<div
 			className={cn(
 				className,
-				"flex shrink-0 items-center justify-center rounded-lg border bg-[#f7f7f7] text-[#b5b5b5]",
+				"flex shrink-0 items-center justify-center rounded-lg border bg-subtle text-faint",
 			)}
 		>
 			<ImageIcon className="size-1/2" strokeWidth={1.5} />
@@ -57,7 +57,7 @@ export function ProductName({
 		<span className="flex min-w-0 items-center gap-2">
 			<span className="truncate font-medium">{name}</span>
 			{variantName && (
-				<span className="shrink-0 rounded-md bg-[#f1f1f1] px-1.5 text-xs text-muted-foreground">
+				<span className="shrink-0 rounded-md bg-surface px-1.5 text-xs text-muted-foreground">
 					{variantName}
 				</span>
 			)}
@@ -75,7 +75,7 @@ type MovementRow = {
 	note: string | null;
 };
 
-// Polaris index-table look: gray header row, hairline row dividers.
+// Index-table look: gray header row, hairline row dividers.
 export function MovementTable({ rows }: { rows: MovementRow[] }) {
 	if (rows.length === 0) {
 		return <p className="px-4 pb-4 text-muted-foreground">No changes yet.</p>;
@@ -83,7 +83,7 @@ export function MovementTable({ rows }: { rows: MovementRow[] }) {
 	return (
 		<table className="w-full">
 			<thead>
-				<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+				<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
 					<th className="px-4 py-2 font-medium">Date</th>
 					<th className="px-4 py-2 font-medium">Reason</th>
 					<th className="px-4 py-2 font-medium">Location</th>

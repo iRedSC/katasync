@@ -26,7 +26,7 @@ function InventoryHistory() {
 			<Card flush>
 				<table className="w-full">
 					<thead>
-						<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+						<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
 							<th className="px-4 py-2 font-medium">Change</th>
 							<th className="hidden px-4 py-2 font-medium md:table-cell">
 								Date
@@ -47,14 +47,14 @@ function InventoryHistory() {
 							return (
 								<tr
 									key={b.batchId}
-									className="border-t first:border-t-0 hover:bg-[#f7f7f7]"
+									className="border-t first:border-t-0 hover:bg-subtle"
 								>
 									<td className="px-4 py-2.5">
 										<div className="flex items-center gap-3">
 											{single ? (
 												<ProductImage src={b.imageUrl} className="size-9" />
 											) : (
-												<div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-[#f7f7f7] text-xs font-semibold tabular-nums">
+												<div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-subtle text-xs font-semibold tabular-nums">
 													{b.lines > 999
 														? `${Math.round(b.lines / 1000)}k`
 														: b.lines}

@@ -47,10 +47,10 @@ export function LineRow({
 					<img
 						src={line.imageUrl}
 						alt=""
-						className="size-16 shrink-0 rounded-xl bg-[#e3e3e3] object-cover"
+						className="size-16 shrink-0 rounded-xl bg-surface-strong object-cover"
 					/>
 				) : (
-					<div className="flex size-16 shrink-0 items-center justify-center rounded-xl bg-[#e3e3e3] text-[#8a8a8a]">
+					<div className="flex size-16 shrink-0 items-center justify-center rounded-xl bg-surface-strong text-faint">
 						<ImageOff className="size-6" />
 					</div>
 				)}
@@ -89,7 +89,7 @@ export function LineRow({
 						"mt-3 flex h-16 w-full items-center justify-center gap-2 rounded-2xl text-xl font-bold",
 						done
 							? "bg-success-fill text-success-text opacity-60"
-							: "bg-[#303030] text-white active:bg-[#1a1a1a]",
+							: "bg-primary text-primary-foreground active:bg-primary-hover",
 						busy && "opacity-40",
 					)}
 				>

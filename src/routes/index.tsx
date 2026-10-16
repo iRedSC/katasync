@@ -168,7 +168,7 @@ function Stat({
 				)}
 			>
 				{value === undefined ? (
-					<span className="text-[#b5b5b5]">—</span>
+					<span className="text-faint">—</span>
 				) : (
 					<NumberFlow value={value} />
 				)}
@@ -177,7 +177,7 @@ function Stat({
 		</div>
 	);
 	return link ? (
-		<Link {...link} className="block hover:bg-[#f7f7f7]">
+		<Link {...link} className="block hover:bg-subtle">
 			{body}
 		</Link>
 	) : (
@@ -203,7 +203,7 @@ function ProductRow({
 			<Link
 				to="/products/$sku"
 				params={{ sku }}
-				className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#f7f7f7]"
+				className="flex items-center gap-3 px-4 py-2.5 hover:bg-subtle"
 			>
 				<ProductImage src={imageUrl} className="size-9" />
 				<div className="min-w-0 flex-1">

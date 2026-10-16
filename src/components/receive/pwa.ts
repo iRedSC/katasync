@@ -3,7 +3,7 @@
 export const receiveHead = () => ({
 	meta: [
 		{ title: "Receive" },
-		{ name: "theme-color", content: "#1a1a1a" },
+		{ name: "theme-color", content: "#0b1220" },
 		{ name: "apple-mobile-web-app-capable", content: "yes" },
 		{ name: "mobile-web-app-capable", content: "yes" },
 		{ name: "apple-mobile-web-app-title", content: "Receive" },

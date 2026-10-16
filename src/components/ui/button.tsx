@@ -8,16 +8,16 @@ const buttonVariants = cva(
 	{
 		variants: {
 			variant: {
-				// Polaris primary: flat near-black.
-				default: "bg-primary text-primary-foreground hover:bg-[#1a1a1a]",
+				// Flat brand blue, like native's actions.
+				default: "bg-primary text-primary-foreground hover:bg-primary-hover",
 				destructive:
 					"bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",
-				// Polaris secondary: white with a hairline edge.
-				outline: "bg-white shadow-card hover:bg-[#f7f7f7]",
+				// White with a hairline edge.
+				outline: "bg-white shadow-card hover:bg-subtle",
 				secondary:
-					"bg-white shadow-card hover:bg-[#f7f7f7]",
+					"bg-white shadow-card hover:bg-subtle",
 				ghost:
-					"hover:bg-[#e3e3e3]",
+					"hover:bg-surface-strong",
 				link: "text-primary underline-offset-4 hover:underline",
 			},
 			size: {

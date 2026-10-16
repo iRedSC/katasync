@@ -147,29 +147,30 @@ export function AddressInput({
 							{status}
 						</li>
 					)}
-					{showing && options.map((o, i) => (
-						<li
-							key={o.placeId}
-							id={`${listId}-${i}`}
-							role="option"
-							aria-selected={i === active}
-							// Mouse down, not click, so the input keeps focus.
-							onMouseDown={(e) => {
-								e.preventDefault();
-								pick(o);
-							}}
-							onMouseEnter={() => setActive(i)}
-							className={cn(
-								"cursor-pointer px-2 py-1.5",
-								i === active && "bg-[#f1f1f1]",
-							)}
-						>
-							<span className="font-medium">{o.main}</span>
-							{o.rest && (
-								<span className="text-muted-foreground"> {o.rest}</span>
-							)}
-						</li>
-					))}
+					{showing &&
+						options.map((o, i) => (
+							<li
+								key={o.placeId}
+								id={`${listId}-${i}`}
+								role="option"
+								aria-selected={i === active}
+								// Mouse down, not click, so the input keeps focus.
+								onMouseDown={(e) => {
+									e.preventDefault();
+									pick(o);
+								}}
+								onMouseEnter={() => setActive(i)}
+								className={cn(
+									"cursor-pointer px-2 py-1.5",
+									i === active && "bg-surface",
+								)}
+							>
+								<span className="font-medium">{o.main}</span>
+								{o.rest && (
+									<span className="text-muted-foreground"> {o.rest}</span>
+								)}
+							</li>
+						))}
 				</ul>
 			)}
 			{error && (

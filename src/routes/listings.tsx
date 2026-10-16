@@ -103,7 +103,7 @@ function Listings() {
 									onMouseMove={() => setSelected(i)}
 									className={cn(
 										"flex items-center gap-4 border-t px-4 py-3 first:border-t-0",
-										i === selected && "bg-[#f1f1f1]",
+										i === selected && "bg-surface",
 									)}
 								>
 									<div className="min-w-0 flex-1">

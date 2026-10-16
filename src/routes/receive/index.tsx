@@ -28,7 +28,7 @@ function Receive() {
 					type="button"
 					aria-label="Refresh"
 					onClick={() => router.invalidate()}
-					className="flex size-14 items-center justify-center rounded-full bg-card shadow-card active:bg-[#e3e3e3]"
+					className="flex size-14 items-center justify-center rounded-full bg-card shadow-card active:bg-surface-strong"
 				>
 					<RefreshCw className="size-6" />
 				</button>
@@ -54,7 +54,7 @@ function Receive() {
 								<Link
 									to="/receive/$id"
 									params={{ id: String(po.id) }}
-									className="block rounded-2xl bg-card p-4 shadow-card active:bg-[#f7f7f7]"
+									className="block rounded-2xl bg-card p-4 shadow-card active:bg-subtle"
 								>
 									<div className="flex items-center gap-3">
 										<div className="min-w-0 flex-1">
@@ -67,9 +67,9 @@ function Receive() {
 										</div>
 										<ChevronRight className="size-8 shrink-0 text-muted-foreground" />
 									</div>
-									<div className="mt-4 h-3 overflow-hidden rounded-full bg-[#e3e3e3]">
+									<div className="mt-4 h-3 overflow-hidden rounded-full bg-surface-strong">
 										<div
-											className="h-full rounded-full bg-[#303030]"
+											className="h-full rounded-full bg-primary"
 											style={{ width: `${percent}%` }}
 										/>
 									</div>

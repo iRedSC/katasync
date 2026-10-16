@@ -229,7 +229,7 @@ function PurchaseOrderPage() {
 								</span>
 							)}
 							{d.supplier.notes && (
-								<p className="mt-2 rounded-lg bg-[#f7f7f7] px-2 py-1.5">
+								<p className="mt-2 rounded-lg bg-subtle px-2 py-1.5">
 									{d.supplier.notes}
 								</p>
 							)}
@@ -424,7 +424,7 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 		<div className="overflow-x-auto">
 			<table className="w-full [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
 				<thead>
-					<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+					<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
 						<th className="px-4 py-2 font-medium">Product</th>
 						<th className="px-3 py-2 font-medium whitespace-nowrap">
 							Their SKU
@@ -462,7 +462,7 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 												<span className="line-clamp-2 font-medium">
 													{l.name}
 													{l.variantName && (
-														<span className="ml-1.5 rounded-md bg-[#f1f1f1] px-1.5 text-xs font-normal text-muted-foreground">
+														<span className="ml-1.5 rounded-md bg-surface px-1.5 text-xs font-normal text-muted-foreground">
 															{l.variantName}
 														</span>
 													)}
@@ -667,7 +667,7 @@ const field =
 // Quantity reads as a bold number on a soft fill, so the column scans at a
 // glance.
 const quantityBox =
-	"h-9 w-16 rounded-lg border border-transparent bg-[#f1f1f1] px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none";
+	"h-9 w-16 rounded-lg border border-transparent bg-surface px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none";
 
 // A draft line's quantity. Click to type a number, or drag sideways for the
 // number line. 0 takes the line off, with Undo.
@@ -761,7 +761,7 @@ function QuantityField({
 				}}
 				className={cn(
 					quantityBox,
-					"cursor-pointer select-none hover:bg-[#e8e8e8]",
+					"cursor-pointer select-none hover:bg-surface",
 					scrub.dragging && "cursor-ew-resize",
 				)}
 			>
@@ -864,7 +864,7 @@ function InlineField({
 						setEditing(true);
 					}}
 					className={cn(
-						"max-w-full cursor-text truncate border-b border-dotted border-[#b5b5b5] leading-tight tabular-nums hover:border-foreground",
+						"max-w-full cursor-text truncate border-b border-dotted border-faint leading-tight tabular-nums hover:border-foreground",
 						text === "" && "text-muted-foreground",
 					)}
 				>

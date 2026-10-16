@@ -202,7 +202,7 @@ function NumberLine({
 						<div
 							className={cn(
 								"w-px",
-								major ? "h-3 bg-[#8a8a8a]" : "h-2 bg-[#cccccc]",
+								major ? "h-3 bg-input" : "h-2 bg-line",
 								current && "h-3 w-0.5 bg-foreground",
 							)}
 						/>
@@ -210,7 +210,7 @@ function NumberLine({
 							<Trash2
 								className={cn(
 									"mt-1 size-3.5",
-									current ? "text-critical-text" : "text-[#8a8a8a]",
+									current ? "text-critical-text" : "text-faint",
 								)}
 							/>
 						) : (
