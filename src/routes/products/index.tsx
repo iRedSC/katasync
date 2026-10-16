@@ -47,6 +47,7 @@ import {
 	TRUST_DAYS,
 	trustOf,
 } from "#/inventory/stock-state";
+import { copyText } from "#/lib/copy";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { offerUndo } from "#/lib/undo";
@@ -984,12 +985,7 @@ function RowMenu({
 				Count stock
 			</ContextMenuItem>
 			<ContextMenuSeparator />
-			<ContextMenuItem
-				onSelect={async () => {
-					await navigator.clipboard.writeText(p.sku);
-					toast(`Copied ${p.sku}`);
-				}}
-			>
+			<ContextMenuItem onSelect={() => copyText(p.sku)}>
 				<Copy />
 				Copy SKU
 			</ContextMenuItem>

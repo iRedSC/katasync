@@ -1,9 +1,25 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ExternalLink, PackageCheck, Printer } from "lucide-react";
+import {
+	AlertTriangle,
+	Copy,
+	ExternalLink,
+	FileText,
+	Link2,
+	PackageCheck,
+	Printer,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { Button } from "#/components/ui/button";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "#/components/ui/context-menu";
+import { copyText } from "#/lib/copy";
 import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
@@ -32,6 +48,7 @@ function Orders() {
 	const navigate = useNavigate();
 	const list = useRef<HTMLTableSectionElement>(null);
 	const [selected, setSelected] = useState(0);
+	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the view changes
 	useEffect(() => setSelected(0), [view]);
@@ -126,86 +143,155 @@ function Orders() {
 								<th className="px-4 py-2 font-medium">Status</th>
 							</tr>
 						</thead>
-						<tbody ref={list}>
-							{rows.map((o, i) => {
-								const status = orderStatus(o);
-								const external = externalFulfillment(o);
-								return (
-									<tr
-										key={o.id}
-										data-index={i}
-										onClick={() => open(o)}
-										onMouseMove={() => setSelected(i)}
-										className={cn(
-											"cursor-pointer border-t first:border-t-0",
-											i === selected ? "bg-surface" : "hover:bg-subtle",
-										)}
-									>
-										{view === "ship" && (
-											<td className="px-4 py-2.5 font-mono text-base font-bold tabular-nums">
-												{o.pin}
-											</td>
-										)}
-										<td className="px-4 py-2.5 font-semibold">
-											{external ? (
-												// Opens the marketplace's page; the rest of the row
-												// still opens katasync's.
-												<a
-													href={external.url}
-													target="_blank"
-													rel="noreferrer"
-													onClick={(e) => e.stopPropagation()}
-													className="inline-flex items-center gap-1 text-link hover:underline"
-												>
-													{o.name}
-													<ExternalLink className="size-3.5" />
-												</a>
-											) : (
-												o.name
-											)}
-										</td>
-										<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-											{formatOrderDate(o.placedAt)}
-										</td>
-										{/* Takes the leftover width; long names end in "…". */}
-										<td className="w-full max-w-0 px-4 py-2.5">
-											<div className="truncate">
-												{o.customerName ?? "No name"}
-											</div>
-											{o.shipCity && (
-												<div className="truncate text-xs text-muted-foreground">
-													{o.shipCity}
-													{o.shipRegion && `, ${o.shipRegion}`}
-												</div>
-											)}
-										</td>
-										<td className="hidden px-4 py-2.5 lg:table-cell">
-											<ChannelBadge
-												channel={o.channel}
-												salesChannel={o.salesChannel}
-											/>
-										</td>
-										<td className="px-4 py-2.5 text-right tabular-nums">
-											{formatMoney(o.total)}
-										</td>
-										<td className="hidden px-4 py-2.5 whitespace-nowrap md:table-cell">
-											{formatCount(o.items)} {o.items === 1 ? "item" : "items"}
-										</td>
-										<td className="px-4 py-2.5">
-											<div className="flex gap-1.5">
-												<Badge tone={status.tone}>{status.label}</Badge>
-												{o.unmatched > 0 && (
-													<Badge tone="critical">Unknown product</Badge>
+						{/* One menu for the whole table: it acts on the row that was
+						    right-clicked. */}
+						<ContextMenu>
+							<ContextMenuTrigger asChild>
+								<tbody ref={list}>
+									{rows.map((o, i) => {
+										const status = orderStatus(o);
+										const external = externalFulfillment(o);
+										return (
+											<tr
+												key={o.id}
+												data-index={i}
+												onClick={() => open(o)}
+												onMouseMove={() => setSelected(i)}
+												onContextMenu={() => setMenuFor(o)}
+												className={cn(
+													"cursor-pointer border-t first:border-t-0",
+													i === selected ? "bg-surface" : "hover:bg-subtle",
 												)}
-											</div>
-										</td>
-									</tr>
-								);
-							})}
-						</tbody>
+											>
+												{view === "ship" && (
+													<td className="px-4 py-2.5 font-mono text-base font-bold tabular-nums">
+														{o.pin}
+													</td>
+												)}
+												<td className="px-4 py-2.5 font-semibold">
+													{external ? (
+														// Opens the marketplace's page; the rest of the row
+														// still opens katasync's.
+														<a
+															href={external.url}
+															target="_blank"
+															rel="noreferrer"
+															onClick={(e) => e.stopPropagation()}
+															className="inline-flex items-center gap-1 text-link hover:underline"
+														>
+															{o.name}
+															<ExternalLink className="size-3.5" />
+														</a>
+													) : (
+														o.name
+													)}
+												</td>
+												<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
+													{formatOrderDate(o.placedAt)}
+												</td>
+												{/* Takes the leftover width; long names end in "…". */}
+												<td className="w-full max-w-0 px-4 py-2.5">
+													<div className="truncate">
+														{o.customerName ?? "No name"}
+													</div>
+													{o.shipCity && (
+														<div className="truncate text-xs text-muted-foreground">
+															{o.shipCity}
+															{o.shipRegion && `, ${o.shipRegion}`}
+														</div>
+													)}
+												</td>
+												<td className="hidden px-4 py-2.5 lg:table-cell">
+													<ChannelBadge
+														channel={o.channel}
+														salesChannel={o.salesChannel}
+													/>
+												</td>
+												<td className="px-4 py-2.5 text-right tabular-nums">
+													{formatMoney(o.total)}
+												</td>
+												<td className="hidden px-4 py-2.5 whitespace-nowrap md:table-cell">
+													{formatCount(o.items)}{" "}
+													{o.items === 1 ? "item" : "items"}
+												</td>
+												<td className="px-4 py-2.5">
+													<div className="flex gap-1.5">
+														<Badge tone={status.tone}>{status.label}</Badge>
+														{o.unmatched > 0 && (
+															<Badge tone="critical">Unknown product</Badge>
+														)}
+													</div>
+												</td>
+											</tr>
+										);
+									})}
+								</tbody>
+							</ContextMenuTrigger>
+							{menuFor && <OrderMenu order={menuFor} />}
+						</ContextMenu>
 					</table>
 				)}
 			</Card>
 		</Page>
+	);
+}
+
+// Only the actions this row's data supports. Shipping, returns, and voiding
+// stay on the order's page: the review items just take you there.
+function OrderMenu({ order: o }: { order: OrderRow }) {
+	const navigate = useNavigate();
+	const external = externalFulfillment(o);
+
+	return (
+		<ContextMenuContent>
+			<ContextMenuItem
+				shortcut="↵"
+				onSelect={() =>
+					navigate({ to: "/orders/$id", params: { id: String(o.id) } })
+				}
+			>
+				<FileText />
+				Open
+			</ContextMenuItem>
+			<ContextMenuItem
+				onSelect={() => window.open(`/orders/${o.id}`, "_blank")}
+			>
+				<ExternalLink />
+				Open in new tab
+			</ContextMenuItem>
+			<ContextMenuItem
+				onSelect={() => window.open(`/print/invoices?id=${o.id}`, "_blank")}
+			>
+				<Printer />
+				Print invoice
+			</ContextMenuItem>
+			{external && (
+				<ContextMenuItem onSelect={() => window.open(external.url, "_blank")}>
+					<ExternalLink />
+					Fulfill on {external.name}
+				</ContextMenuItem>
+			)}
+			{o.labelToVoid && (
+				<ContextMenuItem
+					onSelect={() =>
+						navigate({ to: "/orders/$id", params: { id: String(o.id) } })
+					}
+				>
+					<AlertTriangle />
+					Review label to void
+				</ContextMenuItem>
+			)}
+			{o.unmatched > 0 && (
+				<ContextMenuItem onSelect={() => navigate({ to: "/listings" })}>
+					<Link2 />
+					Review unmatched listings
+				</ContextMenuItem>
+			)}
+			<ContextMenuSeparator />
+			<ContextMenuItem onSelect={() => copyText(o.name)}>
+				<Copy />
+				Copy order name
+			</ContextMenuItem>
+		</ContextMenuContent>
 	);
 }
