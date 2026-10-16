@@ -5,7 +5,13 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import { AlertTriangle, FileText, Mail, Smartphone } from "lucide-react";
-import { Fragment, type ReactNode, useRef, useState } from "react";
+import {
+	Fragment,
+	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page } from "#/components/page";
@@ -410,9 +416,22 @@ function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 
 type Line = PurchaseOrderDetail["lines"][number];
 
+// A quantity being dragged, typed, or saved, before the page's data has it.
+type QuantityPreview = { lineId: number; quantity: number };
+
 function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const draft = d.order.status === "draft";
 	const receiving = d.order.status === "sent";
+	const [preview, setPreview] = useState<QuantityPreview | null>(null);
+	// Each line only sets or clears its own preview.
+	const previewFor = (lineId: number) => (quantity: number | null) =>
+		setPreview((prev) =>
+			quantity === null
+				? prev?.lineId === lineId
+					? null
+					: prev
+				: { lineId, quantity },
+		);
 	if (d.lines.length === 0)
 		return (
 			<p className="px-4 py-6 text-center text-muted-foreground">
@@ -432,12 +451,12 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 						<th className="px-3 py-2 font-medium whitespace-nowrap">
 							MOQ / UOM
 						</th>
+						<th className="px-3 py-2 text-right font-medium">Qty</th>
 						{draft && (
 							<th className="px-3 py-2 text-center font-medium whitespace-nowrap">
-								On hand
+								On hand → After PO
 							</th>
 						)}
-						<th className="px-3 py-2 text-right font-medium">Qty</th>
 						<th className="px-3 py-2 text-right font-medium">Cost</th>
 						<th className="px-4 py-2 text-right font-medium">Amount</th>
 						{!draft && (
@@ -521,26 +540,48 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 										}}
 									/>
 								</td>
-								{draft && (
-									<td className="px-3 py-2 text-center">
-										{l.kind === "bundle" || !l.stockRange ? (
-											<span className="text-muted-foreground">—</span>
-										) : (
-											<StockRing onHand={l.onHand} range={l.stockRange} />
-										)}
-									</td>
-								)}
 								<td className="px-3 py-2 text-right font-semibold tabular-nums">
 									{draft ? (
 										<QuantityField
 											key={`q${l.quantity}`}
 											line={l}
 											purchaseOrderId={d.order.id}
+											onPreview={previewFor(l.id)}
 										/>
 									) : (
 										formatCount(l.quantity)
 									)}
 								</td>
+								{draft && (
+									<td className="px-3 py-2">
+										{l.kind === "bundle" || !l.stockRange ? (
+											<span className="block text-center text-muted-foreground">
+												—
+											</span>
+										) : (
+											<div className="flex items-center justify-center gap-1">
+												<StockRing onHand={l.onHand} range={l.stockRange} />
+												<span
+													className="text-faint text-xs"
+													aria-hidden="true"
+												>
+													→
+												</span>
+												<StockRing
+													onHand={
+														l.onHand +
+														(preview?.lineId === l.id
+															? preview.quantity
+															: l.quantity) *
+															l.packSize
+													}
+													range={l.stockRange}
+													label="after this PO"
+												/>
+											</div>
+										)}
+									</td>
+								)}
 								<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
 									{l.kind === "bundle" ? (
 										<span className="text-muted-foreground">As parts</span>
@@ -671,25 +712,33 @@ const quantityBox =
 
 // A draft line's quantity. Click to type a number, or drag sideways for the
 // number line. 0 takes the line off, with Undo.
+// onPreview gets the quantity while it's dragged, typed, or saving, and null
+// once the page shows the real one.
 function QuantityField({
 	line,
 	purchaseOrderId,
+	onPreview,
 }: {
 	line: Line;
 	purchaseOrderId: number;
+	onPreview: (quantity: number | null) => void;
 }) {
 	const { run } = useAction();
 	const router = useRouter();
 	const [typing, setTyping] = useState(false);
 	const [text, setText] = useState("");
+	const [saving, setSaving] = useState<number | null>(null);
 
 	async function save(quantity: number) {
 		if (quantity === line.quantity) return;
+		setSaving(quantity);
+		// run resolves after the page reloads, so the real quantity is in.
 		const r = await run(() =>
 			setLine({
 				data: { purchaseOrderId, productId: line.productId, quantity },
 			}),
 		);
+		setSaving(null);
 		if (r && quantity === 0)
 			toast(`Took ${line.sku} off this PO`, {
 				action: {
@@ -710,6 +759,20 @@ function QuantityField({
 	}
 
 	const scrub = useNumberLine({ value: line.quantity, onCommit: save });
+
+	const typed = text.trim();
+	const previewing = scrub.dragging
+		? scrub.shown
+		: typing && /^\d+$/.test(typed)
+			? Number(typed)
+			: saving;
+	// A ref, so a new callback each render doesn't re-run the effect.
+	const report = useRef(onPreview);
+	report.current = onPreview;
+	useEffect(() => {
+		report.current(previewing);
+		return () => report.current(null);
+	}, [previewing]);
 
 	function finishTyping() {
 		setTyping(false);
@@ -765,7 +828,7 @@ function QuantityField({
 					scrub.dragging && "cursor-ew-resize",
 				)}
 			>
-				{scrub.dragging ? scrub.shown : line.quantity}
+				{scrub.dragging ? scrub.shown : (saving ?? line.quantity)}
 			</button>
 			{scrub.line}
 		</>
