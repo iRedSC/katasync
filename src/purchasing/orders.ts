@@ -16,6 +16,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { postMovements, undoBatch } from "#/inventory/ledger";
+import { wantsMore } from "#/purchasing/changes";
 import { type SuggestedLine, suggestPurchases } from "#/purchasing/reorder";
 import { partState, setsOf, shortBySupplier } from "#/purchasing/sets";
 
@@ -77,19 +78,28 @@ export async function draftFromSuggestions(
 // How today's suggestions differ from a draft. A draft is frozen once made:
 // these are what "Update" would apply. New products are added, and lines the
 // suggestion now wants more of are raised. Nothing is lowered or removed, so
-// a quantity set by hand is never undone. A line may be in a different unit
-// from the suggestion (set on just this PO), so amounts compare as the product
-// itself, and a raise is in the line's unit, rounded up. fromSets is what the
-// draft's tool sets will add of each part when it's sent (partsOfSets), so a
-// part already coming in a set isn't ordered twice.
+// a quantity set by hand is never undone. A locked line is never raised; it's
+// skipped instead. A line may be in a different unit from the suggestion (set
+// on just this PO), so amounts compare as the product itself, and a raise is
+// in the line's unit, rounded up. fromSets is what the draft's tool sets will
+// add of each part when it's sent (partsOfSets), so a part already coming in a
+// set isn't ordered twice. wants is, per product on the draft, how many single
+// items the suggestion wants (see wantsMore).
 export function draftChanges(
-	draft: { productId: number; quantity: number; packSize: number }[],
+	draft: {
+		productId: number;
+		quantity: number;
+		packSize: number;
+		locked: boolean;
+	}[],
 	suggested: SuggestedLine[],
 	fromSets: Map<number, number> = new Map(),
 ) {
 	const onDraft = new Map(draft.map((l) => [l.productId, l]));
 	const added: SuggestedLine[] = [];
 	const raised: (SuggestedLine & { raiseTo: number })[] = [];
+	const skipped: SuggestedLine[] = [];
+	const wants = new Map<number, number>();
 	for (const l of suggested) {
 		const want = l.quantity * l.packSize - (fromSets.get(l.productId) ?? 0);
 		const line = onDraft.get(l.productId);
@@ -99,10 +109,14 @@ export function draftChanges(
 					...l,
 					quantity: Math.max(Math.ceil(want / l.packSize), l.minimumQuantity),
 				});
-		} else if (want > line.quantity * line.packSize)
-			raised.push({ ...l, raiseTo: Math.ceil(want / line.packSize) });
+			continue;
+		}
+		wants.set(l.productId, want);
+		if (!wantsMore({ ...line, wants: want })) continue;
+		if (line.locked) skipped.push(l);
+		else raised.push({ ...l, raiseTo: Math.ceil(want / line.packSize) });
 	}
-	return { added, raised };
+	return { added, raised, skipped, wants };
 }
 
 // How many single items of each part a draft's tool set lines come to: the
@@ -598,6 +612,7 @@ export async function updateFromSuggestions(
 				productId: purchaseOrderLines.productId,
 				quantity: purchaseOrderLines.quantity,
 				packSize: purchaseOrderLines.packSize,
+				locked: purchaseOrderLines.locked,
 			})
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
@@ -854,6 +869,29 @@ export async function setDraftLine(
 				},
 			});
 		return { ...terms, quantity };
+	});
+}
+
+// Locks a draft line's quantity so Update leaves it alone, or unlocks it.
+// Like any change, it makes a suggested PO a draft.
+export async function lockDraftLine(
+	db: Db,
+	input: { purchaseOrderId: number; productId: number; locked: boolean },
+) {
+	await db.transaction(async (tx) => {
+		const po = await lockForEdit(tx, input.purchaseOrderId);
+		const changed = await tx
+			.update(purchaseOrderLines)
+			.set({ locked: input.locked })
+			.where(
+				and(
+					eq(purchaseOrderLines.purchaseOrderId, po.id),
+					eq(purchaseOrderLines.productId, input.productId),
+				),
+			)
+			.returning({ id: purchaseOrderLines.id });
+		if (changed.length === 0)
+			throw new PurchaseOrderError(`That product isn't on ${poName(po.id)}`);
 	});
 }
 

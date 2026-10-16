@@ -18,6 +18,7 @@ import {
 	closeOrder,
 	deleteDraft,
 	draftFromSuggestions,
+	lockDraftLine,
 	markSent,
 	openDraft,
 	openSuggested,
@@ -525,6 +526,36 @@ describe("a PO from draft to received", () => {
 			quantity: 0,
 		});
 		expect(await linesOf(id)).toHaveLength(1);
+	});
+
+	test("Update skips a locked line until it's unlocked", async () => {
+		const id = await openDraft(db, canam);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 2,
+		});
+		await lockDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			locked: true,
+		});
+		expect(await updateFromSuggestions(db, id, now)).toEqual({
+			added: 1,
+			raised: 0,
+		});
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([2, 6]);
+
+		await lockDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			locked: false,
+		});
+		expect(await updateFromSuggestions(db, id, now)).toEqual({
+			added: 0,
+			raised: 1,
+		});
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([44, 6]);
 	});
 
 	test("a frozen draft updates on request: adds new, raises short, never lowers", async () => {
