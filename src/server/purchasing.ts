@@ -20,19 +20,18 @@ import {
 	documentFor,
 	loadOrder,
 	receivedByLine,
-	setPartsOf,
 	supplierRows,
 } from "#/purchasing/load";
 import {
 	addDraftLine,
 	addLine,
+	addSetToOtherDrafts,
 	amendLine,
 	cancelOrder,
 	closeOrder,
 	draftChanges,
 	draftFromSuggestions,
 	markSent,
-	movePartToSupplier,
 	openDraft,
 	PurchaseOrderError,
 	partsOfSets,
@@ -40,6 +39,8 @@ import {
 	receiveExtra,
 	removeAddedLine,
 	setDraftLine,
+	setPartsOf,
+	skipSetPart,
 	undoReceipt,
 	updateDraft,
 	updateFromSuggestions,
@@ -140,7 +141,15 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const po = await loadOrder(db, data.id);
-		const productIds = po.lines.map((l) => l.productId);
+		const setParts =
+			po.order.status === "draft" ? await setPartsOf(db, data.id) : [];
+		// A set's parts show their stock too.
+		const productIds = [
+			...new Set([
+				...po.lines.map((l) => l.productId),
+				...setParts.map((p) => p.productId),
+			]),
+		];
 		const [
 			onHand,
 			ranges,
@@ -148,7 +157,6 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			ownedLocations,
 			changes,
 			units,
-			setParts,
 			lead,
 			amendments,
 		] = await Promise.all([
@@ -198,7 +206,6 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 					)
 				: { added: 0, raised: 0 },
 			listUnits(db).then((all) => all.map((u) => u.name)),
-			po.order.status === "draft" ? setPartsOf(db, data.id) : [],
 			leadTimes(db, [po.supplier.id]),
 			// Changes made after sending, for the timeline.
 			db
@@ -229,7 +236,11 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				// Every line's product has one; ?? only satisfies the Map type.
 				stockRange: ranges.get(l.productId) ?? null,
 			})),
-			setParts,
+			setParts: setParts.map((p) => ({
+				...p,
+				onHand: onHand.get(p.productId) ?? 0,
+				stockRange: ranges.get(p.productId) ?? null,
+			})),
 			receipts,
 			amendments,
 			locations: ownedLocations,
@@ -267,12 +278,21 @@ export const setLine = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data }) => setDraftLine(getDb(), data));
 
-// Moves one part of a set on a draft to its own supplier's draft.
-export const moveSetPart = createServerFn({ method: "POST" })
+// Skips one part of a set on a draft, or orders it again.
+export const skipPartOfSet = createServerFn({ method: "POST" })
 	.validator(
-		type({ lineId: "number.integer > 0", productId: "number.integer > 0" }),
+		type({
+			lineId: "number.integer > 0",
+			productId: "number.integer > 0",
+			skipped: "boolean",
+		}),
 	)
-	.handler(async ({ data }) => movePartToSupplier(getDb(), data));
+	.handler(async ({ data }) => skipSetPart(getDb(), data));
+
+// Puts a set on the drafts of the other suppliers its parts are bought from.
+export const addSetToOtherPos = createServerFn({ method: "POST" })
+	.validator(type({ lineId: "number.integer > 0" }))
+	.handler(async ({ data }) => addSetToOtherDrafts(getDb(), data));
 
 export const editDraft = createServerFn({ method: "POST" })
 	.validator(

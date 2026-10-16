@@ -7,6 +7,7 @@ import {
 import {
 	AlertTriangle,
 	ArrowRight,
+	ChevronRight,
 	FileText,
 	Mail,
 	Smartphone,
@@ -21,6 +22,7 @@ import {
 } from "#/components/po-product-picker";
 import { ProductImage } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
+import { SetGauge } from "#/components/set-gauge";
 import { StockRing } from "#/components/stock-ring";
 import { SupplierDialog } from "#/components/supplier-dialog";
 import { Button } from "#/components/ui/button";
@@ -34,21 +36,30 @@ import {
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
+import {
+	orderedItems,
+	type PartState,
+	partState,
+	setCoverage,
+	setsOf,
+	shortBySupplier,
+} from "#/purchasing/sets";
 import { purchaseOrderStatus } from "#/purchasing/status";
 import {
 	addProductToPurchaseOrder,
+	addSetToOtherPos,
 	amendPurchaseLine,
 	cancelPurchaseOrder,
 	closePurchaseOrder,
 	editDraft,
 	getPurchaseOrder,
-	moveSetPart,
 	type PurchaseOrderDetail,
 	receiveLine,
 	sendPurchaseOrder,
 	setLine,
 	setProductSupplier,
 	setPurchaseLineTerms,
+	skipPartOfSet,
 	undoPurchaseReceipt,
 	updateDraftFromSuggestions,
 } from "#/server/purchasing";
@@ -103,12 +114,14 @@ function PurchaseOrderPage() {
 		0,
 	);
 	const status = purchaseOrderStatus({ ...po, ordered, received });
-	const total = d.lines.reduce((n, l) => n + l.quantity * (l.unitCost ?? 0), 0);
-	// Tool sets are priced as their parts when sent, so they're counted apart.
-	const sets = d.lines.filter((l) => l.kind === "bundle").length;
-	const unpriced = d.lines.filter(
-		(l) => l.unitCost === null && l.kind !== "bundle",
-	).length;
+	const shown = draft
+		? draftTotals(d)
+		: {
+				units: ordered,
+				total: d.lines.reduce((n, l) => n + l.quantity * (l.unitCost ?? 0), 0),
+				unpriced: d.lines.filter((l) => l.unitCost === null).length,
+			};
+	const total = shown.total;
 	const canEmail = d.emailConfigured && Boolean(d.supplier.email);
 	const wasSent = po.sentAt !== null;
 	const changed = d.lines.filter((l) => changedSinceSent(l, wasSent)).length;
@@ -145,10 +158,8 @@ function PurchaseOrderPage() {
 			)}
 			<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
 				<span className="text-muted-foreground">
-					{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
-					{unpriced > 0 && `, ${unpriced} without a cost`}
-					{sets > 0 &&
-						`, plus ${sets === 1 ? "a set" : `${sets} sets`} priced as parts when sent`}
+					{formatCount(shown.units)} {shown.units === 1 ? "unit" : "units"}
+					{shown.unpriced > 0 && `, ${shown.unpriced} without a cost`}
 				</span>
 				{changed > 0 && sentTotal !== total && (
 					<span className="text-muted-foreground tabular-nums">
@@ -580,6 +591,14 @@ function LineTable({
 		if (focus) focusedRow.current?.scrollIntoView({ block: "nearest" });
 	}, [focus]);
 	const [preview, setPreview] = useState<QuantityPreview | null>(null);
+	// Sets opened or closed by hand; the rest are open while they're missing
+	// a part.
+	const [opened, setOpened] = useState<ReadonlyMap<number, boolean>>(new Map());
+	const quantities = new Map(
+		preview ? [[preview.lineId, preview.quantity]] : [],
+	);
+	// What the draft orders of each product once sent, sets' parts included.
+	const items = orderedItems(d.lines, d.setParts, d.supplier.id, quantities);
 	// Each line only sets or clears its own preview.
 	const previewFor = (lineId: number) => (quantity: number | null) =>
 		setPreview((prev) =>
@@ -589,6 +608,34 @@ function LineTable({
 					: prev
 				: { lineId, quantity },
 		);
+	const toggle = (lineId: number, open: boolean) =>
+		setOpened((prev) => new Map(prev).set(lineId, open));
+	// A set line's parts, where each comes from, and how it shows.
+	const setFor = (l: Line) => {
+		if (l.kind !== "bundle") return null;
+		const sets = setsOf({ ...l, quantity: quantities.get(l.id) ?? l.quantity });
+		const parts = d.setParts
+			.filter((p) => p.lineId === l.id)
+			.map((part) => ({
+				part,
+				state: partState(part, sets, d.supplier.id),
+			}));
+		const coverage = setCoverage(parts.map((p) => p.state));
+		const here = parts.filter((p) => p.state.kind === "here");
+		return {
+			sets,
+			parts,
+			coverage,
+			open: opened.get(l.id) ?? coverage.short > 0,
+			amount: here.some((p) => p.part.unitCost === null)
+				? null
+				: here.reduce(
+						(n, { part: p }) =>
+							n + ((sets * p.perSet) / p.packSize) * (p.unitCost ?? 0),
+						0,
+					),
+		};
+	};
 	if (lines.length === 0)
 		return (
 			<p className="px-4 py-6 text-center text-muted-foreground">
@@ -642,193 +689,240 @@ function LineTable({
 					</tr>
 				</thead>
 				<tbody>
-					{lines.map((l) => (
-						<Fragment key={l.id}>
-							<tr
-								ref={focus?.lineId === l.id ? focusedRow : undefined}
-								className={cn(
-									"border-t transition-colors first:border-t-0",
-									focus?.lineId === l.id && "bg-info-surface",
-									// Nothing is coming: kept to show the supplier didn't send it.
-									l.quantity === 0 &&
-										l.received === 0 &&
-										"text-muted-foreground",
-								)}
-							>
-								<td className="w-full px-4 py-2 whitespace-normal!">
-									<div
-										className={cn(
-											"flex items-center gap-3",
-											draft && "min-w-72",
-										)}
-									>
-										<ProductImage src={l.imageUrl} />
-										<div className="min-w-0">
-											<Link
-												to="/products/$sku"
-												params={{ sku: l.sku }}
-												className="block hover:underline"
+					{lines.map((l) => {
+						const set = setFor(l);
+						return (
+							<Fragment key={l.id}>
+								<tr
+									ref={focus?.lineId === l.id ? focusedRow : undefined}
+									className={cn(
+										"border-t transition-colors first:border-t-0",
+										focus?.lineId === l.id && "bg-info-surface",
+										// Nothing is coming: kept to show the supplier didn't send it.
+										l.quantity === 0 &&
+											l.received === 0 &&
+											"text-muted-foreground",
+									)}
+								>
+									<td className="relative w-full px-4 py-2 whitespace-normal!">
+										{set && (
+											<button
+												type="button"
+												aria-expanded={set.open}
+												aria-label={`${set.open ? "Hide" : "Show"} the parts of ${l.sku}`}
+												onClick={() => toggle(l.id, !set.open)}
+												className="absolute top-1/2 left-0.5 -translate-y-1/2 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-surface hover:text-foreground"
 											>
-												{/* Wraps instead of cutting off: on a PO the full name matters. */}
-												<span className="line-clamp-2 font-medium">
-													{l.name}
-													{l.variantName && (
-														<span className="ml-1.5 rounded-md bg-surface px-1.5 text-xs font-normal text-muted-foreground">
-															{l.variantName}
-														</span>
+												<ChevronRight
+													className={cn(
+														"size-3.5 transition-transform",
+														set.open && "rotate-90",
 													)}
-												</span>
-											</Link>
-											<div className="text-xs text-muted-foreground">
-												{l.sku}
-												{l.kind === "bundle" && " · Set, sent as its parts"}
-												{wasSent && l.sentQuantity === null && (
-													<span className="text-warning-text">
-														{" "}
-														· Added after sending
+													strokeWidth={2.5}
+												/>
+											</button>
+										)}
+										<div
+											className={cn(
+												"flex items-center gap-3",
+												draft && "min-w-72",
+											)}
+										>
+											<ProductImage src={l.imageUrl} />
+											<div className="min-w-0">
+												<Link
+													to="/products/$sku"
+													params={{ sku: l.sku }}
+													className="block hover:underline"
+												>
+													{/* Wraps instead of cutting off: on a PO the full name matters. */}
+													<span className="line-clamp-2 font-medium">
+														{l.name}
+														{l.variantName && (
+															<span className="ml-1.5 rounded-md bg-surface px-1.5 text-xs font-normal text-muted-foreground">
+																{l.variantName}
+															</span>
+														)}
 													</span>
-												)}
+												</Link>
+												<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+													<span>
+														{l.sku}
+														{set && (
+															<>
+																{" · "}
+																<button
+																	type="button"
+																	onClick={() => toggle(l.id, !set.open)}
+																	className="cursor-pointer hover:text-foreground hover:underline"
+																>
+																	Set of {set.parts.length}{" "}
+																	{set.parts.length === 1 ? "part" : "parts"}
+																</button>
+															</>
+														)}
+														{wasSent && l.sentQuantity === null && (
+															<span className="text-warning-text">
+																{" "}
+																· Added after sending
+															</span>
+														)}
+													</span>
+													{set && (
+														<AddSetButton
+															line={l}
+															parts={set.parts.map((p) => p.part)}
+															sets={setsOf(l)}
+															supplierId={d.supplier.id}
+															disabled={preview !== null}
+														/>
+													)}
+												</div>
 											</div>
 										</div>
-									</div>
-								</td>
-								<td className="px-3 py-2">
-									<SupplierSkuField line={l} supplierId={d.supplier.id} />
-								</td>
-								<td className="px-3 py-2">
-									<PurchaseUnitCell
-										label={l.sku}
-										value={l}
-										cost={l.unitCost}
-										units={draft ? d.units : undefined}
-										saving={{
-											save: (terms) =>
-												setPurchaseLineTerms({
-													data: {
-														purchaseOrderId: d.order.id,
-														productId: l.productId,
-														...terms,
-														makeDefault: false,
-													},
-												}),
-											// Only the product's own supplier's terms can change here.
-											...(l.linkSupplierId === d.supplier.id
-												? {
-														current: {
-															unit: l.defaultUnit ?? "EACH",
-															packSize: l.defaultPackSize ?? 1,
-															minimumQuantity: l.defaultMinimum ?? 1,
-														},
-														saveDefault: (terms) =>
-															setPurchaseLineTerms({
-																data: {
-																	purchaseOrderId: d.order.id,
-																	productId: l.productId,
-																	...terms,
-																	makeDefault: true,
-																},
-															}),
-													}
-												: {
-														noDefaultReason:
-															l.linkSupplierId === null
-																? "This product has no supplier yet; set one on its page"
-																: "This product is bought from another supplier",
-													}),
-										}}
-									/>
-								</td>
-								<td className="px-3 py-2 text-right font-semibold tabular-nums">
-									{editable ? (
-										<QuantityField
-											key={`q${l.quantity}`}
-											line={l}
-											purchaseOrderId={d.order.id}
-											draft={draft}
-											open={focus?.lineId === l.id ? focus.nonce : null}
-											onDone={onQuantityDone}
-											onPreview={previewFor(l.id)}
-										/>
-									) : (
-										formatCount(l.quantity)
-									)}
-									<WasSent
-										line={l}
-										shows={l.sentQuantity !== l.quantity}
-										text={`sent ${formatCount(l.sentQuantity ?? 0)}`}
-									/>
-								</td>
-								{draft && (
+									</td>
 									<td className="px-3 py-2">
-										{l.kind === "bundle" || !l.stockRange ? (
-											<span className="block text-center text-muted-foreground">
-												—
-											</span>
-										) : (
-											<div className="flex items-center justify-center gap-1">
-												<StockRing onHand={l.onHand} range={l.stockRange} />
-												<ArrowRight
-													className="size-4 text-muted-foreground"
-													strokeWidth={2.5}
-													aria-hidden="true"
-												/>
-												<StockRing
-													onHand={
-														l.onHand +
-														(preview?.lineId === l.id
-															? preview.quantity
-															: l.quantity) *
-															l.packSize
-													}
-													range={l.stockRange}
-													label="after this PO"
-												/>
-											</div>
-										)}
+										<SupplierSkuField line={l} supplierId={d.supplier.id} />
 									</td>
-								)}
-								<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
-									{l.kind === "bundle" ? (
-										<span className="text-muted-foreground">As parts</span>
-									) : editable ? (
-										<PriceField
-											line={l}
-											purchaseOrderId={d.order.id}
-											draft={draft}
+									<td className="px-3 py-2">
+										<PurchaseUnitCell
+											label={l.sku}
+											value={l}
+											cost={l.unitCost}
+											units={draft ? d.units : undefined}
+											saving={{
+												save: (terms) =>
+													setPurchaseLineTerms({
+														data: {
+															purchaseOrderId: d.order.id,
+															productId: l.productId,
+															...terms,
+															makeDefault: false,
+														},
+													}),
+												// Only the product's own supplier's terms can change here.
+												...(l.linkSupplierId === d.supplier.id
+													? {
+															current: {
+																unit: l.defaultUnit ?? "EACH",
+																packSize: l.defaultPackSize ?? 1,
+																minimumQuantity: l.defaultMinimum ?? 1,
+															},
+															saveDefault: (terms) =>
+																setPurchaseLineTerms({
+																	data: {
+																		purchaseOrderId: d.order.id,
+																		productId: l.productId,
+																		...terms,
+																		makeDefault: true,
+																	},
+																}),
+														}
+													: {
+															noDefaultReason:
+																l.linkSupplierId === null
+																	? "This product has no supplier yet; set one on its page"
+																	: "This product is bought from another supplier",
+														}),
+											}}
 										/>
-									) : (
-										formatMoney(l.unitCost)
-									)}
-									<WasSent
-										line={l}
-										shows={l.sentUnitCost !== l.unitCost}
-										text={`sent ${formatMoney(l.sentUnitCost)}`}
-									/>
-								</td>
-								<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
-									{l.unitCost === null
-										? "—"
-										: formatMoney(l.unitCost * l.quantity)}
-								</td>
-								{!draft && (
-									<td className="px-4 py-2 text-right whitespace-nowrap">
-										{l.quantity === 0 && l.received === 0 ? (
-											<Badge>None coming</Badge>
-										) : receiving && l.received < l.quantity ? (
-											<ReceiveField line={l} />
+									</td>
+									<td className="px-3 py-2 text-right font-semibold tabular-nums">
+										{editable ? (
+											<QuantityField
+												key={`q${l.quantity}`}
+												line={l}
+												purchaseOrderId={d.order.id}
+												draft={draft}
+												open={focus?.lineId === l.id ? focus.nonce : null}
+												onDone={onQuantityDone}
+												onPreview={previewFor(l.id)}
+											/>
 										) : (
-											<Badge
-												tone={l.received >= l.quantity ? "success" : undefined}
-											>
-												{formatCount(l.received)} of {formatCount(l.quantity)}
-											</Badge>
+											formatCount(l.quantity)
+										)}
+										<WasSent
+											line={l}
+											shows={l.sentQuantity !== l.quantity}
+											text={`sent ${formatCount(l.sentQuantity ?? 0)}`}
+										/>
+									</td>
+									{draft && (
+										<td className="px-3 py-2">
+											{set ? (
+												<div className="flex justify-center">
+													<SetGauge coverage={set.coverage} />
+												</div>
+											) : (
+												<AfterPo
+													onHand={l.onHand}
+													range={l.stockRange}
+													ordered={items.get(l.productId) ?? 0}
+												/>
+											)}
+										</td>
+									)}
+									<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+										{l.kind === "bundle" ? (
+											<span className="text-muted-foreground">As parts</span>
+										) : editable ? (
+											<PriceField
+												line={l}
+												purchaseOrderId={d.order.id}
+												draft={draft}
+											/>
+										) : (
+											formatMoney(l.unitCost)
+										)}
+										<WasSent
+											line={l}
+											shows={l.sentUnitCost !== l.unitCost}
+											text={`sent ${formatMoney(l.sentUnitCost)}`}
+										/>
+									</td>
+									<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
+										{set ? (
+											<span title="Its parts on this PO at their prices. The total rounds each product up to whole units">
+												{set.amount === null ? "—" : formatMoney(set.amount)}
+											</span>
+										) : l.unitCost === null ? (
+											"—"
+										) : (
+											formatMoney(l.unitCost * l.quantity)
 										)}
 									</td>
-								)}
-							</tr>
-							{l.kind === "bundle" && <SetParts detail={d} line={l} />}
-						</Fragment>
-					))}
+									{!draft && (
+										<td className="px-4 py-2 text-right whitespace-nowrap">
+											{l.quantity === 0 && l.received === 0 ? (
+												<Badge>None coming</Badge>
+											) : receiving && l.received < l.quantity ? (
+												<ReceiveField line={l} />
+											) : (
+												<Badge
+													tone={
+														l.received >= l.quantity ? "success" : undefined
+													}
+												>
+													{formatCount(l.received)} of {formatCount(l.quantity)}
+												</Badge>
+											)}
+										</td>
+									)}
+								</tr>
+								{set?.open &&
+									set.parts.map(({ part, state }) => (
+										<SetPartRow
+											key={part.productId}
+											line={l}
+											part={part}
+											state={state}
+											sets={set.sets}
+											ordered={items.get(part.productId) ?? 0}
+										/>
+									))}
+							</Fragment>
+						);
+					})}
 				</tbody>
 			</table>
 		</div>
@@ -857,87 +951,283 @@ function WasSent({
 	);
 }
 
-// A set's parts, under its line on a draft. Sending puts them on this PO,
-// except parts moved to their own supplier's draft. A part bought from
-// another supplier is flagged with a button to move it there.
-function SetParts({
-	detail: d,
-	line,
+// On hand, and what it comes to once the draft arrives: the product's own
+// line plus any set parts of it, as sending will merge them.
+function AfterPo({
+	onHand,
+	range,
+	ordered,
 }: {
-	detail: PurchaseOrderDetail;
+	onHand: number;
+	range: Line["stockRange"];
+	ordered: number;
+}) {
+	if (!range)
+		return <span className="block text-center text-muted-foreground">—</span>;
+	return (
+		<div className="flex items-center justify-center gap-1">
+			<StockRing onHand={onHand} range={range} />
+			<ArrowRight
+				className="size-4 text-muted-foreground"
+				strokeWidth={2.5}
+				aria-hidden="true"
+			/>
+			<StockRing
+				onHand={onHand + ordered}
+				range={range}
+				label="after this PO"
+			/>
+		</div>
+	);
+}
+
+type SetPart = PurchaseOrderDetail["setParts"][number];
+
+// One part of a set, under its line on a draft, laid out like a line. A part
+// bought from this PO's supplier is ordered here; anything else says where it
+// comes from instead, or that nobody orders it yet.
+function SetPartRow({
+	line,
+	part: p,
+	state,
+	sets,
+	ordered,
+}: {
 	line: Line;
+	part: SetPart;
+	state: PartState;
+	sets: number;
+	ordered: number;
 }) {
 	const { busy, run } = useAction();
-	return d.setParts
-		.filter((p) => p.lineId === line.id)
-		.map((p) => {
-			const elsewhere =
-				!p.moved && p.supplierId !== null && p.supplierId !== d.supplier.id;
-			const units = Math.ceil(p.items / p.packSize);
-			const extra = units * p.packSize - p.items;
-			return (
-				<tr key={p.productId} className="text-xs">
-					<td className="max-w-0 py-1 pr-4 pl-[4.25rem]">
-						<div
+	const here = state.kind === "here";
+	const items = sets * p.perSet;
+	const skip = (skipped: boolean) =>
+		run(
+			() =>
+				skipPartOfSet({
+					data: { lineId: line.id, productId: p.productId, skipped },
+				}),
+			(sku) =>
+				skipped
+					? `${sku} skipped for ${line.sku}`
+					: `${sku} is ordered for ${line.sku} again`,
+		);
+	return (
+		<tr className="bg-subtle/60">
+			<td className="w-full py-2 pr-4 pl-10 whitespace-normal!">
+				<div className="flex min-w-72 items-center gap-3 border-l-2 border-surface-strong pl-3">
+					<ProductImage
+						src={p.imageUrl}
+						className={cn("size-8", !here && "opacity-50")}
+					/>
+					<div className="min-w-0">
+						<Link
+							to="/products/$sku"
+							params={{ sku: p.sku }}
 							className={cn(
-								"truncate",
-								p.moved && "line-through text-muted-foreground",
+								"block hover:underline",
+								!here && "text-muted-foreground",
 							)}
 						>
-							{p.name}
-							{p.variantName && ` (${p.variantName})`}
-							<span className="text-muted-foreground"> · {p.sku}</span>
-						</div>
-						{p.moved ? (
-							<div className="text-muted-foreground">
-								Moved to {p.supplierName}'s draft
-							</div>
-						) : elsewhere ? (
-							<div className="flex items-center gap-2 text-warning-text">
-								<AlertTriangle className="size-3.5 shrink-0" />
-								Bought from {p.supplierName}
-								<Button
-									size="sm"
-									variant="outline"
-									className="h-6 px-2 text-xs"
+							<span className="line-clamp-2">
+								{p.name}
+								{p.variantName && (
+									<span className="ml-1.5 rounded-md bg-surface px-1.5 text-xs text-muted-foreground">
+										{p.variantName}
+									</span>
+								)}
+							</span>
+						</Link>
+						<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+							<span>
+								{p.sku} · {formatCount(p.perSet)} per set
+							</span>
+							<PartSource part={p} state={state} sets={sets} />
+							{/* Only this PO orders it, so only here can it be skipped. */}
+							{(here || state.kind === "skipped") && (
+								<button
+									type="button"
 									disabled={busy}
-									onClick={() =>
-										run(
-											() =>
-												moveSetPart({
-													data: { lineId: line.id, productId: p.productId },
-												}),
-											(po) => `Moved ${p.sku} to PO ${po}`,
-										)
+									onClick={() => skip(here)}
+									className="cursor-pointer font-medium text-foreground hover:underline disabled:opacity-50"
+									title={
+										here
+											? "Don't order it for this set, e.g. there's stock already"
+											: "Order it for this set again"
 									}
 								>
-									Move to {p.supplierName}
-								</Button>
-							</div>
-						) : (
-							p.supplierId === null && (
-								<div className="flex items-center gap-2 text-warning-text">
-									<AlertTriangle className="size-3.5 shrink-0" />
-									No supplier yet; set one on its page
-								</div>
-							)
+									{here ? "Skip" : "Order it"}
+								</button>
+							)}
+						</div>
+					</div>
+				</div>
+			</td>
+			<td className="px-3 py-2 text-muted-foreground">
+				{here ? (p.supplierSku ?? "—") : ""}
+			</td>
+			<td className="px-3 py-2">
+				{here && <PurchaseUnitCell label={p.sku} value={p} cost={p.unitCost} />}
+			</td>
+			<td
+				className="px-3 py-2 text-right font-semibold tabular-nums"
+				title={`${formatCount(p.perSet)} per set × ${formatCount(sets)} ${sets === 1 ? "set" : "sets"}`}
+			>
+				{here ? (
+					<span className="inline-block w-16 px-2">
+						{formatCount(items)}
+						{p.packSize > 1 && (
+							<span className="ml-0.5 text-xs font-normal text-muted-foreground">
+								ea
+							</span>
 						)}
-					</td>
-					<td
-						colSpan={6}
-						className="px-4 py-1 text-right text-muted-foreground tabular-nums"
-					>
-						{!p.moved && (
-							<>
-								{formatCount(p.items)} needed
-								{p.packSize > 1 &&
-									`, adds ${formatCount(units)} ${p.unit} of ${p.packSize}${extra > 0 ? ` (${formatCount(extra)} extra)` : ""}`}
-							</>
-						)}
-					</td>
-				</tr>
+					</span>
+				) : (
+					<span className="text-muted-foreground">—</span>
+				)}
+			</td>
+			<td className="px-3 py-2">
+				{here ? (
+					<AfterPo onHand={p.onHand} range={p.stockRange} ordered={ordered} />
+				) : (
+					<span className="block text-center text-muted-foreground">—</span>
+				)}
+			</td>
+			<td className="px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
+				{here && p.unitCost !== null ? formatMoney(p.unitCost) : "—"}
+			</td>
+			<td className="px-4 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
+				{here && p.unitCost !== null
+					? formatMoney((items / p.packSize) * p.unitCost)
+					: "—"}
+			</td>
+		</tr>
+	);
+}
+
+// Where a part of a set comes from, when it isn't this PO.
+function PartSource({
+	part: p,
+	state,
+	sets,
+}: {
+	part: SetPart;
+	state: PartState;
+	sets: number;
+}) {
+	const pos = p.elsewhere.map((e, i) => (
+		<Fragment key={e.purchaseOrderId}>
+			{i > 0 && ", "}
+			<Link
+				to="/purchasing/$id"
+				params={{ id: String(e.purchaseOrderId) }}
+				className="hover:text-foreground hover:underline"
+			>
+				PO {e.purchaseOrderId}
+				{e.status === "sent" && " (sent)"}
+			</Link>
+		</Fragment>
+	));
+	switch (state.kind) {
+		case "here":
+			return null;
+		case "skipped":
+			return <span className="font-medium">Skipped</span>;
+		case "covered":
+			return (
+				<span>
+					From {p.supplierName} on {pos}
+				</span>
 			);
-		});
+		case "short":
+			return (
+				<span className="flex items-center gap-1 text-warning-text">
+					<AlertTriangle className="size-3.5 shrink-0" />
+					{state.noSupplier ? (
+						"No supplier yet; set one on its page"
+					) : state.covered === 0 ? (
+						`Bought from ${p.supplierName}, not on their PO yet`
+					) : (
+						<span>
+							{p.supplierName}'s {pos}{" "}
+							{p.elsewhere.length === 1 ? "has" : "have"}{" "}
+							{formatCount(state.covered)} of {formatCount(sets)} sets
+						</span>
+					)}
+				</span>
+			);
+	}
+}
+
+// Puts a set on the drafts of the other suppliers its parts come from, so
+// each part is ordered for every set. Shows only while one isn't.
+function AddSetButton({
+	line,
+	parts,
+	sets,
+	supplierId,
+	disabled,
+}: {
+	line: Line;
+	parts: SetPart[];
+	sets: number;
+	supplierId: number;
+	disabled: boolean;
+}) {
+	const { busy, run } = useAction();
+	const short = shortBySupplier(parts, sets, supplierId);
+	if (short.size === 0) return null;
+	const names = [...short.keys()].map(
+		(id) => parts.find((p) => p.supplierId === id)?.supplierName ?? "",
+	);
+	return (
+		<Button
+			size="sm"
+			variant="outline"
+			className="h-6 px-2 text-xs"
+			disabled={busy || disabled}
+			title={`Put ${formatCount(sets)} of this set on ${names.join(" and ")}'s ${names.length === 1 ? "draft" : "drafts"}, so their parts are ordered for every set`}
+			onClick={() =>
+				run(
+					() => addSetToOtherPos({ data: { lineId: line.id } }),
+					(added) =>
+						added
+							.map(
+								(a) =>
+									`PO ${a.purchaseOrderId} (${a.supplierName}) has ${formatCount(a.sets)} of ${line.sku}`,
+							)
+							.join("; "),
+				)
+			}
+		>
+			{names.length === 1
+				? `Add to ${names[0]}'s PO`
+				: `Add to ${names.length} other POs`}
+		</Button>
+	);
+}
+
+// What a draft comes to once sent: each product's own line plus the sets'
+// parts bought here, rounded up to whole units once, at the line's price or
+// else the part's.
+function draftTotals(d: PurchaseOrderDetail) {
+	let units = 0;
+	let total = 0;
+	let unpriced = 0;
+	for (const [productId, items] of orderedItems(
+		d.lines,
+		d.setParts,
+		d.supplier.id,
+	)) {
+		const priced =
+			d.lines.find((l) => l.productId === productId && l.kind !== "bundle") ??
+			d.setParts.find((p) => p.productId === productId);
+		units += items;
+		if (!priced || priced.unitCost === null) unpriced++;
+		else total += (items / priced.packSize) * priced.unitCost;
+	}
+	return { units, total, unpriced };
 }
 
 const field =
