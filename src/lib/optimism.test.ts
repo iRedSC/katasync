@@ -264,3 +264,19 @@ describe("optimism", () => {
 		expect(engine.over("count:2", { n: 0 })).toEqual({ n: 0 });
 	});
 });
+
+describe("ids", () => {
+	it("names something before the server makes it, then by the server's id", async () => {
+		const { ids } = await import("./optimism");
+		const made = ids.provisional();
+		expect(made).toBeLessThan(0);
+		expect(() => ids.server(made)).toThrow("An earlier change didn't save");
+		ids.confirm(made, 42);
+		expect(ids.server(made)).toBe(42);
+		expect(ids.current(made)).toBe(42);
+		expect(ids.same(made, 42)).toBe(true);
+		expect(ids.same(42, made)).toBe(true);
+		expect(ids.same(made, 43)).toBe(false);
+		expect(ids.server(7)).toBe(7);
+	});
+});

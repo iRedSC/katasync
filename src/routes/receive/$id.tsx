@@ -7,7 +7,7 @@ import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
 import { receiveHead } from "#/components/receive/pwa";
 import { QuantitySheet } from "#/components/receive/quantity-sheet";
 import { Saving } from "#/components/saving";
-import { optimism, optimistic, type Patch } from "#/lib/optimism";
+import { ids, optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import {
 	amendPurchaseLine,
@@ -40,33 +40,6 @@ type ReceiveOrder = {
 	receipts: Receipt[];
 };
 const receiveData = optimistic<ReceiveOrder>("receive-order");
-
-// A line or receipt made here has a negative id until the server answers with
-// its own. The answers are kept, so a change made later can use the real one.
-let madeHere = 0;
-const serverIds = new Map<number, number>();
-const newId = () => {
-	madeHere++;
-	return -madeHere;
-};
-
-// The id the server knows a line or receipt by. Changes are sent in order, so
-// the change that made it has been answered by the time this is read.
-function serverId(id: number) {
-	if (id > 0) return id;
-	const real = serverIds.get(id);
-	if (real === undefined) throw new Error("An earlier change didn't save");
-	return real;
-}
-
-// The same, read when a change is made. Once the server has answered, the
-// page's data has the real id, so a patch made now must use it.
-const realId = (id: number) => serverIds.get(id) ?? id;
-
-// Whether two ids are the same line or receipt: either may be the id made
-// here or, once the server has answered, its own. Patches match with this,
-// as they may lay over data from before the reload or after it.
-const same = (a: number, b: number) => realId(a) === realId(b);
 
 const done = (l: ReceiveLine) => l.received >= l.quantity;
 
@@ -112,7 +85,7 @@ function receiptFor(
 	const after = receiveOn(line, quantity, last).quantity;
 	const changed = after !== line.quantity;
 	return {
-		id: newId(),
+		id: ids.provisional(),
 		lineId: line.id,
 		quantity,
 		quantityBefore: changed ? line.quantity : null,
@@ -166,7 +139,7 @@ function receivePatch(
 ): Patch {
 	return receiveData.patch(orderId, (d) => {
 		const lines = d.lines.map((l) =>
-			same(l.id, lineId) ? receiveOn(l, receipt.quantity, last) : l,
+			ids.same(l.id, lineId) ? receiveOn(l, receipt.quantity, last) : l,
 		);
 		return {
 			...d,
@@ -214,7 +187,7 @@ function expectPatch(
 ): Patch {
 	return receiveData.patch(orderId, (d) => {
 		const lines = d.lines.map((l) =>
-			same(l.id, lineId) ? { ...l, quantity } : l,
+			ids.same(l.id, lineId) ? { ...l, quantity } : l,
 		);
 		return { ...d, lines, order: settle(d.order, lines) };
 	});
@@ -228,16 +201,16 @@ function undoReceipt(orderId: number, r: Receipt, name: string) {
 		label: `Taking back ${name}`,
 		patch: receiveData.patch(orderId, (d) => {
 			const lines = d.lines.map((l) =>
-				same(l.id, r.lineId) ? unreceiveOn(l, r) : l,
+				ids.same(l.id, r.lineId) ? unreceiveOn(l, r) : l,
 			);
 			return {
 				...d,
 				lines,
-				receipts: d.receipts.filter((x) => !same(x.id, r.id)),
+				receipts: d.receipts.filter((x) => !ids.same(x.id, r.id)),
 				order: afterUndo(d.order, lines),
 			};
 		}),
-		send: async () => undoPurchaseReceipt({ data: { id: serverId(r.id) } }),
+		send: async () => undoPurchaseReceipt({ data: { id: ids.server(r.id) } }),
 	});
 }
 
@@ -262,7 +235,7 @@ function ReceivePurchaseOrder() {
 	const sheetLine =
 		sheetLineId === null
 			? undefined
-			: lines.find((l) => same(l.id, sheetLineId));
+			: lines.find((l) => ids.same(l.id, sheetLineId));
 
 	// Received on the spot: the line shows it at once, and the server gets it
 	// in order. Undo is offered once the server has it.
@@ -276,9 +249,9 @@ function ReceivePurchaseOrder() {
 			patch: receivePatch(order.id, line.id, receipt, last),
 			send: async () => {
 				const result = await receiveLine({
-					data: { lineId: await serverId(line.id), quantity, last },
+					data: { lineId: ids.server(line.id), quantity, last },
 				});
-				serverIds.set(receipt.id, result.receiptId);
+				ids.confirm(receipt.id, result.receiptId);
 				return result;
 			},
 		});
@@ -311,7 +284,7 @@ function ReceivePurchaseOrder() {
 			send: async () =>
 				amendPurchaseLine({
 					data: {
-						lineId: await serverId(line.id),
+						lineId: ids.server(line.id),
 						quantity: line.received,
 					},
 				}),
@@ -321,10 +294,10 @@ function ReceivePurchaseOrder() {
 			undo: async () => {
 				const u = await optimism.change({
 					label: `Waiting for ${name} again`,
-					patch: expectPatch(order.id, realId(line.id), was, afterUndo),
+					patch: expectPatch(order.id, ids.current(line.id), was, afterUndo),
 					send: async () =>
 						amendPurchaseLine({
-							data: { lineId: await serverId(line.id), quantity: was },
+							data: { lineId: ids.server(line.id), quantity: was },
 						}),
 				});
 				return u && `Waiting for ${name} again`;
@@ -352,7 +325,7 @@ function ReceivePurchaseOrder() {
 		const name = productName(match);
 		const line =
 			lines.find((l) => l.productId === match.productId) ??
-			blankLine(match, newId());
+			blankLine(match, ids.provisional());
 		const receipt = receiptFor(line, quantity, false);
 		const r = await optimism.change({
 			label: `Receiving ${name}`,
@@ -365,8 +338,8 @@ function ReceivePurchaseOrder() {
 						quantity,
 					},
 				});
-				serverIds.set(line.id, result.lineId);
-				serverIds.set(receipt.id, result.receiptId);
+				ids.confirm(line.id, result.lineId);
+				ids.confirm(receipt.id, result.receiptId);
 				return result;
 			},
 		});
@@ -480,12 +453,13 @@ function ReceivePurchaseOrder() {
 					canReceive={open}
 					remaining={Math.max(sheetLine.quantity - sheetLine.received, 0)}
 					lastReceipt={
-						receipts.find((r) => same(r.lineId, sheetLine.id))?.quantity ?? null
+						receipts.find((r) => ids.same(r.lineId, sheetLine.id))?.quantity ??
+						null
 					}
 					onConfirm={(quantity, last) => receive(sheetLine, quantity, last)}
 					onNoneCame={() => noneCame(sheetLine)}
 					onUndo={() => {
-						const last = receipts.find((r) => same(r.lineId, sheetLine.id));
+						const last = receipts.find((r) => ids.same(r.lineId, sheetLine.id));
 						if (!last) return;
 						setSheetLineId(null);
 						void undoReceipt(order.id, last, productName(sheetLine));
