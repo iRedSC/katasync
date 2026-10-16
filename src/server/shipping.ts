@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { eq } from "drizzle-orm";
 import { getDb } from "#/db/client";
-import { orders, packages, stores } from "#/db/schema";
+import { orders, packages, shipments, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
 import { shipAddresses } from "#/shipping/addresses";
 import { createBoxes, updateBox } from "#/shipping/boxes";
@@ -52,7 +52,17 @@ export const updatePackage = createServerFn({ method: "POST" })
 export const deletePackage = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))
 	.handler(async ({ data }) => {
-		await getDb().delete(packages).where(eq(packages.id, data.id));
+		const db = getDb();
+		// Past shipments keep their box, so a box that shipped stays.
+		const [used] = await db
+			.select({ name: packages.name })
+			.from(shipments)
+			.innerJoin(packages, eq(packages.id, shipments.packageId))
+			.where(eq(shipments.packageId, data.id))
+			.limit(1);
+		if (used)
+			throw new Error(`${used.name} is on past labels, so it can't be removed`);
+		await db.delete(packages).where(eq(packages.id, data.id));
 	});
 
 export const quickShipLookup = createServerFn({ method: "GET" })

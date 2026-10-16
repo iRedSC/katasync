@@ -1,9 +1,4 @@
-import {
-	createFileRoute,
-	Link,
-	useNavigate,
-	useRouter,
-} from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
 	Ban,
 	ClipboardList,
@@ -44,7 +39,14 @@ import {
 } from "#/components/ui/dialog";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
+import {
+	cancelledRow,
+	purchasingData,
+	withOrder,
+	withoutOrder,
+} from "#/purchasing/list-patches";
 import { purchaseOrderStatus } from "#/purchasing/status";
 import {
 	createDraft,
@@ -61,8 +63,23 @@ export const Route = createFileRoute("/purchasing/")({
 	component: Purchasing,
 });
 
+// An unpatched change waits for the page to reload, so a toast says what's
+// under way until then. A menu closes as it's used, so nothing else would.
+async function whileWorking<T>(message: string, work: Promise<T>): Promise<T> {
+	const id = toast.loading(message);
+	try {
+		return await work;
+	} finally {
+		toast.dismiss(id);
+	}
+}
+
 function Purchasing() {
-	const { ready, open, incoming, done, suppliers } = Route.useLoaderData();
+	const loaded = Route.useLoaderData();
+	const { ready, open, incoming, done, suppliers } = purchasingData.useData(
+		"all",
+		loaded,
+	);
 	const nothing =
 		ready.length === 0 &&
 		open.length === 0 &&
@@ -132,17 +149,13 @@ function NewPurchaseOrder({
 
 	async function create(supplierId: number) {
 		setBusy(true);
-		try {
-			const id = await createDraft({
-				data: { supplierId },
-			});
-			setOpen(false);
-			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-		}
+		const r = await optimism.change({
+			send: () => createDraft({ data: { supplierId } }),
+		});
+		setBusy(false);
+		if (!r) return;
+		setOpen(false);
+		navigate({ to: "/purchasing/$id", params: { id: String(r.value) } });
 	}
 
 	return (
@@ -192,7 +205,7 @@ type Suggestion = PurchasingList["ready"][number];
 // "Create PO" makes the draft straight away.
 function SuggestionList({ rows }: { rows: Suggestion[] }) {
 	const [menuFor, setMenuFor] = useState<Suggestion | null>(null);
-	const { busy, create } = useCreateDraft();
+	const { creating, create } = useCreateDraft();
 	const { opening, open } = useOpenSuggested();
 
 	// Same columns as the PO tables below, so the page reads as one list.
@@ -233,8 +246,10 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 									<div className="truncate">{s.supplierName}</div>
 								</td>
 								<td className="px-4 py-2.5 whitespace-nowrap">
-									{opening === s.supplierId ? (
-										<span className="text-muted-foreground">Opening…</span>
+									{opening === s.supplierId || creating === s.supplierId ? (
+										<span className="text-muted-foreground">
+											{opening === s.supplierId ? "Opening…" : "Creating…"}
+										</span>
 									) : (
 										<ReadinessBadge s={s} />
 									)}
@@ -248,7 +263,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 									{formatMoney(s.total)}
 								</td>
 								<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
-									—
+									No date
 								</td>
 							</tr>
 						))}
@@ -265,7 +280,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 							Open
 						</ContextMenuItem>
 						<ContextMenuItem
-							disabled={busy}
+							disabled={creating !== null}
 							onSelect={() => create(menuFor.supplierId)}
 						>
 							<Plus />
@@ -296,26 +311,23 @@ function ProductCount({ s }: { s: Suggestion }) {
 	);
 }
 
-// Makes the supplier's draft from today's suggestions and opens it.
+// Makes the supplier's draft from today's suggestions and opens it. The new
+// PO's number comes from the server, so the row shows Creating… until it's in.
 function useCreateDraft() {
 	const navigate = useNavigate();
-	const router = useRouter();
-	const [busy, setBusy] = useState(false);
+	const [creating, setCreating] = useState<number | null>(null);
 
 	async function create(supplierId: number) {
-		setBusy(true);
-		try {
-			const id = await createDraftFromSuggestions({ data: { supplierId } });
-			router.invalidate();
-			toast.success(`PO ${id} created`);
-			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-		}
+		setCreating(supplierId);
+		const r = await optimism.change({
+			send: () => createDraftFromSuggestions({ data: { supplierId } }),
+		});
+		setCreating(null);
+		if (!r) return;
+		toast.success(`PO ${r.value} created`);
+		navigate({ to: "/purchasing/$id", params: { id: String(r.value) } });
 	}
-	return { busy, create };
+	return { creating, create };
 }
 
 // Opens the supplier's suggestion on the PO page, as a suggested PO.
@@ -325,14 +337,11 @@ function useOpenSuggested() {
 
 	async function open(supplierId: number) {
 		setOpening(supplierId);
-		try {
-			const id = await openSuggestedPurchaseOrder({ data: { supplierId } });
-			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		} finally {
-			setOpening(null);
-		}
+		const r = await optimism.change({
+			send: () => openSuggestedPurchaseOrder({ data: { supplierId } }),
+		});
+		setOpening(null);
+		if (r) navigate({ to: "/purchasing/$id", params: { id: String(r.value) } });
 	}
 	return { opening, open };
 }
@@ -426,7 +435,7 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 											? formatDay(o.expectedAt)
 											: o.closedAt
 												? `Done ${formatDay(o.closedAt)}`
-												: "—"}
+												: "No date"}
 									</td>
 								</tr>
 							);
@@ -443,58 +452,68 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 // offered: both want the PO open, to check its lines or what arrived.
 function OrderMenu({ order: o }: { order: OrderRow }) {
 	const navigate = useNavigate();
-	const router = useRouter();
 	const name = `PO ${o.id}`;
 	// Still a draft or on order; null once it's done.
 	const live = o.status === "draft" || o.status === "sent" ? o.status : null;
 	const done = live === null;
 
-	async function attempt(work: () => Promise<void>) {
-		try {
-			await work();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		}
+	// Brings a draft up to today's suggestions. What changed is only known from
+	// the server, so the list waits for the reload.
+	async function refresh() {
+		const r = await whileWorking(
+			`Updating ${name} from today's suggestions`,
+			optimism.change({
+				send: () => updateDraftFromSuggestions({ data: { id: o.id } }),
+			}),
+		);
+		if (!r) return;
+		const { added, raised } = r.value;
+		toast.success(
+			added + raised === 0
+				? `${name} already has everything suggested`
+				: `${name}: ${[
+						added > 0 && `${formatCount(added)} added`,
+						raised > 0 && `${formatCount(raised)} raised`,
+					]
+						.filter(Boolean)
+						.join(", ")}`,
+		);
 	}
 
-	const refresh = () =>
-		attempt(async () => {
-			const { added, raised } = await updateDraftFromSuggestions({
-				data: { id: o.id },
-			});
-			await router.invalidate();
-			toast.success(
-				added + raised === 0
-					? `${name} already has everything suggested`
-					: `${name}: ${[
-							added > 0 && `${formatCount(added)} added`,
-							raised > 0 && `${formatCount(raised)} raised`,
-						]
-							.filter(Boolean)
-							.join(", ")}`,
-			);
-		});
-
+	// The list moves the PO as it's cancelled, and back as Undo puts it.
 	const cancel = (status: "draft" | "sent") =>
-		attempt(() => cancelWithUndo({ ...o, status }, () => router.invalidate()));
-
-	const again = () =>
-		attempt(async () => {
-			const r = await orderPurchaseOrderAgain({ data: { id: o.id } });
-			await router.invalidate();
-			const left = [
-				r.alreadyOn > 0 && `${formatCount(r.alreadyOn)} already on it`,
-				r.moved > 0 &&
-					`${formatCount(r.moved)} now bought from another supplier`,
-			].filter(Boolean);
-			toast.success(
-				`Added ${formatCount(r.added)} ${r.added === 1 ? "product" : "products"} from ${name} to PO ${r.id}`,
-				left.length > 0
-					? { description: `Left off: ${left.join(", ")}` }
-					: undefined,
-			);
-			navigate({ to: "/purchasing/$id", params: { id: String(r.id) } });
+		cancelWithUndo({ ...o, status }, undefined, {
+			change: purchasingData.patch("all", (d) =>
+				status === "draft"
+					? withoutOrder(d, o.id)
+					: withOrder(d, cancelledRow(o)),
+			),
+			undo: purchasingData.patch("all", (d) => withOrder(d, o)),
 		});
+
+	// The new order's number is only known from the server, so this waits for
+	// the reload before it opens.
+	async function again() {
+		const r = await whileWorking(
+			`Ordering ${name} again`,
+			optimism.change({
+				send: () => orderPurchaseOrderAgain({ data: { id: o.id } }),
+			}),
+		);
+		if (!r) return;
+		const { id, added, alreadyOn, moved } = r.value;
+		const left = [
+			alreadyOn > 0 && `${formatCount(alreadyOn)} already on it`,
+			moved > 0 && `${formatCount(moved)} now bought from another supplier`,
+		].filter(Boolean);
+		toast.success(
+			`Added ${formatCount(added)} ${added === 1 ? "product" : "products"} from ${name} to PO ${id}`,
+			left.length > 0
+				? { description: `Left off: ${left.join(", ")}` }
+				: undefined,
+		);
+		navigate({ to: "/purchasing/$id", params: { id: String(id) } });
+	}
 
 	return (
 		<ContextMenuContent>

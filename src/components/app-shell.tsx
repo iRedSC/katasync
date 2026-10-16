@@ -2,6 +2,7 @@ import { Link, useLoaderData, useLocation } from "@tanstack/react-router";
 import { Menu, Search } from "lucide-react";
 import { type ReactNode, Suspense, use, useEffect, useState } from "react";
 import { openFind, pages } from "#/components/command-palette";
+import { Saving } from "#/components/saving";
 import { cn } from "#/lib/utils";
 import type { NavCounts } from "#/server/nav";
 
@@ -62,7 +63,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 					<span className="flex-1">Search</span>
 					<kbd className="rounded bg-white/10 px-1.5 text-xs">⌘ K</kbd>
 				</button>
-				<div className="hidden md:block md:w-[13rem]" />
+				<div className="hidden justify-end md:flex md:w-[13rem]">
+					<Saving className="pr-2 text-xs text-white/60" />
+				</div>
 			</header>
 
 			<div className="flex flex-1">

@@ -16,6 +16,7 @@ import { Button } from "#/components/ui/button";
 import type { CheckTarget } from "#/diagnostics/checks";
 import type { Health, Hint } from "#/diagnostics/health";
 import { channelName, formatCount, formatDateTime } from "#/lib/format";
+import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import {
 	type Diagnostics,
@@ -37,9 +38,6 @@ const HEALTH: Record<Health, { label: string; tone?: Tone }> = {
 	never_synced: { label: "Never synced" },
 	not_connected: { label: "Not connected" },
 };
-
-const errorMessage = (err: unknown) =>
-	err instanceof Error ? err.message : String(err);
 
 function ago(at: Date | string | null) {
 	if (!at) return "never";
@@ -332,22 +330,19 @@ function RunTable({ runs }: { runs: ChannelData["runs"] }) {
 }
 
 function TrackingCard({ handoffs }: { handoffs: Diagnostics["handoffs"] }) {
-	const router = useRouter();
 	const [busy, setBusy] = useState<number | null>(null);
 
-	// Retrying a dispatch retries every order in it that wasn't told.
+	// Retrying a dispatch retries every order in it that wasn't told. Sending
+	// is outside the app, so the button waits for the server and the reload.
 	async function retry(dispatchId: number) {
 		setBusy(dispatchId);
-		try {
-			const r = await resendTracking({ data: { dispatchId } });
-			if (r.sent) toast.success(r.message);
-			else toast.error(r.message);
-			await router.invalidate();
-		} catch (err) {
-			toast.error(errorMessage(err));
-		} finally {
-			setBusy(null);
-		}
+		const r = await optimism.change({
+			send: () => resendTracking({ data: { dispatchId } }),
+		});
+		setBusy(null);
+		if (!r) return;
+		if (r.value.sent) toast.success(r.value.message);
+		else toast.error(r.value.message);
 	}
 
 	return (
@@ -538,14 +533,22 @@ function useCheck(target: CheckTarget) {
 	const [running, setRunning] = useState(false);
 	async function run() {
 		setRunning(true);
-		try {
-			results.set(target, await runConnectionCheck({ data: { target } }));
-			for (const listener of listeners) listener();
-		} catch (err) {
-			toast.error(`The check couldn't run: ${errorMessage(err)}`);
-		} finally {
-			setRunning(false);
-		}
+		// The result shows as soon as the server answers; the reload comes after.
+		await optimism.change({
+			send: async () => {
+				const r = await runConnectionCheck({ data: { target } }).catch(
+					(err: unknown) => {
+						throw new Error(
+							`The check couldn't run: ${err instanceof Error ? err.message : String(err)}`,
+						);
+					},
+				);
+				results.set(target, r);
+				for (const listener of listeners) listener();
+				return r;
+			},
+		});
+		setRunning(false);
 	}
 	return { result, running, run };
 }
@@ -704,21 +707,17 @@ function StorefrontTrackingCard({
 }: {
 	rows: Diagnostics["storefrontTracking"];
 }) {
-	const router = useRouter();
 	const [busy, setBusy] = useState<number | null>(null);
 
 	async function retry(shipmentId: number) {
 		setBusy(shipmentId);
-		try {
-			const r = await retryStorefront({ data: { id: shipmentId } });
-			if (r.sent) toast.success(r.message);
-			else toast.error(r.message);
-			await router.invalidate();
-		} catch (err) {
-			toast.error(errorMessage(err));
-		} finally {
-			setBusy(null);
-		}
+		const r = await optimism.change({
+			send: () => retryStorefront({ data: { id: shipmentId } }),
+		});
+		setBusy(null);
+		if (!r) return;
+		if (r.value.sent) toast.success(r.value.message);
+		else toast.error(r.value.message);
 	}
 
 	return (

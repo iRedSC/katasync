@@ -1,22 +1,19 @@
-import {
-	createFileRoute,
-	Link,
-	useNavigate,
-	useRouter,
-} from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, PackagePlus } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import type { PurchaseOrderMatch } from "#/components/po-product-picker";
 import { ExtraSheet } from "#/components/receive/extra-sheet";
 import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
 import { receiveHead } from "#/components/receive/pwa";
 import { QuantitySheet } from "#/components/receive/quantity-sheet";
+import { Saving } from "#/components/saving";
+import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import {
 	amendPurchaseLine,
 	closePurchaseOrder,
 	getPurchaseOrder,
+	type PurchaseOrderDetail,
 	receiveExtraLine,
 	receiveLine,
 	undoPurchaseReceipt,
@@ -28,19 +25,227 @@ export const Route = createFileRoute("/receive/$id")({
 	component: ReceivePurchaseOrder,
 });
 
-const message = (err: unknown) =>
-	err instanceof Error ? err.message : String(err);
+type Receipt = Pick<
+	PurchaseOrderDetail["receipts"][number],
+	"id" | "lineId" | "quantity" | "quantityBefore" | "quantityAfter"
+>;
 
-const productName = (line: ReceiveLine) =>
-	line.variantName ? `${line.name} (${line.variantName})` : line.name;
+// What this page shows of the PO. Its own kind of data: a line made here (an
+// extra, before the reload) has only what this page shows, so the purchasing
+// page's patches can't be laid over it.
+type ReceiveOrder = {
+	order: Pick<PurchaseOrderDetail["order"], "id" | "status">;
+	supplier: Pick<PurchaseOrderDetail["supplier"], "name">;
+	lines: ReceiveLine[];
+	receipts: Receipt[];
+};
+const receiveData = optimistic<ReceiveOrder>("receive-order");
+
+// A line or receipt made here has a negative id until the server answers with
+// its own. The answers are kept, so a change made later can use the real one.
+let madeHere = 0;
+const serverIds = new Map<number, number>();
+const newId = () => {
+	madeHere++;
+	return -madeHere;
+};
+
+// The id the server knows a line or receipt by. Changes are sent in order, so
+// the change that made it has been answered by the time this is read.
+function serverId(id: number) {
+	if (id > 0) return id;
+	const real = serverIds.get(id);
+	if (real === undefined) throw new Error("An earlier change didn't save");
+	return real;
+}
+
+// The same, read when a change is made. Once the server has answered, the
+// page's data has the real id, so a patch made now must use it.
+const realId = (id: number) => serverIds.get(id) ?? id;
+
+// Whether two ids are the same line or receipt: either may be the id made
+// here or, once the server has answered, its own. Patches match with this,
+// as they may lay over data from before the reload or after it.
+const same = (a: number, b: number) => realId(a) === realId(b);
+
+const done = (l: ReceiveLine) => l.received >= l.quantity;
+
+const productName = (p: Pick<ReceiveLine, "name" | "variantName">) =>
+	p.variantName ? `${p.name} (${p.variantName})` : p.name;
+
+// Receives on a line the way receive does (see src/purchasing/orders.ts): more
+// than expected makes the line expect what came, and `last` makes it expect
+// only what came.
+function receiveOn(
+	l: ReceiveLine,
+	quantity: number,
+	last: boolean,
+): ReceiveLine {
+	const received = l.received + quantity;
+	return {
+		...l,
+		received,
+		quantity: last || received > l.quantity ? received : l.quantity,
+	};
+}
+
+// Takes a receipt back off its line, as undoReceipt does: a line that still
+// expects what the receipt made it expect goes back to what it expected before.
+function unreceiveOn(l: ReceiveLine, r: Receipt): ReceiveLine {
+	return {
+		...l,
+		received: l.received - r.quantity,
+		quantity:
+			r.quantityBefore !== null && l.quantity === r.quantityAfter
+				? r.quantityBefore
+				: l.quantity,
+	};
+}
+
+// The receipt a change makes, as the server will record it: what the line
+// expected before and after, when the receipt changed that.
+function receiptFor(
+	line: ReceiveLine,
+	quantity: number,
+	last: boolean,
+): Receipt {
+	const after = receiveOn(line, quantity, last).quantity;
+	const changed = after !== line.quantity;
+	return {
+		id: newId(),
+		lineId: line.id,
+		quantity,
+		quantityBefore: changed ? line.quantity : null,
+		quantityAfter: changed ? after : null,
+	};
+}
+
+// A line for a product the PO doesn't have yet, as receiveExtra adds it: the
+// supplier's terms, expecting nothing.
+function blankLine(match: PurchaseOrderMatch, id: number): ReceiveLine {
+	return {
+		id,
+		productId: match.productId,
+		sku: match.sku,
+		name: match.name,
+		variantName: match.variantName,
+		imageUrl: match.imageUrl,
+		unit: match.unit ?? "EACH",
+		packSize: match.packSize ?? 1,
+		quantity: 0,
+		received: 0,
+		sentQuantity: null,
+	};
+}
+
+// The PO as receiving settles it: all in closes it, and anything still short
+// keeps it open, reopening it if it was closed.
+function afterReceive(
+	order: ReceiveOrder["order"],
+	lines: ReceiveLine[],
+): ReceiveOrder["order"] {
+	return { ...order, status: lines.every(done) ? "closed" : "sent" };
+}
+
+// As undoing a receipt settles it: a closed PO that's short again reopens.
+// A sent PO is left as it is, as the server leaves it.
+function afterUndo(
+	order: ReceiveOrder["order"],
+	lines: ReceiveLine[],
+): ReceiveOrder["order"] {
+	return order.status === "closed" && !lines.every(done)
+		? { ...order, status: "sent" }
+		: order;
+}
+
+function receivePatch(
+	orderId: number,
+	lineId: number,
+	receipt: Receipt,
+	last: boolean,
+): Patch {
+	return receiveData.patch(orderId, (d) => {
+		const lines = d.lines.map((l) =>
+			same(l.id, lineId) ? receiveOn(l, receipt.quantity, last) : l,
+		);
+		return {
+			...d,
+			lines,
+			receipts: [receipt, ...d.receipts],
+			order: afterReceive(d.order, lines),
+		};
+	});
+}
+
+// Receives something that isn't on the PO, or more of something that is. Its
+// line is added here when the page doesn't have it yet.
+function extraPatch(
+	orderId: number,
+	match: PurchaseOrderMatch,
+	receipt: Receipt,
+): Patch {
+	return receiveData.patch(orderId, (d) => {
+		const lines = d.lines.some((l) => l.productId === match.productId)
+			? d.lines.map((l) =>
+					l.productId === match.productId
+						? receiveOn(l, receipt.quantity, false)
+						: l,
+				)
+			: [
+					...d.lines,
+					receiveOn(blankLine(match, receipt.lineId), receipt.quantity, false),
+				];
+		return {
+			...d,
+			lines,
+			receipts: [receipt, ...d.receipts],
+			order: afterReceive(d.order, lines),
+		};
+	});
+}
+
+// Sets what a line expects, as amendLine does. `settle` is how the PO settles
+// after it.
+function expectPatch(
+	orderId: number,
+	lineId: number,
+	quantity: number,
+	settle: typeof afterReceive,
+): Patch {
+	return receiveData.patch(orderId, (d) => {
+		const lines = d.lines.map((l) =>
+			same(l.id, lineId) ? { ...l, quantity } : l,
+		);
+		return { ...d, lines, order: settle(d.order, lines) };
+	});
+}
+
+// Takes a receipt back, off its line and out of the receipts. The page may
+// show the receipt and its line by the id made here or by the server's, as
+// the reload may or may not be in, so either matches.
+function undoReceipt(orderId: number, r: Receipt, name: string) {
+	return optimism.change({
+		label: `Taking back ${name}`,
+		patch: receiveData.patch(orderId, (d) => {
+			const lines = d.lines.map((l) =>
+				same(l.id, r.lineId) ? unreceiveOn(l, r) : l,
+			);
+			return {
+				...d,
+				lines,
+				receipts: d.receipts.filter((x) => !same(x.id, r.id)),
+				order: afterUndo(d.order, lines),
+			};
+		}),
+		send: async () => undoPurchaseReceipt({ data: { id: serverId(r.id) } }),
+	});
+}
 
 function ReceivePurchaseOrder() {
-	const { order, supplier, lines, receipts } = Route.useLoaderData();
-	const router = useRouter();
+	const loaded = Route.useLoaderData();
+	const d = receiveData.useData(loaded.order.id, loaded);
 	const navigate = useNavigate();
-	// The line whose request is in flight. Everything is locked meanwhile, so a
-	// double tap can't receive twice and a reload can't race a write.
-	const [busyLine, setBusyLine] = useState<number | null>(null);
+	const { order, supplier, lines, receipts } = d;
 	const [sheetLineId, setSheetLineId] = useState<number | null>(null);
 	// Something that isn't on the PO: finding it, then counting it.
 	const [extra, setExtra] = useState<
@@ -51,114 +256,141 @@ function ReceivePurchaseOrder() {
 	// A closed PO can still take back a mis-tapped receipt, and take
 	// something else that was in the box.
 	const undoable = open || order.status === "closed";
-	const done = (l: ReceiveLine) => l.received >= l.quantity;
 	const allDone = lines.length > 0 && lines.every(done);
 	// Unfinished lines first; the rest sink to the bottom.
 	const sorted = [...lines.filter((l) => !done(l)), ...lines.filter(done)];
-	const sheetLine = lines.find((l) => l.id === sheetLineId);
+	const sheetLine =
+		sheetLineId === null
+			? undefined
+			: lines.find((l) => same(l.id, sheetLineId));
 
-	async function run(lineId: number, work: () => Promise<void>) {
-		if (busyLine !== null) return;
-		setBusyLine(lineId);
-		try {
-			await work();
-			await router.invalidate();
-		} catch (err) {
-			toast.error(message(err));
-		} finally {
-			setBusyLine(null);
-		}
+	// Received on the spot: the line shows it at once, and the server gets it
+	// in order. Undo is offered once the server has it.
+	async function receive(line: ReceiveLine, quantity: number, last = false) {
+		navigator.vibrate?.(10);
+		setSheetLineId(null);
+		const name = productName(line);
+		const receipt = receiptFor(line, quantity, last);
+		const r = await optimism.change({
+			label: `Receiving ${name}`,
+			patch: receivePatch(order.id, line.id, receipt, last),
+			send: async () => {
+				const result = await receiveLine({
+					data: { lineId: await serverId(line.id), quantity, last },
+				});
+				serverIds.set(receipt.id, result.receiptId);
+				return result;
+			},
+		});
+		if (!r) return;
+		const unit = line.packSize === 1 ? "" : ` ${line.unit}`;
+		const total = line.received + quantity;
+		const note =
+			total > line.quantity
+				? " The PO keeps the extra."
+				: last && total < line.quantity
+					? " Not waiting for the rest."
+					: "";
+		offerUndo(`Received ${quantity}${unit} × ${name}.${note}`, {
+			tone: "success",
+			undo: async () => {
+				const u = await undoReceipt(order.id, receipt, name);
+				return u && `Undid ${name}`;
+			},
+		});
 	}
 
-	// Not through run: it shows its own errors, and offerUndo needs to see them.
-	const undo = async (line: ReceiveLine, receiptId: number) => {
-		await undoPurchaseReceipt({ data: { id: receiptId } });
-		await router.invalidate();
-		return `Undid ${productName(line)}`;
-	};
-
-	const receive = (line: ReceiveLine, quantity: number, last = false) =>
-		run(line.id, async () => {
-			const result = await receiveLine({
-				data: { lineId: line.id, quantity, last },
-			});
-			navigator.vibrate?.(10);
-			setSheetLineId(null);
-			const unit = line.packSize === 1 ? "" : ` ${line.unit}`;
-			const total = line.received + quantity;
-			const note =
-				total > line.quantity
-					? " The PO keeps the extra."
-					: last && total < line.quantity
-						? " Not waiting for the rest."
-						: "";
-			offerUndo(`Received ${quantity}${unit} × ${productName(line)}.${note}`, {
-				tone: "success",
-				undo: () => undo(line, result.receiptId),
-			});
-		});
-
 	// Stops waiting for what's left of a line, receiving none of it.
-	const noneCame = (line: ReceiveLine) =>
-		run(line.id, async () => {
-			const { was } = await amendPurchaseLine({
-				data: { lineId: line.id, quantity: line.received },
-			});
-			setSheetLineId(null);
-			offerUndo(`Not waiting for ${productName(line)}`, {
-				undo: async () => {
-					await amendPurchaseLine({
-						data: { lineId: line.id, quantity: was.quantity },
-					});
-					await router.invalidate();
-					return `Waiting for ${productName(line)} again`;
-				},
-			});
+	async function noneCame(line: ReceiveLine) {
+		setSheetLineId(null);
+		const name = productName(line);
+		const was = line.quantity;
+		const r = await optimism.change({
+			label: `Not waiting for ${name}`,
+			patch: expectPatch(order.id, line.id, line.received, afterReceive),
+			send: async () =>
+				amendPurchaseLine({
+					data: {
+						lineId: await serverId(line.id),
+						quantity: line.received,
+					},
+				}),
 		});
+		if (!r) return;
+		offerUndo(`Not waiting for ${name}`, {
+			undo: async () => {
+				const u = await optimism.change({
+					label: `Waiting for ${name} again`,
+					patch: expectPatch(order.id, realId(line.id), was, afterUndo),
+					send: async () =>
+						amendPurchaseLine({
+							data: { lineId: await serverId(line.id), quantity: was },
+						}),
+				});
+				return u && `Waiting for ${name} again`;
+			},
+		});
+	}
 
 	function pickExtra(match: PurchaseOrderMatch) {
 		// Already on an open PO: count it on its own line. A closed PO takes
 		// it as extra, which reopens and settles it in one go.
-		if (match.lineId !== null && open) {
+		const onPage = lines.find((l) => l.productId === match.productId);
+		if (onPage && open) {
 			setExtra(null);
-			setSheetLineId(match.lineId);
+			setSheetLineId(onPage.id);
 			return;
 		}
 		setExtra({ step: "count", match });
 	}
 
-	const receiveExtra = (match: PurchaseOrderMatch, quantity: number) =>
-		run(-match.productId, async () => {
-			const result = await receiveExtraLine({
-				data: {
-					purchaseOrderId: order.id,
-					productId: match.productId,
-					quantity,
-				},
-			});
-			navigator.vibrate?.(10);
-			setExtra(null);
-			const name = match.variantName
-				? `${match.name} (${match.variantName})`
-				: match.name;
-			offerUndo(`Added and received ${quantity} × ${name}`, {
-				tone: "success",
-				undo: async () => {
-					await undoPurchaseReceipt({ data: { id: result.receiptId } });
-					await router.invalidate();
-					return `Undid ${name}`;
-				},
-			});
+	// Something in the box that isn't on the PO, or more of something that is.
+	// On a closed PO it reopens, as receiveExtra does.
+	async function receiveExtra(match: PurchaseOrderMatch, quantity: number) {
+		navigator.vibrate?.(10);
+		setExtra(null);
+		const name = productName(match);
+		const line =
+			lines.find((l) => l.productId === match.productId) ??
+			blankLine(match, newId());
+		const receipt = receiptFor(line, quantity, false);
+		const r = await optimism.change({
+			label: `Receiving ${name}`,
+			patch: extraPatch(order.id, match, receipt),
+			send: async () => {
+				const result = await receiveExtraLine({
+					data: {
+						purchaseOrderId: order.id,
+						productId: match.productId,
+						quantity,
+					},
+				});
+				serverIds.set(line.id, result.lineId);
+				serverIds.set(receipt.id, result.receiptId);
+				return result;
+			},
 		});
+		if (!r) return;
+		offerUndo(`Added and received ${quantity} × ${name}`, {
+			tone: "success",
+			undo: async () => {
+				const u = await undoReceipt(order.id, receipt, name);
+				return u && `Undid ${name}`;
+			},
+		});
+	}
 
-	async function closeOrder() {
+	function closeOrder() {
 		if (!confirm("Stop waiting for the rest?")) return;
-		try {
-			await closePurchaseOrder({ data: { id: order.id } });
-			await navigate({ to: "/receive" });
-		} catch (err) {
-			toast.error(message(err));
-		}
+		void optimism.change({
+			label: `PO ${order.id}`,
+			patch: receiveData.patch(order.id, (d) => ({
+				...d,
+				order: { ...d.order, status: "closed" },
+			})),
+			send: () => closePurchaseOrder({ data: { id: order.id } }),
+		});
+		void navigate({ to: "/receive" });
 	}
 
 	return (
@@ -177,6 +409,7 @@ function ReceivePurchaseOrder() {
 					</h1>
 					<p className="text-lg leading-tight text-muted-foreground">
 						PO {order.id}
+						<Saving className="ml-3 text-base text-muted-foreground" />
 					</p>
 				</div>
 			</header>
@@ -212,8 +445,6 @@ function ReceivePurchaseOrder() {
 						line={line}
 						locked={!undoable}
 						canReceive={open}
-						busy={busyLine !== null}
-						receiving={busyLine === line.id}
 						onReceive={(quantity) => receive(line, quantity)}
 						onHold={() => setSheetLineId(line.id)}
 					/>
@@ -249,16 +480,15 @@ function ReceivePurchaseOrder() {
 					canReceive={open}
 					remaining={Math.max(sheetLine.quantity - sheetLine.received, 0)}
 					lastReceipt={
-						receipts.find((r) => r.lineId === sheetLine.id)?.quantity ?? null
+						receipts.find((r) => same(r.lineId, sheetLine.id))?.quantity ?? null
 					}
-					busy={busyLine !== null}
 					onConfirm={(quantity, last) => receive(sheetLine, quantity, last)}
 					onNoneCame={() => noneCame(sheetLine)}
 					onUndo={() => {
-						const last = receipts.find((r) => r.lineId === sheetLine.id);
+						const last = receipts.find((r) => same(r.lineId, sheetLine.id));
 						if (!last) return;
 						setSheetLineId(null);
-						undo(sheetLine, last.id);
+						void undoReceipt(order.id, last, productName(sheetLine));
 					}}
 					onClose={() => setSheetLineId(null)}
 				/>
@@ -274,11 +504,7 @@ function ReceivePurchaseOrder() {
 			{extra?.step === "count" && (
 				<QuantitySheet
 					key={`extra${extra.match.productId}`}
-					title={
-						extra.match.variantName
-							? `${extra.match.name} (${extra.match.variantName})`
-							: extra.match.name
-					}
+					title={productName(extra.match)}
 					unit={
 						extra.match.packSize && extra.match.packSize > 1
 							? (extra.match.unit ?? undefined)
@@ -288,7 +514,6 @@ function ReceivePurchaseOrder() {
 					remaining={0}
 					extra={extra.match.lineId === null}
 					lastReceipt={null}
-					busy={busyLine !== null}
 					onConfirm={(quantity) => receiveExtra(extra.match, quantity)}
 					onUndo={() => {}}
 					onClose={() => setExtra(null)}

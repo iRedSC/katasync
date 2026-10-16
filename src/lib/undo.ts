@@ -8,8 +8,9 @@ import { type ExternalToast, toast } from "sonner";
 
 type Undo = {
 	toastId: string | number;
-	// Says what was undone, shown once it is.
-	run: () => Promise<string>;
+	// Says what was undone, shown once it is. Null when it failed and has
+	// already said why.
+	run: () => Promise<string | null>;
 	used: boolean;
 };
 
@@ -44,7 +45,8 @@ async function runUndo(entry: Undo) {
 	if (armed === entry) armed = null;
 	toast.dismiss(entry.toastId);
 	try {
-		toast(await entry.run());
+		const done = await entry.run();
+		if (done !== null) toast(done);
 	} catch (err) {
 		toast.error(err instanceof Error ? err.message : String(err));
 	}

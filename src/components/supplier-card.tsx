@@ -1,10 +1,15 @@
-import { Link, useRouter } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "#/components/page";
-import { PurchaseUnitCell } from "#/components/purchase-unit";
+import {
+	type PurchaseTerms,
+	PurchaseUnitCell,
+} from "#/components/purchase-unit";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
+import { optimism, type Patch } from "#/lib/optimism";
+import { perPack } from "#/purchasing/pack";
 import {
 	type getProductSupplier,
 	listSuppliers,
@@ -14,18 +19,33 @@ import {
 } from "#/server/purchasing";
 
 type ProductSupplier = Awaited<ReturnType<typeof getProductSupplier>>;
+type SupplierLink = NonNullable<ProductSupplier["link"]>;
 
 // Who a product is bought from, and the POs it's on. Products without a
 // supplier are never suggested for reordering, so setting one is right here.
+// `patch` says how a change shows on the page the card is on: it gets the link
+// as it will be and returns the change for it. Without it, changes wait for
+// the server.
 export function SupplierCard({
 	productId,
 	data,
+	patch,
 }: {
 	productId: number;
 	data: ProductSupplier;
+	patch?: (link: SupplierLink | null) => { label: string; patch: Patch };
 }) {
 	const [editing, setEditing] = useState(false);
 	const { link, open, units } = data;
+
+	// The cell makes the change; this is just the server call, and the patch
+	// that shows it here.
+	const saveTerms = (terms: PurchaseTerms) =>
+		setProductPurchaseUnit({ data: { productId, ...terms } });
+	const patchTerms =
+		link && patch
+			? (terms: PurchaseTerms) => patch(termsLink(link, terms)).patch
+			: undefined;
 
 	return (
 		<Card
@@ -46,6 +66,7 @@ export function SupplierCard({
 				<SupplierForm
 					productId={productId}
 					link={link}
+					patch={patch}
 					onDone={() => setEditing(false)}
 				/>
 			) : link ? (
@@ -61,10 +82,7 @@ export function SupplierCard({
 							value={link}
 							cost={link.cost}
 							units={units.map((u) => u.name)}
-							saving={{
-								save: (terms) =>
-									setProductPurchaseUnit({ data: { productId, ...terms } }),
-							}}
+							saving={{ save: saveTerms, patch: patchTerms }}
 						/>
 					</dd>
 					<dt className="text-muted-foreground">Price</dt>
@@ -108,19 +126,33 @@ export function SupplierCard({
 	);
 }
 
+// The link once its terms are saved. The server also converts the price to
+// the new pack size.
+function termsLink(link: SupplierLink, terms: PurchaseTerms): SupplierLink {
+	return {
+		...link,
+		...terms,
+		cost:
+			link.cost === null
+				? null
+				: perPack(link.cost, link.packSize, terms.packSize),
+	};
+}
+
 const input =
 	"h-8 w-full rounded-lg border border-input bg-white px-2 outline-none focus:border-ring";
 
 function SupplierForm({
 	productId,
 	link,
+	patch,
 	onDone,
 }: {
 	productId: number;
-	link: ProductSupplier["link"];
+	link: SupplierLink | null;
+	patch?: (link: SupplierLink | null) => { label: string; patch: Patch };
 	onDone: () => void;
 }) {
-	const router = useRouter();
 	const [suppliers, setSuppliers] = useState<SupplierRow[] | null>(null);
 	const [busy, setBusy] = useState(false);
 	if (suppliers === null) listSuppliers().then(setSuppliers);
@@ -130,25 +162,42 @@ function SupplierForm({
 		const f = new FormData(e.currentTarget);
 		const supplierId = Number(f.get("supplierId")) || null;
 		const cost = String(f.get("cost") ?? "").trim();
-		setBusy(true);
-		try {
-			await setProductSupplier({
+		const price = cost === "" ? null : Number(cost);
+		if (price !== null && !(Number.isFinite(price) && price >= 0))
+			return toast.error(`"${cost}" isn't a price`);
+		const supplierSku = String(f.get("supplierSku") ?? "");
+		const picked = suppliers?.find((s) => s.supplier.id === supplierId);
+		if (supplierId !== null && !picked) return toast.error("Pick a supplier");
+
+		// As the server saves it. A new supplier keeps the terms the link had,
+		// and a new link starts at the defaults.
+		const next: SupplierLink | null = picked
+			? {
+					supplierId: picked.supplier.id,
+					supplierName: picked.supplier.name,
+					supplierSku: supplierSku.trim() || null,
+					cost: price,
+					unit: link?.unit ?? "EACH",
+					packSize: link?.packSize ?? 1,
+					minimumQuantity: link?.minimumQuantity ?? 1,
+				}
+			: null;
+		const send = () =>
+			setProductSupplier({
 				data: {
 					productId,
 					supplierId,
-					...(supplierId && {
-						supplierSku: String(f.get("supplierSku") ?? ""),
-						cost: cost === "" ? null : Number(cost),
-					}),
+					...(supplierId && { supplierSku, cost: price }),
 				},
 			});
-			await router.invalidate();
-			onDone();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-		}
+
+		const laid = patch?.(next);
+		// A change that shows at once closes the form now; otherwise it waits.
+		if (laid) onDone();
+		else setBusy(true);
+		const r = await optimism.change(laid ? { ...laid, send } : { send });
+		setBusy(false);
+		if (r && !laid) onDone();
 	}
 
 	return (

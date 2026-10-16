@@ -4,7 +4,23 @@ import { cn } from "#/lib/utils";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { holdable, useLongPress } from "./use-long-press";
 
-export type ReceiveLine = PurchaseOrderDetail["lines"][number];
+// What the receive page shows of a line. Narrower than the PO's line, so a line
+// that's only on this page (an extra, before the reload) can be made from a
+// search match.
+export type ReceiveLine = Pick<
+	PurchaseOrderDetail["lines"][number],
+	| "id"
+	| "productId"
+	| "sku"
+	| "name"
+	| "variantName"
+	| "imageUrl"
+	| "unit"
+	| "packSize"
+	| "quantity"
+	| "received"
+	| "sentQuantity"
+>;
 
 // One product on the PO. Tap the big button to receive what's left; hold it
 // for a different amount. Finished lines, and every line of a closed PO, open
@@ -13,8 +29,6 @@ export function LineRow({
 	line,
 	locked,
 	canReceive,
-	busy,
-	receiving,
 	onReceive,
 	onHold,
 }: {
@@ -23,10 +37,6 @@ export function LineRow({
 	locked: boolean;
 	// The PO is waiting on a delivery.
 	canReceive: boolean;
-	// Some request is in flight; nothing can be tapped until it lands.
-	busy: boolean;
-	// This line's request is the one in flight.
-	receiving: boolean;
 	onReceive: (quantity: number) => void;
 	onHold: () => void;
 }) {
@@ -35,7 +45,6 @@ export function LineRow({
 	const unit = line.packSize === 1 ? "" : ` ${line.unit}`;
 	const done = remaining === 0 || !canReceive;
 	const press = useLongPress({
-		disabled: busy,
 		onPress: () => (done ? onHold() : onReceive(remaining)),
 		onLongPress: onHold,
 	});
@@ -93,7 +102,6 @@ export function LineRow({
 			{!locked && (
 				<button
 					type="button"
-					disabled={busy}
 					{...press}
 					className={cn(
 						holdable,
@@ -101,7 +109,6 @@ export function LineRow({
 						done
 							? "bg-success-fill text-success-text opacity-60"
 							: "bg-primary text-primary-foreground active:bg-primary-hover",
-						busy && "opacity-40",
 					)}
 				>
 					{done ? (
@@ -115,8 +122,6 @@ export function LineRow({
 						) : (
 							`${remaining}${unit} never came`
 						)
-					) : receiving ? (
-						"Receiving…"
 					) : (
 						`Receive ${remaining}${unit}`
 					)}

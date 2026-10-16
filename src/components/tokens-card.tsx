@@ -1,48 +1,51 @@
-import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import { formatDay } from "#/lib/format";
+import { optimism, optimistic } from "#/lib/optimism";
 import { createToken, type listTokens, revokeToken } from "#/server/auth";
 
 type Token = Awaited<ReturnType<typeof listTokens>>[number];
 
-const message = (err: unknown) =>
-	err instanceof Error ? err.message : String(err);
+// Revoking shows at once, from this list.
+export const tokensData = optimistic<Token[]>("tokens");
 
 // API tokens for Claude and other MCP clients. A new token is shown once,
 // with the command that connects Claude Code to katasync.
 export function TokensCard({ tokens }: { tokens: Token[] }) {
-	const router = useRouter();
 	const [naming, setNaming] = useState(false);
+	const [making, setMaking] = useState(false);
 	const [made, setMade] = useState<{ token: string; endpoint: string } | null>(
 		null,
 	);
 
+	// The token comes back from the server, so the form waits for it.
 	async function create(e: FormEvent<HTMLFormElement>) {
 		e.preventDefault();
 		const form = new FormData(e.currentTarget);
 		const name = String(form.get("name") ?? "");
 		const canWrite = form.get("access") === "write";
-		try {
-			setMade(await createToken({ data: { name, canWrite } }));
-			setNaming(false);
-			await router.invalidate();
-		} catch (err) {
-			toast.error(message(err));
-		}
+		setMaking(true);
+		const r = await optimism.change({
+			send: () => createToken({ data: { name, canWrite } }),
+		});
+		setMaking(false);
+		if (!r) return;
+		setMade(r.value);
+		setNaming(false);
 	}
 
 	async function revoke(t: Token) {
 		if (!confirm(`Revoke ${t.name}? Anything using it stops working.`)) return;
-		try {
-			await revokeToken({ data: { id: t.id } });
-			await router.invalidate();
-			toast.success(`Revoked ${t.name}`);
-		} catch (err) {
-			toast.error(message(err));
-		}
+		const r = await optimism.change({
+			label: `Revoking ${t.name}`,
+			patch: tokensData.patch("all", (list) =>
+				list.filter((x) => x.id !== t.id),
+			),
+			send: () => revokeToken({ data: { id: t.id } }),
+		});
+		if (r) toast.success(`Revoked ${t.name}`);
 	}
 
 	const command =
@@ -81,8 +84,8 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 						<option value="write">Can make changes</option>
 						<option value="read">Read only</option>
 					</select>
-					<Button type="submit" size="sm">
-						Make
+					<Button type="submit" size="sm" disabled={making}>
+						{making ? "Making…" : "Make"}
 					</Button>
 					<Button
 						type="button"

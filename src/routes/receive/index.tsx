@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Check, ChevronRight, RefreshCw } from "lucide-react";
 import { receiveHead } from "#/components/receive/pwa";
+import { Saving } from "#/components/saving";
 import { cn } from "#/lib/utils";
 import { listReceivable } from "#/server/purchasing";
 
@@ -23,15 +24,18 @@ function Receive() {
 		<main className="mx-auto min-h-svh max-w-xl bg-background px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
 			<header className="flex items-center justify-between py-2">
 				<h1 className="text-3xl font-bold">Receiving</h1>
-				{/* The installed app has no browser reload button. */}
-				<button
-					type="button"
-					aria-label="Refresh"
-					onClick={() => router.invalidate()}
-					className="flex size-14 items-center justify-center rounded-full bg-card shadow-card active:bg-surface-strong"
-				>
-					<RefreshCw className="size-6" />
-				</button>
+				<div className="flex items-center gap-3">
+					<Saving className="text-base text-muted-foreground" />
+					{/* The installed app has no browser reload button. */}
+					<button
+						type="button"
+						aria-label="Refresh"
+						onClick={() => router.invalidate()}
+						className="flex size-14 items-center justify-center rounded-full bg-card shadow-card active:bg-surface-strong"
+					>
+						<RefreshCw className="size-6" />
+					</button>
+				</div>
 			</header>
 
 			{orders.length === 0 ? (

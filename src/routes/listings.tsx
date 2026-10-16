@@ -1,4 +1,4 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { Copy, Link2, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -28,6 +28,7 @@ import {
 import { copyText } from "#/lib/copy";
 import { channelName, formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { optimism, optimistic } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import {
 	createListingProduct,
@@ -43,43 +44,57 @@ export const Route = createFileRoute("/listings")({
 
 type Listing = Awaited<ReturnType<typeof listUnmappedListings>>[number];
 
+// Matching a listing or making it a product takes it off this list at once.
+const listingsData = optimistic<Listing[]>("listings");
+
 function Listings() {
-	const rows = Route.useLoaderData();
-	const router = useRouter();
+	const rows = listingsData.useData("all", Route.useLoaderData());
 	const [selected, setSelected] = useState(0);
 	const [matching, setMatching] = useState<Listing | null>(null);
-	const [busy, setBusy] = useState<number | null>(null);
 	const [menuFor, setMenuFor] = useState<Listing | null>(null);
 
 	useEffect(() => {
 		setSelected((i) => Math.min(i, Math.max(rows.length - 1, 0)));
 	}, [rows.length]);
 
-	async function done(
+	// The listing is mapped by the server, so it leaves the list. If the server
+	// refuses, it comes back and the engine says why.
+	async function resolve(
 		listing: Listing,
-		action: Promise<{ sku: string; ordersUpdated: number }>,
-		verb: string,
+		{
+			label,
+			verb,
+			send,
+		}: {
+			label: string;
+			verb: string;
+			send: () => Promise<{ sku: string; ordersUpdated: number }>;
+		},
 	) {
-		setBusy(listing.id);
-		try {
-			const { sku, ordersUpdated } = await action;
-			await router.invalidate();
-			toast.success(`${verb} ${sku}`, {
-				description:
-					ordersUpdated > 0
-						? `${formatCount(ordersUpdated)} past order ${ordersUpdated === 1 ? "line" : "lines"} updated`
-						: listing.title,
-			});
-		} catch (error) {
-			toast.error(error instanceof Error ? error.message : String(error));
-		} finally {
-			setBusy(null);
-		}
+		const r = await optimism.change({
+			label,
+			patch: listingsData.patch("all", (list) =>
+				list.filter((l) => l.id !== listing.id),
+			),
+			send,
+		});
+		if (!r) return;
+		const { sku, ordersUpdated } = r.value;
+		toast.success(`${verb} ${sku}`, {
+			description:
+				ordersUpdated > 0
+					? `${formatCount(ordersUpdated)} past order ${ordersUpdated === 1 ? "line" : "lines"} updated`
+					: listing.title,
+		});
 	}
 
 	const create = (l: Listing | undefined) =>
 		l &&
-		done(l, createListingProduct({ data: { listingId: l.id } }), "Created");
+		resolve(l, {
+			label: `Creating ${l.title}`,
+			verb: "Created",
+			send: () => createListingProduct({ data: { listingId: l.id } }),
+		});
 
 	useHotkeys({
 		j: () => setSelected((i) => Math.min(i + 1, rows.length - 1)),
@@ -136,16 +151,11 @@ function Listings() {
 												<Button
 													variant="outline"
 													size="sm"
-													disabled={busy === l.id}
 													onClick={() => setMatching(l)}
 												>
 													Match existing
 												</Button>
-												<Button
-													size="sm"
-													disabled={busy === l.id}
-													onClick={() => create(l)}
-												>
+												<Button size="sm" onClick={() => create(l)}>
 													Create product
 												</Button>
 											</div>
@@ -156,7 +166,6 @@ function Listings() {
 							{menuFor && (
 								<ListingMenu
 									listing={menuFor}
-									busy={busy === menuFor.id}
 									onMatch={() => setMatching(menuFor)}
 									onCreate={() => create(menuFor)}
 								/>
@@ -174,11 +183,11 @@ function Listings() {
 				onClose={() => setMatching(null)}
 				onPick={(listing, sku) => {
 					setMatching(null);
-					done(
-						listing,
-						matchListing({ data: { listingId: listing.id, sku } }),
-						"Matched to",
-					);
+					resolve(listing, {
+						label: `Matching ${listing.title}`,
+						verb: "Matched to",
+						send: () => matchListing({ data: { listingId: listing.id, sku } }),
+					});
 				}}
 			/>
 		</Page>
@@ -188,22 +197,20 @@ function Listings() {
 // The same actions as the row's buttons, plus copying its SKU.
 function ListingMenu({
 	listing,
-	busy,
 	onMatch,
 	onCreate,
 }: {
 	listing: Listing;
-	busy: boolean;
 	onMatch: () => void;
 	onCreate: () => void;
 }) {
 	return (
 		<ContextMenuContent>
-			<ContextMenuItem disabled={busy} onSelect={onMatch} shortcut="M">
+			<ContextMenuItem onSelect={onMatch} shortcut="M">
 				<Link2 />
 				Match to existing product…
 			</ContextMenuItem>
-			<ContextMenuItem disabled={busy} onSelect={onCreate} shortcut="C">
+			<ContextMenuItem onSelect={onCreate} shortcut="C">
 				<Plus />
 				Create product
 			</ContextMenuItem>

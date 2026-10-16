@@ -2,7 +2,6 @@ import {
 	createFileRoute,
 	useLocation,
 	useNavigate,
-	useRouter,
 } from "@tanstack/react-router";
 import { type } from "arktype";
 import {
@@ -49,6 +48,7 @@ import {
 import { copyText } from "#/lib/copy";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
@@ -77,6 +77,31 @@ import {
 	undoAddToPurchaseOrder,
 } from "#/server/purchasing";
 import { deleteView, listViews, saveView } from "#/server/views";
+
+// What the page loads. The optimistic patches below lay changes over it until
+// the reload shows them.
+const loadPage = async () => {
+	const [products, views] = await Promise.all([listProducts(), listViews()]);
+	return { ...products, views };
+};
+type ProductsPage = Awaited<ReturnType<typeof loadPage>>;
+const productsData = optimistic<ProductsPage>("products");
+
+// A change to one product's row on the list.
+function patchProduct(
+	productId: number,
+	change: (p: ProductRow) => ProductRow,
+): Patch {
+	return productsData.patch("all", (d) => ({
+		...d,
+		products: d.products.map((p) => (p.id === productId ? change(p) : p)),
+	}));
+}
+
+// A change to the saved views, which the tabs and the Save buttons show.
+function patchViews(change: (views: View[]) => View[]): Patch {
+	return productsData.patch("all", (d) => ({ ...d, views: change(d.views) }));
+}
 
 // The URL holds the chips and sort, so links (like Home's "Oversold") and the
 // back button work. `view` is the saved view they came from, so it can be
@@ -114,10 +139,7 @@ export const Route = createFileRoute("/products/")({
 			layout: search.layout === "table" ? "table" : undefined,
 		};
 	},
-	loader: async () => {
-		const [products, views] = await Promise.all([listProducts(), listViews()]);
-		return { ...products, views };
-	},
+	loader: loadPage,
 	component: Products,
 });
 
@@ -243,7 +265,8 @@ function Products() {
 }
 
 function ProductList() {
-	const { products, views } = Route.useLoaderData();
+	const loaded = Route.useLoaderData();
+	const { products, views } = productsData.useData("all", loaded);
 	const search = Route.useSearch();
 	// The router hands back a new array on every render, so key it by content:
 	// otherwise each render would count as a change, resetting the selection
@@ -254,7 +277,6 @@ function ProductList() {
 	const sort = search.sort ?? "name";
 	const current = { filters, sort };
 	const navigate = useNavigate({ from: Route.fullPath });
-	const router = useRouter();
 	const input = useRef<HTMLInputElement>(null);
 	// The box answers keystrokes from here; the URL keeps a copy for when the
 	// user comes back to this entry.
@@ -272,6 +294,9 @@ function ProductList() {
 	// The product the right-click menu acts on.
 	const [menuFor, setMenuFor] = useState<ProductRow | null>(null);
 	const [editing, setEditing] = useState<"new" | View | null>(null);
+	// Products whose add to a PO is on its way. Not patched, since the PO it
+	// lands on comes from the server, so the Add waits for it.
+	const [adding, setAdding] = useState<ReadonlySet<number>>(() => new Set());
 
 	// The tab to highlight: the view these came from, else any view that
 	// matches exactly, else All when nothing is filtered.
@@ -283,7 +308,7 @@ function ProductList() {
 
 	// When this load's trust and counts were worked out against.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a new load is a new now
-	const now = useMemo(() => new Date(), [products]);
+	const now = useMemo(() => new Date(), [loaded]);
 	const state = useMemo(
 		() => new Map(products.map((p) => [p.id, stateOf(p, now)])),
 		[products, now],
@@ -573,6 +598,7 @@ function ProductList() {
 											product={menuFor}
 											onOpen={open}
 											onAddToPo={addToPo}
+											adding={adding}
 											onCount={countStock}
 										/>
 									)}
@@ -591,6 +617,7 @@ function ProductList() {
 											now={now}
 											onOpen={() => open(p)}
 											onMenu={() => setMenuFor(p)}
+											busy={adding.has(p.id)}
 											onOrder={() => addToPo(p)}
 											onCount={() => countStock(p)}
 										/>
@@ -602,6 +629,7 @@ function ProductList() {
 									product={menuFor}
 									onOpen={open}
 									onAddToPo={addToPo}
+									adding={adding}
 									onCount={countStock}
 								/>
 							)}
@@ -648,73 +676,95 @@ function ProductList() {
 	);
 
 	async function addToPo(p: ProductRow) {
-		try {
-			const { added, purchaseOrderId, supplierName, line } =
-				await addToPurchaseOrder({
+		setAdding((ids) => new Set(ids).add(p.id));
+		// Not patched: the PO it lands on comes from the server, and may be a new draft.
+		const r = await optimism.change({
+			send: () =>
+				addToPurchaseOrder({
 					data: { productId: p.id, quantity: p.reorder?.quantity },
-				});
-			await router.invalidate();
-			if (!added) {
-				toast(
-					`${p.sku} is already on PO ${purchaseOrderId}: ${formatOrderQuantity(line)}`,
-				);
-				return;
-			}
-			offerUndo(
-				`Added ${formatOrderQuantity(line)} to PO ${purchaseOrderId} (${supplierName})`,
-				{
-					tone: "success",
-					undo: async () => {
-						const undone = await undoAddToPurchaseOrder({
-							data: { purchaseOrderId, line },
-						});
-						await router.invalidate();
-						return undone
-							? `Took ${p.sku} off PO ${purchaseOrderId}`
-							: `${p.sku} on PO ${purchaseOrderId} changed since, so it's left as is`;
-					},
-				},
+				}),
+		});
+		setAdding((ids) => new Set([...ids].filter((id) => id !== p.id)));
+		if (!r) return;
+		const { added, purchaseOrderId, supplierName, line } = r.value;
+		if (!added) {
+			toast(
+				`${p.sku} is already on PO ${purchaseOrderId}: ${formatOrderQuantity(line)}`,
 			);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
+			return;
 		}
+		offerUndo(
+			`Added ${formatOrderQuantity(line)} to PO ${purchaseOrderId} (${supplierName})`,
+			{
+				tone: "success",
+				undo: async () => {
+					const undone = await optimism.change({
+						label: `Taking ${p.sku} off PO ${purchaseOrderId}`,
+						patch: patchProduct(p.id, (x) => ({ ...x, draft: null })),
+						send: () =>
+							undoAddToPurchaseOrder({ data: { purchaseOrderId, line } }),
+					});
+					return (
+						undone &&
+						(undone.value
+							? `Took ${p.sku} off PO ${purchaseOrderId}`
+							: `${p.sku} on PO ${purchaseOrderId} changed since, so it's left as is`)
+					);
+				},
+			},
+		);
 	}
 
 	async function countStock(p: ProductRow) {
-		try {
-			const added = await requestCount({ data: { productId: p.id } });
-			if (added.length === 0) {
-				toast(`${p.sku} is already on the count list`);
-
-				return;
-			}
-			await router.invalidate();
-			offerUndo(`Added ${p.sku} to the count list`, {
-				tone: "success",
-				undo: async () => {
-					const cancelled = await cancelCountRequest({
-						data: { requests: added },
-					});
-					await router.invalidate();
-					return cancelled < added.length
-						? `${p.sku}'s count request changed since, so it's left as is`
-						: `Took ${p.sku} off the count list`;
-				},
-			});
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
+		const r = await optimism.change({
+			label: `Count request for ${p.sku}`,
+			patch: patchProduct(p.id, (x) => ({ ...x, countRequested: true })),
+			send: () => requestCount({ data: { productId: p.id } }),
+		});
+		if (!r) return;
+		const added = r.value;
+		if (added.length === 0) {
+			toast(`${p.sku} is already on the count list`);
+			return;
 		}
+		offerUndo(`Added ${p.sku} to the count list`, {
+			tone: "success",
+			undo: async () => {
+				const cancelled = await optimism.change({
+					label: `Taking ${p.sku} off the count list`,
+					patch: patchProduct(p.id, (x) => ({ ...x, countRequested: false })),
+					send: () => cancelCountRequest({ data: { requests: added } }),
+				});
+				return (
+					cancelled &&
+					(cancelled.value < added.length
+						? `${p.sku}'s count request changed since, so it's left as is`
+						: `Took ${p.sku} off the count list`)
+				);
+			},
+		});
 	}
 
 	async function updateView(v: View) {
-		await saveView({ data: { id: v.id, name: v.name, ...current } });
-		await router.invalidate();
+		const r = await optimism.change({
+			label: `Saving “${v.name}”`,
+			patch: patchViews((views) =>
+				views.map((x) => (x.id === v.id ? { ...x, ...current } : x)),
+			),
+			send: () => saveView({ data: { id: v.id, name: v.name, ...current } }),
+		});
+		if (!r) return;
 		offerUndo(`Saved “${v.name}”`, {
 			tone: "success",
 			undo: async () => {
-				await saveView({ data: v });
-				await router.invalidate();
-				return `“${v.name}” back as it was`;
+				const back = await optimism.change({
+					label: `Putting “${v.name}” back`,
+					patch: patchViews((views) =>
+						views.map((x) => (x.id === v.id ? v : x)),
+					),
+					send: () => saveView({ data: v }),
+				});
+				return back && `“${v.name}” back as it was`;
 			},
 		});
 	}
@@ -786,41 +836,59 @@ function ViewDialog({
 	onSaved: (id: number) => void;
 	onDeleted: () => void;
 }) {
-	const router = useRouter();
 	const [name, setName] = useState(view?.name ?? "");
-	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 
 	async function submit(e: FormEvent) {
 		e.preventDefault();
-		setSaving(true);
-		setError(null);
-		try {
-			const { id } = await saveView({
-				data: view ? { ...view, name } : { name, ...search },
+		if (view) {
+			// A rename shows at once, so the dialog closes as it's made. If it
+			// fails, the engine says why and the old name comes back.
+			const { id } = view;
+			const next = { ...view, name };
+			void optimism.change({
+				label: `Renaming “${view.name}”`,
+				patch: patchViews((views) =>
+					views.map((v) => (v.id === id ? { ...v, name: name.trim() } : v)),
+				),
+				send: () => saveView({ data: next }),
 			});
-			await router.invalidate();
 			onSaved(id);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setSaving(false);
+			return;
 		}
+		// A new view's id comes from the server, so the dialog waits for it.
+		setSaving(true);
+		const r = await optimism.change({
+			send: () => saveView({ data: { name, ...search } }),
+		});
+		setSaving(false);
+		if (r) onSaved(r.value.id);
 	}
 
-	async function remove() {
+	function remove() {
 		if (!view) return;
-		await deleteView({ data: { id: view.id } });
-		await router.invalidate();
+		const gone = view;
+		// Off the tabs at once. Undo brings it back as a new view, since the
+		// server gives it a new id.
+		void optimism
+			.change({
+				label: `Deleting “${gone.name}”`,
+				patch: patchViews((views) => views.filter((v) => v.id !== gone.id)),
+				send: () => deleteView({ data: { id: gone.id } }),
+			})
+			.then((r) => {
+				if (!r) return;
+				offerUndo(`Deleted “${gone.name}”`, {
+					undo: async () => {
+						const { id: _, ...rest } = gone;
+						const back = await optimism.change({
+							send: () => saveView({ data: rest }),
+						});
+						return back && `“${gone.name}” is back`;
+					},
+				});
+			});
 		onDeleted();
-		offerUndo(`Deleted “${view.name}”`, {
-			undo: async () => {
-				const { id: _, ...rest } = view;
-				await saveView({ data: rest });
-				await router.invalidate();
-				return `“${view.name}” is back`;
-			},
-		});
 	}
 
 	return (
@@ -837,7 +905,6 @@ function ViewDialog({
 						placeholder="Name, e.g. Low stock A items"
 						className="h-9 rounded-lg border border-input px-3 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 					/>
-					{error && <p className="text-critical-text">{error}</p>}
 					<DialogFooter className="sm:justify-between">
 						{view ? (
 							<Button type="button" variant="ghost" onClick={remove}>
@@ -916,11 +983,13 @@ function RowMenu({
 	product: p,
 	onOpen,
 	onAddToPo,
+	adding,
 	onCount,
 }: {
 	product: ProductRow;
 	onOpen: (p: ProductRow) => void;
 	onAddToPo: (p: ProductRow) => void;
+	adding: ReadonlySet<number>;
 	onCount: (p: ProductRow) => void;
 }) {
 	const navigate = useNavigate();
@@ -941,6 +1010,7 @@ function RowMenu({
 			{action?.kind === "add" && (
 				<ContextMenuItem
 					onSelect={() => onAddToPo(p)}
+					disabled={adding.has(p.id)}
 					shortcut={p.reorder ? "A" : undefined}
 				>
 					<PackagePlus />

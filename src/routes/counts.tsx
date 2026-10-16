@@ -21,6 +21,7 @@ import {
 import { copyText } from "#/lib/copy";
 import { formatCount, formatDay } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { optimistic } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { listCountsDue } from "#/server/catalog";
 
@@ -31,15 +32,38 @@ export const Route = createFileRoute("/counts")({
 
 type Shelf = Awaited<ReturnType<typeof listCountsDue>>[number];
 
+// The shelves due, as counting them changes the list.
+const shelvesData = optimistic<Shelf[]>("counts");
+
+const sameShelf = (a: Shelf, b: Shelf) =>
+	a.productId === b.productId && a.locationId === b.locationId;
+
 // Shelves someone asked to have counted, most valuable first. A count that
 // matches still clears it.
 function CycleCounts() {
-	const shelves = Route.useLoaderData();
+	const loaded = Route.useLoaderData();
+	const shelves = shelvesData.useData("all", loaded);
 	const list = useRef<HTMLTableSectionElement>(null);
 	const [selected, setSelected] = useState(0);
 	const [counting, setCounting] = useState<Shelf | null>(null);
 	const [menuFor, setMenuFor] = useState<Shelf | null>(null);
 	const last = shelves.length - 1;
+
+	// Counting a shelf takes it off the list; undo puts it back where it was.
+	function countChange(shelf: Shelf) {
+		const at = shelves.findIndex((s) => sameShelf(s, shelf));
+		const where = at < 0 ? shelves.length : at;
+		return {
+			patch: shelvesData.patch("all", (list) =>
+				list.filter((s) => !sameShelf(s, shelf)),
+			),
+			undo: shelvesData.patch("all", (list) =>
+				list.some((s) => sameShelf(s, shelf))
+					? list
+					: [...list.slice(0, where), shelf, ...list.slice(where)],
+			),
+		};
+	}
 
 	useEffect(() => {
 		list.current
@@ -180,6 +204,7 @@ function CycleCounts() {
 					name={counting.name}
 					locations={[{ id: counting.locationId, name: counting.location }]}
 					onHandByLocation={new Map([[counting.location, counting.onHand]])}
+					patch={() => countChange(counting)}
 				/>
 			)}
 		</Page>

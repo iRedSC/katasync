@@ -1,6 +1,7 @@
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
 import { getContext } from "./integrations/tanstack-query/root-provider";
+import { connectOptimism } from "./lib/optimism";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {
@@ -16,6 +17,13 @@ export function getRouter() {
 	});
 
 	setupRouterSsrQueryIntegration({ router, queryClient: context.queryClient });
+	// Changes show at once; the page reloads once the server has them all.
+	// sync, so the reload resolves once the new data shows rather than while
+	// it still loads in the background; until then the patches stay up.
+	connectOptimism({
+		reload: () => router.invalidate({ sync: true }),
+		onLoadStart: (started) => router.subscribe("onBeforeLoad", started),
+	});
 
 	return router;
 }

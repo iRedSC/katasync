@@ -1,4 +1,3 @@
-import { useRouter } from "@tanstack/react-router";
 import { Minus, Plus } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { ProductImage } from "#/components/product";
@@ -12,6 +11,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
+import { optimism, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { receiveOrderReturn, undoOrderReturn } from "#/server/orders";
 
@@ -24,28 +24,35 @@ type ReturnLine = {
 	left: number;
 };
 
+export type Received = { lineId: number; quantity: number };
+
 // What came back in the box, line by line. Starts at everything still
 // returnable, since most returns are the whole order; Enter puts it all
-// back on the shelf.
+// back on the shelf. It closes at once: the page shows the return before the
+// server has it, and a failure says why in a toast.
 export function ReturnDialog({
 	open,
 	onOpenChange,
 	orderId,
 	orderName,
 	lines,
+	patches,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	orderId: number;
 	orderName: string;
 	lines: ReturnLine[];
+	// The page's data with a return laid over it, and with it taken off again
+	// for Undo.
+	patches: {
+		receive: (received: Received[], restock: boolean) => Patch;
+		undo: (received: Received[], restock: boolean) => Patch;
+	};
 }) {
-	const router = useRouter();
 	const [counts, setCounts] = useState(
 		() => new Map(lines.map((l) => [l.id, l.left])),
 	);
-	const [error, setError] = useState<string | null>(null);
-	const [saving, setSaving] = useState(false);
 	const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
 
 	const set = (line: ReturnLine, n: number) =>
@@ -53,41 +60,41 @@ export function ReturnDialog({
 			new Map(counts).set(line.id, Math.max(0, Math.min(line.left, n))),
 		);
 
-	async function receive(restock: boolean) {
-		setSaving(true);
-		setError(null);
-		try {
-			const { ids } = await receiveOrderReturn({
-				data: {
-					orderId,
-					lines: [...counts].map(([lineId, quantity]) => ({
-						lineId,
-						quantity,
-					})),
-					restock,
+	function receive(restock: boolean) {
+		const received = [...counts].map(([lineId, quantity]) => ({
+			lineId,
+			quantity,
+		}));
+		onOpenChange(false);
+		record(received, restock);
+	}
+
+	async function record(received: Received[], restock: boolean) {
+		const count = received.reduce((sum, l) => sum + l.quantity, 0);
+		const r = await optimism.change({
+			label: `Return on ${orderName}`,
+			patch: patches.receive(received, restock),
+			send: () =>
+				receiveOrderReturn({ data: { orderId, lines: received, restock } }),
+		});
+		if (!r) return;
+		offerUndo(
+			restock
+				? `${formatCount(count)} back on the shelf`
+				: `${formatCount(count)} written off as damaged`,
+			{
+				tone: "success",
+				description: `Return on ${orderName}`,
+				undo: async () => {
+					const undone = await optimism.change({
+						label: `Undoing return on ${orderName}`,
+						patch: patches.undo(received, restock),
+						send: () => undoOrderReturn({ data: { ids: r.value.ids } }),
+					});
+					return undone && `Return on ${orderName} undone`;
 				},
-			});
-			onOpenChange(false);
-			await router.invalidate();
-			offerUndo(
-				restock
-					? `${formatCount(total)} back on the shelf`
-					: `${formatCount(total)} written off as damaged`,
-				{
-					tone: "success",
-					description: `Return on ${orderName}`,
-					undo: async () => {
-						await undoOrderReturn({ data: { ids } });
-						await router.invalidate();
-						return `Return on ${orderName} undone`;
-					},
-				},
-			);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setSaving(false);
-		}
+			},
+		);
 	}
 
 	function submit(e: FormEvent) {
@@ -150,17 +157,16 @@ export function ReturnDialog({
 						})}
 					</ul>
 
-					{error && <p className="text-center text-critical-text">{error}</p>}
 					<DialogFooter className="gap-2 sm:justify-between">
 						<Button
 							type="button"
 							variant="outline"
-							disabled={total === 0 || saving}
+							disabled={total === 0}
 							onClick={() => receive(false)}
 						>
 							Damaged, write off
 						</Button>
-						<Button type="submit" disabled={total === 0 || saving}>
+						<Button type="submit" disabled={total === 0}>
 							Put {formatCount(total)} back on shelf
 						</Button>
 					</DialogFooter>
