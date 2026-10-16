@@ -234,8 +234,9 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				.where(eq(purchaseOrderAmendments.purchaseOrderId, data.id))
 				.orderBy(desc(purchaseOrderAmendments.id))
 				.limit(200),
-			// On a draft: what else from this supplier will need ordering before
-			// its next PO, leaving out what's on it already, sets' parts too.
+			// On a draft: what else from this supplier is worth adding (see
+			// recommendedAdditions), leaving out what's on it already, sets'
+			// parts too.
 			po.order.status === "draft"
 				? partsOfSets(db, data.id).then((fromSets) =>
 						recommendedAdditions(

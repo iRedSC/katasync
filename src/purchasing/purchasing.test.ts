@@ -342,6 +342,15 @@ describe("suggestPurchases", () => {
 		await supply(knife, null);
 		await stock(knife, -1);
 		await sell(blade, 90);
+		// Unsold, so a C item: only marked critical does it go on the PO.
+		await db
+			.update(schema.products)
+			.set({ critical: true })
+			.where(eq(schema.products.id, knife));
+		await db
+			.update(schema.suppliers)
+			.set({ criticalThreshold: 3 })
+			.where(eq(schema.suppliers.id, canam));
 
 		const [s] = await suggestPurchases(db, now);
 		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE", "KNIFE"]);
@@ -427,11 +436,42 @@ describe("recommendedAdditions", () => {
 		// capped at the lead time's 10: the reorder point is 20 and a top-up goes
 		// to 40. NOW needs ordering today, so it's a suggestion instead; FAR
 		// lasts past cover.
-		expect(
-			r.map((l) => [l.sku, l.daysUntilReorder, l.quantity, l.critical]),
-		).toEqual([
+		expect(r.map((l) => [l.sku, l.due, l.quantity, l.critical])).toEqual([
 			["SOON", 3, 17, true],
 			["LATER", 10, 10, true],
+		]);
+	});
+
+	test("puts C items that need ordering first, filled to max, instead of on the PO", async () => {
+		const top = await createProduct(db, "TOP", "simple");
+		const slow = await createProduct(db, "SLOW", "simple");
+		const counted = await createProduct(db, "COUNTED", "simple");
+		const dormant = await createProduct(db, "DORMANT", "simple");
+		for (const id of [top, slow, counted, dormant]) await supply(id, 2);
+		await sell(top, 90);
+		await stock(top, 23); // due in 3 days, as above
+		await sell(slow, 1); // a sliver of the margin: a C item
+		await stock(counted, 1);
+		await db
+			.update(schema.stockLevels)
+			.set({ lastCountedAt: daysAgo(30) })
+			.where(eq(schema.stockLevels.productId, counted));
+		// All three C items sit below a min of 3, so they need ordering.
+		for (const id of [slow, counted, dormant])
+			await db
+				.update(schema.products)
+				.set({ minStock: 3, maxStock: 12 })
+				.where(eq(schema.products.id, id));
+
+		expect(await suggestPurchases(db, now)).toEqual([]);
+
+		const r = await recommendedAdditions(db, canam, new Set(), now);
+		// DORMANT never sold and was never counted, so it's left out. The rest
+		// fill to their max of 12, less what's on the shelf.
+		expect(r.map((l) => [l.sku, l.due, l.quantity])).toEqual([
+			["COUNTED", "now", 11],
+			["SLOW", "now", 12],
+			["TOP", 3, 17],
 		]);
 	});
 });
