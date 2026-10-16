@@ -10,10 +10,15 @@ import { toast } from "sonner";
 // Once the queue is empty the page reloads once, and the patches it now
 // includes come off, so nothing flickers back to how it was. Nothing is sent
 // while that reload runs, so a reload has every sent change and no other.
-// A sent change's patch skips any data first seen after its reload started,
-// since that data has it already; so a patch may safely add to a count
-// (received + 5) as well as set a value, even in the moment the reloaded
-// data shows before the engine lets go of the patch.
+// A sent change's patch skips any data first seen after a later load started
+// (the engine's reload, or a page loading as staff move around), since that
+// data has it already; so a patch may safely add to a count (received + 5) as
+// well as set a value, even in the moment the reloaded data shows before the
+// engine lets go of the patch.
+//
+// A change made as another change starts sending (a helper that makes its
+// own change, called from a send) goes to the server at once, as part of it,
+// rather than waiting behind the change that's waiting for it.
 //
 // A change that fails comes off the screen and says why in a toast.
 
@@ -30,7 +35,7 @@ type Change = {
 	patches: readonly Patch[];
 	send: () => Promise<unknown>;
 	state: "waiting" | "sending" | "sent";
-	// Reloads started before it was sent; data first seen after more had
+	// Loads started before it was sent; data first seen after more had
 	// started has it.
 	sentAfter?: number;
 	settle: (result: { value: unknown } | null) => void;
@@ -55,8 +60,10 @@ export function createOptimism({
 	// A change failed, so the page differs from what was shown; reload even if
 	// nothing was sent.
 	let stale = false;
-	let reloadsStarted = 0;
-	// When each piece of data was first seen, counted in reloads started.
+	let loadsStarted = 0;
+	// True while a send is being started, so a change it makes joins it.
+	let starting = false;
+	// When each piece of data was first seen, counted in loads started.
 	const seen = new WeakMap<object, number>();
 	const listeners = new Set<() => void>();
 
@@ -67,7 +74,7 @@ export function createOptimism({
 	const mark = (id: number, state: Change["state"], value?: unknown) =>
 		set(
 			changes.map((c) =>
-				c.id === id ? { ...c, state, value, sentAfter: reloadsStarted } : c,
+				c.id === id ? { ...c, state, value, sentAfter: loadsStarted } : c,
 			),
 		);
 	// An unpatched change shows nothing until the reload, so it settles then,
@@ -77,6 +84,31 @@ export function createOptimism({
 			if (c.patches.length === 0) c.settle({ value: c.value });
 	};
 
+	// Sends one change. Resolves to its answer, or to null once it has failed,
+	// been taken off, and said why.
+	async function deliver(c: Change): Promise<{ value: unknown } | null> {
+		try {
+			const was = starting;
+			starting = true;
+			let pending: Promise<unknown>;
+			try {
+				pending = c.send();
+			} finally {
+				starting = was;
+			}
+			const value = await pending;
+			mark(c.id, "sent", value);
+			return { value };
+		} catch (err) {
+			set(changes.filter((x) => x.id !== c.id));
+			stale = true;
+			const message = err instanceof Error ? err.message : String(err);
+			failed(c.label ? `${c.label} didn't save: ${message}` : message);
+			c.settle(null);
+			return null;
+		}
+	}
+
 	async function pump() {
 		if (pumping) return;
 		pumping = true;
@@ -85,25 +117,14 @@ export function createOptimism({
 				const next = changes.find((c) => c.state === "waiting");
 				if (next) {
 					mark(next.id, "sending");
-					try {
-						const value = await next.send();
-						mark(next.id, "sent", value);
-						if (next.patches.length > 0) next.settle({ value });
-					} catch (err) {
-						set(changes.filter((c) => c.id !== next.id));
-						stale = true;
-						const message = err instanceof Error ? err.message : String(err);
-						failed(
-							next.label ? `${next.label} didn't save: ${message}` : message,
-						);
-						next.settle(null);
-					}
+					const r = await deliver(next);
+					if (r && next.patches.length > 0) next.settle(r);
 					continue;
 				}
 				const sent = changes.filter((c) => c.state === "sent");
 				if (sent.length === 0 && !stale) return;
 				try {
-					reloadsStarted++;
+					loadsStarted++;
 					await reload();
 				} catch (err) {
 					// The patches stay, so the page still shows what was saved.
@@ -133,8 +154,10 @@ export function createOptimism({
 		// Makes a change: its patch shows now, and it resolves to the server's
 		// answer once sent, or to null once it has failed and said why. Without
 		// a patch, nothing changes on screen until the reload after it, so it
-		// resolves once that reload is in. A send must not make a change of its
-		// own: it would wait behind the change it's part of, forever.
+		// resolves once that reload is in. One made as a send starts goes out
+		// at once, as part of that send, and resolves once it's sent. A send must
+		// not make a change after it has awaited something: that change would
+		// wait behind the send waiting for it.
 		change<T>({
 			label,
 			patch,
@@ -153,28 +176,37 @@ export function createOptimism({
 			| { label?: undefined; patch?: undefined }
 		)): Promise<Result<T>> {
 			return new Promise((resolve) => {
-				set([
-					...changes,
-					{
-						id: nextId++,
-						label,
-						patches: patch === undefined ? [] : [patch].flat(),
-						send,
-						state: "waiting",
-						settle: resolve as Change["settle"],
-					},
-				]);
-				void pump();
+				const c: Change = {
+					id: nextId++,
+					label,
+					patches: patch === undefined ? [] : [patch].flat(),
+					send,
+					state: starting ? "sending" : "waiting",
+					settle: resolve as Change["settle"],
+				};
+				if (!starting) {
+					set([...changes, c]);
+					void pump();
+					return;
+				}
+				// Ahead of what's waiting, so its patch lays over in the order made.
+				const at = changes.findIndex((x) => x.state === "waiting");
+				set(
+					at === -1
+						? [...changes, c]
+						: [...changes.slice(0, at), c, ...changes.slice(at)],
+				);
+				void deliver(c).then((r) => r && c.settle(r));
 			});
 		},
 		// The data with every patch it doesn't have yet laid over, in order.
 		// Data is first seen when it renders, and a page renders its data
 		// before anyone can change it.
 		over<T>(key: string, base: T): T {
-			let loadedAfter = reloadsStarted;
+			let loadedAfter = loadsStarted;
 			if (typeof base === "object" && base !== null) {
 				const first = seen.get(base);
-				if (first === undefined) seen.set(base, reloadsStarted);
+				if (first === undefined) seen.set(base, loadsStarted);
 				else loadedAfter = first;
 			}
 			let data = base;
@@ -184,6 +216,11 @@ export function createOptimism({
 					if (p.key === key) data = (p.apply as (d: T) => T)(data);
 			}
 			return data;
+		},
+		// A page started loading by itself, as when staff move to it. Data it
+		// brings has every change sent before now.
+		loadStarted() {
+			loadsStarted++;
 		},
 		// True while some change hasn't reached the server.
 		saving: () => changes.some((c) => c.state !== "sent"),
@@ -207,8 +244,16 @@ export const optimism = createOptimism({
 	failed: (message) => toast.error(message),
 });
 
-export function connectOptimism(reload: () => Promise<void>) {
+export function connectOptimism({
+	reload,
+	onLoadStart,
+}: {
+	reload: () => Promise<void>;
+	// Calls back whenever the router starts loading data, for any reason.
+	onLoadStart: (started: () => void) => void;
+}) {
 	reloadPage = reload;
+	onLoadStart(() => optimism.loadStarted());
 }
 
 // The same empty list each time, as React requires of a snapshot.

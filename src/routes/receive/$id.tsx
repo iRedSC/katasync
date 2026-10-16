@@ -63,6 +63,11 @@ function serverId(id: number) {
 // page's data has the real id, so a patch made now must use it.
 const realId = (id: number) => serverIds.get(id) ?? id;
 
+// Whether two ids are the same line or receipt: either may be the id made
+// here or, once the server has answered, its own. Patches match with this,
+// as they may lay over data from before the reload or after it.
+const same = (a: number, b: number) => realId(a) === realId(b);
+
 const done = (l: ReceiveLine) => l.received >= l.quantity;
 
 const productName = (p: Pick<ReceiveLine, "name" | "variantName">) =>
@@ -161,7 +166,7 @@ function receivePatch(
 ): Patch {
 	return receiveData.patch(orderId, (d) => {
 		const lines = d.lines.map((l) =>
-			l.id === lineId ? receiveOn(l, receipt.quantity, last) : l,
+			same(l.id, lineId) ? receiveOn(l, receipt.quantity, last) : l,
 		);
 		return {
 			...d,
@@ -209,7 +214,7 @@ function expectPatch(
 ): Patch {
 	return receiveData.patch(orderId, (d) => {
 		const lines = d.lines.map((l) =>
-			l.id === lineId ? { ...l, quantity } : l,
+			same(l.id, lineId) ? { ...l, quantity } : l,
 		);
 		return { ...d, lines, order: settle(d.order, lines) };
 	});
@@ -219,17 +224,16 @@ function expectPatch(
 // show the receipt and its line by the id made here or by the server's, as
 // the reload may or may not be in, so either matches.
 function undoReceipt(orderId: number, r: Receipt, name: string) {
-	const is = (id: number, made: number) => id === made || id === realId(made);
 	return optimism.change({
 		label: `Taking back ${name}`,
 		patch: receiveData.patch(orderId, (d) => {
 			const lines = d.lines.map((l) =>
-				is(l.id, r.lineId) ? unreceiveOn(l, r) : l,
+				same(l.id, r.lineId) ? unreceiveOn(l, r) : l,
 			);
 			return {
 				...d,
 				lines,
-				receipts: d.receipts.filter((x) => !is(x.id, r.id)),
+				receipts: d.receipts.filter((x) => !same(x.id, r.id)),
 				order: afterUndo(d.order, lines),
 			};
 		}),
@@ -255,7 +259,10 @@ function ReceivePurchaseOrder() {
 	const allDone = lines.length > 0 && lines.every(done);
 	// Unfinished lines first; the rest sink to the bottom.
 	const sorted = [...lines.filter((l) => !done(l)), ...lines.filter(done)];
-	const sheetLine = lines.find((l) => l.id === sheetLineId);
+	const sheetLine =
+		sheetLineId === null
+			? undefined
+			: lines.find((l) => same(l.id, sheetLineId));
 
 	// Received on the spot: the line shows it at once, and the server gets it
 	// in order. Undo is offered once the server has it.
@@ -473,12 +480,12 @@ function ReceivePurchaseOrder() {
 					canReceive={open}
 					remaining={Math.max(sheetLine.quantity - sheetLine.received, 0)}
 					lastReceipt={
-						receipts.find((r) => r.lineId === sheetLine.id)?.quantity ?? null
+						receipts.find((r) => same(r.lineId, sheetLine.id))?.quantity ?? null
 					}
 					onConfirm={(quantity, last) => receive(sheetLine, quantity, last)}
 					onNoneCame={() => noneCame(sheetLine)}
 					onUndo={() => {
-						const last = receipts.find((r) => r.lineId === sheetLine.id);
+						const last = receipts.find((r) => same(r.lineId, sheetLine.id));
 						if (!last) return;
 						setSheetLineId(null);
 						void undoReceipt(order.id, last, productName(sheetLine));

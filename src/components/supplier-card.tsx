@@ -38,12 +38,14 @@ export function SupplierCard({
 	const [editing, setEditing] = useState(false);
 	const { link, open, units } = data;
 
-	function saveTerms(terms: PurchaseTerms) {
-		const send = () =>
-			setProductPurchaseUnit({ data: { productId, ...terms } });
-		const laid = link && patch?.(termsLink(link, terms));
-		return optimism.change(laid ? { ...laid, send } : { send });
-	}
+	// The cell makes the change; this is just the server call, and the patch
+	// that shows it here.
+	const saveTerms = (terms: PurchaseTerms) =>
+		setProductPurchaseUnit({ data: { productId, ...terms } });
+	const patchTerms =
+		link && patch
+			? (terms: PurchaseTerms) => patch(termsLink(link, terms)).patch
+			: undefined;
 
 	return (
 		<Card
@@ -80,7 +82,7 @@ export function SupplierCard({
 							value={link}
 							cost={link.cost}
 							units={units.map((u) => u.name)}
-							saving={{ save: saveTerms }}
+							saving={{ save: saveTerms, patch: patchTerms }}
 						/>
 					</dd>
 					<dt className="text-muted-foreground">Price</dt>

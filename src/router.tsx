@@ -20,7 +20,10 @@ export function getRouter() {
 	// Changes show at once; the page reloads once the server has them all.
 	// sync, so the reload resolves once the new data shows rather than while
 	// it still loads in the background; until then the patches stay up.
-	connectOptimism(() => router.invalidate({ sync: true }));
+	connectOptimism({
+		reload: () => router.invalidate({ sync: true }),
+		onLoadStart: (started) => router.subscribe("onBeforeLoad", started),
+	});
 
 	return router;
 }

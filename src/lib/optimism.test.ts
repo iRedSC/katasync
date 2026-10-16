@@ -186,6 +186,7 @@ describe("optimism", () => {
 		expect(shown()).toEqual({ n: 0 });
 		expect(failures).toEqual(["Cost of ABC-1 didn't save: PO is closed"]);
 		// Reloads anyway, since the page may have moved on without it.
+		await tick();
 		expect(reloads).toHaveLength(1);
 	});
 
@@ -209,6 +210,48 @@ describe("optimism", () => {
 		await tick();
 		expect(shown()).toEqual({ n: 5 });
 		expect(failures[0]).toMatch(/couldn't refresh: offline/);
+	});
+
+	it("sends a change made as another starts with it, rather than deadlocking", async () => {
+		const { engine } = setup();
+		const order: string[] = [];
+		const outer = engine.change({
+			label: "Outer",
+			patch: add(1),
+			send: async () => {
+				const inner = await engine.change({
+					label: "Inner",
+					patch: add(10),
+					send: async () => {
+						order.push("inner");
+						return "in";
+					},
+				});
+				order.push("outer");
+				return inner;
+			},
+		});
+		expect(await outer).toEqual({ value: { value: "in" } });
+		expect(order).toEqual(["inner", "outer"]);
+	});
+
+	it("never adds a sent change twice to data a page loaded by itself", async () => {
+		const { server, engine, shown } = setup();
+		const later = deferred();
+		await engine.change({
+			label: "Add",
+			patch: add(5),
+			send: async () => {
+				server.n += 5;
+			},
+		});
+		// Still busy, so the engine hasn't reloaded yet.
+		engine.change({ label: "Wait", patch: add(0), send: () => later.promise });
+		expect(shown()).toEqual({ n: 5 });
+		// Staff go elsewhere and back: the page loads what the server has.
+		engine.loadStarted();
+		const fresh = { ...server };
+		expect(engine.over("count:1", fresh)).toEqual({ n: 5 });
 	});
 
 	it("lays patches only over the data they were written for", () => {
