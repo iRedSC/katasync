@@ -722,14 +722,29 @@ export const purchaseOrderLines = pgTable(
 		unit: text().notNull().default("EACH"),
 		packSize: integer().notNull().default(1),
 		minimumQuantity: integer().notNull().default(1),
-		// How many of `unit`. Receiving puts quantity × packSize on the shelf.
+		// How many of `unit` we expect. Receiving puts quantity × packSize on
+		// the shelf. After sending it can still change, when we keep what the
+		// supplier got wrong; 0 means none are coming.
 		quantity: integer().notNull(),
 		// USD per `unit`. Null when nobody knows the price yet.
 		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
+		// What the supplier was sent, saved once by sending and never changed:
+		// the PDF prints these, so changes made since never reach the supplier.
+		// Null on drafts and on lines added after sending.
+		sentQuantity: integer(),
+		sentUnitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 	},
 	(t) => [
 		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),
-		check("purchase_order_lines_quantity_positive", sql`${t.quantity} > 0`),
+		// Drafts take a line off instead of keeping it at 0 (orders.ts).
+		check(
+			"purchase_order_lines_quantity_not_negative",
+			sql`${t.quantity} >= 0`,
+		),
+		check(
+			"purchase_order_lines_sent_cost_needs_sent",
+			sql`${t.sentUnitCost} is null or ${t.sentQuantity} is not null`,
+		),
 		check("purchase_order_lines_pack_size_positive", sql`${t.packSize} > 0`),
 		check(
 			"purchase_order_lines_minimum_positive",
@@ -780,10 +795,19 @@ export const purchaseOrderReceipts = pgTable(
 		undoesId: integer()
 			.unique()
 			.references((): AnyPgColumn => purchaseOrderReceipts.id),
+		// When this receipt changed the line's quantity (more came than
+		// expected, or it was marked as all that's coming): what it was before
+		// and after, so undoing the receipt can put it back.
+		quantityBefore: integer(),
+		quantityAfter: integer(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index("purchase_order_receipts_line_idx").on(t.lineId),
+		check(
+			"purchase_order_receipts_quantity_change_whole",
+			sql`(${t.quantityBefore} is null) = (${t.quantityAfter} is null)`,
+		),
 		check("purchase_order_receipts_quantity_nonzero", sql`${t.quantity} <> 0`),
 		check(
 			"purchase_order_receipts_undo_is_negative",

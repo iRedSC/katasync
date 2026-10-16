@@ -506,36 +506,62 @@ export async function addDraftLine(
 	db: Db,
 	input: { purchaseOrderId: number; productId: number; quantity: number },
 ): Promise<{ added: boolean; line: AddedLine }> {
+	return addLine(db, input, ["draft"]);
+}
+
+// addDraftLine for any PO still open, including one already sent: the
+// supplier sent something else, or something extra we're keeping. A line
+// added after sending is never printed on the PO, since the supplier wasn't
+// sent it. It reopens a closed PO, since now something is on its way.
+export async function addLine(
+	db: Db,
+	input: { purchaseOrderId: number; productId: number; quantity: number },
+	allowed: Status[] = ["draft", "sent", "closed"],
+): Promise<{ added: boolean; line: AddedLine }> {
 	if (!Number.isInteger(input.quantity) || input.quantity <= 0)
 		throw new PurchaseOrderError(
 			`Quantity must be a whole number above 0, got ${input.quantity}`,
 		);
 	return db.transaction(async (tx) => {
-		const po = await lockOrder(tx, input.purchaseOrderId, ["draft"]);
-		const [existing] = await tx
-			.select(lineFields)
-			.from(purchaseOrderLines)
-			.where(
-				and(
-					eq(purchaseOrderLines.purchaseOrderId, po.id),
-					eq(purchaseOrderLines.productId, input.productId),
-				),
-			);
-		if (existing) return { added: false, line: existing };
-		const product = await newLine(tx, input.productId);
-		await refuseEmptySet(tx, input.productId, product);
-		const [line] = await tx
-			.insert(purchaseOrderLines)
-			.values({
-				purchaseOrderId: po.id,
-				productId: input.productId,
-				...product.terms,
-				quantity: input.quantity,
-				unitCost: product.unitCost,
-			})
-			.returning(lineFields);
-		return { added: true, line };
+		const po = await lockOrder(tx, input.purchaseOrderId, allowed);
+		return insertLine(tx, po, input);
 	});
+}
+
+// Adds the line under the PO's lock, unless the product's already on it.
+async function insertLine(
+	tx: Db,
+	po: typeof purchaseOrders.$inferSelect,
+	input: { productId: number; quantity: number },
+): Promise<{ added: boolean; line: AddedLine }> {
+	const [existing] = await tx
+		.select(lineFields)
+		.from(purchaseOrderLines)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, po.id),
+				eq(purchaseOrderLines.productId, input.productId),
+			),
+		);
+	if (existing) return { added: false, line: existing };
+	const product = await newLine(tx, input.productId);
+	if (product.kind === "bundle" && po.status !== "draft")
+		throw new PurchaseOrderError(
+			`${product.sku} is a tool set; add the parts that came instead`,
+		);
+	await refuseEmptySet(tx, input.productId, product);
+	const [line] = await tx
+		.insert(purchaseOrderLines)
+		.values({
+			purchaseOrderId: po.id,
+			productId: input.productId,
+			...product.terms,
+			quantity: input.quantity,
+			unitCost: product.unitCost,
+		})
+		.returning(lineFields);
+	if (po.status === "closed" && input.quantity > 0) await reopen(tx, po.id);
+	return { added: true, line };
 }
 
 // Undoes addDraftLine: takes the line off only if it's still exactly as
@@ -642,6 +668,14 @@ export async function markSent(
 			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
 		if (lines.length === 0)
 			throw new PurchaseOrderError(`${poName(po.id)} has nothing on it`);
+		// Saved before the PDF is built, so it prints exactly these.
+		await tx
+			.update(purchaseOrderLines)
+			.set({
+				sentQuantity: purchaseOrderLines.quantity,
+				sentUnitCost: purchaseOrderLines.unitCost,
+			})
+			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
 		const [supplier] = await tx
 			.select({ leadTimeDays: suppliers.leadTimeDays })
 			.from(suppliers)
@@ -667,9 +701,13 @@ export async function markSent(
 // What arrived for one line, in the line's unit: 2 cases of 30 puts 60 on the
 // shelf at the PO's location. Folds its price into the product's average cost.
 // Closes the PO once every line has arrived in full.
+// More than expected means the supplier sent extra and we're keeping it, so
+// the line now expects what arrived. `last` says nothing more is coming, so
+// the line expects only what arrived. Either change is saved on the receipt,
+// so undoing it puts the line back. Neither reaches the supplier.
 export async function receive(
 	db: Db,
-	input: { lineId: number; quantity: number },
+	input: { lineId: number; quantity: number; last?: boolean },
 ) {
 	if (!Number.isInteger(input.quantity) || input.quantity <= 0)
 		throw new PurchaseOrderError(
@@ -702,9 +740,26 @@ export async function receive(
 				},
 			],
 		});
+		const total = (await receivedOf(tx, line.id)) + input.quantity;
+		const expect =
+			total > line.quantity || (input.last && total < line.quantity)
+				? total
+				: null;
+		if (expect !== null)
+			await tx
+				.update(purchaseOrderLines)
+				.set({ quantity: expect })
+				.where(eq(purchaseOrderLines.id, line.id));
 		const [receipt] = await tx
 			.insert(purchaseOrderReceipts)
-			.values({ lineId: line.id, quantity: input.quantity, batchId })
+			.values({
+				lineId: line.id,
+				quantity: input.quantity,
+				batchId,
+				...(expect !== null
+					? { quantityBefore: line.quantity, quantityAfter: expect }
+					: {}),
+			})
 			.returning({ id: purchaseOrderReceipts.id });
 
 		if (line.unitCost !== null) {
@@ -732,6 +787,9 @@ export async function undoReceipt(db: Db, receiptId: number) {
 				quantity: purchaseOrderReceipts.quantity,
 				batchId: purchaseOrderReceipts.batchId,
 				undoesId: purchaseOrderReceipts.undoesId,
+				quantityBefore: purchaseOrderReceipts.quantityBefore,
+				quantityAfter: purchaseOrderReceipts.quantityAfter,
+				lineQuantity: purchaseOrderLines.quantity,
 				purchaseOrderId: purchaseOrderLines.purchaseOrderId,
 			})
 			.from(purchaseOrderReceipts)
@@ -756,13 +814,141 @@ export async function undoReceipt(db: Db, receiptId: number) {
 			batchId,
 			undoesId: receipt.id,
 		});
-		if (po.status === "closed" && (await shortLines(tx, po.id)) > 0) {
+		// Only when nobody has changed the quantity since.
+		if (
+			receipt.quantityBefore !== null &&
+			receipt.lineQuantity === receipt.quantityAfter
+		)
 			await tx
-				.update(purchaseOrders)
-				.set({ status: "sent", closedAt: null })
-				.where(eq(purchaseOrders.id, po.id));
-		}
+				.update(purchaseOrderLines)
+				.set({ quantity: receipt.quantityBefore })
+				.where(eq(purchaseOrderLines.id, receipt.lineId));
+		if (po.status === "closed" && (await shortLines(tx, po.id)) > 0)
+			await reopen(tx, po.id);
 	});
+}
+
+// Something arrived that isn't on the PO, or more of something that is:
+// it's added if needed and received in one go, so it can't be left half
+// done. Expecting nothing before the receipt, undoing it leaves the line
+// expecting nothing. Works on a closed PO too, since the box may hold more
+// after everything else is in.
+export async function receiveExtra(
+	db: Db,
+	input: { purchaseOrderId: number; productId: number; quantity: number },
+) {
+	return db.transaction(async (tx) => {
+		const po = await lockOrder(tx, input.purchaseOrderId, ["sent", "closed"]);
+		const { line } = await insertLine(tx, po, {
+			productId: input.productId,
+			quantity: 0,
+		});
+		if (po.status === "closed") await reopen(tx, po.id);
+		const result = await receive(tx, {
+			lineId: line.id,
+			quantity: input.quantity,
+		});
+		return { ...result, lineId: line.id };
+	});
+}
+
+// Changes a sent line without telling the supplier: we're keeping what they
+// got wrong. The PDF still shows what was sent. A quantity can't go under
+// what's already arrived; 0 means none are coming. A line added after
+// sending that never received anything is taken off instead of kept at 0.
+// Returns what the line was, for undo, and whether stock had already come in
+// at the old cost, which keeps that cost.
+export async function amendLine(
+	db: Db,
+	input: { lineId: number; quantity?: number; unitCost?: number | null },
+) {
+	if (
+		input.quantity !== undefined &&
+		!(Number.isInteger(input.quantity) && input.quantity >= 0)
+	)
+		throw new PurchaseOrderError(
+			`Quantity must be a whole number, got ${input.quantity}`,
+		);
+	if (input.unitCost != null && !(input.unitCost >= 0))
+		throw new PurchaseOrderError(`Price can't be ${input.unitCost}`);
+	return db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		if (!found) throw new PurchaseOrderError("That line doesn't exist");
+		const po = await lockOrder(tx, found.purchaseOrderId, ["sent", "closed"]);
+		const [line] = await tx
+			.select()
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		const received = await receivedOf(tx, line.id);
+		const was = { quantity: line.quantity, unitCost: line.unitCost };
+		const quantity = input.quantity ?? line.quantity;
+		if (quantity < received)
+			throw new PurchaseOrderError(
+				`${received} already arrived; undo a receipt to go lower`,
+			);
+		if (quantity === 0 && line.sentQuantity === null) {
+			const [receipt] = await tx
+				.select({ id: purchaseOrderReceipts.id })
+				.from(purchaseOrderReceipts)
+				.where(eq(purchaseOrderReceipts.lineId, line.id))
+				.limit(1);
+			if (!receipt) {
+				await tx
+					.delete(purchaseOrderLines)
+					.where(eq(purchaseOrderLines.id, line.id));
+				await settle(tx, po, null);
+				return { was, removed: true, receivedAtOldCost: false };
+			}
+		}
+		await tx
+			.update(purchaseOrderLines)
+			.set({
+				quantity,
+				...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
+			})
+			.where(eq(purchaseOrderLines.id, line.id));
+		if (quantity !== line.quantity) await settle(tx, po, quantity > received);
+		return {
+			was,
+			removed: false,
+			receivedAtOldCost:
+				input.unitCost !== undefined &&
+				input.unitCost !== line.unitCost &&
+				received > 0,
+		};
+	});
+}
+
+// After a line's quantity changes: a sent PO with everything in closes, and
+// a closed one reopens when the changed line is now waiting on more. `short`
+// is whether it is, or null when the line was taken off.
+async function settle(
+	tx: Db,
+	po: typeof purchaseOrders.$inferSelect,
+	short: boolean | null,
+) {
+	if (po.status === "sent") await closeIfComplete(tx, po.id);
+	else if (po.status === "closed" && short) await reopen(tx, po.id);
+}
+
+async function reopen(tx: Db, id: number) {
+	await tx
+		.update(purchaseOrders)
+		.set({ status: "sent", closedAt: null })
+		.where(eq(purchaseOrders.id, id));
+}
+
+async function receivedOf(tx: Db, lineId: number) {
+	const [row] = await tx
+		.select({
+			units: sql<number>`coalesce(sum(${purchaseOrderReceipts.quantity}), 0)::int`,
+		})
+		.from(purchaseOrderReceipts)
+		.where(eq(purchaseOrderReceipts.lineId, lineId));
+	return row.units;
 }
 
 // Stops waiting for what hasn't arrived, e.g. the supplier is out of it.

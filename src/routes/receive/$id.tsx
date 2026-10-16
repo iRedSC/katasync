@@ -4,15 +4,19 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, Check, PackagePlus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import type { PurchaseOrderMatch } from "#/components/po-product-picker";
+import { ExtraSheet } from "#/components/receive/extra-sheet";
 import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
 import { receiveHead } from "#/components/receive/pwa";
 import { QuantitySheet } from "#/components/receive/quantity-sheet";
 import {
+	amendPurchaseLine,
 	closePurchaseOrder,
 	getPurchaseOrder,
+	receiveExtraLine,
 	receiveLine,
 	undoPurchaseReceipt,
 } from "#/server/purchasing";
@@ -37,9 +41,14 @@ function ReceivePurchaseOrder() {
 	// double tap can't receive twice and a reload can't race a write.
 	const [busyLine, setBusyLine] = useState<number | null>(null);
 	const [sheetLineId, setSheetLineId] = useState<number | null>(null);
+	// Something that isn't on the PO: finding it, then counting it.
+	const [extra, setExtra] = useState<
+		{ step: "find" } | { step: "count"; match: PurchaseOrderMatch } | null
+	>(null);
 
 	const open = order.status === "sent";
-	// A closed PO can still take back a mis-tapped receipt.
+	// A closed PO can still take back a mis-tapped receipt, and take
+	// something else that was in the box.
 	const undoable = open || order.status === "closed";
 	const done = (l: ReceiveLine) => l.received >= l.quantity;
 	const allDone = lines.length > 0 && lines.every(done);
@@ -66,19 +75,88 @@ function ReceivePurchaseOrder() {
 			toast(`Undid ${productName(line)}`);
 		});
 
-	const receive = (line: ReceiveLine, quantity: number) =>
+	const receive = (line: ReceiveLine, quantity: number, last = false) =>
 		run(line.id, async () => {
 			const result = await receiveLine({
-				data: { lineId: line.id, quantity },
+				data: { lineId: line.id, quantity, last },
 			});
 			navigator.vibrate?.(10);
 			setSheetLineId(null);
 			const unit = line.packSize === 1 ? "" : ` ${line.unit}`;
-			toast.success(`Received ${quantity}${unit} × ${productName(line)}`, {
+			const total = line.received + quantity;
+			const note =
+				total > line.quantity
+					? " The PO keeps the extra."
+					: last && total < line.quantity
+						? " Not waiting for the rest."
+						: "";
+			toast.success(
+				`Received ${quantity}${unit} × ${productName(line)}.${note}`,
+				{
+					duration: 8000,
+					action: {
+						label: "Undo",
+						onClick: () => undo(line, result.receiptId),
+					},
+				},
+			);
+		});
+
+	// Stops waiting for what's left of a line, receiving none of it.
+	const noneCame = (line: ReceiveLine) =>
+		run(line.id, async () => {
+			const { was } = await amendPurchaseLine({
+				data: { lineId: line.id, quantity: line.received },
+			});
+			setSheetLineId(null);
+			toast(`Not waiting for ${productName(line)}`, {
 				duration: 8000,
 				action: {
 					label: "Undo",
-					onClick: () => undo(line, result.receiptId),
+					onClick: () =>
+						run(line.id, async () => {
+							await amendPurchaseLine({
+								data: { lineId: line.id, quantity: was.quantity },
+							});
+						}),
+				},
+			});
+		});
+
+	function pickExtra(match: PurchaseOrderMatch) {
+		// Already on an open PO: count it on its own line. A closed PO takes
+		// it as extra, which reopens and settles it in one go.
+		if (match.lineId !== null && open) {
+			setExtra(null);
+			setSheetLineId(match.lineId);
+			return;
+		}
+		setExtra({ step: "count", match });
+	}
+
+	const receiveExtra = (match: PurchaseOrderMatch, quantity: number) =>
+		run(-match.productId, async () => {
+			const result = await receiveExtraLine({
+				data: {
+					purchaseOrderId: order.id,
+					productId: match.productId,
+					quantity,
+				},
+			});
+			navigator.vibrate?.(10);
+			setExtra(null);
+			const name = match.variantName
+				? `${match.name} (${match.variantName})`
+				: match.name;
+			toast.success(`Added and received ${quantity} × ${name}`, {
+				duration: 8000,
+				action: {
+					label: "Undo",
+					onClick: () =>
+						run(result.lineId, async () => {
+							await undoPurchaseReceipt({ data: { id: result.receiptId } });
+							toast(`Undid ${name}`);
+						}),
 				},
 			});
 		});
@@ -152,6 +230,17 @@ function ReceivePurchaseOrder() {
 				))}
 			</ul>
 
+			{undoable && (
+				<button
+					type="button"
+					onClick={() => setExtra({ step: "find" })}
+					className="mt-4 flex h-16 w-full items-center justify-center gap-2 rounded-2xl bg-card text-xl font-bold shadow-card active:bg-surface-strong"
+				>
+					<PackagePlus className="size-7" />
+					Something else came
+				</button>
+			)}
+
 			{open && !allDone && (
 				<button
 					type="button"
@@ -173,7 +262,8 @@ function ReceivePurchaseOrder() {
 						receipts.find((r) => r.lineId === sheetLine.id)?.quantity ?? null
 					}
 					busy={busyLine !== null}
-					onConfirm={(quantity) => receive(sheetLine, quantity)}
+					onConfirm={(quantity, last) => receive(sheetLine, quantity, last)}
+					onNoneCame={() => noneCame(sheetLine)}
 					onUndo={() => {
 						const last = receipts.find((r) => r.lineId === sheetLine.id);
 						if (!last) return;
@@ -181,6 +271,37 @@ function ReceivePurchaseOrder() {
 						undo(sheetLine, last.id);
 					}}
 					onClose={() => setSheetLineId(null)}
+				/>
+			)}
+
+			{extra?.step === "find" && (
+				<ExtraSheet
+					purchaseOrderId={order.id}
+					onPick={pickExtra}
+					onClose={() => setExtra(null)}
+				/>
+			)}
+			{extra?.step === "count" && (
+				<QuantitySheet
+					key={`extra${extra.match.productId}`}
+					title={
+						extra.match.variantName
+							? `${extra.match.name} (${extra.match.variantName})`
+							: extra.match.name
+					}
+					unit={
+						extra.match.packSize && extra.match.packSize > 1
+							? (extra.match.unit ?? undefined)
+							: undefined
+					}
+					canReceive
+					remaining={0}
+					extra={extra.match.lineId === null}
+					lastReceipt={null}
+					busy={busyLine !== null}
+					onConfirm={(quantity) => receiveExtra(extra.match, quantity)}
+					onUndo={() => {}}
+					onClose={() => setExtra(null)}
 				/>
 			)}
 		</main>

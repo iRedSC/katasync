@@ -23,6 +23,8 @@ import {
 } from "#/purchasing/load";
 import {
 	addDraftLine,
+	addLine,
+	amendLine,
 	cancelOrder,
 	closeOrder,
 	draftChanges,
@@ -33,6 +35,7 @@ import {
 	PurchaseOrderError,
 	partsOfSets,
 	receive,
+	receiveExtra,
 	removeAddedLine,
 	setDraftLine,
 	undoReceipt,
@@ -246,26 +249,117 @@ export const editDraft = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data }) => updateDraft(getDb(), data));
 
-// Adds a product to a draft by SKU, at the smallest quantity its supplier sells.
-export const addLineBySku = createServerFn({ method: "POST" })
-	.validator(type({ purchaseOrderId: "number.integer > 0", sku: "string > 0" }))
+// Products to add to a PO, best match first: an exact SKU, barcode, or
+// supplier SKU (a scan) leads, then products bought from this PO's supplier.
+// Each says if it's already on the PO and who it's bought from, so the picker
+// can warn before adding the wrong thing.
+export const searchForPurchaseOrder = createServerFn({ method: "GET" })
+	.validator(type({ purchaseOrderId: "number.integer > 0", query: "string" }))
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const [product] = await db
+		const q = data.query.trim();
+		if (q === "") return [];
+		const [po] = await db
+			.select({ supplierId: purchaseOrders.supplierId })
+			.from(purchaseOrders)
+			.where(eq(purchaseOrders.id, data.purchaseOrderId));
+		if (!po)
+			throw new PurchaseOrderError(`PO ${data.purchaseOrderId} doesn't exist`);
+		const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+		// Coalesced: descending order puts nulls first.
+		const exact = sql<boolean>`coalesce(lower(${products.sku}) = lower(${q}) or ${products.barcode} = ${q} or lower(${productSuppliers.supplierSku}) = lower(${q}), false)`;
+		const rows = await db
 			.select({
-				id: products.id,
-				minimum: productSuppliers.minimumQuantity,
+				productId: products.id,
+				sku: products.sku,
+				name: products.name,
+				variantName: products.variantName,
+				imageUrl: products.imageUrl,
+				kind: products.kind,
+				supplierSku: productSuppliers.supplierSku,
+				supplierId: productSuppliers.supplierId,
+				supplierName: suppliers.name,
+				unit: productSuppliers.unit,
+				packSize: productSuppliers.packSize,
+				cost: productSuppliers.cost,
+				lineId: purchaseOrderLines.id,
 			})
 			.from(products)
 			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-			.where(eq(products.sku, data.sku));
-		if (!product) throw new PurchaseOrderError(`No product ${data.sku}`);
-		await setDraftLine(db, {
-			purchaseOrderId: data.purchaseOrderId,
-			productId: product.id,
-			quantity: product.minimum ?? 1,
-		});
+			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+			.leftJoin(
+				purchaseOrderLines,
+				and(
+					eq(purchaseOrderLines.purchaseOrderId, data.purchaseOrderId),
+					eq(purchaseOrderLines.productId, products.id),
+				),
+			)
+			.where(
+				or(
+					sql`${products.sku} ilike ${like}`,
+					sql`${products.name} ilike ${like}`,
+					sql`${products.variantName} ilike ${like}`,
+					sql`${products.barcode} ilike ${like}`,
+					sql`${productSuppliers.supplierSku} ilike ${like}`,
+				),
+			)
+			.orderBy(
+				desc(exact),
+				desc(
+					sql`coalesce(${productSuppliers.supplierId} = ${po.supplierId}, false)`,
+				),
+				products.name,
+				products.variantName,
+			)
+			.limit(12);
+		const onHand = await onHandOf(
+			db,
+			rows.map((r) => r.productId),
+		);
+		return rows.map((r) => ({
+			...r,
+			onHand: onHand.get(r.productId) ?? 0,
+			fromThisSupplier: r.supplierId === po.supplierId,
+		}));
 	});
+
+export type PurchaseOrderMatch = Awaited<
+	ReturnType<typeof searchForPurchaseOrder>
+>[number];
+
+// Adds a product to a PO at the fewest its supplier sells. A product already
+// on it is left alone and comes back with added false, so the page can point
+// at its line instead. On a sent PO the supplier isn't told.
+export const addProductToPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			purchaseOrderId: "number.integer > 0",
+			productId: "number.integer > 0",
+		}),
+	)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [link] = await db
+			.select({ minimum: productSuppliers.minimumQuantity })
+			.from(productSuppliers)
+			.where(eq(productSuppliers.productId, data.productId));
+		const { added, line } = await addLine(db, {
+			...data,
+			quantity: link?.minimum ?? 1,
+		});
+		return { added, lineId: line.id };
+	});
+
+// Changes a sent PO's line without telling the supplier.
+export const amendPurchaseLine = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			lineId: "number.integer > 0",
+			"quantity?": "number.integer >= 0",
+			"unitCost?": "number >= 0 | null",
+		}),
+	)
+	.handler(async ({ data }) => amendLine(getDb(), data));
 
 // Puts a product on its supplier's draft, starting one if needed. Without a
 // quantity it's the fewest the supplier sells. A product already on the draft
@@ -370,11 +464,27 @@ export const sendPurchaseOrder = createServerFn({ method: "POST" })
 		return { sentTo };
 	});
 
+// `last`: nothing more of it is coming, so the line expects only what came.
 export const receiveLine = createServerFn({ method: "POST" })
 	.validator(
-		type({ lineId: "number.integer > 0", quantity: "number.integer > 0" }),
+		type({
+			lineId: "number.integer > 0",
+			quantity: "number.integer > 0",
+			"last?": "boolean",
+		}),
 	)
 	.handler(async ({ data }) => receive(getDb(), data));
+
+// Something in the box that isn't on the PO: added and received at once.
+export const receiveExtraLine = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			purchaseOrderId: "number.integer > 0",
+			productId: "number.integer > 0",
+			quantity: "number.integer > 0",
+		}),
+	)
+	.handler(async ({ data }) => receiveExtra(getDb(), data));
 
 export const undoPurchaseReceipt = createServerFn({ method: "POST" })
 	.validator(id)

@@ -69,6 +69,10 @@ export async function loadOrder(db: Db, poId: number) {
 			defaultMinimum: productSuppliers.minimumQuantity,
 			quantity: purchaseOrderLines.quantity,
 			unitCost: purchaseOrderLines.unitCost,
+			// What the supplier was sent; null on drafts and on lines added
+			// after sending.
+			sentQuantity: purchaseOrderLines.sentQuantity,
+			sentUnitCost: purchaseOrderLines.sentUnitCost,
 			received: sql<number>`coalesce(${received.units}, 0)::int`,
 		})
 		.from(purchaseOrderLines)
@@ -131,6 +135,33 @@ export async function setPartsOf(db: Db, poId: number) {
 		.orderBy(part.name, part.variantName);
 }
 
+// What the PO prints: always what the supplier was sent. Changes made after
+// sending are ours alone, so they never print; a draft prints as it stands.
+export function printedLines(
+	lines: Awaited<ReturnType<typeof loadOrder>>["lines"],
+	sentAt: Date | null,
+) {
+	return lines.flatMap((l) => {
+		const printed =
+			l.sentQuantity !== null
+				? { quantity: l.sentQuantity, unitCost: l.sentUnitCost }
+				: sentAt === null
+					? { quantity: l.quantity, unitCost: l.unitCost }
+					: null;
+		if (!printed) return [];
+		return [
+			{
+				sku: l.sku,
+				supplierSku: l.supplierSku,
+				description: l.variantName ? `${l.name} (${l.variantName})` : l.name,
+				unit: l.unit,
+				packSize: l.packSize,
+				...printed,
+			},
+		];
+	});
+}
+
 export async function documentFor(db: Db, poId: number) {
 	const po = await loadOrder(db, poId);
 	const notes = [po.supplier.poNotes, po.order.notes].filter((n): n is string =>
@@ -155,15 +186,7 @@ export async function documentFor(db: Db, poId: number) {
 			},
 			supplier: po.supplier,
 			notes,
-			lines: po.lines.map((l) => ({
-				sku: l.sku,
-				supplierSku: l.supplierSku,
-				description: l.variantName ? `${l.name} (${l.variantName})` : l.name,
-				unit: l.unit,
-				packSize: l.packSize,
-				quantity: l.quantity,
-				unitCost: l.unitCost,
-			})),
+			lines: printedLines(po.lines, po.order.sentAt),
 		}),
 	};
 }
