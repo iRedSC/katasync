@@ -7,7 +7,6 @@ import {
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
-	stockLevels,
 	suppliers,
 } from "#/db/schema";
 import type { AbcClass } from "#/inventory/abc";
@@ -94,10 +93,13 @@ export function safetyStock(
 const DAY = 86_400_000;
 const dayOf = (t: Date) => t.toISOString().slice(0, 10);
 
-// Every stocked product's forecast. Stock on each day of the window comes
-// back from today's on hand by undoing each later day's movements on our own
-// shelves. Days before the ledger's first movement can't be rebuilt, so they
-// count as in stock, which is what demand assumed before this.
+// Every stocked product's forecast. Stock on each day of the window is
+// rebuilt from the ledger alone, in one query so it reads one moment: what
+// had moved on our own shelves before the window, then each day's movements
+// on top. (Starting from today's stock_levels in a separate query could pair
+// a receipt that landed in between with a balance that doesn't have it yet.)
+// Days before the ledger's first movement can't be rebuilt, so they count as
+// in stock, which is what demand assumed before this.
 export async function forecasts(
 	db: Db,
 	now = new Date(),
@@ -111,33 +113,28 @@ export async function forecasts(
 	const days = Array.from({ length: DEMAND_DAYS }, (_, i) =>
 		dayOf(new Date(start.getTime() + i * DAY)),
 	);
-	const owned = and(eq(locations.kind, "owned"));
-	const [sales, onHandRows, moves, [ledger]] = await Promise.all([
+	const [sales, ledgerRows] = await Promise.all([
 		soldByDay(db, start),
-		db
-			.select({
-				productId: stockLevels.productId,
-				onHand: sql<number>`sum(${stockLevels.onHand})::int`,
-			})
-			.from(stockLevels)
-			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(owned)
-			.groupBy(stockLevels.productId),
+		// day is null for everything before the window. firstAt is the
+		// ledger's first movement anywhere, read in the same statement.
 		db
 			.select({
 				productId: movements.productId,
-				day: sql<string>`to_char(${movements.createdAt} at time zone 'UTC', 'YYYY-MM-DD')`,
+				day: sql<
+					string | null
+				>`case when ${movements.createdAt} < ${start} then null else to_char(${movements.createdAt} at time zone 'UTC', 'YYYY-MM-DD') end`,
 				delta: sql<number>`sum(${movements.delta})::int`,
+				firstAt: sql<
+					string | null
+				>`(select min(${movements.createdAt}) from ${movements})`,
 			})
 			.from(movements)
 			.innerJoin(locations, eq(locations.id, movements.locationId))
-			.where(and(owned, sql`${movements.createdAt} >= ${start}`))
+			.where(eq(locations.kind, "owned"))
 			.groupBy(sql`1`, sql`2`),
-		db
-			.select({ at: sql<string | null>`min(${movements.createdAt})` })
-			.from(movements),
 	]);
-	const ledgerDay = ledger?.at ? dayOf(new Date(ledger.at)) : null;
+	const firstAt = ledgerRows[0]?.firstAt;
+	const ledgerDay = firstAt ? dayOf(new Date(firstAt)) : null;
 
 	const sold = new Map<number, Map<string, number>>();
 	for (const s of sales) {
@@ -145,29 +142,35 @@ export async function forecasts(
 		m.set(s.day, s.units);
 		sold.set(s.productId, m);
 	}
+	const before = new Map<number, number>();
 	const moved = new Map<number, Map<string, number>>();
-	for (const mv of moves) {
+	for (const mv of ledgerRows) {
+		if (mv.day === null) {
+			before.set(mv.productId, mv.delta);
+			continue;
+		}
 		const m = moved.get(mv.productId) ?? new Map<string, number>();
 		m.set(mv.day, mv.delta);
 		moved.set(mv.productId, m);
 	}
-	const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
 
 	const result = new Map<number, Forecast>();
-	for (const id of new Set([...sold.keys(), ...onHand.keys()])) {
+	for (const id of new Set([
+		...sold.keys(),
+		...before.keys(),
+		...moved.keys(),
+	])) {
 		const units = sold.get(id);
 		const deltas = moved.get(id);
-		// End-of-day stock, walking back from today.
-		let stock = onHand.get(id) ?? 0;
-		const series = new Array<{ units: number; inStock: boolean }>(days.length);
-		for (let i = days.length - 1; i >= 0; i--) {
-			const day = days[i];
-			series[i] = {
+		// End-of-day stock, walking forward from before the window.
+		let stock = before.get(id) ?? 0;
+		const series = days.map((day) => {
+			stock += deltas?.get(day) ?? 0;
+			return {
 				units: units?.get(day) ?? 0,
 				inStock: ledgerDay === null || day < ledgerDay || stock > 0,
 			};
-			stock -= deltas?.get(day) ?? 0;
-		}
+		});
 		result.set(id, forecastOf(series));
 	}
 	return result;

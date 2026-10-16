@@ -122,6 +122,21 @@ describe("with a database", () => {
 		expect(days).toBe(365);
 	});
 
+	test("a set that can't be costed leaves its parts' margin alone", async () => {
+		const blade = await product("BLADE", 10);
+		const noCost = await product("NOCOST-PART", null);
+		const set = await createProduct(db, "SET", "bundle");
+		await setRecipe(db, set, [
+			{ productId: blade, quantity: 1 },
+			{ productId: noCost, quantity: 1 },
+		]);
+		await sell(blade, 10, {}, 20); // $100 margin of its own
+		await sell(set, 100, {}, 50); // can't be split, so it doesn't count
+
+		const { classes } = await abcClasses(db, now);
+		expect(classes.get(blade)).toMatchObject({ abc: "A", value: 100 });
+	});
+
 	test("ranks tool sets among themselves by their own margin", async () => {
 		const blade = await product("BLADE", 10);
 		const pump = await product("PUMP", 300);

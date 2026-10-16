@@ -140,8 +140,10 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 
 	// Revenue per stocked product: its own sales, plus its share of each set
 	// sale, split by cost. A set whose cost isn't known can't be split, so its
-	// revenue stays with the set.
+	// sales leave its parts' margin on both sides: no revenue, and the units
+	// they took (in soldSince) aren't costed either.
 	const earned = new Map<number, number>();
+	const unvalued = new Map<number, number>();
 	const add = (id: number, amount: number) =>
 		earned.set(id, (earned.get(id) ?? 0) + amount);
 	const setSales: { setId: number; units: number; revenue: number }[] = [];
@@ -153,7 +155,14 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 		}
 		setSales.push({ setId: r.productId, units: r.units, revenue: r.revenue });
 		const cost = setCost(r.productId);
-		if (!cost) continue;
+		if (!cost) {
+			for (const part of partsOf.get(r.productId) ?? [])
+				unvalued.set(
+					part.partId,
+					(unvalued.get(part.partId) ?? 0) + r.units * part.quantity,
+				);
+			continue;
+		}
 		for (const part of partsOf.get(r.productId) ?? [])
 			add(part.partId, (r.revenue * part.quantity * (part.cost ?? 0)) / cost);
 	}
@@ -166,7 +175,8 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 			unpriced++;
 			continue;
 		}
-		const margin = (earned.get(p.id) ?? 0) - units * (p.cost ?? 0);
+		const costed = Math.max(0, units - (unvalued.get(p.id) ?? 0));
+		const margin = (earned.get(p.id) ?? 0) - costed * (p.cost ?? 0);
 		rows.push({ productId: p.id, units, value: Math.max(0, margin) });
 	}
 
