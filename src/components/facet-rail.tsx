@@ -37,21 +37,18 @@ export function FacetRail({
 				!f.exclude &&
 				f.value.toLowerCase() === value.toLowerCase(),
 		);
+	// Ticking drops any chip on the same value first, exclusions included,
+	// so "not counted" and "counted" can't both be on and empty the list.
 	function toggle(field: ListField, value: string) {
+		const was = picked(field, value);
+		const rest = filters.filter(
+			(f) =>
+				!(f.field === field && f.value.toLowerCase() === value.toLowerCase()),
+		);
 		onFilters(
-			picked(field, value)
-				? filters.filter(
-						(f) =>
-							!(
-								f.field === field &&
-								!f.exclude &&
-								f.value.toLowerCase() === value.toLowerCase()
-							),
-					)
-				: [
-						...filters,
-						{ field, value, exclude: false, and: false, exact: true },
-					],
+			was
+				? rest
+				: [...rest, { field, value, exclude: false, and: false, exact: true }],
 		);
 	}
 	return (
@@ -61,6 +58,9 @@ export function FacetRail({
 					key={g.field + g.title}
 					group={g}
 					counts={counts.get(g.field) ?? new Map()}
+					pickedValues={filters
+						.filter((f) => f.field === g.field && !f.exclude)
+						.map((f) => f.value)}
 					picked={(v) => picked(g.field, v)}
 					onToggle={(v) => toggle(g.field, v)}
 				/>
@@ -72,11 +72,14 @@ export function FacetRail({
 function Group({
 	group: g,
 	counts,
+	pickedValues,
 	picked,
 	onToggle,
 }: {
 	group: RailGroup;
 	counts: Map<string, number>;
+	// Picked values with no products left still need a box to untick.
+	pickedValues: string[];
 	picked: (value: string) => boolean;
 	onToggle: (value: string) => void;
 }) {
@@ -85,7 +88,17 @@ function Group({
 	// products drop out unless picked, so a pick can always be undone here.
 	const values = (
 		g.values ??
-		[...counts.keys()].sort(
+		[
+			...new Set([
+				...counts.keys(),
+				...pickedValues.filter(
+					(v) =>
+						![...counts.keys()].some(
+							(k) => k.toLowerCase() === v.toLowerCase(),
+						),
+				),
+			]),
+		].sort(
 			(a, b) =>
 				(counts.get(b) ?? 0) - (counts.get(a) ?? 0) || a.localeCompare(b),
 		)

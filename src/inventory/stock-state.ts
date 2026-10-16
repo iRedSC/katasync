@@ -74,7 +74,12 @@ export function nextStepOf(p: StockInput, trust: Trust | null): NextStep {
 	if (trust?.kind === "needs count")
 		return trust.requested ? { kind: "count requested" } : { kind: "count" };
 	if (p.reorder) return { kind: "order", ...p.reorder };
-	if (!p.hasSupplier && levelOf(p) === "below min")
+	// Without a supplier nothing can suggest an order, so short stock asks
+	// for one.
+	if (
+		!p.hasSupplier &&
+		["oversold", "sold out", "below min"].includes(levelOf(p))
+	)
 		return { kind: "set supplier" };
 	return { kind: "none" };
 }

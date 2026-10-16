@@ -99,10 +99,15 @@ describe("next step", () => {
 		).toEqual({ kind: "on draft", purchaseOrderId: 1004 });
 	});
 
-	test("low stock with no supplier asks for one", () => {
-		expect(
-			step(product({ onHand: 2, available: 2, hasSupplier: false })),
-		).toEqual({ kind: "set supplier" });
+	test("short stock with no supplier asks for one", () => {
+		for (const [onHand, available] of [
+			[2, 2],
+			[0, 0],
+			[-3, 0],
+		])
+			expect(step(product({ onHand, available, hasSupplier: false }))).toEqual({
+				kind: "set supplier",
+			});
 	});
 
 	test("tool sets and healthy stock need nothing", () => {
