@@ -34,11 +34,14 @@ import {
 	draftFromSuggestions,
 	markSent,
 	openDraft,
+	orderAgain,
 	PurchaseOrderError,
 	partsOfSets,
 	receive,
 	receiveExtra,
 	removeAddedLine,
+	restoreDraft,
+	restoreOrder,
 	setDraftLine,
 	setPartsOf,
 	skipSetPart,
@@ -79,7 +82,9 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 				.select({
 					id: purchaseOrders.id,
 					status: purchaseOrders.status,
+					supplierId: suppliers.id,
 					supplierName: suppliers.name,
+					supplierEmail: suppliers.email,
 					sentAt: purchaseOrders.sentAt,
 					expectedAt: purchaseOrders.expectedAt,
 					closedAt: purchaseOrders.closedAt,
@@ -97,7 +102,7 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 					eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
 				)
 				.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
-				.groupBy(purchaseOrders.id, suppliers.name)
+				.groupBy(purchaseOrders.id, suppliers.id)
 				.orderBy(desc(purchaseOrders.id))
 				.limit(200),
 			db
@@ -598,9 +603,47 @@ export const cancelPurchaseOrder = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) => cancelOrder(getDb(), data.id));
 
+// Undoes cancelPurchaseOrder: back on order.
+export const restorePurchaseOrder = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => restoreOrder(getDb(), data.id));
+
+// Returns what was deleted, for restoreDraftPurchaseOrder.
 export const deleteDraftPurchaseOrder = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) => deleteDraft(getDb(), data.id));
+
+const positive = "number.integer > 0";
+
+// Undoes deleteDraftPurchaseOrder with what it returned.
+export const restoreDraftPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			id: positive,
+			supplierId: positive,
+			locationId: positive,
+			notes: "string | null",
+			createdAt: "Date",
+			lines: type({
+				productId: positive,
+				unit: "string",
+				packSize: positive,
+				minimumQuantity: positive,
+				quantity: "number.integer >= 0",
+				unitCost: "number | null",
+			}).array(),
+			skippedParts: type({
+				setProductId: positive,
+				partProductId: positive,
+			}).array(),
+		}),
+	)
+	.handler(async ({ data }) => restoreDraft(getDb(), data));
+
+// A finished PO's products onto its supplier's draft again.
+export const orderPurchaseOrderAgain = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => orderAgain(getDb(), data.id));
 
 // POs waiting on deliveries, for the receiving app.
 export const listReceivable = createServerFn({ method: "GET" }).handler(
@@ -624,7 +667,7 @@ export const listReceivable = createServerFn({ method: "GET" }).handler(
 			)
 			.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
 			.where(eq(purchaseOrders.status, "sent"))
-			.groupBy(purchaseOrders.id, suppliers.name)
+			.groupBy(purchaseOrders.id, suppliers.id)
 			.orderBy(purchaseOrders.expectedAt);
 	},
 );

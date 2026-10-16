@@ -8,14 +8,20 @@ import {
 	AlertTriangle,
 	ArrowRight,
 	ChevronRight,
+	Copy,
+	ExternalLink,
 	FileText,
 	Mail,
+	PackageCheck,
+	Pencil,
 	Smartphone,
+	Trash2,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page, useBack } from "#/components/page";
+import { cancelWithUndo } from "#/components/po-cancel";
 import {
 	ProductPicker,
 	type PurchaseOrderMatch,
@@ -26,7 +32,15 @@ import { SetGauge } from "#/components/set-gauge";
 import { StockRing } from "#/components/stock-ring";
 import { SupplierDialog } from "#/components/supplier-dialog";
 import { Button } from "#/components/ui/button";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "#/components/ui/context-menu";
 import { VelocityGauge } from "#/components/velocity-gauge";
+import { copyText } from "#/lib/copy";
 import {
 	cityLine,
 	formatCount,
@@ -36,6 +50,7 @@ import {
 	formatTime,
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
 	orderedItems,
@@ -51,9 +66,7 @@ import {
 	addRecommended,
 	addSetToOtherPos,
 	amendPurchaseLine,
-	cancelPurchaseOrder,
 	closePurchaseOrder,
-	deleteDraftPurchaseOrder,
 	editDraft,
 	getPurchaseOrder,
 	type PurchaseOrderDetail,
@@ -142,6 +155,7 @@ function PurchaseOrderPage() {
 			detail={d}
 			lines={lines}
 			focus={focus}
+			onEditQuantity={(lineId) => setFocus({ lineId, nonce: Date.now() })}
 			onQuantityDone={(enter) => {
 				setFocus(null);
 				if (enter) picker.current?.focus();
@@ -700,11 +714,14 @@ function LineTable({
 	detail: d,
 	lines,
 	focus,
+	onEditQuantity,
 	onQuantityDone,
 }: {
 	detail: PurchaseOrderDetail;
 	lines: Line[];
 	focus: LineFocus | null;
+	// Opens a line's quantity, as adding it from the picker does.
+	onEditQuantity: (lineId: number) => void;
 	// A quantity opened by focus is done; enter says it was left with Enter.
 	onQuantityDone: (enter: boolean) => void;
 }) {
@@ -718,6 +735,7 @@ function LineTable({
 		if (focus) focusedRow.current?.scrollIntoView({ block: "nearest" });
 	}, [focus]);
 	const [preview, setPreview] = useState<QuantityPreview | null>(null);
+	const [menuFor, setMenuFor] = useState<Line | null>(null);
 	// Sets opened or closed by hand; the rest are open while they're missing
 	// a part.
 	const [opened, setOpened] = useState<ReadonlyMap<number, boolean>>(new Map());
@@ -823,250 +841,402 @@ function LineTable({
 						)}
 					</tr>
 				</thead>
-				<tbody>
-					{lines.map((l) => {
-						const set = setFor(l);
-						return (
-							<Fragment key={l.id}>
-								<tr
-									ref={focus?.lineId === l.id ? focusedRow : undefined}
-									className={cn(
-										"border-t transition-colors first:border-t-0",
-										focus?.lineId === l.id && "bg-info-surface",
-										// Nothing is coming: kept to show the supplier didn't send it.
-										l.quantity === 0 &&
-											l.received === 0 &&
-											"text-muted-foreground",
-									)}
-								>
-									<td className="relative w-full px-4 py-2 whitespace-normal!">
-										{set && (
-											<button
-												type="button"
-												aria-expanded={set.open}
-												aria-label={`${set.open ? "Hide" : "Show"} the parts of ${l.sku}`}
-												onClick={() => toggle(l.id, !set.open)}
-												className="absolute top-1/2 left-0.5 -translate-y-1/2 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-surface hover:text-foreground"
-											>
-												<ChevronRight
-													className={cn(
-														"size-3.5 transition-transform",
-														set.open && "rotate-90",
-													)}
-													strokeWidth={2.5}
-												/>
-											</button>
-										)}
-										<div
+				{/* One menu for the whole table: it acts on the line that was
+				    right-clicked. */}
+				<ContextMenu>
+					<ContextMenuTrigger asChild>
+						<tbody>
+							{lines.map((l) => {
+								const set = setFor(l);
+								return (
+									<Fragment key={l.id}>
+										<tr
+											ref={focus?.lineId === l.id ? focusedRow : undefined}
+											onContextMenu={() => setMenuFor(l)}
 											className={cn(
-												"flex items-center gap-3",
-												draft && "min-w-72",
+												"border-t transition-colors first:border-t-0",
+												focus?.lineId === l.id && "bg-info-surface",
+												// Nothing is coming: kept to show the supplier didn't send it.
+												l.quantity === 0 &&
+													l.received === 0 &&
+													"text-muted-foreground",
 											)}
 										>
-											<ProductImage src={l.imageUrl} />
-											<div className="min-w-0">
-												<Link
-													to="/products/$sku"
-													params={{ sku: l.sku }}
-													className="block hover:underline"
+											<td className="relative w-full px-4 py-2 whitespace-normal!">
+												{set && (
+													<button
+														type="button"
+														aria-expanded={set.open}
+														aria-label={`${set.open ? "Hide" : "Show"} the parts of ${l.sku}`}
+														onClick={() => toggle(l.id, !set.open)}
+														className="absolute top-1/2 left-0.5 -translate-y-1/2 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-surface hover:text-foreground"
+													>
+														<ChevronRight
+															className={cn(
+																"size-3.5 transition-transform",
+																set.open && "rotate-90",
+															)}
+															strokeWidth={2.5}
+														/>
+													</button>
+												)}
+												<div
+													className={cn(
+														"flex items-center gap-3",
+														draft && "min-w-72",
+													)}
 												>
-													{/* Wraps instead of cutting off: on a PO the full name matters. */}
-													<span className="line-clamp-2 font-medium">
-														{l.name}
-														{l.variantName && (
-															<span className="ml-1.5 rounded-md bg-surface px-1.5 text-xs font-normal text-muted-foreground">
-																{l.variantName}
+													<ProductImage src={l.imageUrl} />
+													<div className="min-w-0">
+														<Link
+															to="/products/$sku"
+															params={{ sku: l.sku }}
+															className="block hover:underline"
+														>
+															{/* Wraps instead of cutting off: on a PO the full name matters. */}
+															<span className="line-clamp-2 font-medium">
+																{l.name}
+																{l.variantName && (
+																	<span className="ml-1.5 rounded-md bg-surface px-1.5 text-xs font-normal text-muted-foreground">
+																		{l.variantName}
+																	</span>
+																)}
 															</span>
-														)}
-													</span>
-												</Link>
-												<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-													<span>
-														{l.sku}
-														{set && (
-															<>
-																{" · "}
-																<button
-																	type="button"
-																	onClick={() => toggle(l.id, !set.open)}
-																	className="cursor-pointer hover:text-foreground hover:underline"
-																>
-																	Set of {set.parts.length}{" "}
-																	{set.parts.length === 1 ? "part" : "parts"}
-																</button>
-															</>
-														)}
-														{wasSent && l.sentQuantity === null && (
-															<span className="text-warning-text">
-																{" "}
-																· Added after sending
+														</Link>
+														<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+															<span>
+																{l.sku}
+																{set && (
+																	<>
+																		{" · "}
+																		<button
+																			type="button"
+																			onClick={() => toggle(l.id, !set.open)}
+																			className="cursor-pointer hover:text-foreground hover:underline"
+																		>
+																			Set of {set.parts.length}{" "}
+																			{set.parts.length === 1
+																				? "part"
+																				: "parts"}
+																		</button>
+																	</>
+																)}
+																{wasSent && l.sentQuantity === null && (
+																	<span className="text-warning-text">
+																		{" "}
+																		· Added after sending
+																	</span>
+																)}
 															</span>
-														)}
-													</span>
-													{set && (
-														<AddSetButton
-															line={l}
-															parts={set.parts.map((p) => p.part)}
-															sets={setsOf(l)}
-															supplierId={d.supplier.id}
-															disabled={preview !== null}
+															{set && (
+																<AddSetButton
+																	line={l}
+																	parts={set.parts.map((p) => p.part)}
+																	sets={setsOf(l)}
+																	supplierId={d.supplier.id}
+																	disabled={preview !== null}
+																/>
+															)}
+														</div>
+													</div>
+												</div>
+											</td>
+											<td className="px-3 py-2">
+												<SupplierSkuField line={l} supplierId={d.supplier.id} />
+											</td>
+											<td className="px-3 py-2">
+												<PurchaseUnitCell
+													label={l.sku}
+													value={l}
+													cost={l.unitCost}
+													units={draft ? d.units : undefined}
+													saving={{
+														save: (terms) =>
+															setPurchaseLineTerms({
+																data: {
+																	purchaseOrderId: d.order.id,
+																	productId: l.productId,
+																	...terms,
+																	makeDefault: false,
+																},
+															}),
+														// Only the product's own supplier's terms can change here.
+														...(l.linkSupplierId === d.supplier.id
+															? {
+																	current: {
+																		unit: l.defaultUnit ?? "EACH",
+																		packSize: l.defaultPackSize ?? 1,
+																		minimumQuantity: l.defaultMinimum ?? 1,
+																	},
+																	saveDefault: (terms) =>
+																		setPurchaseLineTerms({
+																			data: {
+																				purchaseOrderId: d.order.id,
+																				productId: l.productId,
+																				...terms,
+																				makeDefault: true,
+																			},
+																		}),
+																}
+															: {
+																	noDefaultReason:
+																		l.linkSupplierId === null
+																			? "This product has no supplier yet; set one on its page"
+																			: "This product is bought from another supplier",
+																}),
+													}}
+												/>
+											</td>
+											<td className="px-3 py-2 text-right font-semibold tabular-nums">
+												{editable ? (
+													<QuantityField
+														key={`q${l.quantity}`}
+														line={l}
+														purchaseOrderId={d.order.id}
+														draft={draft}
+														open={focus?.lineId === l.id ? focus.nonce : null}
+														onDone={onQuantityDone}
+														onPreview={previewFor(l.id)}
+													/>
+												) : (
+													formatCount(l.quantity)
+												)}
+												<WasSent
+													line={l}
+													shows={l.sentQuantity !== l.quantity}
+													text={`sent ${formatCount(l.sentQuantity ?? 0)}`}
+												/>
+											</td>
+											{draft && (
+												<td className="px-3 py-2">
+													{set ? (
+														<div className="flex justify-center">
+															<SetGauge coverage={set.coverage} />
+														</div>
+													) : (
+														<AfterPo
+															onHand={l.onHand}
+															range={l.stockRange}
+															ordered={items.get(l.productId) ?? 0}
 														/>
 													)}
-												</div>
-											</div>
-										</div>
-									</td>
-									<td className="px-3 py-2">
-										<SupplierSkuField line={l} supplierId={d.supplier.id} />
-									</td>
-									<td className="px-3 py-2">
-										<PurchaseUnitCell
-											label={l.sku}
-											value={l}
-											cost={l.unitCost}
-											units={draft ? d.units : undefined}
-											saving={{
-												save: (terms) =>
-													setPurchaseLineTerms({
-														data: {
-															purchaseOrderId: d.order.id,
-															productId: l.productId,
-															...terms,
-															makeDefault: false,
-														},
-													}),
-												// Only the product's own supplier's terms can change here.
-												...(l.linkSupplierId === d.supplier.id
-													? {
-															current: {
-																unit: l.defaultUnit ?? "EACH",
-																packSize: l.defaultPackSize ?? 1,
-																minimumQuantity: l.defaultMinimum ?? 1,
-															},
-															saveDefault: (terms) =>
-																setPurchaseLineTerms({
-																	data: {
-																		purchaseOrderId: d.order.id,
-																		productId: l.productId,
-																		...terms,
-																		makeDefault: true,
-																	},
-																}),
-														}
-													: {
-															noDefaultReason:
-																l.linkSupplierId === null
-																	? "This product has no supplier yet; set one on its page"
-																	: "This product is bought from another supplier",
-														}),
-											}}
-										/>
-									</td>
-									<td className="px-3 py-2 text-right font-semibold tabular-nums">
-										{editable ? (
-											<QuantityField
-												key={`q${l.quantity}`}
-												line={l}
-												purchaseOrderId={d.order.id}
-												draft={draft}
-												open={focus?.lineId === l.id ? focus.nonce : null}
-												onDone={onQuantityDone}
-												onPreview={previewFor(l.id)}
-											/>
-										) : (
-											formatCount(l.quantity)
-										)}
-										<WasSent
-											line={l}
-											shows={l.sentQuantity !== l.quantity}
-											text={`sent ${formatCount(l.sentQuantity ?? 0)}`}
-										/>
-									</td>
-									{draft && (
-										<td className="px-3 py-2">
-											{set ? (
-												<div className="flex justify-center">
-													<SetGauge coverage={set.coverage} />
-												</div>
-											) : (
-												<AfterPo
-													onHand={l.onHand}
-													range={l.stockRange}
-													ordered={items.get(l.productId) ?? 0}
+												</td>
+											)}
+											{draft && (
+												<td className="px-3 py-2">
+													<VelocityGauge why={l.why} onPo={l} />
+												</td>
+											)}
+											<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+												{l.kind === "bundle" ? (
+													<span className="text-muted-foreground">
+														As parts
+													</span>
+												) : editable ? (
+													<PriceField
+														line={l}
+														purchaseOrderId={d.order.id}
+														draft={draft}
+													/>
+												) : (
+													formatMoney(l.unitCost)
+												)}
+												<WasSent
+													line={l}
+													shows={l.sentUnitCost !== l.unitCost}
+													text={`sent ${formatMoney(l.sentUnitCost)}`}
 												/>
+											</td>
+											<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
+												{set ? (
+													<span title="Its parts on this PO at their prices. The total rounds each product up to whole units">
+														{set.amount === null
+															? "—"
+															: formatMoney(set.amount)}
+													</span>
+												) : l.unitCost === null ? (
+													"—"
+												) : (
+													formatMoney(l.unitCost * l.quantity)
+												)}
+											</td>
+											{!draft && (
+												<td className="px-4 py-2 text-right whitespace-nowrap">
+													{l.quantity === 0 && l.received === 0 ? (
+														<Badge>None coming</Badge>
+													) : receiving && l.received < l.quantity ? (
+														<ReceiveField line={l} />
+													) : (
+														<Badge
+															tone={
+																l.received >= l.quantity ? "success" : undefined
+															}
+														>
+															{formatCount(l.received)} of{" "}
+															{formatCount(l.quantity)}
+														</Badge>
+													)}
+												</td>
 											)}
-										</td>
-									)}
-									{draft && (
-										<td className="px-3 py-2">
-											<VelocityGauge why={l.why} onPo={l} />
-										</td>
-									)}
-									<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
-										{l.kind === "bundle" ? (
-											<span className="text-muted-foreground">As parts</span>
-										) : editable ? (
-											<PriceField
-												line={l}
-												purchaseOrderId={d.order.id}
-												draft={draft}
-											/>
-										) : (
-											formatMoney(l.unitCost)
-										)}
-										<WasSent
-											line={l}
-											shows={l.sentUnitCost !== l.unitCost}
-											text={`sent ${formatMoney(l.sentUnitCost)}`}
-										/>
-									</td>
-									<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
-										{set ? (
-											<span title="Its parts on this PO at their prices. The total rounds each product up to whole units">
-												{set.amount === null ? "—" : formatMoney(set.amount)}
-											</span>
-										) : l.unitCost === null ? (
-											"—"
-										) : (
-											formatMoney(l.unitCost * l.quantity)
-										)}
-									</td>
-									{!draft && (
-										<td className="px-4 py-2 text-right whitespace-nowrap">
-											{l.quantity === 0 && l.received === 0 ? (
-												<Badge>None coming</Badge>
-											) : receiving && l.received < l.quantity ? (
-												<ReceiveField line={l} />
-											) : (
-												<Badge
-													tone={
-														l.received >= l.quantity ? "success" : undefined
-													}
-												>
-													{formatCount(l.received)} of {formatCount(l.quantity)}
-												</Badge>
-											)}
-										</td>
-									)}
-								</tr>
-								{set?.open &&
-									set.parts.map(({ part, state }) => (
-										<SetPartRow
-											key={part.productId}
-											line={l}
-											part={part}
-											state={state}
-											sets={set.sets}
-											ordered={items.get(part.productId) ?? 0}
-										/>
-									))}
-							</Fragment>
-						);
-					})}
-				</tbody>
+										</tr>
+										{set?.open &&
+											set.parts.map(({ part, state }) => (
+												<SetPartRow
+													key={part.productId}
+													line={l}
+													part={part}
+													state={state}
+													sets={set.sets}
+													ordered={items.get(part.productId) ?? 0}
+												/>
+											))}
+									</Fragment>
+								);
+							})}
+						</tbody>
+					</ContextMenuTrigger>
+					{menuFor && (
+						<LineMenu
+							line={menuFor}
+							detail={d}
+							onEditQuantity={() => onEditQuantity(menuFor.id)}
+						/>
+					)}
+				</ContextMenu>
 			</table>
 		</div>
 	);
+}
+
+// What a line can do from here. Price and unit stay on their own fields,
+// which already open with a click.
+function LineMenu({
+	line: l,
+	detail: d,
+	onEditQuantity,
+}: {
+	line: Line;
+	detail: PurchaseOrderDetail;
+	onEditQuantity: () => void;
+}) {
+	const router = useRouter();
+	const po = d.order;
+	const url = `/products/${encodeURIComponent(l.sku)}`;
+	const remaining = l.quantity - l.received;
+	const reload = () => router.invalidate();
+
+	async function attempt(work: () => Promise<void>) {
+		try {
+			await work();
+		} catch (err) {
+			toast.error(errorText(err));
+		}
+	}
+
+	return (
+		<ContextMenuContent>
+			<ContextMenuItem
+				onSelect={() =>
+					router.navigate({ to: "/products/$sku", params: { sku: l.sku } })
+				}
+			>
+				<FileText />
+				Open product
+			</ContextMenuItem>
+			<ContextMenuItem onSelect={() => window.open(url, "_blank")}>
+				<ExternalLink />
+				Open product in new tab
+			</ContextMenuItem>
+			{po.status !== "cancelled" && (
+				<>
+					<ContextMenuSeparator />
+					<ContextMenuItem onSelect={onEditQuantity} shortcut="Q">
+						<Pencil />
+						{po.status === "draft" ? "Change quantity" : "Amend quantity"}
+					</ContextMenuItem>
+				</>
+			)}
+			{po.status === "sent" && remaining > 0 && (
+				<ContextMenuItem
+					shortcut="R"
+					onSelect={() => attempt(() => receiveWithUndo(l, remaining, reload))}
+				>
+					<PackageCheck />
+					Receive the rest ({formatCount(remaining)}
+					{l.packSize === 1 ? "" : ` ${l.unit}`})
+				</ContextMenuItem>
+			)}
+			{po.status === "draft" && (
+				<ContextMenuItem
+					className="text-critical-text [&_svg]:text-critical-text"
+					onSelect={() =>
+						attempt(async () => {
+							await setLine({
+								data: {
+									purchaseOrderId: po.id,
+									productId: l.productId,
+									quantity: 0,
+								},
+							});
+							await reload();
+							offerPutBack(l, po.id, reload);
+						})
+					}
+				>
+					<Trash2 />
+					Take off this PO
+				</ContextMenuItem>
+			)}
+			<ContextMenuSeparator />
+			<ContextMenuItem onSelect={() => copyText(l.sku)}>
+				<Copy />
+				Copy SKU
+			</ContextMenuItem>
+		</ContextMenuContent>
+	);
+}
+
+// After a draft line is taken off: Undo puts it back as it was.
+function offerPutBack(
+	line: Line,
+	purchaseOrderId: number,
+	reload: () => Promise<void>,
+) {
+	offerUndo(`Took ${line.sku} off this PO`, {
+		undo: async () => {
+			await setLine({
+				data: {
+					purchaseOrderId,
+					productId: line.productId,
+					quantity: line.quantity,
+					unitCost: line.unitCost,
+				},
+			});
+			await reload();
+			return `${line.sku} back on this PO`;
+		},
+	});
+}
+
+// Receives part or all of a sent line, with Undo. Throws when it can't.
+async function receiveWithUndo(
+	line: Line,
+	quantity: number,
+	reload: () => Promise<void>,
+) {
+	const { receiptId } = await receiveLine({
+		data: { lineId: line.id, quantity },
+	});
+	await reload();
+	const unit = line.packSize === 1 ? "" : ` ${line.unit}`;
+	offerUndo(`Received ${formatCount(quantity)}${unit} × ${line.sku}`, {
+		tone: "success",
+		undo: async () => {
+			await undoPurchaseReceipt({ data: { id: receiptId } });
+			await reload();
+			return `Took back ${formatCount(quantity)}${unit} × ${line.sku}`;
+		},
+	});
 }
 
 // Under a sent line's quantity or cost, when it has changed since: what the
@@ -1448,22 +1618,7 @@ function QuantityField({
 		);
 		setSaving(null);
 		if (r && quantity === 0)
-			toast(`Took ${line.sku} off this PO`, {
-				action: {
-					label: "Undo",
-					onClick: async () => {
-						await setLine({
-							data: {
-								purchaseOrderId,
-								productId: line.productId,
-								quantity: line.quantity,
-								unitCost: line.unitCost,
-							},
-						});
-						router.invalidate();
-					},
-				},
-			});
+			offerPutBack(line, purchaseOrderId, () => router.invalidate());
 	}
 
 	const scrub = useNumberLine({ value: line.quantity, onCommit: save });
@@ -1673,6 +1828,7 @@ function amended({
 	reload: () => Promise<void>;
 }) {
 	const { was } = result;
+	// Reloads either way, so a half-done undo still shows what's saved.
 	const undo = async () => {
 		try {
 			const lineId = result.removed
@@ -1685,20 +1841,19 @@ function amended({
 			await amendPurchaseLine({
 				data: { lineId, quantity: was.quantity, unitCost: was.unitCost },
 			});
-		} catch (err) {
-			toast.error(errorText(err));
+		} finally {
+			await reload();
 		}
-		await reload();
+		return `${line.sku} back as it was`;
 	};
-	const action = { label: "Undo", onClick: undo };
 	if (result.removed)
-		toast(`Took ${line.sku} off. The supplier isn't told.`, { action });
+		offerUndo(`Took ${line.sku} off. The supplier isn't told.`, { undo });
 	else if (result.receivedAtOldCost)
-		toast.warning(
+		offerUndo(
 			`${summary}. What already arrived keeps the old cost. The supplier isn't told.`,
-			{ action, duration: 10_000 },
+			{ undo, tone: "warning" },
 		);
-	else toast(`${summary}. The supplier isn't told.`, { action });
+	else offerUndo(`${summary}. The supplier isn't told.`, { undo });
 }
 
 // A line's cost per unit. Empty means no cost yet. On a sent PO it's a change
@@ -1812,6 +1967,7 @@ function SupplierSkuField({
 // all of it.
 function ReceiveField({ line }: { line: Line }) {
 	const { busy, run } = useAction();
+	const router = useRouter();
 	const remaining = line.quantity - line.received;
 	const [value, setValue] = useState(String(remaining));
 	const n = Number(value);
@@ -1819,10 +1975,8 @@ function ReceiveField({ line }: { line: Line }) {
 
 	async function submit() {
 		if (!valid) return;
-		const r = await run(
-			() => receiveLine({ data: { lineId: line.id, quantity: n } }),
-			() =>
-				`Received ${formatCount(n)}${line.packSize === 1 ? "" : ` ${line.unit}`} × ${line.sku}`,
+		const r = await run(() =>
+			receiveWithUndo(line, n, () => router.invalidate()),
 		);
 		if (r) setValue(String(Math.max(remaining - n, 1)));
 	}
@@ -2031,8 +2185,10 @@ function OtherActions({
 	run: ReturnType<typeof useAction>["run"];
 }) {
 	const navigate = useNavigate();
+	const router = useRouter();
 	const po = d.order;
 	if (po.status === "closed" || po.status === "cancelled") return null;
+	const live = po.status;
 	return (
 		<Card title="More">
 			<div className="flex flex-col items-start gap-1">
@@ -2069,23 +2225,11 @@ function OtherActions({
 						disabled={busy}
 						className="text-critical-text"
 						onClick={async () => {
-							if (
-								!confirm(
-									po.status === "draft"
-										? "Delete this draft?"
-										: "Cancel this PO? Tell the supplier too.",
-								)
-							)
-								return;
-							const r = await run(
-								() =>
-									po.status === "draft"
-										? deleteDraftPurchaseOrder({ data: { id: po.id } })
-										: cancelPurchaseOrder({ data: { id: po.id } }),
-								() =>
-									po.status === "draft"
-										? "Draft deleted"
-										: `PO ${po.id} cancelled`,
+							const r = await run(() =>
+								cancelWithUndo(
+									{ id: po.id, status: live, supplierName: d.supplier.name },
+									() => router.invalidate(),
+								),
 							);
 							if (r) navigate({ to: "/purchasing" });
 						}}

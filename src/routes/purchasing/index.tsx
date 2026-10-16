@@ -4,10 +4,22 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { ClipboardList, Plus } from "lucide-react";
+import {
+	Ban,
+	ClipboardList,
+	ExternalLink,
+	FileText,
+	Mail,
+	PackageCheck,
+	Plus,
+	RefreshCw,
+	Repeat,
+	Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
+import { cancelWithUndo } from "#/components/po-cancel";
 import { Button } from "#/components/ui/button";
 import {
 	Command,
@@ -17,6 +29,13 @@ import {
 	CommandItem,
 	CommandList,
 } from "#/components/ui/command";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "#/components/ui/context-menu";
 import {
 	Dialog,
 	DialogContent,
@@ -37,7 +56,9 @@ import { purchaseOrderStatus } from "#/purchasing/status";
 import {
 	createDraft,
 	listPurchasing,
+	orderPurchaseOrderAgain,
 	type PurchasingList,
+	updateDraftFromSuggestions,
 } from "#/server/purchasing";
 
 export const Route = createFileRoute("/purchasing/")({
@@ -166,6 +187,8 @@ type Suggestion = PurchasingList["ready"][number];
 // shows what would go on the PO; only "Create PO" makes the draft.
 function SuggestionList({ rows }: { rows: Suggestion[] }) {
 	const [viewing, setViewing] = useState<number | null>(null);
+	const [menuFor, setMenuFor] = useState<Suggestion | null>(null);
+	const { busy, create } = useCreateDraft();
 	// Looked up by supplier, so the preview closes if the row leaves the list.
 	const shown = rows.find((s) => s.supplierId === viewing) ?? null;
 
@@ -188,36 +211,61 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 						</th>
 					</tr>
 				</thead>
-				<tbody>
-					{rows.map((s) => (
-						<tr
-							key={s.supplierId}
-							onClick={() => setViewing(s.supplierId)}
-							className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
-						>
-							<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
-								<span className="font-normal text-muted-foreground">New</span>
-							</td>
-							<td className="px-4 py-2.5">
-								<div className="truncate">{s.supplierName}</div>
-							</td>
-							<td className="px-4 py-2.5 whitespace-nowrap">
-								<ReadinessBadge s={s} />
-							</td>
-							<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-								<div className="truncate">
-									<ProductCount s={s} />
-								</div>
-							</td>
-							<td className="px-4 py-2.5 text-right tabular-nums">
-								{formatMoney(s.total)}
-							</td>
-							<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
-								—
-							</td>
-						</tr>
-					))}
-				</tbody>
+				<ContextMenu>
+					<ContextMenuTrigger asChild>
+						<tbody>
+							{rows.map((s) => (
+								<tr
+									key={s.supplierId}
+									onClick={() => setViewing(s.supplierId)}
+									onContextMenu={() => setMenuFor(s)}
+									className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
+								>
+									<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
+										<span className="font-normal text-muted-foreground">
+											New
+										</span>
+									</td>
+									<td className="px-4 py-2.5">
+										<div className="truncate">{s.supplierName}</div>
+									</td>
+									<td className="px-4 py-2.5 whitespace-nowrap">
+										<ReadinessBadge s={s} />
+									</td>
+									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
+										<div className="truncate">
+											<ProductCount s={s} />
+										</div>
+									</td>
+									<td className="px-4 py-2.5 text-right tabular-nums">
+										{formatMoney(s.total)}
+									</td>
+									<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
+										—
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</ContextMenuTrigger>
+					{menuFor && (
+						<ContextMenuContent>
+							<ContextMenuItem
+								shortcut="↵"
+								onSelect={() => setViewing(menuFor.supplierId)}
+							>
+								<FileText />
+								Preview
+							</ContextMenuItem>
+							<ContextMenuItem
+								disabled={busy}
+								onSelect={() => create(menuFor.supplierId)}
+							>
+								<Plus />
+								Create PO
+							</ContextMenuItem>
+						</ContextMenuContent>
+					)}
+				</ContextMenu>
 			</table>
 			<SuggestionPreview s={shown} onClose={() => setViewing(null)} />
 		</>
@@ -242,15 +290,8 @@ function ProductCount({ s }: { s: Suggestion }) {
 	);
 }
 
-// What a suggested PO would order, before there's a draft. "Create PO" turns
-// it into the supplier's draft and opens it.
-function SuggestionPreview({
-	s,
-	onClose,
-}: {
-	s: Suggestion | null;
-	onClose: () => void;
-}) {
+// Makes the supplier's draft from today's suggestions and opens it.
+function useCreateDraft() {
 	const navigate = useNavigate();
 	const router = useRouter();
 	const [busy, setBusy] = useState(false);
@@ -268,6 +309,19 @@ function SuggestionPreview({
 			setBusy(false);
 		}
 	}
+	return { busy, create };
+}
+
+// What a suggested PO would order, before there's a draft. "Create PO" turns
+// it into the supplier's draft and opens it.
+function SuggestionPreview({
+	s,
+	onClose,
+}: {
+	s: Suggestion | null;
+	onClose: () => void;
+}) {
+	const { busy, create } = useCreateDraft();
 
 	return (
 		<Dialog open={s !== null} onOpenChange={(o) => !o && !busy && onClose()}>
@@ -367,6 +421,7 @@ function Columns() {
 
 function OrderTable({ rows }: { rows: OrderRow[] }) {
 	const navigate = useNavigate();
+	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
 	return (
 		<table className="w-full table-fixed">
 			<Columns />
@@ -384,59 +439,197 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 					</th>
 				</tr>
 			</thead>
-			<tbody>
-				{rows.map((o) => {
-					const status = purchaseOrderStatus(o);
-					return (
-						<tr
-							key={o.id}
-							onClick={() =>
-								navigate({
-									to: "/purchasing/$id",
-									params: { id: String(o.id) },
-								})
-							}
-							className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
-						>
-							<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
-								PO {o.id}
-							</td>
-							<td className="px-4 py-2.5">
-								<div className="truncate">{o.supplierName}</div>
-							</td>
-							<td className="px-4 py-2.5">
-								<Badge tone={status.tone}>{status.label}</Badge>
-							</td>
-							<td className="hidden px-4 py-2.5 whitespace-nowrap tabular-nums md:table-cell">
-								{o.status === "draft" ? (
-									<span className="text-muted-foreground">
-										{formatCount(o.lines)}{" "}
-										{o.lines === 1 ? "product" : "products"}
-									</span>
-								) : (
-									<span
-										className={cn(
-											o.received < o.ordered && "text-muted-foreground",
+			{/* One menu for the whole table: it acts on the row that was
+			    right-clicked. */}
+			<ContextMenu>
+				<ContextMenuTrigger asChild>
+					<tbody>
+						{rows.map((o) => {
+							const status = purchaseOrderStatus(o);
+							return (
+								<tr
+									key={o.id}
+									onClick={() =>
+										navigate({
+											to: "/purchasing/$id",
+											params: { id: String(o.id) },
+										})
+									}
+									onContextMenu={() => setMenuFor(o)}
+									className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
+								>
+									<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
+										PO {o.id}
+									</td>
+									<td className="px-4 py-2.5">
+										<div className="truncate">{o.supplierName}</div>
+									</td>
+									<td className="px-4 py-2.5">
+										<Badge tone={status.tone}>{status.label}</Badge>
+									</td>
+									<td className="hidden px-4 py-2.5 whitespace-nowrap tabular-nums md:table-cell">
+										{o.status === "draft" ? (
+											<span className="text-muted-foreground">
+												{formatCount(o.lines)}{" "}
+												{o.lines === 1 ? "product" : "products"}
+											</span>
+										) : (
+											<span
+												className={cn(
+													o.received < o.ordered && "text-muted-foreground",
+												)}
+											>
+												{formatCount(o.received)} of {formatCount(o.ordered)}
+											</span>
 										)}
-									>
-										{formatCount(o.received)} of {formatCount(o.ordered)}
-									</span>
-								)}
-							</td>
-							<td className="px-4 py-2.5 text-right tabular-nums">
-								{formatMoney(o.total)}
-							</td>
-							<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-								{o.status === "sent" && o.expectedAt
-									? formatDay(o.expectedAt)
-									: o.closedAt
-										? `Done ${formatDay(o.closedAt)}`
-										: "—"}
-							</td>
-						</tr>
-					);
-				})}
-			</tbody>
+									</td>
+									<td className="px-4 py-2.5 text-right tabular-nums">
+										{formatMoney(o.total)}
+									</td>
+									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
+										{o.status === "sent" && o.expectedAt
+											? formatDay(o.expectedAt)
+											: o.closedAt
+												? `Done ${formatDay(o.closedAt)}`
+												: "—"}
+									</td>
+								</tr>
+							);
+						})}
+					</tbody>
+				</ContextMenuTrigger>
+				{menuFor && <OrderMenu order={menuFor} />}
+			</ContextMenu>
 		</table>
+	);
+}
+
+// What each kind of PO can do from here. Sending and closing short aren't
+// offered: both want the PO open, to check its lines or what arrived.
+function OrderMenu({ order: o }: { order: OrderRow }) {
+	const navigate = useNavigate();
+	const router = useRouter();
+	const name = `PO ${o.id}`;
+	// Still a draft or on order; null once it's done.
+	const live = o.status === "draft" || o.status === "sent" ? o.status : null;
+	const done = live === null;
+
+	async function attempt(work: () => Promise<void>) {
+		try {
+			await work();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err));
+		}
+	}
+
+	const refresh = () =>
+		attempt(async () => {
+			const { added, raised } = await updateDraftFromSuggestions({
+				data: { id: o.id },
+			});
+			await router.invalidate();
+			toast.success(
+				added + raised === 0
+					? `${name} already has everything suggested`
+					: `${name}: ${[
+							added > 0 && `${formatCount(added)} added`,
+							raised > 0 && `${formatCount(raised)} raised`,
+						]
+							.filter(Boolean)
+							.join(", ")}`,
+			);
+		});
+
+	const cancel = (status: "draft" | "sent") =>
+		attempt(() => cancelWithUndo({ ...o, status }, () => router.invalidate()));
+
+	const again = () =>
+		attempt(async () => {
+			const r = await orderPurchaseOrderAgain({ data: { id: o.id } });
+			await router.invalidate();
+			const left = [
+				r.alreadyOn > 0 && `${formatCount(r.alreadyOn)} already on it`,
+				r.moved > 0 &&
+					`${formatCount(r.moved)} now bought from another supplier`,
+			].filter(Boolean);
+			toast.success(
+				`Added ${formatCount(r.added)} ${r.added === 1 ? "product" : "products"} from ${name} to PO ${r.id}`,
+				left.length > 0
+					? { description: `Left off: ${left.join(", ")}` }
+					: undefined,
+			);
+			navigate({ to: "/purchasing/$id", params: { id: String(r.id) } });
+		});
+
+	return (
+		<ContextMenuContent>
+			<ContextMenuItem
+				onSelect={() =>
+					navigate({ to: "/purchasing/$id", params: { id: String(o.id) } })
+				}
+			>
+				<FileText />
+				Open
+			</ContextMenuItem>
+			<ContextMenuItem
+				onSelect={() => window.open(`/purchasing/${o.id}`, "_blank")}
+			>
+				<ExternalLink />
+				Open in new tab
+			</ContextMenuItem>
+			<ContextMenuSeparator />
+			{o.status === "draft" && (
+				<ContextMenuItem onSelect={refresh}>
+					<RefreshCw />
+					Update from today's suggestions
+				</ContextMenuItem>
+			)}
+			{o.status === "sent" && (
+				<ContextMenuItem
+					onSelect={() =>
+						navigate({ to: "/receive/$id", params: { id: String(o.id) } })
+					}
+				>
+					<PackageCheck />
+					Receive
+				</ContextMenuItem>
+			)}
+			{done && (
+				<ContextMenuItem onSelect={again}>
+					<Repeat />
+					Order again
+				</ContextMenuItem>
+			)}
+			{o.lines > 0 && (
+				<ContextMenuItem
+					onSelect={() => window.open(`/purchasing/pdf/${o.id}`, "_blank")}
+				>
+					<FileText />
+					View PDF
+				</ContextMenuItem>
+			)}
+			{!done && o.supplierEmail && (
+				<ContextMenuItem
+					onSelect={() => {
+						window.location.href = `mailto:${o.supplierEmail}?subject=${encodeURIComponent(`Purchase order ${o.id}`)}`;
+					}}
+				>
+					<Mail />
+					Email {o.supplierName}
+				</ContextMenuItem>
+			)}
+			{live && o.received === 0 && (
+				<>
+					<ContextMenuSeparator />
+					<ContextMenuItem
+						onSelect={() => cancel(live)}
+						className="text-critical-text [&_svg]:text-critical-text"
+					>
+						{live === "draft" ? <Trash2 /> : <Ban />}
+						{live === "draft" ? "Delete draft" : "Cancel PO"}
+					</ContextMenuItem>
+				</>
+			)}
+		</ContextMenuContent>
 	);
 }

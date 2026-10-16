@@ -46,8 +46,10 @@ import {
 	nextStepOf,
 	trustOf,
 } from "#/inventory/stock-state";
+import { copyText } from "#/lib/copy";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
 	type Facets,
@@ -658,25 +660,18 @@ function ProductList() {
 				);
 				return;
 			}
-			toast.success(
+			offerUndo(
 				`Added ${formatOrderQuantity(line)} to PO ${purchaseOrderId} (${supplierName})`,
 				{
-					action: {
-						label: "Undo",
-						onClick: async () => {
-							try {
-								const undone = await undoAddToPurchaseOrder({
-									data: { purchaseOrderId, line },
-								});
-								await router.invalidate();
-								if (!undone)
-									toast(
-										`${p.sku} on PO ${purchaseOrderId} changed since, so it's left as is`,
-									);
-							} catch (err) {
-								toast.error(err instanceof Error ? err.message : String(err));
-							}
-						},
+					tone: "success",
+					undo: async () => {
+						const undone = await undoAddToPurchaseOrder({
+							data: { purchaseOrderId, line },
+						});
+						await router.invalidate();
+						return undone
+							? `Took ${p.sku} off PO ${purchaseOrderId}`
+							: `${p.sku} on PO ${purchaseOrderId} changed since, so it's left as is`;
 					},
 				},
 			);
@@ -694,23 +689,16 @@ function ProductList() {
 				return;
 			}
 			await router.invalidate();
-			toast.success(`Added ${p.sku} to the count list`, {
-				action: {
-					label: "Undo",
-					onClick: async () => {
-						try {
-							const cancelled = await cancelCountRequest({
-								data: { requests: added },
-							});
-							await router.invalidate();
-							if (cancelled < added.length)
-								toast(
-									`${p.sku}'s count request changed since, so it's left as is`,
-								);
-						} catch (err) {
-							toast.error(err instanceof Error ? err.message : String(err));
-						}
-					},
+			offerUndo(`Added ${p.sku} to the count list`, {
+				tone: "success",
+				undo: async () => {
+					const cancelled = await cancelCountRequest({
+						data: { requests: added },
+					});
+					await router.invalidate();
+					return cancelled < added.length
+						? `${p.sku}'s count request changed since, so it's left as is`
+						: `Took ${p.sku} off the count list`;
 				},
 			});
 		} catch (err) {
@@ -721,13 +709,12 @@ function ProductList() {
 	async function updateView(v: View) {
 		await saveView({ data: { id: v.id, name: v.name, ...current } });
 		await router.invalidate();
-		toast.success(`Saved “${v.name}”`, {
-			action: {
-				label: "Undo",
-				onClick: async () => {
-					await saveView({ data: v });
-					await router.invalidate();
-				},
+		offerUndo(`Saved “${v.name}”`, {
+			tone: "success",
+			undo: async () => {
+				await saveView({ data: v });
+				await router.invalidate();
+				return `“${v.name}” back as it was`;
 			},
 		});
 	}
@@ -826,14 +813,12 @@ function ViewDialog({
 		await deleteView({ data: { id: view.id } });
 		await router.invalidate();
 		onDeleted();
-		toast(`Deleted “${view.name}”`, {
-			action: {
-				label: "Undo",
-				onClick: async () => {
-					const { id: _, ...rest } = view;
-					await saveView({ data: rest });
-					await router.invalidate();
-				},
+		offerUndo(`Deleted “${view.name}”`, {
+			undo: async () => {
+				const { id: _, ...rest } = view;
+				await saveView({ data: rest });
+				await router.invalidate();
+				return `“${view.name}” is back`;
 			},
 		});
 	}
@@ -988,12 +973,7 @@ function RowMenu({
 				Count stock
 			</ContextMenuItem>
 			<ContextMenuSeparator />
-			<ContextMenuItem
-				onSelect={async () => {
-					await navigator.clipboard.writeText(p.sku);
-					toast(`Copied ${p.sku}`);
-				}}
-			>
+			<ContextMenuItem onSelect={() => copyText(p.sku)}>
 				<Copy />
 				Copy SKU
 			</ContextMenuItem>

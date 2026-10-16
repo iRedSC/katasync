@@ -1297,9 +1297,29 @@ export async function closeOrder(db: Db, id: number, now = new Date()) {
 
 // Throws a draft away, lines and all. Nothing was sent, so there's no record
 // worth keeping. Checked under the lock, so a PO sent a moment ago stays.
-export async function deleteDraft(db: Db, id: number) {
+// Returns what was thrown away, for restoreDraft to put back.
+export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 	return db.transaction(async (tx) => {
-		await lockOrder(tx, id, ["draft"]);
+		const po = await lockOrder(tx, id, ["draft"]);
+		const lines = await tx
+			.select({
+				productId: purchaseOrderLines.productId,
+				unit: purchaseOrderLines.unit,
+				packSize: purchaseOrderLines.packSize,
+				minimumQuantity: purchaseOrderLines.minimumQuantity,
+				quantity: purchaseOrderLines.quantity,
+				unitCost: purchaseOrderLines.unitCost,
+			})
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.purchaseOrderId, id))
+			.orderBy(purchaseOrderLines.id);
+		const skippedParts = await tx
+			.select({
+				setProductId: purchaseOrderSkippedParts.setProductId,
+				partProductId: purchaseOrderSkippedParts.partProductId,
+			})
+			.from(purchaseOrderSkippedParts)
+			.where(eq(purchaseOrderSkippedParts.purchaseOrderId, id));
 		await tx
 			.delete(purchaseOrderAmendments)
 			.where(eq(purchaseOrderAmendments.purchaseOrderId, id));
@@ -1307,6 +1327,76 @@ export async function deleteDraft(db: Db, id: number) {
 			.delete(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, id));
 		await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+		return {
+			id,
+			supplierId: po.supplierId,
+			locationId: po.locationId,
+			notes: po.notes,
+			createdAt: po.createdAt,
+			lines,
+			skippedParts,
+		};
+	});
+}
+
+export type DeletedDraft = {
+	id: number;
+	supplierId: number;
+	locationId: number;
+	notes: string | null;
+	createdAt: Date;
+	lines: {
+		productId: number;
+		unit: string;
+		packSize: number;
+		minimumQuantity: number;
+		quantity: number;
+		unitCost: number | null;
+	}[];
+	skippedParts: { setProductId: number; partProductId: number }[];
+};
+
+// Undoes deleteDraft: the same draft, under the same PO number. It can't come
+// back once its supplier has a new draft.
+export async function restoreDraft(db: Db, draft: DeletedDraft) {
+	return db.transaction(async (tx) => {
+		const [other] = await tx
+			.select({ id: purchaseOrders.id })
+			.from(purchaseOrders)
+			.where(
+				and(
+					eq(purchaseOrders.supplierId, draft.supplierId),
+					eq(purchaseOrders.status, "draft"),
+				),
+			);
+		if (other)
+			throw new PurchaseOrderError(
+				`Can't bring back ${poName(draft.id)}: its supplier has a new draft, ${poName(other.id)}`,
+			);
+		const [po] = await tx
+			.insert(purchaseOrders)
+			.overridingSystemValue()
+			.values({
+				id: draft.id,
+				supplierId: draft.supplierId,
+				locationId: draft.locationId,
+				notes: draft.notes,
+				createdAt: new Date(draft.createdAt),
+			})
+			.onConflictDoNothing()
+			.returning({ id: purchaseOrders.id });
+		if (!po)
+			throw new PurchaseOrderError(`${poName(draft.id)} is already back`);
+		if (draft.lines.length > 0)
+			await tx
+				.insert(purchaseOrderLines)
+				.values(draft.lines.map((l) => ({ ...l, purchaseOrderId: po.id })));
+		if (draft.skippedParts.length > 0)
+			await tx
+				.insert(purchaseOrderSkippedParts)
+				.values(
+					draft.skippedParts.map((s) => ({ ...s, purchaseOrderId: po.id })),
+				);
 	});
 }
 
@@ -1333,6 +1423,79 @@ export async function cancelOrder(db: Db, id: number, now = new Date()) {
 			.update(purchaseOrders)
 			.set({ status: "cancelled", closedAt: now })
 			.where(eq(purchaseOrders.id, id));
+	});
+}
+
+// Undoes cancelOrder: back on order. Cancelling changes nothing else, so
+// that's all there is to put back.
+export async function restoreOrder(db: Db, id: number) {
+	return db.transaction(async (tx) => {
+		const po = await lockOrder(tx, id, ["cancelled"]);
+		// Drafts used to be cancelled rather than deleted; those stay as they are.
+		if (!po.sentAt)
+			throw new PurchaseOrderError(`${poName(id)} was never sent`);
+		await tx
+			.update(purchaseOrders)
+			.set({ status: "sent", closedAt: null })
+			.where(eq(purchaseOrders.id, id));
+	});
+}
+
+// Puts a finished PO's products on its supplier's draft again, in what was
+// sent (or, for lines never sent, what the PO ended up expecting). Each comes
+// in at today's terms and price, rounded up to whole units. Products already
+// on the draft keep their line, and products that have since moved to another
+// supplier are left off, so nothing is ordered twice or from the wrong place.
+export async function orderAgain(db: Db, sourceId: number) {
+	const reorderable = async (tx: Db) => {
+		const from = await lockOrder(tx, sourceId, ["closed", "cancelled"]);
+		const lines = await tx
+			.select({
+				productId: purchaseOrderLines.productId,
+				items: sql<number>`(coalesce(${purchaseOrderLines.sentQuantity}, ${purchaseOrderLines.quantity}) * ${purchaseOrderLines.packSize})::int`,
+				supplierId: productSuppliers.supplierId,
+			})
+			.from(purchaseOrderLines)
+			.leftJoin(
+				productSuppliers,
+				eq(productSuppliers.productId, purchaseOrderLines.productId),
+			)
+			.where(eq(purchaseOrderLines.purchaseOrderId, from.id))
+			.orderBy(purchaseOrderLines.id);
+		return { from, lines: lines.filter((l) => l.items > 0) };
+	};
+	// Checked before opening the draft, so a PO with nothing left to order
+	// doesn't leave an empty draft behind.
+	const first = await db.transaction(reorderable);
+	if (!first.lines.some((l) => l.supplierId === first.from.supplierId))
+		throw new PurchaseOrderError(
+			`Nothing on ${poName(sourceId)} is still bought from this supplier`,
+		);
+	const draftId = await openDraft(db, first.from.supplierId);
+	return db.transaction(async (tx) => {
+		const { from, lines } = await reorderable(tx);
+		await lockOrder(tx, draftId, ["draft"]);
+		const onDraft = new Set(
+			(
+				await tx
+					.select({ productId: purchaseOrderLines.productId })
+					.from(purchaseOrderLines)
+					.where(eq(purchaseOrderLines.purchaseOrderId, draftId))
+			).map((l) => l.productId),
+		);
+		let added = 0;
+		let alreadyOn = 0;
+		let moved = 0;
+		for (const l of lines) {
+			if (l.supplierId !== from.supplierId) moved++;
+			else if (onDraft.has(l.productId)) alreadyOn++;
+			else {
+				await addItems(tx, draftId, l.productId, l.items);
+				onDraft.add(l.productId);
+				added++;
+			}
+		}
+		return { id: draftId, added, alreadyOn, moved };
 	});
 }
 
