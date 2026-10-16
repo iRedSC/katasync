@@ -1,7 +1,6 @@
 import NumberFlow from "@number-flow/react";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
-import { toast } from "sonner";
 import { CountDialog } from "#/components/count-dialog";
 import {
 	AbcBadge,
@@ -18,6 +17,7 @@ import { SupplierCard } from "#/components/supplier-card";
 import { Button } from "#/components/ui/button";
 import { channelName, formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
 	getDefaultRange,
@@ -450,13 +450,12 @@ function InsureToggle({ sku, insure }: { sku: string; insure: boolean }) {
 	async function set(next: boolean) {
 		await setInsureWhenShipped({ data: { sku, insure: next } });
 		router.invalidate();
-		toast.success(next ? "Insured when shipped" : "No longer insured", {
-			action: {
-				label: "Undo",
-				onClick: async () => {
-					await setInsureWhenShipped({ data: { sku, insure: !next } });
-					router.invalidate();
-				},
+		offerUndo(next ? "Insured when shipped" : "No longer insured", {
+			tone: "success",
+			undo: async () => {
+				await setInsureWhenShipped({ data: { sku, insure: !next } });
+				await router.invalidate();
+				return next ? "No longer insured" : "Insured when shipped";
 			},
 		});
 	}
@@ -488,13 +487,12 @@ function CriticalToggle({
 	async function set(next: boolean) {
 		await setCritical({ data: { productId, critical: next } });
 		router.invalidate();
-		toast.success(next ? "Marked critical" : "No longer critical", {
-			action: {
-				label: "Undo",
-				onClick: async () => {
-					await setCritical({ data: { productId, critical: !next } });
-					router.invalidate();
-				},
+		offerUndo(next ? "Marked critical" : "No longer critical", {
+			tone: "success",
+			undo: async () => {
+				await setCritical({ data: { productId, critical: !next } });
+				await router.invalidate();
+				return next ? "No longer critical" : "Marked critical";
 			},
 		});
 	}

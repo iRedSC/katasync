@@ -16,6 +16,7 @@ import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page, useBack } from "#/components/page";
+import { cancelWithUndo } from "#/components/po-cancel";
 import {
 	ProductPicker,
 	type PurchaseOrderMatch,
@@ -36,6 +37,7 @@ import {
 	formatTime,
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
 	orderedItems,
@@ -51,7 +53,6 @@ import {
 	addRecommended,
 	addSetToOtherPos,
 	amendPurchaseLine,
-	cancelPurchaseOrder,
 	closePurchaseOrder,
 	editDraft,
 	getPurchaseOrder,
@@ -1445,20 +1446,18 @@ function QuantityField({
 		);
 		setSaving(null);
 		if (r && quantity === 0)
-			toast(`Took ${line.sku} off this PO`, {
-				action: {
-					label: "Undo",
-					onClick: async () => {
-						await setLine({
-							data: {
-								purchaseOrderId,
-								productId: line.productId,
-								quantity: line.quantity,
-								unitCost: line.unitCost,
-							},
-						});
-						router.invalidate();
-					},
+			offerUndo(`Took ${line.sku} off this PO`, {
+				undo: async () => {
+					await setLine({
+						data: {
+							purchaseOrderId,
+							productId: line.productId,
+							quantity: line.quantity,
+							unitCost: line.unitCost,
+						},
+					});
+					await router.invalidate();
+					return `${line.sku} back on this PO`;
 				},
 			});
 	}
@@ -1670,6 +1669,7 @@ function amended({
 	reload: () => Promise<void>;
 }) {
 	const { was } = result;
+	// Reloads either way, so a half-done undo still shows what's saved.
 	const undo = async () => {
 		try {
 			const lineId = result.removed
@@ -1682,20 +1682,19 @@ function amended({
 			await amendPurchaseLine({
 				data: { lineId, quantity: was.quantity, unitCost: was.unitCost },
 			});
-		} catch (err) {
-			toast.error(errorText(err));
+		} finally {
+			await reload();
 		}
-		await reload();
+		return `${line.sku} back as it was`;
 	};
-	const action = { label: "Undo", onClick: undo };
 	if (result.removed)
-		toast(`Took ${line.sku} off. The supplier isn't told.`, { action });
+		offerUndo(`Took ${line.sku} off. The supplier isn't told.`, { undo });
 	else if (result.receivedAtOldCost)
-		toast.warning(
+		offerUndo(
 			`${summary}. What already arrived keeps the old cost. The supplier isn't told.`,
-			{ action, duration: 10_000 },
+			{ undo, tone: "warning" },
 		);
-	else toast(`${summary}. The supplier isn't told.`, { action });
+	else offerUndo(`${summary}. The supplier isn't told.`, { undo });
 }
 
 // A line's cost per unit. Empty means no cost yet. On a sent PO it's a change
@@ -2028,8 +2027,10 @@ function OtherActions({
 	run: ReturnType<typeof useAction>["run"];
 }) {
 	const navigate = useNavigate();
+	const router = useRouter();
 	const po = d.order;
 	if (po.status === "closed" || po.status === "cancelled") return null;
+	const live = po.status;
 	return (
 		<Card title="More">
 			<div className="flex flex-col items-start gap-1">
@@ -2066,20 +2067,11 @@ function OtherActions({
 						disabled={busy}
 						className="text-critical-text"
 						onClick={async () => {
-							if (
-								!confirm(
-									po.status === "draft"
-										? "Delete this draft?"
-										: "Cancel this PO? Tell the supplier too.",
-								)
-							)
-								return;
-							const r = await run(
-								() => cancelPurchaseOrder({ data: { id: po.id } }),
-								() =>
-									po.status === "draft"
-										? "Draft deleted"
-										: `PO ${po.id} cancelled`,
+							const r = await run(() =>
+								cancelWithUndo(
+									{ id: po.id, status: live, supplierName: d.supplier.name },
+									() => router.invalidate(),
+								),
 							);
 							if (r) navigate({ to: "/purchasing" });
 						}}

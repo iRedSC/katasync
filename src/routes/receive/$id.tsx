@@ -12,6 +12,7 @@ import { ExtraSheet } from "#/components/receive/extra-sheet";
 import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
 import { receiveHead } from "#/components/receive/pwa";
 import { QuantitySheet } from "#/components/receive/quantity-sheet";
+import { offerUndo } from "#/lib/undo";
 import {
 	amendPurchaseLine,
 	closePurchaseOrder,
@@ -69,11 +70,12 @@ function ReceivePurchaseOrder() {
 		}
 	}
 
-	const undo = (line: ReceiveLine, receiptId: number) =>
-		run(line.id, async () => {
-			await undoPurchaseReceipt({ data: { id: receiptId } });
-			toast(`Undid ${productName(line)}`);
-		});
+	// Not through run: it shows its own errors, and offerUndo needs to see them.
+	const undo = async (line: ReceiveLine, receiptId: number) => {
+		await undoPurchaseReceipt({ data: { id: receiptId } });
+		await router.invalidate();
+		return `Undid ${productName(line)}`;
+	};
 
 	const receive = (line: ReceiveLine, quantity: number, last = false) =>
 		run(line.id, async () => {
@@ -90,16 +92,10 @@ function ReceivePurchaseOrder() {
 					: last && total < line.quantity
 						? " Not waiting for the rest."
 						: "";
-			toast.success(
-				`Received ${quantity}${unit} × ${productName(line)}.${note}`,
-				{
-					duration: 8000,
-					action: {
-						label: "Undo",
-						onClick: () => undo(line, result.receiptId),
-					},
-				},
-			);
+			offerUndo(`Received ${quantity}${unit} × ${productName(line)}.${note}`, {
+				tone: "success",
+				undo: () => undo(line, result.receiptId),
+			});
 		});
 
 	// Stops waiting for what's left of a line, receiving none of it.
@@ -109,16 +105,13 @@ function ReceivePurchaseOrder() {
 				data: { lineId: line.id, quantity: line.received },
 			});
 			setSheetLineId(null);
-			toast(`Not waiting for ${productName(line)}`, {
-				duration: 8000,
-				action: {
-					label: "Undo",
-					onClick: () =>
-						run(line.id, async () => {
-							await amendPurchaseLine({
-								data: { lineId: line.id, quantity: was.quantity },
-							});
-						}),
+			offerUndo(`Not waiting for ${productName(line)}`, {
+				undo: async () => {
+					await amendPurchaseLine({
+						data: { lineId: line.id, quantity: was.quantity },
+					});
+					await router.invalidate();
+					return `Waiting for ${productName(line)} again`;
 				},
 			});
 		});
@@ -148,15 +141,12 @@ function ReceivePurchaseOrder() {
 			const name = match.variantName
 				? `${match.name} (${match.variantName})`
 				: match.name;
-			toast.success(`Added and received ${quantity} × ${name}`, {
-				duration: 8000,
-				action: {
-					label: "Undo",
-					onClick: () =>
-						run(result.lineId, async () => {
-							await undoPurchaseReceipt({ data: { id: result.receiptId } });
-							toast(`Undid ${name}`);
-						}),
+			offerUndo(`Added and received ${quantity} × ${name}`, {
+				tone: "success",
+				undo: async () => {
+					await undoPurchaseReceipt({ data: { id: result.receiptId } });
+					await router.invalidate();
+					return `Undid ${name}`;
 				},
 			});
 		});
