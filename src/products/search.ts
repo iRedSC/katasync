@@ -6,11 +6,12 @@
 //   !!word                                       exclude titles containing word
 //   +#tag                                        and, with the last chip on that field
 //   <3  >3  =3  <=3  >=3                         inventory, as the Inventory column shows it
+//   v<3  v>=0.5                                  velocity, units sold a month
 //
 // Several filters on one field match any of them (#a #b: tagged a or b),
 // unless + joins them (#a +#b: tagged a and b; #a #b +#c: a, or b and c).
-// Different fields must all match. Exclusions all apply. Inventory filters
-// all apply too, so >2 <10 is a range.
+// Different fields must all match. Exclusions all apply. Inventory and
+// velocity filters all apply too, so >2 <10 is a range.
 //
 // A filter still being typed matches by substring, so the list narrows live.
 // Locking it in (Tab on a suggestion) makes it a chip that matches exactly.
@@ -27,6 +28,7 @@ export const FIELDS = [
 	"trust",
 	"title",
 	"inventory",
+	"velocity",
 ] as const;
 export type Field = (typeof FIELDS)[number];
 
@@ -43,10 +45,17 @@ export type Filter = {
 
 // What a product offers each field. Several values per field, since a product
 // has many tags and can be both "active" and "sold out".
-export type Facets = Record<Exclude<Field, "inventory">, string[]> & {
+export type Facets = Record<Exclude<Field, NumberField>, string[]> & {
 	text: string[];
 	inventory: number;
+	// Units sold a month.
+	velocity: number;
 };
+
+// Fields compared against a number rather than matched against values.
+type NumberField = "inventory" | "velocity";
+const isNumber = (field: Field): field is NumberField =>
+	field === "inventory" || field === "velocity";
 
 export const SIGILS = {
 	"#": "tag",
@@ -56,36 +65,36 @@ export const SIGILS = {
 	"^": "class",
 	"&": "supplier",
 	"~": "trust",
-} as const satisfies Record<string, Exclude<Field, "title" | "inventory">>;
+} as const satisfies Record<string, Exclude<Field, "title" | NumberField>>;
 export type ListField = (typeof SIGILS)[keyof typeof SIGILS];
 
 const SIGIL_OF = Object.fromEntries(
 	Object.entries(SIGILS).map(([sigil, field]) => [field, sigil]),
 ) as Record<ListField, string>;
 
-// An inventory comparison such as "<=3". The value of an inventory filter is
-// the whole comparison.
-const COMPARISON = /^(<=|>=|<|>|=)(-?\d+)$/;
+// A comparison such as "<=3". The value of an inventory or velocity filter is
+// the whole comparison. Velocity can be fractional, like 0.5 a month.
+const COMPARISON = /^(<=|>=|<|>|=)(-?\d+(?:\.\d+)?)$/;
 export function comparison(value: string) {
 	const m = COMPARISON.exec(value);
 	return m
 		? { op: m[1] as "<" | "<=" | "=" | ">=" | ">", n: Number(m[2]) }
 		: null;
 }
-function compare(inventory: number, value: string) {
+function compare(n: number, value: string) {
 	const c = comparison(value);
 	if (!c) return true; // still being typed, e.g. "<"
 	switch (c.op) {
 		case "<":
-			return inventory < c.n;
+			return n < c.n;
 		case "<=":
-			return inventory <= c.n;
+			return n <= c.n;
 		case "=":
-			return inventory === c.n;
+			return n === c.n;
 		case ">=":
-			return inventory >= c.n;
+			return n >= c.n;
 		case ">":
-			return inventory > c.n;
+			return n > c.n;
 	}
 }
 
@@ -94,6 +103,7 @@ export function spell(f: Pick<Filter, "field" | "value" | "exclude" | "and">) {
 	const and = f.and ? "+" : "";
 	if (f.field === "title") return `${and}!!${f.value}`;
 	if (f.field === "inventory") return f.value;
+	if (f.field === "velocity") return `v${f.value}`;
 	return `${and}${SIGIL_OF[f.field]}${f.exclude ? "!" : ""}${f.value}`;
 }
 
@@ -116,6 +126,15 @@ export function parseWord(typed: string): Filter | null {
 		return {
 			field: "inventory",
 			value: word,
+			exclude: false,
+			and,
+			exact: true,
+		};
+	}
+	if (/^v(<|>|=)/i.test(word)) {
+		return {
+			field: "velocity",
+			value: word.slice(1),
 			exclude: false,
 			and,
 			exact: true,
@@ -160,18 +179,18 @@ export function matches(facets: Facets, filters: Filter[], words: string[]) {
 	const active = filters.filter((f) => f.value !== "");
 	if (
 		!active.every(
-			(f) => f.field !== "inventory" || compare(facets.inventory, f.value),
+			(f) => !isNumber(f.field) || compare(facets[f.field], f.value),
 		)
 	)
 		return false;
 	const lists = active.filter(
-		(f): f is Filter & { field: Exclude<Field, "inventory"> } =>
-			f.field !== "inventory",
+		(f): f is Filter & { field: Exclude<Field, NumberField> } =>
+			!isNumber(f.field),
 	);
 	if (lists.some((f) => f.exclude && hits(facets[f.field], f))) return false;
 	// Per field, a list of alternatives; each alternative is filters that
 	// must all match. + adds to the last alternative instead of starting one.
-	const wanted = new Map<Exclude<Field, "inventory">, Filter[][]>();
+	const wanted = new Map<Exclude<Field, NumberField>, Filter[][]>();
 	for (const f of lists) {
 		if (f.exclude) continue;
 		const alternatives = wanted.get(f.field) ?? [];
@@ -213,7 +232,7 @@ export function suggest(
 	picked: Filter[],
 	limit = 8,
 ) {
-	if (typing.field === "title" || typing.field === "inventory") return [];
+	if (typing.field === "title" || isNumber(typing.field)) return [];
 	const q = typing.value.toLowerCase();
 	const taken = new Set(
 		picked

@@ -18,6 +18,7 @@ const FIELDS: { field: Field; label: string; typed: string }[] = [
 	{ field: "trust", label: "Trust", typed: "~" },
 	{ field: "supplier", label: "Supplier", typed: "&" },
 	{ field: "inventory", label: "Inventory", typed: ">=3" },
+	{ field: "velocity", label: "Sold a month", typed: "v>=3" },
 	{ field: "type", label: "Type", typed: "@" },
 	{ field: "vendor", label: "Vendor", typed: "$" },
 	{ field: "tag", label: "Tag", typed: "#" },
@@ -80,8 +81,8 @@ export function AddFilter({
 							<ChevronLeft className="size-4" />
 							{FIELDS.find((f) => f.field === field)?.label}
 						</button>
-						{field === "inventory" ? (
-							<InventoryForm onAdd={add} />
+						{field === "inventory" || field === "velocity" ? (
+							<ComparisonForm key={field} field={field} onAdd={add} />
 						) : field === "title" ? (
 							<TextForm
 								placeholder="Word to leave out"
@@ -167,17 +168,31 @@ function ValueList({
 const OPS = ["<", "<=", "=", ">=", ">"] as const;
 const OP_LABEL = { "<": "<", "<=": "≤", "=": "=", ">=": "≥", ">": ">" };
 
-function InventoryForm({
+// Inventory is whole units and can go negative; velocity is a rate, so it
+// takes fractions but not negatives.
+const NUMBER = {
+	inventory: { pattern: /^-?\d+$/, strip: /[^\d-]/g, placeholder: "Units" },
+	velocity: {
+		pattern: /^\d+(\.\d+)?$/,
+		strip: /[^\d.]/g,
+		placeholder: "Units a month",
+	},
+};
+
+function ComparisonForm({
+	field,
 	onAdd,
 }: {
+	field: "inventory" | "velocity";
 	onAdd: (f: Omit<Filter, "and" | "exact">) => void;
 }) {
 	const [op, setOp] = useState<(typeof OPS)[number]>("<");
 	const [n, setN] = useState("");
+	const number = NUMBER[field];
 	function submit(e: FormEvent) {
 		e.preventDefault();
-		if (!/^-?\d+$/.test(n)) return;
-		onAdd({ field: "inventory", value: `${op}${n}`, exclude: false });
+		if (!number.pattern.test(n)) return;
+		onAdd({ field, value: `${op}${Number(n)}`, exclude: false });
 	}
 	return (
 		<form onSubmit={submit} className="flex flex-col gap-2 p-1">
@@ -199,15 +214,15 @@ function InventoryForm({
 			<input
 				// biome-ignore lint/a11y/noAutofocus: the number is the only thing left to give
 				autoFocus
-				inputMode="numeric"
+				inputMode={field === "velocity" ? "decimal" : "numeric"}
 				value={n}
-				onChange={(e) => setN(e.target.value.replace(/[^\d-]/g, ""))}
-				placeholder="Units"
+				onChange={(e) => setN(e.target.value.replace(number.strip, ""))}
+				placeholder={number.placeholder}
 				className="h-8 rounded-lg border border-input px-2 tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 			/>
 			<button
 				type="submit"
-				disabled={!/^-?\d+$/.test(n)}
+				disabled={!number.pattern.test(n)}
 				className="h-8 rounded-lg bg-primary font-medium text-white disabled:opacity-40"
 			>
 				Add filter

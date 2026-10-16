@@ -20,6 +20,7 @@ const LABEL: Record<Field, string> = {
 	trust: "trust",
 	title: "title lacks",
 	inventory: "inventory",
+	velocity: "sold a month",
 };
 
 // "not tag", "and vendor", "title lacks": what a chip or suggestion filters on.
@@ -193,7 +194,9 @@ export function FilterSearch({
 								? `Tab to hide titles containing “${typing.value}”`
 								: typing.field === "inventory"
 									? `Tab to keep inventory ${typing.value}`
-									: `No ${LABEL[typing.field]} is “${typing.value}”. Tab to lock it in anyway.`}
+									: typing.field === "velocity"
+										? `Tab to keep ${typing.value} sold a month`
+										: `No ${LABEL[typing.field]} is “${typing.value}”. Tab to lock it in anyway.`}
 						</p>
 					)}
 				</div>

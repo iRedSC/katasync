@@ -1,19 +1,20 @@
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import type { Filter, ListField } from "#/products/search";
+import { comparison, type Filter, type ListField } from "#/products/search";
 
-export type RailGroup = {
-	title: string;
-	field: ListField;
-	// Fixed values in this order, or null to list every value, most common
-	// first.
-	values: readonly string[] | null;
-	// What a value reads as, when not just itself capitalized.
-	label?: (value: string) => string;
-	// A line under the group saying what its values mean.
-	note?: ReactNode;
-};
+export type RailGroup =
+	| {
+			title: string;
+			field: ListField;
+			// Fixed values in this order, or null to list every value, most
+			// common first.
+			values: readonly string[] | null;
+			// What a value reads as, when not just itself capitalized.
+			label?: (value: string) => string;
+	  }
+	// A min and a max, kept as ">=" and "<=" chips.
+	| { title: string; field: "velocity"; range: true };
 
 const SHORT = 6;
 
@@ -23,14 +24,11 @@ const SHORT = 6;
 // products picking that value would show, given everything else picked.
 export function FacetRail({
 	groups,
-	notes = {},
 	counts,
 	filters,
 	onFilters,
 }: {
 	groups: RailGroup[];
-	// Notes known only at render time, by field; they follow the group's own.
-	notes?: Partial<Record<ListField, ReactNode>>;
 	counts: Map<ListField, Map<string, number>>;
 	filters: Filter[];
 	onFilters: (next: Filter[]) => void;
@@ -58,33 +56,39 @@ export function FacetRail({
 	}
 	return (
 		<nav aria-label="Filters" className="flex flex-col gap-5">
-			{groups.map((g) => (
-				<Group
-					key={g.field + g.title}
-					group={g}
-					note={notes[g.field]}
-					counts={counts.get(g.field) ?? new Map()}
-					pickedValues={filters
-						.filter((f) => f.field === g.field && !f.exclude)
-						.map((f) => f.value)}
-					picked={(v) => picked(g.field, v)}
-					onToggle={(v) => toggle(g.field, v)}
-				/>
-			))}
+			{groups.map((g) =>
+				"range" in g ? (
+					<Range
+						key={g.field + g.title}
+						title={g.title}
+						filters={filters}
+						onFilters={onFilters}
+					/>
+				) : (
+					<Group
+						key={g.field + g.title}
+						group={g}
+						counts={counts.get(g.field) ?? new Map()}
+						pickedValues={filters
+							.filter((f) => f.field === g.field && !f.exclude)
+							.map((f) => f.value)}
+						picked={(v) => picked(g.field, v)}
+						onToggle={(v) => toggle(g.field, v)}
+					/>
+				),
+			)}
 		</nav>
 	);
 }
 
 function Group({
 	group: g,
-	note,
 	counts,
 	pickedValues,
 	picked,
 	onToggle,
 }: {
-	group: RailGroup;
-	note?: ReactNode;
+	group: Extract<RailGroup, { values: unknown }>;
 	counts: Map<string, number>;
 	// Picked values with no products left still need a box to untick.
 	pickedValues: string[];
@@ -158,13 +162,100 @@ function Group({
 					{all ? "Show fewer" : `Show all ${formatCount(values.length)}`}
 				</button>
 			) : null}
-			{(g.note || note) && (
-				<p className="mt-1.5 px-1.5 text-xs leading-4 text-muted-foreground">
-					{g.note} {note}
+		</section>
+	);
+}
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+type Bound = ">=" | "<=";
+const NUMBER = /^\d+(\.\d+)?$/;
+
+// Min and max boxes for velocity. Each box owns one chip: ">=" for min, "<="
+// for max. Other velocity chips typed in the search box are left alone.
+function Range({
+	title,
+	filters,
+	onFilters,
+}: {
+	title: string;
+	filters: Filter[];
+	onFilters: (next: Filter[]) => void;
+}) {
+	const bound = (op: Bound) => {
+		const f = filters.find(
+			(f) => f.field === "velocity" && comparison(f.value)?.op === op,
+		);
+		return f ? String(comparison(f.value)?.n) : "";
+	};
+	// Empty clears the bound; anything else only lands once it's a number.
+	function set(op: Bound, text: string) {
+		if (text !== "" && !NUMBER.test(text)) return;
+		const rest = filters.filter(
+			(f) => !(f.field === "velocity" && comparison(f.value)?.op === op),
+		);
+		onFilters(
+			text === ""
+				? rest
+				: [
+						...rest,
+						{
+							field: "velocity",
+							value: `${op}${Number(text)}`,
+							exclude: false,
+							and: false,
+							exact: true,
+						},
+					],
+		);
+	}
+	const min = bound(">=");
+	const max = bound("<=");
+	return (
+		<section>
+			<h2 className="mb-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+				{title}
+			</h2>
+			<div className="flex items-center gap-1.5 px-1.5">
+				<BoundBox label="Min" value={min} onValue={(t) => set(">=", t)} />
+				<span className="text-muted-foreground">to</span>
+				<BoundBox label="Max" value={max} onValue={(t) => set("<=", t)} />
+			</div>
+			<p className="mt-1 px-1.5 text-xs text-muted-foreground">Sold a month</p>
+			{min !== "" && max !== "" && Number(min) > Number(max) && (
+				<p className="mt-1 px-1.5 text-xs text-destructive">
+					Min is above max, so nothing matches.
 				</p>
 			)}
 		</section>
 	);
 }
 
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+// Shows the chip's number, but holds what's being typed ("0.") until the
+// box loses focus, so a half-typed number isn't wiped by the round trip.
+function BoundBox({
+	label,
+	value,
+	onValue,
+}: {
+	label: string;
+	value: string;
+	onValue: (text: string) => void;
+}) {
+	const [draft, setDraft] = useState<string | null>(null);
+	return (
+		<input
+			aria-label={`${label} sold a month`}
+			placeholder={label}
+			inputMode="decimal"
+			value={draft ?? value}
+			onChange={(e) => {
+				const text = e.target.value.replace(/[^\d.]/g, "");
+				setDraft(text);
+				onValue(text);
+			}}
+			onBlur={() => setDraft(null)}
+			className="h-7 w-full min-w-0 rounded-lg border border-input bg-white px-2 tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+		/>
+	);
+}

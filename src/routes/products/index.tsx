@@ -44,7 +44,6 @@ import {
 	daysLeft,
 	levelOf,
 	nextStepOf,
-	TRUST_DAYS,
 	trustOf,
 } from "#/inventory/stock-state";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
@@ -173,6 +172,7 @@ function facetsOf(p: ProductRow, state: StockState): Facets {
 		supplier: p.supplier ? [p.supplier.name] : [],
 		trust,
 		inventory: stock(p),
+		velocity: p.dailyDemand * 30,
 	};
 }
 
@@ -197,7 +197,6 @@ const RAIL: RailGroup[] = [
 		title: "Trust",
 		field: "trust",
 		values: ["counted", "uncounted"],
-		note: `Counted means every shelf was counted in the last ${TRUST_DAYS} days.`,
 	},
 	{
 		title: "Class",
@@ -205,6 +204,7 @@ const RAIL: RailGroup[] = [
 		values: ["A", "B", "C"],
 		label: (v) => `${v} items`,
 	},
+	{ title: "Velocity", field: "velocity", range: true },
 	{ title: "Supplier", field: "supplier", values: null },
 	{ title: "Type", field: "type", values: null },
 ];
@@ -241,7 +241,7 @@ function Products() {
 }
 
 function ProductList() {
-	const { products, abcDays, unpriced, views } = Route.useLoaderData();
+	const { products, views } = Route.useLoaderData();
 	const search = Route.useSearch();
 	// The router hands back a new array on every render, so key it by content:
 	// otherwise each render would count as a change, resetting the selection
@@ -323,7 +323,9 @@ function ProductList() {
 		const q = parseQuery(query);
 		const all = [...filters, ...q.filters];
 		const out = new Map<ListField, Map<string, number>>();
-		for (const { field } of RAIL) {
+		for (const g of RAIL) {
+			if ("range" in g) continue;
+			const { field } = g;
 			const others = all.filter((f) => f.field !== field);
 			const values = new Map<string, number>();
 			for (const f of facets) {
@@ -392,20 +394,6 @@ function ProductList() {
 				<aside className="sticky top-[4.5rem] hidden max-h-[calc(100svh-5.5rem)] w-56 shrink-0 overflow-y-auto overscroll-contain pb-4 lg:block">
 					<FacetRail
 						groups={RAIL}
-						notes={{
-							class: (
-								<>
-									Ranked by margin (sales less cost). A earns the first 80%, B
-									the next 15%, C the rest, over{" "}
-									{abcDays >= 365
-										? "the last 12 months"
-										: `${formatCount(abcDays)} days`}
-									.
-									{unpriced > 0 &&
-										` ${formatCount(unpriced)} sold ${unpriced === 1 ? "product has" : "products have"} no cost, so no class yet.`}
-								</>
-							),
-						}}
 						counts={railCounts}
 						filters={filters}
 						onFilters={(next) => setSearch({ filters: next })}
