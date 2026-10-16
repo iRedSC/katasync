@@ -571,9 +571,9 @@ function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 	);
 }
 
-// Under a draft's lines: this supplier's products that don't need ordering
-// yet but will before its next PO would, soonest first, at the quantity a
-// reorder would order. Says how far short of the supplier's minimum the
+// Under a draft's lines: this supplier's products worth adding, filled to
+// their max. First what needs ordering now but the PO doesn't take by itself
+// (C items), then what will need ordering before its next PO would. Says how far short of the supplier's minimum the
 // draft is, since these are what fill it.
 function Recommended({
 	detail: d,
@@ -592,7 +592,7 @@ function Recommended({
 		>
 			{d.recommended.length === 0 ? (
 				<p className="px-4 py-6 text-center text-muted-foreground">
-					Nothing due soon.
+					Nothing to add.
 				</p>
 			) : (
 				<div className="overflow-x-auto">
@@ -629,17 +629,19 @@ function Recommended({
 												</Link>
 												<div className="flex items-center gap-2 text-xs text-muted-foreground">
 													{r.sku}
-													{r.critical && (
-														<Badge tone="critical">Critical</Badge>
-													)}
+													{r.critical && <Badge tone="info">Essential</Badge>}
 												</div>
 											</div>
 										</div>
 									</td>
 									<td className="px-3 py-2 text-muted-foreground">
-										{r.daysUntilReorder === 0
-											? "Today"
-											: `${formatCount(r.daysUntilReorder)}d`}
+										{r.due === "now" ? (
+											<Badge tone="warning">Needs order</Badge>
+										) : r.due === 0 ? (
+											"Today"
+										) : (
+											`${formatCount(r.due)}d`
+										)}
 									</td>
 									<td className="px-3 py-2 text-right font-semibold tabular-nums">
 										{formatCount(r.quantity)}

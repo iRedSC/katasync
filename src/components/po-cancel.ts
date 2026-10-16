@@ -1,5 +1,10 @@
 import { offerUndo } from "#/lib/undo";
-import { cancelPurchaseOrder, restorePurchaseOrder } from "#/server/purchasing";
+import {
+	cancelPurchaseOrder,
+	deleteDraftPurchaseOrder,
+	restoreDraftPurchaseOrder,
+	restorePurchaseOrder,
+} from "#/server/purchasing";
 
 // Deletes a draft or cancels a sent PO, with Undo instead of a confirm. Used
 // by the PO list and the PO itself, so both say the same thing. Throws when
@@ -9,17 +14,26 @@ export async function cancelWithUndo(
 	reload: () => Promise<void>,
 ) {
 	const name = `PO ${po.id}`;
-	const draft = po.status === "draft";
+	if (po.status === "draft") {
+		const deleted = await deleteDraftPurchaseOrder({ data: { id: po.id } });
+		await reload();
+		offerUndo(`Deleted draft ${name}`, {
+			undo: async () => {
+				await restoreDraftPurchaseOrder({ data: deleted });
+				await reload();
+				return `${name} is back`;
+			},
+		});
+		return;
+	}
 	await cancelPurchaseOrder({ data: { id: po.id } });
 	await reload();
-	offerUndo(draft ? `Deleted draft ${name}` : `Cancelled ${name}`, {
-		description: draft ? undefined : `${po.supplierName} isn't told`,
+	offerUndo(`Cancelled ${name}`, {
+		description: `${po.supplierName} isn't told`,
 		undo: async () => {
-			const back = await restorePurchaseOrder({ data: { id: po.id } });
+			await restorePurchaseOrder({ data: { id: po.id } });
 			await reload();
-			return back === "draft"
-				? `${name} is a draft again`
-				: `${name} is on order again`;
+			return `${name} is on order again`;
 		},
 	});
 }

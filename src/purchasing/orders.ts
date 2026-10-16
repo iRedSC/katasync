@@ -1295,17 +1295,116 @@ export async function closeOrder(db: Db, id: number, now = new Date()) {
 	});
 }
 
-// Calls a PO off. Once anything has arrived, close it instead. `allowed` is
-// checked under the lock, so a caller limiting itself to drafts can't cancel a
-// PO that was sent a moment ago.
-export async function cancelOrder(
-	db: Db,
-	id: number,
-	now = new Date(),
-	allowed: Status[] = ["draft", "sent"],
-) {
+// Throws a draft away, lines and all. Nothing was sent, so there's no record
+// worth keeping. Checked under the lock, so a PO sent a moment ago stays.
+// Returns what was thrown away, for restoreDraft to put back.
+export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 	return db.transaction(async (tx) => {
-		await lockOrder(tx, id, allowed);
+		const po = await lockOrder(tx, id, ["draft"]);
+		const lines = await tx
+			.select({
+				productId: purchaseOrderLines.productId,
+				unit: purchaseOrderLines.unit,
+				packSize: purchaseOrderLines.packSize,
+				minimumQuantity: purchaseOrderLines.minimumQuantity,
+				quantity: purchaseOrderLines.quantity,
+				unitCost: purchaseOrderLines.unitCost,
+			})
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.purchaseOrderId, id))
+			.orderBy(purchaseOrderLines.id);
+		const skippedParts = await tx
+			.select({
+				setProductId: purchaseOrderSkippedParts.setProductId,
+				partProductId: purchaseOrderSkippedParts.partProductId,
+			})
+			.from(purchaseOrderSkippedParts)
+			.where(eq(purchaseOrderSkippedParts.purchaseOrderId, id));
+		await tx
+			.delete(purchaseOrderAmendments)
+			.where(eq(purchaseOrderAmendments.purchaseOrderId, id));
+		await tx
+			.delete(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.purchaseOrderId, id));
+		await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
+		return {
+			id,
+			supplierId: po.supplierId,
+			locationId: po.locationId,
+			notes: po.notes,
+			createdAt: po.createdAt,
+			lines,
+			skippedParts,
+		};
+	});
+}
+
+export type DeletedDraft = {
+	id: number;
+	supplierId: number;
+	locationId: number;
+	notes: string | null;
+	createdAt: Date;
+	lines: {
+		productId: number;
+		unit: string;
+		packSize: number;
+		minimumQuantity: number;
+		quantity: number;
+		unitCost: number | null;
+	}[];
+	skippedParts: { setProductId: number; partProductId: number }[];
+};
+
+// Undoes deleteDraft: the same draft, under the same PO number. It can't come
+// back once its supplier has a new draft.
+export async function restoreDraft(db: Db, draft: DeletedDraft) {
+	return db.transaction(async (tx) => {
+		const [other] = await tx
+			.select({ id: purchaseOrders.id })
+			.from(purchaseOrders)
+			.where(
+				and(
+					eq(purchaseOrders.supplierId, draft.supplierId),
+					eq(purchaseOrders.status, "draft"),
+				),
+			);
+		if (other)
+			throw new PurchaseOrderError(
+				`Can't bring back ${poName(draft.id)}: its supplier has a new draft, ${poName(other.id)}`,
+			);
+		const [po] = await tx
+			.insert(purchaseOrders)
+			.overridingSystemValue()
+			.values({
+				id: draft.id,
+				supplierId: draft.supplierId,
+				locationId: draft.locationId,
+				notes: draft.notes,
+				createdAt: new Date(draft.createdAt),
+			})
+			.onConflictDoNothing()
+			.returning({ id: purchaseOrders.id });
+		if (!po)
+			throw new PurchaseOrderError(`${poName(draft.id)} is already back`);
+		if (draft.lines.length > 0)
+			await tx
+				.insert(purchaseOrderLines)
+				.values(draft.lines.map((l) => ({ ...l, purchaseOrderId: po.id })));
+		if (draft.skippedParts.length > 0)
+			await tx
+				.insert(purchaseOrderSkippedParts)
+				.values(
+					draft.skippedParts.map((s) => ({ ...s, purchaseOrderId: po.id })),
+				);
+	});
+}
+
+// Calls off a sent PO. Once anything has arrived, close it instead. Drafts
+// are deleted (deleteDraft), not cancelled.
+export async function cancelOrder(db: Db, id: number, now = new Date()) {
+	return db.transaction(async (tx) => {
+		await lockOrder(tx, id, ["sent"]);
 		const [{ received }] = await tx
 			.select({
 				received: sql<number>`coalesce(sum(${purchaseOrderReceipts.quantity}), 0)::int`,
@@ -1327,33 +1426,18 @@ export async function cancelOrder(
 	});
 }
 
-// Undoes cancelOrder: back to a draft, or on order if it had been sent.
-// Cancelling changes nothing else, so that's all there is to put back. A
-// draft can't come back once its supplier has a new one.
+// Undoes cancelOrder: back on order. Cancelling changes nothing else, so
+// that's all there is to put back.
 export async function restoreOrder(db: Db, id: number) {
 	return db.transaction(async (tx) => {
 		const po = await lockOrder(tx, id, ["cancelled"]);
-		const status = po.sentAt ? "sent" : "draft";
-		if (status === "draft") {
-			const [other] = await tx
-				.select({ id: purchaseOrders.id })
-				.from(purchaseOrders)
-				.where(
-					and(
-						eq(purchaseOrders.supplierId, po.supplierId),
-						eq(purchaseOrders.status, "draft"),
-					),
-				);
-			if (other)
-				throw new PurchaseOrderError(
-					`Can't bring back ${poName(id)}: its supplier has a new draft, ${poName(other.id)}`,
-				);
-		}
+		// Drafts used to be cancelled rather than deleted; those stay as they are.
+		if (!po.sentAt)
+			throw new PurchaseOrderError(`${poName(id)} was never sent`);
 		await tx
 			.update(purchaseOrders)
-			.set({ status, closedAt: null })
+			.set({ status: "sent", closedAt: null })
 			.where(eq(purchaseOrders.id, id));
-		return status;
 	});
 }
 

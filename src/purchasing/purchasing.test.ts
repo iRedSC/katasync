@@ -16,6 +16,7 @@ import {
 	averageCost,
 	cancelOrder,
 	closeOrder,
+	deleteDraft,
 	draftFromSuggestions,
 	markSent,
 	openDraft,
@@ -24,6 +25,7 @@ import {
 	receive,
 	receiveExtra,
 	removeAddedLine,
+	restoreDraft,
 	restoreOrder,
 	setDraftLine,
 	setPartsOf,
@@ -34,6 +36,7 @@ import {
 import {
 	daysUntilReorder,
 	explainReorder,
+	readyToOrder,
 	recommendedAdditions,
 	reorderBreakdown,
 	reorderQuantity,
@@ -344,6 +347,15 @@ describe("suggestPurchases", () => {
 		await supply(knife, null);
 		await stock(knife, -1);
 		await sell(blade, 90);
+		// Unsold, so a C item: only marked critical does it go on the PO.
+		await db
+			.update(schema.products)
+			.set({ critical: true })
+			.where(eq(schema.products.id, knife));
+		await db
+			.update(schema.suppliers)
+			.set({ criticalThreshold: 3 })
+			.where(eq(schema.suppliers.id, canam));
 
 		const [s] = await suggestPurchases(db, now);
 		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE", "KNIFE"]);
@@ -429,11 +441,42 @@ describe("recommendedAdditions", () => {
 		// capped at the lead time's 10: the reorder point is 20 and a top-up goes
 		// to 40. NOW needs ordering today, so it's a suggestion instead; FAR
 		// lasts past cover.
-		expect(
-			r.map((l) => [l.sku, l.daysUntilReorder, l.quantity, l.critical]),
-		).toEqual([
+		expect(r.map((l) => [l.sku, l.due, l.quantity, l.critical])).toEqual([
 			["SOON", 3, 17, true],
 			["LATER", 10, 10, true],
+		]);
+	});
+
+	test("puts C items that need ordering first, filled to max, instead of on the PO", async () => {
+		const top = await createProduct(db, "TOP", "simple");
+		const slow = await createProduct(db, "SLOW", "simple");
+		const counted = await createProduct(db, "COUNTED", "simple");
+		const dormant = await createProduct(db, "DORMANT", "simple");
+		for (const id of [top, slow, counted, dormant]) await supply(id, 2);
+		await sell(top, 90);
+		await stock(top, 23); // due in 3 days, as above
+		await sell(slow, 1); // a sliver of the margin: a C item
+		await stock(counted, 1);
+		await db
+			.update(schema.stockLevels)
+			.set({ lastCountedAt: daysAgo(30) })
+			.where(eq(schema.stockLevels.productId, counted));
+		// All three C items sit below a min of 3, so they need ordering.
+		for (const id of [slow, counted, dormant])
+			await db
+				.update(schema.products)
+				.set({ minStock: 3, maxStock: 12 })
+				.where(eq(schema.products.id, id));
+
+		expect(await suggestPurchases(db, now)).toEqual([]);
+
+		const r = await recommendedAdditions(db, canam, new Set(), now);
+		// DORMANT never sold and was never counted, so it's left out. The rest
+		// fill to their max of 12, less what's on the shelf.
+		expect(r.map((l) => [l.sku, l.due, l.quantity])).toEqual([
+			["COUNTED", "now", 11],
+			["SLOW", "now", 12],
+			["TOP", 3, 17],
 		]);
 	});
 });
@@ -1019,70 +1062,95 @@ describe("a PO from draft to received", () => {
 		).rejects.toThrow(/is closed/);
 	});
 
-	test("a draft-only cancel is checked under the lock, so a sent PO stays sent", async () => {
+	test("drafts are deleted, not cancelled; sent POs are cancelled, not deleted", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
+		await expect(cancelOrder(db, id, now)).rejects.toThrow(/is draft/);
 		await markSent(db, { purchaseOrderId: id, sentTo: null });
-		await expect(cancelOrder(db, id, now, ["draft"])).rejects.toThrow(
-			/is sent/,
-		);
+		await expect(deleteDraft(db, id)).rejects.toThrow(/is sent/);
 		expect((await getPo(id)).status).toBe("sent");
 		await cancelOrder(db, id);
 		expect((await getPo(id)).status).toBe("cancelled");
 	});
 
-	test("undoing a cancel puts a PO back as it was", async () => {
-		const sentId = await draftFromSuggestions(db, canam, now);
-		await markSent(db, { purchaseOrderId: sentId, sentTo: null, now });
-		await cancelOrder(db, sentId);
-		expect(await restoreOrder(db, sentId)).toBe("sent");
-		expect(await getPo(sentId)).toMatchObject({
-			status: "sent",
-			closedAt: null,
-		});
-		await expect(restoreOrder(db, sentId)).rejects.toThrow(/is sent/);
-
-		const draftId = await draftFromSuggestions(db, canam, now);
-		await cancelOrder(db, draftId);
-		expect(await restoreOrder(db, draftId)).toBe("draft");
-		expect(await getPo(draftId)).toMatchObject({ status: "draft" });
+	test("undoing a cancel puts a sent PO back on order", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		await cancelOrder(db, id);
+		await restoreOrder(db, id);
+		expect(await getPo(id)).toMatchObject({ status: "sent", closedAt: null });
+		await expect(restoreOrder(db, id)).rejects.toThrow(/is sent/);
 	});
 
-	test("a cancelled draft can't come back over its supplier's new draft", async () => {
-		const old = await draftFromSuggestions(db, canam, now);
-		await cancelOrder(db, old);
+	test("undoing a delete brings the draft back under its number, lines and skipped parts too", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await db.insert(schema.purchaseOrderSkippedParts).values({
+			purchaseOrderId: id,
+			setProductId: blade,
+			partProductId: knife,
+		});
+		const before = await linesOf(id);
+		const deleted = await deleteDraft(db, id);
+		expect(await getPo(id)).toBeUndefined();
+
+		await restoreDraft(db, deleted);
+		expect(await getPo(id)).toMatchObject({
+			status: "draft",
+			supplierId: canam,
+		});
+		expect(
+			(await linesOf(id)).map(({ productId, quantity, unitCost }) => ({
+				productId,
+				quantity,
+				unitCost,
+			})),
+		).toEqual(
+			before.map(({ productId, quantity, unitCost }) => ({
+				productId,
+				quantity,
+				unitCost,
+			})),
+		);
+		expect(
+			await db
+				.select()
+				.from(schema.purchaseOrderSkippedParts)
+				.where(eq(schema.purchaseOrderSkippedParts.purchaseOrderId, id)),
+		).toHaveLength(1);
+		await expect(restoreDraft(db, deleted)).rejects.toThrow(/new draft/);
+		// New POs still number on from where they were.
+		await deleteDraft(db, id);
+		expect(await openDraft(db, canam)).toBeGreaterThan(id);
+	});
+
+	test("a deleted draft can't come back over its supplier's new draft", async () => {
+		const deleted = await deleteDraft(
+			db,
+			await draftFromSuggestions(db, canam, now),
+		);
 		const fresh = await openDraft(db, canam);
-		await expect(restoreOrder(db, old)).rejects.toThrow(
+		await expect(restoreDraft(db, deleted)).rejects.toThrow(
 			new RegExp(`new draft, PO ${fresh}`),
 		);
-		expect((await getPo(old)).status).toBe("cancelled");
 	});
 
 	test("ordering again copies what was sent onto the draft, never twice", async () => {
-		const id = await draftFromSuggestions(db, canam, now);
-		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
-		const [bladeLine] = await linesOf(id);
+		const { id, bladeLine } = await sent();
 		await receive(db, { lineId: bladeLine.id, quantity: 10, last: true });
 		await closeOrder(db, id);
-		await expect(orderAgain(db, id)).resolves.toBeDefined();
-		const draft = (
-			await db
-				.select()
-				.from(schema.purchaseOrders)
-				.where(eq(schema.purchaseOrders.status, "draft"))
-		)[0];
+		const r = await orderAgain(db, id);
 		// The blade line was cut to the 10 that came; what was sent was 44.
-		expect((await linesOf(draft.id)).map((l) => l.quantity)).toEqual([44, 6]);
+		expect((await linesOf(r.id)).map((l) => l.quantity)).toEqual([44, 6]);
 		expect(await orderAgain(db, id)).toEqual({
-			id: draft.id,
+			id: r.id,
 			added: 0,
 			alreadyOn: 2,
 			moved: 0,
 		});
-		await expect(orderAgain(db, draft.id)).rejects.toThrow(/is draft/);
+		await expect(orderAgain(db, r.id)).rejects.toThrow(/is draft/);
 	});
 
 	test("ordering again leaves off products bought elsewhere now", async () => {
-		const id = await draftFromSuggestions(db, canam, now);
+		const { id } = await sent();
 		await cancelOrder(db, id);
 		const [{ id: other }] = await db
 			.insert(schema.suppliers)
@@ -1100,23 +1168,35 @@ describe("a PO from draft to received", () => {
 			.update(schema.productSuppliers)
 			.set({ supplierId: other })
 			.where(eq(schema.productSuppliers.productId, blade));
-		await cancelOrder(db, r.id);
-		const drafts = () =>
-			db
+		await deleteDraft(db, r.id);
+		await expect(orderAgain(db, id)).rejects.toThrow(/still bought/);
+		expect(
+			await db
 				.select()
 				.from(schema.purchaseOrders)
-				.where(eq(schema.purchaseOrders.status, "draft"));
-		await expect(orderAgain(db, id)).rejects.toThrow(/still bought/);
-		expect(await drafts()).toHaveLength(0);
+				.where(eq(schema.purchaseOrders.status, "draft")),
+		).toHaveLength(0);
 	});
 
-	test("can't receive a draft; a cancelled draft frees the slot", async () => {
+	test("a ready supplier leaves Ready to order once it has a draft, and returns when the draft is deleted", async () => {
+		expect(readyToOrder(await suggestPurchases(db, now))).toHaveLength(1);
+		const id = await draftFromSuggestions(db, canam, now);
+		const suggestions = await suggestPurchases(db, now);
+		expect(suggestions[0]).toMatchObject({ draftId: id });
+		expect(readyToOrder(suggestions)).toEqual([]);
+		await deleteDraft(db, id);
+		expect(readyToOrder(await suggestPurchases(db, now))).toHaveLength(1);
+	});
+
+	test("can't receive a draft; deleting a draft removes it and frees the slot", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		const [line] = await linesOf(id);
 		await expect(receive(db, { lineId: line.id, quantity: 1 })).rejects.toThrow(
 			/is draft/,
 		);
-		await cancelOrder(db, id);
+		await deleteDraft(db, id);
+		expect(await linesOf(id)).toEqual([]);
+		expect(await getPo(id)).toBeUndefined();
 		expect(await draftFromSuggestions(db, canam, now)).not.toBe(id);
 	});
 

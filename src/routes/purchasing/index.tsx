@@ -40,9 +40,16 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
+	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
-import { formatCount, formatDay, formatMoney } from "#/lib/format";
+import {
+	formatCount,
+	formatDay,
+	formatMoney,
+	formatOrderQuantity,
+} from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import { purchaseOrderStatus } from "#/purchasing/status";
@@ -60,8 +67,7 @@ export const Route = createFileRoute("/purchasing/")({
 });
 
 function Purchasing() {
-	const { suggestions, open, done, suppliers } = Route.useLoaderData();
-	const ready = suggestions.filter((s) => s.readiness !== "waiting");
+	const { ready, open, done, suppliers } = Route.useLoaderData();
 	const nothing = ready.length === 0 && open.length === 0 && done.length === 0;
 
 	return (
@@ -175,145 +181,224 @@ function NewPurchaseOrder({
 	);
 }
 
-type Suggestion = PurchasingList["suggestions"][number];
+type Suggestion = PurchasingList["ready"][number];
 
-// One row per supplier: what today's sales say to send them.
+// One row per supplier: what today's sales say to send them. Clicking a row
+// shows what would go on the PO; only "Create PO" makes the draft.
 function SuggestionList({ rows }: { rows: Suggestion[] }) {
+	const [viewing, setViewing] = useState<number | null>(null);
+	const [menuFor, setMenuFor] = useState<Suggestion | null>(null);
+	const { busy, create } = useCreateDraft();
+	// Looked up by supplier, so the preview closes if the row leaves the list.
+	const shown = rows.find((s) => s.supplierId === viewing) ?? null;
+
+	// Same columns as the PO tables below, so the page reads as one list.
+	return (
+		<>
+			<table className="w-full table-fixed">
+				<Columns />
+				<thead>
+					<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
+						<th className="px-4 py-2 font-medium">PO</th>
+						<th className="px-4 py-2 font-medium">Supplier</th>
+						<th className="px-4 py-2 font-medium">Status</th>
+						<th className="hidden px-4 py-2 font-medium md:table-cell">
+							Products
+						</th>
+						<th className="px-4 py-2 text-right font-medium">Total</th>
+						<th className="hidden px-4 py-2 font-medium md:table-cell">
+							Expected
+						</th>
+					</tr>
+				</thead>
+				<ContextMenu>
+					<ContextMenuTrigger asChild>
+						<tbody>
+							{rows.map((s) => (
+								<tr
+									key={s.supplierId}
+									onClick={() => setViewing(s.supplierId)}
+									onContextMenu={() => setMenuFor(s)}
+									className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
+								>
+									<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
+										<span className="font-normal text-muted-foreground">
+											New
+										</span>
+									</td>
+									<td className="px-4 py-2.5">
+										<div className="truncate">{s.supplierName}</div>
+									</td>
+									<td className="px-4 py-2.5 whitespace-nowrap">
+										<ReadinessBadge s={s} />
+									</td>
+									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
+										<div className="truncate">
+											<ProductCount s={s} />
+										</div>
+									</td>
+									<td className="px-4 py-2.5 text-right tabular-nums">
+										{formatMoney(s.total)}
+									</td>
+									<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
+										—
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</ContextMenuTrigger>
+					{menuFor && (
+						<ContextMenuContent>
+							<ContextMenuItem
+								shortcut="↵"
+								onSelect={() => setViewing(menuFor.supplierId)}
+							>
+								<FileText />
+								Preview
+							</ContextMenuItem>
+							<ContextMenuItem
+								disabled={busy}
+								onSelect={() => create(menuFor.supplierId)}
+							>
+								<Plus />
+								Create PO
+							</ContextMenuItem>
+						</ContextMenuContent>
+					)}
+				</ContextMenu>
+			</table>
+			<SuggestionPreview s={shown} onClose={() => setViewing(null)} />
+		</>
+	);
+}
+
+function ReadinessBadge({ s }: { s: Suggestion }) {
+	return s.readiness === "critical" ? (
+		<Badge tone="critical">Stockout risk</Badge>
+	) : (
+		<Badge tone="success">Ready</Badge>
+	);
+}
+
+function ProductCount({ s }: { s: Suggestion }) {
+	return (
+		<>
+			{formatCount(s.lines.length)}{" "}
+			{s.lines.length === 1 ? "product" : "products"}
+			{s.unpriced > 0 && `, ${s.unpriced} unpriced`}
+		</>
+	);
+}
+
+// Makes the supplier's draft from today's suggestions and opens it.
+function useCreateDraft() {
 	const navigate = useNavigate();
 	const router = useRouter();
-	const [busy, setBusy] = useState<number | null>(null);
-	const [menuFor, setMenuFor] = useState<Suggestion | null>(null);
+	const [busy, setBusy] = useState(false);
 
-	// `fromSuggestions: false` opens a draft with nothing on it yet.
-	async function open(s: Suggestion, fromSuggestions = true) {
-		setBusy(s.supplierId);
+	async function create(supplierId: number) {
+		setBusy(true);
 		try {
-			const id = await createDraft({
-				data: { supplierId: s.supplierId, fromSuggestions },
-			});
+			const id = await createDraft({ data: { supplierId } });
 			router.invalidate();
+			toast.success(`PO ${id} created`);
 			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : String(err));
 		} finally {
-			setBusy(null);
+			setBusy(false);
 		}
 	}
-
-	// Same columns as the PO tables below, so the page reads as one list.
-	// Clicking a row opens the supplier's draft, creating it if needed.
-	return (
-		<table className="w-full table-fixed">
-			<Columns />
-			<thead>
-				<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
-					<th className="px-4 py-2 font-medium">PO</th>
-					<th className="px-4 py-2 font-medium">Supplier</th>
-					<th className="px-4 py-2 font-medium">Status</th>
-					<th className="hidden px-4 py-2 font-medium md:table-cell">
-						Products
-					</th>
-					<th className="px-4 py-2 text-right font-medium">Total</th>
-					<th className="hidden px-4 py-2 font-medium md:table-cell">
-						Expected
-					</th>
-				</tr>
-			</thead>
-			<ContextMenu>
-				<ContextMenuTrigger asChild>
-					<tbody>
-						{rows.map((s) => (
-							<tr
-								key={s.supplierId}
-								onClick={() => busy === null && open(s)}
-								onContextMenu={() => setMenuFor(s)}
-								className={cn(
-									"cursor-pointer border-t first:border-t-0 hover:bg-subtle",
-									busy !== null && "cursor-wait",
-								)}
-							>
-								<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
-									{s.draftId ? (
-										`PO ${s.draftId}`
-									) : (
-										<span className="font-normal text-muted-foreground">
-											New
-										</span>
-									)}
-								</td>
-								<td className="px-4 py-2.5">
-									<div className="truncate">{s.supplierName}</div>
-								</td>
-								<td className="px-4 py-2.5 whitespace-nowrap">
-									{busy === s.supplierId ? (
-										<span className="text-muted-foreground">Opening…</span>
-									) : s.readiness === "critical" ? (
-										<Badge tone="critical">Critical</Badge>
-									) : s.draftId ? (
-										<Badge tone="info">Draft open</Badge>
-									) : (
-										<Badge tone="success">Ready</Badge>
-									)}
-								</td>
-								<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-									<div className="truncate">
-										{formatCount(s.lines.length)}{" "}
-										{s.lines.length === 1 ? "product" : "products"}
-										{s.unpriced > 0 && `, ${s.unpriced} unpriced`}
-									</div>
-								</td>
-								<td className="px-4 py-2.5 text-right tabular-nums">
-									{formatMoney(s.total)}
-								</td>
-								<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
-									—
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</ContextMenuTrigger>
-				{menuFor && (
-					<SuggestionMenu
-						suggestion={menuFor}
-						busy={busy !== null}
-						onOpen={(fromSuggestions) => open(menuFor, fromSuggestions)}
-					/>
-				)}
-			</ContextMenu>
-		</table>
-	);
+	return { busy, create };
 }
 
-// A supplier with a draft is a PO already, so it gets the draft's menu.
-function SuggestionMenu({
-	suggestion: s,
-	busy,
-	onOpen,
+// What a suggested PO would order, before there's a draft. "Create PO" turns
+// it into the supplier's draft and opens it.
+function SuggestionPreview({
+	s,
+	onClose,
 }: {
-	suggestion: Suggestion;
-	busy: boolean;
-	onOpen: (fromSuggestions: boolean) => void;
+	s: Suggestion | null;
+	onClose: () => void;
 }) {
+	const { busy, create } = useCreateDraft();
+
 	return (
-		<ContextMenuContent>
-			<ContextMenuItem disabled={busy} onSelect={() => onOpen(true)}>
-				<FileText />
-				{s.draftId ? `Open PO ${s.draftId}` : "Start a draft with these"}
-			</ContextMenuItem>
-			{s.draftId ? (
-				<ContextMenuItem
-					onSelect={() => window.open(`/purchasing/${s.draftId}`, "_blank")}
-				>
-					<ExternalLink />
-					Open in new tab
-				</ContextMenuItem>
-			) : (
-				<ContextMenuItem disabled={busy} onSelect={() => onOpen(false)}>
-					<Plus />
-					Start an empty draft
-				</ContextMenuItem>
-			)}
-		</ContextMenuContent>
+		<Dialog open={s !== null} onOpenChange={(o) => !o && !busy && onClose()}>
+			<DialogContent className="sm:max-w-3xl">
+				{s && (
+					<>
+						<DialogHeader>
+							<DialogTitle className="flex items-center gap-2">
+								{s.supplierName}
+								<ReadinessBadge s={s} />
+							</DialogTitle>
+							<DialogDescription>
+								<ProductCount s={s} />, {formatMoney(s.total)}. Nothing is
+								created until you create the PO.
+							</DialogDescription>
+						</DialogHeader>
+						<div className="max-h-[60vh] overflow-y-auto">
+							<table className="w-full text-sm">
+								<thead>
+									<tr className="border-b text-left text-xs text-muted-foreground">
+										<th className="py-2 pr-4 font-medium">Product</th>
+										<th className="py-2 pr-4 text-right font-medium">
+											On hand
+										</th>
+										<th className="py-2 pr-4 text-right font-medium">
+											On order
+										</th>
+										<th className="py-2 pr-4 text-right font-medium">Order</th>
+										<th className="py-2 text-right font-medium">Cost</th>
+									</tr>
+								</thead>
+								<tbody>
+									{s.lines.map((l) => (
+										<tr key={l.productId} className="border-b last:border-b-0">
+											<td className="py-2 pr-4">
+												<div className="font-medium">{l.sku}</div>
+												<div className="truncate text-xs text-muted-foreground">
+													{l.variantName
+														? `${l.name}, ${l.variantName}`
+														: l.name}
+												</div>
+											</td>
+											<td className="py-2 pr-4 text-right tabular-nums">
+												{formatCount(l.onHand)}
+											</td>
+											<td className="py-2 pr-4 text-right tabular-nums">
+												{formatCount(l.onOrder)}
+											</td>
+											<td className="py-2 pr-4 text-right whitespace-nowrap tabular-nums">
+												{formatOrderQuantity(l)}
+											</td>
+											<td className="py-2 text-right tabular-nums">
+												{l.unitCost === null ? (
+													<span className="text-muted-foreground">
+														Unpriced
+													</span>
+												) : (
+													formatMoney(l.quantity * l.unitCost)
+												)}
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+						<DialogFooter>
+							<Button variant="outline" disabled={busy} onClick={onClose}>
+								Close
+							</Button>
+							<Button disabled={busy} onClick={() => create(s.supplierId)}>
+								{busy ? "Creating…" : "Create PO"}
+							</Button>
+						</DialogFooter>
+					</>
+				)}
+			</DialogContent>
+		</Dialog>
 	);
 }
 

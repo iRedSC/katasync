@@ -29,6 +29,7 @@ import {
 	amendLine,
 	cancelOrder,
 	closeOrder,
+	deleteDraft,
 	draftChanges,
 	draftFromSuggestions,
 	markSent,
@@ -39,6 +40,7 @@ import {
 	receive,
 	receiveExtra,
 	removeAddedLine,
+	restoreDraft,
 	restoreOrder,
 	setDraftLine,
 	setPartsOf,
@@ -48,6 +50,7 @@ import {
 	updateFromSuggestions,
 } from "#/purchasing/orders";
 import {
+	readyToOrder,
 	recommendedAdditions,
 	reorderBreakdown,
 	suggestPurchases,
@@ -68,7 +71,7 @@ import {
 
 const id = type({ id: "number.integer > 0" });
 
-// Today's suggestions, and every PO still open plus the latest finished ones.
+// Suggestions ready to order, and every PO still open plus the latest finished ones.
 export const listPurchasing = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
@@ -113,18 +116,20 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 		const done = orders
 			.filter((o) => o.status === "closed" || o.status === "cancelled")
 			.slice(0, 30);
-		return { suggestions, open, done, suppliers: supplierNames };
+		return {
+			ready: readyToOrder(suggestions),
+			open,
+			done,
+			suppliers: supplierNames,
+		};
 	},
 );
 
 export type PurchasingList = Awaited<ReturnType<typeof listPurchasing>>;
 
-// "POs ready" on Home: suppliers whose suggested order reached their minimum,
-// or has enough critical products in it.
+// "POs ready" on Home: the same list as "Ready to order".
 export const countPosReady = createServerFn({ method: "GET" }).handler(
-	async () =>
-		(await suggestPurchases(getDb())).filter((s) => s.readiness !== "waiting")
-			.length,
+	async () => readyToOrder(await suggestPurchases(getDb())).length,
 );
 
 // Owned stock for each product, so a draft shows what's already on the shelf.
@@ -238,8 +243,9 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				.where(eq(purchaseOrderAmendments.purchaseOrderId, data.id))
 				.orderBy(desc(purchaseOrderAmendments.id))
 				.limit(200),
-			// On a draft: what else from this supplier will need ordering before
-			// its next PO, leaving out what's on it already, sets' parts too.
+			// On a draft: what else from this supplier is worth adding (see
+			// recommendedAdditions), leaving out what's on it already, sets'
+			// parts too.
 			po.order.status === "draft"
 				? partsOfSets(db, data.id).then((fromSets) =>
 						recommendedAdditions(
@@ -597,10 +603,42 @@ export const cancelPurchaseOrder = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) => cancelOrder(getDb(), data.id));
 
-// Undoes cancelPurchaseOrder. Returns what it's back to.
+// Undoes cancelPurchaseOrder: back on order.
 export const restorePurchaseOrder = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) => restoreOrder(getDb(), data.id));
+
+// Returns what was deleted, for restoreDraftPurchaseOrder.
+export const deleteDraftPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => deleteDraft(getDb(), data.id));
+
+const positive = "number.integer > 0";
+
+// Undoes deleteDraftPurchaseOrder with what it returned.
+export const restoreDraftPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			id: positive,
+			supplierId: positive,
+			locationId: positive,
+			notes: "string | null",
+			createdAt: "Date",
+			lines: type({
+				productId: positive,
+				unit: "string",
+				packSize: positive,
+				minimumQuantity: positive,
+				quantity: "number.integer >= 0",
+				unitCost: "number | null",
+			}).array(),
+			skippedParts: type({
+				setProductId: positive,
+				partProductId: positive,
+			}).array(),
+		}),
+	)
+	.handler(async ({ data }) => restoreDraft(getDb(), data));
 
 // A finished PO's products onto its supplier's draft again.
 export const orderPurchaseOrderAgain = createServerFn({ method: "POST" })

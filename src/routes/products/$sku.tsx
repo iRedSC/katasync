@@ -487,12 +487,12 @@ function CriticalToggle({
 	async function set(next: boolean) {
 		await setCritical({ data: { productId, critical: next } });
 		router.invalidate();
-		offerUndo(next ? "Marked critical" : "No longer critical", {
+		offerUndo(next ? "Marked essential" : "No longer essential", {
 			tone: "success",
 			undo: async () => {
 				await setCritical({ data: { productId, critical: !next } });
 				await router.invalidate();
-				return next ? "No longer critical" : "Marked critical";
+				return next ? "No longer essential" : "Marked essential";
 			},
 		});
 	}
@@ -502,7 +502,7 @@ function CriticalToggle({
 				"flex items-center gap-2",
 				isA ? "cursor-default text-muted-foreground" : "cursor-pointer",
 			)}
-			title={isA ? "A items are always critical" : undefined}
+			title={isA ? "A items are always essential" : undefined}
 		>
 			<input
 				type="checkbox"
@@ -511,7 +511,7 @@ function CriticalToggle({
 				onChange={(e) => set(e.target.checked)}
 				className="size-4 accent-primary"
 			/>
-			Critical
+			Essential
 		</label>
 	);
 }
