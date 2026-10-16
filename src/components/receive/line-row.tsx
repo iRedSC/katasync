@@ -77,9 +77,7 @@ export function LineRow({
 						{line.sku}
 					</p>
 					{line.sentQuantity === null ? (
-						<p className="text-sm font-semibold text-warning-text">
-							Added after sending
-						</p>
+						<p className="text-sm font-semibold text-info-text">Amended</p>
 					) : (
 						line.sentQuantity !== line.quantity && (
 							<p className="text-sm font-semibold text-warning-text">

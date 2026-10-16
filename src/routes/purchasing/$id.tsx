@@ -205,7 +205,24 @@ function PurchaseOrderPage() {
 	const total = shown.total;
 	const canEmail = d.emailConfigured && Boolean(d.supplier.email);
 	const wasSent = po.sentAt !== null;
-	const changed = d.lines.filter((l) => changedSinceSent(l, wasSent)).length;
+	const amended = d.lines.filter(
+		(l) => sinceSent(l, wasSent) === "amended",
+	).length;
+	const adjusted = d.lines.filter(
+		(l) => sinceSent(l, wasSent) === "adjusted",
+	).length;
+	const changed = amended + adjusted;
+	// Shown on the first card's header, so it reads once for the whole PO.
+	const changes =
+		changed > 0
+			? [
+					amended > 0 && `${formatCount(amended)} amended`,
+					adjusted > 0 && `${formatCount(adjusted)} adjusted`,
+				]
+					.filter(Boolean)
+					.join(", ")
+			: null;
+	const linesAside = (n: number) => `${n} ${n === 1 ? "line" : "lines"}`;
 	const sentTotal = d.lines.reduce(
 		(n, l) => n + (l.sentQuantity ?? 0) * (l.sentUnitCost ?? 0),
 		0,
@@ -426,22 +443,18 @@ function PurchaseOrderPage() {
 						</>
 					) : (
 						<>
-							{changed > 0 && (
-								<Banner
-									tone="warning"
-									title={`${changed === 1 ? "1 line" : `${formatCount(changed)} lines`} changed after sending`}
-								>
-									These stay here: the PDF and the supplier still have what was
-									sent.
-								</Banner>
-							)}
 							{/* Like Shopify's unfulfilled and fulfilled cards: a line moves
 							    down once all of it is in. */}
 							{incoming.length > 0 && (
 								<Card
 									flush
 									title={po.status === "sent" ? "Incoming" : "Not received"}
-									aside={`${incoming.length} ${incoming.length === 1 ? "line" : "lines"}`}
+									tone={changes ? "warning" : undefined}
+									aside={
+										changes
+											? `${changes} · ${linesAside(incoming.length)}`
+											: linesAside(incoming.length)
+									}
 								>
 									{lineTable(incoming)}
 									{arrived.length === 0 && totals}
@@ -451,7 +464,14 @@ function PurchaseOrderPage() {
 								<Card
 									flush
 									title="Received"
-									aside={`${arrived.length} ${arrived.length === 1 ? "line" : "lines"}`}
+									tone={
+										changes && incoming.length === 0 ? "warning" : undefined
+									}
+									aside={
+										changes && incoming.length === 0
+											? `${changes} · ${linesAside(arrived.length)}`
+											: linesAside(arrived.length)
+									}
 								>
 									{lineTable(arrived)}
 									{totals}
@@ -976,15 +996,16 @@ function browseLine(row: BrowseRow, id: number, supplierId: number): Line {
 
 type LineFocus = { lineId: number; nonce: number };
 
-// A line that differs from what the supplier was sent, or was added after.
+// How a line differs from what the supplier was sent: amended when it was
+// added after sending, adjusted when its quantity or cost changed since.
 // A draft has sent nothing, so nothing on it has changed.
-function changedSinceSent(l: Line, sent: boolean) {
-	return (
-		sent &&
-		(l.sentQuantity === null ||
-			l.quantity !== l.sentQuantity ||
-			l.unitCost !== l.sentUnitCost)
-	);
+type SinceSent = "amended" | "adjusted" | null;
+function sinceSent(l: Line, sent: boolean): SinceSent {
+	if (!sent) return null;
+	if (l.sentQuantity === null) return "amended";
+	return l.quantity !== l.sentQuantity || l.unitCost !== l.sentUnitCost
+		? "adjusted"
+		: null;
 }
 
 // A quantity being dragged, typed, or saved, before the page's data has it.
@@ -1077,7 +1098,7 @@ function LineTable({
 			<table
 				className={cn(
 					"w-full [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap",
-					!draft && "min-w-[54rem] table-fixed",
+					!draft && "min-w-[60rem] table-fixed",
 				)}
 			>
 				{!draft && (
@@ -1085,7 +1106,8 @@ function LineTable({
 						<col />
 						<col className="w-24" />
 						<col className="w-24" />
-						<col className="w-24" />
+						<col className="w-28" />
+						<col className="w-28" />
 						<col className="w-24" />
 						<col className="w-24" />
 						<col className="w-56" />
@@ -1100,7 +1122,21 @@ function LineTable({
 						<th className="px-3 py-2 font-medium whitespace-nowrap">
 							MOQ / UOM
 						</th>
-						<th className="px-3 py-2 text-right font-medium">Qty</th>
+						{draft ? (
+							<th className="px-3 py-2 text-right font-medium">Qty</th>
+						) : (
+							<>
+								<th
+									className="px-3 py-2 text-right font-medium"
+									title="What the supplier was sent. The PDF still shows this."
+								>
+									Qty requested
+								</th>
+								<th className="px-3 py-2 text-right font-medium">
+									Qty expected
+								</th>
+							</>
+						)}
 						{draft && (
 							<th className="px-3 py-2 text-center font-medium whitespace-nowrap">
 								On hand → After PO
@@ -1128,6 +1164,7 @@ function LineTable({
 						<tbody>
 							{lines.map((l) => {
 								const set = setFor(l);
+								const since = sinceSent(l, wasSent);
 								return (
 									<Fragment key={l.id}>
 										<tr
@@ -1139,6 +1176,8 @@ function LineTable({
 											onContextMenu={() => setMenuFor(l)}
 											className={cn(
 												"border-t transition-colors first:border-t-0",
+												since === "amended" && "bg-info-surface/60",
+												since === "adjusted" && "bg-warning-surface/60",
 												focus !== null &&
 													ids.same(focus.lineId, l.id) &&
 													"bg-info-surface",
@@ -1207,10 +1246,16 @@ function LineTable({
 																		</button>
 																	</>
 																)}
-																{wasSent && l.sentQuantity === null && (
+																{since === "amended" && (
+																	<span className="text-info-text">
+																		{" "}
+																		· Amended
+																	</span>
+																)}
+																{since === "adjusted" && (
 																	<span className="text-warning-text">
 																		{" "}
-																		· Added after sending
+																		· Adjusted
 																	</span>
 																)}
 															</span>
@@ -1278,6 +1323,13 @@ function LineTable({
 													}}
 												/>
 											</td>
+											{!draft && (
+												<td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
+													{l.sentQuantity === null
+														? "—"
+														: formatCount(l.sentQuantity)}
+												</td>
+											)}
 											<td className="px-3 py-2 text-right font-semibold tabular-nums">
 												{editable ? (
 													<div className="group/qty inline-flex items-center gap-1">
@@ -1305,11 +1357,6 @@ function LineTable({
 												) : (
 													formatCount(l.quantity)
 												)}
-												<WasSent
-													line={l}
-													shows={l.sentQuantity !== l.quantity}
-													text={`sent ${formatCount(l.sentQuantity ?? 0)}`}
-												/>
 											</td>
 											{draft && (
 												<td className="px-3 py-2">
