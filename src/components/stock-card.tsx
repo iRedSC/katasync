@@ -1,10 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import {
-	ClipboardCheck,
-	ClipboardList,
-	PackagePlus,
-	Truck,
-} from "lucide-react";
+import { ClipboardList, PackagePlus, Truck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Level, NextStep, Trust } from "#/inventory/stock-state";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
@@ -16,7 +11,7 @@ import { fillColor, rangeFill } from "./stock-ring";
 import { Button } from "./ui/button";
 
 export type StockState = {
-	trust: Trust | null;
+	trust: Trust;
 	level: Level;
 	step: NextStep;
 	daysLeft: number | null;
@@ -32,6 +27,15 @@ const LEVEL_BADGE: Record<Level, { label: string; tone?: Tone } | null> = {
 	healthy: null,
 	"over max": { label: "Over max", tone: "info" },
 };
+
+// A and B products get a 2px outline in their class's color, like native's
+// sale cards; C stays plain. The second pixel is a ring outside the card's
+// hairline, so nothing inside shrinks.
+const ABC_OUTLINE = {
+	A: "shadow-[0_0_0_2px_var(--abc-a-line)]",
+	B: "shadow-[0_0_0_2px_var(--abc-b-line)]",
+	C: "shadow-card",
+} as const;
 
 // A product as a tile for deciding what to do: the photo (is this the thing
 // I think it is?) beside the stock (do I act?), then trust and the one next
@@ -70,8 +74,9 @@ export function StockCard({
 			onMouseMove={onSelect}
 			onContextMenu={onSelect}
 			className={cn(
-				"flex cursor-pointer flex-col gap-2.5 rounded-xl bg-card p-3 text-left shadow-card transition-shadow",
-				selected && "shadow-[0_0_0_2px_var(--ring)]",
+				"flex cursor-pointer flex-col gap-2.5 rounded-xl bg-card p-3 text-left",
+				p.abc ? ABC_OUTLINE[p.abc] : "shadow-card",
+				selected && "outline-2 outline-offset-2 outline-faint",
 			)}
 		>
 			<div className="grid grid-cols-2 gap-3">
@@ -85,26 +90,26 @@ export function StockCard({
 						<span className="text-muted-foreground"> {p.variantName}</span>
 					)}
 				</p>
-				<p className="flex min-w-0 gap-2 text-xs text-muted-foreground">
+				<p className="flex min-w-0 gap-1.5 text-xs text-muted-foreground">
 					<span className="shrink-0">{p.sku}</span>
+					<span aria-hidden="true">·</span>
 					<span className="truncate">
-						{p.kind === "bundle"
-							? "Tool set"
-							: (p.supplier?.name ?? "No supplier")}
+						{p.kind === "bundle" && "Tool set from "}
+						{p.supplier?.name ?? "No supplier"}
 					</span>
 				</p>
 			</div>
 			<div className="flex items-center gap-2">
-				{p.kind !== "bundle" && (
-					<AbcBadge
-						abc={p.abc}
-						title={
-							p.abcRank !== null
+				<AbcBadge
+					abc={p.abc}
+					title={
+						p.kind === "bundle"
+							? "The class of its most valuable part"
+							: p.abcRank !== null
 								? `#${formatCount(p.abcRank)} by value`
 								: "Needs a cost to get a class"
-						}
-					/>
-				)}
+					}
+				/>
 				{badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
 			</div>
 			{/* Trust and the step share the foot, wrapping before they'd overflow. */}
@@ -123,29 +128,24 @@ function StockSide({
 	product: ProductRow;
 	state: StockState;
 }) {
-	const oversold = (p.onHand ?? 0) < 0;
-	if (p.kind === "bundle") {
-		return (
-			<div className="flex min-w-0 flex-col justify-center">
-				<Big muted={p.available === 0}>{formatCount(p.available)}</Big>
-				<span className="text-xs text-muted-foreground">can be built</span>
-			</div>
-		);
-	}
-	const onHand = p.onHand ?? 0;
+	// A tool set's stock is how many its parts can build.
+	const set = p.kind === "bundle";
+	const onHand = set ? p.available : (p.onHand ?? 0);
+	const oversold = onHand < 0;
 	return (
 		<div className="flex min-w-0 flex-col justify-between">
 			<div>
 				<Big critical={oversold} muted={onHand === 0}>
 					{formatCount(onHand)}
 				</Big>
-				<span className="block text-xs text-muted-foreground">on hand</span>
-				<span className="block text-xs text-muted-foreground">
-					{state.daysLeft === null
-						? "No sales in 90 days"
-						: state.daysLeft === 0
-							? "Out now"
-							: `Lasts ~${formatCount(state.daysLeft)} ${state.daysLeft === 1 ? "day" : "days"}`}
+				<span className="mt-1 block text-xs text-muted-foreground">
+					{set
+						? "Built from its parts"
+						: state.daysLeft === null
+							? "No sales in 90 days"
+							: state.daysLeft === 0
+								? "Out now"
+								: `Lasts ~${formatCount(state.daysLeft)} ${state.daysLeft === 1 ? "day" : "days"}`}
 				</span>
 			</div>
 			<div className="flex flex-col gap-1">
@@ -228,27 +228,20 @@ export function StockBar({
 	);
 }
 
-function TrustLine({ trust, now }: { trust: Trust | null; now: Date }) {
-	if (!trust)
-		return (
-			<p className="text-xs text-muted-foreground">Counted through its parts</p>
-		);
+// One word; when it was counted is in the tooltip.
+function TrustLine({ trust, now }: { trust: Trust; now: Date }) {
 	if (trust.kind === "counted") {
 		const days = Math.floor((now.getTime() - trust.at.getTime()) / 86_400_000);
 		return (
-			<p className="flex items-center gap-1.5 text-xs text-success-text">
-				<ClipboardCheck className="size-3.5" />
-				Counted{" "}
-				{days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`}
+			<p
+				className="text-xs font-medium text-success-text"
+				title={`Counted ${days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`}`}
+			>
+				Counted
 			</p>
 		);
 	}
-	return (
-		<p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-			<ClipboardList className="size-3.5" />
-			{trust.requested ? "On the count list" : "Needs a count"}
-		</p>
-	);
+	return <p className="text-xs text-muted-foreground">Uncounted</p>;
 }
 
 // The card's one button. Steps that need nothing from you show as text.

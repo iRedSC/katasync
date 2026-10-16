@@ -45,8 +45,10 @@ describe("trust", () => {
 			});
 	});
 
-	test("tool sets have none of their own", () => {
-		expect(trustOf(product({ kind: "bundle" }), now)).toBeNull();
+	test("tool sets go by their parts' counts like any product", () => {
+		expect(
+			trustOf(product({ kind: "bundle", lastCountedAt: null }), now),
+		).toMatchObject({ kind: "needs count" });
 	});
 });
 
@@ -120,11 +122,11 @@ describe("next step", () => {
 			});
 	});
 
-	test("tool sets and healthy stock need nothing", () => {
+	test("healthy stock needs nothing; a set that can't be built orders", () => {
 		expect(step(product())).toEqual({ kind: "none" });
-		expect(step(product({ kind: "bundle", reorder }))).toEqual({
-			kind: "none",
-		});
+		expect(
+			step(product({ kind: "bundle", onHand: null, available: 0, reorder })),
+		).toEqual({ kind: "order", ...reorder });
 	});
 });
 

@@ -70,6 +70,9 @@
   --abc-b-text: #003a5a;
   --abc-c-fill: #e3e3e3;
   --abc-c-text: #303030;
+  /* Card outlines for A and B, strong enough to read as a 2px line. */
+  --abc-a-line: #8cbf26;
+  --abc-b-line: #5aa9ec;
 
   color-scheme: light;
 }

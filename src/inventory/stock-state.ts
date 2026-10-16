@@ -8,8 +8,8 @@ import type { StockRange } from "#/inventory/stock-range";
 // A shelf count older than this no longer vouches for the number.
 export const TRUST_DAYS = 60;
 
-// Whether the on-hand number can be acted on. Tool sets have no stock of
-// their own (their parts are counted), so they have no trust.
+// Whether the on-hand number can be acted on. A tool set's comes from its
+// parts: the caller passes their oldest count.
 export type Trust =
 	| { kind: "counted"; at: Date }
 	| { kind: "needs count"; requested: boolean };
@@ -50,8 +50,7 @@ export type StockInput = {
 	reorder: { quantity: number; unit: string; packSize: number } | null;
 };
 
-export function trustOf(p: StockInput, now: Date): Trust | null {
-	if (p.kind === "bundle") return null;
+export function trustOf(p: StockInput, now: Date): Trust {
 	const at = p.lastCountedAt;
 	return at && now.getTime() - at.getTime() <= TRUST_DAYS * 86_400_000
 		? { kind: "counted", at }
@@ -69,12 +68,10 @@ export function levelOf(p: StockInput): Level {
 	return "healthy";
 }
 
-export function nextStepOf(p: StockInput, trust: Trust | null): NextStep {
-	// Tool sets are ordered and counted through their parts.
-	if (p.kind === "bundle") return { kind: "none" };
+export function nextStepOf(p: StockInput, trust: Trust): NextStep {
 	if (p.draft)
 		return { kind: "on draft", purchaseOrderId: p.draft.purchaseOrderId };
-	if (trust?.kind === "needs count" && countsFirst(p.abc))
+	if (trust.kind === "needs count" && countsFirst(p.abc))
 		return trust.requested ? { kind: "count requested" } : { kind: "count" };
 	if (p.reorder) return { kind: "order", ...p.reorder };
 	// Without a supplier nothing can suggest an order, so short stock asks

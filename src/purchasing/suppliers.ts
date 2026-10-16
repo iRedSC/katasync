@@ -1,6 +1,11 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { productSuppliers, products, suppliers } from "#/db/schema";
+import {
+	productComponents,
+	productSuppliers,
+	products,
+	suppliers,
+} from "#/db/schema";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
 // Who each product is bought from, and the suppliers' own details.
@@ -128,4 +133,41 @@ export async function updateSupplier(
 		.where(eq(suppliers.id, id))
 		.returning({ id: suppliers.id });
 	if (updated.length === 0) throw new PurchaseOrderError("No such supplier");
+}
+
+// Who a tool set is ordered from: the supplier of most of its parts, ties
+// going alphabetically. A set has no supplier of its own; it goes on that
+// supplier's draft as one line, and sending the PO turns it into its parts.
+// Sets whose parts have no suppliers are left out.
+export async function setSuppliers(db: Db, setIds?: number[]) {
+	const rows = await db
+		.select({
+			setId: productComponents.parentProductId,
+			supplierId: suppliers.id,
+			name: suppliers.name,
+			parts: sql<number>`count(*)::int`,
+		})
+		.from(productComponents)
+		.innerJoin(
+			productSuppliers,
+			eq(productSuppliers.productId, productComponents.componentProductId),
+		)
+		.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+		.where(
+			setIds ? inArray(productComponents.parentProductId, setIds) : undefined,
+		)
+		.groupBy(productComponents.parentProductId, suppliers.id, suppliers.name);
+	const best = new Map<number, { id: number; name: string; parts: number }>();
+	for (const r of rows) {
+		const had = best.get(r.setId);
+		if (
+			!had ||
+			r.parts > had.parts ||
+			(r.parts === had.parts && r.name.localeCompare(had.name) < 0)
+		)
+			best.set(r.setId, { id: r.supplierId, name: r.name, parts: r.parts });
+	}
+	return new Map(
+		[...best].map(([id, { id: sid, name }]) => [id, { id: sid, name }]),
+	);
 }

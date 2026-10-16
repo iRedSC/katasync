@@ -20,7 +20,7 @@ import { toast } from "sonner";
 import { FacetRail, type RailGroup } from "#/components/facet-rail";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
-import { AbcBadge, Badge, Banner, Card, Page } from "#/components/page";
+import { AbcBadge, Badge, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { StockCard, type StockState } from "#/components/stock-card";
 import { Button } from "#/components/ui/button";
@@ -147,13 +147,11 @@ function facetsOf(p: ProductRow, state: StockState): Facets {
 	if (p.onOrder > 0) status.push("on order");
 	if (!p.supplier && p.kind !== "bundle") status.push("no supplier");
 	const trust =
-		state.trust === null
-			? []
-			: state.trust.kind === "counted"
-				? ["counted"]
-				: state.trust.requested
-					? ["needs count", "count requested"]
-					: ["needs count"];
+		state.trust.kind === "counted"
+			? ["counted"]
+			: state.trust.requested
+				? ["uncounted", "count requested"]
+				: ["uncounted"];
 	return {
 		text: [p.sku, title, p.category ?? ""],
 		title: [title],
@@ -188,13 +186,8 @@ const RAIL: RailGroup[] = [
 	{
 		title: "Trust",
 		field: "trust",
-		values: ["counted", "needs count", "count requested"],
-		label: (v) =>
-			v === "counted"
-				? `Counted in ${TRUST_DAYS} days`
-				: v === "needs count"
-					? "Needs a count"
-					: "On the count list",
+		values: ["counted", "uncounted"],
+		note: `Counted means every shelf was counted in the last ${TRUST_DAYS} days.`,
 	},
 	{
 		title: "Class",
@@ -369,16 +362,13 @@ function Products() {
 		},
 		c: () => {
 			const p = filtered[selected];
-			if (p && p.kind !== "bundle") countStock(p);
+			if (p) countStock(p);
 		},
 		Escape: () => {
 			if (document.activeElement === input.current) input.current?.blur();
 			else if (query) setQuery("");
 		},
 	});
-
-	const aboutValue =
-		sort === "value" || filters.some((f) => f.field === "class");
 
 	return (
 		<Page
@@ -400,36 +390,32 @@ function Products() {
 				/>
 			}
 		>
-			{aboutValue && unpriced > 0 && (
-				<Banner
-					tone="warning"
-					title={`${formatCount(unpriced)} sold ${unpriced === 1 ? "product needs a cost" : "products need a cost"} to get a class`}
-				>
-					Classes rank products by units sold times cost. Products showing a
-					dash in the Class column are left out until they have one.
-				</Banner>
-			)}
-			{aboutValue && (
-				<p className="-mt-1 text-muted-foreground">
-					A is the products carrying the first 80% of the money spent on stock,
-					B the next 15%, C the rest. Based on{" "}
-					{abcDays >= 365
-						? "the last 12 months"
-						: `${formatCount(abcDays)} days`}{" "}
-					of sales.
-				</p>
-			)}
 			<div className="flex items-start gap-6">
-				<aside className="sticky top-4 hidden max-h-[calc(100svh-6rem)] w-56 shrink-0 overflow-y-auto pb-4 lg:block">
+				{/* Scrolls on its own, held under the app bar while the list scrolls. */}
+				<aside className="sticky top-[4.5rem] hidden max-h-[calc(100svh-5.5rem)] w-56 shrink-0 overflow-y-auto overscroll-contain pb-4 lg:block">
 					<FacetRail
 						groups={RAIL}
+						notes={{
+							class: (
+								<>
+									A carries the first 80% of what's spent on stock, B the next
+									15%, C the rest, over{" "}
+									{abcDays >= 365
+										? "the last 12 months"
+										: `${formatCount(abcDays)} days`}
+									.
+									{unpriced > 0 &&
+										` ${formatCount(unpriced)} sold ${unpriced === 1 ? "product has" : "products have"} no cost, so no class yet.`}
+								</>
+							),
+						}}
 						counts={railCounts}
 						filters={filters}
 						onFilters={(next) => setSearch({ filters: next })}
 					/>
 				</aside>
 				<div ref={list} className="flex min-w-0 flex-1 flex-col gap-3">
-					<Card flush>
+					<Card flush className="overflow-visible">
 						<div className="flex flex-wrap items-center gap-1 border-b p-2">
 							<Tab
 								label="All"
@@ -569,17 +555,16 @@ function Products() {
 														</div>
 													</td>
 													<td className="px-2 py-2 text-center">
-														{/* Tool sets are classed through their parts. */}
-														{p.kind !== "bundle" && (
-															<AbcBadge
-																abc={p.abc}
-																title={
-																	p.abcRank !== null
+														<AbcBadge
+															abc={p.abc}
+															title={
+																p.kind === "bundle"
+																	? "The class of its most valuable part"
+																	: p.abcRank !== null
 																		? `#${formatCount(p.abcRank)} by value`
 																		: "Needs a cost to get a class"
-																}
-															/>
-														)}
+															}
+														/>
 													</td>
 													<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
 														<RowStatus product={p} />
@@ -930,10 +915,9 @@ function Inventory({ product: p }: { product: ProductRow }) {
 	);
 }
 
-// What putting this product on a PO means right now. Tool sets are ordered
-// through their parts, so they get nothing.
+// What putting this product on a PO means right now. A tool set's supplier
+// is the one most of its parts come from.
 function orderAction(p: ProductRow) {
-	if (p.kind === "bundle") return null;
 	if (p.draft)
 		return {
 			kind: "draft" as const,
@@ -1017,12 +1001,10 @@ function RowMenu({
 					Set a supplier to order it
 				</ContextMenuItem>
 			)}
-			{p.kind !== "bundle" && (
-				<ContextMenuItem onSelect={() => onCount(p)} shortcut="C">
-					<ClipboardList />
-					Count stock
-				</ContextMenuItem>
-			)}
+			<ContextMenuItem onSelect={() => onCount(p)} shortcut="C">
+				<ClipboardList />
+				Count stock
+			</ContextMenuItem>
 			<ContextMenuSeparator />
 			<ContextMenuItem
 				onSelect={async () => {
