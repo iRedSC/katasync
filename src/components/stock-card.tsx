@@ -9,6 +9,7 @@ import { AbcBadge, Badge, type Tone } from "./page";
 import { ProductImage } from "./product";
 import { fillColor, rangeFill } from "./stock-ring";
 import { Button } from "./ui/button";
+import { VelocityGauge } from "./velocity-gauge";
 
 export type StockState = {
 	trust: Trust;
@@ -111,6 +112,11 @@ export function StockCard({
 					}
 				/>
 				{badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
+				{p.why && (
+					<span className="-my-2 ml-auto">
+						<VelocityGauge why={p.why} onPo={p.draft ?? undefined} />
+					</span>
+				)}
 			</div>
 			{/* Trust and the step share the foot, wrapping before they'd overflow. */}
 			<div className="mt-auto flex min-h-8 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-t pt-2.5">

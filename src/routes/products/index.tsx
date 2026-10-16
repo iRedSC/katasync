@@ -38,6 +38,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { VelocityGauge } from "#/components/velocity-gauge";
 import {
 	daysLeft,
 	levelOf,
@@ -511,6 +512,12 @@ function Products() {
 										<th className="hidden px-4 py-2 text-right font-medium xl:table-cell">
 											On order
 										</th>
+										<th
+											className="hidden px-2 py-2 text-center font-medium md:table-cell"
+											title="Units sold a month. Hover for the reorder math"
+										>
+											Velocity
+										</th>
 										<th className="hidden px-4 py-2 font-medium md:table-cell">
 											Reorder
 										</th>
@@ -574,6 +581,12 @@ function Products() {
 													</td>
 													<td className="hidden px-4 py-2 text-right whitespace-nowrap tabular-nums xl:table-cell">
 														{p.onOrder > 0 ? formatCount(p.onOrder) : ""}
+													</td>
+													<td className="hidden px-2 py-1.5 md:table-cell">
+														<VelocityGauge
+															why={p.why}
+															onPo={p.draft ?? undefined}
+														/>
 													</td>
 													<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
 														<Reorder product={p} />
