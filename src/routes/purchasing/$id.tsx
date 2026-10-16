@@ -23,10 +23,10 @@ import { Button } from "#/components/ui/button";
 import {
 	cityLine,
 	formatCount,
-	formatDateTime,
 	formatDay,
 	formatMoney,
 	formatPhone,
+	formatTime,
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
@@ -100,6 +100,20 @@ function PurchaseOrderPage() {
 		(l) => l.unitCost === null && l.kind !== "bundle",
 	).length;
 	const canEmail = d.emailConfigured && Boolean(d.supplier.email);
+	const incoming = d.lines.filter((l) => l.received < l.quantity);
+	const arrived = d.lines.filter((l) => l.received >= l.quantity);
+	const totals = (
+		<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
+			{draft && <AddLine purchaseOrderId={po.id} />}
+			<span className="text-muted-foreground">
+				{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
+				{unpriced > 0 && `, ${unpriced} without a cost`}
+				{sets > 0 &&
+					`, plus ${sets === 1 ? "a set" : `${sets} sets`} priced as parts when sent`}
+			</span>
+			<span className="font-semibold tabular-nums">{formatMoney(total)}</span>
+		</div>
+	);
 
 	useHotkeys({ Escape: () => navigate({ to: "/purchasing" }) });
 
@@ -183,23 +197,45 @@ function PurchaseOrderPage() {
 			    wide screens. */}
 			<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
 				<div className="flex min-w-0 flex-col gap-4">
-					<Card flush>
-						{draft && <FrozenBar detail={d} />}
-						<LineTable detail={d} />
-						<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
-							{draft && <AddLine purchaseOrderId={po.id} />}
-							<span className="text-muted-foreground">
-								{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
-								{unpriced > 0 && `, ${unpriced} without a cost`}
-								{sets > 0 &&
-									`, plus ${sets === 1 ? "a set" : `${sets} sets`} priced as parts when sent`}
-							</span>
-							<span className="font-semibold tabular-nums">
-								{formatMoney(total)}
-							</span>
-						</div>
-					</Card>
-					{d.receipts.length > 0 && <Receipts detail={d} />}
+					{draft ? (
+						<Card flush>
+							<FrozenBar detail={d} />
+							<LineTable detail={d} lines={d.lines} />
+							{totals}
+						</Card>
+					) : (
+						<>
+							{/* Like Shopify's unfulfilled and fulfilled cards: a line moves
+							    down once all of it is in. */}
+							{incoming.length > 0 && (
+								<Card
+									flush
+									title={po.status === "sent" ? "Incoming" : "Not received"}
+									aside={`${incoming.length} ${incoming.length === 1 ? "line" : "lines"}`}
+								>
+									<LineTable detail={d} lines={incoming} />
+									{arrived.length === 0 && totals}
+								</Card>
+							)}
+							{arrived.length > 0 && (
+								<Card
+									flush
+									title="Received"
+									aside={`${arrived.length} ${arrived.length === 1 ? "line" : "lines"}`}
+								>
+									<LineTable detail={d} lines={arrived} />
+									{totals}
+								</Card>
+							)}
+							{d.lines.length === 0 && (
+								<Card flush>
+									<LineTable detail={d} lines={d.lines} />
+									{totals}
+								</Card>
+							)}
+							<Timeline detail={d} />
+						</>
+					)}
 				</div>
 
 				<div className="flex flex-col gap-4">
@@ -419,7 +455,13 @@ type Line = PurchaseOrderDetail["lines"][number];
 // A quantity being dragged, typed, or saved, before the page's data has it.
 type QuantityPreview = { lineId: number; quantity: number };
 
-function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
+function LineTable({
+	detail: d,
+	lines,
+}: {
+	detail: PurchaseOrderDetail;
+	lines: Line[];
+}) {
 	const draft = d.order.status === "draft";
 	const receiving = d.order.status === "sent";
 	const [preview, setPreview] = useState<QuantityPreview | null>(null);
@@ -432,16 +474,36 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 					: prev
 				: { lineId, quantity },
 		);
-	if (d.lines.length === 0)
+	if (lines.length === 0)
 		return (
 			<p className="px-4 py-6 text-center text-muted-foreground">
-				Nothing on this PO yet. Add a product by SKU below.
+				{draft
+					? "Nothing on this PO yet. Add a product by SKU below."
+					: "Nothing on this PO."}
 			</p>
 		);
 	return (
 		// Scrolls sideways rather than squeeze a column when there's no room.
 		<div className="overflow-x-auto">
-			<table className="w-full [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
+			{/* After sending, lines split across the Incoming and Received cards;
+			    fixed widths keep their columns lined up. */}
+			<table
+				className={cn(
+					"w-full [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap",
+					!draft && "min-w-[52rem] table-fixed",
+				)}
+			>
+				{!draft && (
+					<colgroup>
+						<col />
+						<col className="w-24" />
+						<col className="w-24" />
+						<col className="w-14" />
+						<col className="w-24" />
+						<col className="w-24" />
+						<col className="w-56" />
+					</colgroup>
+				)}
 				<thead>
 					<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
 						<th className="px-4 py-2 font-medium">Product</th>
@@ -465,11 +527,16 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 					</tr>
 				</thead>
 				<tbody>
-					{d.lines.map((l) => (
+					{lines.map((l) => (
 						<Fragment key={l.id}>
 							<tr className="border-t first:border-t-0">
 								<td className="w-full px-4 py-2 whitespace-normal!">
-									<div className="flex min-w-72 items-center gap-3">
+									<div
+										className={cn(
+											"flex items-center gap-3",
+											draft && "min-w-72",
+										)}
+									>
 										<ProductImage src={l.imageUrl} />
 										<div className="min-w-0">
 											<Link
@@ -1118,48 +1185,116 @@ function AddLine({ purchaseOrderId }: { purchaseOrderId: number }) {
 	);
 }
 
-function Receipts({ detail: d }: { detail: PurchaseOrderDetail }) {
+type TimelineEvent = {
+	key: string;
+	at: Date;
+	body: ReactNode;
+	undo?: PurchaseOrderDetail["receipts"][number];
+};
+
+// Everything that happened to the PO, newest first and grouped by day, like
+// the timeline under a Shopify order. Receipts can be undone from here.
+function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const { busy, run } = useAction();
+	const po = d.order;
 	const lines = new Map(d.lines.map((l) => [l.id, l]));
+	const events: TimelineEvent[] = [
+		{ key: "created", at: new Date(po.createdAt), body: "PO created" },
+	];
+	if (po.sentAt)
+		events.push({
+			key: "sent",
+			at: new Date(po.sentAt),
+			body: po.sentTo ? `Sent to ${po.sentTo}` : "Marked as ordered",
+		});
+	for (const r of d.receipts) {
+		const line = lines.get(r.lineId);
+		events.push({
+			key: `r${r.id}`,
+			at: new Date(r.createdAt),
+			undo: r,
+			body: (
+				<>
+					Received{" "}
+					<span className="font-semibold tabular-nums">
+						{formatCount(r.quantity)}
+					</span>
+					{line && line.packSize !== 1 && ` ${line.unit}`} × {line?.name ?? "?"}
+					{line?.variantName && (
+						<span className="text-muted-foreground"> {line.variantName}</span>
+					)}
+				</>
+			),
+		});
+	}
+	if (po.closedAt)
+		events.push({
+			key: "closed",
+			at: new Date(po.closedAt),
+			body: po.status === "cancelled" ? "PO cancelled" : "PO closed",
+		});
+	events.sort((a, b) => b.at.getTime() - a.at.getTime());
+
+	const days: { day: string; events: TimelineEvent[] }[] = [];
+	for (const e of events) {
+		const day = formatDay(e.at);
+		if (days.at(-1)?.day !== day) days.push({ day, events: [] });
+		days.at(-1)?.events.push(e);
+	}
+
 	return (
-		<Card title="Received" flush>
-			<ul>
-				{d.receipts.map((r) => {
-					const line = lines.get(r.lineId);
-					return (
-						<li
-							key={r.id}
-							className="flex items-center gap-3 border-t px-4 py-2 first:border-t-0"
-						>
-							<span className="w-36 shrink-0 text-muted-foreground">
-								{formatDateTime(r.createdAt)}
-							</span>
-							<span className="min-w-0 flex-1 truncate">
-								<span className="font-semibold tabular-nums">
-									{formatCount(r.quantity)}
-								</span>
-								{line && line.packSize !== 1 && ` ${line.unit}`} ×{" "}
-								{line?.name ?? "?"}
-							</span>
-							<Button
-								size="sm"
-								variant="ghost"
-								disabled={busy}
-								onClick={() =>
-									run(
-										() => undoPurchaseReceipt({ data: { id: r.id } }),
-										() =>
-											`Took ${formatCount(r.quantity * (line?.packSize ?? 1))} back off the shelf`,
-									)
-								}
-							>
-								Undo
-							</Button>
-						</li>
-					);
-				})}
-			</ul>
-		</Card>
+		<section>
+			<h2 className="px-1 pb-2 text-sm font-semibold">Timeline</h2>
+			<ol className="relative ml-3 border-l-2 border-border pb-1">
+				{days.map((g) => (
+					<li key={g.day}>
+						<div className="py-2 pl-6 text-xs font-medium text-muted-foreground">
+							{g.day}
+						</div>
+						<ul>
+							{g.events.map((e) => {
+								const receipt = e.undo;
+								const line = receipt && lines.get(receipt.lineId);
+								return (
+									<li
+										key={e.key}
+										className="relative flex min-h-9 items-center gap-3 py-1 pl-6"
+									>
+										<span className="absolute top-1/2 -left-[7px] size-3 -translate-y-1/2 rounded-full border-2 border-background bg-muted-foreground/60" />
+										<span className="min-w-0 flex-1">{e.body}</span>
+										<span className="shrink-0 text-muted-foreground tabular-nums">
+											{formatTime(e.at)}
+										</span>
+										{/* Always the same width, so the times line up. */}
+										<span className="w-16 shrink-0 text-right">
+											{receipt && (
+												<Button
+													size="sm"
+													variant="ghost"
+													disabled={busy}
+													onClick={() =>
+														run(
+															() =>
+																undoPurchaseReceipt({
+																	data: { id: receipt.id },
+																}),
+															() =>
+																`Took ${formatCount(receipt.quantity * (line?.packSize ?? 1))} back off the shelf`,
+														)
+													}
+												>
+													Undo
+												</Button>
+											)}
+										</span>
+									</li>
+								);
+							})}
+						</ul>
+					</li>
+				))}
+			</ol>
+		</section>
 	);
 }
 
