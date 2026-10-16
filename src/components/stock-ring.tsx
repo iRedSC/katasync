@@ -37,13 +37,16 @@ export const fillColor = (fill: number) =>
 	`oklch(${0.7 + 0.12 * Math.sin(Math.PI * fill)} 0.17 ${55 + fill * 90})`;
 
 // On hand as a number in a ring filled from min to max: empty at or under
-// min, full at or over max. Oversold stock is a full red ring.
+// min, full at or over max. Oversold stock is a full red ring. The label
+// names the count in the tooltip, e.g. "after this order".
 export function StockRing({
 	onHand,
 	range,
+	label = "on hand",
 }: {
 	onHand: number;
 	range: StockRange & { own: boolean };
+	label?: string;
 }) {
 	const oversold = onHand < 0;
 	const fill = oversold ? 1 : rangeFill(onHand, range);
@@ -53,7 +56,7 @@ export function StockRing({
 		<span
 			className="relative inline-flex shrink-0 items-center justify-center"
 			style={{ width: SIZE, height: SIZE }}
-			title={`${formatCount(onHand)} on hand. Keep ${formatCount(range.min)} to ${formatCount(range.max)}${range.own ? "" : " (default)"}`}
+			title={`${formatCount(onHand)} ${label}. Keep ${formatCount(range.min)} to ${formatCount(range.max)}${range.own ? "" : " (default)"}`}
 		>
 			<svg
 				width={SIZE}
