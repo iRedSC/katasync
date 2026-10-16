@@ -1,9 +1,9 @@
-import { useRouter } from "@tanstack/react-router";
 import { Popover } from "radix-ui";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney, formatUnit } from "#/lib/format";
+import { optimism, type Patch } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { addPurchaseUnit } from "#/server/purchasing";
 
@@ -17,10 +17,14 @@ export type PurchaseTerms = {
 
 // How saving works where the cell is used. On a PO, `save` changes just that
 // PO, and `saveDefault` (when allowed) also makes the terms the product's
-// default. On a product page there's no PO, so `save` sets the default.
+// default. On a product page there's no PO, so `save` sets the default. Each
+// is a plain server call. `patch` and `patchDefault` show what they change on
+// the page at once; without them the page shows it once reloaded.
 export type SaveTerms = {
 	save: (terms: PurchaseTerms) => Promise<unknown>;
 	saveDefault?: (terms: PurchaseTerms) => Promise<unknown>;
+	patch?: (terms: PurchaseTerms) => Patch;
+	patchDefault?: (terms: PurchaseTerms) => Patch;
 	// Why Set default is unavailable, when it is.
 	noDefaultReason?: string;
 	// The product's default now, so the form can say when it's on it.
@@ -77,6 +81,7 @@ export function PurchaseUnitCell({
 						value={value}
 						cost={cost}
 						units={units}
+						label={label}
 						saving={saving}
 						onDone={() => setOpen(false)}
 					/>
@@ -93,16 +98,17 @@ function TermsForm({
 	value,
 	cost,
 	units: initialUnits,
+	label,
 	saving,
 	onDone,
 }: {
 	value: PurchaseTerms;
 	cost: number | null;
 	units: string[];
+	label: string;
 	saving: SaveTerms;
 	onDone: () => void;
 }) {
-	const router = useRouter();
 	const [units, setUnits] = useState(initialUnits);
 	const [unit, setUnit] = useState(value.unit);
 	const [adding, setAdding] = useState(false);
@@ -115,42 +121,50 @@ function TermsForm({
 	const packValid = Number.isInteger(packSize) && packSize > 0;
 	const resized = packValid && packSize !== value.packSize;
 
+	// The name comes back from the server, which may tidy it, so it waits for
+	// the reload before it's offered as a unit.
 	async function addUnit() {
 		if (newUnit.trim() === "") return setAdding(false);
-		try {
-			const name = await addPurchaseUnit({ data: { name: newUnit } });
-			setUnits((all) => [...all, name]);
-			setUnit(name);
-			setAdding(false);
-			setNewUnit("");
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		}
+		const added = await optimism.change({
+			send: () => addPurchaseUnit({ data: { name: newUnit } }),
+		});
+		if (!added) return;
+		setUnits((all) => [...all, added.value]);
+		setUnit(added.value);
+		setAdding(false);
+		setNewUnit("");
 	}
 
-	async function submit(save: SaveTerms["save"]) {
+	// Saves the terms with `send`. With a `patch` the cell shows them at once
+	// and closes; without one it stays busy until the page has reloaded.
+	async function submit(send: SaveTerms["save"], patch?: SaveTerms["patch"]) {
 		const minimumQuantity = Number(minimum);
 		if (!packValid)
 			return toast.error(`"${pack}" isn't a whole number to pack by`);
 		if (!Number.isInteger(minimumQuantity) || minimumQuantity < 1)
 			return toast.error(`"${minimum}" isn't a whole number`);
-		setBusy(true);
-		try {
-			await save({ unit, packSize, minimumQuantity });
-			await router.invalidate();
+		const terms = { unit, packSize, minimumQuantity };
+		const sending = () => send(terms);
+		if (patch) {
 			onDone();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
+			await optimism.change({
+				label: `${label}'s unit and minimum`,
+				patch: patch(terms),
+				send: sending,
+			});
+			return;
 		}
+		setBusy(true);
+		const saved = await optimism.change({ send: sending });
+		setBusy(false);
+		if (saved) onDone();
 	}
 
 	return (
 		<form
 			onSubmit={(e: FormEvent) => {
 				e.preventDefault();
-				submit(saving.save);
+				submit(saving.save, saving.patch);
 			}}
 			className="flex flex-col gap-2.5"
 		>
@@ -263,7 +277,10 @@ function TermsForm({
 								saving.noDefaultReason ??
 								"Also use these for this product on future POs"
 							}
-							onClick={() => saving.saveDefault && submit(saving.saveDefault)}
+							onClick={() =>
+								saving.saveDefault &&
+								submit(saving.saveDefault, saving.patchDefault)
+							}
 							className="ml-auto text-xs text-link hover:underline disabled:text-muted-foreground disabled:no-underline"
 						>
 							Set default

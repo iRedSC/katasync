@@ -3,15 +3,19 @@ import { useState } from "react";
 import { Badge, Card, Page } from "#/components/page";
 import { SupplierDialog } from "#/components/supplier-dialog";
 import { formatCount, formatMoney } from "#/lib/format";
-import { listSuppliers } from "#/server/purchasing";
+import { optimistic } from "#/lib/optimism";
+import { listSuppliers, type SupplierRow } from "#/server/purchasing";
 
 export const Route = createFileRoute("/purchasing/suppliers")({
 	loader: () => listSuppliers(),
 	component: Suppliers,
 });
 
+// The suppliers' rows, with changes not yet confirmed laid over them.
+const supplierRows = optimistic<SupplierRow[]>("suppliers");
+
 function Suppliers() {
-	const rows = Route.useLoaderData();
+	const rows = supplierRows.useData("all", Route.useLoaderData());
 	const [editing, setEditing] = useState<number | null>(null);
 	const supplier = rows.find((r) => r.supplier.id === editing);
 
@@ -77,7 +81,7 @@ function Suppliers() {
 								<td className="px-4 py-2.5 text-right tabular-nums">
 									{r.supplier.minimumOrder > 0
 										? formatMoney(r.supplier.minimumOrder)
-										: "—"}
+										: "None"}
 								</td>
 							</tr>
 						))}
@@ -90,6 +94,24 @@ function Suppliers() {
 					leadTime={supplier.leadTime}
 					open
 					onOpenChange={(open) => !open && setEditing(null)}
+					patch={(saved) =>
+						supplierRows.patch("all", (all) =>
+							all.map((r) =>
+								r.supplier.id !== saved.id
+									? r
+									: {
+											...r,
+											supplier: saved,
+											// Reorder uses the measured lead time when there is one (see leadTimes).
+											leadTime: {
+												...r.leadTime,
+												configured: saved.leadTimeDays,
+												days: r.leadTime.measured?.days ?? saved.leadTimeDays,
+											},
+										},
+							),
+						)
+					}
 				/>
 			)}
 			<p className="px-1 text-muted-foreground">

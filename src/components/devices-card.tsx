@@ -6,6 +6,7 @@ import { signOut } from "#/auth/client";
 import { Badge, Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import { formatDay } from "#/lib/format";
+import { optimism, optimistic } from "#/lib/optimism";
 import {
 	createDeviceLink,
 	type listDevices,
@@ -15,8 +16,14 @@ import {
 
 type Device = Awaited<ReturnType<typeof listDevices>>[number];
 
+// Renames and removals show at once, from this list.
+export const devicesData = optimistic<Device[]>("devices");
+
 const message = (err: unknown) =>
 	err instanceof Error ? err.message : String(err);
+
+// The name as the server keeps it (see passkeyName).
+const tidy = (name: string) => name.trim().replace(/\s+/g, " ");
 
 // Everyone shares one company account; each phone or computer signs in with
 // its own passkey. Adding one makes a link to open on the new device.
@@ -28,18 +35,6 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 		expiresAt: Date;
 	} | null>(null);
 	const [renaming, setRenaming] = useState<string | null>(null);
-
-	async function act(work: () => Promise<unknown>, done?: string) {
-		try {
-			await work();
-			await router.invalidate();
-			if (done) toast.success(done);
-			return true;
-		} catch (err) {
-			toast.error(message(err));
-			return false;
-		}
-	}
 
 	async function addDevice() {
 		try {
@@ -54,6 +49,17 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 		}
 	}
 
+	async function rename(d: Device, name: string) {
+		setRenaming(null);
+		await optimism.change({
+			label: `${d.name}'s name`,
+			patch: devicesData.patch("all", (list) =>
+				list.map((x) => (x.id === d.id ? { ...x, name: tidy(name) } : x)),
+			),
+			send: () => renameDevice({ data: { id: d.id, name } }),
+		});
+	}
+
 	async function remove(d: Device) {
 		const warning = d.current
 			? `Remove ${d.name}? This device will be signed out.`
@@ -61,10 +67,16 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 				? `Remove ${d.name}? It's the last device; getting back in will need pnpm auth:setup-link on the server.`
 				: `Remove ${d.name}? It won't be able to sign in.`;
 		if (!confirm(warning)) return;
-		if (
-			await act(() => removeDevice({ data: { id: d.id } }), `Removed ${d.name}`)
-		)
-			if (d.current) window.location.assign("/login");
+		const r = await optimism.change({
+			label: `Removing ${d.name}`,
+			patch: devicesData.patch("all", (list) =>
+				list.filter((x) => x.id !== d.id),
+			),
+			send: () => removeDevice({ data: { id: d.id } }),
+		});
+		if (!r) return;
+		toast.success(`Removed ${d.name}`);
+		if (d.current) window.location.assign("/login");
 	}
 
 	return (
@@ -133,33 +145,11 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 							className="flex items-center gap-3 border-t px-4 py-3"
 						>
 							{renaming === d.id ? (
-								<form
-									className="flex flex-1 gap-2"
-									onSubmit={async (e) => {
-										e.preventDefault();
-										const name = String(
-											new FormData(e.currentTarget).get("name") ?? "",
-										);
-										if (
-											await act(() =>
-												renameDevice({ data: { id: d.id, name } }),
-											)
-										)
-											setRenaming(null);
-									}}
-									onKeyDown={(e) => e.key === "Escape" && setRenaming(null)}
-								>
-									<input
-										name="name"
-										defaultValue={d.name}
-										// biome-ignore lint/a11y/noAutofocus: opened to rename
-										autoFocus
-										className="h-8 flex-1 rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
-									/>
-									<Button type="submit" size="sm">
-										Save
-									</Button>
-								</form>
+								<NameForm
+									initial={d.name}
+									onSave={(name) => rename(d, name)}
+									onCancel={() => setRenaming(null)}
+								/>
 							) : (
 								<>
 									<span className="flex flex-1 items-center gap-2 font-medium">
@@ -200,5 +190,39 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 				</Button>
 			</div>
 		</Card>
+	);
+}
+
+// Opened with the device's current name. Save needs a name in it.
+function NameForm({
+	initial,
+	onSave,
+	onCancel,
+}: {
+	initial: string;
+	onSave: (name: string) => void;
+	onCancel: () => void;
+}) {
+	const [name, setName] = useState(initial);
+	return (
+		<form
+			className="flex flex-1 gap-2"
+			onSubmit={(e) => {
+				e.preventDefault();
+				onSave(name);
+			}}
+			onKeyDown={(e) => e.key === "Escape" && onCancel()}
+		>
+			<input
+				value={name}
+				// biome-ignore lint/a11y/noAutofocus: opened to rename
+				autoFocus
+				onChange={(e) => setName(e.target.value)}
+				className="h-8 flex-1 rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
+			/>
+			<Button type="submit" size="sm" disabled={name.trim() === ""}>
+				Save
+			</Button>
+		</form>
 	);
 }

@@ -1,5 +1,4 @@
 import NumberFlow from "@number-flow/react";
-import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
@@ -12,6 +11,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
+import { optimism, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { recordCount, undoMovement } from "#/server/catalog";
@@ -24,7 +24,9 @@ const reasons = [
 ] as const;
 
 // Type what's on the shelf; the app works out the change. Location is only
-// asked for when there's more than one.
+// asked for when there's more than one. `patch` says how a count shows on the
+// page it's on, and what undoing it shows; with it the dialog closes at once.
+// Without it, the dialog waits for the server.
 export function CountDialog({
 	open,
 	onOpenChange,
@@ -32,6 +34,7 @@ export function CountDialog({
 	name,
 	locations,
 	onHandByLocation,
+	patch,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -39,54 +42,64 @@ export function CountDialog({
 	name: string;
 	locations: { id: number; name: string }[];
 	onHandByLocation: Map<string, number>;
+	patch?: (count: { location: string; counted: number; previous: number }) => {
+		patch: Patch;
+		undo: Patch;
+	};
 }) {
-	const router = useRouter();
 	const [locationId, setLocationId] = useState(locations[0]?.id);
 	const location = locations.find((l) => l.id === locationId);
 	const current = onHandByLocation.get(location?.name ?? "") ?? 0;
 	const [counted, setCounted] = useState("");
 	const [reason, setReason] =
 		useState<(typeof reasons)[number]["value"]>("count");
-	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 
 	const value = counted === "" ? null : Number(counted);
 	const delta =
 		value === null || !Number.isInteger(value) ? null : value - current;
 
+	// Labelled with what it is, e.g. "Count of Widget didn't save".
+	function change<T>(laid: Patch | undefined, send: () => Promise<T>) {
+		return optimism.change(
+			laid ? { label: `Count of ${name}`, patch: laid, send } : { send },
+		);
+	}
+
 	async function submit(e: FormEvent) {
 		e.preventDefault();
 		if (value === null || !Number.isInteger(value)) return;
-		setSaving(true);
-		setError(null);
-		try {
-			const result = await recordCount({
-				data: { sku, counted: value, reason, locationId },
-			});
+		const laid =
+			location &&
+			patch?.({ location: location.name, counted: value, previous: current });
+		const close = () => {
 			onOpenChange(false);
 			setCounted("");
-			await router.invalidate();
-			const { batchId } = result;
-			if (!batchId) {
-				toast.success("Count confirmed. Nothing changed.", {
-					description: name,
-				});
-			} else {
-				offerUndo(`Count saved. ${formatCount(result.onHand)} on the shelf.`, {
-					tone: "success",
-					description: name,
-					undo: async () => {
-						await undoMovement({ data: { batchId } });
-						await router.invalidate();
-						return `Count of ${name} undone`;
-					},
-				});
-			}
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setSaving(false);
+		};
+		// A count that shows at once closes now; otherwise the dialog waits.
+		if (laid) close();
+		else setSaving(true);
+		const r = await change(laid?.patch, () =>
+			recordCount({ data: { sku, counted: value, reason, locationId } }),
+		);
+		setSaving(false);
+		if (!r) return;
+		if (!laid) close();
+		const { batchId } = r.value;
+		if (!batchId) {
+			toast.success("Count confirmed. Nothing changed.", { description: name });
+			return;
 		}
+		offerUndo(`Count saved. ${formatCount(r.value.onHand)} on the shelf.`, {
+			tone: "success",
+			description: name,
+			undo: async () => {
+				const undone = await change(laid?.undo, () =>
+					undoMovement({ data: { batchId } }),
+				);
+				return undone && `Count of ${name} undone`;
+			},
+		});
 	}
 
 	return (
@@ -159,7 +172,6 @@ export function CountDialog({
 						))}
 					</div>
 
-					{error && <p className="text-center text-critical-text">{error}</p>}
 					<DialogFooter>
 						<Button
 							type="submit"

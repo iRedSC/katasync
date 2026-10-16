@@ -740,7 +740,7 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 	.validator(type({ productId: "number.integer > 0" }))
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const [link] = await db
+		const links = await db
 			.select({
 				supplierId: suppliers.id,
 				supplierName: suppliers.name,
@@ -777,7 +777,9 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 				),
 			)
 			.orderBy(purchaseOrders.id);
-		return { link: link ?? null, open, units: await listUnits(db) };
+		// A product may have no supplier yet.
+		const link = links.at(0) ?? null;
+		return { link, open, units: await listUnits(db) };
 	});
 
 // Sets or changes who a product comes from. supplierId null removes it.

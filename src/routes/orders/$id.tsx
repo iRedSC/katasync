@@ -1,11 +1,11 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Banner, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
-import { ReturnDialog } from "#/components/return-dialog";
+import { type Received, ReturnDialog } from "#/components/return-dialog";
 import { Button } from "#/components/ui/button";
 import {
 	channelName,
@@ -16,6 +16,7 @@ import {
 	formatPhone,
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
@@ -27,8 +28,34 @@ export const Route = createFileRoute("/orders/$id")({
 	component: OrderPage,
 });
 
+// The page's data with changes the server hasn't confirmed laid over it.
+const orderData = optimistic<OrderDetail>("order");
+
+// Receiving a return counts it against each line, and against the line's
+// restocked count when it went back on the shelf. Undo takes it off again.
+const returnedPatch =
+	(orderId: number, sign: 1 | -1) =>
+	(received: Received[], restock: boolean): Patch =>
+		orderData.patch(orderId, (d) => ({
+			...d,
+			lines: d.lines.map((l) => {
+				const got = received.find((r) => r.lineId === l.id);
+				if (!got) return l;
+				const n = sign * got.quantity;
+				return {
+					...l,
+					returned: l.returned + n,
+					restocked: restock ? l.restocked + n : l.restocked,
+				};
+			}),
+		}));
+
 function OrderPage() {
-	const { order, lines, sends, adminUrl } = Route.useLoaderData();
+	const loaded = Route.useLoaderData();
+	const { order, lines, sends, adminUrl } = orderData.useData(
+		loaded.order.id,
+		loaded,
+	);
 	const goBack = useBack({ to: "/orders" });
 	const status = orderStatus(order);
 	const external = externalFulfillment(order);
@@ -181,6 +208,10 @@ function OrderPage() {
 					orderId={order.id}
 					orderName={order.name}
 					lines={returnable}
+					patches={{
+						receive: returnedPatch(order.id, 1),
+						undo: returnedPatch(order.id, -1),
+					}}
 				/>
 			)}
 
@@ -310,24 +341,20 @@ function SendRow({
 	send: OrderDetail["sends"][number];
 	channel: string;
 }) {
-	const router = useRouter();
 	const [confirm, setConfirm] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const live = d.boxes.filter((b) => b.voidedAt === null);
 	const first = d.boxes[0];
 	const test = d.boxes.some((b) => b.test);
 
+	// Talks to a carrier or marketplace, so it waits for the reload that shows
+	// it. A failure is toasted by the engine; a success is said once it's shown.
 	async function act(work: () => Promise<string>) {
 		setBusy(true);
-		try {
-			toast.success(await work());
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-			setConfirm(false);
-			router.invalidate();
-		}
+		const r = await optimism.change({ send: work });
+		setBusy(false);
+		setConfirm(false);
+		if (r) toast.success(r.value);
 	}
 
 	// Sending tracking needs every box bought and none voided.

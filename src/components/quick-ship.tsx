@@ -1,4 +1,3 @@
-import { useRouter } from "@tanstack/react-router";
 import {
 	CircleAlert,
 	CircleCheck,
@@ -17,6 +16,7 @@ import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { formatMoney } from "#/lib/format";
+import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { printLabels } from "#/printing/qz-client";
 import {
@@ -79,7 +79,6 @@ export function openQuickShip(pin: number) {
 // back. The order loads as the third digit is typed, and prices load while
 // the weight is still on screen, so Enter rarely waits.
 export function QuickShip() {
-	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [step, setStep] = useState<Step>("pin");
 	const [error, setError] = useState<string | null>(null);
@@ -368,27 +367,31 @@ export function QuickShip() {
 		const list = allBoxes(weightGrams);
 		if (!plan || list.length === 0 || busy) return;
 		const parts = splitInsurance(insureAmount, list.length);
-		const result = await run(() =>
-			quickShipBuy({
-				data: {
-					orderIds: plan.orderIds,
-					contentsKey: plan.contentsKey,
-					boxes: list.map((p, i) => ({
-						packageId: p.box?.id ?? null,
-						...p.dims,
-						weightGrams: p.weightGrams,
-						insureAmount: parts[i],
-					})),
-					choice: {
-						carrier: quote.carrier,
-						service: quote.service,
-						id: quote.id,
-					},
-				},
+		// Buys a real label, so it stays busy until the reload shows it.
+		const r = await run(() =>
+			optimism.change({
+				send: () =>
+					quickShipBuy({
+						data: {
+							orderIds: plan.orderIds,
+							contentsKey: plan.contentsKey,
+							boxes: list.map((p, i) => ({
+								packageId: p.box?.id ?? null,
+								...p.dims,
+								weightGrams: p.weightGrams,
+								insureAmount: parts[i],
+							})),
+							choice: {
+								carrier: quote.carrier,
+								service: quote.service,
+								id: quote.id,
+							},
+						},
+					}),
 			}),
 		);
-		if (!result) return;
-		router.invalidate();
+		if (!r) return;
+		const result = r.value;
 		if (result.failed) {
 			// A label still live blocks buying again; it has to be voided.
 			if (result.boxes.length > 0) {
@@ -805,6 +808,7 @@ function PackageStep({
 }) {
 	const [value, setValue] = useState(current ? String(current.pin) : "");
 	const [saveError, setSaveError] = useState<string | null>(null);
+	const [saving, setSaving] = useState(false);
 	// The side being typed but not locked in yet, for the hint below.
 	const [typing, setTyping] = useState("");
 	const [custom, setCustom] = useState(!current && dims !== null);
@@ -819,28 +823,32 @@ function PackageStep({
 	const parts = [...sides, typing].map(Number).filter((n) => n > 0);
 
 	async function submit(final = parts) {
+		if (saving) return;
 		if (custom && final.length === 4) {
 			// A fourth number is a pin: save this size as a box (no empty
 			// weight; add one in Settings if it matters) and ship in it.
 			const [l, w, h, pin] = final;
 			const taken = boxes.find((b) => b.pin === pin);
 			if (taken) return setSaveError(`Pin ${pin} is already ${taken.name}`);
-			try {
-				const saved = await savePackage({
-					data: {
-						name: `${l} × ${w} × ${h}`,
-						lengthIn: l,
-						widthIn: w,
-						heightIn: h,
-						weightOz: 0,
-						pin,
-					},
-				});
-				onSaved(saved);
-				onChoose({ box: saved, dims: saved });
-			} catch (err) {
-				setSaveError(err instanceof Error ? err.message : String(err));
-			}
+			// The new box needs its id, so it waits for the reload that shows it.
+			setSaving(true);
+			const r = await optimism.change({
+				send: () =>
+					savePackage({
+						data: {
+							name: `${l} × ${w} × ${h}`,
+							lengthIn: l,
+							widthIn: w,
+							heightIn: h,
+							weightOz: 0,
+							pin,
+						},
+					}),
+			});
+			setSaving(false);
+			if (!r) return;
+			onSaved(r.value);
+			onChoose({ box: r.value, dims: r.value });
 		} else if (custom && final.length === 3) {
 			const [l, w, h] = final.map((n) => Math.round(n * MM_PER_INCH));
 			onChoose({ box: null, dims: { lengthMm: l, widthMm: w, heightMm: h } });
@@ -901,7 +909,9 @@ function PackageStep({
 				/>
 			)}
 			<div className="flex h-8 items-center justify-center text-lg">
-				{custom && saveError ? (
+				{saving ? (
+					<span className="text-muted-foreground">Saving box…</span>
+				) : custom && saveError ? (
 					<span className="text-critical-text">{saveError}</span>
 				) : custom ? (
 					parts.length === 4 ? (
@@ -1340,28 +1350,26 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 	const many = bought.boxes.length > 1;
 	const handoff = bought.handoff;
 
+	// Refunds money at the carrier, so it waits for the reload that shows it.
 	async function confirmVoid() {
 		setVoiding("busy");
 		setVoidError(null);
-		try {
-			const result = await voidLabel({
-				data: { dispatchId: bought.dispatchId },
-			});
-			// Some refunds refused: stay here so voiding can be tried again.
-			if (result.remaining > 0) {
-				return setVoidError(result.notes.join(" "));
-			}
-			setVoided(
-				[
-					`${many ? "Labels" : "Label"} voided, refund ${result.refundStatus.toLowerCase()}.`,
-					...result.notes,
-				].join(" "),
-			);
-		} catch (err) {
-			setVoidError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setVoiding(null);
+		const r = await optimism.change({
+			send: () => voidLabel({ data: { dispatchId: bought.dispatchId } }),
+		});
+		setVoiding(null);
+		if (!r) return;
+		const result = r.value;
+		// Some refunds refused: stay here so voiding can be tried again.
+		if (result.remaining > 0) {
+			return setVoidError(result.notes.join(" "));
 		}
+		setVoided(
+			[
+				`${many ? "Labels" : "Label"} voided, refund ${result.refundStatus.toLowerCase()}.`,
+				...result.notes,
+			].join(" "),
+		);
 	}
 
 	if (voided) {

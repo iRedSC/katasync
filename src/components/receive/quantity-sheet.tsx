@@ -17,7 +17,6 @@ export function QuantitySheet({
 	remaining,
 	extra = false,
 	lastReceipt,
-	busy,
 	onConfirm,
 	onNoneCame,
 	onUndo,
@@ -31,7 +30,6 @@ export function QuantitySheet({
 	extra?: boolean;
 	// Newest receipt that can still be undone for this line.
 	lastReceipt: number | null;
-	busy: boolean;
 	// last: nothing more of it is coming.
 	onConfirm: (quantity: number, last: boolean) => void;
 	// Stop waiting for what's left without receiving any.
@@ -144,7 +142,7 @@ export function QuantitySheet({
 
 						<button
 							type="button"
-							disabled={!valid || busy}
+							disabled={!valid}
 							onClick={() =>
 								quantity === 0 ? onNoneCame?.() : onConfirm(quantity, false)
 							}
@@ -161,9 +159,8 @@ export function QuantitySheet({
 						{short && (
 							<button
 								type="button"
-								disabled={busy}
 								onClick={() => onConfirm(quantity, true)}
-								className="mt-2 h-16 w-full rounded-2xl bg-surface text-xl font-bold active:bg-surface-strong disabled:opacity-40"
+								className="mt-2 h-16 w-full rounded-2xl bg-surface text-xl font-bold active:bg-surface-strong"
 							>
 								Receive {quantity}
 								{u}, that's all they sent
@@ -180,9 +177,8 @@ export function QuantitySheet({
 				{lastReceipt !== null && (
 					<button
 						type="button"
-						disabled={busy}
 						onClick={onUndo}
-						className="mt-2 flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-muted-foreground active:bg-surface disabled:opacity-40"
+						className="mt-2 flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-muted-foreground active:bg-surface"
 					>
 						<Undo2 className="size-5" />
 						Undo last receipt ({lastReceipt})

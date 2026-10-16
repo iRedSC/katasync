@@ -53,6 +53,7 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { cancelledOnList } from "#/purchasing/list-patches";
 import {
 	orderedItems,
 	type PartState,
@@ -468,6 +469,9 @@ function PurchaseOrderPage() {
 						leadTime={d.leadTime}
 						open={editingSupplier}
 						onOpenChange={setEditingSupplier}
+						patch={(supplier) =>
+							poData.patch(po.id, (data) => ({ ...data, supplier }))
+						}
 					/>
 
 					<Card title="Delivery">
@@ -2356,7 +2360,6 @@ function OtherActions({
 	run: ReturnType<typeof useAction>["run"];
 }) {
 	const navigate = useNavigate();
-	const router = useRouter();
 	const po = d.order;
 	if (po.status === "closed" || po.status === "cancelled") return null;
 	const live = po.status;
@@ -2396,14 +2399,15 @@ function OtherActions({
 						size="sm"
 						disabled={busy}
 						className="text-critical-text"
-						onClick={async () => {
-							const r = await run(() =>
-								cancelWithUndo(
-									{ id: po.id, status: live, supplierName: d.supplier.name },
-									() => router.invalidate(),
-								),
+						onClick={() => {
+							// To the list first: it shows the PO gone or cancelled at
+							// once, and a deleted draft's page has nothing to reload.
+							navigate({ to: "/purchasing" });
+							cancelWithUndo(
+								{ id: po.id, status: live, supplierName: d.supplier.name },
+								undefined,
+								{ change: cancelledOnList(po.id) },
 							);
-							if (r) navigate({ to: "/purchasing" });
 						}}
 					>
 						{po.status === "draft" ? "Delete draft" : "Cancel PO"}

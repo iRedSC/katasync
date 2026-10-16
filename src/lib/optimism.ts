@@ -133,7 +133,8 @@ export function createOptimism({
 		// Makes a change: its patch shows now, and it resolves to the server's
 		// answer once sent, or to null once it has failed and said why. Without
 		// a patch, nothing changes on screen until the reload after it, so it
-		// resolves once that reload is in.
+		// resolves once that reload is in. A send must not make a change of its
+		// own: it would wait behind the change it's part of, forever.
 		change<T>({
 			label,
 			patch,

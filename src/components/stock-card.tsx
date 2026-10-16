@@ -48,6 +48,7 @@ export function StockCard({
 	now,
 	onOpen,
 	onMenu,
+	busy = false,
 	onOrder,
 	onCount,
 }: {
@@ -57,6 +58,8 @@ export function StockCard({
 	onOpen: () => void;
 	// Right-click: points the shared menu at this product.
 	onMenu: () => void;
+	// An add to a PO that hasn't shown yet; its button waits for it.
+	busy?: boolean;
 	onOrder: () => void;
 	onCount: () => void;
 }) {
@@ -115,7 +118,12 @@ export function StockCard({
 			{/* Trust and the step share the foot, wrapping before they'd overflow. */}
 			<div className="mt-auto flex min-h-8 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-t pt-2.5">
 				<TrustLine trust={state.trust} now={now} />
-				<Step step={state.step} onOrder={onOrder} onCount={onCount} />
+				<Step
+					step={state.step}
+					busy={busy}
+					onOrder={onOrder}
+					onCount={onCount}
+				/>
 			</div>
 		</div>
 	);
@@ -247,10 +255,12 @@ function TrustLine({ trust, now }: { trust: Trust; now: Date }) {
 // The card's one button. Steps that need nothing from you show as text.
 function Step({
 	step,
+	busy,
 	onOrder,
 	onCount,
 }: {
 	step: NextStep;
+	busy: boolean;
 	onOrder: () => void;
 	onCount: () => void;
 }) {
@@ -261,7 +271,7 @@ function Step({
 	switch (step.kind) {
 		case "order":
 			return (
-				<Button size="sm" onClick={stop(onOrder)}>
+				<Button size="sm" disabled={busy} onClick={stop(onOrder)}>
 					<PackagePlus />
 					Add {formatOrderQuantity(step)} to PO
 				</Button>

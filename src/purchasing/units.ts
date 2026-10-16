@@ -8,6 +8,7 @@ import {
 	purchaseUnits,
 } from "#/db/schema";
 import { lockForEdit, PurchaseOrderError } from "#/purchasing/orders";
+import { perPack } from "#/purchasing/pack";
 
 // The units suppliers sell in, and which one each product is bought in.
 // Stock always counts the product itself; a unit only changes how POs are
@@ -103,9 +104,7 @@ export async function deleteUnit(db: Db, name: string) {
 	});
 }
 
-// Converts a price or count between pack sizes, e.g. $2 each is $60 a case of 30.
-export const perPack = (perOld: number, oldPack: number, newPack: number) =>
-	Math.round((perOld / oldPack) * newPack * 10_000) / 10_000;
+export { perPack };
 
 export type UnitTerms = {
 	unit: string;

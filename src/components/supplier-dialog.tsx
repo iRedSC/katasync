@@ -1,4 +1,3 @@
-import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AddressInput } from "#/components/address-input";
@@ -10,6 +9,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { optimism, type Patch } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { type LeadTime, MIN_MEASURED_POS } from "#/purchasing/forecast";
 import type { PlaceAddress } from "#/server/places";
@@ -22,18 +22,21 @@ const input =
 
 // Edits a supplier's details. With unsaved changes, clicking outside doesn't
 // close it, so a stray click can't lose them; it shakes and says why instead.
-// Cancel or Esc still close it.
+// Cancel or Esc still close it. `patch` shows the saved details on the page at
+// once; without it the page shows them once reloaded.
 export function SupplierDialog({
 	supplier,
 	leadTime,
 	open,
 	onOpenChange,
+	patch,
 }: {
 	supplier: Supplier;
 	// What reorder plans on, so the form can say when it isn't the typed one.
 	leadTime: LeadTime;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	patch?: (saved: Supplier) => Patch;
 }) {
 	const [dirty, setDirty] = useState(false);
 	const [blocked, setBlocked] = useState(false);
@@ -86,10 +89,34 @@ export function SupplierDialog({
 					}}
 					blocked={blocked}
 					onDone={() => change(false)}
+					patch={patch}
 				/>
 			</DialogContent>
 		</Dialog>
 	);
+}
+
+// Why the server would refuse these details, so the form can say so before the
+// page shows them as saved.
+function refusal(v: Supplier): string | null {
+	if (v.name === "") return "A supplier needs a name";
+	if (
+		!(
+			Number.isInteger(v.leadTimeDays) &&
+			v.leadTimeDays >= 1 &&
+			v.leadTimeDays <= 365
+		)
+	)
+		return "Lead time must be a whole number of days, 1 to 365";
+	if (
+		!(Number.isInteger(v.coverDays) && v.coverDays >= 1 && v.coverDays <= 365)
+	)
+		return "Cover must be a whole number of days, 1 to 365";
+	if (!(v.minimumOrder >= 0))
+		return "Spend threshold must be a number, 0 or more";
+	if (!(Number.isInteger(v.criticalThreshold) && v.criticalThreshold >= 1))
+		return "Essential threshold must be a whole number, 1 or more";
+	return null;
 }
 
 function SupplierForm({
@@ -98,14 +125,15 @@ function SupplierForm({
 	onDirty,
 	blocked,
 	onDone,
+	patch,
 }: {
 	s: Supplier;
 	leadTime: LeadTime;
 	onDirty: (dirty: boolean) => void;
 	blocked: boolean;
 	onDone: () => void;
+	patch?: (saved: Supplier) => Patch;
 }) {
-	const router = useRouter();
 	const [busy, setBusy] = useState(false);
 	const form = useRef<HTMLFormElement>(null);
 
@@ -130,38 +158,52 @@ function SupplierForm({
 		e.preventDefault();
 		const f = new FormData(e.currentTarget);
 		const str = (k: string) => String(f.get(k) ?? "");
-		setBusy(true);
-		try {
-			await updateSupplier({
-				data: {
-					id: s.id,
-					name: str("name"),
-					contactName: str("contactName"),
-					email: str("email").trim(),
-					phone: str("phone"),
-					address1: str("address1"),
-					address2: str("address2"),
-					city: str("city"),
-					region: str("region"),
-					postalCode: str("postalCode"),
-					country: str("country"),
-					paymentTerms: str("paymentTerms"),
-					notes: str("notes"),
-					poNotes: str("poNotes"),
-					leadTimeDays: Number(str("leadTimeDays")),
-					coverDays: Number(str("coverDays")),
-					minimumOrder: Number(str("minimumOrder") || 0),
-					criticalThreshold: Number(str("criticalThreshold")),
-				},
-			});
-			await router.invalidate();
-			toast.success(`Saved ${str("name")}`);
-			onDone();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
+		// As the server stores them: blanks become empty, and the name is trimmed.
+		const blank = (k: string) => str(k).trim() || null;
+		const values = {
+			name: str("name").trim(),
+			contactName: blank("contactName"),
+			email: blank("email"),
+			phone: blank("phone"),
+			address1: blank("address1"),
+			address2: blank("address2"),
+			city: blank("city"),
+			region: blank("region"),
+			postalCode: blank("postalCode"),
+			country: blank("country"),
+			paymentTerms: blank("paymentTerms"),
+			notes: blank("notes"),
+			poNotes: blank("poNotes"),
+			leadTimeDays: Number(str("leadTimeDays")),
+			coverDays: Number(str("coverDays")),
+			minimumOrder: Number(str("minimumOrder") || 0),
+			criticalThreshold: Number(str("criticalThreshold")),
+		};
+		const saved: Supplier = { ...s, ...values };
+		const refused = refusal(saved);
+		if (refused) {
+			toast.error(refused);
+			return;
 		}
+		const send = () => updateSupplier({ data: { id: s.id, ...values } });
+		if (patch) {
+			// Shown at once, so the form closes now. A save that fails says why,
+			// and the page goes back to what it was.
+			onDone();
+			const r = await optimism.change({
+				label: `${s.name}'s details`,
+				patch: patch(saved),
+				send,
+			});
+			if (r) toast.success(`Saved ${saved.name}`);
+			return;
+		}
+		setBusy(true);
+		const r = await optimism.change({ send });
+		setBusy(false);
+		if (!r) return;
+		toast.success(`Saved ${saved.name}`);
+		onDone();
 	}
 
 	return (

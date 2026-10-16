@@ -1,5 +1,5 @@
 import NumberFlow from "@number-flow/react";
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { CountDialog } from "#/components/count-dialog";
 import {
@@ -15,8 +15,10 @@ import { MovementTable, ProductImage, ProductName } from "#/components/product";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
 import { Button } from "#/components/ui/button";
+import type { StockRange } from "#/inventory/stock-range";
 import { channelName, formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
@@ -41,8 +43,58 @@ export const Route = createFileRoute("/products/$sku")({
 	component: ProductPage,
 });
 
+type ProductSupplier = Awaited<ReturnType<typeof getProductSupplier>>;
+// What the page loads: the product, its supplier, and its default range.
+type Loaded = ProductDetail & {
+	supplier: ProductSupplier;
+	defaultRange: StockRange;
+};
+
+// The page's data with changes the server hasn't confirmed laid over it.
+const productData = optimistic<Loaded>("product");
+
+// The shelf holds `onHand` at `location`, and what that makes sellable, as
+// getAvailability works it out: owned stock only, never below zero.
+function withShelf(d: Loaded, location: string, onHand: number): Loaded {
+	const stock = d.stock.some((s) => s.location === location)
+		? d.stock.map((s) => (s.location === location ? { ...s, onHand } : s))
+		: [...d.stock, { location, kind: "owned" as const, onHand }];
+	const available = stock.reduce(
+		(n, s) => (s.kind === "owned" ? n + s.onHand : n),
+		0,
+	);
+	return { ...d, stock, available: Math.max(0, available) };
+}
+
+// A count sets its shelf to what was counted, as recording it does.
+const countPatch = (productId: number, location: string, onHand: number) =>
+	productData.patch(productId, (d) => withShelf(d, location, onHand));
+
+const rangePatch = (productId: number, range: StockRange | null) =>
+	productData.patch(productId, (d) => ({
+		...d,
+		product: {
+			...d.product,
+			minStock: range?.min ?? null,
+			maxStock: range?.max ?? null,
+		},
+	}));
+
+const insurePatch = (productId: number, insure: boolean) =>
+	productData.patch(productId, (d) => ({
+		...d,
+		product: { ...d.product, insureWhenShipped: insure },
+	}));
+
+const criticalPatch = (productId: number, critical: boolean) =>
+	productData.patch(productId, (d) => ({
+		...d,
+		product: { ...d.product, critical },
+	}));
+
 function ProductPage() {
-	const d = Route.useLoaderData();
+	const loaded = Route.useLoaderData();
+	const d = productData.useData(loaded.product.id, loaded);
 	const p = d.product;
 	const goBack = useBack({ to: "/products" });
 	const [counting, setCounting] = useState(false);
@@ -226,6 +278,10 @@ function ProductPage() {
 									onSave={(range) =>
 										saveProductStockRange({ data: { productId: p.id, range } })
 									}
+									patch={(range) => ({
+										label: `Stock range of ${p.sku}`,
+										patch: rangePatch(p.id, range),
+									})}
 								/>
 							</div>
 						</Card>
@@ -250,7 +306,19 @@ function ProductPage() {
 
 					<Details d={d} />
 
-					{canCount && <SupplierCard productId={p.id} data={d.supplier} />}
+					{canCount && (
+						<SupplierCard
+							productId={p.id}
+							data={d.supplier}
+							patch={(link) => ({
+								label: `Supplier of ${p.sku}`,
+								patch: productData.patch(p.id, (data) => ({
+									...data,
+									supplier: { ...data.supplier, link },
+								})),
+							})}
+						/>
+					)}
 
 					{d.group && d.variants.length > 1 && (
 						<Card title="Variants">
@@ -337,6 +405,10 @@ function ProductPage() {
 					name={p.variantName ? `${p.name}, ${p.variantName}` : p.name}
 					locations={d.locations}
 					onHandByLocation={new Map(d.stock.map((s) => [s.location, s.onHand]))}
+					patch={({ location, counted, previous }) => ({
+						patch: countPatch(p.id, location, counted),
+						undo: countPatch(p.id, location, previous),
+					})}
 				/>
 			)}
 		</Page>
@@ -434,9 +506,14 @@ function Details({ d }: { d: ProductDetail }) {
 				</dl>
 			)}
 			<div className="flex flex-col gap-2">
-				<InsureToggle sku={p.sku} insure={p.insureWhenShipped} />
+				<InsureToggle
+					productId={p.id}
+					sku={p.sku}
+					insure={p.insureWhenShipped}
+				/>
 				<CriticalToggle
 					productId={p.id}
+					sku={p.sku}
 					critical={p.critical}
 					isA={d.abc?.abc === "A"}
 				/>
@@ -445,17 +522,31 @@ function Details({ d }: { d: ProductDetail }) {
 	);
 }
 
-function InsureToggle({ sku, insure }: { sku: string; insure: boolean }) {
-	const router = useRouter();
+function InsureToggle({
+	productId,
+	sku,
+	insure,
+}: {
+	productId: number;
+	sku: string;
+	insure: boolean;
+}) {
 	async function set(next: boolean) {
-		await setInsureWhenShipped({ data: { sku, insure: next } });
-		router.invalidate();
+		const r = await optimism.change({
+			label: `Insurance of ${sku}`,
+			patch: insurePatch(productId, next),
+			send: () => setInsureWhenShipped({ data: { sku, insure: next } }),
+		});
+		if (!r) return;
 		offerUndo(next ? "Insured when shipped" : "No longer insured", {
 			tone: "success",
 			undo: async () => {
-				await setInsureWhenShipped({ data: { sku, insure: !next } });
-				await router.invalidate();
-				return next ? "No longer insured" : "Insured when shipped";
+				const undone = await optimism.change({
+					label: `Insurance of ${sku}`,
+					patch: insurePatch(productId, !next),
+					send: () => setInsureWhenShipped({ data: { sku, insure: !next } }),
+				});
+				return undone && (next ? "No longer insured" : "Insured when shipped");
 			},
 		});
 	}
@@ -476,23 +567,31 @@ function InsureToggle({ sku, insure }: { sku: string; insure: boolean }) {
 // them, with the reason on hover.
 function CriticalToggle({
 	productId,
+	sku,
 	critical,
 	isA,
 }: {
 	productId: number;
+	sku: string;
 	critical: boolean;
 	isA: boolean;
 }) {
-	const router = useRouter();
 	async function set(next: boolean) {
-		await setCritical({ data: { productId, critical: next } });
-		router.invalidate();
+		const r = await optimism.change({
+			label: `Essential flag of ${sku}`,
+			patch: criticalPatch(productId, next),
+			send: () => setCritical({ data: { productId, critical: next } }),
+		});
+		if (!r) return;
 		offerUndo(next ? "Marked essential" : "No longer essential", {
 			tone: "success",
 			undo: async () => {
-				await setCritical({ data: { productId, critical: !next } });
-				await router.invalidate();
-				return next ? "No longer essential" : "Marked essential";
+				const undone = await optimism.change({
+					label: `Essential flag of ${sku}`,
+					patch: criticalPatch(productId, !next),
+					send: () => setCritical({ data: { productId, critical: !next } }),
+				});
+				return undone && (next ? "No longer essential" : "Marked essential");
 			},
 		});
 	}
