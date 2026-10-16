@@ -615,7 +615,7 @@ function Recommended({
 												<div className="flex items-center gap-2 text-xs text-muted-foreground">
 													{r.sku}
 													{r.critical && (
-														<Badge tone="critical">Critical</Badge>
+														<Badge tone="info">Essential</Badge>
 													)}
 												</div>
 											</div>
