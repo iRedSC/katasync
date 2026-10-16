@@ -33,7 +33,7 @@ export function rangeFill(onHand: number, range: StockRange) {
 
 // Orange at min, through yellow, to green at max. Lighter in the middle,
 // since oklch yellow at the ends' lightness is olive. Red is kept for oversold.
-const fillColor = (fill: number) =>
+export const fillColor = (fill: number) =>
 	`oklch(${0.7 + 0.12 * Math.sin(Math.PI * fill)} 0.17 ${55 + fill * 90})`;
 
 // On hand as a number in a ring filled from min to max: empty at or under

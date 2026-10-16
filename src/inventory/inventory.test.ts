@@ -386,6 +386,31 @@ describe("recordCount", () => {
 		expect(await db.select().from(schema.movements)).toHaveLength(before);
 	});
 
+	test("logs every count, matched or not, and marks undone ones", async () => {
+		const wrench = await sku("WRENCH", "simple");
+		await receive(wrench, warehouse, 5);
+		const count = (counted: number) =>
+			recordCount(db, {
+				productId: wrench,
+				locationId: warehouse,
+				counted,
+				note: "Counted",
+			});
+		await count(5);
+		const { batchId } = await count(3);
+		if (!batchId) throw new Error("expected a batch");
+		await undoBatch(db, batchId);
+
+		const history = await db
+			.select()
+			.from(schema.countHistory)
+			.orderBy(schema.countHistory.id);
+		expect(history).toMatchObject([
+			{ sku: "WRENCH", expected: 5, counted: 5, drift: 0, undone: false },
+			{ sku: "WRENCH", expected: 5, counted: 3, drift: -2, undone: true },
+		]);
+	});
+
 	test("tool sets can't be counted", async () => {
 		const set = await sku("SET", "bundle");
 		await expect(

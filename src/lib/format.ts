@@ -105,3 +105,14 @@ export function channelName(channel: string) {
 export function formatUnit(unit: string, packSize: number) {
 	return packSize === 1 ? unit : `${unit} of ${formatCount(packSize)}`;
 }
+
+// "12", or "2 CASE of 30" when the supplier sells in packs.
+export function formatOrderQuantity(q: {
+	quantity: number;
+	unit: string;
+	packSize: number;
+}) {
+	return q.unit === "EACH"
+		? formatCount(q.quantity)
+		: `${formatCount(q.quantity)} ${formatUnit(q.unit, q.packSize)}`;
+}

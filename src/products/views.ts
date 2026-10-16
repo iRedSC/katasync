@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { Filter } from "#/products/search";
+import { FIELDS, type Filter } from "#/products/search";
 
 // How the product list can be ordered. Only the sort button sets this; the
 // search language has no way to type it.
@@ -9,17 +9,15 @@ export const SORTS = {
 	inventory: "Inventory, lowest first",
 	"-inventory": "Inventory, highest first",
 	value: "Most valuable first",
+	runout: "Runs out soonest",
 } as const;
 export type Sort = keyof typeof SORTS;
 
-export const sortType = type(
-	"'name' | '-name' | 'inventory' | '-inventory' | 'value'",
-);
+export const sortType = type.enumerated(...(Object.keys(SORTS) as Sort[]));
 
 // Search chips as they travel through the URL and the database.
 export const filtersType = type({
-	field:
-		"'tag' | 'type' | 'vendor' | 'status' | 'class' | 'title' | 'inventory'",
+	field: type.enumerated(...FIELDS),
 	value: "string",
 	exclude: "boolean",
 	and: "boolean",

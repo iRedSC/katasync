@@ -267,6 +267,13 @@
       "when": 1792082611343,
       "tag": "0037_stock_range",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792165267542,
+      "tag": "0038_count_log",
+      "breakpoints": true
     }
   ]
 }

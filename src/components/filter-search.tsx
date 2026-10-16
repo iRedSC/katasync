@@ -16,6 +16,8 @@ const LABEL: Record<Field, string> = {
 	vendor: "vendor",
 	status: "status",
 	class: "class",
+	supplier: "supplier",
+	trust: "trust",
 	title: "title lacks",
 	inventory: "inventory",
 };
