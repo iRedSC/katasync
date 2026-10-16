@@ -32,9 +32,7 @@ function label(f: Pick<Filter, "field" | "exclude" | "and">) {
 
 // A search box that turns filters into chips. Typing "#cl" suggests tags
 // containing "cl"; Tab or Enter locks the highlighted one in as a chip.
-// Backspace in an empty box removes the last chip. Keys it doesn't use (Enter
-// with no filter being typed, arrows when nothing is suggested) go to
-// onKeyDown, so the list below can use them.
+// Backspace in an empty box removes the last chip.
 export function FilterSearch({
 	inputRef,
 	text,
@@ -43,7 +41,6 @@ export function FilterSearch({
 	onChips,
 	counts,
 	placeholder,
-	onKeyDown,
 }: {
 	inputRef: RefObject<HTMLInputElement | null>;
 	text: string;
@@ -52,7 +49,6 @@ export function FilterSearch({
 	onChips: (chips: Filter[]) => void;
 	counts: ReturnType<typeof facetCounts>;
 	placeholder: string;
-	onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
 }) {
 	const [focused, setFocused] = useState(false);
 	const [dismissed, setDismissed] = useState(false);
@@ -110,9 +106,7 @@ export function FilterSearch({
 		) {
 			e.preventDefault();
 			onChips(chips.slice(0, -1));
-			return;
 		}
-		onKeyDown(e);
 	}
 
 	return (

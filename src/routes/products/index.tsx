@@ -1,5 +1,6 @@
 import {
 	createFileRoute,
+	useLocation,
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
@@ -15,7 +16,7 @@ import {
 	Rows3,
 	Truck,
 } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FacetRail, type RailGroup } from "#/components/facet-rail";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
@@ -78,11 +79,13 @@ import { deleteView, listViews, saveView } from "#/server/views";
 // The URL holds the chips and sort, so links (like Home's "Oversold") and the
 // back button work. `view` is the saved view they came from, so it can be
 // updated. Anything malformed is dropped rather than failing the page.
-// layout is "table" for the old rows; cards are the default.
+// layout is "table" for the old rows; cards are the default. `q` is the
+// typed search, so opening a product and coming back keeps it.
 type Search = {
 	view?: number;
 	filters?: Filter[];
 	sort?: Sort;
+	q?: string;
 	layout?: "table";
 };
 
@@ -100,6 +103,12 @@ export const Route = createFileRoute("/products/")({
 					? undefined
 					: filters,
 			sort: sort instanceof type.errors || sort === "name" ? undefined : sort,
+			// The URL parser turns "?q=12" into a number, so take it back.
+			q:
+				(typeof search.q === "string" || typeof search.q === "number") &&
+				String(search.q) !== ""
+					? String(search.q)
+					: undefined,
 			layout: search.layout === "table" ? "table" : undefined,
 		};
 	},
@@ -223,7 +232,14 @@ function sorted(
 	return by[sort]();
 }
 
+// Each history entry gets a fresh list, so back and forward bring back that
+// entry's search text. Typing replaces the entry, so it doesn't remount.
 function Products() {
+	const entry = useLocation({ select: (l) => l.state.__TSR_index });
+	return <ProductList key={entry} />;
+}
+
+function ProductList() {
 	const { products, abcDays, unpriced, views } = Route.useLoaderData();
 	const search = Route.useSearch();
 	// The router hands back a new array on every render, so key it by content:
@@ -234,13 +250,24 @@ function Products() {
 	const filters = useMemo(() => search.filters ?? [], [filtersKey]);
 	const sort = search.sort ?? "name";
 	const current = { filters, sort };
-	const navigate = useNavigate();
+	const navigate = useNavigate({ from: Route.fullPath });
 	const router = useRouter();
 	const input = useRef<HTMLInputElement>(null);
-	const list = useRef<HTMLDivElement>(null);
-	const [query, setQuery] = useState("");
+	// The box answers keystrokes from here; the URL keeps a copy for when the
+	// user comes back to this entry.
+	const [query, setText] = useState(search.q ?? "");
+	function setQuery(text: string) {
+		setText(text);
+		navigate({
+			to: "/products",
+			search: (prev) => ({ ...prev, q: text || undefined }),
+			replace: true,
+			resetScroll: false,
+		});
+	}
 	const [shown, setShown] = useState(PAGE);
-	const [selected, setSelected] = useState(0);
+	// The product the right-click menu acts on.
+	const [menuFor, setMenuFor] = useState<ProductRow | null>(null);
 	const [editing, setEditing] = useState<"new" | View | null>(null);
 
 	// The tab to highlight: the view these came from, else any view that
@@ -308,30 +335,20 @@ function Products() {
 		return out;
 	}, [facets, query, filters]);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the list changes
-	useEffect(() => setSelected(0), [query, filters, sort]);
-	useEffect(() => {
-		list.current
-			?.querySelector(`[data-index="${selected}"]`)
-			?.scrollIntoView({ block: "nearest" });
-	}, [selected]);
-
-	const last = Math.min(shown, filtered.length) - 1;
-	const open = (p: ProductRow | undefined) =>
-		p && navigate({ to: "/products/$sku", params: { sku: p.sku } });
+	const open = (p: ProductRow) =>
+		navigate({ to: "/products/$sku", params: { sku: p.sku } });
 
 	// Chip and sort changes replace the history entry instead of piling up.
 	function setSearch(next: Partial<{ filters: Filter[]; sort: Sort }>) {
 		setShown(PAGE);
 		navigate({
 			to: "/products",
-			search: { ...search, ...next },
+			search: (prev) => ({ ...prev, ...next }),
 			replace: true,
 		});
 	}
+	// A new entry, so the list remounts with an empty search box.
 	function showView(v: View | null) {
-		setQuery("");
-		setShown(PAGE);
 		navigate({
 			to: "/products",
 			search: {
@@ -343,27 +360,6 @@ function Products() {
 
 	useHotkeys({
 		"/": () => input.current?.focus(),
-		j: () => setSelected((i) => Math.min(i + 1, last)),
-		k: () => setSelected((i) => Math.max(i - 1, 0)),
-		Enter: () => open(filtered[selected]),
-		// Does the card's button: orders what's suggested, once the stock is
-		// trusted. Anything else takes the menu, so a stray key press can't
-		// start a PO.
-		a: () => {
-			const p = filtered[selected];
-			if (!p) return;
-			const step = stateFor(p).step;
-			if (step.kind === "order") addToPo(p);
-			else if (step.kind === "count")
-				toast(
-					`Count ${p.sku} first: it's ${p.abc} stock that hasn't been counted in ${TRUST_DAYS} days`,
-				);
-			else toast(orderAction(p)?.why || `${p.sku} doesn't need ordering`);
-		},
-		c: () => {
-			const p = filtered[selected];
-			if (p) countStock(p);
-		},
 		Escape: () => {
 			if (document.activeElement === input.current) input.current?.blur();
 			else if (query) setQuery("");
@@ -380,10 +376,10 @@ function Products() {
 					onLayout={(l) =>
 						navigate({
 							to: "/products",
-							search: {
-								...search,
+							search: (prev) => ({
+								...prev,
 								layout: l === "table" ? "table" : undefined,
-							},
+							}),
 							replace: true,
 						})
 					}
@@ -414,7 +410,7 @@ function Products() {
 						onFilters={(next) => setSearch({ filters: next })}
 					/>
 				</aside>
-				<div ref={list} className="flex min-w-0 flex-1 flex-col gap-3">
+				<div className="flex min-w-0 flex-1 flex-col gap-3">
 					<Card flush className="overflow-visible">
 						<div className="flex flex-wrap items-center gap-1 border-b p-2">
 							<Tab
@@ -477,17 +473,6 @@ function Products() {
 									onChips={(next) => setSearch({ filters: next })}
 									counts={facetValues}
 									placeholder="Search, or filter: #tag @type $vendor %status ^class >=3 inventory"
-									onKeyDown={(e) => {
-										if (e.key === "Enter") open(filtered[selected]);
-										if (e.key === "ArrowDown") {
-											e.preventDefault();
-											setSelected((i) => Math.min(i + 1, last));
-										}
-										if (e.key === "ArrowUp") {
-											e.preventDefault();
-											setSelected((i) => Math.max(i - 1, 0));
-										}
-									}}
 								/>
 							</div>
 							<AddFilter
@@ -519,22 +504,17 @@ function Products() {
 										</th>
 									</tr>
 								</thead>
-								{/* One menu for the whole list: right-clicking a row selects it,
-					    and the menu acts on the selected product. */}
+								{/* One menu for the whole list: it acts on the row that was
+					    right-clicked. */}
 								<ContextMenu>
 									<ContextMenuTrigger asChild>
 										<tbody>
-											{filtered.slice(0, shown).map((p, i) => (
+											{filtered.slice(0, shown).map((p) => (
 												<tr
 													key={p.id}
-													data-index={i}
 													onClick={() => open(p)}
-													onMouseMove={() => setSelected(i)}
-													onContextMenu={() => setSelected(i)}
-													className={cn(
-														"cursor-pointer border-t first:border-t-0",
-														i === selected ? "bg-surface" : "hover:bg-subtle",
-													)}
+													onContextMenu={() => setMenuFor(p)}
+													className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
 												>
 													{/* Takes the width the other columns leave, so long names end
 								    in "…" instead of pushing them off the card. */}
@@ -585,9 +565,9 @@ function Products() {
 											))}
 										</tbody>
 									</ContextMenuTrigger>
-									{filtered[selected] && (
+									{menuFor && (
 										<RowMenu
-											product={filtered[selected]}
+											product={menuFor}
 											onOpen={open}
 											onAddToPo={addToPo}
 											onCount={countStock}
@@ -600,25 +580,23 @@ function Products() {
 						<ContextMenu>
 							<ContextMenuTrigger asChild>
 								<div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">
-									{filtered.slice(0, shown).map((p, i) => (
+									{filtered.slice(0, shown).map((p) => (
 										<StockCard
 											key={p.id}
 											product={p}
 											state={stateFor(p)}
-											index={i}
-											selected={i === selected}
 											now={now}
 											onOpen={() => open(p)}
-											onSelect={() => setSelected(i)}
+											onMenu={() => setMenuFor(p)}
 											onOrder={() => addToPo(p)}
 											onCount={() => countStock(p)}
 										/>
 									))}
 								</div>
 							</ContextMenuTrigger>
-							{filtered[selected] && (
+							{menuFor && (
 								<RowMenu
-									product={filtered[selected]}
+									product={menuFor}
 									onOpen={open}
 									onAddToPo={addToPo}
 									onCount={countStock}
@@ -652,7 +630,10 @@ function Products() {
 					onClose={() => setEditing(null)}
 					onSaved={(id) => {
 						setEditing(null);
-						navigate({ to: "/products", search: { view: id, ...current } });
+						navigate({
+							to: "/products",
+							search: (prev) => ({ ...prev, view: id, ...current }),
+						});
 					}}
 					onDeleted={() => {
 						setEditing(null);

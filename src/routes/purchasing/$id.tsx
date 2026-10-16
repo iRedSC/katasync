@@ -15,7 +15,7 @@ import {
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
-import { Badge, Banner, Card, Page } from "#/components/page";
+import { Badge, Banner, Card, Page, useBack } from "#/components/page";
 import {
 	ProductPicker,
 	type PurchaseOrderMatch,
@@ -97,7 +97,7 @@ function useAction() {
 
 function PurchaseOrderPage() {
 	const d = Route.useLoaderData();
-	const navigate = useNavigate();
+	const goBack = useBack({ to: "/purchasing" });
 	const { busy, run } = useAction();
 	const po = d.order;
 	const draft = po.status === "draft";
@@ -173,7 +173,7 @@ function PurchaseOrderPage() {
 	);
 
 	useHotkeys({
-		Escape: () => navigate({ to: "/purchasing" }),
+		Escape: goBack,
 		"/": (e) => {
 			if (!editable) return;
 			e.preventDefault();
