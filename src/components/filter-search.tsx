@@ -120,7 +120,7 @@ export function FilterSearch({
 			<div
 				onClick={() => inputRef.current?.focus()}
 				className={cn(
-					"flex min-h-8 cursor-text flex-wrap items-center gap-1 rounded-lg border border-[#8a8a8a] bg-white py-0.5 pr-10 pl-8",
+					"flex min-h-8 cursor-text flex-wrap items-center gap-1 rounded-lg border border-input bg-white py-0.5 pr-10 pl-8",
 					focused && "border-ring ring-1 ring-ring",
 				)}
 			>
@@ -129,7 +129,7 @@ export function FilterSearch({
 					<span
 						// biome-ignore lint/suspicious/noArrayIndexKey: chips can repeat and have no id
 						key={i}
-						className="inline-flex h-6 items-center gap-1 rounded-md bg-[#e3e3e3] pr-0.5 pl-2 text-xs"
+						className="inline-flex h-6 items-center gap-1 rounded-md bg-surface-strong pr-0.5 pl-2 text-xs"
 					>
 						<span className="text-muted-foreground">{label(chip)}</span>
 						<span className="font-medium">{chip.value}</span>
@@ -140,7 +140,7 @@ export function FilterSearch({
 								e.stopPropagation();
 								onChips(chips.filter((_, j) => j !== i));
 							}}
-							className="rounded p-0.5 text-muted-foreground hover:bg-[#d4d4d4] hover:text-foreground"
+							className="rounded p-0.5 text-muted-foreground hover:bg-line hover:text-foreground"
 						>
 							<X className="size-3" />
 						</button>
@@ -160,7 +160,7 @@ export function FilterSearch({
 					}}
 					onKeyDown={keyDown}
 				/>
-				<kbd className="absolute top-1.5 right-2 rounded border bg-[#f7f7f7] px-1.5 text-xs text-muted-foreground">
+				<kbd className="absolute top-1.5 right-2 rounded border bg-subtle px-1.5 text-xs text-muted-foreground">
 					/
 				</kbd>
 			</div>
@@ -176,7 +176,7 @@ export function FilterSearch({
 							onMouseMove={() => setHighlight(i)}
 							className={cn(
 								"flex w-full items-center gap-2 px-3 py-1.5 text-left",
-								i === highlight && "bg-[#f1f1f1]",
+								i === highlight && "bg-surface",
 							)}
 						>
 							<span className="text-muted-foreground">{label(typing)}</span>
@@ -185,7 +185,7 @@ export function FilterSearch({
 								{formatCount(s.count)}
 							</span>
 							{i === highlight && (
-								<kbd className="rounded border bg-[#f7f7f7] px-1 text-xs text-muted-foreground">
+								<kbd className="rounded border bg-subtle px-1 text-xs text-muted-foreground">
 									Tab
 								</kbd>
 							)}

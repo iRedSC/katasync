@@ -172,7 +172,7 @@ function SummaryRow({
 		<li className="border-t first:border-t-0">
 			<a
 				href={href}
-				className="grid grid-cols-[12rem_10rem_minmax(0,1fr)] items-center gap-3 px-4 py-2.5 hover:bg-[#f7f7f7]"
+				className="grid grid-cols-[12rem_10rem_minmax(0,1fr)] items-center gap-3 px-4 py-2.5 hover:bg-subtle"
 			>
 				<span className="font-medium">{name}</span>
 				<span>
@@ -424,7 +424,7 @@ function UnmappedCard({ rows }: { rows: Diagnostics["unmapped"] }) {
 						</p>
 						<table className="w-full">
 							<thead>
-								<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+								<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
 									<th className="px-4 py-2 font-medium">SKU</th>
 									<th className="px-3 py-2 font-medium">Store</th>
 									<th className="px-3 py-2 text-right font-medium">Orders</th>
@@ -657,7 +657,7 @@ function ClaudeCard({ calls }: { calls: Diagnostics["claude"] }) {
 								<button
 									type="button"
 									onClick={() => setOpen(open === c.id ? null : c.id)}
-									className="grid w-full grid-cols-[9rem_10rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2 text-left hover:bg-[#f7f7f7]"
+									className="grid w-full grid-cols-[9rem_10rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2 text-left hover:bg-subtle"
 								>
 									<span className="whitespace-nowrap text-muted-foreground">
 										{formatDateTime(c.createdAt)}
@@ -675,14 +675,14 @@ function ClaudeCard({ calls }: { calls: Diagnostics["claude"] }) {
 										<p className="text-xs text-muted-foreground">
 											With the token {c.tokenName}
 										</p>
-										<pre className="max-h-48 overflow-auto rounded-lg bg-[#f7f7f7] p-2 font-mono text-xs break-words whitespace-pre-wrap">
+										<pre className="max-h-48 overflow-auto rounded-lg bg-subtle p-2 font-mono text-xs break-words whitespace-pre-wrap">
 											{JSON.stringify(JSON.parse(c.arguments), null, 1)}
 										</pre>
 										<pre
 											className={cn(
 												"max-h-48 overflow-auto rounded-lg p-2 font-mono text-xs break-words whitespace-pre-wrap",
 												c.ok
-													? "bg-[#f7f7f7]"
+													? "bg-subtle"
 													: "bg-critical-surface text-critical-text",
 											)}
 										>

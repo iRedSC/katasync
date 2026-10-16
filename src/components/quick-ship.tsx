@@ -65,7 +65,7 @@ function splitInsurance(total: number | null, boxes: number) {
 
 // The big inputs every step types into.
 const bigInput =
-	"h-24 w-full rounded-xl border-2 border-input bg-white text-center text-6xl font-bold tabular-nums outline-none focus:border-[#303030] disabled:opacity-60";
+	"h-24 w-full rounded-xl border-2 border-input bg-white text-center text-6xl font-bold tabular-nums outline-none focus:border-primary disabled:opacity-60";
 
 // Opens quick ship already on this order, past the pin step (the order
 // page's Ship button).
@@ -598,7 +598,7 @@ function StepStrip({
 	current: Step;
 }) {
 	return (
-		<ol className="grid auto-cols-fr grid-flow-col border-b bg-[#f7f7f7]">
+		<ol className="grid auto-cols-fr grid-flow-col border-b bg-subtle">
 			{steps.map((s) => {
 				const active = s.id === current;
 				return (
@@ -608,7 +608,7 @@ function StepStrip({
 							"min-w-0 border-b-4 px-4 pt-3 pb-2",
 							// Marketplace order numbers run long; the order gets two shares.
 							s.id === "pin" && "col-span-2",
-							active ? "border-[#303030] bg-white" : "border-transparent",
+							active ? "border-primary bg-white" : "border-transparent",
 						)}
 					>
 						<div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
@@ -617,7 +617,7 @@ function StepStrip({
 						<div
 							className={cn(
 								"truncate text-lg font-semibold",
-								!s.value && "text-[#b5b5b5]",
+								!s.value && "text-faint",
 							)}
 						>
 							{s.value ?? "—"}
@@ -767,7 +767,7 @@ function PinStep({
 				onKeyDown={(e) => {
 					if (e.key === "Enter" && Number(value) > 0) onSubmit(Number(value));
 				}}
-				className={cn(bigInput, "tracking-[0.4em] placeholder:text-[#e3e3e3]")}
+				className={cn(bigInput, "tracking-[0.4em] placeholder:text-line")}
 			/>
 			<div className="flex h-8 items-center justify-center text-lg">
 				{preview === "loading" && <Spinner />}
@@ -897,10 +897,7 @@ function PackageStep({
 							setCustom(true);
 						}
 					}}
-					className={cn(
-						bigInput,
-						"tracking-[0.4em] placeholder:text-[#e3e3e3]",
-					)}
+					className={cn(bigInput, "tracking-[0.4em] placeholder:text-line")}
 				/>
 			)}
 			<div className="flex h-8 items-center justify-center text-lg">
@@ -984,12 +981,12 @@ function SizeInput({
 		// biome-ignore lint/a11y/noStaticElementInteractions: same
 		<div
 			onClick={() => input.current?.focus()}
-			className="flex h-24 w-full cursor-text items-center justify-center gap-5 rounded-xl border-2 border-input bg-white text-6xl font-bold tabular-nums focus-within:border-[#303030]"
+			className="flex h-24 w-full cursor-text items-center justify-center gap-5 rounded-xl border-2 border-input bg-white text-6xl font-bold tabular-nums focus-within:border-primary"
 		>
 			{sides.map((side, i) => (
 				<span key={SIDE_LETTERS[i]}>
 					{side}
-					<span className="ml-0.5 text-2xl font-semibold text-[#b5b5b5]">
+					<span className="ml-0.5 text-2xl font-semibold text-faint">
 						{SIDE_LETTERS[i]}
 					</span>
 				</span>
@@ -1031,7 +1028,7 @@ function SizeInput({
 					className="min-w-[0.15em] bg-transparent outline-none [field-sizing:content]"
 				/>
 				{!done && (
-					<span className="ml-0.5 text-2xl font-semibold text-[#b5b5b5]">
+					<span className="ml-0.5 text-2xl font-semibold text-faint">
 						{SIDE_LETTERS[sides.length]}
 					</span>
 				)}
@@ -1110,12 +1107,12 @@ function WeightStep({
 							if (g) onAnother(g);
 						}
 					}}
-					className={cn(bigInput, "pr-24 placeholder:text-[#e3e3e3]")}
+					className={cn(bigInput, "pr-24 placeholder:text-line")}
 				/>
 				<button
 					type="button"
 					onClick={toggle}
-					className="absolute top-1/2 right-3 -translate-y-1/2 rounded-lg bg-[#f1f1f1] px-3 py-2 text-2xl font-semibold hover:bg-[#e3e3e3]"
+					className="absolute top-1/2 right-3 -translate-y-1/2 rounded-lg bg-surface px-3 py-2 text-2xl font-semibold hover:bg-surface-strong"
 				>
 					{unit}
 				</button>
@@ -1183,8 +1180,8 @@ function InsureStep({
 					className={cn(
 						"flex h-16 items-center justify-between rounded-xl border-2 px-5 text-left text-xl",
 						choice === i
-							? "border-[#303030] bg-[#303030] text-white"
-							: "border-[#e3e3e3] hover:bg-[#f7f7f7]",
+							? "border-primary bg-primary text-primary-foreground"
+							: "border-border hover:bg-subtle",
 					)}
 				>
 					<span>{o.label}</span>
@@ -1304,8 +1301,8 @@ function RatesStep({
 						className={cn(
 							"flex h-16 shrink-0 items-center justify-between rounded-xl border-2 px-5 text-left",
 							i === selected
-								? "border-[#303030] bg-[#303030] text-white"
-								: "border-[#e3e3e3] hover:bg-[#f7f7f7]",
+								? "border-primary bg-primary text-primary-foreground"
+								: "border-border hover:bg-subtle",
 							busy && i !== selected && "opacity-40",
 						)}
 					>
@@ -1376,7 +1373,7 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 					ref={next}
 					type="button"
 					onClick={onNext}
-					className="h-14 rounded-xl bg-[#303030] px-8 text-xl font-semibold text-white outline-none hover:bg-[#1a1a1a] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+					className="h-14 rounded-xl bg-primary px-8 text-xl font-semibold text-white outline-none hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 				>
 					Next order
 				</button>
@@ -1429,7 +1426,7 @@ function DoneStep({ bought, onNext }: { bought: Bought; onNext: () => void }) {
 						ref={next}
 						type="button"
 						onClick={onNext}
-						className="h-14 rounded-xl bg-[#303030] px-8 text-xl font-semibold text-white outline-none hover:bg-[#1a1a1a] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+						className="h-14 rounded-xl bg-primary px-8 text-xl font-semibold text-white outline-none hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 					>
 						Next order
 					</button>
@@ -1526,7 +1523,7 @@ function ExternalStep({ name, onOpen }: { name: string; onOpen: () => void }) {
 				ref={button}
 				type="button"
 				onClick={onOpen}
-				className="inline-flex h-16 items-center gap-3 rounded-xl bg-[#303030] px-8 text-xl font-semibold text-white outline-none hover:bg-[#1a1a1a] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				className="inline-flex h-16 items-center gap-3 rounded-xl bg-primary px-8 text-xl font-semibold text-white outline-none hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			>
 				Press Enter to go to the fulfillment page
 				<ExternalLink className="size-6" />

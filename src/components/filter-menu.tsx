@@ -23,7 +23,7 @@ const FIELDS: { field: Field; label: string; typed: string }[] = [
 ];
 
 const iconButton =
-	"inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-[#8a8a8a] bg-white text-[#4a4a4a] hover:bg-[#f7f7f7] data-[state=open]:bg-[#f1f1f1]";
+	"inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-input bg-white text-muted-foreground hover:bg-subtle data-[state=open]:bg-surface";
 
 // Adds a chip by picking instead of typing: a field, then a value.
 export function AddFilter({
@@ -60,7 +60,7 @@ export function AddFilter({
 								<button
 									type="button"
 									onClick={() => setField(f.field)}
-									className="flex h-8 w-full items-center justify-between rounded-lg px-2 text-left hover:bg-[#f1f1f1]"
+									className="flex h-8 w-full items-center justify-between rounded-lg px-2 text-left hover:bg-surface"
 								>
 									{f.label}
 									<kbd className="text-xs text-muted-foreground">{f.typed}</kbd>
@@ -73,7 +73,7 @@ export function AddFilter({
 						<button
 							type="button"
 							onClick={() => setField(null)}
-							className="flex h-8 items-center gap-1 rounded-lg px-1 font-semibold hover:bg-[#f1f1f1]"
+							className="flex h-8 items-center gap-1 rounded-lg px-1 font-semibold hover:bg-surface"
 						>
 							<ChevronLeft className="size-4" />
 							{FIELDS.find((f) => f.field === field)?.label}
@@ -121,10 +121,10 @@ function ValueList({
 					value={q}
 					onChange={(e) => setQ(e.target.value)}
 					placeholder="Find a value"
-					className="mx-1 h-8 rounded-lg border border-[#8a8a8a] px-2 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+					className="mx-1 h-8 rounded-lg border border-input px-2 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 				/>
 			)}
-			<div className="mx-1 flex rounded-lg bg-[#f1f1f1] p-0.5 text-xs font-medium">
+			<div className="mx-1 flex rounded-lg bg-surface p-0.5 text-xs font-medium">
 				{[false, true].map((x) => (
 					<button
 						key={String(x)}
@@ -145,7 +145,7 @@ function ValueList({
 						<button
 							type="button"
 							onClick={() => onAdd(value, exclude)}
-							className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[#f1f1f1]"
+							className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-surface"
 						>
 							<span className="flex-1 truncate">{value}</span>
 							<span className="text-xs tabular-nums text-muted-foreground">
@@ -187,7 +187,7 @@ function InventoryForm({
 						onClick={() => setOp(o)}
 						className={cn(
 							"h-8 flex-1 rounded-lg font-medium",
-							op === o ? "bg-[#303030] text-white" : "bg-[#f1f1f1]",
+							op === o ? "bg-primary text-primary-foreground" : "bg-surface",
 						)}
 					>
 						{OP_LABEL[o]}
@@ -201,12 +201,12 @@ function InventoryForm({
 				value={n}
 				onChange={(e) => setN(e.target.value.replace(/[^\d-]/g, ""))}
 				placeholder="Units"
-				className="h-8 rounded-lg border border-[#8a8a8a] px-2 tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+				className="h-8 rounded-lg border border-input px-2 tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 			/>
 			<button
 				type="submit"
 				disabled={!/^-?\d+$/.test(n)}
-				className="h-8 rounded-lg bg-[#303030] font-medium text-white disabled:opacity-40"
+				className="h-8 rounded-lg bg-primary font-medium text-white disabled:opacity-40"
 			>
 				Add filter
 			</button>
@@ -236,12 +236,12 @@ function TextForm({
 				value={value}
 				onChange={(e) => setValue(e.target.value)}
 				placeholder={placeholder}
-				className="h-8 rounded-lg border border-[#8a8a8a] px-2 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+				className="h-8 rounded-lg border border-input px-2 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 			/>
 			<button
 				type="submit"
 				disabled={!value.trim()}
-				className="h-8 rounded-lg bg-[#303030] font-medium text-white disabled:opacity-40"
+				className="h-8 rounded-lg bg-primary font-medium text-white disabled:opacity-40"
 			>
 				Add filter
 			</button>
@@ -279,7 +279,7 @@ export function SortMenu({
 									onSort(s);
 									setOpen(false);
 								}}
-								className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[#f1f1f1]"
+								className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-surface"
 							>
 								<Check className={cn("size-4", s !== sort && "invisible")} />
 								{SORTS[s]}

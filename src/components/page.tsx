@@ -10,7 +10,7 @@ import {
 import type { ReactNode } from "react";
 import { cn } from "#/lib/utils";
 
-// Polaris-style building blocks: Page, Card, Banner, Badge.
+// Building blocks: Page, Card, Banner, Badge.
 
 export function Page({
 	title,
@@ -41,7 +41,7 @@ export function Page({
 				{back && (
 					<Link
 						{...back}
-						className="rounded-lg p-1.5 text-[#4a4a4a] hover:bg-[#e3e3e3]"
+						className="rounded-lg p-1.5 text-muted-foreground hover:bg-surface-strong"
 						aria-label="Back"
 					>
 						<ArrowLeft className="size-4" />
@@ -170,7 +170,7 @@ export function Banner({
 					<div className="pt-1">
 						<Link
 							{...action.link}
-							className="inline-flex h-7 items-center rounded-lg bg-white px-3 font-medium shadow-card hover:bg-[#f7f7f7]"
+							className="inline-flex h-7 items-center rounded-lg bg-white px-3 font-medium shadow-card hover:bg-subtle"
 						>
 							{action.label}
 						</Link>
@@ -192,10 +192,10 @@ export function Badge({
 	return (
 		<span
 			className={cn(
-				"inline-flex h-5 shrink-0 items-center rounded-lg px-2 text-xs font-medium whitespace-nowrap",
+				"inline-flex h-5 shrink-0 items-center rounded-md px-2 text-xs font-medium whitespace-nowrap",
 				tone
 					? cn(tones[tone].fill, tones[tone].text)
-					: "bg-[#e3e3e3] text-[#303030]",
+					: "bg-surface-strong text-foreground",
 			)}
 		>
 			{children}
@@ -228,7 +228,7 @@ export function AbcBadge({
 		<span
 			title={title}
 			className={cn(
-				"inline-flex h-5 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-semibold",
+				"inline-flex h-5 w-6 shrink-0 items-center justify-center rounded-md text-xs font-semibold",
 				abcColors[abc],
 			)}
 		>
@@ -249,7 +249,7 @@ export function EmptyState({
 }) {
 	return (
 		<div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
-			<Icon className="size-10 text-[#b5b5b5]" strokeWidth={1.5} />
+			<Icon className="size-10 text-faint" strokeWidth={1.5} />
 			<p className="text-base font-semibold">{title}</p>
 			{children && (
 				<div className="max-w-sm text-muted-foreground">{children}</div>

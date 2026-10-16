@@ -245,7 +245,7 @@ function OrderPage() {
 							</li>
 						))}
 					</ul>
-					<dl className="flex flex-col gap-1 border-t bg-[#f7f7f7] px-4 py-3">
+					<dl className="flex flex-col gap-1 border-t bg-subtle px-4 py-3">
 						<Line label="Items" value={formatMoney(subtotal)} />
 						<Line
 							label="Shipping charged"

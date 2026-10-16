@@ -66,7 +66,7 @@ export function StockRing({
 					cy={SIZE / 2}
 					r={RADIUS}
 					fill="none"
-					stroke="#e3e3e3"
+					stroke="var(--surface-strong)"
 					strokeWidth={STROKE}
 				/>
 				{fill > 0 && (

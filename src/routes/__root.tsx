@@ -66,10 +66,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 						// Shopify's toast: a dark pill at the bottom of the screen.
 						classNames: {
 							toast:
-								"!bg-[#303030] !border-0 !text-white !rounded-xl !text-[0.8125rem]",
+								"!bg-topbar !border-0 !text-white !rounded-xl !text-[0.8125rem]",
 							description: "!text-white/70",
 							actionButton:
-								"!bg-white !text-[#303030] !font-semibold !rounded-lg",
+								"!bg-white !text-foreground !font-semibold !rounded-lg",
 						},
 					}}
 				/>

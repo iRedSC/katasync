@@ -352,7 +352,7 @@ function Products() {
 
 				<table className="w-full">
 					<thead>
-						<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+						<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
 							<th className="px-4 py-2 font-medium">Product</th>
 							<th className="px-2 py-2 text-center font-medium">Class</th>
 							<th className="hidden px-4 py-2 font-medium md:table-cell">
@@ -384,7 +384,7 @@ function Products() {
 										onContextMenu={() => setSelected(i)}
 										className={cn(
 											"cursor-pointer border-t first:border-t-0",
-											i === selected ? "bg-[#f1f1f1]" : "hover:bg-[#f7f7f7]",
+											i === selected ? "bg-surface" : "hover:bg-subtle",
 										)}
 									>
 										{/* Takes the width the other columns leave, so long names end
@@ -554,8 +554,8 @@ function Tab({
 			className={cn(
 				"inline-flex h-7 items-center rounded-lg font-medium",
 				active
-					? "bg-[#e3e3e3] text-foreground"
-					: "text-muted-foreground hover:bg-[#f1f1f1] hover:text-foreground",
+					? "bg-surface-strong text-foreground"
+					: "text-muted-foreground hover:bg-surface hover:text-foreground",
 			)}
 		>
 			<button
@@ -577,7 +577,7 @@ function Tab({
 					type="button"
 					onClick={onEdit}
 					aria-label={`Rename or delete ${label}`}
-					className="-ml-1.5 mr-1 rounded p-1 text-muted-foreground hover:bg-[#d4d4d4] hover:text-foreground"
+					className="-ml-1.5 mr-1 rounded p-1 text-muted-foreground hover:bg-line hover:text-foreground"
 				>
 					<Pencil className="size-3" />
 				</button>
@@ -651,7 +651,7 @@ function ViewDialog({
 						value={name}
 						onChange={(e) => setName(e.target.value)}
 						placeholder="Name, e.g. Low stock A items"
-						className="h-9 rounded-lg border border-[#8a8a8a] px-3 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+						className="h-9 rounded-lg border border-input px-3 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
 					/>
 					{error && <p className="text-critical-text">{error}</p>}
 					<DialogFooter className="sm:justify-between">

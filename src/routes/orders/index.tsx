@@ -80,8 +80,8 @@ function Orders() {
 							className={cn(
 								"inline-flex h-7 items-center rounded-lg px-2.5 font-medium",
 								view === v.key
-									? "bg-[#e3e3e3] text-foreground"
-									: "text-muted-foreground hover:bg-[#f1f1f1] hover:text-foreground",
+									? "bg-surface-strong text-foreground"
+									: "text-muted-foreground hover:bg-surface hover:text-foreground",
 							)}
 						>
 							{v.label}
@@ -107,7 +107,7 @@ function Orders() {
 					// No cell wraps; the customer column takes what's left and truncates.
 					<table className="w-full whitespace-nowrap">
 						<thead>
-							<tr className="border-b bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+							<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
 								{view === "ship" && (
 									<th className="w-16 px-4 py-2 font-medium">Pin</th>
 								)}
@@ -138,7 +138,7 @@ function Orders() {
 										onMouseMove={() => setSelected(i)}
 										className={cn(
 											"cursor-pointer border-t first:border-t-0",
-											i === selected ? "bg-[#f1f1f1]" : "hover:bg-[#f7f7f7]",
+											i === selected ? "bg-surface" : "hover:bg-subtle",
 										)}
 									>
 										{view === "ship" && (

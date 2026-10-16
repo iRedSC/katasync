@@ -92,7 +92,7 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 							})}
 							.
 						</p>
-						<code className="truncate rounded bg-[#f1f1f1] px-2 py-1 text-xs">
+						<code className="truncate rounded bg-surface px-2 py-1 text-xs">
 							{link.url}
 						</code>
 						<div className="flex gap-2">

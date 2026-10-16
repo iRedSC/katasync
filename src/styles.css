@@ -1,35 +1,43 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
-@import '@fontsource-variable/inter';
 
-/* Modeled on the Shopify admin (Polaris light tokens, @shopify/polaris-tokens
-   9.x). Flat colors only: no gradients, no glows. Violet is the one brand touch
-   (charts). Status always pairs color with a word. */
+/* Shares its look with native (the storefront): a near-white cool page,
+   white panels, navy ink and chrome, and the logo's blue for actions, links
+   and selection. Flat colors only: no gradients, no glows. Status always
+   pairs color with a word. */
 :root {
-  --background: #f1f1f1;
-  --foreground: #303030;
+  --background: #f6f7f9;
+  --foreground: #0b1220;
   --card: #ffffff;
-  --card-foreground: #303030;
+  --card-foreground: #0b1220;
   --popover: #ffffff;
-  --popover-foreground: #303030;
-  --primary: #303030;
+  --popover-foreground: #0b1220;
+  --primary: #3154f0;
+  --primary-hover: #2443d4;
   --primary-foreground: #ffffff;
-  --secondary: #f7f7f7;
-  --secondary-foreground: #303030;
-  --muted: #f7f7f7;
-  --muted-foreground: #616161;
-  --accent: #f7f7f7;
-  --accent-foreground: #303030;
-  --destructive: #c70a24;
+  --secondary: #f0f2f5;
+  --secondary-foreground: #0b1220;
+  --muted: #f0f2f5;
+  --muted-foreground: #4a5465;
+  --accent: #f6f7f9;
+  --accent-foreground: #0b1220;
+  --destructive: #c0262d;
   --destructive-foreground: #ffffff;
-  --border: #e3e3e3;
-  --input: #8a8a8a;
-  --ring: #005bd3;
-  --link: #005bd3;
-  --brand: #5241ea;
-  --topbar: #1a1a1a;
-  --nav: #ebebeb;
-  --radius: 0.75rem;
+  --border: #e3e7ed;
+  --input: #aab4c5;
+  --ring: #3154f0;
+  --link: #3154f0;
+  --brand: #3154f0;
+  --topbar: #0b1220;
+  --nav: #eef1f5;
+  /* A gray ramp for fills inside white panels, lightest first: table heads
+     and hover, wells and selected rows, chips and pressed states, ticks. */
+  --subtle: #f6f7f9;
+  --surface: #f0f2f5;
+  --surface-strong: #e2e7ee;
+  --line: #d3d9e2;
+  /* Placeholder dashes and empty-state icons. */
+  --faint: #9aa4b5;
 
   /* Polaris tones: surface (banner background), fill (badge), text, icon,
      border. */
@@ -67,7 +75,7 @@
 }
 
 @theme inline {
-  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -76,6 +84,7 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -91,6 +100,11 @@
   --color-brand: var(--brand);
   --color-topbar: var(--topbar);
   --color-nav: var(--nav);
+  --color-subtle: var(--subtle);
+  --color-surface: var(--surface);
+  --color-surface-strong: var(--surface-strong);
+  --color-line: var(--line);
+  --color-faint: var(--faint);
   --color-critical-surface: var(--critical-surface);
   --color-critical-fill: var(--critical-fill);
   --color-critical-text: var(--critical-text);
@@ -117,12 +131,14 @@
   --color-abc-b-text: var(--abc-b-text);
   --color-abc-c-fill: var(--abc-c-fill);
   --color-abc-c-text: var(--abc-c-text);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  /* A hairline edge plus Polaris's 1px bottom shadow. Not a glow. */
-  --shadow-card: 0 0 0 1px rgba(26, 26, 26, 0.05), 0 1px 0 rgba(26, 26, 26, 0.07);
+  /* Rounded rects, never pills; `full` is for circles only. */
+  --radius-sm: 4px; /* checkboxes, small chips */
+  --radius-md: 5px; /* a control nested in another */
+  --radius-lg: 8px; /* buttons, fields, menu items */
+  --radius-xl: 14px; /* cards and panels */
+  --radius-2xl: 16px; /* sheets and big touch targets */
+  /* The panel border as a hairline ring, plus a soft drop. Not a glow. */
+  --shadow-card: 0 0 0 1px #e3e7ed, 0 1px 2px rgb(11 18 32 / 0.05);
 }
 
 @layer base {

@@ -181,7 +181,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 		<table className="w-full table-fixed">
 			<Columns />
 			<thead>
-				<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+				<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
 					<th className="px-4 py-2 font-medium">PO</th>
 					<th className="px-4 py-2 font-medium">Supplier</th>
 					<th className="px-4 py-2 font-medium">Status</th>
@@ -200,7 +200,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 						key={s.supplierId}
 						onClick={() => busy === null && open(s)}
 						className={cn(
-							"cursor-pointer border-t first:border-t-0 hover:bg-[#f7f7f7]",
+							"cursor-pointer border-t first:border-t-0 hover:bg-subtle",
 							busy !== null && "cursor-wait",
 						)}
 					>
@@ -266,7 +266,7 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 		<table className="w-full table-fixed">
 			<Columns />
 			<thead>
-				<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+				<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
 					<th className="px-4 py-2 font-medium">PO</th>
 					<th className="px-4 py-2 font-medium">Supplier</th>
 					<th className="px-4 py-2 font-medium">Status</th>
@@ -291,7 +291,7 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 									params: { id: String(o.id) },
 								})
 							}
-							className="cursor-pointer border-t first:border-t-0 hover:bg-[#f7f7f7]"
+							className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
 						>
 							<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
 								PO {o.id}

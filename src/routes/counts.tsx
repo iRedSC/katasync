@@ -79,7 +79,7 @@ function CycleCounts() {
 				) : (
 					<table className="w-full">
 						<thead>
-							<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+							<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
 								<th className="px-4 py-2 font-medium">Product</th>
 								<th className="px-2 py-2 text-center font-medium">Class</th>
 								<th className="hidden px-4 py-2 font-medium md:table-cell">
@@ -97,7 +97,7 @@ function CycleCounts() {
 									onMouseMove={() => setSelected(i)}
 									className={cn(
 										"border-t first:border-t-0",
-										i === selected && "bg-[#f1f1f1]",
+										i === selected && "bg-surface",
 									)}
 								>
 									<td className="w-full max-w-0 px-4 py-2">

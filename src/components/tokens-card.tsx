@@ -100,7 +100,7 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 						Copy this now; katasync won't show the token again. To connect
 						Claude Code, run:
 					</p>
-					<code className="rounded bg-[#f1f1f1] px-2 py-1.5 text-xs break-all">
+					<code className="rounded bg-surface px-2 py-1.5 text-xs break-all">
 						{command}
 					</code>
 					<div className="flex gap-2">

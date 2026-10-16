@@ -197,7 +197,9 @@ function Chip({
 			onClick={onClick}
 			className={cn(
 				"h-7 rounded-lg px-3 font-medium transition-colors",
-				active ? "bg-[#303030] text-white" : "bg-[#f1f1f1] hover:bg-[#e3e3e3]",
+				active
+					? "bg-primary text-primary-foreground"
+					: "bg-surface hover:bg-surface-strong",
 			)}
 		>
 			{children}

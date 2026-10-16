@@ -116,7 +116,7 @@ function ProductPage() {
 						>
 							<table className="w-full">
 								<thead>
-									<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+									<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
 										<th className="px-4 py-2 font-medium">Part</th>
 										<th className="px-4 py-2 text-right font-medium">Needed</th>
 										<th className="px-4 py-2 text-right font-medium">
@@ -182,7 +182,7 @@ function ProductPage() {
 						>
 							<table className="w-full">
 								<thead>
-									<tr className="border-y bg-[#f7f7f7] text-left text-xs text-muted-foreground">
+									<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
 										<th className="px-4 py-2 font-medium">Location</th>
 										<th className="px-4 py-2 text-right font-medium">
 											On hand
@@ -270,8 +270,8 @@ function ProductPage() {
 										className={cn(
 											"rounded-lg px-2 py-0.5 font-medium",
 											v.sku === p.sku
-												? "bg-[#303030] text-white"
-												: "bg-[#f1f1f1] hover:bg-[#e3e3e3]",
+												? "bg-primary text-primary-foreground"
+												: "bg-surface hover:bg-surface-strong",
 										)}
 									>
 										{v.variantName ?? v.sku}
@@ -292,7 +292,7 @@ function ProductPage() {
 										<Link
 											to="/products/$sku"
 											params={{ sku: u.sku }}
-											className="flex gap-2 px-4 py-2 hover:bg-[#f7f7f7]"
+											className="flex gap-2 px-4 py-2 hover:bg-subtle"
 										>
 											<span className="truncate">{u.name}</span>
 											{u.quantity > 1 && (
@@ -466,7 +466,7 @@ function InsureToggle({ sku, insure }: { sku: string; insure: boolean }) {
 				type="checkbox"
 				checked={insure}
 				onChange={(e) => set(e.target.checked)}
-				className="size-4 accent-[#303030]"
+				className="size-4 accent-primary"
 			/>
 			Insure when shipped
 		</label>

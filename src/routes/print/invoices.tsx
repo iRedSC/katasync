@@ -26,7 +26,7 @@ function Invoices() {
 	}, [invoices.length]);
 
 	return (
-		<div className="min-h-svh bg-[#f1f1f1] py-6 print:bg-white print:py-0">
+		<div className="min-h-svh bg-surface py-6 print:bg-white print:py-0">
 			<style>{"@page { size: letter; margin: 0.5in; }"}</style>
 			<div className="mx-auto mb-4 flex max-w-[8.5in] items-center justify-between print:hidden">
 				<span className="text-muted-foreground">
@@ -35,7 +35,7 @@ function Invoices() {
 				<button
 					type="button"
 					onClick={() => window.print()}
-					className="h-8 rounded-lg bg-[#303030] px-3 font-semibold text-white hover:bg-[#1a1a1a]"
+					className="h-8 rounded-lg bg-primary px-3 font-semibold text-white hover:bg-primary-hover"
 				>
 					Print
 				</button>
@@ -92,7 +92,9 @@ function Invoice({
 							year: "numeric",
 						})}
 					</p>
-					{o.salesChannel && <p className="text-[#616161]">{o.salesChannel}</p>}
+					{o.salesChannel && (
+						<p className="text-muted-foreground">{o.salesChannel}</p>
+					)}
 				</div>
 			</header>
 
@@ -100,7 +102,7 @@ function Invoice({
 			    label carries the address, so the invoice leaves it off. */}
 			{o.shipAddress1 && (
 				<section>
-					<p className="text-[9pt] font-semibold tracking-wide text-[#616161] uppercase">
+					<p className="text-[9pt] font-semibold tracking-wide text-muted-foreground uppercase">
 						Ship to
 					</p>
 					<p className="text-[13pt] font-semibold">
@@ -126,14 +128,16 @@ function Invoice({
 						<tr
 							// biome-ignore lint/suspicious/noArrayIndexKey: lines have no stable key here and never reorder
 							key={i}
-							className="break-inside-avoid border-b border-[#e3e3e3] align-top"
+							className="break-inside-avoid border-b border-border align-top"
 						>
 							<td className="py-2 text-[13pt] font-bold tabular-nums">
 								{l.quantity}
 							</td>
 							<td className="py-2">
 								<p>{l.title}</p>
-								{l.sku && <p className="text-[9pt] text-[#616161]">{l.sku}</p>}
+								{l.sku && (
+									<p className="text-[9pt] text-muted-foreground">{l.sku}</p>
+								)}
 							</td>
 							<td className="py-2 text-right tabular-nums">
 								{formatMoney(l.unitPrice)}
@@ -165,7 +169,7 @@ function Invoice({
 
 			{/* The packer's line sits in the page's bottom corner. */}
 			<footer className="mt-auto flex items-end justify-between gap-6">
-				<p className="text-[#616161]">Thank you for your order.</p>
+				<p className="text-muted-foreground">Thank you for your order.</p>
 				{o.pin !== null && (
 					<div className="text-right">
 						{o.shipsWith.length > 0 && (
