@@ -40,22 +40,17 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
-	DialogFooter,
-	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
-import {
-	formatCount,
-	formatDay,
-	formatMoney,
-	formatOrderQuantity,
-} from "#/lib/format";
+import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import { purchaseOrderStatus } from "#/purchasing/status";
 import {
 	createDraft,
+	createDraftFromSuggestions,
 	listPurchasing,
+	openSuggestedPurchaseOrder,
 	orderPurchaseOrderAgain,
 	type PurchasingList,
 	updateDraftFromSuggestions,
@@ -67,8 +62,12 @@ export const Route = createFileRoute("/purchasing/")({
 });
 
 function Purchasing() {
-	const { ready, open, done, suppliers } = Route.useLoaderData();
-	const nothing = ready.length === 0 && open.length === 0 && done.length === 0;
+	const { ready, open, incoming, done, suppliers } = Route.useLoaderData();
+	const nothing =
+		ready.length === 0 &&
+		open.length === 0 &&
+		incoming.length === 0 &&
+		done.length === 0;
 
 	return (
 		<Page
@@ -101,6 +100,11 @@ function Purchasing() {
 							<OrderTable rows={open} />
 						</Card>
 					)}
+					{incoming.length > 0 && (
+						<Card title="Incoming" flush>
+							<OrderTable rows={incoming} />
+						</Card>
+					)}
 					{done.length > 0 && (
 						<Card title="Done" flush>
 							<OrderTable rows={done} />
@@ -130,7 +134,7 @@ function NewPurchaseOrder({
 		setBusy(true);
 		try {
 			const id = await createDraft({
-				data: { supplierId, fromSuggestions: false },
+				data: { supplierId },
 			});
 			setOpen(false);
 			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
@@ -184,91 +188,93 @@ function NewPurchaseOrder({
 type Suggestion = PurchasingList["ready"][number];
 
 // One row per supplier: what today's sales say to send them. Clicking a row
-// shows what would go on the PO; only "Create PO" makes the draft.
+// opens it on the PO page, where it only becomes a draft once it's changed.
+// "Create PO" makes the draft straight away.
 function SuggestionList({ rows }: { rows: Suggestion[] }) {
-	const [viewing, setViewing] = useState<number | null>(null);
 	const [menuFor, setMenuFor] = useState<Suggestion | null>(null);
 	const { busy, create } = useCreateDraft();
-	// Looked up by supplier, so the preview closes if the row leaves the list.
-	const shown = rows.find((s) => s.supplierId === viewing) ?? null;
+	const { opening, open } = useOpenSuggested();
 
 	// Same columns as the PO tables below, so the page reads as one list.
 	return (
-		<>
-			<table className="w-full table-fixed">
-				<Columns />
-				<thead>
-					<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
-						<th className="px-4 py-2 font-medium">PO</th>
-						<th className="px-4 py-2 font-medium">Supplier</th>
-						<th className="px-4 py-2 font-medium">Status</th>
-						<th className="hidden px-4 py-2 font-medium md:table-cell">
-							Products
-						</th>
-						<th className="px-4 py-2 text-right font-medium">Total</th>
-						<th className="hidden px-4 py-2 font-medium md:table-cell">
-							Expected
-						</th>
-					</tr>
-				</thead>
-				<ContextMenu>
-					<ContextMenuTrigger asChild>
-						<tbody>
-							{rows.map((s) => (
-								<tr
-									key={s.supplierId}
-									onClick={() => setViewing(s.supplierId)}
-									onContextMenu={() => setMenuFor(s)}
-									className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
-								>
-									<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
-										<span className="font-normal text-muted-foreground">
-											New
-										</span>
-									</td>
-									<td className="px-4 py-2.5">
-										<div className="truncate">{s.supplierName}</div>
-									</td>
-									<td className="px-4 py-2.5 whitespace-nowrap">
+		<table className="w-full table-fixed">
+			<Columns />
+			<thead>
+				<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
+					<th className="px-4 py-2 font-medium">PO</th>
+					<th className="px-4 py-2 font-medium">Supplier</th>
+					<th className="px-4 py-2 font-medium">Status</th>
+					<th className="hidden px-4 py-2 font-medium md:table-cell">
+						Products
+					</th>
+					<th className="px-4 py-2 text-right font-medium">Total</th>
+					<th className="hidden px-4 py-2 font-medium md:table-cell">
+						Expected
+					</th>
+				</tr>
+			</thead>
+			<ContextMenu>
+				<ContextMenuTrigger asChild>
+					<tbody>
+						{rows.map((s) => (
+							<tr
+								key={s.supplierId}
+								onClick={() => opening === null && open(s.supplierId)}
+								onContextMenu={() => setMenuFor(s)}
+								className={cn(
+									"cursor-pointer border-t first:border-t-0 hover:bg-subtle",
+									opening !== null && "cursor-wait",
+								)}
+							>
+								<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
+									<span className="font-normal text-muted-foreground">New</span>
+								</td>
+								<td className="px-4 py-2.5">
+									<div className="truncate">{s.supplierName}</div>
+								</td>
+								<td className="px-4 py-2.5 whitespace-nowrap">
+									{opening === s.supplierId ? (
+										<span className="text-muted-foreground">Opening…</span>
+									) : (
 										<ReadinessBadge s={s} />
-									</td>
-									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-										<div className="truncate">
-											<ProductCount s={s} />
-										</div>
-									</td>
-									<td className="px-4 py-2.5 text-right tabular-nums">
-										{formatMoney(s.total)}
-									</td>
-									<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
-										—
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</ContextMenuTrigger>
-					{menuFor && (
-						<ContextMenuContent>
-							<ContextMenuItem
-								shortcut="↵"
-								onSelect={() => setViewing(menuFor.supplierId)}
-							>
-								<FileText />
-								Preview
-							</ContextMenuItem>
-							<ContextMenuItem
-								disabled={busy}
-								onSelect={() => create(menuFor.supplierId)}
-							>
-								<Plus />
-								Create PO
-							</ContextMenuItem>
-						</ContextMenuContent>
-					)}
-				</ContextMenu>
-			</table>
-			<SuggestionPreview s={shown} onClose={() => setViewing(null)} />
-		</>
+									)}
+								</td>
+								<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
+									<div className="truncate">
+										<ProductCount s={s} />
+									</div>
+								</td>
+								<td className="px-4 py-2.5 text-right tabular-nums">
+									{formatMoney(s.total)}
+								</td>
+								<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
+									—
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</ContextMenuTrigger>
+				{menuFor && (
+					<ContextMenuContent>
+						<ContextMenuItem
+							shortcut="↵"
+							disabled={opening !== null}
+							onSelect={() => open(menuFor.supplierId)}
+						>
+							<FileText />
+							Open
+						</ContextMenuItem>
+						<ContextMenuItem
+							disabled={busy}
+							onSelect={() => create(menuFor.supplierId)}
+						>
+							<Plus />
+							Create PO
+						</ContextMenuItem>
+					</ContextMenuContent>
+				)}
+			</ContextMenu>
+		</table>
 	);
 }
 
@@ -299,7 +305,7 @@ function useCreateDraft() {
 	async function create(supplierId: number) {
 		setBusy(true);
 		try {
-			const id = await createDraft({ data: { supplierId } });
+			const id = await createDraftFromSuggestions({ data: { supplierId } });
 			router.invalidate();
 			toast.success(`PO ${id} created`);
 			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
@@ -312,94 +318,23 @@ function useCreateDraft() {
 	return { busy, create };
 }
 
-// What a suggested PO would order, before there's a draft. "Create PO" turns
-// it into the supplier's draft and opens it.
-function SuggestionPreview({
-	s,
-	onClose,
-}: {
-	s: Suggestion | null;
-	onClose: () => void;
-}) {
-	const { busy, create } = useCreateDraft();
+// Opens the supplier's suggestion on the PO page, as a suggested PO.
+function useOpenSuggested() {
+	const navigate = useNavigate();
+	const [opening, setOpening] = useState<number | null>(null);
 
-	return (
-		<Dialog open={s !== null} onOpenChange={(o) => !o && !busy && onClose()}>
-			<DialogContent className="sm:max-w-3xl">
-				{s && (
-					<>
-						<DialogHeader>
-							<DialogTitle className="flex items-center gap-2">
-								{s.supplierName}
-								<ReadinessBadge s={s} />
-							</DialogTitle>
-							<DialogDescription>
-								<ProductCount s={s} />, {formatMoney(s.total)}. Nothing is
-								created until you create the PO.
-							</DialogDescription>
-						</DialogHeader>
-						<div className="max-h-[60vh] overflow-y-auto">
-							<table className="w-full text-sm">
-								<thead>
-									<tr className="border-b text-left text-xs text-muted-foreground">
-										<th className="py-2 pr-4 font-medium">Product</th>
-										<th className="py-2 pr-4 text-right font-medium">
-											On hand
-										</th>
-										<th className="py-2 pr-4 text-right font-medium">
-											On order
-										</th>
-										<th className="py-2 pr-4 text-right font-medium">Order</th>
-										<th className="py-2 text-right font-medium">Cost</th>
-									</tr>
-								</thead>
-								<tbody>
-									{s.lines.map((l) => (
-										<tr key={l.productId} className="border-b last:border-b-0">
-											<td className="py-2 pr-4">
-												<div className="font-medium">{l.sku}</div>
-												<div className="truncate text-xs text-muted-foreground">
-													{l.variantName
-														? `${l.name}, ${l.variantName}`
-														: l.name}
-												</div>
-											</td>
-											<td className="py-2 pr-4 text-right tabular-nums">
-												{formatCount(l.onHand)}
-											</td>
-											<td className="py-2 pr-4 text-right tabular-nums">
-												{formatCount(l.onOrder)}
-											</td>
-											<td className="py-2 pr-4 text-right whitespace-nowrap tabular-nums">
-												{formatOrderQuantity(l)}
-											</td>
-											<td className="py-2 text-right tabular-nums">
-												{l.unitCost === null ? (
-													<span className="text-muted-foreground">
-														Unpriced
-													</span>
-												) : (
-													formatMoney(l.quantity * l.unitCost)
-												)}
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</div>
-						<DialogFooter>
-							<Button variant="outline" disabled={busy} onClick={onClose}>
-								Close
-							</Button>
-							<Button disabled={busy} onClick={() => create(s.supplierId)}>
-								{busy ? "Creating…" : "Create PO"}
-							</Button>
-						</DialogFooter>
-					</>
-				)}
-			</DialogContent>
-		</Dialog>
-	);
+	async function open(supplierId: number) {
+		setOpening(supplierId);
+		try {
+			const id = await openSuggestedPurchaseOrder({ data: { supplierId } });
+			navigate({ to: "/purchasing/$id", params: { id: String(id) } });
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err));
+		} finally {
+			setOpening(null);
+		}
+	}
+	return { opening, open };
 }
 
 type OrderRow = PurchasingList["open"][number];

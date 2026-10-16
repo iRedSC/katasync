@@ -42,6 +42,26 @@ export async function lockOrder(db: Db, id: number, allowed: Status[]) {
 	return po;
 }
 
+// Locks a PO for a change to what it orders or where it goes. A suggested PO
+// becomes a draft with its first change, and stops following the suggestion.
+export async function lockForEdit(
+	db: Db,
+	id: number,
+	allowed: Status[] = ["draft"],
+) {
+	const po = await lockOrder(
+		db,
+		id,
+		allowed.includes("draft") ? [...allowed, "suggested"] : allowed,
+	);
+	if (po.status !== "suggested") return po;
+	await db
+		.update(purchaseOrders)
+		.set({ status: "draft" })
+		.where(eq(purchaseOrders.id, id));
+	return { ...po, status: "draft" as const };
+}
+
 // Opens the supplier's draft with today's suggestions in it, creating it if
 // there isn't one.
 export async function draftFromSuggestions(
@@ -384,7 +404,7 @@ export async function skipSetPart(
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.id, input.lineId));
 		if (!found) throw new PurchaseOrderError("That line doesn't exist");
-		await lockOrder(tx, found.purchaseOrderId, ["draft"]);
+		await lockForEdit(tx, found.purchaseOrderId);
 		const line = await setLineParts(tx, input.lineId);
 		const part = line.parts.find((p) => p.productId === input.productId);
 		if (!part)
@@ -448,7 +468,7 @@ export async function addSetToOtherDrafts(
 		for (const id of [before.purchaseOrderId, ...drafts.values()].sort(
 			(a, b) => a - b,
 		))
-			await lockOrder(tx, id, ["draft"]);
+			await lockForEdit(tx, id);
 		// Again under the locks, so it's what's on the POs now.
 		const line = await setLineParts(tx, input.lineId);
 		const added = [];
@@ -613,36 +633,149 @@ export async function updateFromSuggestions(
 }
 
 // The supplier's draft, created empty if it doesn't exist. Delivered to the
-// first of our own locations; it can be changed before sending.
+// first of our own locations; it can be changed before sending. A suggested
+// PO is only a look at the suggestion, so it becomes this empty draft.
 export async function openDraft(db: Db, supplierId: number): Promise<number> {
 	return db.transaction(async (tx) => {
-		const [existing] = await tx
-			.select({ id: purchaseOrders.id })
-			.from(purchaseOrders)
-			.where(
-				and(
-					eq(purchaseOrders.supplierId, supplierId),
-					eq(purchaseOrders.status, "draft"),
-				),
-			);
+		const [existing] = await currentDraft(tx, supplierId);
+		if (existing?.status === "suggested") {
+			await tx
+				.delete(purchaseOrderLines)
+				.where(eq(purchaseOrderLines.purchaseOrderId, existing.id));
+			await tx
+				.update(purchaseOrders)
+				.set({ status: "draft" })
+				.where(eq(purchaseOrders.id, existing.id));
+		}
 		if (existing) return existing.id;
-		const [location] = await tx
-			.select({ id: locations.id })
-			.from(locations)
-			.where(eq(locations.kind, "owned"))
-			.orderBy(locations.id)
-			.limit(1);
-		if (!location)
-			throw new PurchaseOrderError("Add a location to deliver POs to first");
 		const [po] = await tx
 			.insert(purchaseOrders)
-			.values({ supplierId, locationId: location.id })
+			.values({ supplierId, locationId: await firstLocation(tx) })
 			.onConflictDoNothing()
 			.returning({ id: purchaseOrders.id });
 		if (po) return po.id;
 		// Someone else created it a moment ago.
 		return openDraft(tx, supplierId);
 	});
+}
+
+// The supplier's suggested PO, matching today's suggestion, so its
+// suggestion opens on the PO page. Nothing is a draft until it's changed
+// (lockForEdit). A supplier with a draft already gets that instead.
+export async function openSuggested(
+	db: Db,
+	supplierId: number,
+	now = new Date(),
+): Promise<number> {
+	const id = await db.transaction(async (tx): Promise<number> => {
+		const [existing] = await currentDraft(tx, supplierId);
+		if (existing) return existing.id;
+		const [po] = await tx
+			.insert(purchaseOrders)
+			.values({
+				supplierId,
+				locationId: await firstLocation(tx),
+				status: "suggested",
+			})
+			.onConflictDoNothing()
+			.returning({ id: purchaseOrders.id });
+		if (po) return po.id;
+		return (await currentDraft(tx, supplierId))[0].id;
+	});
+	await refreshSuggested(db, id, now);
+	return id;
+}
+
+// Makes a suggested PO's lines match today's suggestion for its supplier:
+// lines it no longer suggests go, changed ones follow it, new ones are added.
+// Lines keep their ids, so an edit made from what's shown still finds its
+// line. Leaves any other PO alone.
+export async function refreshSuggested(db: Db, id: number, now = new Date()) {
+	const [po] = await db
+		.select({ status: purchaseOrders.status })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, id));
+	if (po?.status !== "suggested") return;
+	const suggestions = await suggestPurchases(db, now);
+	await db.transaction(async (tx) => {
+		// Checked again under the lock: an edit may have made it a draft.
+		const locked = await lockOrder(tx, id, [
+			"suggested",
+			"draft",
+			"sent",
+			"closed",
+			"cancelled",
+		]);
+		if (locked.status !== "suggested") return;
+		const want =
+			suggestions.find((s) => s.supplierId === locked.supplierId)?.lines ?? [];
+		const current = await tx
+			.select()
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.purchaseOrderId, id));
+		const gone = current.filter(
+			(c) => !want.some((l) => l.productId === c.productId),
+		);
+		if (gone.length > 0)
+			await tx.delete(purchaseOrderLines).where(
+				inArray(
+					purchaseOrderLines.id,
+					gone.map((c) => c.id),
+				),
+			);
+		for (const l of want) {
+			const terms = {
+				unit: l.unit,
+				packSize: l.packSize,
+				minimumQuantity: l.minimumQuantity,
+				quantity: l.quantity,
+				unitCost: l.unitCost,
+			};
+			const line = current.find((c) => c.productId === l.productId);
+			if (!line)
+				await tx
+					.insert(purchaseOrderLines)
+					.values({ purchaseOrderId: id, productId: l.productId, ...terms });
+			else if (
+				line.unit !== terms.unit ||
+				line.packSize !== terms.packSize ||
+				line.minimumQuantity !== terms.minimumQuantity ||
+				line.quantity !== terms.quantity ||
+				line.unitCost !== terms.unitCost
+			)
+				await tx
+					.update(purchaseOrderLines)
+					.set(terms)
+					.where(eq(purchaseOrderLines.id, line.id));
+		}
+	});
+}
+
+// The supplier's draft or suggested PO, locked. There's at most one.
+function currentDraft(tx: Db, supplierId: number) {
+	return tx
+		.select({ id: purchaseOrders.id, status: purchaseOrders.status })
+		.from(purchaseOrders)
+		.where(
+			and(
+				eq(purchaseOrders.supplierId, supplierId),
+				inArray(purchaseOrders.status, ["draft", "suggested"]),
+			),
+		)
+		.for("update");
+}
+
+// Where a new PO is delivered: the first of our own locations.
+async function firstLocation(tx: Db) {
+	const [location] = await tx
+		.select({ id: locations.id })
+		.from(locations)
+		.where(eq(locations.kind, "owned"))
+		.orderBy(locations.id)
+		.limit(1);
+	if (!location)
+		throw new PurchaseOrderError("Add a location to deliver POs to first");
+	return location.id;
 }
 
 // Sets how many of a product a draft orders, adding the line if needed. 0
@@ -670,7 +803,7 @@ export async function setDraftLine(
 	if (input.unitCost != null && !(input.unitCost >= 0))
 		throw new PurchaseOrderError(`Price can't be ${input.unitCost}`);
 	return db.transaction(async (tx) => {
-		const po = await lockOrder(tx, input.purchaseOrderId, ["draft"]);
+		const po = await lockForEdit(tx, input.purchaseOrderId);
 		const where = and(
 			eq(purchaseOrderLines.purchaseOrderId, po.id),
 			eq(purchaseOrderLines.productId, input.productId),
@@ -825,7 +958,7 @@ export async function addLine(
 			`Quantity must be a whole number above 0, got ${input.quantity}`,
 		);
 	return db.transaction(async (tx) => {
-		const po = await lockOrder(tx, input.purchaseOrderId, allowed);
+		const po = await lockForEdit(tx, input.purchaseOrderId, allowed);
 		const result = await insertLine(tx, po, input);
 		if (result.added && po.status !== "draft")
 			await tx.insert(purchaseOrderAmendments).values({
@@ -883,7 +1016,7 @@ export async function removeAddedLine(
 ): Promise<boolean> {
 	const { line } = input;
 	return db.transaction(async (tx) => {
-		await lockOrder(tx, input.purchaseOrderId, ["draft"]);
+		await lockForEdit(tx, input.purchaseOrderId);
 		const removed = await tx
 			.delete(purchaseOrderLines)
 			.where(
@@ -931,7 +1064,7 @@ export async function updateDraft(
 	},
 ) {
 	return db.transaction(async (tx) => {
-		await lockOrder(tx, input.purchaseOrderId, ["draft"]);
+		await lockForEdit(tx, input.purchaseOrderId);
 		if (input.locationId !== undefined) {
 			const [location] = await tx
 				.select({ kind: locations.kind })
@@ -970,7 +1103,10 @@ export async function markSent(
 ): Promise<string | null> {
 	const now = input.now ?? new Date();
 	return db.transaction(async (tx) => {
-		const po = await lockOrder(tx, input.purchaseOrderId, ["draft"]);
+		const po = await lockOrder(tx, input.purchaseOrderId, [
+			"draft",
+			"suggested",
+		]);
 		await splitSets(tx, po.id);
 		const lines = await tx
 			.select({ id: purchaseOrderLines.id })
@@ -1360,19 +1496,19 @@ export type DeletedDraft = {
 // back once its supplier has a new draft.
 export async function restoreDraft(db: Db, draft: DeletedDraft) {
 	return db.transaction(async (tx) => {
-		const [other] = await tx
-			.select({ id: purchaseOrders.id })
-			.from(purchaseOrders)
-			.where(
-				and(
-					eq(purchaseOrders.supplierId, draft.supplierId),
-					eq(purchaseOrders.status, "draft"),
-				),
-			);
-		if (other)
+		const [other] = await currentDraft(tx, draft.supplierId);
+		if (other?.status === "draft")
 			throw new PurchaseOrderError(
 				`Can't bring back ${poName(draft.id)}: its supplier has a new draft, ${poName(other.id)}`,
 			);
+		// A suggested PO is only a look at the suggestion; the draft takes its
+		// place.
+		if (other) {
+			await tx
+				.delete(purchaseOrderLines)
+				.where(eq(purchaseOrderLines.purchaseOrderId, other.id));
+			await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, other.id));
+		}
 		const [po] = await tx
 			.insert(purchaseOrders)
 			.overridingSystemValue()

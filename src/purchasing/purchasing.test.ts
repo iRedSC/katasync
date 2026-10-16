@@ -20,10 +20,12 @@ import {
 	draftFromSuggestions,
 	markSent,
 	openDraft,
+	openSuggested,
 	orderAgain,
 	purchaseOrderOfBatch,
 	receive,
 	receiveExtra,
+	refreshSuggested,
 	removeAddedLine,
 	restoreDraft,
 	restoreOrder,
@@ -1186,6 +1188,61 @@ describe("a PO from draft to received", () => {
 		expect(readyToOrder(suggestions)).toEqual([]);
 		await deleteDraft(db, id);
 		expect(readyToOrder(await suggestPurchases(db, now))).toHaveLength(1);
+	});
+
+	test("a suggestion opens as a suggested PO, and its first change makes it a draft", async () => {
+		const id = await openSuggested(db, canam, now);
+		expect((await getPo(id)).status).toBe("suggested");
+		const [suggestion] = await suggestPurchases(db, now);
+		expect((await linesOf(id)).map((l) => [l.productId, l.quantity])).toEqual(
+			suggestion.lines
+				.map((l) => [l.productId, l.quantity])
+				.sort((a, b) => a[0] - b[0]),
+		);
+		// Only a look: still ready to order, and opening it again is the same PO.
+		expect(readyToOrder(await suggestPurchases(db, now))).toHaveLength(1);
+		expect(await openSuggested(db, canam, now)).toBe(id);
+
+		const [line] = await linesOf(id);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: line.productId,
+			quantity: line.quantity + 1,
+		});
+		expect((await getPo(id)).status).toBe("draft");
+		expect(readyToOrder(await suggestPurchases(db, now))).toEqual([]);
+		// Now a draft, it no longer follows the suggestion.
+		await refreshSuggested(db, id, now);
+		expect((await linesOf(id))[0].quantity).toBe(line.quantity + 1);
+	});
+
+	test("a suggested PO follows the suggestion, keeping its lines' ids", async () => {
+		const id = await openSuggested(db, canam, now);
+		const before = await linesOf(id);
+		await db
+			.update(schema.purchaseOrderLines)
+			.set({ quantity: 999 })
+			.where(eq(schema.purchaseOrderLines.id, before[0].id));
+		await refreshSuggested(db, id, now);
+		expect(await linesOf(id)).toEqual(before);
+	});
+
+	test("bringing back a deleted draft replaces the supplier's suggested PO", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		const lines = await linesOf(id);
+		const deleted = await deleteDraft(db, id);
+		const suggested = await openSuggested(db, canam, now);
+		await restoreDraft(db, deleted);
+		expect((await getPo(id)).status).toBe("draft");
+		expect(await linesOf(id)).toHaveLength(lines.length);
+		expect(await getPo(suggested)).toBeUndefined();
+	});
+
+	test("starting a draft for a supplier with a suggested PO starts it empty", async () => {
+		const id = await openSuggested(db, canam, now);
+		expect(await openDraft(db, canam)).toBe(id);
+		expect((await getPo(id)).status).toBe("draft");
+		expect(await linesOf(id)).toEqual([]);
 	});
 
 	test("can't receive a draft; deleting a draft removes it and frees the slot", async () => {
