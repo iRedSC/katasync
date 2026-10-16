@@ -751,6 +751,12 @@ function Recommended({
 								<th className="px-4 py-2 font-medium">Product</th>
 								<th className="px-3 py-2 font-medium">Due</th>
 								<th className="px-3 py-2 text-right font-medium">Qty</th>
+								<th
+									className="px-3 py-2 text-center font-medium"
+									title="Units sold a month. Hover for the reorder math"
+								>
+									Velocity
+								</th>
 								<th className="px-3 py-2 text-right font-medium">Amount</th>
 								<th className="px-4 py-2" />
 							</tr>
@@ -800,6 +806,9 @@ function Recommended({
 												{r.unit}
 											</span>
 										)}
+									</td>
+									<td className="px-3 py-2">
+										<VelocityGauge why={r.why} />
 									</td>
 									<td className="px-3 py-2 text-right tabular-nums">
 										{r.unitCost === null
