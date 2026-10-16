@@ -88,6 +88,7 @@ export function Card({
 	title,
 	aside,
 	flush = false,
+	tone,
 	className,
 	children,
 }: {
@@ -95,6 +96,8 @@ export function Card({
 	aside?: ReactNode;
 	// Flush cards let tables and lists run edge to edge.
 	flush?: boolean;
+	// Tints the header, to flag what the aside says.
+	tone?: "warning";
 	className?: string;
 	children: ReactNode;
 }) {
@@ -111,10 +114,22 @@ export function Card({
 					className={cn(
 						"flex items-center justify-between gap-4",
 						flush ? "px-4 pt-4 pb-2" : "pb-3",
+						tone === "warning" &&
+							(flush
+								? "bg-warning-surface pb-4 text-warning-text"
+								: "-mx-4 -mt-4 mb-3 bg-warning-surface p-4 text-warning-text"),
 					)}
 				>
 					<h2 className="text-sm font-semibold">{title}</h2>
-					{aside && <div className="text-muted-foreground">{aside}</div>}
+					{aside && (
+						<div
+							className={
+								tone === "warning" ? "font-medium" : "text-muted-foreground"
+							}
+						>
+							{aside}
+						</div>
+					)}
 				</div>
 			)}
 			{children}
