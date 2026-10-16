@@ -210,7 +210,9 @@ export function connectOptimism(reload: () => Promise<void>) {
 	reloadPage = reload;
 }
 
-const server = () => [] as readonly Change[];
+// The same empty list each time, as React requires of a snapshot.
+const none: readonly Change[] = [];
+const server = () => none;
 
 // Patches for one kind of page's data, and the hook that lays them over it.
 // `name` keeps one kind's patches off another's; `id` keeps one record's off

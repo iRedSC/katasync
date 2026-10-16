@@ -102,7 +102,7 @@ function Saving() {
 				saving ? "opacity-100 delay-300" : "opacity-0",
 			)}
 		>
-			Saving…
+			{saving && "Saving…"}
 		</span>
 	);
 }
