@@ -38,13 +38,29 @@ export function reorderQuantity(p: {
 	const position = p.onHand + p.onOrder;
 	const reorderPoint = p.dailyDemand * (p.leadTimeDays + p.safetyDays);
 	if (position >= reorderPoint && position >= 0) return 0;
-	const target = Math.ceil(
-		p.dailyDemand * (p.leadTimeDays + p.safetyDays + p.coverDays),
-	);
+	const target = stockTarget(p);
 	const need = target - position;
 	if (need <= 0) return 0;
 	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
 }
+
+// What a reorder tops stock up to: enough to last until a PO sent today
+// arrives, plus safety, plus the supplier's cover. Also the default max stock.
+export function stockTarget(p: {
+	dailyDemand: number;
+	leadTimeDays: number;
+	safetyDays: number;
+	coverDays: number;
+}) {
+	return Math.ceil(
+		p.dailyDemand * (p.leadTimeDays + p.safetyDays + p.coverDays),
+	);
+}
+
+// What products without a supplier forecast with: the suppliers table's own
+// defaults.
+export const DEFAULT_LEAD_TIME_DAYS = 14;
+export const DEFAULT_COVER_DAYS = 30;
 
 // A items carry this share of their lead time as spare stock, since running
 // out of them costs the most. B and C carry none.
@@ -335,7 +351,6 @@ async function arrivingUnits(db: Db, now: Date) {
 // order only count if they land before the shelf empties. Products without a
 // supplier use the default lead time, since they still have to come from
 // somewhere.
-const DEFAULT_LEAD_TIME_DAYS = 14;
 export async function aItemsAtRisk(db: Db, now = new Date()) {
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
 	const [abc, sold, onHand, arriving] = await Promise.all([

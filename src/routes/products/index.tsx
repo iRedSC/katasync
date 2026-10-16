@@ -363,7 +363,7 @@ function Products() {
 			if (step.kind === "order") addToPo(p);
 			else if (step.kind === "count")
 				toast(
-					`Count ${p.sku} first: its stock hasn't been counted in ${TRUST_DAYS} days`,
+					`Count ${p.sku} first: it's ${p.abc} stock that hasn't been counted in ${TRUST_DAYS} days`,
 				);
 			else toast(orderAction(p)?.why || `${p.sku} doesn't need ordering`);
 		},

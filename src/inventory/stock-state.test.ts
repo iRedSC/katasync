@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { forecastMax } from "./stock-range";
 import {
 	daysLeft,
 	levelOf,
@@ -14,6 +15,7 @@ const daysAgo = (n: number) => new Date(now.getTime() - n * 86_400_000);
 function product(extra: Partial<StockInput> = {}): StockInput {
 	return {
 		kind: "simple",
+		abc: "A",
 		onHand: 20,
 		available: 20,
 		range: { min: 10, max: 40 },
@@ -87,6 +89,14 @@ describe("next step", () => {
 		).toEqual({ kind: "count requested" });
 	});
 
+	test("C and unclassed stock orders without waiting for a count", () => {
+		for (const abc of ["C", null] as const)
+			expect(step(product({ abc, reorder, lastCountedAt: null }))).toEqual({
+				kind: "order",
+				...reorder,
+			});
+	});
+
 	test("a line already on a draft wins", () => {
 		expect(
 			step(
@@ -123,4 +133,17 @@ test("days left at the sales rate", () => {
 	expect(daysLeft(5, 0)).toBeNull();
 	expect(daysLeft(-3, 1)).toBe(0);
 	expect(daysLeft(null, 1)).toBeNull();
+});
+
+describe("default max from the forecast", () => {
+	const p = { leadTimeDays: 14, safetyDays: 0, coverDays: 30 };
+
+	test("is what a reorder tops up to", () => {
+		// 0.5 a day over 14 + 30 days.
+		expect(forecastMax(1, { ...p, dailyDemand: 0.5 })).toBe(22);
+	});
+
+	test("stays above min when nothing sells", () => {
+		expect(forecastMax(1, { ...p, dailyDemand: 0 })).toBe(2);
+	});
 });

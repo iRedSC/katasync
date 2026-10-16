@@ -29,9 +29,10 @@ import {
 } from "#/inventory/ledger";
 import { soldSince } from "#/inventory/sales";
 import {
+	defaultMinStock,
+	defaultRanges,
+	setDefaultMinStock,
 	setProductStockRange,
-	setStockDefaults,
-	stockDefaults,
 	stockRanges,
 } from "#/inventory/stock-range";
 import {
@@ -136,7 +137,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
 				.where(eq(locations.kind, "owned"))
 				.groupBy(stockLevels.productId),
-			stockRanges(db, ids),
+			ranked.then((abc) => stockRanges(db, ids, abc)),
 			soldSince(db, new Date(Date.now() - DEMAND_DAYS * 86_400_000), {
 				includeFba: false,
 			}),
@@ -745,16 +746,27 @@ export const setInsureWhenShipped = createServerFn({ method: "POST" })
 			.where(eq(products.sku, data.sku));
 	});
 
-// The stock range products use until they get their own.
-export const getStockDefaults = createServerFn({ method: "GET" }).handler(
-	async () => stockDefaults(getDb()),
+// The min products use until they get their own range.
+export const getDefaultMinStock = createServerFn({ method: "GET" }).handler(
+	async () => defaultMinStock(getDb()),
 );
 
-const range = type({ min: "number.integer >= 0", max: "number.integer > 0" });
+export const saveDefaultMinStock = createServerFn({ method: "POST" })
+	.validator(type({ min: "number.integer >= 0" }))
+	.handler(async ({ data }) => setDefaultMinStock(getDb(), data.min));
 
-export const saveStockDefaults = createServerFn({ method: "POST" })
-	.validator(range)
-	.handler(async ({ data }) => setStockDefaults(getDb(), data));
+// The range a product falls back on: min from settings, max from its sales.
+export const getDefaultRange = createServerFn({ method: "GET" })
+	.validator(type({ productId: "number.integer > 0" }))
+	.handler(async ({ data }) => {
+		const range = (await defaultRanges(getDb(), [data.productId])).get(
+			data.productId,
+		);
+		if (!range) throw new Error(`No product ${data.productId}`);
+		return range;
+	});
+
+const range = type({ min: "number.integer >= 0", max: "number.integer > 0" });
 
 // range null puts the product back on the defaults.
 export const saveProductStockRange = createServerFn({ method: "POST" })

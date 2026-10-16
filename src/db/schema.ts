@@ -954,15 +954,12 @@ export const settings = pgTable(
 	"settings",
 	{
 		id: smallint().primaryKey().default(1),
-		// The stock range for products without their own (products.minStock).
-		defaultMinStock: integer().notNull().default(0),
-		defaultMaxStock: integer().notNull().default(20),
+		// The min for products without their own range (products.minStock).
+		// Their max comes from their sales forecast (inventory/stock-range.ts).
+		defaultMinStock: integer().notNull().default(1),
 	},
 	(t) => [
 		check("settings_single", sql`${t.id} = 1`),
-		check(
-			"settings_stock_range",
-			sql`${t.defaultMinStock} >= 0 and ${t.defaultMaxStock} > ${t.defaultMinStock}`,
-		),
+		check("settings_stock_range", sql`${t.defaultMinStock} >= 0`),
 	],
 );

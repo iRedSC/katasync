@@ -1,3 +1,4 @@
+import type { AbcClass } from "#/inventory/abc";
 import type { StockRange } from "#/inventory/stock-range";
 
 // What the products page says about a product's stock, worked out once here
@@ -24,8 +25,9 @@ export const LEVELS = [
 ] as const;
 export type Level = (typeof LEVELS)[number];
 
-// The one thing to do next. Untrusted stock gets counted before it's
-// ordered: an order sized from a wrong number is wrong too.
+// The one thing to do next. Untrusted A and B stock gets counted before it's
+// ordered: an order sized from a wrong number is wrong too, and those carry
+// the money. C and unclassed products order on the number as it stands.
 export type NextStep =
 	| { kind: "order"; quantity: number; unit: string; packSize: number }
 	| { kind: "count" }
@@ -36,6 +38,7 @@ export type NextStep =
 
 export type StockInput = {
 	kind: "simple" | "kit" | "bundle";
+	abc: AbcClass | null;
 	onHand: number | null;
 	available: number;
 	range: StockRange;
@@ -71,7 +74,7 @@ export function nextStepOf(p: StockInput, trust: Trust | null): NextStep {
 	if (p.kind === "bundle") return { kind: "none" };
 	if (p.draft)
 		return { kind: "on draft", purchaseOrderId: p.draft.purchaseOrderId };
-	if (trust?.kind === "needs count")
+	if (trust?.kind === "needs count" && countsFirst(p.abc))
 		return trust.requested ? { kind: "count requested" } : { kind: "count" };
 	if (p.reorder) return { kind: "order", ...p.reorder };
 	// Without a supplier nothing can suggest an order, so short stock asks
@@ -83,6 +86,9 @@ export function nextStepOf(p: StockInput, trust: Trust | null): NextStep {
 		return { kind: "set supplier" };
 	return { kind: "none" };
 }
+
+// Classes whose untrusted stock waits for a count before an order.
+export const countsFirst = (abc: AbcClass | null) => abc === "A" || abc === "B";
 
 // Days until on hand runs out at the recent sales rate. Null when nothing
 // sold recently, so there's no rate to divide by.
