@@ -93,11 +93,11 @@ function Suppliers() {
 				/>
 			)}
 			<p className="px-1 text-muted-foreground">
-				A product is reordered once its stock would run out within the lead
-				time plus a safety margin, then bought to last the cover days on top.
-				Lead times are measured from deliveries once a supplier has 3 received
-				POs. A supplier's suggested PO is ready once its total reaches their
-				spend threshold.
+				A product is reordered once its stock would run out within the lead time
+				plus a safety margin, then bought to last the cover days on top. Lead
+				times are measured from deliveries once a supplier has 3 received POs. A
+				supplier's suggested PO is ready once its total reaches their spend
+				threshold.
 			</p>
 		</Page>
 	);
