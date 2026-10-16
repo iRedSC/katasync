@@ -94,6 +94,9 @@ export const products = pgTable(
 		// means the defaults in settings. Shown as the on hand ring on POs.
 		minStock: integer(),
 		maxStock: integer(),
+		// Can't run out: one of these needing ordering counts toward its
+		// supplier's criticalThreshold. A items count without this.
+		critical: boolean().notNull().default(false),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
@@ -583,39 +586,51 @@ export const shipments = pgTable(
 );
 
 // A company we buy from. `code` is the short name Sumtracker used, e.g. "CANAM".
-export const suppliers = pgTable("suppliers", {
-	id: integer().primaryKey().generatedAlwaysAsIdentity(),
-	code: text().notNull().unique(),
-	name: text().notNull(),
-	contactName: text(),
-	// Where POs are emailed.
-	email: text(),
-	phone: text(),
-	address1: text(),
-	address2: text(),
-	city: text(),
-	region: text(),
-	postalCode: text(),
-	country: text(),
-	paymentTerms: text(),
-	// For us only, e.g. "Free shipping over $1500".
-	notes: text(),
-	// Printed on every PO sent to them.
-	poNotes: text(),
-	// Days from sending a PO to it arriving. Stock is reordered early enough to
-	// last that long.
-	leadTimeDays: integer().notNull().default(14),
-	// Days of sales each PO should cover once it arrives. Longer means bigger,
-	// rarer orders.
-	coverDays: integer().notNull().default(30),
-	// Spend threshold: a suggested PO counts as ready once its total reaches
-	// this, e.g. their free-shipping minimum. 0 means ready as soon as anything
-	// needs ordering.
-	minimumOrder: numeric({ precision: 12, scale: 2, mode: "number" })
-		.notNull()
-		.default(0),
-	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+export const suppliers = pgTable(
+	"suppliers",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		code: text().notNull().unique(),
+		name: text().notNull(),
+		contactName: text(),
+		// Where POs are emailed.
+		email: text(),
+		phone: text(),
+		address1: text(),
+		address2: text(),
+		city: text(),
+		region: text(),
+		postalCode: text(),
+		country: text(),
+		paymentTerms: text(),
+		// For us only, e.g. "Free shipping over $1500".
+		notes: text(),
+		// Printed on every PO sent to them.
+		poNotes: text(),
+		// Days from sending a PO to it arriving. Stock is reordered early enough to
+		// last that long.
+		leadTimeDays: integer().notNull().default(14),
+		// Days of sales each PO should cover once it arrives. Longer means bigger,
+		// rarer orders.
+		coverDays: integer().notNull().default(30),
+		// Spend threshold: a suggested PO counts as ready once its total reaches
+		// this, e.g. their free-shipping minimum. 0 means ready as soon as anything
+		// needs ordering.
+		minimumOrder: numeric({ precision: 12, scale: 2, mode: "number" })
+			.notNull()
+			.default(0),
+		// How many critical products (marked, or A items) needing ordering make a
+		// suggested PO ready whatever its total.
+		criticalThreshold: integer().notNull().default(2),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			"suppliers_critical_threshold_positive",
+			sql`${t.criticalThreshold} > 0`,
+		),
+	],
+);
 
 // What suppliers sell in, e.g. CASE. Edited in Settings; renames carry over to
 // every product that uses the unit. EACH is one of the product itself, always

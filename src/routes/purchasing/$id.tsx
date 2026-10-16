@@ -47,6 +47,7 @@ import {
 import { purchaseOrderStatus } from "#/purchasing/status";
 import {
 	addProductToPurchaseOrder,
+	addRecommended,
 	addSetToOtherPos,
 	amendPurchaseLine,
 	cancelPurchaseOrder,
@@ -289,11 +290,14 @@ function PurchaseOrderPage() {
 			<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
 				<div className="flex min-w-0 flex-col gap-4">
 					{draft ? (
-						<Card flush>
-							<FrozenBar detail={d} />
-							{lineTable(d.lines)}
-							{totals}
-						</Card>
+						<>
+							<Card flush>
+								<FrozenBar detail={d} />
+								{lineTable(d.lines)}
+								{totals}
+							</Card>
+							<Recommended detail={d} total={total} />
+						</>
 					) : (
 						<>
 							{changed > 0 && (
@@ -548,6 +552,125 @@ function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 				Update
 			</Button>
 		</div>
+	);
+}
+
+// Under a draft's lines: this supplier's products that don't need ordering
+// yet but will before its next PO would, soonest first, at the quantity a
+// reorder would order. Says how far short of the supplier's minimum the
+// draft is, since these are what fill it.
+function Recommended({
+	detail: d,
+	total,
+}: {
+	detail: PurchaseOrderDetail;
+	total: number;
+}) {
+	const { busy, run } = useAction();
+	const short = d.supplier.minimumOrder - total;
+	return (
+		<Card
+			flush
+			title="Recommended additions"
+			aside={short > 0 ? `${formatMoney(short)} short` : undefined}
+		>
+			{d.recommended.length === 0 ? (
+				<p className="px-4 py-6 text-center text-muted-foreground">
+					Nothing due soon.
+				</p>
+			) : (
+				<div className="overflow-x-auto">
+					<table className="w-full [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+						<thead>
+							<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
+								<th className="px-4 py-2 font-medium">Product</th>
+								<th className="px-3 py-2 font-medium">Due</th>
+								<th className="px-3 py-2 text-right font-medium">Qty</th>
+								<th className="px-3 py-2 text-right font-medium">Amount</th>
+								<th className="px-4 py-2" />
+							</tr>
+						</thead>
+						<tbody>
+							{d.recommended.map((r) => (
+								<tr key={r.productId} className="border-t first:border-t-0">
+									<td className="w-full px-4 py-2 whitespace-normal!">
+										<div className="flex min-w-60 items-center gap-3">
+											<ProductImage src={r.imageUrl} />
+											<div className="min-w-0">
+												<Link
+													to="/products/$sku"
+													params={{ sku: r.sku }}
+													className="block hover:underline"
+												>
+													<span className="line-clamp-2 font-medium">
+														{r.name}
+														{r.variantName && (
+															<span className="ml-1.5 rounded-md bg-surface px-1.5 text-xs font-normal text-muted-foreground">
+																{r.variantName}
+															</span>
+														)}
+													</span>
+												</Link>
+												<div className="flex items-center gap-2 text-xs text-muted-foreground">
+													{r.sku}
+													{r.critical && (
+														<Badge tone="critical">Critical</Badge>
+													)}
+												</div>
+											</div>
+										</div>
+									</td>
+									<td className="px-3 py-2 text-muted-foreground">
+										{r.daysUntilReorder === 0
+											? "Today"
+											: `${formatCount(r.daysUntilReorder)}d`}
+									</td>
+									<td className="px-3 py-2 text-right font-semibold tabular-nums">
+										{formatCount(r.quantity)}
+										{r.packSize !== 1 && (
+											<span className="font-normal text-muted-foreground">
+												{" "}
+												{r.unit}
+											</span>
+										)}
+									</td>
+									<td className="px-3 py-2 text-right tabular-nums">
+										{r.unitCost === null
+											? "—"
+											: formatMoney(r.unitCost * r.quantity)}
+									</td>
+									<td className="px-4 py-2 text-right">
+										<Button
+											size="sm"
+											variant="outline"
+											disabled={busy}
+											onClick={() =>
+												run(
+													() =>
+														addRecommended({
+															data: {
+																purchaseOrderId: d.order.id,
+																productId: r.productId,
+																quantity: r.quantity,
+															},
+														}),
+													(res) =>
+														res.added
+															? `Added ${r.sku}`
+															: `${r.sku} is already on this PO`,
+												)
+											}
+										>
+											Add
+										</Button>
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			)}
+		</Card>
 	);
 }
 

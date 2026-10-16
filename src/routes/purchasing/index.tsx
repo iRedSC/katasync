@@ -40,7 +40,7 @@ export const Route = createFileRoute("/purchasing/")({
 
 function Purchasing() {
 	const { suggestions, open, done, suppliers } = Route.useLoaderData();
-	const ready = suggestions.filter((s) => s.ready);
+	const ready = suggestions.filter((s) => s.readiness !== "waiting");
 	const nothing = ready.length === 0 && open.length === 0 && done.length === 0;
 
 	return (
@@ -217,6 +217,8 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 						<td className="px-4 py-2.5 whitespace-nowrap">
 							{busy === s.supplierId ? (
 								<span className="text-muted-foreground">Opening…</span>
+							) : s.readiness === "critical" ? (
+								<Badge tone="critical">Critical</Badge>
 							) : s.draftId ? (
 								<Badge tone="info">Draft open</Badge>
 							) : (

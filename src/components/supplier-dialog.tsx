@@ -151,6 +151,7 @@ function SupplierForm({
 					leadTimeDays: Number(str("leadTimeDays")),
 					coverDays: Number(str("coverDays")),
 					minimumOrder: Number(str("minimumOrder") || 0),
+					criticalThreshold: Number(str("criticalThreshold")),
 				},
 			});
 			await router.invalidate();
@@ -233,7 +234,7 @@ function SupplierForm({
 					/>
 				</Field>
 			</div>
-			<div className="grid grid-cols-3 gap-3 md:col-span-2">
+			<div className="grid grid-cols-2 gap-3 md:col-span-2 md:grid-cols-4">
 				<Field label="Lead time (days)">
 					<input
 						name="leadTimeDays"
@@ -263,6 +264,16 @@ function SupplierForm({
 						inputMode="decimal"
 						defaultValue={s.minimumOrder || ""}
 						placeholder="None"
+						className={cn(input, "tabular-nums")}
+					/>
+				</Field>
+				<Field label="Critical threshold">
+					<input
+						name="criticalThreshold"
+						required
+						inputMode="numeric"
+						defaultValue={s.criticalThreshold}
+						title="Critical products needing ordering that make a PO ready, whatever its total"
 						className={cn(input, "tabular-nums")}
 					/>
 				</Field>

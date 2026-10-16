@@ -801,6 +801,17 @@ export const setInsureWhenShipped = createServerFn({ method: "POST" })
 			.where(eq(products.sku, data.sku));
 	});
 
+// Critical products count toward their supplier's criticalThreshold when they
+// need ordering (see purchasing/reorder.ts).
+export const setCritical = createServerFn({ method: "POST" })
+	.validator(type({ productId: "number.integer > 0", critical: "boolean" }))
+	.handler(async ({ data }) => {
+		await getDb()
+			.update(products)
+			.set({ critical: data.critical })
+			.where(eq(products.id, data.productId));
+	});
+
 // The min products use until they get their own range.
 export const getDefaultMinStock = createServerFn({ method: "GET" }).handler(
 	async () => defaultMinStock(getDb()),
