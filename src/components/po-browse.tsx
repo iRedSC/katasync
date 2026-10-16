@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Loader2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Loader2 } from "lucide-react";
 import {
 	type MouseEvent,
 	type ReactNode,
@@ -415,8 +415,10 @@ function Table({
 												size="sm"
 												variant="ghost"
 												onClick={() => onGoToLine(lineId)}
+												title="On this PO. Click to go to its line"
 											>
-												On this PO, go
+												<Check />
+												Added
 											</Button>
 										) : (
 											<Button
