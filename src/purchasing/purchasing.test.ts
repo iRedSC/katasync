@@ -929,10 +929,18 @@ describe("a PO from draft to received", () => {
 		await amendLine(db, { lineId: line.id, quantity: 0 });
 		// Extra in the box is on its receipt, not here.
 		const nut = await createProduct(db, "NUT", "simple");
-		await receiveExtra(db, { purchaseOrderId: id, productId: nut, quantity: 2 });
+		await receiveExtra(db, {
+			purchaseOrderId: id,
+			productId: nut,
+			quantity: 2,
+		});
 		// Nothing on a draft is a change.
 		const draft = await openDraft(db, canam);
-		await addLine(db, { purchaseOrderId: draft, productId: gauge, quantity: 1 });
+		await addLine(db, {
+			purchaseOrderId: draft,
+			productId: gauge,
+			quantity: 1,
+		});
 
 		const log = await db
 			.select()
