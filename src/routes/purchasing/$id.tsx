@@ -15,6 +15,10 @@ import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page } from "#/components/page";
+import {
+	ProductPicker,
+	type PurchaseOrderMatch,
+} from "#/components/po-product-picker";
 import { ProductImage } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { StockRing } from "#/components/stock-ring";
@@ -31,9 +35,9 @@ import {
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import { purchaseOrderStatus } from "#/purchasing/status";
-import { listProductIndex } from "#/server/catalog";
 import {
-	addLineBySku,
+	addProductToPurchaseOrder,
+	amendPurchaseLine,
 	cancelPurchaseOrder,
 	closePurchaseOrder,
 	editDraft,
@@ -85,7 +89,13 @@ function PurchaseOrderPage() {
 	const { busy, run } = useAction();
 	const po = d.order;
 	const draft = po.status === "draft";
+	// Sent and closed POs can still change, without telling the supplier.
+	const editable = po.status !== "cancelled";
 	const [editingSupplier, setEditingSupplier] = useState(false);
+	const picker = useRef<HTMLInputElement>(null);
+	// The line just added or picked, so it scrolls into view with its
+	// quantity open. The nonce reopens it when picked again.
+	const [focus, setFocus] = useState<LineFocus | null>(null);
 	// Counted in the product itself, so 2 cases of 12 are 24.
 	const ordered = d.lines.reduce((n, l) => n + l.quantity * l.packSize, 0);
 	const received = d.lines.reduce(
@@ -100,22 +110,87 @@ function PurchaseOrderPage() {
 		(l) => l.unitCost === null && l.kind !== "bundle",
 	).length;
 	const canEmail = d.emailConfigured && Boolean(d.supplier.email);
+	const wasSent = po.sentAt !== null;
+	const changed = d.lines.filter((l) => changedSinceSent(l, wasSent)).length;
+	const sentTotal = d.lines.reduce(
+		(n, l) => n + (l.sentQuantity ?? 0) * (l.sentUnitCost ?? 0),
+		0,
+	);
 	const incoming = d.lines.filter((l) => l.received < l.quantity);
-	const arrived = d.lines.filter((l) => l.received >= l.quantity);
+	// Lines with none coming sit last, under what did arrive.
+	const arrived = d.lines
+		.filter((l) => l.received >= l.quantity)
+		.sort((a, b) => Number(a.quantity === 0) - Number(b.quantity === 0));
+	const lineTable = (lines: Line[]) => (
+		<LineTable
+			detail={d}
+			lines={lines}
+			focus={focus}
+			onQuantityDone={(enter) => {
+				setFocus(null);
+				if (enter) picker.current?.focus();
+			}}
+		/>
+	);
 	const totals = (
-		<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
-			{draft && <AddLine purchaseOrderId={po.id} />}
-			<span className="text-muted-foreground">
-				{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
-				{unpriced > 0 && `, ${unpriced} without a cost`}
-				{sets > 0 &&
-					`, plus ${sets === 1 ? "a set" : `${sets} sets`} priced as parts when sent`}
-			</span>
-			<span className="font-semibold tabular-nums">{formatMoney(total)}</span>
-		</div>
+		<>
+			{editable && (
+				<ProductPicker
+					ref={picker}
+					purchaseOrderId={po.id}
+					sent={!draft}
+					busy={busy}
+					onPick={pick}
+				/>
+			)}
+			<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
+				<span className="text-muted-foreground">
+					{formatCount(ordered)} {ordered === 1 ? "unit" : "units"}
+					{unpriced > 0 && `, ${unpriced} without a cost`}
+					{sets > 0 &&
+						`, plus ${sets === 1 ? "a set" : `${sets} sets`} priced as parts when sent`}
+				</span>
+				{changed > 0 && sentTotal !== total && (
+					<span className="text-muted-foreground tabular-nums">
+						Sent as {formatMoney(sentTotal)}
+					</span>
+				)}
+				<span className="font-semibold tabular-nums">{formatMoney(total)}</span>
+			</div>
+		</>
 	);
 
-	useHotkeys({ Escape: () => navigate({ to: "/purchasing" }) });
+	useHotkeys({
+		Escape: () => navigate({ to: "/purchasing" }),
+		"/": (e) => {
+			if (!editable) return;
+			e.preventDefault();
+			picker.current?.focus();
+		},
+	});
+
+	async function pick(m: PurchaseOrderMatch) {
+		if (m.lineId !== null) {
+			toast(`${m.sku} is already on this PO`);
+			setFocus({ lineId: m.lineId, nonce: Date.now() });
+			return true;
+		}
+		const r = await run(
+			() =>
+				addProductToPurchaseOrder({
+					data: { purchaseOrderId: po.id, productId: m.productId },
+				}),
+			(r) =>
+				!r.added
+					? `${m.sku} is already on this PO`
+					: draft
+						? `Added ${m.sku}`
+						: `Added ${m.sku}. The supplier isn't told.`,
+		);
+		if (!r) return false;
+		setFocus({ lineId: r.value.lineId, nonce: Date.now() });
+		return true;
+	}
 
 	const send = (email: boolean) =>
 		run(
@@ -144,6 +219,11 @@ function PurchaseOrderPage() {
 								href={`/purchasing/pdf/${po.id}`}
 								target="_blank"
 								rel="noreferrer"
+								title={
+									draft
+										? undefined
+										: "As sent to the supplier, without later changes"
+								}
 							>
 								<FileText />
 								PDF
@@ -200,11 +280,20 @@ function PurchaseOrderPage() {
 					{draft ? (
 						<Card flush>
 							<FrozenBar detail={d} />
-							<LineTable detail={d} lines={d.lines} />
+							{lineTable(d.lines)}
 							{totals}
 						</Card>
 					) : (
 						<>
+							{changed > 0 && (
+								<Banner
+									tone="warning"
+									title={`${changed === 1 ? "1 line" : `${formatCount(changed)} lines`} changed after sending`}
+								>
+									These stay here: the PDF and the supplier still have what was
+									sent.
+								</Banner>
+							)}
 							{/* Like Shopify's unfulfilled and fulfilled cards: a line moves
 							    down once all of it is in. */}
 							{incoming.length > 0 && (
@@ -213,7 +302,7 @@ function PurchaseOrderPage() {
 									title={po.status === "sent" ? "Incoming" : "Not received"}
 									aside={`${incoming.length} ${incoming.length === 1 ? "line" : "lines"}`}
 								>
-									<LineTable detail={d} lines={incoming} />
+									{lineTable(incoming)}
 									{arrived.length === 0 && totals}
 								</Card>
 							)}
@@ -223,13 +312,13 @@ function PurchaseOrderPage() {
 									title="Received"
 									aside={`${arrived.length} ${arrived.length === 1 ? "line" : "lines"}`}
 								>
-									<LineTable detail={d} lines={arrived} />
+									{lineTable(arrived)}
 									{totals}
 								</Card>
 							)}
 							{d.lines.length === 0 && (
 								<Card flush>
-									<LineTable detail={d} lines={d.lines} />
+									{lineTable(d.lines)}
 									{totals}
 								</Card>
 							)}
@@ -452,18 +541,43 @@ function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 
 type Line = PurchaseOrderDetail["lines"][number];
 
+type LineFocus = { lineId: number; nonce: number };
+
+// A line that differs from what the supplier was sent, or was added after.
+// A draft has sent nothing, so nothing on it has changed.
+function changedSinceSent(l: Line, sent: boolean) {
+	return (
+		sent &&
+		(l.sentQuantity === null ||
+			l.quantity !== l.sentQuantity ||
+			l.unitCost !== l.sentUnitCost)
+	);
+}
+
 // A quantity being dragged, typed, or saved, before the page's data has it.
 type QuantityPreview = { lineId: number; quantity: number };
 
 function LineTable({
 	detail: d,
 	lines,
+	focus,
+	onQuantityDone,
 }: {
 	detail: PurchaseOrderDetail;
 	lines: Line[];
+	focus: LineFocus | null;
+	// A quantity opened by focus is done; enter says it was left with Enter.
+	onQuantityDone: (enter: boolean) => void;
 }) {
 	const draft = d.order.status === "draft";
 	const receiving = d.order.status === "sent";
+	const editable = d.order.status !== "cancelled";
+	const wasSent = d.order.sentAt !== null;
+	// The focused line scrolls into view.
+	const focusedRow = useRef<HTMLTableRowElement>(null);
+	useEffect(() => {
+		if (focus) focusedRow.current?.scrollIntoView({ block: "nearest" });
+	}, [focus]);
 	const [preview, setPreview] = useState<QuantityPreview | null>(null);
 	// Each line only sets or clears its own preview.
 	const previewFor = (lineId: number) => (quantity: number | null) =>
@@ -478,7 +592,7 @@ function LineTable({
 		return (
 			<p className="px-4 py-6 text-center text-muted-foreground">
 				{draft
-					? "Nothing on this PO yet. Add a product by SKU below."
+					? "Nothing on this PO yet. Add a product below."
 					: "Nothing on this PO."}
 			</p>
 		);
@@ -490,7 +604,7 @@ function LineTable({
 			<table
 				className={cn(
 					"w-full [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap",
-					!draft && "min-w-[52rem] table-fixed",
+					!draft && "min-w-[54rem] table-fixed",
 				)}
 			>
 				{!draft && (
@@ -498,7 +612,7 @@ function LineTable({
 						<col />
 						<col className="w-24" />
 						<col className="w-24" />
-						<col className="w-14" />
+						<col className="w-24" />
 						<col className="w-24" />
 						<col className="w-24" />
 						<col className="w-56" />
@@ -529,7 +643,17 @@ function LineTable({
 				<tbody>
 					{lines.map((l) => (
 						<Fragment key={l.id}>
-							<tr className="border-t first:border-t-0">
+							<tr
+								ref={focus?.lineId === l.id ? focusedRow : undefined}
+								className={cn(
+									"border-t transition-colors first:border-t-0",
+									focus?.lineId === l.id && "bg-info-surface",
+									// Nothing is coming: kept to show the supplier didn't send it.
+									l.quantity === 0 &&
+										l.received === 0 &&
+										"text-muted-foreground",
+								)}
+							>
 								<td className="w-full px-4 py-2 whitespace-normal!">
 									<div
 										className={cn(
@@ -557,6 +681,12 @@ function LineTable({
 											<div className="text-xs text-muted-foreground">
 												{l.sku}
 												{l.kind === "bundle" && " · Set, sent as its parts"}
+												{wasSent && l.sentQuantity === null && (
+													<span className="text-warning-text">
+														{" "}
+														· Added after sending
+													</span>
+												)}
 											</div>
 										</div>
 									</div>
@@ -608,16 +738,24 @@ function LineTable({
 									/>
 								</td>
 								<td className="px-3 py-2 text-right font-semibold tabular-nums">
-									{draft ? (
+									{editable ? (
 										<QuantityField
 											key={`q${l.quantity}`}
 											line={l}
 											purchaseOrderId={d.order.id}
+											draft={draft}
+											open={focus?.lineId === l.id ? focus.nonce : null}
+											onDone={onQuantityDone}
 											onPreview={previewFor(l.id)}
 										/>
 									) : (
 										formatCount(l.quantity)
 									)}
+									<WasSent
+										line={l}
+										shows={l.sentQuantity !== l.quantity}
+										text={`sent ${formatCount(l.sentQuantity ?? 0)}`}
+									/>
 								</td>
 								{draft && (
 									<td className="px-3 py-2">
@@ -651,11 +789,20 @@ function LineTable({
 								<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
 									{l.kind === "bundle" ? (
 										<span className="text-muted-foreground">As parts</span>
-									) : draft ? (
-										<PriceField line={l} purchaseOrderId={d.order.id} />
+									) : editable ? (
+										<PriceField
+											line={l}
+											purchaseOrderId={d.order.id}
+											draft={draft}
+										/>
 									) : (
 										formatMoney(l.unitCost)
 									)}
+									<WasSent
+										line={l}
+										shows={l.sentUnitCost !== l.unitCost}
+										text={`sent ${formatMoney(l.sentUnitCost)}`}
+									/>
 								</td>
 								<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
 									{l.unitCost === null
@@ -664,7 +811,9 @@ function LineTable({
 								</td>
 								{!draft && (
 									<td className="px-4 py-2 text-right whitespace-nowrap">
-										{receiving && l.received < l.quantity ? (
+										{l.quantity === 0 && l.received === 0 ? (
+											<Badge>None coming</Badge>
+										) : receiving && l.received < l.quantity ? (
 											<ReceiveField line={l} />
 										) : (
 											<Badge
@@ -681,6 +830,28 @@ function LineTable({
 					))}
 				</tbody>
 			</table>
+		</div>
+	);
+}
+
+// Under a sent line's quantity or cost, when it has changed since: what the
+// supplier was sent, which is what the PDF still shows.
+function WasSent({
+	line,
+	shows,
+	text,
+}: {
+	line: Line;
+	shows: boolean;
+	text: string;
+}) {
+	if (line.sentQuantity === null || !shows) return null;
+	return (
+		<div
+			className="text-xs font-normal text-warning-text"
+			title="What the supplier was sent. The PDF still shows this."
+		>
+			{text}
 		</div>
 	);
 }
@@ -776,17 +947,27 @@ const field =
 const quantityBox =
 	"h-9 w-16 rounded-lg border border-transparent bg-surface px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none";
 
-// A draft line's quantity. Click to type a number, or drag sideways for the
-// number line. 0 takes the line off, with Undo.
+// A line's quantity. Click to type a number, or drag sideways for the
+// number line. On a draft 0 takes the line off, with Undo. On a sent PO it's
+// a change the supplier isn't told about, also with Undo; 0 there means none
+// are coming.
 // onPreview gets the quantity while it's dragged, typed, or saving, and null
-// once the page shows the real one.
+// once the page shows the real one. `open` (a nonce) opens it for typing, and
+// finishing calls onDone.
 function QuantityField({
 	line,
 	purchaseOrderId,
+	draft,
+	open,
+	onDone,
 	onPreview,
 }: {
 	line: Line;
 	purchaseOrderId: number;
+	draft: boolean;
+	open: number | null;
+	// enter: it was left with Enter, so go on to the next product.
+	onDone: (enter: boolean) => void;
 	onPreview: (quantity: number | null) => void;
 }) {
 	const { run } = useAction();
@@ -794,10 +975,33 @@ function QuantityField({
 	const [typing, setTyping] = useState(false);
 	const [text, setText] = useState("");
 	const [saving, setSaving] = useState<number | null>(null);
+	// Opened by `open`, so Enter goes on to the next product.
+	const opened = useRef(false);
+	useEffect(() => {
+		if (open === null) return;
+		opened.current = true;
+		setText("");
+		setTyping(true);
+	}, [open]);
 
 	async function save(quantity: number) {
 		if (quantity === line.quantity) return;
 		setSaving(quantity);
+		if (!draft) {
+			const r = await run(() =>
+				amendPurchaseLine({ data: { lineId: line.id, quantity } }),
+			);
+			setSaving(null);
+			if (r)
+				amended({
+					line,
+					result: r.value,
+					summary: `${line.sku} now ${formatCount(quantity)}, was ${formatCount(line.quantity)}`,
+					purchaseOrderId,
+					reload: () => router.invalidate(),
+				});
+			return;
+		}
 		// run resolves after the page reloads, so the real quantity is in.
 		const r = await run(() =>
 			setLine({
@@ -840,8 +1044,15 @@ function QuantityField({
 		return () => report.current(null);
 	}, [previewing]);
 
+	// Set by Enter just before it leaves the field.
+	const entered = useRef(false);
 	function finishTyping() {
 		setTyping(false);
+		// Once done, `open` must not reopen it when the saved quantity
+		// remounts the field.
+		if (opened.current) onDone(entered.current);
+		entered.current = false;
+		opened.current = false;
 		const value = text.trim();
 		if (value === "") return;
 		const n = Number(value);
@@ -864,7 +1075,10 @@ function QuantityField({
 				onChange={(e) => setText(e.target.value)}
 				onBlur={finishTyping}
 				onKeyDown={(e) => {
-					if (e.key === "Enter") e.currentTarget.blur();
+					if (e.key === "Enter") {
+						entered.current = true;
+						e.currentTarget.blur();
+					}
 					if (e.key === "Escape") {
 						setText("");
 						e.stopPropagation();
@@ -1004,15 +1218,64 @@ function InlineField({
 	);
 }
 
-// A draft line's cost per unit. Empty means no cost yet.
+// Says what a change to a sent line did, that the supplier isn't told, and
+// offers to put it back. A line added after sending and set to 0 comes off,
+// so its undo adds it again.
+function amended({
+	line,
+	result,
+	summary,
+	purchaseOrderId,
+	reload,
+}: {
+	line: Line;
+	result: Awaited<ReturnType<typeof amendPurchaseLine>>;
+	summary: string;
+	purchaseOrderId: number;
+	reload: () => Promise<void>;
+}) {
+	const { was } = result;
+	const undo = async () => {
+		try {
+			const lineId = result.removed
+				? (
+						await addProductToPurchaseOrder({
+							data: { purchaseOrderId, productId: line.productId },
+						})
+					).lineId
+				: line.id;
+			await amendPurchaseLine({
+				data: { lineId, quantity: was.quantity, unitCost: was.unitCost },
+			});
+		} catch (err) {
+			toast.error(errorText(err));
+		}
+		await reload();
+	};
+	const action = { label: "Undo", onClick: undo };
+	if (result.removed)
+		toast(`Took ${line.sku} off. The supplier isn't told.`, { action });
+	else if (result.receivedAtOldCost)
+		toast.warning(
+			`${summary}. What already arrived keeps the old cost. The supplier isn't told.`,
+			{ action, duration: 10_000 },
+		);
+	else toast(`${summary}. The supplier isn't told.`, { action });
+}
+
+// A line's cost per unit. Empty means no cost yet. On a sent PO it's a change
+// the supplier isn't told about.
 function PriceField({
 	line,
 	purchaseOrderId,
+	draft,
 }: {
 	line: Line;
 	purchaseOrderId: number;
+	draft: boolean;
 }) {
 	const { run } = useAction();
+	const router = useRouter();
 	return (
 		<InlineField
 			shown={formatMoney(line.unitCost)}
@@ -1028,13 +1291,28 @@ function PriceField({
 					toast.error(`"${text}" isn't a cost`);
 					return false;
 				}
+				const unitCost = text === "" ? null : n;
+				if (!draft) {
+					const r = await run(() =>
+						amendPurchaseLine({ data: { lineId: line.id, unitCost } }),
+					);
+					if (r)
+						amended({
+							line,
+							result: r.value,
+							summary: `${line.sku} now ${formatMoney(unitCost)}, was ${formatMoney(line.unitCost)}`,
+							purchaseOrderId,
+							reload: () => router.invalidate(),
+						});
+					return r !== null;
+				}
 				const r = await run(() =>
 					setLine({
 						data: {
 							purchaseOrderId,
 							productId: line.productId,
 							quantity: line.quantity,
-							unitCost: text === "" ? null : n,
+							unitCost,
 						},
 					}),
 				);
@@ -1141,48 +1419,28 @@ function ReceiveField({ line }: { line: Line }) {
 	);
 }
 
-// Adds a product by SKU, with the catalog as suggestions.
-function AddLine({ purchaseOrderId }: { purchaseOrderId: number }) {
-	const { busy, run } = useAction();
-	const [sku, setSku] = useState("");
-	const [index, setIndex] = useState<Awaited<
-		ReturnType<typeof listProductIndex>
-	> | null>(null);
+type Amendment = PurchaseOrderDetail["amendments"][number];
 
-	return (
-		<form
-			className="mr-auto flex items-center gap-1.5"
-			onSubmit={async (e) => {
-				e.preventDefault();
-				const value = sku.trim();
-				if (!value) return;
-				const r = await run(
-					() => addLineBySku({ data: { purchaseOrderId, sku: value } }),
-					() => `Added ${value}`,
-				);
-				if (r) setSku("");
-			}}
-		>
-			<input
-				value={sku}
-				list="po-skus"
-				placeholder="Add a SKU"
-				onFocus={() => index ?? listProductIndex().then(setIndex)}
-				onChange={(e) => setSku(e.target.value)}
-				className="h-8 w-44 rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
-			/>
-			<datalist id="po-skus">
-				{index?.map((p) => (
-					<option key={p.sku} value={p.sku}>
-						{p.variantName ? `${p.name} (${p.variantName})` : p.name}
-					</option>
-				))}
-			</datalist>
-			<Button type="submit" size="sm" variant="outline" disabled={busy || !sku}>
-				Add
-			</Button>
-		</form>
-	);
+function amendmentText(a: Amendment, name: string) {
+	const was = formatCount(a.quantityBefore ?? 0);
+	const now = formatCount(a.quantityAfter ?? 0);
+	switch (a.kind) {
+		case "added":
+			return `Added ${now} × ${name} after sending`;
+		case "removed":
+			return `Took ${name} off`;
+		case "quantity":
+			return a.quantityAfter === 0
+				? `None of ${name} coming, was ${was}`
+				: `${name} changed from ${was} to ${now}`;
+		case "cost":
+			return `${name} cost changed from ${formatMoney(a.unitCostBefore)} to ${formatMoney(a.unitCostAfter)}`;
+	}
+}
+
+// Marks a timeline entry as a change kept here, never sent.
+function NotSent({ children }: { children: ReactNode }) {
+	return <span className="text-warning-text"> · {children}</span>;
 }
 
 type TimelineEvent = {
@@ -1223,6 +1481,28 @@ function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 					{line?.variantName && (
 						<span className="text-muted-foreground"> {line.variantName}</span>
 					)}
+					{r.quantityBefore !== null && r.quantityAfter !== null && (
+						<NotSent>
+							{r.quantityBefore === 0
+								? "not on the PO, added"
+								: r.quantityAfter > r.quantityBefore
+									? `more than the ${formatCount(r.quantityBefore)} expected, kept`
+									: `that's all they sent, of ${formatCount(r.quantityBefore)}`}
+						</NotSent>
+					)}
+				</>
+			),
+		});
+	}
+	for (const a of d.amendments) {
+		const name = a.variantName ? `${a.name} (${a.variantName})` : a.name;
+		events.push({
+			key: `a${a.id}`,
+			at: new Date(a.createdAt),
+			body: (
+				<>
+					{amendmentText(a, name)}
+					<NotSent>supplier not told</NotSent>
 				</>
 			),
 		});
