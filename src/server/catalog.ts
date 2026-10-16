@@ -27,10 +27,13 @@ import {
 	requestCounts,
 	undoBatch,
 } from "#/inventory/ledger";
+import { soldSince } from "#/inventory/sales";
 import {
+	defaultMinStock,
+	defaultRanges,
+	setDefaultMinStock,
 	setProductStockRange,
-	setStockDefaults,
-	stockDefaults,
+	stockRanges,
 } from "#/inventory/stock-range";
 import {
 	applyListingsToOrders,
@@ -40,6 +43,7 @@ import {
 import { purchaseOrderOfBatch } from "#/purchasing/orders";
 import {
 	aItemsAtRisk,
+	DEMAND_DAYS,
 	draftLines,
 	reorderNeeds,
 	unitsOnOrder,
@@ -78,42 +82,67 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
 			.orderBy(products.name, products.variantName);
 		const ranked = abcClasses(db);
-		const [available, onHandRows, filing, abc, onOrder, drafts, needs] =
-			await Promise.all([
-				ownedLocationIds().then((owned) =>
-					getAvailability(
-						db,
-						rows.map((r) => r.id),
-						owned,
-					),
+		const ids = rows.map((r) => r.id);
+		const [
+			available,
+			onHandRows,
+			filing,
+			abc,
+			onOrder,
+			drafts,
+			needs,
+			shelves,
+			ranges,
+			sold,
+		] = await Promise.all([
+			ownedLocationIds().then((owned) => getAvailability(db, ids, owned)),
+			db
+				.select({
+					productId: stockLevels.productId,
+					onHand: sql<number>`sum(${stockLevels.onHand})::int`,
+				})
+				.from(stockLevels)
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(eq(locations.kind, "owned"))
+				.groupBy(stockLevels.productId),
+			db
+				.select({
+					productId: listings.productId,
+					tags: listings.tags,
+					productType: listings.productType,
+					vendor: listings.vendor,
+					status: listings.status,
+				})
+				.from(listings)
+				.innerJoin(stores, eq(stores.id, listings.storeId))
+				.where(
+					and(eq(stores.channel, "shopify"), isNotNull(listings.productId)),
 				),
-				db
-					.select({
-						productId: stockLevels.productId,
-						onHand: sql<number>`sum(${stockLevels.onHand})::int`,
-					})
-					.from(stockLevels)
-					.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-					.where(eq(locations.kind, "owned"))
-					.groupBy(stockLevels.productId),
-				db
-					.select({
-						productId: listings.productId,
-						tags: listings.tags,
-						productType: listings.productType,
-						vendor: listings.vendor,
-						status: listings.status,
-					})
-					.from(listings)
-					.innerJoin(stores, eq(stores.id, listings.storeId))
-					.where(
-						and(eq(stores.channel, "shopify"), isNotNull(listings.productId)),
-					),
-				ranked,
-				unitsOnOrder(db),
-				draftLines(db),
-				ranked.then((abc) => reorderNeeds(db, new Date(), abc)),
-			]);
+			ranked,
+			unitsOnOrder(db),
+			draftLines(db),
+			ranked.then((abc) => reorderNeeds(db, new Date(), abc)),
+			// Counts across our own shelves: the oldest, null when any shelf
+			// was never counted, and whether one is waiting to be counted.
+			db
+				.select({
+					productId: stockLevels.productId,
+					oldest:
+						sql<Date | null>`case when bool_or(${stockLevels.lastCountedAt} is null) then null else min(${stockLevels.lastCountedAt}) end`.mapWith(
+							(v: string | Date | null) => (v === null ? null : new Date(v)),
+						),
+					requested: sql<boolean>`bool_or(${countDue})`,
+				})
+				.from(stockLevels)
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(eq(locations.kind, "owned"))
+				.groupBy(stockLevels.productId),
+			ranked.then((abc) => stockRanges(db, ids, abc)),
+			soldSince(db, new Date(Date.now() - DEMAND_DAYS * 86_400_000), {
+				includeFba: false,
+			}),
+		]);
+		const counted = new Map(shelves.map((s) => [s.productId, s]));
 		const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
 		const need = new Map(needs.map((n) => [n.productId, n]));
 		const shopify = shopifyFiling(filing);
@@ -122,6 +151,9 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				const s = shopify.get(r.id);
 				const c = abc.classes.get(r.id);
 				const n = need.get(r.id);
+				const range = ranges.get(r.id);
+				// stockRanges answers for every product it's asked about.
+				if (!range) throw new Error(`No stock range for ${r.sku}`);
 				return {
 					...r,
 					// Our own type wins; Shopify's fills in where we have none.
@@ -147,6 +179,13 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 					reorder: n
 						? { quantity: n.quantity, unit: n.unit, packSize: n.packSize }
 						: null,
+					// How much we like to keep, its own or the defaults.
+					range,
+					// The oldest count across our shelves; null if any never was.
+					lastCountedAt: counted.get(r.id)?.oldest ?? null,
+					countRequested: counted.get(r.id)?.requested ?? false,
+					// Units a day over the reorder window, as reorder sizes them.
+					dailyDemand: (sold.get(r.id) ?? 0) / DEMAND_DAYS,
 				};
 			}),
 			abcDays: abc.days,
@@ -707,16 +746,27 @@ export const setInsureWhenShipped = createServerFn({ method: "POST" })
 			.where(eq(products.sku, data.sku));
 	});
 
-// The stock range products use until they get their own.
-export const getStockDefaults = createServerFn({ method: "GET" }).handler(
-	async () => stockDefaults(getDb()),
+// The min products use until they get their own range.
+export const getDefaultMinStock = createServerFn({ method: "GET" }).handler(
+	async () => defaultMinStock(getDb()),
 );
 
-const range = type({ min: "number.integer >= 0", max: "number.integer > 0" });
+export const saveDefaultMinStock = createServerFn({ method: "POST" })
+	.validator(type({ min: "number.integer >= 0" }))
+	.handler(async ({ data }) => setDefaultMinStock(getDb(), data.min));
 
-export const saveStockDefaults = createServerFn({ method: "POST" })
-	.validator(range)
-	.handler(async ({ data }) => setStockDefaults(getDb(), data));
+// The range a product falls back on: min from settings, max from its sales.
+export const getDefaultRange = createServerFn({ method: "GET" })
+	.validator(type({ productId: "number.integer > 0" }))
+	.handler(async ({ data }) => {
+		const range = (await defaultRanges(getDb(), [data.productId])).get(
+			data.productId,
+		);
+		if (!range) throw new Error(`No product ${data.productId}`);
+		return range;
+	});
+
+const range = type({ min: "number.integer >= 0", max: "number.integer > 0" });
 
 // range null puts the product back on the defaults.
 export const saveProductStockRange = createServerFn({ method: "POST" })

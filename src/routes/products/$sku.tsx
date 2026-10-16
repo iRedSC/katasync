@@ -25,8 +25,8 @@ import { channelName, formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 import {
+	getDefaultRange,
 	getProductDetail,
-	getStockDefaults,
 	type ProductDetail,
 	saveProductStockRange,
 	setInsureWhenShipped,
@@ -36,11 +36,11 @@ import { getProductSupplier } from "#/server/purchasing";
 export const Route = createFileRoute("/products/$sku")({
 	loader: async ({ params }) => {
 		const detail = await getProductDetail({ data: { sku: params.sku } });
-		const [supplier, stockDefaults] = await Promise.all([
+		const [supplier, defaultRange] = await Promise.all([
 			getProductSupplier({ data: { productId: detail.product.id } }),
-			getStockDefaults(),
+			getDefaultRange({ data: { productId: detail.product.id } }),
 		]);
-		return { ...detail, supplier, stockDefaults };
+		return { ...detail, supplier, defaultRange };
 	},
 	component: ProductPage,
 });
@@ -229,7 +229,7 @@ function ProductPage() {
 											? { min: p.minStock, max: p.maxStock }
 											: null
 									}
-									defaults={d.stockDefaults}
+									defaults={d.defaultRange}
 									onSave={(range) =>
 										saveProductStockRange({ data: { productId: p.id, range } })
 									}

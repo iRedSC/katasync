@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	countLog,
 	movements,
 	productComponents,
 	products,
@@ -446,7 +447,16 @@ export async function recordCount(
 				),
 			);
 		const delta = input.counted - level.onHand;
-		if (delta === 0) return { delta, onHand: level.onHand, batchId: null };
+		const log = {
+			productId: input.productId,
+			locationId: input.locationId,
+			expected: level.onHand,
+			counted: input.counted,
+		};
+		if (delta === 0) {
+			await tx.insert(countLog).values({ ...log, countedAt: sql`now()` });
+			return { delta, onHand: level.onHand, batchId: null };
+		}
 		const result = await postMovements(tx, {
 			note: input.note,
 			lines: [
@@ -464,6 +474,9 @@ export async function recordCount(
 			locationId: input.locationId,
 			previousCountedAt: level.lastCountedAt,
 		});
+		await tx
+			.insert(countLog)
+			.values({ ...log, countedAt: sql`now()`, batchId: result.batchId });
 		return {
 			delta,
 			onHand: result.levels[0].onHand,

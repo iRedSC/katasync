@@ -4,16 +4,16 @@ import { toast } from "sonner";
 import { DevicesCard } from "#/components/devices-card";
 import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
-import { StockRangeForm } from "#/components/stock-range-form";
+import { MinStockForm } from "#/components/stock-range-form";
 import { TokensCard } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
 import { channelNames } from "#/lib/format";
 import { listDevices, listTokens } from "#/server/auth";
 import {
-	getStockDefaults,
+	getDefaultMinStock,
 	listLocations,
 	listStores,
-	saveStockDefaults,
+	saveDefaultMinStock,
 	setPrimaryStore,
 } from "#/server/catalog";
 import {
@@ -31,7 +31,7 @@ import {
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
-		const [locations, stores, boxes, units, devices, tokens, stockDefaults] =
+		const [locations, stores, boxes, units, devices, tokens, minStock] =
 			await Promise.all([
 				listLocations(),
 				listStores(),
@@ -39,9 +39,9 @@ export const Route = createFileRoute("/settings")({
 				listPurchaseUnits(),
 				listDevices(),
 				listTokens(),
-				getStockDefaults(),
+				getDefaultMinStock(),
 			]);
-		return { locations, stores, boxes, units, devices, tokens, stockDefaults };
+		return { locations, stores, boxes, units, devices, tokens, minStock };
 	},
 	component: Settings,
 });
@@ -52,7 +52,7 @@ const channels = Object.entries(channelNames).map(([id, name]) => ({
 }));
 
 function Settings() {
-	const { locations, stores, boxes, units, devices, tokens, stockDefaults } =
+	const { locations, stores, boxes, units, devices, tokens, minStock } =
 		Route.useLoaderData();
 	return (
 		<Page title="Settings" width="narrow">
@@ -103,16 +103,15 @@ function Settings() {
 			<Boxes boxes={boxes} />
 			<Units units={units} />
 			<Card title="Stock range">
-				<StockRangeForm
-					value={stockDefaults}
-					onSave={(range) =>
-						// Without defaults to fall back on, the form never saves null.
-						range ? saveStockDefaults({ data: range }) : Promise.resolve()
-					}
+				<MinStockForm
+					value={minStock}
+					onSave={(min) => saveDefaultMinStock({ data: { min } })}
 				/>
 				<p className="mt-2 text-muted-foreground">
-					For products without their own, set on the product's page. The on hand
-					ring on a draft PO fills from min to max.
+					For products without their own range, set on the product's page. Their
+					max comes from their sales: what a reorder tops them up to (lead time,
+					the supplier's cover, and spare stock for A items), at least 5. The on
+					hand ring on a draft PO fills from min to max.
 				</p>
 			</Card>
 			<LabelPrintingCard />

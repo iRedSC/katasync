@@ -223,6 +223,38 @@ export const stockCounts = pgTable("stock_counts", {
 	previousCountedAt: timestamp({ withTimezone: true }),
 });
 
+// Every shelf count, matched or not: what the system expected and what was
+// on the shelf. stock_counts only holds counts that moved stock (to undo
+// them); this keeps the clean ones too, so drift can be told from noise
+// ("off 3 of the last 4 counts" rather than "off once"). batchId is the
+// correcting movement batch, null when the count matched. Written only by
+// recordCount in src/inventory/ledger.ts. Read through the count_history view,
+// which also marks counts that were undone.
+export const countLog = pgTable(
+	"count_log",
+	{
+		id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+		productId: integer()
+			.notNull()
+			.references(() => products.id),
+		locationId: integer()
+			.notNull()
+			.references(() => locations.id),
+		countedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		expected: integer().notNull(),
+		counted: integer().notNull(),
+		batchId: uuid().unique(),
+	},
+	(t) => [
+		index("count_log_product_idx").on(t.productId, t.countedAt),
+		// A batch is posted exactly when the count was off.
+		check(
+			"count_log_batch_when_off",
+			sql`(${t.batchId} is null) = (${t.expected} = ${t.counted})`,
+		),
+	],
+);
+
 export const channel = pgEnum("channel", [
 	"shopify",
 	"amazon",
@@ -873,6 +905,20 @@ export const salesUnits = pgView("sales_units", {
 	units: integer().notNull(),
 }).existing();
 
+// count_log with the drift worked out and undone counts marked, defined in
+// the count log migration. Drift is counted minus expected.
+export const countHistory = pgView("count_history", {
+	id: bigint({ mode: "number" }).notNull(),
+	productId: integer().notNull(),
+	sku: text().notNull(),
+	locationId: integer().notNull(),
+	countedAt: timestamp({ withTimezone: true }).notNull(),
+	expected: integer().notNull(),
+	counted: integer().notNull(),
+	drift: integer().notNull(),
+	undone: boolean().notNull(),
+}).existing();
+
 // Every change made through /mcp: which token, which tool, what it was asked,
 // and how it went. Shown on Diagnostics, so a change Claude made can be found.
 // Reads aren't kept. Written by src/routes/mcp.ts.
@@ -908,15 +954,12 @@ export const settings = pgTable(
 	"settings",
 	{
 		id: smallint().primaryKey().default(1),
-		// The stock range for products without their own (products.minStock).
-		defaultMinStock: integer().notNull().default(0),
-		defaultMaxStock: integer().notNull().default(20),
+		// The min for products without their own range (products.minStock).
+		// Their max comes from their sales forecast (inventory/stock-range.ts).
+		defaultMinStock: integer().notNull().default(1),
 	},
 	(t) => [
 		check("settings_single", sql`${t.id} = 1`),
-		check(
-			"settings_stock_range",
-			sql`${t.defaultMinStock} >= 0 and ${t.defaultMaxStock} > ${t.defaultMinStock}`,
-		),
+		check("settings_stock_range", sql`${t.defaultMinStock} >= 0`),
 	],
 );

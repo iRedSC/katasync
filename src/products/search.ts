@@ -1,8 +1,8 @@
 // The product search language. Plain words search name, SKU, and type; a
 // word starting with a sigil filters instead:
 //
-//   #tag   @type   $vendor   %status   ^class
-//   #!tag  @!type  $!vendor  %!status  ^!class   exclude
+//   #tag   @type   $vendor   %status   ^class   &supplier   ~trust
+//   #!tag  @!type  $!vendor  %!status  ^!class  &!supplier  ~!trust   exclude
 //   !!word                                       exclude titles containing word
 //   +#tag                                        and, with the last chip on that field
 //   <3  >3  =3  <=3  >=3                         inventory, as the Inventory column shows it
@@ -15,14 +15,20 @@
 // A filter still being typed matches by substring, so the list narrows live.
 // Locking it in (Tab on a suggestion) makes it a chip that matches exactly.
 
-export type Field =
-	| "tag"
-	| "type"
-	| "vendor"
-	| "status"
-	| "class"
-	| "title"
-	| "inventory";
+// Every field, in one list so the URL and database checks (views.ts) can't
+// fall behind the search language.
+export const FIELDS = [
+	"tag",
+	"type",
+	"vendor",
+	"status",
+	"class",
+	"supplier",
+	"trust",
+	"title",
+	"inventory",
+] as const;
+export type Field = (typeof FIELDS)[number];
 
 export type Filter = {
 	field: Field;
@@ -48,6 +54,8 @@ export const SIGILS = {
 	$: "vendor",
 	"%": "status",
 	"^": "class",
+	"&": "supplier",
+	"~": "trust",
 } as const satisfies Record<string, Exclude<Field, "title" | "inventory">>;
 export type ListField = (typeof SIGILS)[keyof typeof SIGILS];
 
