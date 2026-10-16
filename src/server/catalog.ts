@@ -44,7 +44,8 @@ import {
 	aItemsAtRisk,
 	draftLines,
 	loadPlan,
-	reorderNeeds,
+	needsOf,
+	reorderBreakdown,
 	unitsOnOrder,
 } from "#/purchasing/reorder";
 import { setSuppliers } from "#/purchasing/suppliers";
@@ -91,7 +92,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			abc,
 			onOrder,
 			drafts,
-			needs,
+			breakdown,
 			shelves,
 			ranges,
 			planned,
@@ -124,7 +125,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			ranked,
 			unitsOnOrder(db),
 			draftLines(db),
-			reorderNeeds(db, new Date(), plan),
+			reorderBreakdown(db, { plan }),
 			// Counts across our own shelves: the oldest, null when any shelf
 			// was never counted, and whether one is waiting to be counted.
 			db
@@ -152,7 +153,8 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 		]);
 		const counted = new Map(shelves.map((s) => [s.productId, s]));
 		const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
-		const need = new Map(needs.map((n) => [n.productId, n]));
+		const need = new Map(needsOf(breakdown).map((n) => [n.productId, n]));
+		const why = new Map(breakdown.map((b) => [b.line.productId, b.why]));
 		const shopify = shopifyFiling(filing);
 		const listed = rows.map(({ supplierId, supplierName, ...r }) => {
 			const s = shopify.get(r.id);
@@ -193,6 +195,9 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				countRequested: counted.get(r.id)?.requested ?? false,
 				// Units a day over the reorder window, as reorder sizes them.
 				dailyDemand: planned.forecasts.get(r.id)?.dailyDemand ?? 0,
+				// Why reorder wants what it does, for the velocity gauge. Null for
+				// tool sets, which are ordered as their parts.
+				why: r.kind === "bundle" ? null : (why.get(r.id) ?? null),
 			};
 		});
 		// A tool set reads like any product: its class from its own sales

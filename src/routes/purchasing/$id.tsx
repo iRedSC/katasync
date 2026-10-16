@@ -26,6 +26,7 @@ import { SetGauge } from "#/components/set-gauge";
 import { StockRing } from "#/components/stock-ring";
 import { SupplierDialog } from "#/components/supplier-dialog";
 import { Button } from "#/components/ui/button";
+import { VelocityGauge } from "#/components/velocity-gauge";
 import {
 	cityLine,
 	formatCount,
@@ -804,6 +805,14 @@ function LineTable({
 								On hand → After PO
 							</th>
 						)}
+						{draft && (
+							<th
+								className="px-3 py-2 text-center font-medium whitespace-nowrap"
+								title="Units sold a month. Hover for the reorder math"
+							>
+								Velocity
+							</th>
+						)}
 						<th className="px-3 py-2 text-right font-medium">Cost</th>
 						<th className="px-4 py-2 text-right font-medium">Amount</th>
 						{!draft && (
@@ -983,6 +992,11 @@ function LineTable({
 													ordered={items.get(l.productId) ?? 0}
 												/>
 											)}
+										</td>
+									)}
+									{draft && (
+										<td className="px-3 py-2">
+											<VelocityGauge why={l.why} onPo={l} />
 										</td>
 									)}
 									<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
@@ -1213,6 +1227,13 @@ function SetPartRow({
 			<td className="px-3 py-2">
 				{here ? (
 					<AfterPo onHand={p.onHand} range={p.stockRange} ordered={ordered} />
+				) : (
+					<span className="block text-center text-muted-foreground">—</span>
+				)}
+			</td>
+			<td className="px-3 py-2">
+				{here ? (
+					<VelocityGauge why={p.why} />
 				) : (
 					<span className="block text-center text-muted-foreground">—</span>
 				)}
