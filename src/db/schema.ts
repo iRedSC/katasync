@@ -753,6 +753,8 @@ export const purchaseOrderLines = pgTable(
 		// Null on drafts and on lines added after sending.
 		sentQuantity: integer(),
 		sentUnitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
+		// Set by hand on a draft: Update leaves this line's quantity alone.
+		locked: boolean().notNull().default(false),
 	},
 	(t) => [
 		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),

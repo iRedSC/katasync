@@ -11,6 +11,8 @@ import {
 	Copy,
 	ExternalLink,
 	FileText,
+	Lock,
+	LockOpen,
 	Mail,
 	PackageCheck,
 	Pencil,
@@ -53,6 +55,7 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { ids, optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { wantsMore } from "#/purchasing/changes";
 import { cancelledOnList } from "#/purchasing/list-patches";
 import {
 	orderedItems,
@@ -71,6 +74,7 @@ import {
 	closePurchaseOrder,
 	editDraft,
 	getPurchaseOrder,
+	lockLine,
 	type PurchaseOrderDetail,
 	receiveLine,
 	sendPurchaseOrder,
@@ -613,11 +617,33 @@ function SuggestedBar() {
 
 // A draft doesn't change by itself after it's made. When today's
 // suggestions have moved on, this says how, and Update brings them in: new
-// products added, short quantities raised. Nothing is lowered.
+// products added, short quantities raised. Nothing is lowered. The bar keeps
+// its height when up to date so the lines below don't shift.
 function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const { busy, run } = useAction();
-	const { added, raised } = d.changes;
-	if (added + raised === 0) return null;
+	const { added } = d.changes;
+	// Worked out here, so a lock or a new quantity shows at once.
+	const short = d.lines.filter(wantsMore);
+	const raised = short.filter((l) => !l.locked).length;
+	const skipped = short.length - raised;
+	const skippedNote = skipped > 0 && (
+		<span
+			className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground"
+			title="Locked lines that need more. Update leaves them as they are."
+		>
+			<Lock aria-hidden className="size-3" />
+			{formatCount(skipped)} skipped
+		</span>
+	);
+	if (added + raised === 0)
+		return (
+			<div className="flex items-center gap-3 border-b px-4 py-2.5">
+				<p className="min-w-0 flex-1 text-muted-foreground">
+					Up to date{skippedNote}
+				</p>
+				<div aria-hidden className="h-8" />
+			</div>
+		);
 	const parts = [
 		added > 0 && `${formatCount(added)} new`,
 		raised > 0 &&
@@ -628,10 +654,8 @@ function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 			<p className="min-w-0 flex-1">
 				<span className="font-medium">
 					Reorder needs changed: {parts.join(", ")}.
-				</span>{" "}
-				<span className="text-muted-foreground">
-					This draft stays as it is until you update it.
 				</span>
+				{skippedNote}
 			</p>
 			<Button
 				size="sm"
@@ -1139,16 +1163,24 @@ function LineTable({
 											</td>
 											<td className="px-3 py-2 text-right font-semibold tabular-nums">
 												{editable ? (
-													<QuantityField
-														key={`q${l.quantity}`}
-														line={l}
-														purchaseOrderId={d.order.id}
-														at={d.lines.indexOf(l)}
-														draft={draft}
-														open={focus?.lineId === l.id ? focus.nonce : null}
-														onDone={onQuantityDone}
-														onPreview={previewFor(l.id)}
-													/>
+													<div className="group/qty inline-flex items-center gap-1">
+														{draft && (
+															<LockToggle
+																line={l}
+																purchaseOrderId={d.order.id}
+															/>
+														)}
+														<QuantityField
+															key={`q${l.quantity}`}
+															line={l}
+															purchaseOrderId={d.order.id}
+															at={d.lines.indexOf(l)}
+															draft={draft}
+															open={focus?.lineId === l.id ? focus.nonce : null}
+															onDone={onQuantityDone}
+															onPreview={previewFor(l.id)}
+														/>
+													</div>
 												) : (
 													formatCount(l.quantity)
 												)}
@@ -1733,6 +1765,60 @@ const field =
 // glance.
 const quantityBox =
 	"h-9 w-16 rounded-lg border border-transparent bg-surface px-2 text-right text-[0.9375rem] font-semibold tabular-nums outline-none";
+
+// Locks a draft line's quantity so Update leaves it alone. Shows only while
+// the quantity is hovered or focused, or once it's locked, so the column
+// stays quiet. It takes its space either way, so nothing shifts.
+function LockToggle({
+	line,
+	purchaseOrderId,
+}: {
+	line: Line;
+	purchaseOrderId: number;
+}) {
+	const { save } = useAction();
+	const locked = line.locked;
+	const Icon = locked ? Lock : LockOpen;
+	return (
+		<button
+			type="button"
+			aria-pressed={locked}
+			aria-label={`${locked ? "Unlock" : "Lock"} ${line.sku}'s quantity`}
+			title={
+				locked
+					? "Locked: Update leaves this quantity alone. Click to unlock."
+					: "Lock, so Update leaves this quantity alone"
+			}
+			onClick={() =>
+				save({
+					label: `${line.sku}'s lock`,
+					patch: patchLines(
+						purchaseOrderId,
+						(l) => l.productId === line.productId,
+						(l) => ({ ...l, locked: !locked }),
+						{ draftEdit: true },
+					),
+					send: () =>
+						lockLine({
+							data: {
+								purchaseOrderId,
+								productId: line.productId,
+								locked: !locked,
+							},
+						}),
+				})
+			}
+			className={cn(
+				"flex size-6 items-center justify-center rounded-md outline-none hover:bg-surface focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
+				locked
+					? "text-foreground"
+					: "text-muted-foreground opacity-0 group-hover/qty:opacity-100 group-focus-within/qty:opacity-100",
+			)}
+		>
+			<Icon aria-hidden className="size-3.5" />
+		</button>
+	);
+}
 
 // A line's quantity. Click to type a number, or drag sideways for the
 // number line. On a draft 0 takes the line off, with Undo. On a sent PO it's

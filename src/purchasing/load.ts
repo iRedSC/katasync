@@ -70,6 +70,7 @@ export async function loadOrder(db: Db, poId: number) {
 			// after sending.
 			sentQuantity: purchaseOrderLines.sentQuantity,
 			sentUnitCost: purchaseOrderLines.sentUnitCost,
+			locked: purchaseOrderLines.locked,
 			received: sql<number>`coalesce(${received.units}, 0)::int`,
 		})
 		.from(purchaseOrderLines)

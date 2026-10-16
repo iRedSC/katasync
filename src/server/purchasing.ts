@@ -32,6 +32,7 @@ import {
 	deleteDraft,
 	draftChanges,
 	draftFromSuggestions,
+	lockDraftLine,
 	markSent,
 	openDraft,
 	openSuggested,
@@ -220,7 +221,9 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				.where(eq(locations.kind, "owned"))
 				.orderBy(locations.name),
 			// On a draft: how today's suggestions differ from it (see draftChanges).
-			// A suggested PO is the suggestion.
+			// The page works out raised and skipped from each line's wants, so
+			// they follow quantities and locks as they change. A suggested PO is
+			// the suggestion.
 			po.order.status === "draft"
 				? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
 						([all, fromSets]) => {
@@ -229,10 +232,10 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 								all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
 								fromSets,
 							);
-							return { added: c.added.length, raised: c.raised.length };
+							return { added: c.added.length, wants: c.wants };
 						},
 					)
-				: { added: 0, raised: 0 },
+				: { added: 0, wants: new Map<number, number>() },
 			listUnits(db).then((all) => all.map((u) => u.name)),
 			leadTimes(db, [po.supplier.id]),
 			// Changes made after sending, for the timeline.
@@ -272,10 +275,13 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 		]);
 		return {
 			leadTime: leadTimeOf(lead, po.supplier.id),
-			changes,
+			changes: { added: changes.added },
 			...po,
 			lines: po.lines.map((l) => ({
 				...l,
+				// Single items today's suggestion wants; null when it doesn't
+				// have the product, or on anything but a draft.
+				wants: changes.wants.get(l.productId) ?? null,
 				onHand: onHand.get(l.productId) ?? 0,
 				// Every line's product has one; ?? only satisfies the Map type.
 				stockRange: ranges.get(l.productId) ?? null,
@@ -341,6 +347,17 @@ export const setLine = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => setDraftLine(getDb(), data));
+
+// Locks a draft line's quantity so Update leaves it alone, or unlocks it.
+export const lockLine = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			purchaseOrderId: "number.integer > 0",
+			productId: "number.integer > 0",
+			locked: "boolean",
+		}),
+	)
+	.handler(async ({ data }) => lockDraftLine(getDb(), data));
 
 // Skips one part of a set on a draft, or orders it again.
 export const skipPartOfSet = createServerFn({ method: "POST" })

@@ -1,0 +1,1 @@
+ALTER TABLE "purchase_order_lines" ADD COLUMN "locked" boolean DEFAULT false NOT NULL;
