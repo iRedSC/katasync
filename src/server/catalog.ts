@@ -197,14 +197,13 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				dailyDemand: (sold.get(r.id) ?? 0) / DEMAND_DAYS,
 			};
 		});
-		// A tool set reads like any product, through its parts: the class of
-		// its most valuable part, counted once all its parts are, ordered from
-		// the supplier of most of them, one at a time once none can be built.
+		// A tool set reads like any product: its class from its own sales
+		// (abc.sets), counted once all its parts are, ordered from the supplier
+		// of most of its parts, one at a time once none can be built.
 		const byId = new Map(listed.map((p) => [p.id, p]));
 		const partsOf = new Map<number, number[]>();
 		for (const c of components)
 			partsOf.set(c.setId, [...(partsOf.get(c.setId) ?? []), c.partId]);
-		const rank = { A: 0, B: 1, C: 2 } as const;
 		return {
 			products: listed.map((p) => {
 				if (p.kind !== "bundle") return p;
@@ -212,15 +211,13 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 					const part = byId.get(id);
 					return part ? [part] : [];
 				});
-				const classes = parts.flatMap((part) => (part.abc ? [part.abc] : []));
 				const counts = parts.map((part) => part.lastCountedAt);
 				const supplier = setSupplier.get(p.id) ?? null;
+				const c = abc.sets.get(p.id);
 				return {
 					...p,
-					abc:
-						classes.length > 0
-							? classes.reduce((a, b) => (rank[b] < rank[a] ? b : a))
-							: null,
+					abc: c?.abc ?? null,
+					abcRank: c?.rank ?? null,
 					lastCountedAt:
 						counts.length === 0 || counts.some((at) => at === null)
 							? null
@@ -406,7 +403,9 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			),
 			abcClasses(db),
 		]);
-		const rank = abc.classes.get(product.id);
+		// Tool sets rank among themselves (see AbcResult.sets).
+		const ranking = product.kind === "bundle" ? abc.sets : abc.classes;
+		const rank = ranking.get(product.id);
 
 		return {
 			product,
@@ -422,7 +421,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			listings: productListings,
 			history,
 			available: availability.get(product.id) ?? 0,
-			abc: rank ? { ...rank, of: abc.classes.size, days: abc.days } : null,
+			abc: rank ? { ...rank, of: ranking.size, days: abc.days } : null,
 			// Where a count could be recorded. One location means nobody has to pick.
 			locations: ownedLocations,
 		};

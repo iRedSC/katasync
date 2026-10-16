@@ -125,6 +125,33 @@ describe("with a database", () => {
 		expect(days).toBe(365);
 	});
 
+	test("ranks tool sets among themselves by their own sales", async () => {
+		const blade = await product("BLADE", 10);
+		const pump = await product("PUMP", 300);
+		const big = await createProduct(db, "BIG", "bundle");
+		const small = await createProduct(db, "SMALL", "bundle");
+		const unpricedSet = await createProduct(db, "NOCOST", "bundle");
+		const noCost = await product("NOCOST-PART", null);
+		await setRecipe(db, big, [
+			{ productId: pump, quantity: 1 },
+			{ productId: blade, quantity: 2 },
+		]);
+		await setRecipe(db, small, [{ productId: blade, quantity: 1 }]);
+		await setRecipe(db, unpricedSet, [{ productId: noCost, quantity: 1 }]);
+
+		await sell(big, 2); // 2 x 320 = 640
+		await sell(small, 20); // 20 x 10 = 200
+		await sell(unpricedSet, 1);
+
+		const { sets, classes, unpriced } = await abcClasses(db, now);
+		expect(sets.get(big)).toMatchObject({ abc: "A", rank: 1, value: 640 });
+		expect(sets.get(small)).toMatchObject({ rank: 2, units: 20 });
+		expect(sets.has(unpricedSet)).toBe(false);
+		expect(classes.has(big)).toBe(false);
+		// The set with a cost-less part, and that part sold through it.
+		expect(unpriced).toBe(2);
+	});
+
 	test("leaves out sold products with no cost, and reports short history", async () => {
 		const priced = await product("PRICED", 2);
 		const unpriced = await product("UNPRICED", null);

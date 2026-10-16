@@ -558,11 +558,11 @@ function Products() {
 														<AbcBadge
 															abc={p.abc}
 															title={
-																p.kind === "bundle"
-																	? "The class of its most valuable part"
-																	: p.abcRank !== null
-																		? `#${formatCount(p.abcRank)} by value`
-																		: "Needs a cost to get a class"
+																p.abcRank === null
+																	? "Needs a cost to get a class"
+																	: p.kind === "bundle"
+																		? `#${formatCount(p.abcRank)} of tool sets by value`
+																		: `#${formatCount(p.abcRank)} by value`
 															}
 														/>
 													</td>
