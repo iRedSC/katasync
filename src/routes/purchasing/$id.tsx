@@ -4,14 +4,14 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { AlertTriangle, FileText, Mail, Smartphone } from "lucide-react";
 import {
-	Fragment,
-	type ReactNode,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
+	AlertTriangle,
+	ArrowRight,
+	FileText,
+	Mail,
+	Smartphone,
+} from "lucide-react";
+import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Banner, Card, Page } from "#/components/page";
@@ -561,12 +561,11 @@ function LineTable({ detail: d }: { detail: PurchaseOrderDetail }) {
 										) : (
 											<div className="flex items-center justify-center gap-1">
 												<StockRing onHand={l.onHand} range={l.stockRange} />
-												<span
-													className="text-faint text-xs"
+												<ArrowRight
+													className="size-4 text-muted-foreground"
+													strokeWidth={2.5}
 													aria-hidden="true"
-												>
-													→
-												</span>
+												/>
 												<StockRing
 													onHand={
 														l.onHand +
