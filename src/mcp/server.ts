@@ -130,6 +130,14 @@ const unitTerms = {
 		.int()
 		.positive()
 		.describe("How many of the product one unit holds; 1 for EACH"),
+	supplier_count: z
+		.number()
+		.int()
+		.positive()
+		.optional()
+		.describe(
+			"How many the supplier says one unit holds, printed on the PO. Defaults to pack_size; differs when their count isn't ours, e.g. their PACK of 5 is one of our product (pack_size 1, supplier_count 5)",
+		),
 	minimum: z
 		.number()
 		.int()
@@ -360,13 +368,22 @@ function registerWriteTools(server: McpServer, db: Db) {
 			},
 			annotations: WRITE,
 		},
-		async ({ po, sku, unit, pack_size, minimum, make_default }) => {
+		async ({
+			po,
+			sku,
+			unit,
+			pack_size,
+			supplier_count,
+			minimum,
+			make_default,
+		}) => {
 			const product = await productBySku(db, sku);
 			await setLineTerms(db, {
 				purchaseOrderId: po,
 				productId: product.id,
 				unit: unit.toUpperCase(),
 				packSize: pack_size,
+				supplierCount: supplier_count ?? pack_size,
 				minimumQuantity: minimum,
 				makeDefault: make_default,
 			});
@@ -453,15 +470,22 @@ function registerWriteTools(server: McpServer, db: Db) {
 			inputSchema: { sku: z.string(), ...unitTerms },
 			annotations: { ...WRITE, idempotentHint: true },
 		},
-		async ({ sku, unit, pack_size, minimum }) => {
+		async ({ sku, unit, pack_size, supplier_count = pack_size, minimum }) => {
 			const product = await productBySku(db, sku);
 			await setPurchaseUnit(db, {
 				productId: product.id,
 				unit: unit.toUpperCase(),
 				packSize: pack_size,
+				supplierCount: supplier_count,
 				minimumQuantity: minimum,
 			});
-			return json({ sku, unit: unit.toUpperCase(), pack_size, minimum });
+			return json({
+				sku,
+				unit: unit.toUpperCase(),
+				pack_size,
+				supplier_count,
+				minimum,
+			});
 		},
 	);
 

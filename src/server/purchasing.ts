@@ -418,6 +418,7 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 				supplierName: suppliers.name,
 				unit: productSuppliers.unit,
 				packSize: productSuppliers.packSize,
+				supplierCount: productSuppliers.supplierCount,
 				cost: productSuppliers.cost,
 				lineId: purchaseOrderLines.id,
 			})
@@ -485,6 +486,7 @@ export const browseForPurchaseOrder = createServerFn({ method: "GET" })
 					supplierSku: productSuppliers.supplierSku,
 					unit: productSuppliers.unit,
 					packSize: productSuppliers.packSize,
+					supplierCount: productSuppliers.supplierCount,
 					cost: productSuppliers.cost,
 					minimumQuantity: productSuppliers.minimumQuantity,
 				})
@@ -589,6 +591,7 @@ export const undoAddToPurchaseOrder = createServerFn({ method: "POST" })
 				id: "number.integer > 0",
 				unit: "string",
 				packSize: "number.integer > 0",
+				supplierCount: "number.integer > 0",
 				minimumQuantity: "number.integer > 0",
 				quantity: "number.integer > 0",
 				unitCost: "number | null",
@@ -699,6 +702,7 @@ export const restoreDraftPurchaseOrder = createServerFn({ method: "POST" })
 				productId: positive,
 				unit: "string",
 				packSize: positive,
+				supplierCount: positive,
 				minimumQuantity: positive,
 				quantity: "number.integer >= 0",
 				unitCost: "number | null",
@@ -805,6 +809,7 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 				cost: productSuppliers.cost,
 				unit: productSuppliers.unit,
 				packSize: productSuppliers.packSize,
+				supplierCount: productSuppliers.supplierCount,
 				minimumQuantity: productSuppliers.minimumQuantity,
 			})
 			.from(productSuppliers)
@@ -817,6 +822,7 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 				quantity: purchaseOrderLines.quantity,
 				unit: purchaseOrderLines.unit,
 				packSize: purchaseOrderLines.packSize,
+				supplierCount: purchaseOrderLines.supplierCount,
 				expectedAt: purchaseOrders.expectedAt,
 			})
 			.from(purchaseOrderLines)
@@ -858,6 +864,7 @@ export const setProductPurchaseUnit = createServerFn({ method: "POST" })
 			productId: "number.integer > 0",
 			unit: "string > 0",
 			packSize: "number.integer > 0",
+			supplierCount: "number.integer > 0",
 			minimumQuantity: "number.integer > 0",
 		}),
 	)
@@ -872,6 +879,7 @@ export const setPurchaseLineTerms = createServerFn({ method: "POST" })
 			productId: "number.integer > 0",
 			unit: "string > 0",
 			packSize: "number.integer > 0",
+			supplierCount: "number.integer > 0",
 			minimumQuantity: "number.integer > 0",
 			makeDefault: "boolean",
 		}),

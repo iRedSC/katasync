@@ -28,7 +28,7 @@ function product(extra: Partial<StockInput> = {}): StockInput {
 	};
 }
 
-const reorder = { quantity: 12, unit: "EACH", packSize: 1 };
+const reorder = { quantity: 12, unit: "EACH", packSize: 1, supplierCount: 1 };
 
 describe("trust", () => {
 	test("a count inside the window vouches for the number", () => {

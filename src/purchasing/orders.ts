@@ -240,6 +240,7 @@ export async function setPartsOf(db: Db, poId: number) {
 			skipped: sql<boolean>`${purchaseOrderSkippedParts.purchaseOrderId} is not null`,
 			unit: sql<string>`coalesce(${partLine.unit}, ${productSuppliers.unit}, 'EACH')`,
 			packSize: sql<number>`coalesce(${partLine.packSize}, ${productSuppliers.packSize}, 1)::int`,
+			supplierCount: sql<number>`coalesce(${partLine.supplierCount}, ${productSuppliers.supplierCount}, 1)::int`,
 			minimumQuantity: sql<number>`coalesce(${partLine.minimumQuantity}, ${productSuppliers.minimumQuantity}, 1)::int`,
 			partLineId: partLine.id,
 			lineCost: partLine.unitCost,
@@ -628,6 +629,7 @@ export async function updateFromSuggestions(
 					productId: l.productId,
 					unit: l.unit,
 					packSize: l.packSize,
+					supplierCount: l.supplierCount,
 					minimumQuantity: l.minimumQuantity,
 					quantity: l.quantity,
 					unitCost: l.unitCost,
@@ -742,6 +744,7 @@ export async function refreshSuggested(db: Db, id: number, now = new Date()) {
 			const terms = {
 				unit: l.unit,
 				packSize: l.packSize,
+				supplierCount: l.supplierCount,
 				minimumQuantity: l.minimumQuantity,
 				quantity: l.quantity,
 				unitCost: l.unitCost,
@@ -754,6 +757,7 @@ export async function refreshSuggested(db: Db, id: number, now = new Date()) {
 			else if (
 				line.unit !== terms.unit ||
 				line.packSize !== terms.packSize ||
+				line.supplierCount !== terms.supplierCount ||
 				line.minimumQuantity !== terms.minimumQuantity ||
 				line.quantity !== terms.quantity ||
 				line.unitCost !== terms.unitCost
@@ -830,6 +834,7 @@ export async function setDraftLine(
 			.select({
 				unit: purchaseOrderLines.unit,
 				packSize: purchaseOrderLines.packSize,
+				supplierCount: purchaseOrderLines.supplierCount,
 				minimumQuantity: purchaseOrderLines.minimumQuantity,
 			})
 			.from(purchaseOrderLines)
@@ -906,6 +911,7 @@ async function newLine(tx: Db, productId: number) {
 			supplierCost: productSuppliers.cost,
 			unit: productSuppliers.unit,
 			packSize: productSuppliers.packSize,
+			supplierCount: productSuppliers.supplierCount,
 			minimumQuantity: productSuppliers.minimumQuantity,
 		})
 		.from(products)
@@ -919,6 +925,7 @@ async function newLine(tx: Db, productId: number) {
 		terms: {
 			unit: product.unit ?? "EACH",
 			packSize,
+			supplierCount: product.supplierCount ?? 1,
 			minimumQuantity: product.minimumQuantity ?? 1,
 		},
 		// A tool set has no price of its own: sending replaces it with its
@@ -958,6 +965,7 @@ const lineFields = {
 	id: purchaseOrderLines.id,
 	unit: purchaseOrderLines.unit,
 	packSize: purchaseOrderLines.packSize,
+	supplierCount: purchaseOrderLines.supplierCount,
 	minimumQuantity: purchaseOrderLines.minimumQuantity,
 	quantity: purchaseOrderLines.quantity,
 	unitCost: purchaseOrderLines.unitCost,
@@ -966,6 +974,7 @@ export type AddedLine = {
 	id: number;
 	unit: string;
 	packSize: number;
+	supplierCount: number;
 	minimumQuantity: number;
 	quantity: number;
 	unitCost: number | null;
@@ -1063,6 +1072,7 @@ export async function removeAddedLine(
 					eq(purchaseOrderLines.purchaseOrderId, input.purchaseOrderId),
 					eq(purchaseOrderLines.unit, line.unit),
 					eq(purchaseOrderLines.packSize, line.packSize),
+					eq(purchaseOrderLines.supplierCount, line.supplierCount),
 					eq(purchaseOrderLines.minimumQuantity, line.minimumQuantity),
 					eq(purchaseOrderLines.quantity, line.quantity),
 					line.unitCost === null
@@ -1480,6 +1490,7 @@ export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 				productId: purchaseOrderLines.productId,
 				unit: purchaseOrderLines.unit,
 				packSize: purchaseOrderLines.packSize,
+				supplierCount: purchaseOrderLines.supplierCount,
 				minimumQuantity: purchaseOrderLines.minimumQuantity,
 				quantity: purchaseOrderLines.quantity,
 				unitCost: purchaseOrderLines.unitCost,
@@ -1523,6 +1534,7 @@ export type DeletedDraft = {
 		productId: number;
 		unit: string;
 		packSize: number;
+		supplierCount: number;
 		minimumQuantity: number;
 		quantity: number;
 		unitCost: number | null;

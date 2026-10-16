@@ -907,10 +907,12 @@ function recommendedLine(
 		supplierSku: r.supplierSku,
 		unit: r.unit,
 		packSize: r.packSize,
+		supplierCount: r.supplierCount,
 		minimumQuantity: r.minimumQuantity,
 		linkSupplierId: supplierId,
 		defaultUnit: r.unit,
 		defaultPackSize: r.packSize,
+		defaultSupplierCount: r.supplierCount,
 		defaultMinimum: r.minimumQuantity,
 		quantity: r.quantity,
 		unitCost: r.kind === "bundle" ? null : r.unitCost,
@@ -933,6 +935,7 @@ function browseLine(row: BrowseRow, id: number, supplierId: number): Line {
 	const t = row.terms;
 	const unit = t?.unit ?? "EACH";
 	const packSize = t?.packSize ?? 1;
+	const supplierCount = t?.supplierCount ?? 1;
 	const minimumQuantity = t?.minimumQuantity ?? 1;
 	return {
 		id,
@@ -947,10 +950,12 @@ function browseLine(row: BrowseRow, id: number, supplierId: number): Line {
 		supplierSku: t?.supplierSku ?? null,
 		unit,
 		packSize,
+		supplierCount,
 		minimumQuantity,
 		linkSupplierId: supplierId,
 		defaultUnit: unit,
 		defaultPackSize: packSize,
+		defaultSupplierCount: supplierCount,
 		defaultMinimum: minimumQuantity,
 		quantity: minimumQuantity,
 		unitCost:
@@ -1251,6 +1256,7 @@ function LineTable({
 																	current: {
 																		unit: l.defaultUnit ?? "EACH",
 																		packSize: l.defaultPackSize ?? 1,
+																		supplierCount: l.defaultSupplierCount ?? 1,
 																		minimumQuantity: l.defaultMinimum ?? 1,
 																	},
 																	saveDefault: (terms) =>

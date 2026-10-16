@@ -323,6 +323,13 @@
       "when": 1792188159970,
       "tag": "0045_line_lock",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1792192845674,
+      "tag": "0046_supplier_count",
+      "breakpoints": true
     }
   ]
 }

@@ -105,19 +105,37 @@ export function channelName(channel: string) {
 	return channelNames[channel] ?? channel;
 }
 
-// What a PO line is ordered in: "EACH", or "CASE of 30" when one unit holds
-// several of the product.
-export function formatUnit(unit: string, packSize: number) {
-	return packSize === 1 ? unit : `${unit} of ${formatCount(packSize)}`;
-}
-
-// "12", or "2 CASE of 30" when the supplier sells in packs.
-export function formatOrderQuantity(q: {
-	quantity: number;
+// How a PO line is ordered in. packSize is how many of the product one unit
+// holds; supplierCount is the count the supplier puts on it, which the PO
+// prints. They differ when the supplier's "PACK of 5" is one of our product.
+export type OrderUnit = {
 	unit: string;
 	packSize: number;
-}) {
-	return q.unit === "EACH"
-		? formatCount(q.quantity)
-		: `${formatCount(q.quantity)} ${formatUnit(q.unit, q.packSize)}`;
+	supplierCount: number;
+};
+
+// The unit as the supplier calls it and the PO prints it: "EACH", or
+// "CASE of 30" when they count several in one.
+export function supplierUnit(t: { unit: string; supplierCount: number }) {
+	return t.supplierCount === 1
+		? t.unit
+		: `${t.unit} of ${formatCount(t.supplierCount)}`;
+}
+
+// The unit for us: supplierUnit, plus what it adds to stock when that isn't
+// the supplier's count, so "PACK of 5" never reads as five of ours.
+export function formatUnit(t: OrderUnit) {
+	return t.supplierCount === t.packSize
+		? supplierUnit(t)
+		: `${supplierUnit(t)} (counts as ${formatCount(t.packSize)})`;
+}
+
+// "12", or "2 CASE of 30" when the supplier sells in packs, or
+// "2 PACK of 5 (counts as 2)" when their count isn't ours.
+export function formatOrderQuantity(q: OrderUnit & { quantity: number }) {
+	if (q.unit === "EACH") return formatCount(q.quantity);
+	const ordered = `${formatCount(q.quantity)} ${supplierUnit(q)}`;
+	return q.supplierCount === q.packSize
+		? ordered
+		: `${ordered} (counts as ${formatCount(q.quantity * q.packSize)})`;
 }

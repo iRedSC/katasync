@@ -186,7 +186,12 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				// What to order today, in the supplier's unit. Null when stock
 				// and what's on order last until a PO sent now would arrive.
 				reorder: n
-					? { quantity: n.quantity, unit: n.unit, packSize: n.packSize }
+					? {
+							quantity: n.quantity,
+							unit: n.unit,
+							packSize: n.packSize,
+							supplierCount: n.supplierCount,
+						}
 					: null,
 				// How much we like to keep, its own or the defaults.
 				range,
@@ -229,7 +234,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 					supplier,
 					reorder:
 						p.available === 0 && supplier
-							? { quantity: 1, unit: "EACH", packSize: 1 }
+							? { quantity: 1, unit: "EACH", packSize: 1, supplierCount: 1 }
 							: null,
 				};
 			}),

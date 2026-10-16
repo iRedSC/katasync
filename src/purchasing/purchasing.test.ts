@@ -6,6 +6,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
+import { formatOrderQuantity } from "#/lib/format";
 import { createProduct, createTestDb } from "#/test/db";
 import { loadOrder, printedLines, supplierRows } from "./load";
 import {
@@ -71,6 +72,7 @@ describe("reorderQuantity", () => {
 		minStock: 0,
 		minimumQuantity: 1,
 		packSize: 1,
+		supplierCount: 1,
 	};
 
 	test("orders once stock won't last until a new PO arrives", () => {
@@ -141,13 +143,19 @@ describe("explainReorder", () => {
 		minStock: 0,
 		minimumQuantity: 1,
 		packSize: 1,
+		supplierCount: 1,
 	};
 	const context = {
 		inStockDays: 90,
 		rank: 0.5,
 		leadTime: { days: 10, from: "supplier" as const, pos: 0 },
 		abc: "B" as const,
-		purchase: { unit: "EACH", packSize: 1, minimumQuantity: 1 },
+		purchase: {
+			unit: "EACH",
+			packSize: 1,
+			supplierCount: 1,
+			minimumQuantity: 1,
+		},
 	};
 
 	test("breaks the aim into parts that add up to it", () => {
@@ -159,10 +167,21 @@ describe("explainReorder", () => {
 	});
 
 	test("orders what reorderQuantity orders, and says why it's rounded", () => {
-		const input = { ...base, onHand: 5, onOrder: 3, packSize: 12 };
+		const input = {
+			...base,
+			onHand: 5,
+			onOrder: 3,
+			packSize: 12,
+			supplierCount: 12,
+		};
 		const why = explainReorder(input, {
 			...context,
-			purchase: { unit: "CASE", packSize: 12, minimumQuantity: 1 },
+			purchase: {
+				unit: "CASE",
+				packSize: 12,
+				supplierCount: 12,
+				minimumQuantity: 1,
+			},
 		});
 		// Aim 34, have 8: short 26, so 3 cases of 12.
 		expect(why.verdict).toEqual({
@@ -276,6 +295,7 @@ async function supply(productId: number, cost: number | null, minimum = 1) {
 	await db.insert(schema.productSuppliers).values({
 		productId,
 		supplierId: canam,
+		supplierCount: 1,
 		cost,
 		minimumQuantity: minimum,
 	});
@@ -405,7 +425,7 @@ describe("reorderBreakdown", () => {
 		const all = await reorderBreakdown(db, { now });
 		const of = (id: number) => all.find((b) => b.line.productId === id);
 		expect(of(blade)?.why).toMatchObject({
-			purchase: { unit: "EACH", packSize: 1 },
+			purchase: { unit: "EACH", packSize: 1, supplierCount: 1 },
 			leadTime: { from: "supplier" },
 			verdict: { kind: "order" },
 		});
@@ -658,7 +678,7 @@ describe("a PO from draft to received", () => {
 		// No price from Canam, so it's the product's own cost.
 		await db
 			.insert(schema.productSuppliers)
-			.values({ productId: handle, supplierId: canam });
+			.values({ productId: handle, supplierId: canam, supplierCount: 1 });
 		// At its min stock, so it isn't suggested by itself.
 		await stock(handle, 1);
 		const set = await createProduct(db, "SET", "bundle");
@@ -706,9 +726,12 @@ describe("a PO from draft to received", () => {
 			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
 			.returning();
 		const handle = await createProduct(db, "HANDLE", "simple");
-		await db
-			.insert(schema.productSuppliers)
-			.values({ productId: handle, supplierId: other, cost: 1 });
+		await db.insert(schema.productSuppliers).values({
+			productId: handle,
+			supplierId: other,
+			supplierCount: 1,
+			cost: 1,
+		});
 		const loose = await createProduct(db, "LOOSE", "simple");
 		const set = await createProduct(db, "SET", "bundle");
 		await setRecipe(db, set, [
@@ -741,9 +764,12 @@ describe("a PO from draft to received", () => {
 			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
 			.returning();
 		const handle = await createProduct(db, "HANDLE", "simple");
-		await db
-			.insert(schema.productSuppliers)
-			.values({ productId: handle, supplierId: other, cost: 1 });
+		await db.insert(schema.productSuppliers).values({
+			productId: handle,
+			supplierId: other,
+			supplierCount: 1,
+			cost: 1,
+		});
 		const set = await createProduct(db, "SET", "bundle");
 		await setRecipe(db, set, [
 			{ productId: blade, quantity: 2 },
@@ -893,6 +919,7 @@ describe("a PO from draft to received", () => {
 			productId: knife,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			minimumQuantity: 1,
 			makeDefault: false,
 		});
@@ -1537,20 +1564,38 @@ describe("buying in packs", () => {
 		// 120 sold in 90 days for 10 + 20 days, plus safety capped at the lead
 		// time's demand (an A item), less 10 on hand: 44 to order.
 		expect(await linesOf(id)).toMatchObject([
-			{ unit: "EACH", packSize: 1, quantity: 44, unitCost: 2 },
+			{
+				unit: "EACH",
+				packSize: 1,
+				supplierCount: 1,
+				quantity: 44,
+				unitCost: 2,
+			},
 		]);
 		await setPurchaseUnit(db, {
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			minimumQuantity: 1,
 		});
 		// 44 blades round up to 4 cases of 12, at 12 × $2.
 		expect(await linesOf(id)).toMatchObject([
-			{ unit: "CASE", packSize: 12, quantity: 4, unitCost: 24 },
+			{
+				unit: "CASE",
+				packSize: 12,
+				supplierCount: 12,
+				quantity: 4,
+				unitCost: 24,
+			},
 		]);
 		const [link] = await db.select().from(schema.productSuppliers);
-		expect(link).toMatchObject({ unit: "CASE", packSize: 12, cost: 24 });
+		expect(link).toMatchObject({
+			unit: "CASE",
+			packSize: 12,
+			supplierCount: 12,
+			cost: 24,
+		});
 		// The draft already has enough, so nothing more is suggested.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
@@ -1563,6 +1608,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			minimumQuantity: 1,
 		});
 		const id = await draftFromSuggestions(db, canam, now);
@@ -1597,6 +1643,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "EACH",
 			packSize: 1,
+			supplierCount: 1,
 			minimumQuantity: 1,
 		});
 		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 3 });
@@ -1604,7 +1651,12 @@ describe("buying in packs", () => {
 
 	test("terms set on one PO stay on that PO unless made the default", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
-		const terms = { unit: "CASE", packSize: 12, minimumQuantity: 2 };
+		const terms = {
+			unit: "CASE",
+			packSize: 12,
+			supplierCount: 12,
+			minimumQuantity: 2,
+		};
 		await setLineTerms(db, {
 			purchaseOrderId: id,
 			productId: blade,
@@ -1615,7 +1667,12 @@ describe("buying in packs", () => {
 			{ ...terms, quantity: 4, unitCost: 24 },
 		]);
 		const [link] = await db.select().from(schema.productSuppliers);
-		expect(link).toMatchObject({ unit: "EACH", packSize: 1, cost: 2 });
+		expect(link).toMatchObject({
+			unit: "EACH",
+			packSize: 1,
+			supplierCount: 1,
+			cost: 2,
+		});
 		// 44 wanted is 4 cases: already enough, though the units differ.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
@@ -1626,6 +1683,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 6,
+			supplierCount: 6,
 			minimumQuantity: 1,
 		});
 		expect((await linesOf(id))[0]).toMatchObject(terms);
@@ -1635,6 +1693,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "PACK",
 			packSize: 4,
+			supplierCount: 4,
 			minimumQuantity: 5,
 			makeDefault: true,
 		});
@@ -1643,6 +1702,7 @@ describe("buying in packs", () => {
 		expect(after).toMatchObject({
 			unit: "PACK",
 			packSize: 4,
+			supplierCount: 4,
 			minimumQuantity: 5,
 			cost: 8,
 		});
@@ -1661,12 +1721,19 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			minimumQuantity: 5,
 			makeDefault: false,
 		});
 		// 44 blades are 4 cases, but the supplier won't sell fewer than 5.
 		expect(await linesOf(id)).toMatchObject([
-			{ unit: "CASE", packSize: 12, quantity: 5, minimumQuantity: 5 },
+			{
+				unit: "CASE",
+				packSize: 12,
+				supplierCount: 12,
+				quantity: 5,
+				minimumQuantity: 5,
+			},
 		]);
 	});
 
@@ -1677,6 +1744,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			minimumQuantity: 2,
 			makeDefault: false,
 		});
@@ -1688,7 +1756,13 @@ describe("buying in packs", () => {
 				quantity: 25,
 				inItems: true,
 			}),
-		).toEqual({ unit: "CASE", packSize: 12, minimumQuantity: 2, quantity: 3 });
+		).toEqual({
+			unit: "CASE",
+			packSize: 12,
+			supplierCount: 12,
+			minimumQuantity: 2,
+			quantity: 3,
+		});
 		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 3 });
 
 		// Terms changed in between are used by the next call.
@@ -1697,6 +1771,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 6,
+			supplierCount: 6,
 			minimumQuantity: 1,
 			makeDefault: false,
 		});
@@ -1718,7 +1793,12 @@ describe("buying in packs", () => {
 			quantity: 7,
 			inItems: true,
 		});
-		expect(added).toMatchObject({ unit: "EACH", packSize: 1, quantity: 7 });
+		expect(added).toMatchObject({
+			unit: "EACH",
+			packSize: 1,
+			supplierCount: 1,
+			quantity: 7,
+		});
 		await setDraftLine(db, {
 			purchaseOrderId: id,
 			productId: knife,
@@ -1735,6 +1815,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			minimumQuantity: 1,
 			makeDefault: false,
 		});
@@ -1768,6 +1849,7 @@ describe("buying in packs", () => {
 				productId: blade,
 				unit: "CASE",
 				packSize: 12,
+				supplierCount: 12,
 				minimumQuantity: 1,
 				makeDefault: true,
 			}),
@@ -1794,6 +1876,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			minimumQuantity: 1,
 		});
 		const id = await draftFromSuggestions(db, canam, now);
@@ -1826,6 +1909,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
+			supplierCount: 12,
 			minimumQuantity: 1,
 		});
 
@@ -1840,12 +1924,90 @@ describe("buying in packs", () => {
 		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 4 });
 	});
 
+	test("a supplier's PACK of 5 can be one of ours: the PO says 5, stock gets 1", async () => {
+		await setPurchaseUnit(db, {
+			productId: blade,
+			unit: "PACK",
+			packSize: 1,
+			supplierCount: 5,
+			minimumQuantity: 1,
+		});
+		const id = await draftFromSuggestions(db, canam, now);
+		// 44 to order, one of ours per pack, at the product's own $2 a pack.
+		expect(await linesOf(id)).toMatchObject([
+			{
+				unit: "PACK",
+				packSize: 1,
+				supplierCount: 5,
+				quantity: 44,
+				unitCost: 2,
+			},
+		]);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 3,
+			unitCost: 2,
+		});
+		const order = await loadOrder(db, id);
+		expect(printedLines(order.lines, null)).toMatchObject([
+			{ unit: "PACK", supplierCount: 5, quantity: 3 },
+		]);
+		expect(formatOrderQuantity(order.lines[0])).toBe(
+			"3 PACK of 5 (counts as 3)",
+		);
+
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		expect((await unitsOnOrder(db)).get(blade)).toBe(3);
+		const [line] = await linesOf(id);
+		await receive(db, { lineId: line.id, quantity: 1 });
+		const [level] = await db
+			.select()
+			.from(schema.stockLevels)
+			.where(eq(schema.stockLevels.productId, blade));
+		expect(level.onHand).toBe(11);
+	});
+
+	test("changing only the supplier's count leaves quantity and price alone", async () => {
+		await setPurchaseUnit(db, {
+			productId: blade,
+			unit: "PACK",
+			packSize: 1,
+			supplierCount: 1,
+			minimumQuantity: 1,
+		});
+		const id = await draftFromSuggestions(db, canam, now);
+		await setPurchaseUnit(db, {
+			productId: blade,
+			unit: "PACK",
+			packSize: 1,
+			supplierCount: 5,
+			minimumQuantity: 1,
+		});
+		// The draft line was on the default, so it follows it.
+		expect(await linesOf(id)).toMatchObject([
+			{ packSize: 1, supplierCount: 5, quantity: 44, unitCost: 2 },
+		]);
+		const [link] = await db.select().from(schema.productSuppliers);
+		expect(link).toMatchObject({ packSize: 1, supplierCount: 5, cost: 2 });
+		await expect(
+			setPurchaseUnit(db, {
+				productId: blade,
+				unit: "EACH",
+				packSize: 1,
+				supplierCount: 5,
+				minimumQuantity: 1,
+			}),
+		).rejects.toThrow(/one of the product/);
+	});
+
 	test("EACH holds one, and the unit list guards what's in use", async () => {
 		await expect(
 			setPurchaseUnit(db, {
 				productId: blade,
 				unit: "EACH",
 				packSize: 6,
+				supplierCount: 6,
 				minimumQuantity: 1,
 			}),
 		).rejects.toThrow(/one of the product/);
@@ -1858,6 +2020,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			unit: "BAG OF 50",
 			packSize: 50,
+			supplierCount: 50,
 			minimumQuantity: 1,
 		});
 		const id = await draftFromSuggestions(db, canam, now);

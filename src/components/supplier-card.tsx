@@ -179,6 +179,7 @@ function SupplierForm({
 					cost: price,
 					unit: link?.unit ?? "EACH",
 					packSize: link?.packSize ?? 1,
+					supplierCount: link?.supplierCount ?? 1,
 					minimumQuantity: link?.minimumQuantity ?? 1,
 				}
 			: null;

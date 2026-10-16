@@ -106,9 +106,13 @@ export async function deleteUnit(db: Db, name: string) {
 
 export { perPack };
 
+// packSize is how many of the product one unit holds, and does the math.
+// supplierCount is what the supplier calls it, printed on the PO: their
+// "PACK of 5" may be one of ours, so packSize 1 and supplierCount 5.
 export type UnitTerms = {
 	unit: string;
 	packSize: number;
+	supplierCount: number;
 	minimumQuantity: number;
 };
 
@@ -117,7 +121,11 @@ async function checkTerms(db: Db, t: UnitTerms) {
 		throw new PurchaseOrderError(
 			`Pack size must be a whole number, got ${t.packSize}`,
 		);
-	if (t.unit === EACH && t.packSize !== 1)
+	if (!Number.isInteger(t.supplierCount) || t.supplierCount < 1)
+		throw new PurchaseOrderError(
+			`The supplier's count must be a whole number, got ${t.supplierCount}`,
+		);
+	if (t.unit === EACH && (t.packSize !== 1 || t.supplierCount !== 1))
 		throw new PurchaseOrderError(
 			"EACH is one of the product; pick a unit like CASE for packs",
 		);
@@ -268,6 +276,7 @@ export async function setPurchaseUnit(
 					eq(purchaseOrders.status, "draft"),
 					eq(purchaseOrderLines.unit, old.unit),
 					eq(purchaseOrderLines.packSize, old.packSize),
+					eq(purchaseOrderLines.supplierCount, old.supplierCount),
 					eq(purchaseOrderLines.minimumQuantity, old.minimumQuantity),
 				),
 			)

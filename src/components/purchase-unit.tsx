@@ -2,16 +2,19 @@ import { Popover } from "radix-ui";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
-import { formatCount, formatMoney, formatUnit } from "#/lib/format";
+import { formatCount, formatMoney, supplierUnit } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { addPurchaseUnit } from "#/server/purchasing";
 
 const EACH = "EACH";
 
+// packSize is how many of the product one unit adds to stock; supplierCount
+// is the count the supplier puts on it, printed on the PO.
 export type PurchaseTerms = {
 	unit: string;
 	packSize: number;
+	supplierCount: number;
 	minimumQuantity: number;
 };
 
@@ -31,8 +34,9 @@ export type SaveTerms = {
 	current?: PurchaseTerms;
 };
 
-// MOQ and UOM in one cell: "CASE of 12" over "min 2". Click to change both in
-// place. Without `units` it's read-only, e.g. on a sent PO.
+// MOQ and UOM in one cell: "CASE of 12" over "min 2", with "counts as 1" when
+// the supplier's count isn't ours. Click to change them in place. Without
+// `units` it's read-only, e.g. on a sent PO.
 export function PurchaseUnitCell({
 	value,
 	cost,
@@ -52,8 +56,13 @@ export function PurchaseUnitCell({
 	const shown = (
 		<span className="flex flex-col items-start leading-tight">
 			<span className={cn(value.unit === EACH && "text-muted-foreground")}>
-				{formatUnit(value.unit, value.packSize)}
+				{supplierUnit(value)}
 			</span>
+			{value.supplierCount !== value.packSize && (
+				<span className="text-xs text-muted-foreground">
+					counts as {formatCount(value.packSize)}
+				</span>
+			)}
 			{value.minimumQuantity > 1 && (
 				<span className="text-xs text-muted-foreground">
 					min {formatCount(value.minimumQuantity)}
@@ -113,11 +122,17 @@ function TermsForm({
 	const [unit, setUnit] = useState(value.unit);
 	const [adding, setAdding] = useState(false);
 	const [newUnit, setNewUnit] = useState("");
+	const [count, setCount] = useState(String(value.supplierCount));
 	const [pack, setPack] = useState(String(value.packSize));
+	// "Counts as" follows the supplier's count until it's set apart, so the
+	// usual pack, where theirs is ours, is one number to type.
+	const [apart, setApart] = useState(value.packSize !== value.supplierCount);
 	const [minimum, setMinimum] = useState(String(value.minimumQuantity));
 	const [busy, setBusy] = useState(false);
 
-	const packSize = unit === EACH ? 1 : Number(pack);
+	const supplierCount = unit === EACH ? 1 : Number(count);
+	const countValid = Number.isInteger(supplierCount) && supplierCount > 0;
+	const packSize = unit === EACH ? 1 : apart ? Number(pack) : supplierCount;
 	const packValid = Number.isInteger(packSize) && packSize > 0;
 	const resized = packValid && packSize !== value.packSize;
 
@@ -139,11 +154,13 @@ function TermsForm({
 	// and closes; without one it stays busy until the page has reloaded.
 	async function submit(send: SaveTerms["save"], patch?: SaveTerms["patch"]) {
 		const minimumQuantity = Number(minimum);
+		if (!countValid)
+			return toast.error(`"${count}" isn't a whole number to pack by`);
 		if (!packValid)
-			return toast.error(`"${pack}" isn't a whole number to pack by`);
+			return toast.error(`"${pack}" isn't a whole number to count it as`);
 		if (!Number.isInteger(minimumQuantity) || minimumQuantity < 1)
 			return toast.error(`"${minimum}" isn't a whole number`);
-		const terms = { unit, packSize, minimumQuantity };
+		const terms = { unit, packSize, supplierCount, minimumQuantity };
 		const sending = () => send(terms);
 		if (patch) {
 			onDone();
@@ -211,7 +228,11 @@ function TermsForm({
 							aria-label="Unit"
 							onChange={(e) => {
 								setUnit(e.target.value);
-								if (e.target.value === EACH) setPack("1");
+								if (e.target.value === EACH) {
+									setCount("1");
+									setPack("1");
+									setApart(false);
+								}
 							}}
 							className={input}
 						>
@@ -224,16 +245,55 @@ function TermsForm({
 					)}
 				</div>
 				<label className="flex flex-col gap-1">
-					<span className="text-xs text-muted-foreground">Holds</span>
+					<span className="text-xs text-muted-foreground">Of</span>
 					<input
-						value={unit === EACH ? "1" : pack}
+						value={unit === EACH ? "1" : count}
 						disabled={unit === EACH}
 						inputMode="numeric"
-						onChange={(e) => setPack(e.target.value)}
+						title="The count the supplier puts on it, printed on the PO"
+						onChange={(e) => setCount(e.target.value)}
 						className={cn(input, "text-right tabular-nums")}
 					/>
 				</label>
 			</div>
+			{unit !== EACH && (
+				<div className="flex flex-col gap-1">
+					<span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+						Counts as, in stock
+						<button
+							type="button"
+							onClick={() => {
+								// Set apart, it starts from the supplier's count.
+								if (!apart) setPack(count);
+								setApart(!apart);
+							}}
+							className="text-link hover:underline"
+						>
+							{apart ? "same as theirs" : "change"}
+						</button>
+					</span>
+					{apart ? (
+						<input
+							value={pack}
+							inputMode="numeric"
+							aria-label="Counts as, in stock"
+							onChange={(e) => setPack(e.target.value)}
+							className={cn(input, "text-right tabular-nums")}
+						/>
+					) : (
+						<span className="text-sm tabular-nums">
+							{countValid ? formatCount(supplierCount) : "?"}, the same as
+							theirs
+						</span>
+					)}
+					{apart && countValid && packValid && (
+						<p className="text-xs text-muted-foreground">
+							The PO says {supplierUnit({ unit, supplierCount })}; receiving one
+							adds {formatCount(packSize)} to stock.
+						</p>
+					)}
+				</div>
+			)}
 			<label className="flex flex-col gap-1">
 				<span className="text-xs text-muted-foreground">
 					Minimum order, in {unit}
@@ -266,6 +326,7 @@ function TermsForm({
 				{saving.saveDefault &&
 				saving.current?.unit === unit &&
 				saving.current.packSize === packSize &&
+				saving.current.supplierCount === supplierCount &&
 				String(saving.current.minimumQuantity) === minimum.trim() ? (
 					<span className="ml-auto text-xs text-muted-foreground">Default</span>
 				) : (
