@@ -6,6 +6,7 @@ import {
 	locations,
 	productSuppliers,
 	products,
+	purchaseOrderAmendments,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
@@ -139,53 +140,82 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 		const db = getDb();
 		const po = await loadOrder(db, data.id);
 		const productIds = po.lines.map((l) => l.productId);
-		const [onHand, ranges, receipts, ownedLocations, changes, units, setParts] =
-			await Promise.all([
-				onHandOf(db, productIds),
-				stockRanges(db, productIds),
-				// The latest receipts that can still be undone.
-				db
-					.select({
-						id: purchaseOrderReceipts.id,
-						lineId: purchaseOrderReceipts.lineId,
-						quantity: purchaseOrderReceipts.quantity,
-						createdAt: purchaseOrderReceipts.createdAt,
-					})
-					.from(purchaseOrderReceipts)
-					.innerJoin(
-						purchaseOrderLines,
-						eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
+		const [
+			onHand,
+			ranges,
+			receipts,
+			ownedLocations,
+			changes,
+			units,
+			setParts,
+			amendments,
+		] = await Promise.all([
+			onHandOf(db, productIds),
+			stockRanges(db, productIds),
+			// The latest receipts that can still be undone.
+			db
+				.select({
+					id: purchaseOrderReceipts.id,
+					lineId: purchaseOrderReceipts.lineId,
+					quantity: purchaseOrderReceipts.quantity,
+					// Set when the receipt changed what the line expects.
+					quantityBefore: purchaseOrderReceipts.quantityBefore,
+					quantityAfter: purchaseOrderReceipts.quantityAfter,
+					createdAt: purchaseOrderReceipts.createdAt,
+				})
+				.from(purchaseOrderReceipts)
+				.innerJoin(
+					purchaseOrderLines,
+					eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
+				)
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, data.id),
+						isNull(purchaseOrderReceipts.undoesId),
+						sql`not exists (select 1 from ${purchaseOrderReceipts} u where u.undoes_id = ${purchaseOrderReceipts.id})`,
+					),
+				)
+				.orderBy(desc(purchaseOrderReceipts.id))
+				.limit(50),
+			db
+				.select({ id: locations.id, name: locations.name })
+				.from(locations)
+				.where(eq(locations.kind, "owned"))
+				.orderBy(locations.name),
+			// On a draft: how today's suggestions differ from it (see draftChanges).
+			po.order.status === "draft"
+				? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
+						([all, fromSets]) => {
+							const c = draftChanges(
+								po.lines,
+								all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
+								fromSets,
+							);
+							return { added: c.added.length, raised: c.raised.length };
+						},
 					)
-					.where(
-						and(
-							eq(purchaseOrderLines.purchaseOrderId, data.id),
-							isNull(purchaseOrderReceipts.undoesId),
-							sql`not exists (select 1 from ${purchaseOrderReceipts} u where u.undoes_id = ${purchaseOrderReceipts.id})`,
-						),
-					)
-					.orderBy(desc(purchaseOrderReceipts.id))
-					.limit(50),
-				db
-					.select({ id: locations.id, name: locations.name })
-					.from(locations)
-					.where(eq(locations.kind, "owned"))
-					.orderBy(locations.name),
-				// On a draft: how today's suggestions differ from it (see draftChanges).
-				po.order.status === "draft"
-					? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
-							([all, fromSets]) => {
-								const c = draftChanges(
-									po.lines,
-									all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
-									fromSets,
-								);
-								return { added: c.added.length, raised: c.raised.length };
-							},
-						)
-					: { added: 0, raised: 0 },
-				listUnits(db).then((all) => all.map((u) => u.name)),
-				po.order.status === "draft" ? setPartsOf(db, data.id) : [],
-			]);
+				: { added: 0, raised: 0 },
+			listUnits(db).then((all) => all.map((u) => u.name)),
+			po.order.status === "draft" ? setPartsOf(db, data.id) : [],
+			// Changes made after sending, for the timeline.
+			db
+				.select({
+					id: purchaseOrderAmendments.id,
+					kind: purchaseOrderAmendments.kind,
+					quantityBefore: purchaseOrderAmendments.quantityBefore,
+					quantityAfter: purchaseOrderAmendments.quantityAfter,
+					unitCostBefore: purchaseOrderAmendments.unitCostBefore,
+					unitCostAfter: purchaseOrderAmendments.unitCostAfter,
+					createdAt: purchaseOrderAmendments.createdAt,
+					name: products.name,
+					variantName: products.variantName,
+				})
+				.from(purchaseOrderAmendments)
+				.innerJoin(products, eq(products.id, purchaseOrderAmendments.productId))
+				.where(eq(purchaseOrderAmendments.purchaseOrderId, data.id))
+				.orderBy(desc(purchaseOrderAmendments.id))
+				.limit(200),
+		]);
 		return {
 			changes,
 			...po,
@@ -197,6 +227,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			})),
 			setParts,
 			receipts,
+			amendments,
 			locations: ownedLocations,
 			units,
 			emailConfigured: emailConfigured(),

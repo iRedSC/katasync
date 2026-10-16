@@ -777,6 +777,48 @@ export const purchaseOrderMovedParts = pgTable(
 	],
 );
 
+// Changes made to a PO after it was sent, which the supplier is never told
+// about, for its timeline. Changes a receipt made are kept on the receipt.
+// Keyed by product rather than line, since a line added after sending can
+// come off again.
+// added: put on after sending (quantityAfter). removed: taken back off
+// (quantityBefore). quantity / cost: one changed (before and after).
+export const purchaseOrderAmendmentKind = pgEnum(
+	"purchase_order_amendment_kind",
+	["added", "removed", "quantity", "cost"],
+);
+
+export const purchaseOrderAmendments = pgTable(
+	"purchase_order_amendments",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id),
+		productId: integer()
+			.notNull()
+			.references(() => products.id),
+		kind: purchaseOrderAmendmentKind().notNull(),
+		quantityBefore: integer(),
+		quantityAfter: integer(),
+		unitCostBefore: numeric({ precision: 12, scale: 4, mode: "number" }),
+		unitCostAfter: numeric({ precision: 12, scale: 4, mode: "number" }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_order_amendments_po_idx").on(t.purchaseOrderId),
+		check(
+			"purchase_order_amendments_shape",
+			sql`case ${t.kind}
+				when 'added' then ${t.quantityAfter} is not null and ${t.quantityBefore} is null
+				when 'removed' then ${t.quantityBefore} is not null and ${t.quantityAfter} is null
+				when 'quantity' then ${t.quantityBefore} is not null and ${t.quantityAfter} is not null
+				else ${t.quantityBefore} is null and ${t.quantityAfter} is null
+			end`,
+		),
+	],
+);
+
 // Each time units of a line are received, and each undo (a negative quantity
 // pointing at the receipt it reverses). Counted in the line's unit, like its
 // quantity. A line's received count is the sum.

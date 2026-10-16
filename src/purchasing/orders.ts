@@ -5,6 +5,7 @@ import {
 	productComponents,
 	productSuppliers,
 	products,
+	purchaseOrderAmendments,
 	purchaseOrderLines,
 	purchaseOrderMovedParts,
 	purchaseOrderReceipts,
@@ -524,7 +525,15 @@ export async function addLine(
 		);
 	return db.transaction(async (tx) => {
 		const po = await lockOrder(tx, input.purchaseOrderId, allowed);
-		return insertLine(tx, po, input);
+		const result = await insertLine(tx, po, input);
+		if (result.added && po.status !== "draft")
+			await tx.insert(purchaseOrderAmendments).values({
+				purchaseOrderId: po.id,
+				productId: input.productId,
+				kind: "added",
+				quantityAfter: input.quantity,
+			});
+		return result;
 	});
 }
 
@@ -899,6 +908,12 @@ export async function amendLine(
 				await tx
 					.delete(purchaseOrderLines)
 					.where(eq(purchaseOrderLines.id, line.id));
+				await tx.insert(purchaseOrderAmendments).values({
+					purchaseOrderId: po.id,
+					productId: line.productId,
+					kind: "removed",
+					quantityBefore: line.quantity,
+				});
 				await settle(tx, po, null);
 				return { was, removed: true, receivedAtOldCost: false };
 			}
@@ -910,7 +925,24 @@ export async function amendLine(
 				...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
 			})
 			.where(eq(purchaseOrderLines.id, line.id));
-		if (quantity !== line.quantity) await settle(tx, po, quantity > received);
+		// Each change goes on the PO's timeline.
+		const base = { purchaseOrderId: po.id, productId: line.productId };
+		if (quantity !== line.quantity) {
+			await tx.insert(purchaseOrderAmendments).values({
+				...base,
+				kind: "quantity",
+				quantityBefore: line.quantity,
+				quantityAfter: quantity,
+			});
+			await settle(tx, po, quantity > received);
+		}
+		if (input.unitCost !== undefined && input.unitCost !== line.unitCost)
+			await tx.insert(purchaseOrderAmendments).values({
+				...base,
+				kind: "cost",
+				unitCostBefore: line.unitCost,
+				unitCostAfter: input.unitCost,
+			});
 		return {
 			was,
 			removed: false,

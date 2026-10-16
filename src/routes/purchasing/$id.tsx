@@ -1419,6 +1419,30 @@ function ReceiveField({ line }: { line: Line }) {
 	);
 }
 
+type Amendment = PurchaseOrderDetail["amendments"][number];
+
+function amendmentText(a: Amendment, name: string) {
+	const was = formatCount(a.quantityBefore ?? 0);
+	const now = formatCount(a.quantityAfter ?? 0);
+	switch (a.kind) {
+		case "added":
+			return `Added ${now} × ${name} after sending`;
+		case "removed":
+			return `Took ${name} off`;
+		case "quantity":
+			return a.quantityAfter === 0
+				? `None of ${name} coming, was ${was}`
+				: `${name} changed from ${was} to ${now}`;
+		case "cost":
+			return `${name} cost changed from ${formatMoney(a.unitCostBefore)} to ${formatMoney(a.unitCostAfter)}`;
+	}
+}
+
+// Marks a timeline entry as a change kept here, never sent.
+function NotSent({ children }: { children: ReactNode }) {
+	return <span className="text-warning-text"> · {children}</span>;
+}
+
 type TimelineEvent = {
 	key: string;
 	at: Date;
@@ -1457,6 +1481,28 @@ function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 					{line?.variantName && (
 						<span className="text-muted-foreground"> {line.variantName}</span>
 					)}
+					{r.quantityBefore !== null && r.quantityAfter !== null && (
+						<NotSent>
+							{r.quantityBefore === 0
+								? "not on the PO, added"
+								: r.quantityAfter > r.quantityBefore
+									? `more than the ${formatCount(r.quantityBefore)} expected, kept`
+									: `that's all they sent, of ${formatCount(r.quantityBefore)}`}
+						</NotSent>
+					)}
+				</>
+			),
+		});
+	}
+	for (const a of d.amendments) {
+		const name = a.variantName ? `${a.name} (${a.variantName})` : a.name;
+		events.push({
+			key: `a${a.id}`,
+			at: new Date(a.createdAt),
+			body: (
+				<>
+					{amendmentText(a, name)}
+					<NotSent>supplier not told</NotSent>
 				</>
 			),
 		});

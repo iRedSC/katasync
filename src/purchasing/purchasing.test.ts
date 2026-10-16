@@ -915,6 +915,58 @@ describe("a PO from draft to received", () => {
 		expect((await getPo(id)).status).toBe("closed");
 	});
 
+	test("changes after sending go on the timeline; receipts keep their own", async () => {
+		const { id, bladeLine, knifeLine } = await sent();
+		await amendLine(db, { lineId: bladeLine.id, quantity: 40, unitCost: 6 });
+		// No change, no entry.
+		await amendLine(db, { lineId: knifeLine.id, quantity: 6 });
+		const gauge = await createProduct(db, "GAUGE", "simple");
+		const { line } = await addLine(db, {
+			purchaseOrderId: id,
+			productId: gauge,
+			quantity: 3,
+		});
+		await amendLine(db, { lineId: line.id, quantity: 0 });
+		// Extra in the box is on its receipt, not here.
+		const nut = await createProduct(db, "NUT", "simple");
+		await receiveExtra(db, { purchaseOrderId: id, productId: nut, quantity: 2 });
+		// Nothing on a draft is a change.
+		const draft = await openDraft(db, canam);
+		await addLine(db, { purchaseOrderId: draft, productId: gauge, quantity: 1 });
+
+		const log = await db
+			.select()
+			.from(schema.purchaseOrderAmendments)
+			.orderBy(schema.purchaseOrderAmendments.id);
+		expect(
+			log.map((a) => [
+				a.purchaseOrderId,
+				a.kind,
+				a.quantityBefore,
+				a.quantityAfter,
+				a.unitCostBefore,
+				a.unitCostAfter,
+			]),
+		).toEqual([
+			[id, "quantity", 37, 40, null, null],
+			[id, "cost", null, null, 5, 6],
+			[id, "added", null, 3, null, null],
+			[id, "removed", 3, null, null, null],
+		]);
+		const [receipt] = await db
+			.select()
+			.from(schema.purchaseOrderReceipts)
+			.innerJoin(
+				schema.purchaseOrderLines,
+				eq(schema.purchaseOrderLines.id, schema.purchaseOrderReceipts.lineId),
+			)
+			.where(eq(schema.purchaseOrderLines.productId, nut));
+		expect(receipt.purchase_order_receipts).toMatchObject({
+			quantityBefore: 0,
+			quantityAfter: 2,
+		});
+	});
+
 	test("adding a product already on the PO leaves its line alone", async () => {
 		const { id, bladeLine } = await sent();
 		const r = await addLine(db, {

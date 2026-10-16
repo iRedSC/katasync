@@ -288,6 +288,13 @@
       "when": 1792172733503,
       "tag": "0040_po_amendments",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792174859022,
+      "tag": "0041_po_amendment_log",
+      "breakpoints": true
     }
   ]
 }
