@@ -43,7 +43,7 @@ describe("reorderQuantity", () => {
 		onHand: 0,
 		onOrder: 0,
 		leadTimeDays: 10,
-		safetyDays: 0,
+		safetyStock: 0,
 		coverDays: 20,
 		minimumQuantity: 1,
 		packSize: 1,
@@ -72,6 +72,12 @@ describe("reorderQuantity", () => {
 		expect(
 			reorderQuantity({ ...base, onHand: 9, packSize: 30, minimumQuantity: 2 }),
 		).toBe(2);
+	});
+
+	test("orders earlier, and more, by the safety stock", () => {
+		// Reorder point 10 + 5; topped up to 30 + 5.
+		expect(reorderQuantity({ ...base, safetyStock: 5, onHand: 15 })).toBe(0);
+		expect(reorderQuantity({ ...base, safetyStock: 5, onHand: 14 })).toBe(21);
 	});
 
 	test("buys back oversold stock even with no recent sales", () => {
@@ -201,9 +207,10 @@ describe("suggestPurchases", () => {
 		await sell(blade, 900, { placedAt: daysAgo(91) });
 
 		const [s] = await suggestPurchases(db, now);
-		// 60 sold over 90 days, for 10 + 20 days plus 5 spare as an A item: 24.
-		expect(s.lines).toMatchObject([{ sku: "BLADE", sold: 60, quantity: 24 }]);
-		expect(s).toMatchObject({ total: 120, ready: true, draftId: null });
+		// 60 sold over 90 days, for 10 + 20 days, plus safety stock
+		// capped at the lead time's 7 (all sold on one day): 27.
+		expect(s.lines).toMatchObject([{ sku: "BLADE", sold: 60, quantity: 27 }]);
+		expect(s).toMatchObject({ total: 135, ready: true, draftId: null });
 	});
 
 	test("isn't ready below the supplier's minimum, and lists unpriced lines", async () => {
@@ -216,8 +223,9 @@ describe("suggestPurchases", () => {
 
 		const [s] = await suggestPurchases(db, now);
 		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE", "KNIFE"]);
-		// Blade is an A item: 1 a day for 10 + 20 days plus 5 spare.
-		expect(s).toMatchObject({ total: 35, unpriced: 1, ready: false });
+		// Blade is an A item: 1 a day for 10 + 20 days plus 10
+		// safety (capped at the lead time's demand; it all sold on one day).
+		expect(s).toMatchObject({ total: 40, unpriced: 1, ready: false });
 	});
 });
 
@@ -242,19 +250,20 @@ describe("a PO from draft to received", () => {
 	test("drafts from suggestions without overwriting edits", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		expect(await linesOf(id)).toMatchObject([
-			// 4 every 3 days for 10 + 20 days plus 5 spare (an A item), less
+			// 4 every 3 days for 10 + 20 days plus safety capped at
+			// the lead time's demand (an A item), less
 			// the 10 on hand.
-			{ productId: blade, quantity: 37, unitCost: 5 },
+			{ productId: blade, quantity: 44, unitCost: 5 },
 			// 3 needed, but the supplier sells at least 6.
 			{ productId: knife, quantity: 6, unitCost: 2 },
 		]);
 		await setDraftLine(db, {
 			purchaseOrderId: id,
 			productId: blade,
-			quantity: 40,
+			quantity: 50,
 		});
 		expect(await draftFromSuggestions(db, canam, now)).toBe(id);
-		expect((await linesOf(id))[0].quantity).toBe(40);
+		expect((await linesOf(id))[0].quantity).toBe(50);
 
 		await setDraftLine(db, {
 			purchaseOrderId: id,
@@ -271,12 +280,12 @@ describe("a PO from draft to received", () => {
 			productId: blade,
 			quantity: 2,
 		});
-		// Blade (suggested 37) is short of what's suggested; the knife is new.
+		// Blade (suggested 44) is short of what's suggested; the knife is new.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 1,
 			raised: 1,
 		});
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([37, 6]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([44, 6]);
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 0,
@@ -289,7 +298,7 @@ describe("a PO from draft to received", () => {
 			quantity: 50,
 		});
 		await updateFromSuggestions(db, id, now);
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([37, 50]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([44, 50]);
 
 		await markSent(db, { purchaseOrderId: id, sentTo: null });
 		await expect(updateFromSuggestions(db, id, now)).rejects.toThrow(/is sent/);
@@ -392,8 +401,8 @@ describe("a PO from draft to received", () => {
 			},
 		});
 		expect(await linesOf(id)).toMatchObject([
-			// 37 suggested plus 2 in each of 3 sets.
-			{ productId: blade, quantity: 43 },
+			// 44 suggested plus 2 in each of 3 sets.
+			{ productId: blade, quantity: 50 },
 			{ productId: knife, quantity: 6 },
 			// Not on the draft before: a new line, at the product's own cost.
 			{ productId: handle, quantity: 3, unit: "EACH", unitCost: 3 },
@@ -576,14 +585,14 @@ describe("a PO from draft to received", () => {
 			productId: set,
 			quantity: 4,
 		});
-		// 8 blades and 4 knives in the sets: 29 more blades (37 suggested), and
+		// 8 blades and 4 knives in the sets: 36 more blades (44 suggested), and
 		// 2 knives rounded up to the supplier's 6.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 2,
 			raised: 0,
 		});
 		expect(await linesOf(id)).toMatchObject([
-			{ productId: blade, quantity: 29 },
+			{ productId: blade, quantity: 36 },
 			{ productId: knife, quantity: 6 },
 			{ productId: set, quantity: 4 },
 		]);
@@ -705,13 +714,13 @@ describe("a PO from draft to received", () => {
 			status: "sent",
 			expectedAt: new Date("2026-10-20T12:00:00Z"),
 		});
-		expect((await unitsOnOrder(db)).get(blade)).toBe(37);
+		expect((await unitsOnOrder(db)).get(blade)).toBe(44);
 		// On order now, so nothing more is suggested.
 		expect(await suggestPurchases(db, now)).toEqual([]);
 
 		const [bladeLine, knifeLine] = await linesOf(id);
 		await receive(db, { lineId: bladeLine.id, quantity: 10 });
-		expect((await unitsOnOrder(db)).get(blade)).toBe(27);
+		expect((await unitsOnOrder(db)).get(blade)).toBe(34);
 		const [product] = await db
 			.select()
 			.from(schema.products)
@@ -719,7 +728,7 @@ describe("a PO from draft to received", () => {
 		// 10 on the shelf at $4, 10 more at $5.
 		expect(product.unitCost).toBe(4.5);
 
-		const last = await receive(db, { lineId: bladeLine.id, quantity: 27 });
+		const last = await receive(db, { lineId: bladeLine.id, quantity: 34 });
 		expect(last.closed).toBe(false);
 		const knives = await receive(db, { lineId: knifeLine.id, quantity: 6 });
 		expect(knives.closed).toBe(true);
@@ -782,10 +791,10 @@ describe("buying in packs", () => {
 
 	test("changing the unit converts the price and draft lines", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
-		// 120 sold in 90 days for 10 + 20 days plus 5 spare (an A item), 10 on
-		// hand: 37 each to order.
+		// 120 sold in 90 days for 10 + 20 days, plus safety capped at the lead
+		// time's demand (an A item), less 10 on hand: 44 to order.
 		expect(await linesOf(id)).toMatchObject([
-			{ unit: "EACH", packSize: 1, quantity: 37, unitCost: 2 },
+			{ unit: "EACH", packSize: 1, quantity: 44, unitCost: 2 },
 		]);
 		await setPurchaseUnit(db, {
 			productId: blade,
@@ -793,7 +802,7 @@ describe("buying in packs", () => {
 			packSize: 12,
 			minimumQuantity: 1,
 		});
-		// 37 blades round up to 4 cases of 12, at 12 × $2.
+		// 44 blades round up to 4 cases of 12, at 12 × $2.
 		expect(await linesOf(id)).toMatchObject([
 			{ unit: "CASE", packSize: 12, quantity: 4, unitCost: 24 },
 		]);
@@ -864,7 +873,7 @@ describe("buying in packs", () => {
 		]);
 		const [link] = await db.select().from(schema.productSuppliers);
 		expect(link).toMatchObject({ unit: "EACH", packSize: 1, cost: 2 });
-		// 37 wanted is 4 cases: already enough, though the units differ.
+		// 44 wanted is 4 cases: already enough, though the units differ.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 0,
@@ -903,7 +912,7 @@ describe("buying in packs", () => {
 
 	test("a converted line is raised to the new minimum", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
-		expect(await linesOf(id)).toMatchObject([{ unit: "EACH", quantity: 37 }]);
+		expect(await linesOf(id)).toMatchObject([{ unit: "EACH", quantity: 44 }]);
 		await setLineTerms(db, {
 			purchaseOrderId: id,
 			productId: blade,
@@ -912,7 +921,7 @@ describe("buying in packs", () => {
 			minimumQuantity: 5,
 			makeDefault: false,
 		});
-		// 37 blades are 4 cases, but the supplier won't sell fewer than 5.
+		// 44 blades are 4 cases, but the supplier won't sell fewer than 5.
 		expect(await linesOf(id)).toMatchObject([
 			{ unit: "CASE", packSize: 12, quantity: 5, minimumQuantity: 5 },
 		]);
@@ -991,7 +1000,7 @@ describe("buying in packs", () => {
 			productId: blade,
 			quantity: 1,
 		});
-		// 37 wanted, 12 on the PO: raised to 4 cases.
+		// 44 wanted, 12 on the PO: raised to 4 cases.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 1,

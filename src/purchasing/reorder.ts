@@ -10,18 +10,70 @@ import {
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
-import { type AbcClass, type AbcResult, abcClasses } from "#/inventory/abc";
+import { type AbcResult, abcClasses } from "#/inventory/abc";
 import { soldSince } from "#/inventory/sales";
+import {
+	DEMAND_DAYS,
+	type Forecast,
+	forecasts,
+	type LeadTime,
+	leadTimes,
+	NO_FORECAST,
+	safetyStock,
+} from "#/purchasing/forecast";
 
-// Sales from this many days back set each product's daily demand.
-export const DEMAND_DAYS = 90;
+export { DEMAND_DAYS };
+
+// Everything reorder reads besides stock: each product's forecast, each
+// supplier's lead time, and the classes that set how much safety stock to
+// hold. Load it once and pass it around when several things need it.
+export type Plan = {
+	forecasts: Map<number, Forecast>;
+	leadTimes: Map<number, LeadTime>;
+	abc: AbcResult;
+};
+
+export async function loadPlan(
+	db: Db,
+	now = new Date(),
+	abc?: AbcResult | Promise<AbcResult>,
+): Promise<Plan> {
+	const [f, l, a] = await Promise.all([
+		forecasts(db, now),
+		leadTimes(db),
+		abc ?? abcClasses(db, now),
+	]);
+	return { forecasts: f, leadTimes: l, abc: a };
+}
+
+// A product's demand, lead time, and safety stock under a plan. Without a
+// supplier it plans on the suppliers table's defaults.
+export function planFor(
+	plan: Plan,
+	productId: number,
+	supplierId: number | null,
+) {
+	const forecast = plan.forecasts.get(productId) ?? NO_FORECAST;
+	const leadTimeDays =
+		(supplierId === null ? undefined : plan.leadTimes.get(supplierId)?.days) ??
+		DEFAULT_LEAD_TIME_DAYS;
+	return {
+		dailyDemand: forecast.dailyDemand,
+		leadTimeDays,
+		safetyStock: safetyStock(
+			forecast,
+			plan.abc.classes.get(productId)?.abc ?? null,
+			leadTimeDays,
+		),
+	};
+}
 
 // How many of the supplier's unit to order, or 0 to leave it off the PO.
 // Demand, stock, and what's on order count the product itself; packSize is how
 // many of it one unit holds.
 //
-// A product needs ordering once what's on the shelf and on order would run out
-// before a PO sent today arrives (leadTimeDays), with safetyDays to spare. It's
+// A product needs ordering once what's on the shelf and on order would fall
+// below what the lead time uses plus its safety stock (both in units). It's
 // then topped up to last coverDays past that, rounded up to whole units, and to
 // at least the supplier's minimum. Oversold stock (negative onHand) is always
 // bought back.
@@ -30,13 +82,13 @@ export function reorderQuantity(p: {
 	onHand: number;
 	onOrder: number;
 	leadTimeDays: number;
-	safetyDays: number;
+	safetyStock: number;
 	coverDays: number;
 	minimumQuantity: number;
 	packSize: number;
 }): number {
 	const position = p.onHand + p.onOrder;
-	const reorderPoint = p.dailyDemand * (p.leadTimeDays + p.safetyDays);
+	const reorderPoint = p.dailyDemand * p.leadTimeDays + p.safetyStock;
 	if (position >= reorderPoint && position >= 0) return 0;
 	const target = stockTarget(p);
 	const need = target - position;
@@ -45,15 +97,15 @@ export function reorderQuantity(p: {
 }
 
 // What a reorder tops stock up to: enough to last until a PO sent today
-// arrives, plus safety, plus the supplier's cover. Also the default max stock.
+// arrives and coverDays past it, plus safety stock. Also the default max.
 export function stockTarget(p: {
 	dailyDemand: number;
 	leadTimeDays: number;
-	safetyDays: number;
+	safetyStock: number;
 	coverDays: number;
 }) {
 	return Math.ceil(
-		p.dailyDemand * (p.leadTimeDays + p.safetyDays + p.coverDays),
+		p.dailyDemand * (p.leadTimeDays + p.coverDays) + p.safetyStock,
 	);
 }
 
@@ -61,12 +113,6 @@ export function stockTarget(p: {
 // defaults.
 export const DEFAULT_LEAD_TIME_DAYS = 14;
 export const DEFAULT_COVER_DAYS = 30;
-
-// A items carry this share of their lead time as spare stock, since running
-// out of them costs the most. B and C carry none.
-const A_SAFETY = 0.5;
-export const safetyDays = (abc: AbcClass | null, leadTimeDays: number) =>
-	abc === "A" ? Math.ceil(leadTimeDays * A_SAFETY) : 0;
 
 export type SuggestedLine = {
 	productId: number;
@@ -109,14 +155,14 @@ export type ReorderNeed = SuggestedLine & {
 };
 
 // Every product with a supplier that needs ordering today, in name order.
-// Pass `abc` when the caller already has it, to skip ranking twice.
+// Pass `plan` when the caller already has one, to skip loading it twice.
 export async function reorderNeeds(
 	db: Db,
 	now = new Date(),
-	abc?: AbcResult,
+	plan?: Plan | Promise<Plan>,
 ): Promise<ReorderNeed[]> {
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [sold, onHand, onOrder, linked, classes] = await Promise.all([
+	const [sold, onHand, onOrder, linked, planned] = await Promise.all([
 		soldSince(db, since, { includeFba: false }),
 		ownedOnHand(db),
 		unitsOnOrder(db),
@@ -135,7 +181,6 @@ export async function reorderNeeds(
 				packSize: productSuppliers.packSize,
 				supplierId: suppliers.id,
 				supplierName: suppliers.name,
-				leadTimeDays: suppliers.leadTimeDays,
 				coverDays: suppliers.coverDays,
 				minimumOrder: suppliers.minimumOrder,
 			})
@@ -143,7 +188,7 @@ export async function reorderNeeds(
 			.innerJoin(products, eq(products.id, productSuppliers.productId))
 			.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
 			.orderBy(products.name, products.variantName),
-		abc ?? abcClasses(db, now),
+		plan ?? loadPlan(db, now),
 	]);
 
 	return linked.flatMap((p) => {
@@ -154,12 +199,7 @@ export async function reorderNeeds(
 		};
 		const quantity = reorderQuantity({
 			...line,
-			dailyDemand: line.sold / DEMAND_DAYS,
-			leadTimeDays: p.leadTimeDays,
-			safetyDays: safetyDays(
-				classes.classes.get(p.productId)?.abc ?? null,
-				p.leadTimeDays,
-			),
+			...planFor(planned, p.productId, p.supplierId),
 			coverDays: p.coverDays,
 			minimumQuantity: p.minimumQuantity,
 			packSize: p.packSize,
@@ -313,7 +353,7 @@ export async function draftLines(db: Db) {
 // each is due, soonest first. A PO without an expected date is due its
 // supplier's lead time after it was sent. Ones already past due aren't coming
 // on any day we can plan around, so they are left out.
-async function arrivingUnits(db: Db, now: Date) {
+async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
 	const received = receivedByLine(db);
 	const rows = await db
 		.select({
@@ -321,6 +361,7 @@ async function arrivingUnits(db: Db, now: Date) {
 			units: sql<number>`(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`,
 			expectedAt: purchaseOrders.expectedAt,
 			sentAt: purchaseOrders.sentAt,
+			supplierId: purchaseOrders.supplierId,
 			leadTimeDays: suppliers.leadTimeDays,
 		})
 		.from(purchaseOrderLines)
@@ -336,7 +377,8 @@ async function arrivingUnits(db: Db, now: Date) {
 	for (const r of rows) {
 		const arrivesAt =
 			r.expectedAt?.getTime() ??
-			(r.sentAt ?? now).getTime() + r.leadTimeDays * 86_400_000;
+			(r.sentAt ?? now).getTime() +
+				(lead.get(r.supplierId)?.days ?? r.leadTimeDays) * 86_400_000;
 		if (r.units === 0 || arrivesAt < now.getTime()) continue;
 		const list = byProduct.get(r.productId) ?? [];
 		list.push({ units: r.units, arrivesAt });
@@ -352,14 +394,12 @@ async function arrivingUnits(db: Db, now: Date) {
 // supplier use the default lead time, since they still have to come from
 // somewhere.
 export async function aItemsAtRisk(db: Db, now = new Date()) {
-	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [abc, sold, onHand, arriving] = await Promise.all([
-		abcClasses(db, now),
-		soldSince(db, since, { includeFba: false }),
+	const plan = await loadPlan(db, now);
+	const [onHand, arriving] = await Promise.all([
 		ownedOnHand(db),
-		arrivingUnits(db, now),
+		arrivingUnits(db, now, plan.leadTimes),
 	]);
-	const aIds = [...abc.classes]
+	const aIds = [...plan.abc.classes]
 		.filter(([, c]) => c.abc === "A")
 		.map(([id]) => id);
 	if (aIds.length === 0) return [];
@@ -370,7 +410,7 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 			name: products.name,
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,
-			leadTimeDays: suppliers.leadTimeDays,
+			supplierId: suppliers.id,
 		})
 		.from(products)
 		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
@@ -379,7 +419,7 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 
 	return rows
 		.flatMap((p) => {
-			const dailyDemand = (sold.get(p.id) ?? 0) / DEMAND_DAYS;
+			const { dailyDemand, leadTimeDays } = planFor(plan, p.id, p.supplierId);
 			if (dailyDemand === 0) return [];
 			// Each PO extends the stock only if it arrives before it runs out.
 			let position = onHand.get(p.id) ?? 0;
@@ -388,7 +428,6 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 				if (daysAway * dailyDemand > position) break;
 				position += po.units;
 			}
-			const leadTimeDays = p.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
 			if (position >= dailyDemand * leadTimeDays) return [];
 			return [
 				{

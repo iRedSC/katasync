@@ -99,8 +99,8 @@ function ProductPage() {
 										<AbcBadge abc={d.abc.abc} />
 										<span>
 											{formatShare(d.abc.share)} of{" "}
-											{d.abc.days >= 365 ? "yearly" : `${d.abc.days}-day`} sales
-											value · #{formatCount(d.abc.rank)} of{" "}
+											{d.abc.days >= 365 ? "yearly" : `${d.abc.days}-day`}{" "}
+											margin · #{formatCount(d.abc.rank)} of{" "}
 											{formatCount(d.abc.of)}
 										</span>
 									</p>

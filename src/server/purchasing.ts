@@ -14,6 +14,7 @@ import {
 } from "#/db/schema";
 import { stockRanges } from "#/inventory/stock-range";
 import { emailConfigured, sendEmail } from "#/purchasing/email";
+import { type LeadTime, leadTimes } from "#/purchasing/forecast";
 import {
 	documentFor,
 	loadOrder,
@@ -136,54 +137,64 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 		const db = getDb();
 		const po = await loadOrder(db, data.id);
 		const productIds = po.lines.map((l) => l.productId);
-		const [onHand, ranges, receipts, ownedLocations, changes, units, setParts] =
-			await Promise.all([
-				onHandOf(db, productIds),
-				stockRanges(db, productIds),
-				// The latest receipts that can still be undone.
-				db
-					.select({
-						id: purchaseOrderReceipts.id,
-						lineId: purchaseOrderReceipts.lineId,
-						quantity: purchaseOrderReceipts.quantity,
-						createdAt: purchaseOrderReceipts.createdAt,
-					})
-					.from(purchaseOrderReceipts)
-					.innerJoin(
-						purchaseOrderLines,
-						eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
+		const [
+			onHand,
+			ranges,
+			receipts,
+			ownedLocations,
+			changes,
+			units,
+			setParts,
+			lead,
+		] = await Promise.all([
+			onHandOf(db, productIds),
+			stockRanges(db, productIds),
+			// The latest receipts that can still be undone.
+			db
+				.select({
+					id: purchaseOrderReceipts.id,
+					lineId: purchaseOrderReceipts.lineId,
+					quantity: purchaseOrderReceipts.quantity,
+					createdAt: purchaseOrderReceipts.createdAt,
+				})
+				.from(purchaseOrderReceipts)
+				.innerJoin(
+					purchaseOrderLines,
+					eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
+				)
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, data.id),
+						isNull(purchaseOrderReceipts.undoesId),
+						sql`not exists (select 1 from ${purchaseOrderReceipts} u where u.undoes_id = ${purchaseOrderReceipts.id})`,
+					),
+				)
+				.orderBy(desc(purchaseOrderReceipts.id))
+				.limit(50),
+			db
+				.select({ id: locations.id, name: locations.name })
+				.from(locations)
+				.where(eq(locations.kind, "owned"))
+				.orderBy(locations.name),
+			// On a draft: how today's suggestions differ from it (see draftChanges).
+			po.order.status === "draft"
+				? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
+						([all, fromSets]) => {
+							const c = draftChanges(
+								po.lines,
+								all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
+								fromSets,
+							);
+							return { added: c.added.length, raised: c.raised.length };
+						},
 					)
-					.where(
-						and(
-							eq(purchaseOrderLines.purchaseOrderId, data.id),
-							isNull(purchaseOrderReceipts.undoesId),
-							sql`not exists (select 1 from ${purchaseOrderReceipts} u where u.undoes_id = ${purchaseOrderReceipts.id})`,
-						),
-					)
-					.orderBy(desc(purchaseOrderReceipts.id))
-					.limit(50),
-				db
-					.select({ id: locations.id, name: locations.name })
-					.from(locations)
-					.where(eq(locations.kind, "owned"))
-					.orderBy(locations.name),
-				// On a draft: how today's suggestions differ from it (see draftChanges).
-				po.order.status === "draft"
-					? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
-							([all, fromSets]) => {
-								const c = draftChanges(
-									po.lines,
-									all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
-									fromSets,
-								);
-								return { added: c.added.length, raised: c.raised.length };
-							},
-						)
-					: { added: 0, raised: 0 },
-				listUnits(db).then((all) => all.map((u) => u.name)),
-				po.order.status === "draft" ? setPartsOf(db, data.id) : [],
-			]);
+				: { added: 0, raised: 0 },
+			listUnits(db).then((all) => all.map((u) => u.name)),
+			po.order.status === "draft" ? setPartsOf(db, data.id) : [],
+			leadTimes(db, [po.supplier.id]),
+		]);
 		return {
+			leadTime: leadTimeOf(lead, po.supplier.id),
 			changes,
 			...po,
 			lines: po.lines.map((l) => ({
@@ -415,9 +426,24 @@ export const listReceivable = createServerFn({ method: "GET" }).handler(
 	},
 );
 
+// Each supplier with the lead time reorder plans on.
 export const listSuppliers = createServerFn({ method: "GET" }).handler(
-	async () => supplierRows(getDb()),
+	async () => {
+		const db = getDb();
+		const [rows, lead] = await Promise.all([supplierRows(db), leadTimes(db)]);
+		return rows.map((r) => ({
+			...r,
+			leadTime: leadTimeOf(lead, r.supplier.id),
+		}));
+	},
 );
+
+// leadTimes answers for every supplier it's asked about.
+function leadTimeOf(lead: Map<number, LeadTime>, supplierId: number) {
+	const l = lead.get(supplierId);
+	if (!l) throw new Error(`No lead time for supplier ${supplierId}`);
+	return l;
+}
 
 export type SupplierRow = Awaited<ReturnType<typeof listSuppliers>>[number];
 

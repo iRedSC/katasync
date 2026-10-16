@@ -1,13 +1,11 @@
 import { eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { productSuppliers, products, settings, suppliers } from "#/db/schema";
-import { type AbcResult, abcClasses } from "#/inventory/abc";
-import { soldSince } from "#/inventory/sales";
 import {
 	DEFAULT_COVER_DAYS,
-	DEFAULT_LEAD_TIME_DAYS,
-	DEMAND_DAYS,
-	safetyDays,
+	loadPlan,
+	type Plan,
+	planFor,
 	stockTarget,
 } from "#/purchasing/reorder";
 
@@ -59,57 +57,47 @@ export async function setProductStockRange(
 // The lowest default max, so slow sellers still keep a few on the shelf.
 export const MIN_FORECAST_MAX = 5;
 
-// The max a forecast gives: what reorder tops stock up to, from the last
-// DEMAND_DAYS of sales, the supplier's lead time and cover (the suppliers
-// defaults without one), and A items' safety stock. At least
-// MIN_FORECAST_MAX, and always above min.
+// The max a forecast gives: what reorder tops stock up to (see
+// stockTarget). At least MIN_FORECAST_MAX, and always above min.
 export function forecastMax(
 	min: number,
 	p: {
 		dailyDemand: number;
 		leadTimeDays: number;
-		safetyDays: number;
+		safetyStock: number;
 		coverDays: number;
 	},
 ) {
 	return Math.max(min + 1, MIN_FORECAST_MAX, stockTarget(p));
 }
 
-// Each product's default range, ignoring any range of its own. Pass `abc`
-// when the caller already has it, to skip ranking twice.
+// Each product's default range, ignoring any range of its own. Pass `plan`
+// when the caller already has one, to skip loading it twice.
 export async function defaultRanges(
 	db: Db,
 	productIds: number[],
-	abc?: AbcResult,
+	plan?: Plan | Promise<Plan>,
 ): Promise<Map<number, StockRange>> {
 	if (productIds.length === 0) return new Map();
-	const since = new Date(Date.now() - DEMAND_DAYS * 86_400_000);
-	const [min, sold, linked, classes] = await Promise.all([
+	const [min, linked, planned] = await Promise.all([
 		defaultMinStock(db),
-		soldSince(db, since, { includeFba: false }),
 		db
 			.select({
 				productId: productSuppliers.productId,
-				leadTimeDays: suppliers.leadTimeDays,
+				supplierId: productSuppliers.supplierId,
 				coverDays: suppliers.coverDays,
 			})
 			.from(productSuppliers)
 			.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
 			.where(inArray(productSuppliers.productId, productIds)),
-		abc ?? abcClasses(db),
+		plan ?? loadPlan(db),
 	]);
 	const supplier = new Map(linked.map((l) => [l.productId, l]));
 	return new Map(
 		productIds.map((id) => {
 			const s = supplier.get(id);
-			const leadTimeDays = s?.leadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
 			const max = forecastMax(min, {
-				dailyDemand: (sold.get(id) ?? 0) / DEMAND_DAYS,
-				leadTimeDays,
-				safetyDays: safetyDays(
-					classes.classes.get(id)?.abc ?? null,
-					leadTimeDays,
-				),
+				...planFor(planned, id, s?.supplierId ?? null),
 				coverDays: s?.coverDays ?? DEFAULT_COVER_DAYS,
 			});
 			return [id, { min, max }];
@@ -121,10 +109,10 @@ export async function defaultRanges(
 export async function stockRanges(
 	db: Db,
 	productIds: number[],
-	abc?: AbcResult,
+	plan?: Plan | Promise<Plan>,
 ) {
 	const [defaults, own] = await Promise.all([
-		defaultRanges(db, productIds, abc),
+		defaultRanges(db, productIds, plan),
 		productIds.length === 0
 			? []
 			: db

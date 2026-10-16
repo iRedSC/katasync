@@ -67,7 +67,11 @@ How things count:
 - Cycle counts only happen when asked for: request_counts puts shelves on the staff's count list, and a count clears them. Ask when stock looks wrong, e.g. oversold or not matching what a channel reports.
 - Count accuracy: use the count_history view (one row per shelf count: product_id, sku, location_id, counted_at, expected, counted, drift = counted minus expected, undone). Matched counts are there too (drift 0), so look for products that drift again and again, not one bad count. Leave out undone rows: those were mistakes. History before this log only has the counts that changed stock.
 - The products page treats stock as trusted once every owned shelf was counted in the last 60 days. For A and B items it asks for a count before suggesting an order; C items order on the number as it stands.
-- Each product keeps stock between a min and max: its own (products.min_stock/max_stock), or the defaults: settings.default_min_stock, and a max forecast from the last 90 days of sales over the supplier's lead time plus cover (plus spare for A items), at least 5.
+- Each product keeps stock between a min and max: its own (products.min_stock/max_stock), or the defaults: settings.default_min_stock, and a max of what a reorder tops it up to, at least 5.
+- Reorder demand is units sold over the last 90 days divided by the days the product was in stock (rebuilt from the movements ledger; days before the ledger began count as in stock), never fewer than 14. So a product that sat at zero isn't read as slow.
+- Lead time: the median of the supplier's last 5 received POs (sent to first delivery) once there are 3; until then suppliers.lead_time_days.
+- Safety stock: z × the daily sales swing × √lead time, with z for 98% (A), 95% (B), 90% (C and unclassed) in-stock odds, capped at the lead time's demand.
+- ABC classes rank by margin over 12 months (sales less unit cost; a tool set's sale is split across its parts by cost). Tool sets rank among themselves by their own margin.
 - Stock and receiving changes can be undone (undo_stock_change, undo_po_receipt). Every change you make is logged and shown to the user.
 
 Use describe_schema before writing SQL. Prefer reorder_suggestions for "what should we order": it accounts for lead time, what's already on order, and minimums. When a request is ambiguous about quantities, say which interpretation you used.`;

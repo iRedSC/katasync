@@ -279,6 +279,7 @@ function PurchaseOrderPage() {
 					</Card>
 					<SupplierDialog
 						supplier={d.supplier}
+						leadTime={d.leadTime}
 						open={editingSupplier}
 						onOpenChange={setEditingSupplier}
 					/>

@@ -398,8 +398,8 @@ function Products() {
 						notes={{
 							class: (
 								<>
-									A carries the first 80% of what's spent on stock, B the next
-									15%, C the rest, over{" "}
+									Ranked by margin (sales less cost). A earns the first 80%, B
+									the next 15%, C the rest, over{" "}
 									{abcDays >= 365
 										? "the last 12 months"
 										: `${formatCount(abcDays)} days`}
