@@ -410,6 +410,8 @@ export async function reorderBreakdown(
 				.select({
 					productId: products.id,
 					sku: products.sku,
+					kind: products.kind,
+					barcode: products.barcode,
 					name: products.name,
 					variantName: products.variantName,
 					imageUrl: products.imageUrl,
@@ -516,16 +518,20 @@ export async function reorderBreakdown(
 			abc: abcClass,
 			purchase,
 		});
+		// Its own range, else the one its forecast gives, as stockRanges does.
+		const range =
+			p.minStock !== null && p.maxStock !== null
+				? { min: p.minStock, max: p.maxStock, own: true }
+				: { min: defaultMin, max: forecastMax(defaultMin, input), own: false };
 		return {
 			line,
 			supplier,
 			input,
 			why,
-			// Its own max, else the one its forecast gives (as stockRanges does).
-			max:
-				p.minStock !== null && p.maxStock !== null
-					? p.maxStock
-					: forecastMax(defaultMin, input),
+			kind: p.kind,
+			barcode: p.barcode,
+			range,
+			max: range.max,
 			ordersItself: ordersItself(p.markedCritical, abcClass),
 			// A C item nobody has sold or counted in a year is dead stock, or
 			// was never really stocked: nothing to recommend. Unpriced products
@@ -558,6 +564,12 @@ export type RecommendedLine = SuggestedLine & {
 	// "now": it needs ordering today but doesn't go on POs by itself (see
 	// ordersItself). Otherwise the days until it would need ordering anyway.
 	due: "now" | number;
+	// What its line shows once added, so the PO can show it before the server
+	// has it.
+	kind: Breakdown["kind"];
+	barcode: string | null;
+	stockRange: Breakdown["range"];
+	why: Breakdown["why"];
 };
 
 type Breakdown = Awaited<ReturnType<typeof reorderBreakdown>>[number];
@@ -587,7 +599,17 @@ export async function recommendedAdditions(
 			const due = recommendedDue(plan);
 			const quantity = fillToMax(input, plan.max);
 			if (due === null || quantity === 0) return [];
-			return [{ ...line, quantity, due }];
+			return [
+				{
+					...line,
+					quantity,
+					due,
+					kind: plan.kind,
+					barcode: plan.barcode,
+					stockRange: plan.range,
+					why: plan.why,
+				},
+			];
 		})
 		.sort((a, b) => dueOrder(a.due) - dueOrder(b.due));
 }

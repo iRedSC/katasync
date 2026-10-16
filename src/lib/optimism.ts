@@ -234,6 +234,40 @@ export function createOptimism({
 
 export type Optimism = ReturnType<typeof createOptimism>;
 
+// Ids for things a change makes, such as a PO line, before the server has
+// made them. One made here is negative until the change that makes it is
+// answered and passes the server's id to `confirm`; the page shows the
+// server's after the reload. Changes are sent in order, so by the time a
+// later change sends, the one that made its id has been answered.
+let provisionals = 0;
+const confirmed = new Map<number, number>();
+
+export const ids = {
+	// A new id for something not made yet.
+	provisional() {
+		provisionals++;
+		return -provisionals;
+	},
+	// The server made it, as `real`.
+	confirm(provisional: number, real: number) {
+		confirmed.set(provisional, real);
+	},
+	// The server's id, when it's known; else the one made here.
+	current: (id: number) => confirmed.get(id) ?? id,
+	// The id to send. Throws when what it names was never made, because the
+	// change that made it failed, so nothing sends an id the server never gave.
+	server(id: number) {
+		if (id > 0) return id;
+		const real = confirmed.get(id);
+		if (real === undefined) throw new Error("An earlier change didn't save");
+		return real;
+	},
+	// Whether two ids name the same thing: either may be the one made here or
+	// the server's. Patches match with this, as they may lay over data from
+	// before the reload or after it.
+	same: (a: number, b: number) => ids.current(a) === ids.current(b),
+};
+
 // The app's engine. Reloads the router's data once connected; until then a
 // reload does nothing, which only happens on the server, where nothing
 // changes.

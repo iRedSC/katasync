@@ -50,7 +50,7 @@ import {
 	formatTime,
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
-import { optimism, optimistic, type Patch } from "#/lib/optimism";
+import { ids, optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { cancelledOnList } from "#/purchasing/list-patches";
@@ -670,8 +670,45 @@ function Recommended({
 	detail: PurchaseOrderDetail;
 	total: number;
 }) {
-	const { busy, run } = useAction();
+	const { save } = useAction();
 	const short = d.supplier.minimumOrder - total;
+
+	// The line shows at once, as the server will make it, under an id of its
+	// own until the server's comes back.
+	function add(r: Recommendation) {
+		const id = ids.provisional();
+		const line = recommendedLine(r, id, d.supplier.id);
+		save({
+			label: `Adding ${r.sku}`,
+			patch: poData.patch(d.order.id, (data) => ({
+				...data,
+				// A suggested PO's first change saves it as a draft.
+				order:
+					data.order.status === "suggested"
+						? { ...data.order, status: "draft" }
+						: data.order,
+				lines: data.lines.some((l) => l.productId === r.productId)
+					? data.lines
+					: [...data.lines, line].sort(byName),
+				recommended: data.recommended.filter(
+					(x) => x.productId !== r.productId,
+				),
+			})),
+			send: async () => {
+				const res = await addRecommended({
+					data: {
+						purchaseOrderId: d.order.id,
+						productId: r.productId,
+						quantity: r.quantity,
+					},
+				});
+				ids.confirm(id, res.line.id);
+				return res;
+			},
+			success: (res) =>
+				res.added ? `Added ${r.sku}` : `${r.sku} is already on this PO`,
+		});
+	}
 	return (
 		<Card
 			flush
@@ -746,27 +783,7 @@ function Recommended({
 											: formatMoney(r.unitCost * r.quantity)}
 									</td>
 									<td className="px-4 py-2 text-right">
-										<Button
-											size="sm"
-											variant="outline"
-											disabled={busy}
-											onClick={() =>
-												run(
-													() =>
-														addRecommended({
-															data: {
-																purchaseOrderId: d.order.id,
-																productId: r.productId,
-																quantity: r.quantity,
-															},
-														}),
-													(res) =>
-														res.added
-															? `Added ${r.sku}`
-															: `${r.sku} is already on this PO`,
-												)
-											}
-										>
+										<Button size="sm" variant="outline" onClick={() => add(r)}>
 											Add
 										</Button>
 									</td>
@@ -781,6 +798,47 @@ function Recommended({
 }
 
 type Line = PurchaseOrderDetail["lines"][number];
+type Recommendation = PurchaseOrderDetail["recommended"][number];
+
+// The server lists lines by product name, then variant.
+const byName = (a: Line, b: Line) =>
+	a.name.localeCompare(b.name) ||
+	(a.variantName ?? "").localeCompare(b.variantName ?? "");
+
+// A recommendation as the line adding it makes: the supplier's terms and
+// price (a tool set has none of its own), on a draft, nothing received.
+function recommendedLine(
+	r: Recommendation,
+	id: number,
+	supplierId: number,
+): Line {
+	return {
+		id,
+		productId: r.productId,
+		sku: r.sku,
+		kind: r.kind,
+		name: r.name,
+		variantName: r.variantName,
+		imageUrl: r.imageUrl,
+		barcode: r.barcode,
+		supplierSku: r.supplierSku,
+		unit: r.unit,
+		packSize: r.packSize,
+		minimumQuantity: r.minimumQuantity,
+		linkSupplierId: supplierId,
+		defaultUnit: r.unit,
+		defaultPackSize: r.packSize,
+		defaultMinimum: r.minimumQuantity,
+		quantity: r.quantity,
+		unitCost: r.kind === "bundle" ? null : r.unitCost,
+		sentQuantity: null,
+		sentUnitCost: null,
+		received: 0,
+		onHand: r.onHand,
+		stockRange: r.stockRange,
+		why: r.why,
+	};
+}
 
 type LineFocus = { lineId: number; nonce: number };
 
@@ -1322,7 +1380,8 @@ async function receiveWithUndo(
 	const r = await optimism.change({
 		label: `Receiving ${line.sku}`,
 		patch: receivedPatch(purchaseOrderId, line, quantity),
-		send: () => receiveLine({ data: { lineId: line.id, quantity } }),
+		send: () =>
+			receiveLine({ data: { lineId: ids.server(line.id), quantity } }),
 	});
 	if (!r) return null;
 	// What the receipt made the line expect, if it raised it.
@@ -1432,7 +1491,11 @@ function SetPartRow({
 		run(
 			() =>
 				skipPartOfSet({
-					data: { lineId: line.id, productId: p.productId, skipped },
+					data: {
+						lineId: ids.server(line.id),
+						productId: p.productId,
+						skipped,
+					},
 				}),
 			(sku) =>
 				skipped
@@ -1623,7 +1686,7 @@ function AddSetButton({
 			title={`Put ${formatCount(sets)} of this set on ${names.join(" and ")}'s ${names.length === 1 ? "draft" : "drafts"}, so their parts are ordered for every set`}
 			onClick={() =>
 				run(
-					() => addSetToOtherPos({ data: { lineId: line.id } }),
+					() => addSetToOtherPos({ data: { lineId: ids.server(line.id) } }),
 					(added) =>
 						added
 							.map(
@@ -1719,7 +1782,10 @@ function QuantityField({
 					(l) => l.id === line.id,
 					(l) => ({ ...l, quantity }),
 				),
-				send: () => amendPurchaseLine({ data: { lineId: line.id, quantity } }),
+				send: () =>
+					amendPurchaseLine({
+						data: { lineId: ids.server(line.id), quantity },
+					}),
 			});
 			if (r)
 				amended({
@@ -1974,7 +2040,7 @@ function amended({
 								data: { purchaseOrderId, productId: line.productId },
 							})
 						).lineId
-					: line.id;
+					: ids.server(line.id);
 				await amendPurchaseLine({
 					data: { lineId, quantity: was.quantity, unitCost: was.unitCost },
 				});
@@ -2029,7 +2095,9 @@ function PriceField({
 							(l) => ({ ...l, unitCost }),
 						),
 						send: () =>
-							amendPurchaseLine({ data: { lineId: line.id, unitCost } }),
+							amendPurchaseLine({
+								data: { lineId: ids.server(line.id), unitCost },
+							}),
 					}).then(
 						(r) =>
 							r &&
