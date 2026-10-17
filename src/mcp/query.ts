@@ -68,18 +68,45 @@ export async function readOnlyQuery(
 	const refused = REFUSED.exec(statement)?.[1];
 	if (refused)
 		throw new QueryError(`${refused} isn't available to the query tool`);
-	return connect((db) =>
-		db.transaction(async (tx) => {
-			await tx.execute(sql`set transaction read only`);
-			await tx.execute(sql.raw(`set local statement_timeout = '${TIMEOUT}'`));
-			// The newline ends a trailing -- comment before the wrapper.
-			const result = (await tx.execute(
-				sql`select * from (${sql.raw(statement)}\n) as q limit ${limit + 1}`,
-			)) as unknown as Rows;
-			const rows = result.rows.slice(0, limit).map(plain);
-			return { rows, truncated: result.rows.length > limit };
-		}),
-	);
+	return connect(async (db) => {
+		try {
+			return await db.transaction(async (tx) => {
+				await tx.execute(sql`set transaction read only`);
+				await tx.execute(sql.raw(`set local statement_timeout = '${TIMEOUT}'`));
+				// The newline ends a trailing -- comment before the wrapper.
+				const result = (await tx.execute(
+					sql`select * from (${sql.raw(statement)}\n) as q limit ${limit + 1}`,
+				)) as unknown as Rows;
+				const rows = result.rows.slice(0, limit).map(plain);
+				return { rows, truncated: result.rows.length > limit };
+			});
+		} catch (error) {
+			throw await explain(db, error);
+		}
+	});
+}
+
+// Postgres's own words, not Drizzle's "Failed query: <the SQL>", which hides
+// them. A missing table also lists the ones there are, so a guessed name gets
+// corrected instead of guessed again.
+async function explain(db: Db, error: unknown) {
+	const pg = (
+		error instanceof Error && error.cause instanceof Error ? error.cause : error
+	) as { message?: string; code?: string };
+	if (typeof pg?.message !== "string") return error;
+	if (pg.code === "42P01") {
+		const names = Object.keys(await describeSchema(db)).join(", ");
+		return new QueryError(
+			`${pg.message}. Tables and views: ${names}. describe_schema has their columns.`,
+			{ cause: pg },
+		);
+	}
+	if (pg.code === "42703")
+		return new QueryError(
+			`${pg.message}. describe_schema lists each table's columns.`,
+			{ cause: pg },
+		);
+	return new QueryError(pg.message, { cause: pg });
 }
 
 export const MCP_ROLE = "katasync_mcp";

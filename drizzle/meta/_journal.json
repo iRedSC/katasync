@@ -330,6 +330,13 @@
       "when": 1792192845674,
       "tag": "0046_supplier_count",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792197518809,
+      "tag": "0047_supplier_invoices",
+      "breakpoints": true
     }
   ]
 }
