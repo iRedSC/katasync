@@ -41,7 +41,9 @@ export const Route = createFileRoute("/api/cron/costs/$channel")({
 					return Response.json({ skipped: `set ${missing.join(", ")}` });
 				const result = await costPassAlone(getDb(), channel);
 				if (!result)
-					return Response.json({ skipped: "the last cost pass is still running" });
+					return Response.json({
+						skipped: "the last cost pass is still running",
+					});
 				// Single orders that failed are kept on their checks for
 				// Diagnostics; the pass itself worked.
 				return Response.json({

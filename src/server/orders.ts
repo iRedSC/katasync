@@ -7,7 +7,11 @@ import {
 	dispatches,
 	dispatchOrders,
 	locations,
+	orderCharges,
+	orderCostChecks,
+	orderCostReports,
 	orderLines,
+	orderProfit,
 	orderReturns,
 	orders,
 	products,
@@ -210,7 +214,46 @@ export const getOrder = createServerFn({ method: "GET" })
 				shippedWith: others.filter((o) => o.dispatchId === h.dispatchId),
 			};
 		});
-		return { order, lines, sends, adminUrl: adminUrl(order) };
+		// What it made, and what each marketplace said it charged.
+		const [[profit], charges, reports, checks] = await Promise.all([
+			db.select().from(orderProfit).where(eq(orderProfit.orderId, data.id)),
+			db
+				.select({
+					billedBy: orderCharges.billedBy,
+					kind: orderCharges.kind,
+					description: orderCharges.description,
+					amount: orderCharges.amount,
+				})
+				.from(orderCharges)
+				.where(eq(orderCharges.orderId, data.id))
+				.orderBy(orderCharges.id),
+			db
+				.select({
+					billedBy: orderCostReports.billedBy,
+					settled: orderCostReports.settled,
+					fetchedAt: orderCostReports.fetchedAt,
+				})
+				.from(orderCostReports)
+				.where(eq(orderCostReports.orderId, data.id)),
+			db
+				.select({
+					billedBy: orderCostChecks.billedBy,
+					checkedAt: orderCostChecks.checkedAt,
+					error: orderCostChecks.error,
+				})
+				.from(orderCostChecks)
+				.where(eq(orderCostChecks.orderId, data.id)),
+		]);
+		return {
+			order,
+			lines,
+			sends,
+			adminUrl: adminUrl(order),
+			profit: profit ?? null,
+			charges,
+			reports,
+			checks,
+		};
 	});
 
 // The order's page in its own admin, for anything katasync doesn't do.

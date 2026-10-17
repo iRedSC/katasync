@@ -1185,7 +1185,14 @@ export const orderProfit = pgView("order_profit", {
 	feesStatus: text({ enum: ["final", "reported", "estimated"] }).notNull(),
 	labels: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	labelsStatus: text({
-		enum: ["known", "stand_in", "not_needed", "not_shipped", "missing"],
+		enum: [
+			"known",
+			"stand_in",
+			"not_needed",
+			"not_shipped",
+			"awaiting",
+			"missing",
+		],
 	}).notNull(),
 	refunds: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	adjustments: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),

@@ -6,11 +6,11 @@ import { refreshCosts } from "#/orders/cost-refresh";
 import { applySkusToOrders } from "#/orders/remap";
 import { assignOrderPins } from "#/shipping/pins";
 import { syncAmazon } from "./amazon";
+import { syncEbay } from "./ebay";
 import { fetchAmazonCharges } from "./finance/amazon";
 import { fetchEbayCharges } from "./finance/ebay";
 import { fetchShopifyCharges } from "./finance/shopify";
 import { fetchTiktokCharges } from "./finance/tiktok";
-import { syncEbay } from "./ebay";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
 import { shippingLocation } from "./stores";
 import { ingestTiktokOrder, syncTiktok } from "./tiktok";
@@ -81,9 +81,13 @@ const chargeFetchers = {
 // (src/orders/cost-refresh.ts). It only writes charges, never orders, so it
 // has a lock of its own and never waits on or holds up the order sync.
 // Returns null if the last cost pass is still running.
-export async function costPassAlone(db: Db, channel: SyncedChannel) {
+export async function costPassAlone(
+	db: Db,
+	channel: SyncedChannel,
+	options: { history?: boolean; limit?: number } = {},
+) {
 	return holdingChannel(channel, { purpose: "cost-pass" }, () =>
-		refreshCosts(db, channel, chargeFetchers[channel]),
+		refreshCosts(db, channel, chargeFetchers[channel], options),
 	);
 }
 
@@ -106,11 +110,15 @@ export async function ingestWebhookOrder(
 ) {
 	const ingest = ingestOne[channel];
 	if (!ingest) throw new Error(`${channel} has no webhooks`);
-	const done = await holdingChannel(channel, { purpose: "sync-pass" }, async () => {
-		await ingest(db, orderId);
-		await assignOrderPins(db);
-		return true;
-	});
+	const done = await holdingChannel(
+		channel,
+		{ purpose: "sync-pass" },
+		async () => {
+			await ingest(db, orderId);
+			await assignOrderPins(db);
+			return true;
+		},
+	);
 	return done ?? false;
 }
 

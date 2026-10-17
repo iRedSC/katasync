@@ -4,6 +4,7 @@ import {
 	dispatches,
 	dispatchOrders,
 	mcpCalls,
+	orderCostChecks,
 	orderLines,
 	orders,
 	shipments,
@@ -31,23 +32,30 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 			channelOverview(db, c, now),
 		),
 	);
-	const [[{ lastStartedAt }], handoffs, storefrontTracking, unmapped, claude] =
-		await Promise.all([
-			db.select({ lastStartedAt: max(syncRuns.startedAt) }).from(syncRuns),
-			failedHandoffs(db),
-			storefrontTrackingFailures(db),
-			unmappedSkus(db),
-			// Changes made through /mcp (see src/mcp/log.ts).
-			db
-				.select()
-				.from(mcpCalls)
-				.orderBy(desc(mcpCalls.createdAt), desc(mcpCalls.id))
-				.limit(50)
-				// As text: arguments can be any JSON.
-				.then((rows) =>
-					rows.map((r) => ({ ...r, arguments: JSON.stringify(r.arguments) })),
-				),
-		]);
+	const [
+		[{ lastStartedAt }],
+		handoffs,
+		storefrontTracking,
+		unmapped,
+		claude,
+		charges,
+	] = await Promise.all([
+		db.select({ lastStartedAt: max(syncRuns.startedAt) }).from(syncRuns),
+		failedHandoffs(db),
+		storefrontTrackingFailures(db),
+		unmappedSkus(db),
+		// Changes made through /mcp (see src/mcp/log.ts).
+		db
+			.select()
+			.from(mcpCalls)
+			.orderBy(desc(mcpCalls.createdAt), desc(mcpCalls.id))
+			.limit(50)
+			// As text: arguments can be any JSON.
+			.then((rows) =>
+				rows.map((r) => ({ ...r, arguments: JSON.stringify(r.arguments) })),
+			),
+		chargeFailures(db),
+	]);
 	const shippoKey = process.env.SHIPPO_API_KEY;
 	return {
 		worker: {
@@ -59,6 +67,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 		storefrontTracking,
 		unmapped,
 		claude,
+		charges,
 		services: {
 			shippo: {
 				configured: Boolean(shippoKey),
@@ -197,6 +206,24 @@ function storefrontTrackingFailures(db: Db) {
 		.limit(50);
 }
 
+// Asking a marketplace what it charged on an order that failed last time
+// (src/orders/cost-refresh.ts), grouped by marketplace and error. Those
+// orders keep estimated fees until it works; it's retried on its own.
+function chargeFailures(db: Db) {
+	return db
+		.select({
+			billedBy: orderCostChecks.billedBy,
+			error: sql<string>`${orderCostChecks.error}`,
+			orders: sql<number>`count(*)::int`,
+			lastAt: max(orderCostChecks.checkedAt),
+		})
+		.from(orderCostChecks)
+		.where(isNotNull(orderCostChecks.error))
+		.groupBy(orderCostChecks.billedBy, orderCostChecks.error)
+		.orderBy(desc(max(orderCostChecks.checkedAt)))
+		.limit(20);
+}
+
 // SKUs sold that match no product. `missed` counts orders that should have
 // taken stock and didn't; the rest are history from before the store's
 // stockFrom, or shipped by the marketplace.
@@ -223,8 +250,9 @@ function unmappedSkus(db: Db) {
 		.limit(50);
 }
 
-// For the nav badge: channels failing or stale, the worker being down, and
-// tracking that didn't reach a marketplace. Unmapped SKUs have their own home
+// For the nav badge: channels failing or stale, the worker being down,
+// tracking that didn't reach a marketplace, and charges that couldn't be
+// read. Unmapped SKUs have their own home
 // on Listings, so they don't count here.
 export async function diagnosticsAttention(db: Db, now = new Date()) {
 	const o = await diagnosticsOverview(db, now);
@@ -236,6 +264,7 @@ export async function diagnosticsAttention(db: Db, now = new Date()) {
 		(o.worker.alive ? 0 : 1) +
 		stuck.length +
 		(o.handoffs.length > 0 ? 1 : 0) +
-		(o.storefrontTracking.length > 0 ? 1 : 0)
+		(o.storefrontTracking.length > 0 ? 1 : 0) +
+		(o.charges.length > 0 ? 1 : 0)
 	);
 }

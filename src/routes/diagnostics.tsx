@@ -125,6 +125,19 @@ function DiagnosticsPage() {
 						detail="Shippo labels on Shopify orders"
 					/>
 					<SummaryRow
+						href="#charges"
+						name="Marketplace charges"
+						status={
+							d.charges.length > 0
+								? {
+										label: `${d.charges.reduce((n, c) => n + c.orders, 0)} orders failed`,
+										tone: "warning",
+									}
+								: { label: "Reading", tone: "success" }
+						}
+						detail="Fees and labels for profit"
+					/>
+					<SummaryRow
 						href="#unmapped"
 						name="Unmatched SKUs"
 						status={
@@ -155,6 +168,7 @@ function DiagnosticsPage() {
 			))}
 			<TrackingCard handoffs={d.handoffs} />
 			<StorefrontTrackingCard rows={d.storefrontTracking} />
+			<ChargesCard rows={d.charges} />
 			<UnmappedCard rows={d.unmapped} />
 			<ServicesCard services={d.services} />
 			<ClaudeCard calls={d.claude} />
@@ -688,6 +702,41 @@ function ClaudeCard({ calls }: { calls: Diagnostics["claude"] }) {
 										</pre>
 									</div>
 								)}
+							</li>
+						))}
+					</ul>
+				)}
+			</Card>
+		</div>
+	);
+}
+
+// Marketplaces katasync couldn't read fees and labels from. Each order is
+// asked again on its own schedule; until then its fees stay estimated.
+function ChargesCard({ rows }: { rows: Diagnostics["charges"] }) {
+	return (
+		<div id="charges" className="scroll-mt-16">
+			<Card title="Marketplace charges" flush>
+				{rows.length === 0 ? (
+					<p className="px-4 pb-4 text-muted-foreground">
+						Every marketplace answered last time it was asked.
+					</p>
+				) : (
+					<ul>
+						{rows.map((r) => (
+							<li
+								key={`${r.billedBy} ${r.error}`}
+								className="border-t px-4 py-3"
+							>
+								<span className="font-medium">{channelName(r.billedBy)}</span>{" "}
+								<span className="text-muted-foreground">
+									{formatCount(r.orders)} orders, last tried{" "}
+									{r.lastAt ? formatDateTime(r.lastAt) : "never"}. Asked again
+									on their own; fees stay estimated until then.
+								</span>
+								<p className="mt-1 text-xs break-words text-warning-text">
+									{r.error}
+								</p>
 							</li>
 						))}
 					</ul>

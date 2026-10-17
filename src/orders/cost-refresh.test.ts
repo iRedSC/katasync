@@ -159,3 +159,18 @@ test("a batch that fails as a whole marks every order", async () => {
 		"#b",
 	]);
 });
+
+test("history asks once about orders too old for passes, never asked before", async () => {
+	await order("#recent", 2);
+	await order("#old", 90 * 24);
+	await order("#older", 300 * 24);
+	const asked: string[] = [];
+	const fetch = eachOrder(async (o) => {
+		asked.push(o.name);
+		return null;
+	});
+	await refreshCosts(db, "shopify", fetch, { now, history: true });
+	expect(asked).toEqual(["#old", "#older"]);
+	await refreshCosts(db, "shopify", fetch, { now, history: true });
+	expect(asked).toHaveLength(2);
+});

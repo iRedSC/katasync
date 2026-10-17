@@ -21,7 +21,11 @@
 --                 not_needed: the marketplace shipped it (FBA), or it was
 --                 picked up or sold in person
 --                 not_shipped: no label yet because nothing has shipped
---                 missing: shipped, but no label cost from anyone
+--                 awaiting: shipped, and the marketplace it sold on hasn't
+--                 reported yet, so a label it billed may still come
+--                 missing: shipped, the marketplace has reported, and no
+--                 label cost from anyone: bought somewhere katasync can't
+--                 see
 --   cost_known    every line has a product with a cost
 -- complete is all three settled enough to trust the profit.
 --
@@ -153,6 +157,7 @@ SELECT
 		WHEN "fulfilled_by_channel" OR "no_label"
 			OR "fulfillment_status" = 'FULFILLMENT_NOT_REQUIRED' THEN 'not_needed'
 		WHEN "fulfillment_status" NOT IN ('FULFILLED', 'PARTIALLY_FULFILLED') THEN 'not_shipped'
+		WHEN "fees_status" = 'estimated' THEN 'awaiting'
 		ELSE 'missing'
 	END AS "labels_status",
 	"refunds",

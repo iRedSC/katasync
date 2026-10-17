@@ -15,6 +15,7 @@ import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as McpRouteImport } from './routes/mcp'
+import { Route as ProfitRouteImport } from './routes/profit'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StockRouteImport } from './routes/stock'
@@ -66,6 +67,11 @@ const LoginRoute = LoginRouteImport.update({
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfitRoute = ProfitRouteImport.update({
+  id: '/profit',
+  path: '/profit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -187,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/profit': typeof ProfitRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -217,6 +224,7 @@ export interface FileRoutesByTo {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/profit': typeof ProfitRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -248,6 +256,7 @@ export interface FileRoutesById {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/profit': typeof ProfitRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -280,6 +289,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
+    | '/profit'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -310,6 +320,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
+    | '/profit'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -340,6 +351,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
+    | '/profit'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -371,6 +383,7 @@ export interface RootRouteChildren {
   ListingsRoute: typeof ListingsRoute
   LoginRoute: typeof LoginRoute
   McpRoute: typeof McpRoute
+  ProfitRoute: typeof ProfitRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   StockRoute: typeof StockRoute
@@ -437,6 +450,13 @@ declare module '@tanstack/react-router' {
       path: '/mcp'
       fullPath: '/mcp'
       preLoaderRoute: typeof McpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profit': {
+      id: '/profit'
+      path: '/profit'
+      fullPath: '/profit'
+      preLoaderRoute: typeof ProfitRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -603,6 +623,7 @@ const rootRouteChildren: RootRouteChildren = {
   ListingsRoute: ListingsRoute,
   LoginRoute: LoginRoute,
   McpRoute: McpRoute,
+  ProfitRoute: ProfitRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   StockRoute: StockRoute,
@@ -629,3 +650,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

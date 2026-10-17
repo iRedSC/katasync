@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { type channel, orderCostChecks, orders, stores } from "#/db/schema";
 import { type CostReport, saveCostReport } from "./charges";
@@ -64,12 +64,17 @@ export function eachOrder(
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+// Orders to ask about now. With `history`, instead the orders already old
+// enough to be final that were never asked about: a one-time catch-up of
+// what came before (pnpm sync --costs-history), asked once each.
 export async function dueOrders(
 	db: Db,
 	billedBy: Channel,
 	now: Date,
 	limit = PER_PASS,
+	history = false,
 ): Promise<DueOrder[]> {
+	const finalFrom = new Date(now.getTime() - FINAL_AFTER_MS);
 	const age = sql`extract(epoch from (${now}::timestamptz - ${orders.placedAt})) * 1000`;
 	const rows = await db
 		.select({
@@ -96,7 +101,12 @@ export async function dueOrders(
 					sql`${orders.marketplaceOrderId} like ${`${billedBy}:%`}`,
 				),
 				isNull(orders.cancelledAt),
-				gte(orders.placedAt, new Date(now.getTime() - FINAL_AFTER_MS)),
+				history
+					? and(
+							lt(orders.placedAt, finalFrom),
+							isNull(orderCostChecks.checkedAt),
+						)
+					: gte(orders.placedAt, finalFrom),
 				// Asked again after a quarter of the order's age, between an hour
 				// and a week: about 30 asks over the window, not one per pass.
 				// Settled ones too, since a refund can follow settlement.
@@ -130,10 +140,16 @@ export async function refreshCosts(
 	db: Db,
 	billedBy: Channel,
 	fetchCharges: ChargeFetcher,
-	options: { now?: Date; limit?: number } = {},
+	options: { now?: Date; limit?: number; history?: boolean } = {},
 ) {
 	const now = options.now ?? new Date();
-	const due = await dueOrders(db, billedBy, now, options.limit);
+	const due = await dueOrders(
+		db,
+		billedBy,
+		now,
+		options.limit,
+		options.history,
+	);
 	let reported = 0;
 	const problems: string[] = [];
 	if (due.length === 0) return { checked: 0, reported, problems };

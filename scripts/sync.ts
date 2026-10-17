@@ -5,6 +5,9 @@
 //   pnpm sync --only amazon  just one channel
 //   pnpm sync --costs        one cost pass of every channel instead: what
 //                            each marketplace charged on orders that are due
+//   pnpm sync --costs-history
+//                            one-time: ask each marketplace once about every
+//                            order too old for cost passes that never was
 //   pnpm sync --shopify-history 365
 //                            one-time import of Shopify orders placed in the
 //                            last 365 days that the regular sync hasn't seen
@@ -27,6 +30,7 @@ const { values } = parseArgs({
 	options: {
 		watch: { type: "boolean", default: false },
 		costs: { type: "boolean", default: false },
+		"costs-history": { type: "boolean", default: false },
 		only: { type: "string" },
 		"shopify-history": { type: "string" },
 	},
@@ -81,6 +85,33 @@ async function costPass(channel: (typeof channels)[number]) {
 	} catch (error) {
 		console.error(`${new Date().toISOString()} ${channel.name} costs failed:`, error);
 	}
+}
+
+if (values["costs-history"]) {
+	// Every channel at once, each in batches until none are left.
+	await Promise.all(
+		channels.map(async (channel) => {
+			if (channelEnv[channel.name].some((name) => !process.env[name])) return;
+			let checked = 0;
+			let reported = 0;
+			for (;;) {
+				const result = await costPassAlone(getDb(), channel.name, {
+					history: true,
+					limit: 100,
+				});
+				if (!result) {
+					await new Promise((resolve) => setTimeout(resolve, 30_000));
+					continue;
+				}
+				if (result.checked === 0) break;
+				checked += result.checked;
+				reported += result.reported;
+				for (const problem of result.problems) console.log(`  ${problem}`);
+				console.log(`${channel.name}: ${reported} of ${checked} older orders reported`);
+			}
+		}),
+	);
+	process.exit(0);
 }
 
 if (values["shopify-history"]) {
