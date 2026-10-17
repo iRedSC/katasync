@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Badge, Banner, Card, Page, type Tone } from "#/components/page";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import type { CheckTarget } from "#/diagnostics/checks";
 import type { Health, Hint } from "#/diagnostics/health";
 import { channelName, formatCount, formatDateTime } from "#/lib/format";
@@ -616,9 +617,11 @@ function ErrorBlock({ title, text }: { title: string; text: string }) {
 		<div className="rounded-lg border border-critical-border bg-critical-surface p-3">
 			<div className="mb-1 flex items-center justify-between font-medium text-critical-text">
 				{title}
-				<button type="button" onClick={() => copy(text)} title="Copy">
-					<Copy className="size-3.5" />
-				</button>
+				<Tip content="Copy">
+					<button type="button" aria-label="Copy" onClick={() => copy(text)}>
+						<Copy className="size-3.5" />
+					</button>
+				</Tip>
 			</div>
 			<pre className="max-h-48 overflow-auto font-mono text-xs break-words whitespace-pre-wrap">
 				{text}

@@ -39,6 +39,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { VelocityGauge } from "#/components/velocity-gauge";
 import { copyText } from "#/lib/copy";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
@@ -470,12 +471,11 @@ function ProductList() {
 										<th className="hidden px-4 py-2 text-right font-medium xl:table-cell">
 											On order
 										</th>
-										<th
-											className="hidden px-2 py-2 text-center font-medium md:table-cell"
-											title="Units sold a month"
-										>
-											Velocity
-										</th>
+										<Tip content="Units sold a month">
+											<th className="hidden px-2 py-2 text-center font-medium md:table-cell">
+												Velocity
+											</th>
+										</Tip>
 										<th className="hidden px-4 py-2 font-medium md:table-cell">
 											Reorder
 										</th>

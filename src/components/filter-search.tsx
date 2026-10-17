@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
 import { type KeyboardEvent, type RefObject, useState } from "react";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import {
@@ -186,18 +187,19 @@ export function FilterSearch<K extends string>({
 							className="inline-flex h-6 items-center gap-1 rounded-md bg-surface-strong pr-0.5 pl-2 text-xs"
 						>
 							<span className="text-muted-foreground">sort</span>
-							<button
-								type="button"
-								title={describeTerm(term, columns)}
-								onClick={(e) => {
-									e.stopPropagation();
-									onSort(withTerm(sort, { ...term, desc: !term.desc }));
-								}}
-								className="inline-flex items-center gap-0.5 rounded font-medium hover:text-link"
-							>
-								{label}
-								<Arrow className="size-3" />
-							</button>
+							<Tip content={describeTerm(term, columns)}>
+								<button
+									type="button"
+									onClick={(e) => {
+										e.stopPropagation();
+										onSort(withTerm(sort, { ...term, desc: !term.desc }));
+									}}
+									className="inline-flex items-center gap-0.5 rounded font-medium hover:text-link"
+								>
+									{label}
+									<Arrow className="size-3" />
+								</button>
+							</Tip>
 							<button
 								type="button"
 								aria-label={`Stop sorting by ${label}`}

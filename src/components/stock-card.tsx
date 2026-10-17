@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { ClipboardList, PackagePlus, Truck } from "lucide-react";
 import type { ReactNode } from "react";
+import { Tip } from "#/components/ui/tooltip";
 import {
 	afterArrival,
 	type Level,
@@ -214,31 +215,32 @@ export function StockBar({
 	const filled = share(onHand);
 	const coming = share(afterArrival(onHand, onOrder)) - filled;
 	return (
-		<div
-			className="relative h-2 overflow-hidden rounded-sm bg-surface-strong"
-			title={`${formatCount(onHand)} on hand${onOrder > 0 ? `, ${formatCount(onOrder)} coming` : ""}. Keep ${formatCount(range.min)} to ${formatCount(range.max)}`}
+		<Tip
+			content={`${formatCount(onHand)} on hand${onOrder > 0 ? `, ${formatCount(onOrder)} coming` : ""}. Keep ${formatCount(range.min)} to ${formatCount(range.max)}`}
 		>
-			<div
-				className="absolute inset-y-0 left-0"
-				style={{
-					width: `${filled}%`,
-					background:
-						onHand < 0
-							? "var(--critical-icon)"
-							: fillColor(rangeFill(onHand, range)),
-				}}
-			/>
-			{coming > 0 && (
+			<div className="relative h-2 overflow-hidden rounded-sm bg-surface-strong">
 				<div
-					className="absolute inset-y-0 bg-[repeating-linear-gradient(45deg,var(--primary)_0_2px,transparent_2px_5px)] opacity-60"
-					style={{ left: `${filled}%`, width: `${coming}%` }}
+					className="absolute inset-y-0 left-0"
+					style={{
+						width: `${filled}%`,
+						background:
+							onHand < 0
+								? "var(--critical-icon)"
+								: fillColor(rangeFill(onHand, range)),
+					}}
 				/>
-			)}
-			<div
-				className="absolute inset-y-0 w-px bg-foreground/40"
-				style={{ left: `${share(range.min)}%` }}
-			/>
-		</div>
+				{coming > 0 && (
+					<div
+						className="absolute inset-y-0 bg-[repeating-linear-gradient(45deg,var(--primary)_0_2px,transparent_2px_5px)] opacity-60"
+						style={{ left: `${filled}%`, width: `${coming}%` }}
+					/>
+				)}
+				<div
+					className="absolute inset-y-0 w-px bg-foreground/40"
+					style={{ left: `${share(range.min)}%` }}
+				/>
+			</div>
+		</Tip>
 	);
 }
 
@@ -247,12 +249,11 @@ function TrustLine({ trust, now }: { trust: Trust; now: Date }) {
 	if (trust.kind === "counted") {
 		const days = Math.floor((now.getTime() - trust.at.getTime()) / 86_400_000);
 		return (
-			<p
-				className="text-xs font-medium text-success-text"
-				title={`Counted ${days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`}`}
+			<Tip
+				content={`Counted ${days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`}`}
 			>
-				Counted
-			</p>
+				<p className="text-xs font-medium text-success-text">Counted</p>
+			</Tip>
 		);
 	}
 	return <p className="text-xs text-muted-foreground">Uncounted</p>;

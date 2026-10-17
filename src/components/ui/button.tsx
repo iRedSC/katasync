@@ -44,7 +44,7 @@ function Button({
 	size = "default",
 	asChild = false,
 	...props
-}: React.ComponentProps<"button"> &
+}: Omit<React.ComponentProps<"button">, "title"> &
 	VariantProps<typeof buttonVariants> & {
 		asChild?: boolean;
 	}) {

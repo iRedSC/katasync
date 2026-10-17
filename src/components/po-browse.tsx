@@ -19,6 +19,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney, formatOrderQuantity } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { facetsOf, sortValuesOf, stateOf, stock } from "#/products/rows";
@@ -409,32 +410,36 @@ function Table({
 									</td>
 									<td className="px-5 py-2 text-right whitespace-nowrap">
 										{lineId !== undefined ? (
-											<Button
-												size="sm"
-												variant="ghost"
-												onClick={() => onGoToLine(lineId)}
-												title="Go to line"
-											>
-												<Check />
-												Added
-											</Button>
+											<Tip content="Go to line">
+												<Button
+													size="sm"
+													variant="ghost"
+													onClick={() => onGoToLine(lineId)}
+												>
+													<Check />
+													Added
+												</Button>
+											</Tip>
 										) : (
-											<Button
-												size="sm"
-												variant="outline"
-												disabled={busy || blocked}
-												title={
+											<Tip
+												content={
 													blocked
 														? "Tool set: add the parts that came"
 														: undefined
 												}
-												onClick={() => add(row)}
 											>
-												{adding === row.id && (
-													<Loader2 className="animate-spin" />
-												)}
-												Add
-											</Button>
+												<Button
+													size="sm"
+													variant="outline"
+													disabled={busy || blocked}
+													onClick={() => add(row)}
+												>
+													{adding === row.id && (
+														<Loader2 className="animate-spin" />
+													)}
+													Add
+												</Button>
+											</Tip>
 										)}
 									</td>
 								</tr>
@@ -482,20 +487,21 @@ function SortHeader({
 			className={cn("px-3 py-2 font-medium", className)}
 			aria-sort={term ? (term.desc ? "descending" : "ascending") : undefined}
 		>
-			<button
-				type="button"
-				onClick={onClick}
-				title={title}
-				className={cn(
-					"inline-flex items-center gap-1 hover:text-foreground",
-					right && "flex-row-reverse",
-					term && "text-foreground",
-				)}
-			>
-				{children}
-				{term && <Arrow className="size-3" />}
-				{term && rank > 0 && <span className="tabular-nums">{rank}</span>}
-			</button>
+			<Tip content={title}>
+				<button
+					type="button"
+					onClick={onClick}
+					className={cn(
+						"inline-flex items-center gap-1 hover:text-foreground",
+						right && "flex-row-reverse",
+						term && "text-foreground",
+					)}
+				>
+					{children}
+					{term && <Arrow className="size-3" />}
+					{term && rank > 0 && <span className="tabular-nums">{rank}</span>}
+				</button>
+			</Tip>
 		</th>
 	);
 }
