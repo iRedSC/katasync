@@ -2,6 +2,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Check, ChevronRight, RefreshCw } from "lucide-react";
 import { receiveHead } from "#/components/receive/pwa";
 import { Saving } from "#/components/saving";
+import { ReceiveSkeleton } from "#/components/skeleton";
 import { cn } from "#/lib/utils";
 import { listReceivable } from "#/server/purchasing";
 
@@ -9,6 +10,7 @@ export const Route = createFileRoute("/receive/")({
 	head: receiveHead,
 	loader: () => listReceivable(),
 	component: Receive,
+	pendingComponent: () => <ReceiveSkeleton title="Receiving" />,
 });
 
 const day = new Intl.DateTimeFormat("en-US", {
@@ -58,6 +60,8 @@ function Receive() {
 								<Link
 									to="/receive/$id"
 									params={{ id: String(po.id) }}
+									// A phone has no hover to load ahead on, and the list is short.
+									preload="viewport"
 									className="block rounded-2xl bg-card p-4 shadow-card active:bg-subtle"
 								>
 									<div className="flex items-center gap-3">

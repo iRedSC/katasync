@@ -3,6 +3,7 @@ import { Copy, Link2, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
+import { ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
 	Command,
@@ -40,6 +41,7 @@ import {
 export const Route = createFileRoute("/listings")({
 	loader: () => listUnmappedListings(),
 	component: Listings,
+	pendingComponent: () => <ListSkeleton title="Unmatched listings" />,
 });
 
 type Listing = Awaited<ReturnType<typeof listUnmappedListings>>[number];

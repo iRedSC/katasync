@@ -3,6 +3,7 @@ import { ClipboardList, PackagePlus, Truck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Level, NextStep, Trust } from "#/inventory/stock-state";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
+import type { RowLinkProps } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
 import type { ProductRow } from "#/server/catalog";
 import { AbcBadge, Badge, type Tone } from "./page";
@@ -46,7 +47,7 @@ export function StockCard({
 	product: p,
 	state,
 	now,
-	onOpen,
+	link,
 	onMenu,
 	busy = false,
 	onOrder,
@@ -55,7 +56,8 @@ export function StockCard({
 	product: ProductRow;
 	state: StockState;
 	now: Date;
-	onOpen: () => void;
+	// Opens the product, and loads it on hover.
+	link: RowLinkProps;
 	// Right-click: points the shared menu at this product.
 	onMenu: () => void;
 	// An add to a PO that hasn't shown yet; its button waits for it.
@@ -69,8 +71,7 @@ export function StockCard({
 		<div
 			role="button"
 			tabIndex={-1}
-			onClick={onOpen}
-			onKeyDown={(e) => e.key === "Enter" && onOpen()}
+			{...link}
 			onContextMenu={onMenu}
 			className={cn(
 				"flex cursor-pointer flex-col gap-2.5 rounded-xl bg-card p-3 text-left",

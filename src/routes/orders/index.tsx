@@ -11,6 +11,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
+import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
 	ContextMenu,
@@ -22,6 +23,7 @@ import {
 import { copyText } from "#/lib/copy";
 import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
+import { useRowLink } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
@@ -35,6 +37,11 @@ export const Route = createFileRoute("/orders/")({
 	loaderDeps: ({ search }) => ({ view: search.view ?? "ship" }),
 	loader: ({ deps }) => listOrders({ data: { view: deps.view } }),
 	component: Orders,
+	pendingComponent: () => (
+		<ListSkeleton title="Orders">
+			<ListCard tabs />
+		</ListSkeleton>
+	),
 });
 
 const views: { key: View; label: string }[] = [
@@ -46,20 +53,45 @@ function Orders() {
 	const rows = Route.useLoaderData();
 	const { view = "ship" } = Route.useSearch();
 	const navigate = useNavigate();
+	const { link, preload, load } = useRowLink();
 	const list = useRef<HTMLTableSectionElement>(null);
 	const [selected, setSelected] = useState(0);
 	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the view changes
 	useEffect(() => setSelected(0), [view]);
+	const to = (o: OrderRow) =>
+		({ to: "/orders/$id", params: { id: String(o.id) } }) as const;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: follows the selection, not each reload of the rows
 	useEffect(() => {
 		list.current
 			?.querySelector(`[data-index="${selected}"]`)
 			?.scrollIntoView({ block: "nearest" });
-	}, [selected]);
+		// Enter opens the selected order, so it's loaded ahead too.
+		const o = rows[selected];
+		if (o) preload(to(o));
+	}, [selected, preload]);
 
-	const open = (o: OrderRow | undefined) =>
-		o && navigate({ to: "/orders/$id", params: { id: String(o.id) } });
+	const open = (o: OrderRow | undefined) => o && navigate(to(o));
+
+	// Nearly every order to ship gets opened, one after another, so each
+	// loads as it scrolls into view rather than waiting for a hover. All
+	// orders is too long to load whole.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: watches the rows shown, not each reload's copy of them
+	useEffect(() => {
+		const body = list.current;
+		if (view !== "ship" || !body) return;
+		const seen = new IntersectionObserver((entries) => {
+			for (const e of entries) {
+				if (!e.isIntersecting) continue;
+				seen.unobserve(e.target);
+				const o = rows[Number((e.target as HTMLElement).dataset.index)];
+				if (o) load(to(o));
+			}
+		});
+		for (const tr of body.querySelectorAll("tr[data-index]")) seen.observe(tr);
+		return () => seen.disconnect();
+	}, [view, rows.map((o) => o.id).join(), load]);
 
 	useHotkeys({
 		j: () => setSelected((i) => Math.min(i + 1, rows.length - 1)),
@@ -155,7 +187,7 @@ function Orders() {
 											<tr
 												key={o.id}
 												data-index={i}
-												onClick={() => open(o)}
+												{...link(to(o))}
 												onMouseMove={() => setSelected(i)}
 												onContextMenu={() => setMenuFor(o)}
 												className={cn(

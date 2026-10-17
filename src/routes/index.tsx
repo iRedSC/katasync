@@ -2,6 +2,7 @@ import NumberFlow from "@number-flow/react";
 import { createFileRoute, Link, type LinkProps } from "@tanstack/react-router";
 import { Badge, Banner, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
+import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { statusSearch } from "#/products/views";
@@ -21,6 +22,15 @@ export const Route = createFileRoute("/")({
 		return { ...dashboard, toShip, posReady, attention };
 	},
 	component: Home,
+	pendingComponent: () => (
+		<ListSkeleton title="Home">
+			<FieldsCard lines={2} />
+			<div className="grid gap-4 lg:grid-cols-2">
+				<ListCard rows={5} picture />
+				<ListCard rows={5} picture />
+			</div>
+		</ListSkeleton>
+	),
 });
 
 function Home() {

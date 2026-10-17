@@ -1,5 +1,6 @@
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
+import { Bone, ListSkeleton } from "./components/skeleton";
 import { getContext } from "./integrations/tanstack-query/root-provider";
 import { connectOptimism } from "./lib/optimism";
 import { routeTree } from "./routeTree.gen";
@@ -14,6 +15,16 @@ export function getRouter() {
 		defaultPreload: "intent",
 		// Data preloaded on hover stays fresh long enough to be used by the click.
 		defaultPreloadStaleTime: 30_000,
+		// A click leaves at once: the next page's skeleton shows while its data
+		// loads, rather than the old page sitting there for a second. Pages
+		// already loaded show their last data while it refreshes, so they skip
+		// the skeleton; so do reloads after a change. No minimum, so a fast
+		// load isn't held back to hide a flicker.
+		defaultPendingMs: 0,
+		defaultPendingMinMs: 0,
+		defaultPendingComponent: () => (
+			<ListSkeleton title={<Bone className="h-6 w-40" />} />
+		),
 	});
 
 	setupRouterSsrQueryIntegration({ router, queryClient: context.queryClient });
