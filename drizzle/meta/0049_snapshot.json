@@ -1,5 +1,5 @@
 {
-  "id": "2552906b-8c64-4bde-8877-6038304924bf",
+  "id": "865acf7f-4ea7-4df4-82d4-88b1742851f6",
   "prevId": "0dabc7dc-4154-43f3-a7b4-5b52676160a8",
   "version": "7",
   "dialect": "postgresql",
@@ -1017,6 +1017,66 @@
       },
       "isRLSEnabled": false
     },
+    "public.order_cost_checks": {
+      "name": "order_cost_checks",
+      "schema": "",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "billed_by": {
+          "name": "billed_by",
+          "type": "channel",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "order_cost_checks_order_id_orders_id_fk": {
+          "name": "order_cost_checks_order_id_orders_id_fk",
+          "tableFrom": "order_cost_checks",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "order_cost_checks_order_id_billed_by_pk": {
+          "name": "order_cost_checks_order_id_billed_by_pk",
+          "columns": [
+            "order_id",
+            "billed_by"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.order_cost_reports": {
       "name": "order_cost_reports",
       "schema": "",
@@ -1039,6 +1099,13 @@
           "type": "boolean",
           "primaryKey": false,
           "notNull": true
+        },
+        "no_label": {
+          "name": "no_label",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "fetched_at": {
           "name": "fetched_at",

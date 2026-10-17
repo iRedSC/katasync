@@ -1,213 +1,150 @@
-// Parsing for eBay Finances API transactions. Pure: no network, no database.
-// Fetching is injected through fetchPage so paging can be tested.
+import { type } from "arktype";
+import type { ReportedCharge } from "#/orders/charges";
+import { type ChargeFetcher, eachOrder } from "#/orders/cost-refresh";
+import { accessToken } from "../ebay";
 
-export type EbayAmount = {
-	value?: string | number | null;
-	currency?: string | null;
-	convertedFromCurrency?: string | null;
-	convertedFromValue?: string | number | null;
-	exchangeRate?: string | number | null;
-};
+// What eBay charged on an order, from the Finances API: selling fees on the
+// sale, labels bought on eBay, ad fees, refunds, and anything else posted
+// against the order. Each transaction says whether it took money (DEBIT) or
+// gave some back (CREDIT), so a refunded fee or a voided label nets out.
 
-export type EbayFee = {
-	feeType?: string | null;
-	amount?: EbayAmount;
-};
+// Finances lives on its own host.
+const FINANCES = "https://apiz.ebay.com/sell/finances/v1/transaction";
+const PAGE = 200;
 
-export type EbayTransactionReference = {
-	referenceType?: string | null;
-	referenceId?: string | null;
-};
+const money = type({ value: "string.numeric.parse" });
+const transaction = type({
+	transactionType: "string",
+	bookingEntry: "'CREDIT' | 'DEBIT'",
+	amount: money,
+	"totalFeeAmount?": money,
+	"transactionMemo?": "string",
+	"orderLineItems?": type({
+		"marketplaceFees?": type({ feeType: "string", amount: money }).array(),
+	}).array(),
+});
+const page = type({ "transactions?": transaction.array() });
 
-export type EbayTransactionLineItem = {
-	lineItemId?: string | null;
-	marketplaceFees?: EbayFee[] | null;
-};
+export type EbayTransaction = typeof transaction.infer;
 
-export type EbayTransaction = {
-	orderId?: string | null;
-	transactionId?: string | null;
-	transactionType?: string | null;
-	transactionDate?: string | number | null;
-	transactionMemo?: string | null;
-	amount?: EbayAmount;
-	totalFeeAmount?: EbayAmount;
-	insuranceAmount?: EbayAmount;
-	feeJurisdiction?: string | number | boolean | Record<string, never> | null;
-	references?: EbayTransactionReference[] | null;
-	fees?: EbayFee[] | null;
-	orderLineItems?: EbayTransactionLineItem[] | null;
-};
+// Money movements that aren't about the order's profit.
+const IGNORED = new Set(["PAYOUT", "TRANSFER", "WITHDRAWAL", "LOAN_REPAYMENT"]);
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+// "FINAL_VALUE_FEE_FIXED_PER_ORDER" → "Final value fee fixed per order".
+export function words(code: string) {
+	const text = code.toLowerCase().replaceAll("_", " ");
+	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-// Which fields survive parsing. eBay adds fields without notice, and only the
-// ones listed here reach the rest of the app. ObjectShape makes every key of
-// the type appear here, so a field can't be added to the type and silently
-// dropped.
-type Shape = "scalar" | { fields: Record<string, Shape> } | { items: Shape };
-
-type ObjectShape<T> = { fields: { [K in keyof T]-?: Shape } };
-
-const amountShape = {
-	fields: {
-		value: "scalar",
-		currency: "scalar",
-		convertedFromCurrency: "scalar",
-		convertedFromValue: "scalar",
-		exchangeRate: "scalar",
-	},
-} satisfies ObjectShape<EbayAmount>;
-
-const referenceShape = {
-	fields: { referenceType: "scalar", referenceId: "scalar" },
-} satisfies ObjectShape<EbayTransactionReference>;
-
-const feeShape = {
-	fields: { feeType: "scalar", amount: amountShape },
-} satisfies ObjectShape<EbayFee>;
-
-const lineItemShape = {
-	fields: {
-		lineItemId: "scalar",
-		marketplaceFees: { items: feeShape },
-	},
-} satisfies ObjectShape<EbayTransactionLineItem>;
-
-const transactionShape = {
-	fields: {
-		orderId: "scalar",
-		transactionId: "scalar",
-		transactionType: "scalar",
-		transactionDate: "scalar",
-		transactionMemo: "scalar",
-		amount: amountShape,
-		totalFeeAmount: amountShape,
-		insuranceAmount: amountShape,
-		// Kept as an empty object: no fields of it were ever declared.
-		feeJurisdiction: { fields: {} },
-		references: { items: referenceShape },
-		fees: { items: feeShape },
-		orderLineItems: { items: lineItemShape },
-	},
-} satisfies ObjectShape<EbayTransaction>;
-
-function pick(value: unknown, shape: Shape): unknown {
-	if (value === undefined || value === null || shape === "scalar") {
-		return value;
-	}
-	if ("items" in shape) {
-		return Array.isArray(value)
-			? value.map((item) => pick(item, shape.items))
-			: value;
-	}
-	if (!isRecord(value)) return value;
-	const picked: Record<string, unknown> = {};
-	for (const [key, fieldShape] of Object.entries(shape.fields)) {
-		if (!Object.hasOwn(value, key)) continue;
-		picked[key] = pick(value[key], fieldShape);
-	}
-	return picked;
+function lineFees(t: EbayTransaction) {
+	return (t.orderLineItems ?? []).flatMap((l) => l.marketplaceFees ?? []);
 }
 
-export function parseEbayAmount(amount: unknown): number {
-	if (!isRecord(amount)) {
-		return parseFloat("0");
-	}
-	const value = amount.value;
-	if (typeof value === "string") {
-		return parseFloat(value || "0");
-	}
-	if (typeof value === "number") {
-		return parseFloat(String(value || "0"));
-	}
-	if (typeof value === "boolean" || typeof value === "bigint") {
-		return parseFloat(String(value));
-	}
-	if (!value) {
-		return parseFloat("0");
-	}
-	return Number.NaN;
-}
-
-export function transactionBelongsToOrder(
-	transaction: { orderId?: unknown; references?: unknown },
-	orderId: string,
-): boolean {
-	return getEbayTransactionOrderIds(transaction).includes(orderId);
-}
-
-// Some transactions (such as ad fees) name their order only in references,
-// so both places count.
-export function getEbayTransactionOrderIds(transaction: {
-	orderId?: unknown;
-	references?: unknown;
-}): string[] {
-	const orderIds = new Set<string>();
-	if (typeof transaction.orderId === "string") {
-		orderIds.add(transaction.orderId);
-	}
-	if (transaction.references && Array.isArray(transaction.references)) {
-		for (const reference of transaction.references) {
-			if (
-				isRecord(reference) &&
-				reference.referenceType === "ORDER_ID" &&
-				typeof reference.referenceId === "string"
-			) {
-				orderIds.add(reference.referenceId);
-			}
+export function ebayCharges(transactions: EbayTransaction[]): ReportedCharge[] {
+	const charges: ReportedCharge[] = [];
+	for (const t of transactions) {
+		if (IGNORED.has(t.transactionType)) continue;
+		// Positive when it cost us.
+		const sign = t.bookingEntry === "DEBIT" ? 1 : -1;
+		const amount = t.amount.value;
+		const fees = lineFees(t);
+		const feeTotal = t.totalFeeAmount?.value ?? 0;
+		switch (t.transactionType) {
+			case "SALE":
+				// The sale's own amount is revenue, already on the order; only its
+				// fees are charges.
+				for (const f of fees) {
+					charges.push({
+						kind: "fee",
+						description: words(f.feeType),
+						amount: f.amount.value,
+					});
+				}
+				if (fees.length === 0 && feeTotal !== 0) {
+					charges.push({
+						kind: "fee",
+						description: "Selling fees",
+						amount: feeTotal,
+					});
+				}
+				break;
+			case "REFUND":
+				// eBay hands back the fees on what's refunded, so the debit is the
+				// refund less those fees. Both are kept, and they add up to it.
+				charges.push({
+					kind: "refund",
+					description: t.transactionMemo ?? "Refund",
+					amount: sign * (amount + feeTotal),
+				});
+				for (const f of fees) {
+					charges.push({
+						kind: "fee",
+						description: `${words(f.feeType)} refunded`,
+						amount: -sign * f.amount.value,
+					});
+				}
+				if (fees.length === 0 && feeTotal !== 0) {
+					charges.push({
+						kind: "fee",
+						description: "Selling fees refunded",
+						amount: -sign * feeTotal,
+					});
+				}
+				break;
+			case "SHIPPING_LABEL":
+				charges.push({
+					kind: "label",
+					description:
+						sign > 0 ? "eBay shipping label" : "eBay shipping label refunded",
+					amount: sign * amount,
+				});
+				break;
+			case "NON_SALE_CHARGE":
+				charges.push({
+					kind: "fee",
+					description: t.transactionMemo ?? "eBay charge",
+					amount: sign * amount,
+				});
+				break;
+			default:
+				// Disputes, credits, and adjustments eBay posts against the order.
+				charges.push({
+					kind: "adjustment",
+					description: t.transactionMemo ?? words(t.transactionType),
+					amount: sign * amount,
+				});
 		}
 	}
-	return [...orderIds];
+	return charges;
 }
 
-export function toEbayTransactions(value: unknown): EbayTransaction[] {
-	if (!Array.isArray(value)) {
-		return [];
-	}
-	const transactions: EbayTransaction[] = [];
-	for (const item of value) {
-		if (!isRecord(item)) continue;
-		// pick returns a record for a record input, and transactionShape
-		// lists every EbayTransaction key, so the cast holds.
-		transactions.push(pick(item, transactionShape) as EbayTransaction);
-	}
-	return transactions;
-}
-
-export function readEbayTransactionsPage(data: unknown): {
-	rawPage: unknown[];
-	transactions: EbayTransaction[];
-} {
-	const raw = isRecord(data) ? data.transactions : undefined;
-	const rawPage = Array.isArray(raw) ? raw : [];
-	return { rawPage, transactions: toEbayTransactions(rawPage) };
-}
-
-type CollectEbayTransactionPagesArgs = {
-	limit: number;
-	fetchPage: (args: { offset: number; limit: number }) => Promise<unknown>;
-};
-
-// A short or empty page means the last one.
-export async function collectEbayTransactionPages({
-	limit,
-	fetchPage,
-}: CollectEbayTransactionPagesArgs): Promise<EbayTransaction[]> {
-	if (!Number.isInteger(limit) || limit < 1) {
-		throw new Error(
-			`eBay page size must be a whole number above 0, not ${limit}`,
-		);
-	}
-	const transactions: EbayTransaction[] = [];
-
-	for (let offset = 0; ; offset += limit) {
-		const page = readEbayTransactionsPage(await fetchPage({ offset, limit }));
-		transactions.push(...page.transactions);
-		if (page.rawPage.length === 0 || page.rawPage.length < limit) {
-			return transactions;
+export async function ebayTransactions(orderId: string) {
+	const all: EbayTransaction[] = [];
+	for (let offset = 0; ; offset += PAGE) {
+		const url = new URL(FINANCES);
+		url.search = new URLSearchParams({
+			filter: `orderId:{${orderId}}`,
+			limit: String(PAGE),
+			offset: String(offset),
+		}).toString();
+		const response = await fetch(url, {
+			headers: { Authorization: `Bearer ${await accessToken()}` },
+		});
+		if (!response.ok) {
+			throw new Error(
+				`eBay Finances answered ${response.status}: ${await response.text()}`,
+			);
 		}
+		const transactions = page.assert(await response.json()).transactions ?? [];
+		all.push(...transactions);
+		if (transactions.length < PAGE) return all;
 	}
 }
+
+// eBay posts the sale's transaction once the buyer has paid; nothing posted
+// yet means nothing to report yet.
+export const fetchEbayCharges: ChargeFetcher = eachOrder(async (order) => {
+	const transactions = await ebayTransactions(order.marketplaceId);
+	if (transactions.length === 0) return null;
+	return { settled: false, charges: ebayCharges(transactions) };
+});

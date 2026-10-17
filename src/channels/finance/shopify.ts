@@ -1,328 +1,224 @@
-const SHOPIFYQL_PAGE_SIZE = 50;
-const SHOPIFYQL_DEFAULT_SINCE = "2006-01-01";
-const SHOPIFYQL_DAY_MS = 24 * 60 * 60 * 1000;
-// Shop-local sale days can differ from the UTC order timestamp by a day, so
-// the window reaches two days either side.
-const SHOPIFYQL_TZ_PAD_DAYS = 2;
+import { type } from "arktype";
+import type { ReportedCharge } from "#/orders/charges";
+import type { ChargeFetcher, DueOrder } from "#/orders/cost-refresh";
+import { shopifyQuery } from "../shopify";
 
-export type ShopifyOrderFinancials = {
-	orderId: string;
-	storeShippingCost: number;
-	shippingLabelAdjustment: number;
-	customerShippingCharges: number;
-	shopifyPaymentsProcessingFees: number;
-	foreignExchangeFees: number;
-	managedMarketsFees: number;
-	internationalFees: number;
-};
+// What Shopify charged on orders: payment processing fees and refunds from
+// the order itself (posted at once), and Shopify Shipping labels from
+// ShopifyQL's shipping_labels report, which also has voids and carrier
+// adjustments. ShopifyQL lags the order by up to a day, so until it has an
+// order, the label purchases in the order's timeline stand in.
+// Orders paid outside Shopify Payments (cash at the counter, a relayed TikTok
+// order) have no fees here, and that's right: nobody bills them.
 
-export type ShopifyQlRow = Record<string, string | number | null>;
-
-export type ShopifyBasicEvent = {
-	action?: string;
-	message?: string;
-};
-
-export function shopifyQlDateWindow(
-	orderTimestamp: number,
-	now = Date.now(),
-): { startDate: string; endDate: string } {
-	const start = new Date(
-		orderTimestamp - SHOPIFYQL_TZ_PAD_DAYS * SHOPIFYQL_DAY_MS,
-	);
-	const end = new Date(
-		Math.max(now, orderTimestamp) + SHOPIFYQL_TZ_PAD_DAYS * SHOPIFYQL_DAY_MS,
-	);
-	return {
-		startDate: start.toISOString().slice(0, 10),
-		endDate: end.toISOString().slice(0, 10),
-	};
+// Order IDs are put into ShopifyQL's text, so they must be digits only.
+export function numericOrderId(gid: string) {
+	const id = gid.split("/").pop() ?? "";
+	if (!/^\d+$/.test(id)) throw new Error(`Not a Shopify order ID: ${gid}`);
+	return id;
 }
 
-// Order IDs are interpolated into ShopifyQL, so they must be digits only.
-function numericOrderIds(orderIds: string[]): string[] {
-	return [...new Set(orderIds.map((id) => id.split("/").pop() ?? ""))].map(
-		(id) => {
-			if (!/^\d+$/.test(id)) {
-				throw new Error(`Invalid Shopify order ID: ${id}`);
-			}
-			return id;
-		},
-	);
-}
+const day = (d: Date) => d.toISOString().slice(0, 10);
 
-function queryLimit(orderIds?: string[]): number {
-	if (!orderIds || orderIds.length === 0) return SHOPIFYQL_PAGE_SIZE;
-	return Math.min(SHOPIFYQL_PAGE_SIZE, numericOrderIds(orderIds).length);
-}
-
-function limitClause(orderIds?: string[], offset?: number): string {
-	const limit = queryLimit(orderIds);
-	if (!offset) return `LIMIT ${limit}`;
-	return `LIMIT ${limit} OFFSET ${offset}`;
-}
-
-function dateClause(startDate?: string, endDate?: string): string {
-	if (!startDate && !endDate) {
-		return `SINCE ${SHOPIFYQL_DEFAULT_SINCE} UNTIL today`;
-	}
-	if (!startDate || !endDate) {
-		throw new Error("ShopifyQL date ranges require both a start and end date");
-	}
-	if (
-		!/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
-		!/^\d{4}-\d{2}-\d{2}$/.test(endDate)
-	) {
-		throw new Error("ShopifyQL dates must use YYYY-MM-DD");
-	}
-	return `SINCE ${startDate} UNTIL ${endDate}`;
-}
-
-function orderClause(orderIds?: string[]): string {
-	if (!orderIds || orderIds.length === 0) return "";
-	return `WHERE order_id IN (${numericOrderIds(orderIds).join(", ")})`;
-}
-
-function buildQuery(args: {
-	schema: "profitability" | "fees" | "shipping_labels";
-	metrics: string[];
-	startDate?: string;
-	endDate?: string;
-	orderIds?: string[];
-	offset?: number;
-}): string {
+// Sale days are the shop's, not UTC, so the window reaches two days early.
+export function shippingLabelsQuery(ids: string[], since: Date) {
+	const from = new Date(since.getTime() - 2 * 24 * 60 * 60 * 1000);
 	return [
-		`FROM ${args.schema}`,
-		`SHOW ${args.metrics.join(", ")}`,
-		orderClause(args.orderIds),
+		"FROM shipping_labels SHOW shipping_label_costs",
+		`WHERE order_id IN (${ids.map(numericOrderId).join(", ")})`,
 		"GROUP BY order_id",
-		dateClause(args.startDate, args.endDate),
+		`SINCE ${day(from)} UNTIL today`,
 		"ORDER BY order_id ASC",
-		limitClause(args.orderIds, args.offset),
-	]
-		.filter(Boolean)
-		.join("\n");
+		`LIMIT ${ids.length}`,
+	].join(" ");
 }
 
-export function buildShopifyProfitabilityQuery(args: {
-	startDate?: string;
-	endDate?: string;
-	orderIds?: string[];
-	offset?: number;
-}): string {
-	return buildQuery({
-		schema: "profitability",
-		metrics: [
-			"average_store_shipping_costs",
-			"average_shipping_label_adjustment_costs",
-			"average_customer_shipping_charges",
-		],
-		...args,
-	});
-}
+const LABEL_BOUGHT = /purchased a \$([0-9,]+(?:\.[0-9]+)?)\s+shipping label/i;
 
-export function buildShopifyFeesQuery(args: {
-	startDate?: string;
-	endDate?: string;
-	orderIds?: string[];
-	offset?: number;
-}): string {
-	return buildQuery({
-		schema: "fees",
-		metrics: [
-			"shopify_payments_processing_fees",
-			"foreign_exchange_fees",
-			"managed_markets_fees",
-			"international_fees",
-		],
-		...args,
-	});
-}
-
-export function buildShopifyShippingLabelsQuery(args: {
-	startDate?: string;
-	endDate?: string;
-	orderIds?: string[];
-	offset?: number;
-}): string {
-	return buildQuery({
-		schema: "shipping_labels",
-		metrics: ["shipping_label_costs"],
-		...args,
-	});
-}
-
-function money(row: ShopifyQlRow, key: string): number {
-	const value = Number(row[key] ?? 0);
-	return Number.isFinite(value) ? value : 0;
-}
-
-function orderId(row: ShopifyQlRow): string {
-	const rawValue = String(row.order_id ?? "");
-	const value = rawValue.split("/").pop() ?? "";
-	if (!/^\d+$/.test(value)) {
-		throw new Error(`Invalid order_id in ShopifyQL response: ${rawValue}`);
-	}
-	return value;
-}
-
-export function mergeShopifyFinancialRows(
-	profitabilityRows: ShopifyQlRow[],
-	feeRows: ShopifyQlRow[],
-	shippingLabelRows: ShopifyQlRow[] = [],
-): ShopifyOrderFinancials[] {
-	const byOrder = new Map<string, ShopifyOrderFinancials>();
-
-	const get = (id: string): ShopifyOrderFinancials => {
-		const existing = byOrder.get(id);
-		if (existing) return existing;
-		const financials: ShopifyOrderFinancials = {
-			orderId: id,
-			storeShippingCost: 0,
-			shippingLabelAdjustment: 0,
-			customerShippingCharges: 0,
-			shopifyPaymentsProcessingFees: 0,
-			foreignExchangeFees: 0,
-			managedMarketsFees: 0,
-			internationalFees: 0,
-		};
-		byOrder.set(id, financials);
-		return financials;
-	};
-
-	for (const row of profitabilityRows) {
-		const financials = get(orderId(row));
-		financials.storeShippingCost = money(row, "average_store_shipping_costs");
-		financials.shippingLabelAdjustment = money(
-			row,
-			"average_shipping_label_adjustment_costs",
-		);
-		financials.customerShippingCharges = money(
-			row,
-			"average_customer_shipping_charges",
-		);
-	}
-
-	for (const row of feeRows) {
-		const financials = get(orderId(row));
-		financials.shopifyPaymentsProcessingFees = money(
-			row,
-			"shopify_payments_processing_fees",
-		);
-		financials.foreignExchangeFees = money(row, "foreign_exchange_fees");
-		financials.managedMarketsFees = money(row, "managed_markets_fees");
-		financials.internationalFees = money(row, "international_fees");
-	}
-
-	// Label purchases are the real shipping cost, so they override the
-	// profitability average whenever they exist.
-	for (const row of shippingLabelRows) {
-		const financials = get(orderId(row));
-		const labelCost = money(row, "shipping_label_costs");
-		if (labelCost !== 0) {
-			financials.storeShippingCost =
-				labelCost + financials.shippingLabelAdjustment;
-		}
-	}
-
-	return [...byOrder.values()];
-}
-
-const LABEL_PURCHASE_COST =
-	/purchased a \$([0-9,]+(?:\.[0-9]+)?)\s+shipping label/i;
-
-export function shippingLabelCostFromEvents(
-	events: ShopifyBasicEvent[],
-): number {
+export function labelsFromEvents(
+	events: { action?: string; message?: string }[],
+) {
 	let total = 0;
 	for (const event of events) {
 		if (event.action !== "shipping_label_created_success") continue;
-		const match = event.message?.match(LABEL_PURCHASE_COST);
-		if (!match) continue;
-		const amount = Number(match[1].split(",").join(""));
-		if (Number.isFinite(amount)) total += amount;
+		const match = event.message?.match(LABEL_BOUGHT);
+		if (match) total += Number(match[1].replaceAll(",", ""));
 	}
 	return total;
 }
 
-// Event-logged label costs stand in when ShopifyQL has not caught up yet, and
-// then the adjustment is folded in, since the event total is the full cost.
-export function applyShippingLabelEvents<
-	T extends {
-		storeShippingCost: number;
-		shippingLabelAdjustment: number;
+const money = type({ shopMoney: { amount: "string.numeric.parse" } });
+const order = type({
+	id: "string",
+	transactions: type({
+		kind: "string",
+		status: "string",
+		fees: type({
+			type: "string",
+			amount: { amount: "string.numeric.parse" },
+		}).array(),
+	}).array(),
+	refunds: type({
+		refundLineItems: { nodes: type({ subtotalSet: money }).array() },
+		refundShippingLines: { nodes: type({ subtotalAmountSet: money }).array() },
+	}).array(),
+	events: {
+		nodes: type({ "action?": "string", "message?": "string" }).array(),
 	},
->(financials: T, events: ShopifyBasicEvent[]): T {
-	const storeShippingCost = shippingLabelCostFromEvents(events);
-	if (storeShippingCost === 0) return financials;
-	return {
-		...financials,
-		storeShippingCost,
-		shippingLabelAdjustment: 0,
-	};
-}
+	fulfillmentOrders: {
+		nodes: type({
+			deliveryMethod: type({ methodType: "string" }).or("null"),
+		}).array(),
+	},
+});
+export type ShopifyFinanceOrder = typeof order.infer;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-function connectionNodes(value: unknown): unknown[] {
-	if (!isRecord(value)) return [];
-	if (Array.isArray(value.nodes)) return value.nodes;
-	if (!Array.isArray(value.edges)) return [];
-	return value.edges.map((edge) => (isRecord(edge) ? edge.node : undefined));
-}
-
-function methodTypeFromDelivery(value: unknown): string | undefined {
-	if (!isRecord(value)) return undefined;
-	return typeof value.methodType === "string" ? value.methodType : undefined;
-}
-
-function fulfillmentMethodTypes(order: unknown): string[] {
-	if (!isRecord(order)) return [];
-	const types: string[] = [];
-	for (const node of connectionNodes(order.fulfillmentOrders)) {
-		if (!isRecord(node)) continue;
-		const methodType = methodTypeFromDelivery(node.deliveryMethod);
-		if (methodType) types.push(methodType);
+const ORDERS = `query($ids: [ID!]!) {
+	nodes(ids: $ids) {
+		... on Order {
+			id
+			transactions(first: 50) { kind status fees { type amount { amount } } }
+			refunds(first: 50) {
+				refundLineItems(first: 100) { nodes { subtotalSet { shopMoney { amount } } } }
+				refundShippingLines(first: 10) { nodes { subtotalAmountSet { shopMoney { amount } } } }
+			}
+			events(first: 100, query: "action:shipping_label_created_success") {
+				nodes { ... on BasicEvent { action message } }
+			}
+			fulfillmentOrders(first: 20) { nodes { deliveryMethod { methodType } } }
+		}
 	}
-	return types;
-}
+}`;
 
-function normalizeDeliveryMethodType(value: string): string {
-	return value.trim().toUpperCase().replace(/-/g, "_");
-}
+const SHOPIFYQL = `query($q: String!) {
+	shopifyqlQuery(query: $q) { tableData { rows } parseErrors }
+}`;
+const shopifyql = type({
+	shopifyqlQuery: {
+		"tableData?": type({
+			rows: type({
+				order_id: "string | number",
+				shipping_label_costs: "string | number",
+			}).array(),
+		}).or("null"),
+		"parseErrors?": "string[] | null",
+	},
+});
 
-function isPickupMethodType(value: string): boolean {
-	const normalized = normalizeDeliveryMethodType(value);
-	return normalized === "PICK_UP" || normalized === "PICKUP";
-}
+// Picked up, sold at the counter, or driven over ourselves: no label.
+const UNSHIPPED = new Set(["PICK_UP", "RETAIL", "NONE", "LOCAL"]);
 
-function shippingLineLooksLikePickup(line: unknown): boolean {
-	if (!isRecord(line)) return false;
-	const fields = [
-		line.deliveryCategory,
-		line.code,
-		line.title,
-		line.shippingRateHandle,
-	];
-	return fields.some(
-		(field) => typeof field === "string" && /\bpick[\s_-]?up\b/i.test(field),
+export function shippedWithoutLabel(o: ShopifyFinanceOrder) {
+	const methods = o.fulfillmentOrders.nodes.map(
+		(f) => f.deliveryMethod?.methodType ?? "NONE",
 	);
+	return methods.length > 0 && methods.every((m) => UNSHIPPED.has(m));
 }
 
-function shippingLinesLookLikePickup(order: unknown): boolean {
-	if (!isRecord(order)) return false;
-	const lines = connectionNodes(order.shippingLines);
-	return lines.length > 0 && lines.every(shippingLineLooksLikePickup);
+// "processing_fee" → "Processing fee".
+function words(code: string) {
+	const text = code.replaceAll("_", " ");
+	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-// Fulfillment method is authoritative when present. Shipping line names are
-// only a fallback for orders without fulfillment orders.
-export function isShopifyPickupOrder(order: unknown): boolean {
-	const methodTypes = fulfillmentMethodTypes(order);
-	if (methodTypes.length > 0) {
-		return methodTypes.every(isPickupMethodType);
+export function shopifyCharges(
+	o: ShopifyFinanceOrder,
+	reportedLabels: number | undefined,
+): ReportedCharge[] {
+	const charges: ReportedCharge[] = [];
+	for (const t of o.transactions) {
+		if (t.status !== "SUCCESS") continue;
+		// Fees on a refund transaction are Shopify giving some back.
+		const sign = t.kind === "REFUND" ? -1 : 1;
+		for (const f of t.fees) {
+			charges.push({
+				kind: "fee",
+				description: words(f.type),
+				amount: sign * f.amount.amount,
+			});
+		}
 	}
-	return shippingLinesLookLikePickup(order);
+	for (const r of o.refunds) {
+		// What went back to the buyer, without the tax Shopify returns for us.
+		const refunded =
+			r.refundLineItems.nodes.reduce(
+				(s, l) => s + l.subtotalSet.shopMoney.amount,
+				0,
+			) +
+			r.refundShippingLines.nodes.reduce(
+				(s, l) => s + l.subtotalAmountSet.shopMoney.amount,
+				0,
+			);
+		if (refunded !== 0) {
+			charges.push({ kind: "refund", description: "Refund", amount: refunded });
+		}
+	}
+	const labels = reportedLabels ?? labelsFromEvents(o.events.nodes);
+	if (labels !== 0) {
+		charges.push({
+			kind: "label",
+			description:
+				reportedLabels === undefined
+					? "Shopify Shipping labels (until Shopify reports them)"
+					: "Shopify Shipping labels",
+			amount: labels,
+		});
+	}
+	return charges;
 }
+
+export const fetchShopifyCharges: ChargeFetcher = async (due: DueOrder[]) => {
+	const results = [];
+	// ShopifyQL takes up to 50 order IDs a query.
+	for (let i = 0; i < due.length; i += 50) {
+		const batch = due.slice(i, i + 50);
+		const since = new Date(Math.min(...batch.map((o) => o.placedAt.getTime())));
+		const [ordersBody, labelsBody] = await Promise.all([
+			shopifyQuery(ORDERS, { ids: batch.map((o) => o.marketplaceId) }),
+			shopifyQuery(SHOPIFYQL, {
+				q: shippingLabelsQuery(
+					batch.map((o) => o.marketplaceId),
+					since,
+				),
+			}),
+		]);
+		const { shopifyqlQuery } = shopifyql.assert(labelsBody);
+		if (shopifyqlQuery.parseErrors?.length) {
+			throw new Error(`ShopifyQL: ${shopifyqlQuery.parseErrors.join("; ")}`);
+		}
+		const labels = new Map(
+			(shopifyqlQuery.tableData?.rows ?? []).map((r) => [
+				String(r.order_id),
+				Number(r.shipping_label_costs),
+			]),
+		);
+		const nodes = type({ nodes: "unknown[]" }).assert(ordersBody).nodes;
+		for (const [j, o] of batch.entries()) {
+			const node = nodes[j];
+			if (!node) {
+				results.push({
+					orderId: o.orderId,
+					error: "Shopify has no such order",
+				});
+				continue;
+			}
+			const parsed = order(node);
+			if (parsed instanceof type.errors) {
+				results.push({ orderId: o.orderId, error: parsed.summary });
+				continue;
+			}
+			results.push({
+				orderId: o.orderId,
+				report: {
+					settled: false,
+					noLabel: shippedWithoutLabel(parsed),
+					charges: shopifyCharges(
+						parsed,
+						labels.get(numericOrderId(o.marketplaceId)),
+					),
+				},
+			});
+		}
+	}
+	return results;
+};

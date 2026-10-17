@@ -2,9 +2,14 @@ import { sql } from "drizzle-orm";
 import { type Db, withOwnConnection } from "#/db/client";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { recordSyncRun } from "#/diagnostics/runs";
+import { refreshCosts } from "#/orders/cost-refresh";
 import { applySkusToOrders } from "#/orders/remap";
 import { assignOrderPins } from "#/shipping/pins";
 import { syncAmazon } from "./amazon";
+import { fetchAmazonCharges } from "./finance/amazon";
+import { fetchEbayCharges } from "./finance/ebay";
+import { fetchShopifyCharges } from "./finance/shopify";
+import { fetchTiktokCharges } from "./finance/tiktok";
 import { syncEbay } from "./ebay";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
 import { shippingLocation } from "./stores";
@@ -60,8 +65,25 @@ export async function syncPassAlone(
 	channel: SyncedChannel,
 	options: { listings: boolean },
 ) {
-	return holdingChannel(channel, { waitFor: "30s" }, () =>
+	return holdingChannel(channel, { purpose: "sync-pass", waitFor: "30s" }, () =>
 		syncPass(db, channel, options),
+	);
+}
+
+const chargeFetchers = {
+	shopify: fetchShopifyCharges,
+	ebay: fetchEbayCharges,
+	tiktok: fetchTiktokCharges,
+	amazon: fetchAmazonCharges,
+};
+
+// Asks a marketplace again about what it charged on orders that are due
+// (src/orders/cost-refresh.ts). It only writes charges, never orders, so it
+// has a lock of its own and never waits on or holds up the order sync.
+// Returns null if the last cost pass is still running.
+export async function costPassAlone(db: Db, channel: SyncedChannel) {
+	return holdingChannel(channel, { purpose: "cost-pass" }, () =>
+		refreshCosts(db, channel, chargeFetchers[channel]),
 	);
 }
 
@@ -84,7 +106,7 @@ export async function ingestWebhookOrder(
 ) {
 	const ingest = ingestOne[channel];
 	if (!ingest) throw new Error(`${channel} has no webhooks`);
-	const done = await holdingChannel(channel, {}, async () => {
+	const done = await holdingChannel(channel, { purpose: "sync-pass" }, async () => {
 		await ingest(db, orderId);
 		await assignOrderPins(db);
 		return true;
@@ -92,8 +114,9 @@ export async function ingestWebhookOrder(
 	return done ?? false;
 }
 
-// Runs `work` while holding this channel's lock, so only one thing writes a
-// channel's orders at a time. Returns null if the lock is taken, or with
+// Runs `work` while holding this channel's lock for `purpose`, so only one
+// thing writes a channel's orders (sync-pass) or charges (cost-pass) at a
+// time. Returns null if the lock is taken, or with
 // `waitFor`, still taken after that long. The lock is held by a transaction on
 // a connection of its own and released when that transaction ends, however
 // the work ends. Not a session lock: DATABASE_URL goes through Neon's pooler,
@@ -101,7 +124,7 @@ export async function ingestWebhookOrder(
 // client closes.
 async function holdingChannel<T>(
 	channel: SyncedChannel,
-	options: { waitFor?: string },
+	options: { purpose: "sync-pass" | "cost-pass"; waitFor?: string },
 	work: () => Promise<T>,
 ): Promise<T | null> {
 	return withOwnConnection((lockDb) =>
@@ -111,7 +134,7 @@ async function holdingChannel<T>(
 			await tx.execute(
 				sql`set local idle_in_transaction_session_timeout = '15min'`,
 			);
-			const key = sql`hashtext('sync-pass'), hashtext(${channel})`;
+			const key = sql`hashtext(${options.purpose}), hashtext(${channel})`;
 			if (options.waitFor) {
 				await tx.execute(
 					sql`select set_config('lock_timeout', ${options.waitFor}, true)`,

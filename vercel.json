@@ -9,6 +9,10 @@
     { "path": "/api/cron/sync/ebay", "schedule": "2-28/2,32-58/2 * * * *" },
     { "path": "/api/cron/sync/ebay?listings=1", "schedule": "0,30 * * * *" },
     { "path": "/api/cron/sync/amazon", "schedule": "5-25/5,35-55/5 * * * *" },
-    { "path": "/api/cron/sync/amazon?listings=1", "schedule": "0,30 * * * *" }
+    { "path": "/api/cron/sync/amazon?listings=1", "schedule": "0,30 * * * *" },
+    { "path": "/api/cron/costs/shopify", "schedule": "1-51/10 * * * *" },
+    { "path": "/api/cron/costs/tiktok", "schedule": "3-53/10 * * * *" },
+    { "path": "/api/cron/costs/ebay", "schedule": "5-55/10 * * * *" },
+    { "path": "/api/cron/costs/amazon", "schedule": "7-57/10 * * * *" }
   ]
 }

@@ -473,7 +473,28 @@ export const orderCostReports = pgTable(
 		// Others never say so; they're taken as final once the order is old
 		// enough to stop being rechecked.
 		settled: boolean().notNull(),
+		// The marketplace says the order needs no label: picked up, or sold
+		// in person. Otherwise a shipped order with no label cost is missing
+		// one.
+		noLabel: boolean().notNull().default(false),
 		fetchedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
+);
+
+// When katasync last asked a marketplace about an order's charges, whatever
+// came back, so the refresh can back off (src/orders/cost-refresh.ts). error
+// is why the last ask failed, for Diagnostics; null when it worked, even if
+// the marketplace had nothing yet.
+export const orderCostChecks = pgTable(
+	"order_cost_checks",
+	{
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		billedBy: channel().notNull(),
+		checkedAt: timestamp({ withTimezone: true }).notNull(),
+		error: text(),
 	},
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
 );
@@ -1142,6 +1163,34 @@ export const salesUnits = pgView("sales_units", {
 	storeId: integer().notNull(),
 	placedAt: timestamp({ withTimezone: true }).notNull(),
 	units: integer().notNull(),
+}).existing();
+
+// What each order made, defined in the order profit migration: revenue,
+// cost, fees, labels, refunds and adjustments, each with how sure it is, and
+// profit. One row per order not cancelled. Statuses are explained there.
+export const orderProfit = pgView("order_profit", {
+	orderId: integer().notNull(),
+	storeId: integer().notNull(),
+	soldOn: channel().notNull(),
+	placedAt: timestamp({ withTimezone: true }).notNull(),
+	revenue: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	shippingCharged: numeric({
+		precision: 12,
+		scale: 2,
+		mode: "number",
+	}).notNull(),
+	cost: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	costKnown: boolean().notNull(),
+	fees: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	feesStatus: text({ enum: ["final", "reported", "estimated"] }).notNull(),
+	labels: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	labelsStatus: text({
+		enum: ["known", "stand_in", "not_needed", "not_shipped", "missing"],
+	}).notNull(),
+	refunds: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	adjustments: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	profit: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	complete: boolean().notNull(),
 }).existing();
 
 // count_log with the drift worked out and undone counts marked, defined in

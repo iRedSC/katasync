@@ -35,6 +35,7 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 import { Route as PurchasingSuggestedSupplierIdRouteImport } from './routes/purchasing/suggested.$supplierId'
+import { Route as ApiCronCostsChannelRouteImport } from './routes/api/cron/costs.$channel'
 import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
 
 const IndexRoute = IndexRouteImport.update({
@@ -168,6 +169,11 @@ const PurchasingSuggestedSupplierIdRoute =
     path: '/purchasing/suggested/$supplierId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiCronCostsChannelRoute = ApiCronCostsChannelRouteImport.update({
+  id: '/api/cron/costs/$channel',
+  path: '/api/cron/costs/$channel',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCronSyncChannelRoute = ApiCronSyncChannelRouteImport.update({
   id: '/api/cron/sync/$channel',
   path: '/api/cron/sync/$channel',
@@ -201,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
+  '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRoutesByTo {
@@ -230,6 +237,7 @@ export interface FileRoutesByTo {
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
+  '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRoutesById {
@@ -260,6 +268,7 @@ export interface FileRoutesById {
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
+  '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRouteTypes {
@@ -291,6 +300,7 @@ export interface FileRouteTypes {
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
+    | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -320,6 +330,7 @@ export interface FileRouteTypes {
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
+    | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
   id:
     | '__root__'
@@ -349,6 +360,7 @@ export interface FileRouteTypes {
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
+    | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
   fileRoutesById: FileRoutesById
 }
@@ -379,6 +391,7 @@ export interface RootRouteChildren {
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
   PurchasingSuggestedSupplierIdRoute: typeof PurchasingSuggestedSupplierIdRoute
+  ApiCronCostsChannelRoute: typeof ApiCronCostsChannelRoute
   ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
 }
 
@@ -566,6 +579,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchasingSuggestedSupplierIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cron/costs/$channel': {
+      id: '/api/cron/costs/$channel'
+      path: '/api/cron/costs/$channel'
+      fullPath: '/api/cron/costs/$channel'
+      preLoaderRoute: typeof ApiCronCostsChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/cron/sync/$channel': {
       id: '/api/cron/sync/$channel'
       path: '/api/cron/sync/$channel'
@@ -603,18 +623,9 @@ const rootRouteChildren: RootRouteChildren = {
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
   PurchasingSuggestedSupplierIdRoute: PurchasingSuggestedSupplierIdRoute,
+  ApiCronCostsChannelRoute: ApiCronCostsChannelRoute,
   ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

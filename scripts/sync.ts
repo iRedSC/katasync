@@ -3,6 +3,8 @@
 //   pnpm sync                one pass of every channel
 //   pnpm sync --watch        keep going, each channel on its own schedule
 //   pnpm sync --only amazon  just one channel
+//   pnpm sync --costs        one cost pass of every channel instead: what
+//                            each marketplace charged on orders that are due
 //   pnpm sync --shopify-history 365
 //                            one-time import of Shopify orders placed in the
 //                            last 365 days that the regular sync hasn't seen
@@ -11,7 +13,7 @@
 // recorded for Diagnostics (/diagnostics).
 import { parseArgs } from "node:util";
 import { backfillShopify } from "#/channels/shopify";
-import { syncPass } from "#/channels/sync";
+import { costPassAlone, syncPass } from "#/channels/sync";
 import { getDb } from "#/db/client";
 import { channelEnv } from "#/diagnostics/checks";
 
@@ -24,6 +26,7 @@ try {
 const { values } = parseArgs({
 	options: {
 		watch: { type: "boolean", default: false },
+		costs: { type: "boolean", default: false },
 		only: { type: "string" },
 		"shopify-history": { type: "string" },
 	},
@@ -41,6 +44,8 @@ const channels = [
 	// also mirrors FBA stock.
 	{ name: "amazon", every: 5 * MINUTE, listingsEvery: 30 * MINUTE },
 ] as const;
+// Cost passes, like the costs crons, every 10 minutes per channel.
+const COSTS_EVERY = 10 * MINUTE;
 const listingsAt = new Map<string, number>();
 const selected = channels.filter((c) => !values.only || c.name === values.only);
 
@@ -62,6 +67,19 @@ async function pass(channel: (typeof channels)[number]) {
 	} catch (error) {
 		// One channel failing (an outage, an expired token) doesn't stop the rest.
 		console.error(`${new Date().toISOString()} ${channel.name} failed:`, error);
+	}
+}
+
+async function costPass(channel: (typeof channels)[number]) {
+	try {
+		const result = await costPassAlone(getDb(), channel.name);
+		if (!result) return console.log(`${channel.name} costs: last pass still running`);
+		console.log(
+			`${new Date().toISOString()} ${channel.name} costs: ${result.reported} of ${result.checked} orders reported`,
+		);
+		for (const problem of result.problems) console.log(`  ${problem}`);
+	} catch (error) {
+		console.error(`${new Date().toISOString()} ${channel.name} costs failed:`, error);
 	}
 }
 
@@ -87,8 +105,16 @@ const ready = selected.filter((c) => {
 });
 
 if (!values.watch) {
-	for (const channel of ready) await pass(channel);
+	for (const channel of ready) await (values.costs ? costPass : pass)(channel);
 	process.exit(0);
+}
+for (const channel of ready) {
+	(async () => {
+		for (;;) {
+			await costPass(channel);
+			await new Promise((resolve) => setTimeout(resolve, COSTS_EVERY));
+		}
+	})();
 }
 for (const channel of ready) {
 	(async () => {

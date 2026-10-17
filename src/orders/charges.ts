@@ -26,6 +26,9 @@ export type CostReport = {
 	orderId: number;
 	billedBy: Channel;
 	settled: boolean;
+	// The marketplace says the order needs no label: picked up, or sold in
+	// person.
+	noLabel?: boolean;
 	charges: ReportedCharge[];
 	// When the marketplace was asked; defaults to now.
 	fetchedAt?: Date;
@@ -81,11 +84,16 @@ export async function saveCostReport(
 				orderId: report.orderId,
 				billedBy: report.billedBy,
 				settled: report.settled,
+				noLabel: report.noLabel ?? false,
 				fetchedAt,
 			})
 			.onConflictDoUpdate({
 				target: [orderCostReports.orderId, orderCostReports.billedBy],
-				set: { settled: report.settled, fetchedAt },
+				set: {
+					settled: report.settled,
+					noLabel: report.noLabel ?? false,
+					fetchedAt,
+				},
 				setWhere: sql`${orderCostReports.fetchedAt} <= excluded.fetched_at
 					and (not ${orderCostReports.settled} or excluded.settled)`,
 			})
