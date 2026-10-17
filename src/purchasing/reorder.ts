@@ -13,6 +13,7 @@ import {
 } from "#/db/schema";
 import { type AbcClass, type AbcResult, abcClasses } from "#/inventory/abc";
 import { soldSince } from "#/inventory/sales";
+import { afterArrival } from "#/inventory/stock-state";
 import {
 	DEMAND_DAYS,
 	type Forecast,
@@ -86,18 +87,34 @@ export type ReorderInput = {
 	packSize: number;
 };
 
+// Shelf plus on order, as it stands once what's ordered arrives. Oversold
+// stock counts as 0, since receiving writes it off.
+function position(p: ReorderInput) {
+	return afterArrival(p.onHand, p.onOrder);
+}
+
 // Below this, a product needs ordering: what sells before a PO sent today
-// arrives plus its safety stock, or its min stock if that's more. Oversold
-// stock (negative) is always below it.
+// arrives plus its safety stock, or its min stock if that's more.
 function reorderPoint(p: ReorderInput) {
-	return Math.max(p.dailyDemand * p.leadTimeDays + p.safetyStock, p.minStock);
+	return Math.max(
+		p.dailyDemand * p.leadTimeDays + p.safetyStock,
+		p.minStock,
+		oversoldFloor(p),
+	);
+}
+
+// Oversold with nothing on order: the shelf owes units nobody is bringing,
+// so order at least one even with no recent sales or min stock.
+function oversoldFloor(p: ReorderInput) {
+	return p.onHand < 0 && p.onOrder === 0 ? 1 : 0;
 }
 
 // How many of the supplier's unit it takes to top stock up to its target
-// (stockTarget, or min stock if that's more), rounded up to whole units and
+// (stockTarget, or min stock or the oversold floor if more), rounded up to whole units and
 // to at least the supplier's minimum. 0 when it's already there.
 function topUp(p: ReorderInput) {
-	const need = Math.max(stockTarget(p), p.minStock) - (p.onHand + p.onOrder);
+	const need =
+		Math.max(stockTarget(p), p.minStock, oversoldFloor(p)) - position(p);
 	if (need <= 0) return 0;
 	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
 }
@@ -105,13 +122,13 @@ function topUp(p: ReorderInput) {
 // How many of the supplier's unit to order, or 0 to leave it off the PO: a
 // top-up once shelf plus on order drops below the reorder point.
 export function reorderQuantity(p: ReorderInput): number {
-	return p.onHand + p.onOrder < reorderPoint(p) ? topUp(p) : 0;
+	return position(p) < reorderPoint(p) ? topUp(p) : 0;
 }
 
 // Days until a product that doesn't need ordering yet will, at its current
 // sales. null when it never will (no sales) or already does.
 export function daysUntilReorder(p: ReorderInput): number | null {
-	const left = p.onHand + p.onOrder - reorderPoint(p);
+	const left = position(p) - reorderPoint(p);
 	if (p.dailyDemand === 0 || left < 0) return null;
 	return Math.floor(left / p.dailyDemand);
 }
@@ -149,7 +166,7 @@ export function forecastMax(
 // How many of the supplier's unit fill stock up to max, rounded up to whole
 // units and to at least the supplier's minimum. 0 when it's already there.
 function fillToMax(p: ReorderInput, max: number) {
-	const need = max - (p.onHand + p.onOrder);
+	const need = max - position(p);
 	if (need <= 0) return 0;
 	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
 }
@@ -245,7 +262,7 @@ export function explainReorder(
 				};
 	const quantity = reorderQuantity(p);
 	const days = daysUntilReorder(p);
-	const shortfall = aim.total - (p.onHand + p.onOrder);
+	const shortfall = aim.total - position(p);
 	const verdict: ReorderWhy["verdict"] =
 		quantity > 0
 			? {

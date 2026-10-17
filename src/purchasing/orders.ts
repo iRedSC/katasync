@@ -15,7 +15,7 @@ import {
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
-import { postMovements, undoBatch } from "#/inventory/ledger";
+import { postReceipt, undoBatch } from "#/inventory/ledger";
 import { wantsMore } from "#/purchasing/changes";
 import { type SuggestedLine, suggestPurchases } from "#/purchasing/reorder";
 import { partState, setsOf, shortBySupplier } from "#/purchasing/sets";
@@ -1223,16 +1223,11 @@ export async function receive(
 			.for("update");
 
 		const before = await ownedOnHand(tx, line.productId);
-		const { batchId } = await postMovements(tx, {
+		const { batchId } = await postReceipt(tx, {
+			productId: line.productId,
+			locationId: po.locationId,
+			quantity: input.quantity * line.packSize,
 			reference: poName(po.id),
-			lines: [
-				{
-					productId: line.productId,
-					locationId: po.locationId,
-					delta: input.quantity * line.packSize,
-					reason: "receipt",
-				},
-			],
 		});
 		const total = (await receivedOf(tx, line.id)) + input.quantity;
 		const expect =

@@ -44,6 +44,7 @@ import {
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
 import { VelocityGauge } from "#/components/velocity-gauge";
+import { afterArrival } from "#/inventory/stock-state";
 import { copyText } from "#/lib/copy";
 import {
 	cityLine,
@@ -1696,7 +1697,7 @@ function AfterPo({
 				aria-hidden="true"
 			/>
 			<StockRing
-				onHand={onHand + ordered}
+				onHand={afterArrival(onHand, ordered)}
 				range={range}
 				label="after this PO"
 			/>

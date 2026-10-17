@@ -1,0 +1,1 @@
+ALTER TYPE "public"."movement_reason" ADD VALUE 'oversold_reset';

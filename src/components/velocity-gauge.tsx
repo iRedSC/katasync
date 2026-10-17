@@ -1,5 +1,6 @@
 import { HoverCard } from "radix-ui";
 import type { ReactNode } from "react";
+import { afterArrival } from "#/inventory/stock-state";
 import { formatCount, formatOrderQuantity, formatUnit } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { DEMAND_DAYS } from "#/purchasing/forecast";
@@ -339,7 +340,7 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 	const cushion = `${why.abc ? `${why.abc} item` : "Unclassed"}, ${Math.round(why.serviceShare * 100)}% service`;
 	const minSetsPoint =
 		why.aim.kind === "min" || why.orderBelow > restockPoint(why);
-	const have = why.onHand + why.onOrder;
+	const have = afterArrival(why.onHand, why.onOrder);
 
 	if (v.kind === "idle" && why.minStock === 0) return null;
 
@@ -385,10 +386,13 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 			<Row
 				key="shelf"
 				color={COLORS.shelf}
-				label={why.onHand < 0 ? "Oversold" : "On shelf"}
-				value={
-					why.onHand < 0 ? `+${formatCount(-why.onHand)}` : minus(why.onHand)
+				label="On shelf"
+				note={
+					why.onHand < 0
+						? `${formatCount(-why.onHand)} oversold, written off on arrival`
+						: undefined
 				}
+				value={minus(Math.max(why.onHand, 0))}
 			/>,
 			...(why.onOrder > 0
 				? [
@@ -408,11 +412,13 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 				striped
 				label="Order"
 				note={
-					!why.purchase || v.roundedUp === null
-						? undefined
-						: v.roundedUp === "minimum"
-							? `Supplier minimum: ${formatOrderQuantity({ quantity: why.purchase.minimumQuantity, ...why.purchase })}`
-							: `Rounded up to ${formatUnit(why.purchase)}`
+					short <= 0 && why.onHand < 0
+						? "Oversold with nothing on order"
+						: !why.purchase || v.roundedUp === null
+							? undefined
+							: v.roundedUp === "minimum"
+								? `Supplier minimum: ${formatOrderQuantity({ quantity: why.purchase.minimumQuantity, ...why.purchase })}`
+								: `Rounded up to ${formatUnit(why.purchase)}`
 				}
 				value={formatCount(v.units)}
 			/>,
@@ -462,7 +468,7 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 				label="Have"
 				note={
 					why.onOrder > 0
-						? `${formatCount(why.onHand)} on shelf + ${formatCount(why.onOrder)} incoming`
+						? `${formatCount(Math.max(why.onHand, 0))} on shelf + ${formatCount(why.onOrder)} incoming`
 						: undefined
 				}
 				value={formatCount(have)}
