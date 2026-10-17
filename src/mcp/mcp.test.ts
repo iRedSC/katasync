@@ -513,6 +513,109 @@ describe("over MCP", () => {
 		expect(after.onHand).toBe(0);
 	});
 
+	test("changes a sent PO to match what came, without changing what was sent", async () => {
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		const knife = await createProduct(db, "KNIFE", "simple");
+		await db.insert(schema.productSuppliers).values({
+			productId: knife,
+			supplierId: canam,
+			supplierCount: 1,
+			cost: 9,
+		});
+		const [location] = await db.select().from(schema.locations);
+		const [draft] = await db
+			.insert(schema.purchaseOrders)
+			.values({ supplierId: canam, locationId: location.id, status: "draft" })
+			.returning();
+		const [po] = await db
+			.insert(schema.purchaseOrders)
+			.values({ supplierId: canam, locationId: location.id, status: "sent" })
+			.returning();
+		await db.insert(schema.purchaseOrderLines).values({
+			purchaseOrderId: po.id,
+			productId: blade,
+			supplierCount: 1,
+			quantity: 10,
+			unitCost: 2,
+			sentQuantity: 10,
+			sentUnitCost: 2,
+		});
+
+		const onDraft = await tool("add_to_sent_po", {
+			po: draft.id,
+			sku: "KNIFE",
+			quantity: 1,
+		});
+		expect(onDraft.data).toMatch(/is draft/);
+		const twice = await tool("add_to_sent_po", {
+			po: po.id,
+			sku: "BLADE",
+			quantity: 1,
+		});
+		expect(twice.data).toMatch(/already on PO .*adjust_sent_po_line/);
+		const added = await tool("add_to_sent_po", {
+			po: po.id,
+			sku: "KNIFE",
+			quantity: 3,
+		});
+		expect(added.data.lines).toContainEqual(
+			expect.objectContaining({ sku: "KNIFE", quantity: 3, unitCost: 9 }),
+		);
+
+		const nothing = await tool("adjust_sent_po_line", {
+			po: po.id,
+			sku: "BLADE",
+		});
+		expect(nothing).toMatchObject({ isError: true });
+		await tool("receive_po_line", { po: po.id, sku: "BLADE", quantity: 4 });
+		const tooLow = await tool("adjust_sent_po_line", {
+			po: po.id,
+			sku: "BLADE",
+			quantity: 3,
+		});
+		expect(tooLow.data).toMatch(/4 already arrived/);
+		const adjusted = await tool("adjust_sent_po_line", {
+			po: po.id,
+			sku: "BLADE",
+			quantity: 8,
+			unit_cost: 2.5,
+		});
+		expect(adjusted.data.was).toEqual({ quantity: 10, unitCost: 2 });
+		expect(adjusted.data.warning).toMatch(/old price/);
+		expect(adjusted.data.po.lines).toContainEqual(
+			expect.objectContaining({
+				sku: "BLADE",
+				quantity: 8,
+				unitCost: 2.5,
+				sent: { quantity: 10, unitCost: 2 },
+			}),
+		);
+
+		// A line added after sending that never arrived comes off at 0.
+		const gone = await tool("adjust_sent_po_line", {
+			po: po.id,
+			sku: "KNIFE",
+			quantity: 0,
+		});
+		expect(gone.data.removed).toBe("KNIFE");
+		expect(gone.data.po.lines.map((l: { sku: string }) => l.sku)).toEqual([
+			"BLADE",
+		]);
+		const amendments = await db
+			.select({ kind: schema.purchaseOrderAmendments.kind })
+			.from(schema.purchaseOrderAmendments)
+			.orderBy(schema.purchaseOrderAmendments.id);
+		expect(amendments.map((a) => a.kind)).toEqual([
+			"added",
+			"quantity",
+			"cost",
+			"removed",
+		]);
+	});
+
 	describe("supplier invoices", () => {
 		let tsw: number;
 		let po: number;
