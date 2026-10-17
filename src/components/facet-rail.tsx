@@ -224,7 +224,7 @@ function Range({
 			<p className="mt-1 px-1.5 text-xs text-muted-foreground">Sold a month</p>
 			{min !== "" && max !== "" && Number(min) > Number(max) && (
 				<p className="mt-1 px-1.5 text-xs text-destructive">
-					Min is above max, so nothing matches.
+					Min is above max.
 				</p>
 			)}
 		</section>

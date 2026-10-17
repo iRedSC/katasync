@@ -193,7 +193,7 @@ function OrderPage() {
 						? "Cancel the label in TikTok Seller Center."
 						: `Void the ${liveBoxes[0].serviceName} ${liveBoxes.length > 1 ? "labels" : "label"} to get ${formatMoney(liveBoxes.reduce((sum, b) => sum + b.cost, 0))} back.`}
 					{liveSend.shippedWith.length > 0 &&
-						` This shipment also holds ${liveSend.shippedWith.map((o) => o.name).join(", ")}; voiding puts ${liveSend.shippedWith.length === 1 ? "it" : "them"} back on To ship to pack again without this order.`}
+						` Voiding also sends ${liveSend.shippedWith.map((o) => o.name).join(", ")} back to To ship.`}
 				</Banner>
 			)}
 
@@ -203,9 +203,8 @@ function OrderPage() {
 					title={`${unmatched.length === 1 ? "One item isn't" : `${unmatched.length} items aren't`} matched to a product`}
 					action={{ label: "Match listings", link: { to: "/listings" } }}
 				>
-					katasync can't take stock for{" "}
-					{unmatched.map((l) => l.sku ?? l.title).join(", ")} until the listing
-					is matched.
+					No stock taken for {unmatched.map((l) => l.sku ?? l.title).join(", ")}
+					.
 				</Banner>
 			)}
 
@@ -380,7 +379,7 @@ function SendRow({
 					? { tone: "success" as const, text: `Tracking sent to ${channel}` }
 					: d.channelError
 						? { tone: "critical" as const, text: "Tracking not sent" }
-						: { tone: "warning" as const, text: "Tracking not sent yet" };
+						: { tone: "warning" as const, text: "Tracking pending" };
 
 	return (
 		<li className="flex flex-col gap-2 border-t px-4 py-3 first:border-t-0">
@@ -450,9 +449,7 @@ function SendRow({
 			)}
 			{!d.live && d.unfinishedVoid && (
 				<div className="flex flex-wrap items-center gap-2">
-					<span className="text-critical-text">
-						Voiding didn't finish for this order.
-					</span>
+					<span className="text-critical-text">Voiding didn't finish.</span>
 					<Button
 						size="sm"
 						variant="outline"

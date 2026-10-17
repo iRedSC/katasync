@@ -75,7 +75,6 @@ export function PurchaseUnitCell({
 		<Popover.Root open={open} onOpenChange={setOpen}>
 			<Popover.Trigger
 				aria-label={`Minimum and unit for ${label}`}
-				title="Change the minimum or unit"
 				className="cursor-pointer rounded-md border-b border-dotted border-faint text-left whitespace-nowrap hover:border-foreground"
 			>
 				{shown}
@@ -250,7 +249,7 @@ function TermsForm({
 						value={unit === EACH ? "1" : count}
 						disabled={unit === EACH}
 						inputMode="numeric"
-						title="The count the supplier puts on it, printed on the PO"
+						title="The supplier's count, printed on the PO"
 						onChange={(e) => setCount(e.target.value)}
 						className={cn(input, "text-right tabular-nums")}
 					/>
@@ -334,10 +333,7 @@ function TermsForm({
 						<button
 							type="button"
 							disabled={busy || adding || !saving.saveDefault}
-							title={
-								saving.noDefaultReason ??
-								"Also use these for this product on future POs"
-							}
+							title={saving.noDefaultReason ?? "Use on future POs"}
 							onClick={() =>
 								saving.saveDefault &&
 								submit(saving.saveDefault, saving.patchDefault)

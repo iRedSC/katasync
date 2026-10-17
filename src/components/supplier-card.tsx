@@ -95,7 +95,7 @@ export function SupplierCard({
 				</dl>
 			) : (
 				<p className="text-muted-foreground">
-					None, so it's never suggested for reordering.
+					None. Never suggested for reorder.
 				</p>
 			)}
 			{!editing && open.length > 0 && (

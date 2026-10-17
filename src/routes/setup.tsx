@@ -25,7 +25,7 @@ function Setup() {
 		return (
 			<AuthCard title="Add this device">
 				<p className="text-critical-text">
-					This link is missing its code. Open the whole link again.
+					Link is incomplete. Open the whole link.
 				</p>
 			</AuthCard>
 		);
@@ -48,9 +48,7 @@ function Setup() {
 		<AuthCard title="Add this device">
 			<form onSubmit={submit} className="flex flex-col gap-3">
 				<label className="flex flex-col gap-1">
-					<span className="text-muted-foreground">
-						Name it so you can tell it apart later
-					</span>
+					<span className="text-muted-foreground">Device name</span>
 					<input
 						value={name}
 						onChange={(e) => setName(e.target.value)}
@@ -64,10 +62,6 @@ function Setup() {
 				</Button>
 				{error && <p className="text-critical-text">{error}</p>}
 			</form>
-			<p className="text-muted-foreground">
-				The passkey stays on this device. It signs in with your face,
-				fingerprint, or screen lock.
-			</p>
 		</AuthCard>
 	);
 }

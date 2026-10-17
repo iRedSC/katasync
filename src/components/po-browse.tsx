@@ -95,10 +95,8 @@ export function BrowseProducts({
 			<DialogContent className="flex max-h-[calc(100svh-4rem)] flex-col gap-3 p-0 sm:max-w-6xl">
 				<DialogHeader className="px-5 pt-5">
 					<DialogTitle>Browse {supplierName}</DialogTitle>
-					<DialogDescription>
-						{sent
-							? "Add something the supplier sent. They aren't told."
-							: "Everything bought from them. Filter, sort, then add."}
+					<DialogDescription className="sr-only">
+						Products bought from {supplierName}
 					</DialogDescription>
 				</DialogHeader>
 				{/* Mounted only while open, so each opening loads fresh numbers. */}
@@ -159,7 +157,7 @@ function Browser({
 		return (
 			<p className="flex items-center justify-center gap-2 px-5 py-16 text-muted-foreground">
 				<Loader2 className="size-4 animate-spin" />
-				Loading their products
+				Loading
 			</p>
 		);
 	if (load.state === "failed")
@@ -281,7 +279,7 @@ function Table({
 			term={sort.find((t) => t.key === key)}
 			rank={sort.length > 1 ? sort.findIndex((t) => t.key === key) + 1 : 0}
 			onClick={(e) => sortBy(key, e)}
-			title={`Sort by ${COLUMNS[key].label}. Shift-click to break ties`}
+			title="Shift-click to break ties"
 			className={className}
 		>
 			{children}
@@ -308,7 +306,7 @@ function Table({
 						sort={sort}
 						onSort={changeSort}
 						columns={COLUMNS}
-						placeholder="Search, filter (%needs ordering *A >=3), or sort (^!velocity ^cost)"
+						placeholder="Search, or %status *class >=3 ^sort"
 					/>
 				</div>
 				<AddFilter
@@ -415,7 +413,7 @@ function Table({
 												size="sm"
 												variant="ghost"
 												onClick={() => onGoToLine(lineId)}
-												title="On this PO. Click to go to its line"
+												title="Go to line"
 											>
 												<Check />
 												Added
@@ -446,9 +444,7 @@ function Table({
 				</table>
 				{filtered.length === 0 && (
 					<p className="py-16 text-center text-muted-foreground">
-						{rows.length === 0
-							? "Nothing is bought from this supplier yet."
-							: "No products match. Try a shorter search, or remove a chip."}
+						{rows.length === 0 ? "Nothing bought from them" : "No matches"}
 					</p>
 				)}
 				{shown < filtered.length && (

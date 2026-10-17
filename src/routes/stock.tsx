@@ -25,10 +25,6 @@ function InventoryHistory() {
 	const batches = Route.useLoaderData();
 	return (
 		<Page title="Inventory history">
-			<p className="-mt-2 text-muted-foreground">
-				Every change to stock, newest first. Mistakes are fixed with a new
-				entry, never by editing an old one.
-			</p>
 			<Card flush>
 				<table className="w-full">
 					<thead>

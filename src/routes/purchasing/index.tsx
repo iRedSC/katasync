@@ -108,8 +108,7 @@ function Purchasing() {
 			{nothing ? (
 				<Card>
 					<EmptyState icon={ClipboardList} title="Nothing to reorder">
-						Stock covers every product's sales until a new order would arrive.
-						Products need a supplier before they're suggested.
+						Products without a supplier aren't suggested.
 					</EmptyState>
 				</Card>
 			) : (
@@ -179,12 +178,12 @@ function NewPurchaseOrder({
 				>
 					<DialogTitle className="sr-only">New PO</DialogTitle>
 					<DialogDescription className="sr-only">
-						Pick the supplier this PO is for.
+						Pick a supplier
 					</DialogDescription>
 					<Command>
-						<CommandInput placeholder="New PO for which supplier?" />
+						<CommandInput placeholder="Supplier" />
 						<CommandList>
-							<CommandEmpty>No supplier by that name.</CommandEmpty>
+							<CommandEmpty>No matches</CommandEmpty>
 							<CommandGroup heading="Suppliers">
 								{suppliers.map((s) => (
 									<CommandItem
@@ -459,7 +458,7 @@ function OrderMenu({ order: o }: { order: OrderRow }) {
 		const { added, raised } = r.value;
 		toast.success(
 			added + raised === 0
-				? `${name} already has everything suggested`
+				? `${name} is up to date`
 				: `${name}: ${[
 						added > 0 && `${formatCount(added)} added`,
 						raised > 0 && `${formatCount(raised)} raised`,

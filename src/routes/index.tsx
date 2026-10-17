@@ -64,11 +64,9 @@ function Home() {
 			{d.attention > 0 && (
 				<Banner
 					tone="critical"
-					title={`${formatCount(d.attention)} ${d.attention === 1 ? "thing needs" : "things need"} attention in Diagnostics`}
+					title={`${formatCount(d.attention)} ${d.attention === 1 ? "problem" : "problems"} with order sync or tracking`}
 					action={{ label: "Open Diagnostics", link: { to: "/diagnostics" } }}
-				>
-					Order sync or tracking isn't working as it should.
-				</Banner>
+				/>
 			)}
 
 			{d.blockedBundles > 0 && (
@@ -79,9 +77,7 @@ function Home() {
 						label: "Review tool sets",
 						link: { to: "/products", search: statusSearch("missing parts") },
 					}}
-				>
-					Each is missing a part. The parts blocking the most sets are below.
-				</Banner>
+				/>
 			)}
 
 			<div className="grid gap-4 lg:grid-cols-2">
@@ -96,8 +92,7 @@ function Home() {
 						flush
 					>
 						<p className="px-4 pb-2 text-muted-foreground">
-							Top sellers that will run out before a new PO could arrive, even
-							counting what's on order.
+							Out before a new PO could arrive, even with what's on order.
 						</p>
 						<ul>
 							{d.atRisk.slice(0, 6).map((r) => (

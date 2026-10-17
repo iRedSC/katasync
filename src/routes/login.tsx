@@ -38,8 +38,7 @@ function Login() {
 			</Button>
 			{error && <p className="text-critical-text">{error}</p>}
 			<p className="text-muted-foreground">
-				New device? On one that's signed in, open Settings, then Devices, and
-				add this one.
+				New device? Add it from Settings on a signed-in one.
 			</p>
 		</AuthCard>
 	);

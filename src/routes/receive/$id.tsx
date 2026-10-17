@@ -400,7 +400,7 @@ function ReceivePurchaseOrder() {
 					>
 						Back to list
 					</Link>
-					<p className="text-base">Tap a line to undo a mistake</p>
+					<p className="text-base">Tap a line to undo</p>
 				</div>
 			) : open ? (
 				<p className="mb-3 text-center text-base text-muted-foreground">
@@ -409,8 +409,8 @@ function ReceivePurchaseOrder() {
 			) : (
 				<p className="mb-3 rounded-2xl bg-warning-surface p-4 text-center text-lg font-semibold text-warning-text">
 					{order.status === "closed"
-						? "This PO is closed. Tap a line to undo a mistake."
-						: `This PO is ${order.status}`}
+						? "Closed. Tap a line to undo."
+						: `PO ${order.status}`}
 				</p>
 			)}
 

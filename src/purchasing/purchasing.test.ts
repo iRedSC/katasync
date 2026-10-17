@@ -982,10 +982,10 @@ describe("a PO from draft to received", () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		await expect(
 			setDraftLine(db, { purchaseOrderId: id, productId: set, quantity: 1 }),
-		).rejects.toThrow(/no parts yet/);
+		).rejects.toThrow(/has no parts/);
 		await expect(
 			addDraftLine(db, { purchaseOrderId: id, productId: set, quantity: 1 }),
-		).rejects.toThrow(/no parts yet/);
+		).rejects.toThrow(/has no parts/);
 
 		for (const l of await linesOf(id))
 			await setDraftLine(db, {

@@ -442,7 +442,7 @@ function ProductList() {
 									sort={sort}
 									onSort={(s) => setSearch({ sort: s })}
 									columns={PRODUCT_SORTS}
-									placeholder="Search, filter (#tag @type %status *class >=3), or sort (^cost ^!velocity)"
+									placeholder="Search, or #tag @type %status *class >=3 ^sort"
 								/>
 							</div>
 							<AddFilter
@@ -472,7 +472,7 @@ function ProductList() {
 										</th>
 										<th
 											className="hidden px-2 py-2 text-center font-medium md:table-cell"
-											title="Units sold a month. Hover for the reorder math"
+											title="Units sold a month"
 										>
 											Velocity
 										</th>
@@ -519,7 +519,7 @@ function ProductList() {
 															abc={p.abc}
 															title={
 																p.abcRank === null
-																	? "Needs a cost to get a class"
+																	? "Needs a cost"
 																	: p.kind === "bundle"
 																		? `#${formatCount(p.abcRank)} of tool sets by value`
 																		: `#${formatCount(p.abcRank)} by value`
@@ -595,7 +595,7 @@ function ProductList() {
 					)}
 					{filtered.length === 0 && (
 						<p className="rounded-xl bg-card py-16 text-center text-muted-foreground shadow-card">
-							No products match. Try a shorter search, or untick a filter.
+							No matches.
 						</p>
 					)}
 					{shown < filtered.length && (
@@ -666,7 +666,7 @@ function ProductList() {
 						undone &&
 						(undone.value
 							? `Took ${p.sku} off PO ${purchaseOrderId}`
-							: `${p.sku} on PO ${purchaseOrderId} changed since, so it's left as is`)
+							: `Can't undo: ${p.sku} on PO ${purchaseOrderId} changed`)
 					);
 				},
 			},
@@ -696,7 +696,7 @@ function ProductList() {
 				return (
 					cancelled &&
 					(cancelled.value < added.length
-						? `${p.sku}'s count request changed since, so it's left as is`
+						? `Can't undo: ${p.sku}'s count request changed`
 						: `Took ${p.sku} off the count list`)
 				);
 			},

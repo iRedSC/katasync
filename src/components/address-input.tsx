@@ -85,7 +85,7 @@ export function AddressInput({
 	const showing = listOpen && !loading && options.length > 0;
 	const status =
 		typed.length < 3
-			? "Keep typing to search addresses and businesses"
+			? "Keep typing…"
 			: loading
 				? "Searching…"
 				: error

@@ -241,7 +241,7 @@ async function checkEmail(s: Steps) {
 		// A sending-only key may not list domains; that's the safer key to use.
 		if (response.status === 401 && /restricted/i.test(text))
 			return {
-				warn: `The key can only send, so ${domain} can't be checked from here. Sending a PO will show if it works.`,
+				warn: `Send-only key, so ${domain} can't be checked.`,
 			};
 		if (!response.ok)
 			throw new Error(`Resend answered ${response.status}: ${text}`);

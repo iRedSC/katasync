@@ -54,7 +54,7 @@ export function ExtraSheet({
 						)
 							onPick(first);
 					}}
-					placeholder="What came? Name, SKU, or scan"
+					placeholder="Name, SKU, or scan"
 					className="h-14 min-w-0 flex-1 rounded-2xl bg-card px-4 text-lg shadow-card outline-none"
 				/>
 				<button
@@ -80,7 +80,7 @@ export function ExtraSheet({
 				)}
 				{search.state === "done" && results.length === 0 && (
 					<li className="py-8 text-center text-lg text-muted-foreground">
-						Nothing matches "{search.query}"
+						No matches
 					</li>
 				)}
 				{results.map((m) => {

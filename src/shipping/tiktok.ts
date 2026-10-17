@@ -64,7 +64,7 @@ async function lineItemsToShip(orderId: string, cipher: string) {
 	const order = await orderOf(orderId, cipher);
 	if (order.status !== "AWAITING_SHIPMENT") {
 		throw new Error(
-			`TikTok shows this order as ${order.status.toLowerCase().replaceAll("_", " ")}, so it can't take a new label`,
+			`TikTok order is ${order.status.toLowerCase().replaceAll("_", " ")}; no new label`,
 		);
 	}
 	return order.line_items

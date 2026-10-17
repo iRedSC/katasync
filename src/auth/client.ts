@@ -20,7 +20,7 @@ async function post(step: string, body: unknown = {}) {
 // The passkey prompt being closed reads as an error; say what happened.
 function plain(error: unknown) {
 	if (error instanceof Error && error.name === "NotAllowedError")
-		return new Error("The passkey prompt was closed or timed out. Try again.");
+		return new Error("Passkey prompt closed or timed out. Try again.");
 	return error;
 }
 

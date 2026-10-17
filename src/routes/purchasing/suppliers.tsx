@@ -5,6 +5,7 @@ import { ListSkeleton } from "#/components/skeleton";
 import { SupplierDialog } from "#/components/supplier-dialog";
 import { formatCount, formatMoney } from "#/lib/format";
 import { optimistic } from "#/lib/optimism";
+import { MIN_MEASURED_POS } from "#/purchasing/forecast";
 import { listSuppliers, type SupplierRow } from "#/server/purchasing";
 
 export const Route = createFileRoute("/purchasing/suppliers")({
@@ -74,8 +75,8 @@ function Suppliers() {
 									<span
 										title={
 											r.leadTime.measured
-												? `Measured from the last ${r.leadTime.measured.pos} POs; typed in as ${r.leadTime.configured}`
-												: "Typed in; measured once enough POs arrive"
+												? `Measured from ${r.leadTime.measured.pos} POs (typed: ${r.leadTime.configured})`
+												: `Typed in; measured after ${MIN_MEASURED_POS} received POs`
 										}
 									>
 										{r.leadTime.days} days
@@ -122,13 +123,6 @@ function Suppliers() {
 					}
 				/>
 			)}
-			<p className="px-1 text-muted-foreground">
-				A product is reordered once its stock would run out within the lead time
-				plus a safety margin, then bought to last the cover days on top. Lead
-				times are measured from deliveries once a supplier has 3 received POs. A
-				supplier's suggested PO is ready once its total reaches their spend
-				threshold.
-			</p>
 		</Page>
 	);
 }

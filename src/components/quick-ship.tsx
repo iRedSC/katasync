@@ -518,8 +518,7 @@ export function QuickShip() {
 						!external &&
 						found.liveDispatchId !== null && (
 							<Notice tone="info">
-								This order already has a label. To ship it in a different box,
-								void that label on the order page first.
+								Already labeled. Void it on the order page to change boxes.
 							</Notice>
 						)}
 
@@ -689,13 +688,12 @@ function OrderSummary({
 				<div className="flex flex-col gap-2 rounded-xl border-2 border-info-border bg-info-surface px-4 py-3 text-info-text">
 					<p className="text-lg font-semibold">
 						{found.companions.length === 1
-							? "Another order goes to this address"
-							: `${found.companions.length} more orders go to this address`}
+							? "Another order to this address"
+							: `${found.companions.length} more orders to this address`}
 						{canCombine && (
 							<span className="font-normal">
 								{" "}
-								· <Key>T</Key> ships{" "}
-								{found.companions.length === 1 ? "it" : "them"} in this box
+								· <Key>T</Key> combines
 							</span>
 						)}
 					</p>
@@ -942,8 +940,7 @@ function PackageStep({
 					</span>
 				) : boxes.length === 0 ? (
 					<span className="text-muted-foreground">
-						No saved boxes yet. Type the length and press Space for a custom
-						size.
+						No saved boxes. Type a custom size.
 					</span>
 				) : value ? (
 					<span className="text-critical-text">No box has that pin</span>
@@ -1177,9 +1174,7 @@ function InsureStep({
 			}}
 		>
 			<p className="text-xl font-semibold">
-				{boxes > 1
-					? `Insure these ${boxes} boxes? The amount is split between them.`
-					: "Insure this package?"}
+				{boxes > 1 ? `Insure ${boxes} boxes? Split evenly.` : "Insure?"}
 			</p>
 			{options.map((o, i) => (
 				<button
@@ -1533,7 +1528,7 @@ function ExternalStep({ name, onOpen }: { name: string; onOpen: () => void }) {
 				onClick={onOpen}
 				className="inline-flex h-16 items-center gap-3 rounded-xl bg-primary px-8 text-xl font-semibold text-white outline-none hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 			>
-				Press Enter to go to the fulfillment page
+				Open fulfillment page
 				<ExternalLink className="size-6" />
 			</button>
 		</div>

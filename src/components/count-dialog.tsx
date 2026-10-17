@@ -87,10 +87,10 @@ export function CountDialog({
 		if (!laid) close();
 		const { batchId } = r.value;
 		if (!batchId) {
-			toast.success("Count confirmed. Nothing changed.", { description: name });
+			toast.success("Count confirmed", { description: name });
 			return;
 		}
-		offerUndo(`Count saved. ${formatCount(r.value.onHand)} on the shelf.`, {
+		offerUndo(`Count saved: ${formatCount(r.value.onHand)}`, {
 			tone: "success",
 			description: name,
 			undo: async () => {
@@ -138,9 +138,9 @@ export function CountDialog({
 						/>
 						<p className="text-muted-foreground">
 							{delta === null ? (
-								<>We think there are {formatCount(current)}</>
+								<>Expected {formatCount(current)}</>
 							) : delta === 0 ? (
-								<>Matches what we think. Saving marks it counted.</>
+								<>Matches</>
 							) : (
 								<>
 									<span
@@ -154,7 +154,7 @@ export function CountDialog({
 											format={{ signDisplay: "always" }}
 										/>
 									</span>{" "}
-									from the {formatCount(current)} we think there are
+									from {formatCount(current)}
 								</>
 							)}
 						</p>

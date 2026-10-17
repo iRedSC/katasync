@@ -109,17 +109,12 @@ function Listings() {
 		<Page title="Unmatched listings">
 			{rows.length === 0 ? (
 				<Card>
-					<EmptyState icon={Link2} title="Every listing has a product">
-						When a store adds a listing katasync can't match on its own, it
-						shows up here.
-					</EmptyState>
+					<EmptyState icon={Link2} title="All matched" />
 				</Card>
 			) : (
 				<>
 					<p className="-mt-2 text-muted-foreground">
-						These listings sell something katasync doesn't know yet, so their
-						sales can't take stock. Create the product if it's new, or match it
-						to one you already have. Most-sold first.
+						Their sales take no stock until matched.
 					</p>
 					<Card flush>
 						{/* One menu for the whole list: it acts on the row that was
@@ -175,7 +170,7 @@ function Listings() {
 						</ContextMenu>
 					</Card>
 					<p className="text-xs text-muted-foreground">
-						Keyboard: J and K to move, C to create, M to match.
+						J K move · C create · M match
 					</p>
 				</>
 			)}
@@ -273,7 +268,7 @@ function MatchDialog({
 				</DialogDescription>
 				<Command shouldFilter={false}>
 					<CommandInput
-						placeholder="Search products by SKU or name"
+						placeholder="SKU or name"
 						value={query}
 						onValueChange={setQuery}
 					/>

@@ -955,7 +955,7 @@ async function refuseEmptySet(
 		.limit(1);
 	if (!part)
 		throw new PurchaseOrderError(
-			`${product.sku} is a tool set with no parts yet; add them on its page`,
+			`${product.sku} has no parts; add them on its page`,
 		);
 }
 

@@ -99,28 +99,27 @@ export function hintFor(channel: Channel | "shippo" | "email", error: string) {
 		return {
 			title: "The saved login no longer works.",
 			action:
-				"Run the connection check. If the token step fails, the app's authorization was revoked or expired: authorize it again and update the refresh token.",
+				"Run the connection check. If the token step fails, authorize again and update the refresh token.",
 		};
 	if (/ACCESS_DENIED|access denied|\b403\b|insufficient.*scope/i.test(error))
 		return {
 			title: "The app is missing a permission.",
 			action:
 				channel === "shopify"
-					? "Run the connection check to see the granted scopes, then add the missing one to the custom app in Shopify admin (Settings > Apps > Develop apps) and reinstall it."
+					? "Run the connection check, add the missing scope in Shopify admin (Settings > Apps > Develop apps), and reinstall."
 					: "Authorize the app again, approving every permission it asks for.",
 		};
 	if (/THROTTLED|rate limit|\b429\b|QuotaExceeded/i.test(error))
 		return {
 			title: "The API's rate limit was hit.",
-			action: "Usually passes by itself; the next pass retries.",
+			action: "Retries next pass.",
 		};
 	if (
 		/fetch failed|ENOTFOUND|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket/i.test(error)
 	)
 		return {
 			title: "Couldn't reach the API.",
-			action:
-				"Check this machine's internet connection. If it's fine, the marketplace may be down; the next pass retries.",
+			action: "Check this machine's internet. Retries next pass.",
 		};
 	if (
 		/\b5\d\d\b|Unexpected end of JSON|invalid JSON|Unexpected token/i.test(
@@ -129,8 +128,7 @@ export function hintFor(channel: Channel | "shippo" | "email", error: string) {
 	)
 		return {
 			title: "The marketplace answered with an error or a broken response.",
-			action:
-				"Usually passes by itself. If it repeats, the error text says which call.",
+			action: "Retries next pass.",
 		};
 	return null;
 }
@@ -139,16 +137,14 @@ export function hintFor(channel: Channel | "shippo" | "email", error: string) {
 export function hintForIssue(message: string): Hint | null {
 	if (message.startsWith("no product for "))
 		return {
-			title:
-				"A listing isn't matched to a product, so these orders took no stock.",
-			action:
-				"Match it on Listings; the orders then take their stock automatically.",
+			title: "Unmatched listing, so no stock taken.",
+			action: "Match it on Listings; these orders then take stock.",
 		};
 	if (message === "no location to take stock from")
 		return {
 			title: "There's more than one location to ship from.",
 			action:
-				"katasync can't tell which shelf these came off, so they took no stock. Record them with a count until shipping locations are set per store.",
+				"No stock taken. Fix with a count until each store has a shipping location.",
 		};
 	return null;
 }

@@ -62,7 +62,7 @@ export function matchWarning(
 ): { text: string; blocks: boolean } | null {
 	if (m.kind === "bundle" && sent)
 		return { text: "Tool set: add the parts that came", blocks: true };
-	if (m.supplierId === null) return { text: "No supplier yet", blocks: false };
+	if (m.supplierId === null) return { text: "No supplier", blocks: false };
 	if (!m.fromThisSupplier)
 		return { text: `Bought from ${m.supplierName}`, blocks: false };
 	return null;
@@ -116,11 +116,7 @@ export function ProductPicker({
 					ref={ref}
 					value={query}
 					onValueChange={setQuery}
-					placeholder={
-						sent
-							? "Add something the supplier sent: name, SKU, barcode, or their SKU"
-							: "Add a product: name, SKU, barcode, or their SKU"
-					}
+					placeholder="Add: name, SKU, barcode, or their SKU"
 					className="h-9 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
 				/>
 				{search.state === "searching" && (
@@ -131,13 +127,7 @@ export function ProductPicker({
 						/
 					</kbd>
 				)}
-				<Button
-					type="button"
-					size="sm"
-					variant="outline"
-					onClick={onBrowse}
-					title="Everything bought from this supplier, to filter and sort"
-				>
+				<Button type="button" size="sm" variant="outline" onClick={onBrowse}>
 					<LayoutList />
 					Browse
 				</Button>
@@ -149,9 +139,7 @@ export function ProductPicker({
 					) : (
 						search.state === "done" &&
 						results.length === 0 && (
-							<p className="px-3 py-4 text-muted-foreground">
-								No product matches "{search.query}"
-							</p>
+							<p className="px-3 py-4 text-muted-foreground">No matches</p>
 						)
 					)}
 					{results.map((m) => {
