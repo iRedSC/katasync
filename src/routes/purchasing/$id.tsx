@@ -32,7 +32,7 @@ import {
 import { ProductImage } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { SetGauge } from "#/components/set-gauge";
-import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
+import { PurchaseOrderSkeleton } from "#/components/skeleton";
 import { StockRing } from "#/components/stock-ring";
 import { SupplierDialog } from "#/components/supplier-dialog";
 import { Button } from "#/components/ui/button";
@@ -91,19 +91,7 @@ import {
 export const Route = createFileRoute("/purchasing/$id")({
 	loader: ({ params }) => getPurchaseOrder({ data: { id: Number(params.id) } }),
 	component: PurchaseOrderPage,
-	pendingComponent: () => (
-		<DetailSkeleton
-			back={{ to: "/purchasing" }}
-			width="wide"
-			main={<ListCard rows={8} picture />}
-			side={
-				<>
-					<FieldsCard title="Supplier" lines={4} />
-					<FieldsCard title="Delivery" />
-				</>
-			}
-		/>
-	),
+	pendingComponent: PurchaseOrderSkeleton,
 });
 
 // Not sent yet: lines are edited as a draft's are.

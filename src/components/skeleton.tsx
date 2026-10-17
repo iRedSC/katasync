@@ -155,6 +155,24 @@ export function DetailSkeleton({
 	);
 }
 
+// A PO, whether it already has a number or is being made from a supplier's
+// suggestion.
+export function PurchaseOrderSkeleton() {
+	return (
+		<DetailSkeleton
+			back={{ to: "/purchasing" }}
+			width="wide"
+			main={<ListCard rows={8} picture />}
+			side={
+				<>
+					<FieldsCard title="Supplier" lines={4} />
+					<FieldsCard title="Delivery" />
+				</>
+			}
+		/>
+	);
+}
+
 // The receiving app's own frame: big type, cards on a phone.
 export function ReceiveSkeleton({ title }: { title?: string }) {
 	return (

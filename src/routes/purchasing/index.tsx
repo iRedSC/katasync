@@ -54,7 +54,6 @@ import {
 	createDraft,
 	createDraftFromSuggestions,
 	listPurchasing,
-	openSuggestedPurchaseOrder,
 	orderPurchaseOrderAgain,
 	type PurchasingList,
 	updateDraftFromSuggestions,
@@ -209,12 +208,18 @@ function NewPurchaseOrder({
 type Suggestion = PurchasingList["ready"][number];
 
 // One row per supplier: what today's sales say to send them. Clicking a row
-// opens it on the PO page, where it only becomes a draft once it's changed.
-// "Create PO" makes the draft straight away.
+// opens it on the PO page at once, where it only becomes a draft once it's
+// changed. "Create PO" makes the draft straight away.
 function SuggestionList({ rows }: { rows: Suggestion[] }) {
 	const [menuFor, setMenuFor] = useState<Suggestion | null>(null);
 	const { creating, create } = useCreateDraft();
-	const { opening, open } = useOpenSuggested();
+	const { link } = useRowLink();
+	const navigate = useNavigate();
+	const to = (s: Suggestion) =>
+		({
+			to: "/purchasing/suggested/$supplierId",
+			params: { supplierId: String(s.supplierId) },
+		}) as const;
 
 	// Same columns as the PO tables below, so the page reads as one list.
 	return (
@@ -240,12 +245,9 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 						{rows.map((s) => (
 							<tr
 								key={s.supplierId}
-								onClick={() => opening === null && open(s.supplierId)}
+								{...link(to(s))}
 								onContextMenu={() => setMenuFor(s)}
-								className={cn(
-									"cursor-pointer border-t first:border-t-0 hover:bg-subtle",
-									opening !== null && "cursor-wait",
-								)}
+								className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
 							>
 								<td className="px-4 py-2.5 font-semibold whitespace-nowrap">
 									<span className="font-normal text-muted-foreground">New</span>
@@ -254,10 +256,8 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 									<div className="truncate">{s.supplierName}</div>
 								</td>
 								<td className="px-4 py-2.5 whitespace-nowrap">
-									{opening === s.supplierId || creating === s.supplierId ? (
-										<span className="text-muted-foreground">
-											{opening === s.supplierId ? "Opening…" : "Creating…"}
-										</span>
+									{creating === s.supplierId ? (
+										<span className="text-muted-foreground">Creating…</span>
 									) : (
 										<ReadinessBadge s={s} />
 									)}
@@ -281,8 +281,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 					<ContextMenuContent>
 						<ContextMenuItem
 							shortcut="↵"
-							disabled={opening !== null}
-							onSelect={() => open(menuFor.supplierId)}
+							onSelect={() => navigate(to(menuFor))}
 						>
 							<FileText />
 							Open
@@ -336,22 +335,6 @@ function useCreateDraft() {
 		navigate({ to: "/purchasing/$id", params: { id: String(r.value) } });
 	}
 	return { creating, create };
-}
-
-// Opens the supplier's suggestion on the PO page, as a suggested PO.
-function useOpenSuggested() {
-	const navigate = useNavigate();
-	const [opening, setOpening] = useState<number | null>(null);
-
-	async function open(supplierId: number) {
-		setOpening(supplierId);
-		const r = await optimism.change({
-			send: () => openSuggestedPurchaseOrder({ data: { supplierId } }),
-		});
-		setOpening(null);
-		if (r) navigate({ to: "/purchasing/$id", params: { id: String(r.value) } });
-	}
-	return { opening, open };
 }
 
 type OrderRow = PurchasingList["open"][number];

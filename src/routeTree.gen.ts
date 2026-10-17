@@ -34,6 +34,7 @@ import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
+import { Route as PurchasingSuggestedSupplierIdRouteImport } from './routes/purchasing/suggested.$supplierId'
 import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
 
 const IndexRoute = IndexRouteImport.update({
@@ -161,6 +162,12 @@ const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
   path: '/purchasing/pdf/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PurchasingSuggestedSupplierIdRoute =
+  PurchasingSuggestedSupplierIdRouteImport.update({
+    id: '/purchasing/suggested/$supplierId',
+    path: '/purchasing/suggested/$supplierId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiCronSyncChannelRoute = ApiCronSyncChannelRouteImport.update({
   id: '/api/cron/sync/$channel',
   path: '/api/cron/sync/$channel',
@@ -193,6 +200,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
+  '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRoutesByTo {
@@ -221,6 +229,7 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
+  '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRoutesById {
@@ -250,6 +259,7 @@ export interface FileRoutesById {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
+  '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
 }
 export interface FileRouteTypes {
@@ -280,6 +290,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
+    | '/purchasing/suggested/$supplierId'
     | '/api/cron/sync/$channel'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -308,6 +319,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
+    | '/purchasing/suggested/$supplierId'
     | '/api/cron/sync/$channel'
   id:
     | '__root__'
@@ -336,6 +348,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
+    | '/purchasing/suggested/$supplierId'
     | '/api/cron/sync/$channel'
   fileRoutesById: FileRoutesById
 }
@@ -365,6 +378,7 @@ export interface RootRouteChildren {
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
+  PurchasingSuggestedSupplierIdRoute: typeof PurchasingSuggestedSupplierIdRoute
   ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
 }
 
@@ -545,6 +559,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchasingPdfIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/purchasing/suggested/$supplierId': {
+      id: '/purchasing/suggested/$supplierId'
+      path: '/purchasing/suggested/$supplierId'
+      fullPath: '/purchasing/suggested/$supplierId'
+      preLoaderRoute: typeof PurchasingSuggestedSupplierIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/cron/sync/$channel': {
       id: '/api/cron/sync/$channel'
       path: '/api/cron/sync/$channel'
@@ -581,6 +602,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
+  PurchasingSuggestedSupplierIdRoute: PurchasingSuggestedSupplierIdRoute,
   ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,
 }
 export const routeTree = rootRouteImport
