@@ -12,6 +12,7 @@ import {
 	useBack,
 } from "#/components/page";
 import { MovementTable, ProductImage, ProductName } from "#/components/product";
+import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
 import { Button } from "#/components/ui/button";
@@ -41,6 +42,23 @@ export const Route = createFileRoute("/products/$sku")({
 		return { ...detail, supplier, defaultRange };
 	},
 	component: ProductPage,
+	pendingComponent: () => (
+		<DetailSkeleton
+			back={{ to: "/products" }}
+			main={
+				<>
+					<FieldsCard lines={4} />
+					<ListCard title="Inventory" rows={2} />
+				</>
+			}
+			side={
+				<>
+					<FieldsCard title="Availability" />
+					<FieldsCard title="Sales channels" />
+				</>
+			}
+		/>
+	),
 });
 
 type ProductSupplier = Awaited<ReturnType<typeof getProductSupplier>>;

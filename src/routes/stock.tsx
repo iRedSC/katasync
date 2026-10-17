@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Card, Page } from "#/components/page";
 import { ProductImage } from "#/components/product";
+import { ListCard, ListSkeleton } from "#/components/skeleton";
 import {
 	formatCount,
 	formatDateTime,
@@ -13,6 +14,11 @@ import { listMovementBatches } from "#/server/catalog";
 export const Route = createFileRoute("/stock")({
 	loader: () => listMovementBatches(),
 	component: InventoryHistory,
+	pendingComponent: () => (
+		<ListSkeleton title="Inventory history">
+			<ListCard picture />
+		</ListSkeleton>
+	),
 });
 
 function InventoryHistory() {

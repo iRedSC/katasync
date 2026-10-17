@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { CountDialog } from "#/components/count-dialog";
 import { AbcBadge, Card, EmptyState, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
+import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
 	ContextMenu,
@@ -28,6 +29,11 @@ import { listCountsDue } from "#/server/catalog";
 export const Route = createFileRoute("/counts")({
 	loader: () => listCountsDue(),
 	component: CycleCounts,
+	pendingComponent: () => (
+		<ListSkeleton title="Cycle counts">
+			<ListCard picture />
+		</ListSkeleton>
+	),
 });
 
 type Shelf = Awaited<ReturnType<typeof listCountsDue>>[number];

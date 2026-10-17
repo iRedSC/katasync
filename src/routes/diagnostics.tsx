@@ -12,6 +12,7 @@ import {
 import { type ReactNode, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Badge, Banner, Card, Page, type Tone } from "#/components/page";
+import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import type { CheckTarget } from "#/diagnostics/checks";
 import type { Health, Hint } from "#/diagnostics/health";
@@ -28,6 +29,12 @@ import { resendTracking, retryStorefront } from "#/server/shipping";
 export const Route = createFileRoute("/diagnostics")({
 	loader: () => getDiagnostics(),
 	component: DiagnosticsPage,
+	pendingComponent: () => (
+		<ListSkeleton title="Diagnostics">
+			<ListCard rows={4} />
+			<FieldsCard lines={4} />
+		</ListSkeleton>
+	),
 });
 
 const HEALTH: Record<Health, { label: string; tone?: Tone }> = {

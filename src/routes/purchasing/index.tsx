@@ -15,6 +15,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { cancelWithUndo } from "#/components/po-cancel";
+import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
 	Command,
@@ -40,6 +41,7 @@ import {
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism } from "#/lib/optimism";
+import { useRowLink } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
 import {
 	cancelledRow,
@@ -61,6 +63,12 @@ import {
 export const Route = createFileRoute("/purchasing/")({
 	loader: () => listPurchasing(),
 	component: Purchasing,
+	pendingComponent: () => (
+		<ListSkeleton title="Purchase orders">
+			<ListCard title="Ready to order" rows={3} />
+			<ListCard title="Open" rows={4} />
+		</ListSkeleton>
+	),
 });
 
 // An unpatched change waits for the page to reload, so a toast says what's
@@ -364,7 +372,7 @@ function Columns() {
 }
 
 function OrderTable({ rows }: { rows: OrderRow[] }) {
-	const navigate = useNavigate();
+	const { link } = useRowLink();
 	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
 	return (
 		<table className="w-full table-fixed">
@@ -393,12 +401,10 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 							return (
 								<tr
 									key={o.id}
-									onClick={() =>
-										navigate({
-											to: "/purchasing/$id",
-											params: { id: String(o.id) },
-										})
-									}
+									{...link({
+										to: "/purchasing/$id",
+										params: { id: String(o.id) },
+									})}
 									onContextMenu={() => setMenuFor(o)}
 									className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
 								>

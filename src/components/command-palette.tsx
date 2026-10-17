@@ -28,6 +28,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { useHotkeys } from "#/lib/hotkeys";
+import { useRowLink } from "#/lib/row-link";
 import { listProductIndex } from "#/server/catalog";
 import type { NavCounts } from "#/server/nav";
 
@@ -134,6 +135,7 @@ type IndexEntry = Awaited<ReturnType<typeof listProductIndex>>[number];
 // ⌘K: jump to any page or product. Also owns the "g x" page shortcuts.
 export function CommandPalette() {
 	const navigate = useNavigate();
+	const { preload } = useRowLink();
 	const [open, setOpen] = useState(false);
 	const [index, setIndex] = useState<IndexEntry[] | null>(null);
 	const [query, setQuery] = useState("");
@@ -194,7 +196,17 @@ export function CommandPalette() {
 				<DialogDescription className="sr-only">
 					Find a product or page
 				</DialogDescription>
-				<Command shouldFilter={false}>
+				<Command
+					shouldFilter={false}
+					// The highlighted product or page loads ahead, so Enter shows it
+					// at once.
+					onValueChange={(v) => {
+						const p = matches.find((m) => m.sku === v);
+						if (p) preload({ to: "/products/$sku", params: { sku: p.sku } });
+						const page = pages.find((x) => x.to === v);
+						if (page) preload({ to: page.to });
+					}}
+				>
 					<CommandInput
 						placeholder="Find a product or page…"
 						value={query}

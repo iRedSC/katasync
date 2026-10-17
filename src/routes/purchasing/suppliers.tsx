@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { Badge, Card, Page } from "#/components/page";
+import { ListSkeleton } from "#/components/skeleton";
 import { SupplierDialog } from "#/components/supplier-dialog";
 import { formatCount, formatMoney } from "#/lib/format";
 import { optimistic } from "#/lib/optimism";
@@ -9,6 +10,13 @@ import { listSuppliers, type SupplierRow } from "#/server/purchasing";
 export const Route = createFileRoute("/purchasing/suppliers")({
 	loader: () => listSuppliers(),
 	component: Suppliers,
+	pendingComponent: () => (
+		<ListSkeleton
+			title="Suppliers"
+			back={{ to: "/purchasing" }}
+			width="narrow"
+		/>
+	),
 });
 
 // The suppliers' rows, with changes not yet confirmed laid over them.

@@ -7,6 +7,7 @@ import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
 import { receiveHead } from "#/components/receive/pwa";
 import { QuantitySheet } from "#/components/receive/quantity-sheet";
 import { Saving } from "#/components/saving";
+import { ReceiveSkeleton } from "#/components/skeleton";
 import { ids, optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import {
@@ -23,6 +24,7 @@ export const Route = createFileRoute("/receive/$id")({
 	head: receiveHead,
 	loader: ({ params }) => getPurchaseOrder({ data: { id: Number(params.id) } }),
 	component: ReceivePurchaseOrder,
+	pendingComponent: () => <ReceiveSkeleton />,
 });
 
 type Receipt = Pick<

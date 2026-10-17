@@ -22,6 +22,7 @@ import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
 import { AbcBadge, Badge, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
+import { Bone, ListSkeleton } from "#/components/skeleton";
 import { StockCard } from "#/components/stock-card";
 import { Button } from "#/components/ui/button";
 import {
@@ -43,6 +44,7 @@ import { copyText } from "#/lib/copy";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
+import { useRowLink } from "#/lib/row-link";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { facetsOf, sortValuesOf, stateOf, stock } from "#/products/rows";
@@ -140,6 +142,16 @@ export const Route = createFileRoute("/products/")({
 	},
 	loader: loadPage,
 	component: Products,
+	pendingComponent: () => (
+		<ListSkeleton title="Products" width="wide">
+			<div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">
+				{Array.from({ length: 12 }, (_, i) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity
+					<Bone key={i} className="h-44 rounded-xl" />
+				))}
+			</div>
+		</ListSkeleton>
+	),
 });
 
 const PAGE = 100;
@@ -295,8 +307,10 @@ function ProductList() {
 		return out;
 	}, [facets, query, filters]);
 
-	const open = (p: ProductRow) =>
-		navigate({ to: "/products/$sku", params: { sku: p.sku } });
+	const { link } = useRowLink();
+	const to = (p: ProductRow) =>
+		({ to: "/products/$sku", params: { sku: p.sku } }) as const;
+	const open = (p: ProductRow) => navigate(to(p));
 
 	// Chip and sort changes replace the history entry instead of piling up.
 	function setSearch(next: Partial<{ filters: Filter[]; sort: ProductSort }>) {
@@ -478,7 +492,7 @@ function ProductList() {
 											{filtered.slice(0, shown).map((p) => (
 												<tr
 													key={p.id}
-													onClick={() => open(p)}
+													{...link(to(p))}
 													onContextMenu={() => setMenuFor(p)}
 													className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
 												>
@@ -559,7 +573,7 @@ function ProductList() {
 											product={p}
 											state={stateFor(p)}
 											now={now}
-											onOpen={() => open(p)}
+											link={link(to(p))}
 											onMenu={() => setMenuFor(p)}
 											busy={adding.has(p.id)}
 											onOrder={() => addToPo(p)}

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { DevicesCard, devicesData } from "#/components/devices-card";
 import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
+import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { MinStockForm } from "#/components/stock-range-form";
 import { TokensCard, tokensData } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
@@ -45,6 +46,13 @@ export const Route = createFileRoute("/settings")({
 		return { locations, stores, boxes, units, devices, tokens, minStock };
 	},
 	component: Settings,
+	pendingComponent: () => (
+		<ListSkeleton title="Settings" width="narrow">
+			<ListCard title="Sales channels" rows={3} />
+			<ListCard title="Locations" rows={3} />
+			<FieldsCard title="Stock range" />
+		</ListSkeleton>
+	),
 });
 
 const channels = Object.entries(channelNames).map(([id, name]) => ({

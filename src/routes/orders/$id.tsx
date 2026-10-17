@@ -6,6 +6,7 @@ import { Badge, Banner, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
 import { type Received, ReturnDialog } from "#/components/return-dialog";
+import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
 	channelName,
@@ -26,6 +27,13 @@ import { resendTracking, voidLabel } from "#/server/shipping";
 export const Route = createFileRoute("/orders/$id")({
 	loader: ({ params }) => getOrder({ data: { id: Number(params.id) } }),
 	component: OrderPage,
+	pendingComponent: () => (
+		<DetailSkeleton
+			back={{ to: "/orders" }}
+			main={<ListCard title="Items" rows={3} picture />}
+			side={<FieldsCard title="Ship to" lines={4} />}
+		/>
+	),
 });
 
 // The page's data with changes the server hasn't confirmed laid over it.
