@@ -25,7 +25,12 @@ import {
 	SERVICE_LEVELS,
 	safetyStock,
 } from "#/purchasing/forecast";
-import { type SetMembership, setMembership } from "#/purchasing/sets";
+import {
+	type SetMembership,
+	setFloorOf,
+	setMembership,
+	setsBlocked,
+} from "#/purchasing/sets";
 
 export { DEMAND_DAYS };
 
@@ -85,7 +90,7 @@ export type ReorderInput = {
 	coverDays: number;
 	// The product's min stock: never let shelf plus on order drop below it.
 	minStock: number;
-	// Enough for one of each tool set it's in (see setMembership), or 0 in none:
+	// Enough for one of each tool set it's in (see setFloorOf), or 0 in none:
 	// below it, some set can't be sold. Holds like minStock.
 	setFloor: number;
 	minimumQuantity: number;
@@ -225,8 +230,7 @@ export type ReorderWhy = {
 	// product's min stock, or one of each of its tool sets when that's more.
 	minStock: number;
 	minFrom: "stock" | "sets";
-	// The tool sets it's a part of, and how many of them its shelf can't
-	// build even one of.
+	// The tool sets it's a part of, and its shelf to build them from.
 	sets: SetMembership;
 	// Reorder happens once shelf plus on order is below this.
 	orderBelow: number;
@@ -419,8 +423,6 @@ export const ordersItself = (
 	setsBlocked: number,
 ) => marked || abc === "A" || abc === "B" || setsBlocked > 0;
 
-const NO_SETS = { in: 0, blocked: 0, floor: 0 };
-
 type Supplier = {
 	supplierId: number;
 	supplierName: string;
@@ -508,6 +510,9 @@ export async function reorderBreakdown(
 				.select({
 					productId: productComponents.componentProductId,
 					perSet: productComponents.quantity,
+					sku: products.sku,
+					name: products.name,
+					variantName: products.variantName,
 				})
 				.from(productComponents)
 				.innerJoin(products, eq(products.id, productComponents.parentProductId))
@@ -519,7 +524,11 @@ export async function reorderBreakdown(
 	return rows.map((p) => {
 		const rank = planned.abc.classes.get(p.productId);
 		const abcClass = rank?.abc ?? null;
-		const { floor: setFloor, ...membership } = sets.get(p.productId) ?? NO_SETS;
+		const membership = sets.get(p.productId) ?? {
+			shelf: Math.max(onHand.get(p.productId) ?? 0, 0),
+			sets: [],
+		};
+		const blocked = setsBlocked(membership);
 		// The joins make these all null together, or none.
 		const supplier: Supplier | null =
 			p.supplierId === null ||
@@ -561,7 +570,7 @@ export async function reorderBreakdown(
 			...planFor(planned, p.productId, p.supplierId),
 			coverDays: p.coverDays ?? DEFAULT_COVER_DAYS,
 			minStock: p.minStock ?? defaultMin,
-			setFloor,
+			setFloor: setFloorOf(membership),
 			minimumQuantity: terms.minimumQuantity,
 			packSize: terms.packSize,
 		};
@@ -579,7 +588,7 @@ export async function reorderBreakdown(
 			unitCost:
 				p.cost ??
 				(p.productCost === null ? null : p.productCost * terms.packSize),
-			critical: isCritical(p.markedCritical, abcClass, membership.blocked),
+			critical: isCritical(p.markedCritical, abcClass, blocked),
 		};
 		const lead =
 			p.supplierId === null ? undefined : planned.leadTimes.get(p.supplierId);
@@ -609,11 +618,7 @@ export async function reorderBreakdown(
 			barcode: p.barcode,
 			range,
 			max: range.max,
-			ordersItself: ordersItself(
-				p.markedCritical,
-				abcClass,
-				membership.blocked,
-			),
+			ordersItself: ordersItself(p.markedCritical, abcClass, blocked),
 			// A C item nobody has sold or counted in a year is dead stock, or
 			// was never really stocked: nothing to recommend. Unpriced products
 			// have no class but did sell, so they stay.

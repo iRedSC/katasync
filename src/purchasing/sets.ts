@@ -129,26 +129,48 @@ export function orderedItems(
 	return items;
 }
 
-// A product's place in tool sets: how many it's a part of, and how many of
-// those its shelf can't build one of.
-export type SetMembership = { in: number; blocked: number };
+// One tool set a product is a part of.
+export type SetOfPart = {
+	sku: string;
+	name: string;
+	variantName: string | null;
+	// Single items of the product in one set.
+	perSet: number;
+};
 
-// For each product in a tool set, from the sets' recipes and what's on the
-// shelf: its membership, and the floor that keeps every set buildable (the
-// most of it any one set takes). Oversold counts as none.
+// A product's place in tool sets: what's on its shelf (never below zero)
+// and the sets it's in.
+export type SetMembership = { shelf: number; sets: SetOfPart[] };
+
+// How many of a set the product's shelf builds, as far as it goes.
+export const buildsOf = (m: SetMembership, set: SetOfPart) =>
+	Math.floor(m.shelf / set.perSet);
+
+// How many of its sets the product's shelf can't build one of.
+export const setsBlocked = (m: SetMembership) =>
+	m.sets.filter((s) => buildsOf(m, s) === 0).length;
+
+// The least of the product that keeps every one of its sets buildable: the
+// most any one set takes. 0 in no set.
+export const setFloorOf = (m: SetMembership) =>
+	Math.max(0, ...m.sets.map((s) => s.perSet));
+
+// Each product's membership, from the sets' recipes and what's on the
+// shelf. Products in no set aren't in it. Sets in name order.
 export function setMembership(
-	recipes: { productId: number; perSet: number }[],
+	recipes: ({ productId: number } & SetOfPart)[],
 	onHand: ReadonlyMap<number, number>,
-): Map<number, SetMembership & { floor: number }> {
-	const result = new Map<number, SetMembership & { floor: number }>();
-	for (const r of recipes) {
-		const prev = result.get(r.productId) ?? { in: 0, blocked: 0, floor: 0 };
-		const shelf = Math.max(onHand.get(r.productId) ?? 0, 0);
-		result.set(r.productId, {
-			in: prev.in + 1,
-			blocked: prev.blocked + (shelf < r.perSet ? 1 : 0),
-			floor: Math.max(prev.floor, r.perSet),
-		});
+): Map<number, SetMembership> {
+	const result = new Map<number, SetMembership>();
+	for (const { productId, ...set } of recipes) {
+		const m = result.get(productId) ?? {
+			shelf: Math.max(onHand.get(productId) ?? 0, 0),
+			sets: [],
+		};
+		m.sets.push(set);
+		result.set(productId, m);
 	}
+	for (const m of result.values())
+		m.sets.sort((a, b) => a.name.localeCompare(b.name));
 	return result;
 }

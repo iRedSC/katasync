@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { ImageIcon, LayersIcon } from "lucide-react";
-import { Tip } from "#/components/ui/tooltip";
+import { HoverCard } from "radix-ui";
+import { Fragment } from "react";
 import {
 	formatCount,
 	formatDateTime,
@@ -8,7 +9,7 @@ import {
 	formatReason,
 } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import type { SetMembership } from "#/purchasing/sets";
+import { buildsOf, type SetMembership, setsBlocked } from "#/purchasing/sets";
 
 export function ProductImage({
 	src,
@@ -72,34 +73,107 @@ export function ProductName({
 	);
 }
 
-// How many tool sets a product is a part of, for beside its SKU. Red when
-// its shelf leaves some of them unsellable; nothing when it's in none.
+// How many tool sets a product is a part of, beside its SKU. Red when its
+// shelf can't build one of some of them. Hovering lists the sets and how
+// many of each its shelf builds. Nothing when it's in none.
 export function SetsChip({ sets }: { sets: SetMembership | null }) {
-	if (!sets || sets.in === 0) return null;
-	const noun = (n: number) => `tool ${n === 1 ? "set" : "sets"}`;
-	const title =
-		sets.blocked === 0
-			? `Part of ${formatCount(sets.in)} ${noun(sets.in)}`
-			: `Part of ${formatCount(sets.in)} ${noun(sets.in)}; too few on the shelf to build ${sets.blocked === sets.in ? (sets.in === 1 ? "it" : "any of them") : `${formatCount(sets.blocked)} of them`}`;
+	if (!sets || sets.sets.length === 0) return null;
+	const blocked = setsBlocked(sets);
 	return (
-		<Tip content={title}>
-			<span
-				className={cn(
-					"inline-flex h-4 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium tabular-nums",
-					sets.blocked > 0
-						? "bg-critical-fill text-critical-text"
-						: "bg-surface text-muted-foreground",
-				)}
-			>
-				<LayersIcon className="size-3" aria-hidden />
-				<span aria-hidden>
-					{sets.blocked > 0
-						? `${formatCount(sets.blocked)}/${formatCount(sets.in)}`
-						: formatCount(sets.in)}
+		<HoverCard.Root openDelay={150} closeDelay={100}>
+			<HoverCard.Trigger asChild>
+				<button
+					type="button"
+					aria-label={`In ${formatCount(sets.sets.length)} tool ${sets.sets.length === 1 ? "set" : "sets"}. Show them`}
+					// The row behind opens the product; this only explains.
+					onClick={(e) => e.stopPropagation()}
+					className={cn(
+						"inline-flex h-4 shrink-0 cursor-help items-center gap-1 rounded-md px-1.5 text-[11px] font-medium tabular-nums outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring",
+						blocked > 0
+							? "bg-critical-fill text-critical-text"
+							: "bg-surface text-muted-foreground",
+					)}
+				>
+					<LayersIcon className="size-3" aria-hidden />
+					{formatCount(sets.sets.length)}
+				</button>
+			</HoverCard.Trigger>
+			<HoverCard.Portal>
+				<HoverCard.Content
+					side="bottom"
+					align="start"
+					sideOffset={6}
+					collisionPadding={12}
+					onClick={(e) => e.stopPropagation()}
+					className="z-50 w-96 rounded-xl bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-black/10"
+				>
+					<SetsList sets={sets} blocked={blocked} />
+				</HoverCard.Content>
+			</HoverCard.Portal>
+		</HoverCard.Root>
+	);
+}
+
+function SetsList({ sets, blocked }: { sets: SetMembership; blocked: number }) {
+	const count = sets.sets.length;
+	return (
+		<div className="flex flex-col gap-3">
+			<div>
+				<p className="text-base leading-snug font-semibold">
+					In {formatCount(count)} tool {count === 1 ? "set" : "sets"}
+				</p>
+				<p className="text-xs text-muted-foreground">
+					{formatCount(sets.shelf)} on the shelf
+					{blocked > 0 && (
+						<span className="text-critical-text">
+							{" · "}
+							{blocked === count
+								? "Blocks all"
+								: `Blocks ${formatCount(blocked)}`}
+						</span>
+					)}
+				</p>
+			</div>
+			<div className="grid grid-cols-[1fr_auto_auto] text-xs">
+				<span className="pb-1 font-medium text-muted-foreground">Set</span>
+				<span className="pb-1 pl-4 text-right font-medium text-muted-foreground">
+					Each
 				</span>
-				<span className="sr-only">{title}</span>
-			</span>
-		</Tip>
+				<span className="pb-1 pl-4 text-right font-medium text-muted-foreground">
+					Builds
+				</span>
+				{sets.sets.map((set) => {
+					const builds = buildsOf(sets, set);
+					return (
+						<Fragment key={set.sku}>
+							<Link
+								to="/products/$sku"
+								params={{ sku: set.sku }}
+								className="border-t py-1.5 leading-snug hover:underline"
+							>
+								{set.name}
+								{set.variantName && (
+									<span className="ml-1.5 rounded-md bg-surface px-1.5 text-muted-foreground">
+										{set.variantName}
+									</span>
+								)}
+							</Link>
+							<span className="border-t py-1.5 pl-4 text-right tabular-nums text-muted-foreground">
+								{formatCount(set.perSet)}
+							</span>
+							<span
+								className={cn(
+									"border-t py-1.5 pl-4 text-right font-semibold tabular-nums",
+									builds === 0 && "text-critical-text",
+								)}
+							>
+								{formatCount(builds)}
+							</span>
+						</Fragment>
+					);
+				})}
+			</div>
+		</div>
 	);
 }
 
