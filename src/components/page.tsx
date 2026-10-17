@@ -185,6 +185,9 @@ const tones: Record<
 	},
 };
 
+const bannerAction =
+	"inline-flex h-7 items-center rounded-lg bg-white px-3 font-medium shadow-card hover:bg-subtle";
+
 // A problem worth acting on, like Polaris's Banner. The icon and title say
 // what the color means.
 export function Banner({
@@ -196,7 +199,7 @@ export function Banner({
 	tone: Tone;
 	title: ReactNode;
 	children?: ReactNode;
-	action?: { label: string; link: LinkProps };
+	action?: { label: string } & ({ link: LinkProps } | { onClick: () => void });
 }) {
 	const t = tones[tone];
 	return (
@@ -213,12 +216,19 @@ export function Banner({
 				{children && <div>{children}</div>}
 				{action && (
 					<div className="pt-1">
-						<Link
-							{...action.link}
-							className="inline-flex h-7 items-center rounded-lg bg-white px-3 font-medium shadow-card hover:bg-subtle"
-						>
-							{action.label}
-						</Link>
+						{"link" in action ? (
+							<Link {...action.link} className={bannerAction}>
+								{action.label}
+							</Link>
+						) : (
+							<button
+								type="button"
+								onClick={action.onClick}
+								className={bannerAction}
+							>
+								{action.label}
+							</button>
+						)}
 					</div>
 				)}
 			</div>

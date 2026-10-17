@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	listings,
@@ -201,8 +201,9 @@ export async function takeStock(
 	}
 }
 
-// The listing mapping decides first. Before listings have synced, an exact SKU
-// or alias match is enough.
+// The listing mapping decides first. Without one, an exact SKU or alias match
+// is enough, then the same SKU in other capitals ("FCI-Rad360" for
+// "FCI-RAD360") when exactly one product has it, as listings match.
 export async function resolveProduct(
 	db: Db,
 	storeId: number,
@@ -230,7 +231,13 @@ export async function resolveProduct(
 		.select({ id: productAliases.productId })
 		.from(productAliases)
 		.where(eq(productAliases.alias, line.sku));
-	return byAlias?.id ?? null;
+	if (byAlias) return byAlias.id;
+	const byCase = await db
+		.select({ id: products.id })
+		.from(products)
+		.where(sql`lower(${products.sku}) = lower(trim(${line.sku}))`)
+		.limit(2);
+	return byCase.length === 1 ? byCase[0].id : null;
 }
 
 // Cost of one unit right now. A bundle costs the sum of its parts; unknown if

@@ -3,16 +3,9 @@ import { Copy, Link2, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
+import { ProductSearchDialog } from "#/components/product-search-dialog";
 import { ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
-import {
-	Command,
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "#/components/ui/command";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -20,12 +13,6 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogTitle,
-} from "#/components/ui/dialog";
 import { copyText } from "#/lib/copy";
 import { channelName, formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
@@ -33,7 +20,6 @@ import { optimism, optimistic } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import {
 	createListingProduct,
-	listProductIndex,
 	listUnmappedListings,
 	matchListing,
 } from "#/server/catalog";
@@ -175,11 +161,21 @@ function Listings() {
 				</>
 			)}
 
-			<MatchDialog
-				listing={matching}
+			<ProductSearchDialog
+				title={
+					matching && (
+						<>
+							<span className="font-semibold">Match</span>{" "}
+							<span className="text-muted-foreground">{matching.title}</span>
+						</>
+					)
+				}
+				startFrom={matching?.externalSku}
 				onClose={() => setMatching(null)}
-				onPick={(listing, sku) => {
+				onPick={({ sku }) => {
+					const listing = matching;
 					setMatching(null);
+					if (!listing) return;
 					resolve(listing, {
 						label: `Matching ${listing.title}`,
 						verb: "Matched to",
@@ -223,84 +219,5 @@ function ListingMenu({
 				</>
 			)}
 		</ContextMenuContent>
-	);
-}
-
-type IndexEntry = Awaited<ReturnType<typeof listProductIndex>>[number];
-
-function MatchDialog({
-	listing,
-	onClose,
-	onPick,
-}: {
-	listing: Listing | null;
-	onClose: () => void;
-	onPick: (listing: Listing, sku: string) => void;
-}) {
-	const [index, setIndex] = useState<IndexEntry[] | null>(null);
-	const [query, setQuery] = useState("");
-
-	useEffect(() => {
-		if (listing && index === null) listProductIndex().then(setIndex);
-		// Start from the listing's SKU, which is usually close to the right one.
-		if (listing) setQuery(listing.externalSku?.split(/[-_ ]/)[0] ?? "");
-	}, [listing, index]);
-
-	const q = query.trim().toLowerCase();
-	const matches =
-		!index || q.length < 2
-			? []
-			: index
-					.filter(
-						(p) =>
-							p.sku.toLowerCase().includes(q) ||
-							p.name.toLowerCase().includes(q),
-					)
-					.slice(0, 40);
-
-	return (
-		<Dialog open={listing !== null} onOpenChange={(open) => !open && onClose()}>
-			<DialogContent className="overflow-hidden p-0" showCloseButton={false}>
-				<DialogTitle className="sr-only">Match listing</DialogTitle>
-				<DialogDescription className="border-b px-4 py-3 text-foreground">
-					<span className="font-semibold">Match</span>{" "}
-					<span className="text-muted-foreground">{listing?.title}</span>
-				</DialogDescription>
-				<Command shouldFilter={false}>
-					<CommandInput
-						placeholder="SKU or name"
-						value={query}
-						onValueChange={setQuery}
-					/>
-					<CommandList>
-						<CommandEmpty>No products match.</CommandEmpty>
-						{matches.length > 0 && (
-							<CommandGroup>
-								{matches.map((p) => (
-									<CommandItem
-										key={p.sku}
-										value={p.sku}
-										onSelect={() => listing && onPick(listing, p.sku)}
-									>
-										<span className="truncate">
-											{p.name}
-											{p.variantName && (
-												<span className="text-muted-foreground">
-													{" "}
-													{p.variantName}
-												</span>
-											)}
-										</span>
-										<span className="ml-auto shrink-0 text-xs text-muted-foreground">
-											{p.sku}
-										</span>
-									</CommandItem>
-								))}
-							</CommandGroup>
-						)}
-					</CommandList>
-				</Command>
-			</DialogContent>
-		</Dialog>
 	);
 }

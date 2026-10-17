@@ -426,7 +426,7 @@ function ProductPage() {
 								))}
 								{d.aliases.length > 0 && (
 									<li className="text-muted-foreground">
-										Amazon SKU {d.aliases.join(", ")}
+										Also sold as {d.aliases.join(", ")}
 									</li>
 								)}
 							</ul>
