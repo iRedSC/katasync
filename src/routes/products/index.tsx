@@ -21,7 +21,7 @@ import { FacetRail, type RailGroup } from "#/components/facet-rail";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
 import { AbcBadge, Badge, Card, Page } from "#/components/page";
-import { ProductImage, ProductName } from "#/components/product";
+import { ProductImage, ProductName, SetsChip } from "#/components/product";
 import { Bone, ListSkeleton } from "#/components/skeleton";
 import { StockCard } from "#/components/stock-card";
 import { Button } from "#/components/ui/button";
@@ -506,8 +506,9 @@ function ProductList() {
 																	name={p.name}
 																	variantName={p.variantName}
 																/>
-																<div className="flex gap-2 text-xs text-muted-foreground">
+																<div className="flex items-center gap-2 text-xs text-muted-foreground">
 																	<span>{p.sku}</span>
+																	<SetsChip sets={p.why?.sets ?? null} />
 																	{p.kind === "bundle" && <span>Tool set</span>}
 																	{p.kind === "kit" && <span>Kit</span>}
 																</div>

@@ -624,8 +624,8 @@ export const suppliers = pgTable(
 		minimumOrder: numeric({ precision: 12, scale: 2, mode: "number" })
 			.notNull()
 			.default(0),
-		// How many critical products (marked, or A items) needing ordering make a
-		// suggested PO ready whatever its total.
+		// How many critical products (marked, A items, or parts blocking a set)
+		// needing ordering make a suggested PO ready whatever its total.
 		criticalThreshold: integer().notNull().default(2),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},

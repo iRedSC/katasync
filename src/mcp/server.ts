@@ -80,6 +80,7 @@ How things count:
 - Count accuracy: use the count_history view (one row per shelf count: product_id, sku, location_id, counted_at, expected, counted, drift = counted minus expected, undone). Matched counts are there too (drift 0), so look for products that drift again and again, not one bad count. Leave out undone rows: those were mistakes. History before this log only has the counts that changed stock.
 - The products page treats stock as trusted once every owned shelf was counted in the last 60 days. For A and B items it asks for a count before suggesting an order; C items order on the number as it stands.
 - Each product keeps stock between a min and max: its own (products.min_stock/max_stock), or the defaults: settings.default_min_stock, and a max of what a reorder tops it up to, at least 5.
+- A part of tool sets also keeps enough for one of each set it's in. A part whose shelf can't build one of some set goes on its supplier's PO by itself whatever its class, like A and B items; other C items are only recommended on the PO.
 - Reorder demand is units sold over the last 90 days divided by the days the product was in stock (rebuilt from the movements ledger; days before the ledger began count as in stock), never fewer than 14. So a product that sat at zero isn't read as slow.
 - Lead time: the median of the supplier's last 5 received POs (sent to first delivery) once there are 3; until then suppliers.lead_time_days.
 - Safety stock: z × the daily sales swing × √lead time, with z for 98% (A), 95% (B), 90% (C and unclassed) in-stock odds, capped at the lead time's demand.
@@ -321,7 +322,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 		"reorder_suggestions",
 		{
 			description:
-				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Accounts for lead time, cover days, minimums, and open POs.",
+				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Accounts for lead time, cover days, minimums, open POs, and tool sets a part leaves unsellable.",
 			inputSchema: {
 				supplier: z.string().optional().describe("Code or name"),
 			},
@@ -871,7 +872,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 		"update_supplier",
 		{
 			description:
-				"Changes a supplier's details. Only given fields change. lead_time_days: days from sending a PO to delivery. cover_days: days of sales each PO should cover. minimum_order: spend (USD) at which a suggested PO counts as ready. critical_threshold: how many essential products (marked essential, or A items) needing ordering make it ready whatever the spend.",
+				"Changes a supplier's details. Only given fields change. lead_time_days: days from sending a PO to delivery. cover_days: days of sales each PO should cover. minimum_order: spend (USD) at which a suggested PO counts as ready. critical_threshold: how many essential products (marked essential, A items, or parts some tool set can't be built without) needing ordering make it ready whatever the spend.",
 			inputSchema: {
 				supplier: z.string().describe("Code or name"),
 				name: z.string().optional(),

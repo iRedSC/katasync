@@ -70,6 +70,7 @@ describe("reorderQuantity", () => {
 		safetyStock: 0,
 		coverDays: 20,
 		minStock: 0,
+		setFloor: 0,
 		minimumQuantity: 1,
 		packSize: 1,
 		supplierCount: 1,
@@ -141,6 +142,13 @@ describe("reorderQuantity", () => {
 		expect(reorderQuantity({ ...base, minStock: 20, onHand: 15 })).toBe(15);
 	});
 
+	test("keeps enough for one of each tool set, like min stock", () => {
+		const idle = { ...base, dailyDemand: 0, setFloor: 3 };
+		expect(reorderQuantity({ ...idle, onHand: 2 })).toBe(1);
+		expect(reorderQuantity({ ...idle, onHand: 1, onOrder: 2 })).toBe(0);
+		expect(reorderQuantity({ ...idle, onHand: 3 })).toBe(0);
+	});
+
 	test("counts days until it needs ordering", () => {
 		expect(daysUntilReorder({ ...base, onHand: 15 })).toBe(5);
 		expect(daysUntilReorder({ ...base, onHand: 10 })).toBe(0);
@@ -158,6 +166,7 @@ describe("explainReorder", () => {
 		safetyStock: 4,
 		coverDays: 20,
 		minStock: 0,
+		setFloor: 0,
 		minimumQuantity: 1,
 		packSize: 1,
 		supplierCount: 1,
@@ -173,6 +182,7 @@ describe("explainReorder", () => {
 			supplierCount: 1,
 			minimumQuantity: 1,
 		},
+		sets: { in: 0, blocked: 0 },
 	};
 
 	test("breaks the aim into parts that add up to it", () => {
@@ -221,6 +231,22 @@ describe("explainReorder", () => {
 			explainReorder({ ...base, dailyDemand: 0, safetyStock: 0 }, context)
 				.verdict,
 		).toEqual({ kind: "idle" });
+	});
+
+	test("says when its tool sets, not min stock, set the floor", () => {
+		const why = explainReorder(
+			{ ...base, minStock: 40, setFloor: 50 },
+			context,
+		);
+		expect(why).toMatchObject({
+			aim: { kind: "min", total: 50, forecast: 34 },
+			minStock: 50,
+			minFrom: "sets",
+			orderBelow: 50,
+		});
+		expect(
+			explainReorder({ ...base, minStock: 50, setFloor: 50 }, context),
+		).toMatchObject({ minStock: 50, minFrom: "stock" });
 	});
 
 	test("lets min stock set the aim when it's more than sales call for", () => {
@@ -457,6 +483,53 @@ describe("reorderBreakdown", () => {
 
 		const only = await reorderBreakdown(db, { now, productIds: [loose] });
 		expect(only.map((b) => b.line.sku)).toEqual(["LOOSE"]);
+	});
+});
+
+describe("tool set parts", () => {
+	test("a C part that leaves a set unsellable goes on the PO by itself", async () => {
+		const blade = await createProduct(db, "BLADE", "simple");
+		const knife = await createProduct(db, "KNIFE", "simple");
+		const loner = await createProduct(db, "LONER", "simple");
+		const set = await createProduct(db, "SET", "bundle");
+		const other = await createProduct(db, "OTHER", "bundle");
+		await setRecipe(db, set, [
+			{ productId: blade, quantity: 2 },
+			{ productId: knife, quantity: 1 },
+		]);
+		await setRecipe(db, other, [{ productId: blade, quantity: 3 }]);
+		for (const id of [blade, knife, loner]) await supply(id, 2);
+		await stock(knife, 1);
+		await stock(blade, 1);
+		// LONER is short of min stock too, but in no set. Counted, so it isn't
+		// dormant.
+		await stock(loner, 1);
+		await db
+			.update(schema.stockLevels)
+			.set({ lastCountedAt: daysAgo(30) })
+			.where(eq(schema.stockLevels.productId, loner));
+		await db
+			.update(schema.products)
+			.set({ minStock: 2, maxStock: 4 })
+			.where(eq(schema.products.id, loner));
+
+		const all = await reorderBreakdown(db, { now });
+		const of = (id: number) => all.find((b) => b.line.productId === id);
+		// Never sold, so all C items. Blade can build neither set.
+		expect(of(blade)?.why.sets).toEqual({ in: 2, blocked: 2 });
+		expect(of(knife)?.why.sets).toEqual({ in: 1, blocked: 0 });
+		expect(of(loner)?.why.sets).toEqual({ in: 0, blocked: 0 });
+		expect(of(blade)?.why).toMatchObject({ minStock: 3, minFrom: "sets" });
+
+		const [s] = await suggestPurchases(db, now);
+		// Topped up to one of the set that takes most: 3, less the 1 there.
+		// Essential too, so it counts toward the essential threshold.
+		expect(s.lines.map((l) => [l.sku, l.quantity, l.critical])).toEqual([
+			["BLADE", 2, true],
+		]);
+		expect(s.critical).toBe(1);
+		const r = await recommendedAdditions(db, canam, new Set(), now);
+		expect(r.map((l) => l.sku)).toEqual(["LONER"]);
 	});
 });
 

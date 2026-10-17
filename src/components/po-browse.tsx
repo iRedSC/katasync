@@ -10,7 +10,7 @@ import {
 import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
 import { AbcBadge } from "#/components/page";
-import { ProductImage, ProductName } from "#/components/product";
+import { ProductImage, ProductName, SetsChip } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -365,8 +365,9 @@ function Table({
 													name={row.name}
 													variantName={row.variantName}
 												/>
-												<div className="flex gap-2 text-xs text-muted-foreground">
+												<div className="flex items-center gap-2 text-xs text-muted-foreground">
 													<span>{row.sku}</span>
+													<SetsChip sets={row.why?.sets ?? null} />
 													{t?.supplierSku && (
 														<span>Their SKU {t.supplierSku}</span>
 													)}

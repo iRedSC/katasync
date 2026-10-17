@@ -2,6 +2,7 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
+	productComponents,
 	productSuppliers,
 	products,
 	purchaseOrderLines,
@@ -24,6 +25,7 @@ import {
 	SERVICE_LEVELS,
 	safetyStock,
 } from "#/purchasing/forecast";
+import { type SetMembership, setMembership } from "#/purchasing/sets";
 
 export { DEMAND_DAYS };
 
@@ -83,6 +85,9 @@ export type ReorderInput = {
 	coverDays: number;
 	// The product's min stock: never let shelf plus on order drop below it.
 	minStock: number;
+	// Enough for one of each tool set it's in (see setMembership), or 0 in none:
+	// below it, some set can't be sold. Holds like minStock.
+	setFloor: number;
 	minimumQuantity: number;
 	packSize: number;
 };
@@ -98,7 +103,7 @@ function position(p: ReorderInput) {
 function reorderPoint(p: ReorderInput) {
 	return Math.max(
 		p.dailyDemand * p.leadTimeDays + p.safetyStock,
-		p.minStock,
+		floorOf(p),
 		oversoldFloor(p),
 	);
 }
@@ -109,12 +114,17 @@ function oversoldFloor(p: ReorderInput) {
 	return p.onHand < 0 && p.onOrder === 0 ? 1 : 0;
 }
 
+// The least shelf plus on order may be: min stock, or one of each of its
+// tool sets if that's more.
+const floorOf = (p: ReorderInput) => Math.max(p.minStock, p.setFloor);
+
 // How many of the supplier's unit it takes to top stock up to its target
-// (stockTarget, or min stock or the oversold floor if more), rounded up to whole units and
-// to at least the supplier's minimum. 0 when it's already there.
+// (stockTarget, or its floor or the oversold floor if more), rounded up to
+// whole units and to at least the supplier's minimum. 0 when it's already
+// there.
 function topUp(p: ReorderInput) {
 	const need =
-		Math.max(stockTarget(p), p.minStock, oversoldFloor(p)) - position(p);
+		Math.max(stockTarget(p), floorOf(p), oversoldFloor(p)) - position(p);
 	if (need <= 0) return 0;
 	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
 }
@@ -209,9 +219,15 @@ export type ReorderWhy = {
 				cover: number;
 				total: number;
 		  }
-		// Min stock is more than the forecast's aim, so it is the aim.
+		// The floor (minStock) is more than the forecast's aim, so it is the aim.
 		| { kind: "min"; total: number; forecast: number };
+	// The least shelf plus on order may be, and where it comes from: the
+	// product's min stock, or one of each of its tool sets when that's more.
 	minStock: number;
+	minFrom: "stock" | "sets";
+	// The tool sets it's a part of, and how many of them its shelf can't
+	// build even one of.
+	sets: SetMembership;
 	// Reorder happens once shelf plus on order is below this.
 	orderBelow: number;
 	// What it's bought in. Null without a supplier: it can't be ordered yet.
@@ -245,14 +261,16 @@ export function explainReorder(
 		leadTime: ReorderWhy["leadTime"];
 		abc: AbcClass | null;
 		purchase: ReorderWhy["purchase"];
+		sets: SetMembership;
 	},
 ): ReorderWhy {
 	const forecastAim = stockTarget(p);
+	const floor = floorOf(p);
 	// Rounded the way reorderPoint compares: whole units under it reorder.
 	const restock = Math.ceil(p.dailyDemand * p.leadTimeDays);
 	const aim: ReorderWhy["aim"] =
-		p.minStock > forecastAim
-			? { kind: "min", total: p.minStock, forecast: forecastAim }
+		floor > forecastAim
+			? { kind: "min", total: floor, forecast: forecastAim }
 			: {
 					kind: "forecast",
 					restock,
@@ -291,7 +309,9 @@ export function explainReorder(
 		onHand: p.onHand,
 		onOrder: p.onOrder,
 		aim,
-		minStock: p.minStock,
+		minStock: floor,
+		minFrom: p.setFloor > p.minStock ? "sets" : "stock",
+		sets: context.sets,
 		orderBelow: Math.ceil(reorderPoint(p)),
 		purchase: context.purchase,
 		verdict,
@@ -332,7 +352,8 @@ export type SuggestedLine = {
 	sold: number;
 	quantity: number;
 	unitCost: number | null;
-	// Marked critical, or an A item (see isCritical).
+	// Marked critical, an A item, or leaving a tool set unsellable (see
+	// isCritical).
 	critical: boolean;
 };
 
@@ -378,17 +399,27 @@ export function readiness(s: {
 	return "waiting";
 }
 
-// A product we can't run out of: marked critical by hand, or one of the A
-// items that make most of the sales.
-export const isCritical = (marked: boolean, abc: AbcClass | null) =>
-	marked || abc === "A";
+// A product we can't run out of: marked critical by hand, one of the A items
+// that make most of the sales, or a part some tool set can't be built
+// without, since the set sells nothing until it arrives.
+export const isCritical = (
+	marked: boolean,
+	abc: AbcClass | null,
+	setsBlocked: number,
+) => marked || abc === "A" || setsBlocked > 0;
 
 // Whether a product that needs ordering goes on its supplier's PO by itself:
-// A and B items, which earn enough to always keep, and anything marked
-// critical. The rest (C items, and unpriced ones that can't be classed) are
+// A and B items, which earn enough to always keep, anything marked critical,
+// and parts that leave a tool set unsellable, since the set's sales wait on
+// them. The rest (C items, and unpriced ones that can't be classed) are
 // recommended instead, so someone decides whether they're worth restocking.
-export const ordersItself = (marked: boolean, abc: AbcClass | null) =>
-	marked || abc === "A" || abc === "B";
+export const ordersItself = (
+	marked: boolean,
+	abc: AbcClass | null,
+	setsBlocked: number,
+) => marked || abc === "A" || abc === "B" || setsBlocked > 0;
+
+const NO_SETS = { in: 0, blocked: 0, floor: 0 };
 
 type Supplier = {
 	supplierId: number;
@@ -415,7 +446,7 @@ export async function reorderBreakdown(
 	const { now = new Date(), productIds } = options;
 	if (productIds?.length === 0) return [];
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [sold, onHand, onOrder, defaultMin, rows, planned, counted] =
+	const [sold, onHand, onOrder, defaultMin, rows, planned, counted, recipes] =
 		await Promise.all([
 			soldSince(db, since, { includeFba: false }),
 			ownedOnHand(db),
@@ -472,12 +503,23 @@ export async function reorderBreakdown(
 					),
 				)
 				.then((rows) => new Set(rows.map((r) => r.productId))),
+			// Tool sets' parts. A kit's parts are in the kit, not a set.
+			db
+				.select({
+					productId: productComponents.componentProductId,
+					perSet: productComponents.quantity,
+				})
+				.from(productComponents)
+				.innerJoin(products, eq(products.id, productComponents.parentProductId))
+				.where(eq(products.kind, "bundle")),
 		]);
 	const ranks = velocityRanks(planned.forecasts);
+	const sets = setMembership(recipes, onHand);
 
 	return rows.map((p) => {
 		const rank = planned.abc.classes.get(p.productId);
 		const abcClass = rank?.abc ?? null;
+		const { floor: setFloor, ...membership } = sets.get(p.productId) ?? NO_SETS;
 		// The joins make these all null together, or none.
 		const supplier: Supplier | null =
 			p.supplierId === null ||
@@ -519,6 +561,7 @@ export async function reorderBreakdown(
 			...planFor(planned, p.productId, p.supplierId),
 			coverDays: p.coverDays ?? DEFAULT_COVER_DAYS,
 			minStock: p.minStock ?? defaultMin,
+			setFloor,
 			minimumQuantity: terms.minimumQuantity,
 			packSize: terms.packSize,
 		};
@@ -536,7 +579,7 @@ export async function reorderBreakdown(
 			unitCost:
 				p.cost ??
 				(p.productCost === null ? null : p.productCost * terms.packSize),
-			critical: isCritical(p.markedCritical, abcClass),
+			critical: isCritical(p.markedCritical, abcClass, membership.blocked),
 		};
 		const lead =
 			p.supplierId === null ? undefined : planned.leadTimes.get(p.supplierId);
@@ -550,6 +593,7 @@ export async function reorderBreakdown(
 			},
 			abc: abcClass,
 			purchase,
+			sets: membership,
 		});
 		// Its own range, else the one its forecast gives, as stockRanges does.
 		const range =
@@ -565,7 +609,11 @@ export async function reorderBreakdown(
 			barcode: p.barcode,
 			range,
 			max: range.max,
-			ordersItself: ordersItself(p.markedCritical, abcClass),
+			ordersItself: ordersItself(
+				p.markedCritical,
+				abcClass,
+				membership.blocked,
+			),
 			// A C item nobody has sold or counted in a year is dead stock, or
 			// was never really stocked: nothing to recommend. Unpriced products
 			// have no class but did sell, so they stay.

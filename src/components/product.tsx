@@ -1,7 +1,14 @@
 import { Link } from "@tanstack/react-router";
-import { ImageIcon } from "lucide-react";
-import { formatDateTime, formatDelta, formatReason } from "#/lib/format";
+import { ImageIcon, LayersIcon } from "lucide-react";
+import { Tip } from "#/components/ui/tooltip";
+import {
+	formatCount,
+	formatDateTime,
+	formatDelta,
+	formatReason,
+} from "#/lib/format";
 import { cn } from "#/lib/utils";
+import type { SetMembership } from "#/purchasing/sets";
 
 export function ProductImage({
 	src,
@@ -62,6 +69,37 @@ export function ProductName({
 				</span>
 			)}
 		</span>
+	);
+}
+
+// How many tool sets a product is a part of, for beside its SKU. Red when
+// its shelf leaves some of them unsellable; nothing when it's in none.
+export function SetsChip({ sets }: { sets: SetMembership | null }) {
+	if (!sets || sets.in === 0) return null;
+	const noun = (n: number) => `tool ${n === 1 ? "set" : "sets"}`;
+	const title =
+		sets.blocked === 0
+			? `Part of ${formatCount(sets.in)} ${noun(sets.in)}`
+			: `Part of ${formatCount(sets.in)} ${noun(sets.in)}; too few on the shelf to build ${sets.blocked === sets.in ? (sets.in === 1 ? "it" : "any of them") : `${formatCount(sets.blocked)} of them`}`;
+	return (
+		<Tip content={title}>
+			<span
+				className={cn(
+					"inline-flex h-4 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium tabular-nums",
+					sets.blocked > 0
+						? "bg-critical-fill text-critical-text"
+						: "bg-surface text-muted-foreground",
+				)}
+			>
+				<LayersIcon className="size-3" aria-hidden />
+				<span aria-hidden>
+					{sets.blocked > 0
+						? `${formatCount(sets.blocked)}/${formatCount(sets.in)}`
+						: formatCount(sets.in)}
+				</span>
+				<span className="sr-only">{title}</span>
+			</span>
+		</Tip>
 	);
 }
 
