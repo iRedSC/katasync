@@ -104,10 +104,9 @@ export function LabelPrintingCard() {
 				</div>
 			)}
 			<p className="border-t px-4 py-3 text-muted-foreground">
-				Set up each Windows packing computer once: download the setup, open it,
-				and click Yes. It installs QZ Tray if needed and lets katasync print
-				without asking. If the browser or Windows warns about the file, choose
-				Keep, then Run. Then pick the label printer here, on that computer.
+				Once per Windows packing computer: run the setup and click Yes. If
+				warned, choose Keep, then Run. Then pick the printer here, on that
+				computer.
 			</p>
 		</Card>
 	);

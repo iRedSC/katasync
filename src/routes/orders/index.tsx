@@ -146,12 +146,8 @@ function Orders() {
 				{rows.length === 0 ? (
 					<EmptyState
 						icon={PackageCheck}
-						title={view === "ship" ? "Nothing to ship" : "No orders yet"}
-					>
-						{view === "ship"
-							? "Every order is packed and out the door. New ones show up here within a couple of minutes."
-							: "Orders show up here once a store syncs."}
-					</EmptyState>
+						title={view === "ship" ? "Nothing to ship" : "No orders"}
+					/>
 				) : (
 					// No cell wraps; the customer column takes what's left and truncates.
 					<table className="w-full whitespace-nowrap">

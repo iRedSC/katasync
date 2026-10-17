@@ -259,7 +259,7 @@ function ProductPage() {
 												className="px-4 py-2.5 text-muted-foreground"
 												colSpan={2}
 											>
-												No stock recorded yet.
+												No stock recorded.
 											</td>
 										</tr>
 									)}
@@ -388,9 +388,7 @@ function ProductPage() {
 
 					<Card title="Sales channels">
 						{d.listings.length === 0 && d.aliases.length === 0 ? (
-							<p className="text-muted-foreground">
-								Not linked to any store listing yet.
-							</p>
+							<p className="text-muted-foreground">No listings.</p>
 						) : (
 							<ul className="flex flex-col gap-1.5">
 								{d.listings.map((l) => (
@@ -442,7 +440,7 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 				tone: "warning",
 				text: (
 					<>
-						This set can't be sold. Not enough{" "}
+						Can't sell: not enough{" "}
 						{missing.map((c, i) => (
 							<span key={c.sku}>
 								{i > 0 && (i === missing.length - 1 ? " or " : ", ")}
@@ -483,12 +481,7 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 	if (onHand < 0) {
 		return {
 			tone: "critical",
-			text: (
-				<>
-					Sold {formatCount(-onHand)} more than we have. Count the shelf, or a
-					restock is overdue.
-				</>
-			),
+			text: <>Oversold by {formatCount(-onHand)}. Count the shelf.</>,
 		};
 	}
 	return null;

@@ -24,7 +24,7 @@ export function coverageText(c: SetCoverage) {
 		`${c.here} of ${total} ${total === 1 ? "part" : "parts"} ordered on this PO`,
 		c.covered > 0 && `${c.covered} on other suppliers' POs`,
 		c.skipped > 0 && `${c.skipped} skipped`,
-		c.short > 0 && `${c.short} not ordered for every set yet`,
+		c.short > 0 && `${c.short} short`,
 	]
 		.filter(Boolean)
 		.join(", ");

@@ -91,10 +91,6 @@ function CycleCounts() {
 
 	return (
 		<Page title="Cycle counts">
-			<p className="-mt-2 text-muted-foreground">
-				Shelves someone asked to have counted, most valuable first. Count the
-				top of the list first.
-			</p>
 			<Card
 				flush
 				title={
@@ -118,9 +114,7 @@ function CycleCounts() {
 				}
 			>
 				{shelves.length === 0 ? (
-					<EmptyState icon={ListChecks} title="Every shelf is counted">
-						Shelves show up here when someone asks for a count.
-					</EmptyState>
+					<EmptyState icon={ListChecks} title="All counted" />
 				) : (
 					<table className="w-full">
 						<thead>
@@ -171,9 +165,7 @@ function CycleCounts() {
 											<td className="px-2 py-2 text-center">
 												<AbcBadge
 													abc={s.abc}
-													title={
-														s.abc ? undefined : "Needs a cost to get a class"
-													}
+													title={s.abc ? undefined : "Needs a cost"}
 												/>
 											</td>
 											<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">

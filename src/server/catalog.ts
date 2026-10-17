@@ -676,8 +676,7 @@ export const undoMovement = createServerFn({ method: "POST" })
 		const db = getDb();
 		// A PO receipt undone here would leave the PO thinking it arrived.
 		const po = await purchaseOrderOfBatch(db, data.batchId);
-		if (po !== null)
-			throw new Error(`This came in on PO ${po}. Undo it on the PO instead.`);
+		if (po !== null) throw new Error(`Undo this on PO ${po}.`);
 		await undoBatch(db, data.batchId);
 	});
 

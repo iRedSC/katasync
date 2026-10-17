@@ -70,7 +70,7 @@ export async function qzConnected(): Promise<Qz> {
 			.connect({ retries: 1, delay: 1 })
 			.catch((err: unknown) => {
 				throw new Error(
-					`QZ Tray isn't running on this computer (${message(err)}). Start it, or run the setup from Settings.`,
+					`QZ Tray isn't running (${message(err)}). Start it, or run the setup from Settings.`,
 				);
 			})
 			.finally(() => {

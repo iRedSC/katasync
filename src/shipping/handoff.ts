@@ -488,7 +488,7 @@ export async function retryStorefrontTracking(
 	const note = await updateStorefrontTracking(db, shipmentId, outside);
 	return note
 		? { sent: false, message: note }
-		: { sent: true, message: "The storefront's tracking entry is up to date" };
+		: { sent: true, message: "Storefront tracking up to date" };
 }
 
 // One word for several boxes' refunds when they agree, else each.

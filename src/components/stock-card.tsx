@@ -103,7 +103,7 @@ export function StockCard({
 					abc={p.abc}
 					title={
 						p.abcRank === null
-							? "Needs a cost to get a class"
+							? "Needs a cost"
 							: p.kind === "bundle"
 								? `#${formatCount(p.abcRank)} of tool sets by value`
 								: `#${formatCount(p.abcRank)} by value`

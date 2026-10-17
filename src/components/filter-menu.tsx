@@ -96,7 +96,7 @@ export function AddFilter({
 							<ComparisonForm key={field} field={field} onAdd={add} />
 						) : field === "title" ? (
 							<TextForm
-								placeholder="Word to leave out"
+								placeholder="Word"
 								onAdd={(value) => add({ field: "title", value, exclude: true })}
 							/>
 						) : (
@@ -363,8 +363,7 @@ export function SortMenu<K extends string>({
 					})}
 				</ul>
 				<p className="border-t px-2 pt-2 pb-1 text-xs text-muted-foreground">
-					Type <kbd>^cost</kbd> for lowest first, <kbd>^!cost</kbd> for highest.
-					Several sort chips break ties in order.
+					<kbd>^</kbd> lowest · <kbd>^!</kbd> highest · later chips break ties
 				</p>
 			</PopoverContent>
 		</Popover>

@@ -315,7 +315,7 @@ function SupplierForm({
 						required
 						inputMode="numeric"
 						defaultValue={s.criticalThreshold}
-						title="Essential products needing ordering that make a PO ready, whatever its total"
+						title="Essentials needing order that make a PO ready, whatever its total"
 						className={cn(input, "tabular-nums")}
 					/>
 				</Field>
@@ -336,7 +336,6 @@ function SupplierForm({
 					<input
 						name="poNotes"
 						defaultValue={s.poNotes ?? ""}
-						placeholder="e.g. Ship UPS Ground on our account"
 						className={input}
 					/>
 				</Field>

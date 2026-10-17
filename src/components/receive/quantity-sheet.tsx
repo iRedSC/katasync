@@ -107,8 +107,8 @@ export function QuantitySheet({
 							)}
 						>
 							{extra
-								? "Not on the PO, so it's added. The supplier isn't told."
-								: "More than ordered. The PO keeps the extra."}
+								? "Not on the PO. Gets added."
+								: "More than ordered. PO keeps the extra."}
 						</p>
 
 						<div className="mt-1 grid grid-cols-3 gap-2">

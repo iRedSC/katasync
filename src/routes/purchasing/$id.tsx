@@ -261,7 +261,7 @@ function PurchaseOrderPage() {
 			<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
 				<span className="text-muted-foreground">
 					{formatCount(shown.units)} {shown.units === 1 ? "unit" : "units"}
-					{shown.unpriced > 0 && `, ${shown.unpriced} without a cost`}
+					{shown.unpriced > 0 && `, ${shown.unpriced} unpriced`}
 				</span>
 				{changed > 0 && sentTotal !== total && (
 					<span className="text-muted-foreground tabular-nums">
@@ -306,7 +306,7 @@ function PurchaseOrderPage() {
 					? `${m.sku} is already on this PO`
 					: draft
 						? `Added ${m.sku}`
-						: `Added ${m.sku}. The supplier isn't told.`,
+						: `Added ${m.sku}`,
 		);
 		if (!r) return false;
 		setFocus({ lineId: r.value.lineId, nonce: Date.now() });
@@ -345,7 +345,7 @@ function PurchaseOrderPage() {
 					? `${row.sku} is already on this PO`
 					: draft
 						? `Added ${row.sku}`
-						: `Added ${row.sku}. The supplier isn't told.`,
+						: `Added ${row.sku}`,
 		});
 	}
 
@@ -420,13 +420,13 @@ function PurchaseOrderPage() {
 						link: { to: "/purchasing/suppliers" },
 					}}
 				>
-					Add one to email this PO, or order another way and mark it sent below.
+					Or order another way and mark it sent.
 				</Banner>
 			)}
 			{draft && d.supplier.email && !d.emailConfigured && (
 				<Banner tone="warning" title="Email isn't set up">
-					katasync needs RESEND_API_KEY and PO_EMAIL_FROM to send POs. Until
-					then, download the PDF and mark it sent below.
+					Needs RESEND_API_KEY and PO_EMAIL_FROM. Until then, download the PDF
+					and mark it sent.
 				</Banner>
 			)}
 
@@ -597,7 +597,7 @@ function PurchaseOrderPage() {
 						{draft ? (
 							<textarea
 								defaultValue={po.notes ?? ""}
-								placeholder="Printed on the PO, e.g. ship by ground"
+								placeholder="Printed on the PO"
 								rows={3}
 								onBlur={(e) => {
 									const notes = e.target.value;
@@ -621,8 +621,7 @@ function PurchaseOrderPage() {
 						)}
 						{d.supplier.poNotes && (
 							<p className="mt-2 text-muted-foreground">
-								Also printed for every {d.supplier.name} PO:{" "}
-								{d.supplier.poNotes}
+								On every PO: {d.supplier.poNotes}
 							</p>
 						)}
 					</Card>
@@ -663,7 +662,7 @@ function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 	if (isUnsent(po.status))
 		rows.push([
 			"Lead time",
-			`${d.supplier.leadTimeDays} days, so about ${formatDay(new Date(Date.now() + d.supplier.leadTimeDays * 86_400_000))}`,
+			`${d.supplier.leadTimeDays} days, about ${formatDay(new Date(Date.now() + d.supplier.leadTimeDays * 86_400_000))}`,
 		]);
 	return (
 		<dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-y-1">
@@ -682,7 +681,7 @@ function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 function SuggestedBar() {
 	return (
 		<div className="border-b bg-subtle px-4 py-2.5 text-sm text-muted-foreground">
-			Today's suggestion. It's saved as a draft when you change anything.
+			Today's suggestion. Becomes a draft on your first change.
 		</div>
 	);
 }
@@ -701,7 +700,7 @@ function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const skippedNote = skipped > 0 && (
 		<span
 			className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground"
-			title="Locked lines that need more. Update leaves them as they are."
+			title="Locked lines Update leaves alone"
 		>
 			<Lock aria-hidden className="size-3" />
 			{formatCount(skipped)} skipped
@@ -834,7 +833,7 @@ function Recommended({
 								</th>
 								<th
 									className="px-3 py-2 text-center font-medium"
-									title="Units sold a month. Hover for the reorder math"
+									title="Units sold a month"
 								>
 									Velocity
 								</th>
@@ -1126,9 +1125,7 @@ function LineTable({
 	if (lines.length === 0)
 		return (
 			<p className="px-4 py-6 text-center text-muted-foreground">
-				{draft
-					? "Nothing on this PO yet. Add a product below."
-					: "Nothing on this PO."}
+				Nothing on this PO.
 			</p>
 		);
 	return (
@@ -1169,7 +1166,7 @@ function LineTable({
 							<>
 								<th
 									className="px-3 py-2 text-right font-medium"
-									title="What the supplier was sent. The PDF still shows this."
+									title="As sent. The PDF still shows this."
 								>
 									Qty requested
 								</th>
@@ -1186,7 +1183,7 @@ function LineTable({
 						{draft && (
 							<th
 								className="px-3 py-2 text-center font-medium whitespace-nowrap"
-								title="Units sold a month. Hover for the reorder math"
+								title="Units sold a month"
 							>
 								Velocity
 							</th>
@@ -1358,8 +1355,8 @@ function LineTable({
 															: {
 																	noDefaultReason:
 																		l.linkSupplierId === null
-																			? "This product has no supplier yet; set one on its page"
-																			: "This product is bought from another supplier",
+																			? "No supplier; set one on its page"
+																			: "Bought from another supplier",
 																}),
 													}}
 												/>
@@ -1441,7 +1438,7 @@ function LineTable({
 											</td>
 											<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
 												{set ? (
-													<span title="Its parts on this PO at their prices. The total rounds each product up to whole units">
+													<span title="Its parts at their prices. The total rounds up to whole units">
 														{set.amount === null
 															? "—"
 															: formatMoney(set.amount)}
@@ -1670,7 +1667,7 @@ function WasSent({
 	return (
 		<div
 			className="text-xs font-normal text-warning-text"
-			title="What the supplier was sent. The PDF still shows this."
+			title="As sent. The PDF still shows this."
 		>
 			{text}
 		</div>
@@ -1781,11 +1778,7 @@ function SetPartRow({
 									disabled={busy}
 									onClick={() => skip(here)}
 									className="cursor-pointer font-medium text-foreground hover:underline disabled:opacity-50"
-									title={
-										here
-											? "Don't order it for this set, e.g. there's stock already"
-											: "Order it for this set again"
-									}
+									title={here ? "Skip for this set" : "Order for this set"}
 								>
 									{here ? "Skip" : "Order it"}
 								</button>
@@ -1882,9 +1875,9 @@ function PartSource({
 				<span className="flex items-center gap-1 text-warning-text">
 					<AlertTriangle className="size-3.5 shrink-0" />
 					{state.noSupplier ? (
-						"No supplier yet; set one on its page"
+						"No supplier; set one on its page"
 					) : state.covered === 0 ? (
-						`Bought from ${p.supplierName}, not on their PO yet`
+						`Not on ${p.supplierName}'s PO`
 					) : (
 						<span>
 							{p.supplierName}'s {pos}{" "}
@@ -1924,7 +1917,7 @@ function AddSetButton({
 			variant="outline"
 			className="h-6 px-2 text-xs"
 			disabled={busy || disabled}
-			title={`Put ${formatCount(sets)} of this set on ${names.join(" and ")}'s ${names.length === 1 ? "draft" : "drafts"}, so their parts are ordered for every set`}
+			title={`Add ${formatCount(sets)} to ${names.join(" and ")}'s ${names.length === 1 ? "draft" : "drafts"}`}
 			onClick={() =>
 				run(
 					() => addSetToOtherPos({ data: { lineId: ids.server(line.id) } }),
@@ -1995,8 +1988,8 @@ function LockToggle({
 			aria-label={`${locked ? "Unlock" : "Lock"} ${line.sku}'s quantity`}
 			title={
 				locked
-					? "Locked: Update leaves this quantity alone. Click to unlock."
-					: "Lock, so Update leaves this quantity alone"
+					? "Locked: Update leaves it alone"
+					: "Lock so Update leaves it alone"
 			}
 			onClick={() =>
 				save({
@@ -2176,7 +2169,7 @@ function QuantityField({
 			<button
 				type="button"
 				aria-label={`Quantity of ${line.sku}: ${line.quantity}`}
-				title="Click to type, or drag sideways"
+				title="Drag sideways to adjust"
 				{...scrub.handlers}
 				onClick={() => {
 					// A drag's release isn't a click.
@@ -2343,14 +2336,13 @@ function amended({
 		});
 		return r && `${line.sku} back as it was`;
 	};
-	if (result.removed)
-		offerUndo(`Took ${line.sku} off. The supplier isn't told.`, { undo });
+	if (result.removed) offerUndo(`Took ${line.sku} off`, { undo });
 	else if (result.receivedAtOldCost)
-		offerUndo(
-			`${summary}. What already arrived keeps the old cost. The supplier isn't told.`,
-			{ undo, tone: "warning" },
-		);
-	else offerUndo(`${summary}. The supplier isn't told.`, { undo });
+		offerUndo(`${summary}. Received units keep the old cost.`, {
+			undo,
+			tone: "warning",
+		});
+	else offerUndo(summary, { undo });
 }
 
 // A line's cost per unit. Empty means no cost yet. On a sent PO it's a change
@@ -2449,8 +2441,8 @@ function SupplierSkuField({
 					line.kind === "bundle"
 						? "Sets are bought as their parts"
 						: line.linkSupplierId === null
-							? "This product has no supplier yet; set one on its page"
-							: "This product is bought from another supplier"
+							? "No supplier; set one on its page"
+							: "Bought from another supplier"
 				}
 			>
 				{line.supplierSku ?? "—"}

@@ -78,7 +78,7 @@ type MovementRow = {
 // Index-table look: gray header row, hairline row dividers.
 export function MovementTable({ rows }: { rows: MovementRow[] }) {
 	if (rows.length === 0) {
-		return <p className="px-4 pb-4 text-muted-foreground">No changes yet.</p>;
+		return <p className="px-4 pb-4 text-muted-foreground">No changes.</p>;
 	}
 	return (
 		<table className="w-full">

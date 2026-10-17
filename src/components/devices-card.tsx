@@ -96,8 +96,7 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 					<img src={link.qr} alt="Setup link" className="size-36 shrink-0" />
 					<div className="flex min-w-0 flex-col gap-2">
 						<p>
-							Scan this with the new device's camera, or open the link on it. It
-							works once, until{" "}
+							Open on the new device. Works once, until{" "}
 							{link.expiresAt.toLocaleTimeString([], {
 								hour: "numeric",
 								minute: "2-digit",
@@ -135,7 +134,7 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 			)}
 			{devices.length === 0 ? (
 				<p className="border-t px-4 py-3 text-muted-foreground">
-					No devices yet. Add one, or run pnpm auth:setup-link on the server.
+					None. Or run pnpm auth:setup-link on the server.
 				</p>
 			) : (
 				<ul>

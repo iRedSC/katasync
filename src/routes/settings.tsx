@@ -102,8 +102,7 @@ function Settings() {
 					})}
 				</ul>
 				<p className="border-t px-4 py-3 text-muted-foreground">
-					The primary store's listings become products when no product has their
-					SKU yet. Other stores' listings only match.
+					The primary store's new SKUs become products. Other stores only match.
 				</p>
 			</Card>
 			<Card title="Locations" flush>
@@ -127,11 +126,8 @@ function Settings() {
 					onSave={(min) => saveDefaultMinStock({ data: { min } })}
 				/>
 				<p className="mt-2 text-muted-foreground">
-					For products without their own range, set on the product's page. Their
-					max comes from their sales: what a reorder tops them up to (lead time,
-					the supplier's cover, and safety stock for how much sales swing, more
-					for A items), at least 5. The on hand ring on a draft PO fills from
-					min to max.
+					Default for products without their own. Max follows sales, lead time,
+					cover, and safety stock; at least 5.
 				</p>
 			</Card>
 			<LabelPrintingCard />
@@ -214,8 +210,7 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 		>
 			{boxes.length === 0 && !adding && (
 				<p className="px-4 py-3 text-muted-foreground">
-					No boxes yet. Each box gets a short pin to type in quick ship
-					(Ctrl+Space).
+					Type a box's pin in quick ship (Ctrl+Space).
 				</p>
 			)}
 			<ul>
@@ -414,10 +409,10 @@ function PrimaryToggle({ store }: { store: Store }) {
 		toast.success(
 			id === null
 				? "No primary store"
-				: `${store.name} is primary. ${created === 1 ? "1 product" : `${created} products`} created from its listings.`,
+				: `${store.name} is primary. ${created === 1 ? "1 product" : `${created} products`} created.`,
 			skipped.length > 0
 				? {
-						description: `${skipped.length} left for you on Listings: ${skipped.slice(0, 3).join("; ")}`,
+						description: `${skipped.length} left on Listings: ${skipped.slice(0, 3).join("; ")}`,
 					}
 				: undefined,
 		);
@@ -429,7 +424,7 @@ function PrimaryToggle({ store }: { store: Store }) {
 			size="sm"
 			variant="ghost"
 			onClick={() => set(null)}
-			title="Click to unset"
+			title="Unset primary"
 		>
 			<Badge tone="info">Primary</Badge>
 		</Button>
@@ -553,7 +548,7 @@ function Units({ units }: { units: Unit[] }) {
 											disabled={u.products > 0}
 											title={
 												u.products > 0
-													? "Change the products bought in it first"
+													? `Used by ${u.products} ${u.products === 1 ? "product" : "products"}`
 													: undefined
 											}
 											onClick={() => remove(u)}

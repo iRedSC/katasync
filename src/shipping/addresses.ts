@@ -27,7 +27,7 @@ export async function shipAddresses(
 		!from.email
 	) {
 		throw new Error(
-			"The warehouse has no ship-from address or email yet; both come from Shopify (primary location and store contact email)",
+			"No ship-from address or email. Set Shopify's primary location and store contact email.",
 		);
 	}
 	return {

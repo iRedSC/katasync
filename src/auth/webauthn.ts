@@ -136,7 +136,7 @@ export async function finishAuthentication(
 		.where(eq(passkeys.id, response.id));
 	if (!passkey)
 		throw new AuthError(
-			"This passkey was removed from katasync. Ask a signed-in device for a setup link.",
+			"This passkey was removed. Get a setup link from a signed-in device.",
 		);
 	const rp = relyingParty();
 	const result = await verifyAuthenticationResponse({

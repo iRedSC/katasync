@@ -98,7 +98,7 @@ export async function buyDispatch(
 		// happens in Seller Center.
 		if (tiktok && (list.length > 1 || boxes.length > 1)) {
 			throw new Error(
-				"TikTok orders ship one order to one box on TikTok's label. Combine or split TikTok packages in TikTok Seller Center.",
+				"TikTok: one order per box. Combine or split in TikTok Seller Center.",
 			);
 		}
 		// Anything that could stop a record being saved is checked before

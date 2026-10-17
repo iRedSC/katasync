@@ -116,7 +116,7 @@ export const quickShipRates = createServerFn({ method: "POST" })
 		if (labelSource(first) === "tiktok") {
 			if (data.orderIds.length > 1 || data.boxes.length > 1) {
 				throw new Error(
-					"TikTok orders ship one order to one box on TikTok's label. Combine or split TikTok packages in TikTok Seller Center.",
+					"TikTok: one order per box. Combine or split in TikTok Seller Center.",
 				);
 			}
 			perBox = [

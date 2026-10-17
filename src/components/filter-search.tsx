@@ -188,7 +188,7 @@ export function FilterSearch<K extends string>({
 							<span className="text-muted-foreground">sort</span>
 							<button
 								type="button"
-								title={`${describeTerm(term, columns)}. Click to flip`}
+								title={describeTerm(term, columns)}
 								onClick={(e) => {
 									e.stopPropagation();
 									onSort(withTerm(sort, { ...term, desc: !term.desc }));
@@ -264,9 +264,7 @@ export function FilterSearch<K extends string>({
 						</p>
 					)}
 					<p className="border-t px-3 pt-1.5 pb-1 text-xs text-muted-foreground">
-						{sorting.desc
-							? "^! sorts highest first. ^ for lowest first"
-							: "^ sorts lowest first. ^! for highest first"}
+						^ lowest · ^! highest
 					</p>
 				</div>
 			)}
@@ -300,12 +298,12 @@ export function FilterSearch<K extends string>({
 					{suggestions.length === 0 && (
 						<p className="px-3 py-1.5 text-muted-foreground">
 							{typing.field === "title"
-								? `Tab to hide titles containing “${typing.value}”`
+								? `Tab: hide “${typing.value}”`
 								: typing.field === "inventory"
-									? `Tab to keep inventory ${typing.value}`
+									? `Tab: inventory ${typing.value}`
 									: typing.field === "velocity"
-										? `Tab to keep ${typing.value} sold a month`
-										: `No ${LABEL[typing.field]} is “${typing.value}”. Tab to lock it in anyway.`}
+										? `Tab: ${typing.value} sold a month`
+										: `No ${LABEL[typing.field]} “${typing.value}”. Tab to use anyway.`}
 						</p>
 					)}
 				</div>

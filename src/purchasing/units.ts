@@ -221,9 +221,7 @@ export async function setLineTerms(
 		if (!makeDefault) return;
 		const link = await setDefaultTerms(tx, productId, terms);
 		if (link.supplierId !== po.supplierId)
-			throw new PurchaseOrderError(
-				"This product is bought from another supplier, so its default can't be set here",
-			);
+			throw new PurchaseOrderError("Bought from another supplier");
 	});
 }
 

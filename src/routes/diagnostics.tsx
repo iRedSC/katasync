@@ -76,13 +76,14 @@ function DiagnosticsPage() {
 			{!d.worker.alive && (
 				<Banner tone="critical" title="Order sync isn't running">
 					{d.worker.lastStartedAt
-						? `No channel has synced since ${formatDateTime(d.worker.lastStartedAt)}. `
-						: "No sync has ever been recorded. "}
-					Start it on the machine that runs katasync with{" "}
+						? `Last sync ${formatDateTime(d.worker.lastStartedAt)}. `
+						: "Never synced. "}
+					Run{" "}
 					<code className="rounded bg-white/70 px-1 font-mono">
 						pnpm sync --watch
-					</code>
-					. Until then, new orders don't arrive and stock doesn't move.
+					</code>{" "}
+					on the katasync machine. Until then, no new orders and no stock
+					changes.
 				</Banner>
 			)}
 
@@ -108,7 +109,6 @@ function DiagnosticsPage() {
 									}
 								: { label: "All sent", tone: "success" }
 						}
-						detail="Labels whose tracking reached the marketplace"
 					/>
 					<SummaryRow
 						href="#storefront-tracking"
@@ -121,7 +121,7 @@ function DiagnosticsPage() {
 									}
 								: { label: "Up to date", tone: "success" }
 						}
-						detail="Shippo carriers listed on Shopify orders for the tracking page"
+						detail="Shippo labels on Shopify orders"
 					/>
 					<SummaryRow
 						href="#unmapped"
@@ -133,7 +133,6 @@ function DiagnosticsPage() {
 									? { label: `${d.unmapped.length} in history` }
 									: { label: "None", tone: "success" }
 						}
-						detail="Sold SKUs that match no product"
 					/>
 					<SummaryRow
 						href="#services"
@@ -171,7 +170,7 @@ function SummaryRow({
 	href: string;
 	name: string;
 	status: { label: string; tone?: Tone };
-	detail: string;
+	detail?: string;
 }) {
 	return (
 		<li className="border-t first:border-t-0">
@@ -229,14 +228,14 @@ function ChannelCard({ data: c }: { data: ChannelData }) {
 						)}
 					</Facts>
 					{c.latestError && (
-						<ErrorBlock title="Latest pass failed with" text={c.latestError} />
+						<ErrorBlock title="Latest error" text={c.latestError} />
 					)}
 					{c.hint && <HintBlock hint={c.hint} />}
 					<CheckResults target={c.channel} />
 					{c.issues.length > 0 && (
 						<div className="flex flex-col gap-2">
 							<p className="font-medium">
-								Problems in the latest pass ({formatCount(c.issueCount)})
+								Latest pass ({formatCount(c.issueCount)})
 							</p>
 							{c.issues.map((g) => (
 								<div
@@ -356,9 +355,7 @@ function TrackingCard({ handoffs }: { handoffs: Diagnostics["handoffs"] }) {
 		<div id="tracking" className="scroll-mt-16">
 			<Card title="Tracking handoff" flush>
 				{handoffs.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">
-						Every label's tracking reached its marketplace.
-					</p>
+					<p className="px-4 pb-4 text-muted-foreground">All sent.</p>
 				) : (
 					<ul>
 						{handoffs.map((h) => (
@@ -415,52 +412,42 @@ function UnmappedCard({ rows }: { rows: Diagnostics["unmapped"] }) {
 				}
 			>
 				{rows.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">
-						Every SKU sold matches a product.
-					</p>
+					<p className="px-4 pb-4 text-muted-foreground">None.</p>
 				) : (
-					<>
-						<p className="px-4 pb-2 text-muted-foreground">
-							Matching a listing to its product makes these orders take their
-							stock. "Stock not taken" counts orders that should have.
-						</p>
-						<table className="w-full">
-							<thead>
-								<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
-									<th className="px-4 py-2 font-medium">SKU</th>
-									<th className="px-3 py-2 font-medium">Store</th>
-									<th className="px-3 py-2 text-right font-medium">Orders</th>
-									<th className="px-3 py-2 text-right font-medium">
-										Stock not taken
-									</th>
-									<th className="px-4 py-2 text-right font-medium">
-										Last sold
-									</th>
+					<table className="w-full">
+						<thead>
+							<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
+								<th className="px-4 py-2 font-medium">SKU</th>
+								<th className="px-3 py-2 font-medium">Store</th>
+								<th className="px-3 py-2 text-right font-medium">Orders</th>
+								<th className="px-3 py-2 text-right font-medium">
+									Stock not taken
+								</th>
+								<th className="px-4 py-2 text-right font-medium">Last sold</th>
+							</tr>
+						</thead>
+						<tbody>
+							{rows.map((r) => (
+								<tr key={`${r.store}:${r.sku}`} className="border-t">
+									<td className="px-4 py-2 font-mono text-xs">{r.sku}</td>
+									<td className="px-3 py-2">{r.store}</td>
+									<td className="px-3 py-2 text-right tabular-nums">
+										{formatCount(r.orders)}
+									</td>
+									<td className="px-3 py-2 text-right tabular-nums">
+										{r.missed > 0 ? (
+											<Badge tone="warning">{formatCount(r.missed)}</Badge>
+										) : (
+											<span className="text-muted-foreground">0</span>
+										)}
+									</td>
+									<td className="px-4 py-2 text-right whitespace-nowrap text-muted-foreground">
+										{ago(r.lastPlacedAt)}
+									</td>
 								</tr>
-							</thead>
-							<tbody>
-								{rows.map((r) => (
-									<tr key={`${r.store}:${r.sku}`} className="border-t">
-										<td className="px-4 py-2 font-mono text-xs">{r.sku}</td>
-										<td className="px-3 py-2">{r.store}</td>
-										<td className="px-3 py-2 text-right tabular-nums">
-											{formatCount(r.orders)}
-										</td>
-										<td className="px-3 py-2 text-right tabular-nums">
-											{r.missed > 0 ? (
-												<Badge tone="warning">{formatCount(r.missed)}</Badge>
-											) : (
-												<span className="text-muted-foreground">0</span>
-											)}
-										</td>
-										<td className="px-4 py-2 text-right whitespace-nowrap text-muted-foreground">
-											{ago(r.lastPlacedAt)}
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</>
+							))}
+						</tbody>
+					</table>
 				)}
 			</Card>
 		</div>
@@ -476,9 +463,9 @@ function ServicesCard({ services }: { services: Diagnostics["services"] }) {
 					target="shippo"
 					status={
 						!services.shippo.configured
-							? "SHIPPO_API_KEY isn't set, so labels can't be bought."
+							? "SHIPPO_API_KEY not set."
 							: services.shippo.test
-								? "Test key: labels are samples that can't ship."
+								? "Test key: labels can't ship."
 								: "Live key."
 					}
 				/>
@@ -488,7 +475,7 @@ function ServicesCard({ services }: { services: Diagnostics["services"] }) {
 					status={
 						services.email.configured
 							? `Sends as ${services.email.from}`
-							: "RESEND_API_KEY and PO_EMAIL_FROM aren't set, so POs can't be emailed."
+							: "RESEND_API_KEY and PO_EMAIL_FROM not set."
 					}
 				/>
 			</Card>
@@ -546,7 +533,7 @@ function useCheck(target: CheckTarget) {
 				const r = await runConnectionCheck({ data: { target } }).catch(
 					(err: unknown) => {
 						throw new Error(
-							`The check couldn't run: ${err instanceof Error ? err.message : String(err)}`,
+							`Check failed: ${err instanceof Error ? err.message : String(err)}`,
 						);
 					},
 				);
@@ -657,9 +644,7 @@ function ClaudeCard({ calls }: { calls: Diagnostics["claude"] }) {
 		<div id="claude" className="scroll-mt-16">
 			<Card title="Changes made by Claude" flush>
 				{calls.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">
-						None yet. Changes made through Claude (MCP) are listed here.
-					</p>
+					<p className="px-4 pb-4 text-muted-foreground">None yet.</p>
 				) : (
 					<ul>
 						{calls.map((c) => (
@@ -683,7 +668,7 @@ function ClaudeCard({ calls }: { calls: Diagnostics["claude"] }) {
 								{open === c.id && (
 									<div className="flex flex-col gap-2 px-4 pb-3">
 										<p className="text-xs text-muted-foreground">
-											With the token {c.tokenName}
+											Token: {c.tokenName}
 										</p>
 										<pre className="max-h-48 overflow-auto rounded-lg bg-subtle p-2 font-mono text-xs break-words whitespace-pre-wrap">
 											{JSON.stringify(JSON.parse(c.arguments), null, 1)}
@@ -731,9 +716,7 @@ function StorefrontTrackingCard({
 		<div id="storefront-tracking" className="scroll-mt-16">
 			<Card title="Storefront tracking" flush>
 				{rows.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">
-						Every Shopify order lists its Shippo labels for the tracking page.
-					</p>
+					<p className="px-4 pb-4 text-muted-foreground">Up to date.</p>
 				) : (
 					<ul>
 						{rows.map((r) => (

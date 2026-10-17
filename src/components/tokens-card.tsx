@@ -71,7 +71,7 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 						name="name"
 						// biome-ignore lint/a11y/noAutofocus: opened to type a name
 						autoFocus
-						placeholder="What it's for, e.g. Claude on the office PC"
+						placeholder="Name, e.g. Office PC"
 						onKeyDown={(e) => e.key === "Escape" && setNaming(false)}
 						className="h-8 flex-1 rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
 					/>
@@ -99,10 +99,7 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 			)}
 			{made && command && (
 				<div className="flex flex-col gap-2 border-t px-4 py-3">
-					<p>
-						Copy this now; katasync won't show the token again. To connect
-						Claude Code, run:
-					</p>
+					<p>Shown once. For Claude Code, run:</p>
 					<code className="rounded bg-surface px-2 py-1.5 text-xs break-all">
 						{command}
 					</code>
@@ -137,8 +134,7 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 			)}
 			{tokens.length === 0 ? (
 				<p className="border-t px-4 py-3 text-muted-foreground">
-					No tokens. Make one to let Claude read katasync, draft POs, and update
-					the catalog and stock. Sending POs and buying labels stay in the app.
+					None. Sending POs and buying labels stay in the app.
 				</p>
 			) : (
 				<ul>

@@ -56,9 +56,7 @@ export function StockRangeForm({
 		setSaving(false);
 		if (r)
 			toast.success(
-				range
-					? `Keeping ${range.min} to ${range.max}`
-					: "Back on the default range",
+				range ? `Keeping ${range.min} to ${range.max}` : "Default range",
 			);
 	}
 
