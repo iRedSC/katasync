@@ -28,7 +28,6 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
-import { setMembership } from "#/purchasing/sets";
 import {
 	getDefaultRange,
 	getProductDetail,
@@ -165,22 +164,7 @@ function ProductPage() {
 								)}
 								<p className="flex items-center gap-2 text-muted-foreground">
 									{p.sku}
-									<SetsChip
-										sets={
-											setMembership(
-												d.usedIn
-													.filter((u) => u.kind === "bundle")
-													.map((u) => ({
-														productId: p.id,
-														sku: u.sku,
-														name: u.name,
-														variantName: u.variantName,
-														perSet: u.quantity,
-													})),
-												new Map([[p.id, d.available]]),
-											).get(p.id) ?? null
-										}
-									/>
+									<SetsChip sets={d.sets} />
 								</p>
 								{d.abc && (
 									<p className="mt-1 flex items-center gap-2 text-muted-foreground">

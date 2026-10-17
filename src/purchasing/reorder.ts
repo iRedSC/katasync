@@ -13,7 +13,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { type AbcClass, type AbcResult, abcClasses } from "#/inventory/abc";
-import { soldSince } from "#/inventory/sales";
+import { setsSoldSince, soldSince } from "#/inventory/sales";
 import { afterArrival } from "#/inventory/stock-state";
 import {
 	DEMAND_DAYS,
@@ -27,6 +27,7 @@ import {
 } from "#/purchasing/forecast";
 import {
 	type SetMembership,
+	type SetRecipeRow,
 	setFloorOf,
 	setMembership,
 	setsBlocked,
@@ -448,78 +449,74 @@ export async function reorderBreakdown(
 	const { now = new Date(), productIds } = options;
 	if (productIds?.length === 0) return [];
 	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [sold, onHand, onOrder, defaultMin, rows, planned, counted, recipes] =
-		await Promise.all([
-			soldSince(db, since, { includeFba: false }),
-			ownedOnHand(db),
-			unitsOnOrder(db, productIds),
-			// Read here rather than from inventory/stock-range, which imports this
-			// file.
-			db
-				.select({ min: settings.defaultMinStock })
-				.from(settings)
-				.then(([row]) => {
-					if (!row) throw new Error("The settings row is missing");
-					return row.min;
-				}),
-			db
-				.select({
-					productId: products.id,
-					sku: products.sku,
-					kind: products.kind,
-					barcode: products.barcode,
-					name: products.name,
-					variantName: products.variantName,
-					imageUrl: products.imageUrl,
-					productCost: products.unitCost,
-					markedCritical: products.critical,
-					minStock: products.minStock,
-					maxStock: products.maxStock,
-					supplierSku: productSuppliers.supplierSku,
-					cost: productSuppliers.cost,
-					minimumQuantity: productSuppliers.minimumQuantity,
-					unit: productSuppliers.unit,
-					packSize: productSuppliers.packSize,
-					supplierCount: productSuppliers.supplierCount,
-					supplierId: suppliers.id,
-					supplierName: suppliers.name,
-					coverDays: suppliers.coverDays,
-					minimumOrder: suppliers.minimumOrder,
-					criticalThreshold: suppliers.criticalThreshold,
-				})
-				.from(products)
-				.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-				.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
-				.where(productIds ? inArray(products.id, productIds) : undefined)
-				.orderBy(products.name, products.variantName),
-			options.plan ?? loadPlan(db, now),
-			// Products counted on any of our own shelves, ever.
-			db
-				.selectDistinct({ productId: stockLevels.productId })
-				.from(stockLevels)
-				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-				.where(
-					and(
-						eq(locations.kind, "owned"),
-						isNotNull(stockLevels.lastCountedAt),
-					),
-				)
-				.then((rows) => new Set(rows.map((r) => r.productId))),
-			// Tool sets' parts. A kit's parts are in the kit, not a set.
-			db
-				.select({
-					productId: productComponents.componentProductId,
-					perSet: productComponents.quantity,
-					sku: products.sku,
-					name: products.name,
-					variantName: products.variantName,
-				})
-				.from(productComponents)
-				.innerJoin(products, eq(products.id, productComponents.parentProductId))
-				.where(eq(products.kind, "bundle")),
-		]);
+	const [
+		sold,
+		onHand,
+		onOrder,
+		defaultMin,
+		rows,
+		planned,
+		counted,
+		setsSold,
+		recipes,
+	] = await Promise.all([
+		soldSince(db, since, { includeFba: false }),
+		ownedOnHand(db),
+		unitsOnOrder(db, productIds),
+		// Read here rather than from inventory/stock-range, which imports this
+		// file.
+		db
+			.select({ min: settings.defaultMinStock })
+			.from(settings)
+			.then(([row]) => {
+				if (!row) throw new Error("The settings row is missing");
+				return row.min;
+			}),
+		db
+			.select({
+				productId: products.id,
+				sku: products.sku,
+				kind: products.kind,
+				barcode: products.barcode,
+				name: products.name,
+				variantName: products.variantName,
+				imageUrl: products.imageUrl,
+				productCost: products.unitCost,
+				markedCritical: products.critical,
+				minStock: products.minStock,
+				maxStock: products.maxStock,
+				supplierSku: productSuppliers.supplierSku,
+				cost: productSuppliers.cost,
+				minimumQuantity: productSuppliers.minimumQuantity,
+				unit: productSuppliers.unit,
+				packSize: productSuppliers.packSize,
+				supplierCount: productSuppliers.supplierCount,
+				supplierId: suppliers.id,
+				supplierName: suppliers.name,
+				coverDays: suppliers.coverDays,
+				minimumOrder: suppliers.minimumOrder,
+				criticalThreshold: suppliers.criticalThreshold,
+			})
+			.from(products)
+			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+			.where(productIds ? inArray(products.id, productIds) : undefined)
+			.orderBy(products.name, products.variantName),
+		options.plan ?? loadPlan(db, now),
+		// Products counted on any of our own shelves, ever.
+		db
+			.selectDistinct({ productId: stockLevels.productId })
+			.from(stockLevels)
+			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+			.where(
+				and(eq(locations.kind, "owned"), isNotNull(stockLevels.lastCountedAt)),
+			)
+			.then((rows) => new Set(rows.map((r) => r.productId))),
+		setsSoldSince(db, since),
+		setRecipes(db),
+	]);
 	const ranks = velocityRanks(planned.forecasts);
-	const sets = setMembership(recipes, onHand);
+	const sets = setMembership(recipes, onHand, setsSold);
 
 	return rows.map((p) => {
 		const rank = planned.abc.classes.get(p.productId);
@@ -769,6 +766,46 @@ export async function suggestPurchases(
 	return result.sort(
 		(a, b) => rank[a.readiness] - rank[b.readiness] || b.total - a.total,
 	);
+}
+
+// Every tool set's recipe, with what each set shows as a product. A kit's
+// parts are in the kit, not a set.
+export async function setRecipes(db: Db): Promise<SetRecipeRow[]> {
+	const rows = await db
+		.select({
+			setId: productComponents.parentProductId,
+			productId: productComponents.componentProductId,
+			perSet: productComponents.quantity,
+			sku: products.sku,
+			name: products.name,
+			variantName: products.variantName,
+			imageUrl: products.imageUrl,
+		})
+		.from(productComponents)
+		.innerJoin(products, eq(products.id, productComponents.parentProductId))
+		.where(eq(products.kind, "bundle"));
+	return rows.map(({ setId, productId, perSet, ...set }) => ({
+		setId,
+		productId,
+		perSet,
+		set,
+	}));
+}
+
+// One product's tool sets, as reorderBreakdown works them out, or null when
+// it's in none.
+export async function membershipOf(
+	db: Db,
+	productId: number,
+	now = new Date(),
+): Promise<SetMembership | null> {
+	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
+	const [recipes, onHand, sold] = await Promise.all([
+		setRecipes(db),
+		ownedOnHand(db),
+		setsSoldSince(db, since),
+	]);
+	return setMembership(recipes, onHand, sold).get(productId) ?? null;
 }
 
 // On hand across our own locations. Negative (oversold) stays negative, so it

@@ -1,7 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { ImageIcon, LayersIcon } from "lucide-react";
 import { HoverCard } from "radix-ui";
-import { Fragment } from "react";
 import {
 	formatCount,
 	formatDateTime,
@@ -9,7 +8,13 @@ import {
 	formatReason,
 } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import { buildsOf, type SetMembership, setsBlocked } from "#/purchasing/sets";
+import { DEMAND_DAYS } from "#/purchasing/forecast";
+import {
+	partRole,
+	type SetMembership,
+	setsBlocked,
+	setsLimited,
+} from "#/purchasing/sets";
 
 export function ProductImage({
 	src,
@@ -74,8 +79,9 @@ export function ProductName({
 }
 
 // How many tool sets a product is a part of, beside its SKU. Red when its
-// shelf can't build one of some of them. Hovering lists the sets and how
-// many of each its shelf builds. Nothing when it's in none.
+// shelf can't build one of some of them. Hovering lists the sets as
+// products, with how many can be sold and how many sold. Nothing when it's in
+// none.
 export function SetsChip({ sets }: { sets: SetMembership | null }) {
 	if (!sets || sets.sets.length === 0) return null;
 	const blocked = setsBlocked(sets);
@@ -105,19 +111,21 @@ export function SetsChip({ sets }: { sets: SetMembership | null }) {
 					sideOffset={6}
 					collisionPadding={12}
 					onClick={(e) => e.stopPropagation()}
-					className="z-50 w-96 rounded-xl bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-black/10"
+					className="z-50 flex max-h-(--radix-hover-card-content-available-height) w-[26rem] flex-col gap-3 rounded-xl bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-black/10"
 				>
-					<SetsList sets={sets} blocked={blocked} />
+					<SetsList sets={sets} />
 				</HoverCard.Content>
 			</HoverCard.Portal>
 		</HoverCard.Root>
 	);
 }
 
-function SetsList({ sets, blocked }: { sets: SetMembership; blocked: number }) {
+function SetsList({ sets }: { sets: SetMembership }) {
 	const count = sets.sets.length;
+	const blocked = setsBlocked(sets);
+	const limited = setsLimited(sets) - blocked;
 	return (
-		<div className="flex flex-col gap-3">
+		<>
 			<div>
 				<p className="text-base leading-snug font-semibold">
 					In {formatCount(count)} tool {count === 1 ? "set" : "sets"}
@@ -126,54 +134,60 @@ function SetsList({ sets, blocked }: { sets: SetMembership; blocked: number }) {
 					{formatCount(sets.shelf)} on the shelf
 					{blocked > 0 && (
 						<span className="text-critical-text">
-							{" · "}
-							{blocked === count
-								? "Blocks all"
-								: `Blocks ${formatCount(blocked)}`}
+							{" · "}Blocks {formatCount(blocked)}
 						</span>
 					)}
+					{limited > 0 && <> · Limits {formatCount(limited)}</>}
 				</p>
 			</div>
-			<div className="grid grid-cols-[1fr_auto_auto] text-xs">
-				<span className="pb-1 font-medium text-muted-foreground">Set</span>
-				<span className="pb-1 pl-4 text-right font-medium text-muted-foreground">
-					Each
-				</span>
-				<span className="pb-1 pl-4 text-right font-medium text-muted-foreground">
-					Builds
-				</span>
+			<div className="-mx-4 flex min-h-0 flex-col overflow-y-auto">
+				<div className="flex gap-3 border-b px-4 pb-1 text-xs font-medium text-muted-foreground">
+					<span className="flex-1">Set</span>
+					<span className="w-14 text-right">Sellable</span>
+					<span className="w-14 text-right">Sold {DEMAND_DAYS}d</span>
+				</div>
 				{sets.sets.map((set) => {
-					const builds = buildsOf(sets, set);
+					const role = partRole(sets, set);
 					return (
-						<Fragment key={set.sku}>
-							<Link
-								to="/products/$sku"
-								params={{ sku: set.sku }}
-								className="border-t py-1.5 leading-snug hover:underline"
-							>
-								{set.name}
-								{set.variantName && (
-									<span className="ml-1.5 rounded-md bg-surface px-1.5 text-muted-foreground">
-										{set.variantName}
-									</span>
+						<Link
+							key={set.sku}
+							to="/products/$sku"
+							params={{ sku: set.sku }}
+							className="flex items-center gap-3 border-b px-4 py-2 last:border-b-0 hover:bg-subtle"
+						>
+							<ProductImage src={set.imageUrl} className="size-8" />
+							<div className="min-w-0 flex-1">
+								<ProductName name={set.name} variantName={set.variantName} />
+								<div className="flex gap-2 text-xs text-muted-foreground">
+									<span>{set.sku}</span>
+									{set.perSet > 1 && <span>× {formatCount(set.perSet)}</span>}
+								</div>
+							</div>
+							<span
+								className={cn(
+									"w-14 text-right tabular-nums",
+									role === "blocks"
+										? "font-semibold text-critical-text"
+										: role === "limits"
+											? "font-semibold"
+											: "text-muted-foreground",
 								)}
-							</Link>
-							<span className="border-t py-1.5 pl-4 text-right tabular-nums text-muted-foreground">
-								{formatCount(set.perSet)}
+							>
+								{formatCount(set.sellable)}
 							</span>
 							<span
 								className={cn(
-									"border-t py-1.5 pl-4 text-right font-semibold tabular-nums",
-									builds === 0 && "text-critical-text",
+									"w-14 text-right tabular-nums",
+									set.sold === 0 && "text-faint",
 								)}
 							>
-								{formatCount(builds)}
+								{formatCount(set.sold)}
 							</span>
-						</Fragment>
+						</Link>
 					);
 				})}
 			</div>
-		</div>
+		</>
 	);
 }
 

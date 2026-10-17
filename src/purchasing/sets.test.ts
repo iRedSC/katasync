@@ -1,5 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { orderedItems, type SetPartInput, shortBySupplier } from "./sets";
+import {
+	orderedItems,
+	partRole,
+	type SetPartInput,
+	setFloorOf,
+	setMembership,
+	setsBlocked,
+	setsLimited,
+	shortBySupplier,
+} from "./sets";
 
 const part = (p: Partial<SetPartInput>): SetPartInput => ({
 	lineId: 1,
@@ -55,4 +64,55 @@ test("shortBySupplier asks each supplier for what its least-covered part lacks",
 		part({ productId: 14, supplierId: null }),
 	];
 	expect([...shortBySupplier(parts, 3, 1)]).toEqual([[2, 2]]);
+});
+
+describe("setMembership", () => {
+	const set = (sku: string) => ({
+		sku,
+		name: sku,
+		variantName: null,
+		imageUrl: null,
+	});
+	// A takes 1 blade and 1 knife; B takes 2 blades; C takes 1 knife.
+	const recipes = [
+		{ setId: 1, productId: 10, perSet: 1, set: set("A") },
+		{ setId: 1, productId: 20, perSet: 1, set: set("A") },
+		{ setId: 2, productId: 10, perSet: 2, set: set("B") },
+		{ setId: 3, productId: 20, perSet: 1, set: set("C") },
+	];
+
+	test("sells what the scarcest part builds, and says who holds each back", () => {
+		// 1 blade, 5 knives: A sells 1 (blade limits), B none (blade blocks).
+		const m = setMembership(
+			recipes,
+			new Map([
+				[10, 1],
+				[20, 5],
+			]),
+			new Map([[3, 4]]),
+		);
+		const blade = m.get(10);
+		const knife = m.get(20);
+		if (!blade || !knife) throw new Error("expected both");
+		expect(
+			blade.sets.map((s) => [s.sku, s.sellable, partRole(blade, s)]),
+		).toEqual([
+			["B", 0, "blocks"],
+			["A", 1, "limits"],
+		]);
+		expect(setsBlocked(blade)).toBe(1);
+		expect(setsLimited(blade)).toBe(2);
+		// Knife holds back neither; C sold best, so it leads.
+		expect(knife.sets.map((s) => [s.sku, s.sold, partRole(knife, s)])).toEqual([
+			["C", 4, "limits"],
+			["A", 0, "free"],
+		]);
+		expect(setFloorOf(blade)).toBe(2);
+	});
+
+	test("counts oversold as none", () => {
+		const m = setMembership(recipes, new Map([[10, -2]]), new Map());
+		expect(m.get(10)?.shelf).toBe(0);
+		expect(m.get(20)?.sets.every((s) => s.sellable === 0)).toBe(true);
+	});
 });

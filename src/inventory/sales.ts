@@ -37,6 +37,33 @@ export async function soldSince(
 	return new Map(rows.map((r) => [r.productId, r.units]));
 }
 
+// Tool sets sold since a date, as sets rather than their parts. Cancelled
+// and FBA orders are left out, as reorder counts.
+export async function setsSoldSince(db: Db, since: Date) {
+	const rows = await db
+		.select({
+			productId: orderLines.productId,
+			units: sql<number>`sum(${orderLines.quantity})::int`,
+		})
+		.from(orderLines)
+		.innerJoin(orders, eq(orders.id, orderLines.orderId))
+		.innerJoin(products, eq(products.id, orderLines.productId))
+		.where(
+			and(
+				eq(products.kind, "bundle"),
+				gte(orders.placedAt, since),
+				isNull(orders.cancelledAt),
+				eq(orders.fulfilledByChannel, false),
+			),
+		)
+		.groupBy(orderLines.productId);
+	return new Map(
+		rows.flatMap((r) =>
+			r.productId === null ? [] : [[r.productId, r.units] as const],
+		),
+	);
+}
+
 // soldSince for reorder (no FBA), per UTC day: day is YYYY-MM-DD. Same
 // counting, so a day's units add up to soldSince's.
 export async function soldByDay(db: Db, since: Date) {
