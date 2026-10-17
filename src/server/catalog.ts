@@ -44,6 +44,7 @@ import {
 	aItemsAtRisk,
 	draftLines,
 	loadPlan,
+	membershipOf,
 	needsOf,
 	reorderBreakdown,
 	unitsOnOrder,
@@ -405,13 +406,14 @@ export const getProductDetail = createServerFn({ method: "GET" })
 		]);
 
 		// The product and its parts in one availability lookup.
-		const [availability, abc] = await Promise.all([
+		const [availability, abc, sets] = await Promise.all([
 			getAvailability(
 				db,
 				[product.id, ...components.map((c) => c.id)],
 				ownedLocations.map((l) => l.id),
 			),
 			abcClasses(db),
+			membershipOf(db, product.id),
 		]);
 		// Tool sets rank among themselves (see AbcResult.sets).
 		const ranking = product.kind === "bundle" ? abc.sets : abc.classes;
@@ -426,6 +428,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 				available: availability.get(c.id) ?? 0,
 			})),
 			usedIn,
+			sets,
 			stock,
 			aliases: aliases.map((a) => a.alias),
 			listings: productListings,

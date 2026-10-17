@@ -129,48 +129,93 @@ export function orderedItems(
 	return items;
 }
 
-// One tool set a product is a part of.
+// One tool set a product is a part of, shown like any product.
 export type SetOfPart = {
 	sku: string;
 	name: string;
 	variantName: string | null;
+	imageUrl: string | null;
 	// Single items of the product in one set.
 	perSet: number;
+	// How many of the set can be sold now: what its scarcest part builds.
+	sellable: number;
+	// Sets sold over the reorder window.
+	sold: number;
 };
 
 // A product's place in tool sets: what's on its shelf (never below zero)
 // and the sets it's in.
 export type SetMembership = { shelf: number; sets: SetOfPart[] };
 
-// How many of a set the product's shelf builds, as far as it goes.
-export const buildsOf = (m: SetMembership, set: SetOfPart) =>
-	Math.floor(m.shelf / set.perSet);
+// How a product stands in one of its sets. blocks: its shelf can't build
+// one, so the set can't sell. limits: it's (one of) the scarcest parts,
+// so more of it is more sets. free: another part runs out first.
+export function partRole(
+	m: SetMembership,
+	set: SetOfPart,
+): "blocks" | "limits" | "free" {
+	const builds = Math.floor(m.shelf / set.perSet);
+	if (builds === 0) return "blocks";
+	return builds === set.sellable ? "limits" : "free";
+}
 
 // How many of its sets the product's shelf can't build one of.
 export const setsBlocked = (m: SetMembership) =>
-	m.sets.filter((s) => buildsOf(m, s) === 0).length;
+	m.sets.filter((s) => partRole(m, s) === "blocks").length;
+
+// How many of its sets it blocks or limits.
+export const setsLimited = (m: SetMembership) =>
+	m.sets.filter((s) => partRole(m, s) !== "free").length;
 
 // The least of the product that keeps every one of its sets buildable: the
 // most any one set takes. 0 in no set.
 export const setFloorOf = (m: SetMembership) =>
 	Math.max(0, ...m.sets.map((s) => s.perSet));
 
-// Each product's membership, from the sets' recipes and what's on the
-// shelf. Products in no set aren't in it. Sets in name order.
+// One part of a set, as setMembership reads the sets' recipes.
+export type SetRecipeRow = {
+	setId: number;
+	productId: number;
+	perSet: number;
+	set: Omit<SetOfPart, "perSet" | "sellable" | "sold">;
+};
+
+// Each product's membership, from every set's recipe, what's on the shelf
+// (a part's own stock, as availability counts it), and sets sold. Products in
+// no set aren't in it. Sets this product holds back come first, then the
+// best sellers.
 export function setMembership(
-	recipes: ({ productId: number } & SetOfPart)[],
+	recipes: SetRecipeRow[],
 	onHand: ReadonlyMap<number, number>,
+	sold: ReadonlyMap<number, number>,
 ): Map<number, SetMembership> {
+	const shelf = (id: number) => Math.max(onHand.get(id) ?? 0, 0);
+	const sellable = new Map<number, number>();
+	for (const r of recipes) {
+		const builds = Math.floor(shelf(r.productId) / r.perSet);
+		sellable.set(r.setId, Math.min(sellable.get(r.setId) ?? builds, builds));
+	}
 	const result = new Map<number, SetMembership>();
-	for (const { productId, ...set } of recipes) {
-		const m = result.get(productId) ?? {
-			shelf: Math.max(onHand.get(productId) ?? 0, 0),
+	for (const r of recipes) {
+		const m = result.get(r.productId) ?? {
+			shelf: shelf(r.productId),
 			sets: [],
 		};
-		m.sets.push(set);
-		result.set(productId, m);
+		m.sets.push({
+			...r.set,
+			perSet: r.perSet,
+			sellable: sellable.get(r.setId) ?? 0,
+			sold: sold.get(r.setId) ?? 0,
+		});
+		result.set(r.productId, m);
 	}
+	const rank = { blocks: 0, limits: 1, free: 2 } as const;
 	for (const m of result.values())
-		m.sets.sort((a, b) => a.name.localeCompare(b.name));
+		m.sets.sort(
+			(a, b) =>
+				rank[partRole(m, a)] - rank[partRole(m, b)] ||
+				b.sold - a.sold ||
+				a.name.localeCompare(b.name),
+		);
 	return result;
 }
