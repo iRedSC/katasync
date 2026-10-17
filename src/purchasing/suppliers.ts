@@ -181,3 +181,60 @@ export async function setSuppliers(db: Db, setIds?: number[]) {
 		[...best].map(([id, { id: sid, name }]) => [id, { id: sid, name }]),
 	);
 }
+
+// Fills in a supplier's part numbers for products bought from it, e.g. from
+// an invoice. Only products bought from this supplier change, so their part
+// number can't land on something bought elsewhere. A product that already
+// has a different number keeps it unless `replace`.
+export async function fillSupplierSkus(
+	db: Db,
+	input: {
+		supplierId: number;
+		entries: { productId: number; sku: string; supplierSku: string }[];
+		replace: boolean;
+	},
+) {
+	const result = {
+		filled: [] as { sku: string; supplierSku: string; was: string | null }[],
+		unchanged: [] as string[],
+		kept: [] as { sku: string; ours: string; given: string }[],
+		skipped: [] as { sku: string; reason: string }[],
+	};
+	await db.transaction(async (tx) => {
+		for (const e of input.entries) {
+			const given = e.supplierSku.trim();
+			const [link] = await tx
+				.select({
+					supplierId: productSuppliers.supplierId,
+					supplierSku: productSuppliers.supplierSku,
+				})
+				.from(productSuppliers)
+				.where(eq(productSuppliers.productId, e.productId))
+				.for("update");
+			if (!given)
+				result.skipped.push({ sku: e.sku, reason: "empty part number" });
+			else if (!link)
+				result.skipped.push({ sku: e.sku, reason: "no supplier set" });
+			else if (link.supplierId !== input.supplierId)
+				result.skipped.push({
+					sku: e.sku,
+					reason: "bought from another supplier",
+				});
+			else if (link.supplierSku === given) result.unchanged.push(e.sku);
+			else if (link.supplierSku && !input.replace)
+				result.kept.push({ sku: e.sku, ours: link.supplierSku, given });
+			else {
+				await tx
+					.update(productSuppliers)
+					.set({ supplierSku: given })
+					.where(eq(productSuppliers.productId, e.productId));
+				result.filled.push({
+					sku: e.sku,
+					supplierSku: given,
+					was: link.supplierSku,
+				});
+			}
+		}
+	});
+	return result;
+}

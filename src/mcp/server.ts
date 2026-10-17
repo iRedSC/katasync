@@ -23,10 +23,17 @@ import {
 import { setRecipe } from "#/inventory/recipes";
 import { matchListing, productFromListing } from "#/orders/remap";
 import { updateProductDetails } from "#/products/details";
+import {
+	invoicesOf,
+	matchInvoice,
+	recordInvoice,
+	removeInvoice,
+} from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
 import {
 	deleteDraft,
 	draftFromSuggestions,
+	markSent,
 	openDraft,
 	PurchaseOrderError,
 	purchaseOrderOfBatch,
@@ -37,6 +44,7 @@ import {
 } from "#/purchasing/orders";
 import { suggestPurchases } from "#/purchasing/reorder";
 import {
+	fillSupplierSkus,
 	setProductSupplier,
 	supplierByRef,
 	updateSupplier,
@@ -51,9 +59,10 @@ import {
 import { createBoxes, updateBox } from "#/shipping/boxes";
 import { describeSchema, MAX_ROWS, readOnlyQuery } from "./query";
 
-// katasync as MCP tools: read anything, change the catalog, draft POs, and
-// count stock. Sending POs, buying labels, and anything else that reaches
-// suppliers, carriers, or money stays in the app. Server only.
+// katasync as MCP tools: read anything, change the catalog, draft POs, check
+// supplier invoices, and count stock. Emailing POs, buying labels, and
+// anything else that reaches suppliers, carriers, or money stays in the app;
+// mark_po_sent only records a PO the supplier already has. Server only.
 
 const INSTRUCTIONS = `katasync runs inventory, purchasing, and order sync for East Coast Drywall Tools, selling on Shopify (which also relays TikTok Shop), Amazon, and eBay.
 
@@ -63,7 +72,8 @@ How things count:
 - Sales: use the sales_units view (product_id, order_id, store_id, placed_at, units). Tool sets count as their parts; cancelled and FBA orders are left out. Join stores for the channel.
 - Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
 - Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.
-- POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here sends a PO: the user reviews and sends drafts in the app. Sent POs can be received here.
+- POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here emails a PO: the user reviews and sends drafts in the app. When the supplier already has a draft (they invoiced or shipped it), mark_po_sent records that without contacting anyone; ask the user first. Sent POs can be received here.
+- Supplier invoices: match_invoice checks one against its PO (quantities, prices, missing and extra lines, totals) and changes nothing. Give every line, with their item number as supplier_sku when it has one. Then record_supplier_invoice keeps its number, date, due date, and total on the PO; the same number from the same supplier can't be recorded twice.
 - Cycle counts only happen when asked for: request_counts puts shelves on the staff's count list, and a count clears them. Ask when stock looks wrong, e.g. oversold or not matching what a channel reports.
 - Count accuracy: use the count_history view (one row per shelf count: product_id, sku, location_id, counted_at, expected, counted, drift = counted minus expected, undone). Matched counts are there too (drift 0), so look for products that drift again and again, not one bad count. Leave out undone rows: those were mistakes. History before this log only has the counts that changed stock.
 - The products page treats stock as trusted once every owned shelf was counted in the last 60 days. For A and B items it asks for a count before suggesting an order; C items order on the number as it stands.
@@ -85,11 +95,97 @@ export const READ_TOOLS = new Set([
 	"reorder_suggestions",
 	"get_purchase_order",
 	"list_purchase_units",
+	"match_invoice",
 ]);
 
 const json = (data: unknown) => ({
 	content: [{ type: "text" as const, text: JSON.stringify(data, null, 1) }],
 });
+
+// A PO as Claude reads it: totals up front, and per line only what tells
+// lines apart. Images, ids, and defaults equal to the line's terms are left
+// out; a line's default terms show only when they differ.
+async function orderForClaude(db: Db, id: number) {
+	const po = await loadOrder(db, id);
+	const invoices = await invoicesOf(db, id);
+	const priced = po.lines.filter((l) => l.unitCost !== null);
+	return {
+		id: po.order.id,
+		status: po.order.status,
+		supplier: {
+			code: po.supplier.code,
+			name: po.supplier.name,
+			email: po.supplier.email,
+			paymentTerms: po.supplier.paymentTerms,
+		},
+		deliverTo: po.location.name,
+		notes: po.order.notes,
+		createdAt: po.order.createdAt,
+		sentAt: po.order.sentAt,
+		sentTo: po.order.sentTo,
+		expectedAt: po.order.expectedAt,
+		closedAt: po.order.closedAt,
+		totals: {
+			lines: po.lines.length,
+			// Summed in each line's own unit, as an invoice counts them.
+			quantity: po.lines.reduce((n, l) => n + l.quantity, 0),
+			items: po.lines.reduce((n, l) => n + l.quantity * l.packSize, 0),
+			total:
+				priced.reduce(
+					(n, l) => n + Math.round(l.quantity * (l.unitCost ?? 0) * 100),
+					0,
+				) / 100,
+			linesWithoutPrice: po.lines.length - priced.length,
+			received: po.lines.reduce((n, l) => n + l.received, 0),
+		},
+		invoices: invoices.map((i) => ({
+			id: i.id,
+			number: i.number,
+			invoicedOn: i.invoicedOn,
+			dueOn: i.dueOn,
+			total: i.total,
+		})),
+		lines: po.lines.map((l) => ({
+			sku: l.sku,
+			supplierSku: l.supplierSku,
+			name: l.variantName ? `${l.name} (${l.variantName})` : l.name,
+			...(l.kind !== "simple" ? { kind: l.kind } : {}),
+			unit: l.unit,
+			packSize: l.packSize,
+			...(l.supplierCount !== l.packSize
+				? { supplierCount: l.supplierCount }
+				: {}),
+			...(l.minimumQuantity > 1 ? { minimum: l.minimumQuantity } : {}),
+			quantity: l.quantity,
+			unitCost: l.unitCost,
+			extended:
+				l.unitCost === null
+					? null
+					: Math.round(l.quantity * l.unitCost * 100) / 100,
+			received: l.received,
+			...(l.sentQuantity !== null &&
+			(l.sentQuantity !== l.quantity || l.sentUnitCost !== l.unitCost)
+				? { sent: { quantity: l.sentQuantity, unitCost: l.sentUnitCost } }
+				: {}),
+			...(l.locked ? { locked: true } : {}),
+			...(l.linkSupplierId !== po.supplier.id
+				? { note: "now bought from another supplier" }
+				: l.defaultUnit !== l.unit ||
+						l.defaultPackSize !== l.packSize ||
+						l.defaultSupplierCount !== l.supplierCount ||
+						l.defaultMinimum !== l.minimumQuantity
+					? {
+							defaultTerms: {
+								unit: l.defaultUnit,
+								packSize: l.defaultPackSize,
+								supplierCount: l.defaultSupplierCount,
+								minimum: l.defaultMinimum,
+							},
+						}
+					: {}),
+		})),
+	};
+}
 
 const READ = { readOnlyHint: true, openWorldHint: false } as const;
 const WRITE = {
@@ -121,6 +217,21 @@ async function ownedLocation(db: Db, name?: string) {
 	if (only === null)
 		throw new PurchaseOrderError("There are several locations; name one");
 	return only;
+}
+
+// When a PO marked sent outside katasync went out: midday that day, so it's
+// the same day in any US timezone. Not in the future, and not before the PO
+// existed.
+async function sentDay(db: Db, po: number, day: string) {
+	const at = new Date(`${day}T12:00:00Z`);
+	if (Number.isNaN(at.getTime()) || day > new Date().toISOString().slice(0, 10))
+		throw new PurchaseOrderError(`${day} isn't a day that has passed`);
+	const { order } = await loadOrder(db, po);
+	const made = order.createdAt.toISOString().slice(0, 10);
+	if (day < made)
+		throw new PurchaseOrderError(`PO ${po} was made on ${made}, after ${day}`);
+	// Today's midday may not have come yet.
+	return at > new Date() ? new Date() : at;
 }
 
 const unitTerms = {
@@ -226,11 +337,75 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 		"get_purchase_order",
 		{
 			description:
-				"A PO with its supplier, delivery location, and lines (unit, pack size, minimum, quantity, price, received).",
+				"A PO: status, supplier, totals (lines, quantity, items, dollars, received), recorded invoices, and lines (SKU, supplier SKU, unit and pack size, quantity, price, extended, received). A line shows what was sent only when it has changed since, and its default terms only when they differ.",
 			inputSchema: { id: z.number().int().positive() },
 			annotations: READ,
 		},
-		async ({ id }) => json(await loadOrder(db, id)),
+		async ({ id }) => json(await orderForClaude(db, id)),
+	);
+
+	server.registerTool(
+		"match_invoice",
+		{
+			description:
+				"Checks a supplier invoice against its PO and changes nothing. Lines match by our SKU, then their item number (supplier_sku), then a description naming exactly one PO line. Returns whether it matches, totals, each line whose quantity or price differs, invoice lines not on the PO, PO lines not on the invoice, item numbers the products don't have yet (supplierSkusToSave, for set_supplier_skus), and whether the invoice number is already recorded. Quantities and prices are per the PO line's unit, as the invoice counts them.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				invoice_number: z.string().optional(),
+				total: z
+					.number()
+					.min(0)
+					.optional()
+					.describe("Total due on the invoice, freight and tax included"),
+				freight: z.number().min(0).optional(),
+				tax: z.number().min(0).optional(),
+				lines: z
+					.array(
+						z.object({
+							line: z
+								.number()
+								.int()
+								.positive()
+								.optional()
+								.describe(
+									"Their line number; defaults to its place in this list",
+								),
+							sku: z.string().optional().describe("Our SKU, if shown"),
+							supplier_sku: z
+								.string()
+								.optional()
+								.describe("Their item number, if shown"),
+							description: z.string().optional(),
+							quantity: z
+								.number()
+								.int()
+								.min(0)
+								.describe("Shipped or billed, in their unit"),
+							unit_cost: z.number().min(0).describe("Per their unit"),
+						}),
+					)
+					.min(1),
+			},
+			annotations: READ,
+		},
+		async ({ po, invoice_number, total, freight, tax, lines }) =>
+			json(
+				await matchInvoice(db, {
+					purchaseOrderId: po,
+					number: invoice_number,
+					total,
+					freight,
+					tax,
+					lines: lines.map((l) => ({
+						line: l.line,
+						sku: l.sku,
+						supplierSku: l.supplier_sku,
+						description: l.description,
+						quantity: l.quantity,
+						unitCost: l.unit_cost,
+					})),
+				}),
+			),
 	);
 
 	server.registerTool(
@@ -351,7 +526,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 		async ({ supplier }) => {
 			const { id } = await supplierByRef(db, supplier);
 			const po = await draftFromSuggestions(db, id);
-			return json(await loadOrder(db, po));
+			return json(await orderForClaude(db, po));
 		},
 	);
 
@@ -387,7 +562,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 				minimumQuantity: minimum,
 				makeDefault: make_default,
 			});
-			return json(await loadOrder(db, po));
+			return json(await orderForClaude(db, po));
 		},
 	);
 
@@ -412,8 +587,69 @@ function registerWriteTools(server: McpServer, db: Db) {
 				...(notes !== undefined ? { notes } : {}),
 				...(location ? { locationId: await ownedLocation(db, location) } : {}),
 			});
-			return json(await loadOrder(db, po));
+			return json(await orderForClaude(db, po));
 		},
+	);
+
+	server.registerTool(
+		"mark_po_sent",
+		{
+			description:
+				"Records that a draft PO already reached the supplier some other way (their invoice or shipment shows they have it), so it can be received. Contacts no one and prints nothing. Freezes the lines as sent; later changes show as amendments. Ask the user before using it.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				sent_on: z
+					.string()
+					.regex(/^\d{4}-\d{2}-\d{2}$/)
+					.optional()
+					.describe(
+						"The day it went to the supplier, if known; defaults to now. Sets when it's expected, and lead times learn from it.",
+					),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sent_on }) => {
+			const now = sent_on ? await sentDay(db, po, sent_on) : undefined;
+			await markSent(db, { purchaseOrderId: po, sentTo: null, now });
+			return json(await orderForClaude(db, po));
+		},
+	);
+
+	server.registerTool(
+		"record_supplier_invoice",
+		{
+			description:
+				"Keeps a supplier's invoice on its PO: number, date, due date, and total. The PO must be on order (sent or closed). The same invoice number from the same supplier is refused, on any PO, so nothing is paid twice. Check it with match_invoice first.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				number: z.string().min(1),
+				invoiced_on: z.string().describe("YYYY-MM-DD"),
+				due_on: z.string().nullable().optional().describe("YYYY-MM-DD"),
+				total: z.number().min(0).describe("Total due, USD"),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, number, invoiced_on, due_on, total }) =>
+			json(
+				await recordInvoice(db, {
+					purchaseOrderId: po,
+					number,
+					invoicedOn: invoiced_on,
+					dueOn: due_on,
+					total,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"remove_supplier_invoice",
+		{
+			description:
+				"Takes a recorded invoice off its PO, e.g. one put on the wrong PO. Its id is in get_purchase_order's invoices.",
+			inputSchema: { id: z.number().int().positive() },
+			annotations: { ...WRITE, destructiveHint: true },
+		},
+		async ({ id }) => json({ removed: await removeInvoice(db, id) }),
 	);
 
 	server.registerTool(
@@ -459,6 +695,43 @@ function registerWriteTools(server: McpServer, db: Db) {
 				.from(productSuppliers)
 				.where(eq(productSuppliers.productId, product.id));
 			return json(link ?? { sku, supplier: null });
+		},
+	);
+
+	server.registerTool(
+		"set_supplier_skus",
+		{
+			description:
+				"Fills in a supplier's item numbers for many products at once, e.g. supplierSkusToSave from match_invoice. Only products bought from that supplier change. One that already has a different number keeps it unless replace is true. Reports filled, unchanged, kept, and skipped.",
+			inputSchema: {
+				supplier: z.string().describe("Code or name"),
+				items: z
+					.array(z.object({ sku: z.string(), supplier_sku: z.string() }))
+					.min(1),
+				replace: z.boolean().default(false),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ supplier, items, replace }) => {
+			const { id } = await supplierByRef(db, supplier);
+			const entries = [];
+			const unknown = [];
+			for (const item of items) {
+				const product = await productBySku(db, item.sku).catch(() => null);
+				if (!product) unknown.push({ sku: item.sku, reason: "no such SKU" });
+				else
+					entries.push({
+						productId: product.id,
+						sku: product.sku,
+						supplierSku: item.supplier_sku,
+					});
+			}
+			const result = await fillSupplierSkus(db, {
+				supplierId: id,
+				entries,
+				replace,
+			});
+			return json({ ...result, skipped: [...unknown, ...result.skipped] });
 		},
 	);
 

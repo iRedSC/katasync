@@ -16,6 +16,7 @@ import {
 import { stockRanges } from "#/inventory/stock-range";
 import { emailConfigured, sendEmail } from "#/purchasing/email";
 import { type LeadTime, leadTimes } from "#/purchasing/forecast";
+import { invoicesOf } from "#/purchasing/invoices";
 import {
 	documentFor,
 	loadOrder,
@@ -188,6 +189,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			amendments,
 			recommended,
 			whys,
+			invoices,
 		] = await Promise.all([
 			onHandOf(db, productIds),
 			stockRanges(db, productIds),
@@ -273,6 +275,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			reorderBreakdown(db, { productIds }).then(
 				(all) => new Map(all.map((b) => [b.line.productId, b.why])),
 			),
+			invoicesOf(db, data.id),
 		]);
 		return {
 			leadTime: leadTimeOf(lead, po.supplier.id),
@@ -298,6 +301,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			recommended,
 			receipts,
 			amendments,
+			invoices,
 			locations: ownedLocations,
 			units,
 			emailConfigured: emailConfigured(),

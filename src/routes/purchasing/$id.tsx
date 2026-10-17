@@ -2609,6 +2609,35 @@ function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 			),
 		});
 	}
+	// What the PO comes to now, in cents, to set each invoice against.
+	const poCents = d.lines.reduce(
+		(n, l) => n + Math.round(l.quantity * (l.unitCost ?? 0) * 100),
+		0,
+	);
+	for (const inv of d.invoices) {
+		const over = Math.round(inv.total * 100) - poCents;
+		// Midday, so the date doesn't slip a day in any US timezone.
+		const day = (s: string) => formatDay(new Date(`${s}T12:00:00`));
+		events.push({
+			key: `i${inv.id}`,
+			at: new Date(inv.createdAt),
+			body: (
+				<>
+					Invoice <span className="font-semibold">{inv.number}</span> for{" "}
+					<span className="tabular-nums">{formatMoney(inv.total)}</span>, dated{" "}
+					{day(inv.invoicedOn)}
+					{inv.dueOn && <>, due {day(inv.dueOn)}</>}
+					{over !== 0 && (
+						<span className="text-warning-text">
+							{" "}
+							· {formatMoney(Math.abs(over) / 100)} {over > 0 ? "more" : "less"}{" "}
+							than the PO
+						</span>
+					)}
+				</>
+			),
+		});
+	}
 	if (po.closedAt)
 		events.push({
 			key: "closed",

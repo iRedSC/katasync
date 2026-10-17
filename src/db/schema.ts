@@ -5,6 +5,8 @@ import {
 	boolean,
 	check,
 	customType,
+	date,
+	foreignKey,
 	index,
 	integer,
 	jsonb,
@@ -731,6 +733,9 @@ export const purchaseOrders = pgTable(
 		uniqueIndex("purchase_orders_one_draft")
 			.on(t.supplierId)
 			.where(sql`${t.status} not in ('sent', 'closed', 'cancelled')`),
+		// Lets a supplier invoice point at a PO and its supplier together, so
+		// an invoice can't name one supplier and a PO from another.
+		unique("purchase_orders_id_supplier").on(t.id, t.supplierId),
 	],
 );
 
@@ -876,6 +881,43 @@ export const purchaseOrderSentSets = pgTable(
 	(t) => [
 		primaryKey({ columns: [t.purchaseOrderId, t.setProductId] }),
 		check("purchase_order_sent_sets_positive", sql`${t.sets} > 0`),
+	],
+);
+
+// A supplier's bill for a PO, as written on it. The number is unique per
+// supplier, ignoring case, so the same invoice can't be recorded (and paid)
+// twice. Rules live in src/purchasing/invoices.ts.
+export const supplierInvoices = pgTable(
+	"supplier_invoices",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer().notNull(),
+		supplierId: integer().notNull(),
+		// Their invoice number, e.g. TSW-INV-58213.
+		number: text().notNull(),
+		invoicedOn: date({ mode: "string" }).notNull(),
+		dueOn: date({ mode: "string" }),
+		// What they say is due, USD, freight and tax included.
+		total: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		foreignKey({
+			name: "supplier_invoices_po_fk",
+			columns: [t.purchaseOrderId, t.supplierId],
+			foreignColumns: [purchaseOrders.id, purchaseOrders.supplierId],
+		}),
+		index("supplier_invoices_po_idx").on(t.purchaseOrderId),
+		uniqueIndex("supplier_invoices_number").on(
+			t.supplierId,
+			sql`lower(${t.number})`,
+		),
+		check("supplier_invoices_number_given", sql`btrim(${t.number}) <> ''`),
+		check("supplier_invoices_total_not_negative", sql`${t.total} >= 0`),
+		check(
+			"supplier_invoices_due_after_invoiced",
+			sql`${t.dueOn} is null or ${t.dueOn} >= ${t.invoicedOn}`,
+		),
 	],
 );
 
