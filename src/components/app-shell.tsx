@@ -3,6 +3,7 @@ import { Menu, Search } from "lucide-react";
 import { type ReactNode, Suspense, use, useEffect, useState } from "react";
 import { openFind, pages } from "#/components/command-palette";
 import { Saving } from "#/components/saving";
+import { Tip } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
 import type { NavCounts } from "#/server/nav";
 
@@ -154,34 +155,35 @@ function NavItem({
 }) {
 	const active = isActive(to, pathname);
 	return (
-		<Link
-			to={to}
-			title={`${label} (${keys.toUpperCase()})`}
-			className={cn(
-				"flex h-8 items-center gap-2 rounded-lg px-2 text-[0.8125rem] text-foreground",
-				child ? "pl-8 font-normal" : "font-medium",
-				active ? "bg-white font-semibold" : "hover:bg-surface-strong",
-			)}
-		>
-			{!child && (
-				<Icon
-					className={cn(
-						"size-4",
-						active ? "text-foreground" : "text-muted-foreground",
-					)}
-				/>
-			)}
-			<span className="flex-1 truncate">{label}</span>
-			{counts && (
-				<Suspense>
-					<Waiting
-						counts={counts}
-						own={count}
-						hidden={hidden.flatMap((k) => (k.count ? [k.count] : []))}
+		<Tip side="right" content={`${label} (${keys.toUpperCase()})`}>
+			<Link
+				to={to}
+				className={cn(
+					"flex h-8 items-center gap-2 rounded-lg px-2 text-[0.8125rem] text-foreground",
+					child ? "pl-8 font-normal" : "font-medium",
+					active ? "bg-white font-semibold" : "hover:bg-surface-strong",
+				)}
+			>
+				{!child && (
+					<Icon
+						className={cn(
+							"size-4",
+							active ? "text-foreground" : "text-muted-foreground",
+						)}
 					/>
-				</Suspense>
-			)}
-		</Link>
+				)}
+				<span className="flex-1 truncate">{label}</span>
+				{counts && (
+					<Suspense>
+						<Waiting
+							counts={counts}
+							own={count}
+							hidden={hidden.flatMap((k) => (k.count ? [k.count] : []))}
+						/>
+					</Suspense>
+				)}
+			</Link>
+		</Tip>
 	);
 }
 

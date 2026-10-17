@@ -16,6 +16,7 @@ import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import type { StockRange } from "#/inventory/stock-range";
 import { channelName, formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
@@ -607,22 +608,23 @@ function CriticalToggle({
 		});
 	}
 	return (
-		<label
-			className={cn(
-				"flex items-center gap-2",
-				isA ? "cursor-default text-muted-foreground" : "cursor-pointer",
-			)}
-			title={isA ? "A items are always essential" : undefined}
-		>
-			<input
-				type="checkbox"
-				checked={critical || isA}
-				disabled={isA}
-				onChange={(e) => set(e.target.checked)}
-				className="size-4 accent-primary"
-			/>
-			Essential
-		</label>
+		<Tip content={isA ? "A items are always essential" : undefined}>
+			<label
+				className={cn(
+					"flex items-center gap-2",
+					isA ? "cursor-default text-muted-foreground" : "cursor-pointer",
+				)}
+			>
+				<input
+					type="checkbox"
+					checked={critical || isA}
+					disabled={isA}
+					onChange={(e) => set(e.target.checked)}
+					className="size-4 accent-primary"
+				/>
+				Essential
+			</label>
+		</Tip>
 	);
 }
 

@@ -1,3 +1,4 @@
+import { Tip } from "#/components/ui/tooltip";
 import type { StockRange } from "#/inventory/stock-range";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
@@ -53,48 +54,51 @@ export function StockRing({
 	const text =
 		Math.abs(onHand) >= 1000 ? compact.format(onHand) : String(onHand);
 	return (
-		<span
-			className="relative inline-flex shrink-0 items-center justify-center"
-			style={{ width: SIZE, height: SIZE }}
-			title={`${formatCount(onHand)} ${label}. Keep ${formatCount(range.min)} to ${formatCount(range.max)}${range.own ? "" : " (default)"}`}
+		<Tip
+			content={`${formatCount(onHand)} ${label}. Keep ${formatCount(range.min)} to ${formatCount(range.max)}${range.own ? "" : " (default)"}`}
 		>
-			<svg
-				width={SIZE}
-				height={SIZE}
-				className="absolute inset-0 -rotate-90"
-				aria-hidden="true"
+			<span
+				className="relative inline-flex shrink-0 items-center justify-center"
+				style={{ width: SIZE, height: SIZE }}
 			>
-				<circle
-					cx={SIZE / 2}
-					cy={SIZE / 2}
-					r={RADIUS}
-					fill="none"
-					stroke="var(--surface-strong)"
-					strokeWidth={STROKE}
-				/>
-				{fill > 0 && (
+				<svg
+					width={SIZE}
+					height={SIZE}
+					className="absolute inset-0 -rotate-90"
+					aria-hidden="true"
+				>
 					<circle
 						cx={SIZE / 2}
 						cy={SIZE / 2}
 						r={RADIUS}
 						fill="none"
-						stroke={oversold ? "var(--critical-icon)" : fillColor(fill)}
+						stroke="var(--surface-strong)"
 						strokeWidth={STROKE}
-						strokeLinecap="round"
-						strokeDasharray={CIRCUMFERENCE}
-						strokeDashoffset={CIRCUMFERENCE * (1 - fill)}
 					/>
-				)}
-			</svg>
-			<span
-				className={cn(
-					"relative leading-none font-semibold tracking-tight tabular-nums",
-					oversold && "text-critical-text",
-				)}
-				style={{ fontSize: fontSize(text) }}
-			>
-				{text}
+					{fill > 0 && (
+						<circle
+							cx={SIZE / 2}
+							cy={SIZE / 2}
+							r={RADIUS}
+							fill="none"
+							stroke={oversold ? "var(--critical-icon)" : fillColor(fill)}
+							strokeWidth={STROKE}
+							strokeLinecap="round"
+							strokeDasharray={CIRCUMFERENCE}
+							strokeDashoffset={CIRCUMFERENCE * (1 - fill)}
+						/>
+					)}
+				</svg>
+				<span
+					className={cn(
+						"relative leading-none font-semibold tracking-tight tabular-nums",
+						oversold && "text-critical-text",
+					)}
+					style={{ fontSize: fontSize(text) }}
+				>
+					{text}
+				</span>
 			</span>
-		</span>
+		</Tip>
 	);
 }

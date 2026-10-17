@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Badge, Card, Page } from "#/components/page";
 import { ListSkeleton } from "#/components/skeleton";
 import { SupplierDialog } from "#/components/supplier-dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney } from "#/lib/format";
 import { optimistic } from "#/lib/optimism";
 import { MIN_MEASURED_POS } from "#/purchasing/forecast";
@@ -72,20 +73,22 @@ function Suppliers() {
 									{formatCount(r.products)}
 								</td>
 								<td className="px-4 py-2.5 text-right whitespace-nowrap tabular-nums">
-									<span
-										title={
+									<Tip
+										content={
 											r.leadTime.measured
 												? `Measured from ${r.leadTime.measured.pos} POs (typed: ${r.leadTime.configured})`
 												: `Typed in; measured after ${MIN_MEASURED_POS} received POs`
 										}
 									>
-										{r.leadTime.days} days
-										{r.leadTime.measured && (
-											<span className="ml-1 text-xs text-muted-foreground">
-												measured
-											</span>
-										)}
-									</span>
+										<span>
+											{r.leadTime.days} days
+											{r.leadTime.measured && (
+												<span className="ml-1 text-xs text-muted-foreground">
+													measured
+												</span>
+											)}
+										</span>
+									</Tip>
 								</td>
 								<td className="px-4 py-2.5 text-right tabular-nums">
 									{r.supplier.minimumOrder > 0

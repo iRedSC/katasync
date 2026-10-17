@@ -1,5 +1,6 @@
 import { HoverCard } from "radix-ui";
 import type { ReactNode } from "react";
+import { Tip } from "#/components/ui/tooltip";
 import { afterArrival } from "#/inventory/stock-state";
 import { formatCount, formatOrderQuantity, formatUnit } from "#/lib/format";
 import { cn } from "#/lib/utils";
@@ -70,12 +71,9 @@ export function VelocityGauge({
 }) {
 	if (!why)
 		return (
-			<span
-				className="block text-center text-muted-foreground"
-				title="Tool sets are ordered as their parts; each part has its own velocity"
-			>
-				—
-			</span>
+			<Tip content="Tool sets are ordered as their parts; each part has its own velocity">
+				<span className="block text-center text-muted-foreground">—</span>
+			</Tip>
 		);
 	return (
 		<HoverCard.Root openDelay={150} closeDelay={100}>
@@ -283,8 +281,9 @@ function Bars({ why }: { why: ReorderWhy }) {
 			{why.orderBelow > 0 && (
 				<div
 					className="pointer-events-none absolute inset-y-0 ml-11 border-l border-dashed border-foreground/50"
-					style={{ left: `calc((100% - 2.75rem) * ${why.orderBelow / scale})` }}
-					title={`Ordering starts below ${formatCount(why.orderBelow)}`}
+					style={{
+						left: `calc((100% - 2.75rem) * ${why.orderBelow / scale})`,
+					}}
 				/>
 			)}
 		</div>

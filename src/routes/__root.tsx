@@ -8,6 +8,7 @@ import { Toaster } from "sonner";
 import { AppShell, isBare } from "#/components/app-shell";
 import { CommandPalette } from "#/components/command-palette";
 import { QuickShip } from "#/components/quick-ship";
+import { TooltipProvider } from "#/components/ui/tooltip";
 import "#/lib/undo";
 import { getNavCounts } from "#/server/nav";
 import appCss from "../styles.css?url";
@@ -58,9 +59,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<HeadContent />
 			</head>
 			<body>
-				<AppShell>{children}</AppShell>
-				<CommandPalette />
-				<QuickShip />
+				<TooltipProvider>
+					<AppShell>{children}</AppShell>
+					<CommandPalette />
+					<QuickShip />
+				</TooltipProvider>
 				<Toaster
 					position="bottom-center"
 					toastOptions={{

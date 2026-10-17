@@ -9,6 +9,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { optimism, type Patch } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { type LeadTime, MIN_MEASURED_POS } from "#/purchasing/forecast";
@@ -310,14 +311,15 @@ function SupplierForm({
 					/>
 				</Field>
 				<Field label="Essential threshold">
-					<input
-						name="criticalThreshold"
-						required
-						inputMode="numeric"
-						defaultValue={s.criticalThreshold}
-						title="Essentials needing order that make a PO ready, whatever its total"
-						className={cn(input, "tabular-nums")}
-					/>
+					<Tip content="Essentials needing order that make a PO ready, whatever its total">
+						<input
+							name="criticalThreshold"
+							required
+							inputMode="numeric"
+							defaultValue={s.criticalThreshold}
+							className={cn(input, "tabular-nums")}
+						/>
+					</Tip>
 				</Field>
 			</div>
 			<Field label="Payment terms">

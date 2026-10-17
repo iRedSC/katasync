@@ -7,6 +7,7 @@ import {
 import {
 	AlertTriangle,
 	ArrowRight,
+	Asterisk,
 	ChevronRight,
 	Copy,
 	ExternalLink,
@@ -43,6 +44,7 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
+import { Tip } from "#/components/ui/tooltip";
 import { VelocityGauge } from "#/components/velocity-gauge";
 import { afterArrival } from "#/inventory/stock-state";
 import { copyText } from "#/lib/copy";
@@ -373,19 +375,22 @@ function PurchaseOrderPage() {
 				<>
 					{d.lines.length > 0 && (
 						<Button asChild variant="outline" size="sm">
-							<a
-								href={`/purchasing/pdf/${po.id}`}
-								target="_blank"
-								rel="noreferrer"
-								title={
+							<Tip
+								content={
 									draft
 										? undefined
 										: "As sent to the supplier, without later changes"
 								}
 							>
-								<FileText />
-								PDF
-							</a>
+								<a
+									href={`/purchasing/pdf/${po.id}`}
+									target="_blank"
+									rel="noreferrer"
+								>
+									<FileText />
+									PDF
+								</a>
+							</Tip>
 						</Button>
 					)}
 					{po.status === "sent" && (
@@ -397,17 +402,20 @@ function PurchaseOrderPage() {
 						</Button>
 					)}
 					{draft && (
-						<Button
-							size="sm"
-							disabled={busy || d.lines.length === 0 || !canEmail}
-							title={
+						<Tip
+							content={
 								canEmail ? `Email the PDF to ${d.supplier.email}` : undefined
 							}
-							onClick={() => send(true)}
 						>
-							<Mail />
-							Send to supplier
-						</Button>
+							<Button
+								size="sm"
+								disabled={busy || d.lines.length === 0 || !canEmail}
+								onClick={() => send(true)}
+							>
+								<Mail />
+								Send to supplier
+							</Button>
+						</Tip>
 					)}
 				</>
 			}
@@ -699,13 +707,12 @@ function FrozenBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const raised = short.filter((l) => !l.locked).length;
 	const skipped = short.length - raised;
 	const skippedNote = skipped > 0 && (
-		<span
-			className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground"
-			title="Locked lines Update leaves alone"
-		>
-			<Lock aria-hidden className="size-3" />
-			{formatCount(skipped)} skipped
-		</span>
+		<Tip content="Locked lines Update leaves alone">
+			<span className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground">
+				<Lock aria-hidden className="size-3" />
+				{formatCount(skipped)} skipped
+			</span>
+		</Tip>
 	);
 	if (added + raised === 0)
 		return (
@@ -832,12 +839,11 @@ function Recommended({
 								<th className="px-3 py-2 text-center font-medium">
 									On hand → After PO
 								</th>
-								<th
-									className="px-3 py-2 text-center font-medium"
-									title="Units sold a month"
-								>
-									Velocity
-								</th>
+								<Tip content="Units sold a month">
+									<th className="px-3 py-2 text-center font-medium">
+										Velocity
+									</th>
+								</Tip>
 								<th className="px-3 py-2 text-right font-medium">Cost</th>
 								<th className="px-3 py-2 text-right font-medium">Amount</th>
 								<th className="px-4 py-2" />
@@ -1165,12 +1171,11 @@ function LineTable({
 							<th className="px-3 py-2 text-right font-medium">Qty</th>
 						) : (
 							<>
-								<th
-									className="px-3 py-2 text-right font-medium"
-									title="As sent. The PDF still shows this."
-								>
-									Qty requested
-								</th>
+								<Tip content="As sent. The PDF still shows this.">
+									<th className="px-3 py-2 text-right font-medium">
+										Qty requested
+									</th>
+								</Tip>
 								<th className="px-3 py-2 text-right font-medium">
 									Qty expected
 								</th>
@@ -1182,12 +1187,11 @@ function LineTable({
 							</th>
 						)}
 						{draft && (
-							<th
-								className="px-3 py-2 text-center font-medium whitespace-nowrap"
-								title="Units sold a month"
-							>
-								Velocity
-							</th>
+							<Tip content="Units sold a month">
+								<th className="px-3 py-2 text-center font-medium whitespace-nowrap">
+									Velocity
+								</th>
+							</Tip>
 						)}
 						<th className="px-3 py-2 text-right font-medium">Cost</th>
 						<th className="px-4 py-2 text-right font-medium">Amount</th>
@@ -1417,33 +1421,37 @@ function LineTable({
 													<VelocityGauge why={l.why} onPo={l} />
 												</td>
 											)}
-											<td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
-												{l.kind === "bundle" ? (
-													<span className="text-muted-foreground">
-														As parts
-													</span>
-												) : editable ? (
-													<PriceField
+											<td className="px-3 py-2 whitespace-nowrap tabular-nums">
+												<div className="flex items-center justify-end gap-0.5">
+													<WasSent
 														line={l}
-														purchaseOrderId={d.order.id}
-														draft={draft}
+														shows={l.sentUnitCost !== l.unitCost}
+														was={`Sent at ${formatMoney(l.sentUnitCost)}`}
 													/>
-												) : (
-													formatMoney(l.unitCost)
-												)}
-												<WasSent
-													line={l}
-													shows={l.sentUnitCost !== l.unitCost}
-													was={`Sent at ${formatMoney(l.sentUnitCost)}`}
-												/>
+													{l.kind === "bundle" ? (
+														<span className="text-muted-foreground">
+															As parts
+														</span>
+													) : editable ? (
+														<PriceField
+															line={l}
+															purchaseOrderId={d.order.id}
+															draft={draft}
+														/>
+													) : (
+														formatMoney(l.unitCost)
+													)}
+												</div>
 											</td>
 											<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
 												{set ? (
-													<span title="Its parts at their prices. The total rounds up to whole units">
-														{set.amount === null
-															? "—"
-															: formatMoney(set.amount)}
-													</span>
+													<Tip content="Its parts at their prices. The total rounds up to whole units">
+														<span>
+															{set.amount === null
+																? "—"
+																: formatMoney(set.amount)}
+														</span>
+													</Tip>
 												) : l.unitCost === null ? (
 													"—"
 												) : (
@@ -1667,13 +1675,15 @@ function WasSent({
 	if (line.sentQuantity === null || !shows) return null;
 	const tip = `${was}. The PDF still shows this.`;
 	return (
-		<span
-			className="ml-0.5 cursor-help align-top font-normal text-warning-text"
-			title={tip}
-			aria-label={tip}
-		>
-			*
-		</span>
+		<Tip content={tip}>
+			<span
+				role="img"
+				aria-label={tip}
+				className="inline-flex cursor-help text-warning-text"
+			>
+				<Asterisk aria-hidden className="size-5" strokeWidth={2.75} />
+			</span>
+		</Tip>
 	);
 }
 
@@ -1776,15 +1786,18 @@ function SetPartRow({
 							<PartSource part={p} state={state} sets={sets} />
 							{/* Only this PO orders it, so only here can it be skipped. */}
 							{(here || state.kind === "skipped") && (
-								<button
-									type="button"
-									disabled={busy}
-									onClick={() => skip(here)}
-									className="cursor-pointer font-medium text-foreground hover:underline disabled:opacity-50"
-									title={here ? "Skip for this set" : "Order for this set"}
+								<Tip
+									content={here ? "Skip for this set" : "Order for this set"}
 								>
-									{here ? "Skip" : "Order it"}
-								</button>
+									<button
+										type="button"
+										disabled={busy}
+										onClick={() => skip(here)}
+										className="cursor-pointer font-medium text-foreground hover:underline disabled:opacity-50"
+									>
+										{here ? "Skip" : "Order it"}
+									</button>
+								</Tip>
 							)}
 						</div>
 					</div>
@@ -1796,23 +1809,24 @@ function SetPartRow({
 			<td className="px-3 py-2">
 				{here && <PurchaseUnitCell label={p.sku} value={p} cost={p.unitCost} />}
 			</td>
-			<td
-				className="px-3 py-2 text-right font-semibold tabular-nums"
-				title={`${formatCount(p.perSet)} per set × ${formatCount(sets)} ${sets === 1 ? "set" : "sets"}`}
+			<Tip
+				content={`${formatCount(p.perSet)} per set × ${formatCount(sets)} ${sets === 1 ? "set" : "sets"}`}
 			>
-				{here ? (
-					<span className="inline-block w-16 px-2">
-						{formatCount(items)}
-						{p.packSize > 1 && (
-							<span className="ml-0.5 text-xs font-normal text-muted-foreground">
-								ea
-							</span>
-						)}
-					</span>
-				) : (
-					<span className="text-muted-foreground">—</span>
-				)}
-			</td>
+				<td className="px-3 py-2 text-right font-semibold tabular-nums">
+					{here ? (
+						<span className="inline-block w-16 px-2">
+							{formatCount(items)}
+							{p.packSize > 1 && (
+								<span className="ml-0.5 text-xs font-normal text-muted-foreground">
+									ea
+								</span>
+							)}
+						</span>
+					) : (
+						<span className="text-muted-foreground">—</span>
+					)}
+				</td>
+			</Tip>
 			<td className="px-3 py-2">
 				{here ? (
 					<AfterPo onHand={p.onHand} range={p.stockRange} ordered={ordered} />
@@ -1915,29 +1929,32 @@ function AddSetButton({
 		(id) => parts.find((p) => p.supplierId === id)?.supplierName ?? "",
 	);
 	return (
-		<Button
-			size="sm"
-			variant="outline"
-			className="h-6 px-2 text-xs"
-			disabled={busy || disabled}
-			title={`Add ${formatCount(sets)} to ${names.join(" and ")}'s ${names.length === 1 ? "draft" : "drafts"}`}
-			onClick={() =>
-				run(
-					() => addSetToOtherPos({ data: { lineId: ids.server(line.id) } }),
-					(added) =>
-						added
-							.map(
-								(a) =>
-									`PO ${a.purchaseOrderId} (${a.supplierName}) has ${formatCount(a.sets)} of ${line.sku}`,
-							)
-							.join("; "),
-				)
-			}
+		<Tip
+			content={`Add ${formatCount(sets)} to ${names.join(" and ")}'s ${names.length === 1 ? "draft" : "drafts"}`}
 		>
-			{names.length === 1
-				? `Add to ${names[0]}'s PO`
-				: `Add to ${names.length} other POs`}
-		</Button>
+			<Button
+				size="sm"
+				variant="outline"
+				className="h-6 px-2 text-xs"
+				disabled={busy || disabled}
+				onClick={() =>
+					run(
+						() => addSetToOtherPos({ data: { lineId: ids.server(line.id) } }),
+						(added) =>
+							added
+								.map(
+									(a) =>
+										`PO ${a.purchaseOrderId} (${a.supplierName}) has ${formatCount(a.sets)} of ${line.sku}`,
+								)
+								.join("; "),
+					)
+				}
+			>
+				{names.length === 1
+					? `Add to ${names[0]}'s PO`
+					: `Add to ${names.length} other POs`}
+			</Button>
+		</Tip>
 	);
 }
 
@@ -1985,43 +2002,46 @@ function LockToggle({
 	const locked = line.locked;
 	const Icon = locked ? Lock : LockOpen;
 	return (
-		<button
-			type="button"
-			aria-pressed={locked}
-			aria-label={`${locked ? "Unlock" : "Lock"} ${line.sku}'s quantity`}
-			title={
+		<Tip
+			content={
 				locked
 					? "Locked: Update leaves it alone"
 					: "Lock so Update leaves it alone"
 			}
-			onClick={() =>
-				save({
-					label: `${line.sku}'s lock`,
-					patch: patchLines(
-						purchaseOrderId,
-						(l) => l.productId === line.productId,
-						(l) => ({ ...l, locked: !locked }),
-						{ draftEdit: true },
-					),
-					send: () =>
-						lockLine({
-							data: {
-								purchaseOrderId,
-								productId: line.productId,
-								locked: !locked,
-							},
-						}),
-				})
-			}
-			className={cn(
-				"flex size-6 items-center justify-center rounded-md outline-none hover:bg-surface focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
-				locked
-					? "text-foreground"
-					: "text-muted-foreground opacity-0 group-hover/qty:opacity-100 group-focus-within/qty:opacity-100",
-			)}
 		>
-			<Icon aria-hidden className="size-3.5" />
-		</button>
+			<button
+				type="button"
+				aria-pressed={locked}
+				aria-label={`${locked ? "Unlock" : "Lock"} ${line.sku}'s quantity`}
+				onClick={() =>
+					save({
+						label: `${line.sku}'s lock`,
+						patch: patchLines(
+							purchaseOrderId,
+							(l) => l.productId === line.productId,
+							(l) => ({ ...l, locked: !locked }),
+							{ draftEdit: true },
+						),
+						send: () =>
+							lockLine({
+								data: {
+									purchaseOrderId,
+									productId: line.productId,
+									locked: !locked,
+								},
+							}),
+					})
+				}
+				className={cn(
+					"flex size-6 items-center justify-center rounded-md outline-none hover:bg-surface focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
+					locked
+						? "text-foreground"
+						: "text-muted-foreground opacity-0 group-hover/qty:opacity-100 group-focus-within/qty:opacity-100",
+				)}
+			>
+				<Icon aria-hidden className="size-3.5" />
+			</button>
+		</Tip>
 	);
 }
 
@@ -2169,25 +2189,26 @@ function QuantityField({
 
 	return (
 		<>
-			<button
-				type="button"
-				aria-label={`Quantity of ${line.sku}: ${line.quantity}`}
-				title="Drag sideways to adjust"
-				{...scrub.handlers}
-				onClick={() => {
-					// A drag's release isn't a click.
-					if (scrub.wasDrag()) return;
-					setText("");
-					setTyping(true);
-				}}
-				className={cn(
-					quantityBox,
-					"cursor-pointer select-none hover:bg-surface",
-					scrub.dragging && "cursor-ew-resize",
-				)}
-			>
-				{scrub.dragging ? scrub.shown : line.quantity}
-			</button>
+			<Tip content="Drag sideways to adjust">
+				<button
+					type="button"
+					aria-label={`Quantity of ${line.sku}: ${line.quantity}`}
+					{...scrub.handlers}
+					onClick={() => {
+						// A drag's release isn't a click.
+						if (scrub.wasDrag()) return;
+						setText("");
+						setTyping(true);
+					}}
+					className={cn(
+						quantityBox,
+						"cursor-pointer select-none hover:bg-surface",
+						scrub.dragging && "cursor-ew-resize",
+					)}
+				>
+					{scrub.dragging ? scrub.shown : line.quantity}
+				</button>
+			</Tip>
 			{scrub.line}
 		</>
 	);
@@ -2438,9 +2459,8 @@ function SupplierSkuField({
 	const { save } = useAction();
 	if (line.linkSupplierId !== supplierId)
 		return (
-			<span
-				className="px-1.5 text-muted-foreground"
-				title={
+			<Tip
+				content={
 					line.kind === "bundle"
 						? "Sets are bought as their parts"
 						: line.linkSupplierId === null
@@ -2448,8 +2468,10 @@ function SupplierSkuField({
 							: "Bought from another supplier"
 				}
 			>
-				{line.supplierSku ?? "—"}
-			</span>
+				<span className="px-1.5 text-muted-foreground">
+					{line.supplierSku ?? "—"}
+				</span>
+			</Tip>
 		);
 	return (
 		<InlineField

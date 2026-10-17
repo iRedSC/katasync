@@ -11,6 +11,7 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from "#/components/ui/popover";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { Field, Filter, facetCounts } from "#/products/search";
@@ -299,12 +300,17 @@ export function SortMenu<K extends string>({
 	}
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger
-				className={cn(iconButton, lead && "text-foreground")}
-				aria-label={title}
-				title={title}
-			>
-				<ArrowUpDown className="size-4" />
+			{/* The tip sits inside so the popover's data-state reaches the button. */}
+			<PopoverTrigger asChild>
+				<Tip content={title}>
+					<button
+						type="button"
+						className={cn(iconButton, lead && "text-foreground")}
+						aria-label={title}
+					>
+						<ArrowUpDown className="size-4" />
+					</button>
+				</Tip>
 			</PopoverTrigger>
 			<PopoverContent className="w-72">
 				<div className="flex items-center justify-between px-2 py-1">
@@ -341,21 +347,24 @@ export function SortMenu<K extends string>({
 									const Arrow = desc ? ArrowDown : ArrowUp;
 									const on = term?.desc === desc;
 									return (
-										<button
+										<Tip
 											key={String(desc)}
-											type="button"
-											title={`${c.label}, ${desc ? c.desc : c.asc}`}
-											aria-label={`${c.label}, ${desc ? c.desc : c.asc}`}
-											aria-pressed={on}
-											onClick={() => pick({ key, desc })}
-											className={cn(
-												"inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface",
-												on &&
-													"bg-primary text-primary-foreground hover:bg-primary",
-											)}
+											content={`${c.label}, ${desc ? c.desc : c.asc}`}
 										>
-											<Arrow className="size-4" />
-										</button>
+											<button
+												type="button"
+												aria-label={`${c.label}, ${desc ? c.desc : c.asc}`}
+												aria-pressed={on}
+												onClick={() => pick({ key, desc })}
+												className={cn(
+													"inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface",
+													on &&
+														"bg-primary text-primary-foreground hover:bg-primary",
+												)}
+											>
+												<Arrow className="size-4" />
+											</button>
+										</Tip>
 									);
 								})}
 							</li>

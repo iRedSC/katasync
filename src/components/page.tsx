@@ -14,6 +14,7 @@ import {
 	type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { Tip } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
 
 // Building blocks: Page, Card, Banner, Badge.
@@ -263,21 +264,22 @@ export function AbcBadge({
 }) {
 	if (abc === null) {
 		return (
-			<span className="text-muted-foreground" title={title}>
-				—
-			</span>
+			<Tip content={title}>
+				<span className="text-muted-foreground">—</span>
+			</Tip>
 		);
 	}
 	return (
-		<span
-			title={title}
-			className={cn(
-				"inline-flex h-5 w-6 shrink-0 items-center justify-center rounded-md text-xs font-semibold",
-				abcColors[abc],
-			)}
-		>
-			{abc}
-		</span>
+		<Tip content={title}>
+			<span
+				className={cn(
+					"inline-flex h-5 w-6 shrink-0 items-center justify-center rounded-md text-xs font-semibold",
+					abcColors[abc],
+				)}
+			>
+				{abc}
+			</span>
+		</Tip>
 	);
 }
 

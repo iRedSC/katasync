@@ -1,3 +1,4 @@
+import { Tip } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
 import type { SetCoverage } from "#/purchasing/sets";
 
@@ -39,48 +40,49 @@ export function SetGauge({ coverage: c }: { coverage: SetCoverage }) {
 	let offset = 0;
 	const text = `${c.here}/${total}`;
 	return (
-		<span
-			className="relative inline-flex shrink-0 items-center justify-center"
-			style={{ width: SIZE, height: SIZE }}
-			title={coverageText(c)}
-		>
-			<svg
-				width={SIZE}
-				height={SIZE}
-				className="absolute inset-0 -rotate-90"
-				aria-hidden="true"
-			>
-				{SEGMENTS.map(({ kind, color }) => {
-					const length = c[kind] * slice;
-					const start = offset;
-					offset += length;
-					if (length === 0) return null;
-					// Each part is its own slice, with a gap after it.
-					return Array.from({ length: c[kind] }, (_, i) => (
-						<circle
-							// biome-ignore lint/suspicious/noArrayIndexKey: slices never reorder
-							key={`${kind}${i}`}
-							cx={SIZE / 2}
-							cy={SIZE / 2}
-							r={RADIUS}
-							fill="none"
-							stroke={color}
-							strokeWidth={STROKE}
-							strokeDasharray={`${total === 1 ? slice : slice - GAP} ${CIRCUMFERENCE}`}
-							strokeDashoffset={-(start + i * slice)}
-						/>
-					));
-				})}
-			</svg>
+		<Tip content={coverageText(c)}>
 			<span
-				className={cn(
-					"relative leading-none font-semibold tracking-tight tabular-nums",
-					c.short > 0 && "text-critical-text",
-				)}
-				style={{ fontSize: text.length <= 3 ? 10.5 : 8.5 }}
+				className="relative inline-flex shrink-0 items-center justify-center"
+				style={{ width: SIZE, height: SIZE }}
 			>
-				{text}
+				<svg
+					width={SIZE}
+					height={SIZE}
+					className="absolute inset-0 -rotate-90"
+					aria-hidden="true"
+				>
+					{SEGMENTS.map(({ kind, color }) => {
+						const length = c[kind] * slice;
+						const start = offset;
+						offset += length;
+						if (length === 0) return null;
+						// Each part is its own slice, with a gap after it.
+						return Array.from({ length: c[kind] }, (_, i) => (
+							<circle
+								// biome-ignore lint/suspicious/noArrayIndexKey: slices never reorder
+								key={`${kind}${i}`}
+								cx={SIZE / 2}
+								cy={SIZE / 2}
+								r={RADIUS}
+								fill="none"
+								stroke={color}
+								strokeWidth={STROKE}
+								strokeDasharray={`${total === 1 ? slice : slice - GAP} ${CIRCUMFERENCE}`}
+								strokeDashoffset={-(start + i * slice)}
+							/>
+						));
+					})}
+				</svg>
+				<span
+					className={cn(
+						"relative leading-none font-semibold tracking-tight tabular-nums",
+						c.short > 0 && "text-critical-text",
+					)}
+					style={{ fontSize: text.length <= 3 ? 10.5 : 8.5 }}
+				>
+					{text}
+				</span>
 			</span>
-		</span>
+		</Tip>
 	);
 }

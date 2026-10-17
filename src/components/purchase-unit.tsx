@@ -2,6 +2,7 @@ import { Popover } from "radix-ui";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney, supplierUnit } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
@@ -245,14 +246,15 @@ function TermsForm({
 				</div>
 				<label className="flex flex-col gap-1">
 					<span className="text-xs text-muted-foreground">Of</span>
-					<input
-						value={unit === EACH ? "1" : count}
-						disabled={unit === EACH}
-						inputMode="numeric"
-						title="The supplier's count, printed on the PO"
-						onChange={(e) => setCount(e.target.value)}
-						className={cn(input, "text-right tabular-nums")}
-					/>
+					<Tip content="The supplier's count, printed on the PO">
+						<input
+							value={unit === EACH ? "1" : count}
+							disabled={unit === EACH}
+							inputMode="numeric"
+							onChange={(e) => setCount(e.target.value)}
+							className={cn(input, "text-right tabular-nums")}
+						/>
+					</Tip>
 				</label>
 			</div>
 			{unit !== EACH && (
@@ -330,18 +332,22 @@ function TermsForm({
 					<span className="ml-auto text-xs text-muted-foreground">Default</span>
 				) : (
 					(saving.saveDefault || saving.noDefaultReason) && (
-						<button
-							type="button"
-							disabled={busy || adding || !saving.saveDefault}
-							title={saving.noDefaultReason ?? "Use on future POs"}
-							onClick={() =>
-								saving.saveDefault &&
-								submit(saving.saveDefault, saving.patchDefault)
-							}
-							className="ml-auto text-xs text-link hover:underline disabled:text-muted-foreground disabled:no-underline"
-						>
-							Set default
-						</button>
+						// ml-auto on the wrapper: a disabled button's tip wraps it in a span.
+						<span className="ml-auto">
+							<Tip content={saving.noDefaultReason ?? "Use on future POs"}>
+								<button
+									type="button"
+									disabled={busy || adding || !saving.saveDefault}
+									onClick={() =>
+										saving.saveDefault &&
+										submit(saving.saveDefault, saving.patchDefault)
+									}
+									className="text-xs text-link hover:underline disabled:text-muted-foreground disabled:no-underline"
+								>
+									Set default
+								</button>
+							</Tip>
+						</span>
 					)
 				)}
 			</div>

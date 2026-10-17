@@ -8,6 +8,7 @@ import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { MinStockForm } from "#/components/stock-range-form";
 import { TokensCard, tokensData } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import { channelNames } from "#/lib/format";
 import { optimism, optimistic } from "#/lib/optimism";
 import { listDevices, listTokens } from "#/server/auth";
@@ -420,14 +421,11 @@ function PrimaryToggle({ store }: { store: Store }) {
 
 	return store.primary ? (
 		// Same box as the Make primary button, so both line up.
-		<Button
-			size="sm"
-			variant="ghost"
-			onClick={() => set(null)}
-			title="Unset primary"
-		>
-			<Badge tone="info">Primary</Badge>
-		</Button>
+		<Tip content="Unset primary">
+			<Button size="sm" variant="ghost" onClick={() => set(null)}>
+				<Badge tone="info">Primary</Badge>
+			</Button>
+		</Tip>
 	) : (
 		<Button size="sm" variant="ghost" onClick={() => set(store.id)}>
 			Make primary
@@ -542,19 +540,22 @@ function Units({ units }: { units: Unit[] }) {
 										>
 											Rename
 										</Button>
-										<Button
-											size="sm"
-											variant="ghost"
-											disabled={u.products > 0}
-											title={
+										<Tip
+											content={
 												u.products > 0
 													? `Used by ${u.products} ${u.products === 1 ? "product" : "products"}`
 													: undefined
 											}
-											onClick={() => remove(u)}
 										>
-											Remove
-										</Button>
+											<Button
+												size="sm"
+												variant="ghost"
+												disabled={u.products > 0}
+												onClick={() => remove(u)}
+											>
+												Remove
+											</Button>
+										</Tip>
 									</>
 								)}
 							</li>
