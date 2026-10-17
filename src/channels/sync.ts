@@ -18,12 +18,15 @@ import { ingestTiktokOrder, syncTiktok } from "./tiktok";
 
 const passes: Record<
 	SyncedChannel,
-	(db: Db, listings: boolean) => ReturnType<typeof syncEbay>
+	(
+		db: Db,
+		listings: boolean,
+	) => Promise<{ store: string; orders: number; problems: string[] }>
 > = {
 	shopify: (db, listings) => syncShopify(db, { listings }),
-	ebay: (db) => syncEbay(db),
+	ebay: (db, listings) => syncEbay(db, { listings }),
 	tiktok: (db, listings) => syncTiktok(db, { listings }),
-	amazon: (db) => syncAmazon(db),
+	amazon: (db, listings) => syncAmazon(db, { listings }),
 };
 
 export const isSyncedChannel = (name: string): name is SyncedChannel =>

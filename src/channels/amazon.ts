@@ -1,73 +1,17 @@
 import { type } from "arktype";
 import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
+import { applyListingsToOrders } from "#/orders/remap";
+import { MARKETPLACE_US, spApi } from "./amazon-api";
+import {
+	amazonListings,
+	fbaQuantities,
+	mirrorFbaStock,
+} from "./amazon-listings";
+import { matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
-// Amazon US through the Selling Partner API (Orders v0).
-const ENDPOINT = "https://sellingpartnerapi-na.amazon.com";
-const MARKETPLACE_US = "ATVPDKIKX0DER";
-
-let cachedToken: { value: string; expiresAt: number } | undefined;
-
-// Trades the long-lived refresh token for a 1-hour access token. Amazon's
-// refresh token doesn't change when used, so sharing it is safe.
-export async function accessToken() {
-	if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
-		return cachedToken.value;
-	}
-	const { AMAZON_CLIENT_ID, AMAZON_CLIENT_SECRET, AMAZON_REFRESH_TOKEN } =
-		process.env;
-	if (!AMAZON_CLIENT_ID || !AMAZON_CLIENT_SECRET || !AMAZON_REFRESH_TOKEN) {
-		throw new Error(
-			"Set AMAZON_CLIENT_ID, AMAZON_CLIENT_SECRET, and AMAZON_REFRESH_TOKEN",
-		);
-	}
-	const response = await fetch("https://api.amazon.com/auth/o2/token", {
-		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded" },
-		body: new URLSearchParams({
-			grant_type: "refresh_token",
-			refresh_token: AMAZON_REFRESH_TOKEN,
-			client_id: AMAZON_CLIENT_ID,
-			client_secret: AMAZON_CLIENT_SECRET,
-		}),
-	});
-	if (!response.ok) {
-		throw new Error(
-			`Amazon login failed: ${response.status} ${await response.text()}`,
-		);
-	}
-	const body = type({ access_token: "string", expires_in: "number" }).assert(
-		await response.json(),
-	);
-	cachedToken = {
-		value: body.access_token,
-		expiresAt: Date.now() + body.expires_in * 1000,
-	};
-	return cachedToken.value;
-}
-
-// GETs an SP-API path, waiting and retrying when Amazon says to slow down.
-// Order lists allow about one call a minute once the burst is spent.
-export async function spApi(path: string): Promise<unknown> {
-	for (let attempt = 1; ; attempt++) {
-		const response = await fetch(`${ENDPOINT}${path}`, {
-			headers: { "x-amz-access-token": await accessToken() },
-		});
-		if (response.status === 429 && attempt < 8) {
-			const rate = Number(response.headers.get("x-amzn-ratelimit-limit"));
-			const wait = rate > 0 ? Math.max(2000, 1000 / rate) : 2000 * attempt;
-			await new Promise((resolve) => setTimeout(resolve, wait));
-			continue;
-		}
-		if (!response.ok) {
-			throw new Error(
-				`Amazon answered ${response.status}: ${await response.text()}`,
-			);
-		}
-		return response.json();
-	}
-}
+// Amazon US orders through the Selling Partner API (Orders v0).
 
 const money = type({ Amount: "string.numeric.parse" });
 
@@ -216,15 +160,42 @@ export function planAmazonWindows(
 	return windows;
 }
 
-export async function syncAmazon(db: Db) {
+export async function syncAmazon(db: Db, options: { listings: boolean }) {
 	const store = await ensureStore(db, "amazon", "Amazon US");
 	const locationId = await shippingLocation(db);
+	const problems: string[] = [];
+
+	// Listings first, so order lines can resolve to products; then FBA stock,
+	// which goes by the FBA listings' products.
+	let listings = 0;
+	if (options.listings) {
+		const listed = await amazonListings();
+		if (listed) {
+			listings = listed.length;
+			const { unmapped } = await syncListings(db, store.id, listed);
+			if (unmapped.length > 0)
+				problems.push(
+					`${unmapped.length} FBA listings were unmatched from tool sets; Amazon needs real units`,
+				);
+			const matched = await matchListings(db);
+			problems.push(...matched.skipped);
+			// Orders that sold a newly matched listing pick up the product now.
+			const caughtUp = await applyListingsToOrders(
+				db,
+				matched.mapped,
+				locationId,
+			);
+			problems.push(...caughtUp.problems);
+		}
+		const fba = await mirrorFbaStock(db, store.id, await fbaQuantities());
+		problems.push(...fba.problems);
+	}
+
 	// Amazon refuses ranges that end less than two minutes ago.
 	const latest = Date.now() - 3 * 60 * 1000;
 	const cursor =
 		store.ordersSyncedThrough?.getTime() ?? Date.now() - FIRST_SYNC_DAYS * DAY;
 	let count = 0;
-	const problems: string[] = [];
 
 	for (const window of planAmazonWindows(cursor, latest)) {
 		let nextToken: string | undefined;
@@ -254,7 +225,7 @@ export async function syncAmazon(db: Db) {
 			await advanceOrderCursor(db, store.id, new Date(window.until));
 		}
 	}
-	return { store: store.name, orders: count, problems };
+	return { store: store.name, listings, orders: count, problems };
 }
 
 async function orderItems(orderId: string) {

@@ -291,7 +291,7 @@ function ProductPage() {
 												{s.location}
 												{s.kind === "fba" && (
 													<span className="ml-2">
-														<Badge>Amazon FBA</Badge>
+														<Badge>Amazon's, not ours to ship</Badge>
 													</span>
 												)}
 											</td>
@@ -499,7 +499,10 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 				),
 		};
 	}
-	const onHand = d.stock.reduce((sum, s) => sum + s.onHand, 0);
+	// Amazon's FBA stock can't cover our shelf.
+	const onHand = d.stock
+		.filter((s) => s.kind === "owned")
+		.reduce((sum, s) => sum + s.onHand, 0);
 	if (onHand < 0) {
 		return {
 			tone: "critical",

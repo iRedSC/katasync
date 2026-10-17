@@ -1,9 +1,14 @@
 import { type } from "arktype";
+import { XMLParser } from "fast-xml-parser";
 import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
+import { applyListingsToOrders } from "#/orders/remap";
+import { type ChannelListing, matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
-// eBay US through the Sell Fulfillment API.
+// eBay US through the Sell Fulfillment API, and its listings through the
+// Trading API, which (unlike the Inventory API) sees listings made in Seller
+// Hub.
 export const API = "https://api.ebay.com";
 // Must be scopes the user granted; eBay rejects a refresh that asks for
 // more. The token is shared with profit-margarine, which was granted these
@@ -164,11 +169,134 @@ export function ebayToChannelOrder(
 	};
 }
 
+// One page of GetMyeBaySelling's active listings, as much as we keep.
+const activePage = type({
+	GetMyeBaySellingResponse: {
+		Ack: "string",
+		"Errors?": type({ LongMessage: "string" }).array(),
+		"ActiveList?": {
+			"ItemArray?": {
+				Item: type({
+					ItemID: "string",
+					Title: "string",
+					"SKU?": "string",
+					"Variations?": {
+						Variation: type({
+							"SKU?": "string",
+							"VariationTitle?": "string",
+						}).array(),
+					},
+				}).array(),
+			},
+			PaginationResult: { TotalNumberOfPages: "string.integer.parse" },
+		},
+	},
+});
+
+const xml = new XMLParser({
+	isArray: (name) => ["Item", "Variation", "Errors"].includes(name),
+	// SKUs like "0012" and item IDs must stay text.
+	parseTagValue: false,
+});
+
+// A page of active listings as listings, keyed the way order lines name them:
+// each variation by its SKU, a listing without variations by its SKU, or by
+// item ID when it has none. A listing with variations only sells those.
+export function ebayListingsPage(body: string): {
+	listings: ChannelListing[];
+	pages: number;
+} {
+	const response = activePage.assert(xml.parse(body)).GetMyeBaySellingResponse;
+	if (response.Ack === "Failure")
+		throw new Error(
+			`eBay refused the listings: ${response.Errors?.map((e) => e.LongMessage).join("; ")}`,
+		);
+	const listings = new Map<string, ChannelListing>();
+	for (const item of response.ActiveList?.ItemArray?.Item ?? []) {
+		const sold = item.Variations
+			? item.Variations.Variation.map((v) => ({
+					sku: v.SKU?.trim() || null,
+					title: v.VariationTitle ?? item.Title,
+				}))
+			: [{ sku: item.SKU?.trim() || null, title: item.Title }];
+		for (const { sku, title } of sold) {
+			const externalId = sku ?? item.ItemID;
+			// Variations without SKUs all sell under the item ID.
+			if (listings.has(externalId)) continue;
+			listings.set(externalId, {
+				externalId,
+				externalSku: sku,
+				title: title.trim(),
+				fulfillment: "merchant",
+			});
+		}
+	}
+	return {
+		listings: [...listings.values()],
+		pages: response.ActiveList?.PaginationResult.TotalNumberOfPages ?? 0,
+	};
+}
+
+async function activeListings(): Promise<ChannelListing[]> {
+	const all: ChannelListing[] = [];
+	for (let page = 1, pages = 1; page <= pages; page++) {
+		const response = await fetch(`${API}/ws/api.dll`, {
+			method: "POST",
+			headers: {
+				"X-EBAY-API-CALL-NAME": "GetMyeBaySelling",
+				"X-EBAY-API-SITEID": "0",
+				"X-EBAY-API-COMPATIBILITY-LEVEL": "1349",
+				"X-EBAY-API-IAF-TOKEN": await accessToken(),
+				"Content-Type": "text/xml",
+			},
+			body: `<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+	<ActiveList>
+		<Include>true</Include>
+		<Pagination><EntriesPerPage>200</EntriesPerPage><PageNumber>${page}</PageNumber></Pagination>
+	</ActiveList>
+	<OutputSelector>ActiveList.ItemArray.Item.ItemID</OutputSelector>
+	<OutputSelector>ActiveList.ItemArray.Item.Title</OutputSelector>
+	<OutputSelector>ActiveList.ItemArray.Item.SKU</OutputSelector>
+	<OutputSelector>ActiveList.ItemArray.Item.Variations</OutputSelector>
+	<OutputSelector>ActiveList.PaginationResult</OutputSelector>
+</GetMyeBaySellingRequest>`,
+		});
+		if (!response.ok)
+			throw new Error(
+				`eBay answered ${response.status}: ${await response.text()}`,
+			);
+		const result = ebayListingsPage(await response.text());
+		all.push(...result.listings);
+		pages = result.pages;
+	}
+	return all;
+}
+
 const FIRST_SYNC_DAYS = 60;
 
-export async function syncEbay(db: Db) {
+export async function syncEbay(db: Db, options: { listings: boolean }) {
 	const store = await ensureStore(db, "ebay", "eBay US");
 	const locationId = await shippingLocation(db);
+
+	// Listings first, so order lines can resolve to products.
+	const problems: string[] = [];
+	let listings = 0;
+	if (options.listings) {
+		const active = await activeListings();
+		listings = active.length;
+		await syncListings(db, store.id, active);
+		const matched = await matchListings(db);
+		problems.push(...matched.skipped);
+		// Orders that sold a newly matched listing pick up the product now.
+		const caughtUp = await applyListingsToOrders(
+			db,
+			matched.mapped,
+			locationId,
+		);
+		problems.push(...caughtUp.problems);
+	}
+
 	const since =
 		store.ordersSyncedThrough ??
 		new Date(Date.now() - FIRST_SYNC_DAYS * 24 * 60 * 60 * 1000);
@@ -176,7 +304,6 @@ export async function syncEbay(db: Db) {
 	let url: string | undefined =
 		`${API}/sell/fulfillment/v1/order?limit=200&filter=${encodeURIComponent(`lastmodifieddate:[${since.toISOString()}..]`)}`;
 	let count = 0;
-	const problems: string[] = [];
 
 	while (url) {
 		const response = await fetch(url, {
@@ -202,7 +329,7 @@ export async function syncEbay(db: Db) {
 	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
-	return { store: store.name, orders: count, problems };
+	return { store: store.name, listings, orders: count, problems };
 }
 
 // eBay's carrier codes for the carriers Shippo sells; anything else is sent
