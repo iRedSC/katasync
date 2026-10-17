@@ -31,6 +31,8 @@ import {
 } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
 import {
+	addLine,
+	amendLine,
 	deleteDraft,
 	draftFromSuggestions,
 	markSent,
@@ -72,7 +74,7 @@ How things count:
 - Sales: use the sales_units view (product_id, order_id, store_id, placed_at, units). Tool sets count as their parts; cancelled and FBA orders are left out. Join stores for the channel.
 - Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
 - Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.
-- POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here emails a PO: the user reviews and sends drafts in the app. When the supplier already has a draft (they invoiced or shipped it), mark_po_sent records that without contacting anyone; ask the user first. Sent POs can be received here.
+- POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here emails a PO: the user reviews and sends drafts in the app. When the supplier already has a draft (they invoiced or shipped it), mark_po_sent records that without contacting anyone; ask the user first. Sent POs can be received here. When a supplier ships or bills something other than what was sent and we're keeping it, add_to_sent_po and adjust_sent_po_line change the PO to match, telling no one.
 - Supplier invoices: match_invoice checks one against its PO (quantities, prices, missing and extra lines, totals) and changes nothing. Give every line, with their item number as supplier_sku when it has one. Then record_supplier_invoice keeps its number, date, due date, and total on the PO; the same number from the same supplier can't be recorded twice.
 - Cycle counts only happen when asked for: request_counts puts shelves on the staff's count list, and a count clears them. Ask when stock looks wrong, e.g. oversold or not matching what a channel reports.
 - Count accuracy: use the count_history view (one row per shelf count: product_id, sku, location_id, counted_at, expected, counted, drift = counted minus expected, undone). Matched counts are there too (drift 0), so look for products that drift again and again, not one bad count. Leave out undone rows: those were mistakes. History before this log only has the counts that changed stock.
@@ -595,7 +597,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 		"mark_po_sent",
 		{
 			description:
-				"Records that a draft PO already reached the supplier some other way (their invoice or shipment shows they have it), so it can be received. Contacts no one and prints nothing. Freezes the lines as sent; later changes show as amendments. Ask the user before using it.",
+				"Records that a draft PO already reached the supplier some other way (their invoice or shipment shows they have it), so it can be received. Contacts no one and prints nothing. Freezes the lines as sent; later changes (add_to_sent_po, adjust_sent_po_line) show against it. Ask the user before using it.",
 			inputSchema: {
 				po: z.number().int().positive(),
 				sent_on: z
@@ -612,6 +614,87 @@ function registerWriteTools(server: McpServer, db: Db) {
 			const now = sent_on ? await sentDay(db, po, sent_on) : undefined;
 			await markSent(db, { purchaseOrderId: po, sentTo: null, now });
 			return json(await orderForClaude(db, po));
+		},
+	);
+
+	server.registerTool(
+		"add_to_sent_po",
+		{
+			description:
+				"Puts a product on a PO already sent, e.g. the supplier shipped or invoiced something extra we're keeping. Tells no one; the PO as sent stays as it was, and the line shows as amended. Quantity is in the product's purchase unit. Reopens a closed PO. A product already on the PO is refused: use adjust_sent_po_line. Drafts take set_draft_po_lines.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				sku: z.string(),
+				quantity: z.number().int().positive(),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sku, quantity }) => {
+			const product = await productBySku(db, sku);
+			const { added, line } = await addLine(
+				db,
+				{ purchaseOrderId: po, productId: product.id, quantity },
+				["sent", "closed"],
+			);
+			if (!added)
+				throw new PurchaseOrderError(
+					`${product.sku} is already on PO ${po} (${line.quantity} ${line.unit}); use adjust_sent_po_line`,
+				);
+			return json(await orderForClaude(db, po));
+		},
+	);
+
+	server.registerTool(
+		"adjust_sent_po_line",
+		{
+			description:
+				"Changes the quantity or price of a line on a PO already sent, e.g. to agree with the supplier's invoice. Tells no one; the PO as sent stays as it was. Per the line's unit. A quantity can't go below what has arrived; 0 means no more are coming, and takes a line added after sending off if none arrived. Closes the PO when that leaves nothing to wait for, and reopens a closed one when it does. Returns what the line was, so it can be set back.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				sku: z.string(),
+				quantity: z.number().int().min(0).optional(),
+				unit_cost: z
+					.number()
+					.min(0)
+					.nullable()
+					.optional()
+					.describe("Per the line's unit; null clears it"),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sku, quantity, unit_cost }) => {
+			if (quantity === undefined && unit_cost === undefined)
+				throw new PurchaseOrderError("Give a quantity, a unit_cost, or both");
+			const product = await productBySku(db, sku);
+			const [line] = await db
+				.select({ id: purchaseOrderLines.id })
+				.from(purchaseOrderLines)
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, po),
+						eq(purchaseOrderLines.productId, product.id),
+					),
+				);
+			if (!line)
+				throw new PurchaseOrderError(
+					`${product.sku} isn't on PO ${po}; add_to_sent_po puts it on`,
+				);
+			const result = await amendLine(db, {
+				lineId: line.id,
+				quantity,
+				unitCost: unit_cost,
+			});
+			return json({
+				was: result.was,
+				...(result.removed ? { removed: product.sku } : {}),
+				...(result.receivedAtOldCost
+					? {
+							warning:
+								"Some already arrived at the old price; that stock keeps its cost",
+						}
+					: {}),
+				po: await orderForClaude(db, po),
+			});
 		},
 	);
 
