@@ -1,4 +1,4 @@
-// Pulls orders (and Shopify listings) from every connected channel.
+// Pulls orders and listings from every connected channel.
 //
 //   pnpm sync                one pass of every channel
 //   pnpm sync --watch        keep going, each channel on its own schedule
@@ -35,10 +35,11 @@ const MINUTE = 60 * 1000;
 // schedules. Listings change rarely, so they refresh every 30 minutes.
 const channels = [
 	{ name: "shopify", every: 2 * MINUTE, listingsEvery: 30 * MINUTE },
-	{ name: "ebay", every: 2 * MINUTE },
+	{ name: "ebay", every: 2 * MINUTE, listingsEvery: 30 * MINUTE },
 	{ name: "tiktok", every: 2 * MINUTE, listingsEvery: 30 * MINUTE },
-	// Amazon allows about one order-list call a minute.
-	{ name: "amazon", every: 5 * MINUTE },
+	// Amazon allows about one order-list call a minute. Its listings pass
+	// also mirrors FBA stock.
+	{ name: "amazon", every: 5 * MINUTE, listingsEvery: 30 * MINUTE },
 ] as const;
 const listingsAt = new Map<string, number>();
 const selected = channels.filter((c) => !values.only || c.name === values.only);

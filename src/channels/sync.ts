@@ -2,25 +2,31 @@ import { sql } from "drizzle-orm";
 import { type Db, withOwnConnection } from "#/db/client";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { recordSyncRun } from "#/diagnostics/runs";
+import { applySkusToOrders } from "#/orders/remap";
 import { assignOrderPins } from "#/shipping/pins";
 import { syncAmazon } from "./amazon";
 import { syncEbay } from "./ebay";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
+import { shippingLocation } from "./stores";
 import { ingestTiktokOrder, syncTiktok } from "./tiktok";
 
 // One sync pass of a channel: pull its orders (and, with `listings`, its
-// listings), record the run for Diagnostics, then pin any new orders to ship.
+// listings), catch up its lines that now have a product, record the run for
+// Diagnostics, then pin any new orders to ship.
 // Shared by `pnpm sync` (scripts/sync.ts) and the Vercel crons
 // (src/routes/api/cron/sync.$channel.ts). Server only.
 
 const passes: Record<
 	SyncedChannel,
-	(db: Db, listings: boolean) => ReturnType<typeof syncEbay>
+	(
+		db: Db,
+		listings: boolean,
+	) => Promise<{ store: string; orders: number; problems: string[] }>
 > = {
 	shopify: (db, listings) => syncShopify(db, { listings }),
-	ebay: (db) => syncEbay(db),
+	ebay: (db, listings) => syncEbay(db, { listings }),
 	tiktok: (db, listings) => syncTiktok(db, { listings }),
-	amazon: (db) => syncAmazon(db),
+	amazon: (db, listings) => syncAmazon(db, { listings }),
 };
 
 export const isSyncedChannel = (name: string): name is SyncedChannel =>
@@ -31,9 +37,15 @@ export async function syncPass(
 	channel: SyncedChannel,
 	options: { listings: boolean },
 ) {
-	const result = await recordSyncRun(db, channel, () =>
-		passes[channel](db, options.listings),
-	);
+	const result = await recordSyncRun(db, channel, async () => {
+		const pass = await passes[channel](db, options.listings);
+		const caughtUp = await applySkusToOrders(
+			db,
+			{ channel },
+			await shippingLocation(db),
+		);
+		return { ...pass, problems: [...pass.problems, ...caughtUp.problems] };
+	});
 	const pinned = await assignOrderPins(db);
 	return { ...result, pinned };
 }

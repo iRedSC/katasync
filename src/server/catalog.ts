@@ -36,6 +36,7 @@ import {
 } from "#/inventory/stock-range";
 import {
 	applyListingsToOrders,
+	linkSku as linkSkuToProduct,
 	matchListing as matchListingToSku,
 	productFromListing,
 } from "#/orders/remap";
@@ -631,6 +632,11 @@ export const matchListing = createServerFn({ method: "POST" })
 	.handler(async ({ data }) =>
 		matchListingToSku(getDb(), data.listingId, data.sku),
 	);
+
+// Links a SKU a channel sold under to a product, then catches up past orders.
+export const linkSku = createServerFn({ method: "POST" })
+	.validator(type({ alias: "string > 0", sku: "string > 0" }))
+	.handler(async ({ data }) => linkSkuToProduct(getDb(), data.alias, data.sku));
 
 // Creates the product a listing is selling, filled in from the listing.
 export const createListingProduct = createServerFn({ method: "POST" })

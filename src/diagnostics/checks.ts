@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { accessToken as amazonAccessToken, spApi } from "#/channels/amazon";
+import { accessToken as amazonAccessToken, spApi } from "#/channels/amazon-api";
 import {
 	API as EBAY_API,
 	accessToken as ebayAccessToken,
