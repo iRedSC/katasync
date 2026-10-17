@@ -128,3 +128,27 @@ export function orderedItems(
 			items.set(productId, Math.ceil(p.items / p.packSize) * p.packSize);
 	return items;
 }
+
+// A product's place in tool sets: how many it's a part of, and how many of
+// those its shelf can't build one of.
+export type SetMembership = { in: number; blocked: number };
+
+// For each product in a tool set, from the sets' recipes and what's on the
+// shelf: its membership, and the floor that keeps every set buildable (the
+// most of it any one set takes). Oversold counts as none.
+export function setMembership(
+	recipes: { productId: number; perSet: number }[],
+	onHand: ReadonlyMap<number, number>,
+): Map<number, SetMembership & { floor: number }> {
+	const result = new Map<number, SetMembership & { floor: number }>();
+	for (const r of recipes) {
+		const prev = result.get(r.productId) ?? { in: 0, blocked: 0, floor: 0 };
+		const shelf = Math.max(onHand.get(r.productId) ?? 0, 0);
+		result.set(r.productId, {
+			in: prev.in + 1,
+			blocked: prev.blocked + (shelf < r.perSet ? 1 : 0),
+			floor: Math.max(prev.floor, r.perSet),
+		});
+	}
+	return result;
+}

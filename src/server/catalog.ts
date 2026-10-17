@@ -350,6 +350,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 					sku: products.sku,
 					name: products.name,
 					quantity: productComponents.quantity,
+					kind: products.kind,
 				})
 				.from(productComponents)
 				.innerJoin(products, eq(products.id, productComponents.parentProductId))

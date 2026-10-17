@@ -340,6 +340,8 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 	const minSetsPoint =
 		why.aim.kind === "min" || why.orderBelow > restockPoint(why);
 	const have = afterArrival(why.onHand, why.onOrder);
+	const minLabel =
+		why.minFrom === "sets" ? "Enough to build each tool set" : "Min stock";
 
 	if (v.kind === "idle" && why.minStock === 0) return null;
 
@@ -373,7 +375,7 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 				<Row
 					key="min"
 					color={COLORS.min}
-					label="Min stock"
+					label={minLabel}
 					note={`Sales alone: ${formatCount(why.aim.forecast)}`}
 					value={formatCount(why.aim.total)}
 				/>,
@@ -428,7 +430,7 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 				<Row
 					key="min"
 					color={COLORS.min}
-					label="Min stock"
+					label={minLabel}
 					note={
 						why.aim.kind === "forecast"
 							? `Sales alone: ${formatCount(restockPoint(why))}`

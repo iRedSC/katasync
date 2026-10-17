@@ -11,7 +11,12 @@ import {
 	type Tone,
 	useBack,
 } from "#/components/page";
-import { MovementTable, ProductImage, ProductName } from "#/components/product";
+import {
+	MovementTable,
+	ProductImage,
+	ProductName,
+	SetsChip,
+} from "#/components/product";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
@@ -23,6 +28,7 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { setMembership } from "#/purchasing/sets";
 import {
 	getDefaultRange,
 	getProductDetail,
@@ -157,7 +163,22 @@ function ProductPage() {
 								{p.variantName && (
 									<p className="text-muted-foreground">{p.variantName}</p>
 								)}
-								<p className="text-muted-foreground">{p.sku}</p>
+								<p className="flex items-center gap-2 text-muted-foreground">
+									{p.sku}
+									<SetsChip
+										sets={
+											setMembership(
+												d.usedIn
+													.filter((u) => u.kind === "bundle")
+													.map((u) => ({
+														productId: p.id,
+														perSet: u.quantity,
+													})),
+												new Map([[p.id, d.available]]),
+											).get(p.id) ?? null
+										}
+									/>
+								</p>
 								{d.abc && (
 									<p className="mt-1 flex items-center gap-2 text-muted-foreground">
 										<AbcBadge abc={d.abc.abc} />

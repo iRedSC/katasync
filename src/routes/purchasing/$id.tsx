@@ -30,7 +30,7 @@ import {
 	ProductPicker,
 	type PurchaseOrderMatch,
 } from "#/components/po-product-picker";
-import { ProductImage } from "#/components/product";
+import { ProductImage, SetsChip } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
 import { SetGauge } from "#/components/set-gauge";
 import { PurchaseOrderSkeleton } from "#/components/skeleton";
@@ -872,6 +872,7 @@ function Recommended({
 												</Link>
 												<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
 													{r.sku}
+													<SetsChip sets={r.why.sets} />
 													{r.critical && <Badge tone="info">Essential</Badge>}
 												</div>
 											</div>
@@ -1302,6 +1303,7 @@ function LineTable({
 																	</span>
 																)}
 															</span>
+															<SetsChip sets={l.why?.sets ?? null} />
 															{set && (
 																<AddSetButton
 																	line={l}
