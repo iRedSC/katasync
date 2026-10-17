@@ -1434,7 +1434,7 @@ function LineTable({
 												<WasSent
 													line={l}
 													shows={l.sentUnitCost !== l.unitCost}
-													text={`sent ${formatMoney(l.sentUnitCost)}`}
+													was={`Sent at ${formatMoney(l.sentUnitCost)}`}
 												/>
 											</td>
 											<td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">
@@ -1658,20 +1658,22 @@ async function receiveWithUndo(
 function WasSent({
 	line,
 	shows,
-	text,
+	was,
 }: {
 	line: Line;
 	shows: boolean;
-	text: string;
+	was: string;
 }) {
 	if (line.sentQuantity === null || !shows) return null;
+	const tip = `${was}. The PDF still shows this.`;
 	return (
-		<div
-			className="text-xs font-normal text-warning-text"
-			title="As sent. The PDF still shows this."
+		<span
+			className="ml-0.5 cursor-help align-top font-normal text-warning-text"
+			title={tip}
+			aria-label={tip}
 		>
-			{text}
-		</div>
+			*
+		</span>
 	);
 }
 
