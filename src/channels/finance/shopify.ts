@@ -53,15 +53,28 @@ const order = type({
 	transactions: type({
 		kind: "string",
 		status: "string",
+		amountSet: money,
 		fees: type({
 			type: "string",
 			amount: { amount: "string.numeric.parse" },
 		}).array(),
 	}).array(),
 	refunds: type({
-		refundLineItems: { nodes: type({ subtotalSet: money }).array() },
-		refundShippingLines: { nodes: type({ subtotalAmountSet: money }).array() },
+		refundLineItems: {
+			nodes: type({
+				quantity: "number",
+				subtotalSet: money,
+				totalTaxSet: money,
+				lineItem: { id: "string" },
+			}).array(),
+		},
+		refundShippingLines: {
+			nodes: type({ taxAmountSet: money }).array(),
+		},
 	}).array(),
+	lineItems: {
+		nodes: type({ id: "string", nonFulfillableQuantity: "number" }).array(),
+	},
 	events: {
 		nodes: type({ "action?": "string", "message?": "string" }).array(),
 	},
@@ -77,11 +90,21 @@ const ORDERS = `query($ids: [ID!]!) {
 	nodes(ids: $ids) {
 		... on Order {
 			id
-			transactions(first: 50) { kind status fees { type amount { amount } } }
-			refunds(first: 50) {
-				refundLineItems(first: 100) { nodes { subtotalSet { shopMoney { amount } } } }
-				refundShippingLines(first: 10) { nodes { subtotalAmountSet { shopMoney { amount } } } }
+			transactions(first: 50) {
+				kind status amountSet { shopMoney { amount } }
+				fees { type amount { amount } }
 			}
+			refunds(first: 50) {
+				refundLineItems(first: 100) {
+					nodes {
+						quantity lineItem { id }
+						subtotalSet { shopMoney { amount } }
+						totalTaxSet { shopMoney { amount } }
+					}
+				}
+				refundShippingLines(first: 10) { nodes { taxAmountSet { shopMoney { amount } } } }
+			}
+			lineItems(first: 250) { nodes { id nonFulfillableQuantity } }
 			events(first: 100, query: "action:shipping_label_created_success") {
 				nodes { ... on BasicEvent { action message } }
 			}
@@ -105,14 +128,48 @@ const shopifyql = type({
 	},
 });
 
-// Picked up, sold at the counter, or driven over ourselves: no label.
-const UNSHIPPED = new Set(["PICK_UP", "RETAIL", "NONE", "LOCAL"]);
+// Picked up, sold at the counter, or driven over ourselves: no label. Only
+// when Shopify says so; an order without a delivery method (one an app made)
+// might still have shipped.
+const UNSHIPPED = new Set(["PICK_UP", "RETAIL", "LOCAL"]);
 
 export function shippedWithoutLabel(o: ShopifyFinanceOrder) {
 	const methods = o.fulfillmentOrders.nodes.map(
-		(f) => f.deliveryMethod?.methodType ?? "NONE",
+		(f) => f.deliveryMethod?.methodType,
 	);
-	return methods.length > 0 && methods.every((m) => UNSHIPPED.has(m));
+	return methods.length > 0 && methods.every((m) => m && UNSHIPPED.has(m));
+}
+
+// What went back to the buyer that the order's revenue still counts: every
+// refund paid out (custom amounts and discrepancies included), less the tax
+// Shopify returns for us, less units refunded before they shipped. katasync
+// already took those off the order's quantity (shopifyLineQuantity), so
+// counting their refund too would take them off twice.
+export function refundedRevenue(o: ShopifyFinanceOrder) {
+	const paidBack = o.transactions
+		.filter((t) => t.kind === "REFUND" && t.status === "SUCCESS")
+		.reduce((sum, t) => sum + t.amountSet.shopMoney.amount, 0);
+	let tax = 0;
+	let unshipped = 0;
+	const removable = new Map(
+		o.lineItems.nodes.map((l) => [l.id, l.nonFulfillableQuantity]),
+	);
+	for (const r of o.refunds) {
+		for (const l of r.refundLineItems.nodes) {
+			tax += l.totalTaxSet.shopMoney.amount;
+			const left = removable.get(l.lineItem.id) ?? 0;
+			const neverShipped = Math.min(left, l.quantity);
+			removable.set(l.lineItem.id, left - neverShipped);
+			if (l.quantity > 0) {
+				unshipped +=
+					(l.subtotalSet.shopMoney.amount * neverShipped) / l.quantity;
+			}
+		}
+		for (const l of r.refundShippingLines.nodes) {
+			tax += l.taxAmountSet.shopMoney.amount;
+		}
+	}
+	return paidBack - tax - unshipped;
 }
 
 // "processing_fee" → "Processing fee".
@@ -124,7 +181,7 @@ function words(code: string) {
 export function shopifyCharges(
 	o: ShopifyFinanceOrder,
 	reportedLabels: number | undefined,
-): ReportedCharge[] {
+): { charges: ReportedCharge[]; labelsPending: boolean } {
 	const charges: ReportedCharge[] = [];
 	for (const t of o.transactions) {
 		if (t.status !== "SUCCESS") continue;
@@ -138,20 +195,9 @@ export function shopifyCharges(
 			});
 		}
 	}
-	for (const r of o.refunds) {
-		// What went back to the buyer, without the tax Shopify returns for us.
-		const refunded =
-			r.refundLineItems.nodes.reduce(
-				(s, l) => s + l.subtotalSet.shopMoney.amount,
-				0,
-			) +
-			r.refundShippingLines.nodes.reduce(
-				(s, l) => s + l.subtotalAmountSet.shopMoney.amount,
-				0,
-			);
-		if (refunded !== 0) {
-			charges.push({ kind: "refund", description: "Refund", amount: refunded });
-		}
+	const refunded = refundedRevenue(o);
+	if (Math.abs(refunded) >= 0.005) {
+		charges.push({ kind: "refund", description: "Refund", amount: refunded });
 	}
 	const labels = reportedLabels ?? labelsFromEvents(o.events.nodes);
 	if (labels !== 0) {
@@ -164,7 +210,12 @@ export function shopifyCharges(
 			amount: labels,
 		});
 	}
-	return charges;
+	// Labels from the timeline are only a stand-in: they miss voids and
+	// carrier adjustments.
+	return {
+		charges,
+		labelsPending: reportedLabels === undefined && labels !== 0,
+	};
 }
 
 export const fetchShopifyCharges: ChargeFetcher = async (due: DueOrder[]) => {
@@ -212,7 +263,7 @@ export const fetchShopifyCharges: ChargeFetcher = async (due: DueOrder[]) => {
 				report: {
 					settled: false,
 					noLabel: shippedWithoutLabel(parsed),
-					charges: shopifyCharges(
+					...shopifyCharges(
 						parsed,
 						labels.get(numericOrderId(o.marketplaceId)),
 					),

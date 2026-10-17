@@ -8,7 +8,8 @@
 -- the cost of goods when each line came in (a tool set's is its parts'),
 -- less units a customer returned to the shelf. Fees, labels, refunds and
 -- adjustments are what the marketplaces reported (order_charges), plus
--- labels bought in katasync (shipments).
+-- labels bought in katasync (shipments). Refunds count only from the
+-- marketplace it sold on.
 --
 -- Nothing unknown counts as $0. Each part says how sure it is:
 --   fees_status   final: reported, and settled or too old to change
@@ -16,8 +17,10 @@
 --                 estimated: not reported yet, so fees are a typical rate
 --                 of revenue for the marketplace
 --   labels_status known: a label's cost is on file
---                 stand_in: only katasync's estimate for a TikTok label,
---                 until TikTok bills it
+--                 stand_in: a figure standing in until the marketplace
+--                 bills it: katasync's estimate for a TikTok label, or the
+--                 labels in Shopify's timeline before its labels report
+--                 has the order (voids and adjustments missing)
 --                 not_needed: the marketplace shipped it (FBA), or it was
 --                 picked up or sold in person
 --                 not_shipped: no label yet because nothing has shipped
@@ -32,7 +35,13 @@
 -- A label in katasync shared by several orders (one box for two orders to
 -- the same address) is split by each order's revenue.
 CREATE VIEW "order_profit" AS
-WITH line_totals AS (
+WITH sold_on AS (
+	-- Where it was really sold: a relayed TikTok order is TikTok's.
+	SELECT o."id" AS "order_id",
+		coalesce(split_part(o."marketplace_order_id", ':', 1)::"channel", st."channel") AS "sold_on"
+	FROM "orders" o JOIN "stores" st ON st."id" = o."store_id"
+),
+line_totals AS (
 	SELECT
 		l."order_id",
 		sum(l."unit_price" * l."quantity") AS "revenue",
@@ -45,15 +54,19 @@ WITH line_totals AS (
 	) r ON r."order_line_id" = l."id"
 	GROUP BY l."order_id"
 ),
+-- Refunds count only from the marketplace the order really sold on: a
+-- relayed TikTok order's refund also shows up in Shopify, and is TikTok's.
 charges AS (
 	SELECT
-		"order_id",
-		sum("amount") FILTER (WHERE "kind" = 'fee') AS "fees",
-		sum("amount") FILTER (WHERE "kind" = 'label') AS "labels",
-		count(*) FILTER (WHERE "kind" = 'label') AS "label_lines",
-		sum("amount") FILTER (WHERE "kind" = 'refund') AS "refunds",
-		sum("amount") FILTER (WHERE "kind" = 'adjustment') AS "adjustments"
-	FROM "order_charges" GROUP BY "order_id"
+		ch."order_id",
+		sum(ch."amount") FILTER (WHERE ch."kind" = 'fee') AS "fees",
+		sum(ch."amount") FILTER (WHERE ch."kind" = 'label') AS "labels",
+		count(*) FILTER (WHERE ch."kind" = 'label') AS "label_lines",
+		sum(ch."amount") FILTER (WHERE ch."kind" = 'refund' AND ch."billed_by" = so."sold_on") AS "refunds",
+		sum(ch."amount") FILTER (WHERE ch."kind" = 'adjustment') AS "adjustments"
+	FROM "order_charges" ch
+	JOIN sold_on so ON so."order_id" = ch."order_id"
+	GROUP BY ch."order_id"
 ),
 -- Each live katasync label, with each of its dispatch's orders' share.
 label_shares AS (
@@ -67,6 +80,8 @@ label_shares AS (
 	FROM "shipments" s
 	JOIN "dispatches" dp ON dp."id" = s."dispatch_id" AND dp."bought_at" IS NOT NULL
 	JOIN "dispatch_orders" d ON d."dispatch_id" = s."dispatch_id"
+	-- A cancelled order sharing the box leaves its share to the others.
+	JOIN "orders" o ON o."id" = d."order_id" AND o."cancelled_at" IS NULL
 	LEFT JOIN line_totals lt ON lt."order_id" = d."order_id"
 	WHERE s."voided_at" IS NULL AND NOT s."test"
 ),
@@ -82,15 +97,15 @@ reports AS (
 		"order_id",
 		array_agg("billed_by") AS "billers",
 		array_agg("billed_by") FILTER (WHERE "settled") AS "settled_by",
-		bool_or("no_label") AS "no_label"
+		bool_or("no_label") AS "no_label",
+		bool_or("labels_pending") AS "labels_pending"
 	FROM "order_cost_reports" GROUP BY "order_id"
 ),
 base AS (
 	SELECT
 		o."id" AS "order_id",
 		o."store_id",
-		-- Where it was really sold: a relayed TikTok order is TikTok's.
-		coalesce(split_part(o."marketplace_order_id", ':', 1)::"channel", st."channel") AS "sold_on",
+		so."sold_on",
 		o."placed_at",
 		o."fulfillment_status",
 		o."fulfilled_by_channel",
@@ -107,9 +122,10 @@ base AS (
 		kl."tiktok",
 		r."billers",
 		r."settled_by",
-		coalesce(r."no_label", false) AS "no_label"
+		coalesce(r."no_label", false) AS "no_label",
+		coalesce(r."labels_pending", false) AS "labels_pending"
 	FROM "orders" o
-	JOIN "stores" st ON st."id" = o."store_id"
+	JOIN sold_on so ON so."order_id" = o."id"
 	LEFT JOIN line_totals lt ON lt."order_id" = o."id"
 	LEFT JOIN charges c ON c."order_id" = o."id"
 	LEFT JOIN katasync_labels kl ON kl."order_id" = o."id"
@@ -152,8 +168,8 @@ SELECT
 	round("reported_labels" + coalesce("bought", 0)
 		+ CASE WHEN "uses_stand_in" THEN "tiktok" ELSE 0 END, 2)::numeric(12, 2) AS "labels",
 	CASE
+		WHEN "labels_pending" OR ("uses_stand_in" AND "label_lines" = 0 AND "bought" IS NULL) THEN 'stand_in'
 		WHEN "label_lines" > 0 OR "bought" IS NOT NULL THEN 'known'
-		WHEN "uses_stand_in" THEN 'stand_in'
 		WHEN "fulfilled_by_channel" OR "no_label"
 			OR "fulfillment_status" = 'FULFILLMENT_NOT_REQUIRED' THEN 'not_needed'
 		WHEN "fulfillment_status" NOT IN ('FULFILLED', 'PARTIALLY_FULFILLED') THEN 'not_shipped'

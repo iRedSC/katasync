@@ -29,6 +29,9 @@ export type CostReport = {
 	// The marketplace says the order needs no label: picked up, or sold in
 	// person.
 	noLabel?: boolean;
+	// Its label figures are a stand-in until it catches up (Shopify's
+	// timeline, before its labels report has the order).
+	labelsPending?: boolean;
 	charges: ReportedCharge[];
 	// When the marketplace was asked; defaults to now.
 	fetchedAt?: Date;
@@ -85,6 +88,7 @@ export async function saveCostReport(
 				billedBy: report.billedBy,
 				settled: report.settled,
 				noLabel: report.noLabel ?? false,
+				labelsPending: report.labelsPending ?? false,
 				fetchedAt,
 			})
 			.onConflictDoUpdate({
@@ -92,6 +96,7 @@ export async function saveCostReport(
 				set: {
 					settled: report.settled,
 					noLabel: report.noLabel ?? false,
+					labelsPending: report.labelsPending ?? false,
 					fetchedAt,
 				},
 				setWhere: sql`${orderCostReports.fetchedAt} <= excluded.fetched_at

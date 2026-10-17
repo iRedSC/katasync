@@ -23,6 +23,7 @@ CREATE TABLE "order_cost_reports" (
 	"billed_by" "channel" NOT NULL,
 	"settled" boolean NOT NULL,
 	"no_label" boolean DEFAULT false NOT NULL,
+	"labels_pending" boolean DEFAULT false NOT NULL,
 	"fetched_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "order_cost_reports_order_id_billed_by_pk" PRIMARY KEY("order_id","billed_by")
 );

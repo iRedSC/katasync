@@ -97,7 +97,7 @@ if (values["costs-history"]) {
 			for (;;) {
 				const result = await costPassAlone(getDb(), channel.name, {
 					history: true,
-					limit: 100,
+					limit: 50,
 				});
 				if (!result) {
 					await new Promise((resolve) => setTimeout(resolve, 30_000));

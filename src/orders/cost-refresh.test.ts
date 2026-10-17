@@ -174,3 +174,28 @@ test("history asks once about orders too old for passes, never asked before", as
 	await refreshCosts(db, "shopify", fetch, { now, history: true });
 	expect(asked).toHaveLength(2);
 });
+
+test("history asks again about old orders whose last ask failed", async () => {
+	await order("#old", 90 * 24);
+	let fail = true;
+	const fetch = eachOrder(async () => {
+		if (fail) throw new Error("Amazon throttled");
+		return null;
+	});
+	await refreshCosts(db, "shopify", fetch, { now, history: true });
+	fail = false;
+	const soon = new Date(now.getTime() + 30 * 60 * 1000);
+	const later = new Date(now.getTime() + 2 * HOUR);
+	expect(
+		(await refreshCosts(db, "shopify", fetch, { now: soon, history: true }))
+			.checked,
+	).toBe(0);
+	expect(
+		(await refreshCosts(db, "shopify", fetch, { now: later, history: true }))
+			.checked,
+	).toBe(1);
+	expect(
+		(await refreshCosts(db, "shopify", fetch, { now: later, history: true }))
+			.checked,
+	).toBe(0);
+});

@@ -277,6 +277,70 @@ describe("order_profit", () => {
 		});
 	});
 
+	test("a relayed order's refund counts once, from where it sold", async () => {
+		const { id } = await order(
+			"#12",
+			[{ unitPrice: 30, quantity: 1, unitCost: 10 }],
+			{
+				marketplaceOrderId: "tiktok:579",
+			},
+		);
+		const refund = {
+			kind: "refund" as const,
+			description: "Refund",
+			amount: 30,
+		};
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "shopify",
+			settled: false,
+			charges: [refund],
+		});
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "tiktok",
+			settled: true,
+			charges: [refund],
+		});
+		expect((await profit(id)).refunds).toBe(30);
+	});
+
+	test("a cancelled order sharing a box leaves its share to the others", async () => {
+		const kept = await order("#13", [
+			{ unitPrice: 10, quantity: 1, unitCost: 4 },
+		]);
+		const gone = await order(
+			"#14",
+			[{ unitPrice: 30, quantity: 1, unitCost: 12 }],
+			{
+				cancelledAt: new Date(),
+			},
+		);
+		await addDispatch(db, {
+			orderIds: [kept.id, gone.id],
+			boxes: [{ cost: 8 }],
+		});
+		expect((await profit(kept.id)).labels).toBe(8);
+	});
+
+	test("Shopify's timeline labels stand in until its labels report has them", async () => {
+		const { id } = await order("#15", [
+			{ unitPrice: 10, quantity: 1, unitCost: 4 },
+		]);
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "shopify",
+			settled: false,
+			labelsPending: true,
+			charges: [{ kind: "label", description: "Labels", amount: 5.72 }],
+		});
+		expect(await profit(id)).toMatchObject({
+			labels: 5.72,
+			labelsStatus: "stand_in",
+			complete: false,
+		});
+	});
+
 	test("cancelled orders aren't in it", async () => {
 		const { id } = await order(
 			"#10",

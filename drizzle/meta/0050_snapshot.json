@@ -1,6 +1,6 @@
 {
-  "id": "73b4e12a-6b23-48b8-90ec-52028f5a2e46",
-  "prevId": "865acf7f-4ea7-4df4-82d4-88b1742851f6",
+  "id": "0ab0f32c-5eee-4a40-968b-4531df392f1f",
+  "prevId": "9d808a8e-262f-4447-b491-e9ea35da8f97",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1102,6 +1102,13 @@
         },
         "no_label": {
           "name": "no_label",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "labels_pending": {
+          "name": "labels_pending",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
@@ -4368,6 +4375,111 @@
         },
         "undone": {
           "name": "undone",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "materialized": false,
+      "isExisting": true
+    },
+    "public.order_profit": {
+      "name": "order_profit",
+      "schema": "public",
+      "columns": {
+        "orderId": {
+          "name": "orderId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storeId": {
+          "name": "storeId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "soldOn": {
+          "name": "soldOn",
+          "type": "channel",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "placedAt": {
+          "name": "placedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revenue": {
+          "name": "revenue",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "shippingCharged": {
+          "name": "shippingCharged",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cost": {
+          "name": "cost",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "costKnown": {
+          "name": "costKnown",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fees": {
+          "name": "fees",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "feesStatus": {
+          "name": "feesStatus",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "labels": {
+          "name": "labels",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "labelsStatus": {
+          "name": "labelsStatus",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "refunds": {
+          "name": "refunds",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "adjustments": {
+          "name": "adjustments",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profit": {
+          "name": "profit",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "complete": {
+          "name": "complete",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true

@@ -1,4 +1,14 @@
-import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	gte,
+	isNotNull,
+	isNull,
+	lt,
+	or,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { type channel, orderCostChecks, orders, stores } from "#/db/schema";
 import { type CostReport, saveCostReport } from "./charges";
@@ -36,7 +46,10 @@ export type DueOrder = {
 export type FetchedCharges =
 	| {
 			orderId: number;
-			report: Pick<CostReport, "settled" | "noLabel" | "charges"> | null;
+			report: Pick<
+				CostReport,
+				"settled" | "noLabel" | "labelsPending" | "charges"
+			> | null;
 	  }
 	| { orderId: number; error: string };
 
@@ -47,7 +60,10 @@ export type ChargeFetcher = (orders: DueOrder[]) => Promise<FetchedCharges[]>;
 export function eachOrder(
 	fetchOne: (
 		order: DueOrder,
-	) => Promise<Pick<CostReport, "settled" | "noLabel" | "charges"> | null>,
+	) => Promise<Pick<
+		CostReport,
+		"settled" | "noLabel" | "labelsPending" | "charges"
+	> | null>,
 ): ChargeFetcher {
 	return async (due) => {
 		const results: FetchedCharges[] = [];
@@ -65,8 +81,9 @@ export function eachOrder(
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 // Orders to ask about now. With `history`, instead the orders already old
-// enough to be final that were never asked about: a one-time catch-up of
-// what came before (pnpm sync --costs-history), asked once each.
+// enough to be final that were never asked about, or whose last ask failed
+// an hour or more ago: a one-time catch-up of what came before (pnpm sync
+// --costs-history), asked once each unless it failed.
 export async function dueOrders(
 	db: Db,
 	billedBy: Channel,
@@ -104,17 +121,26 @@ export async function dueOrders(
 				history
 					? and(
 							lt(orders.placedAt, finalFrom),
-							isNull(orderCostChecks.checkedAt),
+							// Never asked, or the last ask failed an hour or more ago.
+							or(
+								isNull(orderCostChecks.checkedAt),
+								and(
+									isNotNull(orderCostChecks.error),
+									lt(orderCostChecks.checkedAt, new Date(now.getTime() - HOUR)),
+								),
+							),
 						)
-					: gte(orders.placedAt, finalFrom),
-				// Asked again after a quarter of the order's age, between an hour
-				// and a week: about 30 asks over the window, not one per pass.
-				// Settled ones too, since a refund can follow settlement.
-				or(
-					isNull(orderCostChecks.checkedAt),
-					sql`extract(epoch from (${now}::timestamptz - ${orderCostChecks.checkedAt})) * 1000
-						>= greatest(${HOUR}, least(${LONGEST_WAIT}, ${age} / 4))`,
-				),
+					: and(
+							gte(orders.placedAt, finalFrom),
+							// Asked again after a quarter of the order's age, between an
+							// hour and a week: about 30 asks over the window, not one per
+							// pass. Settled ones too, since a refund can follow settlement.
+							or(
+								isNull(orderCostChecks.checkedAt),
+								sql`extract(epoch from (${now}::timestamptz - ${orderCostChecks.checkedAt})) * 1000
+									>= greatest(${HOUR}, least(${LONGEST_WAIT}, ${age} / 4))`,
+							),
+						),
 			),
 		)
 		// Never-asked orders first, then the newest.

@@ -4,6 +4,7 @@ import { type EbayTransaction, ebayCharges } from "./ebay";
 import {
 	labelsFromEvents,
 	numericOrderId,
+	refundedRevenue,
 	type ShopifyFinanceOrder,
 	shippedWithoutLabel,
 	shippingLabelsQuery,
@@ -131,6 +132,18 @@ describe("Amazon", () => {
 			],
 		}) as AmazonTransaction;
 
+	test("leaves out promotions, already off the order's prices", () => {
+		const promoted = shipment("RELEASED");
+		const expenses = promoted.breakdowns?.[1];
+		expenses?.breakdowns?.push({
+			breakdownType: "PromoRebates",
+			breakdownAmount: amount(-2.5),
+		});
+		expect(amazonCharges([promoted]).map((c) => c.description)).not.toContain(
+			"PromoRebates",
+		);
+	});
+
 	test("counts a held-back shipment once, not again as its released copy", () => {
 		const charges = amazonCharges([
 			shipment("RELEASED", [["DEFERRED_TRANSACTION_ID", "x"]]),
@@ -165,29 +178,64 @@ describe("Amazon", () => {
 				},
 			],
 		} as AmazonTransaction;
+		// As Amazon answered for a real refund: its own headings, and the
+		// return label it billed, then covered.
 		const refund = {
 			transactionType: "Refund",
 			breakdowns: [
-				{ breakdownType: "Sales", breakdownAmount: amount(-22.31) },
 				{
-					breakdownType: "Expenses",
-					breakdownAmount: amount(2.68),
+					breakdownType: "Refunded Expenses",
+					breakdownAmount: amount(11.09),
+					breakdowns: [
+						{ breakdownType: "AmazonFees", breakdownAmount: amount(4.44) },
+						{ breakdownType: "Other", breakdownAmount: amount(6.65) },
+					],
+				},
+				{
+					breakdownType: "Refunded Sales",
+					breakdownAmount: amount(-37.94),
 					breakdowns: [
 						{
-							breakdownType: "AmazonFees",
-							breakdownAmount: amount(2.68),
+							breakdownType: "ProductCharges",
+							breakdownAmount: amount(-36.99),
+						},
+						{ breakdownType: "Tax", breakdownAmount: amount(-0.95) },
+					],
+				},
+			],
+		} as AmazonTransaction;
+		const returnLabel = {
+			transactionType: "Adjustment",
+			breakdowns: [
+				{
+					breakdownType: "Expenses",
+					breakdownAmount: amount(-6.65),
+					breakdowns: [
+						{
+							breakdownType: "Other",
+							breakdownAmount: amount(-6.65),
 							breakdowns: [
-								{ breakdownType: "Commission", breakdownAmount: amount(2.68) },
+								{
+									breakdownType: "ReturnPostageBilling_Postage",
+									breakdownAmount: amount(-6.65),
+								},
 							],
 						},
 					],
 				},
 			],
 		} as AmazonTransaction;
-		expect(amazonCharges([postage, refund])).toEqual([
+		expect(amazonCharges([postage, refund, returnLabel])).toEqual([
 			{ kind: "label", description: "PostageBilling_Postage", amount: 7.23 },
-			{ kind: "refund", description: "Refund", amount: 22.31 },
-			{ kind: "fee", description: "Commission", amount: -2.68 },
+			{ kind: "fee", description: "AmazonFees", amount: -4.44 },
+			{ kind: "adjustment", description: "Other", amount: -6.65 },
+			// The buyer's tax came back from Amazon, not from us.
+			{ kind: "refund", description: "Refund", amount: 36.99 },
+			{
+				kind: "label",
+				description: "ReturnPostageBilling_Postage",
+				amount: 6.65,
+			},
 		]);
 	});
 });
@@ -252,19 +300,27 @@ describe("TikTok", () => {
 });
 
 describe("Shopify", () => {
+	const usd = (amount: number) => ({ shopMoney: { amount } });
 	const order = (
 		overrides: Partial<ShopifyFinanceOrder> = {},
 	): ShopifyFinanceOrder => ({
 		id: "gid://shopify/Order/7633729060927",
 		transactions: [
-			{ kind: "AUTHORIZATION", status: "SUCCESS", fees: [] },
+			{
+				kind: "AUTHORIZATION",
+				status: "SUCCESS",
+				amountSet: usd(29.26),
+				fees: [],
+			},
 			{
 				kind: "CAPTURE",
 				status: "SUCCESS",
+				amountSet: usd(29.26),
 				fees: [{ type: "processing_fee", amount: { amount: 1.09 } }],
 			},
 		],
 		refunds: [],
+		lineItems: { nodes: [{ id: "line-1", nonFulfillableQuantity: 0 }] },
 		events: {
 			nodes: [
 				{
@@ -279,20 +335,54 @@ describe("Shopify", () => {
 		},
 		...overrides,
 	});
-
-	test("ShopifyQL's label cost wins once it has the order", () => {
-		expect(shopifyCharges(order(), 5.5)).toEqual([
-			{ kind: "fee", description: "Processing fee", amount: 1.09 },
-			{ kind: "label", description: "Shopify Shipping labels", amount: 5.5 },
-		]);
+	const refundOf = (
+		paid: number,
+		lines: { quantity: number; subtotal: number; tax: number }[],
+		shippingTax = 0,
+	): Partial<ShopifyFinanceOrder> => ({
+		transactions: [
+			...order().transactions,
+			{ kind: "REFUND", status: "SUCCESS", amountSet: usd(paid), fees: [] },
+		],
+		refunds: [
+			{
+				refundLineItems: {
+					nodes: lines.map((l) => ({
+						quantity: l.quantity,
+						subtotalSet: usd(l.subtotal),
+						totalTaxSet: usd(l.tax),
+						lineItem: { id: "line-1" },
+					})),
+				},
+				refundShippingLines: {
+					nodes: shippingTax ? [{ taxAmountSet: usd(shippingTax) }] : [],
+				},
+			},
+		],
 	});
 
-	test("until then the order's label purchases stand in", () => {
-		expect(shopifyCharges(order(), undefined)).toContainEqual({
+	test("ShopifyQL's label cost wins once it has the order", () => {
+		expect(shopifyCharges(order(), 5.5)).toEqual({
+			charges: [
+				{ kind: "fee", description: "Processing fee", amount: 1.09 },
+				{ kind: "label", description: "Shopify Shipping labels", amount: 5.5 },
+			],
+			labelsPending: false,
+		});
+	});
+
+	test("until then the order's label purchases stand in, marked as such", () => {
+		const { charges, labelsPending } = shopifyCharges(order(), undefined);
+		expect(charges).toContainEqual({
 			kind: "label",
 			description: "Shopify Shipping labels (until Shopify reports them)",
 			amount: 5.72,
 		});
+		expect(labelsPending).toBe(true);
+		// No label anywhere is nothing pending.
+		expect(
+			shopifyCharges(order({ events: { nodes: [] } }), undefined).labelsPending,
+		).toBe(false);
 		expect(
 			labelsFromEvents([
 				{
@@ -304,27 +394,27 @@ describe("Shopify", () => {
 		).toBe(1005.1);
 	});
 
-	test("refunds leave out the tax Shopify returns for us", () => {
-		const refunded = order({
-			refunds: [
-				{
-					refundLineItems: {
-						nodes: [{ subtotalSet: { shopMoney: { amount: 20 } } }],
-					},
-					refundShippingLines: {
-						nodes: [{ subtotalAmountSet: { shopMoney: { amount: 5.5 } } }],
-					},
-				},
-			],
-		});
-		expect(shopifyCharges(refunded, 0)).toContainEqual({
-			kind: "refund",
-			description: "Refund",
-			amount: 25.5,
-		});
+	test("refunds are what was paid back, less the tax Shopify returns for us", () => {
+		const refunded = order(
+			refundOf(27.94, [{ quantity: 1, subtotal: 20, tax: 1.6 }], 0.84),
+		);
+		expect(refundedRevenue(refunded)).toBeCloseTo(25.5);
 	});
 
-	test("counter sales and pickups need no label", () => {
+	test("a refund of only an amount, with no items, still counts", () => {
+		expect(refundedRevenue(order(refundOf(10, [])))).toBe(10);
+	});
+
+	test("units refunded before shipping are already off the order's revenue", () => {
+		// Two units refunded, one of which never shipped.
+		const refunded = order({
+			...refundOf(43.2, [{ quantity: 2, subtotal: 40, tax: 3.2 }]),
+			lineItems: { nodes: [{ id: "line-1", nonFulfillableQuantity: 1 }] },
+		});
+		expect(refundedRevenue(refunded)).toBe(20);
+	});
+
+	test("counter sales and pickups need no label, unknown methods might", () => {
 		const at = (methodType: string) =>
 			order({
 				fulfillmentOrders: { nodes: [{ deliveryMethod: { methodType } }] },
@@ -332,6 +422,11 @@ describe("Shopify", () => {
 		expect(shippedWithoutLabel(at("RETAIL"))).toBe(true);
 		expect(shippedWithoutLabel(at("PICK_UP"))).toBe(true);
 		expect(shippedWithoutLabel(at("SHIPPING"))).toBe(false);
+		expect(
+			shippedWithoutLabel(
+				order({ fulfillmentOrders: { nodes: [{ deliveryMethod: null }] } }),
+			),
+		).toBe(false);
 		expect(
 			shippedWithoutLabel(order({ fulfillmentOrders: { nodes: [] } })),
 		).toBe(false);

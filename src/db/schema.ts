@@ -477,6 +477,9 @@ export const orderCostReports = pgTable(
 		// in person. Otherwise a shipped order with no label cost is missing
 		// one.
 		noLabel: boolean().notNull().default(false),
+		// Its label figures are a stand-in until it catches up (Shopify's
+		// timeline, before its labels report has the order).
+		labelsPending: boolean().notNull().default(false),
 		fetchedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],

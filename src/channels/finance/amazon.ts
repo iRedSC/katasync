@@ -57,6 +57,33 @@ function cost(b: Breakdown) {
 	return -b.breakdownAmount.currencyAmount;
 }
 
+// Postage Amazon billed, outbound or for a return, whatever category it's
+// filed under.
+function kindOf(category: Breakdown, entry: Breakdown) {
+	if (entry.breakdownType.includes("PostageBilling")) return "label";
+	return KIND[category.breakdownType] ?? "adjustment";
+}
+
+// Tax Amazon collects and pays itself, and promotions: the order's prices
+// already have its promotion discounts taken off, so counting them here too
+// would take them off twice.
+function skipped(b: Breakdown) {
+	return b.breakdownType.includes("Tax") || b.breakdownType.includes("Promo");
+}
+
+// Sales on a shipment, "Refunded Sales" on a refund.
+const SALES = new Set(["Sales", "Refunded Sales"]);
+
+// What the buyer paid or got back, without the tax Amazon collects and
+// refunds itself.
+function untaxed(sales: Breakdown) {
+	const parts = sales.breakdowns ?? [];
+	if (parts.length === 0) return sales.breakdownAmount.currencyAmount;
+	return parts
+		.filter((p) => !p.breakdownType.includes("Tax"))
+		.reduce((sum, p) => sum + p.breakdownAmount.currencyAmount, 0);
+}
+
 export function amazonCharges(
 	transactions: AmazonTransaction[],
 ): ReportedCharge[] {
@@ -72,26 +99,29 @@ export function amazonCharges(
 			continue;
 		for (const top of t.breakdowns ?? []) {
 			const type = top.breakdownType;
-			if (type === "Sales") {
+			if (SALES.has(type)) {
 				// A sale's own money is revenue, already on the order. On a
 				// refund it's what went back to the buyer; on anything else
 				// (a reimbursement) it's money back.
-				if (top.breakdownAmount.currencyAmount === 0) continue;
 				if (t.transactionType === "Shipment") continue;
+				const amount = -untaxed(top);
+				if (Math.abs(amount) < 0.005) continue;
+				const refund = t.transactionType === "Refund";
 				charges.push({
-					kind: t.transactionType === "Refund" ? "refund" : "adjustment",
-					description:
-						t.transactionType === "Refund" ? "Refund" : t.transactionType,
-					amount: cost(top),
+					kind: refund ? "refund" : "adjustment",
+					description: refund ? "Refund" : t.transactionType,
+					amount,
 				});
 				continue;
 			}
 			// Tax Amazon collects and pays itself nets to nothing for us.
 			if (type.includes("Tax")) continue;
 			for (const category of top.breakdowns ?? [top]) {
+				if (skipped(category)) continue;
 				for (const entry of entries(category)) {
+					if (skipped(entry)) continue;
 					charges.push({
-						kind: KIND[category.breakdownType] ?? "adjustment",
+						kind: kindOf(category, entry),
 						description: entry.breakdownType,
 						amount: cost(entry),
 					});

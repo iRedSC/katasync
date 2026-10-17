@@ -1,6 +1,12 @@
 import { type AnyColumn, and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { orderLines, orderProfit, orders, products } from "#/db/schema";
+import {
+	orderLines,
+	orderProfit,
+	orderReturns,
+	orders,
+	products,
+} from "#/db/schema";
 
 // Profit over a stretch of time, from the order_profit view
 // (drizzle/0050_order_profit.sql). Days and weeks are the shop's, in Eastern
@@ -176,10 +182,13 @@ export async function profitByDay(db: Db, start: Date, end: Date) {
 // Profit per product: each line's sales less its cost, less its share (by
 // sales) of the order's fees, labels, refunds and adjustments, net of the
 // shipping the buyer paid. Tool sets rank as the set they were sold as.
+// Lines with no product aren't ranked, so these don't add up to the total.
 export async function profitByProduct(db: Db, start: Date, end: Date) {
 	const lineRevenue = sql`${orderLines.unitPrice} * ${orderLines.quantity}`;
 	const share = sql`case when ${p.revenue} > 0 then ${lineRevenue} / ${p.revenue} else 0 end`;
-	const lineProfit = sql`${lineRevenue} - coalesce(${orderLines.unitCost}, 0) * ${orderLines.quantity}
+	// Units returned to the shelf aren't a cost, as in the view.
+	const restocked = sql`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and ${orderReturns.restocked}), 0)`;
+	const lineProfit = sql`${lineRevenue} - coalesce(${orderLines.unitCost}, 0) * (${orderLines.quantity} - ${restocked})
 		- ${share} * (${p.fees} + ${p.labels} + ${p.refunds} + ${p.adjustments} - ${p.shippingCharged})`;
 	return db
 		.select({
