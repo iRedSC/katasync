@@ -158,6 +158,9 @@ export const movementReason = pgEnum("movement_reason", [
 	"assembly_produce",
 	// Starting stock carried over from another system.
 	"opening_balance",
+	// Oversold stock written off as a receipt lands, so the shelf restarts
+	// from 0. Always in the receipt's batch.
+	"oversold_reset",
 ]);
 
 // Append-only. A trigger in the migrations rejects UPDATE and DELETE; fix

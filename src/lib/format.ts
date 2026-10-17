@@ -1,3 +1,5 @@
+import type { movementReason } from "#/db/schema";
+
 const usd = new Intl.NumberFormat("en-US", {
 	style: "currency",
 	currency: "USD",
@@ -24,20 +26,23 @@ export function formatDelta(delta: number) {
 	return delta > 0 ? `+${count.format(delta)}` : count.format(delta);
 }
 
-const reasonLabels: Record<string, string> = {
-	receipt: "Received",
-	sale: "Sale",
-	return: "Return",
-	adjustment: "Correction",
-	transfer_out: "Transfer out",
-	transfer_in: "Transfer in",
-	assembly_consume: "Used in assembly",
-	assembly_produce: "Assembled",
-	opening_balance: "Opening balance",
-};
+// Every reason needs a label, so a new one can't show up raw.
+const reasonLabels: Record<(typeof movementReason.enumValues)[number], string> =
+	{
+		receipt: "Received",
+		sale: "Sale",
+		return: "Return",
+		adjustment: "Correction",
+		transfer_out: "Transfer out",
+		transfer_in: "Transfer in",
+		assembly_consume: "Used in assembly",
+		assembly_produce: "Assembled",
+		opening_balance: "Opening balance",
+		oversold_reset: "Oversold written off",
+	};
 
 export function formatReason(reason: string) {
-	return reasonLabels[reason] ?? reason;
+	return reasonLabels[reason as keyof typeof reasonLabels] ?? reason;
 }
 
 const time = new Intl.DateTimeFormat("en-US", {

@@ -1,7 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import { ClipboardList, PackagePlus, Truck } from "lucide-react";
 import type { ReactNode } from "react";
-import type { Level, NextStep, Trust } from "#/inventory/stock-state";
+import {
+	afterArrival,
+	type Level,
+	type NextStep,
+	type Trust,
+} from "#/inventory/stock-state";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import type { RowLinkProps } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
@@ -207,7 +212,7 @@ export function StockBar({
 }) {
 	const share = (n: number) => Math.min(Math.max(n / range.max, 0), 1) * 100;
 	const filled = share(onHand);
-	const coming = share(onHand + onOrder) - filled;
+	const coming = share(afterArrival(onHand, onOrder)) - filled;
 	return (
 		<div
 			className="relative h-2 overflow-hidden rounded-sm bg-surface-strong"

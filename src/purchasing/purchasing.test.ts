@@ -106,9 +106,26 @@ describe("reorderQuantity", () => {
 		expect(reorderQuantity({ ...base, safetyStock: 5, onHand: 14 })).toBe(21);
 	});
 
-	test("buys back oversold stock even with no recent sales", () => {
-		expect(reorderQuantity({ ...base, dailyDemand: 0, onHand: -2 })).toBe(2);
-		expect(reorderQuantity({ ...base, dailyDemand: 0 })).toBe(0);
+	test("counts oversold stock as empty, since receiving writes it off", () => {
+		expect(reorderQuantity({ ...base, onHand: -50 })).toBe(
+			reorderQuantity(base),
+		);
+		// Still ordered with no sales, but only until something is coming.
+		expect(reorderQuantity({ ...base, dailyDemand: 0, onHand: -2 })).toBe(1);
+		expect(
+			reorderQuantity({
+				...base,
+				dailyDemand: 0,
+				onHand: -2,
+				minimumQuantity: 6,
+			}),
+		).toBe(6);
+		expect(
+			reorderQuantity({ ...base, dailyDemand: 0, onHand: -2, onOrder: 1 }),
+		).toBe(0);
+		expect(
+			reorderQuantity({ ...base, dailyDemand: 0, minStock: 3, onHand: -2 }),
+		).toBe(3);
 	});
 
 	test("orders back up to min stock, even with no recent sales", () => {
@@ -1120,6 +1137,34 @@ describe("a PO from draft to received", () => {
 		await expect(
 			receive(db, { lineId: knifeLine.id, quantity: 1 }),
 		).rejects.toThrow(/is closed/);
+	});
+
+	test("receiving onto oversold stock restarts it from 0, and undo puts it back", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		const knifeLine = (await linesOf(id))[1];
+		await stock(knife, -4);
+		const shelf = async () =>
+			(
+				await db
+					.select()
+					.from(schema.stockLevels)
+					.where(eq(schema.stockLevels.productId, knife))
+			)[0].onHand;
+
+		const { receiptId } = await receive(db, {
+			lineId: knifeLine.id,
+			quantity: 6,
+		});
+		expect(await shelf()).toBe(6);
+		const written = await db
+			.select({ delta: schema.movements.delta })
+			.from(schema.movements)
+			.where(eq(schema.movements.reason, "oversold_reset"));
+		expect(written).toEqual([{ delta: 4 }]);
+
+		await undoReceipt(db, receiptId);
+		expect(await shelf()).toBe(-4);
 	});
 
 	test("drafts are deleted, not cancelled; sent POs are cancelled, not deleted", async () => {

@@ -45,7 +45,9 @@ export async function postMovements(
 				`Delta must be a nonzero integer, got ${line.delta}`,
 			);
 		}
-		const key = `${line.productId}:${line.locationId}`;
+		// Twice for one reason is a mistake; a receipt can also write off
+		// oversold stock on the same shelf (see postReceipt).
+		const key = `${line.productId}:${line.locationId}:${line.reason}`;
 		if (seen.has(key)) {
 			throw new LedgerError(
 				`Product ${line.productId} appears twice at location ${line.locationId}`,
@@ -389,6 +391,44 @@ export async function cancelCountRequests(
 			cancelled += rows.length;
 		}
 		return cancelled;
+	});
+}
+
+// Puts received stock on a shelf. Oversold stock there is written off first,
+// in the same batch, so the shelf restarts from 0 and undoing the receipt
+// puts the oversold count back too.
+export async function postReceipt(
+	db: Db,
+	input: {
+		productId: number;
+		locationId: number;
+		quantity: number;
+		reference: string;
+	},
+): Promise<{ batchId: string; levels: StockLevel[] }> {
+	return db.transaction(async (tx) => {
+		// Locked, so a sale landing now can't slip under the write-off.
+		const [level] = await tx
+			.select({ onHand: stockLevels.onHand })
+			.from(stockLevels)
+			.where(
+				and(
+					eq(stockLevels.productId, input.productId),
+					eq(stockLevels.locationId, input.locationId),
+				),
+			)
+			.for("update");
+		const oversold = Math.max(0, -(level?.onHand ?? 0));
+		const shelf = { productId: input.productId, locationId: input.locationId };
+		return postMovements(tx, {
+			reference: input.reference,
+			lines: [
+				...(oversold > 0
+					? [{ ...shelf, delta: oversold, reason: "oversold_reset" as const }]
+					: []),
+				{ ...shelf, delta: input.quantity, reason: "receipt" },
+			],
+		});
 	});
 }
 

@@ -104,3 +104,10 @@ export function daysLeft(onHand: number | null, dailyDemand: number) {
 	if (onHand === null || dailyDemand <= 0) return null;
 	return Math.max(0, Math.floor(onHand / dailyDemand));
 }
+
+// What stock comes to once incoming stock arrives. Oversold stock is
+// written off when a receipt lands (see postReceipt), so it restarts from 0
+// instead of eating into what arrives.
+export function afterArrival(onHand: number, incoming: number) {
+	return Math.max(onHand, 0) + incoming;
+}
