@@ -21,24 +21,25 @@ function TooltipProvider(
 // say (undefined, null, "") just never opens, so conditional tips need no
 // branching at the call site and the child isn't remounted when the tip
 // comes and goes. A disabled child gets no pointer events, so it's wrapped
-// in a span that can still be hovered. Other props (e.g. from a parent
-// PopoverTrigger asChild) pass through to the child.
+// in a span that can still be hovered. Other props, className included (e.g.
+// from a parent Button or PopoverTrigger asChild), pass through to the child;
+// contentClassName styles the bubble.
 function Tip({
 	content,
 	side = "top",
 	align = "center",
-	className,
+	contentClassName,
 	children,
 	...trigger
 }: {
 	content: React.ReactNode;
 	side?: React.ComponentProps<typeof TooltipPrimitive.Content>["side"];
 	align?: React.ComponentProps<typeof TooltipPrimitive.Content>["align"];
-	className?: string;
+	contentClassName?: string;
 	children: React.ReactElement;
 } & Omit<
 	React.ComponentProps<typeof TooltipPrimitive.Trigger>,
-	"asChild" | "content" | "children" | "className" | "title"
+	"asChild" | "content" | "children" | "title"
 >) {
 	const [open, setOpen] = React.useState(false);
 	const empty = content === undefined || content === null || content === "";
@@ -67,7 +68,7 @@ function Tip({
 					className={cn(
 						"z-50 max-w-72 rounded-md bg-topbar px-2.5 py-1.5 text-left text-xs leading-snug font-normal text-balance text-white shadow-lg",
 						"origin-(--radix-tooltip-content-transform-origin) animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
-						className,
+						contentClassName,
 					)}
 				>
 					{content}

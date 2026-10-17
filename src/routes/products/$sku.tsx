@@ -172,6 +172,9 @@ function ProductPage() {
 													.filter((u) => u.kind === "bundle")
 													.map((u) => ({
 														productId: p.id,
+														sku: u.sku,
+														name: u.name,
+														variantName: u.variantName,
 														perSet: u.quantity,
 													})),
 												new Map([[p.id, d.available]]),

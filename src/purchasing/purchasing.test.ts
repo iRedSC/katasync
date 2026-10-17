@@ -48,7 +48,7 @@ import {
 	unitsOnOrder,
 	velocityRanks,
 } from "./reorder";
-import { partState } from "./sets";
+import { partState, setsBlocked } from "./sets";
 import {
 	addUnit,
 	deleteUnit,
@@ -182,7 +182,7 @@ describe("explainReorder", () => {
 			supplierCount: 1,
 			minimumQuantity: 1,
 		},
-		sets: { in: 0, blocked: 0 },
+		sets: { shelf: 0, sets: [] },
 	};
 
 	test("breaks the aim into parts that add up to it", () => {
@@ -516,9 +516,13 @@ describe("tool set parts", () => {
 		const all = await reorderBreakdown(db, { now });
 		const of = (id: number) => all.find((b) => b.line.productId === id);
 		// Never sold, so all C items. Blade can build neither set.
-		expect(of(blade)?.why.sets).toEqual({ in: 2, blocked: 2 });
-		expect(of(knife)?.why.sets).toEqual({ in: 1, blocked: 0 });
-		expect(of(loner)?.why.sets).toEqual({ in: 0, blocked: 0 });
+		const sets = (id: number) => {
+			const m = of(id)?.why.sets;
+			return m && { in: m.sets.map((x) => x.sku), blocked: setsBlocked(m) };
+		};
+		expect(sets(blade)).toEqual({ in: ["OTHER", "SET"], blocked: 2 });
+		expect(sets(knife)).toEqual({ in: ["SET"], blocked: 0 });
+		expect(sets(loner)).toEqual({ in: [], blocked: 0 });
 		expect(of(blade)?.why).toMatchObject({ minStock: 3, minFrom: "sets" });
 
 		const [s] = await suggestPurchases(db, now);
