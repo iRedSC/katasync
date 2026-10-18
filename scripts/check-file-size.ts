@@ -3,9 +3,7 @@
 //   node scripts/check-file-size.ts        check what's staged (the hook runs this)
 //
 // Files that agents don't write (lockfiles, codegen, vendored skills, binaries)
-// are skipped. A file that was already over the limit at HEAD may be committed
-// as long as it doesn't grow, so a fix in one doesn't force a split first; any
-// file that crosses the limit, or grows while over it, blocks the commit.
+// are skipped. Any other staged file over the limit blocks the commit.
 //
 // Runs on Node's own type stripping, so it imports nothing but node: modules.
 import { execFileSync } from "node:child_process";
@@ -24,19 +22,14 @@ const IGNORED: RegExp[] = [
 	/^drizzle\/meta\//, // drizzle-kit snapshots and journal
 	/\.gen\.[cm]?[jt]sx?$/, // routeTree.gen.ts and the like
 	/^src\/components\/ui\//, // shadcn components, added by its CLI
+	// Written by hand, but drizzle-kit reads it as one schema and its tables
+	// reference each other, so it stays whole.
+	/^src\/db\/schema\.ts$/,
 ];
 
-export type StagedFile = {
-	path: string;
-	// Size at HEAD, under its old name if it was renamed; null for a new file.
-	headBytes: number | null;
-	stagedBytes: number;
-	binary: boolean;
-};
+export type StagedFile = { path: string; bytes: number; binary: boolean };
 
-export type Problem =
-	| { kind: "over"; path: string; tokens: number }
-	| { kind: "grew"; path: string; tokens: number; headTokens: number };
+export type Problem = { path: string; tokens: number };
 
 export function isIgnored(path: string, vendored: readonly string[]): boolean {
 	return (
@@ -52,14 +45,8 @@ export function findProblems(
 	const problems: Problem[] = [];
 	for (const file of files) {
 		if (file.binary || isIgnored(file.path, vendored)) continue;
-		const tokens = tokensOf(file.stagedBytes);
-		if (tokens <= MAX_TOKENS) continue;
-		const headTokens = file.headBytes === null ? null : tokensOf(file.headBytes);
-		if (headTokens === null || headTokens <= MAX_TOKENS) {
-			problems.push({ kind: "over", path: file.path, tokens });
-		} else if (tokens > headTokens) {
-			problems.push({ kind: "grew", path: file.path, tokens, headTokens });
-		}
+		const tokens = tokensOf(file.bytes);
+		if (tokens > MAX_TOKENS) problems.push({ path: file.path, tokens });
 	}
 	return problems;
 }
@@ -68,12 +55,7 @@ const fmt = (n: number) => n.toLocaleString("en-US");
 
 export function report(problems: readonly Problem[]): string {
 	const width = Math.max(...problems.map((p) => p.path.length));
-	const lines = problems.map((p) => {
-		const where = p.path.padEnd(width);
-		return p.kind === "over"
-			? `  ${where}  ${fmt(p.tokens)} tokens`
-			: `  ${where}  ${fmt(p.tokens)} tokens, up from ${fmt(p.headTokens)}. It was already over the limit; it may shrink or stay the same, not grow.`;
-	});
+	const lines = problems.map((p) => `  ${p.path.padEnd(width)}  ${fmt(p.tokens)} tokens`);
 	const count =
 		problems.length === 1 ? "1 staged file is" : `${problems.length} staged files are`;
 	return `
@@ -93,9 +75,11 @@ Split each file before committing:
      the original file, or make it an index.ts that re-exports, so callers
      elsewhere don't change. Then update imports only where they break.
   4. Types shared by several new files go in their own types.ts next to them.
-  5. React routes and pages: move each sub-component, dialog, and table into
-     its own file beside the route; keep the route file to the route
-     definition, its loader, and the top-level page component.
+  5. Route files (src/routes/): move each sub-component, dialog, and table
+     into its own file under src/components/<page>/, not beside the route,
+     since TanStack Router treats every file in src/routes/ as a route. Keep
+     the route file to the route definition, its loader, and the top-level
+     page component.
   6. Tests (*.test.ts): split by the behavior under test, mirroring the source
      split, and move shared fixtures and builders into a *.fixtures.ts file.
   7. Move code verbatim. Don't shorten names, strip comments, or compress
@@ -112,13 +96,6 @@ function git(args: string[]): string {
 	return execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 }
 
-function blobSize(spec: string): number | null {
-	try {
-		return Number(git(["cat-file", "-s", spec]).trim());
-	} catch {
-		return null;
-	}
-}
 
 // Git's own test: a NUL byte in the first 8,000 bytes means binary.
 function isBinary(spec: string): boolean {
@@ -129,29 +106,14 @@ function isBinary(spec: string): boolean {
 }
 
 function stagedFiles(): StagedFile[] {
-	const fields = git([
-		"diff",
-		"--cached",
-		"--name-status",
-		"--find-renames",
-		"--diff-filter=ACMR",
-		"-z",
-	]).split("\0");
-	const files: StagedFile[] = [];
-	for (let i = 0; i < fields.length - 1; ) {
-		const status = fields[i++];
-		const from = fields[i++];
-		const path = status.startsWith("R") || status.startsWith("C") ? fields[i++] : from;
-		const stagedBytes = blobSize(`:${path}`) ?? 0;
-		files.push({
-			path,
-			headBytes: status.startsWith("A") || status.startsWith("C") ? null : blobSize(`HEAD:${from}`),
-			stagedBytes,
-			// Only worth reading the blob when it's big enough to matter.
-			binary: tokensOf(stagedBytes) > MAX_TOKENS && isBinary(`:${path}`),
-		});
-	}
-	return files;
+	const paths = git(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"])
+		.split("\0")
+		.filter(Boolean);
+	return paths.map((path) => {
+		const bytes = Number(git(["cat-file", "-s", `:${path}`]).trim());
+		// Only worth reading the blob when it's big enough to matter.
+		return { path, bytes, binary: tokensOf(bytes) > MAX_TOKENS && isBinary(`:${path}`) };
+	});
 }
 
 // Skills installed by `npx skills` are vendored; skills-lock.json lists them.
