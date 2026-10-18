@@ -12,6 +12,7 @@ import {
 } from "#/components/ui/dialog";
 import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
+import { EMAIL_PHOTO_BYTES } from "#/purchasing/damage-limits";
 import {
 	type PurchaseOrderDetail,
 	sendPurchaseDamageReport,
@@ -41,13 +42,16 @@ export function DamageReportDialog({
 	const [sending, setSending] = useState(false);
 	const unchosen = damages.filter((x) => !remedies.has(x.id)).length;
 	const to = d.supplier.email;
+	const photoBytes = damages.reduce((n, x) => n + x.photoBytes, 0);
 	const why = !d.emailConfigured
 		? "Email isn't set up here (RESEND_API_KEY and PO_EMAIL_FROM)"
 		: !to
 			? `${d.supplier.name} has no email. Add one under Supplier.`
-			: unchosen > 0
-				? `Choose credit or replacement for ${unchosen === damages.length ? "each" : `${unchosen} more`}`
-				: null;
+			: photoBytes > EMAIL_PHOTO_BYTES
+				? `The photos come to ${Math.round(photoBytes / 1_000_000)} MB, more than one email takes. Remove some under Received.`
+				: unchosen > 0
+					? `Choose credit or replacement for ${unchosen === damages.length ? "each" : `${unchosen} more`}`
+					: null;
 	const replacing = damages.filter((x) => remedies.get(x.id) === "replacement");
 
 	async function send() {

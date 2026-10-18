@@ -27,11 +27,10 @@ import { updateProductDetails } from "#/products/details";
 import {
 	createPhotoUploadLink,
 	damagesOf,
-	MAX_PHOTO_BYTES,
-	MAX_PHOTOS,
 	recordDamage,
 	removeDamage,
 } from "#/purchasing/damage";
+import { MAX_PHOTO_BYTES, MAX_PHOTOS } from "#/purchasing/damage-limits";
 import {
 	invoicesOf,
 	matchInvoice,

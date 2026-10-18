@@ -12,6 +12,11 @@ import {
 } from "#/db/schema";
 import { postMovements, undoBatch } from "#/inventory/ledger";
 import {
+	EMAIL_PHOTO_BYTES,
+	MAX_PHOTO_BYTES,
+	MAX_PHOTOS,
+} from "#/purchasing/damage-limits";
+import {
 	damagedOf,
 	lockOrder,
 	PurchaseOrderError,
@@ -28,43 +33,50 @@ import {
 export type Remedy = (typeof purchaseOrderDamages.$inferSelect)["remedy"] &
 	string;
 
-// Fewer than Resend's 40 MB per email, with room for the text.
-const EMAIL_PHOTO_BYTES = 35_000_000;
-// What a request may carry on Vercel, and what the table allows.
-export const MAX_PHOTO_BYTES = 4_500_000;
-export const MAX_PHOTOS = 12;
 const UPLOAD_LINK_MINUTES = 30;
 
-// A line and its PO, locked, while the PO is on order.
+// A line and its PO, locked, while the PO is on order. The line is read
+// again once the PO is locked: a change that held the lock may have changed
+// or removed it.
 async function lineOf(tx: Db, lineId: number) {
+	const [found] = await tx
+		.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
+		.from(purchaseOrderLines)
+		.where(eq(purchaseOrderLines.id, lineId));
+	if (!found) throw new PurchaseOrderError("That line doesn't exist");
+	const po = await lockOrder(tx, found.purchaseOrderId, ["sent", "closed"]);
 	const [line] = await tx
 		.select()
 		.from(purchaseOrderLines)
 		.where(eq(purchaseOrderLines.id, lineId));
 	if (!line) throw new PurchaseOrderError("That line doesn't exist");
-	const po = await lockOrder(tx, line.purchaseOrderId, ["sent", "closed"]);
 	return { line, po };
 }
 
 // The damage and its PO, locked, refusing once it's been reported: the
-// supplier already has it as it was.
+// supplier already has it as it was. Read again once the PO is locked, so a
+// report sent meanwhile is seen.
 async function unreported(tx: Db, damageId: number) {
-	const [damage] = await tx
-		.select({
-			id: purchaseOrderDamages.id,
-			lineId: purchaseOrderDamages.lineId,
-			batchId: purchaseOrderDamages.batchId,
-			reportId: purchaseOrderDamages.reportId,
-			purchaseOrderId: purchaseOrderLines.purchaseOrderId,
-		})
-		.from(purchaseOrderDamages)
-		.innerJoin(
-			purchaseOrderLines,
-			eq(purchaseOrderLines.id, purchaseOrderDamages.lineId),
-		)
-		.where(eq(purchaseOrderDamages.id, damageId));
+	const read = () =>
+		tx
+			.select({
+				id: purchaseOrderDamages.id,
+				lineId: purchaseOrderDamages.lineId,
+				batchId: purchaseOrderDamages.batchId,
+				reportId: purchaseOrderDamages.reportId,
+				purchaseOrderId: purchaseOrderLines.purchaseOrderId,
+			})
+			.from(purchaseOrderDamages)
+			.innerJoin(
+				purchaseOrderLines,
+				eq(purchaseOrderLines.id, purchaseOrderDamages.lineId),
+			)
+			.where(eq(purchaseOrderDamages.id, damageId));
+	const [found] = await read();
+	if (!found) throw new PurchaseOrderError("That damage doesn't exist");
+	await lockOrder(tx, found.purchaseOrderId, ["sent", "closed"]);
+	const [damage] = await read();
 	if (!damage) throw new PurchaseOrderError("That damage doesn't exist");
-	await lockOrder(tx, damage.purchaseOrderId, ["sent", "closed"]);
 	if (damage.reportId !== null)
 		throw new PurchaseOrderError(
 			"That damage was already reported to the supplier",
@@ -277,6 +289,7 @@ export async function damagesOf(db: Db, purchaseOrderId: number) {
 					.select({
 						id: purchaseOrderDamagePhotos.id,
 						damageId: purchaseOrderDamagePhotos.damageId,
+						bytes: sql<number>`octet_length(${purchaseOrderDamagePhotos.data})::int`,
 					})
 					.from(purchaseOrderDamagePhotos)
 					.where(
@@ -289,6 +302,10 @@ export async function damagesOf(db: Db, purchaseOrderId: number) {
 	return rows.map((r) => ({
 		...r,
 		photoIds: photos.filter((p) => p.damageId === r.id).map((p) => p.id),
+		// What its photos add to a report's email.
+		photoBytes: photos
+			.filter((p) => p.damageId === r.id)
+			.reduce((n, p) => n + p.bytes, 0),
 		// A replacement has to be whole units: the PO can't expect half a case.
 		replaceable: r.quantity % r.packSize === 0,
 	}));

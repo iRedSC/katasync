@@ -1209,12 +1209,19 @@ export async function receive(
 			`Quantity must be a positive whole number, got ${input.quantity}`,
 		);
 	return db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		if (!found) throw new PurchaseOrderError("That line doesn't exist");
+		const po = await lockOrder(tx, found.purchaseOrderId, ["sent"]);
+		// Read once the PO is locked: whatever held the lock (a damage report
+		// asking for replacements, say) may have changed what it expects.
 		const [line] = await tx
 			.select()
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.id, input.lineId));
 		if (!line) throw new PurchaseOrderError("That line doesn't exist");
-		const po = await lockOrder(tx, line.purchaseOrderId, ["sent"]);
 		// Receipts of this product on other POs wait here, so each one averages
 		// its price against stock and cost the last one left.
 		await tx
@@ -1279,7 +1286,6 @@ export async function undoReceipt(db: Db, receiptId: number) {
 				undoesId: purchaseOrderReceipts.undoesId,
 				quantityBefore: purchaseOrderReceipts.quantityBefore,
 				quantityAfter: purchaseOrderReceipts.quantityAfter,
-				lineQuantity: purchaseOrderLines.quantity,
 				purchaseOrderId: purchaseOrderLines.purchaseOrderId,
 			})
 			.from(purchaseOrderReceipts)
@@ -1296,8 +1302,13 @@ export async function undoReceipt(db: Db, receiptId: number) {
 			.from(purchaseOrderReceipts)
 			.where(eq(purchaseOrderReceipts.undoesId, receipt.id));
 		if (already) throw new PurchaseOrderError("Already undone");
+		// What the line expects now, read under the lock; the quantity read
+		// above may be stale.
 		const [line] = await tx
-			.select({ packSize: purchaseOrderLines.packSize })
+			.select({
+				packSize: purchaseOrderLines.packSize,
+				quantity: purchaseOrderLines.quantity,
+			})
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.id, receipt.lineId));
 		const left = (await receivedOf(tx, receipt.lineId)) - receipt.quantity;
@@ -1317,7 +1328,7 @@ export async function undoReceipt(db: Db, receiptId: number) {
 		// Only when nobody has changed the quantity since.
 		if (
 			receipt.quantityBefore !== null &&
-			receipt.lineQuantity === receipt.quantityAfter
+			line.quantity === receipt.quantityAfter
 		)
 			await tx
 				.update(purchaseOrderLines)

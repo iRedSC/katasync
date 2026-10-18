@@ -1,4 +1,4 @@
-import { Camera, Undo2 } from "lucide-react";
+import { Camera, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "#/components/page";
 import { Button } from "#/components/ui/button";
@@ -7,6 +7,7 @@ import { optimism } from "#/lib/optimism";
 import {
 	type PurchaseOrderDetail,
 	removePurchaseDamage,
+	removePurchaseDamagePhoto,
 } from "#/server/purchasing";
 
 type Damage = PurchaseOrderDetail["damages"][number];
@@ -31,20 +32,31 @@ export function DamageRows({
 					key={x.id}
 					className="flex items-center gap-4 bg-critical-surface/40 px-4 py-2.5"
 				>
-					<div className="flex shrink-0 gap-1">
+					<div className="flex shrink-0 gap-1.5">
 						{x.photoIds.map((id) => (
-							<a
-								key={id}
-								href={`/purchasing/damage-photo/${id}`}
-								target="_blank"
-								rel="noreferrer"
-							>
-								<img
-									src={`/purchasing/damage-photo/${id}`}
-									alt="Damage"
-									className="size-10 rounded-md bg-surface-strong object-cover hover:opacity-80"
-								/>
-							</a>
+							<div key={id} className="group relative">
+								<a
+									href={`/purchasing/damage-photo/${id}`}
+									target="_blank"
+									rel="noreferrer"
+								>
+									<img
+										src={`/purchasing/damage-photo/${id}`}
+										alt="Damage"
+										className="size-10 rounded-md bg-surface-strong object-cover hover:opacity-80"
+									/>
+								</a>
+								{!x.reportedAt && (
+									<button
+										type="button"
+										aria-label="Delete photo"
+										onClick={() => deletePhoto(x, id)}
+										className="absolute -top-1.5 -right-1.5 hidden size-5 items-center justify-center rounded-full bg-foreground text-background shadow-card group-hover:flex focus-visible:flex"
+									>
+										<X className="size-3" />
+									</button>
+								)}
+							</div>
 						))}
 					</div>
 					<div className="min-w-0 flex-1">
@@ -99,4 +111,14 @@ async function takeBack(x: Damage) {
 		send: () => removePurchaseDamage({ data: { id: x.id } }),
 	});
 	if (r) toast.success(`${x.quantity} × ${x.sku} back on the shelf`);
+}
+
+// A photo that shouldn't go to the supplier, e.g. too large or the wrong one.
+// It's gone for good, so it asks first.
+async function deletePhoto(x: Damage, photoId: number) {
+	if (!confirm(`Delete this photo of ${x.sku}?`)) return;
+	const r = await optimism.change({
+		send: () => removePurchaseDamagePhoto({ data: { id: photoId } }),
+	});
+	if (r) toast.success("Photo deleted");
 }
