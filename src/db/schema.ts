@@ -1364,6 +1364,9 @@ export const orderProfit = pgView("order_profit", {
 	// Confirmed and shipped (or needing no shipping): what the Profit tab
 	// counts.
 	shipped: boolean().notNull(),
+	// Refunded in full, with items it sold still to be received back; their
+	// cost isn't counted until then, or until 60 days pass.
+	awaitingReturn: boolean().notNull(),
 }).existing();
 
 // One row per item sold (order line with units; an order cancelled down to
@@ -1406,6 +1409,8 @@ export const orderLineProfit = pgView("order_line_profit", {
 	}).notNull(),
 	complete: boolean().notNull(),
 	shipped: boolean().notNull(),
+	// Units refunded and presumed on their way back, which cost nothing yet.
+	returning: integer().notNull(),
 }).existing();
 
 // count_log with the drift worked out and undone counts marked, defined in

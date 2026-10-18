@@ -20,7 +20,7 @@ import {
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { externalFulfillment } from "#/orders/fulfillment";
-import { orderStatus } from "#/orders/status";
+import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
 import { getOrder, type OrderDetail } from "#/server/orders";
 import { resendTracking, voidLabel } from "#/server/shipping";
@@ -80,15 +80,15 @@ function OrderPage() {
 			? { send: liveSend, boxes: liveBoxes }
 			: null;
 	const ship = () => pin !== null && openQuickShip(pin);
-	// Returns come back here once something has shipped from our shelf.
+	// Returns come back here once everything has left our shelf.
 	const returnable = lines
 		.map((l) => ({ ...l, left: l.quantity - l.returned }))
 		.filter((l) => l.left > 0);
 	const canReturn =
-		!order.fulfilledByChannel &&
-		!order.cancelledAt &&
-		order.fulfillmentStatus === "FULFILLED" &&
-		returnable.length > 0;
+		returnBlocker({ ...order, labeled: isLabeled(profit?.labelsStatus) }) ===
+			null && returnable.length > 0;
+	// Refunded in full: what hasn't come back yet is expected.
+	const awaitingReturn = profit?.awaitingReturn ?? false;
 	const [returning, setReturning] = useState(false);
 	// Picking products for this order's unmatched listings.
 	const [matching, setMatching] = useState(false);
@@ -243,6 +243,14 @@ function OrderPage() {
 												{formatCount(l.returned - l.restocked)} returned damaged
 											</Badge>
 										)}
+										{awaitingReturn &&
+											l.tookStock &&
+											l.quantity > l.returned && (
+												<Badge tone="warning">
+													{formatCount(l.quantity - l.returned)} refunded, not
+													back yet
+												</Badge>
+											)}
 										{l.awaitsMatch && (
 											<>
 												<Badge tone="critical">No stock taken</Badge>
@@ -366,7 +374,11 @@ function ProfitCard({
 		<Card
 			title="Profit"
 			aside={
-				p.complete ? undefined : <Badge tone="warning">Waiting on a cost</Badge>
+				p.complete ? undefined : (
+					<Badge tone="warning">
+						{p.awaitingReturn ? "Awaiting return" : "Waiting on a cost"}
+					</Badge>
+				)
 			}
 		>
 			<dl className="flex flex-col gap-1">
@@ -375,7 +387,13 @@ function ProfitCard({
 				<Line
 					label="Cost of goods"
 					value={formatMoney(-p.cost)}
-					note={p.costKnown ? undefined : "A product has no cost"}
+					note={
+						!p.costKnown
+							? "A product has no cost"
+							: p.awaitingReturn
+								? "Refunded items not back yet aren't counted; they are if written off, or still out 60 days after the sale"
+								: undefined
+					}
 				/>
 				<Line
 					label="Marketplace fees"

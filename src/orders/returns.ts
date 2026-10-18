@@ -1,15 +1,13 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
-import { orderLines, orderReturns, orders } from "#/db/schema";
+import { orderLines, orderProfit, orderReturns, orders } from "#/db/schema";
 import { recordReturn, undoBatch } from "#/inventory/ledger";
+import { isLabeled, returnBlocker } from "./status";
 
 export class ReturnError extends Error {
 	name = "ReturnError";
 }
-
-// Statuses where something has left the building and can come back.
-const shipped = ["FULFILLED"];
 
 // Receives units a customer sent back. Restocked units go back on the
 // shipping location's shelf; written-off ones (damaged) are only recorded.
@@ -35,23 +33,17 @@ export async function receiveReturn(
 			.where(eq(orders.id, input.orderId))
 			.for("update");
 		if (!order) throw new ReturnError(`No order ${input.orderId}`);
-		if (order.fulfilledByChannel) {
-			throw new ReturnError(
-				`${order.name} was shipped by the marketplace, so its returns go back there`,
-			);
-		}
-		if (order.cancelledAt) {
-			throw new ReturnError(
-				`${order.name} was cancelled, so its stock already came back`,
-			);
-		}
-		if (!shipped.includes(order.fulfillmentStatus)) {
-			throw new ReturnError(
-				order.fulfillmentStatus === "PARTIALLY_FULFILLED"
-					? "Receive returns after the remaining items ship or are cancelled"
-					: `${order.name} hasn't shipped yet`,
-			);
-		}
+		// order_profit has no row for a cancelled order, which the rule
+		// turns away before asking whether it shipped.
+		const [profit] = await tx
+			.select({ labelsStatus: orderProfit.labelsStatus })
+			.from(orderProfit)
+			.where(eq(orderProfit.orderId, order.id));
+		const blocked = returnBlocker({
+			...order,
+			labeled: isLabeled(profit?.labelsStatus),
+		});
+		if (blocked) throw new ReturnError(blocked);
 		const locationId = input.restock ? await shippingLocation(tx) : null;
 		if (input.restock && locationId === null) {
 			throw new ReturnError("No location to put returned stock in");

@@ -5,6 +5,7 @@ import * as schema from "#/db/schema";
 import { postMovements, recordSale } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
+import { saveCostReport } from "./charges";
 import { receiveReturn, undoReturns } from "./returns";
 
 let db: Db;
@@ -239,6 +240,46 @@ describe("receiveReturn", () => {
 			).rejects.toThrow(message);
 		}
 		expect(await onHand(wrench)).toBe(5);
+	});
+
+	test("an order with a label can take a return though the marketplace never heard it shipped", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const lineId = await shippedOrder(wrench, 1, {
+			fulfillmentStatus: "UNFULFILLED",
+		});
+		await saveCostReport(db, {
+			orderId,
+			billedBy: "shopify",
+			settled: false,
+			charges: [{ kind: "label", description: "Postage", amount: 8 }],
+		});
+		await receiveReturn(db, {
+			orderId,
+			lines: [{ lineId, quantity: 1 }],
+			restock: true,
+		});
+		expect(await onHand(wrench)).toBe(1);
+	});
+
+	test("needing no label isn't proof an unfulfilled order left", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const lineId = await shippedOrder(wrench, 1, {
+			fulfillmentStatus: "UNFULFILLED",
+		});
+		await saveCostReport(db, {
+			orderId,
+			billedBy: "shopify",
+			settled: false,
+			noLabel: true,
+			charges: [],
+		});
+		await expect(
+			receiveReturn(db, {
+				orderId,
+				lines: [{ lineId, quantity: 1 }],
+				restock: true,
+			}),
+		).rejects.toThrow("hasn't shipped");
 	});
 
 	test("an unmatched item can be written off but not restocked", async () => {
