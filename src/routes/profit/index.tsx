@@ -79,8 +79,19 @@ function verdict(i: Item): keyof typeof VERDICT | null {
 	return null;
 }
 
-// The profit gauge's ends: a sale past either one pins at its edge.
-const GAUGE = 50;
+// The profit gauge's scale squeezes as it grows, so every row shares it: the
+// first $10 takes a real step, and $300 either way reaches the end. A sale past
+// that stops at the edge with a mark.
+const GAUGE_STEP = 10;
+const GAUGE_END = 300;
+// Where a profit sits from -1 (the left end) to 1 (the right).
+const gauge = (profit: number) =>
+	Math.sign(profit) *
+	Math.min(
+		1,
+		Math.log1p(Math.abs(profit) / GAUGE_STEP) /
+			Math.log1p(GAUGE_END / GAUGE_STEP),
+	);
 
 // Why an item's profit isn't final yet, in words.
 function unsure(i: Item): string[] {
@@ -536,37 +547,49 @@ function Row({ item: i, range }: { item: Item; range: string }) {
 	);
 }
 
-// Where a profit falls on a bar from -$50 to $50: a pin, with the side holding
-// it red for a loss or green for a gain and the other side black. A sale past
-// either end stretches its side, pushing zero the other way, so a big win or
-// loss looks big.
+// Where a profit falls, at a glance: color fills from the zero line out to a
+// pin, red for a loss and green for a gain, so its length is how much.
 function Gauge({ profit, unsure }: { profit: number; unsure: boolean }) {
-	const lo = Math.min(-GAUGE, profit);
-	const hi = Math.max(GAUGE, profit);
-	const place = (value: number) => `${((value - lo) / (hi - lo)) * 100}%`;
-	const black = "bg-neutral-900";
+	const at = 50 + gauge(profit) * 50;
+	const loss = profit < 0;
+	const past = Math.abs(profit) > GAUGE_END;
 	return (
 		<div
 			role="img"
-			aria-label={`${formatMoney(profit)} on a scale of ${formatMoney(lo)} to ${formatMoney(hi)}`}
+			aria-label={`${loss ? "Lost" : "Made"} ${formatMoney(Math.abs(profit))}`}
 			// Without a cost the profit is too high, so the gauge is faded too.
-			className={cn("relative h-4 w-24", unsure && "opacity-40")}
+			className={cn("relative h-4 w-28", unsure && "opacity-40")}
 		>
-			<div className="absolute inset-x-0 top-1/2 flex h-2 -translate-y-1/2 overflow-hidden rounded-full">
-				<div
-					className={profit < 0 ? "bg-critical-icon" : black}
-					style={{ width: place(0) }}
-				/>
-				<div className={cn("flex-1", profit > 0 ? "bg-success-icon" : black)} />
-			</div>
+			<div className="absolute inset-x-0 top-1.5 h-1 rounded-full bg-black/8" />
 			<div
-				className="absolute inset-y-0 w-px bg-white/60"
-				style={{ left: place(0) }}
+				className={cn(
+					"absolute top-1.5 h-1",
+					loss
+						? "rounded-l-full bg-critical-icon"
+						: "rounded-r-full bg-success-icon",
+				)}
+				style={{ left: `${Math.min(50, at)}%`, width: `${Math.abs(at - 50)}%` }}
 			/>
+			<div className="absolute inset-y-0.5 left-1/2 w-px bg-black/35" />
 			<div
-				className="absolute inset-y-0 w-1 -translate-x-1/2 rounded-full bg-white ring-1 ring-neutral-900"
-				style={{ left: place(profit) }}
+				className={cn(
+					"absolute top-0.75 size-2.5 -translate-x-1/2 rounded-full border-2 bg-white shadow-sm",
+					loss ? "border-critical-icon" : "border-success-icon",
+				)}
+				style={{ left: `${at}%` }}
 			/>
+			{past && (
+				<span
+					className={cn(
+						"absolute -top-px text-[10px] font-bold",
+						loss
+							? "-left-2.5 text-critical-icon"
+							: "-right-2.5 text-success-icon",
+					)}
+				>
+					{loss ? "‹" : "›"}
+				</span>
+			)}
 		</div>
 	);
 }
