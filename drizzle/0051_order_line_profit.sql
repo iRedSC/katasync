@@ -38,6 +38,7 @@ SELECT
 	"quantity",
 	"revenue",
 	"unit_cost",
+	"restocked",
 	-- Units returned to the shelf aren't a cost.
 	"unit_cost" * ("quantity" - "restocked") AS "cost",
 	-- A line cancelled down to nothing costs nothing either way.
@@ -197,19 +198,33 @@ FROM parts p;
 -- What each item sold made: one row per order line with units, its sales
 -- less its cost, less its share of the order's fees, labels, refunds and
 -- adjustments, net of the shipping the buyer paid. Shares go by sales, or by
--- units on a free order (a replacement). An order's lines add up to its
--- profit in order_profit, give or take rounding.
+-- units on a free order (a replacement). An order whose every line was
+-- cancelled down to nothing keeps its lines, sharing what it still cost
+-- evenly, so its lines always add up to its profit in order_profit, give or
+-- take rounding.
 CREATE VIEW "order_line_profit" AS
-WITH lines AS (
+WITH kept AS (
 	SELECT
 		lc.*,
-		CASE WHEN p."revenue" > 0 THEN lc."revenue" / p."revenue"
-			ELSE lc."quantity"::numeric
-				/ nullif(sum(lc."quantity") OVER (PARTITION BY lc."order_id"), 0)
-		END AS "share"
+		sum(lc."quantity") OVER (PARTITION BY lc."order_id") AS "order_units",
+		count(*) OVER (PARTITION BY lc."order_id") AS "order_lines"
 	FROM "order_line_costs" lc
-	JOIN "order_profit" p ON p."order_id" = lc."order_id"
 	WHERE lc."quantity" > 0
+		OR NOT EXISTS (
+			SELECT 1 FROM "order_lines" l
+			WHERE l."order_id" = lc."order_id" AND l."quantity" > 0
+		)
+),
+lines AS (
+	SELECT
+		k.*,
+		CASE
+			WHEN p."revenue" > 0 THEN k."revenue" / p."revenue"
+			WHEN k."order_units" > 0 THEN k."quantity"::numeric / k."order_units"
+			ELSE 1.0 / k."order_lines"
+		END AS "share"
+	FROM kept k
+	JOIN "order_profit" p ON p."order_id" = k."order_id"
 )
 SELECT
 	l."line_id",
@@ -218,6 +233,8 @@ SELECT
 	p."sold_on",
 	p."placed_at",
 	l."quantity",
+	-- Units a customer sent back to the shelf, which cost nothing.
+	l."restocked"::int AS "restocked",
 	round(l."revenue", 2)::numeric(12, 2) AS "revenue",
 	round(l."cost", 2)::numeric(12, 2) AS "cost",
 	l."cost_known",

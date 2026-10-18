@@ -1204,9 +1204,10 @@ export const orderProfit = pgView("order_profit", {
 	complete: boolean().notNull(),
 }).existing();
 
-// One row per item sold (order line with units), with its share of its
-// order's charges, defined in drizzle/0051_order_line_profit.sql. Its lines
-// add up to the order's profit in order_profit.
+// One row per item sold (order line with units; an order cancelled down to
+// nothing keeps its lines), with its share of its order's charges, defined
+// in drizzle/0051_order_line_profit.sql. Its lines add up to the order's
+// profit in order_profit.
 export const orderLineProfit = pgView("order_line_profit", {
 	lineId: integer().notNull(),
 	orderId: integer().notNull(),
@@ -1214,6 +1215,8 @@ export const orderLineProfit = pgView("order_line_profit", {
 	soldOn: channel().notNull(),
 	placedAt: timestamp({ withTimezone: true }).notNull(),
 	quantity: integer().notNull(),
+	// Units sent back to the shelf, which cost nothing.
+	restocked: integer().notNull(),
 	revenue: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	// Null when the product has no cost, or the line no product.
 	cost: numeric({ precision: 12, scale: 2, mode: "number" }),

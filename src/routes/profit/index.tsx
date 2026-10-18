@@ -570,7 +570,8 @@ function Cost({ item: i, range }: { item: Item; range: string }) {
 			patch: itemsData.patch(range, (list) =>
 				list.map((x) => {
 					if (x.productId !== productId || x.costKnown) return x;
-					const cost = unitCost * x.quantity;
+					// As the view counts it: units back on the shelf cost nothing.
+					const cost = unitCost * (x.quantity - x.restocked);
 					return {
 						...x,
 						cost,

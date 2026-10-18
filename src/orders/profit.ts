@@ -221,6 +221,7 @@ export async function profitItems(db: Db, start: Date, end: Date) {
 			imageUrl: products.imageUrl,
 			productKind: products.kind,
 			quantity: lp.quantity,
+			restocked: lp.restocked,
 			revenue: lp.revenue,
 			cost: lp.cost,
 			costKnown: lp.costKnown,

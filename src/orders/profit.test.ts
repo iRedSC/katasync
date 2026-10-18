@@ -340,6 +340,24 @@ describe("order_profit", () => {
 		);
 	});
 
+	test("an order cancelled down to nothing keeps its lines, so its fee shows", async () => {
+		const { id } = await order("#13", [
+			{ unitPrice: 20, quantity: 0, unitCost: 5 },
+		]);
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "shopify",
+			settled: false,
+			charges: [{ kind: "fee", description: "Processing fee", amount: 1.25 }],
+		});
+		const items = await db
+			.select()
+			.from(schema.orderLineProfit)
+			.where(eq(schema.orderLineProfit.orderId, id));
+		expect(items).toMatchObject([{ quantity: 0, profit: -1.25 }]);
+		expect((await profit(id)).profit).toBe(-1.25);
+	});
+
 	test("a relayed order's refund counts once, from where it sold", async () => {
 		const { id } = await order(
 			"#12",
