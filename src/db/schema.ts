@@ -867,6 +867,10 @@ export const purchaseOrderLines = pgTable(
 		sentUnitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 		// Set by hand on a draft: Update leaves this line's quantity alone.
 		locked: boolean().notNull().default(false),
+		// What whoever unpacked it wants known, e.g. "2 crushed, kept". Shown
+		// above the line when receiving. Never printed; the supplier doesn't
+		// see it. Null when there's none, never blank.
+		receivingNote: text(),
 	},
 	(t) => [
 		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),
@@ -887,6 +891,10 @@ export const purchaseOrderLines = pgTable(
 		check(
 			"purchase_order_lines_minimum_positive",
 			sql`${t.minimumQuantity} > 0`,
+		),
+		check(
+			"purchase_order_lines_receiving_note_not_blank",
+			sql`${t.receivingNote} is null or btrim(${t.receivingNote}) <> ''`,
 		),
 	],
 );

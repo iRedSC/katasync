@@ -505,6 +505,48 @@ describe("over MCP", () => {
 		expect(after.onHand).toBe(0);
 	});
 
+	test("notes a line for receiving, and takes the note off", async () => {
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		const [location] = await db.select().from(schema.locations);
+		const [po] = await db
+			.insert(schema.purchaseOrders)
+			.values({ supplierId: canam, locationId: location.id, status: "sent" })
+			.returning();
+		await db.insert(schema.purchaseOrderLines).values({
+			purchaseOrderId: po.id,
+			productId: blade,
+			supplierCount: 1,
+			quantity: 2,
+		});
+		const set = await tool("set_po_line_note", {
+			po: po.id,
+			sku: "BLADE",
+			note: "  1 crushed, kept  ",
+		});
+		expect(set.data).toMatchObject({ was: null, note: "1 crushed, kept" });
+		const shown = await tool("get_purchase_order", { id: po.id });
+		expect(shown.data.lines[0].receivingNote).toBe("1 crushed, kept");
+		const cleared = await tool("set_po_line_note", {
+			po: po.id,
+			sku: "BLADE",
+			note: " ",
+		});
+		expect(cleared.data).toMatchObject({ was: "1 crushed, kept", note: null });
+		await db
+			.update(schema.purchaseOrders)
+			.set({ status: "draft" })
+			.where(eq(schema.purchaseOrders.id, po.id));
+		const onDraft = await tool("set_po_line_note", {
+			po: po.id,
+			sku: "BLADE",
+			note: "x",
+		});
+		expect(onDraft.isError).toBe(true);
+	});
+
 	test("changes a sent PO to match what came, without changing what was sent", async () => {
 		const [{ id: canam }] = await db
 			.insert(schema.suppliers)

@@ -41,6 +41,7 @@ import {
 	purchaseOrderOfBatch,
 	receive,
 	setDraftLine,
+	setReceivingNote,
 	undoReceipt,
 	updateDraft,
 } from "#/purchasing/orders";
@@ -74,7 +75,7 @@ How things count:
 - Sales: use the sales_units view (product_id, order_id, store_id, placed_at, units). Tool sets count as their parts; cancelled and FBA orders are left out. Join stores for the channel.
 - Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
 - Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.
-- POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here emails a PO: the user reviews and sends drafts in the app. When the supplier already has a draft (they invoiced or shipped it), mark_po_sent records that without contacting anyone; ask the user first. Sent POs can be received here. When a supplier ships or bills something other than what was sent and we're keeping it, add_to_sent_po and adjust_sent_po_line change the PO to match, telling no one.
+- POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here emails a PO: the user reviews and sends drafts in the app. When the supplier already has a draft (they invoiced or shipped it), mark_po_sent records that without contacting anyone; ask the user first. Sent POs can be received here. When a supplier ships or bills something other than what was sent and we're keeping it, add_to_sent_po and adjust_sent_po_line change the PO to match, telling no one. While receiving, set_po_line_note leaves a note on a line (damage, a short count, what's coming later) that shows above it on the receive page.
 - Supplier invoices: match_invoice checks one against its PO (quantities, prices, missing and extra lines, totals) and changes nothing. Give every line, with their item number as supplier_sku when it has one. Then record_supplier_invoice keeps its number, date, due date, and total on the PO; the same number from the same supplier can't be recorded twice.
 - Cycle counts only happen when asked for: request_counts puts shelves on the staff's count list, and a count clears them. Ask when stock looks wrong, e.g. oversold or not matching what a channel reports.
 - Profit: use the order_profit view (one row per order not cancelled: order_id, store_id, sold_on, placed_at, revenue, shipping_charged, cost, cost_known, fees, fees_status, labels, labels_status, refunds, adjustments, profit, complete, shipped). The Profit tab counts only shipped orders (shipped: confirmed by the marketplace and shipped, or needing no shipping); say so when leaving others out. An Amazon order still Pending has no price yet. sold_on is where it really sold (a TikTok order relayed through Shopify is tiktok). fees_status: final, reported (may still change), or estimated (a typical rate until the marketplace reports). labels_status: known, stand_in (katasync's TikTok estimate), not_needed, not_shipped, awaiting (the marketplace may still bill one), or missing (shipped, no label cost from anyone). Say how much of a total rests on estimates or gaps, never present it as final: complete is true when cost, fees and labels are all in. Days are the shop's (America/New_York); weeks start Saturday. Each marketplace's charges per order are in order_charges (billed_by, kind fee/label/refund/adjustment, description, amount; positive costs us). Per item sold, use order_line_profit (line_id, order_id, product_id, sold_on, placed_at, quantity, revenue, cost, cost_known, fees, labels, shipping_charged, refunds, adjustments, profit, fees_status, labels_status, complete, shipped): each line's share of its order's charges, by sales (by units on a free order); an order's lines add up to its profit. A line with no cost of its own uses its product's cost as it is now.
@@ -175,6 +176,7 @@ async function orderForClaude(db: Db, id: number) {
 				? { sent: { quantity: l.sentQuantity, unitCost: l.sentUnitCost } }
 				: {}),
 			...(l.locked ? { locked: true } : {}),
+			...(l.receivingNote ? { receivingNote: l.receivingNote } : {}),
 			...(l.linkSupplierId !== po.supplier.id
 				? { note: "now bought from another supplier" }
 				: l.defaultUnit !== l.unit ||
@@ -1328,6 +1330,35 @@ function registerWriteTools(server: McpServer, db: Db) {
 			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
 			const result = await receive(db, { lineId: line.id, quantity });
 			return json({ po, sku, quantity, ...result });
+		},
+	);
+
+	server.registerTool(
+		"set_po_line_note",
+		{
+			description:
+				'Puts a note on one product\'s line of a sent or closed PO for whoever is receiving it, e.g. "2 crushed, kept" or "back-ordered, due Friday". Shown above the line on the receive page; never printed or sent to the supplier. Replaces any note already there; null or blank takes it off. get_purchase_order shows it as receivingNote. Returns the note it replaced.',
+			inputSchema: {
+				po: z.number().int().positive(),
+				sku: z.string(),
+				note: z.string().nullable(),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sku, note }) => {
+			const product = await productBySku(db, sku);
+			const [line] = await db
+				.select({ id: purchaseOrderLines.id })
+				.from(purchaseOrderLines)
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, po),
+						eq(purchaseOrderLines.productId, product.id),
+					),
+				);
+			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
+			const result = await setReceivingNote(db, { lineId: line.id, note });
+			return json({ po, sku, ...result });
 		},
 	);
 
