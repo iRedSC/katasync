@@ -79,6 +79,9 @@ function verdict(i: Item): keyof typeof VERDICT | null {
 	return null;
 }
 
+// The profit gauge's ends: a sale past either one pins at its edge.
+const GAUGE = 50;
+
 // Why an item's profit isn't final yet, in words.
 function unsure(i: Item): string[] {
 	const sold = channelName(i.soldOn);
@@ -289,6 +292,9 @@ function Items() {
 											>
 												Profit
 											</Th>
+											<th className="px-2.5 py-2 font-medium">
+												<span className="sr-only">Profit at a glance</span>
+											</th>
 										</tr>
 									</thead>
 									<tbody>
@@ -523,7 +529,45 @@ function Row({ item: i, range }: { item: Item; range: string }) {
 				)}
 				<div className="text-xs">{percent(m)}</div>
 			</td>
+			<td className="py-2 pr-4 pl-1.5">
+				<Gauge profit={i.profit} unsure={!i.costKnown} />
+			</td>
 		</tr>
+	);
+}
+
+// Where a profit falls on a bar from -$50 to $50: a pin, with the side holding
+// it red for a loss or green for a gain and the other side black. A sale past
+// either end stretches its side, pushing zero the other way, so a big win or
+// loss looks big.
+function Gauge({ profit, unsure }: { profit: number; unsure: boolean }) {
+	const lo = Math.min(-GAUGE, profit);
+	const hi = Math.max(GAUGE, profit);
+	const place = (value: number) => `${((value - lo) / (hi - lo)) * 100}%`;
+	const black = "bg-neutral-900";
+	return (
+		<div
+			role="img"
+			aria-label={`${formatMoney(profit)} on a scale of ${formatMoney(lo)} to ${formatMoney(hi)}`}
+			// Without a cost the profit is too high, so the gauge is faded too.
+			className={cn("relative h-4 w-24", unsure && "opacity-40")}
+		>
+			<div className="absolute inset-x-0 top-1/2 flex h-2 -translate-y-1/2 overflow-hidden rounded-full">
+				<div
+					className={profit < 0 ? "bg-critical-icon" : black}
+					style={{ width: place(0) }}
+				/>
+				<div className={cn("flex-1", profit > 0 ? "bg-success-icon" : black)} />
+			</div>
+			<div
+				className="absolute inset-y-0 w-px bg-white/60"
+				style={{ left: place(0) }}
+			/>
+			<div
+				className="absolute inset-y-0 w-1 -translate-x-1/2 rounded-full bg-white ring-1 ring-neutral-900"
+				style={{ left: place(profit) }}
+			/>
+		</div>
 	);
 }
 
