@@ -1,0 +1,212 @@
+import { and, eq, inArray } from "drizzle-orm";
+import type { Db } from "#/db/client";
+import { purchaseOrderLines, purchaseOrders } from "#/db/schema";
+import { wantsMore } from "#/purchasing/changes";
+import type { SuggestedLine } from "#/purchasing/reorder";
+import { suggestPurchases } from "#/purchasing/reorder";
+import { currentDraft, firstLocation, openDraft } from "./drafts";
+import { lockOrder } from "./lock";
+import { partsOfSets } from "./set-parts";
+
+// Opens the supplier's draft with today's suggestions in it, creating it if
+// there isn't one.
+export async function draftFromSuggestions(
+	db: Db,
+	supplierId: number,
+	now = new Date(),
+): Promise<number> {
+	const id = await openDraft(db, supplierId);
+	await updateFromSuggestions(db, id, now);
+	return id;
+}
+
+// How today's suggestions differ from a draft. A draft is frozen once made:
+// these are what "Update" would apply. New products are added, and lines the
+// suggestion now wants more of are raised. Nothing is lowered or removed, so
+// a quantity set by hand is never undone. A locked line is never raised; it's
+// skipped instead. A line may be in a different unit from the suggestion (set
+// on just this PO), so amounts compare as the product itself, and a raise is
+// in the line's unit, rounded up. fromSets is what the draft's tool sets will
+// add of each part when it's sent (partsOfSets), so a part already coming in a
+// set isn't ordered twice. wants is, per product on the draft, how many single
+// items the suggestion wants (see wantsMore).
+export function draftChanges(
+	draft: {
+		productId: number;
+		quantity: number;
+		packSize: number;
+		locked: boolean;
+	}[],
+	suggested: SuggestedLine[],
+	fromSets: Map<number, number> = new Map(),
+) {
+	const onDraft = new Map(draft.map((l) => [l.productId, l]));
+	const added: SuggestedLine[] = [];
+	const raised: (SuggestedLine & { raiseTo: number })[] = [];
+	const skipped: SuggestedLine[] = [];
+	const wants = new Map<number, number>();
+	for (const l of suggested) {
+		const want = l.quantity * l.packSize - (fromSets.get(l.productId) ?? 0);
+		const line = onDraft.get(l.productId);
+		if (!line) {
+			if (want > 0)
+				added.push({
+					...l,
+					quantity: Math.max(Math.ceil(want / l.packSize), l.minimumQuantity),
+				});
+			continue;
+		}
+		wants.set(l.productId, want);
+		if (!wantsMore({ ...line, wants: want })) continue;
+		if (line.locked) skipped.push(l);
+		else raised.push({ ...l, raiseTo: Math.ceil(want / line.packSize) });
+	}
+	return { added, raised, skipped, wants };
+}
+
+// Applies draftChanges to a draft. Returns how many lines it added and raised.
+export async function updateFromSuggestions(
+	db: Db,
+	purchaseOrderId: number,
+	now = new Date(),
+): Promise<{ added: number; raised: number }> {
+	const suggestions = await suggestPurchases(db, now);
+	return db.transaction(async (tx) => {
+		// Locked, so it can't be sent or cancelled while lines change.
+		const po = await lockOrder(tx, purchaseOrderId, ["draft"]);
+		const suggested =
+			suggestions.find((s) => s.supplierId === po.supplierId)?.lines ?? [];
+		const current = await tx
+			.select({
+				productId: purchaseOrderLines.productId,
+				quantity: purchaseOrderLines.quantity,
+				packSize: purchaseOrderLines.packSize,
+				locked: purchaseOrderLines.locked,
+			})
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
+		const { added, raised } = draftChanges(
+			current,
+			suggested,
+			await partsOfSets(tx, po.id),
+		);
+		if (added.length > 0)
+			await tx.insert(purchaseOrderLines).values(
+				added.map((l) => ({
+					purchaseOrderId: po.id,
+					productId: l.productId,
+					unit: l.unit,
+					packSize: l.packSize,
+					supplierCount: l.supplierCount,
+					minimumQuantity: l.minimumQuantity,
+					quantity: l.quantity,
+					unitCost: l.unitCost,
+				})),
+			);
+		for (const l of raised)
+			await tx
+				.update(purchaseOrderLines)
+				.set({ quantity: l.raiseTo })
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, po.id),
+						eq(purchaseOrderLines.productId, l.productId),
+					),
+				);
+		return { added: added.length, raised: raised.length };
+	});
+}
+
+// The supplier's suggested PO, matching today's suggestion, so its
+// suggestion opens on the PO page. Nothing is a draft until it's changed
+// (lockForEdit). A supplier with a draft already gets that instead.
+export async function openSuggested(
+	db: Db,
+	supplierId: number,
+	now = new Date(),
+): Promise<number> {
+	const id = await db.transaction(async (tx): Promise<number> => {
+		const [existing] = await currentDraft(tx, supplierId);
+		if (existing) return existing.id;
+		const [po] = await tx
+			.insert(purchaseOrders)
+			.values({
+				supplierId,
+				locationId: await firstLocation(tx),
+				status: "suggested",
+			})
+			.onConflictDoNothing()
+			.returning({ id: purchaseOrders.id });
+		if (po) return po.id;
+		return (await currentDraft(tx, supplierId))[0].id;
+	});
+	await refreshSuggested(db, id, now);
+	return id;
+}
+
+// Makes a suggested PO's lines match today's suggestion for its supplier:
+// lines it no longer suggests go, changed ones follow it, new ones are added.
+// Lines keep their ids, so an edit made from what's shown still finds its
+// line. Leaves any other PO alone.
+export async function refreshSuggested(db: Db, id: number, now = new Date()) {
+	const [po] = await db
+		.select({ status: purchaseOrders.status })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, id));
+	if (po?.status !== "suggested") return;
+	const suggestions = await suggestPurchases(db, now);
+	await db.transaction(async (tx) => {
+		// Checked again under the lock: an edit may have made it a draft.
+		const locked = await lockOrder(tx, id, [
+			"suggested",
+			"draft",
+			"sent",
+			"closed",
+			"cancelled",
+		]);
+		if (locked.status !== "suggested") return;
+		const want =
+			suggestions.find((s) => s.supplierId === locked.supplierId)?.lines ?? [];
+		const current = await tx
+			.select()
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.purchaseOrderId, id));
+		const gone = current.filter(
+			(c) => !want.some((l) => l.productId === c.productId),
+		);
+		if (gone.length > 0)
+			await tx.delete(purchaseOrderLines).where(
+				inArray(
+					purchaseOrderLines.id,
+					gone.map((c) => c.id),
+				),
+			);
+		for (const l of want) {
+			const terms = {
+				unit: l.unit,
+				packSize: l.packSize,
+				supplierCount: l.supplierCount,
+				minimumQuantity: l.minimumQuantity,
+				quantity: l.quantity,
+				unitCost: l.unitCost,
+			};
+			const line = current.find((c) => c.productId === l.productId);
+			if (!line)
+				await tx
+					.insert(purchaseOrderLines)
+					.values({ purchaseOrderId: id, productId: l.productId, ...terms });
+			else if (
+				line.unit !== terms.unit ||
+				line.packSize !== terms.packSize ||
+				line.supplierCount !== terms.supplierCount ||
+				line.minimumQuantity !== terms.minimumQuantity ||
+				line.quantity !== terms.quantity ||
+				line.unitCost !== terms.unitCost
+			)
+				await tx
+					.update(purchaseOrderLines)
+					.set(terms)
+					.where(eq(purchaseOrderLines.id, line.id));
+		}
+	});
+}

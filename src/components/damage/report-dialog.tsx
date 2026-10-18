@@ -10,6 +10,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { EMAIL_PHOTO_BYTES } from "#/purchasing/damage-limits";
@@ -122,28 +123,31 @@ export function DamageReportDialog({
 									{(["credit", "replacement"] as const).map((remedy) => {
 										const off = remedy === "replacement" && !x.replaceable;
 										return (
-											<button
+											<Tip
 												key={remedy}
-												type="button"
-												aria-pressed={chosen === remedy}
-												disabled={sending || off}
-												title={
+												content={
 													off
 														? `${x.quantity} isn't a whole ${x.unit} of ${x.packSize}, so the PO can't expect a replacement`
 														: undefined
 												}
-												onClick={() =>
-													setRemedies(new Map(remedies).set(x.id, remedy))
-												}
-												className={cn(
-													"rounded-md px-3 py-1.5 disabled:opacity-40",
-													chosen === remedy
-														? "bg-white shadow-card"
-														: "text-muted-foreground hover:text-foreground",
-												)}
 											>
-												{remedy === "credit" ? "Credit" : "Replacement"}
-											</button>
+												<button
+													type="button"
+													aria-pressed={chosen === remedy}
+													disabled={sending || off}
+													onClick={() =>
+														setRemedies(new Map(remedies).set(x.id, remedy))
+													}
+													className={cn(
+														"rounded-md px-3 py-1.5 disabled:opacity-40",
+														chosen === remedy
+															? "bg-white shadow-card"
+															: "text-muted-foreground hover:text-foreground",
+													)}
+												>
+													{remedy === "credit" ? "Credit" : "Replacement"}
+												</button>
+											</Tip>
 										);
 									})}
 								</fieldset>

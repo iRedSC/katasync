@@ -7,6 +7,7 @@ import { OrderTabs } from "#/components/order-tabs";
 import { Badge, Card, EmptyState, Page, type Tone } from "#/components/page";
 import { type Received, ReturnDialog } from "#/components/return-dialog";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
+import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
 import { formatCount, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
@@ -436,17 +437,19 @@ function ReturnRow({
 					<Badge>Not expected</Badge>
 				)}
 				{onNothing && (
-					<button
-						type="button"
-						title="Nothing coming back (n)"
-						onClick={(e) => {
-							e.stopPropagation();
-							onNothing();
-						}}
-						className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
-					>
-						<Ban className="size-4" />
-					</button>
+					<Tip content="Nothing coming back (n)">
+						<button
+							type="button"
+							aria-label="Nothing coming back"
+							onClick={(e) => {
+								e.stopPropagation();
+								onNothing();
+							}}
+							className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
+						>
+							<Ban className="size-4" />
+						</button>
+					</Tip>
 				)}
 			</div>
 		</div>
