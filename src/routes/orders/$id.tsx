@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
+import { Ban, ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, Page, useBack } from "#/components/page";
@@ -22,11 +22,17 @@ import {
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
+import { offerUndo } from "#/lib/undo";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
 import { linkSku } from "#/server/catalog";
-import { getOrder, type OrderDetail } from "#/server/orders";
+import {
+	getOrder,
+	markOrderNoReturn,
+	type OrderDetail,
+	undoOrderNoReturn,
+} from "#/server/orders";
 import { resendTracking, voidLabel } from "#/server/shipping";
 
 export const Route = createFileRoute("/orders/$id")({
@@ -65,8 +71,18 @@ const returnedPatch =
 
 function OrderPage() {
 	const loaded = Route.useLoaderData();
-	const { order, lines, sends, adminUrl, profit, charges, reports, checks } =
-		orderData.useData(loaded.order.id, loaded);
+	const {
+		order,
+		lines,
+		sends,
+		adminUrl,
+		profit,
+		charges,
+		reports,
+		checks,
+		returnState,
+		returnRequests,
+	} = orderData.useData(loaded.order.id, loaded);
 	const goBack = useBack({ to: "/orders" });
 	const status = orderStatus(order);
 	const external = externalFulfillment(order);
@@ -94,6 +110,34 @@ function OrderPage() {
 	// Refunded in full: what hasn't come back yet is expected.
 	const awaitingReturn = profit?.awaitingReturn ?? false;
 	const [returning, setReturning] = useState(false);
+
+	// The buyer kept it, or it was lost: its refund's items are a cost now,
+	// and it leaves Returns.
+	async function nothingComing() {
+		const r = await optimism.change({
+			label: `Nothing coming back on ${order.name}`,
+			patch: orderData.patch(order.id, (d) => ({
+				...d,
+				returnState: null,
+				profit: d.profit && { ...d.profit, awaitingReturn: false },
+			})),
+			send: () => markOrderNoReturn({ data: { orderId: order.id } }),
+		});
+		if (!r) return;
+		offerUndo(`Nothing coming back on ${order.name}`, {
+			description: awaitingReturn ? "Its items count as a cost now" : undefined,
+			undo: async () => {
+				// Nothing to lay over: the reload shows what's due again.
+				const undone = await optimism.change({
+					send: () =>
+						undoOrderNoReturn({
+							data: { orderId: order.id, previous: r.value.previous },
+						}),
+				});
+				return undone && `${order.name} is back on Returns`;
+			},
+		});
+	}
 	// The SKU being linked to a product.
 	const [linking, setLinking] = useState<string | null>(null);
 
@@ -180,6 +224,12 @@ function OrderPage() {
 							</a>
 						</Button>
 					)}
+					{returnState && (
+						<Button size="sm" variant="ghost" onClick={nothingComing}>
+							<Ban />
+							Nothing coming back
+						</Button>
+					)}
 					{canReturn && (
 						<Button
 							size="sm"
@@ -216,6 +266,25 @@ function OrderPage() {
 				{formatOrderDate(order.placedAt)} on{" "}
 				{order.salesChannel ?? channelName(order.channel)}
 			</p>
+			{returnRequests.map((r) => (
+				<p key={`${r.billedBy}${r.requestedAt.getTime()}`} className="-mt-2">
+					<Badge
+						tone={
+							r.status === "closed" || r.status === "cancelled"
+								? undefined
+								: "info"
+						}
+					>
+						Return {r.rawStatus.toLowerCase().replace(/_/g, " ")}
+					</Badge>{" "}
+					<span className="text-muted-foreground">
+						Opened {formatOrderDate(r.requestedAt)} on {channelName(r.billedBy)}
+						{r.reason && `: ${r.reason}`}
+						{r.trackingNumber &&
+							`, tracking ${r.carrier ? `${r.carrier} ` : ""}${r.trackingNumber}`}
+					</span>
+				</p>
+			))}
 
 			<ProductSearchDialog
 				title={
