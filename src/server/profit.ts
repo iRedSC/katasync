@@ -6,11 +6,13 @@ import {
 	profitByDay,
 	profitByMarketplace,
 	profitByProduct,
+	profitItems,
 	profitTotals,
 	RANGES,
 	type RangeKey,
 	resolveRange,
 } from "#/orders/profit";
+import { updateProductDetails } from "#/products/details";
 
 const rangeKeys = Object.keys(RANGES) as RangeKey[];
 export const rangeType = type.enumerated(...rangeKeys);
@@ -45,6 +47,26 @@ export const getProfit = createServerFn({ method: "GET" })
 				.slice(0, 10),
 			attention,
 		};
+	});
+
+// Every item sold in the range, with what each made.
+export const getProfitItems = createServerFn({ method: "GET" })
+	.validator(type({ range: rangeType }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const range = await resolveRange(db, data.range);
+		return { range, ...(await profitItems(db, range.start, range.end)) };
+	});
+
+// Sets what one of a product costs. Sales already in with no cost of their
+// own take it at once (order_line_costs); those with one keep theirs.
+export const setProductCost = createServerFn({ method: "POST" })
+	.validator(type({ productId: "number.integer > 0", unitCost: "number >= 0" }))
+	.handler(async ({ data }) => {
+		const saved = await updateProductDetails(getDb(), data.productId, {
+			unitCost: data.unitCost,
+		});
+		return { sku: saved.sku, unitCost: saved.unitCost };
 	});
 
 // This month's profit so far, for Home.

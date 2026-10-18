@@ -409,7 +409,8 @@ export const orderLines = pgTable(
 		// Price per unit after every discount.
 		unitPrice: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		// Cost per unit when the line first came in, so later cost changes don't
-		// rewrite past profit. Null when any part has no cost.
+		// rewrite past profit. Null when any part had no cost; profit then uses
+		// the product's cost as it is now (order_line_costs).
 		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 		// The stock movement this line made, if any. Set once, so re-syncing never
 		// takes stock twice; a cancellation reverses exactly this batch.
@@ -1200,6 +1201,47 @@ export const orderProfit = pgView("order_profit", {
 	refunds: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	adjustments: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	profit: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	complete: boolean().notNull(),
+}).existing();
+
+// One row per item sold (order line with units; an order cancelled down to
+// nothing keeps its lines), with its share of its order's charges, defined
+// in drizzle/0051_order_line_profit.sql. Its lines add up to the order's
+// profit in order_profit.
+export const orderLineProfit = pgView("order_line_profit", {
+	lineId: integer().notNull(),
+	orderId: integer().notNull(),
+	productId: integer(),
+	soldOn: channel().notNull(),
+	placedAt: timestamp({ withTimezone: true }).notNull(),
+	quantity: integer().notNull(),
+	// Units sent back to the shelf, which cost nothing.
+	restocked: integer().notNull(),
+	revenue: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	// Null when the product has no cost, or the line no product.
+	cost: numeric({ precision: 12, scale: 2, mode: "number" }),
+	costKnown: boolean().notNull(),
+	fees: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	labels: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	shippingCharged: numeric({
+		precision: 12,
+		scale: 2,
+		mode: "number",
+	}).notNull(),
+	refunds: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	adjustments: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	profit: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	feesStatus: text({ enum: ["final", "reported", "estimated"] }).notNull(),
+	labelsStatus: text({
+		enum: [
+			"known",
+			"stand_in",
+			"not_needed",
+			"not_shipped",
+			"awaiting",
+			"missing",
+		],
+	}).notNull(),
 	complete: boolean().notNull(),
 }).existing();
 

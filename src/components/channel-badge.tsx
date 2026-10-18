@@ -1,3 +1,4 @@
+import { Tip } from "#/components/ui/tooltip";
 import { channelName } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { isShopifyRelayedTiktok } from "#/orders/fulfillment";
@@ -57,18 +58,24 @@ export function brandOf(
 }
 
 // Where an order was placed, e.g. "Amazon FBA" or "Online Store", with the
-// marketplace's logo and color.
+// marketplace's logo and color. Compact shows only the logo, with the name
+// on hover, for tight tables; a channel without a logo keeps its name.
 export function ChannelBadge({
 	channel,
 	salesChannel,
+	compact = false,
 }: {
 	channel: string;
 	salesChannel: string | null;
+	compact?: boolean;
 }) {
 	const brand = brandOf(channel, salesChannel);
 	const b = brand && brands[brand];
-	return (
+	const name = salesChannel ?? channelName(channel);
+	const logoOnly = compact && Boolean(b);
+	const badge = (
 		<span
+			aria-label={logoOnly ? name : undefined}
 			className={cn(
 				"inline-flex h-5 shrink-0 items-center gap-1 rounded-lg px-1.5 text-xs font-medium whitespace-nowrap",
 				b ? b.chip : "bg-surface-strong text-foreground",
@@ -83,7 +90,8 @@ export function ChannelBadge({
 					<path d={b.path} />
 				</svg>
 			)}
-			{salesChannel ?? channelName(channel)}
+			{!logoOnly && name}
 		</span>
 	);
+	return logoOnly ? <Tip content={name}>{badge}</Tip> : badge;
 }

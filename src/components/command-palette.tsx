@@ -10,6 +10,7 @@ import {
 	ListChecks,
 	Package,
 	Settings,
+	Trophy,
 	Truck,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -59,6 +60,14 @@ export const pages = [
 		icon: ChartNoAxesColumnIncreasing,
 		keys: "g m",
 		parent: null,
+		count: null,
+	},
+	{
+		to: "/profit/overview",
+		label: "Profit overview",
+		icon: Trophy,
+		keys: "g r",
+		parent: "/profit",
 		count: null,
 	},
 	{

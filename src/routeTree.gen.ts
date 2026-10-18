@@ -15,7 +15,6 @@ import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as McpRouteImport } from './routes/mcp'
-import { Route as ProfitRouteImport } from './routes/profit'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StockRouteImport } from './routes/stock'
@@ -27,6 +26,8 @@ import { Route as OrdersIdRouteImport } from './routes/orders/$id'
 import { Route as PrintInvoicesRouteImport } from './routes/print/invoices'
 import { Route as ProductsIndexRouteImport } from './routes/products/index'
 import { Route as ProductsSkuRouteImport } from './routes/products/$sku'
+import { Route as ProfitIndexRouteImport } from './routes/profit/index'
+import { Route as ProfitOverviewRouteImport } from './routes/profit/overview'
 import { Route as PurchasingIndexRouteImport } from './routes/purchasing/index'
 import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
@@ -67,11 +68,6 @@ const LoginRoute = LoginRouteImport.update({
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProfitRoute = ProfitRouteImport.update({
-  id: '/profit',
-  path: '/profit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -127,6 +123,16 @@ const ProductsIndexRoute = ProductsIndexRouteImport.update({
 const ProductsSkuRoute = ProductsSkuRouteImport.update({
   id: '/products/$sku',
   path: '/products/$sku',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfitIndexRoute = ProfitIndexRouteImport.update({
+  id: '/profit/',
+  path: '/profit/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfitOverviewRoute = ProfitOverviewRouteImport.update({
+  id: '/profit/overview',
+  path: '/profit/overview',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PurchasingIndexRoute = PurchasingIndexRouteImport.update({
@@ -193,7 +199,6 @@ export interface FileRoutesByFullPath {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
-  '/profit': typeof ProfitRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -203,11 +208,13 @@ export interface FileRoutesByFullPath {
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/profit/overview': typeof ProfitOverviewRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/orders/': typeof OrdersIndexRoute
   '/products/': typeof ProductsIndexRoute
+  '/profit/': typeof ProfitIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -224,7 +231,6 @@ export interface FileRoutesByTo {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
-  '/profit': typeof ProfitRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -234,11 +240,13 @@ export interface FileRoutesByTo {
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/profit/overview': typeof ProfitOverviewRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/orders': typeof OrdersIndexRoute
   '/products': typeof ProductsIndexRoute
+  '/profit': typeof ProfitIndexRoute
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -256,7 +264,6 @@ export interface FileRoutesById {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
-  '/profit': typeof ProfitRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -266,11 +273,13 @@ export interface FileRoutesById {
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/profit/overview': typeof ProfitOverviewRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/orders/': typeof OrdersIndexRoute
   '/products/': typeof ProductsIndexRoute
+  '/profit/': typeof ProfitIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -289,7 +298,6 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
-    | '/profit'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -299,11 +307,13 @@ export interface FileRouteTypes {
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
+    | '/profit/overview'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
     | '/orders/'
     | '/products/'
+    | '/profit/'
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
@@ -320,7 +330,6 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
-    | '/profit'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -330,11 +339,13 @@ export interface FileRouteTypes {
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
+    | '/profit/overview'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
     | '/orders'
     | '/products'
+    | '/profit'
     | '/purchasing'
     | '/receive'
     | '/api/auth/$'
@@ -351,7 +362,6 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
-    | '/profit'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -361,11 +371,13 @@ export interface FileRouteTypes {
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
+    | '/profit/overview'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
     | '/orders/'
     | '/products/'
+    | '/profit/'
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
@@ -383,7 +395,6 @@ export interface RootRouteChildren {
   ListingsRoute: typeof ListingsRoute
   LoginRoute: typeof LoginRoute
   McpRoute: typeof McpRoute
-  ProfitRoute: typeof ProfitRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   StockRoute: typeof StockRoute
@@ -393,11 +404,13 @@ export interface RootRouteChildren {
   OrdersIdRoute: typeof OrdersIdRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
+  ProfitOverviewRoute: typeof ProfitOverviewRoute
   PurchasingIdRoute: typeof PurchasingIdRoute
   PurchasingSuppliersRoute: typeof PurchasingSuppliersRoute
   ReceiveIdRoute: typeof ReceiveIdRoute
   OrdersIndexRoute: typeof OrdersIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
+  ProfitIndexRoute: typeof ProfitIndexRoute
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -450,13 +463,6 @@ declare module '@tanstack/react-router' {
       path: '/mcp'
       fullPath: '/mcp'
       preLoaderRoute: typeof McpRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/profit': {
-      id: '/profit'
-      path: '/profit'
-      fullPath: '/profit'
-      preLoaderRoute: typeof ProfitRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -534,6 +540,20 @@ declare module '@tanstack/react-router' {
       path: '/products/$sku'
       fullPath: '/products/$sku'
       preLoaderRoute: typeof ProductsSkuRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profit/': {
+      id: '/profit/'
+      path: '/profit'
+      fullPath: '/profit/'
+      preLoaderRoute: typeof ProfitIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profit/overview': {
+      id: '/profit/overview'
+      path: '/profit/overview'
+      fullPath: '/profit/overview'
+      preLoaderRoute: typeof ProfitOverviewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/purchasing/': {
@@ -623,7 +643,6 @@ const rootRouteChildren: RootRouteChildren = {
   ListingsRoute: ListingsRoute,
   LoginRoute: LoginRoute,
   McpRoute: McpRoute,
-  ProfitRoute: ProfitRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   StockRoute: StockRoute,
@@ -633,11 +652,13 @@ const rootRouteChildren: RootRouteChildren = {
   OrdersIdRoute: OrdersIdRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
   ProductsSkuRoute: ProductsSkuRoute,
+  ProfitOverviewRoute: ProfitOverviewRoute,
   PurchasingIdRoute: PurchasingIdRoute,
   PurchasingSuppliersRoute: PurchasingSuppliersRoute,
   ReceiveIdRoute: ReceiveIdRoute,
   OrdersIndexRoute: OrdersIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
+  ProfitIndexRoute: ProfitIndexRoute,
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
