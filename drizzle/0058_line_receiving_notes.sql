@@ -1,0 +1,2 @@
+ALTER TABLE "purchase_order_lines" ADD COLUMN "receiving_note" text;--> statement-breakpoint
+ALTER TABLE "purchase_order_lines" ADD CONSTRAINT "purchase_order_lines_receiving_note_not_blank" CHECK ("purchase_order_lines"."receiving_note" is null or btrim("purchase_order_lines"."receiving_note") <> '');

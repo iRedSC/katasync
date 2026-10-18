@@ -1434,6 +1434,32 @@ export async function amendLine(
 	});
 }
 
+// Puts a note on a line for whoever receives it, or takes it off with null.
+// Only on a PO on order: that's when someone is unpacking it. Blank counts as
+// none. Returns the note it replaced, for undo.
+export async function setReceivingNote(
+	db: Db,
+	input: { lineId: number; note: string | null },
+) {
+	const note = input.note?.trim() || null;
+	return db.transaction(async (tx) => {
+		const [line] = await tx
+			.select({
+				purchaseOrderId: purchaseOrderLines.purchaseOrderId,
+				note: purchaseOrderLines.receivingNote,
+			})
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		if (!line) throw new PurchaseOrderError("That line doesn't exist");
+		await lockOrder(tx, line.purchaseOrderId, ["sent", "closed"]);
+		await tx
+			.update(purchaseOrderLines)
+			.set({ receivingNote: note })
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		return { was: line.note, note };
+	});
+}
+
 // After a line's quantity changes: a sent PO with everything in closes, and
 // a closed one reopens when the changed line is now waiting on more. `short`
 // is whether it is, or null when the line was taken off.

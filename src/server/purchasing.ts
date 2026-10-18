@@ -48,6 +48,7 @@ import {
 	restoreOrder,
 	setDraftLine,
 	setPartsOf,
+	setReceivingNote,
 	skipSetPart,
 	undoReceipt,
 	updateDraft,
@@ -542,6 +543,11 @@ export const amendPurchaseLine = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => amendLine(getDb(), data));
+
+// Notes a line for receiving; null takes the note off.
+export const setLineReceivingNote = createServerFn({ method: "POST" })
+	.validator(type({ lineId: "number.integer > 0", note: "string | null" }))
+	.handler(async ({ data }) => setReceivingNote(getDb(), data));
 
 // Puts a product on its supplier's draft, starting one if needed. Without a
 // quantity it's the fewest the supplier sells. A product already on the draft
