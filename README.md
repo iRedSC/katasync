@@ -48,6 +48,8 @@ Each computer then picks its label printer in Settings; the choice is kept in th
 
 Edit `src/db/schema.ts`, then `pnpm db:generate` and commit the new file in `drizzle/`. For SQL that Drizzle can't express (triggers, functions), use `pnpm db:generate --custom --name <name>`.
 
+Production deploys apply pending migrations before building (`scripts/vercel-build.sh`); a migration that fails stops the deploy. Previews never migrate, since they share the live database. The old deploy serves against the new schema while the build runs, so migrations must be additive. One that drops or renames something live code uses needs a coordinated cutover like the one below.
+
 The dispatch cutover (`0031` through `0035`) requires a coordinated deployment. Back up the database first, stop old packing and sync processes, apply migrations using the direct connection, then deploy the dispatch-aware app before resuming work. `0033` removes the old shipment order and handoff columns after copying their data into dispatches; an old app cannot safely use that schema. A rollback requires restoring both the database and app, not just reverting the code.
 
 ## Inventory model
