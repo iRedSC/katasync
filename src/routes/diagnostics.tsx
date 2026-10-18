@@ -13,9 +13,15 @@ import {
 import { type ReactNode, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Badge, Card, Page, type Tone } from "#/components/page";
+import {
+	DOT,
+	PanelHeader,
+	SidePanel,
+	Tile,
+	TileGrid,
+} from "#/components/panel";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import {
 	Popover,
 	PopoverContent,
@@ -57,13 +63,6 @@ const HEALTH: Record<Health, { label: string; tone?: Tone }> = {
 	stale: { label: "No recent sync", tone: "warning" },
 	never_synced: { label: "Never synced" },
 	not_connected: { label: "Not connected" },
-};
-
-const DOT: Record<Tone, string> = {
-	critical: "bg-critical-icon",
-	warning: "bg-warning-icon",
-	success: "bg-success-icon",
-	info: "bg-info-icon",
 };
 
 function ago(at: Date | string | null) {
@@ -182,63 +181,29 @@ function Connections({
 	const shippo = shippoStatus(d.services.shippo);
 	const email = emailStatus(d.services.email);
 	return (
-		<div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3">
+		<TileGrid>
 			{d.channels.map((c) => (
 				<Tile
 					key={c.channel}
 					name={channelName(c.channel)}
-					tone={HEALTH[c.health].tone}
+					status={HEALTH[c.health].tone ?? "neutral"}
 					detail={channelDetail(c)}
 					onClick={() => open(c.channel)}
 				/>
 			))}
 			<Tile
 				name="Shippo"
-				tone={shippo.tone}
+				status={shippo.tone}
 				detail={shippo.label}
 				onClick={() => open("shippo")}
 			/>
 			<Tile
 				name="PO email"
-				tone={email.tone}
+				status={email.tone}
 				detail={email.label}
 				onClick={() => open("email")}
 			/>
-		</div>
-	);
-}
-
-function Tile({
-	name,
-	tone,
-	detail,
-	onClick,
-}: {
-	name: string;
-	tone?: Tone;
-	detail: string;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className={cn(
-				"flex flex-col gap-0.5 rounded-xl bg-card p-3 text-left shadow-card hover:bg-subtle",
-				tone === "critical" && "ring-1 ring-critical-border",
-			)}
-		>
-			<span className="flex items-center gap-2 font-medium">
-				<span
-					className={cn(
-						"size-2 shrink-0 rounded-full",
-						tone ? DOT[tone] : "bg-faint",
-					)}
-				/>
-				{name}
-			</span>
-			<span className="truncate text-xs text-muted-foreground">{detail}</span>
-		</button>
+		</TileGrid>
 	);
 }
 
@@ -739,63 +704,40 @@ function Sheet({
 }) {
 	const channel = d.channels.find((c) => c.channel === target);
 	return (
-		<Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
-			<DialogContent className="top-0 right-0 left-auto flex h-dvh w-full max-w-lg translate-x-0 translate-y-0 flex-col gap-4 overflow-y-auto rounded-none border-y-0 border-r-0 p-5 sm:max-w-lg data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right">
-				{channel ? (
-					<ChannelDetail c={channel} />
-				) : target === "shippo" ? (
-					<ServiceDetail
-						name="Shippo"
-						target="shippo"
-						status={shippoStatus(d.services.shippo)}
-						detail={
-							d.services.shippo.configured ? null : "SHIPPO_API_KEY not set."
-						}
-					/>
-				) : target === "email" ? (
-					<ServiceDetail
-						name="PO email"
-						target="email"
-						status={emailStatus(d.services.email)}
-						detail={
-							d.services.email.configured
-								? `Sends as ${d.services.email.from}`
-								: "RESEND_API_KEY and PO_EMAIL_FROM not set."
-						}
-					/>
-				) : null}
-			</DialogContent>
-		</Dialog>
-	);
-}
-
-function SheetHeader({
-	name,
-	status,
-	target,
-}: {
-	name: string;
-	status: { label: string; tone?: Tone };
-	target: CheckTarget;
-}) {
-	return (
-		<div className="flex items-center gap-2 pr-8">
-			<DialogTitle className="text-base">{name}</DialogTitle>
-			<Badge tone={status.tone}>{status.label}</Badge>
-			<span className="flex-1" />
-			<CheckButton target={target} />
-		</div>
+		<SidePanel open={target !== null} onClose={onClose}>
+			{channel ? (
+				<ChannelDetail c={channel} />
+			) : target === "shippo" ? (
+				<ServiceDetail
+					name="Shippo"
+					target="shippo"
+					status={shippoStatus(d.services.shippo)}
+					detail={
+						d.services.shippo.configured ? null : "SHIPPO_API_KEY not set."
+					}
+				/>
+			) : target === "email" ? (
+				<ServiceDetail
+					name="PO email"
+					target="email"
+					status={emailStatus(d.services.email)}
+					detail={
+						d.services.email.configured
+							? `Sends as ${d.services.email.from}`
+							: "RESEND_API_KEY and PO_EMAIL_FROM not set."
+					}
+				/>
+			) : null}
+		</SidePanel>
 	);
 }
 
 function ChannelDetail({ c }: { c: ChannelData }) {
 	return (
 		<>
-			<SheetHeader
-				name={channelName(c.channel)}
-				status={HEALTH[c.health]}
-				target={c.channel}
-			/>
+			<PanelHeader title={channelName(c.channel)} status={HEALTH[c.health]}>
+				<CheckButton target={c.channel} />
+			</PanelHeader>
 			<Facts>
 				<Fact label="Last good sync">
 					{c.lastSuccessAt
@@ -839,7 +781,9 @@ function ServiceDetail({
 }) {
 	return (
 		<>
-			<SheetHeader name={name} status={status} target={target} />
+			<PanelHeader title={name} status={status}>
+				<CheckButton target={target} />
+			</PanelHeader>
 			{detail && <p className="text-muted-foreground">{detail}</p>}
 			<CheckResults target={target} />
 		</>
