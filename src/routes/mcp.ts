@@ -1,36 +1,37 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 // katasync's MCP endpoint (Streamable HTTP, stateless): each request gets its
-// own server and transport, so nothing is kept between calls. Callers prove
-// who they are with an API token from Settings, sent as
-// `Authorization: Bearer ks_...`; a read-only token gets only the tools that
-// read. Every change is logged (src/mcp/log.ts). Tools are in
+// own server and transport, so nothing is kept between calls. Callers sign in
+// with OAuth (src/auth/oauth.ts): without a token, the 401 points them to
+// the metadata that starts it. An app approved read only gets only the tools
+// that read. Every change is logged (src/mcp/log.ts). Tools are in
 // src/mcp/server.ts.
 
 async function handle(request: Request) {
-	const [
-		{ getDb },
-		{ checkApiToken },
-		{ buildServer },
-		{ logCalls },
-		transport,
-	] = await Promise.all([
-		import("#/db/client"),
-		import("#/auth/tokens"),
-		import("#/mcp/server"),
-		import("#/mcp/log"),
-		import("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"),
-	]);
+	const [{ getDb }, oauth, { buildServer }, { logCalls }, transport] =
+		await Promise.all([
+			import("#/db/client"),
+			import("#/auth/oauth"),
+			import("#/mcp/server"),
+			import("#/mcp/log"),
+			import("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"),
+		]);
 	const db = getDb();
 	const bearer = /^Bearer (.+)$/.exec(
 		request.headers.get("authorization") ?? "",
 	)?.[1];
-	const token = bearer ? await checkApiToken(db, bearer) : null;
-	if (!token)
+	const token = bearer ? await oauth.checkAccessToken(db, bearer) : null;
+	if (!token) {
+		const metadata = oauth.endpoints(oauth.originOf(request)).resourceMetadata;
+		// A token that was sent but isn't good tells the app to refresh it.
+		const challenge = bearer
+			? `Bearer error="invalid_token", resource_metadata="${metadata}"`
+			: `Bearer resource_metadata="${metadata}"`;
 		return Response.json(
-			{ error: "Send an API token from katasync's Settings as a Bearer token" },
-			{ status: 401, headers: { "WWW-Authenticate": "Bearer" } },
+			{ error: "Connect to katasync first; your MCP client signs in for you" },
+			{ status: 401, headers: { "WWW-Authenticate": challenge } },
 		);
+	}
 
 	// Read here so the call can be logged; the transport is handed the same
 	// body below.

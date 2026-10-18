@@ -42,7 +42,7 @@ Each computer then picks its label printer in Settings; the choice is kept in th
 
 ## Claude (MCP)
 
-`/mcp` is an MCP server (Streamable HTTP, stateless) for Claude and other MCP clients. Make a token in Settings; it shows the `claude mcp add` command to run. Claude can read anything (including read-only SQL), draft POs, receive sent ones, change products and the setup, count stock, ask staff for cycle counts, and build kits; a read-only token gets only the reading tools. Every change it makes is listed on Diagnostics. Sending POs and buying labels stay in the app. Tools live in `src/mcp/server.ts`; the counting rules they rely on are the `owned_stock` and `sales_units` views.
+`/mcp` is an MCP server (Streamable HTTP, stateless) for Claude and other MCP clients, signed in with OAuth (`src/auth/oauth.ts`). Settings shows the address to add as a custom connector (or the `claude mcp add` command); the client registers itself and opens `/oauth/authorize`, where a signed-in device approves it as read only or able to make changes. Connected apps are listed in Settings and can be disconnected there. Claude can read anything (including read-only SQL), draft POs, receive sent ones, change products and the setup, count stock, ask staff for cycle counts, and build kits; an app approved read only gets only the reading tools. Every change it makes is listed on Diagnostics. Sending POs and buying labels stay in the app. Tools live in `src/mcp/server.ts`; the counting rules they rely on are the `owned_stock` and `sales_units` views.
 
 ## Schema changes
 

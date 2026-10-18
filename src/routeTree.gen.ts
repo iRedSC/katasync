@@ -18,9 +18,11 @@ import { Route as McpRouteImport } from './routes/mcp'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StockRouteImport } from './routes/stock'
+import { Route as DotwellKnownSplatRouteImport } from './routes/[.]well-known/$'
 import { Route as LabelsIdRouteImport } from './routes/labels/$id'
 import { Route as LabelsSetupRouteImport } from './routes/labels/setup'
 import { Route as LabelsTestRouteImport } from './routes/labels/test'
+import { Route as OauthAuthorizeRouteImport } from './routes/oauth/authorize'
 import { Route as OrdersIndexRouteImport } from './routes/orders/index'
 import { Route as OrdersIdRouteImport } from './routes/orders/$id'
 import { Route as PrintInvoicesRouteImport } from './routes/print/invoices'
@@ -34,6 +36,7 @@ import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/sup
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 import { Route as PurchasingSuggestedSupplierIdRouteImport } from './routes/purchasing/suggested.$supplierId'
@@ -85,6 +88,11 @@ const StockRoute = StockRouteImport.update({
   path: '/stock',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DotwellKnownSplatRoute = DotwellKnownSplatRouteImport.update({
+  id: '/.well-known/$',
+  path: '/.well-known/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LabelsIdRoute = LabelsIdRouteImport.update({
   id: '/labels/$id',
   path: '/labels/$id',
@@ -98,6 +106,11 @@ const LabelsSetupRoute = LabelsSetupRouteImport.update({
 const LabelsTestRoute = LabelsTestRouteImport.update({
   id: '/labels/test',
   path: '/labels/test',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OauthAuthorizeRoute = OauthAuthorizeRouteImport.update({
+  id: '/oauth/authorize',
+  path: '/oauth/authorize',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrdersIndexRoute = OrdersIndexRouteImport.update({
@@ -165,6 +178,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiOauthSplatRoute = ApiOauthSplatRouteImport.update({
+  id: '/api/oauth/$',
+  path: '/api/oauth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
   id: '/api/webhooks/$channel',
   path: '/api/webhooks/$channel',
@@ -202,9 +220,11 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
+  '/.well-known/$': typeof DotwellKnownSplatRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
   '/labels/test': typeof LabelsTestRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -218,6 +238,7 @@ export interface FileRoutesByFullPath {
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
@@ -234,9 +255,11 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
+  '/.well-known/$': typeof DotwellKnownSplatRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
   '/labels/test': typeof LabelsTestRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -250,6 +273,7 @@ export interface FileRoutesByTo {
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
@@ -267,9 +291,11 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
+  '/.well-known/$': typeof DotwellKnownSplatRoute
   '/labels/$id': typeof LabelsIdRoute
   '/labels/setup': typeof LabelsSetupRoute
   '/labels/test': typeof LabelsTestRoute
+  '/oauth/authorize': typeof OauthAuthorizeRoute
   '/orders/$id': typeof OrdersIdRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
@@ -283,6 +309,7 @@ export interface FileRoutesById {
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
@@ -301,9 +328,11 @@ export interface FileRouteTypes {
     | '/settings'
     | '/setup'
     | '/stock'
+    | '/.well-known/$'
     | '/labels/$id'
     | '/labels/setup'
     | '/labels/test'
+    | '/oauth/authorize'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -317,6 +346,7 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
+    | '/api/oauth/$'
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
@@ -333,9 +363,11 @@ export interface FileRouteTypes {
     | '/settings'
     | '/setup'
     | '/stock'
+    | '/.well-known/$'
     | '/labels/$id'
     | '/labels/setup'
     | '/labels/test'
+    | '/oauth/authorize'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -349,6 +381,7 @@ export interface FileRouteTypes {
     | '/purchasing'
     | '/receive'
     | '/api/auth/$'
+    | '/api/oauth/$'
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
@@ -365,9 +398,11 @@ export interface FileRouteTypes {
     | '/settings'
     | '/setup'
     | '/stock'
+    | '/.well-known/$'
     | '/labels/$id'
     | '/labels/setup'
     | '/labels/test'
+    | '/oauth/authorize'
     | '/orders/$id'
     | '/print/invoices'
     | '/products/$sku'
@@ -381,6 +416,7 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
+    | '/api/oauth/$'
     | '/api/webhooks/$channel'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
@@ -398,9 +434,11 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   StockRoute: typeof StockRoute
+  DotwellKnownSplatRoute: typeof DotwellKnownSplatRoute
   LabelsIdRoute: typeof LabelsIdRoute
   LabelsSetupRoute: typeof LabelsSetupRoute
   LabelsTestRoute: typeof LabelsTestRoute
+  OauthAuthorizeRoute: typeof OauthAuthorizeRoute
   OrdersIdRoute: typeof OrdersIdRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
@@ -414,6 +452,7 @@ export interface RootRouteChildren {
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiOauthSplatRoute: typeof ApiOauthSplatRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
   PurchasingSuggestedSupplierIdRoute: typeof PurchasingSuggestedSupplierIdRoute
@@ -486,6 +525,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StockRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/.well-known/$': {
+      id: '/.well-known/$'
+      path: '/.well-known/$'
+      fullPath: '/.well-known/$'
+      preLoaderRoute: typeof DotwellKnownSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/labels/$id': {
       id: '/labels/$id'
       path: '/labels/$id'
@@ -505,6 +551,13 @@ declare module '@tanstack/react-router' {
       path: '/labels/test'
       fullPath: '/labels/test'
       preLoaderRoute: typeof LabelsTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/oauth/authorize': {
+      id: '/oauth/authorize'
+      path: '/oauth/authorize'
+      fullPath: '/oauth/authorize'
+      preLoaderRoute: typeof OauthAuthorizeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/orders/': {
@@ -598,6 +651,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/oauth/$': {
+      id: '/api/oauth/$'
+      path: '/api/oauth/$'
+      fullPath: '/api/oauth/$'
+      preLoaderRoute: typeof ApiOauthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/webhooks/$channel': {
       id: '/api/webhooks/$channel'
       path: '/api/webhooks/$channel'
@@ -646,9 +706,11 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   StockRoute: StockRoute,
+  DotwellKnownSplatRoute: DotwellKnownSplatRoute,
   LabelsIdRoute: LabelsIdRoute,
   LabelsSetupRoute: LabelsSetupRoute,
   LabelsTestRoute: LabelsTestRoute,
+  OauthAuthorizeRoute: OauthAuthorizeRoute,
   OrdersIdRoute: OrdersIdRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
   ProductsSkuRoute: ProductsSkuRoute,
@@ -662,6 +724,7 @@ const rootRouteChildren: RootRouteChildren = {
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiOauthSplatRoute: ApiOauthSplatRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
   PurchasingSuggestedSupplierIdRoute: PurchasingSuggestedSupplierIdRoute,
@@ -671,13 +734,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
