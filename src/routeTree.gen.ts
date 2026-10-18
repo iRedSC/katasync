@@ -25,6 +25,7 @@ import { Route as LabelsTestRouteImport } from './routes/labels/test'
 import { Route as OauthAuthorizeRouteImport } from './routes/oauth/authorize'
 import { Route as OrdersIndexRouteImport } from './routes/orders/index'
 import { Route as OrdersIdRouteImport } from './routes/orders/$id'
+import { Route as OrdersReturnsRouteImport } from './routes/orders/returns'
 import { Route as PrintInvoicesRouteImport } from './routes/print/invoices'
 import { Route as ProductsIndexRouteImport } from './routes/products/index'
 import { Route as ProductsSkuRouteImport } from './routes/products/$sku'
@@ -124,6 +125,11 @@ const OrdersIndexRoute = OrdersIndexRouteImport.update({
 const OrdersIdRoute = OrdersIdRouteImport.update({
   id: '/orders/$id',
   path: '/orders/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrdersReturnsRoute = OrdersReturnsRouteImport.update({
+  id: '/orders/returns',
+  path: '/orders/returns',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PrintInvoicesRoute = PrintInvoicesRouteImport.update({
@@ -244,6 +250,7 @@ export interface FileRoutesByFullPath {
   '/labels/test': typeof LabelsTestRoute
   '/oauth/authorize': typeof OauthAuthorizeRoute
   '/orders/$id': typeof OrdersIdRoute
+  '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/profit/overview': typeof ProfitOverviewRoute
@@ -282,6 +289,7 @@ export interface FileRoutesByTo {
   '/labels/test': typeof LabelsTestRoute
   '/oauth/authorize': typeof OauthAuthorizeRoute
   '/orders/$id': typeof OrdersIdRoute
+  '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/profit/overview': typeof ProfitOverviewRoute
@@ -321,6 +329,7 @@ export interface FileRoutesById {
   '/labels/test': typeof LabelsTestRoute
   '/oauth/authorize': typeof OauthAuthorizeRoute
   '/orders/$id': typeof OrdersIdRoute
+  '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/profit/overview': typeof ProfitOverviewRoute
@@ -361,6 +370,7 @@ export interface FileRouteTypes {
     | '/labels/test'
     | '/oauth/authorize'
     | '/orders/$id'
+    | '/orders/returns'
     | '/print/invoices'
     | '/products/$sku'
     | '/profit/overview'
@@ -399,6 +409,7 @@ export interface FileRouteTypes {
     | '/labels/test'
     | '/oauth/authorize'
     | '/orders/$id'
+    | '/orders/returns'
     | '/print/invoices'
     | '/products/$sku'
     | '/profit/overview'
@@ -437,6 +448,7 @@ export interface FileRouteTypes {
     | '/labels/test'
     | '/oauth/authorize'
     | '/orders/$id'
+    | '/orders/returns'
     | '/print/invoices'
     | '/products/$sku'
     | '/profit/overview'
@@ -476,6 +488,7 @@ export interface RootRouteChildren {
   LabelsTestRoute: typeof LabelsTestRoute
   OauthAuthorizeRoute: typeof OauthAuthorizeRoute
   OrdersIdRoute: typeof OrdersIdRoute
+  OrdersReturnsRoute: typeof OrdersReturnsRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
   ProfitOverviewRoute: typeof ProfitOverviewRoute
@@ -611,6 +624,13 @@ declare module '@tanstack/react-router' {
       path: '/orders/$id'
       fullPath: '/orders/$id'
       preLoaderRoute: typeof OrdersIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/orders/returns': {
+      id: '/orders/returns'
+      path: '/orders/returns'
+      fullPath: '/orders/returns'
+      preLoaderRoute: typeof OrdersReturnsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/print/invoices': {
@@ -772,6 +792,7 @@ const rootRouteChildren: RootRouteChildren = {
   LabelsTestRoute: LabelsTestRoute,
   OauthAuthorizeRoute: OauthAuthorizeRoute,
   OrdersIdRoute: OrdersIdRoute,
+  OrdersReturnsRoute: OrdersReturnsRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
   ProductsSkuRoute: ProductsSkuRoute,
   ProfitOverviewRoute: ProfitOverviewRoute,
@@ -797,13 +818,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

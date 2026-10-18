@@ -22,12 +22,14 @@ type ReturnLine = {
 	imageUrl: string | null;
 	// What can still come back: sold minus already returned.
 	left: number;
+	// What the counts start at, when not everything left is expected.
+	start?: number;
 };
 
 export type Received = { lineId: number; quantity: number };
 
 // What came back in the box, line by line. Starts at everything still
-// returnable, since most returns are the whole order; Enter puts it all
+// returnable (or what's expected), since most returns are the whole order; Enter puts it all
 // back on the shelf. It closes at once: the page shows the return before the
 // server has it, and a failure says why in a toast.
 export function ReturnDialog({
@@ -51,7 +53,8 @@ export function ReturnDialog({
 	};
 }) {
 	const [counts, setCounts] = useState(
-		() => new Map(lines.map((l) => [l.id, l.left])),
+		() =>
+			new Map(lines.map((l) => [l.id, Math.min(l.start ?? l.left, l.left)])),
 	);
 	const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
 
@@ -105,7 +108,7 @@ export function ReturnDialog({
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-lg">
-				<form onSubmit={submit} className="flex flex-col gap-6">
+				<form onSubmit={submit} className="flex min-w-0 flex-col gap-6">
 					<DialogHeader>
 						<DialogTitle>What came back?</DialogTitle>
 						<DialogDescription>Return on {orderName}</DialogDescription>

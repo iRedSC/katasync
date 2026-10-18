@@ -373,6 +373,10 @@ export const orders = pgTable(
 		shipPostalCode: text(),
 		shipCountry: text(),
 		shipPhone: text(),
+		// Someone said nothing is coming back (the buyer kept it, or it was
+		// lost), so a refund's items are a cost at once and the order leaves
+		// Returns. A return request opened after it still counts.
+		noReturnAt: timestamp({ withTimezone: true }),
 		// A short number (1 to 999) to find the order while packing. Only orders
 		// still to ship have one, so pins are reused once an order ships.
 		pin: smallint(),
@@ -445,6 +449,66 @@ export const orderReturns = pgTable(
 			sql`${t.restocked} = (${t.batchId} is not null)`,
 		),
 		index("order_returns_line_idx").on(t.orderLineId),
+	],
+);
+
+// Where a return a buyer opened on a marketplace stands. Delivered means
+// the carrier says it reached us; it's still due until it's received here.
+export const returnRequestStatus = pgEnum("return_request_status", [
+	"requested",
+	"shipped",
+	"delivered",
+	"closed",
+	"cancelled",
+]);
+
+// A return a buyer opened on the marketplace the order was billed by, as it
+// last reported it. What's due back is worked out from these and refunds in
+// the order_returns_due view (drizzle/0061_returns_tab.sql).
+export const returnRequests = pgTable(
+	"return_requests",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		billedBy: channel().notNull(),
+		externalId: text().notNull(),
+		status: returnRequestStatus().notNull(),
+		// The marketplace's own wording.
+		rawStatus: text().notNull(),
+		reason: text(),
+		trackingNumber: text(),
+		carrier: text(),
+		requestedAt: timestamp({ withTimezone: true }).notNull(),
+		sourceUpdatedAt: timestamp({ withTimezone: true }).notNull(),
+		syncedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("return_requests_billed_by_external_id").on(
+			t.billedBy,
+			t.externalId,
+		),
+		index("return_requests_order_idx").on(t.orderId),
+	],
+);
+
+// What a return request says is coming back. orderLineId is null when the
+// marketplace's line couldn't be matched to one of ours.
+export const returnRequestLines = pgTable(
+	"return_request_lines",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		requestId: integer()
+			.notNull()
+			.references(() => returnRequests.id, { onDelete: "cascade" }),
+		orderLineId: integer().references(() => orderLines.id),
+		sku: text(),
+		quantity: integer().notNull(),
+	},
+	(t) => [
+		check("return_request_lines_quantity_positive", sql`${t.quantity} > 0`),
+		index("return_request_lines_request_idx").on(t.requestId),
 	],
 );
 
@@ -1411,6 +1475,23 @@ export const orderLineProfit = pgView("order_line_profit", {
 	shipped: boolean().notNull(),
 	// Units refunded and presumed on their way back, which cost nothing yet.
 	returning: integer().notNull(),
+}).existing();
+
+// What's due back, one row per line expected, defined in
+// drizzle/0061_returns_tab.sql. Every line of an order has its order's state.
+export const returnStates = [
+	"on_its_way",
+	"requested",
+	"refunded",
+	"maybe",
+] as const;
+export type ReturnState = (typeof returnStates)[number];
+export const orderReturnsDue = pgView("order_returns_due", {
+	lineId: integer().notNull(),
+	orderId: integer().notNull(),
+	state: text({ enum: returnStates }).notNull(),
+	// Units expected back; for a maybe, the most that could come.
+	expected: integer().notNull(),
 }).existing();
 
 // count_log with the drift worked out and undone counts marked, defined in

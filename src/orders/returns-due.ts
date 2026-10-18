@@ -1,0 +1,280 @@
+import {
+	and,
+	desc,
+	eq,
+	gte,
+	ilike,
+	inArray,
+	isNull,
+	notExists,
+	or,
+	sql,
+} from "drizzle-orm";
+import type { Db } from "#/db/client";
+import {
+	orderLines,
+	orderProfit,
+	orderReturns,
+	orderReturnsDue,
+	orders,
+	products,
+	type ReturnState,
+	returnRequests,
+	stores,
+} from "#/db/schema";
+import { isLabeled, returnBlocker } from "./status";
+
+// What the Returns tab shows: orders with something due back (rules in the
+// order_returns_due view), and what came back lately.
+
+export type ReturnOrder = {
+	id: number;
+	name: string;
+	channel: (typeof stores.$inferSelect)["channel"];
+	salesChannel: string | null;
+	marketplaceOrderId: string | null;
+	externalId: string;
+	customerName: string | null;
+	shipCity: string | null;
+	shipRegion: string | null;
+	shipPostalCode: string | null;
+	placedAt: Date;
+	// Null for an order found by search with nothing expected.
+	state: ReturnState | null;
+	// Why its return can't be received here, if it can't.
+	blocker: string | null;
+	requests: {
+		status: (typeof returnRequests.$inferSelect)["status"];
+		reason: string | null;
+		trackingNumber: string | null;
+		carrier: string | null;
+		requestedAt: Date;
+	}[];
+	lines: {
+		id: number;
+		title: string;
+		sku: string | null;
+		imageUrl: string | null;
+		// Sold minus already received.
+		left: number;
+		expected: number;
+	}[];
+};
+
+const stateOrder: ReturnState[] = [
+	"on_its_way",
+	"requested",
+	"refunded",
+	"maybe",
+];
+
+export async function listReturns(db: Db) {
+	const due = await db.select().from(orderReturnsDue);
+	const expected = new Map(due.map((d) => [d.lineId, d.expected]));
+	const states = new Map(due.map((d) => [d.orderId, d.state]));
+	const found = await returnOrders(db, [...states.keys()], states, expected);
+	found.sort(
+		(a, b) =>
+			stateOrder.indexOf(a.state ?? "maybe") -
+				stateOrder.indexOf(b.state ?? "maybe") ||
+			a.placedAt.getTime() - b.placedAt.getTime(),
+	);
+	return { due: found, received: await recentlyReceived(db) };
+}
+
+// Orders matching what's on the box (order number, buyer, city or postal
+// code, SKU or product, return tracking) that can take a return but aren't
+// due, for the box that arrives before anything said it would.
+export async function findReturnable(db: Db, query: string) {
+	const q = query.trim().replace(/^#/, "");
+	if (q.length < 3) return [];
+	const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+	const hits = await db
+		.selectDistinct({ id: orders.id, placedAt: orders.placedAt })
+		.from(orders)
+		.leftJoin(orderLines, eq(orderLines.orderId, orders.id))
+		.leftJoin(products, eq(products.id, orderLines.productId))
+		.leftJoin(returnRequests, eq(returnRequests.orderId, orders.id))
+		.where(
+			and(
+				isNull(orders.cancelledAt),
+				eq(orders.fulfilledByChannel, false),
+				notExists(
+					db
+						.select({ one: sql`1` })
+						.from(orderReturnsDue)
+						.where(eq(orderReturnsDue.orderId, orders.id)),
+				),
+				or(
+					ilike(orders.name, like),
+					ilike(orders.externalId, like),
+					ilike(orders.marketplaceOrderId, like),
+					ilike(orders.customerName, like),
+					ilike(orders.shipCity, like),
+					ilike(orders.shipPostalCode, like),
+					ilike(orderLines.sku, like),
+					ilike(orderLines.title, like),
+					ilike(products.sku, like),
+					ilike(products.name, like),
+					ilike(returnRequests.trackingNumber, like),
+				),
+			),
+		)
+		.orderBy(desc(orders.placedAt))
+		.limit(30);
+	const found = await returnOrders(
+		db,
+		hits.map((h) => h.id),
+		new Map(),
+		new Map(),
+	);
+	return found
+		.filter((o) => o.blocker === null && o.lines.length > 0)
+		.sort((a, b) => b.placedAt.getTime() - a.placedAt.getTime())
+		.slice(0, 10);
+}
+
+async function returnOrders(
+	db: Db,
+	ids: number[],
+	states: Map<number, ReturnState>,
+	expected: Map<number, number>,
+): Promise<ReturnOrder[]> {
+	if (ids.length === 0) return [];
+	const [found, lines, requests] = await Promise.all([
+		db
+			.select({
+				id: orders.id,
+				name: orders.name,
+				channel: stores.channel,
+				salesChannel: orders.salesChannel,
+				marketplaceOrderId: orders.marketplaceOrderId,
+				externalId: orders.externalId,
+				customerName: orders.customerName,
+				shipCity: orders.shipCity,
+				shipRegion: orders.shipRegion,
+				shipPostalCode: orders.shipPostalCode,
+				placedAt: orders.placedAt,
+				cancelledAt: orders.cancelledAt,
+				fulfilledByChannel: orders.fulfilledByChannel,
+				fulfillmentStatus: orders.fulfillmentStatus,
+				labelsStatus: orderProfit.labelsStatus,
+			})
+			.from(orders)
+			.innerJoin(stores, eq(stores.id, orders.storeId))
+			.leftJoin(orderProfit, eq(orderProfit.orderId, orders.id))
+			.where(inArray(orders.id, ids)),
+		db
+			.select({
+				id: orderLines.id,
+				orderId: orderLines.orderId,
+				title: orderLines.title,
+				sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
+				imageUrl: products.imageUrl,
+				left: sql<number>`${orderLines.quantity} - coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
+			})
+			.from(orderLines)
+			.leftJoin(products, eq(products.id, orderLines.productId))
+			.where(inArray(orderLines.orderId, ids))
+			.orderBy(orderLines.id),
+		db
+			.select({
+				orderId: returnRequests.orderId,
+				status: returnRequests.status,
+				reason: returnRequests.reason,
+				trackingNumber: returnRequests.trackingNumber,
+				carrier: returnRequests.carrier,
+				requestedAt: returnRequests.requestedAt,
+			})
+			.from(returnRequests)
+			.where(
+				and(
+					inArray(returnRequests.orderId, ids),
+					inArray(returnRequests.status, ["requested", "shipped", "delivered"]),
+				),
+			)
+			.orderBy(desc(returnRequests.requestedAt)),
+	]);
+	return found.map(
+		({ cancelledAt, fulfilledByChannel, labelsStatus, ...o }) => ({
+			...o,
+			state: states.get(o.id) ?? null,
+			blocker: returnBlocker({
+				...o,
+				cancelledAt,
+				fulfilledByChannel,
+				labeled: isLabeled(labelsStatus ?? undefined),
+			}),
+			requests: requests
+				.filter((r) => r.orderId === o.id)
+				.map(({ orderId: _, ...r }) => r),
+			lines: lines
+				.filter((l) => l.orderId === o.id && l.left > 0)
+				.map(({ orderId: _, ...l }) => ({
+					...l,
+					expected: expected.get(l.id) ?? 0,
+				})),
+		}),
+	);
+}
+
+// Returns received in the last 30 days, newest first, one row per order and
+// moment received.
+async function recentlyReceived(db: Db) {
+	const rows = await db
+		.select({
+			id: orderReturns.id,
+			orderId: orders.id,
+			name: orders.name,
+			channel: stores.channel,
+			salesChannel: orders.salesChannel,
+			customerName: orders.customerName,
+			title: orderLines.title,
+			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
+			quantity: orderReturns.quantity,
+			restocked: orderReturns.restocked,
+			createdAt: orderReturns.createdAt,
+		})
+		.from(orderReturns)
+		.innerJoin(orderLines, eq(orderLines.id, orderReturns.orderLineId))
+		.innerJoin(orders, eq(orders.id, orderLines.orderId))
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.leftJoin(products, eq(products.id, orderLines.productId))
+		.where(gte(orderReturns.createdAt, sql`now() - interval '30 days'`))
+		.orderBy(desc(orderReturns.createdAt), orderReturns.id)
+		.limit(200);
+	return rows;
+}
+
+export class NoReturnError extends Error {
+	name = "NoReturnError";
+}
+
+// "Nothing coming back": a refund's items count as a cost at once and the
+// order leaves Returns. Gives back what it replaced, for Undo.
+export async function markNoReturn(db: Db, orderId: number) {
+	return db.transaction(async (tx) => {
+		const [order] = await tx
+			.select({ noReturnAt: orders.noReturnAt })
+			.from(orders)
+			.where(eq(orders.id, orderId))
+			.for("update");
+		if (!order) throw new NoReturnError(`No order ${orderId}`);
+		await tx
+			.update(orders)
+			.set({ noReturnAt: sql`now()` })
+			.where(eq(orders.id, orderId));
+		return { previous: order.noReturnAt };
+	});
+}
+
+export async function restoreNoReturn(
+	db: Db,
+	orderId: number,
+	previous: Date | null,
+) {
+	await db
+		.update(orders)
+		.set({ noReturnAt: previous })
+		.where(eq(orders.id, orderId));
+}

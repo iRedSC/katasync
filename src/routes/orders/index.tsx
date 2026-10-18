@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { MatchDialog } from "#/components/match-picker";
+import { OrderTabs } from "#/components/order-tabs";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
@@ -44,11 +45,6 @@ export const Route = createFileRoute("/orders/")({
 		</ListSkeleton>
 	),
 });
-
-const views: { key: View; label: string }[] = [
-	{ key: "ship", label: "To ship" },
-	{ key: "all", label: "All orders" },
-];
 
 function Orders() {
 	const rows = Route.useLoaderData();
@@ -118,33 +114,7 @@ function Orders() {
 			}
 		>
 			<Card flush>
-				<div className="flex gap-1 border-b p-2">
-					{views.map((v) => (
-						<button
-							key={v.key}
-							type="button"
-							onClick={() =>
-								navigate({
-									to: "/orders",
-									search: v.key === "ship" ? {} : { view: v.key },
-								})
-							}
-							className={cn(
-								"inline-flex h-7 items-center rounded-lg px-2.5 font-medium",
-								view === v.key
-									? "bg-surface-strong text-foreground"
-									: "text-muted-foreground hover:bg-surface hover:text-foreground",
-							)}
-						>
-							{v.label}
-							{v.key === view && (
-								<span className="ml-1.5 text-muted-foreground tabular-nums">
-									{formatCount(rows.length)}
-								</span>
-							)}
-						</button>
-					))}
-				</div>
+				<OrderTabs active={view} count={rows.length} />
 
 				{rows.length === 0 ? (
 					<EmptyState

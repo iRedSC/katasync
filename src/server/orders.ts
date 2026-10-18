@@ -14,13 +14,22 @@ import {
 	orderLines,
 	orderProfit,
 	orderReturns,
+	orderReturnsDue,
 	orders,
 	products,
+	type ReturnState,
+	returnRequests,
 	shipments,
 	stores,
 } from "#/db/schema";
 import { cityLine } from "#/lib/format";
 import { receiveReturn, undoReturns } from "#/orders/returns";
+import {
+	findReturnable,
+	listReturns,
+	markNoReturn,
+	restoreNoReturn,
+} from "#/orders/returns-due";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { contentsKey } from "#/shipping/contents";
 import {
@@ -226,35 +235,55 @@ export const getOrder = createServerFn({ method: "GET" })
 			};
 		});
 		// What it made, and what each marketplace said it charged.
-		const [[profit], charges, reports, checks] = await Promise.all([
-			db.select().from(orderProfit).where(eq(orderProfit.orderId, data.id)),
-			db
-				.select({
-					billedBy: orderCharges.billedBy,
-					kind: orderCharges.kind,
-					description: orderCharges.description,
-					amount: orderCharges.amount,
-				})
-				.from(orderCharges)
-				.where(eq(orderCharges.orderId, data.id))
-				.orderBy(orderCharges.id),
-			db
-				.select({
-					billedBy: orderCostReports.billedBy,
-					settled: orderCostReports.settled,
-					fetchedAt: orderCostReports.fetchedAt,
-				})
-				.from(orderCostReports)
-				.where(eq(orderCostReports.orderId, data.id)),
-			db
-				.select({
-					billedBy: orderCostChecks.billedBy,
-					checkedAt: orderCostChecks.checkedAt,
-					error: orderCostChecks.error,
-				})
-				.from(orderCostChecks)
-				.where(eq(orderCostChecks.orderId, data.id)),
-		]);
+		const [[profit], charges, reports, checks, [due], requests] =
+			await Promise.all([
+				db.select().from(orderProfit).where(eq(orderProfit.orderId, data.id)),
+				db
+					.select({
+						billedBy: orderCharges.billedBy,
+						kind: orderCharges.kind,
+						description: orderCharges.description,
+						amount: orderCharges.amount,
+					})
+					.from(orderCharges)
+					.where(eq(orderCharges.orderId, data.id))
+					.orderBy(orderCharges.id),
+				db
+					.select({
+						billedBy: orderCostReports.billedBy,
+						settled: orderCostReports.settled,
+						fetchedAt: orderCostReports.fetchedAt,
+					})
+					.from(orderCostReports)
+					.where(eq(orderCostReports.orderId, data.id)),
+				db
+					.select({
+						billedBy: orderCostChecks.billedBy,
+						checkedAt: orderCostChecks.checkedAt,
+						error: orderCostChecks.error,
+					})
+					.from(orderCostChecks)
+					.where(eq(orderCostChecks.orderId, data.id)),
+				// What's due back, as the Returns tab has it.
+				db
+					.select({ state: orderReturnsDue.state })
+					.from(orderReturnsDue)
+					.where(eq(orderReturnsDue.orderId, data.id))
+					.limit(1),
+				db
+					.select({
+						billedBy: returnRequests.billedBy,
+						status: returnRequests.status,
+						rawStatus: returnRequests.rawStatus,
+						reason: returnRequests.reason,
+						trackingNumber: returnRequests.trackingNumber,
+						carrier: returnRequests.carrier,
+						requestedAt: returnRequests.requestedAt,
+					})
+					.from(returnRequests)
+					.where(eq(returnRequests.orderId, data.id))
+					.orderBy(desc(returnRequests.requestedAt)),
+			]);
 		return {
 			order,
 			lines,
@@ -264,6 +293,8 @@ export const getOrder = createServerFn({ method: "GET" })
 			charges,
 			reports,
 			checks,
+			returnState: (due?.state ?? null) as ReturnState | null,
+			returnRequests: requests,
 		};
 	});
 
@@ -308,6 +339,23 @@ export const receiveOrderReturn = createServerFn({ method: "POST" })
 export const undoOrderReturn = createServerFn({ method: "POST" })
 	.validator(type({ ids: "(number.integer > 0)[]" }))
 	.handler(({ data }) => undoReturns(getDb(), data.ids));
+
+// The Returns tab: what's due back, and what came back lately.
+export const getReturns = createServerFn({ method: "GET" }).handler(() =>
+	listReturns(getDb()),
+);
+
+export const searchReturnable = createServerFn({ method: "GET" })
+	.validator(type({ q: "string <= 200" }))
+	.handler(({ data }) => findReturnable(getDb(), data.q));
+
+export const markOrderNoReturn = createServerFn({ method: "POST" })
+	.validator(type({ orderId: "number.integer > 0" }))
+	.handler(({ data }) => markNoReturn(getDb(), data.orderId));
+
+export const undoOrderNoReturn = createServerFn({ method: "POST" })
+	.validator(type({ orderId: "number.integer > 0", previous: "Date | null" }))
+	.handler(({ data }) => restoreNoReturn(getDb(), data.orderId, data.previous));
 
 // Everything the invoices for orders still to ship print, in pin order so
 // the stack matches what packers type.
@@ -435,3 +483,4 @@ export const listInvoices = createServerFn({ method: "GET" })
 
 export type OrderRow = Awaited<ReturnType<typeof listOrders>>[number];
 export type OrderDetail = Awaited<ReturnType<typeof getOrder>>;
+export type ReturnsData = Awaited<ReturnType<typeof getReturns>>;
