@@ -1,6 +1,8 @@
-// Pre-commit check: no staged file may be over 5,000 tokens (bytes / 4).
+// No file may be over 5,000 tokens (bytes / 4).
 //
 //   node scripts/check-file-size.ts        check what's staged (the hook runs this)
+//   node scripts/check-file-size.ts --all  check every tracked file (CI runs this,
+//                                          so --no-verify can't get one past)
 //
 // Files that agents don't write (lockfiles, codegen, vendored skills, binaries)
 // are skipped. Any other staged file over the limit blocks the commit.
@@ -53,13 +55,18 @@ export function findProblems(
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
-export function report(problems: readonly Problem[]): string {
+export function report(
+	problems: readonly Problem[],
+	scope: "staged" | "tracked" = "staged",
+): string {
 	const width = Math.max(...problems.map((p) => p.path.length));
 	const lines = problems.map((p) => `  ${p.path.padEnd(width)}  ${fmt(p.tokens)} tokens`);
 	const count =
-		problems.length === 1 ? "1 staged file is" : `${problems.length} staged files are`;
+		problems.length === 1
+			? `1 ${scope} file is`
+			: `${problems.length} ${scope} files are`;
 	return `
-Commit blocked: ${count} over ${fmt(MAX_TOKENS)} tokens (bytes / ${BYTES_PER_TOKEN}, so ${fmt(MAX_TOKENS * BYTES_PER_TOKEN)} bytes).
+${scope === "staged" ? "Commit blocked" : "Size check failed"}: ${count} over ${fmt(MAX_TOKENS)} tokens (bytes / ${BYTES_PER_TOKEN}, so ${fmt(MAX_TOKENS * BYTES_PER_TOKEN)} bytes).
 
 ${lines.join("\n")}
 
@@ -105,8 +112,14 @@ function isBinary(spec: string): boolean {
 	return head.includes(0);
 }
 
-function stagedFiles(): StagedFile[] {
-	const paths = git(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"])
+// What the index holds for each path: what's staged, or for unchanged files,
+// what's committed.
+function indexedFiles(all: boolean): StagedFile[] {
+	const paths = git(
+		all
+			? ["ls-files", "-z"]
+			: ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
+	)
 		.split("\0")
 		.filter(Boolean);
 	return paths.map((path) => {
@@ -128,9 +141,10 @@ function vendoredSkills(): string[] {
 
 // Run directly (not imported by the tests).
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-	const problems = findProblems(stagedFiles(), vendoredSkills());
+	const all = process.argv.includes("--all");
+	const problems = findProblems(indexedFiles(all), vendoredSkills());
 	if (problems.length > 0) {
-		process.stderr.write(report(problems));
+		process.stderr.write(report(problems, all ? "tracked" : "staged"));
 		process.exit(1);
 	}
 }
