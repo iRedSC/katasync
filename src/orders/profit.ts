@@ -1,4 +1,14 @@
-import { type AnyColumn, and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
+import {
+	type AnyColumn,
+	and,
+	desc,
+	eq,
+	gte,
+	lt,
+	ne,
+	or,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	orderLineProfit,
@@ -205,7 +215,9 @@ export async function profitByProduct(db: Db, start: Date, end: Date) {
 // More items than this in a range and the list says it stopped short.
 export const ITEMS_LIMIT = 5000;
 
-// Every item sold in the range, newest first, with what it made.
+// Every item sold and shipped in the range, newest first, with what it
+// made, and how many items wait to ship. An unshipped sale's label and
+// fees are still to come, so it isn't listed yet.
 export async function profitItems(db: Db, start: Date, end: Date) {
 	const rows = await db
 		.select({
@@ -239,12 +251,29 @@ export async function profitItems(db: Db, start: Date, end: Date) {
 		.innerJoin(orders, eq(orders.id, lp.orderId))
 		.innerJoin(orderLines, eq(orderLines.id, lp.lineId))
 		.leftJoin(products, eq(products.id, lp.productId))
-		.where(and(gte(lp.placedAt, start), lt(lp.placedAt, end)))
+		.where(
+			and(
+				gte(lp.placedAt, start),
+				lt(lp.placedAt, end),
+				ne(lp.labelsStatus, "not_shipped"),
+			),
+		)
 		.orderBy(desc(lp.placedAt), lp.lineId)
 		.limit(ITEMS_LIMIT + 1);
+	const [{ unshipped }] = await db
+		.select({ unshipped: sql<number>`coalesce(sum(${lp.quantity}), 0)::int` })
+		.from(lp)
+		.where(
+			and(
+				gte(lp.placedAt, start),
+				lt(lp.placedAt, end),
+				eq(lp.labelsStatus, "not_shipped"),
+			),
+		);
 	return {
 		items: rows.slice(0, ITEMS_LIMIT),
 		cut: rows.length > ITEMS_LIMIT,
+		unshipped,
 	};
 }
 
