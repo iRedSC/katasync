@@ -3,13 +3,12 @@ import { type } from "arktype";
 import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { matchListings } from "#/channels/listings";
 import { shippingLocation } from "#/channels/stores";
+import { listUnmatched } from "#/channels/unmatched";
 import { type Db, getDb } from "#/db/client";
 import {
 	listings,
 	locations,
 	movements,
-	orderLines,
-	orders,
 	productAliases,
 	productComponents,
 	productGroups,
@@ -36,7 +35,6 @@ import {
 } from "#/inventory/stock-range";
 import {
 	applyListingsToOrders,
-	linkSku as linkSkuToProduct,
 	matchListing as matchListingToSku,
 	productFromListing,
 } from "#/orders/remap";
@@ -540,6 +538,7 @@ export const listProductIndex = createServerFn({ method: "GET" }).handler(
 				sku: products.sku,
 				name: products.name,
 				variantName: products.variantName,
+				imageUrl: products.imageUrl,
 			})
 			.from(products)
 			.orderBy(products.sku),
@@ -578,70 +577,28 @@ export const setPrimaryStore = createServerFn({ method: "POST" })
 	});
 
 // Listings without a SKU are custom products and never need one.
-const unmapped = sql`${listings.productId} is null and ${listings.externalSku} is not null`;
+// Things channels sell that no product backs, with each one's likely
+// products. With an order, only what that order sold.
+export const listUnmatchedItems = createServerFn({ method: "GET" })
+	.validator(type({ "orderId?": "number.integer > 0" }))
+	.handler(async ({ data }) => listUnmatched(getDb(), data));
 
-// Listings that need a product, most-sold first so the ones that matter come
-// up top.
-export const listUnmappedListings = createServerFn({ method: "GET" }).handler(
-	async () => {
-		const sold = getDb()
-			.select({
-				storeId: orders.storeId,
-				listingExternalId: orderLines.listingExternalId,
-				units: sql<number>`sum(${orderLines.quantity})::int`.as("units"),
-			})
-			.from(orderLines)
-			.innerJoin(orders, eq(orders.id, orderLines.orderId))
-			.groupBy(orders.storeId, orderLines.listingExternalId)
-			.as("sold");
-		return getDb()
-			.select({
-				id: listings.id,
-				store: stores.name,
-				channel: stores.channel,
-				externalSku: listings.externalSku,
-				title: listings.title,
-				fulfillment: listings.fulfillment,
-				unitsSold: sql<number>`coalesce(${sold.units}, 0)`,
-			})
-			.from(listings)
-			.innerJoin(stores, eq(stores.id, listings.storeId))
-			.leftJoin(
-				sold,
-				and(
-					eq(sold.storeId, listings.storeId),
-					eq(sold.listingExternalId, listings.externalId),
-				),
-			)
-			.where(unmapped)
-			.orderBy(sql`coalesce(${sold.units}, 0) desc`, listings.title);
-	},
-);
+const item = type({ listingIds: "(number.integer > 0)[] > 0" });
 
-export async function countUnmappedListings(db: Db) {
-	const [{ count }] = await db
-		.select({ count: sql<number>`count(*)::int` })
-		.from(listings)
-		.where(unmapped);
-	return count;
-}
-
-// Matches a listing to an existing product, then catches up past orders.
+// Matches every listing of an unmatched item to a product, then catches up
+// past orders.
 export const matchListing = createServerFn({ method: "POST" })
-	.validator(type({ listingId: "number.integer > 0", sku: "string > 0" }))
+	.validator(item.and({ sku: "string > 0" }))
 	.handler(async ({ data }) =>
-		matchListingToSku(getDb(), data.listingId, data.sku),
+		matchListingToSku(getDb(), data.listingIds, data.sku),
 	);
-
-// Links a SKU a channel sold under to a product, then catches up past orders.
-export const linkSku = createServerFn({ method: "POST" })
-	.validator(type({ alias: "string > 0", sku: "string > 0" }))
-	.handler(async ({ data }) => linkSkuToProduct(getDb(), data.alias, data.sku));
 
 // Creates the product a listing is selling, filled in from the listing.
 export const createListingProduct = createServerFn({ method: "POST" })
-	.validator(type({ listingId: "number.integer > 0" }))
-	.handler(async ({ data }) => productFromListing(getDb(), data.listingId));
+	.validator(item.and({ "sku?": "string > 0", "name?": "string > 0" }))
+	.handler(async ({ data }) =>
+		productFromListing(getDb(), data.listingIds, data),
+	);
 
 // Records what someone counted on the shelf. The app works out the change, and
 // the location when there's only one.

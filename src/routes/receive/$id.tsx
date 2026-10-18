@@ -2,8 +2,10 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, PackagePlus } from "lucide-react";
 import { useState } from "react";
 import type { PurchaseOrderMatch } from "#/components/po-product-picker";
+import { DamageSheet } from "#/components/receive/damage-sheet";
 import { ExtraSheet } from "#/components/receive/extra-sheet";
 import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
+import { NoteSheet } from "#/components/receive/note-sheet";
 import { receiveHead } from "#/components/receive/pwa";
 import { QuantitySheet } from "#/components/receive/quantity-sheet";
 import { Saving } from "#/components/saving";
@@ -17,6 +19,7 @@ import {
 	type PurchaseOrderDetail,
 	receiveExtraLine,
 	receiveLine,
+	setLineReceivingNote,
 	undoPurchaseReceipt,
 } from "#/server/purchasing";
 
@@ -40,6 +43,10 @@ type ReceiveOrder = {
 	supplier: Pick<PurchaseOrderDetail["supplier"], "name">;
 	lines: ReceiveLine[];
 	receipts: Receipt[];
+	damages: Pick<
+		PurchaseOrderDetail["damages"][number],
+		"lineId" | "quantity"
+	>[];
 };
 const receiveData = optimistic<ReceiveOrder>("receive-order");
 
@@ -111,6 +118,7 @@ function blankLine(match: PurchaseOrderMatch, id: number): ReceiveLine {
 		quantity: 0,
 		received: 0,
 		sentQuantity: null,
+		receivingNote: null,
 	};
 }
 
@@ -196,6 +204,30 @@ function expectPatch(
 	});
 }
 
+// Sets a line's receiving note, as setReceivingNote does: blank is none.
+function notePatch(orderId: number, lineId: number, note: string | null) {
+	return receiveData.patch(orderId, (d) => ({
+		...d,
+		lines: d.lines.map((l) =>
+			ids.same(l.id, lineId) ? { ...l, receivingNote: note } : l,
+		),
+	}));
+}
+
+function changeNote(
+	orderId: number,
+	line: ReceiveLine,
+	note: string | null,
+	label: string,
+) {
+	return optimism.change({
+		label,
+		patch: notePatch(orderId, line.id, note),
+		send: async () =>
+			setLineReceivingNote({ data: { lineId: ids.server(line.id), note } }),
+	});
+}
+
 // Takes a receipt back, off its line and out of the receipts. The page may
 // show the receipt and its line by the id made here or by the server's, as
 // the reload may or may not be in, so either matches.
@@ -223,6 +255,15 @@ function ReceivePurchaseOrder() {
 	const navigate = useNavigate();
 	const { order, supplier, lines, receipts } = d;
 	const [sheetLineId, setSheetLineId] = useState<number | null>(null);
+	const [noteLineId, setNoteLineId] = useState<number | null>(null);
+	const [damageLineId, setDamageLineId] = useState<number | null>(null);
+	// Single items of a line recorded as damaged, and what could still be.
+	const damagedOn = (l: ReceiveLine) =>
+		d.damages
+			.filter((x) => ids.same(x.lineId, l.id))
+			.reduce((n, x) => n + x.quantity, 0);
+	const damageable = (l: ReceiveLine) =>
+		Math.max(0, l.received * l.packSize - damagedOn(l));
 	// Something that isn't on the PO: finding it, then counting it.
 	const [extra, setExtra] = useState<
 		{ step: "find" } | { step: "count"; match: PurchaseOrderMatch } | null
@@ -239,6 +280,14 @@ function ReceivePurchaseOrder() {
 		sheetLineId === null
 			? undefined
 			: lines.find((l) => ids.same(l.id, sheetLineId));
+	const damageLine =
+		damageLineId === null
+			? undefined
+			: lines.find((l) => ids.same(l.id, damageLineId));
+	const noteLine =
+		noteLineId === null
+			? undefined
+			: lines.find((l) => ids.same(l.id, noteLineId));
 
 	// Received on the spot: the line shows it at once, and the server gets it
 	// in order. Undo is offered once the server has it.
@@ -304,6 +353,20 @@ function ReceivePurchaseOrder() {
 						}),
 				});
 				return u && `Waiting for ${name} again`;
+			},
+		});
+	}
+
+	async function saveNote(line: ReceiveLine, note: string | null) {
+		setNoteLineId(null);
+		const name = productName(line);
+		const was = line.receivingNote;
+		const r = await changeNote(order.id, line, note, `Note on ${name}`);
+		if (!r) return;
+		offerUndo(note === null ? `Removed the note on ${name}` : `Noted ${name}`, {
+			undo: async () => {
+				const u = await changeNote(order.id, line, was, `Note on ${name}`);
+				return u && `Put the note on ${name} back`;
 			},
 		});
 	}
@@ -423,6 +486,8 @@ function ReceivePurchaseOrder() {
 						canReceive={open}
 						onReceive={(quantity) => receive(line, quantity)}
 						onHold={() => setSheetLineId(line.id)}
+						onNote={() => setNoteLineId(line.id)}
+						damaged={damagedOn(line)}
 					/>
 				))}
 			</ul>
@@ -460,6 +525,14 @@ function ReceivePurchaseOrder() {
 						null
 					}
 					onConfirm={(quantity, last) => receive(sheetLine, quantity, last)}
+					onDamaged={
+						damageable(sheetLine) > 0
+							? () => {
+									setSheetLineId(null);
+									setDamageLineId(sheetLine.id);
+								}
+							: undefined
+					}
 					onNoneCame={() => noneCame(sheetLine)}
 					onUndo={() => {
 						const last = receipts.find((r) => ids.same(r.lineId, sheetLine.id));
@@ -468,6 +541,26 @@ function ReceivePurchaseOrder() {
 						void undoReceipt(order.id, last, productName(sheetLine));
 					}}
 					onClose={() => setSheetLineId(null)}
+				/>
+			)}
+
+			{undoable && damageLine && (
+				<DamageSheet
+					key={damageLine.id}
+					title={productName(damageLine)}
+					lineId={damageLine.id}
+					available={damageable(damageLine)}
+					unit={damageLine.packSize === 1 ? undefined : damageLine.unit}
+					onClose={() => setDamageLineId(null)}
+				/>
+			)}
+			{undoable && noteLine && (
+				<NoteSheet
+					key={noteLine.id}
+					title={productName(noteLine)}
+					note={noteLine.receivingNote}
+					onSave={(note) => saveNote(noteLine, note)}
+					onClose={() => setNoteLineId(null)}
 				/>
 			)}
 
