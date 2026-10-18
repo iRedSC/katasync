@@ -147,12 +147,18 @@ type Box = Awaited<ReturnType<typeof listPackages>>[number];
 const inches = (mm: number) => Math.round((mm / 25.4) * 10) / 10;
 const ounces = (g: number) => Math.round((g / 28.349523125) * 10) / 10;
 
+// Boxes shown before "Show all", so a long list doesn't push the rest of
+// the column off the screen.
+const BOX_ROWS = 10;
+
 // The boxes quick ship knows by pin. Typing a box's pin fills in its size
 // and empty weight. Any box can be edited, pin included.
 function Boxes({ boxes }: { boxes: Box[] }) {
 	const [adding, setAdding] = useState(false);
 	const [editing, setEditing] = useState<number | null>(null);
 	const [saving, setSaving] = useState(false);
+	const [all, setAll] = useState(false);
+	const shown = all ? boxes : boxes.slice(0, BOX_ROWS);
 
 	// A new box's pin comes from the server, so the form waits for its answer.
 	async function add(values: BoxValues) {
@@ -220,7 +226,7 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 				<p className="px-4 pb-3 text-muted-foreground">None.</p>
 			) : (
 				<ul>
-					{boxes.map((b) =>
+					{shown.map((b) =>
 						editing === b.id ? (
 							<Row key={b.id}>
 								<BoxForm
@@ -253,6 +259,17 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 								<BoxLabel box={b} />
 							</Row>
 						),
+					)}
+					{boxes.length > BOX_ROWS && (
+						<li className="border-t">
+							<button
+								type="button"
+								onClick={() => setAll((a) => !a)}
+								className="w-full px-4 py-2.5 text-left text-link hover:bg-subtle"
+							>
+								{all ? "Show fewer" : `Show all ${boxes.length}`}
+							</button>
+						</li>
 					)}
 				</ul>
 			)}
