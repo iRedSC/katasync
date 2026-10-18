@@ -4,51 +4,30 @@ import {
 	useNavigate,
 } from "@tanstack/react-router";
 import { type } from "arktype";
-import {
-	ClipboardList,
-	Copy,
-	ExternalLink,
-	FileText,
-	LayoutGrid,
-	PackagePlus,
-	Pencil,
-	Rows3,
-	Truck,
-} from "lucide-react";
-import { type FormEvent, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { FacetRail, type RailGroup } from "#/components/facet-rail";
+import { FacetRail } from "#/components/facet-rail";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
-import { AbcBadge, Badge, Card, Page } from "#/components/page";
-import { ProductImage, ProductName, SetsChip } from "#/components/product";
+import { Card, Page } from "#/components/page";
+import { LayoutToggle } from "#/components/products-list/layout-toggle";
+import {
+	loadPage,
+	patchProduct,
+	patchViews,
+	productsData,
+} from "#/components/products-list/optimistic";
+import { ProductResults } from "#/components/products-list/product-results";
+import { RAIL } from "#/components/products-list/rail";
+import { ViewDialog } from "#/components/products-list/view-dialog";
+import { Tab } from "#/components/products-list/view-tab";
 import { Bone, ListSkeleton } from "#/components/skeleton";
-import { StockCard } from "#/components/stock-card";
 import { Button } from "#/components/ui/button";
-import {
-	ContextMenu,
-	ContextMenuContent,
-	ContextMenuItem,
-	ContextMenuSeparator,
-	ContextMenuTrigger,
-} from "#/components/ui/context-menu";
-import {
-	Dialog,
-	DialogContent,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "#/components/ui/dialog";
-import { Tip } from "#/components/ui/tooltip";
-import { VelocityGauge } from "#/components/velocity-gauge";
-import { copyText } from "#/lib/copy";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
-import { optimism, optimistic, type Patch } from "#/lib/optimism";
-import { useRowLink } from "#/lib/row-link";
+import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
-import { cn } from "#/lib/utils";
-import { facetsOf, sortValuesOf, stateOf, stock } from "#/products/rows";
+import { facetsOf, sortValuesOf, stateOf } from "#/products/rows";
 import {
 	type Filter,
 	facetCounts,
@@ -70,7 +49,6 @@ import {
 } from "#/products/views";
 import {
 	cancelCountRequest,
-	listProducts,
 	type ProductRow,
 	requestCount,
 } from "#/server/catalog";
@@ -78,32 +56,7 @@ import {
 	addToPurchaseOrder,
 	undoAddToPurchaseOrder,
 } from "#/server/purchasing";
-import { deleteView, listViews, saveView } from "#/server/views";
-
-// What the page loads. The optimistic patches below lay changes over it until
-// the reload shows them.
-const loadPage = async () => {
-	const [products, views] = await Promise.all([listProducts(), listViews()]);
-	return { ...products, views };
-};
-type ProductsPage = Awaited<ReturnType<typeof loadPage>>;
-const productsData = optimistic<ProductsPage>("products");
-
-// A change to one product's row on the list.
-function patchProduct(
-	productId: number,
-	change: (p: ProductRow) => ProductRow,
-): Patch {
-	return productsData.patch("all", (d) => ({
-		...d,
-		products: d.products.map((p) => (p.id === productId ? change(p) : p)),
-	}));
-}
-
-// A change to the saved views, which the tabs and the Save buttons show.
-function patchViews(change: (views: View[]) => View[]): Patch {
-	return productsData.patch("all", (d) => ({ ...d, views: change(d.views) }));
-}
+import { saveView } from "#/server/views";
 
 // The URL holds the chips and sort, so links (like Home's "Oversold") and the
 // back button work. `view` is the saved view they came from, so it can be
@@ -157,39 +110,6 @@ export const Route = createFileRoute("/products/")({
 
 const PAGE = 100;
 
-// The rail's groups, in the order a reorder pass goes: what's wrong, whether
-// the number can be trusted, whether it's worth it, then who sells it.
-const RAIL: RailGroup[] = [
-	{
-		title: "Stock",
-		field: "status",
-		values: [
-			"needs ordering",
-			"below min",
-			"oversold",
-			"sold out",
-			"missing parts",
-			"over max",
-			"on order",
-			"on a draft",
-		],
-	},
-	{
-		title: "Trust",
-		field: "trust",
-		values: ["counted", "uncounted"],
-	},
-	{
-		title: "Class",
-		field: "class",
-		values: ["A", "B", "C"],
-		label: (v) => `${v} items`,
-	},
-	{ title: "Velocity", field: "velocity", range: true },
-	{ title: "Supplier", field: "supplier", values: null },
-	{ title: "Type", field: "type", values: null },
-];
-
 // Each history entry gets a fresh list, so back and forward bring back that
 // entry's search text. Typing replaces the entry, so it doesn't remount.
 function Products() {
@@ -225,8 +145,6 @@ function ProductList() {
 		});
 	}
 	const [shown, setShown] = useState(PAGE);
-	// The product the right-click menu acts on.
-	const [menuFor, setMenuFor] = useState<ProductRow | null>(null);
 	const [editing, setEditing] = useState<"new" | View | null>(null);
 	// Products whose add to a PO is on its way. Not patched, since the PO it
 	// lands on comes from the server, so the Add waits for it.
@@ -307,11 +225,6 @@ function ProductList() {
 		}
 		return out;
 	}, [facets, query, filters]);
-
-	const { link } = useRowLink();
-	const to = (p: ProductRow) =>
-		({ to: "/products/$sku", params: { sku: p.sku } }) as const;
-	const open = (p: ProductRow) => navigate(to(p));
 
 	// Chip and sort changes replace the history entry instead of piling up.
 	function setSearch(next: Partial<{ filters: Filter[]; sort: ProductSort }>) {
@@ -457,143 +370,15 @@ function ProductList() {
 							/>
 						</div>
 					</Card>
-					{search.layout === "table" ? (
-						<Card flush>
-							<table className="w-full">
-								<thead>
-									<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
-										<th className="px-4 py-2 font-medium">Product</th>
-										<th className="px-2 py-2 text-center font-medium">Class</th>
-										<th className="hidden px-4 py-2 font-medium md:table-cell">
-											Status
-										</th>
-										<th className="px-4 py-2 font-medium">Inventory</th>
-										<th className="hidden px-4 py-2 text-right font-medium xl:table-cell">
-											On order
-										</th>
-										<Tip content="Units sold a month">
-											<th className="hidden px-2 py-2 text-center font-medium md:table-cell">
-												Velocity
-											</th>
-										</Tip>
-										<th className="hidden px-4 py-2 font-medium md:table-cell">
-											Reorder
-										</th>
-										<th className="hidden px-4 py-2 font-medium 2xl:table-cell">
-											Type
-										</th>
-									</tr>
-								</thead>
-								{/* One menu for the whole list: it acts on the row that was
-					    right-clicked. */}
-								<ContextMenu>
-									<ContextMenuTrigger asChild>
-										<tbody>
-											{filtered.slice(0, shown).map((p) => (
-												<tr
-													key={p.id}
-													{...link(to(p))}
-													onContextMenu={() => setMenuFor(p)}
-													className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
-												>
-													{/* Takes the width the other columns leave, so long names end
-								    in "…" instead of pushing them off the card. */}
-													<td className="w-full max-w-0 px-4 py-2">
-														<div className="flex items-center gap-3">
-															<ProductImage src={p.imageUrl} />
-															<div className="min-w-0 flex-1">
-																<ProductName
-																	name={p.name}
-																	variantName={p.variantName}
-																/>
-																<div className="flex items-center gap-2 text-xs text-muted-foreground">
-																	<span>{p.sku}</span>
-																	<SetsChip sets={p.why?.sets ?? null} />
-																	{p.kind === "bundle" && <span>Tool set</span>}
-																	{p.kind === "kit" && <span>Kit</span>}
-																</div>
-															</div>
-														</div>
-													</td>
-													<td className="px-2 py-2 text-center">
-														<AbcBadge
-															abc={p.abc}
-															title={
-																p.abcRank === null
-																	? "Needs a cost"
-																	: p.kind === "bundle"
-																		? `#${formatCount(p.abcRank)} of tool sets by value`
-																		: `#${formatCount(p.abcRank)} by value`
-															}
-														/>
-													</td>
-													<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
-														<RowStatus product={p} />
-													</td>
-													<td className="px-4 py-2 whitespace-nowrap">
-														<Inventory product={p} />
-													</td>
-													<td className="hidden px-4 py-2 text-right whitespace-nowrap tabular-nums xl:table-cell">
-														{p.onOrder > 0 ? formatCount(p.onOrder) : ""}
-													</td>
-													<td className="hidden px-2 py-1.5 md:table-cell">
-														<VelocityGauge
-															why={p.why}
-															onPo={p.draft ?? undefined}
-														/>
-													</td>
-													<td className="hidden px-4 py-2 whitespace-nowrap md:table-cell">
-														<Reorder product={p} />
-													</td>
-													<td className="hidden px-4 py-2 whitespace-nowrap text-muted-foreground 2xl:table-cell">
-														{p.category ?? ""}
-													</td>
-												</tr>
-											))}
-										</tbody>
-									</ContextMenuTrigger>
-									{menuFor && (
-										<RowMenu
-											product={menuFor}
-											onOpen={open}
-											onAddToPo={addToPo}
-											adding={adding}
-											onCount={countStock}
-										/>
-									)}
-								</ContextMenu>
-							</table>
-						</Card>
-					) : (
-						<ContextMenu>
-							<ContextMenuTrigger asChild>
-								<div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">
-									{filtered.slice(0, shown).map((p) => (
-										<StockCard
-											key={p.id}
-											product={p}
-											state={stateFor(p)}
-											now={now}
-											link={link(to(p))}
-											onMenu={() => setMenuFor(p)}
-											busy={adding.has(p.id)}
-											onOrder={() => addToPo(p)}
-											onCount={() => countStock(p)}
-										/>
-									))}
-								</div>
-							</ContextMenuTrigger>
-							{menuFor && (
-								<RowMenu
-									product={menuFor}
-									onOpen={open}
-									onAddToPo={addToPo}
-									adding={adding}
-									onCount={countStock}
-								/>
-							)}
-						</ContextMenu>
-					)}
+					<ProductResults
+						layout={search.layout}
+						products={filtered.slice(0, shown)}
+						stateFor={stateFor}
+						now={now}
+						adding={adding}
+						onAddToPo={addToPo}
+						onCount={countStock}
+					/>
 					{filtered.length === 0 && (
 						<p className="rounded-xl bg-card py-16 text-center text-muted-foreground shadow-card">
 							No matches.
@@ -727,322 +512,4 @@ function ProductList() {
 			},
 		});
 	}
-}
-
-function Tab({
-	label,
-	count,
-	active,
-	changed = false,
-	onClick,
-	onEdit,
-}: {
-	label: string;
-	count: number;
-	active: boolean;
-	changed?: boolean;
-	onClick: () => void;
-	onEdit?: () => void;
-}) {
-	return (
-		<span
-			className={cn(
-				"inline-flex h-7 items-center rounded-lg font-medium",
-				active
-					? "bg-surface-strong text-foreground"
-					: "text-muted-foreground hover:bg-surface hover:text-foreground",
-			)}
-		>
-			<button
-				type="button"
-				onClick={onClick}
-				className="inline-flex h-full items-center gap-1.5 px-2.5"
-			>
-				{label}
-				{changed ? (
-					<span className="text-xs text-muted-foreground">edited</span>
-				) : (
-					<span className="tabular-nums text-muted-foreground">
-						{formatCount(count)}
-					</span>
-				)}
-			</button>
-			{onEdit && (
-				<button
-					type="button"
-					onClick={onEdit}
-					aria-label={`Rename or delete ${label}`}
-					className="-ml-1.5 mr-1 rounded p-1 text-muted-foreground hover:bg-line hover:text-foreground"
-				>
-					<Pencil className="size-3" />
-				</button>
-			)}
-		</span>
-	);
-}
-
-// Names a new view, or renames or deletes an existing one.
-function ViewDialog({
-	view,
-	search,
-	onClose,
-	onSaved,
-	onDeleted,
-}: {
-	view: View | null;
-	search: { filters: Filter[]; sort: SortText };
-	onClose: () => void;
-	onSaved: (id: number) => void;
-	onDeleted: () => void;
-}) {
-	const [name, setName] = useState(view?.name ?? "");
-	const [saving, setSaving] = useState(false);
-
-	async function submit(e: FormEvent) {
-		e.preventDefault();
-		if (view) {
-			// A rename shows at once, so the dialog closes as it's made. If it
-			// fails, the engine says why and the old name comes back.
-			const { id } = view;
-			const next = { ...view, name };
-			void optimism.change({
-				label: `Renaming “${view.name}”`,
-				patch: patchViews((views) =>
-					views.map((v) => (v.id === id ? { ...v, name: name.trim() } : v)),
-				),
-				send: () => saveView({ data: next }),
-			});
-			onSaved(id);
-			return;
-		}
-		// A new view's id comes from the server, so the dialog waits for it.
-		setSaving(true);
-		const r = await optimism.change({
-			send: () => saveView({ data: { name, ...search } }),
-		});
-		setSaving(false);
-		if (r) onSaved(r.value.id);
-	}
-
-	function remove() {
-		if (!view) return;
-		const gone = view;
-		// Off the tabs at once. Undo brings it back as a new view, since the
-		// server gives it a new id.
-		void optimism
-			.change({
-				label: `Deleting “${gone.name}”`,
-				patch: patchViews((views) => views.filter((v) => v.id !== gone.id)),
-				send: () => deleteView({ data: { id: gone.id } }),
-			})
-			.then((r) => {
-				if (!r) return;
-				offerUndo(`Deleted “${gone.name}”`, {
-					undo: async () => {
-						const { id: _, ...rest } = gone;
-						const back = await optimism.change({
-							send: () => saveView({ data: rest }),
-						});
-						return back && `“${gone.name}” is back`;
-					},
-				});
-			});
-		onDeleted();
-	}
-
-	return (
-		<Dialog open onOpenChange={(open) => !open && onClose()}>
-			<DialogContent className="sm:max-w-sm">
-				<form onSubmit={submit} className="flex flex-col gap-4">
-					<DialogHeader>
-						<DialogTitle>{view ? "Edit view" : "Save view"}</DialogTitle>
-					</DialogHeader>
-					<input
-						autoFocus
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						placeholder="Name, e.g. Low stock A items"
-						className="h-9 rounded-lg border border-input px-3 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-					/>
-					<DialogFooter className="sm:justify-between">
-						{view ? (
-							<Button type="button" variant="ghost" onClick={remove}>
-								Delete view
-							</Button>
-						) : (
-							<span />
-						)}
-						<Button type="submit" disabled={!name.trim() || saving}>
-							Save
-						</Button>
-					</DialogFooter>
-				</form>
-			</DialogContent>
-		</Dialog>
-	);
-}
-
-// Only problems get a badge. A healthy row stays quiet.
-function RowStatus({ product: p }: { product: ProductRow }) {
-	if ((p.onHand ?? 0) < 0) return <Badge tone="critical">Oversold</Badge>;
-	if (p.kind === "bundle" && p.available === 0) {
-		return <Badge tone="warning">Missing parts</Badge>;
-	}
-	if (p.available === 0) return <Badge>Sold out</Badge>;
-	return null;
-}
-
-function Inventory({ product: p }: { product: ProductRow }) {
-	if ((p.onHand ?? 0) < 0) {
-		return (
-			<span className="font-medium text-critical-text">
-				{formatCount(stock(p))} in stock
-			</span>
-		);
-	}
-	return (
-		<span className={cn(p.available === 0 && "text-muted-foreground")}>
-			{formatCount(p.available)}{" "}
-			{p.kind === "bundle" ? "can be built" : "in stock"}
-		</span>
-	);
-}
-
-// What putting this product on a PO means right now. A tool set's supplier
-// is the one most of its parts come from.
-function orderAction(p: ProductRow) {
-	if (p.draft)
-		return {
-			kind: "draft" as const,
-			why: `Already on PO ${p.draft.purchaseOrderId}`,
-		};
-	if (!p.supplier)
-		return { kind: "no supplier" as const, why: "Set a supplier first" };
-	return { kind: "add" as const, why: "", supplier: p.supplier.name };
-}
-
-// The suggested order, or the line already waiting on a draft.
-function Reorder({ product: p }: { product: ProductRow }) {
-	if (p.draft) {
-		return (
-			<span className="text-muted-foreground">
-				{formatOrderQuantity(p.draft)} on PO {p.draft.purchaseOrderId}
-			</span>
-		);
-	}
-	if (p.reorder) {
-		return (
-			<span className="font-medium">{formatOrderQuantity(p.reorder)}</span>
-		);
-	}
-	return null;
-}
-
-function RowMenu({
-	product: p,
-	onOpen,
-	onAddToPo,
-	adding,
-	onCount,
-}: {
-	product: ProductRow;
-	onOpen: (p: ProductRow) => void;
-	onAddToPo: (p: ProductRow) => void;
-	adding: ReadonlySet<number>;
-	onCount: (p: ProductRow) => void;
-}) {
-	const navigate = useNavigate();
-	const action = orderAction(p);
-	const url = `/products/${encodeURIComponent(p.sku)}`;
-
-	return (
-		<ContextMenuContent>
-			<ContextMenuItem onSelect={() => onOpen(p)} shortcut="↵">
-				<FileText />
-				Open
-			</ContextMenuItem>
-			<ContextMenuItem onSelect={() => window.open(url, "_blank")}>
-				<ExternalLink />
-				Open in new tab
-			</ContextMenuItem>
-			{action && <ContextMenuSeparator />}
-			{action?.kind === "add" && (
-				<ContextMenuItem
-					onSelect={() => onAddToPo(p)}
-					disabled={adding.has(p.id)}
-					shortcut={p.reorder ? "A" : undefined}
-				>
-					<PackagePlus />
-					{p.reorder
-						? `Add ${formatOrderQuantity(p.reorder)} to PO`
-						: "Add to PO"}
-				</ContextMenuItem>
-			)}
-			{action?.kind === "draft" && p.draft && (
-				<ContextMenuItem
-					onSelect={() =>
-						navigate({
-							to: "/purchasing/$id",
-							params: { id: String(p.draft?.purchaseOrderId) },
-						})
-					}
-				>
-					<Truck />
-					Open PO {p.draft.purchaseOrderId}
-				</ContextMenuItem>
-			)}
-			{action?.kind === "no supplier" && (
-				<ContextMenuItem onSelect={() => onOpen(p)}>
-					<PackagePlus />
-					Set a supplier to order it
-				</ContextMenuItem>
-			)}
-			<ContextMenuItem onSelect={() => onCount(p)} shortcut="C">
-				<ClipboardList />
-				Count stock
-			</ContextMenuItem>
-			<ContextMenuSeparator />
-			<ContextMenuItem onSelect={() => copyText(p.sku)}>
-				<Copy />
-				Copy SKU
-			</ContextMenuItem>
-		</ContextMenuContent>
-	);
-}
-
-// Cards for deciding, the table for comparing numbers side by side.
-function LayoutToggle({
-	layout,
-	onLayout,
-}: {
-	layout: "cards" | "table";
-	onLayout: (layout: "cards" | "table") => void;
-}) {
-	return (
-		<fieldset className="flex rounded-lg bg-surface-strong p-0.5">
-			<legend className="sr-only">Layout</legend>
-			{(
-				[
-					["cards", LayoutGrid, "Cards"],
-					["table", Rows3, "Table"],
-				] as const
-			).map(([l, Icon, label]) => (
-				<button
-					key={l}
-					type="button"
-					aria-pressed={layout === l}
-					onClick={() => onLayout(l)}
-					className={cn(
-						"inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium",
-						layout === l
-							? "bg-card text-foreground shadow-card"
-							: "text-muted-foreground hover:text-foreground",
-					)}
-				>
-					<Icon className="size-3.5" />
-					{label}
-				</button>
-			))}
-		</fieldset>
-	);
 }
