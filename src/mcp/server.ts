@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { relyingParty } from "#/auth/webauthn";
 import { shippingLocation } from "#/channels/stores";
 import { listUnmatched, suggestProducts } from "#/channels/unmatched";
 import type { Db } from "#/db/client";
@@ -23,6 +24,13 @@ import {
 import { setRecipe } from "#/inventory/recipes";
 import { matchListing, productFromListing } from "#/orders/remap";
 import { updateProductDetails } from "#/products/details";
+import {
+	createPhotoUploadLink,
+	damagesOf,
+	recordDamage,
+	removeDamage,
+} from "#/purchasing/damage";
+import { MAX_PHOTO_BYTES, MAX_PHOTOS } from "#/purchasing/damage-limits";
 import {
 	invoicesOf,
 	matchInvoice,
@@ -75,7 +83,7 @@ How things count:
 - Sales: use the sales_units view (product_id, order_id, store_id, placed_at, units). Tool sets count as their parts; cancelled and FBA orders are left out. Join stores for the channel.
 - Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
 - Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.
-- POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here emails a PO: the user reviews and sends drafts in the app. When the supplier already has a draft (they invoiced or shipped it), mark_po_sent records that without contacting anyone; ask the user first. Sent POs can be received here. When a supplier ships or bills something other than what was sent and we're keeping it, add_to_sent_po and adjust_sent_po_line change the PO to match, telling no one. While receiving, set_po_line_note leaves a note on a line (damage, a short count, what's coming later) that shows above it on the receive page.
+- POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here emails a PO: the user reviews and sends drafts in the app. When the supplier already has a draft (they invoiced or shipped it), mark_po_sent records that without contacting anyone; ask the user first. Sent POs can be received here. When a supplier ships or bills something other than what was sent and we're keeping it, add_to_sent_po and adjust_sent_po_line change the PO to match, telling no one. While receiving, set_po_line_note leaves a note on a line (a short count, what's coming later) that shows above it on the receive page. Damage that arrived goes in with report_damage, in single items: it comes off the shelf at once, and photos upload with curl to the link it returns. The user sends the damage report to the supplier from the app, choosing credit or replacement per item; nothing here sends it.
 - Supplier invoices: match_invoice checks one against its PO (quantities, prices, missing and extra lines, totals) and changes nothing. Give every line, with their item number as supplier_sku when it has one. Then record_supplier_invoice keeps its number, date, due date, and total on the PO; the same number from the same supplier can't be recorded twice.
 - Cycle counts only happen when asked for: request_counts puts shelves on the staff's count list, and a count clears them. Ask when stock looks wrong, e.g. oversold or not matching what a channel reports.
 - Profit: use the order_profit view (one row per order not cancelled: order_id, store_id, sold_on, placed_at, revenue, shipping_charged, cost, cost_known, fees, fees_status, labels, labels_status, refunds, adjustments, profit, complete, shipped). The Profit tab counts only shipped orders (shipped: confirmed by the marketplace and shipped, or needing no shipping); say so when leaving others out. An Amazon order still Pending has no price yet. sold_on is where it really sold (a TikTok order relayed through Shopify is tiktok). fees_status: final, reported (may still change), or estimated (a typical rate until the marketplace reports). labels_status: known, stand_in (katasync's TikTok estimate), not_needed, not_shipped, awaiting (the marketplace may still bill one), or missing (shipped, no label cost from anyone). Say how much of a total rests on estimates or gaps, never present it as final: complete is true when cost, fees and labels are all in. Days are the shop's (America/New_York); weeks start Saturday. Each marketplace's charges per order are in order_charges (billed_by, kind fee/label/refund/adjustment, description, amount; positive costs us). Per item sold, use order_line_profit (line_id, order_id, product_id, sold_on, placed_at, quantity, revenue, cost, cost_known, fees, labels, shipping_charged, refunds, adjustments, profit, fees_status, labels_status, complete, shipped): each line's share of its order's charges, by sales (by units on a free order); an order's lines add up to its profit. A line with no cost of its own uses its product's cost as it is now.
@@ -106,6 +114,17 @@ export const READ_TOOLS = new Set([
 	"suggest_matches",
 ]);
 
+// The link Claude uploads a damage's photos to, and how.
+async function photoLink(db: Db, damageId: number) {
+	const { token, expiresAt } = await createPhotoUploadLink(db, damageId);
+	const url = `${relyingParty().origin}/api/uploads/damage/${token}`;
+	return {
+		url,
+		expiresAt,
+		how: `curl -F photo=@damage.jpg ${url}  (one photo per request, JPEG, PNG, or WebP, up to ${MAX_PHOTO_BYTES / 1_000_000} MB each, ${MAX_PHOTOS} per damage)`,
+	};
+}
+
 const json = (data: unknown) => ({
 	content: [{ type: "text" as const, text: JSON.stringify(data, null, 1) }],
 });
@@ -116,6 +135,7 @@ const json = (data: unknown) => ({
 async function orderForClaude(db: Db, id: number) {
 	const po = await loadOrder(db, id);
 	const invoices = await invoicesOf(db, id);
+	const damages = await damagesOf(db, id);
 	const priced = po.lines.filter((l) => l.unitCost !== null);
 	return {
 		id: po.order.id,
@@ -152,6 +172,22 @@ async function orderForClaude(db: Db, id: number) {
 			invoicedOn: i.invoicedOn,
 			dueOn: i.dueOn,
 			total: i.total,
+		})),
+		damages: damages.map((d) => ({
+			damageId: d.id,
+			sku: d.sku,
+			quantity: d.quantity,
+			description: d.description,
+			photos: d.photoIds.length,
+			...(d.reportedAt
+				? {
+						reported: {
+							at: d.reportedAt,
+							to: d.reportedTo,
+							asked: d.remedy,
+						},
+					}
+				: {}),
 		})),
 		lines: po.lines.map((l) => ({
 			sku: l.sku,
@@ -1359,6 +1395,79 @@ function registerWriteTools(server: McpServer, db: Db) {
 			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
 			const result = await setReceivingNote(db, { lineId: line.id, note });
 			return json({ po, sku, ...result });
+		},
+	);
+
+	server.registerTool(
+		"report_damage",
+		{
+			description:
+				"Records that some of what arrived for one product on a sent or closed PO is damaged, in single items (2 blades of a case of 12 is 2), with what's wrong. Takes them off the shelf at once, and can't exceed what arrived. Returns damage_id and a photo upload link for curl. The user sends the report to the supplier from the app; remove_damage takes it back until then.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				sku: z.string(),
+				quantity: z
+					.number()
+					.int()
+					.positive()
+					.describe("Single items, not the line's unit"),
+				description: z
+					.string()
+					.min(1)
+					.describe(
+						'What\'s wrong, for the supplier, e.g. "crushed box, handles snapped"',
+					),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sku, quantity, description }) => {
+			const product = await productBySku(db, sku);
+			const [line] = await db
+				.select({ id: purchaseOrderLines.id })
+				.from(purchaseOrderLines)
+				.where(
+					and(
+						eq(purchaseOrderLines.purchaseOrderId, po),
+						eq(purchaseOrderLines.productId, product.id),
+					),
+				);
+			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
+			const { damageId } = await recordDamage(db, {
+				lineId: line.id,
+				quantity,
+				description,
+			});
+			return json({
+				po,
+				sku,
+				damageId,
+				photoUpload: await photoLink(db, damageId),
+			});
+		},
+	);
+
+	server.registerTool(
+		"damage_photo_link",
+		{
+			description:
+				"A fresh link to upload photos of a damage with curl, when report_damage's has expired. Only until the damage is reported to the supplier.",
+			inputSchema: { damage_id: z.number().int().positive() },
+			annotations: WRITE,
+		},
+		async ({ damage_id }) => json(await photoLink(db, damage_id)),
+	);
+
+	server.registerTool(
+		"remove_damage",
+		{
+			description:
+				"Takes back damage recorded by mistake: the items go back on the shelf and its photos are deleted. Refused once the damage is reported to the supplier.",
+			inputSchema: { damage_id: z.number().int().positive() },
+			annotations: WRITE,
+		},
+		async ({ damage_id }) => {
+			await removeDamage(db, damage_id);
+			return json({ removed: damage_id });
 		},
 	);
 

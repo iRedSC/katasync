@@ -7,6 +7,7 @@ import {
 	productSuppliers,
 	products,
 	purchaseOrderAmendments,
+	purchaseOrderDamages,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrderSentSets,
@@ -1208,12 +1209,19 @@ export async function receive(
 			`Quantity must be a positive whole number, got ${input.quantity}`,
 		);
 	return db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		if (!found) throw new PurchaseOrderError("That line doesn't exist");
+		const po = await lockOrder(tx, found.purchaseOrderId, ["sent"]);
+		// Read once the PO is locked: whatever held the lock (a damage report
+		// asking for replacements, say) may have changed what it expects.
 		const [line] = await tx
 			.select()
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.id, input.lineId));
 		if (!line) throw new PurchaseOrderError("That line doesn't exist");
-		const po = await lockOrder(tx, line.purchaseOrderId, ["sent"]);
 		// Receipts of this product on other POs wait here, so each one averages
 		// its price against stock and cost the last one left.
 		await tx
@@ -1278,7 +1286,6 @@ export async function undoReceipt(db: Db, receiptId: number) {
 				undoesId: purchaseOrderReceipts.undoesId,
 				quantityBefore: purchaseOrderReceipts.quantityBefore,
 				quantityAfter: purchaseOrderReceipts.quantityAfter,
-				lineQuantity: purchaseOrderLines.quantity,
 				purchaseOrderId: purchaseOrderLines.purchaseOrderId,
 			})
 			.from(purchaseOrderReceipts)
@@ -1295,6 +1302,21 @@ export async function undoReceipt(db: Db, receiptId: number) {
 			.from(purchaseOrderReceipts)
 			.where(eq(purchaseOrderReceipts.undoesId, receipt.id));
 		if (already) throw new PurchaseOrderError("Already undone");
+		// What the line expects now, read under the lock; the quantity read
+		// above may be stale.
+		const [line] = await tx
+			.select({
+				packSize: purchaseOrderLines.packSize,
+				quantity: purchaseOrderLines.quantity,
+			})
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, receipt.lineId));
+		const left = (await receivedOf(tx, receipt.lineId)) - receipt.quantity;
+		const damaged = await damagedOf(tx, receipt.lineId);
+		if (left * line.packSize < damaged)
+			throw new PurchaseOrderError(
+				`${damaged} of these are recorded as damaged; take the damage back first`,
+			);
 
 		const { batchId } = await undoBatch(tx, receipt.batchId);
 		await tx.insert(purchaseOrderReceipts).values({
@@ -1306,7 +1328,7 @@ export async function undoReceipt(db: Db, receiptId: number) {
 		// Only when nobody has changed the quantity since.
 		if (
 			receipt.quantityBefore !== null &&
-			receipt.lineQuantity === receipt.quantityAfter
+			line.quantity === receipt.quantityAfter
 		)
 			await tx
 				.update(purchaseOrderLines)
@@ -1472,14 +1494,14 @@ async function settle(
 	else if (po.status === "closed" && short) await reopen(tx, po.id);
 }
 
-async function reopen(tx: Db, id: number) {
+export async function reopen(tx: Db, id: number) {
 	await tx
 		.update(purchaseOrders)
 		.set({ status: "sent", closedAt: null })
 		.where(eq(purchaseOrders.id, id));
 }
 
-async function receivedOf(tx: Db, lineId: number) {
+export async function receivedOf(tx: Db, lineId: number) {
 	const [row] = await tx
 		.select({
 			units: sql<number>`coalesce(sum(${purchaseOrderReceipts.quantity}), 0)::int`,
@@ -1487,6 +1509,18 @@ async function receivedOf(tx: Db, lineId: number) {
 		.from(purchaseOrderReceipts)
 		.where(eq(purchaseOrderReceipts.lineId, lineId));
 	return row.units;
+}
+
+// Single items of a line recorded as damaged. Never more than arrived, so a
+// receipt can't be undone from under them (see undoReceipt).
+export async function damagedOf(tx: Db, lineId: number) {
+	const [row] = await tx
+		.select({
+			items: sql<number>`coalesce(sum(${purchaseOrderDamages.quantity}), 0)::int`,
+		})
+		.from(purchaseOrderDamages)
+		.where(eq(purchaseOrderDamages.lineId, lineId));
+	return row.items;
 }
 
 // Stops waiting for what hasn't arrived, e.g. the supplier is out of it.

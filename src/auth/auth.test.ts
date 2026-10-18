@@ -121,6 +121,7 @@ describe("guard", () => {
 			"/api/webhooks/shopify",
 			"/api/oauth/token",
 			"/.well-known/oauth-protected-resource/mcp",
+			"/api/uploads/damage/abc",
 			"/logo.svg",
 			"/assets/main-abc.js",
 		])
@@ -132,6 +133,9 @@ describe("guard", () => {
 			"/api/other",
 			"/_serverFn/x",
 			"/oauth/authorize",
+			// Photos from the app need a session; only upload links don't.
+			"/api/damage-photos/1",
+			"/purchasing/damage-photo/1",
 		])
 			expect(isPublic(path)).toBe(false);
 	});
