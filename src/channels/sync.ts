@@ -86,7 +86,10 @@ export async function costPassAlone(
 	channel: SyncedChannel,
 	options: { history?: boolean; limit?: number } = {},
 ) {
-	return holdingChannel(channel, { purpose: "cost-pass" }, () =>
+	// The history catch-up only takes orders past the regular passes' 60 days,
+	// so it has a lock of its own: hours of old orders mustn't hold up new ones.
+	const purpose = options.history ? "cost-history" : "cost-pass";
+	return holdingChannel(channel, { purpose }, () =>
 		refreshCosts(db, channel, chargeFetchers[channel], options),
 	);
 }
@@ -132,7 +135,10 @@ export async function ingestWebhookOrder(
 // client closes.
 async function holdingChannel<T>(
 	channel: SyncedChannel,
-	options: { purpose: "sync-pass" | "cost-pass"; waitFor?: string },
+	options: {
+		purpose: "sync-pass" | "cost-pass" | "cost-history";
+		waitFor?: string;
+	},
 	work: () => Promise<T>,
 ): Promise<T | null> {
 	return withOwnConnection((lockDb) =>
