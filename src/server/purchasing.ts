@@ -800,6 +800,14 @@ export const updateSupplier = createServerFn({ method: "POST" })
 		updateSupplierDetails(getDb(), supplierId, values),
 	);
 
+// Just the email, so a PO can be sent from its own page without opening the
+// whole supplier form.
+export const setSupplierEmail = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", email: "string.email" }))
+	.handler(async ({ data }) =>
+		updateSupplierDetails(getDb(), data.id, { email: data.email }),
+	);
+
 // Who a product comes from, for its product page. Null when no supplier.
 export const getProductSupplier = createServerFn({ method: "GET" })
 	.validator(type({ productId: "number.integer > 0" }))

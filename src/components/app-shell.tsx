@@ -187,6 +187,16 @@ function NavItem({
 	);
 }
 
+// Work is routine (orders to ship); a problem means something is broken and
+// shows red. Every count has to say which it is.
+const problem: Record<keyof NavCounts, boolean> = {
+	toShip: false,
+	posReady: false,
+	countsDue: false,
+	unmatched: true,
+	attention: true,
+};
+
 // The item's own count as a pill, or a dot when only its hidden sub-pages
 // have something waiting.
 function Waiting({
@@ -202,11 +212,18 @@ function Waiting({
 	if (!c) return null;
 	if (own && c[own] > 0)
 		return (
-			<span className="rounded-md bg-surface-strong px-1.5 text-xs font-medium tabular-nums">
+			<span
+				className={cn(
+					"rounded-md px-1.5 text-xs font-medium tabular-nums",
+					problem[own]
+						? "bg-critical-fill text-critical-text"
+						: "bg-surface-strong",
+				)}
+			>
 				{c[own] > 999 ? "999+" : c[own]}
 			</span>
 		);
-	if (hidden.some((k) => c[k] > 0))
+	if (hidden.some((k) => problem[k] && c[k] > 0))
 		return <span className="size-1.5 rounded-full bg-critical-icon" />;
 	return null;
 }

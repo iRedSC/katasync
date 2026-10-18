@@ -20,10 +20,17 @@ import {
 	Smartphone,
 	Trash2,
 } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+	type FormEvent,
+	Fragment,
+	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { useNumberLine } from "#/components/number-line";
-import { Badge, Banner, Card, Page, useBack } from "#/components/page";
+import { Badge, Card, Page, useBack } from "#/components/page";
 import { BrowseProducts, type BrowseRow } from "#/components/po-browse";
 import { cancelWithUndo } from "#/components/po-cancel";
 import {
@@ -44,6 +51,11 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "#/components/ui/popover";
 import { Tip } from "#/components/ui/tooltip";
 import { VelocityGauge } from "#/components/velocity-gauge";
 import { afterArrival } from "#/inventory/stock-state";
@@ -86,6 +98,7 @@ import {
 	setLine,
 	setProductSupplier,
 	setPurchaseLineTerms,
+	setSupplierEmail,
 	skipPartOfSet,
 	undoPurchaseReceipt,
 	updateDraftFromSuggestions,
@@ -208,7 +221,6 @@ function PurchaseOrderPage() {
 				unpriced: d.lines.filter((l) => l.unitCost === null).length,
 			};
 	const total = shown.total;
-	const canEmail = d.emailConfigured && Boolean(d.supplier.email);
 	const wasSent = po.sentAt !== null;
 	const amended = d.lines.filter(
 		(l) => sinceSent(l, wasSent) === "amended",
@@ -401,44 +413,38 @@ function PurchaseOrderPage() {
 							</Link>
 						</Button>
 					)}
-					{draft && (
-						<Tip
-							content={
-								canEmail ? `Email the PDF to ${d.supplier.email}` : undefined
-							}
-						>
-							<Button
-								size="sm"
-								disabled={busy || d.lines.length === 0 || !canEmail}
-								onClick={() => send(true)}
+					{draft &&
+						(d.supplier.email === null ? (
+							<AddEmail
+								supplier={d.supplier}
+								patch={(email) =>
+									poData.patch(po.id, (data) => ({
+										...data,
+										supplier: { ...data.supplier, email },
+									}))
+								}
+							/>
+						) : (
+							<Tip
+								content={
+									d.emailConfigured
+										? `Email the PDF to ${d.supplier.email}`
+										: "Email isn't set up here (RESEND_API_KEY and PO_EMAIL_FROM). Download the PDF, order another way, and mark it sent."
+								}
 							>
-								<Mail />
-								Send to supplier
-							</Button>
-						</Tip>
-					)}
+								<Button
+									size="sm"
+									disabled={busy || d.lines.length === 0 || !d.emailConfigured}
+									onClick={() => send(true)}
+								>
+									<Mail />
+									Send to supplier
+								</Button>
+							</Tip>
+						))}
 				</>
 			}
 		>
-			{draft && !d.supplier.email && (
-				<Banner
-					tone="warning"
-					title={`${d.supplier.name} has no email`}
-					action={{
-						label: "Add one",
-						link: { to: "/purchasing/suppliers" },
-					}}
-				>
-					Or order another way and mark it sent.
-				</Banner>
-			)}
-			{draft && d.supplier.email && !d.emailConfigured && (
-				<Banner tone="warning" title="Email isn't set up">
-					Needs RESEND_API_KEY and PO_EMAIL_FROM. Until then, download the PDF
-					and mark it sent.
-				</Banner>
-			)}
-
 			{/* The lines need the width, so the side cards only sit beside them on
 			    wide screens. */}
 			<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
@@ -2753,6 +2759,58 @@ function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 				))}
 			</ol>
 		</section>
+	);
+}
+
+// Stands in for Send while the supplier has no email: one field, and once
+// saved the button is Send again. Ordering some other way stays under More.
+function AddEmail({
+	supplier,
+	patch,
+}: {
+	supplier: PurchaseOrderDetail["supplier"];
+	patch: (email: string) => Patch;
+}) {
+	const [open, setOpen] = useState(false);
+	async function submit(e: FormEvent<HTMLFormElement>) {
+		e.preventDefault();
+		const email = String(new FormData(e.currentTarget).get("email")).trim();
+		setOpen(false);
+		const r = await optimism.change({
+			label: `${supplier.name}'s email`,
+			patch: patch(email),
+			send: () => setSupplierEmail({ data: { id: supplier.id, email } }),
+		});
+		if (r) toast.success(`Saved ${supplier.name}'s email`);
+	}
+	return (
+		<Popover open={open} onOpenChange={setOpen}>
+			<PopoverTrigger asChild>
+				<Button size="sm">
+					<Mail />
+					Add email to send
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent className="w-72 p-3">
+				<form onSubmit={submit} className="flex flex-col gap-2">
+					<label htmlFor="supplier-email" className="font-medium">
+						{supplier.name}'s email
+					</label>
+					<input
+						id="supplier-email"
+						name="email"
+						type="email"
+						required
+						// biome-ignore lint/a11y/noAutofocus: the popover opens for this one field
+						autoFocus
+						className="h-8 w-full rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
+					/>
+					<Button type="submit" size="sm" className="self-end">
+						Save
+					</Button>
+				</form>
+			</PopoverContent>
+		</Popover>
 	);
 }
 

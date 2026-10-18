@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Badge, Banner, Card, Page, useBack } from "#/components/page";
+import { Badge, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import {
 	type IndexEntry,
@@ -70,11 +70,6 @@ function OrderPage() {
 	const goBack = useBack({ to: "/orders" });
 	const status = orderStatus(order);
 	const external = externalFulfillment(order);
-	// No SKU means a custom item; only real SKUs need matching.
-	const unmatched = lines.filter(
-		(l): l is typeof l & { sku: string } =>
-			l.productSku === null && l.sku !== null,
-	);
 	const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 	// Shippable here: still to ship (it has a pin), not a marketplace label,
 	// and no live label yet.
@@ -83,6 +78,11 @@ function OrderPage() {
 	const liveSend = sends.find((d) => d.live);
 	const liveBoxes = liveSend?.boxes.filter((b) => b.voidedAt === null) ?? [];
 	const canShip = pin !== null && !external && !liveSend;
+	// Cancelled or refunded with a live label: that box mustn't go out.
+	const toVoid =
+		order.labelToVoid && liveSend && liveBoxes.length > 0
+			? { send: liveSend, boxes: liveBoxes }
+			: null;
 	const ship = () => pin !== null && openQuickShip(pin);
 	// Returns come back here once something has shipped from our shelf.
 	const returnable = lines
@@ -217,36 +217,6 @@ function OrderPage() {
 				{order.salesChannel ?? channelName(order.channel)}
 			</p>
 
-			{order.labelToVoid && liveSend && liveBoxes.length > 0 && (
-				<Banner
-					tone="critical"
-					title={`${order.cancelledAt ? "Cancelled" : "Refunded"} after its label was bought`}
-				>
-					Don't ship this box.{" "}
-					{liveBoxes[0].provider === "tiktok"
-						? "Cancel the label in TikTok Seller Center."
-						: `Void the ${liveBoxes[0].serviceName} ${liveBoxes.length > 1 ? "labels" : "label"} to get ${formatMoney(liveBoxes.reduce((sum, b) => sum + b.cost, 0))} back.`}
-					{liveSend.shippedWith.length > 0 &&
-						` Voiding also sends ${liveSend.shippedWith.map((o) => o.name).join(", ")} back to To ship.`}
-				</Banner>
-			)}
-
-			{unmatched.length > 0 && (
-				<Banner
-					tone="critical"
-					title={`${unmatched.length === 1 ? "One item isn't" : `${unmatched.length} items aren't`} matched to a product`}
-					// One at a time; the dialog names the SKU, and the next comes
-					// up once this one is linked.
-					action={{
-						label: "Link product",
-						onClick: () => setLinking(unmatched[0].sku),
-					}}
-				>
-					No stock taken for {unmatched.map((l) => l.sku ?? l.title).join(", ")}
-					.
-				</Banner>
-			)}
-
 			<ProductSearchDialog
 				title={
 					linking && (
@@ -323,7 +293,18 @@ function OrderPage() {
 											</Badge>
 										)}
 										{l.productSku === null && l.sku !== null && (
-											<Badge tone="critical">Unknown product</Badge>
+											<>
+												<Badge tone="critical">
+													Not linked, no stock taken
+												</Badge>
+												<button
+													type="button"
+													onClick={() => setLinking(l.sku)}
+													className="font-medium text-link hover:underline"
+												>
+													Link product
+												</button>
+											</>
 										)}
 									</div>
 								</div>
@@ -350,7 +331,25 @@ function OrderPage() {
 
 				<div className="flex flex-col gap-4">
 					{sends.length > 0 && (
-						<Card title="Shipments" flush>
+						<Card
+							title="Shipments"
+							flush
+							{...(toVoid && {
+								tone: "critical",
+								aside: "Don't ship this box",
+							})}
+						>
+							{toVoid && (
+								<p className="border-b bg-critical-surface px-4 pb-3 text-critical-text">
+									{order.cancelledAt ? "Cancelled" : "Refunded"} after its label
+									was bought.{" "}
+									{toVoid.boxes[0].provider === "tiktok"
+										? "Cancel the label in TikTok Seller Center."
+										: `Void the ${toVoid.boxes[0].serviceName} ${toVoid.boxes.length > 1 ? "labels" : "label"} to get ${formatMoney(toVoid.boxes.reduce((sum, b) => sum + b.cost, 0))} back.`}
+									{toVoid.send.shippedWith.length > 0 &&
+										` Voiding also sends ${toVoid.send.shippedWith.map((o) => o.name).join(", ")} back to To ship.`}
+								</p>
+							)}
 							<ul>
 								{sends.map((d) => (
 									<SendRow

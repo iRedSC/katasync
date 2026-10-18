@@ -5,7 +5,6 @@ import { CountDialog } from "#/components/count-dialog";
 import {
 	AbcBadge,
 	Badge,
-	Banner,
 	Card,
 	Page,
 	type Tone,
@@ -150,15 +149,22 @@ function ProductPage() {
 				)
 			}
 		>
-			{verdict && <Banner tone={verdict.tone} title={verdict.text} />}
-
 			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
 				<div className="flex min-w-0 flex-col gap-4">
 					<Card>
 						<div className="flex items-center gap-4">
 							<ProductImage src={p.imageUrl} className="size-24" />
 							<div className="min-w-0">
-								<p className="text-base font-semibold">{p.name}</p>
+								<p className="flex items-center gap-2 text-base font-semibold">
+									<span className="min-w-0">{p.name}</span>
+									{verdict && (
+										<Tip content={verdict.detail}>
+											<span className="inline-flex cursor-help">
+												<Badge tone={verdict.tone}>{verdict.label}</Badge>
+											</span>
+										</Tip>
+									)}
+								</p>
 								{p.variantName && (
 									<p className="text-muted-foreground">{p.variantName}</p>
 								)}
@@ -224,6 +230,12 @@ function ProductPage() {
 														<Badge tone="warning">
 															Only {formatCount(c.available)}
 														</Badge>
+													) : limits(d, c) ? (
+														<Tip content="Runs out first">
+															<span className="font-semibold text-warning-text tabular-nums">
+																{formatCount(c.available)}
+															</span>
+														</Tip>
 													) : (
 														<span className="tabular-nums">
 															{formatCount(c.available)}
@@ -440,16 +452,20 @@ function ProductPage() {
 	);
 }
 
-// One sentence a person can act on, worked out from the numbers.
-function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
+// A short label beside the name, worked out from the numbers, with the
+// sentence a person can act on in its tooltip.
+function getVerdict(
+	d: ProductDetail,
+): { tone: Tone; label: string; detail: ReactNode } | null {
 	if (d.product.kind === "bundle") {
 		const missing = d.components.filter((c) => c.available < c.quantity);
 		if (missing.length > 0) {
 			return {
 				tone: "warning",
-				text: (
+				label: "Can't sell",
+				detail: (
 					<>
-						Can't sell: not enough{" "}
+						Not enough{" "}
 						{missing.map((c, i) => (
 							<span key={c.sku}>
 								{i > 0 && (i === missing.length - 1 ? " or " : ", ")}
@@ -464,26 +480,14 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 			};
 		}
 		if (d.available > 3) return null;
-		const limiting = d.components.filter(
-			(c) => Math.floor(c.available / c.quantity) === d.available,
-		);
+		const limiting = d.components.filter((c) => limits(d, c));
 		return {
 			tone: "warning",
-			text:
-				limiting.length === 1 ? (
-					<>
-						Only {formatCount(d.available)} left. {limiting[0].name} runs out
-						first.
-					</>
-				) : (
-					<>
-						Only {formatCount(d.available)} left.{" "}
-						{limiting.length === d.components.length
-							? "Every part runs"
-							: `${limiting.length} parts run`}{" "}
-						out at the same time.
-					</>
-				),
+			label: `Only ${formatCount(d.available)} left`,
+			detail:
+				limiting.length === 1
+					? `${limiting[0].name} runs out first.`
+					: `${limiting.length === d.components.length ? "Every part runs" : `${limiting.length} parts run`} out at the same time.`,
 		};
 	}
 	// Amazon's FBA stock can't cover our shelf.
@@ -493,10 +497,22 @@ function getVerdict(d: ProductDetail): { tone: Tone; text: ReactNode } | null {
 	if (onHand < 0) {
 		return {
 			tone: "critical",
-			text: <>Oversold by {formatCount(-onHand)}. Count the shelf.</>,
+			label: `Oversold by ${formatCount(-onHand)}`,
+			detail: "Count the shelf.",
 		};
 	}
 	return null;
+}
+
+// Whether a part is what caps how many of the set can be sold, once few are
+// left.
+function limits(d: ProductDetail, c: ProductDetail["components"][number]) {
+	return (
+		d.product.kind === "bundle" &&
+		d.available <= 3 &&
+		c.available >= c.quantity &&
+		Math.floor(c.available / c.quantity) === d.available
+	);
 }
 
 // Only what's filled in. Empty fields aren't worth a glance.
