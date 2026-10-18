@@ -61,6 +61,23 @@ const THIN_MARGIN = 0.05;
 const THIN_PROFIT = 3;
 const isThin = (i: Item) =>
 	i.profit >= 0 && (i.profit < THIN_PROFIT || (margin(i) ?? 0) < THIN_MARGIN);
+// Made enough on one sale to stand out.
+const GREAT_PROFIT = 100;
+
+// How a sale did, at a glance: its row's color. A sale with no cost has a
+// profit that's too high, so it gets no verdict.
+const VERDICT = {
+	loss: { row: "bg-critical-surface", text: "text-critical-text" },
+	thin: { row: "bg-warning-surface", text: "text-warning-text" },
+	great: { row: "bg-success-surface/50", text: "text-success-text" },
+} as const;
+function verdict(i: Item): keyof typeof VERDICT | null {
+	if (!i.costKnown) return null;
+	if (i.profit < 0) return "loss";
+	if (isThin(i)) return "thin";
+	if (i.profit >= GREAT_PROFIT) return "great";
+	return null;
+}
 
 // Why an item's profit isn't final yet, in words.
 function unsure(i: Item): string[] {
@@ -408,16 +425,16 @@ function Th({
 function Row({ item: i, range }: { item: Item; range: string }) {
 	const notes = unsure(i);
 	const m = margin(i);
-	// Without a cost the figure is too high, so it doesn't get a verdict.
-	const tone = !i.costKnown
-		? "text-muted-foreground"
-		: i.profit < 0
-			? "text-critical-text"
-			: isThin(i)
-				? "text-warning-text"
-				: undefined;
+	const v = verdict(i);
+	// Without a cost the figure is too high, so it's muted.
+	const tone = !i.costKnown ? "text-muted-foreground" : v && VERDICT[v].text;
 	return (
-		<tr className="border-t first:border-t-0 hover:bg-subtle">
+		<tr
+			className={cn(
+				"border-t first:border-t-0",
+				v ? cn(VERDICT[v].row, "hover:brightness-[0.97]") : "hover:bg-subtle",
+			)}
+		>
 			<td className="px-2.5 py-2">
 				<div className="flex items-center gap-2">
 					<ChannelBadge channel={i.soldOn} salesChannel={null} compact />
