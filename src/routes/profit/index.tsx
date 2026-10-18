@@ -196,8 +196,16 @@ function Items() {
 					every order.
 				</Banner>
 			)}
+			{loaded.unshipped > 0 && (
+				<p className="text-muted-foreground">
+					{formatCount(loaded.unshipped)}{" "}
+					{loaded.unshipped === 1 ? "item waits" : "items wait"} to ship and
+					will show here once{" "}
+					{loaded.unshipped === 1 ? "it ships" : "they ship"}.
+				</p>
+			)}
 			{items.length === 0 ? (
-				<EmptyState icon={Receipt} title="Nothing sold in this range" />
+				<EmptyState icon={Receipt} title="Nothing shipped in this range" />
 			) : (
 				<>
 					<Summary items={shown} />

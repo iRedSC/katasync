@@ -8,6 +8,7 @@ import {
 	ordersNeedingCosts,
 	profitByDay,
 	profitByProduct,
+	profitItems,
 	profitTotals,
 	resolveRange,
 } from "./profit";
@@ -537,5 +538,24 @@ describe("totals", () => {
 		const [row] = await profitByProduct(db, start, end);
 		expect(row.profit).toBe((await profit(free.id)).profit);
 		expect(row.profit).toBeLessThan(-10);
+	});
+
+	test("items list only what has shipped, and counts what waits", async () => {
+		const placedAt = new Date("2026-10-15T15:00:00Z");
+		await order("#shipped", [{ unitPrice: 20, quantity: 1, unitCost: 5 }], {
+			placedAt,
+		});
+		await order("#waiting", [{ unitPrice: 20, quantity: 2, unitCost: 5 }], {
+			placedAt,
+			fulfillmentStatus: "UNFULFILLED",
+		});
+		const { items, unshipped } = await profitItems(
+			db,
+			new Date("2026-10-15T04:00:00Z"),
+			new Date("2026-10-16T04:00:00Z"),
+		);
+		expect(items.map((i) => i.orderName)).toEqual(["#shipped"]);
+		// Units, as "Items sold" counts them.
+		expect(unshipped).toBe(2);
 	});
 });
