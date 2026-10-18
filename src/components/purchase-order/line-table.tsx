@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { DamageRow } from "#/components/damage/damage-details";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
+import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import {
 	orderedItems,
@@ -11,6 +12,7 @@ import {
 } from "#/purchasing/sets";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { LineMenu } from "./line-menu";
+import { NoteDialog, NoteRow, notable } from "./line-note";
 import { LineRow } from "./line-row";
 import { isUnsent } from "./po-data";
 import { SetPartRow } from "./set-parts";
@@ -43,6 +45,12 @@ export function LineTable({
 	}, [focus]);
 	const [preview, setPreview] = useState<QuantityPreview | null>(null);
 	const [menuFor, setMenuFor] = useState<Line | null>(null);
+	// Looked up by id, so the dialog edits the line as it is now.
+	const [noteFor, setNoteFor] = useState<number | null>(null);
+	const noteLine = lines.find(
+		(l) => noteFor !== null && ids.same(l.id, noteFor),
+	);
+	const canNote = notable(d.order.status);
 	// Sets opened or closed by hand; the rest are open while they're missing
 	// a part.
 	const [opened, setOpened] = useState<ReadonlyMap<number, boolean>>(new Map());
@@ -181,6 +189,15 @@ export function LineTable({
 											onMenu={() => setMenuFor(l)}
 											onQuantityDone={onQuantityDone}
 										/>
+										{l.receivingNote && (
+											<NoteRow
+												note={l.receivingNote}
+												// Only sent and closed POs have notes, when the table has 8.
+												columns={8}
+												onOpen={canNote ? () => setNoteFor(l.id) : null}
+												onContextMenu={() => setMenuFor(l)}
+											/>
+										)}
 										{d.damages
 											.filter((x) => x.lineId === l.id)
 											.map((x) => (
@@ -215,9 +232,17 @@ export function LineTable({
 							detail={d}
 							onEditQuantity={() => onEditQuantity(menuFor.id)}
 							onReportDamage={() => onReportDamage(menuFor)}
+							onNote={canNote ? () => setNoteFor(menuFor.id) : null}
 						/>
 					)}
 				</ContextMenu>
+				{noteLine && (
+					<NoteDialog
+						line={noteLine}
+						purchaseOrderId={d.order.id}
+						onClose={() => setNoteFor(null)}
+					/>
+				)}
 			</table>
 		</div>
 	);

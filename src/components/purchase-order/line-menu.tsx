@@ -3,6 +3,7 @@ import {
 	Copy,
 	ExternalLink,
 	FileText,
+	NotebookPen,
 	PackageCheck,
 	Pencil,
 	ShieldAlert,
@@ -27,11 +28,14 @@ export function LineMenu({
 	detail: d,
 	onEditQuantity,
 	onReportDamage,
+	onNote,
 }: {
 	line: Line;
 	detail: PurchaseOrderDetail;
 	onEditQuantity: () => void;
 	onReportDamage: () => void;
+	// null when the line's note can't change.
+	onNote: (() => void) | null;
 }) {
 	const router = useRouter();
 	const po = d.order;
@@ -78,6 +82,12 @@ export function LineMenu({
 						Arrived damaged…
 					</ContextMenuItem>
 				)}
+			{onNote && (
+				<ContextMenuItem shortcut="N" onSelect={onNote}>
+					<NotebookPen />
+					{l.receivingNote ? "Edit note…" : "Add note…"}
+				</ContextMenuItem>
+			)}
 			{po.status === "draft" && (
 				<ContextMenuItem
 					className="text-critical-text [&_svg]:text-critical-text"
