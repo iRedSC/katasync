@@ -9,17 +9,20 @@ import { statusSearch } from "#/products/views";
 import { getDashboard } from "#/server/catalog";
 import { countDiagnosticsAttention } from "#/server/diagnostics";
 import { countOrdersToShip } from "#/server/orders";
+import { getMonthProfit } from "#/server/profit";
 import { countPosReady } from "#/server/purchasing";
 
 export const Route = createFileRoute("/")({
 	loader: async () => {
-		const [dashboard, toShip, posReady, attention] = await Promise.all([
-			getDashboard(),
-			countOrdersToShip(),
-			countPosReady(),
-			countDiagnosticsAttention(),
-		]);
-		return { ...dashboard, toShip, posReady, attention };
+		const [dashboard, toShip, posReady, attention, monthProfit] =
+			await Promise.all([
+				getDashboard(),
+				countOrdersToShip(),
+				countPosReady(),
+				countDiagnosticsAttention(),
+				getMonthProfit(),
+			]);
+		return { ...dashboard, toShip, posReady, attention, monthProfit };
 	},
 	component: Home,
 	pendingComponent: () => (
@@ -57,7 +60,18 @@ function Home() {
 							]),
 						}}
 					/>
-					<Stat label="Monthly profit" pending="Waiting on profit app" />
+					<Stat
+						label="Profit this month"
+						value={Math.round(d.monthProfit.profit)}
+						money
+						tone={d.monthProfit.profit < 0 ? "critical" : undefined}
+						pending={
+							d.monthProfit.unsure > 0
+								? `${formatCount(d.monthProfit.unsure)} orders still waiting on a cost`
+								: undefined
+						}
+						link={{ to: "/profit" }}
+					/>
 				</dl>
 			</Card>
 
@@ -160,9 +174,11 @@ function Stat({
 	tone,
 	link,
 	pending,
+	money = false,
 }: {
 	label: string;
 	value?: number;
+	money?: boolean;
 	tone?: "critical";
 	link?: LinkProps;
 	pending?: string;
@@ -179,7 +195,18 @@ function Stat({
 				{value === undefined ? (
 					<span className="text-faint">—</span>
 				) : (
-					<NumberFlow value={value} />
+					<NumberFlow
+						value={value}
+						format={
+							money
+								? {
+										style: "currency",
+										currency: "USD",
+										maximumFractionDigits: 0,
+									}
+								: undefined
+						}
+					/>
 				)}
 			</dd>
 			{pending && <dd className="text-xs text-muted-foreground">{pending}</dd>}

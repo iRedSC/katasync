@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
 	Activity,
 	ArrowLeftRight,
+	ChartNoAxesColumnIncreasing,
 	ClipboardList,
 	Factory,
 	LayoutDashboard,
@@ -51,6 +52,14 @@ export const pages = [
 		keys: "g o",
 		parent: null,
 		count: "toShip",
+	},
+	{
+		to: "/profit",
+		label: "Profit",
+		icon: ChartNoAxesColumnIncreasing,
+		keys: "g m",
+		parent: null,
+		count: null,
 	},
 	{
 		to: "/products",

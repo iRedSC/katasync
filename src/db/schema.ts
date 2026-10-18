@@ -447,6 +447,98 @@ export const orderReturns = pgTable(
 	],
 );
 
+// What a marketplace charged on one order: its latest statement, from its
+// finance reports. billedBy is the marketplace that sent the bill, which isn't
+// always the order's store: a TikTok order relayed through Shopify is billed
+// by TikTok, matched on marketplaceOrderId.
+//
+// A label's cost belongs to whoever billed it, so no label counts twice:
+//   - bought in katasync through Shippo: Shippo bills us, the cost is on
+//     shipments, and no marketplace reports it.
+//   - bought on a marketplace, in katasync (TikTok) or on its own site
+//     (Shopify Shipping, eBay, Amazon Buy Shipping): a label charge here.
+//     A TikTok shipment's own cost is only a stand-in until TikTok reports.
+//
+// No row means the marketplace hasn't reported yet, which is not the same as
+// charging nothing: a report with no charges says nothing was charged.
+// Refreshing replaces the whole report. Rules live in src/orders/charges.ts.
+export const orderCostReports = pgTable(
+	"order_cost_reports",
+	{
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		billedBy: channel().notNull(),
+		// The marketplace says these numbers are final (TikTok's settlement).
+		// Others never say so; they're taken as final once the order is old
+		// enough to stop being rechecked.
+		settled: boolean().notNull(),
+		// The marketplace says the order needs no label: picked up, or sold
+		// in person. Otherwise a shipped order with no label cost is missing
+		// one.
+		noLabel: boolean().notNull().default(false),
+		// Its label figures are a stand-in until it catches up (Shopify's
+		// timeline, before its labels report has the order).
+		labelsPending: boolean().notNull().default(false),
+		fetchedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
+);
+
+// When katasync last asked a marketplace about an order's charges, whatever
+// came back, so the refresh can back off (src/orders/cost-refresh.ts). error
+// is why the last ask failed, for Diagnostics; null when it worked, even if
+// the marketplace had nothing yet.
+export const orderCostChecks = pgTable(
+	"order_cost_checks",
+	{
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		billedBy: channel().notNull(),
+		checkedAt: timestamp({ withTimezone: true }).notNull(),
+		error: text(),
+	},
+	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
+);
+
+export const chargeKind = pgEnum("charge_kind", [
+	"fee",
+	"label",
+	// Money given back to the buyer.
+	"refund",
+	// Anything else the marketplace adds or takes back, e.g. a reimbursement.
+	"adjustment",
+]);
+
+// One line of a report. Positive is money we lose, negative is money back
+// (a refunded fee, a reimbursement). Amounts are in the store's currency.
+export const orderCharges = pgTable(
+	"order_charges",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		orderId: integer().notNull(),
+		billedBy: channel().notNull(),
+		kind: chargeKind().notNull(),
+		// The marketplace's own wording, e.g. "Referral fee".
+		description: text().notNull(),
+		amount: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	},
+	(t) => [
+		foreignKey({
+			name: "order_charges_report_fk",
+			columns: [t.orderId, t.billedBy],
+			foreignColumns: [orderCostReports.orderId, orderCostReports.billedBy],
+		}).onDelete("cascade"),
+		index("order_charges_report_idx").on(t.orderId, t.billedBy),
+		check("order_charges_amount_not_zero", sql`${t.amount} <> 0`),
+		check(
+			"order_charges_description_given",
+			sql`btrim(${t.description}) <> ''`,
+		),
+	],
+);
+
 // One pass of one channel's order sync (scripts/sync.ts), for Diagnostics.
 // finishedAt is null while it runs, or if the worker died mid-pass. error is
 // why the whole pass failed; problems counts single orders that went wrong
@@ -1074,6 +1166,41 @@ export const salesUnits = pgView("sales_units", {
 	storeId: integer().notNull(),
 	placedAt: timestamp({ withTimezone: true }).notNull(),
 	units: integer().notNull(),
+}).existing();
+
+// What each order made, defined in the order profit migration: revenue,
+// cost, fees, labels, refunds and adjustments, each with how sure it is, and
+// profit. One row per order not cancelled. Statuses are explained there.
+export const orderProfit = pgView("order_profit", {
+	orderId: integer().notNull(),
+	storeId: integer().notNull(),
+	soldOn: channel().notNull(),
+	placedAt: timestamp({ withTimezone: true }).notNull(),
+	revenue: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	shippingCharged: numeric({
+		precision: 12,
+		scale: 2,
+		mode: "number",
+	}).notNull(),
+	cost: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	costKnown: boolean().notNull(),
+	fees: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	feesStatus: text({ enum: ["final", "reported", "estimated"] }).notNull(),
+	labels: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	labelsStatus: text({
+		enum: [
+			"known",
+			"stand_in",
+			"not_needed",
+			"not_shipped",
+			"awaiting",
+			"missing",
+		],
+	}).notNull(),
+	refunds: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	adjustments: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	profit: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	complete: boolean().notNull(),
 }).existing();
 
 // count_log with the drift worked out and undone counts marked, defined in

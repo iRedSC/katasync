@@ -65,10 +65,8 @@ const returnedPatch =
 
 function OrderPage() {
 	const loaded = Route.useLoaderData();
-	const { order, lines, sends, adminUrl } = orderData.useData(
-		loaded.order.id,
-		loaded,
-	);
+	const { order, lines, sends, adminUrl, profit, charges, reports, checks } =
+		orderData.useData(loaded.order.id, loaded);
 	const goBack = useBack({ to: "/orders" });
 	const status = orderStatus(order);
 	const external = externalFulfillment(order);
@@ -364,6 +362,14 @@ function OrderPage() {
 							</ul>
 						</Card>
 					)}
+					{profit && (
+						<ProfitCard
+							profit={profit}
+							charges={charges}
+							reports={reports}
+							checks={checks}
+						/>
+					)}
 					<Card title="Ship to">
 						<p className="font-medium">{order.customerName ?? "No name"}</p>
 						{address.length > 0 ? (
@@ -383,19 +389,116 @@ function OrderPage() {
 	);
 }
 
+const feesNote: Record<string, string | undefined> = {
+	final: undefined,
+	reported: "As reported so far; may still change",
+	estimated: "Estimated until the marketplace reports it",
+};
+const labelsNote: Record<string, string | undefined> = {
+	known: undefined,
+	stand_in: "katasync's estimate until TikTok bills it",
+	not_needed: undefined,
+	not_shipped: "Not shipped yet",
+	awaiting: "Waiting for the marketplace to report",
+	missing: "Shipped, but no label cost from anyone. Bought somewhere else?",
+};
+
+// What the order made, and what each marketplace said it charged
+// (src/orders/profit.ts). Anything not final says so.
+function ProfitCard({
+	profit: p,
+	charges,
+	reports,
+	checks,
+}: Pick<OrderDetail, "charges" | "reports" | "checks"> & {
+	profit: NonNullable<OrderDetail["profit"]>;
+}) {
+	const failed = checks.filter((c) => c.error);
+	return (
+		<Card
+			title="Profit"
+			aside={
+				p.complete ? undefined : <Badge tone="warning">Waiting on a cost</Badge>
+			}
+		>
+			<dl className="flex flex-col gap-1">
+				<Line label="Items" value={formatMoney(p.revenue)} />
+				<Line label="Shipping charged" value={formatMoney(p.shippingCharged)} />
+				<Line
+					label="Cost of goods"
+					value={formatMoney(-p.cost)}
+					note={p.costKnown ? undefined : "A product has no cost"}
+				/>
+				<Line
+					label="Marketplace fees"
+					value={formatMoney(-p.fees)}
+					note={feesNote[p.feesStatus]}
+				/>
+				<Line
+					label="Shipping labels"
+					value={formatMoney(-p.labels)}
+					note={labelsNote[p.labelsStatus]}
+				/>
+				{p.refunds !== 0 && (
+					<Line label="Refunds" value={formatMoney(-p.refunds)} />
+				)}
+				{p.adjustments !== 0 && (
+					<Line label="Adjustments" value={formatMoney(-p.adjustments)} />
+				)}
+				<div className="mt-1 border-t pt-1">
+					<Line label="Profit" value={formatMoney(p.profit)} strong />
+				</div>
+			</dl>
+			{charges.length > 0 && (
+				<details className="mt-3 text-xs">
+					<summary className="cursor-pointer text-muted-foreground">
+						{formatCount(charges.length)} charges reported
+					</summary>
+					<ul className="mt-1 flex flex-col gap-0.5">
+						{charges.map((c, i) => (
+							// Charges have no identity of their own on the page.
+							// biome-ignore lint/suspicious/noArrayIndexKey: listed in order, never reordered
+							<li key={i} className="flex justify-between gap-2">
+								<span className="text-muted-foreground">
+									{channelName(c.billedBy)}: {c.description}
+								</span>
+								<span className="tabular-nums">{formatMoney(-c.amount)}</span>
+							</li>
+						))}
+					</ul>
+				</details>
+			)}
+			{reports.length === 0 && checks.length === 0 && (
+				<p className="mt-3 text-xs text-muted-foreground">
+					Not asked about yet; the marketplace is asked within ten minutes.
+				</p>
+			)}
+			{failed.map((c) => (
+				<p key={c.billedBy} className="mt-3 text-xs text-critical-text">
+					Asking {channelName(c.billedBy)} failed: {c.error}
+				</p>
+			))}
+		</Card>
+	);
+}
+
 function Line({
 	label,
 	value,
 	strong = false,
+	note,
 }: {
 	label: string;
 	value: string;
 	strong?: boolean;
+	// Why the figure isn't final, under the label.
+	note?: string;
 }) {
 	return (
-		<div className="flex justify-between">
+		<div className="flex justify-between gap-3">
 			<dt className={strong ? "font-semibold" : "text-muted-foreground"}>
 				{label}
+				{note && <div className="text-xs text-warning-text">{note}</div>}
 			</dt>
 			<dd className={strong ? "font-semibold tabular-nums" : "tabular-nums"}>
 				{value}
