@@ -1001,7 +1001,7 @@ function AgentChanges({ calls }: { calls: Diagnostics["claude"] }) {
 							{open === c.id && (
 								<div className="flex flex-col gap-2 px-4 pb-3">
 									<p className="text-xs text-muted-foreground">
-										Token: {c.tokenName}
+										By {c.tokenName}
 									</p>
 									<pre className="max-h-48 overflow-auto rounded-lg bg-subtle p-2 font-mono text-xs break-words whitespace-pre-wrap">
 										{JSON.stringify(JSON.parse(c.arguments), null, 1)}

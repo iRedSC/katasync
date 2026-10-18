@@ -3,13 +3,20 @@ import { getCookie, getRequest } from "@tanstack/react-start/server";
 import { type } from "arktype";
 import { asc, eq } from "drizzle-orm";
 import {
+	answerAuthorize,
+	checkAuthorize,
+	disconnect,
+	endpoints,
+	listConnections as oauthConnections,
+	originOf,
+} from "#/auth/oauth";
+import {
 	AuthError,
 	createSetupLink,
 	SESSION_COOKIE,
 	SETUP_LINK_MINUTES,
 	sessionFor,
 } from "#/auth/sessions";
-import { createApiToken, listApiTokens, revokeApiToken } from "#/auth/tokens";
 import { passkeyName } from "#/auth/webauthn";
 import { getDb } from "#/db/client";
 import { passkeys } from "#/db/schema";
@@ -67,20 +74,46 @@ export const createDeviceLink = createServerFn({ method: "POST" }).handler(
 	},
 );
 
-// Tokens for MCP clients like Claude. The token itself is only returned here,
-// once.
-export const listTokens = createServerFn({ method: "GET" }).handler(async () =>
-	listApiTokens(getDb()),
+// Apps connected to /mcp over OAuth (src/auth/oauth.ts), and the address to
+// connect them with.
+export const listConnections = createServerFn({ method: "GET" }).handler(
+	async () => ({
+		endpoint: endpoints(originOf(getRequest())).resource,
+		apps: await oauthConnections(getDb()),
+	}),
 );
 
-export const createToken = createServerFn({ method: "POST" })
-	.validator(type({ name: "string", canWrite: "boolean" }))
-	.handler(async ({ data }) => {
-		const token = await createApiToken(getDb(), data.name, data.canWrite);
-		const origin = process.env.AUTH_ORIGIN ?? new URL(getRequest().url).origin;
-		return { token, endpoint: `${origin}/mcp` };
-	});
+export const disconnectApp = createServerFn({ method: "POST" })
+	.validator(type({ id: "string.uuid" }))
+	.handler(async ({ data }) => disconnect(getDb(), data.id));
 
-export const revokeToken = createServerFn({ method: "POST" })
-	.validator(type({ id: "string > 0" }))
-	.handler(async ({ data }) => revokeApiToken(getDb(), data.id));
+// The approval page. Both re-check the request from scratch, so what's
+// approved is what the app asked, not what the page was told.
+const authorizeParams = type({
+	"response_type?": "string",
+	"client_id?": "string",
+	"redirect_uri?": "string",
+	"code_challenge?": "string",
+	"code_challenge_method?": "string",
+	"state?": "string",
+	"resource?": "string",
+});
+
+export const checkAuthorization = createServerFn({ method: "GET" })
+	.validator(authorizeParams)
+	.handler(async ({ data }) =>
+		checkAuthorize(getDb(), data, originOf(getRequest())),
+	);
+
+export const answerAuthorization = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			params: authorizeParams,
+			answer: type({ approve: "true", canWrite: "boolean" }).or({
+				approve: "false",
+			}),
+		}),
+	)
+	.handler(async ({ data }) =>
+		answerAuthorize(getDb(), data.params, originOf(getRequest()), data.answer),
+	);

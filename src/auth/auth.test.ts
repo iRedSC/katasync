@@ -119,11 +119,20 @@ describe("guard", () => {
 			"/api/auth/login/options",
 			"/api/cron/sync/shopify",
 			"/api/webhooks/shopify",
+			"/api/oauth/token",
+			"/.well-known/oauth-protected-resource/mcp",
 			"/logo.svg",
 			"/assets/main-abc.js",
 		])
 			expect(isPublic(path)).toBe(true);
-		for (const path of ["/", "/settings", "/api/other", "/_serverFn/x"])
+		// Approving an app needs a signed-in device.
+		for (const path of [
+			"/",
+			"/settings",
+			"/api/other",
+			"/_serverFn/x",
+			"/oauth/authorize",
+		])
 			expect(isPublic(path)).toBe(false);
 	});
 

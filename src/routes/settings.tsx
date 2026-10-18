@@ -2,18 +2,21 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Pencil, Trash2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
+import {
+	ConnectionsCard,
+	connectionsData,
+} from "#/components/connections-card";
 import { DevicesCard, devicesData } from "#/components/devices-card";
 import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
 import { ActionSlot, IconAction, Row } from "#/components/rows";
 import { ListSkeleton } from "#/components/skeleton";
 import { MinStockForm } from "#/components/stock-range-form";
-import { TokensCard, tokensData } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { channelNames } from "#/lib/format";
 import { optimism, optimistic } from "#/lib/optimism";
-import { listDevices, listTokens } from "#/server/auth";
+import { listConnections, listDevices } from "#/server/auth";
 import {
 	getDefaultMinStock,
 	listLocations,
@@ -36,17 +39,25 @@ import {
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
-		const [locations, stores, boxes, units, devices, tokens, minStock] =
+		const [locations, stores, boxes, units, devices, connections, minStock] =
 			await Promise.all([
 				listLocations(),
 				listStores(),
 				listPackages(),
 				listPurchaseUnits(),
 				listDevices(),
-				listTokens(),
+				listConnections(),
 				getDefaultMinStock(),
 			]);
-		return { locations, stores, boxes, units, devices, tokens, minStock };
+		return {
+			locations,
+			stores,
+			boxes,
+			units,
+			devices,
+			connections,
+			minStock,
+		};
 	},
 	component: Settings,
 	pendingComponent: () => <ListSkeleton title="Settings" />,
@@ -72,7 +83,7 @@ function Settings() {
 	const boxes = boxesData.useData("all", loaded.boxes);
 	const units = unitsData.useData("all", loaded.units);
 	const devices = devicesData.useData("all", loaded.devices);
-	const tokens = tokensData.useData("all", loaded.tokens);
+	const apps = connectionsData.useData("all", loaded.connections.apps);
 	// Two columns of cards sized to what they hold: stores and shipping on
 	// the left, purchasing and access on the right.
 	return (
@@ -93,7 +104,7 @@ function Settings() {
 						/>
 					</Card>
 					<DevicesCard devices={devices} />
-					<TokensCard tokens={tokens} />
+					<ConnectionsCard endpoint={loaded.connections.endpoint} apps={apps} />
 				</div>
 			</div>
 		</Page>

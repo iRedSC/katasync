@@ -425,11 +425,75 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 		async () => json(await listUnits(db)),
 	);
 
+	server.registerTool(
+		"unmatched_listings",
+		{
+			description:
+				"Listings no product backs, grouped into items, most units sold first: listing_ids, title, SKU (null when the channel has none), channels, fba, units and orders sold, last sold, and up to 6 likely products with the reason each was suggested. With order_id, only what that order sold. Never-sold items are left out unless include_unsold.",
+			inputSchema: {
+				order_id: z.number().int().positive().optional(),
+				include_unsold: z.boolean().default(false),
+			},
+			annotations: READ,
+		},
+		async ({ order_id, include_unsold }) => {
+			const items = await listUnmatched(
+				db,
+				order_id === undefined ? {} : { orderId: order_id },
+			);
+			return json(
+				items
+					.filter((i) => include_unsold || i.units > 0)
+					.map((i) => ({
+						listingIds: i.listingIds,
+						title: i.title,
+						sku: i.sku,
+						channels: i.channels,
+						...(i.fba ? { fba: true } : {}),
+						units: i.units,
+						orders: i.orders,
+						lastSoldAt: i.lastSoldAt,
+						candidates: i.candidates.map((c) => ({
+							sku: c.sku,
+							name: c.variantName ? `${c.name} (${c.variantName})` : c.name,
+							reason: c.reason,
+						})),
+					})),
+			);
+		},
+	);
+
+	server.registerTool(
+		"suggest_matches",
+		{
+			description:
+				"Ranks products that could be the item a title and SKU describe, best first, with why: same-sku (SKU, alias, or supplier item number), matched-before (a listing with this title sells it), part-number (one of its codes is in the title), same-name, similar-name. For FBA listings, tool sets are left out. For a wider search, use query on products.",
+			inputSchema: {
+				title: z.string().min(1),
+				sku: z.string().optional(),
+				fba: z.boolean().default(false),
+				limit: z.number().int().min(1).max(30).default(10),
+			},
+			annotations: READ,
+		},
+		async ({ title, sku, fba, limit }) =>
+			json(
+				(
+					await suggestProducts(db, { title, sku: sku ?? null, fba }, limit)
+				).map((c) => ({
+					sku: c.sku,
+					name: c.variantName ? `${c.name} (${c.variantName})` : c.name,
+					...(c.kind !== "simple" ? { kind: c.kind } : {}),
+					reason: c.reason,
+				})),
+			),
+	);
+
 	if (access.canWrite) registerWriteTools(server, db);
 	return server;
 }
 
-// Tools that change things. Only tokens allowed to write get them, and
+// Tools that change things. Only apps approved to make changes get them, and
 // src/routes/mcp.ts logs every call to them.
 function registerWriteTools(server: McpServer, db: Db) {
 	// Draft POs
@@ -994,70 +1058,6 @@ function registerWriteTools(server: McpServer, db: Db) {
 			});
 			return json({ pin: saved.pin, name: saved.name });
 		},
-	);
-
-	server.registerTool(
-		"unmatched_listings",
-		{
-			description:
-				"Listings no product backs, grouped into items, most units sold first: listing_ids, title, SKU (null when the channel has none), channels, fba, units and orders sold, last sold, and up to 6 likely products with the reason each was suggested. With order_id, only what that order sold. Never-sold items are left out unless include_unsold.",
-			inputSchema: {
-				order_id: z.number().int().positive().optional(),
-				include_unsold: z.boolean().default(false),
-			},
-			annotations: READ,
-		},
-		async ({ order_id, include_unsold }) => {
-			const items = await listUnmatched(
-				db,
-				order_id === undefined ? {} : { orderId: order_id },
-			);
-			return json(
-				items
-					.filter((i) => include_unsold || i.units > 0)
-					.map((i) => ({
-						listingIds: i.listingIds,
-						title: i.title,
-						sku: i.sku,
-						channels: i.channels,
-						...(i.fba ? { fba: true } : {}),
-						units: i.units,
-						orders: i.orders,
-						lastSoldAt: i.lastSoldAt,
-						candidates: i.candidates.map((c) => ({
-							sku: c.sku,
-							name: c.variantName ? `${c.name} (${c.variantName})` : c.name,
-							reason: c.reason,
-						})),
-					})),
-			);
-		},
-	);
-
-	server.registerTool(
-		"suggest_matches",
-		{
-			description:
-				"Ranks products that could be the item a title and SKU describe, best first, with why: same-sku (SKU, alias, or supplier item number), matched-before (a listing with this title sells it), part-number (one of its codes is in the title), same-name, similar-name. For FBA listings, tool sets are left out. For a wider search, use query on products.",
-			inputSchema: {
-				title: z.string().min(1),
-				sku: z.string().optional(),
-				fba: z.boolean().default(false),
-				limit: z.number().int().min(1).max(30).default(10),
-			},
-			annotations: READ,
-		},
-		async ({ title, sku, fba, limit }) =>
-			json(
-				(
-					await suggestProducts(db, { title, sku: sku ?? null, fba }, limit)
-				).map((c) => ({
-					sku: c.sku,
-					name: c.variantName ? `${c.name} (${c.variantName})` : c.name,
-					...(c.kind !== "simple" ? { kind: c.kind } : {}),
-					reason: c.reason,
-				})),
-			),
 	);
 
 	server.registerTool(

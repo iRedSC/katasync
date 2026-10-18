@@ -30,7 +30,10 @@ type Rows = { rows: Record<string, unknown>[] };
 export const SECRET_TABLES = [
 	"sessions",
 	"passkeys",
-	"api_tokens",
+	"oauth_clients",
+	"oauth_grants",
+	"oauth_codes",
+	"oauth_tokens",
 	"setup_links",
 	"auth_challenges",
 	"mcp_login",

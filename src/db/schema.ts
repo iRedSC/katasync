@@ -1107,17 +1107,78 @@ export const authChallenges = pgTable("auth_challenges", {
 	expiresAt: timestamp({ withTimezone: true }).notNull(),
 });
 
-// Lets a program (an MCP client like Claude) use katasync's /mcp endpoint.
-// Shown once when made; only its SHA-256 is stored, like sessions.
-export const apiTokens = pgTable("api_tokens", {
-	tokenHash: text().primaryKey(),
-	// Who or what holds it, e.g. "Claude on the office PC".
+// OAuth for /mcp (src/auth/oauth.ts). An app like Claude registers itself
+// (oauth_clients), someone signed in approves it (oauth_grants), and the app
+// trades the one-time code for tokens (oauth_tokens). Disconnecting an app
+// deletes its grant, and with it every code and token.
+
+// An app that registered itself. Anyone can register, so one that's never
+// approved is cleared out after a day.
+export const oauthClients = pgTable("oauth_clients", {
+	id: text().primaryKey(),
+	// What the app calls itself, e.g. "Claude".
 	name: text().notNull(),
-	// A read-only token only gets the tools that read.
-	canWrite: boolean().notNull().default(true),
+	// Where approval sends the browser back; only these, matched exactly.
+	redirectUris: text().array().notNull(),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-	lastUsedAt: timestamp({ withTimezone: true }),
 });
+
+// One approval of an app: what it may do, until disconnected in Settings.
+export const oauthGrants = pgTable(
+	"oauth_grants",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		clientId: text()
+			.notNull()
+			.references(() => oauthClients.id, { onDelete: "cascade" }),
+		// Read only gets only the tools that read.
+		canWrite: boolean().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		lastUsedAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [index("oauth_grants_client_idx").on(t.clientId)],
+);
+
+// The code approval hands the app, traded once for tokens within minutes.
+// Bound to the redirect it was sent to and the app's PKCE challenge, so a
+// code caught on the way can't be used.
+export const oauthCodes = pgTable("oauth_codes", {
+	codeHash: text().primaryKey(),
+	grantId: uuid()
+		.notNull()
+		.references(() => oauthGrants.id, { onDelete: "cascade" }),
+	redirectUri: text().notNull(),
+	codeChallenge: text().notNull(),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+	// Kept once used, so a second try is caught and ends the grant.
+	usedAt: timestamp({ withTimezone: true }),
+});
+
+export const oauthTokenKind = pgEnum("oauth_token_kind", ["access", "refresh"]);
+
+// An access token calls /mcp for an hour; a refresh token gets a new pair
+// once. Only hashes are kept.
+export const oauthTokens = pgTable(
+	"oauth_tokens",
+	{
+		tokenHash: text().primaryKey(),
+		kind: oauthTokenKind().notNull(),
+		grantId: uuid()
+			.notNull()
+			.references(() => oauthGrants.id, { onDelete: "cascade" }),
+		expiresAt: timestamp({ withTimezone: true }).notNull(),
+		// When a refresh token was traded. Kept, so a second try is caught and
+		// ends the grant.
+		usedAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		index("oauth_tokens_grant_idx").on(t.grantId),
+		check(
+			"oauth_tokens_only_refresh_used",
+			sql`${t.kind} = 'refresh' or ${t.usedAt} is null`,
+		),
+	],
+);
 
 // The password of katasync_mcp, the login the MCP query tool connects as, set
 // the first time it's needed (src/mcp/query.ts). The role and what it may
@@ -1263,7 +1324,7 @@ export const countHistory = pgView("count_history", {
 	undone: boolean().notNull(),
 }).existing();
 
-// Every change made through /mcp: which token, which tool, what it was asked,
+// Every change made through /mcp: which app (token_name), which tool, what it was asked,
 // and how it went. Shown on Diagnostics, so a change Claude made can be found.
 // Reads aren't kept. Written by src/routes/mcp.ts.
 export const mcpCalls = pgTable(
