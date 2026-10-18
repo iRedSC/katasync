@@ -2,9 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { shippingLocation } from "#/channels/stores";
+import { listUnmatched, suggestProducts } from "#/channels/unmatched";
 import type { Db } from "#/db/client";
 import {
-	listings,
 	locations,
 	packages,
 	productSuppliers,
@@ -86,6 +86,7 @@ How things count:
 - Lead time: the median of the supplier's last 5 received POs (sent to first delivery) once there are 3; until then suppliers.lead_time_days.
 - Safety stock: z × the daily sales swing × √lead time, with z for 98% (A), 95% (B), 90% (C and unclassed) in-stock odds, capped at the lead time's demand.
 - ABC classes rank by margin over 12 months (sales less unit cost; a tool set's sale is split across its parts by cost). Tool sets rank among themselves by their own margin.
+- Unmatched listings: a listing no product backs sells without taking stock. unmatched_listings groups them into items (same SKU, or no SKU and the same title across channels) with likely products and why (same-sku, matched-before, part-number, same-name, similar-name). suggest_matches ranks products for any title or SKU. match_listing resolves an item's listing_ids together. Order lines with no listing are custom items typed into an order; they are never matched.
 - Stock and receiving changes can be undone (undo_stock_change, undo_po_receipt). Every change you make is logged and shown to the user.
 
 Use describe_schema before writing SQL. Prefer reorder_suggestions for "what should we order": it accounts for lead time, what's already on order, and minimums. When a request is ambiguous about quantities, say which interpretation you used.`;
@@ -100,6 +101,8 @@ export const READ_TOOLS = new Set([
 	"get_purchase_order",
 	"list_purchase_units",
 	"match_invoice",
+	"unmatched_listings",
+	"suggest_matches",
 ]);
 
 const json = (data: unknown) => ({
@@ -994,26 +997,94 @@ function registerWriteTools(server: McpServer, db: Db) {
 	);
 
 	server.registerTool(
+		"unmatched_listings",
+		{
+			description:
+				"Listings no product backs, grouped into items, most units sold first: listing_ids, title, SKU (null when the channel has none), channels, fba, units and orders sold, last sold, and up to 6 likely products with the reason each was suggested. With order_id, only what that order sold. Never-sold items are left out unless include_unsold.",
+			inputSchema: {
+				order_id: z.number().int().positive().optional(),
+				include_unsold: z.boolean().default(false),
+			},
+			annotations: READ,
+		},
+		async ({ order_id, include_unsold }) => {
+			const items = await listUnmatched(
+				db,
+				order_id === undefined ? {} : { orderId: order_id },
+			);
+			return json(
+				items
+					.filter((i) => include_unsold || i.units > 0)
+					.map((i) => ({
+						listingIds: i.listingIds,
+						title: i.title,
+						sku: i.sku,
+						channels: i.channels,
+						...(i.fba ? { fba: true } : {}),
+						units: i.units,
+						orders: i.orders,
+						lastSoldAt: i.lastSoldAt,
+						candidates: i.candidates.map((c) => ({
+							sku: c.sku,
+							name: c.variantName ? `${c.name} (${c.variantName})` : c.name,
+							reason: c.reason,
+						})),
+					})),
+			);
+		},
+	);
+
+	server.registerTool(
+		"suggest_matches",
+		{
+			description:
+				"Ranks products that could be the item a title and SKU describe, best first, with why: same-sku (SKU, alias, or supplier item number), matched-before (a listing with this title sells it), part-number (one of its codes is in the title), same-name, similar-name. For FBA listings, tool sets are left out. For a wider search, use query on products.",
+			inputSchema: {
+				title: z.string().min(1),
+				sku: z.string().optional(),
+				fba: z.boolean().default(false),
+				limit: z.number().int().min(1).max(30).default(10),
+			},
+			annotations: READ,
+		},
+		async ({ title, sku, fba, limit }) =>
+			json(
+				(
+					await suggestProducts(db, { title, sku: sku ?? null, fba }, limit)
+				).map((c) => ({
+					sku: c.sku,
+					name: c.variantName ? `${c.name} (${c.variantName})` : c.name,
+					...(c.kind !== "simple" ? { kind: c.kind } : {}),
+					reason: c.reason,
+				})),
+			),
+	);
+
+	server.registerTool(
 		"match_listing",
 		{
 			description:
-				"Matches a channel listing (listings.id) to the product it sells, then lets past orders of it take their stock. To make a new product from the listing instead, leave out sku.",
+				"Resolves one unmatched item: matches all its listing_ids (from unmatched_listings) to the product with sku, all or none, then lets past orders take their stock. Without sku, makes a new product from the listings instead, using new_sku (required when the listings have no SKU) and new_name (defaults to the title). Refused if any listing was matched since.",
 			inputSchema: {
-				listing_id: z.number().int().positive(),
+				listing_ids: z.array(z.number().int().positive()).min(1),
 				sku: z.string().optional(),
+				new_sku: z.string().optional(),
+				new_name: z.string().optional(),
 			},
 			annotations: WRITE,
 		},
-		async ({ listing_id, sku }) => {
-			const [listing] = await db
-				.select({ id: listings.id })
-				.from(listings)
-				.where(eq(listings.id, listing_id));
-			if (!listing) throw new PurchaseOrderError(`No listing ${listing_id}`);
+		async ({ listing_ids, sku, new_sku, new_name }) => {
+			if (sku && (new_sku || new_name))
+				throw new PurchaseOrderError(
+					"Give sku to match, or new_sku/new_name to create, not both",
+				);
 			return json(
 				sku
-					? await matchListing(db, listing_id, sku)
-					: await productFromListing(db, listing_id),
+					? await matchListing(db, listing_ids, sku)
+					: await productFromListing(db, listing_ids, {
+							sku: new_sku,
+							name: new_name,
+						}),
 			);
 		},
 	);

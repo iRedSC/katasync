@@ -1,4 +1,5 @@
 import { type AnyColumn, and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
+import { lineAwaitsMatch } from "#/channels/unmatched";
 import type { Db } from "#/db/client";
 import {
 	orderLineProfit,
@@ -227,6 +228,12 @@ export async function profitItems(db: Db, start: Date, end: Date) {
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,
 			productKind: products.kind,
+			// Its listing has no product yet. Custom items have no listing.
+			awaitsMatch: lineAwaitsMatch({
+				productId: lp.productId,
+				storeId: orders.storeId,
+				listingExternalId: orderLines.listingExternalId,
+			}),
 			quantity: lp.quantity,
 			restocked: lp.restocked,
 			revenue: lp.revenue,
