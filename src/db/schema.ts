@@ -1307,3 +1307,12 @@ export const settings = pgTable(
 		check("settings_stock_range", sql`${t.defaultMinStock} >= 0`),
 	],
 );
+
+// Problems dismissed on Diagnostics. `key` names the thing (see
+// src/diagnostics/dismissals.ts). It stays hidden while its error reads the
+// same, and shows again once the error changes.
+export const dismissals = pgTable("dismissals", {
+	key: text().primaryKey(),
+	error: text().notNull(),
+	dismissedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});

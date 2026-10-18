@@ -14,6 +14,7 @@ import {
 } from "#/db/schema";
 import { emailConfigured } from "#/purchasing/email";
 import { channelEnv, missingEnv, type SyncedChannel } from "./checks";
+import { dismissalKey, type IsDismissed, loadDismissals } from "./dismissals";
 import {
 	channelHealth,
 	groupIssues,
@@ -26,10 +27,12 @@ import {
 
 const RECENT_RUNS = 15;
 
+// Dismissed problems are still listed, marked `dismissed`.
 export async function diagnosticsOverview(db: Db, now = new Date()) {
+	const isDismissed = await loadDismissals(db);
 	const channels = await Promise.all(
 		(Object.keys(channelEnv) as SyncedChannel[]).map((c) =>
-			channelOverview(db, c, now),
+			channelOverview(db, c, now, isDismissed),
 		),
 	);
 	const [
@@ -41,8 +44,8 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 		charges,
 	] = await Promise.all([
 		db.select({ lastStartedAt: max(syncRuns.startedAt) }).from(syncRuns),
-		failedHandoffs(db),
-		storefrontTrackingFailures(db),
+		failedHandoffs(db, isDismissed),
+		storefrontTrackingFailures(db, isDismissed),
 		unmappedSkus(db),
 		// Changes made through /mcp (see src/mcp/log.ts).
 		db
@@ -54,7 +57,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 			.then((rows) =>
 				rows.map((r) => ({ ...r, arguments: JSON.stringify(r.arguments) })),
 			),
-		chargeFailures(db),
+		chargeFailures(db, isDismissed),
 	]);
 	const shippoKey = process.env.SHIPPO_API_KEY;
 	return {
@@ -85,7 +88,12 @@ export type DiagnosticsOverview = Awaited<
 	ReturnType<typeof diagnosticsOverview>
 >;
 
-async function channelOverview(db: Db, channel: SyncedChannel, now: Date) {
+async function channelOverview(
+	db: Db,
+	channel: SyncedChannel,
+	now: Date,
+	isDismissed: IsDismissed,
+) {
 	const missing = missingEnv(channelEnv[channel]);
 	const [runs, [lastSuccess]] = await Promise.all([
 		db
@@ -115,23 +123,47 @@ async function channelOverview(db: Db, channel: SyncedChannel, now: Date) {
 	});
 	// Problems from the latest finished run: what's still going wrong now.
 	const latest = runs.find((r) => r.finishedAt !== null);
-	const issues = latest
-		? groupIssues(
+	const rows = latest
+		? (
 				await db
 					.select({
 						reference: syncIssues.reference,
 						message: syncIssues.message,
 					})
 					.from(syncIssues)
-					.where(eq(syncIssues.runId, latest.id)),
-			).map((g) => ({ ...g, hint: hintForIssue(g.message) }))
+					.where(eq(syncIssues.runId, latest.id))
+			).map((r) => ({
+				...r,
+				dismissed: isDismissed(
+					dismissalKey.issue(channel, r.reference, r.message),
+					r.message,
+				),
+				// Unmatched listings are worked from Listings, not here.
+				unmatched: r.message.startsWith("no product for "),
+			}))
 		: [];
+	const issues = [false, true].flatMap((dismissed) =>
+		groupIssues(rows.filter((r) => r.dismissed === dismissed)).map((g) => ({
+			...g,
+			dismissed,
+			unmatched: g.message.startsWith("no product for "),
+			hint: hintForIssue(g.message),
+		})),
+	);
+	// Issue rows are capped per run, so what's left counts from the exact
+	// total: rows not kept are neither dismissed nor known to be unmatched.
+	const openIssues =
+		(latest?.problems ?? 0) -
+		rows.filter((r) => r.dismissed || r.unmatched).length;
+	const health =
+		status.health === "degraded" && openIssues <= 0 ? "healthy" : status.health;
 	const hintSource =
 		status.latestError ??
 		(missing.length > 0 ? `Set ${missing.join(", ")}` : null);
 	return {
 		channel,
 		...status,
+		health,
 		lastSuccessAt: lastSuccess?.at ?? null,
 		missing,
 		hint: hintSource ? hintFor(channel, hintSource) : null,
@@ -151,7 +183,7 @@ async function channelOverview(db: Db, channel: SyncedChannel, now: Date) {
 
 // Orders whose tracking never reached the marketplace, so the customer
 // wasn't told and the order may still show unshipped there.
-function failedHandoffs(db: Db) {
+function failedHandoffs(db: Db, isDismissed: IsDismissed) {
 	return db
 		.select({
 			dispatchId: dispatchOrders.dispatchId,
@@ -177,14 +209,23 @@ function failedHandoffs(db: Db) {
 			),
 		)
 		.orderBy(desc(dispatches.createdAt))
-		.limit(50);
+		.limit(50)
+		.then((rows) =>
+			rows.map((r) => ({
+				...r,
+				dismissed: isDismissed(
+					dismissalKey.handoff(r.dispatchId, r.orderId),
+					r.error ?? "",
+				),
+			})),
+		);
 }
 
 // Labels whose katasync.shippo_tracking entry on the Shopify order couldn't
 // be saved or, once voided, removed. The customer was emailed either way;
 // the storefront's tracking page is wrong until someone fixes it. Voided
 // labels count too: the storefront would still show them.
-function storefrontTrackingFailures(db: Db) {
+function storefrontTrackingFailures(db: Db, isDismissed: IsDismissed) {
 	return db
 		.selectDistinctOn([shipments.id], {
 			shipmentId: shipments.id,
@@ -203,25 +244,62 @@ function storefrontTrackingFailures(db: Db) {
 		.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
 		.where(isNotNull(shipments.storefrontTrackingError))
 		.orderBy(desc(shipments.id), orders.id)
-		.limit(50);
+		.limit(50)
+		.then((rows) =>
+			rows.map((r) => ({
+				...r,
+				dismissed: isDismissed(dismissalKey.storefront(r.shipmentId), r.error),
+			})),
+		);
 }
 
 // Asking a marketplace what it charged on an order that failed last time
 // (src/orders/cost-refresh.ts), grouped by marketplace and error. Those
 // orders keep estimated fees until it works; it's retried on its own.
-function chargeFailures(db: Db) {
-	return db
+// Grouped here rather than in SQL, since dismissals are per order.
+async function chargeFailures(db: Db, isDismissed: IsDismissed) {
+	const rows = await db
 		.select({
+			orderId: orderCostChecks.orderId,
 			billedBy: orderCostChecks.billedBy,
 			error: sql<string>`${orderCostChecks.error}`,
-			orders: sql<number>`count(*)::int`,
-			lastAt: max(orderCostChecks.checkedAt),
+			checkedAt: orderCostChecks.checkedAt,
 		})
 		.from(orderCostChecks)
-		.where(isNotNull(orderCostChecks.error))
-		.groupBy(orderCostChecks.billedBy, orderCostChecks.error)
-		.orderBy(desc(max(orderCostChecks.checkedAt)))
-		.limit(20);
+		.where(isNotNull(orderCostChecks.error));
+	const groups = new Map<
+		string,
+		{
+			billedBy: (typeof rows)[number]["billedBy"];
+			error: string;
+			dismissed: boolean;
+			orders: number;
+			lastAt: Date;
+		}
+	>();
+	for (const r of rows) {
+		const dismissed = isDismissed(
+			dismissalKey.charge(r.orderId, r.billedBy),
+			r.error,
+		);
+		const id = JSON.stringify([r.billedBy, r.error, dismissed]);
+		const group = groups.get(id);
+		if (!group)
+			groups.set(id, {
+				billedBy: r.billedBy,
+				error: r.error,
+				dismissed,
+				orders: 1,
+				lastAt: r.checkedAt,
+			});
+		else {
+			group.orders++;
+			if (r.checkedAt > group.lastAt) group.lastAt = r.checkedAt;
+		}
+	}
+	return [...groups.values()]
+		.sort((a, b) => b.lastAt.getTime() - a.lastAt.getTime())
+		.slice(0, 40);
 }
 
 // SKUs sold that match no product. `missed` counts orders that should have
@@ -260,11 +338,13 @@ export async function diagnosticsAttention(db: Db, now = new Date()) {
 	const stuck = o.channels.filter(
 		(c) => c.health === "failing" || (o.worker.alive && c.health === "stale"),
 	);
+	const open = <T extends { dismissed: boolean }>(rows: T[]) =>
+		rows.some((r) => !r.dismissed) ? 1 : 0;
 	return (
 		(o.worker.alive ? 0 : 1) +
 		stuck.length +
-		(o.handoffs.length > 0 ? 1 : 0) +
-		(o.storefrontTracking.length > 0 ? 1 : 0) +
-		(o.charges.length > 0 ? 1 : 0)
+		open(o.handoffs) +
+		open(o.storefrontTracking) +
+		open(o.charges)
 	);
 }
