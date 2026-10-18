@@ -1125,6 +1125,73 @@ export const purchaseOrderReceipts = pgTable(
 			"purchase_order_receipts_undo_is_negative",
 			sql`(${t.undoesId} is null) = (${t.quantity} > 0)`,
 		),
+		// For discounts that came with a receipt, so theirs is on the same line.
+		unique("purchase_order_receipts_id_line").on(t.id, t.lineId),
+	],
+);
+
+// A percent or dollars off some of a PO line's units, e.g. 10% off all of
+// them, $12 off the 4 that came dented, or 1 free. The amount is for those
+// units together. The line's total is its quantity × price less these.
+// Rules, and what they cover once the line changes, live in
+// src/purchasing/discount.ts; changes go through src/purchasing/orders.ts.
+export const purchaseOrderDiscounts = pgTable(
+	"purchase_order_discounts",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		lineId: integer()
+			.notNull()
+			.references(() => purchaseOrderLines.id, { onDelete: "cascade" }),
+		// How many of the line's unit it covers. Null: every unit no other
+		// discount covers, so it follows the line's quantity.
+		units: integer(),
+		// Exactly one of these.
+		percent: numeric({ precision: 5, scale: 2, mode: "number" }),
+		amount: numeric({ precision: 12, scale: 2, mode: "number" }),
+		// The receipt it came with, e.g. a free one in the box. Undoing the
+		// receipt takes it off.
+		receiptId: integer(),
+		// On the PO when it was sent, so the PDF keeps printing it. Taking one
+		// off after that only marks it removed; anything else is deleted.
+		sent: boolean().notNull().default(false),
+		removedAt: timestamp({ withTimezone: true }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_order_discounts_line_idx").on(t.lineId),
+		foreignKey({
+			columns: [t.receiptId, t.lineId],
+			foreignColumns: [purchaseOrderReceipts.id, purchaseOrderReceipts.lineId],
+		}),
+		// Two discounts can't both take the rest.
+		uniqueIndex("purchase_order_discounts_one_rest")
+			.on(t.lineId)
+			.where(sql`${t.units} is null and ${t.removedAt} is null`),
+		check(
+			"purchase_order_discounts_units_positive",
+			sql`${t.units} is null or ${t.units} > 0`,
+		),
+		check(
+			"purchase_order_discounts_one_kind",
+			sql`(${t.percent} is null) <> (${t.amount} is null)`,
+		),
+		check(
+			"purchase_order_discounts_percent_range",
+			sql`${t.percent} is null or (${t.percent} > 0 and ${t.percent} <= 100)`,
+		),
+		check(
+			"purchase_order_discounts_amount_positive",
+			sql`${t.amount} is null or ${t.amount} > 0`,
+		),
+		// A receipt's discount covers some of what came, never "the rest".
+		check(
+			"purchase_order_discounts_receipt_units",
+			sql`${t.receiptId} is null or ${t.units} is not null`,
+		),
+		check(
+			"purchase_order_discounts_removed_was_sent",
+			sql`${t.removedAt} is null or ${t.sent}`,
+		),
 	],
 );
 

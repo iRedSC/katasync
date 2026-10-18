@@ -7,9 +7,13 @@ import { ExtraSheet } from "#/components/receive/extra-sheet";
 import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
 import { NoteSheet } from "#/components/receive/note-sheet";
 import { receiveHead } from "#/components/receive/pwa";
-import { QuantitySheet } from "#/components/receive/quantity-sheet";
+import {
+	QuantitySheet,
+	type ReceiptDiscount,
+} from "#/components/receive/quantity-sheet";
 import { Saving } from "#/components/saving";
 import { ReceiveSkeleton } from "#/components/skeleton";
+import { formatMoney } from "#/lib/format";
 import { ids, optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import {
@@ -249,6 +253,17 @@ function undoReceipt(orderId: number, r: Receipt, name: string) {
 	});
 }
 
+// A receipt's discount, as its toast says it: ", 1 free", ", 10% off 4".
+function said(discount: ReceiptDiscount | undefined, quantity: number) {
+	if (!discount) return "";
+	const units = discount.units ?? quantity;
+	const { off } = discount;
+	if (off.kind === "percent" && off.percent === 100) return `, ${units} free`;
+	return off.kind === "percent"
+		? `, ${off.percent}% off ${units}`
+		: `, ${formatMoney(off.amount)} off ${units}`;
+}
+
 function ReceivePurchaseOrder() {
 	const loaded = Route.useLoaderData();
 	const d = receiveData.useData(loaded.order.id, loaded);
@@ -291,7 +306,12 @@ function ReceivePurchaseOrder() {
 
 	// Received on the spot: the line shows it at once, and the server gets it
 	// in order. Undo is offered once the server has it.
-	async function receive(line: ReceiveLine, quantity: number, last = false) {
+	async function receive(
+		line: ReceiveLine,
+		quantity: number,
+		last = false,
+		discount?: ReceiptDiscount,
+	) {
 		navigator.vibrate?.(10);
 		setSheetLineId(null);
 		const name = productName(line);
@@ -301,7 +321,7 @@ function ReceivePurchaseOrder() {
 			patch: receivePatch(order.id, line.id, receipt, last),
 			send: async () => {
 				const result = await receiveLine({
-					data: { lineId: ids.server(line.id), quantity, last },
+					data: { lineId: ids.server(line.id), quantity, last, discount },
 				});
 				ids.confirm(receipt.id, result.receiptId);
 				return result;
@@ -316,13 +336,16 @@ function ReceivePurchaseOrder() {
 				: last && total < line.quantity
 					? " Not waiting for the rest."
 					: "";
-		offerUndo(`Received ${quantity}${unit} × ${name}.${note}`, {
-			tone: "success",
-			undo: async () => {
-				const u = await undoReceipt(order.id, receipt, name);
-				return u && `Undid ${name}`;
+		offerUndo(
+			`Received ${quantity}${unit} × ${name}${said(discount, quantity)}.${note}`,
+			{
+				tone: "success",
+				undo: async () => {
+					const u = await undoReceipt(order.id, receipt, name);
+					return u && `Undid ${name}`;
+				},
 			},
-		});
+		);
 	}
 
 	// Stops waiting for what's left of a line, receiving none of it.
@@ -385,7 +408,11 @@ function ReceivePurchaseOrder() {
 
 	// Something in the box that isn't on the PO, or more of something that is.
 	// On a closed PO it reopens, as receiveExtra does.
-	async function receiveExtra(match: PurchaseOrderMatch, quantity: number) {
+	async function receiveExtra(
+		match: PurchaseOrderMatch,
+		quantity: number,
+		discount?: ReceiptDiscount,
+	) {
 		navigator.vibrate?.(10);
 		setExtra(null);
 		const name = productName(match);
@@ -402,6 +429,7 @@ function ReceivePurchaseOrder() {
 						purchaseOrderId: order.id,
 						productId: match.productId,
 						quantity,
+						discount,
 					},
 				});
 				ids.confirm(line.id, result.lineId);
@@ -410,13 +438,16 @@ function ReceivePurchaseOrder() {
 			},
 		});
 		if (!r) return;
-		offerUndo(`Added and received ${quantity} × ${name}`, {
-			tone: "success",
-			undo: async () => {
-				const u = await undoReceipt(order.id, receipt, name);
-				return u && `Undid ${name}`;
+		offerUndo(
+			`Added and received ${quantity} × ${name}${said(discount, quantity)}`,
+			{
+				tone: "success",
+				undo: async () => {
+					const u = await undoReceipt(order.id, receipt, name);
+					return u && `Undid ${name}`;
+				},
 			},
-		});
+		);
 	}
 
 	function closeOrder() {
@@ -524,7 +555,9 @@ function ReceivePurchaseOrder() {
 						receipts.find((r) => ids.same(r.lineId, sheetLine.id))?.quantity ??
 						null
 					}
-					onConfirm={(quantity, last) => receive(sheetLine, quantity, last)}
+					onConfirm={(quantity, last, discount) =>
+						receive(sheetLine, quantity, last, discount)
+					}
 					onDamaged={
 						damageable(sheetLine) > 0
 							? () => {
@@ -584,7 +617,9 @@ function ReceivePurchaseOrder() {
 					remaining={0}
 					extra={extra.match.lineId === null}
 					lastReceipt={null}
-					onConfirm={(quantity) => receiveExtra(extra.match, quantity)}
+					onConfirm={(quantity, _last, discount) =>
+						receiveExtra(extra.match, quantity, discount)
+					}
 					onUndo={() => {}}
 					onClose={() => setExtra(null)}
 				/>
