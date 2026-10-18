@@ -1,0 +1,18 @@
+# The pre-commit hook can be skipped with --no-verify; this can't. Same check,
+# over every tracked file. It needs no dependencies, so it skips pnpm install.
+name: File size
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/check-file-size.ts --all
