@@ -177,17 +177,101 @@ describe("order_profit", () => {
 				{ cost: 9, test: true },
 			],
 		});
-		// Shopify has reported, so no label from anyone means missing.
 		await saveCostReport(db, {
 			orderId: id,
 			billedBy: "shopify",
 			settled: false,
 			charges: [],
 		});
+		expect((await profit(id)).labels).toBe(0);
+	});
+
+	test("a draft order with no label and no shipping charged was picked up", async () => {
+		const { id } = await order(
+			"#6b",
+			[{ unitPrice: 55, quantity: 1, unitCost: 0 }],
+			{
+				salesChannel: "Draft Orders",
+				sourceUpdatedAt: new Date(Date.now() - 60_000),
+			},
+		);
+		// Not asked since: Shopify may still show a label.
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "shopify",
+			settled: false,
+			charges: [],
+			fetchedAt: new Date(Date.now() - 120_000),
+		});
+		expect((await profit(id)).labelsStatus).toBe("awaiting");
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "shopify",
+			settled: false,
+			charges: [{ kind: "fee", description: "Processing fee", amount: 1.9 }],
+		});
 		expect(await profit(id)).toMatchObject({
 			labels: 0,
-			labelsStatus: "missing",
+			labelsStatus: "not_needed",
+			complete: true,
+			shipped: true,
 		});
+	});
+
+	test("an old counter sale with no label needs none, however stale its report", async () => {
+		const { id } = await order(
+			"#6c",
+			[{ unitPrice: 55, quantity: 1, unitCost: 0 }],
+			{
+				salesChannel: "Point of Sale",
+				placedAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+			},
+		);
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "shopify",
+			settled: false,
+			charges: [],
+			fetchedAt: new Date(Date.now() - 120_000),
+		});
+		expect((await profit(id)).labelsStatus).toBe("not_needed");
+	});
+
+	test("an online order, or one that charged shipping, with no label is missing one", async () => {
+		const online = await order(
+			"#6e",
+			[{ unitPrice: 20, quantity: 1, unitCost: 5 }],
+			{ salesChannel: "Online Store" },
+		);
+		const shipped = await order(
+			"#6f",
+			[{ unitPrice: 20, quantity: 1, unitCost: 5 }],
+			{ salesChannel: "Draft Orders", shippingCharged: 9.66 },
+		);
+		for (const { id } of [online, shipped]) {
+			await saveCostReport(db, {
+				orderId: id,
+				billedBy: "shopify",
+				settled: false,
+				charges: [],
+			});
+			expect((await profit(id)).labelsStatus).toBe("missing");
+		}
+	});
+
+	test("a shipped Amazon order with no label from anyone is missing one", async () => {
+		const { id } = await order(
+			"#6d",
+			[{ unitPrice: 20, quantity: 1, unitCost: 5 }],
+			{ storeId: amazon, marketplaceOrderId: "amazon:6d" },
+		);
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "amazon",
+			settled: false,
+			charges: [],
+		});
+		expect((await profit(id)).labelsStatus).toBe("missing");
 	});
 
 	test("a TikTok label bought in katasync stands in until TikTok bills it", async () => {

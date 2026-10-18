@@ -372,6 +372,13 @@
       "when": 1792297321704,
       "tag": "0052_profit_shipped_only",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792335313591,
+      "tag": "0053_shopify_unlabeled_picked_up",
+      "breakpoints": true
     }
   ]
 }
