@@ -15,6 +15,7 @@
     "check": "biome check",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "check:size": "node scripts/check-file-size.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
@@ -22,7 +23,8 @@
     "import:suppliers": "tsx scripts/import-suppliers.ts",
     "sync": "tsx scripts/sync.ts",
     "webhooks": "tsx scripts/webhooks.ts",
-    "auth:setup-link": "tsx scripts/auth-setup-link.ts"
+    "auth:setup-link": "tsx scripts/auth-setup-link.ts",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
