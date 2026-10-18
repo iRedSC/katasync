@@ -78,9 +78,14 @@ export function amazonToChannelOrder(
 		// Amazon doesn't say when an order was cancelled; its last update is
 		// the closest honest answer.
 		cancelledAt: order.OrderStatus === "Canceled" ? order.LastUpdateDate : null,
-		fulfillmentStatus: fba
-			? "FULFILLMENT_NOT_REQUIRED"
-			: (fulfillment[order.OrderStatus] ?? "UNFULFILLED"),
+		// Pending is Amazon not yet confirming the sale, FBA or not: it has
+		// no price yet and nothing has shipped.
+		fulfillmentStatus:
+			order.OrderStatus === "Pending"
+				? "AWAITING_PAYMENT"
+				: fba
+					? "FULFILLMENT_NOT_REQUIRED"
+					: (fulfillment[order.OrderStatus] ?? "UNFULFILLED"),
 		fulfilledByChannel: fba,
 		// Pending means Amazon hasn't confirmed payment yet.
 		financialStatus: order.OrderStatus === "Pending" ? "PENDING" : "PAID",

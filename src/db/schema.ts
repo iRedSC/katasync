@@ -1202,6 +1202,9 @@ export const orderProfit = pgView("order_profit", {
 	adjustments: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	profit: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	complete: boolean().notNull(),
+	// Confirmed and shipped (or needing no shipping): what the Profit tab
+	// counts.
+	shipped: boolean().notNull(),
 }).existing();
 
 // One row per item sold (order line with units; an order cancelled down to
@@ -1243,6 +1246,7 @@ export const orderLineProfit = pgView("order_line_profit", {
 		],
 	}).notNull(),
 	complete: boolean().notNull(),
+	shipped: boolean().notNull(),
 }).existing();
 
 // count_log with the drift worked out and undone counts marked, defined in

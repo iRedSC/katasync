@@ -365,6 +365,13 @@
       "when": 1792295662080,
       "tag": "0051_order_line_profit",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792297321704,
+      "tag": "0052_profit_shipped_only",
+      "breakpoints": true
     }
   ]
 }

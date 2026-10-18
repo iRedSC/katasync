@@ -93,6 +93,17 @@ describe("amazonToChannelOrder", () => {
 		expect(o.fulfillmentStatus).toBe("AWAITING_PAYMENT");
 		expect(o.financialStatus).toBe("PENDING");
 	});
+
+	test("a pending FBA order waits for payment too, not shipped by Amazon yet", () => {
+		const o = amazonToChannelOrder(
+			order({ OrderStatus: "Pending", FulfillmentChannel: "AFN" }),
+			items,
+		);
+		expect(o).toMatchObject({
+			fulfilledByChannel: true,
+			fulfillmentStatus: "AWAITING_PAYMENT",
+		});
+	});
 });
 
 describe("ebayToChannelOrder", () => {

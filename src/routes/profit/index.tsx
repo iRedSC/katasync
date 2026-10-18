@@ -198,9 +198,9 @@ function Items() {
 			)}
 			{loaded.unshipped > 0 && (
 				<p className="text-muted-foreground">
-					{formatCount(loaded.unshipped)}{" "}
-					{loaded.unshipped === 1 ? "item waits" : "items wait"} to ship and
-					will show here once{" "}
+					{formatCount(loaded.unshipped)} more{" "}
+					{loaded.unshipped === 1 ? "item waits" : "items wait"} for payment or
+					shipping and will show once{" "}
 					{loaded.unshipped === 1 ? "it ships" : "they ship"}.
 				</p>
 			)}

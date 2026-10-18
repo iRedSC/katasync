@@ -60,6 +60,13 @@ function Profit() {
 	return (
 		<Page title="Profit" actions={<ProfitViews view={VIEW} range={range} />}>
 			<RangeTabs view={VIEW} range={range} />
+			{d.waiting > 0 && (
+				<p className="text-muted-foreground">
+					Counts confirmed, shipped orders. {formatCount(d.waiting)} more{" "}
+					{d.waiting === 1 ? "order waits" : "orders wait"} for payment or
+					shipping.
+				</p>
+			)}
 
 			{t.orders === 0 ? (
 				<EmptyState icon={Receipt} title="No orders in this range" />

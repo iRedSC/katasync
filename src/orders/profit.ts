@@ -1,14 +1,4 @@
-import {
-	type AnyColumn,
-	and,
-	desc,
-	eq,
-	gte,
-	lt,
-	ne,
-	or,
-	sql,
-} from "drizzle-orm";
+import { type AnyColumn, and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	orderLineProfit,
@@ -144,8 +134,13 @@ export type ProfitTotals = {
 	[K in keyof typeof totalsFields]: number;
 };
 
+// The Profit tab counts only orders confirmed and shipped: an unconfirmed
+// one has no price yet, and an unshipped one's label and fees are still to
+// come.
 const within = (start: Date, end: Date) =>
-	and(gte(p.placedAt, start), lt(p.placedAt, end));
+	and(gte(p.placedAt, start), lt(p.placedAt, end), eq(p.shipped, true));
+const itemsWithin = (start: Date, end: Date) =>
+	and(gte(lp.placedAt, start), lt(lp.placedAt, end), eq(lp.shipped, true));
 
 export async function profitTotals(db: Db, start: Date, end: Date) {
 	const [row] = await db.select(totalsFields).from(p).where(within(start, end));
@@ -182,6 +177,7 @@ export async function profitByDay(db: Db, start: Date, end: Date) {
 			on (p.placed_at at time zone ${tz})::date = d.day
 			and p.placed_at >= ${start.toISOString()}::timestamptz
 			and p.placed_at < ${end.toISOString()}::timestamptz
+			and p.shipped
 		group by d.day
 		order by d.day
 	`)) as unknown as {
@@ -208,16 +204,15 @@ export async function profitByProduct(db: Db, start: Date, end: Date) {
 		})
 		.from(lp)
 		.innerJoin(products, eq(products.id, lp.productId))
-		.where(and(gte(lp.placedAt, start), lt(lp.placedAt, end)))
+		.where(itemsWithin(start, end))
 		.groupBy(products.id);
 }
 
 // More items than this in a range and the list says it stopped short.
 export const ITEMS_LIMIT = 5000;
 
-// Every item sold and shipped in the range, newest first, with what it
-// made, and how many items wait to ship. An unshipped sale's label and
-// fees are still to come, so it isn't listed yet.
+// Every item sold, confirmed and shipped in the range, newest first, with
+// what it made, and how many units wait to be confirmed or shipped.
 export async function profitItems(db: Db, start: Date, end: Date) {
 	const rows = await db
 		.select({
@@ -251,30 +246,32 @@ export async function profitItems(db: Db, start: Date, end: Date) {
 		.innerJoin(orders, eq(orders.id, lp.orderId))
 		.innerJoin(orderLines, eq(orderLines.id, lp.lineId))
 		.leftJoin(products, eq(products.id, lp.productId))
-		.where(
-			and(
-				gte(lp.placedAt, start),
-				lt(lp.placedAt, end),
-				ne(lp.labelsStatus, "not_shipped"),
-			),
-		)
+		.where(itemsWithin(start, end))
 		.orderBy(desc(lp.placedAt), lp.lineId)
 		.limit(ITEMS_LIMIT + 1);
 	const [{ unshipped }] = await db
 		.select({ unshipped: sql<number>`coalesce(sum(${lp.quantity}), 0)::int` })
 		.from(lp)
 		.where(
-			and(
-				gte(lp.placedAt, start),
-				lt(lp.placedAt, end),
-				eq(lp.labelsStatus, "not_shipped"),
-			),
+			and(gte(lp.placedAt, start), lt(lp.placedAt, end), eq(lp.shipped, false)),
 		);
 	return {
 		items: rows.slice(0, ITEMS_LIMIT),
 		cut: rows.length > ITEMS_LIMIT,
 		unshipped,
 	};
+}
+
+// Orders in the range the Profit tab leaves out until they're confirmed and
+// shipped.
+export async function ordersWaiting(db: Db, start: Date, end: Date) {
+	const [row] = await db
+		.select({ orders: sql<number>`count(*)::int` })
+		.from(p)
+		.where(
+			and(gte(p.placedAt, start), lt(p.placedAt, end), eq(p.shipped, false)),
+		);
+	return row.orders;
 }
 
 // Orders whose profit can't be trusted until someone acts: a shipped order
