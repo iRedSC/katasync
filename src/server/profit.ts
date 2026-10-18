@@ -3,6 +3,7 @@ import { type } from "arktype";
 import { getDb } from "#/db/client";
 import {
 	ordersNeedingCosts,
+	ordersWaiting,
 	profitByDay,
 	profitByMarketplace,
 	profitByProduct,
@@ -23,7 +24,7 @@ export const getProfit = createServerFn({ method: "GET" })
 		const db = getDb();
 		const range = await resolveRange(db, data.range);
 		const { start, end } = range;
-		const [totals, previous, marketplaces, days, products, attention] =
+		const [totals, previous, marketplaces, days, products, attention, waiting] =
 			await Promise.all([
 				profitTotals(db, start, end),
 				profitTotals(db, range.previousStart, range.previousEnd),
@@ -31,6 +32,7 @@ export const getProfit = createServerFn({ method: "GET" })
 				profitByDay(db, start, end),
 				profitByProduct(db, start, end),
 				ordersNeedingCosts(db, start, end),
+				ordersWaiting(db, start, end),
 			]);
 		const ranked = [...products].sort((a, b) => b.profit - a.profit);
 		return {
@@ -46,6 +48,7 @@ export const getProfit = createServerFn({ method: "GET" })
 				.reverse()
 				.slice(0, 10),
 			attention,
+			waiting,
 		};
 	});
 

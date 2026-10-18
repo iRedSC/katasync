@@ -6,6 +6,7 @@ import { addDispatch, createProduct, createTestDb } from "#/test/db";
 import { saveCostReport } from "./charges";
 import {
 	ordersNeedingCosts,
+	ordersWaiting,
 	profitByDay,
 	profitByProduct,
 	profitItems,
@@ -557,5 +558,28 @@ describe("totals", () => {
 		expect(items.map((i) => i.orderName)).toEqual(["#shipped"]);
 		// Units, as "Items sold" counts them.
 		expect(unshipped).toBe(2);
+	});
+
+	test("an Amazon order not confirmed yet stays out, FBA or not", async () => {
+		const placedAt = new Date("2026-10-15T15:00:00Z");
+		await order("#paid", [{ unitPrice: 30, quantity: 1, unitCost: 10 }], {
+			placedAt,
+		});
+		await order("#pending", [{ unitPrice: 0, quantity: 1, unitCost: 10 }], {
+			placedAt,
+			storeId: amazon,
+			marketplaceOrderId: "amazon:pending",
+			fulfilledByChannel: true,
+			fulfillmentStatus: "AWAITING_PAYMENT",
+		});
+		const start = new Date("2026-10-15T04:00:00Z");
+		const end = new Date("2026-10-16T04:00:00Z");
+		expect(await profitTotals(db, start, end)).toMatchObject({
+			orders: 1,
+			revenue: 30,
+		});
+		expect(await ordersWaiting(db, start, end)).toBe(1);
+		const { items } = await profitItems(db, start, end);
+		expect(items.map((i) => i.orderName)).toEqual(["#paid"]);
 	});
 });
