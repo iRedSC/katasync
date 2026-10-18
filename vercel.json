@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "tanstack-start",
+  "buildCommand": "sh scripts/vercel-build.sh",
   "crons": [
     { "path": "/api/cron/sync/shopify", "schedule": "2-28/2,32-58/2 * * * *" },
     { "path": "/api/cron/sync/shopify?listings=1", "schedule": "0,30 * * * *" },
