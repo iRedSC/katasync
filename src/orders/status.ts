@@ -42,3 +42,35 @@ export function orderStatus(order: {
 				: { label: "To ship", tone: "warning" };
 	}
 }
+
+// Why a return can't be received on an order, or null when it can. Returns
+// come back here once everything has left our own shelf: fulfilled, or with
+// a label bought even if the marketplace never heard it shipped (`labeled`:
+// order_profit's labels_status is known or stand_in). Needing no label isn't
+// proof: a pickup can be paid for and still on the shelf. One rule for the
+// page's button and the server.
+export function returnBlocker(order: {
+	name: string;
+	cancelledAt: Date | null;
+	fulfilledByChannel: boolean;
+	fulfillmentStatus: string;
+	labeled: boolean;
+}): string | null {
+	if (order.fulfilledByChannel) {
+		return `${order.name} was shipped by the marketplace, so its returns go back there`;
+	}
+	if (order.cancelledAt) {
+		return `${order.name} was cancelled, so its stock already came back`;
+	}
+	if (order.fulfillmentStatus === "PARTIALLY_FULFILLED") {
+		return "Receive returns after the remaining items ship or are cancelled";
+	}
+	if (order.fulfillmentStatus !== "FULFILLED" && !order.labeled) {
+		return `${order.name} hasn't shipped yet`;
+	}
+	return null;
+}
+
+// A label was bought for the order, by katasync or the marketplace.
+export const isLabeled = (labelsStatus: string | undefined) =>
+	labelsStatus === "known" || labelsStatus === "stand_in";

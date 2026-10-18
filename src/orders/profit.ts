@@ -127,6 +127,7 @@ const totalsFields = {
 	labelsMissing: count(sql`${p.labelsStatus} = 'missing'`),
 	labelsStandIn: count(sql`${p.labelsStatus} = 'stand_in'`),
 	labelsAwaiting: count(sql`${p.labelsStatus} = 'awaiting'`),
+	awaitingReturn: count(sql`${p.awaitingReturn}`),
 	costUnknown: count(sql`not ${p.costKnown}`),
 };
 
@@ -229,6 +230,7 @@ export async function profitItems(db: Db, start: Date, end: Date) {
 			productKind: products.kind,
 			quantity: lp.quantity,
 			restocked: lp.restocked,
+			returning: lp.returning,
 			revenue: lp.revenue,
 			cost: lp.cost,
 			costKnown: lp.costKnown,

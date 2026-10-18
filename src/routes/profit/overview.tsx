@@ -183,6 +183,8 @@ function Unsure({ totals: t }: { totals: Data["totals"] }) {
 			`${formatCount(t.labelsStandIn)} TikTok labels use katasync's estimate until TikTok bills them.`,
 		t.labelsAwaiting > 0 &&
 			`${formatCount(t.labelsAwaiting)} shipped orders wait for the marketplace to bill their label.`,
+		t.awaitingReturn > 0 &&
+			`${formatCount(t.awaitingReturn)} refunded orders' items aren't back yet, so their cost isn't counted until they're written off or 60 days pass.`,
 		t.labelsMissing > 0 &&
 			`${formatCount(t.labelsMissing)} shipped orders have no label cost from anyone, so their profit is too high.`,
 		t.costUnknown > 0 &&
@@ -230,7 +232,9 @@ function Breakdown({ totals: t }: { totals: Data["totals"] }) {
 			-t.cost,
 			t.costUnknown > 0
 				? `Missing for ${formatCount(t.costUnknown)} orders`
-				: undefined,
+				: t.awaitingReturn > 0
+					? `Leaves out refunded items not back yet, on ${formatCount(t.awaitingReturn)} orders`
+					: undefined,
 		],
 		[
 			"Marketplace fees",

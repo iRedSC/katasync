@@ -115,6 +115,8 @@ function unsure(i: Item): string[] {
 			"Shipped, but no label cost from anyone, so its profit is too high",
 		i.labelsStatus === "stand_in" &&
 			"The label cost is an estimate until it's billed",
+		i.returning > 0 &&
+			`Refunded; ${formatCount(i.returning)} not back yet, so ${i.returning === 1 ? "its" : "their"} cost isn't counted until written off or 60 days pass`,
 	].filter((n): n is string => typeof n === "string");
 }
 
@@ -675,8 +677,9 @@ function Cost({ item: i, range }: { item: Item; range: string }) {
 			patch: itemsData.patch(range, (list) =>
 				list.map((x) => {
 					if (x.productId !== productId || x.costKnown) return x;
-					// As the view counts it: units back on the shelf cost nothing.
-					const cost = unitCost * (x.quantity - x.restocked);
+					// As the view counts it: units back on the shelf, or on
+					// their way, cost nothing.
+					const cost = unitCost * (x.quantity - x.restocked - x.returning);
 					return {
 						...x,
 						cost,
@@ -684,7 +687,8 @@ function Cost({ item: i, range }: { item: Item; range: string }) {
 						profit: x.profit - cost,
 						complete:
 							x.feesStatus !== "estimated" &&
-							(x.labelsStatus === "known" || x.labelsStatus === "not_needed"),
+							(x.labelsStatus === "known" || x.labelsStatus === "not_needed") &&
+							x.returning === 0,
 					};
 				}),
 			),
