@@ -358,6 +358,13 @@
       "when": 1792264105812,
       "tag": "0050_order_profit",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792295662080,
+      "tag": "0051_order_line_profit",
+      "breakpoints": true
     }
   ]
 }

@@ -1,16 +1,16 @@
 import { type AnyColumn, and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	orderLineProfit,
 	orderLines,
 	orderProfit,
-	orderReturns,
 	orders,
 	products,
 } from "#/db/schema";
 
-// Profit over a stretch of time, from the order_profit view
-// (drizzle/0050_order_profit.sql). Days and weeks are the shop's, in Eastern
-// time, and weeks start on Saturday.
+// Profit over a stretch of time, from the order_profit and order_line_profit
+// views (drizzle/0050_order_profit.sql, 0051_order_line_profit.sql). Days
+// and weeks are the shop's, in Eastern time, and weeks start on Saturday.
 
 export const TIME_ZONE = "America/New_York";
 
@@ -103,6 +103,7 @@ export async function resolveRange(
 }
 
 const p = orderProfit;
+const lp = orderLineProfit;
 const sum = (column: AnyColumn) =>
 	sql<number>`coalesce(sum(${column}), 0)::float8`;
 const count = (where: ReturnType<typeof sql>) =>
@@ -179,37 +180,71 @@ export async function profitByDay(db: Db, start: Date, end: Date) {
 	return result.rows;
 }
 
-// Profit per product: each line's sales less its cost, less its share (by
-// sales) of the order's fees, labels, refunds and adjustments, net of the
-// shipping the buyer paid. Tool sets rank as the set they were sold as.
-// Lines with no product aren't ranked, so these don't add up to the total.
+// Profit per product, from each item sold (order_line_profit). Tool sets
+// rank as the set they were sold as. Lines with no product aren't ranked, so
+// these don't add up to the total.
 export async function profitByProduct(db: Db, start: Date, end: Date) {
-	const lineRevenue = sql`${orderLines.unitPrice} * ${orderLines.quantity}`;
-	// A free order (a replacement) has no sales to split by, so its costs
-	// split by units instead.
-	const share = sql`coalesce(case when ${p.revenue} > 0 then ${lineRevenue} / ${p.revenue}
-		else ${orderLines.quantity}::numeric / nullif((select sum(l.quantity) from ${orderLines} l where l.order_id = ${orderLines.orderId}), 0) end, 0)`;
-	// Units returned to the shelf aren't a cost, as in the view.
-	const restocked = sql`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and ${orderReturns.restocked}), 0)`;
-	const lineProfit = sql`${lineRevenue} - coalesce(${orderLines.unitCost}, 0) * (${orderLines.quantity} - ${restocked})
-		- ${share} * (${p.fees} + ${p.labels} + ${p.refunds} + ${p.adjustments} - ${p.shippingCharged})`;
 	return db
 		.select({
 			sku: products.sku,
 			name: products.name,
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,
-			units: sql<number>`sum(${orderLines.quantity})::int`,
-			revenue: sql<number>`sum(${lineRevenue})::float8`,
-			profit: sql<number>`round(sum(${lineProfit}), 2)::float8`,
-			// Lines whose profit rests on something unknown.
-			unsure: sql<number>`(count(*) filter (where not ${p.complete}))::int`,
+			units: sql<number>`sum(${lp.quantity})::int`,
+			revenue: sum(lp.revenue),
+			profit: sum(lp.profit),
+			// Sales whose profit rests on something unknown.
+			unsure: count(sql`not ${lp.complete}`),
 		})
-		.from(orderLines)
-		.innerJoin(p, eq(p.orderId, orderLines.orderId))
-		.innerJoin(products, eq(products.id, orderLines.productId))
-		.where(within(start, end))
+		.from(lp)
+		.innerJoin(products, eq(products.id, lp.productId))
+		.where(and(gte(lp.placedAt, start), lt(lp.placedAt, end)))
 		.groupBy(products.id);
+}
+
+// More items than this in a range and the list says it stopped short.
+export const ITEMS_LIMIT = 5000;
+
+// Every item sold in the range, newest first, with what it made.
+export async function profitItems(db: Db, start: Date, end: Date) {
+	const rows = await db
+		.select({
+			lineId: lp.lineId,
+			orderId: lp.orderId,
+			orderName: orders.name,
+			soldOn: lp.soldOn,
+			placedAt: lp.placedAt,
+			productId: lp.productId,
+			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
+			name: sql<string>`coalesce(${products.name}, ${orderLines.title})`,
+			variantName: products.variantName,
+			imageUrl: products.imageUrl,
+			productKind: products.kind,
+			quantity: lp.quantity,
+			revenue: lp.revenue,
+			cost: lp.cost,
+			costKnown: lp.costKnown,
+			fees: lp.fees,
+			labels: lp.labels,
+			shippingCharged: lp.shippingCharged,
+			refunds: lp.refunds,
+			adjustments: lp.adjustments,
+			profit: lp.profit,
+			feesStatus: lp.feesStatus,
+			labelsStatus: lp.labelsStatus,
+			complete: lp.complete,
+		})
+		.from(lp)
+		.innerJoin(orders, eq(orders.id, lp.orderId))
+		.innerJoin(orderLines, eq(orderLines.id, lp.lineId))
+		.leftJoin(products, eq(products.id, lp.productId))
+		.where(and(gte(lp.placedAt, start), lt(lp.placedAt, end)))
+		.orderBy(desc(lp.placedAt), lp.lineId)
+		.limit(ITEMS_LIMIT + 1);
+	return {
+		items: rows.slice(0, ITEMS_LIMIT),
+		cut: rows.length > ITEMS_LIMIT,
+	};
 }
 
 // Orders whose profit can't be trusted until someone acts: a shipped order

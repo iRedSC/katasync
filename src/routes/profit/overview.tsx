@@ -1,8 +1,14 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Receipt } from "lucide-react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Banner, Card, EmptyState, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
+import {
+	PROFIT_DEFAULTS,
+	ProfitViews,
+	RangeTabs,
+	rangeSearch,
+} from "#/components/profit-nav";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { Tip } from "#/components/ui/tooltip";
 import {
@@ -12,27 +18,23 @@ import {
 	formatOrderDate,
 } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import { RANGES, type RangeKey } from "#/orders/profit";
 import { getProfit } from "#/server/profit";
 
-// What the business made over a stretch of time, from the order_profit view.
-// Every figure includes orders still waiting on a cost, so totals never
-// silently shrink, and the page says how much of it rests on estimates.
+// What the business made over a stretch of time, from the order_profit view:
+// totals, by marketplace and day, and products ranked. Every figure includes
+// orders still waiting on a cost, so totals never silently shrink, and the
+// page says how much of it rests on estimates.
 
-const DEFAULT: RangeKey = "this_month";
-const isRange = (v: unknown): v is RangeKey =>
-	typeof v === "string" && Object.hasOwn(RANGES, v);
+const VIEW = "/profit/overview";
+const DEFAULT = PROFIT_DEFAULTS[VIEW];
 
-export const Route = createFileRoute("/profit")({
-	validateSearch: (search: Record<string, unknown>): { range?: RangeKey } =>
-		isRange(search.range) && search.range !== DEFAULT
-			? { range: search.range }
-			: {},
+export const Route = createFileRoute("/profit/overview")({
+	validateSearch: rangeSearch(VIEW),
 	loaderDeps: ({ search }) => ({ range: search.range ?? DEFAULT }),
 	loader: ({ deps }) => getProfit({ data: { range: deps.range } }),
 	component: Profit,
 	pendingComponent: () => (
-		<ListSkeleton title="Profit">
+		<ListSkeleton title="Profit overview">
 			<FieldsCard lines={2} />
 			<ListCard rows={4} />
 			<div className="grid gap-4 lg:grid-cols-2">
@@ -53,33 +55,11 @@ const percent = (value: number | null) =>
 function Profit() {
 	const d = Route.useLoaderData();
 	const { range = DEFAULT } = Route.useSearch();
-	const navigate = useNavigate();
 	const t = d.totals;
 
 	return (
-		<Page title="Profit">
-			<div className="flex flex-wrap gap-1">
-				{(Object.keys(RANGES) as RangeKey[]).map((key) => (
-					<button
-						key={key}
-						type="button"
-						onClick={() =>
-							navigate({
-								to: "/profit",
-								search: key === DEFAULT ? {} : { range: key },
-							})
-						}
-						className={cn(
-							"inline-flex h-7 items-center rounded-lg px-2.5 font-medium",
-							range === key
-								? "bg-surface-strong text-foreground"
-								: "text-muted-foreground hover:bg-surface hover:text-foreground",
-						)}
-					>
-						{RANGES[key]}
-					</button>
-				))}
-			</div>
+		<Page title="Profit" actions={<ProfitViews view={VIEW} range={range} />}>
+			<RangeTabs view={VIEW} range={range} />
 
 			{t.orders === 0 ? (
 				<EmptyState icon={Receipt} title="No orders in this range" />

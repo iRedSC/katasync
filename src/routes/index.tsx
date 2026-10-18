@@ -70,7 +70,7 @@ function Home() {
 								? `${formatCount(d.monthProfit.unsure)} orders still waiting on a cost`
 								: undefined
 						}
-						link={{ to: "/profit" }}
+						link={{ to: "/profit/overview" }}
 					/>
 				</dl>
 			</Card>
