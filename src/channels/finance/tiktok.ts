@@ -42,14 +42,26 @@ function words(key: string) {
 	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+// An amount TikTok sent that isn't a number fails the order rather than
+// counting as nothing.
+function money(key: string, value: string) {
+	const n = Number(value);
+	if (value.trim() === "" || !Number.isFinite(n)) {
+		throw new Error(`TikTok sent ${key} as ${JSON.stringify(value)}`);
+	}
+	return n;
+}
+
 function named(
 	entries: Record<string, unknown>,
 	skip: (key: string) => boolean,
 ): [string, number][] {
 	return Object.entries(entries)
 		.filter(([key, value]) => typeof value === "string" && !skip(key))
-		.map(([key, value]) => [key, Number(value)] as [string, number])
-		.filter(([, value]) => Number.isFinite(value) && value !== 0);
+		.map(
+			([key, value]) => [key, money(key, value as string)] as [string, number],
+		)
+		.filter(([, value]) => value !== 0);
 }
 
 function lines(
@@ -79,7 +91,11 @@ export function tiktokCharges(rows: TiktokSkuTransaction[]): ReportedCharge[] {
 			"Other TikTok fees",
 		);
 		const shipping = row.shipping_cost_breakdown ?? {};
-		const buyerPaid = Number(shipping[BUYER_SHIPPING] ?? 0) || 0;
+		const buyerShipping = shipping[BUYER_SHIPPING];
+		const buyerPaid =
+			typeof buyerShipping === "string"
+				? money(BUYER_SHIPPING, buyerShipping)
+				: 0;
 		const labels = lines(
 			"label",
 			named(shipping, (k) => k === BUYER_SHIPPING),

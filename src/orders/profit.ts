@@ -185,7 +185,10 @@ export async function profitByDay(db: Db, start: Date, end: Date) {
 // Lines with no product aren't ranked, so these don't add up to the total.
 export async function profitByProduct(db: Db, start: Date, end: Date) {
 	const lineRevenue = sql`${orderLines.unitPrice} * ${orderLines.quantity}`;
-	const share = sql`case when ${p.revenue} > 0 then ${lineRevenue} / ${p.revenue} else 0 end`;
+	// A free order (a replacement) has no sales to split by, so its costs
+	// split by units instead.
+	const share = sql`coalesce(case when ${p.revenue} > 0 then ${lineRevenue} / ${p.revenue}
+		else ${orderLines.quantity}::numeric / nullif((select sum(l.quantity) from ${orderLines} l where l.order_id = ${orderLines.orderId}), 0) end, 0)`;
 	// Units returned to the shelf aren't a cost, as in the view.
 	const restocked = sql`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and ${orderReturns.restocked}), 0)`;
 	const lineProfit = sql`${lineRevenue} - coalesce(${orderLines.unitCost}, 0) * (${orderLines.quantity} - ${restocked})

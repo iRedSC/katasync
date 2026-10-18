@@ -60,6 +60,13 @@ const order = type({
 		}).array(),
 	}).array(),
 	refunds: type({
+		transactions: {
+			nodes: type({
+				kind: "string",
+				status: "string",
+				amountSet: money,
+			}).array(),
+		},
 		refundLineItems: {
 			nodes: type({
 				quantity: "number",
@@ -95,6 +102,7 @@ const ORDERS = `query($ids: [ID!]!) {
 				fees { type amount { amount } }
 			}
 			refunds(first: 50) {
+				transactions(first: 20) { nodes { kind status amountSet { shopMoney { amount } } } }
 				refundLineItems(first: 100) {
 					nodes {
 						quantity lineItem { id }
@@ -140,21 +148,24 @@ export function shippedWithoutLabel(o: ShopifyFinanceOrder) {
 	return methods.length > 0 && methods.every((m) => m && UNSHIPPED.has(m));
 }
 
-// What went back to the buyer that the order's revenue still counts: every
-// refund paid out (custom amounts and discrepancies included), less the tax
-// Shopify returns for us, less units refunded before they shipped. katasync
-// already took those off the order's quantity (shopifyLineQuantity), so
-// counting their refund too would take them off twice.
+// What went back to the buyer that the order's revenue still counts: each
+// refund's money actually paid out (custom amounts and discrepancies
+// included; a pending or failed one paid nothing), less the tax Shopify
+// returns for us, less units refunded before they shipped. katasync already
+// took those off the order's quantity (shopifyLineQuantity), so counting
+// their refund too would take them off twice. A refund can't pay back less
+// than nothing, so one not paid yet takes nothing off.
 export function refundedRevenue(o: ShopifyFinanceOrder) {
-	const paidBack = o.transactions
-		.filter((t) => t.kind === "REFUND" && t.status === "SUCCESS")
-		.reduce((sum, t) => sum + t.amountSet.shopMoney.amount, 0);
-	let tax = 0;
-	let unshipped = 0;
+	let total = 0;
 	const removable = new Map(
 		o.lineItems.nodes.map((l) => [l.id, l.nonFulfillableQuantity]),
 	);
 	for (const r of o.refunds) {
+		const paidBack = r.transactions.nodes
+			.filter((t) => t.kind === "REFUND" && t.status === "SUCCESS")
+			.reduce((sum, t) => sum + t.amountSet.shopMoney.amount, 0);
+		let tax = 0;
+		let unshipped = 0;
 		for (const l of r.refundLineItems.nodes) {
 			tax += l.totalTaxSet.shopMoney.amount;
 			const left = removable.get(l.lineItem.id) ?? 0;
@@ -168,8 +179,9 @@ export function refundedRevenue(o: ShopifyFinanceOrder) {
 		for (const l of r.refundShippingLines.nodes) {
 			tax += l.taxAmountSet.shopMoney.amount;
 		}
+		if (paidBack > 0) total += Math.max(0, paidBack - tax - unshipped);
 	}
-	return paidBack - tax - unshipped;
+	return total;
 }
 
 // "processing_fee" → "Processing fee".

@@ -9,18 +9,20 @@ import { MARKETPLACE_US, spApi } from "../amazon-api";
 // shipments Amazon holds back for a week (DD7), so they aren't used.
 // Amounts come signed from Amazon's side: negative is what it kept from us.
 
-type Breakdown = {
-	breakdownType: string;
-	breakdownAmount: { currencyAmount: number };
-	breakdowns?: Breakdown[] | null;
-};
-const breakdown = type({
-	breakdownType: "string",
-	breakdownAmount: { currencyAmount: "number" },
-	"breakdowns?": "unknown[] | null",
-}).pipe((b) => b as Breakdown);
+// Checked all the way down: a nested amount that isn't a number fails the
+// order rather than counting as nothing.
+const breakdown = type
+	.scope({
+		breakdown: {
+			breakdownType: "string",
+			breakdownAmount: { currencyAmount: "number" },
+			"breakdowns?": "breakdown[] | null",
+		},
+	})
+	.type("breakdown");
+type Breakdown = typeof breakdown.infer;
 
-const transaction = type({
+export const amazonTransaction = type({
 	transactionType: "string",
 	"transactionStatus?": "string",
 	"relatedIdentifiers?": type({
@@ -33,12 +35,12 @@ const transaction = type({
 });
 const response = type({
 	payload: {
-		"transactions?": transaction.array(),
+		"transactions?": amazonTransaction.array(),
 		"nextToken?": "string | null",
 	},
 });
 
-export type AmazonTransaction = typeof transaction.infer;
+export type AmazonTransaction = typeof amazonTransaction.infer;
 
 // What a category under Expenses is, as a charge.
 const KIND: Record<string, ReportedCharge["kind"]> = {
@@ -64,12 +66,13 @@ function kindOf(category: Breakdown, entry: Breakdown) {
 	return KIND[category.breakdownType] ?? "adjustment";
 }
 
-// Tax Amazon collects and pays itself, and promotions: the order's prices
-// already have its promotion discounts taken off, so counting them here too
-// would take them off twice.
-function skipped(b: Breakdown) {
-	return b.breakdownType.includes("Tax") || b.breakdownType.includes("Promo");
-}
+// Tax Amazon collects and pays itself nets to nothing for us.
+const isTax = (b: Breakdown) => b.breakdownType.includes("Tax");
+// The order's prices already have its promotion discounts taken off, so a
+// shipment's promotions would take them off twice. A refund's are the
+// discount coming back to us: Amazon refunds the full price and returns the
+// promotion, and only the difference went to the buyer.
+const isPromo = (b: Breakdown) => b.breakdownType.includes("Promo");
 
 // Sales on a shipment, "Refunded Sales" on a refund.
 const SALES = new Set(["Sales", "Refunded Sales"]);
@@ -117,9 +120,19 @@ export function amazonCharges(
 			// Tax Amazon collects and pays itself nets to nothing for us.
 			if (type.includes("Tax")) continue;
 			for (const category of top.breakdowns ?? [top]) {
-				if (skipped(category)) continue;
+				if (isTax(category)) continue;
 				for (const entry of entries(category)) {
-					if (skipped(entry)) continue;
+					if (isTax(entry)) continue;
+					if (isPromo(category) || isPromo(entry)) {
+						if (t.transactionType === "Refund") {
+							charges.push({
+								kind: "refund",
+								description: entry.breakdownType,
+								amount: cost(entry),
+							});
+						}
+						continue;
+					}
 					charges.push({
 						kind: kindOf(category, entry),
 						description: entry.breakdownType,

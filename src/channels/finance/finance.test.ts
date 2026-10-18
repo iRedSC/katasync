@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { type AmazonTransaction, amazonCharges } from "./amazon";
+import {
+	type AmazonTransaction,
+	amazonCharges,
+	amazonTransaction,
+} from "./amazon";
 import { type EbayTransaction, ebayCharges } from "./ebay";
 import {
 	labelsFromEvents,
@@ -142,6 +146,45 @@ describe("Amazon", () => {
 		expect(amazonCharges([promoted]).map((c) => c.description)).not.toContain(
 			"PromoRebates",
 		);
+	});
+
+	test("a refund's promotion comes back to us, so the buyer got less", () => {
+		const refund = {
+			transactionType: "Refund",
+			breakdowns: [
+				{
+					breakdownType: "Refunded Sales",
+					breakdownAmount: amount(-100),
+					breakdowns: [
+						{ breakdownType: "ProductCharges", breakdownAmount: amount(-100) },
+					],
+				},
+				{
+					breakdownType: "Refunded Expenses",
+					breakdownAmount: amount(20),
+					breakdowns: [
+						{ breakdownType: "PromoRebates", breakdownAmount: amount(20) },
+					],
+				},
+			],
+		} as AmazonTransaction;
+		const refunded = amazonCharges([refund])
+			.filter((c) => c.kind === "refund")
+			.reduce((sum, c) => sum + c.amount, 0);
+		expect(refunded).toBe(80);
+	});
+
+	test("a nested amount that isn't a number fails the order", () => {
+		const bad = shipment("RELEASED") as unknown as {
+			breakdowns: {
+				breakdowns: { breakdowns: { breakdownAmount: unknown }[] }[];
+			}[];
+		};
+		// The Base under FBAPerUnitFulfillmentFee, three levels down.
+		bad.breakdowns[1].breakdowns[0].breakdowns[0].breakdownAmount = {
+			currencyAmount: null,
+		};
+		expect(() => amazonTransaction.assert(bad)).toThrow();
 	});
 
 	test("counts a held-back shipment once, not again as its released copy", () => {
@@ -297,6 +340,17 @@ describe("TikTok", () => {
 			amount: 24.87,
 		});
 	});
+
+	test("an amount that isn't a number fails the order", () => {
+		expect(() =>
+			tiktokCharges([
+				{
+					...row,
+					revenue_breakdown: { refund_subtotal_before_discount_amount: "x" },
+				},
+			]),
+		).toThrow();
+	});
 });
 
 describe("Shopify", () => {
@@ -339,13 +393,17 @@ describe("Shopify", () => {
 		paid: number,
 		lines: { quantity: number; subtotal: number; tax: number }[],
 		shippingTax = 0,
+		status = "SUCCESS",
 	): Partial<ShopifyFinanceOrder> => ({
 		transactions: [
 			...order().transactions,
-			{ kind: "REFUND", status: "SUCCESS", amountSet: usd(paid), fees: [] },
+			{ kind: "REFUND", status, amountSet: usd(paid), fees: [] },
 		],
 		refunds: [
 			{
+				transactions: {
+					nodes: [{ kind: "REFUND", status, amountSet: usd(paid) }],
+				},
 				refundLineItems: {
 					nodes: lines.map((l) => ({
 						quantity: l.quantity,
@@ -399,6 +457,16 @@ describe("Shopify", () => {
 			refundOf(27.94, [{ quantity: 1, subtotal: 20, tax: 1.6 }], 0.84),
 		);
 		expect(refundedRevenue(refunded)).toBeCloseTo(25.5);
+	});
+
+	test("a refund not paid out yet takes nothing off", () => {
+		const pending = refundOf(
+			22,
+			[{ quantity: 1, subtotal: 20, tax: 2 }],
+			0,
+			"PENDING",
+		);
+		expect(refundedRevenue(order(pending))).toBe(0);
 	});
 
 	test("a refund of only an amount, with no items, still counts", () => {

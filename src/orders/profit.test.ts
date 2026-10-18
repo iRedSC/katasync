@@ -438,4 +438,23 @@ describe("totals", () => {
 		// #b's label may still come from Amazon; nothing to fix yet.
 		expect(await ordersNeedingCosts(db, start, end)).toEqual([]);
 	});
+
+	test("a free replacement's costs still land on its products", async () => {
+		const free = await order(
+			"#free",
+			[{ unitPrice: 0, quantity: 1, unitCost: 10 }],
+			{ placedAt: new Date("2026-10-15T15:00:00Z") },
+		);
+		await saveCostReport(db, {
+			orderId: free.id,
+			billedBy: "shopify",
+			settled: false,
+			charges: [{ kind: "label", description: "Label", amount: 5 }],
+		});
+		const start = new Date("2026-10-15T04:00:00Z");
+		const end = new Date("2026-10-16T04:00:00Z");
+		const [row] = await profitByProduct(db, start, end);
+		expect(row.profit).toBe((await profit(free.id)).profit);
+		expect(row.profit).toBeLessThan(-10);
+	});
 });
