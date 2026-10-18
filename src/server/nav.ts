@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
+import { countUnmatched } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import { diagnosticsAttention } from "#/diagnostics/overview";
-import { countCountsDue, countUnmappedListings } from "#/server/catalog";
+import { countCountsDue } from "#/server/catalog";
 import { countOrdersToShip } from "#/server/orders";
 import { countPosReady } from "#/server/purchasing";
 
@@ -14,7 +15,7 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 			countOrdersToShip(),
 			countPosReady(),
 			countCountsDue(db),
-			countUnmappedListings(db),
+			countUnmatched(db),
 			diagnosticsAttention(db),
 		]);
 		return { toShip, posReady, countsDue: due, unmatched, attention };

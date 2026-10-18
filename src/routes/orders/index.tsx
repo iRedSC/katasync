@@ -8,8 +8,9 @@ import {
 	PackageCheck,
 	Printer,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
+import { MatchDialog } from "#/components/match-picker";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
@@ -57,6 +58,8 @@ function Orders() {
 	const list = useRef<HTMLTableSectionElement>(null);
 	const [selected, setSelected] = useState(0);
 	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
+	const [matchingId, setMatchingId] = useState<number | null>(null);
+	const closeMatch = useCallback(() => setMatchingId(null), []);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the view changes
 	useEffect(() => setSelected(0), [view]);
@@ -255,18 +258,30 @@ function Orders() {
 									})}
 								</tbody>
 							</ContextMenuTrigger>
-							{menuFor && <OrderMenu order={menuFor} />}
+							{menuFor && (
+								<OrderMenu
+									order={menuFor}
+									onMatch={() => setMatchingId(menuFor.id)}
+								/>
+							)}
 						</ContextMenu>
 					</table>
 				)}
 			</Card>
+			<MatchDialog orderId={matchingId} onClose={closeMatch} />
 		</Page>
 	);
 }
 
 // Only the actions this row's data supports. Shipping, returns, and voiding
 // stay on the order's page: the review items just take you there.
-function OrderMenu({ order: o }: { order: OrderRow }) {
+function OrderMenu({
+	order: o,
+	onMatch,
+}: {
+	order: OrderRow;
+	onMatch: () => void;
+}) {
 	const navigate = useNavigate();
 	const external = externalFulfillment(o);
 
@@ -310,9 +325,9 @@ function OrderMenu({ order: o }: { order: OrderRow }) {
 				</ContextMenuItem>
 			)}
 			{o.unmatched > 0 && (
-				<ContextMenuItem onSelect={() => navigate({ to: "/listings" })}>
+				<ContextMenuItem onSelect={onMatch}>
 					<Link2 />
-					Review unmatched listings
+					Match
 				</ContextMenuItem>
 			)}
 			<ContextMenuSeparator />

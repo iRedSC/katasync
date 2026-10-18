@@ -1,13 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import { MatchDialog } from "#/components/match-picker";
 import { Badge, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
-import {
-	type IndexEntry,
-	ProductSearchDialog,
-} from "#/components/product-search-dialog";
 import { openQuickShip } from "#/components/quick-ship";
 import { type Received, ReturnDialog } from "#/components/return-dialog";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
@@ -25,7 +22,6 @@ import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
-import { linkSku } from "#/server/catalog";
 import { getOrder, type OrderDetail } from "#/server/orders";
 import { resendTracking, voidLabel } from "#/server/shipping";
 
@@ -94,36 +90,9 @@ function OrderPage() {
 		order.fulfillmentStatus === "FULFILLED" &&
 		returnable.length > 0;
 	const [returning, setReturning] = useState(false);
-	// The SKU being linked to a product.
-	const [linking, setLinking] = useState<string | null>(null);
-
-	// Saves the SKU as the product's alias. Every line sold under it shows the
-	// product at once; the server catches up stock behind it.
-	async function link(alias: string, product: IndexEntry) {
-		const r = await optimism.change({
-			label: `Linking ${alias} to ${product.sku}`,
-			patch: orderData.patch(order.id, (d) => ({
-				...d,
-				lines: d.lines.map((l) =>
-					l.sku === alias && l.productSku === null
-						? { ...l, productSku: product.sku, productName: product.name }
-						: l,
-				),
-			})),
-			send: () => linkSku({ data: { alias, sku: product.sku } }),
-		});
-		if (!r) return;
-		const { sku, ordersUpdated, problems } = r.value;
-		if (problems.length > 0) {
-			toast.warning(`Linked ${alias} to ${sku}, but stock wasn't taken`, {
-				description: problems.join(". "),
-			});
-			return;
-		}
-		toast.success(`Linked ${alias} to ${sku}`, {
-			description: `${formatCount(ordersUpdated)} order ${ordersUpdated === 1 ? "line" : "lines"} updated`,
-		});
-	}
+	// Picking products for this order's unmatched listings.
+	const [matching, setMatching] = useState(false);
+	const closeMatch = useCallback(() => setMatching(false), []);
 	const address = [
 		order.shipAddress1,
 		order.shipAddress2,
@@ -217,25 +186,7 @@ function OrderPage() {
 				{order.salesChannel ?? channelName(order.channel)}
 			</p>
 
-			<ProductSearchDialog
-				title={
-					linking && (
-						<>
-							<span className="font-semibold">Link {linking}</span>{" "}
-							<span className="text-muted-foreground">
-								to a product, here and on every channel
-							</span>
-						</>
-					)
-				}
-				startFrom={linking}
-				onClose={() => setLinking(null)}
-				onPick={(product) => {
-					const alias = linking;
-					setLinking(null);
-					if (alias) link(alias, product);
-				}}
-			/>
+			<MatchDialog orderId={matching ? order.id : null} onClose={closeMatch} />
 
 			{returning && (
 				<ReturnDialog
@@ -292,17 +243,15 @@ function OrderPage() {
 												{formatCount(l.returned - l.restocked)} returned damaged
 											</Badge>
 										)}
-										{l.productSku === null && l.sku !== null && (
+										{l.awaitsMatch && (
 											<>
-												<Badge tone="critical">
-													Not linked, no stock taken
-												</Badge>
+												<Badge tone="critical">No stock taken</Badge>
 												<button
 													type="button"
-													onClick={() => setLinking(l.sku)}
+													onClick={() => setMatching(true)}
 													className="font-medium text-link hover:underline"
 												>
-													Link product
+													Match
 												</button>
 											</>
 										)}
