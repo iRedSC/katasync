@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Receipt } from "lucide-react";
+import type { ReactNode } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
-import { Banner, Card, EmptyState, Page } from "#/components/page";
+import { Card, EmptyState, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import {
 	PROFIT_DEFAULTS,
@@ -10,6 +11,11 @@ import {
 	rangeSearch,
 } from "#/components/profit-nav";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "#/components/ui/popover";
 import { Tip } from "#/components/ui/tooltip";
 import {
 	channelName,
@@ -79,6 +85,7 @@ function Profit() {
 								value={formatMoney(t.profit)}
 								change={change(t.profit, d.previous.profit)}
 								tone={t.profit < 0 ? "critical" : undefined}
+								note={<Unsure totals={t} />}
 							/>
 							<Stat
 								label="Margin"
@@ -96,7 +103,6 @@ function Profit() {
 							/>
 						</dl>
 					</Card>
-					<Unsure totals={t} />
 					<Breakdown totals={t} />
 					<Days days={d.days} />
 					<Marketplaces rows={d.marketplaces} />
@@ -130,11 +136,14 @@ function Stat({
 	value,
 	change,
 	tone,
+	note,
 }: {
 	label: string;
 	value: string;
 	change?: number | null;
 	tone?: "critical";
+	// What the figure rests on that isn't final.
+	note?: ReactNode;
 }) {
 	return (
 		<div className="flex flex-col gap-1 p-4">
@@ -158,11 +167,14 @@ function Stat({
 					{(change * 100).toFixed(0)}% on the period before
 				</dd>
 			)}
+			{note && <dd>{note}</dd>}
 		</div>
 	);
 }
 
-// Says plainly what the totals rest on that isn't final.
+// Says plainly what the totals rest on that isn't final: a chip under the
+// figure, amber when the profit is too high rather than merely provisional,
+// opening to the reasons.
 function Unsure({ totals: t }: { totals: Data["totals"] }) {
 	const notes = [
 		t.feesEstimated > 0 &&
@@ -177,38 +189,83 @@ function Unsure({ totals: t }: { totals: Data["totals"] }) {
 			`${formatCount(t.costUnknown)} orders have a line with no product cost, so their profit is too high.`,
 	].filter((n): n is string => typeof n === "string");
 	if (notes.length === 0) return null;
-	const serious = t.labelsMissing > 0 || t.costUnknown > 0;
+	const overstated = t.labelsMissing + t.costUnknown;
+	const pending = t.orders - t.complete;
 	return (
-		<Banner
-			tone={serious ? "warning" : "info"}
-			title={`${formatMoney(t.completeProfit)} of this is from ${formatCount(t.complete)} of ${formatCount(t.orders)} orders whose costs are all in`}
-		>
-			<ul className="list-disc pl-5">
-				{notes.map((n) => (
-					<li key={n}>{n}</li>
-				))}
-			</ul>
-		</Banner>
+		<Popover>
+			<PopoverTrigger
+				className={cn(
+					"inline-flex h-5 items-center rounded-md px-1.5 text-xs font-medium",
+					overstated > 0
+						? "bg-warning-fill text-warning-text"
+						: "bg-surface-strong text-muted-foreground",
+				)}
+			>
+				{overstated > 0
+					? `Too high on ${formatCount(overstated)} orders`
+					: `${formatCount(pending)} orders not final`}
+			</PopoverTrigger>
+			<PopoverContent align="start" className="w-80 p-3">
+				<p className="font-semibold">
+					{formatMoney(t.completeProfit)} is from the {formatCount(t.complete)}{" "}
+					of {formatCount(t.orders)} orders whose costs are all in.
+				</p>
+				<ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-muted-foreground">
+					{notes.map((n) => (
+						<li key={n}>{n}</li>
+					))}
+				</ul>
+			</PopoverContent>
+		</Popover>
 	);
 }
 
 function Breakdown({ totals: t }: { totals: Data["totals"] }) {
+	// Why a row isn't final yet, if it isn't.
 	const rows: [string, number, string?][] = [
 		["Sales", t.revenue],
 		["Shipping charged", t.shippingCharged],
-		["Cost of goods", -t.cost],
-		["Marketplace fees", -t.fees],
-		["Shipping labels", -t.labels],
+		[
+			"Cost of goods",
+			-t.cost,
+			t.costUnknown > 0
+				? `Missing for ${formatCount(t.costUnknown)} orders`
+				: undefined,
+		],
+		[
+			"Marketplace fees",
+			-t.fees,
+			t.feesEstimated > 0
+				? `Estimated for ${formatCount(t.feesEstimated)} orders`
+				: undefined,
+		],
+		[
+			"Shipping labels",
+			-t.labels,
+			t.labelsStandIn + t.labelsAwaiting + t.labelsMissing > 0
+				? `Estimated or missing for ${formatCount(t.labelsStandIn + t.labelsAwaiting + t.labelsMissing)} orders`
+				: undefined,
+		],
 		["Refunds", -t.refunds],
 		["Other adjustments", -t.adjustments],
 	];
 	return (
 		<Card title="Where it went">
 			<dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1.5 tabular-nums">
-				{rows.map(([label, amount]) => (
+				{rows.map(([label, amount, unsure]) => (
 					<div key={label} className="contents">
 						<dt className="text-muted-foreground">{label}</dt>
-						<dd className="text-right">{formatMoney(amount)}</dd>
+						<dd className="text-right">
+							{unsure ? (
+								<Tip content={unsure}>
+									<span className="cursor-help border-b border-dotted border-current">
+										≈ {formatMoney(amount)}
+									</span>
+								</Tip>
+							) : (
+								formatMoney(amount)
+							)}
+						</dd>
 					</div>
 				))}
 				<dt className="border-t pt-1.5 font-semibold">Profit</dt>

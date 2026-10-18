@@ -1,9 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, Receipt, Search } from "lucide-react";
+import {
+	AlertTriangle,
+	ArrowDown,
+	ArrowUp,
+	Receipt,
+	Search,
+} from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
-import { Banner, Card, EmptyState, Page } from "#/components/page";
+import { Card, EmptyState, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import {
 	PROFIT_DEFAULTS,
@@ -201,15 +207,6 @@ function Items() {
 			actions={<ProfitViews view={VIEW} range={range} />}
 		>
 			<RangeTabs view={VIEW} range={range} />
-			{loaded.cut && (
-				<Banner
-					tone="warning"
-					title={`Only the newest ${formatCount(ITEMS_LIMIT)} items in this range`}
-				>
-					Pick a shorter range to see them all. The overview's totals cover
-					every order.
-				</Banner>
-			)}
 			{loaded.unshipped > 0 && (
 				<p className="text-muted-foreground">
 					{formatCount(loaded.unshipped)} more{" "}
@@ -222,7 +219,7 @@ function Items() {
 				<EmptyState icon={Receipt} title="Nothing shipped in this range" />
 			) : (
 				<>
-					<Summary items={shown} />
+					<Summary items={shown} cut={loaded.cut} />
 					<Card flush>
 						<div className="flex flex-wrap items-center gap-2 border-b p-2">
 							<label className="flex h-8 min-w-56 flex-1 items-center gap-2 rounded-lg border border-input px-2.5 focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
@@ -316,7 +313,7 @@ function Items() {
 								</table>
 							</div>
 						)}
-						{shown.length > limit && (
+						{shown.length > limit ? (
 							<div className="border-t p-2 text-center">
 								<Button
 									variant="ghost"
@@ -326,6 +323,13 @@ function Items() {
 									Show more ({formatCount(shown.length - limit)} left)
 								</Button>
 							</div>
+						) : (
+							loaded.cut && (
+								<p className="border-t p-3 text-center text-muted-foreground">
+									Older items in this range aren't loaded. Pick a shorter range
+									to see them.
+								</p>
+							)
 						)}
 					</Card>
 				</>
@@ -335,7 +339,9 @@ function Items() {
 }
 
 // Totals of what's shown, so a filter answers "how much did these make".
-function Summary({ items }: { items: Item[] }) {
+// When the range holds more items than load, these totals are only the
+// newest ones, and the card says so rather than passing for the whole range.
+function Summary({ items, cut }: { items: Item[]; cut: boolean }) {
 	const sum = (f: (i: Item) => number) =>
 		items.reduce((total, i) => total + f(i), 0);
 	const profit = sum((i) => i.profit);
@@ -369,6 +375,13 @@ function Summary({ items }: { items: Item[] }) {
 					</div>
 				))}
 			</dl>
+			{cut && (
+				<p className="flex items-center gap-2 border-t px-4 py-2 text-warning-text">
+					<AlertTriangle className="size-4 shrink-0 text-warning-icon" />
+					Totals of the newest {formatCount(ITEMS_LIMIT)} items only. A shorter
+					range totals them all; the overview covers every order.
+				</p>
+			)}
 		</Card>
 	);
 }

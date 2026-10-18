@@ -1,28 +1,25 @@
 import NumberFlow from "@number-flow/react";
 import { createFileRoute, Link, type LinkProps } from "@tanstack/react-router";
-import { Badge, Banner, Card, Page } from "#/components/page";
+import { Badge, Card, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { statusSearch } from "#/products/views";
 import { getDashboard } from "#/server/catalog";
-import { countDiagnosticsAttention } from "#/server/diagnostics";
 import { countOrdersToShip } from "#/server/orders";
 import { getMonthProfit } from "#/server/profit";
 import { countPosReady } from "#/server/purchasing";
 
 export const Route = createFileRoute("/")({
 	loader: async () => {
-		const [dashboard, toShip, posReady, attention, monthProfit] =
-			await Promise.all([
-				getDashboard(),
-				countOrdersToShip(),
-				countPosReady(),
-				countDiagnosticsAttention(),
-				getMonthProfit(),
-			]);
-		return { ...dashboard, toShip, posReady, attention, monthProfit };
+		const [dashboard, toShip, posReady, monthProfit] = await Promise.all([
+			getDashboard(),
+			countOrdersToShip(),
+			countPosReady(),
+			getMonthProfit(),
+		]);
+		return { ...dashboard, toShip, posReady, monthProfit };
 	},
 	component: Home,
 	pendingComponent: () => (
@@ -75,25 +72,6 @@ function Home() {
 				</dl>
 			</Card>
 
-			{d.attention > 0 && (
-				<Banner
-					tone="critical"
-					title={`${formatCount(d.attention)} ${d.attention === 1 ? "problem" : "problems"} with order sync or tracking`}
-					action={{ label: "Open Diagnostics", link: { to: "/diagnostics" } }}
-				/>
-			)}
-
-			{d.blockedBundles > 0 && (
-				<Banner
-					tone="warning"
-					title={`${formatCount(d.blockedBundles)} of ${formatCount(d.bundles)} tool sets can't be sold`}
-					action={{
-						label: "Review tool sets",
-						link: { to: "/products", search: statusSearch("missing parts") },
-					}}
-				/>
-			)}
-
 			<div className="grid gap-4 lg:grid-cols-2">
 				{d.atRisk.length > 0 && (
 					<Card
@@ -122,7 +100,22 @@ function Home() {
 					</Card>
 				)}
 				{d.blockers.length > 0 && (
-					<Card title="Missing parts holding up tool sets" flush>
+					<Card
+						title={`${formatCount(d.blockedBundles)} of ${formatCount(d.bundles)} tool sets can't be sold`}
+						aside={
+							<Link
+								to="/products"
+								search={statusSearch("missing parts")}
+								className="text-link hover:underline"
+							>
+								Review tool sets
+							</Link>
+						}
+						flush
+					>
+						<p className="px-4 pb-2 text-muted-foreground">
+							These missing parts hold them up.
+						</p>
 						<ul>
 							{d.blockers.map((b) => (
 								<ProductRow key={b.sku} {...b}>

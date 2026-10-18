@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import {
+	AlertCircle,
 	AlertTriangle,
 	CheckCircle2,
 	ChevronDown,
@@ -11,9 +12,14 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
-import { Badge, Banner, Card, Page, type Tone } from "#/components/page";
+import { Badge, Card, Page, type Tone } from "#/components/page";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "#/components/ui/popover";
 import { Tip } from "#/components/ui/tooltip";
 import type { CheckTarget } from "#/diagnostics/checks";
 import type { Health, Hint } from "#/diagnostics/health";
@@ -61,6 +67,35 @@ function copy(text: string) {
 	navigator.clipboard.writeText(text).then(() => toast.success("Copied"));
 }
 
+// The worker being down stops everything else on the page, so it sits in the
+// header, opening to what to run.
+function SyncStopped({ lastStartedAt }: { lastStartedAt: Date | null }) {
+	return (
+		<Popover>
+			<PopoverTrigger className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-critical-fill px-2.5 font-medium text-critical-text">
+				<AlertCircle className="size-4" />
+				Order sync stopped
+			</PopoverTrigger>
+			<PopoverContent className="w-80 p-3">
+				<p>
+					{lastStartedAt
+						? `Last sync ${formatDateTime(lastStartedAt)}. `
+						: "Never synced. "}
+					Until it runs, no new orders and no stock changes. On the katasync
+					machine, run:
+				</p>
+				<button
+					type="button"
+					onClick={() => copy("pnpm sync --watch")}
+					className="mt-2 w-full rounded-md bg-subtle px-2 py-1 text-left font-mono hover:bg-surface-strong"
+				>
+					pnpm sync --watch
+				</button>
+			</PopoverContent>
+		</Popover>
+	);
+}
+
 function DiagnosticsPage() {
 	const d = Route.useLoaderData();
 	const router = useRouter();
@@ -69,25 +104,20 @@ function DiagnosticsPage() {
 		<Page
 			title="Diagnostics"
 			actions={
-				<Button variant="outline" size="sm" onClick={() => router.invalidate()}>
-					Refresh
-				</Button>
+				<>
+					{!d.worker.alive && (
+						<SyncStopped lastStartedAt={d.worker.lastStartedAt} />
+					)}
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => router.invalidate()}
+					>
+						Refresh
+					</Button>
+				</>
 			}
 		>
-			{!d.worker.alive && (
-				<Banner tone="critical" title="Order sync isn't running">
-					{d.worker.lastStartedAt
-						? `Last sync ${formatDateTime(d.worker.lastStartedAt)}. `
-						: "Never synced. "}
-					Run{" "}
-					<code className="rounded bg-white/70 px-1 font-mono">
-						pnpm sync --watch
-					</code>{" "}
-					on the katasync machine. Until then, no new orders and no stock
-					changes.
-				</Banner>
-			)}
-
 			<Card flush>
 				<ul>
 					{d.channels.map((c) => (

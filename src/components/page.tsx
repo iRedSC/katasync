@@ -5,19 +5,13 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import {
-	AlertCircle,
-	AlertTriangle,
-	ArrowLeft,
-	CheckCircle2,
-	Info,
-	type LucideIcon,
-} from "lucide-react";
+import { ArrowLeft, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Tip } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
 
-// Building blocks: Page, Card, Banner, Badge.
+// Building blocks: Page, Card, Badge. There's no page-wide banner: a problem
+// shows on the thing it's about (a card's header, a row, a button's tip).
 
 // Going back returns to wherever the user came from (a PO, a filtered list),
 // as it was. `fallback` is only for a page opened fresh, with nothing before
@@ -85,6 +79,11 @@ function BackLink({ fallback }: { fallback: LinkProps }) {
 	);
 }
 
+const headerTones = {
+	warning: "bg-warning-surface text-warning-text",
+	critical: "bg-critical-surface text-critical-text",
+};
+
 export function Card({
 	title,
 	aside,
@@ -98,7 +97,7 @@ export function Card({
 	// Flush cards let tables and lists run edge to edge.
 	flush?: boolean;
 	// Tints the header, to flag what the aside says.
-	tone?: "warning";
+	tone?: "warning" | "critical";
 	className?: string;
 	children: ReactNode;
 }) {
@@ -115,19 +114,15 @@ export function Card({
 					className={cn(
 						"flex items-center justify-between gap-4",
 						flush ? "px-4 pt-4 pb-2" : "pb-3",
-						tone === "warning" &&
+						tone &&
 							(flush
-								? "bg-warning-surface pb-4 text-warning-text"
-								: "-mx-4 -mt-4 mb-3 bg-warning-surface p-4 text-warning-text"),
+								? cn("pb-4", headerTones[tone])
+								: cn("-mx-4 -mt-4 mb-3 p-4", headerTones[tone])),
 					)}
 				>
 					<h2 className="text-sm font-semibold">{title}</h2>
 					{aside && (
-						<div
-							className={
-								tone === "warning" ? "font-medium" : "text-muted-foreground"
-							}
-						>
+						<div className={tone ? "font-medium" : "text-muted-foreground"}>
 							{aside}
 						</div>
 					)}
@@ -140,101 +135,12 @@ export function Card({
 
 export type Tone = "critical" | "warning" | "success" | "info";
 
-const tones: Record<
-	Tone,
-	{
-		icon: LucideIcon;
-		surface: string;
-		fill: string;
-		text: string;
-		iconColor: string;
-		border: string;
-	}
-> = {
-	critical: {
-		icon: AlertCircle,
-		surface: "bg-critical-surface",
-		fill: "bg-critical-fill",
-		text: "text-critical-text",
-		iconColor: "text-critical-icon",
-		border: "border-critical-border",
-	},
-	warning: {
-		icon: AlertTriangle,
-		surface: "bg-warning-surface",
-		fill: "bg-warning-fill",
-		text: "text-warning-text",
-		iconColor: "text-warning-icon",
-		border: "border-warning-border",
-	},
-	success: {
-		icon: CheckCircle2,
-		surface: "bg-success-surface",
-		fill: "bg-success-fill",
-		text: "text-success-text",
-		iconColor: "text-success-icon",
-		border: "border-success-border",
-	},
-	info: {
-		icon: Info,
-		surface: "bg-info-surface",
-		fill: "bg-info-fill",
-		text: "text-info-text",
-		iconColor: "text-info-icon",
-		border: "border-info-border",
-	},
+const tones: Record<Tone, { fill: string; text: string }> = {
+	critical: { fill: "bg-critical-fill", text: "text-critical-text" },
+	warning: { fill: "bg-warning-fill", text: "text-warning-text" },
+	success: { fill: "bg-success-fill", text: "text-success-text" },
+	info: { fill: "bg-info-fill", text: "text-info-text" },
 };
-
-const bannerAction =
-	"inline-flex h-7 items-center rounded-lg bg-white px-3 font-medium shadow-card hover:bg-subtle";
-
-// A problem worth acting on, like Polaris's Banner. The icon and title say
-// what the color means.
-export function Banner({
-	tone,
-	title,
-	children,
-	action,
-}: {
-	tone: Tone;
-	title: ReactNode;
-	children?: ReactNode;
-	action?: { label: string } & ({ link: LinkProps } | { onClick: () => void });
-}) {
-	const t = tones[tone];
-	return (
-		<div
-			className={cn(
-				"flex gap-3 rounded-xl border p-3 pr-4",
-				t.surface,
-				t.border,
-			)}
-		>
-			<t.icon className={cn("mt-0.5 size-5 shrink-0", t.iconColor)} />
-			<div className="flex min-w-0 flex-1 flex-col gap-1">
-				<p className="font-semibold">{title}</p>
-				{children && <div>{children}</div>}
-				{action && (
-					<div className="pt-1">
-						{"link" in action ? (
-							<Link {...action.link} className={bannerAction}>
-								{action.label}
-							</Link>
-						) : (
-							<button
-								type="button"
-								onClick={action.onClick}
-								className={bannerAction}
-							>
-								{action.label}
-							</button>
-						)}
-					</div>
-				)}
-			</div>
-		</div>
-	);
-}
 
 // A status pill. The words carry the meaning; color helps scanning.
 export function Badge({
