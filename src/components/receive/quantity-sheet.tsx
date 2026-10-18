@@ -1,4 +1,4 @@
-import { Delete, Minus, Plus, Undo2 } from "lucide-react";
+import { Delete, Minus, Plus, ShieldAlert, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "#/lib/utils";
 import { holdable } from "./use-long-press";
@@ -9,7 +9,8 @@ const MAX = 9999;
 // number pad, and a confirm button. More than ordered is kept, and the PO
 // then expects it. Less asks whether the rest is still coming; 0 says none
 // came. None of it reaches the supplier. On a closed PO it only offers the
-// undo. `extra` is a product that isn't on the PO yet.
+// undo. `extra` is a product that isn't on the PO yet. Once some has
+// arrived, it can also record some as damaged.
 export function QuantitySheet({
 	title,
 	unit,
@@ -20,6 +21,7 @@ export function QuantitySheet({
 	onConfirm,
 	onNoneCame,
 	onUndo,
+	onDamaged,
 	onClose,
 }: {
 	title: string;
@@ -35,6 +37,8 @@ export function QuantitySheet({
 	// Stop waiting for what's left without receiving any.
 	onNoneCame?: () => void;
 	onUndo: () => void;
+	// Some of what arrived is damaged; absent when nothing arrived yet.
+	onDamaged?: () => void;
 	onClose: () => void;
 }) {
 	const [quantity, setQuantity] = useState(Math.max(remaining, 1));
@@ -169,7 +173,17 @@ export function QuantitySheet({
 					</>
 				)}
 
-				{lastReceipt === null && !canReceive && (
+				{onDamaged && (
+					<button
+						type="button"
+						onClick={onDamaged}
+						className="mt-2 flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-critical-text active:bg-critical-surface"
+					>
+						<ShieldAlert className="size-5" />
+						Some arrived damaged
+					</button>
+				)}
+				{lastReceipt === null && !canReceive && !onDamaged && (
 					<p className="py-6 text-center text-lg text-muted-foreground">
 						Nothing to undo
 					</p>

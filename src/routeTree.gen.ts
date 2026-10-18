@@ -36,12 +36,15 @@ import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/sup
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage-photos/$damageId'
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
+import { Route as PurchasingDamagePhotoIdRouteImport } from './routes/purchasing/damage-photo.$id'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 import { Route as PurchasingSuggestedSupplierIdRouteImport } from './routes/purchasing/suggested.$supplierId'
 import { Route as ApiCronCostsChannelRouteImport } from './routes/api/cron/costs.$channel'
 import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
+import { Route as ApiUploadsDamageTokenRouteImport } from './routes/api/uploads/damage.$token'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -178,6 +181,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDamagePhotosDamageIdRoute = ApiDamagePhotosDamageIdRouteImport.update({
+  id: '/api/damage-photos/$damageId',
+  path: '/api/damage-photos/$damageId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiOauthSplatRoute = ApiOauthSplatRouteImport.update({
   id: '/api/oauth/$',
   path: '/api/oauth/$',
@@ -186,6 +194,11 @@ const ApiOauthSplatRoute = ApiOauthSplatRouteImport.update({
 const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
   id: '/api/webhooks/$channel',
   path: '/api/webhooks/$channel',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PurchasingDamagePhotoIdRoute = PurchasingDamagePhotoIdRouteImport.update({
+  id: '/purchasing/damage-photo/$id',
+  path: '/purchasing/damage-photo/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PurchasingPdfIdRoute = PurchasingPdfIdRouteImport.update({
@@ -207,6 +220,11 @@ const ApiCronCostsChannelRoute = ApiCronCostsChannelRouteImport.update({
 const ApiCronSyncChannelRoute = ApiCronSyncChannelRouteImport.update({
   id: '/api/cron/sync/$channel',
   path: '/api/cron/sync/$channel',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUploadsDamageTokenRoute = ApiUploadsDamageTokenRouteImport.update({
+  id: '/api/uploads/damage/$token',
+  path: '/api/uploads/damage/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -238,12 +256,15 @@ export interface FileRoutesByFullPath {
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
+  '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -273,12 +294,15 @@ export interface FileRoutesByTo {
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
+  '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -309,12 +333,15 @@ export interface FileRoutesById {
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
+  '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -346,12 +373,15 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
+    | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
+    | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
     | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
+    | '/api/uploads/damage/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -381,12 +411,15 @@ export interface FileRouteTypes {
     | '/purchasing'
     | '/receive'
     | '/api/auth/$'
+    | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
+    | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
     | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
+    | '/api/uploads/damage/$token'
   id:
     | '__root__'
     | '/'
@@ -416,12 +449,15 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
+    | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
+    | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
     | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
+    | '/api/uploads/damage/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -452,12 +488,15 @@ export interface RootRouteChildren {
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDamagePhotosDamageIdRoute: typeof ApiDamagePhotosDamageIdRoute
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
+  PurchasingDamagePhotoIdRoute: typeof PurchasingDamagePhotoIdRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
   PurchasingSuggestedSupplierIdRoute: typeof PurchasingSuggestedSupplierIdRoute
   ApiCronCostsChannelRoute: typeof ApiCronCostsChannelRoute
   ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
+  ApiUploadsDamageTokenRoute: typeof ApiUploadsDamageTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -651,6 +690,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/damage-photos/$damageId': {
+      id: '/api/damage-photos/$damageId'
+      path: '/api/damage-photos/$damageId'
+      fullPath: '/api/damage-photos/$damageId'
+      preLoaderRoute: typeof ApiDamagePhotosDamageIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/oauth/$': {
       id: '/api/oauth/$'
       path: '/api/oauth/$'
@@ -663,6 +709,13 @@ declare module '@tanstack/react-router' {
       path: '/api/webhooks/$channel'
       fullPath: '/api/webhooks/$channel'
       preLoaderRoute: typeof ApiWebhooksChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchasing/damage-photo/$id': {
+      id: '/purchasing/damage-photo/$id'
+      path: '/purchasing/damage-photo/$id'
+      fullPath: '/purchasing/damage-photo/$id'
+      preLoaderRoute: typeof PurchasingDamagePhotoIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/purchasing/pdf/$id': {
@@ -691,6 +744,13 @@ declare module '@tanstack/react-router' {
       path: '/api/cron/sync/$channel'
       fullPath: '/api/cron/sync/$channel'
       preLoaderRoute: typeof ApiCronSyncChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/uploads/damage/$token': {
+      id: '/api/uploads/damage/$token'
+      path: '/api/uploads/damage/$token'
+      fullPath: '/api/uploads/damage/$token'
+      preLoaderRoute: typeof ApiUploadsDamageTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -724,12 +784,15 @@ const rootRouteChildren: RootRouteChildren = {
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDamagePhotosDamageIdRoute: ApiDamagePhotosDamageIdRoute,
   ApiOauthSplatRoute: ApiOauthSplatRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
+  PurchasingDamagePhotoIdRoute: PurchasingDamagePhotoIdRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
   PurchasingSuggestedSupplierIdRoute: PurchasingSuggestedSupplierIdRoute,
   ApiCronCostsChannelRoute: ApiCronCostsChannelRoute,
   ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,
+  ApiUploadsDamageTokenRoute: ApiUploadsDamageTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

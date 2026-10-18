@@ -1064,6 +1064,96 @@ export const purchaseOrderReceipts = pgTable(
 	],
 );
 
+// What a damage report asks the supplier for: money back, or the same
+// number again. Chosen per item when the report is sent.
+export const damageRemedy = pgEnum("damage_remedy", ["credit", "replacement"]);
+
+// A report sent to the supplier about damaged items on one PO. Its items are
+// the purchaseOrderDamages pointing at it. Made only by sending it.
+export const purchaseOrderDamageReports = pgTable(
+	"purchase_order_damage_reports",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id),
+		sentTo: text().notNull(),
+		sentAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index("purchase_order_damage_reports_po_idx").on(t.purchaseOrderId)],
+);
+
+// Items of a line that arrived damaged. Counted in single items, not the
+// line's unit: one blade in a case of 12 can break. They come off the shelf
+// when recorded (batchId) and can't exceed what was received. Until a report
+// takes them they can be taken back, which puts them back on the shelf;
+// once reported they stay, with what was asked for. Rules live in
+// src/purchasing/damage.ts.
+export const purchaseOrderDamages = pgTable(
+	"purchase_order_damages",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		lineId: integer()
+			.notNull()
+			.references(() => purchaseOrderLines.id),
+		quantity: integer().notNull(),
+		description: text().notNull(),
+		// The ledger batch that took them off the shelf.
+		batchId: uuid().notNull().unique(),
+		reportId: integer().references(() => purchaseOrderDamageReports.id),
+		remedy: damageRemedy(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_order_damages_line_idx").on(t.lineId),
+		check("purchase_order_damages_quantity_positive", sql`${t.quantity} > 0`),
+		check(
+			"purchase_order_damages_description_given",
+			sql`btrim(${t.description}) <> ''`,
+		),
+		check(
+			"purchase_order_damages_reported_with_remedy",
+			sql`(${t.reportId} is null) = (${t.remedy} is null)`,
+		),
+	],
+);
+
+// Photos of damage, as uploaded: JPEG, PNG, or WebP, checked by their bytes.
+export const purchaseOrderDamagePhotos = pgTable(
+	"purchase_order_damage_photos",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		damageId: integer()
+			.notNull()
+			.references(() => purchaseOrderDamages.id, { onDelete: "cascade" }),
+		contentType: text().notNull(),
+		data: bytea().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_order_damage_photos_damage_idx").on(t.damageId),
+		check(
+			"purchase_order_damage_photos_type",
+			sql`${t.contentType} in ('image/jpeg', 'image/png', 'image/webp')`,
+		),
+		check(
+			"purchase_order_damage_photos_size",
+			sql`octet_length(${t.data}) between 1 and 4500000`,
+		),
+	],
+);
+
+// Links that let something without a session, like Claude's shell, upload
+// photos of one damage. Only the hash is kept; the link works until it
+// expires.
+export const damagePhotoUploads = pgTable("damage_photo_uploads", {
+	tokenHash: text().primaryKey(),
+	damageId: integer()
+		.notNull()
+		.references(() => purchaseOrderDamages.id, { onDelete: "cascade" }),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+});
+
 // Sign-in. katasync has one shared company account, so there are no users:
 // each phone or computer gets its own passkey, named so a lost one can be
 // removed. Rules live in src/auth/.

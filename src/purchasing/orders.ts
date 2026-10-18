@@ -7,6 +7,7 @@ import {
 	productSuppliers,
 	products,
 	purchaseOrderAmendments,
+	purchaseOrderDamages,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrderSentSets,
@@ -1295,6 +1296,16 @@ export async function undoReceipt(db: Db, receiptId: number) {
 			.from(purchaseOrderReceipts)
 			.where(eq(purchaseOrderReceipts.undoesId, receipt.id));
 		if (already) throw new PurchaseOrderError("Already undone");
+		const [line] = await tx
+			.select({ packSize: purchaseOrderLines.packSize })
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, receipt.lineId));
+		const left = (await receivedOf(tx, receipt.lineId)) - receipt.quantity;
+		const damaged = await damagedOf(tx, receipt.lineId);
+		if (left * line.packSize < damaged)
+			throw new PurchaseOrderError(
+				`${damaged} of these are recorded as damaged; take the damage back first`,
+			);
 
 		const { batchId } = await undoBatch(tx, receipt.batchId);
 		await tx.insert(purchaseOrderReceipts).values({
@@ -1472,14 +1483,14 @@ async function settle(
 	else if (po.status === "closed" && short) await reopen(tx, po.id);
 }
 
-async function reopen(tx: Db, id: number) {
+export async function reopen(tx: Db, id: number) {
 	await tx
 		.update(purchaseOrders)
 		.set({ status: "sent", closedAt: null })
 		.where(eq(purchaseOrders.id, id));
 }
 
-async function receivedOf(tx: Db, lineId: number) {
+export async function receivedOf(tx: Db, lineId: number) {
 	const [row] = await tx
 		.select({
 			units: sql<number>`coalesce(sum(${purchaseOrderReceipts.quantity}), 0)::int`,
@@ -1487,6 +1498,18 @@ async function receivedOf(tx: Db, lineId: number) {
 		.from(purchaseOrderReceipts)
 		.where(eq(purchaseOrderReceipts.lineId, lineId));
 	return row.units;
+}
+
+// Single items of a line recorded as damaged. Never more than arrived, so a
+// receipt can't be undone from under them (see undoReceipt).
+export async function damagedOf(tx: Db, lineId: number) {
+	const [row] = await tx
+		.select({
+			items: sql<number>`coalesce(sum(${purchaseOrderDamages.quantity}), 0)::int`,
+		})
+		.from(purchaseOrderDamages)
+		.where(eq(purchaseOrderDamages.lineId, lineId));
+	return row.items;
 }
 
 // Stops waiting for what hasn't arrived, e.g. the supplier is out of it.

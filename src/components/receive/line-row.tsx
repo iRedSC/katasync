@@ -36,8 +36,11 @@ export function LineRow({
 	onReceive,
 	onHold,
 	onNote,
+	damaged,
 }: {
 	line: ReceiveLine;
+	// Single items recorded as damaged.
+	damaged: number;
 	// No button at all: nothing can be received or undone.
 	locked: boolean;
 	// The PO is waiting on a delivery.
@@ -95,6 +98,11 @@ export function LineRow({
 					<p className="truncate font-mono text-xs text-muted-foreground">
 						{line.sku}
 					</p>
+					{damaged > 0 && (
+						<p className="text-sm font-semibold text-critical-text">
+							{damaged} damaged
+						</p>
+					)}
 					{line.sentQuantity === null ? (
 						<p className="text-sm font-semibold text-info-text">Amended</p>
 					) : (

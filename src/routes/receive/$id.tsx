@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, PackagePlus } from "lucide-react";
 import { useState } from "react";
 import type { PurchaseOrderMatch } from "#/components/po-product-picker";
+import { DamageSheet } from "#/components/receive/damage-sheet";
 import { ExtraSheet } from "#/components/receive/extra-sheet";
 import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
 import { NoteSheet } from "#/components/receive/note-sheet";
@@ -42,6 +43,10 @@ type ReceiveOrder = {
 	supplier: Pick<PurchaseOrderDetail["supplier"], "name">;
 	lines: ReceiveLine[];
 	receipts: Receipt[];
+	damages: Pick<
+		PurchaseOrderDetail["damages"][number],
+		"lineId" | "quantity"
+	>[];
 };
 const receiveData = optimistic<ReceiveOrder>("receive-order");
 
@@ -251,6 +256,14 @@ function ReceivePurchaseOrder() {
 	const { order, supplier, lines, receipts } = d;
 	const [sheetLineId, setSheetLineId] = useState<number | null>(null);
 	const [noteLineId, setNoteLineId] = useState<number | null>(null);
+	const [damageLineId, setDamageLineId] = useState<number | null>(null);
+	// Single items of a line recorded as damaged, and what could still be.
+	const damagedOn = (l: ReceiveLine) =>
+		d.damages
+			.filter((x) => ids.same(x.lineId, l.id))
+			.reduce((n, x) => n + x.quantity, 0);
+	const damageable = (l: ReceiveLine) =>
+		Math.max(0, l.received * l.packSize - damagedOn(l));
 	// Something that isn't on the PO: finding it, then counting it.
 	const [extra, setExtra] = useState<
 		{ step: "find" } | { step: "count"; match: PurchaseOrderMatch } | null
@@ -267,6 +280,10 @@ function ReceivePurchaseOrder() {
 		sheetLineId === null
 			? undefined
 			: lines.find((l) => ids.same(l.id, sheetLineId));
+	const damageLine =
+		damageLineId === null
+			? undefined
+			: lines.find((l) => ids.same(l.id, damageLineId));
 	const noteLine =
 		noteLineId === null
 			? undefined
@@ -470,6 +487,7 @@ function ReceivePurchaseOrder() {
 						onReceive={(quantity) => receive(line, quantity)}
 						onHold={() => setSheetLineId(line.id)}
 						onNote={() => setNoteLineId(line.id)}
+						damaged={damagedOn(line)}
 					/>
 				))}
 			</ul>
@@ -507,6 +525,14 @@ function ReceivePurchaseOrder() {
 						null
 					}
 					onConfirm={(quantity, last) => receive(sheetLine, quantity, last)}
+					onDamaged={
+						damageable(sheetLine) > 0
+							? () => {
+									setSheetLineId(null);
+									setDamageLineId(sheetLine.id);
+								}
+							: undefined
+					}
 					onNoneCame={() => noneCame(sheetLine)}
 					onUndo={() => {
 						const last = receipts.find((r) => ids.same(r.lineId, sheetLine.id));
@@ -518,6 +544,16 @@ function ReceivePurchaseOrder() {
 				/>
 			)}
 
+			{undoable && damageLine && (
+				<DamageSheet
+					key={damageLine.id}
+					title={productName(damageLine)}
+					lineId={damageLine.id}
+					available={damageable(damageLine)}
+					unit={damageLine.packSize === 1 ? undefined : damageLine.unit}
+					onClose={() => setDamageLineId(null)}
+				/>
+			)}
 			{undoable && noteLine && (
 				<NoteSheet
 					key={noteLine.id}

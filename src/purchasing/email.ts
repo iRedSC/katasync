@@ -18,7 +18,7 @@ export async function sendEmail(message: {
 	to: string;
 	subject: string;
 	text: string;
-	attachment: { filename: string; content: Buffer };
+	attachments: { filename: string; content: Buffer }[];
 }) {
 	const key = process.env.RESEND_API_KEY;
 	const from = process.env.PO_EMAIL_FROM;
@@ -39,12 +39,10 @@ export async function sendEmail(message: {
 			...(replyTo ? { reply_to: replyTo, bcc: [replyTo] } : {}),
 			subject: message.subject,
 			text: message.text,
-			attachments: [
-				{
-					filename: message.attachment.filename,
-					content: message.attachment.content.toString("base64"),
-				},
-			],
+			attachments: message.attachments.map((a) => ({
+				filename: a.filename,
+				content: a.content.toString("base64"),
+			})),
 		}),
 	});
 	if (!res.ok) {

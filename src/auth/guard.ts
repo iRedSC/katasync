@@ -8,7 +8,8 @@ import { SESSION_COOKIE, sessionCookie, sessionFor } from "./sessions";
 // the files those pages load. /mcp checks its own OAuth token instead, and
 // /api/oauth/ and /.well-known/ are how MCP clients get one (approving still
 // needs a session); /api/cron/ checks the CRON_SECRET Vercel Cron sends, and
-// /api/webhooks/ the channel's signature.
+// /api/webhooks/ the channel's signature; /api/uploads/ checks the upload link's
+// own token.
 const PUBLIC_PATHS = new Set([
 	"/mcp",
 	"/login",
@@ -28,7 +29,8 @@ export function isPublic(pathname: string) {
 		pathname.startsWith("/.well-known/") ||
 		pathname.startsWith("/api/cron/") ||
 		pathname.startsWith("/api/webhooks/") ||
-		pathname.startsWith("/assets/")
+		pathname.startsWith("/assets/") ||
+		pathname.startsWith("/api/uploads/")
 	);
 }
 
