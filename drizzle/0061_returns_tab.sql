@@ -31,7 +31,7 @@ ALTER TABLE "return_requests" ADD CONSTRAINT "return_requests_order_id_orders_id
 CREATE INDEX "return_request_lines_request_idx" ON "return_request_lines" USING btree ("request_id");--> statement-breakpoint
 CREATE INDEX "return_requests_order_idx" ON "return_requests" USING btree ("order_id");
 --> statement-breakpoint
--- order_line_costs as in 0054, except "Nothing coming back" ends the wait:
+-- order_line_costs as in 0060, except "Nothing coming back" ends the wait:
 -- a refunded order marked so counts its cost at once.
 CREATE OR REPLACE VIEW "order_line_costs" AS
 WITH bundle_costs AS (
@@ -70,6 +70,19 @@ refunded AS (
 	GROUP BY o."id", rv."revenue", o."shipping_charged"
 	HAVING sum(ch."amount") >= rv."revenue" + o."shipping_charged"
 ),
+lines AS (
+	-- As in 0054: a line sold under a listing tagged "intangible" (labor, a
+	-- catalog) has no stock or cost.
+	SELECT l.*,
+		l."product_id" IS NULL AND EXISTS (
+			SELECT 1 FROM "orders" o
+			JOIN "listings" li ON li."store_id" = o."store_id"
+				AND li."external_id" = l."listing_external_id"
+			WHERE o."id" = l."order_id"
+				AND EXISTS (SELECT 1 FROM unnest(li."tags") t WHERE lower(t) = 'intangible')
+		) AS "intangible"
+	FROM "order_lines" l
+),
 costed AS (
 	SELECT
 		l."id" AS "line_id",
@@ -77,14 +90,15 @@ costed AS (
 		l."product_id",
 		l."quantity",
 		l."unit_price" * l."quantity" AS "revenue",
-		coalesce(l."unit_cost",
+		CASE WHEN l."intangible" THEN 0 ELSE coalesce(l."unit_cost",
 			CASE WHEN pr."kind" = 'bundle' THEN bc."unit_cost" ELSE pr."unit_cost" END
-		) AS "unit_cost",
+		) END AS "unit_cost",
 		coalesce(r."restocked", 0) AS "restocked",
+		l."intangible",
 		-- Units that took stock and haven't been received back yet.
 		CASE WHEN rf."order_id" IS NOT NULL AND l."sale_batch_id" IS NOT NULL
 			THEN l."quantity" - coalesce(r."returned", 0) ELSE 0 END AS "returning"
-	FROM "order_lines" l
+	FROM lines l
 	LEFT JOIN "products" pr ON pr."id" = l."product_id"
 	LEFT JOIN bundle_costs bc ON bc."product_id" = l."product_id"
 	LEFT JOIN returns r ON r."order_line_id" = l."id"
@@ -101,7 +115,7 @@ SELECT
 	-- Units returned to the shelf, or on their way back, aren't a cost.
 	"unit_cost" * ("quantity" - "restocked" - "returning") AS "cost",
 	-- A line cancelled down to nothing costs nothing either way.
-	("quantity" = 0 OR ("product_id" IS NOT NULL AND "unit_cost" IS NOT NULL)) AS "cost_known",
+	("quantity" = 0 OR "intangible" OR ("product_id" IS NOT NULL AND "unit_cost" IS NOT NULL)) AS "cost_known",
 	"returning"
 FROM costed;
 --> statement-breakpoint

@@ -17,6 +17,7 @@ import {
 	Mail,
 	PackageCheck,
 	Pencil,
+	ShieldAlert,
 	Smartphone,
 	Trash2,
 } from "lucide-react";
@@ -29,6 +30,12 @@ import {
 	useState,
 } from "react";
 import { toast } from "sonner";
+import {
+	DamageDialog,
+	type DamageTarget,
+} from "#/components/damage/damage-dialog";
+import { DamageRows, damageName } from "#/components/damage/damage-rows";
+import { DamageReportDialog } from "#/components/damage/report-dialog";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Card, Page, useBack } from "#/components/page";
 import { BrowseProducts, type BrowseRow } from "#/components/po-browse";
@@ -201,6 +208,9 @@ function PurchaseOrderPage() {
 	// Sent and closed POs can still change, without telling the supplier.
 	const editable = po.status !== "cancelled";
 	const [editingSupplier, setEditingSupplier] = useState(false);
+	const [damageTarget, setDamageTarget] = useState<DamageTarget | null>(null);
+	const [reportingDamage, setReportingDamage] = useState(false);
+	const unreported = d.damages.filter((x) => x.reportedAt === null);
 	const picker = useRef<HTMLInputElement>(null);
 	const [browsing, setBrowsing] = useState(false);
 	// The line just added or picked, so it scrolls into view with its
@@ -255,6 +265,15 @@ function PurchaseOrderPage() {
 			lines={lines}
 			focus={focus}
 			onEditQuantity={(lineId) => setFocus({ lineId, nonce: Date.now() })}
+			onReportDamage={(l) =>
+				setDamageTarget({
+					kind: "new",
+					lineId: l.id,
+					name: lineName(l),
+					available: damageable(d, l),
+					unit: l.packSize === 1 ? null : l.unit,
+				})
+			}
 			onQuantityDone={(enter) => {
 				setFocus(null);
 				if (enter) picker.current?.focus();
@@ -405,6 +424,16 @@ function PurchaseOrderPage() {
 							</Tip>
 						</Button>
 					)}
+					{unreported.length > 0 && (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => setReportingDamage(true)}
+						>
+							<ShieldAlert />
+							Damage report ({unreported.length})
+						</Button>
+					)}
 					{po.status === "sent" && (
 						<Button asChild variant="outline" size="sm">
 							<Link to="/receive/$id" params={{ id: String(po.id) }}>
@@ -477,7 +506,7 @@ function PurchaseOrderPage() {
 									{arrived.length === 0 && totals}
 								</Card>
 							)}
-							{arrived.length > 0 && (
+							{(arrived.length > 0 || d.damages.length > 0) && (
 								<Card
 									flush
 									title="Received"
@@ -490,8 +519,20 @@ function PurchaseOrderPage() {
 											: linesAside(arrived.length)
 									}
 								>
-									{lineTable(arrived)}
-									{totals}
+									{arrived.length > 0 && lineTable(arrived)}
+									{d.damages.length > 0 && (
+										<DamageRows
+											damages={d.damages}
+											onAddPhotos={(x) =>
+												setDamageTarget({
+													kind: "photos",
+													damageId: x.id,
+													name: damageName(x),
+												})
+											}
+										/>
+									)}
+									{arrived.length > 0 && totals}
 								</Card>
 							)}
 							{d.lines.length === 0 && (
@@ -555,6 +596,19 @@ function PurchaseOrderPage() {
 						onAdd={addFromBrowse}
 						onGoToLine={(lineId) => setFocus({ lineId, nonce: Date.now() })}
 					/>
+					{damageTarget && (
+						<DamageDialog
+							target={damageTarget}
+							onClose={() => setDamageTarget(null)}
+						/>
+					)}
+					{reportingDamage && unreported.length > 0 && (
+						<DamageReportDialog
+							detail={d}
+							damages={unreported}
+							onClose={() => setReportingDamage(false)}
+						/>
+					)}
 					<SupplierDialog
 						supplier={d.supplier}
 						leadTime={d.leadTime}
@@ -992,6 +1046,7 @@ function recommendedLine(
 		unitCost: r.kind === "bundle" ? null : r.unitCost,
 		sentQuantity: null,
 		sentUnitCost: null,
+		receivingNote: null,
 		received: 0,
 		onHand: r.onHand,
 		stockRange: r.stockRange,
@@ -1038,6 +1093,7 @@ function browseLine(row: BrowseRow, id: number, supplierId: number): Line {
 				: (t?.cost ?? (row.unitCost === null ? null : row.unitCost * packSize)),
 		sentQuantity: null,
 		sentUnitCost: null,
+		receivingNote: null,
 		received: 0,
 		onHand: row.onHand ?? 0,
 		stockRange: row.range,
@@ -1070,11 +1126,13 @@ function LineTable({
 	lines,
 	focus,
 	onEditQuantity,
+	onReportDamage,
 	onQuantityDone,
 }: {
 	detail: PurchaseOrderDetail;
 	lines: Line[];
 	focus: LineFocus | null;
+	onReportDamage: (line: Line) => void;
 	// Opens a line's quantity, as adding it from the picker does.
 	onEditQuantity: (lineId: number) => void;
 	// A quantity opened by focus is done; enter says it was left with Enter.
@@ -1509,6 +1567,7 @@ function LineTable({
 							line={menuFor}
 							detail={d}
 							onEditQuantity={() => onEditQuantity(menuFor.id)}
+							onReportDamage={() => onReportDamage(menuFor)}
 						/>
 					)}
 				</ContextMenu>
@@ -1517,16 +1576,29 @@ function LineTable({
 	);
 }
 
+const lineName = (l: Pick<Line, "name" | "variantName">) =>
+	l.variantName ? `${l.name} (${l.variantName})` : l.name;
+
+// Single items of a line that arrived and aren't recorded as damaged yet.
+function damageable(d: PurchaseOrderDetail, l: Line) {
+	const damaged = d.damages
+		.filter((x) => x.lineId === l.id)
+		.reduce((n, x) => n + x.quantity, 0);
+	return Math.max(0, l.received * l.packSize - damaged);
+}
+
 // What a line can do from here. Price and unit stay on their own fields,
 // which already open with a click.
 function LineMenu({
 	line: l,
 	detail: d,
 	onEditQuantity,
+	onReportDamage,
 }: {
 	line: Line;
 	detail: PurchaseOrderDetail;
 	onEditQuantity: () => void;
+	onReportDamage: () => void;
 }) {
 	const router = useRouter();
 	const po = d.order;
@@ -1566,6 +1638,13 @@ function LineMenu({
 					{l.packSize === 1 ? "" : ` ${l.unit}`})
 				</ContextMenuItem>
 			)}
+			{(po.status === "sent" || po.status === "closed") &&
+				damageable(d, l) > 0 && (
+					<ContextMenuItem shortcut="D" onSelect={onReportDamage}>
+						<ShieldAlert />
+						Arrived damaged…
+					</ContextMenuItem>
+				)}
 			{po.status === "draft" && (
 				<ContextMenuItem
 					className="text-critical-text [&_svg]:text-critical-text"

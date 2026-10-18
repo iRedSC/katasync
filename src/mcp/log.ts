@@ -12,10 +12,10 @@ const MAX_TOOL_NAME = 100;
 const MAX_DEPTH = 8;
 
 // Names whose values are credentials; a client may pass one by mistake, and
-// any read-only token can read this log back.
+// any app approved read only can read this log back.
 const SECRET_KEY =
 	/api.?key|authori[sz]ation|token|passw|secret|credential|cookie|bearer/i;
-// Looks like one of our own API tokens (see PREFIX in src/auth/tokens.ts).
+// Looks like one of our own tokens (see PREFIX in src/auth/oauth.ts).
 const API_TOKEN = /ks_[A-Za-z0-9_-]{16,}/g;
 const REDACTED = "[redacted]";
 
@@ -35,7 +35,7 @@ function redact(value: unknown, depth = 0): unknown {
 }
 
 // What is kept of a call's arguments, for any tool (including ones that
-// don't exist or that the token isn't allowed): credentials removed, and cut
+// don't exist or that the app isn't allowed): credentials removed, and cut
 // short with a marker if it's still big.
 function loggedArguments(args: unknown) {
 	const clean = redact(args ?? {});

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { addDispatch, createTestDb } from "#/test/db";
+import { dismiss, restore } from "./dismissals";
 import {
 	channelHealth,
 	groupIssues,
@@ -256,4 +257,104 @@ test("lists labels whose storefront tracking entry needs fixing, voided or not",
 	expect(o.storefrontTracking).toHaveLength(2);
 	expect(o.handoffs).toHaveLength(0);
 	expect(await diagnosticsAttention(db, now)).toBe(before + 1);
+});
+
+test("a dismissed label stays hidden until its error changes", async () => {
+	const db = await createTestDb();
+	const [store] = await db
+		.insert(schema.stores)
+		.values({ channel: "shopify", name: "Shopify" })
+		.returning();
+	const [order] = await db
+		.insert(schema.orders)
+		.values({
+			storeId: store.id,
+			externalId: "gid://shopify/Order/9",
+			name: "#9",
+			placedAt: now,
+			fulfillmentStatus: "FULFILLED",
+			total: 30,
+			sourceUpdatedAt: now,
+		})
+		.returning();
+	const dispatch = await addDispatch(db, {
+		orderIds: [order.id],
+		boxes: [
+			{
+				lengthMm: 300,
+				widthMm: 200,
+				heightMm: 100,
+				weightGrams: 600,
+				provider: "shippo",
+				carrier: "USPS",
+				service: "usps_ground_advantage",
+				serviceName: "USPS Ground Advantage",
+				cost: 7,
+				externalId: "tx-1",
+				test: false,
+				storefrontTrackingError: "not saved",
+			},
+		],
+	});
+	await db
+		.update(schema.dispatchOrders)
+		.set({ channelSentAt: now })
+		.where(eq(schema.dispatchOrders.dispatchId, dispatch.dispatchId));
+	const [shipment] = await db.select().from(schema.shipments);
+	const before = await diagnosticsAttention(db, now);
+	const dismissed = async () =>
+		(await diagnosticsOverview(db, now)).storefrontTracking.map(
+			(r) => r.dismissed,
+		);
+
+	await dismiss(db, { kind: "storefront", shipmentId: shipment.id });
+	expect(await dismissed()).toEqual([true]);
+	expect(await diagnosticsAttention(db, now)).toBe(before - 1);
+
+	await db
+		.update(schema.shipments)
+		.set({ storefrontTrackingError: "not saved: 500" })
+		.where(eq(schema.shipments.id, shipment.id));
+	expect(await dismissed()).toEqual([false]);
+
+	await dismiss(db, { kind: "storefront", shipmentId: shipment.id });
+	await restore(db, { kind: "storefront", shipmentId: shipment.id });
+	expect(await dismissed()).toEqual([false]);
+});
+
+test("a dismissed sync issue shows again on a new order", async () => {
+	const db = await createTestDb();
+	const pass = (problems: string[], at: number) =>
+		recordSyncRun(
+			db,
+			"ebay",
+			async () => ({ store: "eBay US", orders: 3, problems }),
+			() => minutesAgo(at),
+		);
+	const issues = async () =>
+		(await diagnosticsOverview(db, now)).channels
+			.find((c) => c.channel === "ebay")
+			?.issues.map((g) => [g.message, g.count, g.dismissed]);
+
+	await pass(["#1: no location to take stock from"], 4);
+	await dismiss(db, {
+		kind: "issue",
+		channel: "ebay",
+		message: "no location to take stock from",
+	});
+	await pass(
+		[
+			"#1: no location to take stock from",
+			"#2: no location to take stock from",
+			"#3: no product for KNIFE",
+		],
+		2,
+	);
+	expect(await issues()).toEqual(
+		expect.arrayContaining([
+			["no location to take stock from", 1, false],
+			["no location to take stock from", 1, true],
+			["no product for KNIFE", 1, false],
+		]),
+	);
 });

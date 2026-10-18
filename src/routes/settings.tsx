@@ -1,17 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { Pencil, Trash2 } from "lucide-react";
+import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
+import {
+	ConnectionsCard,
+	connectionsData,
+} from "#/components/connections-card";
 import { DevicesCard, devicesData } from "#/components/devices-card";
 import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
-import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
+import { ActionSlot, IconAction, Row } from "#/components/rows";
+import { ListSkeleton } from "#/components/skeleton";
 import { MinStockForm } from "#/components/stock-range-form";
-import { TokensCard, tokensData } from "#/components/tokens-card";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { channelNames } from "#/lib/format";
 import { optimism, optimistic } from "#/lib/optimism";
-import { listDevices, listTokens } from "#/server/auth";
+import { listConnections, listDevices } from "#/server/auth";
 import {
 	getDefaultMinStock,
 	listLocations,
@@ -34,26 +39,28 @@ import {
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
-		const [locations, stores, boxes, units, devices, tokens, minStock] =
+		const [locations, stores, boxes, units, devices, connections, minStock] =
 			await Promise.all([
 				listLocations(),
 				listStores(),
 				listPackages(),
 				listPurchaseUnits(),
 				listDevices(),
-				listTokens(),
+				listConnections(),
 				getDefaultMinStock(),
 			]);
-		return { locations, stores, boxes, units, devices, tokens, minStock };
+		return {
+			locations,
+			stores,
+			boxes,
+			units,
+			devices,
+			connections,
+			minStock,
+		};
 	},
 	component: Settings,
-	pendingComponent: () => (
-		<ListSkeleton title="Settings" width="narrow">
-			<ListCard title="Sales channels" rows={3} />
-			<ListCard title="Locations" rows={3} />
-			<FieldsCard title="Stock range" />
-		</ListSkeleton>
-	),
+	pendingComponent: () => <ListSkeleton title="Settings" />,
 });
 
 const channels = Object.entries(channelNames).map(([id, name]) => ({
@@ -66,6 +73,9 @@ const storesData = optimistic<Store[]>("stores");
 const boxesData = optimistic<Box[]>("boxes");
 const unitsData = optimistic<Unit[]>("units");
 
+const plural = (n: number, one: string, many = `${one}s`) =>
+	`${n} ${n === 1 ? one : many}`;
+
 function Settings() {
 	const loaded = Route.useLoaderData();
 	const { locations, minStock } = loaded;
@@ -73,75 +83,74 @@ function Settings() {
 	const boxes = boxesData.useData("all", loaded.boxes);
 	const units = unitsData.useData("all", loaded.units);
 	const devices = devicesData.useData("all", loaded.devices);
-	const tokens = tokensData.useData("all", loaded.tokens);
+	const apps = connectionsData.useData("all", loaded.connections.apps);
+	// Two columns of cards sized to what they hold: stores and shipping on
+	// the left, purchasing and access on the right.
 	return (
-		<Page title="Settings" width="narrow">
-			<Card title="Sales channels" flush>
-				{/* Fixed columns, so the primary controls line up whatever the
-				    store names' lengths. */}
-				<ul>
-					{channels.map((c) => {
-						const connected = stores.filter((s) => s.channel === c.id);
-						return (connected.length > 0 ? connected : [null]).map((s) => (
-							<li
-								key={s?.id ?? c.id}
-								className="grid grid-cols-[8rem_minmax(0,1fr)_8.5rem] items-center gap-3 border-t px-4 py-3 first:border-t-0"
-							>
-								<span className="font-medium">{c.name}</span>
-								<span className="truncate">
-									{s ? (
-										<Badge tone="success">{s.name}</Badge>
-									) : (
-										<Badge>Not connected</Badge>
-									)}
-								</span>
-								<span className="flex justify-end">
-									{s && <PrimaryToggle store={s} />}
-								</span>
-							</li>
-						));
-					})}
-				</ul>
-				<p className="border-t px-4 py-3 text-muted-foreground">
-					The primary store's new SKUs become products. Other stores only match.
-				</p>
-			</Card>
-			<Card title="Locations" flush>
-				<ul>
-					{locations.map((l) => (
-						<Item key={l.id} label={l.name}>
-							<span className="text-muted-foreground">
-								{l.kind === "fba" ? "Amazon's warehouse" : "Ours"}
-							</span>
-						</Item>
-					))}
-				</ul>
-			</Card>
-			<DevicesCard devices={devices} />
-			<TokensCard tokens={tokens} />
-			<Boxes boxes={boxes} />
-			<Units units={units} />
-			<Card title="Stock range">
-				<MinStockForm
-					value={minStock}
-					onSave={(min) => saveDefaultMinStock({ data: { min } })}
-				/>
-				<p className="mt-2 text-muted-foreground">
-					Default for products without their own. Max follows sales, lead time,
-					cover, and safety stock; at least 5.
-				</p>
-			</Card>
-			<LabelPrintingCard />
+		<Page title="Settings">
+			<div className="grid items-start gap-4 lg:grid-cols-2">
+				<div className="flex flex-col gap-4">
+					<Channels stores={stores} />
+					<Locations locations={locations} />
+					<Boxes boxes={boxes} />
+					<LabelPrintingCard />
+				</div>
+				<div className="flex flex-col gap-4">
+					<Units units={units} />
+					<Card title="Stock range">
+						<MinStockForm
+							value={minStock}
+							onSave={(min) => saveDefaultMinStock({ data: { min } })}
+						/>
+					</Card>
+					<DevicesCard devices={devices} />
+					<ConnectionsCard endpoint={loaded.connections.endpoint} apps={apps} />
+				</div>
+			</div>
 		</Page>
 	);
 }
 
-function Item({ label, children }: { label: string; children: ReactNode }) {
+function Channels({ stores }: { stores: Store[] }) {
 	return (
-		<li className="flex items-center justify-between border-t px-4 py-3 first:border-t-0">
-			<span className="font-medium">{label}</span>
-			{children}
-		</li>
+		<Card title="Sales channels" flush>
+			<ul>
+				{channels.flatMap((c) => {
+					const connected = stores.filter((s) => s.channel === c.id);
+					return (connected.length > 0 ? connected : [null]).map((s) => (
+						<Row key={s?.id ?? c.id} actions={s && <PrimaryToggle store={s} />}>
+							<span className="w-24 shrink-0 font-medium">{c.name}</span>
+							<span className="truncate">
+								{s ? (
+									<Badge tone="success">{s.name}</Badge>
+								) : (
+									<Badge>Not connected</Badge>
+								)}
+							</span>
+						</Row>
+					));
+				})}
+			</ul>
+		</Card>
+	);
+}
+
+type Location = Awaited<ReturnType<typeof listLocations>>[number];
+
+function Locations({ locations }: { locations: Location[] }) {
+	return (
+		<Card title="Locations" flush>
+			<ul>
+				{locations.map((l) => (
+					<Row key={l.id}>
+						<span className="flex-1 font-medium">{l.name}</span>
+						<span className="text-muted-foreground">
+							{l.kind === "fba" ? "Amazon's warehouse" : "Ours"}
+						</span>
+					</Row>
+				))}
+			</ul>
+		</Card>
 	);
 }
 
@@ -149,12 +158,18 @@ type Box = Awaited<ReturnType<typeof listPackages>>[number];
 const inches = (mm: number) => Math.round((mm / 25.4) * 10) / 10;
 const ounces = (g: number) => Math.round((g / 28.349523125) * 10) / 10;
 
+// Boxes shown before "Show all", so a long list doesn't push the rest of
+// the column off the screen.
+const BOX_ROWS = 10;
+
 // The boxes quick ship knows by pin. Typing a box's pin fills in its size
 // and empty weight. Any box can be edited, pin included.
 function Boxes({ boxes }: { boxes: Box[] }) {
 	const [adding, setAdding] = useState(false);
 	const [editing, setEditing] = useState<number | null>(null);
 	const [saving, setSaving] = useState(false);
+	const [all, setAll] = useState(false);
+	const shown = all ? boxes : boxes.slice(0, BOX_ROWS);
 
 	// A new box's pin comes from the server, so the form waits for its answer.
 	async function add(values: BoxValues) {
@@ -209,53 +224,8 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 				)
 			}
 		>
-			{boxes.length === 0 && !adding && (
-				<p className="px-4 py-3 text-muted-foreground">
-					Type a box's pin in quick ship (Ctrl+Space).
-				</p>
-			)}
-			<ul>
-				{boxes.map((b) =>
-					editing === b.id ? (
-						<li key={b.id} className="border-t first:border-t-0">
-							<BoxForm
-								box={b}
-								onSave={(values) => edit(b, values)}
-								onCancel={() => setEditing(null)}
-							/>
-						</li>
-					) : (
-						<li
-							key={b.id}
-							className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
-						>
-							<span className="w-12 font-mono text-base font-bold">
-								{b.pin}
-							</span>
-							<span className="flex-1 font-medium">{b.name}</span>
-							<span className="text-muted-foreground tabular-nums">
-								{inches(b.lengthMm)} × {inches(b.widthMm)} ×{" "}
-								{inches(b.heightMm)} in
-							</span>
-							<span className="w-20 text-right text-muted-foreground tabular-nums">
-								{b.weightGrams ? `${ounces(b.weightGrams)} oz` : "No weight"}
-							</span>
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() => setEditing(b.id)}
-							>
-								Edit
-							</Button>
-							<Button size="sm" variant="ghost" onClick={() => remove(b)}>
-								Remove
-							</Button>
-						</li>
-					),
-				)}
-			</ul>
 			{adding && (
-				<div className="border-t">
+				<div className="px-4 pb-3">
 					<BoxForm
 						saving={saving}
 						onSave={(values) => add(values)}
@@ -263,7 +233,78 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 					/>
 				</div>
 			)}
+			{boxes.length === 0 && !adding ? (
+				<p className="px-4 pb-3 text-muted-foreground">None.</p>
+			) : (
+				<ul>
+					{shown.map((b) =>
+						editing === b.id ? (
+							<Row key={b.id}>
+								<BoxForm
+									box={b}
+									onSave={(values) => edit(b, values)}
+									onCancel={() => setEditing(null)}
+								/>
+							</Row>
+						) : (
+							<Row
+								key={b.id}
+								actions={
+									<>
+										<IconAction
+											icon={Pencil}
+											label="Edit"
+											onClick={() => setEditing(b.id)}
+										/>
+										<IconAction
+											icon={Trash2}
+											label="Remove"
+											onClick={() => remove(b)}
+										/>
+									</>
+								}
+							>
+								<span className="w-10 shrink-0 font-mono text-base font-bold">
+									{b.pin}
+								</span>
+								<BoxLabel box={b} />
+							</Row>
+						),
+					)}
+					{boxes.length > BOX_ROWS && (
+						<li className="border-t">
+							<button
+								type="button"
+								onClick={() => setAll((a) => !a)}
+								className="w-full px-4 py-2.5 text-left text-link hover:bg-subtle"
+							>
+								{all ? "Show fewer" : `Show all ${boxes.length}`}
+							</button>
+						</li>
+					)}
+				</ul>
+			)}
 		</Card>
+	);
+}
+
+// A box named after its size (the default) shows the size once.
+function BoxLabel({ box }: { box: Box }) {
+	const size = `${inches(box.lengthMm)} × ${inches(box.widthMm)} × ${inches(box.heightMm)}`;
+	const bare = (t: string) =>
+		t.toLowerCase().replace(/\s+/g, "").replace(/in$/, "").replaceAll("×", "x");
+	const named = bare(box.name) !== bare(size);
+	const detail = [
+		named && `${size} in`,
+		box.weightGrams > 0 && `${ounces(box.weightGrams)} oz`,
+	]
+		.filter(Boolean)
+		.join(" · ");
+	return (
+		<div className="min-w-0 flex-1 tabular-nums">
+			<p className="truncate font-medium">{named ? box.name : `${size} in`}</p>
+			{detail && <p className="text-xs text-muted-foreground">{detail}</p>}
+		</div>
 	);
 }
 
@@ -331,7 +372,7 @@ function BoxForm({
 		<form
 			onSubmit={submit}
 			onKeyDown={(e) => e.key === "Escape" && onCancel()}
-			className="flex flex-wrap items-end gap-2 px-4 py-3"
+			className="flex w-full flex-wrap items-end gap-2"
 		>
 			<label className="flex flex-1 flex-col gap-1">
 				<span className="text-muted-foreground">Name</span>
@@ -427,9 +468,11 @@ function PrimaryToggle({ store }: { store: Store }) {
 			</Button>
 		</Tip>
 	) : (
-		<Button size="sm" variant="ghost" onClick={() => set(store.id)}>
-			Make primary
-		</Button>
+		<Tip content="Its new SKUs become products">
+			<Button size="sm" variant="ghost" onClick={() => set(store.id)}>
+				Make primary
+			</Button>
+		</Tip>
 	);
 }
 
@@ -496,83 +539,80 @@ function Units({ units }: { units: Unit[] }) {
 	}
 
 	return (
-		<div id="units">
-			<Card
-				title="Purchase units"
-				flush
-				aside={
-					!adding && (
-						<Button size="sm" variant="outline" onClick={() => setAdding(true)}>
-							Add unit
-						</Button>
-					)
-				}
-			>
-				<ul>
-					{units.map((u) =>
-						renaming === u.name ? (
-							<li key={u.name} className="border-t first:border-t-0">
-								<UnitNameForm
-									initial={u.name}
-									onSave={(to) => rename(u.name, to)}
-									onCancel={() => setRenaming(null)}
-								/>
-							</li>
-						) : (
-							<li
-								key={u.name}
-								className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
-							>
-								<span className="flex-1 font-medium">{u.name}</span>
-								<span className="text-muted-foreground">
-									{u.name === "EACH"
-										? "One of the product"
-										: u.products === 0
-											? "Not used"
-											: `${u.products} ${u.products === 1 ? "product" : "products"}`}
-								</span>
-								{u.name !== "EACH" && (
+		<Card
+			title="Purchase units"
+			flush
+			aside={
+				!adding && (
+					<Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+						Add unit
+					</Button>
+				)
+			}
+		>
+			{adding && (
+				<div className="px-4 pb-3">
+					<UnitNameForm
+						initial=""
+						onSave={(name) => add(name)}
+						onCancel={() => setAdding(false)}
+					/>
+				</div>
+			)}
+			<ul>
+				{units.map((u) =>
+					renaming === u.name ? (
+						<Row key={u.name}>
+							<UnitNameForm
+								initial={u.name}
+								onSave={(to) => rename(u.name, to)}
+								onCancel={() => setRenaming(null)}
+							/>
+						</Row>
+					) : (
+						<Row
+							key={u.name}
+							actions={
+								u.name === "EACH" ? (
 									<>
-										<Button
-											size="sm"
-											variant="ghost"
+										<ActionSlot />
+										<ActionSlot />
+									</>
+								) : (
+									<>
+										<IconAction
+											icon={Pencil}
+											label="Rename"
 											onClick={() => setRenaming(u.name)}
-										>
-											Rename
-										</Button>
-										<Tip
-											content={
+										/>
+										<IconAction
+											icon={Trash2}
+											label="Remove"
+											tip={
 												u.products > 0
-													? `Used by ${u.products} ${u.products === 1 ? "product" : "products"}`
+													? `Used by ${plural(u.products, "product")}`
 													: undefined
 											}
-										>
-											<Button
-												size="sm"
-												variant="ghost"
-												disabled={u.products > 0}
-												onClick={() => remove(u)}
-											>
-												Remove
-											</Button>
-										</Tip>
+											disabled={u.products > 0}
+											onClick={() => remove(u)}
+										/>
 									</>
-								)}
-							</li>
-						),
-					)}
-				</ul>
-				{adding && (
-					<div className="border-t">
-						<UnitNameForm
-							initial=""
-							onSave={(name) => add(name)}
-							onCancel={() => setAdding(false)}
-						/>
-					</div>
+								)
+							}
+						>
+							<span className="flex-1 font-medium">{u.name}</span>
+							<span className="text-muted-foreground">
+								{u.name === "EACH"
+									? "Built in"
+									: u.products === 0
+										? "Not used"
+										: plural(u.products, "product")}
+							</span>
+						</Row>
+					),
 				)}
-			</Card>
-		</div>
+			</ul>
+		</Card>
 	);
 }
 
@@ -588,7 +628,7 @@ function UnitNameForm({
 	const [name, setName] = useState(initial);
 	return (
 		<form
-			className="flex items-center gap-2 px-4 py-3"
+			className="flex w-full items-center gap-2"
 			onSubmit={(e) => {
 				e.preventDefault();
 				onSave(name);

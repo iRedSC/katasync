@@ -1,7 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { eq, sql } from "drizzle-orm";
-import { beforeEach, describe, expect, test } from "vitest";
-import { checkApiToken, createApiToken, revokeApiToken } from "#/auth/tokens";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
@@ -113,7 +112,8 @@ describe("read-only queries", () => {
 	test("refuses sign-in tables and file or remote functions", async () => {
 		for (const text of [
 			"select * from sessions",
-			"select token_hash from api_tokens",
+			"select token_hash from oauth_tokens",
+			"select * from oauth_clients",
 			"select * from public.passkeys",
 			'select * from "setup_links"',
 			"select count(*) from auth_challenges",
@@ -136,13 +136,17 @@ describe("read-only queries", () => {
 					await db.execute(sql`reset session authorization`);
 				}
 			});
-		await createApiToken(db, "Claude");
-		const escaped = 'select token_hash from U&"api\\005ftokens"';
+		await db.insert(schema.oauthClients).values({
+			id: "c",
+			name: "Claude",
+			redirectUris: ["https://claude.ai/cb"],
+		});
+		const escaped = 'select id from U&"oauth\\005fclients"';
 		// The name check alone misses it: as the owner it reads the hash.
 		expect((await readOnlyQuery(escaped)).rows).toHaveLength(1);
 		for (const text of [
 			escaped,
-			"select query_to_xml('select token_hash from api_'||'tokens', true, false, '')",
+			"select query_to_xml('select id from oauth_'||'clients', true, false, '')",
 			// Switching role back first doesn't help: katasync_mcp isn't a member.
 			`select * from (select U&"set\\005fconfig"('role', 'postgres', true) a,
 				query_to_xml('select * from sess'||'ions', true, false, '') b) q`,
@@ -198,18 +202,6 @@ describe("read-only queries", () => {
 		expect(tables.sessions).toBeUndefined();
 		expect(tables.qz_certificate).toBeUndefined();
 	});
-});
-
-test("API tokens work until revoked, and only their hash is kept", async () => {
-	const token = await createApiToken(db, " Claude ");
-	expect(token).toMatch(/^ks_/);
-	const row = await checkApiToken(db, token);
-	expect(row?.name).toBe("Claude");
-	expect(row?.tokenHash).not.toBe(token);
-	expect(await checkApiToken(db, "ks_made-up")).toBeNull();
-	expect(await checkApiToken(db, token.slice(3))).toBeNull();
-	await revokeApiToken(db, row?.tokenHash ?? "");
-	expect(await checkApiToken(db, token)).toBeNull();
 });
 
 describe("over MCP", () => {
@@ -511,6 +503,93 @@ describe("over MCP", () => {
 		await tool("undo_po_receipt", { receipt_id: got.data.receiptId });
 		const [after] = await db.select().from(schema.stockLevels);
 		expect(after.onHand).toBe(0);
+	});
+
+	test("reports damage with a photo link, and takes it back", async () => {
+		vi.stubEnv("AUTH_ORIGIN", "https://katasync.test");
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		const [location] = await db.select().from(schema.locations);
+		const [po] = await db
+			.insert(schema.purchaseOrders)
+			.values({ supplierId: canam, locationId: location.id, status: "sent" })
+			.returning();
+		await db.insert(schema.purchaseOrderLines).values({
+			purchaseOrderId: po.id,
+			productId: blade,
+			supplierCount: 1,
+			quantity: 2,
+		});
+		await tool("receive_po_line", { po: po.id, sku: "BLADE", quantity: 2 });
+		const got = await tool("report_damage", {
+			po: po.id,
+			sku: "BLADE",
+			quantity: 1,
+			description: "handle snapped",
+		});
+		expect(got.data.photoUpload.url).toMatch(
+			/^https:\/\/katasync\.test\/api\/uploads\/damage\/[\w-]{43}$/,
+		);
+		const shown = await tool("get_purchase_order", { id: po.id });
+		expect(shown.data.damages).toEqual([
+			{
+				damageId: got.data.damageId,
+				sku: "BLADE",
+				quantity: 1,
+				description: "handle snapped",
+				photos: 0,
+			},
+		]);
+		const [level] = await db.select().from(schema.stockLevels);
+		expect(level.onHand).toBe(1);
+		await tool("remove_damage", { damage_id: got.data.damageId });
+		const [after] = await db.select().from(schema.stockLevels);
+		expect(after.onHand).toBe(2);
+		vi.unstubAllEnvs();
+	});
+
+	test("notes a line for receiving, and takes the note off", async () => {
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		const [location] = await db.select().from(schema.locations);
+		const [po] = await db
+			.insert(schema.purchaseOrders)
+			.values({ supplierId: canam, locationId: location.id, status: "sent" })
+			.returning();
+		await db.insert(schema.purchaseOrderLines).values({
+			purchaseOrderId: po.id,
+			productId: blade,
+			supplierCount: 1,
+			quantity: 2,
+		});
+		const set = await tool("set_po_line_note", {
+			po: po.id,
+			sku: "BLADE",
+			note: "  1 crushed, kept  ",
+		});
+		expect(set.data).toMatchObject({ was: null, note: "1 crushed, kept" });
+		const shown = await tool("get_purchase_order", { id: po.id });
+		expect(shown.data.lines[0].receivingNote).toBe("1 crushed, kept");
+		const cleared = await tool("set_po_line_note", {
+			po: po.id,
+			sku: "BLADE",
+			note: " ",
+		});
+		expect(cleared.data).toMatchObject({ was: "1 crushed, kept", note: null });
+		await db
+			.update(schema.purchaseOrders)
+			.set({ status: "draft" })
+			.where(eq(schema.purchaseOrders.id, po.id));
+		const onDraft = await tool("set_po_line_note", {
+			po: po.id,
+			sku: "BLADE",
+			note: "x",
+		});
+		expect(onDraft.isError).toBe(true);
 	});
 
 	test("changes a sent PO to match what came, without changing what was sent", async () => {
@@ -856,7 +935,7 @@ describe("what's kept of a call's arguments", () => {
 	};
 
 	test("leaves out credentials, by name and by look, at any depth", async () => {
-		const token = await createApiToken(db, "Other");
+		const token = "ks_abcdefghijklmnopqrstuvwxyz0123";
 		await logCalls(
 			db,
 			"Claude",

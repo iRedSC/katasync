@@ -3,16 +3,23 @@ import {
 	AlertCircle,
 	AlertTriangle,
 	CheckCircle2,
-	ChevronDown,
-	ChevronRight,
 	Copy,
 	Loader2,
 	PlayCircle,
+	RotateCcw,
+	X,
 	XCircle,
 } from "lucide-react";
 import { type ReactNode, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Badge, Card, Page, type Tone } from "#/components/page";
+import {
+	DOT,
+	PanelHeader,
+	SidePanel,
+	Tile,
+	TileGrid,
+} from "#/components/panel";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
@@ -22,13 +29,16 @@ import {
 } from "#/components/ui/popover";
 import { Tip } from "#/components/ui/tooltip";
 import type { CheckTarget } from "#/diagnostics/checks";
+import type { DismissTarget } from "#/diagnostics/dismissals";
 import type { Health, Hint } from "#/diagnostics/health";
 import { channelName, formatCount, formatDateTime } from "#/lib/format";
-import { optimism } from "#/lib/optimism";
+import { optimism, optimistic } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import {
 	type Diagnostics,
+	dismissProblem,
 	getDiagnostics,
+	restoreProblem,
 	runConnectionCheck,
 } from "#/server/diagnostics";
 import { resendTracking, retryStorefront } from "#/server/shipping";
@@ -43,6 +53,8 @@ export const Route = createFileRoute("/diagnostics")({
 		</ListSkeleton>
 	),
 });
+
+const diagnosticsData = optimistic<Diagnostics>("diagnostics");
 
 const HEALTH: Record<Health, { label: string; tone?: Tone }> = {
 	healthy: { label: "Healthy", tone: "success" },
@@ -67,6 +79,9 @@ function copy(text: string) {
 	navigator.clipboard.writeText(text).then(() => toast.success("Copied"));
 }
 
+// Errors can be pretty-printed JSON; a row has one line for them.
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+
 // The worker being down stops everything else on the page, so it sits in the
 // header, opening to what to run.
 function SyncStopped({ lastStartedAt }: { lastStartedAt: Date | null }) {
@@ -81,8 +96,7 @@ function SyncStopped({ lastStartedAt }: { lastStartedAt: Date | null }) {
 					{lastStartedAt
 						? `Last sync ${formatDateTime(lastStartedAt)}. `
 						: "Never synced. "}
-					Until it runs, no new orders and no stock changes. On the katasync
-					machine, run:
+					On the katasync machine, run:
 				</p>
 				<button
 					type="button"
@@ -97,8 +111,9 @@ function SyncStopped({ lastStartedAt }: { lastStartedAt: Date | null }) {
 }
 
 function DiagnosticsPage() {
-	const d = Route.useLoaderData();
+	const d = diagnosticsData.useData("all", Route.useLoaderData());
 	const router = useRouter();
+	const [sheet, setSheet] = useState<CheckTarget | null>(null);
 
 	return (
 		<Page
@@ -118,230 +133,669 @@ function DiagnosticsPage() {
 				</>
 			}
 		>
-			<Card flush>
-				<ul>
-					{d.channels.map((c) => (
-						<SummaryRow
-							key={c.channel}
-							href={`#sync-${c.channel}`}
-							name={channelName(c.channel)}
-							status={HEALTH[c.health]}
-							detail={`Last good sync ${ago(c.lastSuccessAt)}`}
-						/>
-					))}
-					<SummaryRow
-						href="#tracking"
-						name="Tracking handoff"
-						status={
-							d.handoffs.length > 0
-								? {
-										label: `${d.handoffs.length} not sent`,
-										tone: "critical",
-									}
-								: { label: "All sent", tone: "success" }
-						}
-					/>
-					<SummaryRow
-						href="#storefront-tracking"
-						name="Storefront tracking"
-						status={
-							d.storefrontTracking.length > 0
-								? {
-										label: `${d.storefrontTracking.length} to fix`,
-										tone: "warning",
-									}
-								: { label: "Up to date", tone: "success" }
-						}
-						detail="Shippo labels on Shopify orders"
-					/>
-					<SummaryRow
-						href="#charges"
-						name="Marketplace charges"
-						status={
-							d.charges.length > 0
-								? {
-										label: `${d.charges.reduce((n, c) => n + c.orders, 0)} orders failed`,
-										tone: "warning",
-									}
-								: { label: "Reading", tone: "success" }
-						}
-						detail="Fees and labels for profit"
-					/>
-					<SummaryRow
-						href="#unmapped"
-						name="Unmatched SKUs"
-						status={
-							d.unmapped.some((u) => u.missed > 0)
-								? { label: "Stock not taken", tone: "warning" }
-								: d.unmapped.length > 0
-									? { label: `${d.unmapped.length} in history` }
-									: { label: "None", tone: "success" }
-						}
-					/>
-					<SummaryRow
-						href="#services"
-						name="Shipping labels and email"
-						status={
-							!d.services.shippo.configured || !d.services.email.configured
-								? { label: "Not set up", tone: "warning" }
-								: d.services.shippo.test
-									? { label: "Test labels", tone: "warning" }
-									: { label: "Set up", tone: "success" }
-						}
-						detail="Shippo and Resend"
-					/>
-				</ul>
-			</Card>
-
-			{d.channels.map((c) => (
-				<ChannelCard key={c.channel} data={c} />
-			))}
-			<TrackingCard handoffs={d.handoffs} />
-			<StorefrontTrackingCard rows={d.storefrontTracking} />
-			<ChargesCard rows={d.charges} />
-			<UnmappedCard rows={d.unmapped} />
-			<ServicesCard services={d.services} />
-			<ClaudeCard calls={d.claude} />
+			<Connections d={d} open={setSheet} />
+			<Problems d={d} open={setSheet} />
+			<AgentChanges calls={d.claude} />
+			<Sheet d={d} target={sheet} onClose={() => setSheet(null)} />
 		</Page>
 	);
 }
 
-function SummaryRow({
-	href,
-	name,
-	status,
-	detail,
+// Connections
+
+type ChannelData = Diagnostics["channels"][number];
+
+function channelDetail(c: ChannelData) {
+	switch (c.health) {
+		case "healthy":
+		case "degraded":
+			return `Synced ${ago(c.lastSuccessAt)}`;
+		case "failing":
+			return `Failing since ${ago(c.failingSince)}`;
+		case "stale":
+			return `Last sync ${ago(c.lastSuccessAt)}`;
+		default:
+			return HEALTH[c.health].label;
+	}
+}
+
+function shippoStatus(s: Diagnostics["services"]["shippo"]) {
+	if (!s.configured) return { label: "Not set up", tone: "warning" as const };
+	if (s.test) return { label: "Test key", tone: "warning" as const };
+	return { label: "Live", tone: "success" as const };
+}
+
+function emailStatus(s: Diagnostics["services"]["email"]) {
+	return s.configured
+		? { label: "Set up", tone: "success" as const }
+		: { label: "Not set up", tone: "warning" as const };
+}
+
+function Connections({
+	d,
+	open,
 }: {
-	href: string;
-	name: string;
-	status: { label: string; tone?: Tone };
-	detail?: string;
+	d: Diagnostics;
+	open: (target: CheckTarget) => void;
+}) {
+	const shippo = shippoStatus(d.services.shippo);
+	const email = emailStatus(d.services.email);
+	return (
+		<TileGrid>
+			{d.channels.map((c) => (
+				<Tile
+					key={c.channel}
+					name={channelName(c.channel)}
+					status={HEALTH[c.health].tone ?? "neutral"}
+					detail={channelDetail(c)}
+					onClick={() => open(c.channel)}
+				/>
+			))}
+			<Tile
+				name="Shippo"
+				status={shippo.tone}
+				detail={shippo.label}
+				onClick={() => open("shippo")}
+			/>
+			<Tile
+				name="PO email"
+				status={email.tone}
+				detail={email.label}
+				onClick={() => open("email")}
+			/>
+		</TileGrid>
+	);
+}
+
+// Problems: one list of everything that needs someone, each row with what
+// can be done about it.
+
+type Problem =
+	| { kind: "sync"; channel: ChannelData }
+	| { kind: "handoff"; row: Diagnostics["handoffs"][number] }
+	| { kind: "storefront"; row: Diagnostics["storefrontTracking"][number] }
+	| { kind: "charges"; row: Diagnostics["charges"][number] }
+	| {
+			kind: "issue";
+			channel: ChannelData["channel"];
+			group: ChannelData["issues"][number];
+	  };
+
+const GROUPS = {
+	sync: "Sync",
+	tracking: "Tracking",
+	fees: "Fees",
+	orders: "Orders",
+} as const;
+type Group = keyof typeof GROUPS;
+type Filter = Group | "all" | "dismissed";
+
+function groupOf(p: Problem): Group {
+	switch (p.kind) {
+		case "sync":
+			return "sync";
+		case "handoff":
+		case "storefront":
+			return "tracking";
+		case "charges":
+			return "fees";
+		case "issue":
+			return "orders";
+	}
+}
+
+function isDismissed(p: Problem) {
+	switch (p.kind) {
+		case "sync":
+			return false;
+		case "issue":
+			return p.group.dismissed;
+		default:
+			return p.row.dismissed;
+	}
+}
+
+// Sync failing goes away only when a pass works, so it can't be dismissed.
+function targetOf(p: Problem): DismissTarget | null {
+	switch (p.kind) {
+		case "sync":
+			return null;
+		case "handoff":
+			return {
+				kind: "handoff",
+				dispatchId: p.row.dispatchId,
+				orderId: p.row.orderId,
+			};
+		case "storefront":
+			return { kind: "storefront", shipmentId: p.row.shipmentId };
+		case "charges":
+			return {
+				kind: "charges",
+				billedBy: p.row.billedBy,
+				error: p.row.error,
+			};
+		case "issue":
+			return { kind: "issue", channel: p.channel, message: p.group.message };
+	}
+}
+
+function problemsOf(d: Diagnostics): Problem[] {
+	return [
+		...d.channels
+			.filter(
+				(c) =>
+					c.health === "failing" || (d.worker.alive && c.health === "stale"),
+			)
+			.map((channel) => ({ kind: "sync" as const, channel })),
+		...d.handoffs.map((row) => ({ kind: "handoff" as const, row })),
+		...d.storefrontTracking.map((row) => ({
+			kind: "storefront" as const,
+			row,
+		})),
+		...d.charges.map((row) => ({ kind: "charges" as const, row })),
+		...d.channels.flatMap((c) =>
+			c.issues
+				.filter((group) => !group.unmatched)
+				.map((group) => ({
+					kind: "issue" as const,
+					channel: c.channel,
+					group,
+				})),
+		),
+	];
+}
+
+// Marks what a target covers on the page, until the reload shows it.
+function setDismissed(
+	d: Diagnostics,
+	t: DismissTarget,
+	dismissed: boolean,
+): Diagnostics {
+	switch (t.kind) {
+		case "handoff":
+			return {
+				...d,
+				handoffs: d.handoffs.map((r) =>
+					r.dispatchId === t.dispatchId && r.orderId === t.orderId
+						? { ...r, dismissed }
+						: r,
+				),
+			};
+		case "storefront":
+			return {
+				...d,
+				storefrontTracking: d.storefrontTracking.map((r) =>
+					r.shipmentId === t.shipmentId ? { ...r, dismissed } : r,
+				),
+			};
+		case "charges":
+			return {
+				...d,
+				charges: merge(
+					d.charges.map((r) =>
+						r.billedBy === t.billedBy && r.error === t.error
+							? { ...r, dismissed }
+							: r,
+					),
+					(r) => `${r.billedBy} ${r.error} ${r.dismissed}`,
+					(a, b) => ({
+						...a,
+						orders: a.orders + b.orders,
+						lastAt: a.lastAt > b.lastAt ? a.lastAt : b.lastAt,
+					}),
+				),
+			};
+		case "issue":
+			return {
+				...d,
+				channels: d.channels.map((c) =>
+					c.channel === t.channel
+						? {
+								...c,
+								issues: merge(
+									c.issues.map((g) =>
+										g.message === t.message ? { ...g, dismissed } : g,
+									),
+									(g) => `${g.message} ${g.dismissed}`,
+									(a, b) => ({
+										...a,
+										count: a.count + b.count,
+										references: [...a.references, ...b.references],
+									}),
+								),
+							}
+						: c,
+				),
+			};
+	}
+}
+
+// A group split into dismissed and not becomes one again once it's all
+// dismissed (or all restored).
+function merge<T>(rows: T[], id: (row: T) => string, add: (a: T, b: T) => T) {
+	const byId = new Map<string, T>();
+	for (const row of rows) {
+		const seen = byId.get(id(row));
+		byId.set(id(row), seen ? add(seen, row) : row);
+	}
+	return [...byId.values()];
+}
+
+function setDismissedNow(target: DismissTarget, dismissed: boolean) {
+	return optimism.change({
+		label: dismissed ? "Dismissing" : "Restoring",
+		patch: diagnosticsData.patch("all", (d) =>
+			setDismissed(d, target, dismissed),
+		),
+		send: (): Promise<unknown> =>
+			dismissed
+				? dismissProblem({ data: { target } })
+				: restoreProblem({ data: { target } }),
+	});
+}
+
+async function dismissNow(target: DismissTarget) {
+	const r = await setDismissedNow(target, true);
+	if (!r) return;
+	toast("Dismissed", {
+		action: { label: "Undo", onClick: () => setDismissedNow(target, false) },
+	});
+}
+
+function Problems({
+	d,
+	open,
+}: {
+	d: Diagnostics;
+	open: (target: CheckTarget) => void;
+}) {
+	const [filter, setFilter] = useState<Filter>("all");
+	const all = problemsOf(d);
+	const active = all.filter((p) => !isDismissed(p));
+	const dismissed = all.filter(isDismissed);
+	const counts = Object.fromEntries(
+		(Object.keys(GROUPS) as Group[]).map((g) => [
+			g,
+			active.filter((p) => groupOf(p) === g).length,
+		]),
+	) as Record<Group, number>;
+	// A filter left empty (its last row dismissed) falls back to everything.
+	const shown: Filter =
+		filter === "all" ||
+		(filter === "dismissed" ? dismissed.length > 0 : counts[filter] > 0)
+			? filter
+			: "all";
+	const rows =
+		shown === "all"
+			? active
+			: shown === "dismissed"
+				? dismissed
+				: active.filter((p) => groupOf(p) === shown);
+
+	return (
+		<Card
+			title={`Needs you${active.length > 0 ? ` · ${formatCount(active.length)}` : ""}`}
+			flush
+			aside={
+				<div className="flex items-center gap-1">
+					{(Object.keys(GROUPS) as Group[])
+						.filter((g) => counts[g] > 0)
+						.map((g) => (
+							<Chip
+								key={g}
+								on={shown === g}
+								onClick={() => setFilter(shown === g ? "all" : g)}
+							>
+								{GROUPS[g]} {formatCount(counts[g])}
+							</Chip>
+						))}
+					{dismissed.length > 0 && (
+						<Chip
+							on={shown === "dismissed"}
+							onClick={() =>
+								setFilter(shown === "dismissed" ? "all" : "dismissed")
+							}
+						>
+							Dismissed {formatCount(dismissed.length)}
+						</Chip>
+					)}
+				</div>
+			}
+		>
+			{rows.length === 0 ? (
+				<p className="px-4 pb-4 text-muted-foreground">Nothing needs you.</p>
+			) : (
+				<ul>
+					{rows.map((p) => (
+						<ProblemRow
+							key={`${problemKey(p)}:${isDismissed(p)}`}
+							problem={p}
+							open={open}
+						/>
+					))}
+				</ul>
+			)}
+		</Card>
+	);
+}
+
+function problemKey(p: Problem) {
+	switch (p.kind) {
+		case "sync":
+			return `sync:${p.channel.channel}`;
+		case "handoff":
+			return `handoff:${p.row.dispatchId}:${p.row.orderId}`;
+		case "storefront":
+			return `storefront:${p.row.shipmentId}`;
+		case "charges":
+			return `charges:${p.row.billedBy}:${p.row.error}`;
+		case "issue":
+			return `issue:${p.channel}:${p.group.message}`;
+	}
+}
+
+function Chip({
+	on,
+	onClick,
+	children,
+}: {
+	on: boolean;
+	onClick: () => void;
+	children: ReactNode;
 }) {
 	return (
-		<li className="border-t first:border-t-0">
-			<a
-				href={href}
-				className="grid grid-cols-[12rem_10rem_minmax(0,1fr)] items-center gap-3 px-4 py-2.5 hover:bg-subtle"
-			>
-				<span className="font-medium">{name}</span>
-				<span>
-					<Badge tone={status.tone}>{status.label}</Badge>
-				</span>
-				<span className="truncate text-muted-foreground">{detail}</span>
-			</a>
+		<button
+			type="button"
+			onClick={onClick}
+			className={cn(
+				"h-6 rounded-full px-2.5 text-xs font-medium whitespace-nowrap",
+				on
+					? "bg-foreground text-background"
+					: "text-muted-foreground hover:bg-surface-strong",
+			)}
+		>
+			{children}
+		</button>
+	);
+}
+
+function ProblemRow({
+	problem: p,
+	open,
+}: {
+	problem: Problem;
+	open: (target: CheckTarget) => void;
+}) {
+	const target = targetOf(p);
+	const dismissed = isDismissed(p);
+	const { tone, title, detail, at, action } = describe(p, open);
+	return (
+		<li className="grid grid-cols-[0.5rem_minmax(0,1fr)_auto_2rem] items-center gap-3 border-t px-4 py-2.5">
+			<span className={cn("size-2 rounded-full", DOT[tone])} />
+			<div className="min-w-0">
+				<p className="truncate font-medium">{title}</p>
+				<Tip content={detail}>
+					<p className="truncate text-xs text-muted-foreground">
+						<span className="font-mono">{oneLine(detail)}</span>
+						{at && ` · ${at}`}
+					</p>
+				</Tip>
+			</div>
+			<div className="justify-self-end">{!dismissed && action}</div>
+			<div className="flex justify-center">
+				{target && (
+					<Tip content={dismissed ? "Restore" : "Dismiss"}>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							aria-label={dismissed ? "Restore" : "Dismiss"}
+							onClick={() =>
+								dismissed ? setDismissedNow(target, false) : dismissNow(target)
+							}
+						>
+							{dismissed ? <RotateCcw /> : <X />}
+						</Button>
+					</Tip>
+				)}
+			</div>
 		</li>
 	);
 }
 
-type ChannelData = Diagnostics["channels"][number];
-
-function ChannelCard({ data: c }: { data: ChannelData }) {
-	const [showRuns, setShowRuns] = useState(false);
-	const status = HEALTH[c.health];
+function OrderLink({ id, name }: { id: number; name: string }) {
 	return (
-		<div id={`sync-${c.channel}`} className="scroll-mt-16">
-			<Card
-				title={
-					<span className="flex items-center gap-2">
-						{channelName(c.channel)} orders
-						<Badge tone={status.tone}>{status.label}</Badge>
-					</span>
-				}
-				aside={<CheckButton target={c.channel} />}
-			>
-				<div className="flex flex-col gap-3">
-					<Facts>
-						<Fact label="Last good sync">
-							{c.lastSuccessAt
-								? `${formatDateTime(c.lastSuccessAt)} (${ago(c.lastSuccessAt)})`
-								: "Never"}
-						</Fact>
-						{c.consecutiveFailures > 0 && c.failingSince && (
-							<Fact label="Failing since">
-								<span className="text-critical-text">
-									{formatDateTime(c.failingSince)}, {c.consecutiveFailures}{" "}
-									{c.consecutiveFailures === 1 ? "pass" : "passes"} in a row
-								</span>
-							</Fact>
-						)}
-						{c.missing.length > 0 && (
-							<Fact label="Missing">
-								<span className="font-mono text-xs">
-									{c.missing.join(", ")}
-								</span>
-							</Fact>
-						)}
-					</Facts>
-					{c.latestError && (
-						<ErrorBlock title="Latest error" text={c.latestError} />
-					)}
-					{c.hint && <HintBlock hint={c.hint} />}
-					<CheckResults target={c.channel} />
-					{c.issues.length > 0 && (
-						<div className="flex flex-col gap-2">
-							<p className="font-medium">
-								Latest pass ({formatCount(c.issueCount)})
-							</p>
-							{c.issues.map((g) => (
-								<div
-									key={g.message}
-									className="rounded-lg border border-warning-border bg-warning-surface p-3"
-								>
-									<div className="flex items-start justify-between gap-3">
-										<span className="font-mono text-xs break-words">
-											{g.message}
-										</span>
-										<span className="shrink-0 text-xs font-medium">
-											{formatCount(g.count)}{" "}
-											{g.count === 1 ? "order" : "orders"}
-										</span>
-									</div>
-									{g.references.length > 0 && (
-										<p className="mt-1 text-xs text-muted-foreground">
-											{g.references.join(", ")}
-											{g.count > g.references.length &&
-												`, +${formatCount(g.count - g.references.length)} more`}
-										</p>
-									)}
-									{g.hint && (
-										<p className="mt-2 text-xs">
-											<span className="font-medium">{g.hint.title}</span>{" "}
-											{g.hint.action}
-										</p>
-									)}
-								</div>
-							))}
-						</div>
-					)}
-					{c.runs.length > 0 && (
-						<div>
-							<button
-								type="button"
-								onClick={() => setShowRuns((o) => !o)}
-								className="flex items-center gap-1 font-medium"
-							>
-								{showRuns ? (
-									<ChevronDown className="size-4" />
-								) : (
-									<ChevronRight className="size-4" />
-								)}
-								Recent passes ({c.runs.length})
-							</button>
-							{showRuns && <RunTable runs={c.runs} />}
-						</div>
-					)}
-				</div>
-			</Card>
-		</div>
+		<Link
+			to="/orders/$id"
+			params={{ id: String(id) }}
+			className="hover:underline"
+		>
+			{name}
+		</Link>
+	);
+}
+
+function describe(
+	p: Problem,
+	open: (target: CheckTarget) => void,
+): {
+	tone: Tone;
+	title: ReactNode;
+	detail: string;
+	at: string | null;
+	action: ReactNode;
+} {
+	switch (p.kind) {
+		case "sync": {
+			const c = p.channel;
+			const name = channelName(c.channel);
+			const details = (
+				<Button size="sm" variant="outline" onClick={() => open(c.channel)}>
+					Details
+				</Button>
+			);
+			return c.health === "failing"
+				? {
+						tone: "critical",
+						title: `${name} sync failing`,
+						detail: c.latestError ?? "",
+						at: `since ${ago(c.failingSince)}`,
+						action: details,
+					}
+				: {
+						tone: "warning",
+						title: `${name} not syncing`,
+						detail: `Last good sync ${ago(c.lastSuccessAt)}`,
+						at: null,
+						action: details,
+					};
+		}
+		case "handoff":
+			return {
+				tone: "critical",
+				title: (
+					<>
+						<OrderLink id={p.row.orderId} name={p.row.orderName} /> tracking not
+						sent to {channelName(p.row.channel)}
+					</>
+				),
+				detail: p.row.error ?? "",
+				at: ago(p.row.createdAt),
+				action: (
+					<RetryButton
+						send={() =>
+							resendTracking({ data: { dispatchId: p.row.dispatchId } })
+						}
+					/>
+				),
+			};
+		case "storefront":
+			return {
+				tone: "warning",
+				title: (
+					<>
+						<OrderLink id={p.row.orderId} name={p.row.orderName} /> storefront
+						tracking not {p.row.voided ? "removed" : "saved"}
+					</>
+				),
+				detail: p.row.error,
+				at: ago(p.row.createdAt),
+				action: (
+					<RetryButton
+						send={() => retryStorefront({ data: { id: p.row.shipmentId } })}
+					/>
+				),
+			};
+		case "charges":
+			return {
+				tone: "warning",
+				title: `${channelName(p.row.billedBy)} fees unread on ${formatCount(p.row.orders)} ${p.row.orders === 1 ? "order" : "orders"}`,
+				detail: p.row.error,
+				at: ago(p.row.lastAt),
+				action: null,
+			};
+		case "issue": {
+			const g = p.group;
+			const more = g.count - g.references.length;
+			return {
+				tone: "warning",
+				title: `${channelName(p.channel)}: ${g.message}`,
+				detail: `${formatCount(g.count)} ${g.count === 1 ? "order" : "orders"}${g.references.length > 0 ? `: ${g.references.join(", ")}${more > 0 ? `, +${formatCount(more)}` : ""}` : ""}`,
+				at: null,
+				action: null,
+			};
+		}
+	}
+}
+
+// Sending is outside the app, so the button waits for the server and the
+// reload.
+function RetryButton({
+	send,
+}: {
+	send: () => Promise<{ sent: boolean; message: string }>;
+}) {
+	const [busy, setBusy] = useState(false);
+	async function retry() {
+		setBusy(true);
+		const r = await optimism.change({ send });
+		setBusy(false);
+		if (!r) return;
+		if (r.value.sent) toast.success(r.value.message);
+		else toast.error(r.value.message);
+	}
+	return (
+		<Button size="sm" variant="outline" disabled={busy} onClick={retry}>
+			{busy && <Loader2 className="animate-spin" />}
+			Retry
+		</Button>
+	);
+}
+
+// Details of one connection, from the side.
+
+function Sheet({
+	d,
+	target,
+	onClose,
+}: {
+	d: Diagnostics;
+	target: CheckTarget | null;
+	onClose: () => void;
+}) {
+	const channel = d.channels.find((c) => c.channel === target);
+	return (
+		<SidePanel open={target !== null} onClose={onClose}>
+			{channel ? (
+				<ChannelDetail c={channel} />
+			) : target === "shippo" ? (
+				<ServiceDetail
+					name="Shippo"
+					target="shippo"
+					status={shippoStatus(d.services.shippo)}
+					detail={
+						d.services.shippo.configured ? null : "SHIPPO_API_KEY not set."
+					}
+				/>
+			) : target === "email" ? (
+				<ServiceDetail
+					name="PO email"
+					target="email"
+					status={emailStatus(d.services.email)}
+					detail={
+						d.services.email.configured
+							? `Sends as ${d.services.email.from}`
+							: "RESEND_API_KEY and PO_EMAIL_FROM not set."
+					}
+				/>
+			) : null}
+		</SidePanel>
+	);
+}
+
+function ChannelDetail({ c }: { c: ChannelData }) {
+	return (
+		<>
+			<PanelHeader title={channelName(c.channel)} status={HEALTH[c.health]}>
+				<CheckButton target={c.channel} />
+			</PanelHeader>
+			<Facts>
+				<Fact label="Last good sync">
+					{c.lastSuccessAt
+						? `${formatDateTime(c.lastSuccessAt)} (${ago(c.lastSuccessAt)})`
+						: "Never"}
+				</Fact>
+				{c.consecutiveFailures > 0 && c.failingSince && (
+					<Fact label="Failing since">
+						<span className="text-critical-text">
+							{formatDateTime(c.failingSince)}, {c.consecutiveFailures}{" "}
+							{c.consecutiveFailures === 1 ? "pass" : "passes"}
+						</span>
+					</Fact>
+				)}
+				{c.missing.length > 0 && (
+					<Fact label="Missing">
+						<span className="font-mono text-xs">{c.missing.join(", ")}</span>
+					</Fact>
+				)}
+			</Facts>
+			{c.latestError && (
+				<ErrorBlock title="Latest error" text={c.latestError} />
+			)}
+			{c.hint && <HintBlock hint={c.hint} />}
+			<CheckResults target={c.channel} />
+			{c.runs.length > 0 && <RunTable runs={c.runs} />}
+		</>
+	);
+}
+
+function ServiceDetail({
+	name,
+	target,
+	status,
+	detail,
+}: {
+	name: string;
+	target: CheckTarget;
+	status: { label: string; tone?: Tone };
+	detail: string | null;
+}) {
+	return (
+		<>
+			<PanelHeader title={name} status={status}>
+				<CheckButton target={target} />
+			</PanelHeader>
+			{detail && <p className="text-muted-foreground">{detail}</p>}
+			<CheckResults target={target} />
+		</>
 	);
 }
 
 function RunTable({ runs }: { runs: ChannelData["runs"] }) {
 	return (
-		<table className="mt-2 w-full">
+		<table className="w-full">
 			<thead>
 				<tr className="text-left text-xs text-muted-foreground">
-					<th className="py-1 pr-3 font-medium">Started</th>
+					<th className="py-1 pr-3 font-medium">Pass</th>
 					<th className="py-1 pr-3 font-medium">Result</th>
 					<th className="py-1 pr-3 text-right font-medium">Orders</th>
 					<th className="py-1 font-medium">Detail</th>
@@ -380,179 +834,8 @@ function RunTable({ runs }: { runs: ChannelData["runs"] }) {
 	);
 }
 
-function TrackingCard({ handoffs }: { handoffs: Diagnostics["handoffs"] }) {
-	const [busy, setBusy] = useState<number | null>(null);
-
-	// Retrying a dispatch retries every order in it that wasn't told. Sending
-	// is outside the app, so the button waits for the server and the reload.
-	async function retry(dispatchId: number) {
-		setBusy(dispatchId);
-		const r = await optimism.change({
-			send: () => resendTracking({ data: { dispatchId } }),
-		});
-		setBusy(null);
-		if (!r) return;
-		if (r.value.sent) toast.success(r.value.message);
-		else toast.error(r.value.message);
-	}
-
-	return (
-		<div id="tracking" className="scroll-mt-16">
-			<Card title="Tracking handoff" flush>
-				{handoffs.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">All sent.</p>
-				) : (
-					<ul>
-						{handoffs.map((h) => (
-							<li
-								key={`${h.dispatchId}-${h.orderId}`}
-								className="flex items-start gap-3 border-t px-4 py-3"
-							>
-								<div className="min-w-0 flex-1">
-									<Link
-										to="/orders/$id"
-										params={{ id: String(h.orderId) }}
-										className="font-medium hover:underline"
-									>
-										{h.orderName}
-									</Link>{" "}
-									<span className="text-muted-foreground">
-										on {channelName(h.channel)}, label{" "}
-										{formatDateTime(h.createdAt)}
-										{h.trackingNumber && ` · ${h.trackingNumber}`}
-									</span>
-									<p className="mt-1 font-mono text-xs break-words text-critical-text">
-										{h.error}
-									</p>
-								</div>
-								<Button
-									size="sm"
-									variant="outline"
-									disabled={busy !== null}
-									onClick={() => retry(h.dispatchId)}
-								>
-									{busy === h.dispatchId ? "Sending…" : "Retry"}
-								</Button>
-							</li>
-						))}
-					</ul>
-				)}
-			</Card>
-		</div>
-	);
-}
-
-function UnmappedCard({ rows }: { rows: Diagnostics["unmapped"] }) {
-	return (
-		<div id="unmapped" className="scroll-mt-16">
-			<Card
-				title="Unmatched SKUs"
-				flush
-				aside={
-					rows.length > 0 && (
-						<Link to="/listings" className="text-link hover:underline">
-							Match listings
-						</Link>
-					)
-				}
-			>
-				{rows.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">None.</p>
-				) : (
-					<table className="w-full">
-						<thead>
-							<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
-								<th className="px-4 py-2 font-medium">SKU</th>
-								<th className="px-3 py-2 font-medium">Store</th>
-								<th className="px-3 py-2 text-right font-medium">Orders</th>
-								<th className="px-3 py-2 text-right font-medium">
-									Stock not taken
-								</th>
-								<th className="px-4 py-2 text-right font-medium">Last sold</th>
-							</tr>
-						</thead>
-						<tbody>
-							{rows.map((r) => (
-								<tr key={`${r.store}:${r.sku}`} className="border-t">
-									<td className="px-4 py-2 font-mono text-xs">{r.sku}</td>
-									<td className="px-3 py-2">{r.store}</td>
-									<td className="px-3 py-2 text-right tabular-nums">
-										{formatCount(r.orders)}
-									</td>
-									<td className="px-3 py-2 text-right tabular-nums">
-										{r.missed > 0 ? (
-											<Badge tone="warning">{formatCount(r.missed)}</Badge>
-										) : (
-											<span className="text-muted-foreground">0</span>
-										)}
-									</td>
-									<td className="px-4 py-2 text-right whitespace-nowrap text-muted-foreground">
-										{ago(r.lastPlacedAt)}
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				)}
-			</Card>
-		</div>
-	);
-}
-
-function ServicesCard({ services }: { services: Diagnostics["services"] }) {
-	return (
-		<div id="services" className="scroll-mt-16">
-			<Card title="Shipping labels and email" flush>
-				<ServiceRow
-					name="Shippo"
-					target="shippo"
-					status={
-						!services.shippo.configured
-							? "SHIPPO_API_KEY not set."
-							: services.shippo.test
-								? "Test key: labels can't ship."
-								: "Live key."
-					}
-				/>
-				<ServiceRow
-					name="PO email (Resend)"
-					target="email"
-					status={
-						services.email.configured
-							? `Sends as ${services.email.from}`
-							: "RESEND_API_KEY and PO_EMAIL_FROM not set."
-					}
-				/>
-			</Card>
-		</div>
-	);
-}
-
-function ServiceRow({
-	name,
-	target,
-	status,
-}: {
-	name: string;
-	target: CheckTarget;
-	status: string;
-}) {
-	return (
-		<div className="flex flex-col gap-2 border-t px-4 py-3">
-			<div className="flex items-center justify-between gap-3">
-				<div>
-					<p className="font-medium">{name}</p>
-					<p className="text-muted-foreground">{status}</p>
-				</div>
-				<CheckButton target={target} />
-			</div>
-			<CheckResults target={target} />
-		</div>
-	);
-}
-
-// Live check results, kept per target outside React so the button in a
-// card's header and the results in its body share one.
+// Live check results, kept per target outside React so they outlive the
+// sheet closing.
 type CheckResult = Awaited<ReturnType<typeof runConnectionCheck>>;
 const results = new Map<CheckTarget, CheckResult>();
 const listeners = new Set<() => void>();
@@ -608,7 +891,7 @@ function CheckResults({ target }: { target: CheckTarget }) {
 	return (
 		<div className="rounded-lg border p-3">
 			<p className="mb-2 font-medium">
-				Connection check, {new Date(result.ranAt).toLocaleTimeString()}
+				Check, {new Date(result.ranAt).toLocaleTimeString()}
 			</p>
 			<ol className="flex flex-col gap-1.5">
 				{result.steps.map((step) => (
@@ -683,159 +966,73 @@ function HintBlock({ hint }: { hint: Hint }) {
 	);
 }
 
-// What Claude changed through /mcp, newest first. Arguments are what it
+// What agents changed through /mcp, newest first. Arguments are what it
 // asked for; the result is what katasync answered.
-function ClaudeCard({ calls }: { calls: Diagnostics["claude"] }) {
+const AGENT_ROWS = 8;
+
+function AgentChanges({ calls }: { calls: Diagnostics["claude"] }) {
 	const [open, setOpen] = useState<number | null>(null);
+	const [all, setAll] = useState(false);
+	const shown = all ? calls : calls.slice(0, AGENT_ROWS);
 	return (
-		<div id="claude" className="scroll-mt-16">
-			<Card title="Changes made by Claude" flush>
-				{calls.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">None yet.</p>
-				) : (
-					<ul>
-						{calls.map((c) => (
-							<li key={c.id} className="border-t">
-								<button
-									type="button"
-									onClick={() => setOpen(open === c.id ? null : c.id)}
-									className="grid w-full grid-cols-[9rem_10rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2 text-left hover:bg-subtle"
-								>
-									<span className="whitespace-nowrap text-muted-foreground">
-										{formatDateTime(c.createdAt)}
-									</span>
-									<span className="truncate font-mono text-xs">{c.tool}</span>
-									<span className="truncate font-mono text-xs text-muted-foreground">
-										{c.arguments}
-									</span>
-									<Badge tone={c.ok ? "success" : "critical"}>
-										{c.ok ? "Done" : "Failed"}
-									</Badge>
-								</button>
-								{open === c.id && (
-									<div className="flex flex-col gap-2 px-4 pb-3">
-										<p className="text-xs text-muted-foreground">
-											Token: {c.tokenName}
-										</p>
-										<pre className="max-h-48 overflow-auto rounded-lg bg-subtle p-2 font-mono text-xs break-words whitespace-pre-wrap">
-											{JSON.stringify(JSON.parse(c.arguments), null, 1)}
-										</pre>
-										<pre
-											className={cn(
-												"max-h-48 overflow-auto rounded-lg p-2 font-mono text-xs break-words whitespace-pre-wrap",
-												c.ok
-													? "bg-subtle"
-													: "bg-critical-surface text-critical-text",
-											)}
-										>
-											{c.result}
-										</pre>
-									</div>
-								)}
-							</li>
-						))}
-					</ul>
-				)}
-			</Card>
-		</div>
-	);
-}
-
-// Marketplaces katasync couldn't read fees and labels from. Each order is
-// asked again on its own schedule; until then its fees stay estimated.
-function ChargesCard({ rows }: { rows: Diagnostics["charges"] }) {
-	return (
-		<div id="charges" className="scroll-mt-16">
-			<Card title="Marketplace charges" flush>
-				{rows.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">
-						Every marketplace answered last time it was asked.
-					</p>
-				) : (
-					<ul>
-						{rows.map((r) => (
-							<li
-								key={`${r.billedBy} ${r.error}`}
-								className="border-t px-4 py-3"
+		<Card title="Agent changes" flush>
+			{calls.length === 0 ? (
+				<p className="px-4 pb-4 text-muted-foreground">None yet.</p>
+			) : (
+				<ul>
+					{shown.map((c) => (
+						<li key={c.id} className="border-t">
+							<button
+								type="button"
+								onClick={() => setOpen(open === c.id ? null : c.id)}
+								className="grid w-full grid-cols-[9rem_10rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2 text-left hover:bg-subtle"
 							>
-								<span className="font-medium">{channelName(r.billedBy)}</span>{" "}
-								<span className="text-muted-foreground">
-									{formatCount(r.orders)} orders, last tried{" "}
-									{r.lastAt ? formatDateTime(r.lastAt) : "never"}. Asked again
-									on their own; fees stay estimated until then.
+								<span className="whitespace-nowrap text-muted-foreground">
+									{formatDateTime(c.createdAt)}
 								</span>
-								<p className="mt-1 text-xs break-words text-warning-text">
-									{r.error}
-								</p>
-							</li>
-						))}
-					</ul>
-				)}
-			</Card>
-		</div>
-	);
-}
-
-function StorefrontTrackingCard({
-	rows,
-}: {
-	rows: Diagnostics["storefrontTracking"];
-}) {
-	const [busy, setBusy] = useState<number | null>(null);
-
-	async function retry(shipmentId: number) {
-		setBusy(shipmentId);
-		const r = await optimism.change({
-			send: () => retryStorefront({ data: { id: shipmentId } }),
-		});
-		setBusy(null);
-		if (!r) return;
-		if (r.value.sent) toast.success(r.value.message);
-		else toast.error(r.value.message);
-	}
-
-	return (
-		<div id="storefront-tracking" className="scroll-mt-16">
-			<Card title="Storefront tracking" flush>
-				{rows.length === 0 ? (
-					<p className="px-4 pb-4 text-muted-foreground">Up to date.</p>
-				) : (
-					<ul>
-						{rows.map((r) => (
-							<li
-								key={r.shipmentId}
-								className="flex items-start gap-3 border-t px-4 py-3"
-							>
-								<div className="min-w-0 flex-1">
-									<Link
-										to="/orders/$id"
-										params={{ id: String(r.orderId) }}
-										className="font-medium hover:underline"
-									>
-										{r.orderName}
-									</Link>{" "}
-									<span className="text-muted-foreground">
-										{r.voided ? "voided label" : "label"}{" "}
-										{formatDateTime(r.createdAt)}
-										{r.trackingNumber && ` · ${r.trackingNumber}`}
-									</span>
-									<p className="mt-1 text-xs break-words text-warning-text">
-										{r.error}
+								<span className="truncate font-mono text-xs">{c.tool}</span>
+								<span className="truncate font-mono text-xs text-muted-foreground">
+									{c.arguments}
+								</span>
+								<Badge tone={c.ok ? "success" : "critical"}>
+									{c.ok ? "Done" : "Failed"}
+								</Badge>
+							</button>
+							{open === c.id && (
+								<div className="flex flex-col gap-2 px-4 pb-3">
+									<p className="text-xs text-muted-foreground">
+										By {c.tokenName}
 									</p>
+									<pre className="max-h-48 overflow-auto rounded-lg bg-subtle p-2 font-mono text-xs break-words whitespace-pre-wrap">
+										{JSON.stringify(JSON.parse(c.arguments), null, 1)}
+									</pre>
+									<pre
+										className={cn(
+											"max-h-48 overflow-auto rounded-lg p-2 font-mono text-xs break-words whitespace-pre-wrap",
+											c.ok
+												? "bg-subtle"
+												: "bg-critical-surface text-critical-text",
+										)}
+									>
+										{c.result}
+									</pre>
 								</div>
-								<Button
-									size="sm"
-									variant="outline"
-									disabled={busy !== null}
-									onClick={() => retry(r.shipmentId)}
-								>
-									{busy === r.shipmentId ? "Saving…" : "Retry"}
-								</Button>
-							</li>
-						))}
-					</ul>
-				)}
-			</Card>
-		</div>
+							)}
+						</li>
+					))}
+					{calls.length > AGENT_ROWS && (
+						<li className="border-t">
+							<button
+								type="button"
+								onClick={() => setAll((a) => !a)}
+								className="w-full px-4 py-2 text-left text-link hover:bg-subtle"
+							>
+								{all ? "Show fewer" : `Show all ${formatCount(calls.length)}`}
+							</button>
+						</li>
+					)}
+				</ul>
+			)}
+		</Card>
 	);
 }

@@ -1,6 +1,6 @@
 {
-  "id": "6717451a-3a30-4a2b-a408-49d810c46c19",
-  "prevId": "61b52ed6-92b1-4a09-8df8-a0a7fcc82a01",
+  "id": "bb6af4fd-58dd-47ec-85ce-6871e3507595",
+  "prevId": "11a93bdf-b0ee-4273-8eb5-cd07e860169e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -201,6 +201,38 @@
           "value": "(\"count_log\".\"batch_id\" is null) = (\"count_log\".\"expected\" = \"count_log\".\"counted\")"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.dismissals": {
+      "name": "dismissals",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dismissed_at": {
+          "name": "dismissed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.dispatch_orders": {
@@ -1521,12 +1553,6 @@
         "ship_phone": {
           "name": "ship_phone",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "no_return_at": {
-          "name": "no_return_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -3163,246 +3189,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.return_request_lines": {
-      "name": "return_request_lines",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "return_request_lines_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "request_id": {
-          "name": "request_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "order_line_id": {
-          "name": "order_line_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "sku": {
-          "name": "sku",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "quantity": {
-          "name": "quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "return_request_lines_request_idx": {
-          "name": "return_request_lines_request_idx",
-          "columns": [
-            {
-              "expression": "request_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "return_request_lines_request_id_return_requests_id_fk": {
-          "name": "return_request_lines_request_id_return_requests_id_fk",
-          "tableFrom": "return_request_lines",
-          "tableTo": "return_requests",
-          "columnsFrom": [
-            "request_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "return_request_lines_order_line_id_order_lines_id_fk": {
-          "name": "return_request_lines_order_line_id_order_lines_id_fk",
-          "tableFrom": "return_request_lines",
-          "tableTo": "order_lines",
-          "columnsFrom": [
-            "order_line_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "return_request_lines_quantity_positive": {
-          "name": "return_request_lines_quantity_positive",
-          "value": "\"return_request_lines\".\"quantity\" > 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.return_requests": {
-      "name": "return_requests",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "return_requests_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "order_id": {
-          "name": "order_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "billed_by": {
-          "name": "billed_by",
-          "type": "channel",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "external_id": {
-          "name": "external_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "return_request_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "raw_status": {
-          "name": "raw_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "tracking_number": {
-          "name": "tracking_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "carrier": {
-          "name": "carrier",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "requested_at": {
-          "name": "requested_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source_updated_at": {
-          "name": "source_updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "synced_at": {
-          "name": "synced_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "return_requests_order_idx": {
-          "name": "return_requests_order_idx",
-          "columns": [
-            {
-              "expression": "order_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "return_requests_order_id_orders_id_fk": {
-          "name": "return_requests_order_id_orders_id_fk",
-          "tableFrom": "return_requests",
-          "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "return_requests_billed_by_external_id": {
-          "name": "return_requests_billed_by_external_id",
-          "nullsNotDistinct": false,
-          "columns": [
-            "billed_by",
-            "external_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.sessions": {
       "name": "sessions",
       "schema": "",
@@ -4563,17 +4349,6 @@
         "closed",
         "cancelled"
       ]
-    },
-    "public.return_request_status": {
-      "name": "return_request_status",
-      "schema": "public",
-      "values": [
-        "requested",
-        "shipped",
-        "delivered",
-        "closed",
-        "cancelled"
-      ]
     }
   },
   "schemas": {},
@@ -4765,12 +4540,6 @@
           "type": "boolean",
           "primaryKey": false,
           "notNull": true
-        },
-        "returning": {
-          "name": "returning",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
         }
       },
       "name": "order_line_profit",
@@ -4879,12 +4648,6 @@
         },
         "shipped": {
           "name": "shipped",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "awaitingReturn": {
-          "name": "awaitingReturn",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true

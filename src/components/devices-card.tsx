@@ -1,9 +1,11 @@
 import { useRouter } from "@tanstack/react-router";
+import { Pencil, Trash2 } from "lucide-react";
 import QRCode from "qrcode";
 import { useState } from "react";
 import { toast } from "sonner";
 import { signOut } from "#/auth/client";
 import { Badge, Card } from "#/components/page";
+import { IconAction, Row } from "#/components/rows";
 import { Button } from "#/components/ui/button";
 import { formatDay } from "#/lib/format";
 import { optimism, optimistic } from "#/lib/optimism";
@@ -92,7 +94,7 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 			}
 		>
 			{link && (
-				<div className="flex gap-4 border-t px-4 py-3">
+				<div className="flex gap-4 px-4 pb-3">
 					<img src={link.qr} alt="Setup link" className="size-36 shrink-0" />
 					<div className="flex min-w-0 flex-col gap-2">
 						<p>
@@ -133,53 +135,56 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 				</div>
 			)}
 			{devices.length === 0 ? (
-				<p className="border-t px-4 py-3 text-muted-foreground">
-					None. Or run pnpm auth:setup-link on the server.
-				</p>
+				<p className="px-4 pb-3 text-muted-foreground">None.</p>
 			) : (
 				<ul>
-					{devices.map((d) => (
-						<li
-							key={d.id}
-							className="flex items-center gap-3 border-t px-4 py-3"
-						>
-							{renaming === d.id ? (
+					{devices.map((d) =>
+						renaming === d.id ? (
+							<Row key={d.id}>
 								<NameForm
 									initial={d.name}
 									onSave={(name) => rename(d, name)}
 									onCancel={() => setRenaming(null)}
 								/>
-							) : (
-								<>
-									<span className="flex flex-1 items-center gap-2 font-medium">
-										{d.name}
+							</Row>
+						) : (
+							<Row
+								key={d.id}
+								actions={
+									<>
+										<IconAction
+											icon={Pencil}
+											label="Rename"
+											onClick={() => setRenaming(d.id)}
+										/>
+										<IconAction
+											icon={Trash2}
+											label="Remove"
+											onClick={() => remove(d)}
+										/>
+									</>
+								}
+							>
+								<div className="min-w-0 flex-1">
+									<p className="flex items-center gap-2 font-medium">
+										<span className="truncate">{d.name}</span>
 										{d.current && <Badge tone="info">This device</Badge>}
-									</span>
-									<span className="text-muted-foreground">
+									</p>
+									<p className="text-xs text-muted-foreground">
 										{d.lastUsedAt
-											? `Last signed in ${formatDay(d.lastUsedAt)}`
+											? `Signed in ${formatDay(d.lastUsedAt)}`
 											: `Added ${formatDay(d.createdAt)}`}
-									</span>
-									<Button
-										size="sm"
-										variant="ghost"
-										onClick={() => setRenaming(d.id)}
-									>
-										Rename
-									</Button>
-									<Button size="sm" variant="ghost" onClick={() => remove(d)}>
-										Remove
-									</Button>
-								</>
-							)}
-						</li>
-					))}
+									</p>
+								</div>
+							</Row>
+						),
+					)}
 				</ul>
 			)}
 			<div className="border-t px-4 py-3">
 				<Button
 					size="sm"
-					variant="ghost"
+					variant="outline"
 					onClick={async () => {
 						await signOut();
 						window.location.assign("/login");

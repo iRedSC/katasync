@@ -464,7 +464,7 @@ export const returnRequestStatus = pgEnum("return_request_status", [
 
 // A return a buyer opened on the marketplace the order was billed by, as it
 // last reported it. What's due back is worked out from these and refunds in
-// the order_returns_due view (drizzle/0055_returns_tab.sql).
+// the order_returns_due view (drizzle/0061_returns_tab.sql).
 export const returnRequests = pgTable(
 	"return_requests",
 	{
@@ -931,6 +931,10 @@ export const purchaseOrderLines = pgTable(
 		sentUnitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 		// Set by hand on a draft: Update leaves this line's quantity alone.
 		locked: boolean().notNull().default(false),
+		// What whoever unpacked it wants known, e.g. "2 crushed, kept". Shown
+		// above the line when receiving. Never printed; the supplier doesn't
+		// see it. Null when there's none, never blank.
+		receivingNote: text(),
 	},
 	(t) => [
 		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),
@@ -951,6 +955,10 @@ export const purchaseOrderLines = pgTable(
 		check(
 			"purchase_order_lines_minimum_positive",
 			sql`${t.minimumQuantity} > 0`,
+		),
+		check(
+			"purchase_order_lines_receiving_note_not_blank",
+			sql`${t.receivingNote} is null or btrim(${t.receivingNote}) <> ''`,
 		),
 	],
 );
@@ -1120,6 +1128,96 @@ export const purchaseOrderReceipts = pgTable(
 	],
 );
 
+// What a damage report asks the supplier for: money back, or the same
+// number again. Chosen per item when the report is sent.
+export const damageRemedy = pgEnum("damage_remedy", ["credit", "replacement"]);
+
+// A report sent to the supplier about damaged items on one PO. Its items are
+// the purchaseOrderDamages pointing at it. Made only by sending it.
+export const purchaseOrderDamageReports = pgTable(
+	"purchase_order_damage_reports",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id),
+		sentTo: text().notNull(),
+		sentAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index("purchase_order_damage_reports_po_idx").on(t.purchaseOrderId)],
+);
+
+// Items of a line that arrived damaged. Counted in single items, not the
+// line's unit: one blade in a case of 12 can break. They come off the shelf
+// when recorded (batchId) and can't exceed what was received. Until a report
+// takes them they can be taken back, which puts them back on the shelf;
+// once reported they stay, with what was asked for. Rules live in
+// src/purchasing/damage.ts.
+export const purchaseOrderDamages = pgTable(
+	"purchase_order_damages",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		lineId: integer()
+			.notNull()
+			.references(() => purchaseOrderLines.id),
+		quantity: integer().notNull(),
+		description: text().notNull(),
+		// The ledger batch that took them off the shelf.
+		batchId: uuid().notNull().unique(),
+		reportId: integer().references(() => purchaseOrderDamageReports.id),
+		remedy: damageRemedy(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_order_damages_line_idx").on(t.lineId),
+		check("purchase_order_damages_quantity_positive", sql`${t.quantity} > 0`),
+		check(
+			"purchase_order_damages_description_given",
+			sql`btrim(${t.description}) <> ''`,
+		),
+		check(
+			"purchase_order_damages_reported_with_remedy",
+			sql`(${t.reportId} is null) = (${t.remedy} is null)`,
+		),
+	],
+);
+
+// Photos of damage, as uploaded: JPEG, PNG, or WebP, checked by their bytes.
+export const purchaseOrderDamagePhotos = pgTable(
+	"purchase_order_damage_photos",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		damageId: integer()
+			.notNull()
+			.references(() => purchaseOrderDamages.id, { onDelete: "cascade" }),
+		contentType: text().notNull(),
+		data: bytea().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_order_damage_photos_damage_idx").on(t.damageId),
+		check(
+			"purchase_order_damage_photos_type",
+			sql`${t.contentType} in ('image/jpeg', 'image/png', 'image/webp')`,
+		),
+		check(
+			"purchase_order_damage_photos_size",
+			sql`octet_length(${t.data}) between 1 and 4500000`,
+		),
+	],
+);
+
+// Links that let something without a session, like Claude's shell, upload
+// photos of one damage. Only the hash is kept; the link works until it
+// expires.
+export const damagePhotoUploads = pgTable("damage_photo_uploads", {
+	tokenHash: text().primaryKey(),
+	damageId: integer()
+		.notNull()
+		.references(() => purchaseOrderDamages.id, { onDelete: "cascade" }),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+});
+
 // Sign-in. katasync has one shared company account, so there are no users:
 // each phone or computer gets its own passkey, named so a lost one can be
 // removed. Rules live in src/auth/.
@@ -1171,17 +1269,78 @@ export const authChallenges = pgTable("auth_challenges", {
 	expiresAt: timestamp({ withTimezone: true }).notNull(),
 });
 
-// Lets a program (an MCP client like Claude) use katasync's /mcp endpoint.
-// Shown once when made; only its SHA-256 is stored, like sessions.
-export const apiTokens = pgTable("api_tokens", {
-	tokenHash: text().primaryKey(),
-	// Who or what holds it, e.g. "Claude on the office PC".
+// OAuth for /mcp (src/auth/oauth.ts). An app like Claude registers itself
+// (oauth_clients), someone signed in approves it (oauth_grants), and the app
+// trades the one-time code for tokens (oauth_tokens). Disconnecting an app
+// deletes its grant, and with it every code and token.
+
+// An app that registered itself. Anyone can register, so one that's never
+// approved is cleared out after a day.
+export const oauthClients = pgTable("oauth_clients", {
+	id: text().primaryKey(),
+	// What the app calls itself, e.g. "Claude".
 	name: text().notNull(),
-	// A read-only token only gets the tools that read.
-	canWrite: boolean().notNull().default(true),
+	// Where approval sends the browser back; only these, matched exactly.
+	redirectUris: text().array().notNull(),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-	lastUsedAt: timestamp({ withTimezone: true }),
 });
+
+// One approval of an app: what it may do, until disconnected in Settings.
+export const oauthGrants = pgTable(
+	"oauth_grants",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		clientId: text()
+			.notNull()
+			.references(() => oauthClients.id, { onDelete: "cascade" }),
+		// Read only gets only the tools that read.
+		canWrite: boolean().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		lastUsedAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [index("oauth_grants_client_idx").on(t.clientId)],
+);
+
+// The code approval hands the app, traded once for tokens within minutes.
+// Bound to the redirect it was sent to and the app's PKCE challenge, so a
+// code caught on the way can't be used.
+export const oauthCodes = pgTable("oauth_codes", {
+	codeHash: text().primaryKey(),
+	grantId: uuid()
+		.notNull()
+		.references(() => oauthGrants.id, { onDelete: "cascade" }),
+	redirectUri: text().notNull(),
+	codeChallenge: text().notNull(),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+	// Kept once used, so a second try is caught and ends the grant.
+	usedAt: timestamp({ withTimezone: true }),
+});
+
+export const oauthTokenKind = pgEnum("oauth_token_kind", ["access", "refresh"]);
+
+// An access token calls /mcp for an hour; a refresh token gets a new pair
+// once. Only hashes are kept.
+export const oauthTokens = pgTable(
+	"oauth_tokens",
+	{
+		tokenHash: text().primaryKey(),
+		kind: oauthTokenKind().notNull(),
+		grantId: uuid()
+			.notNull()
+			.references(() => oauthGrants.id, { onDelete: "cascade" }),
+		expiresAt: timestamp({ withTimezone: true }).notNull(),
+		// When a refresh token was traded. Kept, so a second try is caught and
+		// ends the grant.
+		usedAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		index("oauth_tokens_grant_idx").on(t.grantId),
+		check(
+			"oauth_tokens_only_refresh_used",
+			sql`${t.kind} = 'refresh' or ${t.usedAt} is null`,
+		),
+	],
+);
 
 // The password of katasync_mcp, the login the MCP query tool connects as, set
 // the first time it's needed (src/mcp/query.ts). The role and what it may
@@ -1319,7 +1478,7 @@ export const orderLineProfit = pgView("order_line_profit", {
 }).existing();
 
 // What's due back, one row per line expected, defined in
-// drizzle/0055_returns_tab.sql. Every line of an order has its order's state.
+// drizzle/0061_returns_tab.sql. Every line of an order has its order's state.
 export const returnStates = [
 	"on_its_way",
 	"requested",
@@ -1349,7 +1508,7 @@ export const countHistory = pgView("count_history", {
 	undone: boolean().notNull(),
 }).existing();
 
-// Every change made through /mcp: which token, which tool, what it was asked,
+// Every change made through /mcp: which app (token_name), which tool, what it was asked,
 // and how it went. Shown on Diagnostics, so a change Claude made can be found.
 // Reads aren't kept. Written by src/routes/mcp.ts.
 export const mcpCalls = pgTable(
@@ -1393,3 +1552,12 @@ export const settings = pgTable(
 		check("settings_stock_range", sql`${t.defaultMinStock} >= 0`),
 	],
 );
+
+// Problems dismissed on Diagnostics. `key` names the thing (see
+// src/diagnostics/dismissals.ts). It stays hidden while its error reads the
+// same, and shows again once the error changes.
+export const dismissals = pgTable("dismissals", {
+	key: text().primaryKey(),
+	error: text().notNull(),
+	dismissedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});

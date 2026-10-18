@@ -2,6 +2,7 @@ import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, productAliases, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
+import { awaitingProduct } from "./unmatched";
 
 export type ChannelListing = {
 	externalId: string;
@@ -175,7 +176,7 @@ export async function matchListings(
 		.where(
 			and(
 				eq(stores.primary, true),
-				isNull(listings.productId),
+				awaitingProduct,
 				isNotNull(listings.externalSku),
 			),
 		)
@@ -212,25 +213,37 @@ export async function createProductFromListing(db: Db, listingId: number) {
 		const sku = listing.externalSku?.trim();
 		if (!sku)
 			throw new LedgerError("This listing has no SKU, so it's a custom item");
-		const [taken] = await tx
-			.select({ sku: products.sku })
-			.from(products)
-			.where(sql`lower(${products.sku}) = lower(${sku})`);
-		if (taken) {
-			throw new LedgerError(
-				`${taken.sku} already exists; match the listing to it instead`,
-			);
-		}
-		const [product] = await tx
-			.insert(products)
-			.values({ sku, name: cleanTitle(listing.title), kind: "simple" })
-			.returning({ id: products.id, sku: products.sku });
+		const product = await createProductNamed(tx, {
+			sku,
+			name: cleanTitle(listing.title),
+		});
 		await tx
 			.update(listings)
 			.set({ productId: product.id })
 			.where(eq(listings.id, listingId));
 		return product;
 	});
+}
+
+// A new simple product, refused when its SKU exists in any capitals.
+export async function createProductNamed(
+	db: Db,
+	{ sku, name }: { sku: string; name: string },
+) {
+	const [taken] = await db
+		.select({ sku: products.sku })
+		.from(products)
+		.where(sql`lower(${products.sku}) = lower(${sku})`);
+	if (taken) {
+		throw new LedgerError(
+			`${taken.sku} already exists; match the listing to it instead`,
+		);
+	}
+	const [product] = await db
+		.insert(products)
+		.values({ sku, name, kind: "simple" })
+		.returning({ id: products.id, sku: products.sku });
+	return product;
 }
 
 // Shopify names single-variant products "Name - Default Title".

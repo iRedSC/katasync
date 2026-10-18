@@ -23,18 +23,23 @@ const TIMEOUT = "15s";
 type Rows = { rows: Record<string, unknown>[] };
 
 // Sign-in bookkeeping (hashes, public keys, live session ids), the key QZ
-// Tray print jobs are signed with, and the query tool's own password.
+// Tray print jobs are signed with, the query tool's own password, and links
+// that upload damage photos.
 // katasync_mcp has a grant on every other table and view and none on these
 // (see drizzle/0027_mcp_role.sql); they're also hidden from describe_schema
 // and refused by name in queries.
 export const SECRET_TABLES = [
 	"sessions",
 	"passkeys",
-	"api_tokens",
+	"oauth_clients",
+	"oauth_grants",
+	"oauth_codes",
+	"oauth_tokens",
 	"setup_links",
 	"auth_challenges",
 	"mcp_login",
 	"qz_certificate",
+	"damage_photo_uploads",
 ];
 
 // Functions that change the session, reach outside the database, or signal

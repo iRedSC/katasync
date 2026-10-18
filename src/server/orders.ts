@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
+import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
 	dispatches,
@@ -56,12 +57,15 @@ export const listOrders = createServerFn({ method: "GET" })
 			.select({
 				orderId: orderLines.orderId,
 				items: sql<number>`sum(${orderLines.quantity})::int`.as("items"),
+				// Lines from a listing still waiting for its product. Custom items
+				// have no listing and are never matched.
 				unmatched:
-					sql<number>`count(*) filter (where ${orderLines.productId} is null and ${orderLines.sku} is not null)::int`.as(
+					sql<number>`count(*) filter (where ${lineAwaitsMatch({ productId: orderLines.productId, storeId: orders.storeId, listingExternalId: orderLines.listingExternalId })})::int`.as(
 						"unmatched",
 					),
 			})
 			.from(orderLines)
+			.innerJoin(orders, eq(orders.id, orderLines.orderId))
 			.groupBy(orderLines.orderId)
 			.as("line_stats");
 		return (
@@ -148,8 +152,15 @@ export const getOrder = createServerFn({ method: "GET" })
 				productSku: products.sku,
 				productName: products.name,
 				imageUrl: products.imageUrl,
+				// Its listing has no product yet. Custom items have no listing.
+				awaitsMatch: lineAwaitsMatch({
+					productId: orderLines.productId,
+					storeId: orders.storeId,
+					listingExternalId: orderLines.listingExternalId,
+				}),
 			})
 			.from(orderLines)
+			.innerJoin(orders, eq(orders.id, orderLines.orderId))
 			.leftJoin(products, eq(products.id, orderLines.productId))
 			.where(eq(orderLines.orderId, data.id))
 			.orderBy(orderLines.id);

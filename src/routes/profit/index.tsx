@@ -6,9 +6,10 @@ import {
 	Receipt,
 	Search,
 } from "lucide-react";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
+import { MatchDialog } from "#/components/match-picker";
 import { Card, EmptyState, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import {
@@ -623,17 +624,29 @@ function Approx() {
 function Cost({ item: i, range }: { item: Item; range: string }) {
 	const [editing, setEditing] = useState(false);
 	const [value, setValue] = useState("");
+	const [matching, setMatching] = useState(false);
+	const closeMatch = useCallback(() => setMatching(false), []);
 	// Escape closes without saving what was typed.
 	const cancelled = useRef(false);
 
 	if (i.costKnown) return <>{formatMoney(i.cost)}</>;
+	if (i.productId === null && !i.awaitsMatch)
+		return <span className="text-muted-foreground">Custom</span>;
 	if (i.productId === null)
 		return (
-			<Tip content="Link its listing to a product to give it a cost">
-				<Link to="/listings" className="text-critical-text hover:underline">
+			<>
+				<button
+					type="button"
+					onClick={() => setMatching(true)}
+					className="text-critical-text hover:underline"
+				>
 					No product
-				</Link>
-			</Tip>
+				</button>
+				<MatchDialog
+					orderId={matching ? i.orderId : null}
+					onClose={closeMatch}
+				/>
+			</>
 		);
 	if (i.productKind === "bundle")
 		return (

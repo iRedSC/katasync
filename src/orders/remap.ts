@@ -1,10 +1,12 @@
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import {
 	autoMapListings,
-	createProductFromListing,
+	cleanTitle,
+	createProductNamed as createProduct,
 	mapListing,
 } from "#/channels/listings";
 import { shippingLocation } from "#/channels/stores";
+import { unmatchedListings } from "#/channels/unmatched";
 import type { Db } from "#/db/client";
 import {
 	listings,
@@ -175,31 +177,48 @@ export async function linkSku(db: Db, alias: string, sku: string) {
 	};
 }
 
-// Matches a listing to an existing product by SKU, then catches up the orders
-// that already sold it.
-export async function matchListing(db: Db, listingId: number, sku: string) {
-	const [product] = await db
-		.select({ id: products.id, sku: products.sku })
-		.from(products)
-		.where(eq(products.sku, sku));
-	if (!product) throw new Error(`No product ${sku}`);
-	await mapListing(db, listingId, product.id);
-	const caughtUp = await applyListingsToOrders(
-		db,
-		[listingId],
-		await shippingLocation(db),
-	);
-	return { sku: product.sku, ordersUpdated: caughtUp.lines };
+// Matches an unmatched item's listings to an existing product by SKU, all
+// or none, then catches up the orders that already sold them.
+export async function matchListing(db: Db, listingIds: number[], sku: string) {
+	const product = await db.transaction(async (tx) => {
+		await unmatchedListings(tx, listingIds);
+		const [found] = await tx
+			.select({ id: products.id, sku: products.sku })
+			.from(products)
+			.where(eq(products.sku, sku));
+		if (!found) throw new Error(`No product ${sku}`);
+		for (const id of listingIds) await mapListing(tx, id, found.id);
+		return found;
+	});
+	return catchUpListings(db, listingIds, product.sku);
 }
 
-// Creates the product a listing is selling, filled in from the listing, then
-// catches up its orders.
-export async function productFromListing(db: Db, listingId: number) {
-	const product = await createProductFromListing(db, listingId);
+// Creates the product an unmatched item is selling, filled in from its
+// listings, and matches them all to it. A listing with no SKU needs one given.
+export async function productFromListing(
+	db: Db,
+	listingIds: number[],
+	given: { sku?: string; name?: string } = {},
+) {
+	const product = await db.transaction(async (tx) => {
+		const [lead] = await unmatchedListings(tx, listingIds);
+		const sku = given.sku?.trim() || lead.externalSku?.trim();
+		if (!sku) throw new Error("This listing has no SKU; give the product one");
+		const made = await createProduct(tx, {
+			sku,
+			name: given.name?.trim() || cleanTitle(lead.title),
+		});
+		for (const id of listingIds) await mapListing(tx, id, made.id);
+		return made;
+	});
+	return catchUpListings(db, listingIds, product.sku);
+}
+
+async function catchUpListings(db: Db, listingIds: number[], sku: string) {
 	const caughtUp = await applyListingsToOrders(
 		db,
-		[listingId],
+		listingIds,
 		await shippingLocation(db),
 	);
-	return { sku: product.sku, ordersUpdated: caughtUp.lines };
+	return { sku, ordersUpdated: caughtUp.lines, problems: caughtUp.problems };
 }

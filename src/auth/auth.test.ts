@@ -119,11 +119,24 @@ describe("guard", () => {
 			"/api/auth/login/options",
 			"/api/cron/sync/shopify",
 			"/api/webhooks/shopify",
+			"/api/oauth/token",
+			"/.well-known/oauth-protected-resource/mcp",
+			"/api/uploads/damage/abc",
 			"/logo.svg",
 			"/assets/main-abc.js",
 		])
 			expect(isPublic(path)).toBe(true);
-		for (const path of ["/", "/settings", "/api/other", "/_serverFn/x"])
+		// Approving an app needs a signed-in device.
+		for (const path of [
+			"/",
+			"/settings",
+			"/api/other",
+			"/_serverFn/x",
+			"/oauth/authorize",
+			// Photos from the app need a session; only upload links don't.
+			"/api/damage-photos/1",
+			"/purchasing/damage-photo/1",
+		])
 			expect(isPublic(path)).toBe(false);
 	});
 
