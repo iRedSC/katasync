@@ -7,7 +7,11 @@ import {
 	purchaseOrders,
 	purchaseUnits,
 } from "#/db/schema";
-import { lockForEdit, PurchaseOrderError } from "#/purchasing/orders";
+import {
+	convertDiscounts,
+	lockForEdit,
+	PurchaseOrderError,
+} from "#/purchasing/orders";
 import { perPack } from "#/purchasing/pack";
 
 // The units suppliers sell in, and which one each product is bought in.
@@ -140,8 +144,9 @@ async function checkTerms(db: Db, t: UnitTerms) {
 	if (!known) throw new PurchaseOrderError(`${t.unit} isn't a unit`);
 }
 
-// Puts a draft line in new terms. The quantity and price convert so they
-// still mean the same number of the product: 60 EACH becomes 2 CASE of 30.
+// Puts a draft line in new terms. The quantity, price, and discounts convert
+// so they still mean the same number of the product: 60 EACH becomes 2 CASE
+// of 30.
 // Quantities round up to whole units, then up to the new minimum, so 30 EACH
 // in a CASE of 12 with a minimum of 4 becomes 4 CASE rather than 3.
 async function convertLine(
@@ -168,6 +173,7 @@ async function convertLine(
 					: perPack(line.unitCost, line.packSize, t.packSize),
 		})
 		.where(eq(purchaseOrderLines.id, line.id));
+	await convertDiscounts(db, line, t.packSize);
 }
 
 // Sets the supplier's default terms for a product, converting its price to

@@ -1,6 +1,11 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { supplierInvoices, suppliers } from "#/db/schema";
+import {
+	coveredUnits,
+	describeDiscount,
+	lineCents,
+} from "#/purchasing/discount";
 import { loadOrder } from "#/purchasing/load";
 import { lockOrder, PurchaseOrderError, poName } from "#/purchasing/orders";
 
@@ -27,6 +32,16 @@ const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 const describe = (l: Pick<OrderLine, "name" | "variantName">) =>
 	l.variantName ? `${l.name} (${l.variantName})` : l.name;
+
+// What the line comes to after its discounts, in cents.
+const expectedCents = (l: OrderLine) => lineCents(l, l.discounts);
+
+const discountsOf = (l: OrderLine) => {
+	const units = coveredUnits(l.quantity, l.discounts);
+	return l.discounts.map((d, i) =>
+		describeDiscount(d, units[i], l.discounts.length > 1),
+	);
+};
 
 const cents = (quantity: number, unitCost: number) =>
 	Math.round(quantity * unitCost * 100);
@@ -70,7 +85,9 @@ function findLine(lines: OrderLine[], inv: InvoiceLine): Match {
 
 // Compares an invoice with its PO: each line's quantity and price against
 // what the PO expects now (including changes made after sending), lines on
-// one but not the other, and the totals. Changes nothing.
+// one but not the other, and the totals. Changes nothing. A discounted line
+// matches at its price before discounts (the invoice takes them off on lines
+// of their own) or at the price after them (it bills the net).
 export async function matchInvoice(
 	db: Db,
 	input: {
@@ -92,11 +109,18 @@ export async function matchInvoice(
 		matchedBy: "sku" | "supplier_sku" | "description";
 		unit: string;
 		issues: string[];
-		po: { quantity: number; unitCost: number | null };
+		po: {
+			quantity: number;
+			unitCost: number | null;
+			discounts?: string[];
+			total: number | null;
+		};
 		invoice: { quantity: number; unitCost: number };
 		amountOver: number | null;
 	}[] = [];
 	const notOnPo: (InvoiceLine & { line: number; reason: string })[] = [];
+	// Lines taking money off rather than billing a product, e.g. "Discount".
+	const credits: (InvoiceLine & { line: number })[] = [];
 	const supplierSkusToSave: { sku: string; supplierSku: string }[] = [];
 	const supplierSkuConflicts: {
 		sku: string;
@@ -111,7 +135,8 @@ export async function matchInvoice(
 		invoicedCents += cents(inv.quantity, inv.unitCost);
 		const match = findLine(po.lines, inv);
 		if (!match.line) {
-			notOnPo.push({ ...inv, line, reason: match.reason });
+			if (inv.quantity * inv.unitCost < 0) credits.push({ ...inv, line });
+			else notOnPo.push({ ...inv, line, reason: match.reason });
 			return;
 		}
 		const l = match.line;
@@ -138,17 +163,21 @@ export async function matchInvoice(
 		}
 
 		const issues: string[] = [];
+		const expected = expectedCents(l);
 		if (inv.quantity !== l.quantity) issues.push("quantity");
 		if (l.unitCost === null) issues.push("PO has no price");
 		else if (
-			Math.round(l.unitCost * 10000) !== Math.round(inv.unitCost * 10000)
+			Math.round(l.unitCost * 10000) !== Math.round(inv.unitCost * 10000) &&
+			!(
+				inv.quantity === l.quantity &&
+				cents(inv.quantity, inv.unitCost) === expected
+			)
 		)
 			issues.push("price");
 		if (issues.length === 0) {
 			matching++;
 			return;
 		}
-		const expected = l.unitCost === null ? null : cents(l.quantity, l.unitCost);
 		differences.push({
 			line,
 			sku: l.sku,
@@ -156,7 +185,12 @@ export async function matchInvoice(
 			matchedBy: match.by,
 			unit: l.unit,
 			issues,
-			po: { quantity: l.quantity, unitCost: l.unitCost },
+			po: {
+				quantity: l.quantity,
+				unitCost: l.unitCost,
+				...(l.discounts.length > 0 ? { discounts: discountsOf(l) } : {}),
+				total: expected === null ? null : dollars(expected),
+			},
 			invoice: { quantity: inv.quantity, unitCost: inv.unitCost },
 			amountOver:
 				expected === null
@@ -175,8 +209,13 @@ export async function matchInvoice(
 			unitCost: l.unitCost,
 		}));
 
-	const poCents = po.lines.reduce(
-		(n, l) => n + (l.unitCost === null ? 0 : cents(l.quantity, l.unitCost)),
+	const poCents = po.lines.reduce((n, l) => n + (expectedCents(l) ?? 0), 0);
+	const discountCents = po.lines.reduce(
+		(n, l) =>
+			n +
+			(l.unitCost === null
+				? 0
+				: cents(l.quantity, l.unitCost) - (expectedCents(l) ?? 0)),
 		0,
 	);
 	const extrasCents = Math.round(
@@ -203,10 +242,13 @@ export async function matchInvoice(
 					alreadyRecorded: `Invoice ${already.number} is already recorded on ${poName(already.purchaseOrderId)} (${already.total} USD)`,
 				}
 			: {}),
+		// Lines can match at the price before discounts, so the invoice's lines
+		// and credits must also come to what the PO does after them.
 		matches:
 			differences.length === 0 &&
 			notOnPo.length === 0 &&
 			notOnInvoice.length === 0 &&
+			invoicedCents === poCents &&
 			po.lines.every((l) => l.unitCost !== null),
 		totals: {
 			poLines: po.lines.length,
@@ -214,7 +256,9 @@ export async function matchInvoice(
 			matchingLines: matching,
 			poQuantity: po.lines.reduce((n, l) => n + l.quantity, 0),
 			invoiceQuantity: input.lines.reduce((n, l) => n + l.quantity, 0),
+			// After the PO's discounts, which poDiscounts adds up.
 			poTotal: dollars(poCents),
+			poDiscounts: dollars(discountCents),
 			invoiceLinesTotal: dollars(invoicedCents),
 			invoiceOverPo: dollars(invoicedCents - poCents),
 			...(statedCents === null
@@ -230,6 +274,12 @@ export async function matchInvoice(
 		},
 		differences,
 		notOnPo,
+		credits,
+		...(discountCents > 0 && invoicedCents - poCents === discountCents
+			? {
+					note: `The invoice comes to the PO before its $${dollars(discountCents).toFixed(2)} of discounts: they aren't taken off`,
+				}
+			: {}),
 		notOnInvoice,
 		supplierSkusToSave,
 		supplierSkuConflicts,

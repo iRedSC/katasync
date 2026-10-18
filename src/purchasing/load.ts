@@ -1,14 +1,16 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
 	productSuppliers,
 	products,
+	purchaseOrderDiscounts,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
 	suppliers,
 } from "#/db/schema";
+import { discountOf } from "#/purchasing/discount";
 import { renderPurchaseOrder } from "#/purchasing/document";
 import { PurchaseOrderError, poName } from "#/purchasing/orders";
 
@@ -82,7 +84,54 @@ export async function loadOrder(db: Db, poId: number) {
 		.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
 		.where(eq(purchaseOrderLines.purchaseOrderId, poId))
 		.orderBy(products.name, products.variantName);
-	return { ...po, lines };
+	const discounts = (
+		lines.length === 0
+			? []
+			: await db
+					.select({
+						id: purchaseOrderDiscounts.id,
+						lineId: purchaseOrderDiscounts.lineId,
+						units: purchaseOrderDiscounts.units,
+						percent: purchaseOrderDiscounts.percent,
+						amount: purchaseOrderDiscounts.amount,
+						receiptId: purchaseOrderDiscounts.receiptId,
+						sent: purchaseOrderDiscounts.sent,
+						removedAt: purchaseOrderDiscounts.removedAt,
+						createdAt: purchaseOrderDiscounts.createdAt,
+					})
+					.from(purchaseOrderDiscounts)
+					.where(
+						inArray(
+							purchaseOrderDiscounts.lineId,
+							lines.map((l) => l.id),
+						),
+					)
+					.orderBy(purchaseOrderDiscounts.id)
+	).map(discountOf);
+	return {
+		...po,
+		lines: lines.map((l) => {
+			const mine = discounts.filter((d) => d.lineId === l.id);
+			return {
+				...l,
+				// In force now, oldest first.
+				discounts: mine
+					.filter((d) => d.removedAt === null)
+					.map(({ id, units, off, receiptId }) => ({
+						id,
+						units,
+						off,
+						receiptId,
+					})),
+				// What the supplier was sent, even if taken off since.
+				sentDiscounts: mine
+					.filter((d) => d.sent)
+					.map(({ units, off }) => ({ units, off })),
+			};
+		}),
+		// Every discount, taken off or not, for the PO's timeline.
+		discountHistory: discounts,
+	};
 }
 
 // What the PO prints: always what the supplier was sent. Changes made after
@@ -94,9 +143,17 @@ export function printedLines(
 	return lines.flatMap((l) => {
 		const printed =
 			l.sentQuantity !== null
-				? { quantity: l.sentQuantity, unitCost: l.sentUnitCost }
+				? {
+						quantity: l.sentQuantity,
+						unitCost: l.sentUnitCost,
+						discounts: l.sentDiscounts,
+					}
 				: sentAt === null
-					? { quantity: l.quantity, unitCost: l.unitCost }
+					? {
+							quantity: l.quantity,
+							unitCost: l.unitCost,
+							discounts: l.discounts.map(({ units, off }) => ({ units, off })),
+						}
 					: null;
 		if (!printed) return [];
 		return [

@@ -8,6 +8,7 @@ import {
 	products,
 	purchaseOrderAmendments,
 	purchaseOrderDamages,
+	purchaseOrderDiscounts,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrderSentSets,
@@ -18,6 +19,14 @@ import {
 } from "#/db/schema";
 import { postReceipt, undoBatch } from "#/inventory/ledger";
 import { wantsMore } from "#/purchasing/changes";
+import {
+	type Discount,
+	type DiscountOff,
+	discountOf,
+	discountProblem,
+	discountRow,
+	receiptUnitCost,
+} from "#/purchasing/discount";
 import { type SuggestedLine, suggestPurchases } from "#/purchasing/reorder";
 import { partState, setsOf, shortBySupplier } from "#/purchasing/sets";
 
@@ -806,6 +815,8 @@ async function firstLocation(tx: Db) {
 // as the write so a change to the terms can't slip in between. Returns the
 // line's terms and the quantity it ended up with, in its unit. A tool set gets
 // its own line here and is split into its parts when the PO is sent.
+// `discounts`, when given, replace the line's, e.g. putting back a line that
+// was taken off.
 export async function setDraftLine(
 	db: Db,
 	input: {
@@ -814,6 +825,7 @@ export async function setDraftLine(
 		quantity: number;
 		inItems?: boolean;
 		unitCost?: number | null;
+		discounts?: Discount[];
 	},
 ) {
 	if (!Number.isInteger(input.quantity) || input.quantity < 0)
@@ -853,7 +865,7 @@ export async function setDraftLine(
 			throw new PurchaseOrderError(
 				`${product.sku} is a tool set; it's priced as its parts when sent`,
 			);
-		await tx
+		const [line] = await tx
 			.insert(purchaseOrderLines)
 			.values({
 				purchaseOrderId: po.id,
@@ -873,7 +885,22 @@ export async function setDraftLine(
 					quantity,
 					...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
 				},
-			});
+			})
+			.returning({ id: purchaseOrderLines.id });
+		if (input.discounts) {
+			for (const d of input.discounts) checkOff(d.off);
+			await tx
+				.delete(purchaseOrderDiscounts)
+				.where(eq(purchaseOrderDiscounts.lineId, line.id));
+			if (input.discounts.length > 0)
+				await tx.insert(purchaseOrderDiscounts).values(
+					input.discounts.map((d) => ({
+						lineId: line.id,
+						...discountRow(d),
+					})),
+				);
+		}
+		await checkDiscounts(tx, line.id);
 		return { ...terms, quantity };
 	});
 }
@@ -1079,6 +1106,13 @@ export async function removeAddedLine(
 					line.unitCost === null
 						? isNull(purchaseOrderLines.unitCost)
 						: eq(purchaseOrderLines.unitCost, line.unitCost),
+					// So is a discount.
+					notExists(
+						tx
+							.select({ id: purchaseOrderDiscounts.id })
+							.from(purchaseOrderDiscounts)
+							.where(eq(purchaseOrderDiscounts.lineId, purchaseOrderLines.id)),
+					),
 					// Skipping one of a set's parts is a change too.
 					notExists(
 						tx
@@ -1171,6 +1205,18 @@ export async function markSent(
 				sentUnitCost: purchaseOrderLines.unitCost,
 			})
 			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
+		await tx
+			.update(purchaseOrderDiscounts)
+			.set({ sent: true })
+			.where(
+				inArray(
+					purchaseOrderDiscounts.lineId,
+					tx
+						.select({ id: purchaseOrderLines.id })
+						.from(purchaseOrderLines)
+						.where(eq(purchaseOrderLines.purchaseOrderId, po.id)),
+				),
+			);
 		const [supplier] = await tx
 			.select({ leadTimeDays: suppliers.leadTimeDays })
 			.from(suppliers)
@@ -1200,14 +1246,31 @@ export async function markSent(
 // the line now expects what arrived. `last` says nothing more is coming, so
 // the line expects only what arrived. Either change is saved on the receipt,
 // so undoing it puts the line back. Neither reaches the supplier.
+// `discount` is one that came with this delivery, e.g. 1 free in the box, on
+// some of what arrived (all of it when units is left out). The supplier's
+// price stays the price before discounts.
 export async function receive(
 	db: Db,
-	input: { lineId: number; quantity: number; last?: boolean },
+	input: {
+		lineId: number;
+		quantity: number;
+		last?: boolean;
+		discount?: { units?: number; off: DiscountOff };
+	},
 ) {
 	if (!Number.isInteger(input.quantity) || input.quantity <= 0)
 		throw new PurchaseOrderError(
 			`Quantity must be a positive whole number, got ${input.quantity}`,
 		);
+	const discountUnits = input.discount?.units ?? input.quantity;
+	if (
+		input.discount &&
+		!(discountUnits >= 1 && discountUnits <= input.quantity)
+	)
+		throw new PurchaseOrderError(
+			`The discount can cover 1 to ${input.quantity}, the number that came`,
+		);
+	if (input.discount) checkOff(input.discount.off);
 	return db.transaction(async (tx) => {
 		const [found] = await tx
 			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
@@ -1258,13 +1321,28 @@ export async function receive(
 					: {}),
 			})
 			.returning({ id: purchaseOrderReceipts.id });
+		if (input.discount) {
+			await tx.insert(purchaseOrderDiscounts).values({
+				lineId: line.id,
+				receiptId: receipt.id,
+				...discountRow({ units: discountUnits, off: input.discount.off }),
+			});
+		}
+		const discounts = await checkDiscounts(tx, line.id);
 
 		if (line.unitCost !== null) {
+			const quantity = expect ?? line.quantity;
 			await averageInCost(tx, {
 				productId: line.productId,
 				onHandBefore: before,
 				quantity: input.quantity * line.packSize,
-				unitCost: line.unitCost / line.packSize,
+				unitCost:
+					receiptUnitCost({
+						line: { quantity, unitCost: line.unitCost },
+						discounts,
+						receipt: { id: receipt.id, quantity: input.quantity },
+					}) / line.packSize,
+				price: line.unitCost / line.packSize,
 			});
 		}
 		const closed = await closeIfComplete(tx, po.id);
@@ -1325,6 +1403,10 @@ export async function undoReceipt(db: Db, receiptId: number) {
 			batchId,
 			undoesId: receipt.id,
 		});
+		// A discount that came with it goes too. It was never on the PO as sent.
+		await tx
+			.delete(purchaseOrderDiscounts)
+			.where(eq(purchaseOrderDiscounts.receiptId, receipt.id));
 		// Only when nobody has changed the quantity since.
 		if (
 			receipt.quantityBefore !== null &&
@@ -1334,6 +1416,7 @@ export async function undoReceipt(db: Db, receiptId: number) {
 				.update(purchaseOrderLines)
 				.set({ quantity: receipt.quantityBefore })
 				.where(eq(purchaseOrderLines.id, receipt.lineId));
+		await checkDiscounts(tx, receipt.lineId);
 		if (po.status === "closed" && (await shortLines(tx, po.id)) > 0)
 			await reopen(tx, po.id);
 	});
@@ -1346,7 +1429,12 @@ export async function undoReceipt(db: Db, receiptId: number) {
 // after everything else is in.
 export async function receiveExtra(
 	db: Db,
-	input: { purchaseOrderId: number; productId: number; quantity: number },
+	input: {
+		purchaseOrderId: number;
+		productId: number;
+		quantity: number;
+		discount?: { units?: number; off: DiscountOff };
+	},
 ) {
 	return db.transaction(async (tx) => {
 		const po = await lockOrder(tx, input.purchaseOrderId, ["sent", "closed"]);
@@ -1358,6 +1446,7 @@ export async function receiveExtra(
 		const result = await receive(tx, {
 			lineId: line.id,
 			quantity: input.quantity,
+			discount: input.discount,
 		});
 		return { ...result, lineId: line.id };
 	});
@@ -1427,6 +1516,7 @@ export async function amendLine(
 				...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
 			})
 			.where(eq(purchaseOrderLines.id, line.id));
+		await checkDiscounts(tx, line.id);
 		// Each change goes on the PO's timeline.
 		const base = { purchaseOrderId: po.id, productId: line.productId };
 		if (quantity !== line.quantity) {
@@ -1480,6 +1570,243 @@ export async function setReceivingNote(
 			.where(eq(purchaseOrderLines.id, input.lineId));
 		return { was: line.note, note };
 	});
+}
+
+// Whole cents and hundredths of a percent, as stored, so nothing is rounded
+// away unseen.
+function checkOff(off: DiscountOff) {
+	const exact = (n: number) => Math.abs(Math.round(n * 100) - n * 100) < 1e-6;
+	if (off.kind === "percent" && !(off.percent > 0 && off.percent <= 100))
+		throw new PurchaseOrderError(
+			`A percent off is more than 0 and at most 100, got ${off.percent}`,
+		);
+	if (off.kind === "amount" && !(off.amount > 0))
+		throw new PurchaseOrderError(
+			`An amount off is more than $0, got ${off.amount}`,
+		);
+	if (!exact(off.kind === "percent" ? off.percent : off.amount))
+		throw new PurchaseOrderError(
+			off.kind === "percent"
+				? `A percent off has at most 2 decimals, got ${off.percent}`
+				: `An amount off is in whole cents, got ${off.amount}`,
+		);
+}
+
+// Discounts in force on these lines, oldest first.
+async function lineDiscounts(tx: Db, lineIds: number[]) {
+	if (lineIds.length === 0) return [];
+	const rows = await tx
+		.select({
+			id: purchaseOrderDiscounts.id,
+			lineId: purchaseOrderDiscounts.lineId,
+			units: purchaseOrderDiscounts.units,
+			percent: purchaseOrderDiscounts.percent,
+			amount: purchaseOrderDiscounts.amount,
+			receiptId: purchaseOrderDiscounts.receiptId,
+			sent: purchaseOrderDiscounts.sent,
+		})
+		.from(purchaseOrderDiscounts)
+		.where(
+			and(
+				inArray(purchaseOrderDiscounts.lineId, lineIds),
+				isNull(purchaseOrderDiscounts.removedAt),
+			),
+		)
+		.orderBy(purchaseOrderDiscounts.id);
+	return rows.map(discountOf);
+}
+
+// Refuses discounts the line can't have as it now is (discountProblem), with
+// `adding` among them when given. Every change to a line's quantity, price,
+// or discounts goes through this inside its transaction. Returns the
+// discounts in force.
+async function checkDiscounts(tx: Db, lineId: number, adding?: Discount) {
+	const [line] = await tx
+		.select({
+			quantity: purchaseOrderLines.quantity,
+			unitCost: purchaseOrderLines.unitCost,
+			sku: products.sku,
+			kind: products.kind,
+		})
+		.from(purchaseOrderLines)
+		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+		.where(eq(purchaseOrderLines.id, lineId));
+	// Taken off, discounts and all.
+	if (!line) return [];
+	const discounts = await lineDiscounts(tx, [lineId]);
+	const all: Discount[] = adding ? [...discounts, adding] : discounts;
+	if (all.length === 0) return discounts;
+	if (line.kind === "bundle")
+		throw new PurchaseOrderError(
+			`${line.sku} is a tool set, priced as its parts; discount those`,
+		);
+	const problem = discountProblem(line, all);
+	if (problem) throw new PurchaseOrderError(`${line.sku}: ${problem}`);
+	return discounts;
+}
+
+// When a draft line's pack size changes: discounts on a number of units
+// cover the same items in the new unit, so 6 EACH become 1 CASE of 6. One
+// that doesn't come to whole units is refused, rather than rounded. Then
+// checked against the line's new quantity and price.
+export async function convertDiscounts(
+	tx: Db,
+	line: { id: number; packSize: number },
+	packSize: number,
+) {
+	for (const d of await lineDiscounts(tx, [line.id])) {
+		if (d.units === "rest") continue;
+		const items = d.units * line.packSize;
+		if (items % packSize !== 0)
+			throw new PurchaseOrderError(
+				`A discount covers ${items} of it, which isn't a whole number of packs of ${packSize}; change it first`,
+			);
+		await tx
+			.update(purchaseOrderDiscounts)
+			.set({ units: items / packSize })
+			.where(eq(purchaseOrderDiscounts.id, d.id));
+	}
+	await checkDiscounts(tx, line.id);
+}
+
+// The PO a line is on, locked for a change to it: a draft (a suggested PO
+// becomes one), or one already sent, which tells no one.
+async function lockLineOrder(tx: Db, lineId: number) {
+	const [found] = await tx
+		.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
+		.from(purchaseOrderLines)
+		.where(eq(purchaseOrderLines.id, lineId));
+	if (!found) throw new PurchaseOrderError("That line doesn't exist");
+	return lockForEdit(tx, found.purchaseOrderId, ["draft", "sent", "closed"]);
+}
+
+// Puts a discount on a line. On a PO already sent the supplier isn't told,
+// and the PDF stays as sent. `replaces` takes one of the line's discounts off
+// in the same change, which is how one is edited. `receiptId` puts back one
+// that came with a delivery, so undoing that receipt still takes it off.
+// Stock that already arrived keeps the cost it came in at (receivedAtOldCost).
+export async function saveDiscount(
+	db: Db,
+	input: {
+		lineId: number;
+		discount: Discount;
+		replaces?: number;
+		receiptId?: number;
+	},
+) {
+	const { discount } = input;
+	if (
+		discount.units !== "rest" &&
+		!(Number.isInteger(discount.units) && discount.units > 0)
+	)
+		throw new PurchaseOrderError(
+			`A discount covers a whole number of units, got ${discount.units}`,
+		);
+	checkOff(discount.off);
+	return db.transaction(async (tx) => {
+		await lockLineOrder(tx, input.lineId);
+		const replaced =
+			input.replaces === undefined
+				? null
+				: await takeOffDiscount(tx, input.replaces, input.lineId);
+		if (input.receiptId !== undefined)
+			await checkReceiptDiscount(tx, input.receiptId, input.lineId, discount);
+		await checkDiscounts(tx, input.lineId, discount);
+		const [row] = await tx
+			.insert(purchaseOrderDiscounts)
+			.values({
+				lineId: input.lineId,
+				receiptId: input.receiptId,
+				...discountRow(discount),
+			})
+			.returning({ id: purchaseOrderDiscounts.id });
+		return {
+			id: row.id,
+			replaced,
+			receivedAtOldCost: (await receivedOf(tx, input.lineId)) > 0,
+		};
+	});
+}
+
+// A discount that came with a receipt covers some of what that receipt
+// brought, which is still in (not undone), on the same line.
+async function checkReceiptDiscount(
+	tx: Db,
+	receiptId: number,
+	lineId: number,
+	discount: Discount,
+) {
+	const [receipt] = await tx
+		.select({
+			lineId: purchaseOrderReceipts.lineId,
+			quantity: purchaseOrderReceipts.quantity,
+		})
+		.from(purchaseOrderReceipts)
+		.where(eq(purchaseOrderReceipts.id, receiptId));
+	const [undone] = await tx
+		.select({ id: purchaseOrderReceipts.id })
+		.from(purchaseOrderReceipts)
+		.where(eq(purchaseOrderReceipts.undoesId, receiptId));
+	if (!receipt || receipt.lineId !== lineId || receipt.quantity <= 0 || undone)
+		throw new PurchaseOrderError("That delivery isn't on this line any more");
+	if (discount.units === "rest" || discount.units > receipt.quantity)
+		throw new PurchaseOrderError(
+			`The discount can cover 1 to ${receipt.quantity}, the number that came`,
+		);
+}
+
+// Takes a discount off its line. Returns it as it was, for undo. With
+// purchaseOrderId, refuses one on another PO.
+export async function removeDiscount(
+	db: Db,
+	id: number,
+	purchaseOrderId?: number,
+) {
+	return db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({ lineId: purchaseOrderDiscounts.lineId })
+			.from(purchaseOrderDiscounts)
+			.where(eq(purchaseOrderDiscounts.id, id));
+		if (!found) throw new PurchaseOrderError("That discount is already off");
+		const po = await lockLineOrder(tx, found.lineId);
+		if (purchaseOrderId !== undefined && po.id !== purchaseOrderId)
+			throw new PurchaseOrderError(
+				`That discount is on ${poName(po.id)}, not ${poName(purchaseOrderId)}`,
+			);
+		const removed = await takeOffDiscount(tx, id, found.lineId);
+		await checkDiscounts(tx, found.lineId);
+		return {
+			...removed,
+			receivedAtOldCost: (await receivedOf(tx, found.lineId)) > 0,
+		};
+	});
+}
+
+// One printed on the PO as sent is only marked removed, so it still prints.
+async function takeOffDiscount(tx: Db, id: number, lineId: number) {
+	const [row] = await tx
+		.select()
+		.from(purchaseOrderDiscounts)
+		.where(
+			and(
+				eq(purchaseOrderDiscounts.id, id),
+				eq(purchaseOrderDiscounts.lineId, lineId),
+				isNull(purchaseOrderDiscounts.removedAt),
+			),
+		)
+		.for("update");
+	if (!row) throw new PurchaseOrderError("That discount is already off");
+	if (row.sent)
+		await tx
+			.update(purchaseOrderDiscounts)
+			.set({ removedAt: new Date() })
+			.where(eq(purchaseOrderDiscounts.id, id));
+	else
+		await tx
+			.delete(purchaseOrderDiscounts)
+			.where(eq(purchaseOrderDiscounts.id, id));
+	const { units, off } = discountOf(row);
+	return { lineId, units, off, receiptId: row.receiptId };
 }
 
 // After a line's quantity changes: a sent PO with everything in closes, and
@@ -1540,8 +1867,9 @@ export async function closeOrder(db: Db, id: number, now = new Date()) {
 export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 	return db.transaction(async (tx) => {
 		const po = await lockOrder(tx, id, ["draft"]);
-		const lines = await tx
+		const rows = await tx
 			.select({
+				id: purchaseOrderLines.id,
 				productId: purchaseOrderLines.productId,
 				unit: purchaseOrderLines.unit,
 				packSize: purchaseOrderLines.packSize,
@@ -1553,6 +1881,16 @@ export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, id))
 			.orderBy(purchaseOrderLines.id);
+		const discounts = await lineDiscounts(
+			tx,
+			rows.map((l) => l.id),
+		);
+		const lines = rows.map(({ id: lineId, ...l }) => ({
+			...l,
+			discounts: discounts
+				.filter((d) => d.lineId === lineId)
+				.map(({ units, off }) => ({ units, off })),
+		}));
 		const skippedParts = await tx
 			.select({
 				setProductId: purchaseOrderSkippedParts.setProductId,
@@ -1593,6 +1931,7 @@ export type DeletedDraft = {
 		minimumQuantity: number;
 		quantity: number;
 		unitCost: number | null;
+		discounts: Discount[];
 	}[];
 	skippedParts: { setProductId: number; partProductId: number }[];
 };
@@ -1628,10 +1967,19 @@ export async function restoreDraft(db: Db, draft: DeletedDraft) {
 			.returning({ id: purchaseOrders.id });
 		if (!po)
 			throw new PurchaseOrderError(`${poName(draft.id)} is already back`);
-		if (draft.lines.length > 0)
-			await tx
+		for (const { discounts, ...l } of draft.lines) {
+			const [line] = await tx
 				.insert(purchaseOrderLines)
-				.values(draft.lines.map((l) => ({ ...l, purchaseOrderId: po.id })));
+				.values({ ...l, purchaseOrderId: po.id })
+				.returning({ id: purchaseOrderLines.id });
+			if (discounts.length > 0)
+				await tx
+					.insert(purchaseOrderDiscounts)
+					.values(
+						discounts.map((d) => ({ lineId: line.id, ...discountRow(d) })),
+					);
+			await checkDiscounts(tx, line.id);
+		}
 		if (draft.skippedParts.length > 0)
 			await tx
 				.insert(purchaseOrderSkippedParts)
@@ -1790,8 +2138,8 @@ async function ownedOnHand(db: Db, productId: number) {
 
 // Weighted average of what's on the shelf and what just arrived, per one of
 // the product. Oversold units (negative stock) have no cost to average in, so
-// they count as none. The supplier's price becomes the last price paid, in
-// whatever unit the product is bought in now.
+// they count as none. The supplier's price becomes the last price paid
+// before discounts, in whatever unit the product is bought in now.
 export function averageCost(p: {
 	oldCost: number | null;
 	onHandBefore: number;
@@ -1803,6 +2151,8 @@ export function averageCost(p: {
 	return (held * p.oldCost + p.quantity * p.unitCost) / (held + p.quantity);
 }
 
+// unitCost is what each one cost after discounts; price is before them, and
+// becomes the supplier's price, so a one-off discount doesn't carry over.
 async function averageInCost(
 	db: Db,
 	p: {
@@ -1810,6 +2160,7 @@ async function averageInCost(
 		onHandBefore: number;
 		quantity: number;
 		unitCost: number;
+		price: number;
 	},
 ) {
 	const [product] = await db
@@ -1827,7 +2178,7 @@ async function averageInCost(
 	await db
 		.update(productSuppliers)
 		.set({
-			cost: sql`round(${p.unitCost}::numeric * ${productSuppliers.packSize}, 4)`,
+			cost: sql`round(${p.price}::numeric * ${productSuppliers.packSize}, 4)`,
 		})
 		.where(eq(productSuppliers.productId, p.productId));
 }

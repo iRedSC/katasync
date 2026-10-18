@@ -32,6 +32,13 @@ import {
 } from "#/purchasing/damage";
 import { MAX_PHOTO_BYTES, MAX_PHOTOS } from "#/purchasing/damage-limits";
 import {
+	coveredUnits,
+	type DiscountOff,
+	describeDiscount,
+	discountValues,
+	lineCents,
+} from "#/purchasing/discount";
+import {
 	invoicesOf,
 	matchInvoice,
 	recordInvoice,
@@ -48,6 +55,8 @@ import {
 	PurchaseOrderError,
 	purchaseOrderOfBatch,
 	receive,
+	removeDiscount,
+	saveDiscount,
 	setDraftLine,
 	setReceivingNote,
 	undoReceipt,
@@ -84,6 +93,7 @@ How things count:
 - Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
 - Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.
 - POs: suggested, draft, sent, closed, cancelled. A suggested PO is a reorder suggestion opened in the app; its first change makes it a draft. Each supplier has at most one draft or suggested PO; tools that add lines put them on it, creating it if needed. Nothing here emails a PO: the user reviews and sends drafts in the app. When the supplier already has a draft (they invoiced or shipped it), mark_po_sent records that without contacting anyone; ask the user first. Sent POs can be received here. When a supplier ships or bills something other than what was sent and we're keeping it, add_to_sent_po and adjust_sent_po_line change the PO to match, telling no one. While receiving, set_po_line_note leaves a note on a line (a short count, what's coming later) that shows above it on the receive page. Damage that arrived goes in with report_damage, in single items: it comes off the shelf at once, and photos upload with curl to the link it returns. The user sends the damage report to the supplier from the app, choosing credit or replacement per item; nothing here sends it.
+- Discounts: a line can have discounts, each a percent or dollars off some number of its units (units "all" means every unit no other discount on the line covers, and follows the quantity). A dollar discount is for those units together, not each. 100% off is free. A line's extended price is after its discounts; the supplier's price stays the price before them. set_po_line_discount works on drafts and sent POs (telling no one); a discount on a draft prints on the PO when it's sent. When something came free or discounted in a delivery, pass discount to receive_po_line instead, so undoing the receipt takes it off too and the stock's cost reflects it.
 - Supplier invoices: match_invoice checks one against its PO (quantities, prices, missing and extra lines, totals) and changes nothing. Give every line, with their item number as supplier_sku when it has one. Then record_supplier_invoice keeps its number, date, due date, and total on the PO; the same number from the same supplier can't be recorded twice.
 - Cycle counts only happen when asked for: request_counts puts shelves on the staff's count list, and a count clears them. Ask when stock looks wrong, e.g. oversold or not matching what a channel reports.
 - Profit: use the order_profit view (one row per order not cancelled: order_id, store_id, sold_on, placed_at, revenue, shipping_charged, cost, cost_known, fees, fees_status, labels, labels_status, refunds, adjustments, profit, complete, shipped). The Profit tab counts only shipped orders (shipped: confirmed by the marketplace and shipped, or needing no shipping); say so when leaving others out. An Amazon order still Pending has no price yet. sold_on is where it really sold (a TikTok order relayed through Shopify is tiktok). fees_status: final, reported (may still change), or estimated (a typical rate until the marketplace reports). labels_status: known, stand_in (katasync's TikTok estimate), not_needed, not_shipped, awaiting (the marketplace may still bill one), or missing (shipped, no label cost from anyone). Say how much of a total rests on estimates or gaps, never present it as final: complete is true when cost, fees and labels are all in. Days are the shop's (America/New_York); weeks start Saturday. Each marketplace's charges per order are in order_charges (billed_by, kind fee/label/refund/adjustment, description, amount; positive costs us). Per item sold, use order_line_profit (line_id, order_id, product_id, sold_on, placed_at, quantity, revenue, cost, cost_known, fees, labels, shipping_charged, refunds, adjustments, profit, fees_status, labels_status, complete, shipped): each line's share of its order's charges, by sales (by units on a free order); an order's lines add up to its profit. A line with no cost of its own uses its product's cost as it is now.
@@ -137,6 +147,14 @@ async function orderForClaude(db: Db, id: number) {
 	const invoices = await invoicesOf(db, id);
 	const damages = await damagesOf(db, id);
 	const priced = po.lines.filter((l) => l.unitCost !== null);
+	const before = priced.reduce(
+		(n, l) => n + Math.round(l.quantity * (l.unitCost ?? 0) * 100),
+		0,
+	);
+	const after = priced.reduce(
+		(n, l) => n + (lineCents(l, l.discounts) ?? 0),
+		0,
+	);
 	return {
 		id: po.order.id,
 		status: po.order.status,
@@ -158,11 +176,9 @@ async function orderForClaude(db: Db, id: number) {
 			// Summed in each line's own unit, as an invoice counts them.
 			quantity: po.lines.reduce((n, l) => n + l.quantity, 0),
 			items: po.lines.reduce((n, l) => n + l.quantity * l.packSize, 0),
-			total:
-				priced.reduce(
-					(n, l) => n + Math.round(l.quantity * (l.unitCost ?? 0) * 100),
-					0,
-				) / 100,
+			// After discounts.
+			total: after / 100,
+			...(before !== after ? { discounts: (before - after) / 100 } : {}),
 			linesWithoutPrice: po.lines.length - priced.length,
 			received: po.lines.reduce((n, l) => n + l.received, 0),
 		},
@@ -202,10 +218,12 @@ async function orderForClaude(db: Db, id: number) {
 			...(l.minimumQuantity > 1 ? { minimum: l.minimumQuantity } : {}),
 			quantity: l.quantity,
 			unitCost: l.unitCost,
+			// After discounts.
 			extended:
-				l.unitCost === null
+				lineCents(l, l.discounts) === null
 					? null
-					: Math.round(l.quantity * l.unitCost * 100) / 100,
+					: (lineCents(l, l.discounts) ?? 0) / 100,
+			...(l.discounts.length > 0 ? { discounts: discountsForClaude(l) } : {}),
 			received: l.received,
 			...(l.sentQuantity !== null &&
 			(l.sentQuantity !== l.quantity || l.sentUnitCost !== l.unitCost)
@@ -230,6 +248,73 @@ async function orderForClaude(db: Db, id: number) {
 					: {}),
 		})),
 	};
+}
+
+// Each discount with its id (for remove_po_line_discount), what it says, the
+// units it covers now, and the dollars it takes off.
+function discountsForClaude(l: {
+	quantity: number;
+	unitCost: number | null;
+	discounts: {
+		id: number;
+		units: number | "rest";
+		off: DiscountOff;
+		receiptId: number | null;
+	}[];
+}) {
+	const units = coveredUnits(l.quantity, l.discounts);
+	const values = discountValues(l, l.discounts);
+	return l.discounts.map((d, i) => ({
+		id: d.id,
+		says: describeDiscount(d, units[i], l.discounts.length > 1),
+		units: d.units === "rest" ? "all" : d.units,
+		...(d.off.kind === "percent"
+			? { percent: d.off.percent }
+			: { amount: d.off.amount }),
+		covers: units[i],
+		off: values[i],
+		...(d.receiptId !== null ? { cameWithReceipt: d.receiptId } : {}),
+	}));
+}
+
+// A percent or an amount, exactly one.
+const discountShape = {
+	percent: z
+		.number()
+		.gt(0)
+		.max(100)
+		.optional()
+		.describe("Percent off, e.g. 10; 100 is free. Give this or amount"),
+	amount: z
+		.number()
+		.positive()
+		.optional()
+		.describe(
+			"Dollars off those units together, not each. Give this or percent",
+		),
+};
+
+function offOf(d: { percent?: number; amount?: number }): DiscountOff {
+	if ((d.percent === undefined) === (d.amount === undefined))
+		throw new PurchaseOrderError("Give a percent or an amount, not both");
+	return d.percent !== undefined
+		? { kind: "percent", percent: d.percent }
+		: { kind: "amount", amount: d.amount ?? 0 };
+}
+
+async function lineOf(db: Db, po: number, sku: string) {
+	const product = await productBySku(db, sku);
+	const [line] = await db
+		.select({ id: purchaseOrderLines.id })
+		.from(purchaseOrderLines)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, po),
+				eq(purchaseOrderLines.productId, product.id),
+			),
+		);
+	if (!line) throw new PurchaseOrderError(`${product.sku} isn't on PO ${po}`);
+	return line.id;
 }
 
 const READ = { readOnlyHint: true, openWorldHint: false } as const;
@@ -806,6 +891,87 @@ function registerWriteTools(server: McpServer, db: Db) {
 	);
 
 	server.registerTool(
+		"set_po_line_discount",
+		{
+			description:
+				"Puts a discount on a line of a draft or sent PO: a percent or dollars off some of its units, e.g. 10% off all, $12 off 4, or 100% off 1 (free). The amount is for those units together. units 'all' covers every unit no other discount on the line covers and follows the quantity; there can be one of those per line. Discounts can't cover more units than the line has, or take more than they cost. On a sent PO it tells no one and the PO as sent stays as it was; on a draft it prints on the PO when sent. Stock already received keeps the cost it came in at. replaces takes one of the line's discounts off in the same change, to edit it. For something discounted in a delivery, use receive_po_line's discount instead.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				sku: z.string(),
+				units: z
+					.union([z.number().int().positive(), z.literal("all")])
+					.describe("How many of the line's unit, or all"),
+				...discountShape,
+				replaces: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe("Id of a discount on this line to take off in its place"),
+				receipt_id: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe(
+						"Only to put back one that came with a delivery (remove_po_line_discount returns it), so undoing that receipt still takes it off",
+					),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sku, units, percent, amount, replaces, receipt_id }) => {
+			const lineId = await lineOf(db, po, sku);
+			const result = await saveDiscount(db, {
+				lineId,
+				discount: {
+					units: units === "all" ? "rest" : units,
+					off: offOf({ percent, amount }),
+				},
+				replaces,
+				receiptId: receipt_id,
+			});
+			return json({
+				discountId: result.id,
+				...(result.receivedAtOldCost
+					? {
+							warning:
+								"Some already arrived; that stock keeps the cost it came in at",
+						}
+					: {}),
+				po: await orderForClaude(db, po),
+			});
+		},
+	);
+
+	server.registerTool(
+		"remove_po_line_discount",
+		{
+			description:
+				"Takes a discount off a PO line. Its id is in get_purchase_order's line discounts. Returns it as it was, so set_po_line_discount can put it back.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				discount_id: z.number().int().positive(),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, discount_id }) => {
+			const removed = await removeDiscount(db, discount_id, po);
+			return json({
+				was: {
+					units: removed.units === "rest" ? "all" : removed.units,
+					...(removed.off.kind === "percent"
+						? { percent: removed.off.percent }
+						: { amount: removed.off.amount }),
+					...(removed.receiptId !== null
+						? { receipt_id: removed.receiptId }
+						: {}),
+				},
+				po: await orderForClaude(db, po),
+			});
+		},
+	);
+
+	server.registerTool(
 		"record_supplier_invoice",
 		{
 			description:
@@ -1344,15 +1510,28 @@ function registerWriteTools(server: McpServer, db: Db) {
 		"receive_po_line",
 		{
 			description:
-				"Records what arrived for one product on a sent PO, in the line's unit (2 cases of 12 puts 24 on the shelf). Updates the product's average cost and closes the PO once everything has arrived. Returns a receipt_id for undo_po_receipt.",
+				"Records what arrived for one product on a sent PO, in the line's unit (2 cases of 12 puts 24 on the shelf). Updates the product's average cost and closes the PO once everything has arrived. With discount, part or all of what arrived came free or discounted (e.g. 1 free, or $12 off the 4 that are dented): it goes on the line with this receipt, the stock's cost reflects it, and undoing the receipt takes it off. Returns a receipt_id for undo_po_receipt.",
 			inputSchema: {
 				po: z.number().int().positive(),
 				sku: z.string(),
 				quantity: z.number().int().positive(),
+				discount: z
+					.object({
+						units: z
+							.number()
+							.int()
+							.positive()
+							.optional()
+							.describe(
+								"How many of what arrived it covers; all of them when left out",
+							),
+						...discountShape,
+					})
+					.optional(),
 			},
 			annotations: WRITE,
 		},
-		async ({ po, sku, quantity }) => {
+		async ({ po, sku, quantity, discount }) => {
 			const product = await productBySku(db, sku);
 			const [line] = await db
 				.select({ id: purchaseOrderLines.id })
@@ -1364,7 +1543,14 @@ function registerWriteTools(server: McpServer, db: Db) {
 					),
 				);
 			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
-			const result = await receive(db, { lineId: line.id, quantity });
+			const result = await receive(db, {
+				lineId: line.id,
+				quantity,
+				discount: discount && {
+					units: discount.units,
+					off: offOf(discount),
+				},
+			});
 			return json({ po, sku, quantity, ...result });
 		},
 	);

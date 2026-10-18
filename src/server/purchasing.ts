@@ -7,6 +7,7 @@ import {
 	productSuppliers,
 	products,
 	purchaseOrderAmendments,
+	purchaseOrderDiscounts,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
@@ -22,6 +23,7 @@ import {
 	removeDamagePhoto,
 	sendDamageReport,
 } from "#/purchasing/damage";
+import { discountOf, lineCents } from "#/purchasing/discount";
 import { emailConfigured, sendEmail } from "#/purchasing/email";
 import { type LeadTime, leadTimes } from "#/purchasing/forecast";
 import { invoicesOf } from "#/purchasing/invoices";
@@ -52,8 +54,10 @@ import {
 	receiveExtra,
 	refreshSuggested,
 	removeAddedLine,
+	removeDiscount,
 	restoreDraft,
 	restoreOrder,
+	saveDiscount,
 	setDraftLine,
 	setPartsOf,
 	setReceivingNote,
@@ -84,6 +88,21 @@ import {
 import { listProducts } from "#/server/catalog";
 
 const id = type({ id: "number.integer > 0" });
+
+// A discount as the browser sends it; its limits are checked where it's saved.
+const discountOff = type({ kind: "'percent'", percent: "number" }).or({
+	kind: "'amount'",
+	amount: "number",
+});
+const discount = type({
+	units: "number.integer > 0 | 'rest'",
+	off: discountOff,
+});
+// One that came with a delivery, on some of what arrived (all of it without units).
+const receiptDiscount = type({
+	"units?": "number.integer > 0",
+	off: discountOff,
+});
 
 // Suggestions ready to order, and every PO still open plus the latest finished ones.
 export const listPurchasing = createServerFn({ method: "GET" }).handler(
@@ -126,6 +145,12 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 				.from(suppliers)
 				.orderBy(suppliers.name),
 		]);
+		// Totals above are before discounts; take those off line by line.
+		const off = await discountsOff(
+			db,
+			orders.map((o) => o.id),
+		);
+		for (const o of orders) o.total -= off.get(o.id) ?? 0;
 		// Open: drafts still being put together. Incoming: sent, waiting on
 		// deliveries.
 		const open = orders.filter((o) => o.status === "draft");
@@ -144,6 +169,51 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 );
 
 export type PurchasingList = Awaited<ReturnType<typeof listPurchasing>>;
+
+// Dollars of discounts on each of these POs.
+async function discountsOff(db: Db, purchaseOrderIds: number[]) {
+	const off = new Map<number, number>();
+	if (purchaseOrderIds.length === 0) return off;
+	const rows = await db
+		.select({
+			lineId: purchaseOrderLines.id,
+			purchaseOrderId: purchaseOrderLines.purchaseOrderId,
+			quantity: purchaseOrderLines.quantity,
+			unitCost: purchaseOrderLines.unitCost,
+			units: purchaseOrderDiscounts.units,
+			percent: purchaseOrderDiscounts.percent,
+			amount: purchaseOrderDiscounts.amount,
+		})
+		.from(purchaseOrderDiscounts)
+		.innerJoin(
+			purchaseOrderLines,
+			eq(purchaseOrderLines.id, purchaseOrderDiscounts.lineId),
+		)
+		.where(
+			and(
+				inArray(purchaseOrderLines.purchaseOrderId, purchaseOrderIds),
+				isNull(purchaseOrderDiscounts.removedAt),
+			),
+		)
+		.orderBy(purchaseOrderDiscounts.id);
+	const lines = new Map<
+		number,
+		ReturnType<typeof discountOf<(typeof rows)[number]>>[]
+	>();
+	for (const r of rows.map(discountOf))
+		lines.set(r.lineId, [...(lines.get(r.lineId) ?? []), r]);
+	for (const discounts of lines.values()) {
+		const [line] = discounts;
+		const before = lineCents(line, []);
+		const after = lineCents(line, discounts);
+		if (before === null || after === null) continue;
+		off.set(
+			line.purchaseOrderId,
+			(off.get(line.purchaseOrderId) ?? 0) + (before - after) / 100,
+		);
+	}
+	return off;
+}
 
 // "POs ready" on Home: the same list as "Ready to order".
 export const countPosReady = createServerFn({ method: "GET" }).handler(
@@ -361,6 +431,7 @@ export const setLine = createServerFn({ method: "POST" })
 			productId: "number.integer > 0",
 			quantity: "number.integer >= 0",
 			"unitCost?": "number >= 0 | null",
+			"discounts?": discount.array(),
 		}),
 	)
 	.handler(async ({ data }) => setDraftLine(getDb(), data));
@@ -560,6 +631,23 @@ export const setLineReceivingNote = createServerFn({ method: "POST" })
 	.validator(type({ lineId: "number.integer > 0", note: "string | null" }))
 	.handler(async ({ data }) => setReceivingNote(getDb(), data));
 
+// A discount on a line of a draft or a PO already sent (telling no one).
+// `replaces` takes one of the line's discounts off in the same change.
+export const saveLineDiscount = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			lineId: "number.integer > 0",
+			discount,
+			"replaces?": "number.integer > 0",
+			"receiptId?": "number.integer > 0",
+		}),
+	)
+	.handler(async ({ data }) => saveDiscount(getDb(), data));
+
+export const removeLineDiscount = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => removeDiscount(getDb(), data.id));
+
 // Puts a product on its supplier's draft, starting one if needed. Without a
 // quantity it's the fewest the supplier sells. A product already on the draft
 // is left as it is and comes back with added false. Says where it went, and
@@ -671,6 +759,7 @@ export const receiveLine = createServerFn({ method: "POST" })
 			lineId: "number.integer > 0",
 			quantity: "number.integer > 0",
 			"last?": "boolean",
+			"discount?": receiptDiscount,
 		}),
 	)
 	.handler(async ({ data }) => receive(getDb(), data));
@@ -682,6 +771,7 @@ export const receiveExtraLine = createServerFn({ method: "POST" })
 			purchaseOrderId: "number.integer > 0",
 			productId: "number.integer > 0",
 			quantity: "number.integer > 0",
+			"discount?": receiptDiscount,
 		}),
 	)
 	.handler(async ({ data }) => receiveExtra(getDb(), data));
@@ -727,6 +817,7 @@ export const restoreDraftPurchaseOrder = createServerFn({ method: "POST" })
 				minimumQuantity: positive,
 				quantity: "number.integer >= 0",
 				unitCost: "number | null",
+				discounts: discount.array(),
 			}).array(),
 			skippedParts: type({
 				setProductId: positive,
