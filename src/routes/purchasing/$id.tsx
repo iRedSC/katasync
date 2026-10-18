@@ -33,10 +33,14 @@ import {
 } from "react";
 import { toast } from "sonner";
 import {
+	DamageDetailsDialog,
+	DamageRow,
+	damageName,
+} from "#/components/damage/damage-details";
+import {
 	DamageDialog,
 	type DamageTarget,
 } from "#/components/damage/damage-dialog";
-import { DamageRows, damageName } from "#/components/damage/damage-rows";
 import { DamageReportDialog } from "#/components/damage/report-dialog";
 import { useNumberLine } from "#/components/number-line";
 import { Badge, Card, Page, useBack } from "#/components/page";
@@ -225,6 +229,9 @@ function PurchaseOrderPage() {
 	const [editingSupplier, setEditingSupplier] = useState(false);
 	const [damageTarget, setDamageTarget] = useState<DamageTarget | null>(null);
 	const [reportingDamage, setReportingDamage] = useState(false);
+	// Looked up by id, so it closes itself once the damage is removed.
+	const [openDamageId, setOpenDamageId] = useState<number | null>(null);
+	const openDamage = d.damages.find((x) => x.id === openDamageId);
 	const unreported = d.damages.filter((x) => x.reportedAt === null);
 	const picker = useRef<HTMLInputElement>(null);
 	const [browsing, setBrowsing] = useState(false);
@@ -288,6 +295,7 @@ function PurchaseOrderPage() {
 			lines={lines}
 			focus={focus}
 			onEditQuantity={(lineId) => setFocus({ lineId, nonce: Date.now() })}
+			onOpenDamage={setOpenDamageId}
 			onReportDamage={(l) =>
 				setDamageTarget({
 					kind: "new",
@@ -529,7 +537,7 @@ function PurchaseOrderPage() {
 									{arrived.length === 0 && totals}
 								</Card>
 							)}
-							{(arrived.length > 0 || d.damages.length > 0) && (
+							{arrived.length > 0 && (
 								<Card
 									flush
 									title="Received"
@@ -542,20 +550,8 @@ function PurchaseOrderPage() {
 											: linesAside(arrived.length)
 									}
 								>
-									{arrived.length > 0 && lineTable(arrived)}
-									{d.damages.length > 0 && (
-										<DamageRows
-											damages={d.damages}
-											onAddPhotos={(x) =>
-												setDamageTarget({
-													kind: "photos",
-													damageId: x.id,
-													name: damageName(x),
-												})
-											}
-										/>
-									)}
-									{arrived.length > 0 && totals}
+									{lineTable(arrived)}
+									{totals}
 								</Card>
 							)}
 							{d.lines.length === 0 && (
@@ -623,6 +619,20 @@ function PurchaseOrderPage() {
 						<DamageDialog
 							target={damageTarget}
 							onClose={() => setDamageTarget(null)}
+						/>
+					)}
+					{openDamage && (
+						<DamageDetailsDialog
+							damage={openDamage}
+							onClose={() => setOpenDamageId(null)}
+							onAddPhotos={() => {
+								setOpenDamageId(null);
+								setDamageTarget({
+									kind: "photos",
+									damageId: openDamage.id,
+									name: damageName(openDamage),
+								});
+							}}
 						/>
 					)}
 					{reportingDamage && unreported.length > 0 && (
@@ -1156,12 +1166,14 @@ function LineTable({
 	lines,
 	focus,
 	onEditQuantity,
+	onOpenDamage,
 	onReportDamage,
 	onQuantityDone,
 }: {
 	detail: PurchaseOrderDetail;
 	lines: Line[];
 	focus: LineFocus | null;
+	onOpenDamage: (damageId: number) => void;
 	onReportDamage: (line: Line) => void;
 	// Opens a line's quantity, as adding it from the picker does.
 	onEditQuantity: (lineId: number) => void;
@@ -1579,6 +1591,18 @@ function LineTable({
 												</td>
 											)}
 										</tr>
+										{d.damages
+											.filter((x) => x.lineId === l.id)
+											.map((x) => (
+												<DamageRow
+													key={`damage${x.id}`}
+													damage={x}
+													// Damage only exists once sent, when the table has 8.
+													columns={8}
+													onOpen={() => onOpenDamage(x.id)}
+													onContextMenu={() => setMenuFor(l)}
+												/>
+											))}
 										{set?.open &&
 											set.parts.map(({ part, state }) => (
 												<SetPartRow
