@@ -1,6 +1,8 @@
+import { Trash2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card } from "#/components/page";
+import { IconAction, Row } from "#/components/rows";
 import { Button } from "#/components/ui/button";
 import { formatDay } from "#/lib/format";
 import { optimism, optimistic } from "#/lib/optimism";
@@ -11,8 +13,8 @@ type Token = Awaited<ReturnType<typeof listTokens>>[number];
 // Revoking shows at once, from this list.
 export const tokensData = optimistic<Token[]>("tokens");
 
-// API tokens for Claude and other MCP clients. A new token is shown once,
-// with the command that connects Claude Code to katasync.
+// API tokens for agents (Claude and other MCP clients). A new token is
+// shown once, with the command that connects Claude Code to katasync.
 export function TokensCard({ tokens }: { tokens: Token[] }) {
 	const [naming, setNaming] = useState(false);
 	const [making, setMaking] = useState(false);
@@ -54,7 +56,7 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 
 	return (
 		<Card
-			title="Claude and other MCP clients"
+			title="Agent tokens"
 			flush
 			aside={
 				!naming &&
@@ -66,14 +68,14 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 			}
 		>
 			{naming && (
-				<form onSubmit={create} className="flex gap-2 border-t px-4 py-3">
+				<form onSubmit={create} className="flex flex-wrap gap-2 px-4 pb-3">
 					<input
 						name="name"
 						// biome-ignore lint/a11y/noAutofocus: opened to type a name
 						autoFocus
 						placeholder="Name, e.g. Office PC"
 						onKeyDown={(e) => e.key === "Escape" && setNaming(false)}
-						className="h-8 flex-1 rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
+						className="h-8 min-w-40 flex-1 rounded-lg border border-input bg-white px-2 outline-none focus:border-ring"
 					/>
 					<select
 						name="access"
@@ -98,7 +100,7 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 				</form>
 			)}
 			{made && command && (
-				<div className="flex flex-col gap-2 border-t px-4 py-3">
+				<div className="flex flex-col gap-2 px-4 pb-3">
 					<p>Shown once. For Claude Code, run:</p>
 					<code className="rounded bg-surface px-2 py-1.5 text-xs break-all">
 						{command}
@@ -133,29 +135,32 @@ export function TokensCard({ tokens }: { tokens: Token[] }) {
 				</div>
 			)}
 			{tokens.length === 0 ? (
-				<p className="border-t px-4 py-3 text-muted-foreground">
-					None. Sending POs and buying labels stay in the app.
-				</p>
+				<p className="px-4 pb-3 text-muted-foreground">None.</p>
 			) : (
 				<ul>
 					{tokens.map((t) => (
-						<li
+						<Row
 							key={t.id}
-							className="flex items-center gap-3 border-t px-4 py-3"
+							actions={
+								<IconAction
+									icon={Trash2}
+									label="Revoke"
+									onClick={() => revoke(t)}
+								/>
+							}
 						>
-							<span className="flex flex-1 items-center gap-2 font-medium">
-								{t.name}
-								{!t.canWrite && <Badge>Read only</Badge>}
-							</span>
-							<span className="text-muted-foreground">
-								{t.lastUsedAt
-									? `Last used ${formatDay(t.lastUsedAt)}`
-									: `Made ${formatDay(t.createdAt)}, not used yet`}
-							</span>
-							<Button size="sm" variant="ghost" onClick={() => revoke(t)}>
-								Revoke
-							</Button>
-						</li>
+							<div className="min-w-0 flex-1">
+								<p className="flex items-center gap-2 font-medium">
+									<span className="truncate">{t.name}</span>
+									{!t.canWrite && <Badge>Read only</Badge>}
+								</p>
+								<p className="text-xs text-muted-foreground">
+									{t.lastUsedAt
+										? `Used ${formatDay(t.lastUsedAt)}`
+										: `Made ${formatDay(t.createdAt)}, not used yet`}
+								</p>
+							</div>
+						</Row>
 					))}
 				</ul>
 			)}
