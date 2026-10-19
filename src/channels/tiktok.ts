@@ -223,6 +223,8 @@ export const tiktokOrder = type({
 		product_name: "string",
 		"sku_name?": "string",
 		sale_price: "string",
+		// Taken off sale_price but paid to us by TikTok, not lost.
+		"platform_discount?": "string",
 		"display_status?": "string",
 	}).array(),
 });
@@ -286,8 +288,9 @@ export function tiktokToChannelOrder(
 					? `${item.product_name} - ${item.sku_name}`
 					: item.product_name,
 			quantity: units,
-			// What the buyer paid per unit, after every discount.
-			unitPrice: money(item.sale_price),
+			// What we're paid per unit: the buyer's price after every discount,
+			// plus the part of the discount TikTok funds.
+			unitPrice: money(item.sale_price) + money(item.platform_discount),
 		});
 	}
 	return {
