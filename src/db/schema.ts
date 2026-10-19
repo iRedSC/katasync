@@ -639,13 +639,13 @@ export const syncIssues = pgTable(
 	(t) => [index("sync_issues_run_idx").on(t.runId)],
 );
 
-// A box we ship in, with its own short pin (1 to 999) for quick ship.
+// A box we ship in. Quick ship finds it by name or size.
 export const packages = pgTable(
 	"packages",
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity(),
-		pin: smallint().notNull().unique(),
-		name: text().notNull(),
+		// Only when the size alone doesn't say which box (two the same size).
+		name: text(),
 		lengthMm: integer().notNull(),
 		widthMm: integer().notNull(),
 		heightMm: integer().notNull(),
@@ -653,7 +653,7 @@ export const packages = pgTable(
 		weightGrams: integer().notNull().default(0),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [check("packages_pin_range", sql`${t.pin} between 1 and 999`)],
+	(t) => [check("packages_name_not_blank", sql`${t.name} <> ''`)],
 );
 
 // One send to one address: the boxes that went out together, for every

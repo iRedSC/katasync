@@ -1,10 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { orders, packages, shipments, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
 import { shipAddresses } from "#/shipping/addresses";
+import { boxLabel } from "#/shipping/box-filter";
 import { createBoxes, updateBox } from "#/shipping/boxes";
 import { buyDispatch, MAX_BOXES } from "#/shipping/buy";
 import {
@@ -24,11 +25,19 @@ import { getRates, shippoIsTest } from "#/shipping/shippo";
 import { tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
 export const listPackages = createServerFn({ method: "GET" }).handler(
-	async () => getDb().select().from(packages).orderBy(packages.pin),
+	// Smallest first, so a filter that finds several lists them by size.
+	async () =>
+		getDb()
+			.select()
+			.from(packages)
+			.orderBy(
+				sql`${packages.lengthMm} * ${packages.widthMm} * ${packages.heightMm}`,
+				asc(packages.id),
+			),
 );
 
 const boxFields = {
-	name: "string > 0",
+	"name?": "string | null",
 	lengthIn: "number > 0",
 	widthIn: "number > 0",
 	heightIn: "number > 0",
@@ -36,7 +45,7 @@ const boxFields = {
 } as const;
 
 export const savePackage = createServerFn({ method: "POST" })
-	.validator(type({ ...boxFields, "pin?": "1 <= number.integer <= 999" }))
+	.validator(type(boxFields))
 	.handler(async ({ data }) => (await createBoxes(getDb(), [data]))[0]);
 
 export const updatePackage = createServerFn({ method: "POST" })
@@ -44,7 +53,6 @@ export const updatePackage = createServerFn({ method: "POST" })
 		type({
 			...boxFields,
 			id: "number.integer > 0",
-			pin: "1 <= number.integer <= 999",
 		}),
 	)
 	.handler(async ({ data: { id, ...box } }) => updateBox(getDb(), id, box));
@@ -55,13 +63,20 @@ export const deletePackage = createServerFn({ method: "POST" })
 		const db = getDb();
 		// Past shipments keep their box, so a box that shipped stays.
 		const [used] = await db
-			.select({ name: packages.name })
+			.select({
+				name: packages.name,
+				lengthMm: packages.lengthMm,
+				widthMm: packages.widthMm,
+				heightMm: packages.heightMm,
+			})
 			.from(shipments)
 			.innerJoin(packages, eq(packages.id, shipments.packageId))
 			.where(eq(shipments.packageId, data.id))
 			.limit(1);
 		if (used)
-			throw new Error(`${used.name} is on past labels, so it can't be removed`);
+			throw new Error(
+				`${boxLabel(used)} is on past labels, so it can't be removed`,
+			);
 		await db.delete(packages).where(eq(packages.id, data.id));
 	});
 

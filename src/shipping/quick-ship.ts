@@ -252,15 +252,6 @@ export async function serviceHistory(
 		.groupBy(shipments.service);
 }
 
-// Picks the smallest free pin for a new box, so boxes get one-key pins.
-export async function freePackagePin(db: Db) {
-	const used = new Set(
-		(await db.select({ pin: packages.pin }).from(packages)).map((p) => p.pin),
-	);
-	for (let pin = 1; pin <= 999; pin++) if (!used.has(pin)) return pin;
-	throw new Error("Every box pin is taken");
-}
-
 // The box and weight each set of contents shipped in last time, for
 // printing on invoices: the first box, and how many there were. Contents
 // never shipped before are left out.
@@ -269,7 +260,11 @@ export async function lastPackedFor(db: Db, keys: string[]) {
 	const rows = await db
 		.selectDistinctOn([dispatches.contentsKey], {
 			contentsKey: dispatches.contentsKey,
-			boxPin: packages.pin,
+			// The size it went in, saved box or not, and the box's name if any.
+			boxName: packages.name,
+			lengthMm: shipments.lengthMm,
+			widthMm: shipments.widthMm,
+			heightMm: shipments.heightMm,
 			weightGrams: shipments.weightGrams,
 			boxes: sql<number>`(select count(*) from ${shipments} s where s.dispatch_id = ${dispatches.id})::int`,
 		})
@@ -292,7 +287,10 @@ export async function lastPackedFor(db: Db, keys: string[]) {
 }
 
 export type LastPacked = {
-	boxPin: number | null;
+	boxName: string | null;
+	lengthMm: number;
+	widthMm: number;
+	heightMm: number;
 	weightGrams: number;
 	boxes: number;
 };

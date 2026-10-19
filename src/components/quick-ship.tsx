@@ -35,8 +35,8 @@ export function openQuickShip(pin: number) {
 	window.dispatchEvent(new CustomEvent("quick-ship", { detail: pin }));
 }
 
-// Ctrl+Space anywhere: order pin, box pin, weight, (insurance), service.
-// T on the box step adds other orders to the same address to this box; +
+// Ctrl+Space anywhere: order pin, box, weight, (insurance), service.
+// Tab on the box step adds other orders to the same address to this box; +
 // on the weight step adds another box. Enter moves forward, Escape steps
 // back. The order loads as the third digit is typed, and prices load while
 // the weight is still on screen, so Enter rarely waits.
@@ -351,7 +351,8 @@ export function QuickShip() {
 						back();
 					}
 					if (
-						(e.key === "t" || e.key === "T") &&
+						// Tab, not a letter: the box step types box names.
+						e.key === "Tab" &&
 						step === "package" &&
 						found?.companions.length
 					) {
