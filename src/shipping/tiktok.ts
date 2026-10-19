@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { shopCipher, tiktokApi } from "#/channels/tiktok";
+import { shopCipher, TiktokError, tiktokApi } from "#/channels/tiktok";
 import type { Parcel, Rate } from "./shippo";
 
 // TikTok sells its own labels for TikTok orders (shipping_type TIKTOK), paid
@@ -221,11 +221,26 @@ export async function tiktokBuyLabel(
 	};
 }
 
+// TikTok's "arrange shipment before retrieving the shipping document": it
+// takes /ship but arranges it in the background, so the label and its
+// tracking number appear a few seconds later.
+const SHIPMENT_NOT_ARRANGED = 21023035;
+// How long to wait for that, in all about ten seconds.
+const DOCUMENT_WAITS_MS = [1000, 2000, 3000, 4000];
+
 // Marks a package ready to ship, handed over the way TikTok has the shop set
 // up (carrier pickup or drop-off); TikTok tells the buyer. Returns the
 // package ID as the handoff's record, and the label's tracking number.
 // Safe to repeat: a package already shipped is left alone.
-export async function tiktokShipPackage(packageId: string) {
+//
+// Once /ship is taken the package is shipped as far as TikTok is concerned,
+// so a label still being arranged after the wait gives no tracking number
+// rather than a failure; printing the label picks the number up later
+// (label-file.ts).
+export async function tiktokShipPackage(
+	packageId: string,
+	waitsMs = DOCUMENT_WAITS_MS,
+) {
 	const cipher = await shopCipher();
 	const pkg = packageDetail.assert(
 		await tiktokApi(`/fulfillment/202309/packages/${packageId}`, {
@@ -241,8 +256,18 @@ export async function tiktokShipPackage(packageId: string) {
 			pkg.handover_method ? { handover_method: pkg.handover_method } : {},
 		);
 	}
-	const { trackingNumber } = await tiktokLabel(packageId);
-	return { id: packageId, trackingNumber };
+	for (const wait of [...waitsMs, null]) {
+		try {
+			const { trackingNumber } = await tiktokLabel(packageId);
+			return { id: packageId, trackingNumber };
+		} catch (err) {
+			if (!(err instanceof TiktokError && err.code === SHIPMENT_NOT_ARRANGED))
+				throw err;
+			if (wait === null) break;
+			await new Promise((resolve) => setTimeout(resolve, wait));
+		}
+	}
+	return { id: packageId, trackingNumber: null };
 }
 
 // The label PDF link for a package. It expires after about a day; katasync
