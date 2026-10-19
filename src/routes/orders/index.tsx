@@ -65,7 +65,7 @@ export const Route = createFileRoute("/orders/")({
 	loader: ({ deps }) => listOrders({ data: { view: deps.view } }),
 	component: Orders,
 	pendingComponent: () => (
-		<ListSkeleton title="Orders">
+		<ListSkeleton title="Orders" width="wide">
 			<ListCard tabs />
 		</ListSkeleton>
 	),
@@ -207,7 +207,11 @@ function Orders() {
 	});
 
 	return (
-		<Page title="Orders" actions={plan && <PrintButton plan={plan} />}>
+		<Page
+			title="Orders"
+			width="wide"
+			actions={plan && <PrintButton plan={plan} />}
+		>
 			<Card flush className="overflow-visible">
 				<OrderTabs active={view} count={rows.length} />
 				<div className="flex items-start gap-1 border-b p-2">

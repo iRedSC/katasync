@@ -9,13 +9,14 @@ import {
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
-import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
+import { formatMoney, formatOrderDate } from "#/lib/format";
 import type { useRowLink } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
 import type { OrderRow } from "#/server/orders";
 import { OrderMenu } from "./order-menu";
+import { OrderProducts } from "./order-products";
 import { headerState, type Ticks } from "./selection";
 
 export const orderLink = (o: OrderRow) =>
@@ -50,7 +51,8 @@ export function OrderTable({
 	const header = headerState(ticks, rows);
 
 	return (
-		// No cell wraps; the customer column takes what's left and truncates.
+		// No cell wraps; the customer and products columns share what's left and
+		// truncate.
 		<table className="w-full whitespace-nowrap">
 			<thead>
 				<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
@@ -67,11 +69,13 @@ export function OrderTable({
 					<th className="px-4 py-2 font-medium">Order</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">Date</th>
 					<th className="px-4 py-2 font-medium">Customer</th>
+					<th className="hidden px-4 py-2 font-medium md:table-cell">
+						Products
+					</th>
 					<th className="hidden px-4 py-2 font-medium lg:table-cell">
 						Channel
 					</th>
 					<th className="px-4 py-2 text-right font-medium">Total</th>
-					<th className="hidden px-4 py-2 font-medium md:table-cell">Items</th>
 					<th className="px-4 py-2 font-medium">Status</th>
 				</tr>
 			</thead>
@@ -132,8 +136,8 @@ export function OrderTable({
 									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
 										{formatOrderDate(o.placedAt)}
 									</td>
-									{/* Takes the leftover width; long names end in "…". */}
-									<td className="w-full max-w-0 px-4 py-2.5">
+									{/* Shares the leftover width; long names end in "…". */}
+									<td className="w-2/5 max-w-0 px-4 py-2.5">
 										<div className="truncate">
 											{o.customerName ?? "No name"}
 										</div>
@@ -144,6 +148,10 @@ export function OrderTable({
 											</div>
 										)}
 									</td>
+									{/* Shares the leftover width with the customer. */}
+									<td className="hidden w-3/5 max-w-0 px-4 py-2 md:table-cell">
+										<OrderProducts lines={o.lines} />
+									</td>
 									<td className="hidden px-4 py-2.5 lg:table-cell">
 										<ChannelBadge
 											channel={o.channel}
@@ -152,9 +160,6 @@ export function OrderTable({
 									</td>
 									<td className="px-4 py-2.5 text-right tabular-nums">
 										{formatMoney(o.total)}
-									</td>
-									<td className="hidden px-4 py-2.5 whitespace-nowrap md:table-cell">
-										{formatCount(o.items)} {o.items === 1 ? "item" : "items"}
 									</td>
 									<td className="px-4 py-2.5">
 										<div className="flex gap-1.5">

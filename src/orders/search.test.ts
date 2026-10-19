@@ -29,7 +29,7 @@ function order(over: Partial<SearchableOrder> = {}): SearchableOrder {
 		total: 40,
 		items: 1,
 		unmatched: 0,
-		lineText: "",
+		lines: [],
 		...over,
 	};
 }
@@ -134,14 +134,27 @@ describe("words", () => {
 		expect(find(all, "lovelace #1001")).toEqual(["#1001"]);
 	});
 
-	test("plain words search line SKUs and titles", () => {
+	test("plain words search line SKUs and titles, and their products'", () => {
 		const lines = order({
 			name: "#1003",
-			lineText: "KAT-42\nSilk Scarf\nBlue Mug",
+			lines: [
+				{
+					title: "Silk Scarf",
+					sku: "KAT-42",
+					productSku: null,
+					productName: null,
+				},
+				{
+					title: "Mug",
+					sku: null,
+					productSku: "MUG-1",
+					productName: "Blue Mug",
+				},
+			],
 		});
 		expect(find([lines, store], "kat-42")).toEqual(["#1003"]);
 		expect(find([lines, store], "scarf")).toEqual(["#1003"]);
-		expect(find([lines, store], "kat-42 mug")).toEqual(["#1003"]);
+		expect(find([lines, store], "mug-1 blue")).toEqual(["#1003"]);
 	});
 });
 
