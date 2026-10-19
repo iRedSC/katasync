@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "#/components/page";
+import { Truncate } from "#/components/truncate";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { Rate } from "#/shipping/shippo";
@@ -103,9 +104,10 @@ export function RatesStep({
 						)}
 					>
 						<span className="min-w-0">
-							<span className="block truncate text-lg font-semibold">
-								{r.serviceName}
-							</span>
+							<Truncate
+								text={r.serviceName}
+								className="text-lg font-semibold"
+							/>
 							{r.days !== null && (
 								<span
 									className={

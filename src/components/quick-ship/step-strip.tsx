@@ -1,5 +1,7 @@
+import { Truncate } from "#/components/truncate";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { boxLabel } from "#/shipping/box-filter";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import type { Bought, Box, Dims, Found, Packed, Step } from "./types";
 import { ounces, size } from "./units";
@@ -48,7 +50,11 @@ export function stepsFor({
 					value:
 						packed.length > 0 && step !== "package" && step !== "weight"
 							? `${count} boxes`
-							: (box?.name ?? (dims ? `${size(dims)} in` : null)),
+							: box
+								? boxLabel(box)
+								: dims
+									? `${size(dims)} in`
+									: null,
 				},
 				{
 					id: "weight",
@@ -102,14 +108,10 @@ export function StepStrip({
 						<div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
 							{s.label}
 						</div>
-						<div
-							className={cn(
-								"truncate text-lg font-semibold",
-								!s.value && "text-faint",
-							)}
-						>
-							{s.value ?? "—"}
-						</div>
+						<Truncate
+							text={s.value ?? "—"}
+							className={cn("text-lg font-semibold", !s.value && "text-faint")}
+						/>
 					</li>
 				);
 			})}

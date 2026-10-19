@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Truncate } from "#/components/truncate";
 import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { savePackage } from "#/server/shipping";
@@ -9,7 +10,13 @@ import {
 	inches,
 	typedSize,
 } from "#/shipping/box-filter";
-import { type BoxEntry, emptyEntry, entryQuery } from "./box-entry";
+import {
+	type BoxEntry,
+	emptyEntry,
+	entryQuery,
+	isPartial,
+	sizeEntry,
+} from "./box-entry";
 import { BoxEntryInput } from "./box-entry-input";
 import { Key } from "./key";
 import type { Box, Dims } from "./types";
@@ -23,11 +30,14 @@ type Option =
 
 const keyOf = (o: Option) => (o.kind === "box" ? `box:${o.box.id}` : o.kind);
 
+const sidesOf = (d: Dims) => [d.lengthMm, d.widthMm, d.heightMm].map(inches);
+
 // Rows shown before the list scrolls.
 const ROWS = 6;
 
 // Type the size off the box's label ("12 9 4") or a bit of its name; the
-// list narrows as you type and Enter takes the highlighted row. A size no
+// list narrows as you type. Enter on a partial entry fills in the highlighted
+// box's size; Enter on a whole one (or nothing) takes the row. A size no
 // saved box has can ship once or be saved as a box.
 export function PackageStep({
 	boxes,
@@ -44,15 +54,7 @@ export function PackageStep({
 }) {
 	// A size used last time without a saved box starts typed in.
 	const [entry, setEntry] = useState<BoxEntry>(
-		!current && dims
-			? {
-					kind: "size",
-					sides: [dims.lengthMm, dims.widthMm, dims.heightMm].map((mm) =>
-						String(inches(mm)),
-					),
-					typing: "",
-				}
-			: emptyEntry,
+		!current && dims ? sizeEntry(sidesOf(dims)) : emptyEntry,
 	);
 	const query = entryQuery(entry);
 	const [saving, setSaving] = useState(false);
@@ -110,6 +112,16 @@ export function PackageStep({
 		onChoose({ box: r.value, dims: r.value });
 	}
 
+	// Enter on a half-typed size or a name fills in the highlighted box's
+	// size, keeping it highlighted; the next Enter takes it.
+	function enter(option: Option) {
+		if (option.kind === "box" && isPartial(entry)) {
+			setEntry(sizeEntry(sidesOf(option.box)));
+			return setPicked(keyOf(option));
+		}
+		choose(option);
+	}
+
 	function move(by: number) {
 		if (options.length === 0) return;
 		const next = (index + by + options.length) % options.length;
@@ -137,7 +149,7 @@ export function PackageStep({
 						e.preventDefault();
 						move(e.key === "ArrowDown" ? 1 : -1);
 					}
-					if (e.key === "Enter" && highlighted) choose(highlighted);
+					if (e.key === "Enter" && highlighted) enter(highlighted);
 				}}
 			/>
 			{saving ? (
@@ -213,10 +225,13 @@ function OptionLabel({
 		.join(" · ");
 	return (
 		<>
-			<span className="min-w-0 truncate tabular-nums">
+			<Truncate
+				text={`${boxSize(box)} in${box.name ? ` ${box.name}` : ""}`}
+				className="tabular-nums"
+			>
 				<span className="font-semibold">{boxSize(box)} in</span>
 				{box.name && <span className="ml-2">{box.name}</span>}
-			</span>
+			</Truncate>
 			{detail && <span className="shrink-0 opacity-70">{detail}</span>}
 		</>
 	);
