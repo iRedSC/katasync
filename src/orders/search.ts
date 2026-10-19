@@ -40,8 +40,12 @@ export type SearchableOrder = {
 	total: number;
 	items: number;
 	unmatched: number;
-	// Its lines' SKUs and titles, one per line of text.
-	lineText: string;
+	lines: readonly {
+		title: string;
+		sku: string | null;
+		productSku: string | null;
+		productName: string | null;
+	}[];
 };
 
 export const ORDER_FIELDS = ["marketplace", "status"] as const;
@@ -101,7 +105,12 @@ export function facetsOf(o: SearchableOrder): OrderFacets {
 			o.customerName ?? "",
 			o.shipCity ?? "",
 			o.shipRegion ?? "",
-			o.lineText,
+			...o.lines.flatMap((l) => [
+				l.sku ?? "",
+				l.title,
+				l.productSku ?? "",
+				l.productName ?? "",
+			]),
 		].filter(Boolean),
 	};
 }

@@ -16,6 +16,7 @@ import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
 import type { OrderRow } from "#/server/orders";
 import { OrderMenu } from "./order-menu";
+import { OrderProducts } from "./order-products";
 import { headerState, type Ticks } from "./selection";
 
 export const orderLink = (o: OrderRow) =>
@@ -50,7 +51,8 @@ export function OrderTable({
 	const header = headerState(ticks, rows);
 
 	return (
-		// No cell wraps; the customer column takes what's left and truncates.
+		// No cell wraps; the customer and products columns share what's left and
+		// truncate.
 		<table className="w-full whitespace-nowrap">
 			<thead>
 				<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
@@ -67,6 +69,9 @@ export function OrderTable({
 					<th className="px-4 py-2 font-medium">Order</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">Date</th>
 					<th className="px-4 py-2 font-medium">Customer</th>
+					<th className="hidden px-4 py-2 font-medium md:table-cell">
+						Products
+					</th>
 					<th className="hidden px-4 py-2 font-medium lg:table-cell">
 						Channel
 					</th>
@@ -132,8 +137,8 @@ export function OrderTable({
 									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
 										{formatOrderDate(o.placedAt)}
 									</td>
-									{/* Takes the leftover width; long names end in "…". */}
-									<td className="w-full max-w-0 px-4 py-2.5">
+									{/* Shares the leftover width; long names end in "…". */}
+									<td className="w-2/5 max-w-0 px-4 py-2.5">
 										<div className="truncate">
 											{o.customerName ?? "No name"}
 										</div>
@@ -143,6 +148,10 @@ export function OrderTable({
 												{o.shipRegion && `, ${o.shipRegion}`}
 											</div>
 										)}
+									</td>
+									{/* Shares the leftover width with the customer. */}
+									<td className="hidden w-3/5 max-w-0 px-4 py-2 md:table-cell">
+										<OrderProducts lines={o.lines} />
 									</td>
 									<td className="hidden px-4 py-2.5 lg:table-cell">
 										<ChannelBadge

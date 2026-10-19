@@ -75,52 +75,69 @@ export const listOrders = createServerFn({ method: "GET" })
 					sql<number>`count(*) filter (where ${lineAwaitsMatch({ productId: orderLines.productId, storeId: orders.storeId, listingExternalId: orderLines.listingExternalId })})::int`.as(
 						"unmatched",
 					),
-				// Every line's SKU and title, its own and its product's, for the
-				// search. Newline-separated: search words split on whitespace, so
-				// none can match across two of them.
-				lineText:
-					sql<string>`concat_ws(E'\\n', string_agg(${orderLines.sku}, E'\\n'), string_agg(${orderLines.title}, E'\\n'), string_agg(${products.sku}, E'\\n'), string_agg(${products.name}, E'\\n'))`.as(
-						"line_text",
-					),
 			})
 			.from(orderLines)
 			.innerJoin(orders, eq(orders.id, orderLines.orderId))
-			.leftJoin(products, eq(products.id, orderLines.productId))
 			.groupBy(orderLines.orderId)
 			.as("line_stats");
-		return (
-			getDb()
-				.select({
-					id: orders.id,
-					name: orders.name,
-					pin: orders.pin,
-					salesChannel: orders.salesChannel,
-					marketplaceOrderId: orders.marketplaceOrderId,
-					placedAt: orders.placedAt,
-					cancelledAt: orders.cancelledAt,
-					fulfillmentStatus: orders.fulfillmentStatus,
-					financialStatus: orders.financialStatus,
-					customerName: orders.customerName,
-					shipCity: orders.shipCity,
-					shipRegion: orders.shipRegion,
-					total: orders.total,
-					store: stores.name,
-					channel: stores.channel,
-					items: sql<number>`coalesce(${lineStats.items}, 0)`,
-					unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
-					lineText: sql<string>`coalesce(${lineStats.lineText}, '')`,
-					labelToVoid,
-				})
-				.from(orders)
-				.innerJoin(stores, eq(stores.id, orders.storeId))
-				.leftJoin(lineStats, eq(lineStats.orderId, orders.id))
-				// A cancelled order with a live label stays in view until it's voided.
-				.where(
-					data.view === "ship" ? or(needsShipping, labelToVoid) : undefined,
-				)
-				.orderBy(desc(orders.placedAt))
-				.limit(data.view === "ship" ? 500 : 200)
-		);
+		const listed = await getDb()
+			.select({
+				id: orders.id,
+				name: orders.name,
+				pin: orders.pin,
+				salesChannel: orders.salesChannel,
+				marketplaceOrderId: orders.marketplaceOrderId,
+				placedAt: orders.placedAt,
+				cancelledAt: orders.cancelledAt,
+				fulfillmentStatus: orders.fulfillmentStatus,
+				financialStatus: orders.financialStatus,
+				customerName: orders.customerName,
+				shipCity: orders.shipCity,
+				shipRegion: orders.shipRegion,
+				total: orders.total,
+				store: stores.name,
+				channel: stores.channel,
+				items: sql<number>`coalesce(${lineStats.items}, 0)`,
+				unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
+				labelToVoid,
+			})
+			.from(orders)
+			.innerJoin(stores, eq(stores.id, orders.storeId))
+			.leftJoin(lineStats, eq(lineStats.orderId, orders.id))
+			// A cancelled order with a live label stays in view until it's voided.
+			.where(data.view === "ship" ? or(needsShipping, labelToVoid) : undefined)
+			.orderBy(desc(orders.placedAt))
+			.limit(data.view === "ship" ? 500 : 200);
+		// Each order's lines, for its products column and the search. The title
+		// is the marketplace's, as on the order page; the photo is katasync's.
+		const lines = await getDb()
+			.select({
+				orderId: orderLines.orderId,
+				id: orderLines.id,
+				title: orderLines.title,
+				sku: orderLines.sku,
+				quantity: orderLines.quantity,
+				productSku: products.sku,
+				productName: products.name,
+				imageUrl: products.imageUrl,
+			})
+			.from(orderLines)
+			.leftJoin(products, eq(products.id, orderLines.productId))
+			.where(
+				inArray(
+					orderLines.orderId,
+					listed.map((o) => o.id),
+				),
+			)
+			.orderBy(orderLines.id);
+		const linesOf = new Map<
+			number,
+			Omit<(typeof lines)[number], "orderId">[]
+		>();
+		for (const { orderId, ...line } of lines) {
+			linesOf.set(orderId, [...(linesOf.get(orderId) ?? []), line]);
+		}
+		return listed.map((o) => ({ ...o, lines: linesOf.get(o.id) ?? [] }));
 	});
 
 export const getOrder = createServerFn({ method: "GET" })
