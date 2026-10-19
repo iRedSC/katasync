@@ -16,13 +16,23 @@ import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 import { fetchTiktokReturns } from "./tiktok-returns";
 
 // TikTok Shop US through the Partner API (202309 versions). The app is shared
-// with profit-margarine and needs these scopes in Partner Center:
-// seller.authorization.info, seller.order.info, seller.product.basic,
-// seller.product.write, seller.fulfillment.basic, seller.logistics,
-// seller.finance.info, seller.return_refund.basic (returns, with reasons).
+// with profit-margarine and needs TIKTOK_SCOPES in Partner Center; the shop
+// grants them when it authorizes the app (pnpm tiktok:authorize).
 // US apps still call the global host; open-api.us.tiktokglobalshop.com is a
 // dead 404.
 const API = "https://open-api.tiktokglobalshop.com";
+
+export const TIKTOK_SCOPES = [
+	"seller.authorization.info",
+	"seller.order.info",
+	"seller.product.basic",
+	"seller.product.write",
+	"seller.fulfillment.basic",
+	"seller.logistics",
+	"seller.finance.info",
+	// Returns, with reasons (tiktok-returns.ts).
+	"seller.return_refund.basic",
+] as const;
 // Refreshing has its own path; /token/get only trades an authorization code.
 const AUTH = "https://auth.tiktok-shops.com/api/v2/token/refresh";
 const STORE_NAME = "TikTok Shop";

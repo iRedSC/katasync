@@ -25,6 +25,7 @@
     "sync": "tsx scripts/sync.ts",
     "webhooks": "tsx scripts/webhooks.ts",
     "auth:setup-link": "tsx scripts/auth-setup-link.ts",
+    "tiktok:authorize": "tsx scripts/tiktok-authorize.ts",
     "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {
