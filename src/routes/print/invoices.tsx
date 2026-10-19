@@ -113,16 +113,14 @@ function Invoice({
 	// Whatever the total holds beyond items and shipping: tax, or a discount
 	// when negative.
 	const rest = o.total - subtotal - o.shippingCharged;
-	const shipTo = [
-		o.shipAddress1,
-		o.shipAddress2,
-		cityLine(o.shipCity, o.shipRegion, o.shipPostalCode),
-		o.shipCountry && o.shipCountry !== "US" ? o.shipCountry : null,
-	].filter(Boolean);
 	const paid = payment(o.financialStatus);
-	// Marketplaces that hide the buyer's name get a packing slip: what's in
-	// the box, no prices. The marketplace already sent its own receipt.
-	const slip = !o.customerName;
+	// Amazon and TikTok hide the buyer when they sell the label: no name, or
+	// a masked one, and no street. The label carries the address, so the
+	// page is a packing slip instead: what's in the box, no ship-to, no
+	// prices (the marketplace sent its own receipt). One check decides both,
+	// so an order can't print as an invoice addressed to no one.
+	const buyer = shownBuyer(o);
+	const slip = buyer === null;
 
 	return (
 		<article className="mx-auto mb-6 flex min-h-[11in] max-w-[8.5in] flex-col gap-8 bg-white p-[0.5in] text-[11pt] text-black shadow-card break-after-page last:break-after-auto print:m-0 print:min-h-[9.95in] print:max-w-none print:p-0 print:shadow-none">
@@ -153,17 +151,13 @@ function Invoice({
 				</div>
 			</header>
 
-			{/* Amazon and TikTok hide the street when they sell the label; the
-			    label carries the address, so the invoice leaves it off. */}
-			{o.shipAddress1 && (
+			{buyer && (
 				<section>
 					<p className="text-[9pt] font-semibold tracking-wide text-muted-foreground uppercase">
 						Ship to
 					</p>
-					<p className="text-[13pt] font-semibold">
-						{o.customerName ?? "Customer"}
-					</p>
-					{shipTo.map((l) => (
+					<p className="text-[13pt] font-semibold">{buyer.name}</p>
+					{buyer.lines.map((l) => (
 						<p key={l}>{l}</p>
 					))}
 				</section>
@@ -297,12 +291,10 @@ function Invoice({
 						)}
 						<dl className="flex gap-4 rounded-md border border-border px-2.5 py-1 tabular-nums">
 							<PackFact label="Pin" value={String(o.pin)} />
-							<PackFact
-								label={o.boxes > 1 ? `Box 1 of ${o.boxes}` : "Box"}
-								value={
-									o.box === null ? (
-										"?"
-									) : (
+							{o.box && (
+								<PackFact
+									label={o.boxes > 1 ? `Box 1 of ${o.boxes}` : "Box"}
+									value={
 										<>
 											{o.box.name && <span>{o.box.name} </span>}
 											<span
@@ -313,10 +305,12 @@ function Invoice({
 												{o.box.size}
 											</span>
 										</>
-									)
-								}
-							/>
-							<PackFact label="Weight" value={ounces(o.weightGrams)} />
+									}
+								/>
+							)}
+							{o.weightGrams !== null && (
+								<PackFact label="Weight" value={ounces(o.weightGrams)} />
+							)}
 						</dl>
 					</div>
 				)}
@@ -325,11 +319,22 @@ function Invoice({
 	);
 }
 
-// Quick ship's suggestion, read as "?" when it has none yet.
-function ounces(grams: number | null) {
-	return grams === null
-		? "?"
-		: `${Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10} oz`;
+function ounces(grams: number) {
+	return `${Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10} oz`;
+}
+
+// Who the order goes to, or null when the marketplace hid them: no street,
+// or a name that's missing or masked the way TikTok sends it ("D*****").
+function shownBuyer(o: Data["invoices"][number]) {
+	const name = o.customerName;
+	if (!o.shipAddress1 || !name || name.includes("*")) return null;
+	const lines = [
+		o.shipAddress1,
+		o.shipAddress2,
+		cityLine(o.shipCity, o.shipRegion, o.shipPostalCode),
+		o.shipCountry && o.shipCountry !== "US" ? o.shipCountry : null,
+	].filter((l): l is string => !!l);
+	return { name, lines };
 }
 
 function PackFact({ label, value }: { label: string; value: ReactNode }) {
