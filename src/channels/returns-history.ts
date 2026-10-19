@@ -5,13 +5,14 @@ import { type ChannelReturn, saveReturns } from "#/orders/return-requests";
 import { fetchAmazonReturns, REPORT_DAYS } from "./amazon-returns";
 import { fetchEbayReturns, HISTORY_DAYS } from "./ebay-returns";
 import { fetchShopifyReturns } from "./shopify/returns";
+import { fetchTiktokReturns } from "./tiktok-returns";
 
 // One-time import of older returns, for `pnpm sync --returns-history`.
 // Regular passes only reread the last week or two months.
 
 const DAY = 24 * 60 * 60 * 1000;
 
-export const returnChannels = ["amazon", "shopify", "ebay"] as const;
+export const returnChannels = ["amazon", "shopify", "ebay", "tiktok"] as const;
 export type ReturnChannel = (typeof returnChannels)[number];
 
 // Each channel's returns in one stretch of time, and the longest stretch it
@@ -35,6 +36,13 @@ const windows: Record<
 		days: 90,
 		fetch: async (from, until) => ({
 			returns: await fetchShopifyReturns(from, until),
+			problems: [],
+		}),
+	},
+	tiktok: {
+		days: 90,
+		fetch: async (from, until) => ({
+			returns: await fetchTiktokReturns(from, until, "create"),
 			problems: [],
 		}),
 	},

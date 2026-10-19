@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { saveCostReport } from "./charges";
+import { recentReturns } from "./recent-returns";
 import { returnInsights } from "./return-rates";
 
 // The order_line_returns and product_return_rates views
@@ -235,5 +236,27 @@ describe("returnInsights", () => {
 		expect(insights.once.map((r) => r.sku)).toEqual(["ONCE"]);
 		expect(insights.expected.map((r) => r.sku)).toEqual(["STEADY"]);
 		expect(insights.lines.filter((l) => l.productId === flaky)).toHaveLength(9);
+	});
+});
+
+describe("recentReturns", () => {
+	test("orders from the last 90 days that came back, most first", async () => {
+		const twice = await createProduct(db, "TWICE", "simple");
+		const once = await createProduct(db, "ONCE", "simple");
+		for (const ago of [5, 30, 60]) {
+			const s = await sale(twice, 1, daysAgo(ago));
+			if (ago !== 60) await returned(s.lineId, 1);
+		}
+		await returned((await sale(once, 1, daysAgo(10))).lineId, 1);
+		// Too old to be recent.
+		await returned((await sale(once, 1, daysAgo(120))).lineId, 1);
+
+		const recent = await recentReturns(db);
+		expect(
+			recent.map((r) => [r.sku, r.ordersReturned, r.orders, r.lines.length]),
+		).toEqual([
+			["TWICE", 2, 3, 2],
+			["ONCE", 1, 1, 1],
+		]);
 	});
 });

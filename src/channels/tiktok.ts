@@ -9,18 +9,30 @@ import {
 	resolveProduct,
 } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
+import { importReturns } from "#/orders/return-requests";
 import { needsShipping } from "#/orders/to-ship";
 import { matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
+import { fetchTiktokReturns } from "./tiktok-returns";
 
 // TikTok Shop US through the Partner API (202309 versions). The app is shared
-// with profit-margarine and needs these scopes in Partner Center:
-// seller.authorization.info, seller.order.info, seller.product.basic,
-// seller.product.write, seller.fulfillment.basic, seller.logistics,
-// seller.finance.info.
+// with profit-margarine and needs TIKTOK_SCOPES in Partner Center; the shop
+// grants them when it authorizes the app (pnpm tiktok:authorize).
 // US apps still call the global host; open-api.us.tiktokglobalshop.com is a
 // dead 404.
 const API = "https://open-api.tiktokglobalshop.com";
+
+export const TIKTOK_SCOPES = [
+	"seller.authorization.info",
+	"seller.order.info",
+	"seller.product.basic",
+	"seller.product.write",
+	"seller.fulfillment.basic",
+	"seller.logistics",
+	"seller.finance.info",
+	// Returns, with reasons (tiktok-returns.ts).
+	"seller.return_refund.basic",
+] as const;
 // Refreshing has its own path; /token/get only trades an authorization code.
 const AUTH = "https://auth.tiktok-shops.com/api/v2/token/refresh";
 const STORE_NAME = "TikTok Shop";
@@ -401,6 +413,17 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
 	if (refreshWarning) problems.push(refreshWarning);
+	// Returns after orders, so a return on a new order finds it. Every
+	// listings pass rereads the last week's changes.
+	if (options.listings)
+		problems.push(
+			...(await importReturns(db, store, () =>
+				fetchTiktokReturns(
+					new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+					new Date(),
+				),
+			)),
+		);
 	return { store: store.name, orders: count, problems };
 }
 
