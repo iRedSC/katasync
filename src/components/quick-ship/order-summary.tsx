@@ -1,6 +1,7 @@
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
+import { Truncate } from "#/components/truncate";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import { Key } from "./key";
 import type { Found } from "./types";
@@ -22,9 +23,10 @@ export function OrderSummary({
 		<div className="flex flex-col gap-3 border-b px-6 py-4">
 			<div className="flex items-center justify-between gap-3">
 				<div className="min-w-0">
-					<div className="truncate text-xl font-semibold">
-						{o.customerName ?? "No name"}
-					</div>
+					<Truncate
+						text={o.customerName ?? "No name"}
+						className="text-xl font-semibold"
+					/>
 					{o.shipCity && (
 						<div className="text-muted-foreground">
 							{[o.shipCity, o.shipRegion].filter(Boolean).join(", ")}
@@ -49,7 +51,7 @@ export function OrderSummary({
 						<span className="w-12 shrink-0 text-2xl font-bold tabular-nums">
 							{l.quantity}×
 						</span>
-						<span className="min-w-0 flex-1 truncate text-base">{l.title}</span>
+						<Truncate text={l.title} className="flex-1 text-base" />
 						{combined && (
 							<span className="shrink-0 text-muted-foreground">
 								{plan.orderNames[plan.orderIds.indexOf(l.orderId)]}

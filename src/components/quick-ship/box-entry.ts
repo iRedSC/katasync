@@ -14,6 +14,21 @@ export const SIDE_LETTERS = ["L", "W", "H"];
 export const entryQuery = (e: BoxEntry) =>
 	e.kind === "name" ? e.text : [...e.sides, e.typing].filter(Boolean).join(" ");
 
+// A size with every side locked in, as Enter fills it from a box.
+export const sizeEntry = (sides: number[]): BoxEntry => ({
+	kind: "size",
+	sides: sides.map(String),
+	typing: "",
+});
+
+// Something typed, but not yet all three sides. Enter then fills in the
+// highlighted box rather than moving on, so the packer sees what they got.
+export function isPartial(e: BoxEntry) {
+	if (e.kind === "name") return e.text !== "";
+	const count = e.sides.length + (e.typing === "" ? 0 : 1);
+	return count > 0 && count < 3;
+}
+
 // The size input's new value, typed or pasted. A space, x, or comma locks in
 // the side before it; a letter makes it a name search, keeping what's typed.
 export function typeSize(entry: SizeEntry, raw: string): BoxEntry {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
 	emptyEntry,
 	entryQuery,
+	isPartial,
 	reopenSide,
 	type SizeEntry,
 	typeName,
@@ -56,5 +57,13 @@ describe("typing a box", () => {
 	test("the filter sees sides and the side being typed", () => {
 		expect(entryQuery(size(["12", "9"], "4"))).toBe("12 9 4");
 		expect(entryQuery({ kind: "name", text: "mailer" })).toBe("mailer");
+	});
+
+	test("partial is something typed short of three sides", () => {
+		expect(isPartial(emptyEntry)).toBe(false);
+		expect(isPartial(size(["12"]))).toBe(true);
+		expect(isPartial(size(["12", "9"], "4"))).toBe(false);
+		expect(isPartial(size(["12", "9", "4"]))).toBe(false);
+		expect(isPartial({ kind: "name", text: "du" })).toBe(true);
 	});
 });
