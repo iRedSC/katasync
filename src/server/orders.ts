@@ -329,7 +329,7 @@ export const getOrder = createServerFn({ method: "GET" })
 			order,
 			lines,
 			sends,
-			adminUrl: adminUrl(order),
+			adminUrls: adminUrls(order),
 			profit: profit ?? null,
 			charges,
 			reports,
@@ -339,29 +339,43 @@ export const getOrder = createServerFn({ method: "GET" })
 		};
 	});
 
-// The order's page in its own admin, for anything katasync doesn't do.
-// Amazon and TikTok orders already link there to fulfill.
-function adminUrl(order: { channel: string; externalId: string }) {
+// The order's pages in its own admins, for anything katasync doesn't do, like
+// a return. A TikTok sale relayed through Shopify gets both. Amazon orders
+// already link there to fulfill.
+function adminUrls(order: {
+	channel: string;
+	externalId: string;
+	marketplaceOrderId: string | null;
+}): { name: string; url: string }[] {
+	const urls: { name: string; url: string }[] = [];
 	if (order.channel === "shopify") {
 		const handle = process.env.SHOPIFY_STORE_DOMAIN?.replace(
 			".myshopify.com",
 			"",
 		);
 		const id = order.externalId.split("/").pop();
-		return handle && id
-			? {
-					name: "Shopify",
-					url: `https://admin.shopify.com/store/${handle}/orders/${id}`,
-				}
-			: null;
+		if (handle && id)
+			urls.push({
+				name: "Shopify",
+				url: `https://admin.shopify.com/store/${handle}/orders/${id}`,
+			});
 	}
 	if (order.channel === "ebay") {
-		return {
+		urls.push({
 			name: "eBay",
 			url: `https://www.ebay.com/mesh/ord/details?orderid=${encodeURIComponent(order.externalId)}`,
-		};
+		});
 	}
-	return null;
+	const tiktok = order.marketplaceOrderId?.startsWith("tiktok:")
+		? order.marketplaceOrderId.slice("tiktok:".length)
+		: null;
+	if (tiktok) {
+		urls.push({
+			name: "TikTok",
+			url: `https://seller-us.tiktok.com/order/detail?order_no=${encodeURIComponent(tiktok)}`,
+		});
+	}
+	return urls;
 }
 
 export const receiveOrderReturn = createServerFn({ method: "POST" })
