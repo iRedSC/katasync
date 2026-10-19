@@ -15,12 +15,16 @@ import { Notice } from "./notice";
 import { Spinner } from "./spinner";
 import type { Extras, Quote, Rates } from "./types";
 
-// Insurance and signature for a Shippo label, and what the order says
-// about them. Null for labels that take neither (TikTok's).
+// Insurance and signature, and what the order says about them. Always
+// shown; on labels that can't take them (TikTok's), shown off with why.
 export type ExtrasOffer = {
 	total: number;
+	// Big or flagged orders: marked, but never turned on for you.
+	recommendInsurance: boolean;
 	// Why a signature can't be turned off, if it can't.
 	signatureRequired: string | null;
+	// Why neither can be added to this label, if they can't.
+	unavailable: string | null;
 };
 
 const serviceKey = (r: Rate) => `${r.carrier}:${r.service}`;
@@ -55,7 +59,7 @@ export function RatesStep({
 	stale: boolean;
 	boxes: number;
 	busy: boolean;
-	offer: ExtrasOffer | null;
+	offer: ExtrasOffer;
 	extras: Extras;
 	onExtras: (next: Extras) => void;
 	onBuy: (quote: Rate) => void;
@@ -79,8 +83,8 @@ export function RatesStep({
 		if (!rates) return;
 		const i = rates.list.findIndex((r) => serviceKey(r) === chosen.current);
 		moveTo(Math.max(i, 0));
-		// The insurance field holds focus when there is one.
-		if (!offer) root.current?.focus();
+		// The insurance field holds focus when it can be typed in.
+		if (offer.unavailable) root.current?.focus();
 	}, [rates]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: prices the typed amount once typing stops
@@ -107,7 +111,9 @@ export function RatesStep({
 			const step = e.key === "ArrowDown" ? 1 : -1;
 			moveTo(Math.min(Math.max(selected + step, 0), list.length - 1));
 		}
-		if (!offer) {
+		// Off on this label: the reason is on screen under them.
+		if (offer.unavailable) {
+			if (e.key === "Tab") e.preventDefault();
 			if (e.key === "Enter" && ready && list[selected]) onBuy(list[selected]);
 			return;
 		}
@@ -129,7 +135,7 @@ export function RatesStep({
 
 	function toggleSignature() {
 		// Locked on: the reason is on screen under the toggle.
-		if (offer?.signatureRequired) return;
+		if (offer.signatureRequired || offer.unavailable) return;
 		onExtras({ insure: typed, signature: !extras.signature });
 	}
 
@@ -154,28 +160,29 @@ export function RatesStep({
 			className="flex flex-col gap-2 outline-none"
 			onKeyDown={onKeyDown}
 		>
-			{offer && (
-				<>
-					<div className="flex gap-2">
-						<InsuranceField
-							text={draft}
-							total={offer.total}
-							boxes={boxes}
-							input={input}
-							onText={(t) => setDraft(typeInsurance(t))}
-						/>
-						<SignatureToggle
-							on={extras.signature}
-							locked={offer.signatureRequired !== null}
-							onToggle={toggleSignature}
-						/>
-					</div>
-					{offer.signatureRequired && (
-						<p className="text-sm text-muted-foreground">
-							Signature required: {offer.signatureRequired}.
-						</p>
-					)}
-				</>
+			<div className="flex gap-2">
+				<InsuranceField
+					text={draft}
+					total={offer.total}
+					boxes={boxes}
+					recommended={offer.recommendInsurance}
+					disabled={offer.unavailable !== null}
+					input={input}
+					onText={(t) => setDraft(typeInsurance(t))}
+				/>
+				<SignatureToggle
+					on={extras.signature}
+					locked={offer.signatureRequired !== null}
+					disabled={offer.unavailable !== null}
+					onToggle={toggleSignature}
+				/>
+			</div>
+			{(offer.unavailable || offer.signatureRequired) && (
+				<p className="text-sm text-muted-foreground">
+					{offer.unavailable ??
+						`Signature required: ${offer.signatureRequired}`}
+					.
+				</p>
 			)}
 
 			{!rates ? (

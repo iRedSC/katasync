@@ -10,12 +10,16 @@ export function InsuranceField({
 	text,
 	total,
 	boxes,
+	recommended,
+	disabled,
 	input,
 	onText,
 }: {
 	text: string;
 	total: number;
 	boxes: number;
+	recommended: boolean;
+	disabled: boolean;
 	input: RefObject<HTMLInputElement | null>;
 	onText: (text: string) => void;
 }) {
@@ -25,10 +29,18 @@ export function InsuranceField({
 		// biome-ignore lint/a11y/noStaticElementInteractions: same
 		<div
 			onClick={() => input.current?.focus()}
-			className="flex h-16 min-w-0 flex-1 cursor-text items-center gap-3 rounded-xl border-2 border-input bg-white px-4 focus-within:border-primary"
+			className={cn(
+				"flex h-16 min-w-0 flex-1 cursor-text items-center gap-3 rounded-xl border-2 border-input bg-white px-4 focus-within:border-primary",
+				disabled && "cursor-not-allowed opacity-50",
+			)}
 		>
-			<span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+			<span className="flex flex-col text-xs font-medium tracking-wide text-muted-foreground uppercase">
 				Insure
+				{recommended && (
+					<span className="font-semibold text-warning-text normal-case tracking-normal">
+						Recommended
+					</span>
+				)}
 			</span>
 			<span className="inline-flex min-w-0 items-baseline text-4xl font-bold tabular-nums">
 				<span className="mr-0.5 text-2xl font-semibold text-faint">$</span>
@@ -36,6 +48,7 @@ export function InsuranceField({
 					ref={input}
 					// biome-ignore lint/a11y/noAutofocus: shown to type the amount
 					autoFocus
+					disabled={disabled}
 					inputMode="decimal"
 					aria-label="Insure for"
 					placeholder="0"
@@ -45,7 +58,12 @@ export function InsuranceField({
 					className="min-w-[0.6em] max-w-full bg-transparent outline-none [field-sizing:content] placeholder:text-faint"
 				/>
 			</span>
-			<span className="ml-auto shrink-0 text-right text-sm text-muted-foreground">
+			<span
+				className={cn(
+					"ml-auto shrink-0 text-right text-sm text-muted-foreground",
+					disabled && "invisible",
+				)}
+			>
 				{boxes > 1 && <span className="block">Split over {boxes} boxes</span>}
 				<Key>Tab</Key> {full ? "none" : `full ${formatMoney(total)}`}
 			</span>
@@ -57,23 +75,27 @@ export function InsuranceField({
 export function SignatureToggle({
 	on,
 	locked,
+	disabled,
 	onToggle,
 }: {
 	on: boolean;
 	locked: boolean;
+	disabled: boolean;
 	onToggle: () => void;
 }) {
 	return (
 		<button
 			type="button"
 			aria-pressed={on}
+			disabled={disabled}
 			// Out of the Tab order: Tab belongs to the insurance field.
 			tabIndex={-1}
 			onClick={onToggle}
 			className={cn(
 				"flex h-16 shrink-0 items-center gap-3 rounded-xl border-2 px-4",
 				on ? "border-primary" : "border-border hover:bg-subtle",
-				locked && "cursor-not-allowed",
+				(locked || disabled) && "cursor-not-allowed",
+				disabled && "opacity-50",
 			)}
 		>
 			<span
@@ -85,7 +107,7 @@ export function SignatureToggle({
 				<span className="size-5 rounded-full bg-white shadow" />
 			</span>
 			<span className="text-lg font-semibold">Signature</span>
-			{locked ? (
+			{disabled ? null : locked ? (
 				<Lock className="size-4 text-muted-foreground" aria-label="Required" />
 			) : (
 				<Key>S</Key>
