@@ -230,12 +230,33 @@ export async function tiktokBuyLabel(
 	};
 }
 
-// TikTok's "arrange shipment before retrieving the shipping document": it
-// takes /ship but arranges it in the background, so the label and its
-// tracking number appear a few seconds later.
-const SHIPMENT_NOT_ARRANGED = 21023035;
+// TikTok's answers for a package it's still working on: "arrange shipment
+// before retrieving the shipping document" (it takes /ship but arranges it
+// in the background) and "the order is being processed, try again later"
+// (right after the package is created, or while the label is generated).
+// Both clear on their own within seconds.
+const STILL_PROCESSING = new Set([21023035, 21001028]);
 // How long to wait for that, in all about ten seconds.
 const DOCUMENT_WAITS_MS = [1000, 2000, 3000, 4000];
+
+function stillProcessing(err: unknown) {
+	return err instanceof TiktokError && STILL_PROCESSING.has(err.code);
+}
+
+// Calls TikTok until it's done processing the package, waiting between
+// tries. Any other refusal, or still processing after the last wait,
+// throws.
+async function onceProcessed<T>(call: () => Promise<T>, waitsMs: number[]) {
+	for (const wait of waitsMs) {
+		try {
+			return await call();
+		} catch (err) {
+			if (!stillProcessing(err)) throw err;
+			await new Promise((resolve) => setTimeout(resolve, wait));
+		}
+	}
+	return call();
+}
 
 // Marks a package ready to ship, handed over the way TikTok has the shop set
 // up (carrier pickup or drop-off); TikTok tells the buyer. Returns the
@@ -243,7 +264,7 @@ const DOCUMENT_WAITS_MS = [1000, 2000, 3000, 4000];
 // Safe to repeat: a package already shipped is left alone.
 //
 // Once /ship is taken the package is shipped as far as TikTok is concerned,
-// so a label still being arranged after the wait gives no tracking number
+// so a label still being processed after the wait gives no tracking number
 // rather than a failure; printing the label picks the number up later
 // (label-file.ts).
 export async function tiktokShipPackage(
@@ -259,40 +280,48 @@ export async function tiktokShipPackage(
 	const shipped =
 		pkg.package_sub_status === "RTS" || pkg.package_status !== "PROCESSING";
 	if (!shipped) {
-		await tiktokApi(
-			`/fulfillment/202309/packages/${packageId}/ship`,
-			{ shop_cipher: cipher },
-			pkg.handover_method ? { handover_method: pkg.handover_method } : {},
+		await onceProcessed(
+			() =>
+				tiktokApi(
+					`/fulfillment/202309/packages/${packageId}/ship`,
+					{ shop_cipher: cipher },
+					pkg.handover_method ? { handover_method: pkg.handover_method } : {},
+				),
+			waitsMs,
 		);
 	}
-	for (const wait of [...waitsMs, null]) {
-		try {
-			const { trackingNumber } = await tiktokLabel(packageId);
-			return { id: packageId, trackingNumber };
-		} catch (err) {
-			if (!(err instanceof TiktokError && err.code === SHIPMENT_NOT_ARRANGED))
-				throw err;
-			if (wait === null) break;
-			await new Promise((resolve) => setTimeout(resolve, wait));
-		}
+	try {
+		const { trackingNumber } = await tiktokLabel(packageId, waitsMs);
+		return { id: packageId, trackingNumber };
+	} catch (err) {
+		if (!stillProcessing(err)) throw err;
+		return { id: packageId, trackingNumber: null };
 	}
-	return { id: packageId, trackingNumber: null };
 }
 
-// The label PDF link for a package. It expires after about a day; katasync
-// saves the PDF itself (label-file.ts).
-export async function tiktokLabel(packageId: string) {
-	const data = documentData.assert(
-		await tiktokApi(
-			`/fulfillment/202309/packages/${packageId}/shipping_documents`,
-			{
-				shop_cipher: await shopCipher(),
-				document_type: "SHIPPING_LABEL",
-				// 4x6.
-				document_size: "A6",
-				document_format: "PDF",
-			},
-		),
+// The label PDF link for a package, waiting while TikTok still processes
+// it. It expires after about a day; katasync saves the PDF itself
+// (label-file.ts).
+export async function tiktokLabel(
+	packageId: string,
+	waitsMs = DOCUMENT_WAITS_MS,
+) {
+	const cipher = await shopCipher();
+	const data = await onceProcessed(
+		async () =>
+			documentData.assert(
+				await tiktokApi(
+					`/fulfillment/202309/packages/${packageId}/shipping_documents`,
+					{
+						shop_cipher: cipher,
+						document_type: "SHIPPING_LABEL",
+						// 4x6.
+						document_size: "A6",
+						document_format: "PDF",
+					},
+				),
+			),
+		waitsMs,
 	);
 	return { url: data.doc_url, trackingNumber: data.tracking_number || null };
 }
