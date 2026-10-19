@@ -338,7 +338,9 @@ export function QuickShip() {
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogContent
-				className="grid-cols-[minmax(0,1fr)] gap-0 overflow-hidden bg-card p-0 sm:max-w-2xl"
+				// Never taller than the screen: a long order scrolls instead of
+				// pushing the steps off the top.
+				className="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] gap-0 overflow-y-auto bg-card p-0 sm:max-w-2xl"
 				showCloseButton={false}
 				onKeyDown={(e: KeyboardEvent) => {
 					// An Enter typed in a field finishes that step only. Without this,
