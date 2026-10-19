@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { orders, packages, shipments, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
@@ -20,7 +20,9 @@ import {
 	rankRates,
 	serviceHistory,
 	shipmentPlan,
+	signatureRequired,
 } from "#/shipping/quick-ship";
+import { resendTrackingNow } from "#/shipping/retry";
 import { getRates, shippoIsTest } from "#/shipping/shippo";
 import { tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
@@ -102,6 +104,8 @@ const box = {
 const send = {
 	orderIds: "(number.integer > 0)[] > 0",
 	contentsKey: "string",
+	// Orders that need a signature get one either way (see buyDispatch).
+	signature: "boolean",
 } as const;
 
 // Prices for every box, one line per service offered for all of them, most
@@ -142,9 +146,20 @@ export const quickShipRates = createServerFn({ method: "POST" })
 			];
 		} else {
 			const where = await shipAddresses(db, data.orderIds[0]);
+			const members = await db
+				.select({ channel: stores.channel, total: orders.total })
+				.from(orders)
+				.innerJoin(stores, eq(stores.id, orders.storeId))
+				.where(inArray(orders.id, data.orderIds));
+			const signature = data.signature || signatureRequired(members) !== null;
 			const priced = await Promise.all(
 				data.boxes.map((b) =>
-					getRates({ ...where, parcel: b, insureAmount: b.insureAmount }),
+					getRates({
+						...where,
+						parcel: b,
+						insureAmount: b.insureAmount,
+						signature,
+					}),
 				),
 			);
 			perBox = priced.map((p) => p.rates);
@@ -203,10 +218,11 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 		};
 	});
 
-// Tries sending a dispatch's tracking to its orders' marketplaces again.
+// Tries sending a dispatch's tracking to its orders' marketplaces again,
+// with a fresh ten minutes of retrying if it's refused.
 export const resendTracking = createServerFn({ method: "POST" })
 	.validator(type({ dispatchId: "number.integer > 0" }))
-	.handler(async ({ data }) => sendTracking(getDb(), data.dispatchId));
+	.handler(async ({ data }) => resendTrackingNow(getDb(), data.dispatchId));
 
 export const retryStorefront = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))

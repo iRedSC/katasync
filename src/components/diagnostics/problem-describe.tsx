@@ -46,16 +46,21 @@ export function describe(
 						action: details,
 					};
 		}
-		case "handoff":
+		case "handoff": {
+			// Still inside its ten minutes of retrying on its own.
+			const retrying = p.row.retryAt !== null;
 			return {
-				tone: "critical",
+				tone: retrying ? "warning" : "critical",
 				title: (
 					<>
-						<OrderLink id={p.row.orderId} name={p.row.orderName} /> tracking not
-						sent to {channelName(p.row.channel)}
+						<OrderLink id={p.row.orderId} name={p.row.orderName} /> tracking{" "}
+						{retrying ? "retrying to" : "not sent to"}{" "}
+						{channelName(p.row.channel)}
 					</>
 				),
-				detail: p.row.error ?? "",
+				detail: retrying
+					? `${p.row.error ?? ""} (try ${p.row.attempts}; trying again on its own for up to 10 minutes)`
+					: `${p.row.error ?? ""}${p.row.attempts > 0 ? ` (gave up after ${p.row.attempts} tries)` : ""}`,
 				at: ago(p.row.createdAt),
 				action: (
 					<RetryButton
@@ -65,6 +70,7 @@ export function describe(
 					/>
 				),
 			};
+		}
 		case "storefront":
 			return {
 				tone: "warning",

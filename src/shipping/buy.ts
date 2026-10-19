@@ -8,6 +8,7 @@ import {
 	lockOnOwnConnection,
 	type OrderLocker,
 } from "./dispatch";
+import { signatureRequired } from "./quick-ship";
 import {
 	buyLabel,
 	getRate,
@@ -83,6 +84,8 @@ export async function buyDispatch(
 		contentsKey: string;
 		boxes: BoxPlan[];
 		choice: ServiceChoice;
+		// Asked for in quick ship. Orders that need one get one regardless.
+		signature: boolean;
 	},
 	outside: BuyOutside = liveBuy,
 ): Promise<Bought> {
@@ -104,9 +107,11 @@ export async function buyDispatch(
 		// Anything that could stop a record being saved is checked before
 		// money is spent.
 		await assertBoxesExist(db, boxes);
+		const signature =
+			!tiktok && (input.signature || signatureRequired(list) !== null);
 		const rates = tiktok
 			? []
-			: await quoteEach(db, list[0].id, boxes, choice, outside);
+			: await quoteEach(db, list[0].id, boxes, choice, signature, outside);
 
 		const dispatchId = await db.transaction(async (tx) => {
 			const [dispatch] = await tx
@@ -147,6 +152,7 @@ export async function buyDispatch(
 						serviceName: label.rate.serviceName,
 						cost: label.rate.cost,
 						insuredAmount: null,
+						signature: false,
 						trackingNumber: null,
 						trackingUrl: null,
 						// TikTok's links expire; label-file.ts fetches by package.
@@ -166,6 +172,7 @@ export async function buyDispatch(
 						serviceName: rate.serviceName,
 						cost: rate.cost,
 						insuredAmount: plan.insureAmount,
+						signature,
 						trackingNumber: label.trackingNumber,
 						trackingUrl: label.trackingUrl,
 						labelUrl: label.labelUrl,
@@ -229,12 +236,18 @@ async function quoteEach(
 	orderId: number,
 	boxes: BoxPlan[],
 	choice: ServiceChoice,
+	signature: boolean,
 	outside: BuyOutside,
 ): Promise<Awaited<ReturnType<typeof getRate>>[]> {
 	const where = await shipAddresses(db, orderId);
 	const quoted = await Promise.all(
 		boxes.map((b) =>
-			outside.getRates({ ...where, parcel: b, insureAmount: b.insureAmount }),
+			outside.getRates({
+				...where,
+				parcel: b,
+				insureAmount: b.insureAmount,
+				signature,
+			}),
 		),
 	);
 	return Promise.all(

@@ -111,21 +111,25 @@ export async function getRates(input: {
 	to: Address;
 	parcel: Parcel;
 	insureAmount: number | null;
+	signature: boolean;
 }): Promise<{ rates: Rate[]; notes: string[] }> {
+	const extra = {
+		...(input.insureAmount && {
+			insurance: {
+				amount: input.insureAmount.toFixed(2),
+				currency: "USD",
+				content: "Tools",
+			},
+		}),
+		...(input.signature && { signature_confirmation: "STANDARD" }),
+	};
 	const body = shipmentResponse.assert(
 		await shippo("/shipments/", {
 			address_from: input.from,
 			address_to: input.to,
 			parcels: [toShippoParcel(input.parcel)],
-			extra: input.insureAmount
-				? {
-						insurance: {
-							amount: input.insureAmount.toFixed(2),
-							currency: "USD",
-							content: "Tools",
-						},
-					}
-				: undefined,
+			// A signature surcharge shows up in the rates.
+			extra: Object.keys(extra).length > 0 ? extra : undefined,
 			async: false,
 		}),
 	);

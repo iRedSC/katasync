@@ -100,10 +100,15 @@ const box = (extra: Partial<BoxPlan> = {}): BoxPlan => ({
 	...extra,
 });
 const ground = { carrier: "USPS", service: "ground", id: "browser-rate" };
-const buy = (orderIds: number[], boxes: BoxPlan[], outside = fakes()) =>
+const buy = (
+	orderIds: number[],
+	boxes: BoxPlan[],
+	outside = fakes(),
+	signature = false,
+) =>
 	buyDispatch(
 		db,
-		{ orderIds, contentsKey: "X", boxes, choice: ground },
+		{ orderIds, contentsKey: "X", boxes, choice: ground, signature },
 		outside,
 	);
 
@@ -193,6 +198,26 @@ describe("buyDispatch", () => {
 		expect(outside.buyLabel).toHaveBeenCalledTimes(1);
 	});
 
+	test("asks for a signature when chosen, and always on big eBay orders", async () => {
+		const [ebay] = await db
+			.insert(schema.stores)
+			.values({ channel: "ebay", name: "eBay" })
+			.returning();
+		const plain = await addOrder("#1");
+		const chosen = await addOrder("#2", { shipPostalCode: "16502" });
+		const big = await addOrder("#3", { storeId: ebay.id, total: 750 });
+		const outside = fakes();
+		await buy([plain], [box()], outside);
+		await buy([chosen], [box()], outside, true);
+		// Not asked for, but eBay needs it to protect the sale.
+		const bigBuy = await buy([big], [box()], outside, false);
+		const asked = vi
+			.mocked(outside.getRates)
+			.mock.calls.map(([input]) => input.signature);
+		expect(asked).toEqual([false, true, true]);
+		expect((await boxesOf(bigBuy.dispatchId))[0].signature).toBe(true);
+	});
+
 	test("won't combine orders to different addresses", async () => {
 		const a = await addOrder("#1");
 		const b = await addOrder("#2", { shipPostalCode: "90210" });
@@ -212,6 +237,7 @@ describe("buyDispatch", () => {
 					contentsKey: "X",
 					boxes: [box()],
 					choice: { carrier: "UPS", service: "ground", id: "x" },
+					signature: false,
 				},
 				outside,
 			),

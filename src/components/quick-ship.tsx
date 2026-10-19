@@ -2,8 +2,10 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { MAX_BOXES } from "#/components/quick-ship/constants";
 import { DoneStep } from "#/components/quick-ship/done-step";
 import { ExternalStep } from "#/components/quick-ship/external-step";
-import { splitInsurance } from "#/components/quick-ship/insurance";
-import { InsureStep } from "#/components/quick-ship/insure-step";
+import {
+	parseInsurance,
+	splitInsurance,
+} from "#/components/quick-ship/insurance";
 import { Key } from "#/components/quick-ship/key";
 import { Notice } from "#/components/quick-ship/notice";
 import { OrderSummary } from "#/components/quick-ship/order-summary";
@@ -15,6 +17,7 @@ import type {
 	Bought,
 	Box,
 	Dims,
+	Extras,
 	Found,
 	Packed,
 	Rates,
@@ -29,15 +32,29 @@ import { listPackages, quickShipBuy } from "#/server/shipping";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import type { Rate } from "#/shipping/shippo";
 
+const noExtras: Extras = { insure: null, signature: false };
+
+// Each plan starts insured for its full value when it should be, and with a
+// signature when one is required. Going back to fix a box or weight keeps
+// whatever was changed on the service step.
+const startingExtras = (plan: ShipmentPlan): Extras => ({
+	insure: plan.insure ? parseInsurance(String(plan.total)) : null,
+	signature: plan.signatureRequired !== null,
+});
+
+const sameExtras = (a: Extras, b: Extras) =>
+	a.insure === b.insure && a.signature === b.signature;
+
 // Opens quick ship already on this order, past the pin step (the order
 // page's Ship button).
 export function openQuickShip(pin: number) {
 	window.dispatchEvent(new CustomEvent("quick-ship", { detail: pin }));
 }
 
-// Ctrl+Space anywhere: order pin, box, weight, (insurance), service.
-// Tab on the box step adds other orders to the same address to this box; +
-// on the weight step adds another box. Enter moves forward, Escape steps
+// Ctrl+Space anywhere: order pin, box, weight, service. Tab on the box step
+// adds other orders to the same address to this box; + on the weight step
+// adds another box; on the service step, Tab insures and S asks for a
+// signature. Enter moves forward, Escape steps
 // back. The order loads as the third digit is typed, and prices load while
 // the weight is still on screen, so Enter rarely waits.
 export function QuickShip() {
@@ -56,8 +73,9 @@ export function QuickShip() {
 	const [dims, setDims] = useState<Dims | null>(null);
 	const [weightGrams, setWeightGrams] = useState<number | null>(null);
 	const [draftGrams, setDraftGrams] = useState<number | null>(null);
-	const [insureAmount, setInsureAmount] = useState<number | null>(null);
-	const [rates, setRates] = useState<Rates | null>(null);
+	const [extras, setExtras] = useState<Extras>(noExtras);
+	// The prices shown, and the extras they were quoted with.
+	const [rates, setRates] = useState<(Rates & { for: Extras }) | null>(null);
 	const [bought, setBought] = useState<Bought | null>(null);
 
 	// Lookups, plans, and prices already asked for, so asking again is
@@ -76,7 +94,7 @@ export function QuickShip() {
 		setDims(null);
 		setWeightGrams(null);
 		setDraftGrams(null);
-		setInsureAmount(null);
+		setExtras(noExtras);
 		setRates(null);
 		setBought(null);
 		clear();
@@ -114,15 +132,13 @@ export function QuickShip() {
 	const allBoxes = (grams: number | null): Packed[] =>
 		dims && grams ? [...packed, { box, dims, weightGrams: grams }] : packed;
 
-	// Ask for prices as soon as a weight sits still for a moment, using the
-	// insurance the next step would suggest.
+	// Ask for prices as soon as a weight sits still for a moment, with the
+	// extras the service step will show.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: priceFor reads the same state
 	useEffect(() => {
 		if (step !== "weight" || !draftGrams || !plan) return;
 		const timer = setTimeout(() => {
-			priceFor(allBoxes(draftGrams), plan.insure ? plan.total : null)?.catch(
-				() => {},
-			);
+			priceFor(allBoxes(draftGrams), extras)?.catch(() => {});
 		}, 250);
 		return () => clearTimeout(timer);
 	}, [step, draftGrams, plan]);
@@ -154,10 +170,8 @@ export function QuickShip() {
 			setDraftGrams(last.weightGrams);
 			return setStep("weight");
 		}
-		const order: Step[] = ["pin", "package", "weight", "insure", "rates"];
-		let previous = order[order.indexOf(step) - 1];
-		if (previous === "insure" && !plan?.insure) previous = "weight";
-		setStep(previous);
+		const order: Step[] = ["pin", "package", "weight", "rates"];
+		setStep(order[order.indexOf(step) - 1]);
 	};
 
 	// Starts a box from the matching box of the last time these contents
@@ -175,6 +189,7 @@ export function QuickShip() {
 		if (result === null) return setError(`No order to ship has pin ${pin}`);
 		setFound(result);
 		setPlan(result.plan);
+		setExtras(startingExtras(result.plan));
 		// Ready if T is pressed.
 		if (result.companions.length > 0) {
 			planFor([result.order.id, ...result.companions.map((c) => c.id)]).catch(
@@ -211,6 +226,7 @@ export function QuickShip() {
 		const next = await run(() => planFor(orderIds));
 		if (!next) return;
 		setPlan(next);
+		setExtras(startingExtras(next));
 		setRates(null);
 		latest.current++;
 		if (next.last) suggestBox(next, 0);
@@ -255,29 +271,31 @@ export function QuickShip() {
 	function chooseWeight(grams: number) {
 		if (!plan) return;
 		setWeightGrams(grams);
-		if (plan.insure) {
-			setInsureAmount(plan.total);
-			setStep("insure");
-		} else {
-			setInsureAmount(null);
-			showRates(allBoxes(grams), null);
-		}
+		showRates(allBoxes(grams), extras);
 	}
 
-	async function showRates(list: Packed[], insure: number | null) {
-		const pending = priceFor(list, insure);
+	// keep: leave the old prices up, dimmed, while new extras are priced.
+	async function showRates(list: Packed[], next: Extras, keep = false) {
+		const pending = priceFor(list, next);
 		if (!pending) return;
 		const mine = ++latest.current;
 		setStep("rates");
-		setRates(null);
+		if (!keep) setRates(null);
 		const result = await run(() => pending);
-		if (result && mine === latest.current) setRates(result);
+		if (result && mine === latest.current) setRates({ ...result, for: next });
+	}
+
+	function changeExtras(next: Extras) {
+		setExtras(next);
+		showRates(allBoxes(weightGrams), next, true);
 	}
 
 	async function buy(quote: Rate) {
 		const list = allBoxes(weightGrams);
-		if (!plan || list.length === 0 || busy) return;
-		const parts = splitInsurance(insureAmount, list.length);
+		// Only at the price on screen: prices for the extras chosen.
+		if (!plan || list.length === 0 || busy || !rates) return;
+		if (!sameExtras(rates.for, extras)) return;
+		const parts = splitInsurance(extras.insure, list.length);
 		// Buys a real label, so it stays busy until the reload shows it.
 		const r = await run(() =>
 			optimism.change({
@@ -286,6 +304,7 @@ export function QuickShip() {
 						data: {
 							orderIds: plan.orderIds,
 							contentsKey: plan.contentsKey,
+							signature: extras.signature,
 							boxes: list.map((p, i) => ({
 								packageId: p.box?.id ?? null,
 								...p.dims,
@@ -312,7 +331,7 @@ export function QuickShip() {
 			// Everything was refunded: show fresh prices to try again, keeping
 			// the explanation on screen.
 			clearPrices();
-			await showRates(list, insureAmount);
+			await showRates(list, extras);
 			return setError(result.failed);
 		}
 		setBought(result);
@@ -330,7 +349,6 @@ export function QuickShip() {
 		box,
 		dims,
 		weightGrams,
-		insureAmount,
 		bought,
 		count,
 	});
@@ -439,19 +457,25 @@ export function QuickShip() {
 						/>
 					)}
 
-					{step === "insure" && plan && (
-						<InsureStep
-							total={plan.total}
-							boxes={count}
-							onSubmit={(amount) => {
-								setInsureAmount(amount);
-								showRates(allBoxes(weightGrams), amount);
-							}}
-						/>
-					)}
-
 					{step === "rates" && !(error && !rates) && (
-						<RatesStep rates={rates} boxes={count} busy={busy} onBuy={buy} />
+						<RatesStep
+							rates={rates}
+							stale={rates !== null && !sameExtras(rates.for, extras)}
+							boxes={count}
+							busy={busy}
+							offer={
+								plan?.extras
+									? {
+											total: plan.total,
+											suggestInsurance: plan.insure,
+											signatureRequired: plan.signatureRequired,
+										}
+									: null
+							}
+							extras={extras}
+							onExtras={changeExtras}
+							onBuy={buy}
+						/>
 					)}
 
 					{step === "done" && bought && (

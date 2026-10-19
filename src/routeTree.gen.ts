@@ -37,6 +37,7 @@ import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/sup
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiCronTrackingRouteImport } from './routes/api/cron/tracking'
 import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage-photos/$damageId'
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
@@ -188,6 +189,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCronTrackingRoute = ApiCronTrackingRouteImport.update({
+  id: '/api/cron/tracking',
+  path: '/api/cron/tracking',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDamagePhotosDamageIdRoute = ApiDamagePhotosDamageIdRouteImport.update({
   id: '/api/damage-photos/$damageId',
   path: '/api/damage-photos/$damageId',
@@ -269,6 +275,7 @@ export interface FileRoutesByFullPath {
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
@@ -309,6 +316,7 @@ export interface FileRoutesByTo {
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
@@ -350,6 +358,7 @@ export interface FileRoutesById {
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
@@ -392,6 +401,7 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
+    | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
@@ -432,6 +442,7 @@ export interface FileRouteTypes {
     | '/purchasing'
     | '/receive'
     | '/api/auth/$'
+    | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
@@ -472,6 +483,7 @@ export interface FileRouteTypes {
     | '/purchasing/'
     | '/receive/'
     | '/api/auth/$'
+    | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
@@ -513,6 +525,7 @@ export interface RootRouteChildren {
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiCronTrackingRoute: typeof ApiCronTrackingRoute
   ApiDamagePhotosDamageIdRoute: typeof ApiDamagePhotosDamageIdRoute
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
@@ -723,6 +736,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cron/tracking': {
+      id: '/api/cron/tracking'
+      path: '/api/cron/tracking'
+      fullPath: '/api/cron/tracking'
+      preLoaderRoute: typeof ApiCronTrackingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/damage-photos/$damageId': {
       id: '/api/damage-photos/$damageId'
       path: '/api/damage-photos/$damageId'
@@ -825,6 +845,7 @@ const rootRouteChildren: RootRouteChildren = {
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiCronTrackingRoute: ApiCronTrackingRoute,
   ApiDamagePhotosDamageIdRoute: ApiDamagePhotosDamageIdRoute,
   ApiOauthSplatRoute: ApiOauthSplatRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
@@ -839,13 +860,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
