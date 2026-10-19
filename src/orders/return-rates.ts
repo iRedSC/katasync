@@ -1,4 +1,15 @@
-import { and, desc, eq, gt, gte, isNotNull, lt, ne, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	gt,
+	gte,
+	isNotNull,
+	lt,
+	ne,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	orderLineReturns,
@@ -34,13 +45,63 @@ export const evidence = {
 	tiktok: "Relayed returns, with reasons",
 } as const;
 
+// Lines that came back among orders matching `placed`, newest first, each
+// with what its buyers wrote.
+export async function returnedLinesWhere(db: Db, placed: SQL | undefined) {
+	const [lines, notes] = await Promise.all([
+		db
+			.select({
+				lineId: orderLineReturns.lineId,
+				productId: orderLineReturns.productId,
+				orderId: orderLineReturns.orderId,
+				orderName: orders.name,
+				channel: stores.channel,
+				salesChannel: orders.salesChannel,
+				placedAt: orderLineReturns.placedAt,
+				sold: orderLineReturns.sold,
+				returned: orderLineReturns.returned,
+				received: orderLineReturns.received,
+				requested: orderLineReturns.requested,
+				refundedInFull: orderLineReturns.refundedInFull,
+				reasons: orderLineReturns.reasons,
+			})
+			.from(orderLineReturns)
+			.innerJoin(orders, eq(orders.id, orderLineReturns.orderId))
+			.innerJoin(stores, eq(stores.id, orders.storeId))
+			.where(and(placed, gt(orderLineReturns.returned, 0)))
+			.orderBy(desc(orderLineReturns.placedAt)),
+		db
+			.select({
+				lineId: returnRequestLines.orderLineId,
+				note: returnRequests.note,
+			})
+			.from(returnRequestLines)
+			.innerJoin(
+				returnRequests,
+				eq(returnRequests.id, returnRequestLines.requestId),
+			)
+			.where(
+				and(
+					isNotNull(returnRequests.note),
+					ne(returnRequests.status, "cancelled"),
+				),
+			),
+	]);
+	return lines.map((l) => ({
+		...l,
+		notes: notes.flatMap((n) =>
+			n.lineId === l.lineId && n.note ? [n.note] : [],
+		),
+	}));
+}
+
 export async function returnInsights(db: Db) {
 	const day = 24 * 60 * 60 * 1000;
 	const window = {
 		from: new Date(Date.now() - 410 * day),
 		until: new Date(Date.now() - 45 * day),
 	};
-	const [channels, rates, returnedLines, notes] = await Promise.all([
+	const [channels, rates, lines] = await Promise.all([
 		db
 			.select({
 				channel: orderLineReturns.soldOn,
@@ -72,50 +133,9 @@ export async function returnInsights(db: Db) {
 			.from(productReturnRates)
 			.innerJoin(products, eq(products.id, productReturnRates.productId))
 			.where(gt(productReturnRates.returned, 0)),
-		db
-			.select({
-				lineId: orderLineReturns.lineId,
-				productId: orderLineReturns.productId,
-				orderId: orderLineReturns.orderId,
-				orderName: orders.name,
-				channel: stores.channel,
-				salesChannel: orders.salesChannel,
-				placedAt: orderLineReturns.placedAt,
-				sold: orderLineReturns.sold,
-				returned: orderLineReturns.returned,
-				received: orderLineReturns.received,
-				requested: orderLineReturns.requested,
-				refundedInFull: orderLineReturns.refundedInFull,
-				reasons: orderLineReturns.reasons,
-			})
-			.from(orderLineReturns)
-			.innerJoin(orders, eq(orders.id, orderLineReturns.orderId))
-			.innerJoin(stores, eq(stores.id, orders.storeId))
-			.where(and(settled, gt(orderLineReturns.returned, 0)))
-			.orderBy(desc(orderLineReturns.placedAt)),
-		// What buyers wrote, by the line they sent back.
-		db
-			.select({
-				lineId: returnRequestLines.orderLineId,
-				note: returnRequests.note,
-			})
-			.from(returnRequestLines)
-			.innerJoin(
-				returnRequests,
-				eq(returnRequests.id, returnRequestLines.requestId),
-			)
-			.where(
-				and(
-					isNotNull(returnRequests.note),
-					ne(returnRequests.status, "cancelled"),
-				),
-			),
+		returnedLinesWhere(db, settled),
 	]);
 
-	const lines = returnedLines.map((l) => ({
-		...l,
-		notes: notes.filter((n) => n.lineId === l.lineId).map((n) => n.note ?? ""),
-	}));
 	// How many returned lines gave each reason, in plain words, so the same
 	// reason from two channels counts once.
 	const byReason = new Map<string, { text: string; lines: number }>();
