@@ -143,8 +143,13 @@ describe("product_return_rates", () => {
 
 		const rows = await db.select().from(schema.productReturnRates);
 		const of = (sku: string) => rows.find((r) => r.sku === sku);
-		expect(of("POPULAR")).toMatchObject({ sold: 1000, returned: 10 });
-		expect(of("FLAKY")).toMatchObject({ sold: 40, returned: 9 });
+		expect(of("POPULAR")).toMatchObject({
+			orders: 100,
+			ordersReturned: 2,
+			sold: 1000,
+			returned: 10,
+		});
+		expect(of("FLAKY")).toMatchObject({ orders: 40, ordersReturned: 9 });
 		// Popular returns about what its volume predicts.
 		const popularRow = of("POPULAR");
 		expect(popularRow?.rateLow).toBeLessThan(popularRow?.baseline ?? 0);
@@ -155,6 +160,34 @@ describe("product_return_rates", () => {
 			.sort((a, b) => b.excess - a.excess)
 			.map((r) => r.sku);
 		expect(byExcess).toEqual(["FLAKY", "ONCE"]);
+	});
+
+	test("a box sent back is one return, however many are in it", async () => {
+		// Bought by the dozen, or one at a time; 2 of 20 buyers send it back
+		// either way.
+		const bulk = await createProduct(db, "BULK", "simple");
+		const single = await createProduct(db, "SINGLE", "simple");
+		for (let i = 0; i < 20; i++) {
+			const b = await sale(bulk, 12);
+			const s = await sale(single, 1);
+			if (i < 2) {
+				await returned(b.lineId, 12);
+				await returned(s.lineId, 1);
+			}
+		}
+		const rows = await db.select().from(schema.productReturnRates);
+		const of = (sku: string) => rows.find((r) => r.sku === sku);
+		expect(of("BULK")).toMatchObject({
+			ordersReturned: 2,
+			returned: 24,
+			rate: 0.1,
+		});
+		expect(of("SINGLE")).toMatchObject({
+			ordersReturned: 2,
+			returned: 2,
+			rate: 0.1,
+		});
+		expect(of("BULK")?.rateLow).toBe(of("SINGLE")?.rateLow);
 	});
 
 	test("holds each product to the channels it sold on", async () => {

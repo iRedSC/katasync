@@ -1595,23 +1595,25 @@ export const orderLineReturns = pgView("order_line_returns", {
 	reasons: text().array().notNull(),
 }).existing();
 
-// Each product's return rate over the year that ended 45 days ago, against
-// what its sales would bring at each channel's rate, defined in
-// drizzle/0065_return_rate_baseline.sql.
+// Each product's return rate by order over the year that ended 45 days
+// ago, against what its orders would bring at each channel's rate, defined
+// in drizzle/0066_return_rates_by_order.sql. Units are kept for cost and
+// stock; the rates count orders, since a buyer decides once per box.
 export const productReturnRates = pgView("product_return_rates", {
 	productId: integer().notNull(),
 	sku: text().notNull(),
+	orders: integer().notNull(),
+	ordersReturned: integer().notNull(),
 	sold: integer().notNull(),
 	returned: integer().notNull(),
 	received: integer().notNull(),
 	restocked: integer().notNull(),
-	linesReturned: integer().notNull(),
 	rate: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
-	// The lowest rate its numbers make likely (Wilson, 95%).
+	// The lowest rate its orders make likely (Wilson, 95%).
 	rateLow: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
-	// Its sales' rate at each channel's rate: the bar it's held to.
+	// Its orders' rate at each channel's rate: the bar it's held to.
 	baseline: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
-	// Returns that baseline brings, and how many it doesn't explain.
+	// Returned orders that baseline brings, and how many it doesn't explain.
 	expected: numeric({ precision: 12, scale: 1, mode: "number" }).notNull(),
 	excess: numeric({ precision: 12, scale: 1, mode: "number" }).notNull(),
 }).existing();

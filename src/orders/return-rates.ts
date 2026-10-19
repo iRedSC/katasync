@@ -10,7 +10,8 @@ import {
 } from "#/db/schema";
 
 // What Returns › Insights shows, from the order_line_returns and
-// product_return_rates views (drizzle/0064, 0065).
+// product_return_rates views (drizzle/0064, 0066). Rates count orders: a
+// buyer decides once however many are in the box.
 
 // The views' settled year: orders placed 410 to 45 days ago, so each had
 // time to come back. Must match product_return_rates; the tests check the
@@ -39,13 +40,14 @@ export async function returnInsights(db: Db) {
 		db
 			.select({
 				channel: orderLineReturns.soldOn,
+				orders: sql<number>`count(distinct ${orderLineReturns.orderId})::int`,
+				ordersReturned: sql<number>`count(distinct ${orderLineReturns.orderId}) filter (where ${orderLineReturns.returned} > 0)::int`,
 				sold: sql<number>`sum(${orderLineReturns.sold})::int`,
-				returned: sql<number>`sum(${orderLineReturns.returned})::int`,
 			})
 			.from(orderLineReturns)
 			.where(settled)
 			.groupBy(orderLineReturns.soldOn)
-			.orderBy(desc(sql`sum(${orderLineReturns.sold})`)),
+			.orderBy(desc(sql`count(distinct ${orderLineReturns.orderId})`)),
 		db
 			.select({
 				productId: productReturnRates.productId,
@@ -53,6 +55,8 @@ export async function returnInsights(db: Db) {
 				name: products.name,
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
+				orders: productReturnRates.orders,
+				ordersReturned: productReturnRates.ordersReturned,
 				sold: productReturnRates.sold,
 				returned: productReturnRates.returned,
 				rate: productReturnRates.rate,
@@ -103,14 +107,14 @@ export async function returnInsights(db: Db) {
 	// back only as often as their sales predict.
 	const high = rates.filter((r) => r.rateLow > r.baseline);
 	const flagged = high
-		.filter((r) => r.returned > 1)
-		.sort((a, b) => b.excess - a.excess || b.returned - a.returned);
+		.filter((r) => r.ordersReturned > 1)
+		.sort((a, b) => b.excess - a.excess || b.ordersReturned - a.ordersReturned);
 	const once = high
-		.filter((r) => r.returned === 1)
+		.filter((r) => r.ordersReturned === 1)
 		.sort((a, b) => b.rate - a.rate);
 	const expected = rates
 		.filter((r) => r.rateLow <= r.baseline)
-		.sort((a, b) => b.returned - a.returned);
+		.sort((a, b) => b.ordersReturned - a.ordersReturned);
 	return {
 		window,
 		channels: channels.map((c) => ({ ...c, evidence: evidence[c.channel] })),

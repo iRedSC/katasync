@@ -37,14 +37,14 @@ const day = (d: Date) =>
 		year: "numeric",
 	});
 
-// Fewer sales than this and one more order could change the picture.
-const FEW_SALES = 5;
+// Fewer orders than this and one more could change the picture.
+const FEW_ORDERS = 5;
 
 function Insights() {
 	const data = Route.useLoaderData();
 	const linesOf = (productId: number) =>
 		data.lines.filter((l) => l.productId === productId);
-	const sold = data.channels.reduce((n, c) => n + c.sold, 0);
+	const sold = data.channels.reduce((n, c) => n + c.orders, 0);
 	const [showAll, setShowAll] = useState(false);
 	const [showOnce, setShowOnce] = useState(false);
 	const expected = showAll ? data.expected : data.expected.slice(0, 10);
@@ -60,6 +60,8 @@ function Insights() {
 						The last 45 days are left out so their returns have had time to come
 						in. Something counts as returned when it was received here, a buyer
 						asked to return it, or the order was refunded in full (kept or not).
+						Rates count orders, not units: a buyer sending back 3 from one order
+						is one return.
 					</p>
 					{sold === 0 ? null : (
 						<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -68,11 +70,12 @@ function Insights() {
 									<div className="flex items-center justify-between gap-2">
 										<ChannelBadge channel={c.channel} salesChannel={null} />
 										<span className="font-semibold tabular-nums">
-											{percent(c.returned / c.sold)}
+											{percent(c.ordersReturned / c.orders)}
 										</span>
 									</div>
 									<p className="mt-1 tabular-nums">
-										{formatCount(c.returned)} of {formatCount(c.sold)} came back
+										{formatCount(c.ordersReturned)} of {formatCount(c.orders)}{" "}
+										orders sent something back
 									</p>
 									<p className="text-xs text-muted-foreground">{c.evidence}</p>
 								</div>
@@ -216,7 +219,9 @@ function RateRow({
 }) {
 	const [open, setOpen] = useState(false);
 	const reasons = [...new Set(lines.flatMap((l) => l.reasons))];
-	const flagged = r.rateLow > r.baseline && r.returned > 1;
+	const flagged = r.rateLow > r.baseline && r.ordersReturned > 1;
+	const orders = (n: number) =>
+		`${formatCount(n)} ${n === 1 ? "order" : "orders"}`;
 	return (
 		<div className="border-t">
 			<button
@@ -243,22 +248,23 @@ function RateRow({
 				</div>
 				<div className="shrink-0 text-right tabular-nums">
 					<div>
-						{formatCount(r.returned)} of {formatCount(r.sold)} came back ·{" "}
+						{formatCount(r.ordersReturned)} of {orders(r.orders)} came back ·{" "}
 						{percent(r.rate)}
 					</div>
 					<div className="text-xs text-muted-foreground">
+						{formatCount(r.returned)} of {formatCount(r.sold)} units ·{" "}
 						{r.expected < 0.1
-							? "Almost none expected"
-							: `About ${r.expected.toFixed(1)} expected`}
+							? "almost none expected"
+							: `about ${r.expected.toFixed(1)} expected`}
 					</div>
 				</div>
 				<div className="flex w-28 shrink-0 justify-end">
-					{flagged && r.sold < FEW_SALES ? (
+					{flagged && r.orders < FEW_ORDERS ? (
 						<Tip
-							content={`Only ${r.sold} sold, so one more order could change this a lot`}
+							content={`Only ${orders(r.orders)}, so one more could change this a lot`}
 						>
 							<span>
-								<Badge>Few sales</Badge>
+								<Badge>Few orders</Badge>
 							</span>
 						</Tip>
 					) : flagged ? (
