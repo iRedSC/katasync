@@ -9,6 +9,7 @@ import { addressKey, companionsOf, whyNotTogether } from "./dispatch";
 import { assignOrderPins } from "./pins";
 import {
 	combineRates,
+	extraCosts,
 	lastPackedFor,
 	needsInsurance,
 	orderForShipping,
@@ -401,6 +402,14 @@ describe("combineRates", () => {
 		serviceName: `USPS ${service}`,
 		cost,
 		days,
+	});
+
+	test("an extra's cost is each service's price with it less without", () => {
+		const costs = extraCosts(
+			[rate("a", "ground", 9.35), rate("b", "priority", 12)],
+			[rate("c", "ground", 7.1), rate("d", "express", 30)],
+		);
+		expect([...costs]).toEqual([["USPS|ground", 2.25]]);
 	});
 
 	test("one box is just its rates", () => {

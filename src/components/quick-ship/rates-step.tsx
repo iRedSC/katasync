@@ -13,7 +13,7 @@ import {
 } from "./insurance";
 import { Notice } from "./notice";
 import { Spinner } from "./spinner";
-import type { Extras, Rates } from "./types";
+import type { Extras, Quote, Rates } from "./types";
 
 // Insurance and signature for a Shippo label, and what the order says
 // about them. Null for labels that take neither (TikTok's).
@@ -24,6 +24,19 @@ export type ExtrasOffer = {
 };
 
 const serviceKey = (r: Rate) => `${r.carrier}:${r.service}`;
+
+const added = (cost: number) =>
+	cost < 0 ? `−${formatMoney(-cost)}` : `+${formatMoney(cost)}`;
+
+// Under the service name: how long it takes, and what the chosen insurance
+// and signature add to its price.
+function details(r: Quote) {
+	return [
+		r.days !== null && `${r.days} ${r.days === 1 ? "day" : "days"}`,
+		r.insuranceCost !== null && `insurance ${added(r.insuranceCost)}`,
+		r.signatureCost !== null && `signature ${added(r.signatureCost)}`,
+	].filter((part) => part !== false);
+}
 // A typed amount waits this long for more typing before prices update.
 const SETTLE_MS = 400;
 
@@ -213,17 +226,13 @@ export function RatesStep({
 										text={r.serviceName}
 										className="text-lg font-semibold"
 									/>
-									{r.days !== null && (
-										<span
-											className={
-												i === selected
-													? "text-white/70"
-													: "text-muted-foreground"
-											}
-										>
-											{r.days} {r.days === 1 ? "day" : "days"}
-										</span>
-									)}
+									<span
+										className={
+											i === selected ? "text-white/70" : "text-muted-foreground"
+										}
+									>
+										{details(r).join(" · ")}
+									</span>
 								</span>
 								<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">
 									{busy && !stale && !unsettled && i === selected && (
