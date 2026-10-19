@@ -11,7 +11,6 @@ import {
 	toggleFullCoverage,
 	typeInsurance,
 } from "./insurance";
-import { Key } from "./key";
 import { Notice } from "./notice";
 import { Spinner } from "./spinner";
 import type { Extras, Rates } from "./types";
@@ -20,9 +19,6 @@ import type { Extras, Rates } from "./types";
 // about them. Null for labels that take neither (TikTok's).
 export type ExtrasOffer = {
 	total: number;
-	// Big or flagged orders start insured for their full value, with the
-	// field showing; others keep it out of the way until Tab.
-	suggestInsurance: boolean;
 	// Why a signature can't be turned off, if it can't.
 	signatureRequired: string | null;
 };
@@ -53,9 +49,6 @@ export function RatesStep({
 }) {
 	const [selected, setSelected] = useState(0);
 	const [draft, setDraft] = useState(insuranceText(extras.insure));
-	const [showInsurance, setShowInsurance] = useState(
-		extras.insure !== null || Boolean(offer?.suggestInsurance),
-	);
 	const typed = parseInsurance(draft);
 	// Typed but not priced yet: Enter prices it first.
 	const unsettled = typed !== extras.insure;
@@ -73,7 +66,8 @@ export function RatesStep({
 		if (!rates) return;
 		const i = rates.list.findIndex((r) => serviceKey(r) === chosen.current);
 		moveTo(Math.max(i, 0));
-		if (!showInsurance) root.current?.focus();
+		// The insurance field holds focus when there is one.
+		if (!offer) root.current?.focus();
 	}, [rates]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: prices the typed amount once typing stops
@@ -106,8 +100,6 @@ export function RatesStep({
 		}
 		if (e.key === "Tab") {
 			e.preventDefault();
-			// The first Tab brings the field out; after that it toggles.
-			if (!showInsurance) return setShowInsurance(true);
 			const next = toggleFullCoverage(draft, offer.total);
 			setDraft(next);
 			onExtras({ ...extras, insure: parseInsurance(next) });
@@ -152,19 +144,13 @@ export function RatesStep({
 			{offer && (
 				<>
 					<div className="flex gap-2">
-						{showInsurance ? (
-							<InsuranceField
-								text={draft}
-								total={offer.total}
-								boxes={boxes}
-								input={input}
-								onText={(t) => setDraft(typeInsurance(t))}
-							/>
-						) : (
-							<p className="flex h-16 flex-1 items-center gap-2 px-1 text-muted-foreground">
-								Not insured · <Key>Tab</Key> to insure
-							</p>
-						)}
+						<InsuranceField
+							text={draft}
+							total={offer.total}
+							boxes={boxes}
+							input={input}
+							onText={(t) => setDraft(typeInsurance(t))}
+						/>
 						<SignatureToggle
 							on={extras.signature}
 							locked={offer.signatureRequired !== null}
