@@ -22,6 +22,7 @@ import {
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney, formatOrderQuantity } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { productLanguage } from "#/products/language";
 import { facetsOf, sortValuesOf, stateOf, stock } from "#/products/rows";
 import {
 	type Filter,
@@ -235,6 +236,7 @@ function Table({
 		() => facetCounts(prepared.map((p) => p.facets)),
 		[prepared],
 	);
+	const language = useMemo(() => productLanguage(counts), [counts]);
 	const filtered = useMemo(() => {
 		const q = parseQuery(query);
 		const all = [...chips, ...q.filters];
@@ -303,7 +305,7 @@ function Table({
 							setChips(next);
 							setShown(PAGE);
 						}}
-						counts={counts}
+						language={language}
 						sort={sort}
 						onSort={changeSort}
 						columns={COLUMNS}

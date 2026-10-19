@@ -27,6 +27,7 @@ import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
+import { productLanguage } from "#/products/language";
 import { facetsOf, sortValuesOf, stateOf } from "#/products/rows";
 import {
 	type Filter,
@@ -177,6 +178,7 @@ function ProductList() {
 		[state],
 	);
 	const facetValues = useMemo(() => facetCounts(facets), [facets]);
+	const language = useMemo(() => productLanguage(facetValues), [facetValues]);
 	const counts = useMemo(
 		() =>
 			new Map(
@@ -352,7 +354,7 @@ function ProductList() {
 									}}
 									chips={filters}
 									onChips={(next) => setSearch({ filters: next })}
-									counts={facetValues}
+									language={language}
 									sort={sort}
 									onSort={(s) => setSearch({ sort: s })}
 									columns={PRODUCT_SORTS}

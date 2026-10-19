@@ -237,7 +237,7 @@ export function facetCounts(all: Facets[]) {
 export function suggest(
 	counts: ReturnType<typeof facetCounts>,
 	typing: Filter,
-	picked: Filter[],
+	picked: readonly Filter[],
 	limit = 8,
 ) {
 	if (typing.field === "title" || isNumber(typing.field)) return [];

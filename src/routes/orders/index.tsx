@@ -1,41 +1,66 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import {
-	AlertTriangle,
-	Copy,
-	ExternalLink,
-	FileText,
-	Link2,
-	PackageCheck,
-	Printer,
-} from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ChannelBadge } from "#/components/channel-badge";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { PackageCheck, Printer, SearchX } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FilterPicker, SortMenu, ValueList } from "#/components/filter-menu";
+import { FilterSearch } from "#/components/filter-search";
 import { MatchDialog } from "#/components/match-picker";
 import { OrderTabs } from "#/components/order-tabs";
-import { Badge, Card, EmptyState, Page } from "#/components/page";
+import { OrderTable, orderLink } from "#/components/orders-list/order-table";
+import {
+	printPlan,
+	type Ticks,
+	toggle,
+	toggleAll,
+} from "#/components/orders-list/selection";
+import { Card, EmptyState, Page } from "#/components/page";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
-import {
-	ContextMenu,
-	ContextMenuContent,
-	ContextMenuItem,
-	ContextMenuSeparator,
-	ContextMenuTrigger,
-} from "#/components/ui/context-menu";
-import { copyText } from "#/lib/copy";
-import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
+import { Tip } from "#/components/ui/tooltip";
+import { formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { useRowLink } from "#/lib/row-link";
-import { cn } from "#/lib/utils";
-import { externalFulfillment } from "#/orders/fulfillment";
-import { orderStatus } from "#/orders/status";
-import { listOrders, type OrderRow } from "#/server/orders";
+import {
+	chipsFromUrl,
+	facetCounts,
+	facetsOf,
+	matches,
+	ORDER_SORTS,
+	type OrderFilter,
+	type OrderSortKey,
+	orderLanguage,
+	parseQuery,
+	STATUS_DETAILS,
+	sortValuesOf,
+} from "#/orders/search";
+import {
+	isColumn,
+	parseSort,
+	type Sort,
+	sortRows,
+	spellSort,
+	withTerm,
+} from "#/products/sort";
+import { listOrders } from "#/server/orders";
 
 type View = "ship" | "all";
 
+// The URL holds the chips, sort, and typed search, so opening an order and
+// coming back keeps them. Anything malformed is dropped.
+type Search = { view?: View; f?: OrderFilter[]; sort?: string; q?: string };
+
 export const Route = createFileRoute("/orders/")({
-	validateSearch: (search: Record<string, unknown>): { view?: View } =>
-		search.view === "all" ? { view: "all" } : {},
+	validateSearch: (search: Record<string, unknown>): Search => {
+		const f = chipsFromUrl(search.f);
+		const sort = spellSort(parseSort(String(search.sort ?? ""), ORDER_SORTS));
+		// The URL parser turns "?q=12" into a number, so take it back.
+		const q = typeof search.q === "number" ? String(search.q) : search.q;
+		return {
+			...(search.view === "all" ? { view: "all" } : {}),
+			...(f.length ? { f } : {}),
+			...(sort ? { sort } : {}),
+			...(typeof q === "string" && q !== "" ? { q } : {}),
+		};
+	},
 	loaderDeps: ({ search }) => ({ view: search.view ?? "ship" }),
 	loader: ({ deps }) => listOrders({ data: { view: deps.view } }),
 	component: Orders,
@@ -46,32 +71,99 @@ export const Route = createFileRoute("/orders/")({
 	),
 });
 
+const FIELD_MENU = [
+	{ key: "marketplace", label: "Marketplace", typed: "$" },
+	{ key: "status", label: "Status", typed: "%" },
+] as const;
+
 function Orders() {
 	const rows = Route.useLoaderData();
-	const { view = "ship" } = Route.useSearch();
-	const navigate = useNavigate();
+	const search = Route.useSearch();
+	const view = search.view ?? "ship";
+	const navigate = useNavigate({ from: Route.fullPath });
 	const { link, preload, load } = useRowLink();
 	const list = useRef<HTMLTableSectionElement>(null);
-	const [selected, setSelected] = useState(0);
-	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
+	const input = useRef<HTMLInputElement>(null);
+	const [cursor, setCursor] = useState(0);
+	const [ticks, setTicks] = useState<Ticks>(() => new Set());
+	// The last row ticked by hand, where a shift-click's range starts.
+	const [anchor, setAnchor] = useState<number | null>(null);
 	const [matchingId, setMatchingId] = useState<number | null>(null);
 	const closeMatch = useCallback(() => setMatchingId(null), []);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when the view changes
-	useEffect(() => setSelected(0), [view]);
-	const to = (o: OrderRow) =>
-		({ to: "/orders/$id", params: { id: String(o.id) } }) as const;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: follows the selection, not each reload of the rows
+	// The router hands back a new array on every render, so key by content.
+	const chipsKey = JSON.stringify(search.f ?? []);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by content on purpose
+	const chips = useMemo(() => search.f ?? [], [chipsKey]);
+	const sortText = search.sort ?? "";
+	const sort = useMemo(() => parseSort(sortText, ORDER_SORTS), [sortText]);
+	// The box answers keystrokes from here; the URL keeps a copy.
+	const [query, setText] = useState(search.q ?? "");
+
+	function setSearch(next: {
+		f?: OrderFilter[];
+		sort?: Sort<OrderSortKey>;
+		q?: string;
+	}) {
+		navigate({
+			search: (prev) => ({
+				...prev,
+				...("f" in next ? { f: next.f?.length ? next.f : undefined } : {}),
+				...(next.sort ? { sort: spellSort(next.sort) || undefined } : {}),
+				...("q" in next ? { q: next.q || undefined } : {}),
+			}),
+			replace: true,
+			resetScroll: false,
+		});
+	}
+	function setQuery(text: string) {
+		setText(text);
+		setSearch({ q: text });
+	}
+
+	const facets = useMemo(() => rows.map(facetsOf), [rows]);
+	const counts = useMemo(() => facetCounts(facets), [facets]);
+	const language = useMemo(() => orderLanguage(counts), [counts]);
+	const q = useMemo(() => parseQuery(query), [query]);
+	const filtering =
+		chips.length > 0 || q.filters.some((f) => f.value) || q.words.length > 0;
+	const shown = useMemo(() => {
+		const all = [...chips, ...q.filters];
+		// A sort still being typed applies once it names a column exactly.
+		const by = q.sorts.reduce<Sort<OrderSortKey>>(
+			(s, t) =>
+				isColumn(t.value, ORDER_SORTS)
+					? withTerm(s, { key: t.value, desc: t.desc })
+					: s,
+			sort,
+		);
+		return sortRows(
+			rows.filter((_, i) => matches(facets[i], all, q.words)),
+			by,
+			sortValuesOf,
+		);
+	}, [rows, facets, chips, q, sort]);
+	const plan = printPlan({ view, ticks, shown, filtering });
+
+	// A new tab starts over: the tabs drop the chips, so the typed search
+	// goes too, and ticks from the other list don't carry across.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: resets when the view changes
+	useEffect(() => {
+		setText(search.q ?? "");
+		setTicks(new Set());
+		setAnchor(null);
+	}, [view]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: resets when what's shown changes
+	useEffect(() => setCursor(0), [view, chipsKey, query, sortText]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: follows the cursor, not each reload of the rows
 	useEffect(() => {
 		list.current
-			?.querySelector(`[data-index="${selected}"]`)
+			?.querySelector(`[data-index="${cursor}"]`)
 			?.scrollIntoView({ block: "nearest" });
-		// Enter opens the selected order, so it's loaded ahead too.
-		const o = rows[selected];
-		if (o) preload(to(o));
-	}, [selected, preload]);
-
-	const open = (o: OrderRow | undefined) => o && navigate(to(o));
+		// Enter opens the row under the cursor, so it's loaded ahead too.
+		const o = shown[cursor];
+		if (o) preload(orderLink(o));
+	}, [cursor, preload]);
 
 	// Nearly every order to ship gets opened, one after another, so each
 	// loads as it scrolls into view rather than waiting for a hover. All
@@ -84,158 +176,113 @@ function Orders() {
 			for (const e of entries) {
 				if (!e.isIntersecting) continue;
 				seen.unobserve(e.target);
-				const o = rows[Number((e.target as HTMLElement).dataset.index)];
-				if (o) load(to(o));
+				const o = shown[Number((e.target as HTMLElement).dataset.index)];
+				if (o) load(orderLink(o));
 			}
 		});
 		for (const tr of body.querySelectorAll("tr[data-index]")) seen.observe(tr);
 		return () => seen.disconnect();
-	}, [view, rows.map((o) => o.id).join(), load]);
+	}, [view, shown.map((o) => o.id).join(), load]);
+
+	function tick(i: number, range: boolean) {
+		setTicks((t) => toggle(t, shown, i, anchor, range));
+		setAnchor(i);
+	}
 
 	useHotkeys({
-		j: () => setSelected((i) => Math.min(i + 1, rows.length - 1)),
-		k: () => setSelected((i) => Math.max(i - 1, 0)),
-		Enter: () => open(rows[selected]),
+		j: () => setCursor((i) => Math.min(i + 1, shown.length - 1)),
+		k: () => setCursor((i) => Math.max(i - 1, 0)),
+		x: () => tick(cursor, false),
+		Enter: () => {
+			const o = shown[cursor];
+			if (o) navigate(orderLink(o));
+		},
+		"/": () => input.current?.focus(),
+		Escape: () => {
+			if (document.activeElement === input.current) input.current?.blur();
+			else if (plan?.kind === "ids" && plan.why === "ticked")
+				setTicks(new Set());
+			else if (query) setQuery("");
+		},
 	});
 
 	return (
-		<Page
-			title="Orders"
-			actions={
-				view === "ship" &&
-				rows.length > 0 && (
-					<Button asChild variant="outline" size="sm">
-						<a href="/print/invoices" target="_blank" rel="noreferrer">
-							<Printer />
-							Print all
-						</a>
-					</Button>
-				)
-			}
-		>
-			<Card flush>
+		<Page title="Orders" actions={plan && <PrintButton plan={plan} />}>
+			<Card flush className="overflow-visible">
 				<OrderTabs active={view} count={rows.length} />
+				<div className="flex items-start gap-1 border-b p-2">
+					<div className="min-w-0 flex-1">
+						<FilterSearch
+							inputRef={input}
+							text={query}
+							onText={setQuery}
+							chips={chips}
+							onChips={(f) => setSearch({ f })}
+							language={language}
+							sort={sort}
+							onSort={(s) => setSearch({ sort: s })}
+							columns={ORDER_SORTS}
+							placeholder="Search, or $tiktok %unfulfilled ^total"
+						/>
+					</div>
+					<FilterPicker<OrderFilter>
+						fields={FIELD_MENU.map((f) => ({
+							...f,
+							body: (add) => (
+								<ValueList
+									values={counts.get(f.key) ?? new Map()}
+									details={f.key === "status" ? STATUS_DETAILS : undefined}
+									onAdd={(value, exclude) =>
+										add({ field: f.key, value, exclude, exact: true })
+									}
+								/>
+							),
+						}))}
+						onAdd={(f) => setSearch({ f: [...chips, f] })}
+					/>
+					<SortMenu
+						sort={sort}
+						onSort={(s) => setSearch({ sort: s })}
+						columns={ORDER_SORTS}
+					/>
+				</div>
+				{filtering && rows.length > 0 && (
+					<p className="border-b px-4 py-1.5 text-xs text-muted-foreground tabular-nums">
+						{formatCount(shown.length)} of {formatCount(rows.length)} orders
+					</p>
+				)}
 
 				{rows.length === 0 ? (
 					<EmptyState
 						icon={PackageCheck}
 						title={view === "ship" ? "Nothing to ship" : "No orders"}
 					/>
+				) : shown.length === 0 ? (
+					<EmptyState icon={SearchX} title="No orders match">
+						<button
+							type="button"
+							onClick={() => {
+								setText("");
+								setSearch({ f: [], q: "" });
+							}}
+							className="text-link hover:underline"
+						>
+							Clear the search
+						</button>
+					</EmptyState>
 				) : (
-					// No cell wraps; the customer column takes what's left and truncates.
-					<table className="w-full whitespace-nowrap">
-						<thead>
-							<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
-								{view === "ship" && (
-									<th className="w-16 px-4 py-2 font-medium">Pin</th>
-								)}
-								<th className="px-4 py-2 font-medium">Order</th>
-								<th className="hidden px-4 py-2 font-medium md:table-cell">
-									Date
-								</th>
-								<th className="px-4 py-2 font-medium">Customer</th>
-								<th className="hidden px-4 py-2 font-medium lg:table-cell">
-									Channel
-								</th>
-								<th className="px-4 py-2 text-right font-medium">Total</th>
-								<th className="hidden px-4 py-2 font-medium md:table-cell">
-									Items
-								</th>
-								<th className="px-4 py-2 font-medium">Status</th>
-							</tr>
-						</thead>
-						{/* One menu for the whole table: it acts on the row that was
-						    right-clicked. */}
-						<ContextMenu>
-							<ContextMenuTrigger asChild>
-								<tbody ref={list}>
-									{rows.map((o, i) => {
-										const status = orderStatus(o);
-										const external = externalFulfillment(o);
-										return (
-											<tr
-												key={o.id}
-												data-index={i}
-												{...link(to(o))}
-												onMouseMove={() => setSelected(i)}
-												onContextMenu={() => setMenuFor(o)}
-												className={cn(
-													"cursor-pointer border-t first:border-t-0",
-													i === selected ? "bg-surface" : "hover:bg-subtle",
-												)}
-											>
-												{view === "ship" && (
-													<td className="px-4 py-2.5 font-mono text-base font-bold tabular-nums">
-														{o.pin}
-													</td>
-												)}
-												<td className="px-4 py-2.5 font-semibold">
-													{external ? (
-														// Opens the marketplace's page; the rest of the row
-														// still opens katasync's.
-														<a
-															href={external.url}
-															target="_blank"
-															rel="noreferrer"
-															onClick={(e) => e.stopPropagation()}
-															className="inline-flex items-center gap-1 text-link hover:underline"
-														>
-															{o.name}
-															<ExternalLink className="size-3.5" />
-														</a>
-													) : (
-														o.name
-													)}
-												</td>
-												<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-													{formatOrderDate(o.placedAt)}
-												</td>
-												{/* Takes the leftover width; long names end in "…". */}
-												<td className="w-full max-w-0 px-4 py-2.5">
-													<div className="truncate">
-														{o.customerName ?? "No name"}
-													</div>
-													{o.shipCity && (
-														<div className="truncate text-xs text-muted-foreground">
-															{o.shipCity}
-															{o.shipRegion && `, ${o.shipRegion}`}
-														</div>
-													)}
-												</td>
-												<td className="hidden px-4 py-2.5 lg:table-cell">
-													<ChannelBadge
-														channel={o.channel}
-														salesChannel={o.salesChannel}
-													/>
-												</td>
-												<td className="px-4 py-2.5 text-right tabular-nums">
-													{formatMoney(o.total)}
-												</td>
-												<td className="hidden px-4 py-2.5 whitespace-nowrap md:table-cell">
-													{formatCount(o.items)}{" "}
-													{o.items === 1 ? "item" : "items"}
-												</td>
-												<td className="px-4 py-2.5">
-													<div className="flex gap-1.5">
-														<Badge tone={status.tone}>{status.label}</Badge>
-														{o.unmatched > 0 && (
-															<Badge tone="critical">Unknown product</Badge>
-														)}
-													</div>
-												</td>
-											</tr>
-										);
-									})}
-								</tbody>
-							</ContextMenuTrigger>
-							{menuFor && (
-								<OrderMenu
-									order={menuFor}
-									onMatch={() => setMatchingId(menuFor.id)}
-								/>
-							)}
-						</ContextMenu>
-					</table>
+					<OrderTable
+						rows={shown}
+						view={view}
+						bodyRef={list}
+						cursor={cursor}
+						onCursor={setCursor}
+						ticks={ticks}
+						onTick={tick}
+						onTickAll={() => setTicks((t) => toggleAll(t, shown))}
+						link={link}
+						onMatch={setMatchingId}
+					/>
 				)}
 			</Card>
 			<MatchDialog orderId={matchingId} onClose={closeMatch} />
@@ -243,68 +290,36 @@ function Orders() {
 	);
 }
 
-// Only the actions this row's data supports. Shipping, returns, and voiding
-// stay on the order's page: the review items just take you there.
-function OrderMenu({
-	order: o,
-	onMatch,
+// Says how many it prints, so a filtered list never prints more than it shows.
+function PrintButton({
+	plan,
 }: {
-	order: OrderRow;
-	onMatch: () => void;
+	plan: NonNullable<ReturnType<typeof printPlan>>;
 }) {
-	const navigate = useNavigate();
-	const external = externalFulfillment(o);
-
-	return (
-		<ContextMenuContent>
-			<ContextMenuItem
-				shortcut="↵"
-				onSelect={() =>
-					navigate({ to: "/orders/$id", params: { id: String(o.id) } })
-				}
-			>
-				<FileText />
-				Open
-			</ContextMenuItem>
-			<ContextMenuItem
-				onSelect={() => window.open(`/orders/${o.id}`, "_blank")}
-			>
-				<ExternalLink />
-				Open in new tab
-			</ContextMenuItem>
-			<ContextMenuItem
-				onSelect={() => window.open(`/print/invoices?id=${o.id}`, "_blank")}
+	const label =
+		plan.kind === "all"
+			? "Print all"
+			: `Print ${formatCount(plan.ids.length)} ${plan.why === "ticked" ? "ticked" : "shown"}`;
+	const button = (
+		<Button asChild variant="outline" size="sm">
+			<Link
+				to="/print/invoices"
+				search={plan.kind === "ids" ? { ids: plan.ids } : {}}
+				target="_blank"
+				rel="noreferrer"
 			>
 				<Printer />
-				Print invoice
-			</ContextMenuItem>
-			{external && (
-				<ContextMenuItem onSelect={() => window.open(external.url, "_blank")}>
-					<ExternalLink />
-					Fulfill on {external.name}
-				</ContextMenuItem>
-			)}
-			{o.labelToVoid && (
-				<ContextMenuItem
-					onSelect={() =>
-						navigate({ to: "/orders/$id", params: { id: String(o.id) } })
-					}
-				>
-					<AlertTriangle />
-					Review label to void
-				</ContextMenuItem>
-			)}
-			{o.unmatched > 0 && (
-				<ContextMenuItem onSelect={onMatch}>
-					<Link2 />
-					Match
-				</ContextMenuItem>
-			)}
-			<ContextMenuSeparator />
-			<ContextMenuItem onSelect={() => copyText(o.name)}>
-				<Copy />
-				Copy order name
-			</ContextMenuItem>
-		</ContextMenuContent>
+				{label}
+			</Link>
+		</Button>
+	);
+	return plan.kind === "ids" && plan.leftOut > 0 ? (
+		<Tip
+			content={`Leaves out ${formatCount(plan.leftOut)} cancelled with a label to void`}
+		>
+			{button}
+		</Tip>
+	) : (
+		button
 	);
 }
