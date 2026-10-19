@@ -287,6 +287,29 @@ describe("tiktokToChannelOrder", () => {
 		]);
 	});
 
+	test("a TikTok-funded discount counts as revenue, ours doesn't", () => {
+		const o = tiktokToChannelOrder(
+			tiktokOrder.assert({
+				id: "577000000000000002",
+				status: "AWAITING_SHIPMENT",
+				create_time: 1790000000,
+				update_time: 1790000000,
+				line_items: [
+					{
+						id: "a",
+						sku_id: "1729",
+						product_name: "Wrench",
+						// $12.00, less $7.20 TikTok pays us and $1.00 we gave up.
+						sale_price: "3.80",
+						platform_discount: "7.20",
+						seller_discount: "1.00",
+					},
+				],
+			}),
+		);
+		expect(o.lines[0]?.unitPrice).toBeCloseTo(11);
+	});
+
 	test("a masked name is kept, a masked street is dropped", () => {
 		const o = tiktokToChannelOrder(order());
 		expect(o).toMatchObject({
