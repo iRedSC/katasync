@@ -2,12 +2,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 
-export type OrderTab = "ship" | "all" | "returns";
+export type OrderTab = "ship" | "all";
 
 const tabs: { key: OrderTab; label: string }[] = [
 	{ key: "ship", label: "To ship" },
 	{ key: "all", label: "All orders" },
-	{ key: "returns", label: "Returns" },
 ];
 
 // The tabs over every order list. The open one shows how many it lists.
@@ -20,12 +19,7 @@ export function OrderTabs({
 }) {
 	const navigate = useNavigate();
 	const go = (key: OrderTab) =>
-		key === "returns"
-			? navigate({ to: "/orders/returns" })
-			: navigate({
-					to: "/orders",
-					search: key === "ship" ? {} : { view: key },
-				});
+		navigate({ to: "/orders", search: key === "ship" ? {} : { view: key } });
 	return (
 		<div className="flex gap-1 border-b p-2">
 			{tabs.map((t) => (

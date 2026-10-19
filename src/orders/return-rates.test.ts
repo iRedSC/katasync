@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { saveCostReport } from "./charges";
+import { returnInsights } from "./return-rates";
 
 // The order_line_returns and product_return_rates views
 // (drizzle/0064_return_rates.sql, 0065_return_rate_baseline.sql).
@@ -170,5 +171,36 @@ describe("product_return_rates", () => {
 			(r) => r.sku === "AMAZON-ONLY",
 		);
 		expect(row).toMatchObject({ baseline: 0.05, expected: 5, excess: 0 });
+	});
+});
+
+describe("returnInsights", () => {
+	test("counts the same window as the view, and splits flagged from expected", async () => {
+		const flaky = await createProduct(db, "FLAKY", "simple");
+		const steady = await createProduct(db, "STEADY", "simple");
+		for (let i = 0; i < 40; i++) {
+			const s = await sale(flaky, 1);
+			if (i < 9) await returned(s.lineId, 1);
+		}
+		for (let i = 0; i < 200; i++) {
+			const s = await sale(steady, 1);
+			if (i < 3) await returned(s.lineId, 1);
+		}
+		// Just outside each end of the window.
+		await sale(flaky, 7, daysAgo(44));
+		await sale(flaky, 7, daysAgo(411));
+		// Sold once, came back once: high, but not a pattern.
+		const once = await createProduct(db, "ONCE", "simple");
+		await returned((await sale(once, 1)).lineId, 1);
+
+		const insights = await returnInsights(db);
+		const view = await db.select().from(schema.productReturnRates);
+		const sum = (rows: { sold: number }[]) =>
+			rows.reduce((n, r) => n + r.sold, 0);
+		expect(sum(insights.channels)).toBe(sum(view));
+		expect(insights.flagged.map((r) => r.sku)).toEqual(["FLAKY"]);
+		expect(insights.once.map((r) => r.sku)).toEqual(["ONCE"]);
+		expect(insights.expected.map((r) => r.sku)).toEqual(["STEADY"]);
+		expect(insights.lines.filter((l) => l.productId === flaky)).toHaveLength(9);
 	});
 });

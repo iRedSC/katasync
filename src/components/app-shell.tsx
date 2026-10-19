@@ -191,6 +191,7 @@ function NavItem({
 // shows red. Every count has to say which it is.
 const problem: Record<keyof NavCounts, boolean> = {
 	toShip: false,
+	returnsDue: false,
 	posReady: false,
 	countsDue: false,
 	unmatched: true,

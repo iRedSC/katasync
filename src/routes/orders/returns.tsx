@@ -3,9 +3,9 @@ import { Ban, PackageOpen, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
-import { OrderTabs } from "#/components/order-tabs";
 import { Badge, Card, EmptyState, Page, type Tone } from "#/components/page";
 import { type Received, ReturnDialog } from "#/components/return-dialog";
+import { ReturnsTabs } from "#/components/returns-tabs";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
@@ -14,6 +14,7 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
 import {
 	getReturns,
@@ -27,7 +28,7 @@ export const Route = createFileRoute("/orders/returns")({
 	loader: () => getReturns(),
 	component: Returns,
 	pendingComponent: () => (
-		<ListSkeleton title="Orders">
+		<ListSkeleton title="Returns">
 			<ListCard tabs />
 		</ListSkeleton>
 	),
@@ -218,9 +219,9 @@ function Returns() {
 		.filter((g) => g.orders.length > 0);
 
 	return (
-		<Page title="Orders">
+		<Page title="Returns">
 			<Card flush>
-				<OrderTabs active="returns" count={due.length} />
+				<ReturnsTabs active="due" due={due.length} />
 				<div className="flex items-center gap-2 border-b px-4 py-2">
 					<Search className="size-4 text-muted-foreground" />
 					<input
@@ -420,7 +421,7 @@ function ReturnRow({
 				))}
 				{request && (request.reason || request.trackingNumber) && (
 					<li className="truncate text-xs text-muted-foreground">
-						{request.reason}
+						{request.reason && returnReason(request.reason)}
 						{request.reason && request.trackingNumber && " · "}
 						{request.trackingNumber &&
 							`${request.carrier ? `${request.carrier} ` : ""}${request.trackingNumber}`}
