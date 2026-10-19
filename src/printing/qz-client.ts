@@ -69,6 +69,12 @@ export async function qzConnected(): Promise<Qz> {
 		connecting = qz.websocket
 			.connect({ retries: 1, delay: 1 })
 			.catch((err: unknown) => {
+				// Connected without katasync's certificate: hang up, so the next
+				// try sends it rather than reusing an anonymous connection.
+				if (signingError) {
+					qz.websocket.disconnect().catch(() => {});
+					throw signingError;
+				}
 				throw new Error(
 					`QZ Tray isn't running (${message(err)}). Start it, or run the setup from Settings.`,
 				);
@@ -84,9 +90,31 @@ export async function qzConnected(): Promise<Qz> {
 function setUpQz(mod: Qz) {
 	// A CommonJS module: Vite puts it on `default`.
 	const qz = (mod as Qz & { default?: Qz }).default ?? mod;
-	qz.security.setCertificatePromise((resolve, reject) => {
-		qzCertificateText().then(resolve, reject);
-	});
+	// Without a certificate or with an empty signature, QZ doesn't fail: it
+	// treats the page as anonymous and asks about every request, with no way
+	// to remember the answer. So anything else stops the request and says why.
+	const fail = (reject: (reason: string) => void) => (error: unknown) => {
+		signingError = error;
+		reject(message(error));
+	};
+	qz.security.setCertificatePromise(
+		(resolve, reject) => {
+			qzCertificateText().then((certificate: unknown) => {
+				if (
+					typeof certificate === "string" &&
+					certificate.includes("BEGIN CERTIFICATE")
+				)
+					resolve(certificate);
+				else
+					fail(reject)(
+						new Error(
+							`katasync's server sent no QZ certificate (got ${described(certificate)})`,
+						),
+					);
+			}, fail(reject));
+		},
+		{ rejectOnFailure: true },
+	);
 	qz.security.setSignatureAlgorithm("SHA512");
 	// Hand the server the request itself rather than its hash, so it can
 	// check what it signs. The server hashes it the way QZ would.
@@ -97,10 +125,15 @@ function setUpQz(mod: Qz) {
 		passThrough as unknown as Parameters<Qz["api"]["setSha256Type"]>[0],
 	);
 	qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
-		signQzRequest({ data: toSign }).then(resolve, (error: unknown) => {
-			signingError = error;
-			reject(message(error));
-		});
+		signQzRequest({ data: toSign }).then((signature: unknown) => {
+			if (typeof signature === "string" && signature) resolve(signature);
+			else
+				fail(reject)(
+					new Error(
+						`katasync's server sent no QZ signature (got ${described(signature)})`,
+					),
+				);
+		}, fail(reject));
 	});
 	return qz;
 }
@@ -175,6 +208,13 @@ function toBase64(buffer: ArrayBuffer) {
 	for (let i = 0; i < bytes.length; i += 0x8000)
 		binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
 	return btoa(binary);
+}
+
+// What came back instead, short enough for a toast.
+function described(value: unknown) {
+	if (value === undefined) return "nothing";
+	const text = typeof value === "string" ? value : JSON.stringify(value);
+	return `${typeof value} ${(text ?? "").slice(0, 60) || "(empty)"}`;
 }
 
 function message(err: unknown) {

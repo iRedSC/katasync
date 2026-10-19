@@ -12,9 +12,10 @@ const mocks = vi.hoisted(() => ({
 	open: vi.fn(),
 	fetch: vi.fn(),
 	sign: vi.fn(),
+	certificate: vi.fn(),
 	toast: { success: vi.fn(), error: vi.fn() },
 	qz: {
-		websocket: { isActive: vi.fn(), connect: vi.fn() },
+		websocket: { isActive: vi.fn(), connect: vi.fn(), disconnect: vi.fn() },
 		printers: { find: vi.fn() },
 		configs: { create: vi.fn() },
 		print: vi.fn(),
@@ -30,7 +31,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("qz-tray", () => ({ default: mocks.qz }));
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("#/server/printing", () => ({
-	qzCertificateText: vi.fn(async () => "certificate"),
+	qzCertificateText: mocks.certificate,
 	signQzRequest: mocks.sign,
 }));
 
@@ -44,6 +45,7 @@ beforeEach(() => {
 	mocks.qz.print.mockResolvedValue(undefined);
 	mocks.fetch.mockImplementation(async () => new Response("%PDF-1.7 test"));
 	mocks.sign.mockResolvedValue("signature");
+	mocks.certificate.mockResolvedValue("-----BEGIN CERTIFICATE-----");
 	vi.stubGlobal("localStorage", { getItem: mocks.printer });
 	vi.stubGlobal("window", { open: mocks.open });
 	vi.stubGlobal("fetch", mocks.fetch);
@@ -145,4 +147,42 @@ test("a failed job does not block the next job", async () => {
 	expect(mocks.qz.print).toHaveBeenCalledTimes(2);
 	expect(mocks.toast.error).toHaveBeenCalledTimes(1);
 	expect(mocks.toast.success).toHaveBeenCalledTimes(1);
+});
+
+test("an empty signature stops the job instead of reaching QZ anonymously", async () => {
+	mocks.sign.mockResolvedValue("");
+	mocks.qz.print.mockImplementation(async () => {
+		const signer = mocks.qz.security.setSignaturePromise.mock.calls[0][0];
+		await new Promise<string>((resolve, reject) => {
+			signer("request")(resolve, () =>
+				reject(new Error("Failed to sign request")),
+			);
+		});
+	});
+	const { printLabel } = await import("./qz-client");
+	await printLabel(7);
+	expect(mocks.toast.error).toHaveBeenCalledWith(
+		expect.stringContaining("sent no QZ signature (got string (empty))"),
+		expect.anything(),
+	);
+});
+
+test("a missing certificate fails the connection and says so", async () => {
+	mocks.certificate.mockResolvedValue(undefined);
+	mocks.qz.websocket.isActive.mockReturnValue(false);
+	mocks.qz.websocket.disconnect.mockResolvedValue(undefined);
+	mocks.qz.websocket.connect.mockImplementation(async () => {
+		const [handler, options] =
+			mocks.qz.security.setCertificatePromise.mock.calls[0];
+		expect(options).toEqual({ rejectOnFailure: true });
+		await new Promise<string>(handler);
+	});
+	const { printLabel } = await import("./qz-client");
+	await printLabel(7);
+	expect(mocks.qz.websocket.disconnect).toHaveBeenCalled();
+	expect(mocks.qz.print).not.toHaveBeenCalled();
+	expect(mocks.toast.error).toHaveBeenCalledWith(
+		expect.stringContaining("sent no QZ certificate (got nothing)"),
+		expect.anything(),
+	);
 });
