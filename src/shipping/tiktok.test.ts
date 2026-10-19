@@ -17,7 +17,9 @@ const parcel = {
 	hazmat: false,
 };
 
-beforeEach(() => vi.mocked(tiktokApi).mockReset());
+beforeEach(() => {
+	vi.mocked(tiktokApi).mockReset();
+});
 
 describe("tiktokBuyLabel", () => {
 	test("recovers a package TikTok already made instead of buying another", async () => {
@@ -131,12 +133,23 @@ describe("tiktokShipPackage", () => {
 			docs,
 			"Please arrange shipment before retrieving the shipping document.",
 		);
-	// TikTok's answers to the document request, one per call.
-	function answers(...docAnswers: (Error | string)[]) {
+	const processing = (path: string) =>
+		new TiktokError(
+			21001028,
+			path,
+			"The order is being processed. Try again later.",
+		);
+	// TikTok's answers to the document request, one per call, and to /ship.
+	function answers(docAnswers: (Error | string)[], shipAnswers: Error[] = []) {
 		vi.mocked(tiktokApi).mockImplementation(async (...args) => {
 			const [path] = args;
 			if (path === "/fulfillment/202309/packages/pkg-1") {
 				return { package_status: "PROCESSING" };
+			}
+			if (path.endsWith("/ship")) {
+				const next = shipAnswers.shift();
+				if (next) throw next;
+				return undefined;
 			}
 			if (path === docs) {
 				const next = docAnswers.shift();
@@ -151,7 +164,7 @@ describe("tiktokShipPackage", () => {
 	}
 
 	test("waits for TikTok to arrange the shipment, then takes its tracking", async () => {
-		answers(notArranged(), notArranged(), "9400TT");
+		answers([notArranged(), processing(docs), "9400TT"]);
 
 		expect(await tiktokShipPackage("pkg-1", [0, 0, 0])).toEqual({
 			id: "pkg-1",
@@ -163,7 +176,7 @@ describe("tiktokShipPackage", () => {
 	});
 
 	test("counts as shipped without tracking when TikTok is still arranging", async () => {
-		answers(notArranged(), notArranged(), notArranged());
+		answers([notArranged(), processing(docs), notArranged()]);
 
 		expect(await tiktokShipPackage("pkg-1", [0, 0])).toEqual({
 			id: "pkg-1",
@@ -171,8 +184,31 @@ describe("tiktokShipPackage", () => {
 		});
 	});
 
+	test("waits for TikTok to finish processing a new package before shipping it", async () => {
+		const ship = "/fulfillment/202309/packages/pkg-1/ship";
+		answers(["9400TT"], [processing(ship), processing(ship)]);
+
+		expect(await tiktokShipPackage("pkg-1", [0, 0, 0])).toEqual({
+			id: "pkg-1",
+			trackingNumber: "9400TT",
+		});
+		const paths = vi.mocked(tiktokApi).mock.calls.map(([path]) => path);
+		expect(paths.filter((p) => p === ship)).toHaveLength(3);
+	});
+
+	test("a package still processing after the wait fails the handoff, unshipped", async () => {
+		const ship = "/fulfillment/202309/packages/pkg-1/ship";
+		answers(["9400TT"], [processing(ship), processing(ship), processing(ship)]);
+
+		await expect(tiktokShipPackage("pkg-1", [0, 0])).rejects.toThrow(
+			"21001028",
+		);
+		const paths = vi.mocked(tiktokApi).mock.calls.map(([path]) => path);
+		expect(paths).not.toContain(docs);
+	});
+
 	test("any other refusal still fails the handoff", async () => {
-		answers(new TiktokError(12345, docs, "Something else"));
+		answers([new TiktokError(12345, docs, "Something else")]);
 
 		await expect(tiktokShipPackage("pkg-1", [0, 0])).rejects.toThrow(
 			"Something else",

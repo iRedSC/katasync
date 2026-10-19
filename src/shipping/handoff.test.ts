@@ -332,7 +332,8 @@ describe("sendTracking", () => {
 		const result = await sendTracking(db, id, outside);
 		expect(result).toEqual({
 			sent: false,
-			message: "Tracking didn't reach Shopify: Access denied",
+			message:
+				"Tracking didn't reach Shopify: Access denied. Retrying on its own; Diagnostics shows it if it gives up",
 		});
 		expect((await handoffOf(id)).channelError).toBe("Access denied");
 		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
