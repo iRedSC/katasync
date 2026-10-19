@@ -23,6 +23,7 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { externalFulfillment } from "#/orders/fulfillment";
+import { returnReason } from "#/orders/return-reasons";
 import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
 import {
@@ -249,7 +250,7 @@ function OrderPage() {
 					</Badge>{" "}
 					<span className="text-muted-foreground">
 						Opened {formatOrderDate(r.requestedAt)} on {channelName(r.billedBy)}
-						{r.reason && `: ${r.reason}`}
+						{r.reason && `: ${returnReason(r.reason)}`}
 						{r.trackingNumber &&
 							`, tracking ${r.carrier ? `${r.carrier} ` : ""}${r.trackingNumber}`}
 					</span>

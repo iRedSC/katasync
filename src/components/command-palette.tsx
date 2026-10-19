@@ -12,6 +12,7 @@ import {
 	Settings,
 	Trophy,
 	Truck,
+	Undo2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -53,6 +54,14 @@ export const pages = [
 		keys: "g o",
 		parent: null,
 		count: "toShip",
+	},
+	{
+		to: "/orders/returns",
+		label: "Returns",
+		icon: Undo2,
+		keys: "g e",
+		parent: "/orders",
+		count: "returnsDue",
 	},
 	{
 		to: "/profit",

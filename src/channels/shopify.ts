@@ -10,6 +10,8 @@ import {
 } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { applyListingsToOrders } from "#/orders/remap";
+import { importReturns } from "#/orders/return-requests";
+import { fetchShopifyReturns } from "./shopify/returns";
 
 export { shopifyQuery };
 export {
@@ -58,6 +60,9 @@ const shopInfo = type({ shop: { name: "string" } });
 
 // Shopify's 60-day window is the furthest back read_orders reaches.
 const FIRST_SYNC_DAYS = 60;
+
+const DAY = 24 * 60 * 60 * 1000;
+const RETURNS_DAYS = 7;
 
 export async function syncShopify(
 	db: Db,
@@ -112,13 +117,25 @@ export async function syncShopify(
 		locationId,
 	);
 	await advanceOrderCursor(db, store.id, result.newest ?? since);
+	// Returns after orders, so a return on a new order finds it. Every
+	// listings pass rereads the last week, so a missed pass loses nothing.
+	const returns = options.listings
+		? await importReturns(db, store, () =>
+				fetchShopifyReturns(new Date(Date.now() - RETURNS_DAYS * DAY)),
+			)
+		: [];
 	return {
 		store: store.name,
 		variants,
 		mapped: matched.mapped.length,
 		created: matched.created,
 		orders: result.count,
-		problems: [...matched.skipped, ...caughtUp.problems, ...result.problems],
+		problems: [
+			...matched.skipped,
+			...caughtUp.problems,
+			...result.problems,
+			...returns,
+		],
 	};
 }
 

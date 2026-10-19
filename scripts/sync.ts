@@ -11,10 +11,19 @@
 //   pnpm sync --shopify-history 365
 //                            one-time import of Shopify orders placed in the
 //                            last 365 days that the regular sync hasn't seen
+//   pnpm sync --returns-history 365
+//                            one-time import of returns buyers opened in the
+//                            last 365 days on Amazon, Shopify and eBay, with
+//                            their reasons (--only one of them)
 //
 // A channel without credentials in the environment is skipped. Every pass is
 // recorded for Diagnostics (/diagnostics).
 import { parseArgs } from "node:util";
+import {
+	backfillReturns,
+	type ReturnChannel,
+	returnChannels,
+} from "#/channels/returns-history";
 import { backfillShopify } from "#/channels/shopify";
 import { costPassAlone, syncPass } from "#/channels/sync";
 import { getDb } from "#/db/client";
@@ -33,6 +42,7 @@ const { values } = parseArgs({
 		"costs-history": { type: "boolean", default: false },
 		only: { type: "string" },
 		"shopify-history": { type: "string" },
+		"returns-history": { type: "string" },
 	},
 });
 
@@ -126,6 +136,19 @@ if (values["shopify-history"]) {
 		`${result.store}: ${result.orders} older orders in ${((Date.now() - started) / 1000).toFixed(0)}s`,
 	);
 	for (const problem of result.problems) console.log(`  ${problem}`);
+	process.exit(0);
+}
+
+if (values["returns-history"]) {
+	const days = Number(values["returns-history"]);
+	if (!Number.isInteger(days) || days <= 0) throw new Error("Give a number of days");
+	const wanted = returnChannels.filter(
+		(c): c is ReturnChannel =>
+			(!values.only || c === values.only) &&
+			channelEnv[c].every((name) => process.env[name]),
+	);
+	for (const channel of wanted)
+		await backfillReturns(getDb(), channel, days, console.log);
 	process.exit(0);
 }
 

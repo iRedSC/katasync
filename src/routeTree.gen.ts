@@ -40,6 +40,7 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage-photos/$damageId'
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
+import { Route as OrdersReturnsInsightsRouteImport } from './routes/orders/returns_.insights'
 import { Route as PurchasingDamagePhotoIdRouteImport } from './routes/purchasing/damage-photo.$id'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 import { Route as PurchasingSuggestedSupplierIdRouteImport } from './routes/purchasing/suggested.$supplierId'
@@ -202,6 +203,11 @@ const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
   path: '/api/webhooks/$channel',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OrdersReturnsInsightsRoute = OrdersReturnsInsightsRouteImport.update({
+  id: '/orders/returns_/insights',
+  path: '/orders/returns/insights',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PurchasingDamagePhotoIdRoute = PurchasingDamagePhotoIdRouteImport.update({
   id: '/purchasing/damage-photo/$id',
   path: '/purchasing/damage-photo/$id',
@@ -266,6 +272,7 @@ export interface FileRoutesByFullPath {
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
@@ -305,6 +312,7 @@ export interface FileRoutesByTo {
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
@@ -345,6 +353,7 @@ export interface FileRoutesById {
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/orders/returns_/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
@@ -386,6 +395,7 @@ export interface FileRouteTypes {
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
+    | '/orders/returns/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
@@ -425,6 +435,7 @@ export interface FileRouteTypes {
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
+    | '/orders/returns/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
@@ -464,6 +475,7 @@ export interface FileRouteTypes {
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
     | '/api/webhooks/$channel'
+    | '/orders/returns_/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
@@ -504,6 +516,7 @@ export interface RootRouteChildren {
   ApiDamagePhotosDamageIdRoute: typeof ApiDamagePhotosDamageIdRoute
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
+  OrdersReturnsInsightsRoute: typeof OrdersReturnsInsightsRoute
   PurchasingDamagePhotoIdRoute: typeof PurchasingDamagePhotoIdRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
   PurchasingSuggestedSupplierIdRoute: typeof PurchasingSuggestedSupplierIdRoute
@@ -731,6 +744,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWebhooksChannelRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/orders/returns_/insights': {
+      id: '/orders/returns_/insights'
+      path: '/orders/returns/insights'
+      fullPath: '/orders/returns/insights'
+      preLoaderRoute: typeof OrdersReturnsInsightsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/purchasing/damage-photo/$id': {
       id: '/purchasing/damage-photo/$id'
       path: '/purchasing/damage-photo/$id'
@@ -808,6 +828,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDamagePhotosDamageIdRoute: ApiDamagePhotosDamageIdRoute,
   ApiOauthSplatRoute: ApiOauthSplatRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
+  OrdersReturnsInsightsRoute: OrdersReturnsInsightsRoute,
   PurchasingDamagePhotoIdRoute: PurchasingDamagePhotoIdRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
   PurchasingSuggestedSupplierIdRoute: PurchasingSuggestedSupplierIdRoute,
@@ -818,3 +839,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

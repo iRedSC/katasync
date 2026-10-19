@@ -1,83 +1,25 @@
-import { gunzipSync } from "node:zlib";
 import { type } from "arktype";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, locations, stockLevels } from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { MARKETPLACE_US, spApi } from "./amazon-api";
+import { latestReport } from "./amazon-reports";
 import type { ChannelListing } from "./listings";
 
-// Amazon's listings come from its "all listings" report, which Amazon builds
-// in the background: a pass asks for one, and imports it once it's ready,
-// that pass or a later one. Needs the SP-API Product Listing role.
+// Amazon's listings come from its "all listings" report (amazon-reports.ts).
+// Needs the SP-API Product Listing role.
 const REPORT = "GET_MERCHANT_LISTINGS_ALL_DATA";
-const REPORTS = "/reports/2021-06-30";
 // A report younger than this is current enough; listings refresh every 30
 // minutes.
 const FRESH_MS = 25 * 60 * 1000;
-// How long a pass waits for a report it asked for. Amazon usually takes
-// under a minute; one that takes longer is imported next pass.
-const WAIT_MS = 90 * 1000;
-
-const reportsPage = type({
-	reports: type({
-		reportId: "string",
-		processingStatus: "string",
-		createdTime: "string.date.iso.parse",
-		"reportDocumentId?": "string",
-	}).array(),
-});
-const report = reportsPage.get("reports").get(0);
-const reportDocument = type({
-	url: "string",
-	"compressionAlgorithm?": "string",
-});
 
 // Every listing on Amazon US, or null while the report is still being built.
 export async function amazonListings(
 	now = Date.now(),
 ): Promise<ChannelListing[] | null> {
-	const { reports } = reportsPage.assert(
-		await spApi(
-			`${REPORTS}/reports?reportTypes=${REPORT}&marketplaceIds=${MARKETPLACE_US}&processingStatuses=IN_QUEUE,IN_PROGRESS,DONE&pageSize=1`,
-		),
-	);
-	let latest = reports[0];
-	const fresh = latest && now - latest.createdTime.getTime() < FRESH_MS;
-	if (!fresh) {
-		const { reportId } = type({ reportId: "string" }).assert(
-			await spApi(`${REPORTS}/reports`, {
-				reportType: REPORT,
-				marketplaceIds: [MARKETPLACE_US],
-			}),
-		);
-		latest = await waitFor(reportId);
-	}
-	if (latest.processingStatus !== "DONE" || !latest.reportDocumentId)
-		return null;
-	const doc = reportDocument.assert(
-		await spApi(`${REPORTS}/documents/${latest.reportDocumentId}`),
-	);
-	const response = await fetch(doc.url);
-	if (!response.ok)
-		throw new Error(`Amazon's listings report: ${response.status}`);
-	let body = Buffer.from(await response.arrayBuffer());
-	if (doc.compressionAlgorithm === "GZIP") body = gunzipSync(body);
-	return parseListingsReport(body.toString("utf8"));
-}
-
-async function waitFor(reportId: string): Promise<typeof report.infer> {
-	const until = Date.now() + WAIT_MS;
-	for (;;) {
-		const found = report.assert(await spApi(`${REPORTS}/reports/${reportId}`));
-		if (
-			found.processingStatus !== "IN_QUEUE" &&
-			found.processingStatus !== "IN_PROGRESS"
-		)
-			return found;
-		if (Date.now() > until) return found;
-		await new Promise((resolve) => setTimeout(resolve, 10_000));
-	}
+	const text = await latestReport(REPORT, { freshMs: FRESH_MS, now });
+	return text === null ? null : parseListingsReport(text);
 }
 
 // The report is tab-separated with a header row. A listing Amazon ships

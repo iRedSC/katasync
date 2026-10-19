@@ -477,7 +477,10 @@ export const returnRequests = pgTable(
 		status: returnRequestStatus().notNull(),
 		// The marketplace's own wording.
 		rawStatus: text().notNull(),
+		// Why, as the marketplace names it (a code or its words).
 		reason: text(),
+		// What the buyer wrote about it, when they wrote anything.
+		note: text(),
 		trackingNumber: text(),
 		carrier: text(),
 		requestedAt: timestamp({ withTimezone: true }).notNull(),
@@ -1573,6 +1576,49 @@ export const countHistory = pgView("count_history", {
 	counted: integer().notNull(),
 	drift: integer().notNull(),
 	undone: boolean().notNull(),
+}).existing();
+
+// How many of each line came back, by the best evidence there is (received,
+// requested, or refunded in full), defined in drizzle/0064_return_rates.sql.
+// Lines with a product, from orders not cancelled or shipped by the
+// marketplace.
+export const orderLineReturns = pgView("order_line_returns", {
+	lineId: integer().notNull(),
+	orderId: integer().notNull(),
+	productId: integer().notNull(),
+	soldOn: channel().notNull(),
+	placedAt: timestamp({ withTimezone: true }).notNull(),
+	sold: integer().notNull(),
+	returned: integer().notNull(),
+	received: integer().notNull(),
+	restocked: integer().notNull(),
+	requested: integer().notNull(),
+	refundedInFull: boolean().notNull(),
+	// The marketplaces' return reasons, as they word them.
+	reasons: text().array().notNull(),
+}).existing();
+
+// Each product's return rate by order over the year that ended 45 days
+// ago, against what its orders would bring at each channel's rate, defined
+// in drizzle/0066_return_rates_by_order.sql. Units are kept for cost and
+// stock; the rates count orders, since a buyer decides once per box.
+export const productReturnRates = pgView("product_return_rates", {
+	productId: integer().notNull(),
+	sku: text().notNull(),
+	orders: integer().notNull(),
+	ordersReturned: integer().notNull(),
+	sold: integer().notNull(),
+	returned: integer().notNull(),
+	received: integer().notNull(),
+	restocked: integer().notNull(),
+	rate: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
+	// The lowest rate its orders make likely (Wilson, 95%).
+	rateLow: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
+	// Its orders' rate at each channel's rate: the bar it's held to.
+	baseline: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
+	// Returned orders that baseline brings, and how many it doesn't explain.
+	expected: numeric({ precision: 12, scale: 1, mode: "number" }).notNull(),
+	excess: numeric({ precision: 12, scale: 1, mode: "number" }).notNull(),
 }).existing();
 
 // Every change made through /mcp: which app (token_name), which tool, what it was asked,
