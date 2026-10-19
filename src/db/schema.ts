@@ -1575,6 +1575,44 @@ export const countHistory = pgView("count_history", {
 	undone: boolean().notNull(),
 }).existing();
 
+// How many of each line came back, by the best evidence there is (received,
+// requested, or refunded in full), defined in drizzle/0064_return_rates.sql.
+// Lines with a product, from orders not cancelled or shipped by the
+// marketplace.
+export const orderLineReturns = pgView("order_line_returns", {
+	lineId: integer().notNull(),
+	orderId: integer().notNull(),
+	productId: integer().notNull(),
+	soldOn: channel().notNull(),
+	placedAt: timestamp({ withTimezone: true }).notNull(),
+	sold: integer().notNull(),
+	returned: integer().notNull(),
+	received: integer().notNull(),
+	restocked: integer().notNull(),
+	requested: integer().notNull(),
+	refundedInFull: boolean().notNull(),
+	// The marketplaces' return reasons, as they word them.
+	reasons: text().array().notNull(),
+}).existing();
+
+// Each product's return rate over the year that ended 45 days ago, against
+// the shop's, defined in drizzle/0064_return_rates.sql.
+export const productReturnRates = pgView("product_return_rates", {
+	productId: integer().notNull(),
+	sku: text().notNull(),
+	sold: integer().notNull(),
+	returned: integer().notNull(),
+	received: integer().notNull(),
+	restocked: integer().notNull(),
+	linesReturned: integer().notNull(),
+	rate: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
+	// The lowest rate its numbers make likely (Wilson, 95%).
+	rateLow: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
+	shopRate: numeric({ precision: 6, scale: 4, mode: "number" }).notNull(),
+	// Returns its sales would bring at the shop's rate.
+	expected: numeric({ precision: 12, scale: 1, mode: "number" }).notNull(),
+}).existing();
+
 // Every change made through /mcp: which app (token_name), which tool, what it was asked,
 // and how it went. Shown on Diagnostics, so a change Claude made can be found.
 // Reads aren't kept. Written by src/routes/mcp.ts.

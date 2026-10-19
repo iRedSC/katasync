@@ -8,6 +8,7 @@ import {
 	fbaQuantities,
 	mirrorFbaStock,
 } from "./amazon-listings";
+import { recentAmazonReturns, saveAmazonReturns } from "./amazon-returns";
 import { matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
@@ -228,6 +229,21 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 		} while (nextToken);
 		if (window.advancesCursor) {
 			await advanceOrderCursor(db, store.id, new Date(window.until));
+		}
+	}
+	// Returns after orders, so a return on a new order finds it. Their report
+	// needs a role of its own; without it, orders still sync.
+	if (options.listings) {
+		try {
+			const recent = await recentAmazonReturns();
+			if (recent) {
+				problems.push(...recent.problems);
+				await saveAmazonReturns(db, store.id, recent.returns);
+			}
+		} catch (error) {
+			problems.push(
+				`Amazon returns: ${error instanceof Error ? error.message : error}`,
+			);
 		}
 	}
 	return { store: store.name, listings, orders: count, problems };
