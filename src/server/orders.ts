@@ -27,6 +27,7 @@ import {
 	orderReturns,
 	orderReturnsDue,
 	orders,
+	productComponents,
 	products,
 	type ReturnState,
 	returnRequests,
@@ -42,7 +43,7 @@ import {
 	restoreNoReturn,
 } from "#/orders/returns-due";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
-import { boxLabel } from "#/shipping/box-filter";
+import { boxSize } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
 import {
 	addressKey,
@@ -396,6 +397,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					shipCountry: orders.shipCountry,
 					total: orders.total,
 					shippingCharged: orders.shippingCharged,
+					financialStatus: orders.financialStatus,
 					channel: stores.channel,
 					marketplaceOrderId: orders.marketplaceOrderId,
 					needsShipping,
@@ -412,6 +414,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 			? await db
 					.select({
 						orderId: orderLines.orderId,
+						productId: orderLines.productId,
 						sku: sql<
 							string | null
 						>`coalesce(${products.sku}, ${orderLines.sku})`,
@@ -419,6 +422,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 						quantity: orderLines.quantity,
 						unitPrice: orderLines.unitPrice,
 						weightGrams: products.weightGrams,
+						imageUrl: products.imageUrl,
 					})
 					.from(orderLines)
 					.leftJoin(products, eq(products.id, orderLines.productId))
@@ -433,6 +437,31 @@ export const listInvoices = createServerFn({ method: "GET" })
 					)
 					.orderBy(orderLines.id)
 			: [];
+		// What's inside each set sold (kit or bundle), one level down, so the
+		// invoice lists the pieces under it.
+		const setIds = [
+			...new Set(lines.flatMap((l) => (l.productId ? [l.productId] : []))),
+		];
+		const parts = setIds.length
+			? await db
+					.select({
+						setId: productComponents.parentProductId,
+						sku: products.sku,
+						name: products.name,
+						variantName: products.variantName,
+						imageUrl: products.imageUrl,
+						perSet: productComponents.quantity,
+					})
+					.from(productComponents)
+					.innerJoin(
+						products,
+						eq(products.id, productComponents.componentProductId),
+					)
+					.where(inArray(productComponents.parentProductId, setIds))
+					.orderBy(asc(products.sku))
+			: [];
+		const partsOf = (productId: number | null) =>
+			parts.filter((p) => p.setId === productId);
 		const linesOf = (id: number) => lines.filter((l) => l.orderId === id);
 		const keys = new Map(toShip.map((o) => [o.id, contentsKey(linesOf(o.id))]));
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
@@ -477,11 +506,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 				const last = lastPacked.get(keys.get(o.id) ?? "");
 				return {
 					...o,
-					lines: own,
+					lines: own.map((l) => ({ ...l, parts: partsOf(l.productId) })),
 					shipsWith: shipsWith.get(o.id) ?? [],
 					// What quick ship will suggest: the box and weight these exact
 					// contents went out in last time, else the items' own weight.
-					box: last ? boxLabel({ ...last, name: last.boxName }) : null,
+					// Name and size apart, so the invoice can set them differently.
+					box: last ? { name: last.boxName, size: boxSize(last) } : null,
 					// How many boxes these contents took last time; the box and
 					// weight above are the first one's.
 					boxes: last?.boxes ?? 1,
