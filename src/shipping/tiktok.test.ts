@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("#/channels/tiktok", () => ({
+vi.mock("#/channels/tiktok", async (actual) => ({
+	TiktokError: (await actual<typeof import("#/channels/tiktok")>()).TiktokError,
 	shopCipher: async () => "cipher",
 	tiktokApi: vi.fn(),
 }));
 
-import { tiktokApi } from "#/channels/tiktok";
-import { labelPrice, tiktokBuyLabel } from "./tiktok";
+import { TiktokError, tiktokApi } from "#/channels/tiktok";
+import { labelPrice, tiktokBuyLabel, tiktokShipPackage } from "./tiktok";
 
 const parcel = {
 	lengthMm: 300,
@@ -118,6 +119,63 @@ describe("tiktokBuyLabel", () => {
 			recovered: false,
 			rate: { cost: 6.25 },
 		});
+	});
+});
+
+describe("tiktokShipPackage", () => {
+	const docs = "/fulfillment/202309/packages/pkg-1/shipping_documents";
+	const notArranged = () =>
+		new TiktokError(
+			21023035,
+			docs,
+			"Please arrange shipment before retrieving the shipping document.",
+		);
+	// TikTok's answers to the document request, one per call.
+	function answers(...docAnswers: (Error | string)[]) {
+		vi.mocked(tiktokApi).mockImplementation(async (...args) => {
+			const [path] = args;
+			if (path === "/fulfillment/202309/packages/pkg-1") {
+				return { package_status: "PROCESSING" };
+			}
+			if (path === docs) {
+				const next = docAnswers.shift();
+				if (next instanceof Error) throw next;
+				return {
+					doc_url: "https://tiktok.example/l.pdf",
+					tracking_number: next,
+				};
+			}
+			return undefined;
+		});
+	}
+
+	test("waits for TikTok to arrange the shipment, then takes its tracking", async () => {
+		answers(notArranged(), notArranged(), "9400TT");
+
+		expect(await tiktokShipPackage("pkg-1", [0, 0, 0])).toEqual({
+			id: "pkg-1",
+			trackingNumber: "9400TT",
+		});
+		const paths = vi.mocked(tiktokApi).mock.calls.map(([path]) => path);
+		expect(paths.filter((p) => p.endsWith("/ship"))).toHaveLength(1);
+		expect(paths.filter((p) => p === docs)).toHaveLength(3);
+	});
+
+	test("counts as shipped without tracking when TikTok is still arranging", async () => {
+		answers(notArranged(), notArranged(), notArranged());
+
+		expect(await tiktokShipPackage("pkg-1", [0, 0])).toEqual({
+			id: "pkg-1",
+			trackingNumber: null,
+		});
+	});
+
+	test("any other refusal still fails the handoff", async () => {
+		answers(new TiktokError(12345, docs, "Something else"));
+
+		await expect(tiktokShipPackage("pkg-1", [0, 0])).rejects.toThrow(
+			"Something else",
+		);
 	});
 });
 

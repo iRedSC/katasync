@@ -47,9 +47,21 @@ const envelope = type({
 	"data?": "unknown",
 });
 
+// A refusal from TikTok, with its code so callers can tell refusals apart
+// without reading the message.
+export class TiktokError extends Error {
+	constructor(
+		readonly code: number,
+		what: string,
+		message: string | undefined,
+	) {
+		super(`TikTok ${what}: ${message} (${code})`);
+	}
+}
+
 function unwrap(body: unknown, what: string) {
 	const { code, message, data } = envelope.assert(body);
-	if (code !== 0) throw new Error(`TikTok ${what}: ${message} (${code})`);
+	if (code !== 0) throw new TiktokError(code, what, message);
 	return data;
 }
 
