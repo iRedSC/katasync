@@ -2,8 +2,8 @@ import type {
 	listPackages,
 	quickShipBuy,
 	quickShipLookup,
+	quickShipRates,
 } from "#/server/shipping";
-import type { Rate } from "#/shipping/shippo";
 
 export type Found = NonNullable<Awaited<ReturnType<typeof quickShipLookup>>>;
 export type Box = Awaited<ReturnType<typeof listPackages>>[number];
@@ -18,5 +18,7 @@ export type Packed = {
 export type Step = "pin" | "package" | "weight" | "rates" | "done";
 // What the label adds beyond postage, chosen on the rates step.
 export type Extras = { insure: number | null; signature: boolean };
-export type Rates = { list: Rate[]; notes: string[]; test: boolean };
+// A service's price, with what insurance and a signature add to it.
+export type Quote = Awaited<ReturnType<typeof quickShipRates>>["rates"][number];
+export type Rates = { list: Quote[]; notes: string[]; test: boolean };
 export type Bought = Awaited<ReturnType<typeof quickShipBuy>>;

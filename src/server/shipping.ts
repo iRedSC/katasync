@@ -16,6 +16,7 @@ import {
 import { labelPdf } from "#/shipping/label-file";
 import {
 	combineRates,
+	extraCosts,
 	orderForShipping,
 	rankRates,
 	serviceHistory,
@@ -23,7 +24,7 @@ import {
 	signatureRequired,
 } from "#/shipping/quick-ship";
 import { resendTrackingNow } from "#/shipping/retry";
-import { getRates, shippoIsTest } from "#/shipping/shippo";
+import { getRates, type Rate, shippoIsTest } from "#/shipping/shippo";
 import { tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
 export const listPackages = createServerFn({ method: "GET" }).handler(
@@ -131,6 +132,10 @@ export const quickShipRates = createServerFn({ method: "POST" })
 			.where(eq(orders.id, data.orderIds[0]));
 		if (!first) throw new Error(`No order ${data.orderIds[0]}`);
 		let perBox: Awaited<ReturnType<typeof tiktokRates>>[];
+		// The same quotes without insurance, and without a signature, when
+		// those were asked for: what each adds is the difference.
+		let noInsurance: Rate[] | null = null;
+		let noSignature: Rate[] | null = null;
 		let notes: string[] = [];
 		let test = false;
 		if (labelSource(first) === "tiktok") {
@@ -153,17 +158,28 @@ export const quickShipRates = createServerFn({ method: "POST" })
 				.innerJoin(stores, eq(stores.id, orders.storeId))
 				.where(inArray(orders.id, data.orderIds));
 			const signature = data.signature || signatureRequired(members) !== null;
-			const priced = await Promise.all(
-				data.boxes.map((b) =>
-					getRates({
-						...where,
-						parcel: b,
-						insureAmount: b.insureAmount,
-						signature,
-						hazmat: b.hazmat,
-					}),
-				),
-			);
+			const quote = (insure: boolean, sign: boolean) =>
+				Promise.all(
+					data.boxes.map((b) =>
+						getRates({
+							...where,
+							parcel: b,
+							insureAmount: insure ? b.insureAmount : null,
+							signature: sign,
+							hazmat: b.hazmat,
+						}),
+					),
+				);
+			const insured = data.boxes.some((b) => b.insureAmount !== null);
+			const combined = async (insure: boolean, sign: boolean) =>
+				combineRates((await quote(insure, sign)).map((p) => p.rates));
+			const [priced, bare, unsigned] = await Promise.all([
+				quote(true, signature),
+				insured ? combined(false, signature) : null,
+				signature ? combined(true, false) : null,
+			]);
+			noInsurance = bare;
+			noSignature = unsigned;
 			perBox = priced.map((p) => p.rates);
 			notes = [...new Set(priced.flatMap((p) => p.notes))];
 			test = shippoIsTest();
@@ -173,7 +189,20 @@ export const quickShipRates = createServerFn({ method: "POST" })
 			data.contentsKey,
 			data.boxes[0].packageId,
 		);
-		return { rates: rankRates(combineRates(perBox), history), notes, test };
+		const rates = combineRates(perBox);
+		const insuranceCosts = noInsurance && extraCosts(rates, noInsurance);
+		const signatureCosts = noSignature && extraCosts(rates, noSignature);
+		const key = (r: Rate) => `${r.carrier}|${r.service}`;
+		return {
+			rates: rankRates(rates, history).map((r) => ({
+				...r,
+				// What insurance and a signature add to this service, when chosen.
+				insuranceCost: insuranceCosts?.get(key(r)) ?? null,
+				signatureCost: signatureCosts?.get(key(r)) ?? null,
+			})),
+			notes,
+			test,
+		};
 	});
 
 // Buys one label per box with the chosen service, as one dispatch for every

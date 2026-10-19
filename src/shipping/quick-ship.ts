@@ -200,6 +200,24 @@ async function lastBoxes(db: Db, key: string) {
 // for every box, costs added up, the slowest box's days. With one box this
 // is just that box's rates. Buying prices each box again (see buyDispatch),
 // so only the service is taken from here.
+// What an extra (insurance, a signature) adds to each service: its price
+// with the extra less its price without, keyed by carrier and service.
+// Services only offered one way have no entry.
+export function extraCosts(
+	withIt: Rate[],
+	without: Rate[],
+): Map<string, number> {
+	const keyOf = (r: Rate) => `${r.carrier}|${r.service}`;
+	const before = new Map(without.map((r) => [keyOf(r), r.cost]));
+	const costs = new Map<string, number>();
+	for (const r of withIt) {
+		const base = before.get(keyOf(r));
+		if (base !== undefined)
+			costs.set(keyOf(r), Math.round((r.cost - base) * 100) / 100);
+	}
+	return costs;
+}
+
 export function combineRates(perBox: Rate[][]): Rate[] {
 	if (perBox.length === 0) return [];
 	const keyOf = (r: Rate) => `${r.carrier}|${r.service}`;

@@ -490,7 +490,6 @@ export function QuickShip() {
 								plan?.extras
 									? {
 											total: plan.total,
-											suggestInsurance: plan.insure,
 											signatureRequired: plan.signatureRequired,
 										}
 									: null

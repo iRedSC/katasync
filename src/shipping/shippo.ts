@@ -132,7 +132,7 @@ export async function getRates(input: {
 			address_from: input.from,
 			address_to: input.to,
 			parcels: [toShippoParcel(input.parcel)],
-			// A signature surcharge shows up in the rates.
+			// What insurance and a signature cost is in each rate's amount.
 			extra: Object.keys(extra).length > 0 ? extra : undefined,
 			async: false,
 		}),
