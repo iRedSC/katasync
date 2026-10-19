@@ -63,6 +63,10 @@ const reasons: Record<string, Reason> = {
 	"Not as described": NOT_AS_DESCRIBED,
 	"Wrong item": WRONG_ITEM,
 	"Received the wrong item": WRONG_ITEM,
+	"Wrong item was sent": WRONG_ITEM,
+	"Damaged or defective": reason("Damaged", "Damaged or defective"),
+	"Returned to sender": reason("Undeliverable", "Returned to sender"),
+	"Item Arrived Late": LATE,
 	Defective: DEFECTIVE,
 	"Missing parts": MISSING_PARTS,
 	"Size too small": TOO_SMALL,
@@ -70,7 +74,8 @@ const reasons: Record<string, Reason> = {
 };
 
 // A code not listed reads as the marketplace wrote it, its prefix and
-// underscores dropped ("CR-SOME_REASON" as "Some reason").
+// underscores dropped ("CR-SOME_REASON" as "Some reason"). Its chip keeps
+// the first two words; hovering shows the rest. Add it above to name it well.
 function unlisted(code: string): Reason {
 	const words = code
 		.replace(/^(CR|AMZ-PG)-/, "")
@@ -78,7 +83,11 @@ function unlisted(code: string): Reason {
 		.trim()
 		.toLowerCase();
 	const text = words.charAt(0).toUpperCase() + words.slice(1);
-	return reason(text);
+	const kept = text.split(" ");
+	return reason(
+		kept.length > 2 ? `${kept.slice(0, 2).join(" ")}…` : text,
+		text,
+	);
 }
 
 // A Shopify return of several items keeps each one's reason, joined by "; ".

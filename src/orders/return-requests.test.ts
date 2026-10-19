@@ -167,10 +167,11 @@ describe("returnReasons", () => {
 			"Wrong item",
 		]);
 		expect(chips("No longer needed")).toEqual(["Unwanted"]);
-		expect(chips("CR-SOME_NEW_REASON")).toEqual(["Some new reason"]);
+		expect(chips("CR-SOME_REASON")).toEqual(["Some reason"]);
+		expect(chips("CR-SOME_NEW_REASON")).toEqual(["Some new…"]);
 		expect(chips("")).toEqual([]);
 		for (const r of returnReasons(
-			"AMZ-PG-BAD-DESC; CR-DAMAGED_BY_CARRIER; FOUND_BETTER_PRICE; CR-UNAUTHORIZED_PURCHASE",
+			"AMZ-PG-BAD-DESC; CR-DAMAGED_BY_CARRIER; FOUND_BETTER_PRICE; CR-UNAUTHORIZED_PURCHASE; Wrong item was sent; Damaged or defective; Returned to sender; Item Arrived Late; Item doesn't match description",
 		))
 			expect(r.chip.split(" ").length).toBeLessThanOrEqual(2);
 	});
