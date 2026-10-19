@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { cityLine, formatMoney, formatPhone } from "#/lib/format";
 import { listInvoices } from "#/server/orders";
 
@@ -22,14 +22,54 @@ export const Route = createFileRoute("/print/invoices")({
 
 const GRAMS_PER_OUNCE = 28.349523125;
 
+// What the invoice can truthfully say about payment. A partial refund still
+// means the total was paid. Shopify's PARTIALLY_PAID carries no amount, so
+// the invoice says so instead of guessing what's owed; a status it doesn't
+// know (or none) says nothing.
+type Payment = "paid" | "unpaid" | "partial" | "unknown";
+function payment(status: string | null): Payment {
+	switch (status) {
+		case "PAID":
+		case "PARTIALLY_REFUNDED":
+			return "paid";
+		case "PENDING":
+		case "AUTHORIZED":
+		case "EXPIRED":
+			return "unpaid";
+		case "PARTIALLY_PAID":
+			return "partial";
+		default:
+			return "unknown";
+	}
+}
+
 type Data = Awaited<ReturnType<typeof listInvoices>>;
 
 function Invoices() {
 	const { from, invoices } = Route.useLoaderData();
 	const { ids } = Route.useSearch();
 
+	// Item photos load from the stores' CDNs; printing before they arrive
+	// prints empty boxes. Waits for each to load or fail, at most a few
+	// seconds, so a slow CDN can't hold the print dialog forever.
 	useEffect(() => {
-		if (invoices.length > 0) window.print();
+		if (invoices.length === 0) return;
+		let cancelled = false;
+		const loaded = [...document.images].map((img) =>
+			img.complete
+				? Promise.resolve()
+				: new Promise<void>((done) => {
+						img.addEventListener("load", () => done(), { once: true });
+						img.addEventListener("error", () => done(), { once: true });
+					}),
+		);
+		const timeout = new Promise<void>((done) => setTimeout(done, 5000));
+		Promise.race([Promise.all(loaded), timeout]).then(() => {
+			if (!cancelled) window.print();
+		});
+		return () => {
+			cancelled = true;
+		};
 	}, [invoices.length]);
 
 	return (
@@ -79,6 +119,10 @@ function Invoice({
 		cityLine(o.shipCity, o.shipRegion, o.shipPostalCode),
 		o.shipCountry && o.shipCountry !== "US" ? o.shipCountry : null,
 	].filter(Boolean);
+	const paid = payment(o.financialStatus);
+	// Marketplaces that hide the buyer's name get a packing slip: what's in
+	// the box, no prices. The marketplace already sent its own receipt.
+	const slip = !o.customerName;
 
 	return (
 		<article className="mx-auto mb-6 flex min-h-[11in] max-w-[8.5in] flex-col gap-8 bg-white p-[0.5in] text-[11pt] text-black shadow-card break-after-page last:break-after-auto print:m-0 print:min-h-[9.95in] print:max-w-none print:p-0 print:shadow-none">
@@ -92,7 +136,9 @@ function Invoice({
 					{from?.email && <p>{from.email}</p>}
 				</div>
 				<div className="text-right">
-					<p className="text-[20pt] font-bold">Invoice</p>
+					<p className="text-[20pt] font-bold">
+						{slip ? "Packing Slip" : "Invoice"}
+					</p>
 					<p className="font-semibold">{o.name}</p>
 					<p>
 						{new Date(o.placedAt).toLocaleDateString("en-US", {
@@ -128,8 +174,12 @@ function Invoice({
 					<tr className="border-b-2 border-black text-left text-[9pt] tracking-wide uppercase">
 						<th className="w-14 py-1.5 font-semibold">Qty</th>
 						<th className="py-1.5 font-semibold">Item</th>
-						<th className="w-24 py-1.5 text-right font-semibold">Price</th>
-						<th className="w-24 py-1.5 text-right font-semibold">Total</th>
+						{!slip && (
+							<>
+								<th className="w-24 py-1.5 text-right font-semibold">Price</th>
+								<th className="w-24 py-1.5 text-right font-semibold">Total</th>
+							</>
+						)}
 					</tr>
 				</thead>
 				<tbody>
@@ -143,62 +193,131 @@ function Invoice({
 								{l.quantity}
 							</td>
 							<td className="py-2">
-								<p>{l.title}</p>
-								{l.sku && (
-									<p className="text-[9pt] text-muted-foreground">{l.sku}</p>
+								<div className="flex items-start gap-3">
+									<Photo src={l.imageUrl} className="size-[0.6in]" />
+									<div>
+										<p>{l.title}</p>
+										{l.sku && (
+											<p className="text-[9pt] text-muted-foreground">
+												{l.sku}
+											</p>
+										)}
+									</div>
+								</div>
+								{l.parts.length > 0 && (
+									<ul className="mt-2 ml-[calc(0.6in+0.75rem)] flex flex-col gap-1.5 border-l-2 border-border pl-3">
+										{l.parts.map((p) => (
+											<li key={p.sku} className="flex items-center gap-2">
+												<Photo src={p.imageUrl} className="size-[0.35in]" />
+												<span className="w-8 font-bold tabular-nums">
+													{p.perSet * l.quantity}
+												</span>
+												<span className="min-w-0">
+													<span>
+														{p.variantName
+															? `${p.name}, ${p.variantName}`
+															: p.name}
+													</span>
+													<span className="ml-2 text-[9pt] text-muted-foreground">
+														{p.sku}
+													</span>
+												</span>
+											</li>
+										))}
+									</ul>
 								)}
 							</td>
-							<td className="py-2 text-right tabular-nums">
-								{formatMoney(l.unitPrice)}
-							</td>
-							<td className="py-2 text-right tabular-nums">
-								{formatMoney(l.unitPrice * l.quantity)}
-							</td>
+							{!slip && (
+								<>
+									<td className="py-2 text-right tabular-nums">
+										{formatMoney(l.unitPrice)}
+									</td>
+									<td className="py-2 text-right tabular-nums">
+										{formatMoney(l.unitPrice * l.quantity)}
+									</td>
+								</>
+							)}
 						</tr>
 					))}
 				</tbody>
 			</table>
 
-			<dl className="ml-auto grid w-64 grid-cols-[1fr_auto] gap-y-1 tabular-nums [&_dd]:pl-6">
-				<dt>Subtotal</dt>
-				<dd className="text-right">{formatMoney(subtotal)}</dd>
-				<dt>Shipping</dt>
-				<dd className="text-right">{formatMoney(o.shippingCharged)}</dd>
-				{Math.abs(rest) >= 0.01 && (
-					<>
-						<dt>{rest > 0 ? "Tax" : "Discount"}</dt>
-						<dd className="text-right">{formatMoney(rest)}</dd>
-					</>
-				)}
-				<dt className="border-t-2 border-black pt-1 font-bold">Total</dt>
-				<dd className="border-t-2 border-black pt-1 text-right font-bold">
-					{formatMoney(o.total)}
-				</dd>
-			</dl>
+			{!slip && (
+				<dl className="ml-auto grid w-64 grid-cols-[1fr_auto] gap-y-1 tabular-nums [&_dd]:pl-6">
+					<dt>Subtotal</dt>
+					<dd className="text-right">{formatMoney(subtotal)}</dd>
+					<dt>Shipping</dt>
+					<dd className="text-right">{formatMoney(o.shippingCharged)}</dd>
+					{Math.abs(rest) >= 0.01 && (
+						<>
+							<dt>{rest > 0 ? "Tax" : "Discount"}</dt>
+							<dd className="text-right">{formatMoney(rest)}</dd>
+						</>
+					)}
+					<dt className="border-t-2 border-black pt-1 font-bold">Total</dt>
+					<dd className="border-t-2 border-black pt-1 text-right font-bold">
+						{formatMoney(o.total)}
+					</dd>
+					{paid === "paid" && (
+						<>
+							<dt>Paid</dt>
+							<dd className="text-right">{formatMoney(o.total)}</dd>
+							<dt className="font-bold">Balance due</dt>
+							<dd className="text-right font-bold">{formatMoney(0)}</dd>
+						</>
+					)}
+					{paid === "unpaid" && (
+						<>
+							<dt className="font-bold">Balance due</dt>
+							<dd className="text-right font-bold">{formatMoney(o.total)}</dd>
+						</>
+					)}
+					{paid === "partial" && (
+						<dt className="col-span-2 font-bold">Partially paid</dt>
+					)}
+				</dl>
+			)}
 
-			{/* The packer's line sits in the page's bottom corner. */}
+			{/* What the packer needs, small in the bottom corner. */}
 			<footer className="mt-auto flex items-end justify-between gap-6">
 				<p className="text-muted-foreground">Thank you for your order.</p>
 				{o.pin !== null && (
-					<div className="text-right">
+					<div className="flex flex-col items-end gap-1 text-[8pt] text-muted-foreground">
 						{o.shipsWith.length > 0 && (
-							<p className="text-[11pt] font-bold">
+							<p>
 								Ships with{" "}
-								{o.shipsWith
-									.map((c) =>
-										c.pin === null ? c.name : `${c.name} (${c.pin})`,
+								<span className="font-semibold text-black">
+									{o.shipsWith
+										.map((c) =>
+											c.pin === null ? c.name : `${c.name} (${c.pin})`,
+										)
+										.join(", ")}
+								</span>
+							</p>
+						)}
+						<dl className="flex gap-4 rounded-md border border-border px-2.5 py-1 tabular-nums">
+							<PackFact label="Pin" value={String(o.pin)} />
+							<PackFact
+								label={o.boxes > 1 ? `Box 1 of ${o.boxes}` : "Box"}
+								value={
+									o.box === null ? (
+										"?"
+									) : (
+										<>
+											{o.box.name && <span>{o.box.name} </span>}
+											<span
+												className={
+													o.box.name ? "font-normal text-muted-foreground" : ""
+												}
+											>
+												{o.box.size}
+											</span>
+										</>
 									)
-									.join(", ")}
-							</p>
-						)}
-						<p className="text-[13pt] font-bold tabular-nums">
-							{packLine(o.pin, o.box, o.weightGrams)}
-						</p>
-						{o.boxes > 1 && (
-							<p className="text-[11pt] font-bold">
-								Box 1 of {o.boxes} last time
-							</p>
-						)}
+								}
+							/>
+							<PackFact label="Weight" value={ounces(o.weightGrams)} />
+						</dl>
 					</div>
 				)}
 			</footer>
@@ -206,12 +325,33 @@ function Invoice({
 	);
 }
 
-// "2 : 12 × 9 × 4 : 20" is order pin, the box last time (its name first, if
-// it has one), and ounces; X where quick ship has nothing to suggest yet.
-function packLine(pin: number, box: string | null, grams: number | null) {
-	const ounces =
-		grams === null
-			? "X"
-			: String(Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10);
-	return `${pin} : ${box ?? "X"} : ${ounces}`;
+// Quick ship's suggestion, read as "?" when it has none yet.
+function ounces(grams: number | null) {
+	return grams === null
+		? "?"
+		: `${Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10} oz`;
+}
+
+function PackFact({ label, value }: { label: string; value: ReactNode }) {
+	return (
+		<div className="flex flex-col">
+			<dt className="text-[6.5pt] tracking-wide uppercase">{label}</dt>
+			<dd className="text-[10pt] font-semibold text-black">{value}</dd>
+		</div>
+	);
+}
+
+// A product photo, or nothing when there's none or it fails to load: a
+// printed placeholder icon tells the packer nothing.
+function Photo({ src, className }: { src: string | null; className: string }) {
+	const [failed, setFailed] = useState(false);
+	if (!src || failed) return <div className={`${className} shrink-0`} />;
+	return (
+		<img
+			src={src}
+			alt=""
+			onError={() => setFailed(true)}
+			className={`${className} shrink-0 rounded border border-border object-contain`}
+		/>
+	);
 }
