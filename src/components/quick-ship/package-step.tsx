@@ -9,7 +9,8 @@ import {
 	inches,
 	typedSize,
 } from "#/shipping/box-filter";
-import { bigInput } from "./constants";
+import { type BoxEntry, emptyEntry, entryQuery } from "./box-entry";
+import { BoxEntryInput } from "./box-entry-input";
 import { Key } from "./key";
 import type { Box, Dims } from "./types";
 import { ounces } from "./units";
@@ -42,11 +43,18 @@ export function PackageStep({
 	onSaved: (box: Box) => void;
 }) {
 	// A size used last time without a saved box starts typed in.
-	const [query, setQuery] = useState(
+	const [entry, setEntry] = useState<BoxEntry>(
 		!current && dims
-			? [dims.lengthMm, dims.widthMm, dims.heightMm].map(inches).join(" ")
-			: "",
+			? {
+					kind: "size",
+					sides: [dims.lengthMm, dims.widthMm, dims.heightMm].map((mm) =>
+						String(inches(mm)),
+					),
+					typing: "",
+				}
+			: emptyEntry,
 	);
+	const query = entryQuery(entry);
 	const [saving, setSaving] = useState(false);
 
 	const size = typedSize(query);
@@ -113,20 +121,15 @@ export function PackageStep({
 			<div className="flex items-baseline justify-between">
 				<p className="text-xl font-semibold">Box</p>
 				<p className="text-muted-foreground">
-					Size or name · <Key>↑</Key>
+					Size (<Key>Space</Key> between sides) or name · <Key>↑</Key>
 					<Key>↓</Key> picks
 				</p>
 			</div>
-			<input
-				// biome-ignore lint/a11y/noAutofocus: the step exists to type this
-				autoFocus
-				aria-label="Box size or name"
-				placeholder="12 9 4"
-				value={query}
+			<BoxEntryInput
+				entry={entry}
 				disabled={saving}
-				onFocus={(e) => e.target.select()}
-				onChange={(e) => {
-					setQuery(e.target.value);
+				onEntry={(next) => {
+					setEntry(next);
 					setPicked(null);
 				}}
 				onKeyDown={(e) => {
@@ -136,7 +139,6 @@ export function PackageStep({
 					}
 					if (e.key === "Enter" && highlighted) choose(highlighted);
 				}}
-				className={cn(bigInput, "text-5xl placeholder:text-line")}
 			/>
 			{saving ? (
 				<p className="flex h-8 items-center justify-center text-lg text-muted-foreground">
@@ -152,7 +154,8 @@ export function PackageStep({
 				<div
 					ref={list}
 					className="flex flex-col gap-2 overflow-y-auto"
-					style={{ maxHeight: `${ROWS * 3.5}rem` }}
+					// Short screens get fewer rows, so the dialog's top stays on screen.
+					style={{ maxHeight: `min(${ROWS * 3.5}rem, 28dvh)` }}
 				>
 					{options.map((o, i) => (
 						<button
