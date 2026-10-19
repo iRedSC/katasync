@@ -1,6 +1,17 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	desc,
+	eq,
+	gt,
+	inArray,
+	ne,
+	or,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
@@ -34,7 +45,6 @@ import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { contentsKey } from "#/shipping/contents";
 import {
 	addressKey,
-	companionsOf,
 	liveDispatches,
 	whyNotTogether,
 } from "#/shipping/dispatch";
@@ -358,40 +368,45 @@ export const undoOrderNoReturn = createServerFn({ method: "POST" })
 	.handler(({ data }) => restoreNoReturn(getDb(), data.orderId, data.previous));
 
 // Everything the invoices for orders still to ship print, in pin order so
-// the stack matches what packers type.
+// the stack matches what packers type. `ids` picks the orders instead,
+// whether or not they still need shipping.
 export const listInvoices = createServerFn({ method: "GET" })
-	.validator(type({ "id?": "number.integer > 0" }))
+	.validator(type({ "ids?": "(number.integer > 0)[]" }))
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const locationId = await shippingLocation(db);
 		const [from] = locationId
 			? await db.select().from(locations).where(eq(locations.id, locationId))
 			: [];
-		const toShip = await db
-			.select({
-				id: orders.id,
-				name: orders.name,
-				pin: orders.pin,
-				placedAt: orders.placedAt,
-				salesChannel: orders.salesChannel,
-				customerName: orders.customerName,
-				shipAddress1: orders.shipAddress1,
-				shipAddress2: orders.shipAddress2,
-				shipCity: orders.shipCity,
-				shipRegion: orders.shipRegion,
-				shipPostalCode: orders.shipPostalCode,
-				shipCountry: orders.shipCountry,
-				total: orders.total,
-				shippingCharged: orders.shippingCharged,
-				channel: stores.channel,
-				marketplaceOrderId: orders.marketplaceOrderId,
-				needsShipping,
-			})
-			.from(orders)
-			.innerJoin(stores, eq(stores.id, orders.storeId))
-			// One order's invoice, or every order still to ship.
-			.where(data.id ? eq(orders.id, data.id) : needsShipping)
-			.orderBy(asc(orders.pin), asc(orders.placedAt));
+		const select = (where: SQL) =>
+			db
+				.select({
+					id: orders.id,
+					name: orders.name,
+					pin: orders.pin,
+					placedAt: orders.placedAt,
+					salesChannel: orders.salesChannel,
+					customerName: orders.customerName,
+					shipAddress1: orders.shipAddress1,
+					shipAddress2: orders.shipAddress2,
+					shipCity: orders.shipCity,
+					shipRegion: orders.shipRegion,
+					shipPostalCode: orders.shipPostalCode,
+					shipCountry: orders.shipCountry,
+					total: orders.total,
+					shippingCharged: orders.shippingCharged,
+					channel: stores.channel,
+					marketplaceOrderId: orders.marketplaceOrderId,
+					needsShipping,
+				})
+				.from(orders)
+				.innerJoin(stores, eq(stores.id, orders.storeId))
+				.where(where)
+				.orderBy(asc(orders.pin), asc(orders.placedAt));
+		// The orders picked, or every order still to ship.
+		const toShip = await select(
+			data.ids ? inArray(orders.id, data.ids) : needsShipping,
+		);
 		const lines = toShip.length
 			? await db
 					.select({
@@ -423,23 +438,21 @@ export const listInvoices = createServerFn({ method: "GET" })
 		// Other orders to the same address that can share the box, so the
 		// packer gathers them before typing the pin.
 		const shipsWith = new Map<number, { name: string; pin: number | null }[]>();
+		// Any order still to ship can share the box, printed or not, so a
+		// packer printing a few still hears about the rest.
+		const pool = data.ids ? await select(needsShipping) : toShip;
 		// Orders already holding a label can't join another box.
-		const live = data.id
-			? []
-			: await liveDispatches(
-					db,
-					toShip.map((o) => o.id),
-				);
+		const live = await liveDispatches(db, [
+			...new Set([...toShip, ...pool].map((o) => o.id)),
+		]);
 		for (const o of toShip) {
-			const others = data.id
-				? await companionsOf(db, o)
-				: toShip.filter(
-						(c) =>
-							c.id !== o.id &&
-							addressKey(c) !== null &&
-							addressKey(c) === addressKey(o) &&
-							whyNotTogether([o, c], live) === null,
-					);
+			const others = pool.filter(
+				(c) =>
+					c.id !== o.id &&
+					addressKey(c) !== null &&
+					addressKey(c) === addressKey(o) &&
+					whyNotTogether([o, c], live) === null,
+			);
 			shipsWith.set(
 				o.id,
 				others.map((c) => ({ name: c.name, pin: c.pin })),

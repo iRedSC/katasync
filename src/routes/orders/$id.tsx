@@ -188,7 +188,7 @@ function OrderPage() {
 					{external && (
 						<Button asChild size="sm">
 							<a href={external.url} target="_blank" rel="noreferrer">
-								{status.label === "Fulfill externally" ? "Fulfill" : "View"} on{" "}
+								{status.key === "external" ? "Fulfill" : "View"} on{" "}
 								{external.name}
 								<ExternalLink />
 							</a>

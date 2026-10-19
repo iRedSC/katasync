@@ -4,13 +4,6 @@ import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import {
-	type Field,
-	type Filter,
-	type facetCounts,
-	parseWord,
-	suggest,
-} from "#/products/search";
-import {
 	describeTerm,
 	parseSortWord,
 	type Sort,
@@ -19,38 +12,39 @@ import {
 	withTerm,
 } from "#/products/sort";
 
-const LABEL: Record<Field, string> = {
-	tag: "tag",
-	type: "type",
-	vendor: "vendor",
-	status: "status",
-	class: "class",
-	supplier: "supplier",
-	trust: "trust",
-	title: "title lacks",
-	inventory: "inventory",
-	velocity: "sold a month",
+// What one list's search box understands, so products and orders share the
+// box but each has its own sigils. F is that list's chip.
+export type SearchLanguage<F extends { value: string }> = {
+	// The word at the end of the box as a filter being typed, or null when
+	// it's plain search text.
+	parse: (word: string) => F | null;
+	// Values to offer for it, leaving out chips already picked. `detail` says
+	// what a value means when its name alone doesn't.
+	suggest: (
+		typing: F,
+		chips: readonly F[],
+	) => { value: string; count: number; detail?: string }[];
+	// The chip a value locks in as, or null when the value can't be one (an
+	// unknown token), so the box never holds a chip that silently matches
+	// nothing.
+	lock: (typing: F, value: string) => F | null;
+	// "not tag", "and vendor": what a chip or suggestion filters on.
+	label: (f: F) => string;
+	// What the box says when nothing is suggested for what's typed.
+	fallback: (typing: F) => string;
 };
-
-// "not tag", "and vendor", "title lacks": what a chip or suggestion filters on.
-function label(f: Pick<Filter, "field" | "exclude" | "and">) {
-	const and = f.and ? "and " : "";
-	return f.exclude && f.field !== "title"
-		? `${and}not ${LABEL[f.field]}`
-		: `${and}${LABEL[f.field]}`;
-}
 
 // A search box that turns filters and sorts into chips. Typing "#cl"
 // suggests tags containing "cl", "^co" suggests columns to sort on; Tab or
 // Enter locks the highlighted one in as a chip. Clicking a sort chip flips
 // its direction. Backspace in an empty box removes the last chip.
-export function FilterSearch<K extends string>({
+export function FilterSearch<F extends { value: string }, K extends string>({
 	inputRef,
 	text,
 	onText,
 	chips,
 	onChips,
-	counts,
+	language,
 	sort,
 	onSort,
 	columns,
@@ -59,9 +53,9 @@ export function FilterSearch<K extends string>({
 	inputRef: RefObject<HTMLInputElement | null>;
 	text: string;
 	onText: (text: string) => void;
-	chips: Filter[];
-	onChips: (chips: Filter[]) => void;
-	counts: ReturnType<typeof facetCounts>;
+	chips: F[];
+	onChips: (chips: F[]) => void;
+	language: SearchLanguage<F>;
 	sort: Sort<K>;
 	onSort: (sort: Sort<K>) => void;
 	columns: SortColumns<K>;
@@ -74,8 +68,8 @@ export function FilterSearch<K extends string>({
 	// Only the word at the end is being typed; earlier ones are already done.
 	const word = /\s$/.test(text) ? "" : (text.split(/\s+/).at(-1) ?? "");
 	const sorting = parseSortWord(word);
-	const typing = sorting ? null : parseWord(word);
-	const suggestions = typing ? suggest(counts, typing, chips) : [];
+	const typing = sorting ? null : language.parse(word);
+	const suggestions = typing ? language.suggest(typing, chips) : [];
 	const sortSuggestions = sorting
 		? suggestSorts(columns, sorting.value, sort)
 		: [];
@@ -90,14 +84,12 @@ export function FilterSearch<K extends string>({
 	}
 
 	function lock(value: string) {
-		if (!typing) return;
-		onChips([
-			...chips,
-			// Title exclusions stay "contains": nobody types a whole title.
-			{ ...typing, value, exact: typing.field !== "title" },
-		]);
+		const chip = typing && language.lock(typing, value);
+		if (!chip) return false;
+		onChips([...chips, chip]);
 		onText(text.slice(0, text.length - word.length));
 		setHighlight(0);
+		return true;
 	}
 
 	function keyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -111,9 +103,9 @@ export function FilterSearch<K extends string>({
 		}
 		if ((e.key === "Tab" || e.key === "Enter") && typing) {
 			const pick = suggestions[highlight]?.value ?? typing.value;
-			if (pick !== "") {
+			// A value that can't be a chip stays typed; the list says why.
+			if (pick !== "" && lock(pick)) {
 				e.preventDefault();
-				lock(pick);
 				return;
 			}
 		}
@@ -163,7 +155,9 @@ export function FilterSearch<K extends string>({
 						key={i}
 						className="inline-flex h-6 items-center gap-1 rounded-md bg-surface-strong pr-0.5 pl-2 text-xs"
 					>
-						<span className="text-muted-foreground">{label(chip)}</span>
+						<span className="text-muted-foreground">
+							{language.label(chip)}
+						</span>
 						<span className="font-medium">{chip.value}</span>
 						<button
 							type="button"
@@ -285,8 +279,13 @@ export function FilterSearch<K extends string>({
 								i === highlight && "bg-surface",
 							)}
 						>
-							<span className="text-muted-foreground">{label(typing)}</span>
-							<span className="flex-1 truncate">{s.value}</span>
+							<span className="text-muted-foreground">
+								{language.label(typing)}
+							</span>
+							<span className="truncate">{s.value}</span>
+							<span className="flex-1 truncate text-xs text-muted-foreground">
+								{s.detail}
+							</span>
 							<span className="text-xs tabular-nums text-muted-foreground">
 								{formatCount(s.count)}
 							</span>
@@ -299,13 +298,7 @@ export function FilterSearch<K extends string>({
 					))}
 					{suggestions.length === 0 && (
 						<p className="px-3 py-1.5 text-muted-foreground">
-							{typing.field === "title"
-								? `Tab: hide “${typing.value}”`
-								: typing.field === "inventory"
-									? `Tab: inventory ${typing.value}`
-									: typing.field === "velocity"
-										? `Tab: ${typing.value} sold a month`
-										: `No ${LABEL[typing.field]} “${typing.value}”. Tab to use anyway.`}
+							{language.fallback(typing)}
 						</p>
 					)}
 				</div>

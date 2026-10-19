@@ -1,8 +1,25 @@
 import type { Tone } from "#/components/page";
 import { externalFulfillment } from "./fulfillment";
 
-// How an order's state reads to a person, in one place so lists and detail
-// pages agree. Only states that need attention get a color.
+// Every state an order can be in, as a one-word key the orders search
+// types (%unfulfilled) and the words its badge shows.
+export const ORDER_STATUSES = {
+	void: "Cancelled or refunded, void label",
+	cancelled: "Cancelled",
+	refunded: "Refunded",
+	fulfilled: "Fulfilled",
+	noshipping: "No shipping needed",
+	restocked: "Restocked",
+	partial: "Partly shipped",
+	unpaid: "Waiting for payment",
+	hold: "On hold",
+	external: "Fulfill externally",
+	unfulfilled: "To ship",
+} as const;
+export type OrderStatusKey = keyof typeof ORDER_STATUSES;
+
+// How an order's state reads to a person, in one place so lists, detail
+// pages, and search agree. Only states that need attention get a color.
 export function orderStatus(order: {
 	cancelledAt: Date | null;
 	fulfillmentStatus: string;
@@ -12,34 +29,40 @@ export function orderStatus(order: {
 	marketplaceOrderId: string | null;
 	// Cancelled or refunded with a label still live (see to-ship.ts).
 	labelToVoid?: boolean;
-}): { label: string; tone?: Tone } {
+}): { key: OrderStatusKey; label: string; tone?: Tone } {
+	const is = (key: OrderStatusKey, tone?: Tone) => ({
+		key,
+		label: ORDER_STATUSES[key],
+		tone,
+	});
 	if (order.labelToVoid) {
 		return {
+			key: "void",
 			label: `${order.cancelledAt ? "Cancelled" : "Refunded"}, void label`,
 			tone: "critical",
 		};
 	}
-	if (order.cancelledAt) return { label: "Cancelled" };
-	if (order.financialStatus === "REFUNDED") return { label: "Refunded" };
+	if (order.cancelledAt) return is("cancelled");
+	if (order.financialStatus === "REFUNDED") return is("refunded");
 	switch (order.fulfillmentStatus) {
 		case "FULFILLED":
-			return { label: "Fulfilled" };
+			return is("fulfilled");
 		case "FULFILLMENT_NOT_REQUIRED":
-			return { label: "No shipping needed" };
+			return is("noshipping");
 		// Shopify: every item was removed or refunded before shipping.
 		case "RESTOCKED":
-			return { label: "Restocked" };
+			return is("restocked");
 		case "PARTIALLY_FULFILLED":
-			return { label: "Partly shipped", tone: "warning" };
+			return is("partial", "warning");
 		case "AWAITING_PAYMENT":
-			return { label: "Waiting for payment" };
+			return is("unpaid");
 		case "ON_HOLD":
-			return { label: "On hold", tone: "warning" };
+			return is("hold", "warning");
 		default:
 			// Shipped from the marketplace's own page, not from katasync.
 			return externalFulfillment(order)
-				? { label: "Fulfill externally", tone: "info" }
-				: { label: "To ship", tone: "warning" };
+				? is("external", "info")
+				: is("unfulfilled", "warning");
 	}
 }
 

@@ -5,7 +5,7 @@ import {
 	ChevronLeft,
 	ListFilter,
 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import {
 	Popover,
 	PopoverContent,
@@ -40,19 +40,29 @@ const FIELDS: { field: Field; label: string; typed: string }[] = [
 const iconButton =
 	"inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-input bg-white text-muted-foreground hover:bg-subtle data-[state=open]:bg-surface";
 
+// One field the filter button offers: how to type it, so the menu also
+// teaches the search language, and what to pick its value with.
+export type PickField<F> = {
+	key: string;
+	label: string;
+	typed: string;
+	body: (add: (filter: F) => void) => ReactNode;
+};
+
 // Adds a chip by picking instead of typing: a field, then a value.
-export function AddFilter({
-	counts,
+export function FilterPicker<F>({
+	fields,
 	onAdd,
 }: {
-	counts: ReturnType<typeof facetCounts>;
-	onAdd: (filter: Filter) => void;
+	fields: readonly PickField<F>[];
+	onAdd: (filter: F) => void;
 }) {
 	const [open, setOpen] = useState(false);
-	const [field, setField] = useState<Field | null>(null);
+	const [key, setKey] = useState<string | null>(null);
+	const field = fields.find((f) => f.key === key);
 
-	function add(filter: Omit<Filter, "and" | "exact">) {
-		onAdd({ ...filter, and: false, exact: filter.field !== "title" });
+	function add(filter: F) {
+		onAdd(filter);
 		setOpen(false);
 	}
 
@@ -61,20 +71,20 @@ export function AddFilter({
 			open={open}
 			onOpenChange={(next) => {
 				setOpen(next);
-				if (!next) setField(null);
+				if (!next) setKey(null);
 			}}
 		>
 			<PopoverTrigger className={iconButton} aria-label="Add a filter">
 				<ListFilter className="size-4" />
 			</PopoverTrigger>
 			<PopoverContent className="w-72">
-				{field === null ? (
+				{!field ? (
 					<ul>
-						{FIELDS.map((f) => (
-							<li key={f.field}>
+						{fields.map((f) => (
+							<li key={f.key}>
 								<button
 									type="button"
-									onClick={() => setField(f.field)}
+									onClick={() => setKey(f.key)}
 									className="flex h-8 w-full items-center justify-between rounded-lg px-2 text-left hover:bg-surface"
 								>
 									{f.label}
@@ -87,25 +97,15 @@ export function AddFilter({
 					<div className="flex flex-col gap-1">
 						<button
 							type="button"
-							onClick={() => setField(null)}
+							onClick={() => setKey(null)}
 							className="flex h-8 items-center gap-1 rounded-lg px-1 font-semibold hover:bg-surface"
 						>
 							<ChevronLeft className="size-4" />
-							{FIELDS.find((f) => f.field === field)?.label}
+							{field.label}
 						</button>
-						{field === "inventory" || field === "velocity" ? (
-							<ComparisonForm key={field} field={field} onAdd={add} />
-						) : field === "title" ? (
-							<TextForm
-								placeholder="Word"
-								onAdd={(value) => add({ field: "title", value, exclude: true })}
-							/>
-						) : (
-							<ValueList
-								values={counts.get(field) ?? new Map()}
-								onAdd={(value, exclude) => add({ field, value, exclude })}
-							/>
-						)}
+						<div key={field.key} className="contents">
+							{field.body(add)}
+						</div>
 					</div>
 				)}
 			</PopoverContent>
@@ -113,13 +113,51 @@ export function AddFilter({
 	);
 }
 
-// Every value of one field, most common first, narrowed by what's typed. All
-// of them: a few hundred rows is cheap, and a cut-off list looks complete.
-function ValueList({
-	values,
+// The product filter button.
+export function AddFilter({
+	counts,
 	onAdd,
 }: {
-	values: Map<string, number>;
+	counts: ReturnType<typeof facetCounts>;
+	onAdd: (filter: Filter) => void;
+}) {
+	const fields = FIELDS.map(
+		({ field, label, typed }): PickField<Filter> => ({
+			key: field,
+			label,
+			typed,
+			body: (done) => {
+				const add = (f: Omit<Filter, "and" | "exact">) =>
+					done({ ...f, and: false, exact: f.field !== "title" });
+				return field === "inventory" || field === "velocity" ? (
+					<ComparisonForm field={field} onAdd={add} />
+				) : field === "title" ? (
+					<TextForm
+						placeholder="Word"
+						onAdd={(value) => add({ field: "title", value, exclude: true })}
+					/>
+				) : (
+					<ValueList
+						values={counts.get(field) ?? new Map()}
+						onAdd={(value, exclude) => add({ field, value, exclude })}
+					/>
+				);
+			},
+		}),
+	);
+	return <FilterPicker fields={fields} onAdd={onAdd} />;
+}
+
+// Every value of one field, most common first, narrowed by what's typed. All
+// of them: a few hundred rows is cheap, and a cut-off list looks complete.
+// `details` says what a value means when its name alone doesn't.
+export function ValueList({
+	values,
+	details,
+	onAdd,
+}: {
+	values: ReadonlyMap<string, number>;
+	details?: ReadonlyMap<string, string>;
 	onAdd: (value: string, exclude: boolean) => void;
 }) {
 	const [q, setQ] = useState("");
@@ -160,9 +198,16 @@ function ValueList({
 						<button
 							type="button"
 							onClick={() => onAdd(value, exclude)}
-							className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-surface"
+							className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1 text-left hover:bg-surface"
 						>
-							<span className="flex-1 truncate">{value}</span>
+							<span className="flex min-w-0 flex-1 flex-col">
+								<span className="truncate">{value}</span>
+								{details?.get(value) && (
+									<span className="truncate text-xs text-muted-foreground">
+										{details.get(value)}
+									</span>
+								)}
+							</span>
 							<span className="text-xs tabular-nums text-muted-foreground">
 								{formatCount(count)}
 							</span>

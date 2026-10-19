@@ -4,12 +4,18 @@ import { cityLine, formatMoney, formatPhone } from "#/lib/format";
 import { listInvoices } from "#/server/orders";
 
 // One letter-size invoice per order still to ship, in pin order, or just
-// one order's with ?id=. Opens the print dialog on its own.
+// the orders picked: ?ids=[1,2] from the orders list, ?id=1 from one order.
+// Opens the print dialog on its own.
 export const Route = createFileRoute("/print/invoices")({
-	validateSearch: (search: Record<string, unknown>): { id?: number } =>
-		Number(search.id) > 0 ? { id: Number(search.id) } : {},
-	loaderDeps: ({ search }) => ({ id: search.id }),
-	loader: ({ deps }) => listInvoices({ data: deps.id ? { id: deps.id } : {} }),
+	validateSearch: (search: Record<string, unknown>): { ids?: number[] } => {
+		const picked = (Array.isArray(search.ids) ? search.ids : [search.id])
+			.map(Number)
+			.filter((n) => Number.isInteger(n) && n > 0);
+		return picked.length > 0 ? { ids: picked } : {};
+	},
+	loaderDeps: ({ search }) => ({ ids: search.ids }),
+	loader: ({ deps }) =>
+		listInvoices({ data: deps.ids ? { ids: deps.ids } : {} }),
 	head: () => ({ meta: [{ title: "Invoices" }] }),
 	component: Invoices,
 });
@@ -20,6 +26,7 @@ type Data = Awaited<ReturnType<typeof listInvoices>>;
 
 function Invoices() {
 	const { from, invoices } = Route.useLoaderData();
+	const { ids } = Route.useSearch();
 
 	useEffect(() => {
 		if (invoices.length > 0) window.print();
@@ -41,7 +48,9 @@ function Invoices() {
 				</button>
 			</div>
 			{invoices.length === 0 && (
-				<p className="text-center text-muted-foreground">Nothing to ship.</p>
+				<p className="text-center text-muted-foreground">
+					{ids ? "Those orders are gone." : "Nothing to ship."}
+				</p>
 			)}
 			{invoices.map((invoice) => (
 				<Invoice key={invoice.id} from={from} invoice={invoice} />
