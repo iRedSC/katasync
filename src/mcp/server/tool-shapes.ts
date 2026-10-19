@@ -37,7 +37,10 @@ export const unitTerms = {
 };
 
 export const boxShape = {
-	name: z.string().optional().describe("Defaults to its size, e.g. 3 × 3 × 6"),
+	name: z
+		.string()
+		.optional()
+		.describe("Only when two boxes share a size, e.g. Bubble mailer"),
 	length_in: z.number().positive(),
 	width_in: z.number().positive(),
 	height_in: z.number().positive(),

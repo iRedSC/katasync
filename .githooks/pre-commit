@@ -1,3 +1,5 @@
 #!/bin/sh
 # Installed by `pnpm install` (the prepare script sets core.hooksPath).
-exec node scripts/check-file-size.ts
+set -e
+node scripts/check-file-size.ts
+node scripts/check-migrations.ts

@@ -18,22 +18,31 @@ describe("over MCP", () => {
 	const tool = (name: string, args: Record<string, unknown>) =>
 		callTool(db, canWrite, name, args);
 
-	test("creates boxes all or none", async () => {
+	test("creates boxes all or none, named only when asked", async () => {
 		const made = await tool("create_boxes", {
 			boxes: [
-				{ pin: 1, length_in: 3, width_in: 3, height_in: 6, weight_oz: 0 },
+				{ length_in: 3, width_in: 3, height_in: 6, weight_oz: 0 },
+				{
+					name: "Mailer",
+					length_in: 9,
+					width_in: 6,
+					height_in: 1,
+					weight_oz: 1,
+				},
 			],
 		});
-		expect(made.data).toEqual([{ pin: 1, name: "3 × 3 × 6" }]);
-		const clash = await tool("create_boxes", {
+		expect(made.data).toMatchObject([
+			{ box: "3 × 3 × 6" },
+			{ box: "Mailer 9 × 6 × 1" },
+		]);
+		const bad = await tool("create_boxes", {
 			boxes: [
-				{ pin: 2, length_in: 4, width_in: 4, height_in: 4, weight_oz: 1 },
-				{ pin: 1, length_in: 5, width_in: 5, height_in: 5, weight_oz: 1 },
+				{ length_in: 4, width_in: 4, height_in: 4, weight_oz: 1 },
+				{ length_in: 0, width_in: 5, height_in: 5, weight_oz: 1 },
 			],
 		});
-		expect(clash).toMatchObject({ isError: true });
-		expect(clash.data).toMatch(/Pin 1 is already 3 × 3 × 6/);
-		expect(await db.select().from(schema.packages)).toHaveLength(1);
+		expect(bad).toMatchObject({ isError: true });
+		expect(await db.select().from(schema.packages)).toHaveLength(2);
 	});
 
 	test("changes product details, kit parts, and builds kits", async () => {

@@ -5,6 +5,7 @@ import type { Db } from "#/db/client";
 import { packages, products } from "#/db/schema";
 import { matchListing, productFromListing } from "#/orders/remap";
 import { PurchaseOrderError } from "#/purchasing/orders";
+import { boxLabel } from "#/shipping/box-filter";
 import { createBoxes, updateBox } from "#/shipping/boxes";
 import { productBySku } from "./lookups";
 import { boxShape, json, WRITE } from "./tool-shapes";
@@ -14,32 +15,22 @@ export function registerCatalogTools(server: McpServer, db: Db) {
 		"create_boxes",
 		{
 			description:
-				"Adds shipping boxes for quick ship, all or none. Sizes in inches, empty weight in ounces. A pin is 1 to 999; left out, the lowest free pin is used.",
-			inputSchema: {
-				boxes: z
-					.array(
-						z.object({
-							pin: z.number().int().min(1).max(999).optional(),
-							...boxShape,
-						}),
-					)
-					.min(1),
-			},
+				"Adds shipping boxes for quick ship, all or none. Sizes in inches, empty weight in ounces. Quick ship finds boxes by size, so name one only when the size alone doesn't say which box it is.",
+			inputSchema: { boxes: z.array(z.object(boxShape)).min(1) },
 			annotations: WRITE,
 		},
 		async ({ boxes }) => {
 			const saved = await createBoxes(
 				db,
 				boxes.map((b) => ({
-					name: b.name ?? `${b.length_in} × ${b.width_in} × ${b.height_in}`,
+					name: b.name,
 					lengthIn: b.length_in,
 					widthIn: b.width_in,
 					heightIn: b.height_in,
 					weightOz: b.weight_oz,
-					pin: b.pin,
 				})),
 			);
-			return json(saved.map((b) => ({ pin: b.pin, name: b.name })));
+			return json(saved.map((b) => ({ id: b.id, box: boxLabel(b) })));
 		},
 	);
 
@@ -47,11 +38,11 @@ export function registerCatalogTools(server: McpServer, db: Db) {
 		"update_box",
 		{
 			description:
-				"Changes a shipping box, found by its pin. Only given fields change; new_pin moves it to another pin.",
+				"Changes a shipping box, found by its id (the packages table). Only given fields change; a name of null or empty clears it.",
 			inputSchema: {
-				pin: z.number().int().min(1).max(999),
-				new_pin: z.number().int().min(1).max(999).optional(),
+				id: z.number().int().positive(),
 				...z.object(boxShape).partial().shape,
+				name: z.string().nullable().optional(),
 			},
 			annotations: WRITE,
 		},
@@ -59,18 +50,17 @@ export function registerCatalogTools(server: McpServer, db: Db) {
 			const [box] = await db
 				.select()
 				.from(packages)
-				.where(eq(packages.pin, input.pin));
-			if (!box) throw new PurchaseOrderError(`No box with pin ${input.pin}`);
+				.where(eq(packages.id, input.id));
+			if (!box) throw new PurchaseOrderError(`No box with id ${input.id}`);
 			const inches = (mm: number) => mm / 25.4;
 			const saved = await updateBox(db, box.id, {
-				name: input.name ?? box.name,
+				name: input.name === undefined ? box.name : input.name,
 				lengthIn: input.length_in ?? inches(box.lengthMm),
 				widthIn: input.width_in ?? inches(box.widthMm),
 				heightIn: input.height_in ?? inches(box.heightMm),
 				weightOz: input.weight_oz ?? box.weightGrams / 28.349523125,
-				pin: input.new_pin ?? box.pin,
 			});
-			return json({ pin: saved.pin, name: saved.name });
+			return json({ id: saved.id, box: boxLabel(saved) });
 		},
 	);
 

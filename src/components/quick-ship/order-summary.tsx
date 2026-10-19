@@ -67,7 +67,7 @@ export function OrderSummary({
 						{canCombine && (
 							<span className="font-normal">
 								{" "}
-								· <Key>T</Key> combines
+								· <Key>Tab</Key> combines
 							</span>
 						)}
 					</p>
