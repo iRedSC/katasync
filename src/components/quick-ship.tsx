@@ -3,10 +3,7 @@ import { MAX_BOXES } from "#/components/quick-ship/constants";
 import { DoneStep } from "#/components/quick-ship/done-step";
 import { ExternalStep } from "#/components/quick-ship/external-step";
 import { startsHazmat } from "#/components/quick-ship/hazmat";
-import {
-	parseInsurance,
-	splitInsurance,
-} from "#/components/quick-ship/insurance";
+import { splitInsurance } from "#/components/quick-ship/insurance";
 import { Key } from "#/components/quick-ship/key";
 import { Notice } from "#/components/quick-ship/notice";
 import { OrderSummary } from "#/components/quick-ship/order-summary";
@@ -35,11 +32,11 @@ import type { Rate } from "#/shipping/shippo";
 
 const noExtras: Extras = { insure: null, signature: false };
 
-// Each plan starts insured for its full value when it should be, and with a
-// signature when one is required. Going back to fix a box or weight keeps
-// whatever was changed on the service step.
+// Each plan starts uninsured (insurance is only recommended), with a
+// signature only when one is required. Going back to fix a box or weight
+// keeps whatever was changed on the service step.
 const startingExtras = (plan: ShipmentPlan): Extras => ({
-	insure: plan.insure ? parseInsurance(String(plan.total)) : null,
+	insure: null,
 	signature: plan.signatureRequired !== null,
 });
 
@@ -486,14 +483,14 @@ export function QuickShip() {
 							stale={rates !== null && !sameExtras(rates.for, extras)}
 							boxes={count}
 							busy={busy}
-							offer={
-								plan?.extras
-									? {
-											total: plan.total,
-											signatureRequired: plan.signatureRequired,
-										}
-									: null
-							}
+							offer={{
+								total: plan?.total ?? 0,
+								recommendInsurance: plan?.insure ?? false,
+								signatureRequired: plan?.signatureRequired ?? null,
+								unavailable: plan?.extras
+									? null
+									: "TikTok buys this label, and TikTok's labels can't add insurance or a signature",
+							}}
 							extras={extras}
 							onExtras={changeExtras}
 							onBuy={buy}
