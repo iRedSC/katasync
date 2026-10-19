@@ -75,9 +75,17 @@ export const listOrders = createServerFn({ method: "GET" })
 					sql<number>`count(*) filter (where ${lineAwaitsMatch({ productId: orderLines.productId, storeId: orders.storeId, listingExternalId: orderLines.listingExternalId })})::int`.as(
 						"unmatched",
 					),
+				// Every line's SKU and title, its own and its product's, for the
+				// search. Newline-separated: search words split on whitespace, so
+				// none can match across two of them.
+				lineText:
+					sql<string>`concat_ws(E'\\n', string_agg(${orderLines.sku}, E'\\n'), string_agg(${orderLines.title}, E'\\n'), string_agg(${products.sku}, E'\\n'), string_agg(${products.name}, E'\\n'))`.as(
+						"line_text",
+					),
 			})
 			.from(orderLines)
 			.innerJoin(orders, eq(orders.id, orderLines.orderId))
+			.leftJoin(products, eq(products.id, orderLines.productId))
 			.groupBy(orderLines.orderId)
 			.as("line_stats");
 		return (
@@ -100,6 +108,7 @@ export const listOrders = createServerFn({ method: "GET" })
 					channel: stores.channel,
 					items: sql<number>`coalesce(${lineStats.items}, 0)`,
 					unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
+					lineText: sql<string>`coalesce(${lineStats.lineText}, '')`,
 					labelToVoid,
 				})
 				.from(orders)
