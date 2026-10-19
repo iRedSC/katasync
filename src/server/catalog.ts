@@ -27,6 +27,7 @@ export {
 	getDefaultRange,
 	saveDefaultMinStock,
 	saveProductStockRange,
+	setAerosol,
 	setCritical,
 	setInsureWhenShipped,
 } from "#/server/catalog/product-settings";

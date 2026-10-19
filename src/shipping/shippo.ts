@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { shippoDangerousGoods, shipsAerosols } from "./hazmat";
 
 // Shippo buys labels for orders whose marketplace doesn't sell its own
 // (Shopify web, POS, draft orders, and eBay).
@@ -105,13 +106,15 @@ export type Rate = {
 };
 
 // Asks every connected carrier for a price. Rates are only good for a while,
-// so they're fetched right before buying.
+// so they're fetched right before buying. A box with aerosols is declared
+// to Shippo and only gets ground services (see hazmat.ts).
 export async function getRates(input: {
 	from: Address;
 	to: Address;
 	parcel: Parcel;
 	insureAmount: number | null;
 	signature: boolean;
+	hazmat: boolean;
 }): Promise<{ rates: Rate[]; notes: string[] }> {
 	const extra = {
 		...(input.insureAmount && {
@@ -122,6 +125,7 @@ export async function getRates(input: {
 			},
 		}),
 		...(input.signature && { signature_confirmation: "STANDARD" }),
+		...(input.hazmat && { dangerous_goods: shippoDangerousGoods }),
 	};
 	const body = shipmentResponse.assert(
 		await shippo("/shipments/", {
@@ -133,19 +137,26 @@ export async function getRates(input: {
 			async: false,
 		}),
 	);
+	const rates = body.rates.map((r) => ({
+		id: r.object_id,
+		carrier: r.provider,
+		service: r.servicelevel.token,
+		serviceName: `${r.provider} ${r.servicelevel.name}`,
+		cost: r.amount,
+		days: r.estimated_days ?? null,
+	}));
+	const allowed = input.hazmat ? rates.filter(shipsAerosols) : rates;
 	return {
-		rates: body.rates.map((r) => ({
-			id: r.object_id,
-			carrier: r.provider,
-			service: r.servicelevel.token,
-			serviceName: `${r.provider} ${r.servicelevel.name}`,
-			cost: r.amount,
-			days: r.estimated_days ?? null,
-		})),
+		rates: allowed,
 		// When no rates come back, Shippo says why (a bad address, say).
-		notes: (body.messages ?? []).flatMap((m) => (m.text ? [m.text] : [])),
+		notes: [
+			...(body.messages ?? []).flatMap((m) => (m.text ? [m.text] : [])),
+			...(allowed.length < rates.length ? [AEROSOL_NOTE] : []),
+		],
 	};
 }
+
+export const AEROSOL_NOTE = "Aerosols: ground services only.";
 
 const rateResponse = type({
 	object_id: "string",

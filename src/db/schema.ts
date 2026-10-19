@@ -89,6 +89,9 @@ export const products = pgTable(
 		weightGrams: integer(),
 		// Always offer insurance when this ships, whatever the order's value.
 		insureWhenShipped: boolean().notNull().default(false),
+		// An aerosol: quick ship starts its boxes as hazmat (see
+		// shipping/hazmat.ts).
+		aerosol: boolean().notNull().default(false),
 		lengthMm: integer(),
 		widthMm: integer(),
 		heightMm: integer(),
@@ -728,6 +731,9 @@ export const shipments = pgTable(
 		widthMm: integer().notNull(),
 		heightMm: integer().notNull(),
 		weightGrams: integer().notNull(),
+		// Aerosols inside: its PDF gets the Limited Quantity mark as a second
+		// page (see hazmat.ts).
+		hazmat: boolean().notNull().default(false),
 		// "shippo" for now; Amazon and TikTok labels come later.
 		provider: text().notNull(),
 		carrier: text().notNull(),

@@ -16,6 +16,11 @@ import {
 	ProductName,
 	SetsChip,
 } from "#/components/product";
+import {
+	AerosolToggle,
+	CriticalToggle,
+	InsureToggle,
+} from "#/components/product-page/flag-toggles";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
@@ -24,16 +29,13 @@ import { Tip } from "#/components/ui/tooltip";
 import type { StockRange } from "#/inventory/stock-range";
 import { channelName, formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
-import { optimism, optimistic } from "#/lib/optimism";
-import { offerUndo } from "#/lib/undo";
+import { optimistic } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import {
 	getDefaultRange,
 	getProductDetail,
 	type ProductDetail,
 	saveProductStockRange,
-	setCritical,
-	setInsureWhenShipped,
 } from "#/server/catalog";
 import { getProductSupplier } from "#/server/purchasing";
 
@@ -101,18 +103,6 @@ const rangePatch = (productId: number, range: StockRange | null) =>
 			minStock: range?.min ?? null,
 			maxStock: range?.max ?? null,
 		},
-	}));
-
-const insurePatch = (productId: number, insure: boolean) =>
-	productData.patch(productId, (d) => ({
-		...d,
-		product: { ...d.product, insureWhenShipped: insure },
-	}));
-
-const criticalPatch = (productId: number, critical: boolean) =>
-	productData.patch(productId, (d) => ({
-		...d,
-		product: { ...d.product, critical },
 	}));
 
 function ProductPage() {
@@ -550,6 +540,7 @@ function Details({ d }: { d: ProductDetail }) {
 					sku={p.sku}
 					insure={p.insureWhenShipped}
 				/>
+				<AerosolToggle productId={p.id} sku={p.sku} aerosol={p.aerosol} />
 				<CriticalToggle
 					productId={p.id}
 					sku={p.sku}
@@ -558,100 +549,6 @@ function Details({ d }: { d: ProductDetail }) {
 				/>
 			</div>
 		</Card>
-	);
-}
-
-function InsureToggle({
-	productId,
-	sku,
-	insure,
-}: {
-	productId: number;
-	sku: string;
-	insure: boolean;
-}) {
-	async function set(next: boolean) {
-		const r = await optimism.change({
-			label: `Insurance of ${sku}`,
-			patch: insurePatch(productId, next),
-			send: () => setInsureWhenShipped({ data: { sku, insure: next } }),
-		});
-		if (!r) return;
-		offerUndo(next ? "Insured when shipped" : "No longer insured", {
-			tone: "success",
-			undo: async () => {
-				const undone = await optimism.change({
-					label: `Insurance of ${sku}`,
-					patch: insurePatch(productId, !next),
-					send: () => setInsureWhenShipped({ data: { sku, insure: !next } }),
-				});
-				return undone && (next ? "No longer insured" : "Insured when shipped");
-			},
-		});
-	}
-	return (
-		<label className="flex cursor-pointer items-center gap-2">
-			<input
-				type="checkbox"
-				checked={insure}
-				onChange={(e) => set(e.target.checked)}
-				className="size-4 accent-primary"
-			/>
-			Insure when shipped
-		</label>
-	);
-}
-
-// A items are critical already, so the box is checked and grayed out for
-// them, with the reason on hover.
-function CriticalToggle({
-	productId,
-	sku,
-	critical,
-	isA,
-}: {
-	productId: number;
-	sku: string;
-	critical: boolean;
-	isA: boolean;
-}) {
-	async function set(next: boolean) {
-		const r = await optimism.change({
-			label: `Essential flag of ${sku}`,
-			patch: criticalPatch(productId, next),
-			send: () => setCritical({ data: { productId, critical: next } }),
-		});
-		if (!r) return;
-		offerUndo(next ? "Marked essential" : "No longer essential", {
-			tone: "success",
-			undo: async () => {
-				const undone = await optimism.change({
-					label: `Essential flag of ${sku}`,
-					patch: criticalPatch(productId, !next),
-					send: () => setCritical({ data: { productId, critical: !next } }),
-				});
-				return undone && (next ? "No longer essential" : "Marked essential");
-			},
-		});
-	}
-	return (
-		<Tip content={isA ? "A items are always essential" : undefined}>
-			<label
-				className={cn(
-					"flex items-center gap-2",
-					isA ? "cursor-default text-muted-foreground" : "cursor-pointer",
-				)}
-			>
-				<input
-					type="checkbox"
-					checked={critical || isA}
-					disabled={isA}
-					onChange={(e) => set(e.target.checked)}
-					className="size-4 accent-primary"
-				/>
-				Essential
-			</label>
-		</Tip>
 	);
 }
 

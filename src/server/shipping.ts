@@ -100,6 +100,7 @@ const box = {
 	heightMm: "number.integer > 0",
 	weightGrams: "number.integer > 0",
 	insureAmount: "number > 0 | null",
+	hazmat: "boolean",
 } as const;
 
 const send = {
@@ -165,6 +166,7 @@ export const quickShipRates = createServerFn({ method: "POST" })
 							parcel: b,
 							insureAmount: insure ? b.insureAmount : null,
 							signature: sign,
+							hazmat: b.hazmat,
 						}),
 					),
 				);
@@ -239,6 +241,7 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 				id: b.id,
 				trackingNumber: b.trackingNumber,
 				cost: b.cost,
+				hazmat: b.hazmat,
 			})),
 			serviceName: live[0]?.serviceName ?? null,
 			provider: live[0]?.provider ?? null,

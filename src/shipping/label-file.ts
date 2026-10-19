@@ -1,7 +1,22 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { shipments } from "#/db/schema";
+import { appendAerosolMark } from "./hazmat";
 import { tiktokLabel } from "./tiktok";
+
+// What prints: the provider's label, then the Limited Quantity mark for a
+// box with aerosols. Every print and reprint goes through here, so the mark
+// can't be left off.
+export async function printablePdf(db: Db, shipmentId: number) {
+	const [pdf, [row]] = await Promise.all([
+		labelPdf(db, shipmentId),
+		db
+			.select({ hazmat: shipments.hazmat })
+			.from(shipments)
+			.where(eq(shipments.id, shipmentId)),
+	]);
+	return row?.hazmat ? appendAerosolMark(pdf) : pdf;
+}
 
 // A label's PDF: the saved copy, or else fetched from the provider and
 // saved, so every later print is local. TikTok's links expire in a day, so
