@@ -3,6 +3,8 @@ import { XMLParser } from "fast-xml-parser";
 import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
+import { importReturns } from "#/orders/return-requests";
+import { fetchEbayReturns } from "./ebay-returns";
 import { type ChannelListing, matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
@@ -329,6 +331,17 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
+	// Returns after orders, so a return on a new order finds it. Every
+	// listings pass rereads 60 days, so status changes come through.
+	if (options.listings)
+		problems.push(
+			...(await importReturns(db, store, () =>
+				fetchEbayReturns(
+					new Date(Date.now() - 60 * 24 * 60 * 60 * 1000),
+					new Date(),
+				),
+			)),
+		);
 	return { store: store.name, listings, orders: count, problems };
 }
 

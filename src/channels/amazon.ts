@@ -2,13 +2,14 @@ import { type } from "arktype";
 import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
+import { importReturns } from "#/orders/return-requests";
 import { MARKETPLACE_US, spApi } from "./amazon-api";
 import {
 	amazonListings,
 	fbaQuantities,
 	mirrorFbaStock,
 } from "./amazon-listings";
-import { recentAmazonReturns, saveAmazonReturns } from "./amazon-returns";
+import { recentAmazonReturns } from "./amazon-returns";
 import { matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
@@ -231,21 +232,9 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 			await advanceOrderCursor(db, store.id, new Date(window.until));
 		}
 	}
-	// Returns after orders, so a return on a new order finds it. Their report
-	// needs a role of its own; without it, orders still sync.
-	if (options.listings) {
-		try {
-			const recent = await recentAmazonReturns();
-			if (recent) {
-				problems.push(...recent.problems);
-				await saveAmazonReturns(db, store.id, recent.returns);
-			}
-		} catch (error) {
-			problems.push(
-				`Amazon returns: ${error instanceof Error ? error.message : error}`,
-			);
-		}
-	}
+	// Returns after orders, so a return on a new order finds it.
+	if (options.listings)
+		problems.push(...(await importReturns(db, store, recentAmazonReturns)));
 	return { store: store.name, listings, orders: count, problems };
 }
 

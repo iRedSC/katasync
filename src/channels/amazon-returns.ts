@@ -1,11 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
-import type { Db } from "#/db/client";
-import {
-	orderLines,
-	orders,
-	returnRequestLines,
-	returnRequests,
-} from "#/db/schema";
+import type { ChannelReturn } from "#/orders/return-requests";
 import {
 	listReports,
 	parseTsv,
@@ -39,25 +32,13 @@ const COLUMNS = [
 	"Order Item ID",
 ] as const;
 
-export type AmazonReturn = {
-	rmaId: string;
-	orderId: string;
-	rawStatus: string;
-	status: (typeof returnRequests.$inferInsert)["status"];
-	reason: string | null;
-	trackingNumber: string | null;
-	carrier: string | null;
-	requestedAt: Date;
-	lines: { orderItemId: string | null; sku: string | null; quantity: number }[];
-};
-
 // Amazon's own wording, read as a stage. Its statuses don't say whether the
 // box arrived, so the delivery date and tracking do.
 export function returnStatus(row: {
 	status: string;
 	delivered: boolean;
 	tracked: boolean;
-}): AmazonReturn["status"] {
+}): ChannelReturn["status"] {
 	const s = row.status.toLowerCase();
 	if (s.includes("cancel") || s.includes("reject")) return "cancelled";
 	if (s.includes("closed")) return "closed";
@@ -69,10 +50,10 @@ export function returnStatus(row: {
 // One row per item returned; a return of several items shares its RMA ID.
 // Rows Amazon left without a usable date or quantity are skipped and named.
 export function parseReturnsReport(text: string): {
-	returns: AmazonReturn[];
+	returns: ChannelReturn[];
 	problems: string[];
 } {
-	const byRma = new Map<string, AmazonReturn>();
+	const byRma = new Map<string, ChannelReturn>();
 	const problems: string[] = [];
 	for (const row of parseTsv(text, COLUMNS, "returns")) {
 		const orderId = row["Order ID"];
@@ -91,8 +72,8 @@ export function parseReturnsReport(text: string): {
 			row["Amazon RMA ID"] ||
 			`${orderId}:${row["Order Item ID"]}:${row["Return request date"]}`;
 		const found = byRma.get(rmaId) ?? {
-			rmaId,
-			orderId,
+			externalId: rmaId,
+			orderExternalId: orderId,
 			rawStatus: row["Return request status"],
 			status: returnStatus({
 				status: row["Return request status"],
@@ -100,94 +81,21 @@ export function parseReturnsReport(text: string): {
 				tracked: row["Tracking ID"] !== "",
 			}),
 			reason: row["Return Reason"] || null,
+			// Amazon's report has no buyer comments.
+			note: null,
 			trackingNumber: row["Tracking ID"] || null,
 			carrier: row["Return carrier"] || null,
 			requestedAt,
 			lines: [],
 		};
 		found.lines.push({
-			orderItemId: row["Order Item ID"] || null,
+			lineExternalId: row["Order Item ID"] || null,
 			sku: row["Merchant SKU"] || null,
 			quantity,
 		});
 		byRma.set(rmaId, found);
 	}
 	return { returns: [...byRma.values()], problems };
-}
-
-// Saves each return against its order, replacing what Amazon said before.
-// A return for an order katasync doesn't have (older than its history, or
-// never synced) is skipped and counted. Lines match by Amazon's order item
-// ID, then by SKU.
-export async function saveAmazonReturns(
-	db: Db,
-	storeId: number,
-	returns: AmazonReturn[],
-): Promise<{ saved: number; skipped: number }> {
-	if (returns.length === 0) return { saved: 0, skipped: 0 };
-	const known = await db
-		.select({ id: orders.id, externalId: orders.externalId })
-		.from(orders)
-		.where(
-			and(
-				eq(orders.storeId, storeId),
-				inArray(orders.externalId, [...new Set(returns.map((r) => r.orderId))]),
-			),
-		);
-	const orderIds = new Map(known.map((o) => [o.externalId, o.id]));
-	let saved = 0;
-	for (const r of returns) {
-		const orderId = orderIds.get(r.orderId);
-		if (orderId === undefined) continue;
-		await db.transaction(async (tx) => {
-			const lines = await tx
-				.select({
-					id: orderLines.id,
-					externalId: orderLines.externalId,
-					sku: orderLines.sku,
-				})
-				.from(orderLines)
-				.where(eq(orderLines.orderId, orderId));
-			const values = {
-				orderId,
-				billedBy: "amazon" as const,
-				externalId: r.rmaId,
-				status: r.status,
-				rawStatus: r.rawStatus,
-				reason: r.reason,
-				trackingNumber: r.trackingNumber,
-				carrier: r.carrier,
-				requestedAt: r.requestedAt,
-				sourceUpdatedAt: new Date(),
-			};
-			const [request] = await tx
-				.insert(returnRequests)
-				.values(values)
-				.onConflictDoUpdate({
-					target: [returnRequests.billedBy, returnRequests.externalId],
-					set: { ...values, syncedAt: sql`now()` },
-				})
-				.returning({ id: returnRequests.id });
-			await tx
-				.delete(returnRequestLines)
-				.where(eq(returnRequestLines.requestId, request.id));
-			await tx.insert(returnRequestLines).values(
-				r.lines.map((l) => ({
-					requestId: request.id,
-					orderLineId:
-						(
-							lines.find(
-								(o) => l.orderItemId && o.externalId === l.orderItemId,
-							) ?? lines.find((o) => l.sku && o.sku === l.sku)
-						)?.id ?? null,
-					sku: l.sku,
-					quantity: l.quantity,
-				})),
-			);
-		});
-		saved++;
-	}
-	return { saved, skipped: returns.length - saved };
 }
 
 // One window's returns, by when they were requested. Waits up to waitMs for

@@ -11,21 +11,20 @@
 //   pnpm sync --shopify-history 365
 //                            one-time import of Shopify orders placed in the
 //                            last 365 days that the regular sync hasn't seen
-//   pnpm sync --amazon-returns-history 730
-//                            one-time import of Amazon returns requested in
-//                            the last 730 days, with their reasons, 60 days
-//                            a report (a few minutes each)
+//   pnpm sync --returns-history 365
+//                            one-time import of returns buyers opened in the
+//                            last 365 days on Amazon, Shopify and eBay, with
+//                            their reasons (--only one of them)
 //
 // A channel without credentials in the environment is skipped. Every pass is
 // recorded for Diagnostics (/diagnostics).
 import { parseArgs } from "node:util";
 import {
-	fetchAmazonReturns,
-	REPORT_DAYS,
-	saveAmazonReturns,
-} from "#/channels/amazon-returns";
+	backfillReturns,
+	type ReturnChannel,
+	returnChannels,
+} from "#/channels/returns-history";
 import { backfillShopify } from "#/channels/shopify";
-import { ensureStore } from "#/channels/stores";
 import { costPassAlone, syncPass } from "#/channels/sync";
 import { getDb } from "#/db/client";
 import { channelEnv } from "#/diagnostics/checks";
@@ -43,7 +42,7 @@ const { values } = parseArgs({
 		"costs-history": { type: "boolean", default: false },
 		only: { type: "string" },
 		"shopify-history": { type: "string" },
-		"amazon-returns-history": { type: "string" },
+		"returns-history": { type: "string" },
 	},
 });
 
@@ -140,26 +139,16 @@ if (values["shopify-history"]) {
 	process.exit(0);
 }
 
-if (values["amazon-returns-history"]) {
-	const days = Number(values["amazon-returns-history"]);
+if (values["returns-history"]) {
+	const days = Number(values["returns-history"]);
 	if (!Number.isInteger(days) || days <= 0) throw new Error("Give a number of days");
-	const DAY = 24 * 60 * 60 * 1000;
-	const store = await ensureStore(getDb(), "amazon", "Amazon US");
-	const oldest = Date.now() - days * DAY;
-	let saved = 0;
-	let skipped = 0;
-	// Newest first, so a stopped run has the returns that matter most.
-	for (let until = Date.now(); until > oldest; until -= REPORT_DAYS * DAY) {
-		const from = new Date(Math.max(oldest, until - REPORT_DAYS * DAY));
-		const found = await fetchAmazonReturns(from, new Date(until), 15 * 60 * 1000);
-		if (!found) throw new Error(`Amazon's returns report from ${from.toISOString()} wasn't ready in 15 minutes; run again`);
-		for (const problem of found.problems) console.log(`  ${problem}`);
-		const result = await saveAmazonReturns(getDb(), store.id, found.returns);
-		saved += result.saved;
-		skipped += result.skipped;
-		console.log(`${from.toISOString().slice(0, 10)}: ${result.saved} returns saved, ${result.skipped} for orders katasync doesn't have`);
-	}
-	console.log(`Amazon: ${saved} returns saved, ${skipped} skipped`);
+	const wanted = returnChannels.filter(
+		(c): c is ReturnChannel =>
+			(!values.only || c === values.only) &&
+			channelEnv[c].every((name) => process.env[name]),
+	);
+	for (const channel of wanted)
+		await backfillReturns(getDb(), channel, days, console.log);
 	process.exit(0);
 }
 

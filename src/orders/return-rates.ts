@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, isNotNull, lt, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	orderLineReturns,
@@ -6,8 +6,11 @@ import {
 	orders,
 	productReturnRates,
 	products,
+	returnRequestLines,
+	returnRequests,
 	stores,
 } from "#/db/schema";
+import { returnReasons } from "./return-reasons";
 
 // What Returns › Insights shows, from the order_line_returns and
 // product_return_rates views (drizzle/0064, 0066). Rates count orders: a
@@ -21,13 +24,14 @@ const settled = and(
 	lt(orderLineReturns.placedAt, sql`now() - interval '45 days'`),
 );
 
-// What each channel tells us when something comes back. Only Amazon names
-// returns (with a reason); the others only show up as full refunds.
+// What each channel tells us when something comes back. TikTok's own
+// returns aren't read yet; only the ones Shopify relayed come with reasons,
+// the rest show up as full refunds.
 export const evidence = {
 	amazon: "Return requests, with reasons",
-	shopify: "Full refunds only",
-	ebay: "Full refunds only",
-	tiktok: "Full refunds only",
+	shopify: "Return requests, with reasons",
+	ebay: "Return requests, with reasons",
+	tiktok: "Relayed returns, with reasons",
 } as const;
 
 export async function returnInsights(db: Db) {
@@ -36,7 +40,7 @@ export async function returnInsights(db: Db) {
 		from: new Date(Date.now() - 410 * day),
 		until: new Date(Date.now() - 45 * day),
 	};
-	const [channels, rates, lines, reasons] = await Promise.all([
+	const [channels, rates, returnedLines, notes] = await Promise.all([
 		db
 			.select({
 				channel: orderLineReturns.soldOn,
@@ -70,6 +74,7 @@ export async function returnInsights(db: Db) {
 			.where(gt(productReturnRates.returned, 0)),
 		db
 			.select({
+				lineId: orderLineReturns.lineId,
 				productId: orderLineReturns.productId,
 				orderId: orderLineReturns.orderId,
 				orderName: orders.name,
@@ -88,18 +93,40 @@ export async function returnInsights(db: Db) {
 			.innerJoin(stores, eq(stores.id, orders.storeId))
 			.where(and(settled, gt(orderLineReturns.returned, 0)))
 			.orderBy(desc(orderLineReturns.placedAt)),
+		// What buyers wrote, by the line they sent back.
 		db
 			.select({
-				reason: sql<string>`r.reason`,
-				lines: sql<number>`count(*)::int`,
+				lineId: returnRequestLines.orderLineId,
+				note: returnRequests.note,
 			})
-			.from(
-				sql`${orderLineReturns}, unnest(${orderLineReturns.reasons}) as r(reason)`,
+			.from(returnRequestLines)
+			.innerJoin(
+				returnRequests,
+				eq(returnRequests.id, returnRequestLines.requestId),
 			)
-			.where(settled)
-			.groupBy(sql`r.reason`)
-			.orderBy(desc(sql`count(*)`)),
+			.where(
+				and(
+					isNotNull(returnRequests.note),
+					ne(returnRequests.status, "cancelled"),
+				),
+			),
 	]);
+
+	const lines = returnedLines.map((l) => ({
+		...l,
+		notes: notes.filter((n) => n.lineId === l.lineId).map((n) => n.note ?? ""),
+	}));
+	// How many returned lines gave each reason, in plain words, so the same
+	// reason from two channels counts once.
+	const byReason = new Map<string, { text: string; lines: number }>();
+	for (const l of lines)
+		for (const r of returnReasons(l.reasons.join("; "))) {
+			const seen = byReason.get(r.chip);
+			byReason.set(r.chip, { text: r.text, lines: (seen?.lines ?? 0) + 1 });
+		}
+	const reasons = [...byReason]
+		.map(([chip, r]) => ({ chip, ...r }))
+		.sort((a, b) => b.lines - a.lines);
 
 	// Returned too often: even the lowest rate its numbers make likely is
 	// above what its channels would bring, worst excess first. One return

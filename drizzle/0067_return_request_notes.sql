@@ -1,0 +1,1 @@
+ALTER TABLE "return_requests" ADD COLUMN "note" text;

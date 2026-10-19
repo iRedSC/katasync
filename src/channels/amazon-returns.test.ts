@@ -1,13 +1,5 @@
-import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, test } from "vitest";
-import type { Db } from "#/db/client";
-import * as schema from "#/db/schema";
-import { createProduct, createTestDb } from "#/test/db";
-import {
-	parseReturnsReport,
-	returnStatus,
-	saveAmazonReturns,
-} from "./amazon-returns";
+import { describe, expect, test } from "vitest";
+import { parseReturnsReport, returnStatus } from "./amazon-returns";
 
 const HEADER = [
 	"Order ID",
@@ -65,12 +57,12 @@ describe("parseReturnsReport", () => {
 		expect(problems).toEqual(["Amazon return for 111-2 has no date"]);
 		expect(returns).toHaveLength(1);
 		expect(returns[0]).toMatchObject({
-			rmaId: "RMA1",
+			externalId: "RMA1",
 			status: "shipped",
 			reason: "DEFECTIVE",
 			lines: [
-				{ orderItemId: "OI-1", sku: "WRENCH", quantity: 1 },
-				{ orderItemId: "OI-2", sku: "HAWK", quantity: 2 },
+				{ lineExternalId: "OI-1", sku: "WRENCH", quantity: 1 },
+				{ lineExternalId: "OI-2", sku: "HAWK", quantity: 2 },
 			],
 		});
 	});
@@ -88,79 +80,5 @@ describe("parseReturnsReport", () => {
 		expect(s("Closed", true)).toBe("closed");
 		expect(s("Approved", true, true)).toBe("delivered");
 		expect(s("Pending")).toBe("requested");
-	});
-});
-
-describe("saveAmazonReturns", () => {
-	let db: Db;
-	let store: number;
-	let lineId: number;
-
-	beforeEach(async () => {
-		db = await createTestDb();
-		[{ id: store }] = await db
-			.insert(schema.stores)
-			.values({ channel: "amazon", name: "Amazon US" })
-			.returning();
-		const product = await createProduct(db, "WRENCH", "simple");
-		const [o] = await db
-			.insert(schema.orders)
-			.values({
-				storeId: store,
-				externalId: "111-1",
-				name: "111-1",
-				placedAt: new Date(),
-				fulfillmentStatus: "Shipped",
-				total: 20,
-				sourceUpdatedAt: new Date(),
-			})
-			.returning();
-		[{ id: lineId }] = await db
-			.insert(schema.orderLines)
-			.values({
-				orderId: o.id,
-				externalId: "OI-1",
-				productId: product,
-				sku: "WRENCH",
-				title: "Wrench",
-				quantity: 1,
-				unitPrice: 20,
-			})
-			.returning();
-	});
-
-	const amazonReturn = (status: "requested" | "closed") => ({
-		rmaId: "RMA1",
-		orderId: "111-1",
-		rawStatus: status,
-		status,
-		reason: "DEFECTIVE",
-		trackingNumber: null,
-		carrier: null,
-		requestedAt: new Date(),
-		lines: [{ orderItemId: "OI-1", sku: "WRENCH", quantity: 1 }],
-	});
-
-	test("saves against the order's line, and a later report replaces it", async () => {
-		const unknown = {
-			...amazonReturn("requested"),
-			rmaId: "RMA2",
-			orderId: "999",
-		};
-		expect(
-			await saveAmazonReturns(db, store, [amazonReturn("requested"), unknown]),
-		).toEqual({
-			saved: 1,
-			skipped: 1,
-		});
-		await saveAmazonReturns(db, store, [amazonReturn("closed")]);
-
-		const requests = await db.select().from(schema.returnRequests);
-		expect(requests).toMatchObject([{ status: "closed", reason: "DEFECTIVE" }]);
-		const lines = await db
-			.select()
-			.from(schema.returnRequestLines)
-			.where(eq(schema.returnRequestLines.requestId, requests[0].id));
-		expect(lines).toMatchObject([{ orderLineId: lineId, quantity: 1 }]);
 	});
 });

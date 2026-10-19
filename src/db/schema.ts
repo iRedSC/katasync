@@ -477,7 +477,10 @@ export const returnRequests = pgTable(
 		status: returnRequestStatus().notNull(),
 		// The marketplace's own wording.
 		rawStatus: text().notNull(),
+		// Why, as the marketplace names it (a code or its words).
 		reason: text(),
+		// What the buyer wrote about it, when they wrote anything.
+		note: text(),
 		trackingNumber: text(),
 		carrier: text(),
 		requestedAt: timestamp({ withTimezone: true }).notNull(),

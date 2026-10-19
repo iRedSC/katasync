@@ -7,10 +7,10 @@ import { ProductImage, ProductName } from "#/components/product";
 import { ReturnsTabs } from "#/components/returns-tabs";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { Tip } from "#/components/ui/tooltip";
-import { formatCount } from "#/lib/format";
+import { channelName, formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { ReturnedLine, ReturnRate } from "#/orders/return-rates";
-import { returnReason as reasonLabel } from "#/orders/return-reasons";
+import { returnReasons } from "#/orders/return-reasons";
 import { getReturnInsights } from "#/server/returns";
 
 // What comes back, how often, and why: products returned more than their
@@ -49,6 +49,11 @@ function Insights() {
 	const [showOnce, setShowOnce] = useState(false);
 	const expected = showAll ? data.expected : data.expected.slice(0, 10);
 	const reasonMax = Math.max(1, ...data.reasons.map((r) => r.lines));
+	// Channels whose returns say why; the others' refunds don't.
+	const reasonChannels = data.channels
+		.filter((c) => c.evidence.includes("reasons"))
+		.map((c) => channelName(c.channel))
+		.join(", ");
 
 	return (
 		<Page title="Returns">
@@ -147,27 +152,23 @@ function Insights() {
 
 					{data.reasons.length > 0 && (
 						<Card
-							title="Why Amazon buyers send things back"
-							aside="Amazon only"
+							title="Why buyers send things back"
+							aside={`${reasonChannels} · returned orders`}
 						>
 							<div className="flex flex-col gap-1.5">
 								{data.reasons.map((r) => (
-									<Tip key={r.reason} content={r.reason}>
-										<div className="flex items-center gap-3">
-											<span className="w-44 shrink-0 truncate">
-												{reasonLabel(r.reason)}
-											</span>
-											<div className="h-2 flex-1 rounded-full bg-surface">
-												<div
-													className="h-2 rounded-full bg-info-fill"
-													style={{ width: `${(r.lines / reasonMax) * 100}%` }}
-												/>
-											</div>
-											<span className="w-8 text-right tabular-nums">
-												{formatCount(r.lines)}
-											</span>
+									<div key={r.chip} className="flex items-center gap-3">
+										<span className="w-44 shrink-0 truncate">{r.text}</span>
+										<div className="h-2 flex-1 rounded-full bg-surface">
+											<div
+												className="h-2 rounded-full bg-info-fill"
+												style={{ width: `${(r.lines / reasonMax) * 100}%` }}
+											/>
 										</div>
-									</Tip>
+										<span className="w-8 text-right tabular-nums">
+											{formatCount(r.lines)}
+										</span>
+									</div>
 								))}
 							</div>
 						</Card>
@@ -218,7 +219,7 @@ function RateRow({
 	lines: ReturnedLine[];
 }) {
 	const [open, setOpen] = useState(false);
-	const reasons = [...new Set(lines.flatMap((l) => l.reasons))];
+	const reasons = returnReasons(lines.flatMap((l) => l.reasons).join("; "));
 	const flagged = r.rateLow > r.baseline && r.ordersReturned > 1;
 	const orders = (n: number) =>
 		`${formatCount(n)} ${n === 1 ? "order" : "orders"}`;
@@ -241,8 +242,8 @@ function RateRow({
 					<ProductName name={r.name} variantName={r.variantName} />
 					<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
 						<span>{r.sku}</span>
-						{reasons.map((code) => (
-							<Badge key={code}>{reasonLabel(code)}</Badge>
+						{reasons.map((reason) => (
+							<ReasonChip key={reason.chip} reason={reason} />
 						))}
 					</div>
 				</div>
@@ -300,8 +301,13 @@ function RateRow({
 								{formatCount(l.returned)} of {formatCount(l.sold)}
 							</span>
 							<Evidence line={l} />
-							{l.reasons.map((code) => (
-								<Badge key={code}>{reasonLabel(code)}</Badge>
+							{returnReasons(l.reasons.join("; ")).map((reason) => (
+								<ReasonChip key={reason.chip} reason={reason} />
+							))}
+							{l.notes.map((note) => (
+								<q key={note} className="basis-full text-muted-foreground">
+									{note}
+								</q>
 							))}
 						</div>
 					))}
@@ -321,7 +327,25 @@ function Evidence({ line: l }: { line: ReturnedLine }) {
 			{l.requested > 0 && (
 				<Badge tone="info">Requested {formatCount(l.requested)}</Badge>
 			)}
-			{l.refundedInFull && <Badge tone="warning">Refunded in full</Badge>}
+			{l.refundedInFull && (
+				<Tip content="The order was refunded in full">
+					<span>
+						<Badge tone="warning">Refunded</Badge>
+					</span>
+				</Tip>
+			)}
 		</>
+	);
+}
+
+// A reason in a word or two; hovering says it in full.
+function ReasonChip({ reason }: { reason: { chip: string; text: string } }) {
+	const chip = <Badge>{reason.chip}</Badge>;
+	return reason.text === reason.chip ? (
+		chip
+	) : (
+		<Tip content={reason.text}>
+			<span>{chip}</span>
+		</Tip>
 	);
 }
