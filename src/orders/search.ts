@@ -1,6 +1,6 @@
 // The order search language, with the product search's sigils where they
 // mean the same thing. Plain words search the order's name, pin, customer,
-// and city; a word starting with a sigil filters instead:
+// city, and its lines' SKUs and titles; a word starting with a sigil filters instead:
 //
 //   $tiktok        %unfulfilled     filter by marketplace, by status
 //   $!tiktok       %!unfulfilled    exclude
@@ -40,6 +40,8 @@ export type SearchableOrder = {
 	total: number;
 	items: number;
 	unmatched: number;
+	// Its lines' SKUs and titles, one per line of text.
+	lineText: string;
 };
 
 export const ORDER_FIELDS = ["marketplace", "status"] as const;
@@ -99,6 +101,7 @@ export function facetsOf(o: SearchableOrder): OrderFacets {
 			o.customerName ?? "",
 			o.shipCity ?? "",
 			o.shipRegion ?? "",
+			o.lineText,
 		].filter(Boolean),
 	};
 }
