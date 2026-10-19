@@ -38,6 +38,11 @@ const recordList = type({
 	}).array(),
 });
 
+// TikTok refunds a creator's free sample ("buy now, refund later") through
+// returns too, with nothing wrong and nothing coming back. Not a return.
+export const isSampleRefund = (r: { return_reason?: string }) =>
+	r.return_reason?.startsWith("system_refund_sample") ?? false;
+
 // TikTok's statuses, as a stage. A refund with nothing coming back (return
 // type REFUND) is closed: it still counts as returned in the rates, but
 // nothing is due back.
@@ -126,7 +131,8 @@ export async function fetchTiktokReturns(
 			),
 		);
 		for (const r of page.return_orders ?? [])
-			returns.push(tiktokToReturn(r, await buyerNote(cipher, r.return_id)));
+			if (!isSampleRefund(r))
+				returns.push(tiktokToReturn(r, await buyerNote(cipher, r.return_id)));
 		pageToken = page.next_page_token || undefined;
 	} while (pageToken);
 	return returns;

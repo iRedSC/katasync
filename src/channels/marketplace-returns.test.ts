@@ -2,10 +2,15 @@ import { describe, expect, test } from "vitest";
 import { ebayReturnStatus, ebayToReturn } from "./ebay-returns";
 import {
 	itemReason,
+	orderReturns,
 	type ShopifyReturn,
 	shopifyToReturn,
 } from "./shopify/returns";
-import { tiktokReturnStatus, tiktokToReturn } from "./tiktok-returns";
+import {
+	isSampleRefund,
+	tiktokReturnStatus,
+	tiktokToReturn,
+} from "./tiktok-returns";
 
 // How Shopify's and eBay's returns read, shaped like what each sent back
 // when asked.
@@ -84,6 +89,16 @@ describe("shopifyToReturn", () => {
 				},
 			}),
 		).toBe("Received the wrong item");
+	});
+
+	test("a TikTok order Shopify relayed is left to TikTok's own returns", () => {
+		const order = (tags: string[]) => ({
+			id: "o",
+			tags,
+			returns: { nodes: [base] },
+		});
+		expect(orderReturns(order(["TikTokOrderID:5776"]))).toEqual([]);
+		expect(orderReturns(order(["wholesale"]))).toHaveLength(1);
 	});
 
 	test("open with a return label's tracking is on its way", () => {
@@ -186,6 +201,20 @@ describe("tiktokToReturn", () => {
 				{ lineExternalId: "1730", sku: "HAWK", quantity: 1 },
 			],
 		});
+	});
+
+	test("a creator's sample refund isn't a return", () => {
+		expect(
+			isSampleRefund({
+				return_reason: "system_refund_sample_buy_now_refund_later",
+			}),
+		).toBe(true);
+		expect(
+			isSampleRefund({
+				return_reason:
+					"ecom_order_delivered_refund_and_return_reason_defective",
+			}),
+		).toBe(false);
 	});
 
 	test("statuses, and a refund with nothing coming back isn't due", () => {

@@ -77,7 +77,7 @@ describe("saveReturns", () => {
 		lines: [{ lineExternalId: "OI-1", sku: "WRENCH", quantity: 1 }],
 	});
 
-	test("a return Shopify relayed is found on the TikTok order it became", async () => {
+	test("a TikTok return is found by its TikTok order id, wherever the order lives", async () => {
 		const [tiktok] = await db
 			.insert(schema.stores)
 			.values({ channel: "tiktok", name: "TikTok" })
@@ -171,7 +171,7 @@ describe("returnReasons", () => {
 		expect(chips("CR-SOME_NEW_REASON")).toEqual(["Some new…"]);
 		expect(chips("")).toEqual([]);
 		for (const r of returnReasons(
-			"AMZ-PG-BAD-DESC; CR-DAMAGED_BY_CARRIER; FOUND_BETTER_PRICE; CR-UNAUTHORIZED_PURCHASE; Wrong item was sent; Damaged or defective; Returned to sender; Item Arrived Late; Item doesn't match description",
+			"AMZ-PG-BAD-DESC; CR-DAMAGED_BY_CARRIER; FOUND_BETTER_PRICE; CR-UNAUTHORIZED_PURCHASE; Wrong item was sent; Damaged or defective; Returned to sender; Item Arrived Late; Item doesn't match description; Product wouldn't arrive on time; Missing package; Damaged item or packaging; Item arrived too late; Missing items",
 		))
 			expect(r.chip.split(" ").length).toBeLessThanOrEqual(2);
 	});

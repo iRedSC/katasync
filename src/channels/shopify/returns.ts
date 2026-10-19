@@ -5,8 +5,8 @@ import { shopifyQuery } from "./client";
 
 // Returns buyers asked for in Shopify, with the reason they picked and
 // anything they wrote. Needs the read_returns scope. Shopify also mirrors
-// returns on TikTok orders it relayed, reasons and all; those are saved
-// against the TikTok order wherever it now lives (by marketplaceOrderId).
+// returns on TikTok orders it relayed; those are skipped, since TikTok's own
+// (tiktok-returns.ts) are the ones that keep moving.
 
 // Small pages: Shopify prices a query by the most it could return, and
 // refuses one over 1,000.
@@ -130,7 +130,6 @@ const joined = (values: (string | null | undefined)[]) => {
 export function shopifyToReturn(
 	orderId: string,
 	r: ShopifyReturn,
-	marketplaceOrderId: string | null = null,
 ): ChannelReturn {
 	const items = r.returnLineItems.nodes.filter((l) => l.quantity);
 	const tracking = r.reverseFulfillmentOrders.nodes
@@ -140,7 +139,6 @@ export function shopifyToReturn(
 	return {
 		externalId: r.id,
 		orderExternalId: orderId,
-		marketplaceOrderId,
 		status: shopifyReturnStatus(r.status, Boolean(tracking)),
 		rawStatus: r.status,
 		// Each item has its own reason; a return of several keeps them all.
@@ -155,6 +153,17 @@ export function shopifyToReturn(
 			quantity: l.quantity ?? 0,
 		})),
 	};
+}
+
+// An order's returns, unless it's a TikTok order Shopify relayed: TikTok's
+// own copy of those is the one that keeps moving.
+export function orderReturns(o: {
+	id: string;
+	tags: string[];
+	returns: { nodes: ShopifyReturn[] };
+}): ChannelReturn[] {
+	if (tiktokOrderId(o.tags)) return [];
+	return o.returns.nodes.map((r) => shopifyToReturn(o.id, r));
 }
 
 // Returns on orders that changed since `since`. A return being asked for or
@@ -173,9 +182,7 @@ export async function fetchShopifyReturns(since: Date, until?: Date) {
 		const page = ordersPage.assert(
 			await shopifyQuery(RETURNS_QUERY, { query, cursor }),
 		);
-		for (const o of page.orders.nodes)
-			for (const r of o.returns.nodes)
-				returns.push(shopifyToReturn(o.id, r, tiktokOrderId(o.tags)));
+		for (const o of page.orders.nodes) returns.push(...orderReturns(o));
 		cursor = page.orders.pageInfo.hasNextPage
 			? (page.orders.pageInfo.endCursor ?? null)
 			: null;

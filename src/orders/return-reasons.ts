@@ -70,6 +70,16 @@ const reasons: Record<string, Reason> = {
 	Defective: DEFECTIVE,
 	"Missing parts": MISSING_PARTS,
 	"Size too small": TOO_SMALL,
+	// TikTok words its reasons too.
+	"Product wouldn't arrive on time": LATE,
+	"Missing package": reason("Lost package", "Package never arrived"),
+	"Missing items": MISSING_PARTS,
+	"Damaged item": reason("Damaged"),
+	"Damaged item or packaging": reason("Damaged", "Damaged item or packaging"),
+	"Item arrived too late": LATE,
+	"Damaged product": reason("Damaged"),
+	"Product doesn't match description": NOT_AS_DESCRIBED,
+	"Wrong product": WRONG_ITEM,
 	"Size too large": TOO_LARGE,
 };
 

@@ -35,14 +35,12 @@ const settled = and(
 	lt(orderLineReturns.placedAt, sql`now() - interval '45 days'`),
 );
 
-// What each channel tells us when something comes back. TikTok's own
-// returns need the shop to authorize the app again (Return & Refund); until
-// then only the ones Shopify relayed come with reasons.
+// What each channel tells us when something comes back.
 export const evidence = {
 	amazon: "Return requests, with reasons",
 	shopify: "Return requests, with reasons",
 	ebay: "Return requests, with reasons",
-	tiktok: "Relayed returns, with reasons",
+	tiktok: "Return requests, with reasons",
 } as const;
 
 // Lines that came back among orders matching `placed`, newest first, each
