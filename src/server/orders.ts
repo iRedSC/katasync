@@ -7,6 +7,7 @@ import {
 	eq,
 	gt,
 	inArray,
+	isNull,
 	ne,
 	or,
 	type SQL,
@@ -100,6 +101,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				items: sql<number>`coalesce(${lineStats.items}, 0)`,
 				unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
 				labelToVoid,
+				invoicePrintedAt: orders.invoicePrintedAt,
 			})
 			.from(orders)
 			.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -415,6 +417,17 @@ export const undoOrderNoReturn = createServerFn({ method: "POST" })
 // Everything the invoices for orders still to ship print, in pin order so
 // the stack matches what packers type. `ids` picks the orders instead,
 // whether or not they still need shipping.
+// Called by the invoices page once the print dialog closes, with the
+// orders it held, so the next Print all skips them.
+export const markInvoicesPrinted = createServerFn({ method: "POST" })
+	.validator(type({ ids: "(number.integer > 0)[] > 0" }))
+	.handler(async ({ data }) => {
+		await getDb()
+			.update(orders)
+			.set({ invoicePrintedAt: new Date() })
+			.where(inArray(orders.id, data.ids));
+	});
+
 export const listInvoices = createServerFn({ method: "GET" })
 	.validator(type({ "ids?": "(number.integer > 0)[]" }))
 	.handler(async ({ data }) => {
@@ -449,9 +462,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 				.innerJoin(stores, eq(stores.id, orders.storeId))
 				.where(where)
 				.orderBy(asc(orders.pin), asc(orders.placedAt));
-		// The orders picked, or every order still to ship.
+		// The orders picked, printed before or not, or every order still to
+		// ship that hasn't been printed.
 		const toShip = await select(
-			data.ids ? inArray(orders.id, data.ids) : needsShipping,
+			data.ids
+				? inArray(orders.id, data.ids)
+				: sql`${needsShipping} and ${isNull(orders.invoicePrintedAt)}`,
 		);
 		const lines = toShip.length
 			? await db

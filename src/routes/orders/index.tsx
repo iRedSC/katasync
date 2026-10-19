@@ -1,4 +1,9 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import {
+	createFileRoute,
+	Link,
+	useNavigate,
+	useRouter,
+} from "@tanstack/react-router";
 import { PackageCheck, Printer, SearchX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilterPicker, SortMenu, ValueList } from "#/components/filter-menu";
@@ -145,6 +150,20 @@ function Orders() {
 	}, [rows, facets, chips, q, sort]);
 	const plan = printPlan({ view, ticks, shown, filtering });
 
+	// Printing happens in another tab and marks the orders printed there, so
+	// once one is opened, each return to this tab reloads the list to show
+	// it. Every return, since the print dialog may still be open the first.
+	const router = useRouter();
+	const [printOpened, setPrintOpened] = useState(false);
+	useEffect(() => {
+		if (!printOpened) return;
+		const back = () => {
+			if (document.visibilityState === "visible") router.invalidate();
+		};
+		document.addEventListener("visibilitychange", back);
+		return () => document.removeEventListener("visibilitychange", back);
+	}, [printOpened, router]);
+
 	// A new tab starts over: the tabs drop the chips, so the typed search
 	// goes too, and ticks from the other list don't carry across.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: resets when the view changes
@@ -210,7 +229,9 @@ function Orders() {
 		<Page
 			title="Orders"
 			width="wide"
-			actions={plan && <PrintButton plan={plan} />}
+			actions={
+				plan && <PrintButton plan={plan} onOpen={() => setPrintOpened(true)} />
+			}
 		>
 			<Card flush className="overflow-visible">
 				<OrderTabs active={view} count={rows.length} />
@@ -294,16 +315,43 @@ function Orders() {
 	);
 }
 
-// Says how many it prints, so a filtered list never prints more than it shows.
+// Says how many it prints, so a filtered list never prints more than it
+// shows, and what it skips, so a printed order isn't silently missing.
 function PrintButton({
 	plan,
+	onOpen,
 }: {
 	plan: NonNullable<ReturnType<typeof printPlan>>;
+	onOpen: () => void;
 }) {
+	if (plan.kind === "done") {
+		return (
+			<Tip content="Every order here is printed. Tick one to print it again">
+				<Button variant="outline" size="sm" disabled>
+					<Printer />
+					All printed
+				</Button>
+			</Tip>
+		);
+	}
 	const label =
 		plan.kind === "all"
-			? "Print all"
-			: `Print ${formatCount(plan.ids.length)} ${plan.why === "ticked" ? "ticked" : "shown"}`;
+			? plan.skipped > 0
+				? "Print all new"
+				: "Print all"
+			: plan.why === "ticked"
+				? `Print ${formatCount(plan.ids.length)} ticked`
+				: `Print ${formatCount(plan.ids.length)} ${plan.skipped > 0 ? "new" : "shown"}`;
+	const notes = [
+		plan.kind === "ids" && plan.leftOut > 0
+			? `Leaves out ${formatCount(plan.leftOut)} cancelled with a label to void`
+			: null,
+		plan.kind !== "ids" || plan.why === "shown"
+			? plan.skipped > 0
+				? `Skips ${formatCount(plan.skipped)} already printed. Tick one to print it again`
+				: null
+			: null,
+	].filter((n) => n !== null);
 	const button = (
 		<Button asChild variant="outline" size="sm">
 			<Link
@@ -311,18 +359,15 @@ function PrintButton({
 				search={plan.kind === "ids" ? { ids: plan.ids } : {}}
 				target="_blank"
 				rel="noreferrer"
+				onClick={onOpen}
 			>
 				<Printer />
 				{label}
 			</Link>
 		</Button>
 	);
-	return plan.kind === "ids" && plan.leftOut > 0 ? (
-		<Tip
-			content={`Leaves out ${formatCount(plan.leftOut)} cancelled with a label to void`}
-		>
-			{button}
-		</Tip>
+	return notes.length > 0 ? (
+		<Tip content={notes.join(". ")}>{button}</Tip>
 	) : (
 		button
 	);

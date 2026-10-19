@@ -505,6 +505,13 @@
       "when": 1792437706800,
       "tag": "0071_aerosol_hazmat",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1792438460396,
+      "tag": "0072_invoice_printed",
+      "breakpoints": true
     }
   ]
 }

@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useState } from "react";
 import { cityLine, formatMoney, formatPhone } from "#/lib/format";
-import { listInvoices } from "#/server/orders";
+import { listInvoices, markInvoicesPrinted } from "#/server/orders";
 
-// One letter-size invoice per order still to ship, in pin order, or just
-// the orders picked: ?ids=[1,2] from the orders list, ?id=1 from one order.
-// Opens the print dialog on its own.
+// One letter-size invoice per order still to ship and not yet printed, in
+// pin order, or just the orders picked, printed before or not: ?ids=[1,2]
+// from the orders list, ?id=1 from one order. Opens the print dialog on its
+// own, and marks the orders printed once it closes.
 export const Route = createFileRoute("/print/invoices")({
 	validateSearch: (search: Record<string, unknown>): { ids?: number[] } => {
 		const picked = (Array.isArray(search.ids) ? search.ids : [search.id])
@@ -72,6 +73,19 @@ function Invoices() {
 		};
 	}, [invoices.length]);
 
+	// The browser doesn't say whether the dialog printed or was cancelled,
+	// so closing it counts as printed. A cancelled order can be ticked and
+	// printed again from the list.
+	const printedIds = invoices.map((o) => o.id).join();
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the ids, not each load's copy of the list
+	useEffect(() => {
+		if (invoices.length === 0) return;
+		const ids = invoices.map((o) => o.id);
+		const mark = () => markInvoicesPrinted({ data: { ids } });
+		window.addEventListener("afterprint", mark);
+		return () => window.removeEventListener("afterprint", mark);
+	}, [printedIds]);
+
 	return (
 		<div className="min-h-svh bg-surface py-6 print:bg-white print:py-0">
 			<style>{"@page { size: letter; margin: 0.5in; }"}</style>
@@ -89,7 +103,7 @@ function Invoices() {
 			</div>
 			{invoices.length === 0 && (
 				<p className="text-center text-muted-foreground">
-					{ids ? "Those orders are gone." : "Nothing to ship."}
+					{ids ? "Those orders are gone." : "Nothing new to print."}
 				</p>
 			)}
 			{invoices.map((invoice) => (

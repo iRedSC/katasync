@@ -383,6 +383,9 @@ export const orders = pgTable(
 		// A short number (1 to 999) to find the order while packing. Only orders
 		// still to ship have one, so pins are reused once an order ships.
 		pin: smallint(),
+		// The last time its invoice went to the printer. Print all skips
+		// orders that have one; ticking an order prints it again.
+		invoicePrintedAt: timestamp({ withTimezone: true }),
 		total: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		shippingCharged: numeric({ precision: 12, scale: 2, mode: "number" })
 			.notNull()

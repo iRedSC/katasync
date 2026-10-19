@@ -5,7 +5,7 @@
 // of the print, and clearing the filter brings it back ticked. What looks
 // ticked is always exactly what prints.
 
-type Row = { id: number; labelToVoid: boolean };
+type Row = { id: number; labelToVoid: boolean; invoicePrintedAt: Date | null };
 
 export type Ticks = ReadonlySet<number>;
 
@@ -55,15 +55,26 @@ export function headerState(ticks: Ticks, shown: readonly Row[]) {
 }
 
 // What the Print button prints, or null when there's nothing to.
-//   - Ticked orders, when any are: exactly those, on any tab.
+//   - Ticked orders, when any are: exactly those, on any tab, printed
+//     before or not. Ticking is how an invoice prints again.
 //   - Otherwise, on To ship with nothing filtered: every order still to
-//     ship, worked out by the server (the list stops at 500).
-//   - Otherwise, on To ship: the orders shown, leaving out cancelled ones
-//     still listed only for their label to void.
+//     ship that hasn't been printed, worked out by the server (the list
+//     stops at 500).
+//   - Otherwise, on To ship: the orders shown that haven't been printed,
+//     leaving out cancelled ones still listed only for their label to void.
+//   - "done" when every order those would print already has been, so the
+//     button can say so rather than vanish.
 // All orders lists the past too, so it prints only what's ticked.
 export type PrintPlan =
-	| { kind: "all" }
-	| { kind: "ids"; ids: number[]; why: "ticked" | "shown"; leftOut: number };
+	| { kind: "all"; skipped: number }
+	| {
+			kind: "ids";
+			ids: number[];
+			why: "ticked" | "shown";
+			leftOut: number;
+			skipped: number;
+	  }
+	| { kind: "done" };
 
 export function printPlan({
 	view,
@@ -83,16 +94,21 @@ export function printPlan({
 			ids: ticked.map((o) => o.id),
 			why: "ticked",
 			leftOut: 0,
+			skipped: 0,
 		};
 	}
 	if (view !== "ship" || shown.length === 0) return null;
-	if (!filtering) return { kind: "all" };
 	const printable = shown.filter((o) => !o.labelToVoid);
+	const fresh = printable.filter((o) => o.invoicePrintedAt === null);
+	const skipped = printable.length - fresh.length;
 	if (printable.length === 0) return null;
+	if (fresh.length === 0) return { kind: "done" };
+	if (!filtering) return { kind: "all", skipped };
 	return {
 		kind: "ids",
-		ids: printable.map((o) => o.id),
+		ids: fresh.map((o) => o.id),
 		why: "shown",
 		leftOut: shown.length - printable.length,
+		skipped,
 	};
 }

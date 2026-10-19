@@ -167,6 +167,10 @@ export function OrderTable({
 											{o.unmatched > 0 && (
 												<Badge tone="critical">Unknown product</Badge>
 											)}
+											{/* Print all skips it, so the list says why. */}
+											{view === "ship" && o.invoicePrintedAt && (
+												<Badge>Printed</Badge>
+											)}
 										</div>
 									</td>
 								</tr>

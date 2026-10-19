@@ -1,7 +1,16 @@
 import { describe, expect, test } from "vitest";
 import { headerState, printPlan, toggle, toggleAll } from "./selection";
 
-const rows = [1, 2, 3, 4, 5].map((id) => ({ id, labelToVoid: id === 5 }));
+const rows = [1, 2, 3, 4, 5].map((id) => ({
+	id,
+	labelToVoid: id === 5,
+	invoicePrintedAt: null as Date | null,
+}));
+// Orders 2 and 3 have been printed before.
+const somePrinted = rows.map((o) => ({
+	...o,
+	invoicePrintedAt: o.id === 2 || o.id === 3 ? new Date() : null,
+}));
 const ids = (ticks: ReadonlySet<number>) => [...ticks].sort();
 
 describe("ticking", () => {
@@ -33,7 +42,7 @@ describe("what Print prints", () => {
 				shown: rows.slice(0, 3),
 				filtering: true,
 			}),
-		).toEqual({ kind: "ids", ids: [1], why: "ticked", leftOut: 0 });
+		).toEqual({ kind: "ids", ids: [1], why: "ticked", leftOut: 0, skipped: 0 });
 	});
 
 	test("everything to ship when nothing is ticked or filtered", () => {
@@ -44,7 +53,7 @@ describe("what Print prints", () => {
 				shown: rows,
 				filtering: false,
 			}),
-		).toEqual({ kind: "all" });
+		).toEqual({ kind: "all", skipped: 0 });
 	});
 
 	test("a filtered list prints what it shows, less labels to void", () => {
@@ -55,7 +64,13 @@ describe("what Print prints", () => {
 				shown: rows,
 				filtering: true,
 			}),
-		).toEqual({ kind: "ids", ids: [1, 2, 3, 4], why: "shown", leftOut: 1 });
+		).toEqual({
+			kind: "ids",
+			ids: [1, 2, 3, 4],
+			why: "shown",
+			leftOut: 1,
+			skipped: 0,
+		});
 	});
 
 	test("All orders prints only what's ticked", () => {
@@ -67,5 +82,67 @@ describe("what Print prints", () => {
 				filtering: false,
 			}),
 		).toBeNull();
+	});
+
+	test("printing everything skips orders already printed", () => {
+		expect(
+			printPlan({
+				view: "ship",
+				ticks: new Set(),
+				shown: somePrinted,
+				filtering: false,
+			}),
+		).toEqual({ kind: "all", skipped: 2 });
+	});
+
+	test("a filtered list skips orders already printed", () => {
+		expect(
+			printPlan({
+				view: "ship",
+				ticks: new Set(),
+				shown: somePrinted,
+				filtering: true,
+			}),
+		).toEqual({
+			kind: "ids",
+			ids: [1, 4],
+			why: "shown",
+			leftOut: 1,
+			skipped: 2,
+		});
+	});
+
+	test("ticked orders print even when printed before", () => {
+		expect(
+			printPlan({
+				view: "ship",
+				ticks: new Set([2, 3]),
+				shown: somePrinted,
+				filtering: false,
+			}),
+		).toEqual({
+			kind: "ids",
+			ids: [2, 3],
+			why: "ticked",
+			leftOut: 0,
+			skipped: 0,
+		});
+	});
+
+	test("says when everything is already printed", () => {
+		const allPrinted = rows.map((o) => ({
+			...o,
+			invoicePrintedAt: new Date(),
+		}));
+		for (const filtering of [false, true]) {
+			expect(
+				printPlan({
+					view: "ship",
+					ticks: new Set(),
+					shown: allPrinted,
+					filtering,
+				}),
+			).toEqual({ kind: "done" });
+		}
 	});
 });
