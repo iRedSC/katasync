@@ -122,7 +122,8 @@ function Invoice({
 	const paid = payment(o.financialStatus);
 	// Marketplaces that hide the buyer's name get a packing slip: what's in
 	// the box, no prices. The marketplace already sent its own receipt.
-	const slip = !o.customerName;
+	const name = shownName(o.customerName);
+	const slip = name === null;
 
 	return (
 		<article className="mx-auto mb-6 flex min-h-[11in] max-w-[8.5in] flex-col gap-8 bg-white p-[0.5in] text-[11pt] text-black shadow-card break-after-page last:break-after-auto print:m-0 print:min-h-[9.95in] print:max-w-none print:p-0 print:shadow-none">
@@ -160,9 +161,7 @@ function Invoice({
 					<p className="text-[9pt] font-semibold tracking-wide text-muted-foreground uppercase">
 						Ship to
 					</p>
-					<p className="text-[13pt] font-semibold">
-						{o.customerName ?? "Customer"}
-					</p>
+					<p className="text-[13pt] font-semibold">{name ?? "Customer"}</p>
 					{shipTo.map((l) => (
 						<p key={l}>{l}</p>
 					))}
@@ -297,12 +296,10 @@ function Invoice({
 						)}
 						<dl className="flex gap-4 rounded-md border border-border px-2.5 py-1 tabular-nums">
 							<PackFact label="Pin" value={String(o.pin)} />
-							<PackFact
-								label={o.boxes > 1 ? `Box 1 of ${o.boxes}` : "Box"}
-								value={
-									o.box === null ? (
-										"?"
-									) : (
+							{o.box && (
+								<PackFact
+									label={o.boxes > 1 ? `Box 1 of ${o.boxes}` : "Box"}
+									value={
 										<>
 											{o.box.name && <span>{o.box.name} </span>}
 											<span
@@ -313,10 +310,12 @@ function Invoice({
 												{o.box.size}
 											</span>
 										</>
-									)
-								}
-							/>
-							<PackFact label="Weight" value={ounces(o.weightGrams)} />
+									}
+								/>
+							)}
+							{o.weightGrams !== null && (
+								<PackFact label="Weight" value={ounces(o.weightGrams)} />
+							)}
 						</dl>
 					</div>
 				)}
@@ -325,11 +324,14 @@ function Invoice({
 	);
 }
 
-// Quick ship's suggestion, read as "?" when it has none yet.
-function ounces(grams: number | null) {
-	return grams === null
-		? "?"
-		: `${Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10} oz`;
+function ounces(grams: number) {
+	return `${Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10} oz`;
+}
+
+// The buyer's name, or null when the marketplace hid it: missing, or masked
+// the way TikTok sends it ("D*****").
+function shownName(name: string | null) {
+	return name && !name.includes("*") ? name : null;
 }
 
 function PackFact({ label, value }: { label: string; value: ReactNode }) {
