@@ -7,9 +7,9 @@ import type { OrderRow } from "#/server/orders";
 
 type Line = OrderRow["lines"][number];
 
-// What an order is, at a glance: one product's photo and title, or the first
-// photo and how many products. Hovering lists every line. Clicking still
-// opens the order, as anywhere else on its row.
+// What an order is, at a glance: one product's photo, title, and quantity, or
+// the first photo and how many products. Hovering lists every line. Clicking
+// still opens the order, as anywhere else on its row.
 export function OrderProducts({ lines }: { lines: readonly Line[] }) {
 	const [first] = lines;
 	if (!first) return <span className="text-faint">No products</span>;
@@ -30,6 +30,11 @@ export function OrderProducts({ lines }: { lines: readonly Line[] }) {
 							? first.title
 							: `${formatCount(lines.length)} products`}
 					</span>
+					{lines.length === 1 && first.quantity > 1 && (
+						<span className="shrink-0 font-semibold tabular-nums">
+							× {formatCount(first.quantity)}
+						</span>
+					)}
 				</div>
 			</HoverCard.Trigger>
 			<HoverCard.Portal>

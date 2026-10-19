@@ -9,7 +9,7 @@ import {
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
-import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
+import { formatMoney, formatOrderDate } from "#/lib/format";
 import type { useRowLink } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
 import { externalFulfillment } from "#/orders/fulfillment";
@@ -76,7 +76,6 @@ export function OrderTable({
 						Channel
 					</th>
 					<th className="px-4 py-2 text-right font-medium">Total</th>
-					<th className="hidden px-4 py-2 font-medium md:table-cell">Items</th>
 					<th className="px-4 py-2 font-medium">Status</th>
 				</tr>
 			</thead>
@@ -161,9 +160,6 @@ export function OrderTable({
 									</td>
 									<td className="px-4 py-2.5 text-right tabular-nums">
 										{formatMoney(o.total)}
-									</td>
-									<td className="hidden px-4 py-2.5 whitespace-nowrap md:table-cell">
-										{formatCount(o.items)} {o.items === 1 ? "item" : "items"}
 									</td>
 									<td className="px-4 py-2.5">
 										<div className="flex gap-1.5">
