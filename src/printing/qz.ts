@@ -1,7 +1,5 @@
-import "reflect-metadata";
 import { createHash, createSign } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import * as x509 from "@peculiar/x509";
 import { type } from "arktype";
 import { type Db, getDb } from "#/db/client";
 import { qzCertificate } from "#/db/schema";
@@ -55,6 +53,11 @@ export async function qzKeys(): Promise<QzKeys> {
 // QZ wants RSA 2048. Valid for 30 years, since replacing it means running
 // the setup script on every packing computer again.
 export async function makeCertificate() {
+	// @peculiar/x509 needs reflect-metadata loaded before it. Static imports
+	// can't promise that order: the production bundle ran x509 first, which
+	// crashed this whole module and took signing down with it.
+	await import("reflect-metadata");
+	const x509 = await import("@peculiar/x509");
 	const algorithm = {
 		name: "RSASSA-PKCS1-v1_5",
 		hash: "SHA-256",
