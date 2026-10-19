@@ -7,6 +7,11 @@ const labels: Record<string, string> = {
 	"AMZ-PG-APP-TOO-LARGE": "Too large",
 	"AMZ-PG-APP-TOO-SMALL": "Too small",
 	"CR-DEFECTIVE": "Defective",
+	// Seller Central's own words for it. The buyer picks it when asking to
+	// return, so it's their claim, not a warehouse finding that they sent
+	// back a different item (the FBA report's plain SWITCHEROO).
+	"CR-SWITCHEROO": "Wrong item was sent",
+	"CR-UNAUTHORIZED_PURCHASE": "Unauthorized purchase",
 	"CR-UNWANTED_ITEM": "No longer wanted",
 	"CR-ORDERED_WRONG_ITEM": "Ordered the wrong item",
 	"CR-NOT_COMPATIBLE": "Not compatible",
