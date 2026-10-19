@@ -5,6 +5,7 @@ import {
 	type ShopifyReturn,
 	shopifyToReturn,
 } from "./shopify/returns";
+import { tiktokReturnStatus, tiktokToReturn } from "./tiktok-returns";
 
 // How Shopify's and eBay's returns read, shaped like what each sent back
 // when asked.
@@ -148,5 +149,53 @@ describe("ebayToReturn", () => {
 		expect(ebayReturnStatus("ITEM_DELIVERED")).toBe("delivered");
 		expect(ebayReturnStatus("RETURN_REQUEST_CANCELLED")).toBe("cancelled");
 		expect(ebayReturnStatus("RETURN_STARTED")).toBe("requested");
+	});
+});
+
+describe("tiktokToReturn", () => {
+	test("units of one SKU add up, found by its TikTok order id", () => {
+		expect(
+			tiktokToReturn(
+				{
+					return_id: "4035",
+					order_id: "577610389712769305",
+					return_status: "AWAITING_BUYER_SHIP",
+					return_type: "RETURN_AND_REFUND",
+					create_time: 1792000000,
+					return_reason:
+						"ecom_order_delivered_refund_and_return_reason_damaged",
+					return_reason_text: "Damaged item",
+					return_line_items: [
+						{ sku_id: "1729", seller_sku: "WRENCH" },
+						{ sku_id: "1729", seller_sku: "WRENCH" },
+						{ sku_id: "1730", seller_sku: "HAWK" },
+					],
+				},
+				"Handle snapped",
+			),
+		).toMatchObject({
+			externalId: "4035",
+			orderExternalId: "577610389712769305",
+			marketplaceOrderId: "tiktok:577610389712769305",
+			status: "requested",
+			reason: "Damaged item",
+			note: "Handle snapped",
+			requestedAt: new Date(1792000000 * 1000),
+			lines: [
+				{ lineExternalId: "1729", sku: "WRENCH", quantity: 2 },
+				{ lineExternalId: "1730", sku: "HAWK", quantity: 1 },
+			],
+		});
+	});
+
+	test("statuses, and a refund with nothing coming back isn't due", () => {
+		const s = (return_status: string, return_type?: string) =>
+			tiktokReturnStatus({ return_status, return_type });
+		expect(s("BUYER_SHIPPED_ITEM")).toBe("shipped");
+		expect(s("RETURN_OR_REFUND_REQUEST_COMPLETE")).toBe("closed");
+		expect(s("RETURN_OR_REFUND_REQUEST_CANCEL")).toBe("cancelled");
+		expect(s("REFUND_OR_RETURN_REQUEST_REJECT")).toBe("cancelled");
+		expect(s("RETURN_OR_REFUND_REQUEST_PENDING", "REFUND")).toBe("closed");
+		expect(s("RETURN_OR_REFUND_REQUEST_PENDING")).toBe("requested");
 	});
 });

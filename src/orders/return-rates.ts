@@ -36,8 +36,8 @@ const settled = and(
 );
 
 // What each channel tells us when something comes back. TikTok's own
-// returns aren't read yet; only the ones Shopify relayed come with reasons,
-// the rest show up as full refunds.
+// returns need the shop to authorize the app again (Return & Refund); until
+// then only the ones Shopify relayed come with reasons.
 export const evidence = {
 	amazon: "Return requests, with reasons",
 	shopify: "Return requests, with reasons",

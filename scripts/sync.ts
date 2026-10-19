@@ -13,8 +13,8 @@
 //                            last 365 days that the regular sync hasn't seen
 //   pnpm sync --returns-history 365
 //                            one-time import of returns buyers opened in the
-//                            last 365 days on Amazon, Shopify and eBay, with
-//                            their reasons (--only one of them)
+//                            last 365 days on Amazon, Shopify, eBay and
+//                            TikTok, with their reasons (--only one of them)
 //
 // A channel without credentials in the environment is skipped. Every pass is
 // recorded for Diagnostics (/diagnostics).
