@@ -73,7 +73,7 @@ function OrderPage() {
 		order,
 		lines,
 		sends,
-		adminUrl,
+		adminUrls,
 		profit,
 		charges,
 		reports,
@@ -158,14 +158,14 @@ function OrderPage() {
 			back={{ to: "/orders" }}
 			actions={
 				<>
-					{adminUrl && (
-						<Button asChild size="sm" variant="ghost">
-							<a href={adminUrl.url} target="_blank" rel="noreferrer">
-								Open in {adminUrl.name}
+					{adminUrls.map((admin) => (
+						<Button key={admin.name} asChild size="sm" variant="ghost">
+							<a href={admin.url} target="_blank" rel="noreferrer">
+								Open in {admin.name}
 								<ExternalLink />
 							</a>
 						</Button>
-					)}
+					))}
 					<Button asChild size="sm" variant="outline">
 						<a
 							href={`/print/invoices?id=${order.id}`}
