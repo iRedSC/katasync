@@ -1,5 +1,4 @@
 import { Truncate } from "#/components/truncate";
-import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { boxLabel } from "#/shipping/box-filter";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
@@ -17,7 +16,6 @@ export function stepsFor({
 	box,
 	dims,
 	weightGrams,
-	insureAmount,
 	bought,
 	count,
 }: {
@@ -28,7 +26,6 @@ export function stepsFor({
 	box: Box | null;
 	dims: Dims | null;
 	weightGrams: number | null;
-	insureAmount: number | null;
 	bought: Bought | null;
 	count: number;
 }): StepItem[] {
@@ -65,20 +62,6 @@ export function stepsFor({
 							: `${ounces(weightGrams)} oz`
 						: null,
 				},
-				...(plan?.insure
-					? [
-							{
-								id: "insure" as const,
-								label: "Insurance",
-								value:
-									step === "insure" || !weightGrams
-										? null
-										: insureAmount
-											? formatMoney(insureAmount)
-											: "None",
-							},
-						]
-					: []),
 				{ id: "rates", label: "Service", value: bought?.serviceName ?? null },
 			];
 }

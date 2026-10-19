@@ -683,6 +683,10 @@ export const dispatches = pgTable(
 // fulfillment (Shopify needs it to cancel on void). Not sent: why, shown with
 // a retry. Kept per order because a combined box can reach one marketplace
 // and be refused by another.
+//
+// A refused send is tried again on its own (src/shipping/retry.ts) for ten
+// minutes from the first refusal: channelRetryAt is when the next try is due,
+// and null once it's sent or katasync has stopped trying.
 export const dispatchOrders = pgTable(
 	"dispatch_orders",
 	{
@@ -695,6 +699,9 @@ export const dispatchOrders = pgTable(
 		channelSentAt: timestamp({ withTimezone: true }),
 		channelFulfillmentId: text(),
 		channelError: text(),
+		channelFirstFailedAt: timestamp({ withTimezone: true }),
+		channelAttempts: integer().notNull().default(0),
+		channelRetryAt: timestamp({ withTimezone: true }),
 		// When voiding finished for this order: tracking taken back off its
 		// marketplace where possible, and the order back on To ship. Null on a
 		// voided dispatch means voiding again resumes this order.
@@ -703,6 +710,7 @@ export const dispatchOrders = pgTable(
 	(t) => [
 		primaryKey({ columns: [t.dispatchId, t.orderId] }),
 		index("dispatch_orders_order_idx").on(t.orderId),
+		index("dispatch_orders_retry_idx").on(t.channelRetryAt),
 	],
 );
 
@@ -729,6 +737,8 @@ export const shipments = pgTable(
 		serviceName: text().notNull(),
 		cost: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		insuredAmount: numeric({ precision: 12, scale: 2, mode: "number" }),
+		// The label asks for a signature on delivery.
+		signature: boolean().notNull().default(false),
 		trackingNumber: text(),
 		trackingUrl: text(),
 		// The provider's own link to the label. TikTok's expire in a day, so

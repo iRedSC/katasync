@@ -182,7 +182,8 @@ async function channelOverview(
 }
 
 // Orders whose tracking never reached the marketplace, so the customer
-// wasn't told and the order may still show unshipped there.
+// wasn't told and the order may still show unshipped there. Those still
+// being retried are listed too, so a failure shows from the first refusal.
 function failedHandoffs(db: Db, isDismissed: IsDismissed) {
 	return db
 		.select({
@@ -194,6 +195,9 @@ function failedHandoffs(db: Db, isDismissed: IsDismissed) {
 				string | null
 			>`(select string_agg(${shipments.trackingNumber}, ', ' order by ${shipments.id}) from ${shipments} where ${shipments.dispatchId} = ${dispatchOrders.dispatchId} and ${shipments.voidedAt} is null)`,
 			error: dispatchOrders.channelError,
+			// Set while katasync is still trying on its own.
+			retryAt: dispatchOrders.channelRetryAt,
+			attempts: dispatchOrders.channelAttempts,
 			createdAt: dispatches.createdAt,
 		})
 		.from(dispatchOrders)

@@ -27,6 +27,21 @@ export function needsInsurance(order: {
 	);
 }
 
+// eBay only protects a seller from "item not received" on an order this big
+// if the label asked for a signature.
+export const EBAY_SIGNATURE_AT = 750;
+
+// Why these orders' labels must ask for a signature, or null if they needn't.
+export function signatureRequired(
+	members: { channel: string; total: number }[],
+): string | null {
+	return members.some(
+		(o) => o.channel === "ebay" && o.total >= EBAY_SIGNATURE_AT,
+	)
+		? `eBay requires a signature on orders of $${EBAY_SIGNATURE_AT} or more to protect you from "item not received" cases`
+		: null;
+}
+
 // Everything quick ship shows after a pin: the order, other orders to the
 // same address that could share the box, and the plan for shipping it alone.
 export async function orderForShipping(db: Db, pin: number) {
@@ -130,6 +145,7 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 
 	const key = contentsKey(lines);
 	const total = members.reduce((sum, o) => sum + o.total, 0);
+	const shippo = members.every((o) => labelSource(o) === "shippo");
 	return {
 		// In the order quick ship was given them: the pin's order first.
 		orderIds,
@@ -137,10 +153,12 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 		lines,
 		contentsKey: key,
 		total,
-		// TikTok's labels come with TikTok's own shipping protection.
-		insure:
-			members.every((o) => labelSource(o) !== "tiktok") &&
-			needsInsurance({ total, lines }),
+		// Shippo labels take insurance and a signature; TikTok's come with
+		// TikTok's own shipping protection.
+		extras: shippo,
+		// Insurance starts at full coverage.
+		insure: shippo && needsInsurance({ total, lines }),
+		signatureRequired: shippo ? signatureRequired(members) : null,
 		// The boxes these contents went out in last time, if ever.
 		last: await lastBoxes(db, key),
 		// The items' own weights, when every one is known; the box is added

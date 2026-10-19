@@ -46,7 +46,9 @@ export function SendRow({
 				: d.channelSentAt
 					? { tone: "success" as const, text: `Tracking sent to ${channel}` }
 					: d.channelError
-						? { tone: "critical" as const, text: "Tracking not sent" }
+						? d.retrying
+							? { tone: "warning" as const, text: "Tracking retrying" }
+							: { tone: "critical" as const, text: "Tracking not sent" }
 						: { tone: "warning" as const, text: "Tracking pending" };
 
 	return (

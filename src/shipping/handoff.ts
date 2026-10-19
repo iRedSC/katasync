@@ -17,6 +17,7 @@ import {
 } from "#/db/schema";
 import { lockOnOwnConnection, type OrderLocker, ordersOf } from "./dispatch";
 import { assignOrderPins } from "./pins";
+import { nextRetry } from "./retry-window";
 import { refundLabel } from "./shippo";
 import { tiktokShipPackage } from "./tiktok";
 import { storefrontTrackingUrl } from "./tracking-link";
@@ -223,11 +224,25 @@ async function tell(
 		}
 	} catch (err) {
 		const why = err instanceof Error ? err.message : String(err);
+		// Tried again on its own (src/shipping/retry.ts) until ten minutes
+		// after the first refusal.
+		const now = new Date();
+		const firstFailedAt = handoff.channelFirstFailedAt ?? now;
+		const attempts = handoff.channelAttempts + 1;
+		const retryAt = nextRetry(firstFailedAt, attempts, now);
 		await db
 			.update(dispatchOrders)
-			.set({ channelError: why })
+			.set({
+				channelError: why,
+				channelFirstFailedAt: firstFailedAt,
+				channelAttempts: attempts,
+				channelRetryAt: retryAt,
+			})
 			.where(sameMember(member));
-		return done(false, `Tracking didn't reach ${name}: ${why}`);
+		return done(
+			false,
+			`Tracking didn't reach ${name}: ${why}${retryAt ? ". Retrying on its own; Diagnostics shows it if it gives up" : ""}`,
+		);
 	}
 	// Recorded together, so a retry never finds it sent while the order is
 	// still on To ship.
@@ -238,6 +253,7 @@ async function tell(
 				channelSentAt: new Date(),
 				channelFulfillmentId: fulfillmentId,
 				channelError: null,
+				channelRetryAt: null,
 			})
 			.where(sameMember(member));
 		// Shipped now, not on the next sync: off To ship.

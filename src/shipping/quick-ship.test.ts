@@ -14,6 +14,7 @@ import {
 	orderForShipping,
 	rankRates,
 	shipmentPlan,
+	signatureRequired,
 } from "./quick-ship";
 import type { Rate } from "./shippo";
 
@@ -43,6 +44,17 @@ describe("needsInsurance and labelSource", () => {
 		expect(
 			needsInsurance({ total: 20, lines: [{ insureWhenShipped: true }] }),
 		).toBe(true);
+	});
+
+	test("eBay orders of $750 or more need a signature", () => {
+		expect(signatureRequired([{ channel: "ebay", total: 749.99 }])).toBeNull();
+		expect(signatureRequired([{ channel: "shopify", total: 900 }])).toBeNull();
+		expect(
+			signatureRequired([
+				{ channel: "shopify", total: 20 },
+				{ channel: "ebay", total: 750 },
+			]),
+		).toContain("eBay");
 	});
 
 	test("Amazon and TikTok keep their own labels", () => {

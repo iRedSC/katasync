@@ -209,6 +209,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				dispatchId: dispatchOrders.dispatchId,
 				channelSentAt: dispatchOrders.channelSentAt,
 				channelError: dispatchOrders.channelError,
+				channelRetryAt: dispatchOrders.channelRetryAt,
 				reversedAt: dispatchOrders.reversedAt,
 				boughtAt: dispatches.boughtAt,
 			})
@@ -263,6 +264,8 @@ export const getOrder = createServerFn({ method: "GET" })
 				id: h.dispatchId,
 				channelSentAt: h.channelSentAt,
 				channelError: h.channelError,
+				// Still being sent again on its own (src/shipping/retry.ts).
+				retrying: h.channelRetryAt !== null,
 				// False when a box failed part way: void only, never send.
 				complete: h.boughtAt !== null,
 				// Voided, but taking it back for this order didn't finish.

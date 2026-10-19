@@ -6,7 +6,7 @@ import {
 } from "#/server/shipping";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import { splitInsurance } from "./insurance";
-import type { Found, Packed, Rates } from "./types";
+import type { Extras, Found, Packed, Rates } from "./types";
 
 // The per-open caches of lookups, plans, and prices. priceFor prices the
 // given plan, so it reads the plan from this render.
@@ -46,12 +46,13 @@ export function useQuickShipCache(plan: ShipmentPlan | null) {
 		return pending;
 	}
 
-	function priceFor(list: Packed[], insure: number | null) {
+	function priceFor(list: Packed[], extras: Extras) {
 		if (!plan || list.length === 0) return null;
-		const parts = splitInsurance(insure, list.length);
+		const parts = splitInsurance(extras.insure, list.length);
 		const data = {
 			orderIds: plan.orderIds,
 			contentsKey: plan.contentsKey,
+			signature: extras.signature,
 			boxes: list.map((p, i) => ({
 				packageId: p.box?.id ?? null,
 				...p.dims,
