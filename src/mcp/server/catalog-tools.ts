@@ -110,4 +110,22 @@ export function registerCatalogTools(server: McpServer, db: Db) {
 			return json({ sku, insure });
 		},
 	);
+
+	server.registerTool(
+		"set_aerosol",
+		{
+			description:
+				"Whether this product is an aerosol: quick ship then marks its boxes hazmat (ground services only, Limited Quantity mark printed).",
+			inputSchema: { sku: z.string(), aerosol: z.boolean() },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku, aerosol }) => {
+			const product = await productBySku(db, sku);
+			await db
+				.update(products)
+				.set({ aerosol })
+				.where(eq(products.id, product.id));
+			return json({ sku, aerosol });
+		},
+	);
 }

@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { shopCipher, TiktokError, tiktokApi } from "#/channels/tiktok";
+import { shipsAerosols } from "./hazmat";
 import type { Parcel, Rate } from "./shippo";
 
 // TikTok sells its own labels for TikTok orders (shipping_type TIKTOK), paid
@@ -112,7 +113,11 @@ function toRate(
 	}));
 }
 
-async function quote(orderId: string, cipher: string, parcel: Parcel) {
+// A box with aerosols only gets ground services; TikTok has no way to be
+// told, so the mark printed with the label is the declaration.
+type Box = Parcel & { hazmat: boolean };
+
+async function quote(orderId: string, cipher: string, parcel: Box) {
 	const lineItemIds = await lineItemsToShip(orderId, cipher);
 	const data = servicesData.assert(
 		await tiktokApi(
@@ -121,14 +126,18 @@ async function quote(orderId: string, cipher: string, parcel: Parcel) {
 			{ order_line_item_ids: lineItemIds, ...toTiktokParcel(parcel) },
 		),
 	);
-	return { lineItemIds, rates: toRate(data.shipping_services ?? []) };
+	const rates = toRate(data.shipping_services ?? []);
+	return {
+		lineItemIds,
+		rates: parcel.hazmat ? rates.filter(shipsAerosols) : rates,
+	};
 }
 
 // TikTok's prices for this box and weight. Estimates: TikTok charges what
 // the carrier bills.
 export async function tiktokRates(
 	orderId: string,
-	parcel: Parcel,
+	parcel: Box,
 ): Promise<Rate[]> {
 	return (await quote(orderId, await shopCipher(), parcel)).rates;
 }
@@ -161,7 +170,7 @@ const documentData = type({ doc_url: "string", "tracking_number?": "string" });
 // real charge is in Seller Center.
 export async function tiktokBuyLabel(
 	orderId: string,
-	parcel: Parcel,
+	parcel: Box,
 	serviceId: string,
 ) {
 	const cipher = await shopCipher();

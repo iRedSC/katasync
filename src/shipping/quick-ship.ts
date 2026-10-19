@@ -134,6 +134,7 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 			imageUrl: products.imageUrl,
 			weightGrams: products.weightGrams,
 			insureWhenShipped: sql<boolean>`coalesce(${products.insureWhenShipped}, false)`,
+			aerosol: sql<boolean>`coalesce(${products.aerosol}, false)`,
 		})
 		.from(orderLines)
 		.leftJoin(products, eq(products.id, orderLines.productId))
@@ -188,6 +189,7 @@ async function lastBoxes(db: Db, key: string) {
 			widthMm: shipments.widthMm,
 			heightMm: shipments.heightMm,
 			weightGrams: shipments.weightGrams,
+			hazmat: shipments.hazmat,
 		})
 		.from(shipments)
 		.where(eq(shipments.dispatchId, latest.id))

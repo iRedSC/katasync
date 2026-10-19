@@ -98,6 +98,12 @@ export function DoneStep({
 						</li>
 					))}
 				</ul>
+				{bought.boxes.some((b) => b.hazmat) && (
+					<Badge tone="warning">
+						Stick the Limited Quantity mark beside the label
+						{many ? " on each aerosol box" : ""}
+					</Badge>
+				)}
 				{handoff?.sent && (
 					<p className="text-lg font-semibold text-success-text">
 						{handoff.message}

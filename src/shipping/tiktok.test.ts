@@ -14,6 +14,7 @@ const parcel = {
 	widthMm: 200,
 	heightMm: 100,
 	weightGrams: 600,
+	hazmat: false,
 };
 
 beforeEach(() => vi.mocked(tiktokApi).mockReset());
