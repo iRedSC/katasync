@@ -1,3 +1,4 @@
+import { SprayCan } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Truncate } from "#/components/truncate";
 import { optimism } from "#/lib/optimism";
@@ -43,12 +44,16 @@ export function PackageStep({
 	boxes,
 	current,
 	dims,
+	hazmat,
+	onHazmat,
 	onChoose,
 	onSaved,
 }: {
 	boxes: Box[];
 	current: Box | null;
 	dims: Dims | null;
+	hazmat: boolean;
+	onHazmat: () => void;
 	onChoose: (choice: { box: Box | null; dims: Dims }) => void;
 	onSaved: (box: Box) => void;
 }) {
@@ -137,6 +142,31 @@ export function PackageStep({
 					<Key>↓</Key> picks
 				</p>
 			</div>
+			<button
+				type="button"
+				role="switch"
+				aria-checked={hazmat}
+				tabIndex={-1}
+				// Clicking keeps the focus in the input.
+				onMouseDown={(e) => e.preventDefault()}
+				onClick={onHazmat}
+				className={cn(
+					"flex h-10 items-center justify-between gap-3 rounded-xl border-2 px-4 text-lg",
+					hazmat
+						? "border-warning-border bg-warning-surface font-semibold text-warning-text"
+						: "border-border text-muted-foreground hover:bg-subtle",
+				)}
+			>
+				<span className="flex items-center gap-2">
+					<SprayCan className="size-5" />
+					{hazmat
+						? "Aerosols: ground only, Limited Quantity mark prints"
+						: "No aerosols"}
+				</span>
+				<span>
+					<Key>Ctrl</Key> <Key>H</Key>
+				</span>
+			</button>
 			<BoxEntryInput
 				entry={entry}
 				disabled={saving}

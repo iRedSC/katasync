@@ -498,6 +498,13 @@
       "when": 1792436656750,
       "tag": "0070_tracking_retry_and_signature",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1792437706800,
+      "tag": "0071_aerosol_hazmat",
+      "breakpoints": true
     }
   ]
 }

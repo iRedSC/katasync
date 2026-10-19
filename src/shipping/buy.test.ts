@@ -97,6 +97,7 @@ const box = (extra: Partial<BoxPlan> = {}): BoxPlan => ({
 	heightMm: 100,
 	weightGrams: 600,
 	insureAmount: null,
+	hazmat: false,
 	...extra,
 });
 const ground = { carrier: "USPS", service: "ground", id: "browser-rate" };
@@ -146,6 +147,23 @@ beforeEach(async () => {
 });
 
 describe("buyDispatch", () => {
+	test("declares a box with aerosols and remembers it for the label", async () => {
+		const a = await addOrder("#1");
+		const outside = fakes();
+		const bought = await buy(
+			[a],
+			[box({ hazmat: true }), box({ weightGrams: 900 })],
+			outside,
+		);
+
+		expect(bought.failed).toBeNull();
+		expect(outside.getRates).toHaveBeenCalledWith(
+			expect.objectContaining({ hazmat: true, parcel: expect.anything() }),
+		);
+		const saved = await boxesOf(bought.dispatchId);
+		expect(saved.map((x) => x.hazmat)).toEqual([true, false]);
+	});
+
 	test("prices each box itself and buys the chosen service for every order", async () => {
 		const a = await addOrder("#1");
 		const b = await addOrder("#2");

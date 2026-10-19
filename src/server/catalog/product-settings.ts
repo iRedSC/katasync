@@ -20,6 +20,16 @@ export const setInsureWhenShipped = createServerFn({ method: "POST" })
 			.where(eq(products.sku, data.sku));
 	});
 
+// Quick ship starts boxes holding this product as aerosol hazmat.
+export const setAerosol = createServerFn({ method: "POST" })
+	.validator(type({ sku: "string > 0", aerosol: "boolean" }))
+	.handler(async ({ data }) => {
+		await getDb()
+			.update(products)
+			.set({ aerosol: data.aerosol })
+			.where(eq(products.sku, data.sku));
+	});
+
 // Critical products count toward their supplier's criticalThreshold when they
 // need ordering (see purchasing/reorder.ts).
 export const setCritical = createServerFn({ method: "POST" })

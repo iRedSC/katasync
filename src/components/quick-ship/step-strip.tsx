@@ -15,6 +15,7 @@ export function stepsFor({
 	packed,
 	box,
 	dims,
+	hazmat,
 	weightGrams,
 	bought,
 	count,
@@ -25,6 +26,7 @@ export function stepsFor({
 	packed: Packed[];
 	box: Box | null;
 	dims: Dims | null;
+	hazmat: boolean;
 	weightGrams: number | null;
 	bought: Bought | null;
 	count: number;
@@ -46,11 +48,11 @@ export function stepsFor({
 					label: packed.length > 0 ? `Box ${packed.length + 1}` : "Box",
 					value:
 						packed.length > 0 && step !== "package" && step !== "weight"
-							? `${count} boxes`
+							? `${count} boxes${hazmat || packed.some((p) => p.hazmat) ? " · aerosol" : ""}`
 							: box
-								? boxLabel(box)
+								? `${boxLabel(box)}${hazmat ? " · aerosol" : ""}`
 								: dims
-									? `${size(dims)} in`
+									? `${size(dims)} in${hazmat ? " · aerosol" : ""}`
 									: null,
 				},
 				{

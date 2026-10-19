@@ -47,6 +47,9 @@ export type BoxPlan = {
 	heightMm: number;
 	weightGrams: number;
 	insureAmount: number | null;
+	// Aerosols inside: ground services only, and the label prints with the
+	// Limited Quantity mark (see hazmat.ts).
+	hazmat: boolean;
 };
 
 // The service picked in quick ship. Only which service: the price and the
@@ -133,6 +136,7 @@ export async function buyDispatch(
 				widthMm: plan.widthMm,
 				heightMm: plan.heightMm,
 				weightGrams: plan.weightGrams,
+				hazmat: plan.hazmat,
 			};
 			let row: typeof shipments.$inferInsert;
 			try {
@@ -247,6 +251,7 @@ async function quoteEach(
 				parcel: b,
 				insureAmount: b.insureAmount,
 				signature,
+				hazmat: b.hazmat,
 			}),
 		),
 	);

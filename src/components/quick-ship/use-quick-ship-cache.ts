@@ -58,6 +58,7 @@ export function useQuickShipCache(plan: ShipmentPlan | null) {
 				...p.dims,
 				weightGrams: p.weightGrams,
 				insureAmount: parts[i],
+				hazmat: p.hazmat,
 			})),
 		};
 		const key = JSON.stringify(data);

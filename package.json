@@ -53,6 +53,7 @@
     "fast-xml-parser": "^5.11.2",
     "lucide-react": "^0.577.0",
     "nitro": "3.0.260610-beta",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.23.1",
     "qrcode": "^1.5.4",
     "qz-tray": "^2.3.0",

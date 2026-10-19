@@ -2,6 +2,7 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { MAX_BOXES } from "#/components/quick-ship/constants";
 import { DoneStep } from "#/components/quick-ship/done-step";
 import { ExternalStep } from "#/components/quick-ship/external-step";
+import { startsHazmat } from "#/components/quick-ship/hazmat";
 import {
 	parseInsurance,
 	splitInsurance,
@@ -71,6 +72,7 @@ export function QuickShip() {
 	const [packed, setPacked] = useState<Packed[]>([]);
 	const [box, setBox] = useState<Box | null>(null);
 	const [dims, setDims] = useState<Dims | null>(null);
+	const [hazmat, setHazmat] = useState(false);
 	const [weightGrams, setWeightGrams] = useState<number | null>(null);
 	const [draftGrams, setDraftGrams] = useState<number | null>(null);
 	const [extras, setExtras] = useState<Extras>(noExtras);
@@ -92,6 +94,7 @@ export function QuickShip() {
 		setPacked([]);
 		setBox(null);
 		setDims(null);
+		setHazmat(false);
 		setWeightGrams(null);
 		setDraftGrams(null);
 		setExtras(noExtras);
@@ -130,7 +133,9 @@ export function QuickShip() {
 
 	// Every box with its weight, the one being entered last.
 	const allBoxes = (grams: number | null): Packed[] =>
-		dims && grams ? [...packed, { box, dims, weightGrams: grams }] : packed;
+		dims && grams
+			? [...packed, { box, dims, weightGrams: grams, hazmat }]
+			: packed;
 
 	// Ask for prices as soon as a weight sits still for a moment, with the
 	// extras the service step will show.
@@ -166,6 +171,7 @@ export function QuickShip() {
 			setPacked(packed.slice(0, -1));
 			setBox(last.box);
 			setDims(last.dims);
+			setHazmat(last.hazmat);
 			setWeightGrams(last.weightGrams);
 			setDraftGrams(last.weightGrams);
 			return setStep("weight");
@@ -181,6 +187,13 @@ export function QuickShip() {
 		const lastBox = known.find((b) => b.id === last?.packageId) ?? null;
 		setBox(lastBox);
 		setDims(last ?? lastBox);
+		setHazmat(startsHazmat(next, index));
+	}
+
+	// Ctrl+H on the box step. Prices for the other setting don't apply.
+	function toggleHazmat() {
+		if (step !== "package" || busy) return;
+		setHazmat((h) => !h);
 	}
 
 	async function choosePin(pin: number) {
@@ -260,7 +273,7 @@ export function QuickShip() {
 		if (packed.length + 1 >= MAX_BOXES) {
 			return setError(`At most ${MAX_BOXES} boxes in one shipment`);
 		}
-		setPacked([...packed, { box, dims, weightGrams: grams }]);
+		setPacked([...packed, { box, dims, weightGrams: grams, hazmat }]);
 		suggestBox(plan, packed.length + 1);
 		setWeightGrams(null);
 		setDraftGrams(null);
@@ -310,6 +323,7 @@ export function QuickShip() {
 								...p.dims,
 								weightGrams: p.weightGrams,
 								insureAmount: parts[i],
+								hazmat: p.hazmat,
 							})),
 							choice: {
 								carrier: quote.carrier,
@@ -348,6 +362,7 @@ export function QuickShip() {
 		packed,
 		box,
 		dims,
+		hazmat,
 		weightGrams,
 		bought,
 		count,
@@ -369,6 +384,12 @@ export function QuickShip() {
 					if (e.key === "Escape") {
 						e.preventDefault();
 						back();
+					}
+					// Ctrl, not a letter: the box step types box names. Also keeps
+					// the browser's history page from opening.
+					if (e.ctrlKey && e.key.toLowerCase() === "h" && step === "package") {
+						e.preventDefault();
+						toggleHazmat();
 					}
 					if (
 						// Tab, not a letter: the box step types box names.
@@ -429,6 +450,8 @@ export function QuickShip() {
 								boxes={boxes}
 								current={box}
 								dims={dims}
+								hazmat={hazmat}
+								onHazmat={toggleHazmat}
 								// Through the ref: saving a custom box finishes later, and
 								// must reach the current choosePackage, not this render's.
 								onChoose={(next) => choosePackageRef.current(next)}
