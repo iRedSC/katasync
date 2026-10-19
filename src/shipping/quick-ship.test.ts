@@ -170,7 +170,6 @@ describe("with a database", () => {
 		const [box] = await db
 			.insert(schema.packages)
 			.values({
-				pin: 4,
 				name: "Flat",
 				lengthMm: 300,
 				widthMm: 200,
@@ -195,7 +194,11 @@ describe("with a database", () => {
 		// The first box of the latest shipment, and how many boxes it took.
 		expect(last.get("WRENCH×2")).toEqual({
 			contentsKey: "WRENCH×2",
-			boxPin: 4,
+			// The size the label was bought at, which is the shipment's own.
+			boxName: "Flat",
+			lengthMm: 300,
+			widthMm: 200,
+			heightMm: 100,
 			weightGrams: 567,
 			boxes: 2,
 		});

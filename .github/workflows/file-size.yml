@@ -1,5 +1,6 @@
-# The pre-commit hook can be skipped with --no-verify; this can't. Same check,
-# over every tracked file. It needs no dependencies, so it skips pnpm install.
+# The pre-commit hook can be skipped with --no-verify; this can't. Same
+# checks, file sizes over every tracked file. They need no dependencies, so
+# this skips pnpm install.
 name: File size
 
 on:
@@ -16,3 +17,5 @@ jobs:
         with:
           node-version: 24
       - run: node scripts/check-file-size.ts --all
+      # A branch merged after a newer one leaves its migration dated too early.
+      - run: node scripts/check-migrations.ts

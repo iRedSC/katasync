@@ -1,12 +1,34 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { savePackage } from "#/server/shipping";
-import { bigInput } from "./constants";
+import {
+	boxSize,
+	filterBoxes,
+	hasBoxOfSize,
+	inches,
+	typedSize,
+} from "#/shipping/box-filter";
+import { type BoxEntry, emptyEntry, entryQuery } from "./box-entry";
+import { BoxEntryInput } from "./box-entry-input";
 import { Key } from "./key";
 import type { Box, Dims } from "./types";
-import { inches, MM_PER_INCH, size } from "./units";
+import { ounces } from "./units";
 
+// What Enter can pick: a saved box, or the typed size, once or saved.
+type Option =
+	| { kind: "box"; box: Box }
+	| { kind: "custom"; dims: Dims }
+	| { kind: "save"; dims: Dims };
+
+const keyOf = (o: Option) => (o.kind === "box" ? `box:${o.box.id}` : o.kind);
+
+// Rows shown before the list scrolls.
+const ROWS = 6;
+
+// Type the size off the box's label ("12 9 4") or a bit of its name; the
+// list narrows as you type and Enter takes the highlighted row. A size no
+// saved box has can ship once or be saved as a box.
 export function PackageStep({
 	boxes,
 	current,
@@ -20,242 +42,182 @@ export function PackageStep({
 	onChoose: (choice: { box: Box | null; dims: Dims }) => void;
 	onSaved: (box: Box) => void;
 }) {
-	const [value, setValue] = useState(current ? String(current.pin) : "");
-	const [saveError, setSaveError] = useState<string | null>(null);
-	const [saving, setSaving] = useState(false);
-	// The side being typed but not locked in yet, for the hint below.
-	const [typing, setTyping] = useState("");
-	const [custom, setCustom] = useState(!current && dims !== null);
-	const [sides, setSides] = useState(
-		dims
-			? [dims.lengthMm, dims.widthMm, dims.heightMm].map((mm) =>
-					String(inches(mm)),
-				)
-			: [],
+	// A size used last time without a saved box starts typed in.
+	const [entry, setEntry] = useState<BoxEntry>(
+		!current && dims
+			? {
+					kind: "size",
+					sides: [dims.lengthMm, dims.widthMm, dims.heightMm].map((mm) =>
+						String(inches(mm)),
+					),
+					typing: "",
+				}
+			: emptyEntry,
 	);
-	const match = boxes.find((b) => String(b.pin) === value);
-	const parts = [...sides, typing].map(Number).filter((n) => n > 0);
+	const query = entryQuery(entry);
+	const [saving, setSaving] = useState(false);
 
-	async function submit(final = parts) {
+	const size = typedSize(query);
+	const options: Option[] = [
+		...filterBoxes(boxes, query).map((box) => ({ kind: "box" as const, box })),
+		...(size && !hasBoxOfSize(boxes, size)
+			? [
+					{ kind: "custom" as const, dims: size },
+					{ kind: "save" as const, dims: size },
+				]
+			: []),
+	];
+	// The box from last time stays highlighted until something else is typed
+	// or picked.
+	const [picked, setPicked] = useState<string | null>(
+		current ? `box:${current.id}` : null,
+	);
+	const index = Math.max(
+		0,
+		options.findIndex((o) => keyOf(o) === picked),
+	);
+	const highlighted = options[index] as Option | undefined;
+
+	const list = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		list.current?.children[index]?.scrollIntoView({ block: "nearest" });
+	}, [index]);
+
+	async function choose(option: Option) {
 		if (saving) return;
-		if (custom && final.length === 4) {
-			// A fourth number is a pin: save this size as a box (no empty
-			// weight; add one in Settings if it matters) and ship in it.
-			const [l, w, h, pin] = final;
-			const taken = boxes.find((b) => b.pin === pin);
-			if (taken) return setSaveError(`Pin ${pin} is already ${taken.name}`);
-			// The new box needs its id, so it waits for the reload that shows it.
-			setSaving(true);
-			const r = await optimism.change({
-				send: () =>
-					savePackage({
-						data: {
-							name: `${l} × ${w} × ${h}`,
-							lengthIn: l,
-							widthIn: w,
-							heightIn: h,
-							weightOz: 0,
-							pin,
-						},
-					}),
-			});
-			setSaving(false);
-			if (!r) return;
-			onSaved(r.value);
-			onChoose({ box: r.value, dims: r.value });
-		} else if (custom && final.length === 3) {
-			const [l, w, h] = final.map((n) => Math.round(n * MM_PER_INCH));
-			onChoose({ box: null, dims: { lengthMm: l, widthMm: w, heightMm: h } });
-		} else if (!custom && match) {
-			onChoose({ box: match, dims: match });
-		}
+		if (option.kind === "box")
+			return onChoose({ box: option.box, dims: option.box });
+		if (option.kind === "custom")
+			return onChoose({ box: null, dims: option.dims });
+		// The new box needs its id, so it waits for the reload that shows it.
+		// No empty weight; add one in Settings if it matters.
+		setSaving(true);
+		const r = await optimism.change({
+			send: () =>
+				savePackage({
+					data: {
+						name: null,
+						lengthIn: option.dims.lengthMm / 25.4,
+						widthIn: option.dims.widthMm / 25.4,
+						heightIn: option.dims.heightMm / 25.4,
+						weightOz: 0,
+					},
+				}),
+		});
+		setSaving(false);
+		if (!r) return;
+		onSaved(r.value);
+		onChoose({ box: r.value, dims: r.value });
+	}
+
+	function move(by: number) {
+		if (options.length === 0) return;
+		const next = (index + by + options.length) % options.length;
+		setPicked(keyOf(options[next]));
 	}
 
 	return (
 		<div className="flex flex-col gap-3">
 			<div className="flex items-baseline justify-between">
-				<p className="text-xl font-semibold">
-					{custom ? "Box size in inches" : "Box pin"}
+				<p className="text-xl font-semibold">Box</p>
+				<p className="text-muted-foreground">
+					Size (<Key>Space</Key> between sides) or name · <Key>↑</Key>
+					<Key>↓</Key> picks
 				</p>
-				<button
-					type="button"
-					className="text-link hover:underline"
-					onClick={() => setCustom((c) => !c)}
-				>
-					{custom ? "Use a saved box" : "Custom size (C or Space)"}
-				</button>
 			</div>
-			{custom ? (
-				<SizeInput
-					sides={sides}
-					onSides={(next) => {
-						setSides(next);
-						setSaveError(null);
-					}}
-					onTyping={setTyping}
-					onSubmit={(final) => submit(final)}
-				/>
+			<BoxEntryInput
+				entry={entry}
+				disabled={saving}
+				onEntry={(next) => {
+					setEntry(next);
+					setPicked(null);
+				}}
+				onKeyDown={(e) => {
+					if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+						e.preventDefault();
+						move(e.key === "ArrowDown" ? 1 : -1);
+					}
+					if (e.key === "Enter" && highlighted) choose(highlighted);
+				}}
+			/>
+			{saving ? (
+				<p className="flex h-8 items-center justify-center text-lg text-muted-foreground">
+					Saving box…
+				</p>
+			) : options.length === 0 ? (
+				<p className="flex h-8 items-center justify-center text-lg text-muted-foreground">
+					{boxes.length === 0
+						? "No saved boxes. Type length, width, and height."
+						: "No box fits that. Type all three sides for a custom size."}
+				</p>
 			) : (
-				<input
-					// biome-ignore lint/a11y/noAutofocus: the step exists to type this
-					autoFocus
-					inputMode="numeric"
-					maxLength={3}
-					value={value}
-					onFocus={(e) => e.target.select()}
-					onChange={(e) => {
-						if (e.target.value.toLowerCase().endsWith("c")) {
-							return setCustom(true);
-						}
-						setValue(e.target.value.replace(/\D/g, ""));
-					}}
-					onKeyDown={(e) => {
-						if (e.key === "Enter") submit();
-						// Space means this is a size, not a pin: what's typed so far
-						// becomes the length.
-						if (e.key === " ") {
-							e.preventDefault();
-							setSides(Number(value) > 0 ? [value] : []);
-							setCustom(true);
-						}
-					}}
-					className={cn(bigInput, "tracking-[0.4em] placeholder:text-line")}
-				/>
+				<div
+					ref={list}
+					className="flex flex-col gap-2 overflow-y-auto"
+					// Short screens get fewer rows, so the dialog's top stays on screen.
+					style={{ maxHeight: `min(${ROWS * 3.5}rem, 28dvh)` }}
+				>
+					{options.map((o, i) => (
+						<button
+							type="button"
+							key={keyOf(o)}
+							tabIndex={-1}
+							aria-pressed={i === index}
+							// Clicking keeps the focus in the input.
+							onMouseDown={(e) => e.preventDefault()}
+							onMouseMove={() => setPicked(keyOf(o))}
+							onClick={() => choose(o)}
+							className={cn(
+								"flex h-12 shrink-0 items-center justify-between gap-3 rounded-xl border-2 px-4 text-lg",
+								i === index
+									? "border-primary bg-primary text-primary-foreground"
+									: "border-border hover:bg-subtle",
+							)}
+						>
+							<OptionLabel
+								option={o}
+								lastTime={o.kind === "box" && o.box.id === current?.id}
+							/>
+						</button>
+					))}
+				</div>
 			)}
-			<div className="flex h-8 items-center justify-center text-lg">
-				{saving ? (
-					<span className="text-muted-foreground">Saving box…</span>
-				) : custom && saveError ? (
-					<span className="text-critical-text">{saveError}</span>
-				) : custom ? (
-					parts.length === 4 ? (
-						<span>
-							Saves as box <span className="font-semibold">{parts[3]}</span>
-							<span className="text-muted-foreground">
-								{" "}
-								· {parts.slice(0, 3).join(" × ")} in
-							</span>
-						</span>
-					) : parts.length === 3 ? (
-						<span>
-							<span className="font-semibold">{parts.join(" × ")} in</span>
-							<span className="text-muted-foreground">
-								{" "}
-								· <Key>Space</Key> and a pin saves it as a box
-							</span>
-						</span>
-					) : (
-						<span className="text-muted-foreground">
-							Length <Key>Space</Key> width <Key>Space</Key> height
-						</span>
-					)
-				) : match ? (
-					<span>
-						<span className="font-semibold">{match.name}</span>
-						<span className="text-muted-foreground"> · {size(match)} in</span>
-					</span>
-				) : boxes.length === 0 ? (
-					<span className="text-muted-foreground">
-						No saved boxes. Type a custom size.
-					</span>
-				) : value ? (
-					<span className="text-critical-text">No box has that pin</span>
-				) : null}
-			</div>
 		</div>
 	);
 }
 
-// The fourth number, if typed, saves the size as a box under that pin.
-const SIDE_LETTERS = ["L", "W", "H", "PIN"];
-
-// Length, width, height in one box: space locks in a number and labels it
-// (40 becomes 40L), backspace on an empty spot reopens the last one, Enter
-// takes all three.
-function SizeInput({
-	sides,
-	onSides,
-	onTyping,
-	onSubmit,
+function OptionLabel({
+	option,
+	lastTime,
 }: {
-	sides: string[];
-	onSides: (sides: string[]) => void;
-	onTyping: (typing: string) => void;
-	onSubmit: (final: number[]) => void;
+	option: Option;
+	lastTime: boolean;
 }) {
-	const [typing, setTypingHere] = useState("");
-	const setTyping = (text: string) => {
-		setTypingHere(text);
-		onTyping(text);
-	};
-	const input = useRef<HTMLInputElement>(null);
-	const done = sides.length === 4;
-	const onPin = sides.length === 3;
-
-	function lockIn() {
-		if (Number(typing) > 0 && !done) {
-			onSides([...sides, typing]);
-			setTyping("");
-		}
-	}
-
-	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: clicking just focuses the real input inside
-		// biome-ignore lint/a11y/noStaticElementInteractions: same
-		<div
-			onClick={() => input.current?.focus()}
-			className="flex h-24 w-full cursor-text items-center justify-center gap-5 rounded-xl border-2 border-input bg-white text-6xl font-bold tabular-nums focus-within:border-primary"
-		>
-			{sides.map((side, i) => (
-				<span key={SIDE_LETTERS[i]}>
-					{side}
-					<span className="ml-0.5 text-2xl font-semibold text-faint">
-						{SIDE_LETTERS[i]}
-					</span>
+	if (option.kind !== "box")
+		return (
+			<>
+				<span className="font-semibold tabular-nums">
+					{boxSize(option.dims)} in
 				</span>
-			))}
-			{/* The side being typed shows its letter right after the cursor. */}
-			<span className="inline-flex items-baseline">
-				<input
-					ref={input}
-					// biome-ignore lint/a11y/noAutofocus: the step exists to type this
-					autoFocus
-					inputMode="decimal"
-					aria-label="Box size in inches"
-					value={typing}
-					onChange={(e) =>
-						setTyping(
-							onPin
-								? e.target.value.replace(/\D/g, "").slice(0, 3)
-								: e.target.value.replace(/[^\d.]/g, ""),
-						)
-					}
-					onKeyDown={(e) => {
-						if ([" ", "x", "X", ","].includes(e.key)) {
-							e.preventDefault();
-							lockIn();
-						}
-						if (e.key === "Backspace" && typing === "" && sides.length > 0) {
-							e.preventDefault();
-							setTyping(sides[sides.length - 1]);
-							onSides(sides.slice(0, -1));
-						}
-						if (e.key === "Enter") {
-							const final = [...sides, ...(Number(typing) > 0 ? [typing] : [])]
-								.map(Number)
-								.filter((n) => n > 0);
-							if (final.length >= 3) onSubmit(final);
-						}
-					}}
-					// Exactly as wide as what's typed, so the letter hugs the number.
-					className="min-w-[0.15em] bg-transparent outline-none [field-sizing:content]"
-				/>
-				{!done && (
-					<span className="ml-0.5 text-2xl font-semibold text-faint">
-						{SIDE_LETTERS[sides.length]}
-					</span>
-				)}
+				<span className="opacity-70">
+					{option.kind === "custom" ? "This once" : "Save as a box"}
+				</span>
+			</>
+		);
+	const { box } = option;
+	const detail = [
+		lastTime && "last time",
+		box.weightGrams > 0 && `${ounces(box.weightGrams)} oz empty`,
+	]
+		.filter(Boolean)
+		.join(" · ");
+	return (
+		<>
+			<span className="min-w-0 truncate tabular-nums">
+				<span className="font-semibold">{boxSize(box)} in</span>
+				{box.name && <span className="ml-2">{box.name}</span>}
 			</span>
-		</div>
+			{detail && <span className="shrink-0 opacity-70">{detail}</span>}
+		</>
 	);
 }

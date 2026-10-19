@@ -1,6 +1,6 @@
 {
-  "id": "b17435fa-26ef-433f-8b6d-a03b2283395c",
-  "prevId": "7821ebb8-8e7a-470a-88cc-db697d544d4b",
+  "id": "ec84bebf-b06b-4ad7-9885-35b1d5d9238c",
+  "prevId": "8458105a-273a-4c4d-b499-499958683086",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1946,17 +1946,11 @@
             "type": "always"
           }
         },
-        "pin": {
-          "name": "pin",
-          "type": "smallint",
-          "primaryKey": false,
-          "notNull": true
-        },
         "name": {
           "name": "name",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "length_mm": {
           "name": "length_mm",
@@ -1994,20 +1988,12 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "packages_pin_unique": {
-          "name": "packages_pin_unique",
-          "columns": [
-            "pin"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "packages_pin_range": {
-          "name": "packages_pin_range",
-          "value": "\"packages\".\"pin\" between 1 and 999"
+        "packages_name_not_blank": {
+          "name": "packages_name_not_blank",
+          "value": "\"packages\".\"name\" <> ''"
         }
       },
       "isRLSEnabled": false

@@ -192,7 +192,7 @@ function Invoice({
 							</p>
 						)}
 						<p className="text-[13pt] font-bold tabular-nums">
-							{packLine(o.pin, o.boxPin, o.weightGrams)}
+							{packLine(o.pin, o.box, o.weightGrams)}
 						</p>
 						{o.boxes > 1 && (
 							<p className="text-[11pt] font-bold">
@@ -206,12 +206,12 @@ function Invoice({
 	);
 }
 
-// "2 : 4 : 20" is order pin, box pin, and ounces; X where quick ship has
-// nothing to suggest yet.
-function packLine(pin: number, boxPin: number | null, grams: number | null) {
+// "2 : 12 × 9 × 4 : 20" is order pin, the box last time (its name first, if
+// it has one), and ounces; X where quick ship has nothing to suggest yet.
+function packLine(pin: number, box: string | null, grams: number | null) {
 	const ounces =
 		grams === null
 			? "X"
 			: String(Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10);
-	return `${pin} : ${boxPin ?? "X"} : ${ounces}`;
+	return `${pin} : ${box ?? "X"} : ${ounces}`;
 }

@@ -36,6 +36,7 @@ import {
 	savePackage,
 	updatePackage,
 } from "#/server/shipping";
+import { boxLabel, boxSize } from "#/shipping/box-filter";
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
@@ -162,8 +163,8 @@ const ounces = (g: number) => Math.round((g / 28.349523125) * 10) / 10;
 // the column off the screen.
 const BOX_ROWS = 10;
 
-// The boxes quick ship knows by pin. Typing a box's pin fills in its size
-// and empty weight. Any box can be edited, pin included.
+// The boxes quick ship offers, found there by the size on their label or
+// their name. A name is only for telling apart boxes of one size.
 function Boxes({ boxes }: { boxes: Box[] }) {
 	const [adding, setAdding] = useState(false);
 	const [editing, setEditing] = useState<number | null>(null);
@@ -171,7 +172,7 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 	const [all, setAll] = useState(false);
 	const shown = all ? boxes : boxes.slice(0, BOX_ROWS);
 
-	// A new box's pin comes from the server, so the form waits for its answer.
+	// A new box's id comes from the server, so the form waits for its answer.
 	async function add(values: BoxValues) {
 		setSaving(true);
 		const r = await optimism.change({
@@ -179,7 +180,7 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 		});
 		setSaving(false);
 		if (!r) return;
-		toast.success(`Saved ${r.value.name} as pin ${r.value.pin}`);
+		toast.success(`Saved ${boxLabel(r.value)}`);
 		setAdding(false);
 	}
 
@@ -187,29 +188,26 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 	async function edit(box: Box, values: BoxValues) {
 		setEditing(null);
 		const r = await optimism.change({
-			label: `Editing ${box.name}`,
+			label: `Editing ${boxLabel(box)}`,
 			patch: boxesData.patch("all", (list) =>
 				list
 					.map((b) => (b.id === box.id ? savedBox(b, values) : b))
-					.sort((x, y) => x.pin - y.pin),
+					.sort((x, y) => volume(x) - volume(y) || x.id - y.id),
 			),
-			send: () =>
-				updatePackage({
-					data: { ...values, id: box.id, pin: values.pin ?? box.pin },
-				}),
+			send: () => updatePackage({ data: { ...values, id: box.id } }),
 		});
-		if (r) toast.success(`Saved ${r.value.name} as pin ${r.value.pin}`);
+		if (r) toast.success(`Saved ${boxLabel(r.value)}`);
 	}
 
 	async function remove(box: Box) {
 		const r = await optimism.change({
-			label: `Removing ${box.name}`,
+			label: `Removing ${boxLabel(box)}`,
 			patch: boxesData.patch("all", (list) =>
 				list.filter((b) => b.id !== box.id),
 			),
 			send: () => deletePackage({ data: { id: box.id } }),
 		});
-		if (r) toast.success(`Removed ${box.name}`);
+		if (r) toast.success(`Removed ${boxLabel(box)}`);
 	}
 
 	return (
@@ -264,9 +262,6 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 									</>
 								}
 							>
-								<span className="w-10 shrink-0 font-mono text-base font-bold">
-									{b.pin}
-								</span>
 								<BoxLabel box={b} />
 							</Row>
 						),
@@ -288,33 +283,30 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 	);
 }
 
-// A box named after its size (the default) shows the size once.
+// The size leads, as on the box's label; the name, if any, follows.
 function BoxLabel({ box }: { box: Box }) {
-	const size = `${inches(box.lengthMm)} × ${inches(box.widthMm)} × ${inches(box.heightMm)}`;
-	const bare = (t: string) =>
-		t.toLowerCase().replace(/\s+/g, "").replace(/in$/, "").replaceAll("×", "x");
-	const named = bare(box.name) !== bare(size);
 	const detail = [
-		named && `${size} in`,
+		box.name,
 		box.weightGrams > 0 && `${ounces(box.weightGrams)} oz`,
 	]
 		.filter(Boolean)
 		.join(" · ");
 	return (
 		<div className="min-w-0 flex-1 tabular-nums">
-			<p className="truncate font-medium">{named ? box.name : `${size} in`}</p>
+			<p className="truncate font-medium">{boxSize(box)} in</p>
 			{detail && <p className="text-xs text-muted-foreground">{detail}</p>}
 		</div>
 	);
 }
 
+const volume = (b: Box) => b.lengthMm * b.widthMm * b.heightMm;
+
 type BoxValues = {
-	name: string;
+	name: string | null;
 	lengthIn: number;
 	widthIn: number;
 	heightIn: number;
 	weightOz: number;
-	pin?: number;
 };
 
 const MM_PER_INCH = 25.4;
@@ -325,12 +317,11 @@ const GRAMS_PER_OUNCE = 28.349523125;
 function savedBox(box: Box, values: BoxValues): Box {
 	return {
 		...box,
-		name: values.name.trim(),
+		name: values.name?.trim() || null,
 		lengthMm: Math.round(values.lengthIn * MM_PER_INCH),
 		widthMm: Math.round(values.widthIn * MM_PER_INCH),
 		heightMm: Math.round(values.heightIn * MM_PER_INCH),
 		weightGrams: Math.round(values.weightOz * GRAMS_PER_OUNCE),
-		pin: values.pin ?? box.pin,
 	};
 }
 
@@ -352,12 +343,11 @@ function BoxForm({
 		const f = new FormData(e.currentTarget);
 		const n = (key: string) => Number(f.get(key));
 		onSave({
-			name: String(f.get("name")),
+			name: String(f.get("name") ?? "").trim() || null,
 			lengthIn: n("length"),
 			widthIn: n("width"),
 			heightIn: n("height"),
 			weightOz: n("weight") || 0,
-			...(f.get("pin") ? { pin: n("pin") } : {}),
 		});
 	}
 
@@ -374,23 +364,15 @@ function BoxForm({
 			onKeyDown={(e) => e.key === "Escape" && onCancel()}
 			className="flex w-full flex-wrap items-end gap-2"
 		>
-			<label className="flex flex-1 flex-col gap-1">
-				<span className="text-muted-foreground">Name</span>
-				<input
-					name="name"
-					required
-					// biome-ignore lint/a11y/noAutofocus: opened to type this
-					autoFocus
-					defaultValue={box?.name}
-					className={field}
-				/>
-			</label>
+			{/* The size first, as on the box's label. */}
 			{(["length", "width", "height"] as const).map((d) => (
 				<label key={d} className="flex w-16 flex-col gap-1">
 					<span className="text-muted-foreground capitalize">{d}</span>
 					<input
 						name={d}
 						required
+						// biome-ignore lint/a11y/noAutofocus: opened to type this
+						autoFocus={d === "length"}
 						inputMode="decimal"
 						placeholder="in"
 						defaultValue={sides[d]}
@@ -398,6 +380,15 @@ function BoxForm({
 					/>
 				</label>
 			))}
+			<label className="flex min-w-32 flex-1 flex-col gap-1">
+				<span className="text-muted-foreground">Name</span>
+				<input
+					name="name"
+					placeholder="Only if two share a size"
+					defaultValue={box?.name ?? undefined}
+					className={field}
+				/>
+			</label>
 			<label className="flex w-20 flex-col gap-1">
 				<span className="text-muted-foreground">Empty wt</span>
 				<input
@@ -405,18 +396,6 @@ function BoxForm({
 					inputMode="decimal"
 					placeholder="oz"
 					defaultValue={box?.weightGrams ? ounces(box.weightGrams) : undefined}
-					className={field}
-				/>
-			</label>
-			<label className="flex w-16 flex-col gap-1">
-				<span className="text-muted-foreground">Pin</span>
-				<input
-					name="pin"
-					inputMode="numeric"
-					maxLength={3}
-					placeholder="auto"
-					defaultValue={box?.pin}
-					required={!!box}
 					className={field}
 				/>
 			</label>

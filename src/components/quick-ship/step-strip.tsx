@@ -48,11 +48,7 @@ export function stepsFor({
 					value:
 						packed.length > 0 && step !== "package" && step !== "weight"
 							? `${count} boxes`
-							: box
-								? box.name
-								: dims
-									? `${size(dims)} in`
-									: null,
+							: (box?.name ?? (dims ? `${size(dims)} in` : null)),
 				},
 				{
 					id: "weight",

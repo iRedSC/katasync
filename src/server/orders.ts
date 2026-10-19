@@ -42,6 +42,7 @@ import {
 	restoreNoReturn,
 } from "#/orders/returns-due";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
+import { boxLabel } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
 import {
 	addressKey,
@@ -480,7 +481,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					shipsWith: shipsWith.get(o.id) ?? [],
 					// What quick ship will suggest: the box and weight these exact
 					// contents went out in last time, else the items' own weight.
-					boxPin: last?.boxPin ?? null,
+					box: last ? boxLabel({ ...last, name: last.boxName }) : null,
 					// How many boxes these contents took last time; the box and
 					// weight above are the first one's.
 					boxes: last?.boxes ?? 1,
