@@ -9,10 +9,13 @@ import type { StockRange } from "#/inventory/stock-range";
 export const TRUST_DAYS = 60;
 
 // Whether the on-hand number can be acted on. A tool set's comes from its
-// parts: the caller passes their oldest count.
+// parts: the caller passes their oldest count. Not counted sells without limit
+// until its first count (src/inventory/not-counted.ts), so its number is
+// nothing to act on at all.
 export type Trust =
 	| { kind: "counted"; at: Date }
-	| { kind: "needs count"; requested: boolean };
+	| { kind: "needs count"; requested: boolean }
+	| { kind: "not counted"; requested: boolean };
 
 // Most urgent first. Tool sets only ever get the first four.
 export const LEVELS = [
@@ -51,6 +54,7 @@ export type StockInput = {
 	// The oldest count across our shelves; null when any was never counted.
 	lastCountedAt: Date | null;
 	countRequested: boolean;
+	notCounted: boolean;
 	hasSupplier: boolean;
 	draft: { purchaseOrderId: number } | null;
 	reorder: {
@@ -62,6 +66,7 @@ export type StockInput = {
 };
 
 export function trustOf(p: StockInput, now: Date): Trust {
+	if (p.notCounted) return { kind: "not counted", requested: p.countRequested };
 	const at = p.lastCountedAt;
 	return at && now.getTime() - at.getTime() <= TRUST_DAYS * 86_400_000
 		? { kind: "counted", at }
@@ -69,6 +74,8 @@ export function trustOf(p: StockInput, now: Date): Trust {
 }
 
 export function levelOf(p: StockInput): Level {
+	// It sells without limit, so it can't run short or oversell.
+	if (p.notCounted) return "healthy";
 	const onHand = p.onHand ?? 0;
 	if (onHand < 0) return "oversold";
 	if (p.kind === "bundle")
@@ -82,6 +89,9 @@ export function levelOf(p: StockInput): Level {
 export function nextStepOf(p: StockInput, trust: Trust): NextStep {
 	if (p.draft)
 		return { kind: "on draft", purchaseOrderId: p.draft.purchaseOrderId };
+	// Nothing is ordered from a number nobody has counted.
+	if (trust.kind === "not counted")
+		return trust.requested ? { kind: "count requested" } : { kind: "count" };
 	if (trust.kind === "needs count" && countsFirst(p.abc))
 		return trust.requested ? { kind: "count requested" } : { kind: "count" };
 	if (p.reorder) return { kind: "order", ...p.reorder };

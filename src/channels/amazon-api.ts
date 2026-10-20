@@ -44,13 +44,17 @@ export async function accessToken() {
 	return cachedToken.value;
 }
 
-// GETs an SP-API path, or POSTs `body` to it, waiting and retrying when
-// Amazon says to slow down. Order lists allow about one call a minute once
-// the burst is spent.
-export async function spApi(path: string, body?: unknown): Promise<unknown> {
+// GETs an SP-API path, or POSTs `body` to it (or PATCHes, when asked),
+// waiting and retrying when Amazon says to slow down. Order lists allow about
+// one call a minute once the burst is spent.
+export async function spApi(
+	path: string,
+	body?: unknown,
+	method: "POST" | "PATCH" = "POST",
+): Promise<unknown> {
 	for (let attempt = 1; ; attempt++) {
 		const response = await fetch(`${ENDPOINT}${path}`, {
-			method: body === undefined ? "GET" : "POST",
+			method: body === undefined ? "GET" : method,
 			headers: {
 				"x-amz-access-token": await accessToken(),
 				...(body === undefined ? {} : { "Content-Type": "application/json" }),

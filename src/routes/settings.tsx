@@ -11,6 +11,7 @@ import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
 import { ActionSlot, IconAction, Row } from "#/components/rows";
 import { ListSkeleton } from "#/components/skeleton";
+import { StockPushCard } from "#/components/stock-push-card";
 import { MinStockForm } from "#/components/stock-range-form";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
@@ -36,23 +37,34 @@ import {
 	savePackage,
 	updatePackage,
 } from "#/server/shipping";
+import { listStockPush } from "#/server/stock-push";
 import { boxLabel, boxSize } from "#/shipping/box-filter";
 
 export const Route = createFileRoute("/settings")({
 	loader: async () => {
-		const [locations, stores, boxes, units, devices, connections, minStock] =
-			await Promise.all([
-				listLocations(),
-				listStores(),
-				listPackages(),
-				listPurchaseUnits(),
-				listDevices(),
-				listConnections(),
-				getDefaultMinStock(),
-			]);
+		const [
+			locations,
+			stores,
+			stockPush,
+			boxes,
+			units,
+			devices,
+			connections,
+			minStock,
+		] = await Promise.all([
+			listLocations(),
+			listStores(),
+			listStockPush(),
+			listPackages(),
+			listPurchaseUnits(),
+			listDevices(),
+			listConnections(),
+			getDefaultMinStock(),
+		]);
 		return {
 			locations,
 			stores,
+			stockPush,
 			boxes,
 			units,
 			devices,
@@ -92,6 +104,7 @@ function Settings() {
 			<div className="grid items-start gap-4 lg:grid-cols-2">
 				<div className="flex flex-col gap-4">
 					<Channels stores={stores} />
+					<StockPushCard data={loaded.stockPush} />
 					<Locations locations={locations} />
 					<Boxes boxes={boxes} />
 					<LabelPrintingCard />

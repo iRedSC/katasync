@@ -171,3 +171,33 @@ test("a listing tagged intangible never waits for a product, and costs nothing",
 		.where(eq(schema.orderLineProfit.orderId, o.orderId));
 	expect(line).toMatchObject({ cost: 0, costKnown: true });
 });
+
+test("a draft or deleted listing waits for a product only if it ever sold", async () => {
+	await syncListings(db, shopify.id, [
+		{
+			externalId: "v1",
+			externalSku: null,
+			title: "Rock Splicer",
+			fulfillment: "merchant",
+			status: "ARCHIVED",
+		},
+		{
+			externalId: "v2",
+			externalSku: "SK4",
+			title: "Rebuild Kit",
+			fulfillment: "merchant",
+			status: "DELETED",
+		},
+		{
+			externalId: "v3",
+			externalSku: "SK5",
+			title: "Rebuild Kit",
+			fulfillment: "merchant",
+			status: "DRAFT",
+		},
+	]);
+	await sell("v1", null);
+	expect((await listUnmatched(db)).map((i) => [i.sku, i.units])).toEqual([
+		[null, 3],
+	]);
+});

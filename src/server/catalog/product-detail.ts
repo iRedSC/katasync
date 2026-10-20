@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import {
 	listings,
@@ -66,6 +66,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 					variantName: products.variantName,
 					quantity: productComponents.quantity,
 					id: products.id,
+					notCounted: sql<boolean>`${products.notCountedSince} is not null`,
 				})
 				.from(productComponents)
 				.innerJoin(

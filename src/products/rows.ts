@@ -51,9 +51,11 @@ export function facetsOf(p: ProductRow, state: StockState): Facets {
 	const trust =
 		state.trust.kind === "counted"
 			? ["counted"]
-			: state.trust.requested
-				? ["uncounted", "count requested"]
-				: ["uncounted"];
+			: [
+					"uncounted",
+					...(state.trust.kind === "not counted" ? ["not counted"] : []),
+					...(state.trust.requested ? ["count requested"] : []),
+				];
 	return {
 		text: [p.sku, title, p.category ?? ""],
 		title: [title],
@@ -91,7 +93,11 @@ export function sortValuesOf(
 		min: p.range.min,
 		max: p.range.max,
 		cost: p.unitCost,
-		worth: p.unitCost === null ? null : Math.max(0, stock(p)) * p.unitCost,
+		// Not counted has no number to value yet.
+		worth:
+			p.unitCost === null || p.notCounted
+				? null
+				: Math.max(0, stock(p)) * p.unitCost,
 		// Never counted is the oldest count of all.
 		counted: p.lastCountedAt?.getTime() ?? 0,
 		type: p.category,

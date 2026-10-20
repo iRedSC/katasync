@@ -256,6 +256,12 @@ function TrustLine({ trust, now }: { trust: Trust; now: Date }) {
 			</Tip>
 		);
 	}
+	if (trust.kind === "not counted")
+		return (
+			<Tip content="Sells without limit on every channel until it's counted">
+				<p className="text-xs font-medium text-warning-text">Not counted</p>
+			</Tip>
+		);
 	return <p className="text-xs text-muted-foreground">Uncounted</p>;
 }
 

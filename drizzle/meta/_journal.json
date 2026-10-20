@@ -526,6 +526,13 @@
       "when": 1792504878210,
       "tag": "0074_po_line_added_at",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1792506180448,
+      "tag": "0075_stock_push_and_not_counted",
+      "breakpoints": true
     }
   ]
 }
