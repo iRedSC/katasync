@@ -13,7 +13,7 @@ import { formatCount } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
-import { recordTransfer, undoMovement } from "#/server/catalog";
+import { recordTransfer, undoTransferSend } from "#/server/transfers";
 
 type Place = { id: number; name: string };
 
@@ -75,7 +75,7 @@ export function TransferDialog({
 				}),
 		});
 		if (!r) return;
-		const { batchId } = r.value;
+		const { transferId } = r.value;
 		offerUndo(`Moved ${formatCount(valid)} to ${to.name}`, {
 			tone: "success",
 			description: name,
@@ -83,7 +83,8 @@ export function TransferDialog({
 				const undone = await optimism.change({
 					label: `Undoing the ${label.toLowerCase()}`,
 					patch: laid.undo,
-					send: () => undoMovement({ data: { batchId } }),
+					send: () =>
+						undoTransferSend({ data: { id: transferId, discard: true } }),
 				});
 				return undone && `${label} undone`;
 			},

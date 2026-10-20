@@ -21,6 +21,7 @@ import {
 	CriticalToggle,
 	InsureToggle,
 } from "#/components/product-page/flag-toggles";
+import { StockTable } from "#/components/product-page/stock-table";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
@@ -300,53 +301,12 @@ function ProductPage() {
 							}
 							flush
 						>
-							<table className="w-full">
-								<thead>
-									<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
-										<th className="px-4 py-2 font-medium">Location</th>
-										<th className="px-4 py-2 text-right font-medium">
-											On hand
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{d.stock.length === 0 && (
-										<tr>
-											<td
-												className="px-4 py-2.5 text-muted-foreground"
-												colSpan={2}
-											>
-												No stock recorded.
-											</td>
-										</tr>
-									)}
-									{d.stock.map((s) => (
-										<tr key={s.location} className="border-t first:border-t-0">
-											<td className="px-4 py-2.5">
-												{s.location}
-												{s.kind === "fba" && (
-													<span className="ml-2">
-														<Badge>Amazon's, not ours to ship</Badge>
-													</span>
-												)}
-												{s.kind === "retail" && (
-													<span className="ml-2">
-														<Badge>Ships when the warehouse is out</Badge>
-													</span>
-												)}
-											</td>
-											<td
-												className={cn(
-													"px-4 py-2.5 text-right font-semibold tabular-nums",
-													s.onHand < 0 && "text-critical-text",
-												)}
-											>
-												<NumberFlow value={s.onHand} />
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
+							<StockTable
+								productId={p.id}
+								stock={d.stock}
+								locations={d.locations}
+								targets={d.targets}
+							/>
 							<div className="border-t px-4 py-3">
 								<StockRangeForm
 									value={

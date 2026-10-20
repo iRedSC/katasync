@@ -1,12 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Db } from "#/db/client";
-import {
-	recordCount,
-	requestCounts,
-	transferStock,
-	undoBatch,
-} from "#/inventory/ledger";
+import { recordCount, requestCounts, undoBatch } from "#/inventory/ledger";
+import { transferName, transferOfBatch } from "#/inventory/transfers";
 import { PurchaseOrderError, purchaseOrderOfBatch } from "#/purchasing/orders";
 import { ourLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
@@ -77,33 +73,6 @@ export function registerStockTools(server: McpServer, db: Db) {
 	);
 
 	server.registerTool(
-		"transfer_stock",
-		{
-			description:
-				"Moves units of a product between our own locations, e.g. restocking the retail store from the warehouse. Refused when the location it leaves doesn't hold that many; ask for a count there instead. Returns its batch_id for undo_stock_change.",
-			inputSchema: {
-				sku: z.string(),
-				quantity: z.number().int().positive(),
-				from: z.string().describe("Location name the units leave"),
-				to: z.string().describe("Location name the units go to"),
-				note: z.string().optional(),
-			},
-			annotations: WRITE,
-		},
-		async ({ sku, quantity, from, to, note }) => {
-			const product = await productBySku(db, sku);
-			const { batchId } = await transferStock(db, {
-				productId: product.id,
-				fromLocationId: await ourLocation(db, from),
-				toLocationId: await ourLocation(db, to),
-				quantity,
-				note: [note?.trim(), "via Claude"].filter(Boolean).join(": "),
-			});
-			return json({ sku, quantity, from, to, batch_id: batchId });
-		},
-	);
-
-	server.registerTool(
 		"undo_stock_change",
 		{
 			description:
@@ -116,6 +85,11 @@ export function registerStockTools(server: McpServer, db: Db) {
 			if (po !== null)
 				throw new PurchaseOrderError(
 					`This came in on PO ${po}. Undo it on the PO in the app.`,
+				);
+			const transfer = await transferOfBatch(db, batch_id);
+			if (transfer !== null)
+				throw new PurchaseOrderError(
+					`This was transfer ${transferName(transfer)}. Undo it with undo_transfer.`,
 				);
 			return json(await undoBatch(db, batch_id));
 		},

@@ -9,6 +9,10 @@ import { registerReceivingTools } from "./server/receiving-tools";
 import { registerStockSettingsTools } from "./server/stock-settings-tools";
 import { registerStockTools } from "./server/stock-tools";
 import { registerSupplierTools } from "./server/supplier-tools";
+import {
+	registerTransferReadTools,
+	registerTransferTools,
+} from "./server/transfer-tools";
 
 // katasync as MCP tools: read anything, change the catalog, draft POs, check
 // supplier invoices, and count stock. Emailing POs, buying labels, and
@@ -28,6 +32,8 @@ export const READ_TOOLS = new Set([
 	"match_invoice",
 	"unmatched_listings",
 	"suggest_matches",
+	"refill_suggestions",
+	"get_transfer",
 ]);
 
 export function buildServer(db: Db, access: { canWrite: boolean }) {
@@ -37,6 +43,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 	);
 
 	registerReadTools(server, db);
+	registerTransferReadTools(server, db);
 	if (access.canWrite) registerWriteTools(server, db);
 	return server;
 }
@@ -49,6 +56,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerCatalogTools(server, db);
 	registerStockTools(server, db);
 	registerStockSettingsTools(server, db);
+	registerTransferTools(server, db);
 	registerProductTools(server, db);
 	registerReceivingTools(server, db);
 }

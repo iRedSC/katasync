@@ -9,13 +9,12 @@ import { applyStoreSales } from "#/orders/remap";
 import { receiveReturn } from "#/orders/returns";
 import { createProduct, createTestDb } from "#/test/db";
 import { getAvailability } from "./availability";
-import { postMovements, transferStock, undoBatch } from "./ledger";
+import { postMovements } from "./ledger";
 import { onlineStock, setRetailReserve } from "./online-stock";
 import { setRecipe } from "./recipes";
 
 let db: Db;
 let warehouse: number;
-let fba: number;
 let storeId: number;
 const stockFrom = new Date("2026-10-01T00:00:00Z");
 const store = () => ({ id: storeId, stockFrom });
@@ -86,7 +85,7 @@ function posOrder(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 
 beforeEach(async () => {
 	db = await createTestDb();
-	[{ id: warehouse }, { id: fba }] = await db
+	[{ id: warehouse }] = await db
 		.insert(schema.locations)
 		.values([
 			{ name: "Warehouse", kind: "owned" },
@@ -348,65 +347,5 @@ describe("overflow", () => {
 		expect(await onHand(wrench, warehouse)).toBe(10);
 		expect(await onHand(wrench, retail)).toBe(-2);
 		expect(await fetchList(orderId)).toEqual([]);
-	});
-});
-
-describe("transferStock", () => {
-	test("moves stock in one batch that undo moves back", async () => {
-		const retail = await addRetail();
-		const wrench = await createProduct(db, "WRENCH", "simple");
-		await stock(wrench, warehouse, 10);
-
-		const { batchId } = await transferStock(db, {
-			productId: wrench,
-			fromLocationId: warehouse,
-			toLocationId: retail,
-			quantity: 4,
-		});
-		expect(await onHand(wrench, warehouse)).toBe(6);
-		expect(await onHand(wrench, retail)).toBe(4);
-
-		await undoBatch(db, batchId);
-		expect(await onHand(wrench, warehouse)).toBe(10);
-		expect(await onHand(wrench, retail)).toBe(0);
-	});
-
-	test("refuses more than the shelf holds, changing nothing", async () => {
-		const retail = await addRetail();
-		const wrench = await createProduct(db, "WRENCH", "simple");
-		await stock(wrench, warehouse, 3);
-
-		await expect(
-			transferStock(db, {
-				productId: wrench,
-				fromLocationId: warehouse,
-				toLocationId: retail,
-				quantity: 4,
-			}),
-		).rejects.toThrow("Warehouse has 3 of WRENCH, not 4");
-		expect(await onHand(wrench, warehouse)).toBe(3);
-		expect(await onHand(wrench, retail)).toBe(0);
-	});
-
-	test("only between our own locations", async () => {
-		const wrench = await createProduct(db, "WRENCH", "simple");
-		await stock(wrench, warehouse, 3);
-
-		await expect(
-			transferStock(db, {
-				productId: wrench,
-				fromLocationId: warehouse,
-				toLocationId: fba,
-				quantity: 1,
-			}),
-		).rejects.toThrow("only between our own locations");
-		await expect(
-			transferStock(db, {
-				productId: wrench,
-				fromLocationId: warehouse,
-				toLocationId: warehouse,
-				quantity: 1,
-			}),
-		).rejects.toThrow("two different locations");
 	});
 });

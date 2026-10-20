@@ -10,6 +10,7 @@ import {
 	productComponents,
 	productGroups,
 	products,
+	shelfTargets,
 	stockLevels,
 	stores,
 } from "#/db/schema";
@@ -47,6 +48,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			productListings,
 			history,
 			ourLocations,
+			targets,
 		] = await Promise.all([
 			product.groupId
 				? db
@@ -134,6 +136,13 @@ export const getProductDetail = createServerFn({ method: "GET" })
 				.orderBy(desc(movements.id))
 				.limit(50),
 			ours,
+			db
+				.select({
+					locationId: shelfTargets.locationId,
+					target: shelfTargets.target,
+				})
+				.from(shelfTargets)
+				.where(eq(shelfTargets.productId, product.id)),
 		]);
 
 		// The product and its parts in one availability lookup.
@@ -168,6 +177,8 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			locations: ourLocations,
 			// How the page works out what's sellable after a count or move.
 			online,
+			// What refills top each location up to (src/inventory/refill.ts).
+			targets,
 		};
 	});
 
