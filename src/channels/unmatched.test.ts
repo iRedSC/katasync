@@ -72,6 +72,7 @@ const sell = (listingExternalId: string | null, sku: string | null) =>
 			cancelledAt: null,
 			fulfillmentStatus: "UNFULFILLED",
 			fulfilledByChannel: false,
+			soldInStore: false,
 			financialStatus: "PAID",
 			customerName: null,
 			shipCity: null,
@@ -95,7 +96,7 @@ const sell = (listingExternalId: string | null, sku: string | null) =>
 				},
 			],
 		},
-		warehouse,
+		{ shipping: warehouse, store: null },
 	);
 
 test("the same item on two channels is one item; different SKUs stay apart", async () => {

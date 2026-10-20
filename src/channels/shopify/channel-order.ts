@@ -7,6 +7,18 @@ export function tiktokOrderId(tags: string[]) {
 	return tag ? `tiktok:${tag.slice("TikTokOrderID:".length)}` : null;
 }
 
+// Rung up on Shopify POS at our store. Shopify gives such orders the source
+// "pos" and the channel "Point of Sale" (what earlier syncs stored, see
+// drizzle/0076_retail_store.sql); either is enough.
+export function isPosOrder(
+	o: Pick<ShopifyOrder, "sourceName" | "channelInformation">,
+) {
+	return (
+		o.sourceName === "pos" ||
+		o.channelInformation?.channelDefinition?.channelName === "Point of Sale"
+	);
+}
+
 // `shipped` is units shipped per line ID, needed when any line has refunded
 // or removed units (see shopifyLineQuantity).
 export function shopifyToChannelOrder(
@@ -26,6 +38,7 @@ export function shopifyToChannelOrder(
 		cancelledAt: o.cancelledAt,
 		fulfillmentStatus: o.displayFulfillmentStatus,
 		fulfilledByChannel: false,
+		soldInStore: isPosOrder(o),
 		financialStatus: o.displayFinancialStatus,
 		customerName: o.shippingAddress?.name ?? null,
 		shipCity: o.shippingAddress?.city ?? null,

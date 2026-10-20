@@ -1,9 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Db } from "#/db/client";
-import { recordCount, requestCounts, undoBatch } from "#/inventory/ledger";
+import {
+	recordCount,
+	requestCounts,
+	transferStock,
+	undoBatch,
+} from "#/inventory/ledger";
 import { PurchaseOrderError, purchaseOrderOfBatch } from "#/purchasing/orders";
-import { ownedLocation, productBySku } from "./lookups";
+import { ourLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
 
 export function registerStockTools(server: McpServer, db: Db) {
@@ -36,7 +41,7 @@ export function registerStockTools(server: McpServer, db: Db) {
 			};
 			const result = await recordCount(db, {
 				productId: product.id,
-				locationId: await ownedLocation(db, location),
+				locationId: await ourLocation(db, location),
 				counted,
 				note: [labels[reason], note?.trim(), "via Claude"]
 					.filter(Boolean)
@@ -65,9 +70,36 @@ export function registerStockTools(server: McpServer, db: Db) {
 			for (const sku of skus) productIds.push((await productBySku(db, sku)).id);
 			await requestCounts(db, {
 				productIds,
-				locationId: await ownedLocation(db, location),
+				locationId: await ourLocation(db, location),
 			});
 			return json({ requested: new Set(productIds).size });
+		},
+	);
+
+	server.registerTool(
+		"transfer_stock",
+		{
+			description:
+				"Moves units of a product between our own locations, e.g. restocking the retail store from the warehouse. Refused when the location it leaves doesn't hold that many; ask for a count there instead. Returns its batch_id for undo_stock_change.",
+			inputSchema: {
+				sku: z.string(),
+				quantity: z.number().int().positive(),
+				from: z.string().describe("Location name the units leave"),
+				to: z.string().describe("Location name the units go to"),
+				note: z.string().optional(),
+			},
+			annotations: WRITE,
+		},
+		async ({ sku, quantity, from, to, note }) => {
+			const product = await productBySku(db, sku);
+			const { batchId } = await transferStock(db, {
+				productId: product.id,
+				fromLocationId: await ourLocation(db, from),
+				toLocationId: await ourLocation(db, to),
+				quantity,
+				note: [note?.trim(), "via Claude"].filter(Boolean).join(": "),
+			});
+			return json({ sku, quantity, from, to, batch_id: batchId });
 		},
 	);
 

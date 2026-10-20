@@ -14,6 +14,7 @@ import {
 } from "#/db/schema";
 import { abcClasses } from "#/inventory/abc";
 import { getAvailability } from "#/inventory/availability";
+import { isOurs } from "#/inventory/locations";
 import { stockRanges } from "#/inventory/stock-range";
 import {
 	draftLines,
@@ -78,7 +79,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				})
 				.from(stockLevels)
 				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-				.where(eq(locations.kind, "owned"))
+				.where(isOurs)
 				.groupBy(stockLevels.productId),
 			db
 				.select({
@@ -110,7 +111,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				})
 				.from(stockLevels)
 				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-				.where(eq(locations.kind, "owned"))
+				.where(isOurs)
 				.groupBy(stockLevels.productId),
 			stockRanges(db, ids, plan),
 			plan,

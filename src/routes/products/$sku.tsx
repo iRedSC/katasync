@@ -24,6 +24,7 @@ import {
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
+import { TransferDialog } from "#/components/transfer-dialog";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { StockRange } from "#/inventory/stock-range";
@@ -79,11 +80,12 @@ type Loaded = ProductDetail & {
 const productData = optimistic<Loaded>("product");
 
 // The shelf holds `onHand` at `location`, and what that makes sellable, as
-// getAvailability works it out: owned stock only, never below zero.
+// getAvailability works it out: the warehouse's stock only, never below zero.
 function withShelf(d: Loaded, location: string, onHand: number): Loaded {
+	const kind = d.locations.find((l) => l.name === location)?.kind ?? "owned";
 	const stock = d.stock.some((s) => s.location === location)
 		? d.stock.map((s) => (s.location === location ? { ...s, onHand } : s))
-		: [...d.stock, { location, kind: "owned" as const, onHand }];
+		: [...d.stock, { location, kind, onHand }];
 	const available = stock.reduce(
 		(n, s) => (s.kind === "owned" ? n + s.onHand : n),
 		0,
@@ -97,6 +99,20 @@ const countPatch = (productId: number, location: string, onHand: number) =>
 		const next = withShelf(d, location, onHand);
 		// The count ends not counted, as recording it does.
 		return { ...next, product: { ...next.product, notCountedSince: null } };
+	});
+
+// A move takes `quantity` off one shelf and puts it on the other.
+const movePatch = (
+	productId: number,
+	from: string,
+	to: string,
+	quantity: number,
+) =>
+	productData.patch(productId, (d) => {
+		const had = (name: string) =>
+			d.stock.find((s) => s.location === name)?.onHand ?? 0;
+		const left = withShelf(d, from, had(from) - quantity);
+		return withShelf(left, to, had(to) + quantity);
 	});
 
 const rangePatch = (productId: number, range: StockRange | null) =>
@@ -115,11 +131,14 @@ function ProductPage() {
 	const p = d.product;
 	const goBack = useBack({ to: "/products" });
 	const [counting, setCounting] = useState(false);
+	const [moving, setMoving] = useState(false);
 	const canCount = p.kind !== "bundle";
+	const canMove = canCount && d.locations.length > 1;
 	const verdict = getVerdict(d);
 
 	useHotkeys({
 		c: () => canCount && setCounting(true),
+		m: () => canMove && setMoving(true),
 		Escape: goBack,
 	});
 
@@ -248,13 +267,24 @@ function ProductPage() {
 						<Card
 							title="Inventory"
 							aside={
-								<button
-									type="button"
-									onClick={() => setCounting(true)}
-									className="text-link hover:underline"
-								>
-									Count shelf
-								</button>
+								<span className="flex gap-4">
+									{canMove && (
+										<button
+											type="button"
+											onClick={() => setMoving(true)}
+											className="text-link hover:underline"
+										>
+											Move stock
+										</button>
+									)}
+									<button
+										type="button"
+										onClick={() => setCounting(true)}
+										className="text-link hover:underline"
+									>
+										Count shelf
+									</button>
+								</span>
 							}
 							flush
 						>
@@ -285,6 +315,11 @@ function ProductPage() {
 												{s.kind === "fba" && (
 													<span className="ml-2">
 														<Badge>Amazon's, not ours to ship</Badge>
+													</span>
+												)}
+												{s.kind === "retail" && (
+													<span className="ml-2">
+														<Badge>Sells in store only</Badge>
 													</span>
 												)}
 											</td>
@@ -439,6 +474,20 @@ function ProductPage() {
 					patch={({ location, counted, previous }) => ({
 						patch: countPatch(p.id, location, counted),
 						undo: countPatch(p.id, location, previous),
+					})}
+				/>
+			)}
+			{canMove && (
+				<TransferDialog
+					open={moving}
+					onOpenChange={setMoving}
+					sku={p.sku}
+					name={p.variantName ? `${p.name}, ${p.variantName}` : p.name}
+					locations={d.locations}
+					onHandByLocation={new Map(d.stock.map((s) => [s.location, s.onHand]))}
+					patch={({ from, to, quantity }) => ({
+						patch: movePatch(p.id, from, to, quantity),
+						undo: movePatch(p.id, to, from, quantity),
 					})}
 				/>
 			)}

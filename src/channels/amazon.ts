@@ -11,7 +11,7 @@ import {
 } from "./amazon-listings";
 import { recentAmazonReturns } from "./amazon-returns";
 import { matchListings, syncListings } from "./listings";
-import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
+import { advanceOrderCursor, ensureStore, stockLocations } from "./stores";
 
 // Amazon US orders through the Selling Partner API (Orders v0).
 
@@ -89,6 +89,7 @@ export function amazonToChannelOrder(
 					? "FULFILLMENT_NOT_REQUIRED"
 					: (fulfillment[order.OrderStatus] ?? "UNFULFILLED"),
 		fulfilledByChannel: fba,
+		soldInStore: false,
 		// Pending means Amazon hasn't confirmed payment yet.
 		financialStatus: order.OrderStatus === "Pending" ? "PENDING" : "PAID",
 		// Buyer names need Amazon's restricted-data token; city and state don't.
@@ -169,7 +170,7 @@ export function planAmazonWindows(
 
 export async function syncAmazon(db: Db, options: { listings: boolean }) {
 	const store = await ensureStore(db, "amazon", "Amazon US");
-	const locationId = await shippingLocation(db);
+	const stock = await stockLocations(db);
 	const problems: string[] = [];
 
 	// Listings first, so order lines can resolve to products; then FBA stock,
@@ -189,11 +190,7 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 			created = matched.created;
 			problems.push(...matched.skipped);
 			// Orders that sold a newly matched listing pick up the product now.
-			const caughtUp = await applyListingsToOrders(
-				db,
-				matched.mapped,
-				locationId,
-			);
+			const caughtUp = await applyListingsToOrders(db, matched.mapped, stock);
 			problems.push(...caughtUp.problems);
 		}
 		const fba = await mirrorFbaStock(db, store.id, await fbaQuantities());
@@ -223,7 +220,7 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 					db,
 					store,
 					amazonToChannelOrder(order, items),
-					locationId,
+					stock,
 				);
 				problems.push(...result.problems);
 				count++;

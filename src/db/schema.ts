@@ -30,9 +30,12 @@ const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
 	fromDriver: (value) => Buffer.from(value),
 });
 
-// `owned` locations are ours to pick from. `fba` stock is Amazon's: we only
-// mirror what Amazon reports and never route orders to it.
-export const locationKind = pgEnum("location_kind", ["owned", "fba"]);
+// `owned` is the warehouse: orders ship from it and the channels sell its
+// stock. `retail` is our store: its stock is ours (counted, transferred,
+// bought for) but only sells over the counter, so it never ships an order or
+// shows on a channel. `fba` stock is Amazon's: we only mirror what Amazon
+// reports and never route orders to it.
+export const locationKind = pgEnum("location_kind", ["owned", "fba", "retail"]);
 
 export const locations = pgTable("locations", {
 	id: integer().primaryKey().generatedAlwaysAsIdentity(),
@@ -420,6 +423,9 @@ export const orders = pgTable(
 		// The marketplace ships it from its own stock (Amazon FBA); it never
 		// takes ours.
 		fulfilledByChannel: boolean().notNull().default(false),
+		// Rung up at our retail store (Shopify POS): its stock comes off the
+		// store's shelf rather than the warehouse's.
+		soldInStore: boolean().notNull().default(false),
 		financialStatus: text(),
 		customerName: text(),
 		shipAddress1: text(),
@@ -1520,7 +1526,8 @@ export const qzCertificate = pgTable(
 // Views defined in drizzle/0020_reporting_views.sql, so every report counts
 // stock and sales the same way.
 
-// Stock on our own shelves per stocked product (Amazon's FBA stock left out).
+// Stock on our own shelves per stocked product, warehouse and retail store
+// (Amazon's FBA stock left out).
 export const ownedStock = pgView("owned_stock", {
 	productId: integer().notNull(),
 	sku: text().notNull(),

@@ -1,11 +1,11 @@
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
 import {
 	autoMapListings,
 	cleanTitle,
 	createProductNamed as createProduct,
 	mapListing,
 } from "#/channels/listings";
-import { shippingLocation } from "#/channels/stores";
+import { type StockLocations, stockLocations } from "#/channels/stores";
 import { unmatchedListings } from "#/channels/unmatched";
 import type { Db } from "#/db/client";
 import {
@@ -23,7 +23,7 @@ type Pending = {
 	line: typeof orderLines.$inferSelect;
 	order: Pick<
 		typeof orders.$inferSelect,
-		"name" | "placedAt" | "cancelledAt" | "fulfilledByChannel"
+		"name" | "placedAt" | "cancelledAt" | "fulfilledByChannel" | "soldInStore"
 	>;
 	store: Pick<typeof stores.$inferSelect, "id" | "stockFrom">;
 };
@@ -35,6 +35,7 @@ const pendingColumns = {
 		placedAt: orders.placedAt,
 		cancelledAt: orders.cancelledAt,
 		fulfilledByChannel: orders.fulfilledByChannel,
+		soldInStore: orders.soldInStore,
 	},
 	store: { id: stores.id, stockFrom: stores.stockFrom },
 };
@@ -44,7 +45,7 @@ const pendingColumns = {
 async function catchUp(
 	tx: Db,
 	pending: (Pending & { productId: number })[],
-	locationId: number | null,
+	from: StockLocations,
 ): Promise<string[]> {
 	const problems: string[] = [];
 	for (const { line, productId, order, store } of pending) {
@@ -53,12 +54,7 @@ async function catchUp(
 			.set({ productId, unitCost: await costOf(tx, productId) })
 			.where(eq(orderLines.id, line.id));
 		if (line.saleBatchId || !orderTakesStock(store, order)) continue;
-		const problem = await takeStock(
-			tx,
-			{ ...line, productId },
-			order.name,
-			locationId,
-		);
+		const problem = await takeStock(tx, { ...line, productId }, order, from);
 		if (problem) problems.push(problem);
 	}
 	return problems;
@@ -69,7 +65,7 @@ async function catchUp(
 export async function applyListingsToOrders(
 	db: Db,
 	listingIds: number[],
-	locationId: number | null,
+	from: StockLocations,
 ): Promise<{ lines: number; problems: string[] }> {
 	if (listingIds.length === 0) return { lines: 0, problems: [] };
 	return db.transaction(async (tx) => {
@@ -94,7 +90,7 @@ export async function applyListingsToOrders(
 		);
 		return {
 			lines: pending.length,
-			problems: await catchUp(tx, found, locationId),
+			problems: await catchUp(tx, found, from),
 		};
 	});
 }
@@ -106,7 +102,7 @@ export async function applyListingsToOrders(
 export async function applySkusToOrders(
 	db: Db,
 	only: { channel: Channel } | { skus: string[] },
-	locationId: number | null,
+	from: StockLocations,
 ): Promise<{ lines: number; problems: string[] }> {
 	if ("skus" in only && only.skus.length === 0)
 		return { lines: 0, problems: [] };
@@ -133,8 +129,47 @@ export async function applySkusToOrders(
 		}
 		return {
 			lines: found.length,
-			problems: await catchUp(tx, found, locationId),
+			problems: await catchUp(tx, found, from),
 		};
+	});
+}
+
+// Takes stock now for in-store sales that couldn't take it when they came
+// in, because the retail store didn't exist yet (see scripts/add-retail-store.ts).
+// Safe to repeat: a line never takes stock twice.
+export async function applyStoreSales(
+	db: Db,
+): Promise<{ lines: number; problems: string[] }> {
+	const from = await stockLocations(db);
+	return db.transaction(async (tx) => {
+		const pending = await tx
+			.select(pendingColumns)
+			.from(orderLines)
+			.innerJoin(orders, eq(orders.id, orderLines.orderId))
+			.innerJoin(stores, eq(stores.id, orders.storeId))
+			.where(
+				and(
+					eq(orders.soldInStore, true),
+					isNotNull(orderLines.productId),
+					isNull(orderLines.saleBatchId),
+					gt(orderLines.quantity, 0),
+				),
+			)
+			.for("update", { of: orderLines });
+		const problems: string[] = [];
+		let lines = 0;
+		for (const { line, order, store } of pending) {
+			if (line.productId === null || !orderTakesStock(store, order)) continue;
+			lines++;
+			const problem = await takeStock(
+				tx,
+				{ ...line, productId: line.productId },
+				order,
+				from,
+			);
+			if (problem) problems.push(problem);
+		}
+		return { lines, problems };
 	});
 }
 
@@ -163,13 +198,13 @@ export async function linkSku(db: Db, alias: string, sku: string) {
 		throw new Error(`${alias} is already linked to ${linked.sku}`);
 	if (!linked)
 		await db.insert(productAliases).values({ alias, productId: product.id });
-	const locationId = await shippingLocation(db);
+	const from = await stockLocations(db);
 	const byListing = await applyListingsToOrders(
 		db,
 		await autoMapListings(db),
-		locationId,
+		from,
 	);
-	const bySku = await applySkusToOrders(db, { skus: [alias] }, locationId);
+	const bySku = await applySkusToOrders(db, { skus: [alias] }, from);
 	return {
 		sku: product.sku,
 		ordersUpdated: byListing.lines + bySku.lines,
@@ -218,7 +253,7 @@ async function catchUpListings(db: Db, listingIds: number[], sku: string) {
 	const caughtUp = await applyListingsToOrders(
 		db,
 		listingIds,
-		await shippingLocation(db),
+		await stockLocations(db),
 	);
 	return { sku, ordersUpdated: caughtUp.lines, problems: caughtUp.problems };
 }

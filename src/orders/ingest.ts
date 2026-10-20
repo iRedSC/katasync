@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import { type StockLocations, saleLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import {
 	listings,
@@ -27,6 +28,9 @@ export type ChannelOrder = {
 	// The marketplace ships it from its own stock (Amazon FBA). It never takes
 	// stock here: FBA quantities mirror what Amazon reports.
 	fulfilledByChannel: boolean;
+	// Rung up at our retail store (Shopify POS), so its stock comes off the
+	// store's shelf.
+	soldInStore: boolean;
 	financialStatus: string | null;
 	customerName: string | null;
 	shipAddress1: string | null;
@@ -67,7 +71,7 @@ export async function ingestOrder(
 	db: Db,
 	store: IngestStore,
 	order: ChannelOrder,
-	locationId: number | null,
+	from: StockLocations,
 ): Promise<{ orderId: number; problems: string[] }> {
 	return db.transaction(async (tx) => {
 		const { lines, ...fields } = order;
@@ -162,8 +166,8 @@ export async function ingestOrder(
 			const problem = await takeStock(
 				tx,
 				{ ...row, productId: row.productId },
-				order.name,
-				locationId,
+				order,
+				from,
 			);
 			if (problem) problems.push(problem);
 		}
@@ -191,16 +195,16 @@ export function orderTakesStock(
 export async function takeStock(
 	db: Db,
 	line: { id: number; orderId: number; productId: number; quantity: number },
-	orderName: string,
-	locationId: number | null,
+	order: { name: string; soldInStore: boolean },
+	from: StockLocations,
 ): Promise<string | null> {
-	if (locationId === null)
-		return `${orderName}: no location to take stock from`;
+	const shelf = saleLocation(from, order);
+	if ("problem" in shelf) return `${order.name}: ${shelf.problem}`;
 	try {
 		const sale = await recordSale(db, {
 			productId: line.productId,
 			quantity: line.quantity,
-			locationId,
+			locationId: shelf.locationId,
 			reference: `order:${line.orderId}:${line.id}`,
 		});
 		await db
@@ -210,7 +214,7 @@ export async function takeStock(
 		return null;
 	} catch (error) {
 		if (!(error instanceof LedgerError)) throw error;
-		return `${orderName}: ${error.message}`;
+		return `${order.name}: ${error.message}`;
 	}
 }
 

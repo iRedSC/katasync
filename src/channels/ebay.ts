@@ -6,7 +6,7 @@ import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
 import { fetchEbayReturns } from "./ebay-returns";
 import { type ChannelListing, matchListings, syncListings } from "./listings";
-import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
+import { advanceOrderCursor, ensureStore, stockLocations } from "./stores";
 
 // eBay US through the Sell Fulfillment API, and its listings through the
 // Trading API, which (unlike the Inventory API) sees listings made in Seller
@@ -140,6 +140,7 @@ export function ebayToChannelOrder(
 		fulfillmentStatus:
 			fulfillment[order.orderFulfillmentStatus] ?? "UNFULFILLED",
 		fulfilledByChannel: false,
+		soldInStore: false,
 		financialStatus: payment[order.orderPaymentStatus ?? ""] ?? null,
 		customerName: shipTo?.fullName ?? null,
 		shipCity: shipTo?.contactAddress?.city ?? null,
@@ -279,7 +280,7 @@ const FIRST_SYNC_DAYS = 60;
 
 export async function syncEbay(db: Db, options: { listings: boolean }) {
 	const store = await ensureStore(db, "ebay", "eBay US");
-	const locationId = await shippingLocation(db);
+	const stock = await stockLocations(db);
 
 	// Listings first, so order lines can resolve to products.
 	const problems: string[] = [];
@@ -293,11 +294,7 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 		created = matched.created;
 		problems.push(...matched.skipped);
 		// Orders that sold a newly matched listing pick up the product now.
-		const caughtUp = await applyListingsToOrders(
-			db,
-			matched.mapped,
-			locationId,
-		);
+		const caughtUp = await applyListingsToOrders(db, matched.mapped, stock);
 		problems.push(...caughtUp.problems);
 	}
 
@@ -324,7 +321,7 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 				db,
 				store,
 				ebayToChannelOrder(order),
-				locationId,
+				stock,
 			);
 			problems.push(...result.problems);
 			count++;

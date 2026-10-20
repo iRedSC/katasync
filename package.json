@@ -27,6 +27,7 @@
     "stock-push:preview": "tsx scripts/stock-push-preview.ts",
     "stock:pull": "tsx scripts/stock-pull.ts",
     "stock:not-counted": "tsx scripts/mark-not-counted.ts",
+    "location:add-retail": "tsx scripts/add-retail-store.ts",
     "webhooks": "tsx scripts/webhooks.ts",
     "auth:setup-link": "tsx scripts/auth-setup-link.ts",
     "tiktok:authorize": "tsx scripts/tiktok-authorize.ts",

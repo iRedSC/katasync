@@ -10,7 +10,7 @@ import { matchInvoice } from "#/purchasing/invoices";
 import { suggestPurchases } from "#/purchasing/reorder";
 import { supplierByRef } from "#/purchasing/suppliers";
 import { listUnits } from "#/purchasing/units";
-import { ownedLocation } from "./lookups";
+import { ourLocation } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
 import { json, READ } from "./tool-shapes";
 
@@ -101,7 +101,7 @@ export function registerReadTools(server: McpServer, db: Db) {
 			annotations: READ,
 		},
 		async ({ limit, reasons, abc, category, search, location }) => {
-			if (location) await ownedLocation(db, location);
+			if (location) await ourLocation(db, location);
 			const { due } = await countsDue(db);
 			if (
 				category &&

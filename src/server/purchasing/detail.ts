@@ -8,6 +8,7 @@ import {
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 } from "#/db/schema";
+import { isOurs } from "#/inventory/locations";
 import { stockRanges } from "#/inventory/stock-range";
 import { damagesOf } from "#/purchasing/damage";
 import { emailConfigured } from "#/purchasing/email";
@@ -91,8 +92,8 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			db
 				.select({ id: locations.id, name: locations.name })
 				.from(locations)
-				.where(eq(locations.kind, "owned"))
-				.orderBy(locations.name),
+				.where(isOurs)
+				.orderBy(locations.kind, locations.name),
 			// On a draft: how today's suggestions differ from it (see draftChanges).
 			// The page works out raised and skipped from each line's wants, so
 			// they follow quantities and locks as they change. A suggested PO is

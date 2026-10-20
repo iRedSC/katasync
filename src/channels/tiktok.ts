@@ -12,7 +12,12 @@ import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
 import { needsShipping } from "#/orders/to-ship";
 import { matchListings, syncListings } from "./listings";
-import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
+import {
+	advanceOrderCursor,
+	ensureStore,
+	type StockLocations,
+	stockLocations,
+} from "./stores";
 import { fetchTiktokReturns } from "./tiktok-returns";
 
 // TikTok Shop US through the Partner API (202309 versions). The app is shared
@@ -321,6 +326,7 @@ export function tiktokToChannelOrder(
 			? "FULFILLMENT_NOT_REQUIRED"
 			: (fulfillment[order.status] ?? "UNFULFILLED"),
 		fulfilledByChannel: fbt,
+		soldInStore: false,
 		financialStatus: order.status === "UNPAID" ? "PENDING" : "PAID",
 		// A masked name ("D*****") still tells orders apart on the dashboard.
 		customerName: address?.name || null,
@@ -353,7 +359,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	// Created only once TikTok answers, because its existence is what stops
 	// Shopify from importing TikTok orders.
 	const store = await ensureStore(db, "tiktok", STORE_NAME);
-	const locationId = await shippingLocation(db);
+	const stock = await stockLocations(db);
 	const problems: string[] = [];
 
 	let mapped: number[] = [];
@@ -365,7 +371,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 		problems.push(...matched.skipped);
 	}
 	// Orders that sold a newly matched listing pick up the product now.
-	const caughtUp = await applyListingsToOrders(db, mapped, locationId);
+	const caughtUp = await applyListingsToOrders(db, mapped, stock);
 	problems.push(...caughtUp.problems);
 
 	const since =
@@ -407,7 +413,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 			}),
 		);
 		for (const raw of details.orders ?? []) {
-			const result = await ingestDetail(db, store, raw, locationId);
+			const result = await ingestDetail(db, store, raw, stock);
 			problems.push(...result.problems);
 			if (result.ingested) count++;
 		}
@@ -433,13 +439,13 @@ async function ingestDetail(
 	db: Db,
 	store: Awaited<ReturnType<typeof ensureStore>>,
 	raw: typeof tiktokOrder.infer,
-	locationId: number | null,
+	stock: StockLocations,
 ) {
 	const order = tiktokToChannelOrder(raw);
 	const taken = await takeOver(db, store.id, order);
 	// Still on Shopify: ingesting it here would take its stock twice.
 	if (!taken.moved) return { ingested: false, problems: taken.problems };
-	const result = await ingestOrder(db, store, order, locationId);
+	const result = await ingestOrder(db, store, order, stock);
 	return { ingested: true, problems: [...taken.problems, ...result.problems] };
 }
 
@@ -454,9 +460,9 @@ export async function ingestTiktokOrder(db: Db, orderId: string) {
 			ids: orderId,
 		}),
 	);
-	const locationId = await shippingLocation(db);
+	const stock = await stockLocations(db);
 	for (const raw of details.orders ?? [])
-		await ingestDetail(db, store, raw, locationId);
+		await ingestDetail(db, store, raw, stock);
 }
 
 // TikTok orders Shopify relayed that still need shipping.

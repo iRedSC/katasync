@@ -15,6 +15,7 @@ import {
 } from "#/db/schema";
 import { abcClasses } from "#/inventory/abc";
 import { getAvailability } from "#/inventory/availability";
+import { isOurs } from "#/inventory/locations";
 import { membershipOf } from "#/purchasing/reorder";
 
 export const getProductDetail = createServerFn({ method: "GET" })
@@ -29,11 +30,12 @@ export const getProductDetail = createServerFn({ method: "GET" })
 
 		// Everything below depends only on the product, so it runs at once:
 		// one round trip of waiting instead of a dozen in a row.
-		const owned = db
-			.select({ id: locations.id, name: locations.name })
+		// Warehouse first, so it's the one picked unless someone picks another.
+		const ours = db
+			.select({ id: locations.id, name: locations.name, kind: locations.kind })
 			.from(locations)
-			.where(eq(locations.kind, "owned"))
-			.orderBy(locations.name);
+			.where(isOurs)
+			.orderBy(locations.kind, locations.name);
 		const [
 			group,
 			variants,
@@ -43,7 +45,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			aliases,
 			productListings,
 			history,
-			ownedLocations,
+			ourLocations,
 		] = await Promise.all([
 			product.groupId
 				? db
@@ -130,7 +132,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 				.where(eq(movements.productId, product.id))
 				.orderBy(desc(movements.id))
 				.limit(50),
-			owned,
+			ours,
 		]);
 
 		// The product and its parts in one availability lookup.
@@ -138,7 +140,8 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			getAvailability(
 				db,
 				[product.id, ...components.map((c) => c.id)],
-				ownedLocations.map((l) => l.id),
+				// Only the warehouse's stock is for sale on the channels.
+				ourLocations.filter((l) => l.kind === "owned").map((l) => l.id),
 			),
 			abcClasses(db),
 			membershipOf(db, product.id),
@@ -163,8 +166,9 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			history,
 			available: availability.get(product.id) ?? 0,
 			abc: rank ? { ...rank, of: ranking.size, days: abc.days } : null,
-			// Where a count could be recorded. One location means nobody has to pick.
-			locations: ownedLocations,
+			// Where a count or transfer could be recorded. One location means
+			// nobody has to pick.
+			locations: ourLocations,
 		};
 	});
 

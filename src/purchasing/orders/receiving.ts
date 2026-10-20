@@ -11,6 +11,7 @@ import {
 	stockLevels,
 } from "#/db/schema";
 import { postReceipt, undoBatch } from "#/inventory/ledger";
+import { isOurs } from "#/inventory/locations";
 import type { DiscountOff } from "#/purchasing/discount";
 import { discountRow, receiptUnitCost } from "#/purchasing/discount";
 import { closeIfComplete, reopen, shortLines } from "./closing";
@@ -280,10 +281,7 @@ export async function damagedOf(tx: Db, lineId: number) {
 }
 
 async function ownedOnHand(db: Db, productId: number) {
-	const owned = db
-		.select({ id: locations.id })
-		.from(locations)
-		.where(eq(locations.kind, "owned"));
+	const owned = db.select({ id: locations.id }).from(locations).where(isOurs);
 	const [row] = await db
 		.select({
 			onHand: sql<number>`coalesce(sum(${stockLevels.onHand}), 0)::int`,

@@ -37,6 +37,36 @@ export async function shippingLocation(db: Db): Promise<number | null> {
 	return owned.length === 1 ? owned[0].id : null;
 }
 
+// Where each kind of sale takes stock from: shipped orders from the
+// warehouse, in-store sales from the retail store. Null where katasync can't
+// tell (none, or several), so the order reports it instead.
+export type StockLocations = { shipping: number | null; store: number | null };
+
+export async function stockLocations(db: Db): Promise<StockLocations> {
+	const retail = await db
+		.select({ id: locations.id })
+		.from(locations)
+		.where(eq(locations.kind, "retail"));
+	return {
+		shipping: await shippingLocation(db),
+		store: retail.length === 1 ? retail[0].id : null,
+	};
+}
+
+// The shelf one order's stock comes off, or why there isn't one.
+export function saleLocation(
+	from: StockLocations,
+	order: { soldInStore: boolean },
+): { locationId: number } | { problem: string } {
+	const locationId = order.soldInStore ? from.store : from.shipping;
+	if (locationId !== null) return { locationId };
+	return {
+		problem: order.soldInStore
+			? "no retail store to take in-store stock from"
+			: "no location to take stock from",
+	};
+}
+
 // Moves the sync cursor forward. Only ever forward, so a slow or partial pass
 // can't make the next one skip orders.
 export async function advanceOrderCursor(db: Db, storeId: number, to: Date) {

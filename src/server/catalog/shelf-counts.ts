@@ -14,6 +14,7 @@ import {
 	recordCount as recordShelfCount,
 	requestCounts,
 } from "#/inventory/ledger";
+import { isOurs } from "#/inventory/locations";
 import { ownedLocationIds } from "./owned-locations";
 
 // Records what someone counted on the shelf. The app works out the change, and
@@ -35,9 +36,17 @@ export const recordCount = createServerFn({ method: "POST" })
 			.from(products)
 			.where(eq(products.sku, data.sku));
 		if (!product) throw new Error(`No product ${data.sku}`);
-		const owned = await ownedLocationIds();
+		const ours = await db
+			.select({ id: locations.id, kind: locations.kind })
+			.from(locations)
+			.where(isOurs);
+		if (
+			data.locationId !== undefined &&
+			!ours.some((l) => l.id === data.locationId)
+		)
+			throw new Error("That isn't one of our locations");
 		const locationId =
-			data.locationId ?? (owned.length === 1 ? owned[0] : undefined);
+			data.locationId ?? (ours.length === 1 ? ours[0].id : undefined);
 		if (locationId === undefined) throw new Error("Pick a location");
 
 		const labels = {
@@ -59,7 +68,7 @@ export const recordCount = createServerFn({ method: "POST" })
 export const countDue = and(
 	isNotNull(stockLevels.countRequestedAt),
 	sql`(${stockLevels.lastCountedAt} is null or ${stockLevels.lastCountedAt} < ${stockLevels.countRequestedAt})`,
-	eq(locations.kind, "owned"),
+	isOurs,
 );
 
 // Puts a product on the count list at every shelf of ours holding it, or our
@@ -83,16 +92,14 @@ export const requestCount = createServerFn({ method: "POST" })
 	});
 
 // Puts each of our shelves holding the product on the count list, or the
-// first one when none holds it yet.
+// warehouse when none holds it yet.
 async function requestShelfCounts(db: Db, productId: number) {
 	const [held, owned] = await Promise.all([
 		db
 			.select({ locationId: stockLevels.locationId })
 			.from(stockLevels)
 			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(
-				and(eq(stockLevels.productId, productId), eq(locations.kind, "owned")),
-			),
+			.where(and(eq(stockLevels.productId, productId), isOurs)),
 		ownedLocationIds(),
 	]);
 	if (owned.length === 0) throw new Error("Add a location first");

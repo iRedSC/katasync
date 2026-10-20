@@ -40,3 +40,4 @@ export {
 	recordCount,
 	requestCount,
 } from "#/server/catalog/shelf-counts";
+export { recordTransfer } from "#/server/catalog/transfers";

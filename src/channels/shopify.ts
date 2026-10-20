@@ -11,7 +11,7 @@ import { syncShipFrom } from "#/channels/shopify/ship-from";
 import {
 	advanceOrderCursor,
 	ensureStore,
-	shippingLocation,
+	stockLocations,
 } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { applyListingsToOrders } from "#/orders/remap";
@@ -118,13 +118,13 @@ export async function syncShopify(
 				: null;
 		} while (cursor);
 	if (options.listings) await syncShipFrom(db);
-	const locationId = await shippingLocation(db);
+	const stock = await stockLocations(db);
 	const matched = options.listings
 		? await matchListings(db)
 		: { mapped: [], created: 0, skipped: [] };
 	const photographed = await fillProductImages(db, store.id, images);
 	// Orders that sold a newly matched listing pick up the product now.
-	const caughtUp = await applyListingsToOrders(db, matched.mapped, locationId);
+	const caughtUp = await applyListingsToOrders(db, matched.mapped, stock);
 
 	const since =
 		store.ordersSyncedThrough ??
@@ -133,7 +133,7 @@ export async function syncShopify(
 		db,
 		store,
 		`updated_at:>='${since.toISOString()}'`,
-		locationId,
+		stock,
 	);
 	await advanceOrderCursor(db, store.id, result.newest ?? since);
 	// Returns after orders, so a return on a new order finds it. Every
@@ -170,7 +170,7 @@ export async function backfillShopify(db: Db, from: Date, until: Date) {
 		db,
 		store,
 		`created_at:>='${from.toISOString()}' created_at:<'${until.toISOString()}'`,
-		await shippingLocation(db),
+		await stockLocations(db),
 	);
 	return { store: store.name, orders: result.count, problems: result.problems };
 }

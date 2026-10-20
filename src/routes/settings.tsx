@@ -170,7 +170,11 @@ function Locations({ locations }: { locations: Location[] }) {
 					<Row key={l.id}>
 						<span className="flex-1 font-medium">{l.name}</span>
 						<span className="text-muted-foreground">
-							{l.kind === "fba" ? "Amazon's warehouse" : "Ours"}
+							{l.kind === "fba"
+								? "Amazon's warehouse"
+								: l.kind === "retail"
+									? "Our store, sells in person"
+									: "Ours, ships orders"}
 						</span>
 					</Row>
 				))}
