@@ -56,6 +56,7 @@ export const setLine = createServerFn({ method: "POST" })
 			quantity: "number.integer >= 0",
 			"unitCost?": "number >= 0 | null",
 			"discounts?": discount.array(),
+			"addedAt?": "Date",
 		}),
 	)
 	.handler(async ({ data }) => setDraftLine(getDb(), data));

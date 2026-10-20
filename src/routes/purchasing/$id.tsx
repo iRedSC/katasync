@@ -21,7 +21,7 @@ import { AddEmail } from "#/components/purchase-order/add-email";
 import { DeliveryCard } from "#/components/purchase-order/delivery-card";
 import { damageable, lineName } from "#/components/purchase-order/line-damage";
 import { LineTable } from "#/components/purchase-order/line-table";
-import { browseLine, byName } from "#/components/purchase-order/new-lines";
+import { browseLine } from "#/components/purchase-order/new-lines";
 import { NotesCard } from "#/components/purchase-order/notes-card";
 import { OtherActions } from "#/components/purchase-order/other-actions";
 import {
@@ -238,7 +238,7 @@ function PurchaseOrderPage() {
 						: data.order,
 				lines: data.lines.some((l) => l.productId === row.id)
 					? data.lines
-					: [...data.lines, line].sort(byName),
+					: [...data.lines, line],
 				recommended: data.recommended.filter((x) => x.productId !== row.id),
 			})),
 			send: async () => {

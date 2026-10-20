@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct } from "#/test/db";
+import { loadOrder } from "./load";
 import {
 	addDraftLine,
 	draftFromSuggestions,
@@ -76,6 +77,45 @@ describe("a PO from draft to received", () => {
 			quantity: 0,
 		});
 		expect(await linesOf(id)).toHaveLength(1);
+	});
+
+	test("lines list in the order they were added, not by name", async () => {
+		const id = await openDraft(db, canam);
+		const set = (productId: number, quantity: number) =>
+			setDraftLine(db, { purchaseOrderId: id, productId, quantity });
+		const order = async () =>
+			(await loadOrder(db, id)).lines.map((l) => l.productId);
+		await set(knife, 6);
+		await set(blade, 5);
+		expect(await order()).toEqual([knife, blade]);
+		// Changing a line leaves it where it is.
+		await set(knife, 12);
+		expect(await order()).toEqual([knife, blade]);
+		// Put back with its old time, as Undo does, it's where it sat.
+		const [first] = (await loadOrder(db, id)).lines;
+		await set(knife, 0);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: knife,
+			quantity: 12,
+			addedAt: first.addedAt,
+		});
+		expect(await order()).toEqual([knife, blade]);
+		// Taken off and added again, it's the newest.
+		await set(knife, 0);
+		await set(knife, 6);
+		expect(await order()).toEqual([blade, knife]);
+		// A time still to come counts as now.
+		await set(blade, 0);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 5,
+			addedAt: new Date(Date.now() + 86_400_000),
+		});
+		expect((await loadOrder(db, id)).lines[1].addedAt.getTime()).toBeLessThan(
+			Date.now() + 1000,
+		);
 	});
 
 	test("Update skips a locked line until it's unlocked", async () => {

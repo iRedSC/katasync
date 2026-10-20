@@ -960,6 +960,9 @@ export const purchaseOrderLines = pgTable(
 		// above the line when receiving. Never printed; the supplier doesn't
 		// see it. Null when there's none, never blank.
 		receivingNote: text(),
+		// Lines list in this order, then by id. Putting back a line that was
+		// taken off gives it its old time, so it returns to where it sat.
+		addedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		unique("purchase_order_lines_product").on(t.purchaseOrderId, t.productId),

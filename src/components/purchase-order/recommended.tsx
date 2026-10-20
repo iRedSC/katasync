@@ -10,7 +10,7 @@ import { ids } from "#/lib/optimism";
 import { orderedItems } from "#/purchasing/sets";
 import { addRecommended, type PurchaseOrderDetail } from "#/server/purchasing";
 import { AfterPo } from "./after-po";
-import { byName, recommendedLine } from "./new-lines";
+import { recommendedLine } from "./new-lines";
 import { poData } from "./po-data";
 import type { Recommendation } from "./types";
 import { useAction } from "./use-action";
@@ -48,7 +48,7 @@ export function Recommended({
 						: data.order,
 				lines: data.lines.some((l) => l.productId === r.productId)
 					? data.lines
-					: [...data.lines, line].sort(byName),
+					: [...data.lines, line],
 				recommended: data.recommended.filter(
 					(x) => x.productId !== r.productId,
 				),

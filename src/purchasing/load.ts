@@ -76,6 +76,7 @@ export async function loadOrder(db: Db, poId: number) {
 			sentUnitCost: purchaseOrderLines.sentUnitCost,
 			locked: purchaseOrderLines.locked,
 			receivingNote: purchaseOrderLines.receivingNote,
+			addedAt: purchaseOrderLines.addedAt,
 			received: sql<number>`coalesce(${received.units}, 0)::int`,
 		})
 		.from(purchaseOrderLines)
@@ -83,7 +84,8 @@ export async function loadOrder(db: Db, poId: number) {
 		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
 		.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
 		.where(eq(purchaseOrderLines.purchaseOrderId, poId))
-		.orderBy(products.name, products.variantName);
+		// In the order they were added, so a new line lands last.
+		.orderBy(purchaseOrderLines.addedAt, purchaseOrderLines.id);
 	const discounts = (
 		lines.length === 0
 			? []

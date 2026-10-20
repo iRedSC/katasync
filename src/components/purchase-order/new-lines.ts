@@ -1,10 +1,9 @@
 import type { BrowseRow } from "#/components/po-browse";
 import type { Line, Recommendation } from "./types";
 
-// The server lists lines by product name, then variant.
-export const byName = (a: Line, b: Line) =>
-	a.name.localeCompare(b.name) ||
-	(a.variantName ?? "").localeCompare(b.variantName ?? "");
+// The order the server lists lines in: when they were added, then id.
+export const byAdded = (a: Line, b: Line) =>
+	a.addedAt.getTime() - b.addedAt.getTime() || a.id - b.id;
 
 // A recommendation as the line adding it makes: the supplier's terms and
 // price (a tool set has none of its own), on a draft, nothing received.
@@ -46,6 +45,8 @@ export function recommendedLine(
 		locked: false,
 		discounts: [],
 		sentDiscounts: [],
+		// Last, as the server will list it; the reload brings the server's time.
+		addedAt: new Date(),
 	};
 }
 
@@ -99,5 +100,7 @@ export function browseLine(
 		locked: false,
 		discounts: [],
 		sentDiscounts: [],
+		// Last, as the server will list it; the reload brings the server's time.
+		addedAt: new Date(),
 	};
 }

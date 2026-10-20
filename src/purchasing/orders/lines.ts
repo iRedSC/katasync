@@ -26,7 +26,7 @@ import type { AddedLine, Status } from "./types";
 // line's terms and the quantity it ended up with, in its unit. A tool set gets
 // its own line here and is split into its parts when the PO is sent.
 // `discounts`, when given, replace the line's, e.g. putting back a line that
-// was taken off.
+// was taken off; `addedAt` puts it back where it sat (see addedAtOf).
 export async function setDraftLine(
 	db: Db,
 	input: {
@@ -36,6 +36,7 @@ export async function setDraftLine(
 		inItems?: boolean;
 		unitCost?: number | null;
 		discounts?: Discount[];
+		addedAt?: Date;
 	},
 ) {
 	if (!Number.isInteger(input.quantity) || input.quantity < 0)
@@ -85,6 +86,7 @@ export async function setDraftLine(
 				// A new line's terms are the supplier's, so its price is too.
 				unitCost:
 					input.unitCost !== undefined ? input.unitCost : product.unitCost,
+				addedAt: addedAtOf(input.addedAt),
 			})
 			.onConflictDoUpdate({
 				target: [
@@ -226,7 +228,12 @@ export async function addDraftLine(
 // sent it. It reopens a closed PO, since now something is on its way.
 export async function addLine(
 	db: Db,
-	input: { purchaseOrderId: number; productId: number; quantity: number },
+	input: {
+		purchaseOrderId: number;
+		productId: number;
+		quantity: number;
+		addedAt?: Date;
+	},
 	allowed: Status[] = ["draft", "sent", "closed"],
 ): Promise<{ added: boolean; line: AddedLine }> {
 	if (!Number.isInteger(input.quantity) || input.quantity <= 0)
@@ -251,7 +258,7 @@ export async function addLine(
 export async function insertLine(
 	tx: Db,
 	po: typeof purchaseOrders.$inferSelect,
-	input: { productId: number; quantity: number },
+	input: { productId: number; quantity: number; addedAt?: Date },
 ): Promise<{ added: boolean; line: AddedLine }> {
 	const [existing] = await tx
 		.select(lineFields)
@@ -277,6 +284,7 @@ export async function insertLine(
 			...product.terms,
 			quantity: input.quantity,
 			unitCost: product.unitCost,
+			addedAt: addedAtOf(input.addedAt),
 		})
 		.returning(lineFields);
 	if (po.status === "closed" && input.quantity > 0) await reopen(tx, po.id);
@@ -337,4 +345,11 @@ export async function removeAddedLine(
 			.returning({ id: purchaseOrderLines.id });
 		return removed.length > 0;
 	});
+}
+
+// When a new line counts as added: now, or for a line being put back, when
+// it was first added. A time still to come is ignored; it would only hide the
+// line below ones added after it.
+function addedAtOf(was: Date | undefined) {
+	return was !== undefined && was <= new Date() ? was : undefined;
 }

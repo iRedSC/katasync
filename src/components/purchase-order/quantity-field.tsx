@@ -80,12 +80,10 @@ export function LockToggle({
 // are coming.
 // onPreview gets the quantity while it's dragged or typed, and null once the
 // page shows it, which a save does at once. `open` (a nonce) opens it for
-// typing, and finishing calls onDone. `at` is where the line sits, so Undo
-// puts a line taken off back there.
+// typing, and finishing calls onDone.
 export function QuantityField({
 	line,
 	purchaseOrderId,
-	at,
 	draft,
 	open,
 	onDone,
@@ -93,7 +91,6 @@ export function QuantityField({
 }: {
 	line: Line;
 	purchaseOrderId: number;
-	at: number;
 	draft: boolean;
 	open: number | null;
 	// enter: it was left with Enter, so go on to the next product.
@@ -139,7 +136,7 @@ export function QuantityField({
 			return;
 		}
 		if (quantity === 0) {
-			takeOff(line, purchaseOrderId, at);
+			takeOff(line, purchaseOrderId);
 			return;
 		}
 		saveChange({

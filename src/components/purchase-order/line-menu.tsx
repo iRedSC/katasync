@@ -91,7 +91,7 @@ export function LineMenu({
 			{po.status === "draft" && (
 				<ContextMenuItem
 					className="text-critical-text [&_svg]:text-critical-text"
-					onSelect={() => takeOff(l, po.id, d.lines.indexOf(l))}
+					onSelect={() => takeOff(l, po.id)}
 				>
 					<Trash2 />
 					Take off this PO
