@@ -540,6 +540,13 @@
       "when": 1792519264328,
       "tag": "0076_product_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1792526023460,
+      "tag": "0077_products_cost_updated_at",
+      "breakpoints": true
     }
   ]
 }

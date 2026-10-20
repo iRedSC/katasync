@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { products } from "#/db/schema";
 
@@ -76,6 +76,10 @@ export async function updateProductDetails(
 			category: text(details.category),
 			barcode,
 			unitCost: details.unitCost,
+			// Entering the same cost again confirms it. A trigger clears the
+			// date along with the cost.
+			unitCostUpdatedAt:
+				details.unitCost === undefined ? undefined : sql`now()`,
 			weightGrams: measure(details.weightOz, "weight", GRAMS_PER_OUNCE),
 			lengthMm: measure(details.lengthIn, "length", MM_PER_INCH),
 			widthMm: measure(details.widthIn, "width", MM_PER_INCH),

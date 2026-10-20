@@ -330,9 +330,13 @@ async function averageInCost(
 		.from(products)
 		.where(eq(products.id, p.productId));
 	const cost = averageCost({ ...p, oldCost: product.unitCost });
+	// Dated even when the average comes out the same: a receipt confirms it.
 	await db
 		.update(products)
-		.set({ unitCost: Math.round(cost * 10_000) / 10_000 })
+		.set({
+			unitCost: Math.round(cost * 10_000) / 10_000,
+			unitCostUpdatedAt: sql`now()`,
+		})
 		.where(eq(products.id, p.productId));
 	// One statement, so the pack size it multiplies by is the row's current one
 	// even if a new default is being saved at the same time. Same rounding as

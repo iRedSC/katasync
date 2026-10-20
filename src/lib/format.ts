@@ -9,6 +9,7 @@ const dateTime = new Intl.DateTimeFormat("en-US", {
 	dateStyle: "medium",
 	timeStyle: "short",
 });
+const dateOnly = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
 export function formatMoney(value: number | null) {
 	return value === null ? "—" : usd.format(value);
@@ -20,6 +21,11 @@ export function formatCount(value: number) {
 
 export function formatDateTime(value: Date | string) {
 	return dateTime.format(new Date(value));
+}
+
+// "Oct 20, 2026", for dates that may be from another year.
+export function formatDate(value: Date | string) {
+	return dateOnly.format(new Date(value));
 }
 
 export function formatDelta(delta: number) {
