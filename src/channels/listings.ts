@@ -56,6 +56,10 @@ export async function syncListings(
 					status: sql`excluded.status`,
 					updatedAt: sql`now()`,
 				},
+				// Every listing comes back on every pass and almost none changed;
+				// rewriting them all anyway was most of the database's writes.
+				setWhere: sql`(${listings.externalSku}, ${listings.title}, ${listings.fulfillment}, ${listings.tags}, ${listings.productType}, ${listings.vendor}, ${listings.status})
+					is distinct from (excluded.external_sku, excluded.title, excluded.fulfillment, excluded.tags, excluded.product_type, excluded.vendor, excluded.status)`,
 			});
 
 		const unmapped = await tx

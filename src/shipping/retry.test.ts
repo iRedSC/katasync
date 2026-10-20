@@ -5,7 +5,7 @@ import * as schema from "#/db/schema";
 import { addDispatch, createTestDb } from "#/test/db";
 import { memoryLocker } from "./dispatch";
 import type { Outside } from "./handoff";
-import { resendTrackingNow, retryDueTracking } from "./retry";
+import { followUpTracking, resendTrackingNow, retryDueTracking } from "./retry";
 import { nextRetry, RETRY_FOR_MS } from "./retry-window";
 
 let db: Db;
@@ -146,6 +146,44 @@ describe("retryDueTracking", () => {
 		expect(result.message).toContain("Retrying on its own");
 		const after = await handoff();
 		expect(after.channelAttempts).toBe(1);
+		expect(after.channelRetryAt).not.toBeNull();
+	});
+});
+
+describe("followUpTracking", () => {
+	// Sleeping moves a fake clock on instead of waiting.
+	const fakeClock = () => {
+		let now = Date.now();
+		const sleep = vi.fn(async (ms: number) => {
+			now += ms;
+		});
+		return { now: () => now, sleep };
+	};
+
+	test("waits for the retry, sends it, and stops", async () => {
+		await resendTrackingNow(db, dispatchId, refused());
+		const clock = fakeClock();
+		const outside = accepted();
+		await followUpTracking(db, dispatchId, outside, clock);
+		expect(outside.ebayFulfill).toHaveBeenCalledTimes(1);
+		expect(clock.sleep).toHaveBeenCalledTimes(1);
+		expect((await handoff()).channelSentAt).not.toBeNull();
+	});
+
+	test("does nothing when the refusal set no retry", async () => {
+		const clock = fakeClock();
+		await followUpTracking(db, dispatchId, accepted(), clock);
+		expect(clock.sleep).not.toHaveBeenCalled();
+	});
+
+	test("hands what's still refused to the sweeps after a few minutes", async () => {
+		const outside = refused();
+		await resendTrackingNow(db, dispatchId, outside);
+		await followUpTracking(db, dispatchId, outside, fakeClock());
+		// Retries at 30s, 1, 2 and 4 minutes; the next, at 8, is past its time.
+		expect(outside.ebayFulfill).toHaveBeenCalledTimes(5);
+		const after = await handoff();
+		expect(after.channelSentAt).toBeNull();
 		expect(after.channelRetryAt).not.toBeNull();
 	});
 });

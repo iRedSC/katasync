@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { waitUntil } from "@vercel/functions";
 import { type } from "arktype";
 import { asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
@@ -23,7 +24,7 @@ import {
 	shipmentPlan,
 	signatureRequired,
 } from "#/shipping/quick-ship";
-import { resendTrackingNow } from "#/shipping/retry";
+import { followUpTracking, resendTrackingNow } from "#/shipping/retry";
 import { getRates, type Rate, shippoIsTest } from "#/shipping/shippo";
 import { tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
@@ -227,6 +228,7 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 		const handoff = bought.failed
 			? null
 			: await sendTracking(db, bought.dispatchId);
+		if (handoff && !handoff.sent) keepRetrying(bought.dispatchId);
 		// Saved now so reprints never depend on the provider. A failure here
 		// is retried on the first print.
 		for (const b of bought.boxes) {
@@ -254,7 +256,21 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 // with a fresh ten minutes of retrying if it's refused.
 export const resendTracking = createServerFn({ method: "POST" })
 	.validator(type({ dispatchId: "number.integer > 0" }))
-	.handler(async ({ data }) => resendTrackingNow(getDb(), data.dispatchId));
+	.handler(async ({ data }) => {
+		const handoff = await resendTrackingNow(getDb(), data.dispatchId);
+		if (!handoff.sent) keepRetrying(data.dispatchId);
+		return handoff;
+	});
+
+// A refused send retries on its own after the response goes back (see
+// followUpTracking). Does nothing if the refusal set no retry.
+function keepRetrying(dispatchId: number) {
+	waitUntil(
+		followUpTracking(getDb(), dispatchId).catch((error) =>
+			console.error(`Tracking follow-up for dispatch ${dispatchId}:`, error),
+		),
+	);
+}
 
 export const retryStorefront = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))

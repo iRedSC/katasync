@@ -11,12 +11,13 @@ export type Health =
 	| "never_synced"
 	| "not_connected";
 
-// Channels sync every 2 to 5 minutes, so a quarter hour without a good pass
-// means something is wrong even if nothing failed loudly.
-export const STALE_AFTER_MINUTES = 15;
-// No pass of any channel in this long: the worker (pnpm sync --watch) isn't
-// running.
-export const WORKER_QUIET_MINUTES = 10;
+// Channels sync every four hours (more often while the orders page is open),
+// so four and a half hours without a good pass means something is wrong even
+// if nothing failed loudly.
+export const STALE_AFTER_MINUTES = 270;
+// No pass of any channel in this long: the crons (or pnpm sync --watch)
+// aren't running.
+export const WORKER_QUIET_MINUTES = 270;
 
 export type Run = {
 	startedAt: Date;

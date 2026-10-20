@@ -512,6 +512,13 @@
       "when": 1792438460396,
       "tag": "0072_invoice_printed",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792458972028,
+      "tag": "0073_products_sku_lower",
+      "breakpoints": true
     }
   ]
 }
