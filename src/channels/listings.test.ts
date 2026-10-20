@@ -53,6 +53,18 @@ beforeEach(async () => {
 });
 
 describe("syncListings", () => {
+	test("leaves a listing that didn't change untouched", async () => {
+		await syncListings(db, shopify, [listing("111", { tags: ["a"] })]);
+		const old = new Date("2020-01-01T00:00:00Z");
+		await db.update(schema.listings).set({ updatedAt: old });
+		await syncListings(db, shopify, [listing("111", { tags: ["a"] })]);
+		expect((await getListing(shopify, "111")).updatedAt).toEqual(old);
+		await syncListings(db, shopify, [listing("111", { tags: ["a", "b"] })]);
+		const changed = await getListing(shopify, "111");
+		expect(changed.tags).toEqual(["a", "b"]);
+		expect(changed.updatedAt).not.toEqual(old);
+	});
+
 	test("updates details on resync without losing the mapping", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await syncListings(db, shopify, [listing("111", { title: "Old title" })]);

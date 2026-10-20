@@ -2,8 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import { createFileRoute } from "@tanstack/react-router";
 
 // Sends again any tracking a marketplace refused whose retry is due
-// (src/shipping/retry.ts). Called every minute by Vercel Cron, signed like
-// the sync crons.
+// (src/shipping/retry.ts). Called every four hours by Vercel Cron with the
+// sync crons, as a sweep: retries are mostly made by the request that was
+// refused (followUpTracking) and by the open orders page.
 
 function fromVercel(request: Request) {
 	const secret = process.env.CRON_SECRET;

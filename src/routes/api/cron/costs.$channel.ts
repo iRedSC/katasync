@@ -2,8 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import { createFileRoute } from "@tanstack/react-router";
 
 // One cost pass of a channel: asks the marketplace what it charged on orders
-// that are due (src/orders/cost-refresh.ts). Called by Vercel Cron on the
-// schedules in vercel.json, signed like the sync crons. Skips at once if the
+// that are due (src/orders/cost-refresh.ts). Called by Vercel Cron every four
+// hours with the sync crons, signed like them. Skips at once if the
 // last cost pass is still running.
 
 function fromVercel(request: Request) {
@@ -39,7 +39,11 @@ export const Route = createFileRoute("/api/cron/costs/$channel")({
 				const missing = missingEnv(channelEnv[channel]);
 				if (missing.length > 0)
 					return Response.json({ skipped: `set ${missing.join(", ")}` });
-				const result = await costPassAlone(getDb(), channel);
+				// Batches start for three minutes, so the last one ends well
+				// inside Vercel's five-minute limit.
+				const result = await costPassAlone(getDb(), channel, {
+					keepGoingForMs: 3 * 60_000,
+				});
 				if (!result)
 					return Response.json({
 						skipped: "the last cost pass is still running",

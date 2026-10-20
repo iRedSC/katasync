@@ -8,6 +8,7 @@ import { PackageCheck, Printer, SearchX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilterPicker, SortMenu, ValueList } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
+import { LiveSync } from "#/components/live-sync";
 import { MatchDialog } from "#/components/match-picker";
 import { OrderTabs } from "#/components/order-tabs";
 import { OrderTable, orderLink } from "#/components/orders-list/order-table";
@@ -230,7 +231,12 @@ function Orders() {
 			title="Orders"
 			width="wide"
 			actions={
-				plan && <PrintButton plan={plan} onOpen={() => setPrintOpened(true)} />
+				<>
+					<LiveSync repeat />
+					{plan && (
+						<PrintButton plan={plan} onOpen={() => setPrintOpened(true)} />
+					)}
+				</>
 			}
 		>
 			<Card flush className="overflow-visible">

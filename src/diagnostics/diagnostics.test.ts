@@ -9,6 +9,8 @@ import {
 	groupIssues,
 	hintFor,
 	type Run,
+	STALE_AFTER_MINUTES,
+	WORKER_QUIET_MINUTES,
 	workerAlive,
 } from "./health";
 import { diagnosticsAttention, diagnosticsOverview } from "./overview";
@@ -69,14 +71,17 @@ describe("channelHealth", () => {
 
 	test("stale when the last good pass is old, even without errors", () => {
 		expect(
-			channelHealth({ ...base, runs: [run(40)], lastSuccessAt: minutesAgo(39) })
-				.health,
+			channelHealth({
+				...base,
+				runs: [run(STALE_AFTER_MINUTES + 2)],
+				lastSuccessAt: minutesAgo(STALE_AFTER_MINUTES + 1),
+			}).health,
 		).toBe("stale");
 	});
 
 	test("the worker is alive while passes keep starting", () => {
 		expect(workerAlive(minutesAgo(3), now)).toBe(true);
-		expect(workerAlive(minutesAgo(11), now)).toBe(false);
+		expect(workerAlive(minutesAgo(WORKER_QUIET_MINUTES + 1), now)).toBe(false);
 		expect(workerAlive(null, now)).toBe(false);
 	});
 });

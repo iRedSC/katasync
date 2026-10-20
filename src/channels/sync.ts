@@ -1,5 +1,6 @@
-import { sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { type Db, withOwnConnection } from "#/db/client";
+import { syncRuns } from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { recordSyncRun } from "#/diagnostics/runs";
 import { refreshCosts } from "#/orders/cost-refresh";
@@ -70,6 +71,47 @@ export async function syncPassAlone(
 	);
 }
 
+// What a pass asked for by someone watching the orders page did.
+export type WatchedPass =
+	| { state: "ran"; orders: number; problems: number }
+	// Another pass or a webhook holds the channel; its result is what they'll see.
+	| { state: "busy" }
+	// A pass started within freshFor; another now would only repeat it.
+	| { state: "fresh" };
+
+// A pass for the orders page, which asks every couple of minutes while it's
+// open. However many pages are open, a channel syncs at most once per
+// freshFor: the check happens under the channel's lock, so two pages asking at
+// once can't both pass it. Listings are left to the crons.
+export async function watchedPass(
+	db: Db,
+	channel: SyncedChannel,
+	freshForMs: number,
+): Promise<WatchedPass> {
+	const outcome = await holdingChannel(
+		channel,
+		{ purpose: "sync-pass" },
+		async (): Promise<WatchedPass> => {
+			const since = new Date(Date.now() - freshForMs);
+			const [recent] = await db
+				.select({ id: syncRuns.id })
+				.from(syncRuns)
+				.where(
+					and(eq(syncRuns.channel, channel), gte(syncRuns.startedAt, since)),
+				)
+				.limit(1);
+			if (recent) return { state: "fresh" };
+			const result = await syncPass(db, channel, { listings: false });
+			return {
+				state: "ran",
+				orders: result.orders,
+				problems: result.problems.length,
+			};
+		},
+	);
+	return outcome ?? { state: "busy" };
+}
+
 const chargeFetchers = {
 	shopify: fetchShopifyCharges,
 	ebay: fetchEbayCharges,
@@ -81,17 +123,38 @@ const chargeFetchers = {
 // (src/orders/cost-refresh.ts). It only writes charges, never orders, so it
 // has a lock of its own and never waits on or holds up the order sync.
 // Returns null if the last cost pass is still running.
+//
+// With keepGoingForMs, takes batch after batch until nothing is due or that
+// long has passed: the crons run every few hours, so one batch per run would
+// fall behind. A checked order isn't due again for an hour, failed or not, so
+// the batches end.
 export async function costPassAlone(
 	db: Db,
 	channel: SyncedChannel,
-	options: { history?: boolean; limit?: number } = {},
+	options: { history?: boolean; limit?: number; keepGoingForMs?: number } = {},
 ) {
 	// The history catch-up only takes orders past the regular passes' 60 days,
 	// so it has a lock of its own: hours of old orders mustn't hold up new ones.
 	const purpose = options.history ? "cost-history" : "cost-pass";
-	return holdingChannel(channel, { purpose }, () =>
-		refreshCosts(db, channel, chargeFetchers[channel], options),
-	);
+	const until = Date.now() + (options.keepGoingForMs ?? 0);
+	return holdingChannel(channel, { purpose }, async () => {
+		const total = { checked: 0, reported: 0, problems: [] as string[] };
+		for (;;) {
+			const batch = await refreshCosts(
+				db,
+				channel,
+				chargeFetchers[channel],
+				options,
+			);
+			total.checked += batch.checked;
+			total.reported += batch.reported;
+			total.problems.push(...batch.problems);
+			// A batch where every order failed is likely an outage or a login;
+			// more batches would only fail the same way.
+			const allFailed = batch.problems.length >= batch.checked;
+			if (batch.checked === 0 || allFailed || Date.now() >= until) return total;
+		}
+	});
 }
 
 const ingestOne: Partial<

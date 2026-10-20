@@ -106,6 +106,9 @@ export const products = pgTable(
 	},
 	(t) => [
 		index("products_group_idx").on(t.groupId),
+		// Order lines match a SKU in other capitals (resolveProduct), on every
+		// sync pass for each line still without a product.
+		index("products_sku_lower_idx").on(sql`lower(${t.sku})`),
 		check(
 			"products_variant_needs_group",
 			sql`${t.variantName} is null or ${t.groupId} is not null`,

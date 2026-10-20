@@ -1,8 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
 import { createFileRoute } from "@tanstack/react-router";
 
-// One sync pass of a channel, called by Vercel Cron on the schedules in
-// vercel.json. `?listings=1` also refreshes the channel's listings. Vercel
+// One sync pass of a channel, called by Vercel Cron every four hours
+// (vercel.json). Every cron runs at the same minute so the database wakes once
+// and can scale to zero between runs; a cron every few minutes kept it awake
+// around the clock. While the orders page is open it syncs more often itself
+// (syncChannels in src/server/sync.ts). `?listings=1` also refreshes the
+// channel's listings. Vercel
 // signs each call with `Authorization: Bearer $CRON_SECRET`; anything else is
 // refused. Skips if the channel stays locked for 30 seconds, by a pass still
 // running from the last call or a webhook.

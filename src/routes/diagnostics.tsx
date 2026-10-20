@@ -1,4 +1,4 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AgentChanges } from "#/components/diagnostics/agent-changes";
 import { Sheet } from "#/components/diagnostics/connection-sheet";
@@ -6,9 +6,9 @@ import { Connections } from "#/components/diagnostics/connection-tiles";
 import { diagnosticsData } from "#/components/diagnostics/diagnostics-data";
 import { Problems } from "#/components/diagnostics/problem-list";
 import { SyncStopped } from "#/components/diagnostics/sync-stopped";
+import { LiveSync } from "#/components/live-sync";
 import { Page } from "#/components/page";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
-import { Button } from "#/components/ui/button";
 import type { CheckTarget } from "#/diagnostics/checks";
 import { getDiagnostics } from "#/server/diagnostics";
 
@@ -25,7 +25,6 @@ export const Route = createFileRoute("/diagnostics")({
 
 function DiagnosticsPage() {
 	const d = diagnosticsData.useData("all", Route.useLoaderData());
-	const router = useRouter();
 	const [sheet, setSheet] = useState<CheckTarget | null>(null);
 
 	return (
@@ -36,13 +35,7 @@ function DiagnosticsPage() {
 					{!d.worker.alive && (
 						<SyncStopped lastStartedAt={d.worker.lastStartedAt} />
 					)}
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => router.invalidate()}
-					>
-						Refresh
-					</Button>
+					<LiveSync repeat={false} />
 				</>
 			}
 		>
