@@ -207,7 +207,6 @@ export function LineRow({
 							key={`q${l.quantity}`}
 							line={l}
 							purchaseOrderId={d.order.id}
-							at={d.lines.indexOf(l)}
 							draft={draft}
 							open={
 								focus !== null && ids.same(focus.lineId, l.id)

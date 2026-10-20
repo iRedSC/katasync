@@ -13,9 +13,8 @@ import {
 import { patchLines, putLineBack, receivedPatch } from "./po-data";
 import type { Line } from "./types";
 
-// Takes a line off a draft at once, with Undo once the server has it. `at`
-// is where it sat, so Undo puts it back there.
-export async function takeOff(line: Line, purchaseOrderId: number, at: number) {
+// Takes a line off a draft at once, with Undo once the server has it.
+export async function takeOff(line: Line, purchaseOrderId: number) {
 	const r = await optimism.change({
 		label: `Taking ${line.sku} off`,
 		patch: patchLines(
@@ -29,16 +28,16 @@ export async function takeOff(line: Line, purchaseOrderId: number, at: number) {
 				data: { purchaseOrderId, productId: line.productId, quantity: 0 },
 			}),
 	});
-	if (r) offerPutBack(line, purchaseOrderId, at);
+	if (r) offerPutBack(line, purchaseOrderId);
 }
 
 // After a draft line is taken off: Undo puts it back as it was.
-function offerPutBack(line: Line, purchaseOrderId: number, at: number) {
+function offerPutBack(line: Line, purchaseOrderId: number) {
 	offerUndo(`Took ${line.sku} off this PO`, {
 		undo: async () => {
 			const r = await optimism.change({
 				label: `Putting ${line.sku} back`,
-				patch: putLineBack(purchaseOrderId, line, at),
+				patch: putLineBack(purchaseOrderId, line),
 				send: () =>
 					setLine({
 						data: {
@@ -50,6 +49,7 @@ function offerPutBack(line: Line, purchaseOrderId: number, at: number) {
 								units,
 								off,
 							})),
+							addedAt: line.addedAt,
 						},
 					}),
 			});
@@ -123,7 +123,7 @@ export function amended({
 		const r = await optimism.change({
 			label: `Putting ${line.sku} back`,
 			patch: [
-				putLineBack(purchaseOrderId, line, Number.MAX_SAFE_INTEGER),
+				putLineBack(purchaseOrderId, line),
 				patchLines(
 					purchaseOrderId,
 					(l) => l.productId === line.productId,
@@ -134,7 +134,11 @@ export function amended({
 				const lineId = result.removed
 					? (
 							await addProductToPurchaseOrder({
-								data: { purchaseOrderId, productId: line.productId },
+								data: {
+									purchaseOrderId,
+									productId: line.productId,
+									addedAt: line.addedAt,
+								},
 							})
 						).lineId
 					: ids.server(line.id);

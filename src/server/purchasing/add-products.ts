@@ -147,6 +147,8 @@ export const addProductToPurchaseOrder = createServerFn({ method: "POST" })
 		type({
 			purchaseOrderId: "number.integer > 0",
 			productId: "number.integer > 0",
+			// Putting back a line that was taken off: when it was first added.
+			"addedAt?": "Date",
 		}),
 	)
 	.handler(async ({ data }) => {

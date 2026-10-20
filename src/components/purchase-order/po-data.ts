@@ -2,6 +2,7 @@ import { optimistic, type Patch } from "#/lib/optimism";
 import { lineCents, sameDiscounts } from "#/purchasing/discount";
 import { orderedItems } from "#/purchasing/sets";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
+import { byAdded } from "./new-lines";
 import type { Line } from "./types";
 
 // Not sent yet: lines are edited as a draft's are.
@@ -33,15 +34,13 @@ export function patchLines(
 	});
 }
 
-// Puts a line back where it was, as it was, unless the PO already has it.
-export const putLineBack = (purchaseOrderId: number, line: Line, at: number) =>
+// Puts a line back where it sat, as it was, unless the PO already has it.
+// The server gets its addedAt back too, so it keeps the place.
+export const putLineBack = (purchaseOrderId: number, line: Line) =>
 	poData.patch(purchaseOrderId, (d) =>
 		d.lines.some((l) => l.productId === line.productId)
 			? d
-			: {
-					...d,
-					lines: [...d.lines.slice(0, at), line, ...d.lines.slice(at)],
-				},
+			: { ...d, lines: [...d.lines, line].sort(byAdded) },
 	);
 
 // Receiving more than a line expects makes it expect what came.
