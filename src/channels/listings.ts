@@ -83,6 +83,35 @@ export async function syncListings(
 	});
 }
 
+// Gives products without a photo the one their listing shows on the
+// channel. A photo already set is never replaced, so one chosen by hand (or
+// kept from Sumtracker) stays. Run after matching, since it goes through
+// each listing's product. Returns how many products got a photo.
+export async function fillProductImages(
+	db: Db,
+	storeId: number,
+	images: { externalId: string; imageUrl: string }[],
+): Promise<number> {
+	let filled = 0;
+	// Batched so one statement never carries thousands of parameters.
+	for (let i = 0; i < images.length; i += 500) {
+		const shown = images
+			.slice(i, i + 500)
+			.map((x) => sql`(${x.externalId}, ${x.imageUrl})`);
+		const { rows } = (await db.execute(sql`
+			update ${products} set image_url = shown.url
+			from ${listings}
+			join (values ${sql.join(shown, sql`, `)}) as shown(external_id, url)
+				on shown.external_id = ${listings.externalId}
+			where ${listings.storeId} = ${storeId}
+				and ${listings.productId} = ${products.id}
+				and ${products.imageUrl} is null
+			returning ${products.id}`)) as unknown as { rows: unknown[] };
+		filled += rows.length;
+	}
+	return filled;
+}
+
 // Maps a listing to the SKU it sells, or unmaps it with null.
 export async function mapListing(
 	db: Db,

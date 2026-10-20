@@ -7,6 +7,7 @@ import {
 	autoMapListings,
 	type ChannelListing,
 	createProductFromListing,
+	fillProductImages,
 	getListingsForProducts,
 	getUnmappedListings,
 	mapListing,
@@ -239,5 +240,47 @@ describe("matchListings", () => {
 		const result = await matchListings(db);
 		expect(result.created).toBe(0);
 		expect((await getListing(shopify, "WRENCH")).productId).toBe(wrench);
+	});
+});
+
+describe("fillProductImages", () => {
+	test("gives photoless products their listing's photo and keeps set ones", async () => {
+		const bare = await createProduct(db, "BARE", "simple");
+		const shot = await createProduct(db, "SHOT", "simple");
+		await db
+			.update(schema.products)
+			.set({ imageUrl: "https://kept.example/shot.jpg" })
+			.where(eq(schema.products.id, shot));
+		await syncListings(db, shopify, [listing("BARE"), listing("SHOT")]);
+		await syncListings(db, amazon, [listing("BARE")]);
+		await autoMapListings(db);
+
+		const filled = await fillProductImages(db, shopify, [
+			{ externalId: "BARE", imageUrl: "https://cdn.example/bare.jpg" },
+			{ externalId: "SHOT", imageUrl: "https://cdn.example/new.jpg" },
+			{ externalId: "UNKNOWN", imageUrl: "https://cdn.example/x.jpg" },
+		]);
+		expect(filled).toBe(1);
+
+		const rows = await db.select().from(schema.products);
+		const image = (id: number) => rows.find((p) => p.id === id)?.imageUrl;
+		expect(image(bare)).toBe("https://cdn.example/bare.jpg");
+		expect(image(shot)).toBe("https://kept.example/shot.jpg");
+	});
+
+	test("only goes by the given store's listings", async () => {
+		const bare = await createProduct(db, "BARE", "simple");
+		await syncListings(db, amazon, [listing("BARE")]);
+		await autoMapListings(db);
+		expect(
+			await fillProductImages(db, shopify, [
+				{ externalId: "BARE", imageUrl: "https://cdn.example/bare.jpg" },
+			]),
+		).toBe(0);
+		const [row] = await db
+			.select()
+			.from(schema.products)
+			.where(eq(schema.products.id, bare));
+		expect(row.imageUrl).toBeNull();
 	});
 });

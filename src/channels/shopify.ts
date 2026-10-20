@@ -1,5 +1,10 @@
 import { type } from "arktype";
-import { cleanTitle, matchListings, syncListings } from "#/channels/listings";
+import {
+	cleanTitle,
+	fillProductImages,
+	matchListings,
+	syncListings,
+} from "#/channels/listings";
 import { shopifyQuery } from "#/channels/shopify/client";
 import { ingestMatching } from "#/channels/shopify/ingest";
 import { syncShipFrom } from "#/channels/shopify/ship-from";
@@ -38,11 +43,15 @@ const variantsPage = type({
 			id: "string",
 			sku: "string | null",
 			displayName: "string",
+			image: type({ url: "string" }).or("null"),
 			product: {
 				tags: "string[]",
 				productType: "string",
 				vendor: "string",
 				status: "string",
+				featuredMedia: type({
+					preview: { image: type({ url: "string" }).or("null") },
+				}).or("null"),
 			},
 		}).array(),
 	},
@@ -52,7 +61,10 @@ const VARIANTS_QUERY = `
 query Variants($cursor: String) {
 	productVariants(first: 250, after: $cursor) {
 		pageInfo { hasNextPage endCursor }
-		nodes { id sku displayName product { tags productType vendor status } }
+		nodes {
+			id sku displayName image { url }
+			product { tags productType vendor status featuredMedia { preview { image { url } } } }
+		}
 	}
 }`;
 
@@ -74,6 +86,8 @@ export async function syncShopify(
 	// Listings first, so order lines can resolve to products.
 	let cursor: string | null = null;
 	let variants = 0;
+	// The variant's own photo, else its product's main one.
+	const images: { externalId: string; imageUrl: string }[] = [];
 	if (options.listings)
 		do {
 			const page = variantsPage.assert(
@@ -81,6 +95,10 @@ export async function syncShopify(
 			);
 			const nodes = page.productVariants.nodes;
 			variants += nodes.length;
+			for (const v of nodes) {
+				const url = v.image?.url ?? v.product.featuredMedia?.preview.image?.url;
+				if (url) images.push({ externalId: v.id, imageUrl: url });
+			}
 			await syncListings(
 				db,
 				store.id,
@@ -104,6 +122,7 @@ export async function syncShopify(
 	const matched = options.listings
 		? await matchListings(db)
 		: { mapped: [], created: 0, skipped: [] };
+	const photographed = await fillProductImages(db, store.id, images);
 	// Orders that sold a newly matched listing pick up the product now.
 	const caughtUp = await applyListingsToOrders(db, matched.mapped, locationId);
 
@@ -129,6 +148,7 @@ export async function syncShopify(
 		variants,
 		mapped: matched.mapped.length,
 		created: matched.created,
+		photographed,
 		orders: result.count,
 		problems: [
 			...matched.skipped,
