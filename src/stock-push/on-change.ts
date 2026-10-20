@@ -1,6 +1,13 @@
 import { and, eq, gte, inArray, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { movements, productComponents, products, stores } from "#/db/schema";
+import {
+	locations,
+	movements,
+	productComponents,
+	products,
+	stockLevels,
+	stores,
+} from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import type { StockChannel } from "./channel";
 import { stockChannels } from "./channels";
@@ -29,8 +36,15 @@ export async function movedSince(db: Db, since: Date): Promise<number[]> {
 		.selectDistinct({ id: movements.productId })
 		.from(movements)
 		.where(gte(movements.createdAt, new Date(since.getTime() - SLACK_MS)));
-	if (moved.length === 0) return [];
-	const ids = moved.map((m) => m.id);
+	return withSets(
+		db,
+		moved.map((m) => m.id),
+	);
+}
+
+// The products, and every set containing one.
+async function withSets(db: Db, ids: number[]): Promise<number[]> {
+	if (ids.length === 0) return [];
 	const sets = await db
 		.selectDistinct({ id: productComponents.parentProductId })
 		.from(productComponents)
@@ -56,7 +70,37 @@ export async function pushMoved(
 		adapters?: { [C in SyncedChannel]?: StockChannel<never> };
 	} = {},
 ): Promise<StorePush[]> {
-	const ids = await movedSince(db, since);
+	return pushProducts(db, await movedSince(db, since), options);
+}
+
+// What the retail store can spare online changes for everything on its shelf
+// when its reserve does, though no stock moved.
+export async function pushRetailShelf(db: Db): Promise<StorePush[]> {
+	const held = await db
+		.selectDistinct({ id: stockLevels.productId })
+		.from(stockLevels)
+		.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+		.where(eq(locations.kind, "retail"));
+	return pushProducts(
+		db,
+		await withSets(
+			db,
+			held.map((h) => h.id),
+		),
+	);
+}
+
+// Pushes these products to every store with push on, leaving out `except`'s
+// stores. Never throws; each store's failure comes back as its problem.
+async function pushProducts(
+	db: Db,
+	ids: number[],
+	options: {
+		except?: SyncedChannel;
+		mode?: PushMode;
+		adapters?: { [C in SyncedChannel]?: StockChannel<never> };
+	} = {},
+): Promise<StorePush[]> {
 	if (ids.length === 0) return [];
 	const on = await db
 		.select()

@@ -167,6 +167,15 @@ export function OrderTable({
 											{o.unmatched > 0 && (
 												<Badge tone="critical">Unknown product</Badge>
 											)}
+											{o.lines.some((l) => l.fromStore.length > 0) && (
+												<Badge tone="warning">
+													Fetch from{" "}
+													{
+														o.lines.find((l) => l.fromStore.length > 0)
+															?.fromStore[0].location
+													}
+												</Badge>
+											)}
 											{/* Print all skips it, so the list says why. */}
 											{view === "ship" && o.invoicePrintedAt && (
 												<Badge>Printed</Badge>

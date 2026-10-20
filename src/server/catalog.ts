@@ -27,8 +27,10 @@ export {
 export {
 	getDefaultMinStock,
 	getDefaultRange,
+	getRetailReserve,
 	saveDefaultMinStock,
 	saveProductStockRange,
+	saveRetailReserve,
 	setAerosol,
 	setCritical,
 	setInsureWhenShipped,

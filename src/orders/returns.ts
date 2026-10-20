@@ -1,13 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { saleLocation, stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
-import {
-	movements,
-	orderLines,
-	orderProfit,
-	orderReturns,
-	orders,
-} from "#/db/schema";
+import { orderLines, orderProfit, orderReturns, orders } from "#/db/schema";
 import { recordReturn, undoBatch } from "#/inventory/ledger";
 import { isLabeled, returnBlocker } from "./status";
 
@@ -15,10 +9,10 @@ export class ReturnError extends Error {
 	name = "ReturnError";
 }
 
-// Receives units a customer sent back. Restocked units go back on the shelf
-// their sale came off (the retail store's, for an in-store sale), or where
-// the order would take stock from when it never took any; written-off ones
-// (damaged) are only recorded.
+// Receives units a customer sent back. Restocked units go back where the
+// order takes stock from: the retail store for an in-store sale, the
+// warehouse for a shipped one (where the box comes back to), even when some
+// of it came from the store. Written-off ones (damaged) are only recorded.
 // A line can't take back more than it sold, counting earlier returns.
 // Returns are received here whatever the channel says: katasync owns stock,
 // so a restock clicked in Shopify would only be overwritten.
@@ -52,7 +46,13 @@ export async function receiveReturn(
 			labeled: isLabeled(profit?.labelsStatus),
 		});
 		if (blocked) throw new ReturnError(blocked);
-		const fallback = saleLocation(await stockLocations(tx), order);
+		let restockAt: number | null = null;
+		if (input.restock) {
+			const shelf = saleLocation(await stockLocations(tx), order);
+			if ("problem" in shelf)
+				throw new ReturnError(`Can't restock: ${shelf.problem}`);
+			restockAt = shelf.locationId;
+		}
 
 		const lines = await tx
 			.select({
@@ -95,21 +95,16 @@ export async function receiveReturn(
 				);
 			}
 			let batchId: string | null = null;
-			if (input.restock) {
+			if (restockAt !== null) {
 				if (line.productId === null) {
 					throw new ReturnError(
 						`Match ${name} to a product before putting it back on the shelf`,
 					);
 				}
-				const locationId = await restockLocation(
-					tx,
-					line.saleBatchId,
-					fallback,
-				);
 				({ batchId } = await recordReturn(tx, {
 					productId: line.productId,
 					quantity: want.quantity,
-					locationId,
+					locationId: restockAt,
 					reference: `return:${order.id}:${line.id}`,
 					sale: line.saleBatchId
 						? { batchId: line.saleBatchId, quantity: line.quantity }
@@ -130,25 +125,6 @@ export async function receiveReturn(
 		}
 		return { ids };
 	});
-}
-
-// The shelf a line's sale came off, or the order's own when it took none.
-async function restockLocation(
-	tx: Db,
-	saleBatchId: string | null,
-	fallback: ReturnType<typeof saleLocation>,
-) {
-	if (saleBatchId) {
-		const [sale] = await tx
-			.select({ locationId: movements.locationId })
-			.from(movements)
-			.where(eq(movements.batchId, saleBatchId))
-			.limit(1);
-		if (sale) return sale.locationId;
-	}
-	if ("problem" in fallback)
-		throw new ReturnError(`Can't restock: ${fallback.problem}`);
-	return fallback.locationId;
 }
 
 // Takes returns back off, e.g. from the Undo after receiving: restocked

@@ -1,229 +1,29 @@
-import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	countLog,
-	locations,
 	movements,
-	productComponents,
 	products,
 	stockCounts,
 	stockLevels,
 } from "#/db/schema";
-import { ourKinds } from "#/inventory/locations";
+import {
+	assertPositiveInteger,
+	getProduct,
+	getRecipe,
+	LedgerError,
+	postMovements,
+	type StockLevel,
+} from "./ledger/post";
 
-export class LedgerError extends Error {
-	name = "LedgerError";
-}
-
-type MovementReason = (typeof movements.$inferInsert)["reason"];
-
-export type MovementLine = {
-	productId: number;
-	locationId: number;
-	delta: number;
-	reason: MovementReason;
-};
-
-export type StockLevel = {
-	productId: number;
-	locationId: number;
-	onHand: number;
-};
-
-// The only way stock changes. Inserts the movements and updates stock_levels in
-// one transaction, so the two can't drift apart.
-export async function postMovements(
-	db: Db,
-	input: { lines: MovementLine[]; reference?: string; note?: string },
-): Promise<{ batchId: string; levels: StockLevel[] }> {
-	const { lines } = input;
-	if (lines.length === 0) throw new LedgerError("No movement lines");
-
-	const seen = new Set<string>();
-	for (const line of lines) {
-		// An opening balance of 0 is a record that the shelf was empty.
-		if (
-			!Number.isInteger(line.delta) ||
-			(line.delta === 0 && line.reason !== "opening_balance")
-		) {
-			throw new LedgerError(
-				`Delta must be a nonzero integer, got ${line.delta}`,
-			);
-		}
-		// Twice for one reason is a mistake; a receipt can also write off
-		// oversold stock on the same shelf (see postReceipt).
-		const key = `${line.productId}:${line.locationId}:${line.reason}`;
-		if (seen.has(key)) {
-			throw new LedgerError(
-				`Product ${line.productId} appears twice at location ${line.locationId}`,
-			);
-		}
-		seen.add(key);
-	}
-
-	return db.transaction(async (tx) => {
-		const productIds = [...new Set(lines.map((l) => l.productId))];
-		const bundles = await tx
-			.select({ sku: products.sku })
-			.from(products)
-			.where(
-				and(inArray(products.id, productIds), eq(products.kind, "bundle")),
-			);
-		if (bundles.length > 0) {
-			throw new LedgerError(
-				`Bundles have no stock of their own: ${bundles.map((b) => b.sku).join(", ")}`,
-			);
-		}
-
-		const batchId = randomUUID();
-		await tx.insert(movements).values(
-			lines.map((line) => ({
-				...line,
-				batchId,
-				reference: input.reference,
-				note: input.note,
-			})),
-		);
-
-		// Update rows in a fixed order so concurrent batches lock them in the same
-		// order and can't deadlock. The upsert locks each row until commit.
-		const ordered = [...lines].sort(
-			(a, b) => a.productId - b.productId || a.locationId - b.locationId,
-		);
-		const levels: StockLevel[] = [];
-		for (const line of ordered) {
-			const [level] = await tx
-				.insert(stockLevels)
-				.values({
-					productId: line.productId,
-					locationId: line.locationId,
-					onHand: line.delta,
-				})
-				.onConflictDoUpdate({
-					target: [stockLevels.productId, stockLevels.locationId],
-					set: { onHand: sql`${stockLevels.onHand} + ${line.delta}` },
-				})
-				.returning();
-			levels.push(level);
-		}
-		return { batchId, levels };
-	});
-}
-
-async function getRecipe(db: Db, parentProductId: number) {
-	return db
-		.select({
-			productId: productComponents.componentProductId,
-			quantity: productComponents.quantity,
-		})
-		.from(productComponents)
-		.where(eq(productComponents.parentProductId, parentProductId));
-}
-
-async function getProduct(db: Db, productId: number) {
-	const [sku] = await db
-		.select()
-		.from(products)
-		.where(eq(products.id, productId));
-	if (!sku) throw new LedgerError(`Unknown product ${productId}`);
-	return sku;
-}
-
-// A bundle sale takes stock from each component. Simple and kit sales take
-// stock from the SKU itself.
-export async function recordSale(
-	db: Db,
-	input: {
-		productId: number;
-		quantity: number;
-		locationId: number;
-		reference: string;
-	},
-) {
-	return postUnits(db, { ...input, sign: -1, reason: "sale" });
-}
-
-// A returned unit goes back on the shelf the way it was sold: a bundle as
-// its components, anything else as itself.
-export async function recordReturn(
-	db: Db,
-	input: {
-		productId: number;
-		quantity: number;
-		locationId: number;
-		reference: string;
-		sale: { batchId: string; quantity: number } | null;
-	},
-) {
-	assertPositiveInteger(input.quantity);
-	const sale = input.sale;
-	if (sale) {
-		assertPositiveInteger(sale.quantity);
-		const sold = await db
-			.select()
-			.from(movements)
-			.where(eq(movements.batchId, sale.batchId));
-		if (
-			sold.length === 0 ||
-			sold.some((line) => line.reason !== "sale" || line.delta >= 0)
-		) {
-			throw new LedgerError("The original sale movements are unavailable");
-		}
-		return postMovements(db, {
-			reference: input.reference,
-			lines: sold.map((line) => ({
-				productId: line.productId,
-				locationId: input.locationId,
-				delta: (-line.delta * input.quantity) / sale.quantity,
-				reason: "return",
-			})),
-		});
-	}
-	const product = await getProduct(db, input.productId);
-	if (product.kind === "bundle") {
-		throw new LedgerError(
-			"This bundle has no recorded sale components; count the returned parts individually",
-		);
-	}
-	return postUnits(db, { ...input, sign: 1, reason: "return" });
-}
-
-async function postUnits(
-	db: Db,
-	input: {
-		productId: number;
-		quantity: number;
-		locationId: number;
-		reference: string;
-		sign: 1 | -1;
-		reason: "sale" | "return";
-	},
-) {
-	assertPositiveInteger(input.quantity);
-	return db.transaction(async (tx) => {
-		const sku = await getProduct(tx, input.productId);
-		const units =
-			sku.kind === "bundle"
-				? (await getRecipe(tx, sku.id)).map((c) => ({
-						productId: c.productId,
-						quantity: c.quantity * input.quantity,
-					}))
-				: [{ productId: sku.id, quantity: input.quantity }];
-		if (units.length === 0)
-			throw new LedgerError(`Bundle ${sku.sku} has no components`);
-
-		return postMovements(tx, {
-			reference: input.reference,
-			lines: units.map((u) => ({
-				productId: u.productId,
-				locationId: input.locationId,
-				delta: input.sign * u.quantity,
-				reason: input.reason,
-			})),
-		});
-	});
-}
+export {
+	LedgerError,
+	type MovementLine,
+	postMovements,
+	type StockLevel,
+} from "./ledger/post";
+export { type Overflow, recordReturn, recordSale } from "./ledger/sales";
+export { transferStock } from "./ledger/transfers";
 
 // Builds kits from components at one location. Fails without changing anything
 // if any component would go below zero, since you can't build from parts you
@@ -318,73 +118,6 @@ async function convertKits(
 		}
 		return result;
 	});
-}
-
-// Moves stock from one of our shelves to another, e.g. restocking the retail
-// store from the warehouse. Both sides are one batch, so undoing it moves the
-// stock back. Refused when the shelf it leaves doesn't hold that many: a
-// shelf that's off should be counted, not carried below zero.
-export async function transferStock(
-	db: Db,
-	input: {
-		productId: number;
-		fromLocationId: number;
-		toLocationId: number;
-		quantity: number;
-		note?: string;
-	},
-) {
-	assertPositiveInteger(input.quantity);
-	if (input.fromLocationId === input.toLocationId)
-		throw new LedgerError("Pick two different locations");
-	return db.transaction(async (tx) => {
-		const product = await getProduct(tx, input.productId);
-		const ends = await tx
-			.select({ id: locations.id, name: locations.name, kind: locations.kind })
-			.from(locations)
-			.where(inArray(locations.id, [input.fromLocationId, input.toLocationId]));
-		const from = ends.find((l) => l.id === input.fromLocationId);
-		const to = ends.find((l) => l.id === input.toLocationId);
-		for (const end of [from, to])
-			if (!end || !(ourKinds as readonly string[]).includes(end.kind))
-				throw new LedgerError("Stock moves only between our own locations");
-		const result = await postMovements(tx, {
-			reference: "transfer",
-			note: input.note?.trim() || undefined,
-			lines: [
-				{
-					productId: product.id,
-					locationId: input.fromLocationId,
-					delta: -input.quantity,
-					reason: "transfer_out",
-				},
-				{
-					productId: product.id,
-					locationId: input.toLocationId,
-					delta: input.quantity,
-					reason: "transfer_in",
-				},
-			],
-		});
-		const left = result.levels.find(
-			(l) => l.locationId === input.fromLocationId,
-		);
-		if (left && left.onHand < 0) {
-			const had = left.onHand + input.quantity;
-			throw new LedgerError(
-				`${from?.name} has ${Math.max(0, had)} of ${product.sku}, not ${input.quantity}. Count it there if that's wrong.`,
-			);
-		}
-		return result;
-	});
-}
-
-function assertPositiveInteger(quantity: number) {
-	if (!Number.isInteger(quantity) || quantity <= 0) {
-		throw new LedgerError(
-			`Quantity must be a positive integer, got ${quantity}`,
-		);
-	}
 }
 
 // Puts shelves on the cycle count list. A shelf already waiting keeps its

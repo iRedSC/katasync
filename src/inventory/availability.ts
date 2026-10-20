@@ -1,18 +1,21 @@
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { productComponents, products, stockLevels } from "#/db/schema";
+import type { OnlineStock } from "./online-stock";
 
 // Sellable units per SKU across the given locations. Simple SKUs and kits use
 // their own stock. A bundle is limited by its scarcest component. Negative
-// stock counts as zero. Pass `uncounted` to have a product that isn't counted
+// stock counts as zero, and the `keep` shelf (the retail store) gives only
+// what it holds above what it keeps, as a shipped order takes it. Pass `uncounted` to have a product that isn't counted
 // yet (src/inventory/not-counted.ts) sell that many whatever its number, and
 // stop limiting the tool sets it's in.
 export async function getAvailability(
 	db: Db,
 	productIds: number[],
-	locationIds: number[],
+	from: OnlineStock,
 	options: { uncounted?: number } = {},
 ): Promise<Map<number, number>> {
+	const { locationIds, keep } = from;
 	const result = new Map<number, number>();
 	if (productIds.length === 0) return result;
 
@@ -42,7 +45,8 @@ export async function getAvailability(
 		const rows = await db
 			.select({
 				productId: stockLevels.productId,
-				onHand: sql<number>`sum(${stockLevels.onHand})::int`,
+				locationId: stockLevels.locationId,
+				onHand: stockLevels.onHand,
 			})
 			.from(stockLevels)
 			.where(
@@ -50,9 +54,17 @@ export async function getAvailability(
 					inArray(stockLevels.productId, stockedIds),
 					inArray(stockLevels.locationId, locationIds),
 				),
-			)
-			.groupBy(stockLevels.productId);
-		for (const row of rows) onHand.set(row.productId, Math.max(0, row.onHand));
+			);
+		// The other shelves together, then what the kept one can spare.
+		const main = new Map<number, number>();
+		const spare = new Map<number, number>();
+		for (const row of rows) {
+			if (keep && row.locationId === keep.locationId)
+				spare.set(row.productId, Math.max(0, row.onHand - keep.units));
+			else main.set(row.productId, (main.get(row.productId) ?? 0) + row.onHand);
+		}
+		for (const id of new Set([...main.keys(), ...spare.keys()]))
+			onHand.set(id, Math.max(0, main.get(id) ?? 0) + (spare.get(id) ?? 0));
 	}
 	const { uncounted } = options;
 	const unlimited = new Set<number>();
@@ -120,7 +132,7 @@ export async function getBundlesContaining(
 // even one unit. Sorted so the part blocking the most bundles comes first.
 export async function getBundleBlockers(
 	db: Db,
-	locationIds: number[],
+	from: OnlineStock,
 ): Promise<{ productId: number; blocks: number[] }[]> {
 	const recipes = await db
 		.select({
@@ -135,7 +147,7 @@ export async function getBundleBlockers(
 	const available = await getAvailability(
 		db,
 		[...new Set(recipes.map((r) => r.componentId))],
-		locationIds,
+		from,
 		{ uncounted: Number.POSITIVE_INFINITY },
 	);
 

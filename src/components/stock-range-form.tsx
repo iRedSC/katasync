@@ -143,3 +143,65 @@ export function MinStockForm({
 		</form>
 	);
 }
+
+// How many the retail store keeps for walk-ins. Online orders overflow into
+// Retail only while it holds more than this.
+export function ReserveForm({
+	value,
+	store,
+	onSave,
+}: {
+	value: number;
+	store: string;
+	onSave: (units: number) => Promise<unknown>;
+}) {
+	const [units, setUnits] = useState(String(value));
+	const [saving, setSaving] = useState(false);
+	const n = Number(units);
+	const valid = units.trim() !== "" && Number.isInteger(n) && n >= 0;
+
+	async function save() {
+		if (!valid) return toast.error("The reserve is a whole number from 0");
+		setSaving(true);
+		const r = await optimism.change({ send: () => onSave(n) });
+		setSaving(false);
+		if (r)
+			toast.success(
+				n === 0
+					? `Online orders can take everything at ${store}`
+					: `${store} keeps ${n} for walk-ins`,
+			);
+	}
+
+	return (
+		<form
+			className="flex flex-col gap-1"
+			onSubmit={(e) => {
+				e.preventDefault();
+				save();
+			}}
+		>
+			<div className="flex flex-wrap items-center gap-2">
+				{store} keeps
+				<input
+					value={units}
+					inputMode="numeric"
+					aria-label="Retail reserve"
+					onChange={(e) => setUnits(e.target.value)}
+					className={box}
+				/>
+				for walk-ins
+				{units !== String(value) && (
+					<Button type="submit" size="sm" variant="outline" disabled={saving}>
+						Save
+					</Button>
+				)}
+			</div>
+			<p className="text-xs text-muted-foreground">
+				{valid
+					? `When the warehouse is out, online orders take from ${store} only while it has ${n + 1} or more.`
+					: "A whole number from 0."}
+			</p>
+		</form>
+	);
+}

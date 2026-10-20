@@ -261,16 +261,18 @@ describe("getAvailability", () => {
 			locationId: warehouse,
 		});
 
-		const both = await getAvailability(
-			db,
-			[wrench, kit, set],
-			[warehouse, garage],
-		);
+		const both = await getAvailability(db, [wrench, kit, set], {
+			locationIds: [warehouse, garage],
+			keep: null,
+		});
 		expect(both.get(wrench)).toBe(9);
 		expect(both.get(kit)).toBe(6);
 		expect(both.get(set)).toBe(4); // 9 wrenches / 2
 
-		const warehouseOnly = await getAvailability(db, [set], [warehouse]);
+		const warehouseOnly = await getAvailability(db, [set], {
+			locationIds: [warehouse],
+			keep: null,
+		});
 		expect(warehouseOnly.get(set)).toBe(2); // 5 wrenches / 2
 
 		expect(await getBundlesContaining(db, wrench)).toEqual([set]);
@@ -284,9 +286,14 @@ describe("getAvailability", () => {
 			locationId: warehouse,
 			reference: "o",
 		});
-		expect((await getAvailability(db, [wrench], [warehouse])).get(wrench)).toBe(
-			0,
-		);
+		expect(
+			(
+				await getAvailability(db, [wrench], {
+					locationIds: [warehouse],
+					keep: null,
+				})
+			).get(wrench),
+		).toBe(0);
 	});
 });
 
@@ -343,7 +350,9 @@ describe("getBundleBlockers", () => {
 		await receive(handle, warehouse, 1); // enough for SET-B, not SET-A
 		await receive(blade, warehouse, 5);
 
-		expect(await getBundleBlockers(db, [warehouse])).toEqual([
+		expect(
+			await getBundleBlockers(db, { locationIds: [warehouse], keep: null }),
+		).toEqual([
 			{ productId: handle, blocks: [setA] },
 			{ productId: knife, blocks: [setB] },
 		]);

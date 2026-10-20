@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { shippingLocation } from "#/channels/stores";
 import { type Db, getDb } from "#/db/client";
 import {
 	locations,
@@ -15,7 +16,6 @@ import {
 	requestCounts,
 } from "#/inventory/ledger";
 import { isOurs } from "#/inventory/locations";
-import { ownedLocationIds } from "./owned-locations";
 
 // Records what someone counted on the shelf. The app works out the change, and
 // the location when there's only one.
@@ -94,17 +94,20 @@ export const requestCount = createServerFn({ method: "POST" })
 // Puts each of our shelves holding the product on the count list, or the
 // warehouse when none holds it yet.
 async function requestShelfCounts(db: Db, productId: number) {
-	const [held, owned] = await Promise.all([
+	const [held, warehouse] = await Promise.all([
 		db
 			.select({ locationId: stockLevels.locationId })
 			.from(stockLevels)
 			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
 			.where(and(eq(stockLevels.productId, productId), isOurs)),
-		ownedLocationIds(),
+		shippingLocation(db),
 	]);
-	if (owned.length === 0) throw new Error("Add a location first");
+	if (held.length === 0 && warehouse === null)
+		throw new Error("Add a location first");
 	const at =
-		held.length > 0 ? held.map((h) => h.locationId) : [Math.min(...owned)];
+		held.length > 0 || warehouse === null
+			? held.map((h) => h.locationId)
+			: [warehouse];
 	const added = [];
 	for (const locationId of at)
 		added.push(

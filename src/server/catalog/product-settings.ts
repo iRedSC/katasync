@@ -3,12 +3,14 @@ import { type } from "arktype";
 import { eq } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { products } from "#/db/schema";
+import { retailReserve } from "#/inventory/online-stock";
 import {
 	defaultMinStock,
 	defaultRanges,
 	setDefaultMinStock,
 	setProductStockRange,
 } from "#/inventory/stock-range";
+import { changeRetailReserve } from "#/stock-push/reserve";
 
 // Quick ship asks about insurance for any order holding this product.
 export const setInsureWhenShipped = createServerFn({ method: "POST" })
@@ -49,6 +51,15 @@ export const getDefaultMinStock = createServerFn({ method: "GET" }).handler(
 export const saveDefaultMinStock = createServerFn({ method: "POST" })
 	.validator(type({ min: "number.integer >= 0" }))
 	.handler(async ({ data }) => setDefaultMinStock(getDb(), data.min));
+
+// Units Retail keeps for walk-ins; online orders only overflow into the rest.
+export const getRetailReserve = createServerFn({ method: "GET" }).handler(
+	async () => retailReserve(getDb()),
+);
+
+export const saveRetailReserve = createServerFn({ method: "POST" })
+	.validator(type({ units: "number.integer >= 0" }))
+	.handler(async ({ data }) => changeRetailReserve(getDb(), data.units));
 
 // The range a product falls back on: min from settings, max from its sales.
 export const getDefaultRange = createServerFn({ method: "GET" })
