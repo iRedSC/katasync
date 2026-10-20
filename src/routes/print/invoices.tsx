@@ -195,16 +195,25 @@ function Invoice({
 						<tr
 							// biome-ignore lint/suspicious/noArrayIndexKey: lines have no stable key here and never reorder
 							key={i}
-							className="break-inside-avoid border-b border-border align-top"
+							// A set's parts list can run most of a page, and a row kept
+							// whole moved the entire table off page one. Sets split
+							// between parts instead, the item staying with its first.
+							className={`border-b border-border align-top ${l.parts.length > 0 ? "" : "break-inside-avoid"}`}
 						>
 							<td className="py-2 text-[13pt] font-bold tabular-nums">
 								{l.quantity}
 							</td>
 							<td className="py-2">
-								<div className="flex items-start gap-3">
+								<div className="flex break-after-avoid items-start gap-3">
 									<Photo src={l.imageUrl} className="size-[0.6in]" />
 									<div>
 										<p>{l.title}</p>
+										{l.variantName &&
+											!l.title
+												.toLowerCase()
+												.includes(l.variantName.toLowerCase()) && (
+												<p className="font-semibold">{l.variantName}</p>
+											)}
 										{l.sku && (
 											<p className="text-[9pt] text-muted-foreground">
 												{l.sku}
@@ -215,7 +224,10 @@ function Invoice({
 								{l.parts.length > 0 && (
 									<ul className="mt-2 ml-[calc(0.6in+0.75rem)] flex flex-col gap-1.5 border-l-2 border-border pl-3">
 										{l.parts.map((p) => (
-											<li key={p.sku} className="flex items-center gap-2">
+											<li
+												key={p.sku}
+												className="flex break-inside-avoid items-center gap-2"
+											>
 												<Photo src={p.imageUrl} className="size-[0.35in]" />
 												<span className="w-8 font-bold tabular-nums">
 													{p.perSet * l.quantity}

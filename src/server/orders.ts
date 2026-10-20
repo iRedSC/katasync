@@ -480,6 +480,9 @@ export const listInvoices = createServerFn({ method: "GET" })
 						title: orderLines.title,
 						quantity: orderLines.quantity,
 						unitPrice: orderLines.unitPrice,
+						// The size or option to pick, from the catalog: channel
+						// titles don't always carry it.
+						variantName: products.variantName,
 						weightGrams: products.weightGrams,
 						imageUrl: products.imageUrl,
 					})
