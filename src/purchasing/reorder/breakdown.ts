@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -81,6 +81,7 @@ export async function reorderBreakdown(
 				imageUrl: products.imageUrl,
 				productCost: products.unitCost,
 				markedCritical: products.critical,
+				notCounted: sql<boolean>`${products.notCountedSince} is not null`,
 				minStock: products.minStock,
 				maxStock: products.maxStock,
 				supplierSku: productSuppliers.supplierSku,
@@ -178,7 +179,9 @@ export async function reorderBreakdown(
 			supplierSku: p.supplierSku,
 			...terms,
 			...stock,
-			quantity: reorderQuantity(input),
+			// Until it's counted its number means nothing, so nothing is ordered
+			// from it (src/inventory/not-counted.ts).
+			quantity: p.notCounted ? 0 : reorderQuantity(input),
 			// The supplier's price if we know it, else what we last valued it at.
 			unitCost:
 				p.cost ??
@@ -214,6 +217,7 @@ export async function reorderBreakdown(
 			range,
 			max: range.max,
 			ordersItself: ordersItself(p.markedCritical, abcClass, blocked),
+			notCounted: p.notCounted,
 			// A C item nobody has sold or counted in a year is dead stock, or
 			// was never really stocked: nothing to recommend. Unpriced products
 			// have no class but did sell, so they stay.

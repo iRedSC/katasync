@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -200,7 +200,8 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 		.from(products)
 		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
 		.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
-		.where(inArray(products.id, aIds));
+		// Not counted sells without limit, so it can't run out.
+		.where(and(inArray(products.id, aIds), isNull(products.notCountedSince)));
 
 	return rows
 		.flatMap((p) => {

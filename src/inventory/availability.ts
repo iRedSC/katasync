@@ -1,14 +1,17 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { productComponents, products, stockLevels } from "#/db/schema";
 
 // Sellable units per SKU across the given locations. Simple SKUs and kits use
 // their own stock. A bundle is limited by its scarcest component. Negative
-// stock counts as zero.
+// stock counts as zero. Pass `uncounted` to have a product that isn't counted
+// yet (src/inventory/not-counted.ts) sell that many whatever its number, and
+// stop limiting the tool sets it's in.
 export async function getAvailability(
 	db: Db,
 	productIds: number[],
 	locationIds: number[],
+	options: { uncounted?: number } = {},
 ): Promise<Map<number, number>> {
 	const result = new Map<number, number>();
 	if (productIds.length === 0) return result;
@@ -51,6 +54,23 @@ export async function getAvailability(
 			.groupBy(stockLevels.productId);
 		for (const row of rows) onHand.set(row.productId, Math.max(0, row.onHand));
 	}
+	const { uncounted } = options;
+	const unlimited = new Set<number>();
+	if (uncounted !== undefined && stockedIds.length > 0) {
+		const rows = await db
+			.select({ id: products.id })
+			.from(products)
+			.where(
+				and(
+					inArray(products.id, stockedIds),
+					isNotNull(products.notCountedSince),
+				),
+			);
+		for (const row of rows) {
+			unlimited.add(row.id);
+			onHand.set(row.id, uncounted);
+		}
+	}
 
 	for (const sku of requested) {
 		if (sku.kind !== "bundle") {
@@ -63,9 +83,13 @@ export async function getAvailability(
 			parts.length === 0
 				? 0
 				: Math.min(
-						...parts.map((p) =>
-							Math.floor((onHand.get(p.componentProductId) ?? 0) / p.quantity),
-						),
+						...parts.map((p) => {
+							const has = onHand.get(p.componentProductId) ?? 0;
+							// However many it takes, a part without limit doesn't limit.
+							return unlimited.has(p.componentProductId)
+								? has
+								: Math.floor(has / p.quantity);
+						}),
 					),
 		);
 	}
@@ -107,10 +131,12 @@ export async function getBundleBlockers(
 		.from(productComponents)
 		.innerJoin(products, eq(products.id, productComponents.parentProductId))
 		.where(eq(products.kind, "bundle"));
+	// A part that sells without limit never blocks a set.
 	const available = await getAvailability(
 		db,
 		[...new Set(recipes.map((r) => r.componentId))],
 		locationIds,
+		{ uncounted: Number.POSITIVE_INFINITY },
 	);
 
 	const blocks = new Map<number, number[]>();

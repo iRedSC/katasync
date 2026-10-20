@@ -28,7 +28,8 @@ type Breakdown = Awaited<ReturnType<typeof reorderBreakdown>>[number];
 // on POs by themselves; then the ones that don't need ordering yet but will
 // before its next PO would (within its cover days), soonest first, since
 // ordering them now saves a second shipment. Products in `except` (already on
-// the draft) and dormant C items (see reorderBreakdown) are left out.
+// the draft) and dormant C items (see reorderBreakdown) are left out, as are products
+// not counted yet.
 export async function recommendedAdditions(
 	db: Db,
 	supplierId: number,
@@ -42,7 +43,8 @@ export async function recommendedAdditions(
 			if (
 				supplier?.supplierId !== supplierId ||
 				except.has(line.productId) ||
-				plan.dormant
+				plan.dormant ||
+				plan.notCounted
 			)
 				return [];
 			const due = recommendedDue(plan);

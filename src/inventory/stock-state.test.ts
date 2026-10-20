@@ -21,6 +21,7 @@ function product(extra: Partial<StockInput> = {}): StockInput {
 		range: { min: 10, max: 40 },
 		lastCountedAt: daysAgo(5),
 		countRequested: false,
+		notCounted: false,
 		hasSupplier: true,
 		draft: null,
 		reorder: null,
@@ -29,6 +30,22 @@ function product(extra: Partial<StockInput> = {}): StockInput {
 }
 
 const reorder = { quantity: 12, unit: "EACH", packSize: 1, supplierCount: 1 };
+
+describe("not counted", () => {
+	test("is never short or oversold, and asks for a count before any order", () => {
+		const p = product({
+			notCounted: true,
+			onHand: -7,
+			available: 0,
+			countRequested: true,
+			reorder,
+		});
+		const trust = trustOf(p, now);
+		expect(trust).toEqual({ kind: "not counted", requested: true });
+		expect(levelOf(p)).toBe("healthy");
+		expect(nextStepOf(p, trust)).toEqual({ kind: "count requested" });
+	});
+});
 
 describe("trust", () => {
 	test("a count inside the window vouches for the number", () => {

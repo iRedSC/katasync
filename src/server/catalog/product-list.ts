@@ -41,6 +41,9 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				category: products.category,
 				imageUrl: products.imageUrl,
 				unitCost: products.unitCost,
+				// Sells without limit until its first count; for a tool set, when
+				// any part does (src/inventory/not-counted.ts).
+				notCounted: sql<boolean>`${products.notCountedSince} is not null`,
 				group: productGroups.name,
 				supplierId: suppliers.id,
 				supplierName: suppliers.name,
@@ -199,6 +202,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 							? null
 							: new Date(Math.min(...counts.map((at) => at?.getTime() ?? 0))),
 					countRequested: parts.some((part) => part.countRequested),
+					notCounted: parts.some((part) => part.notCounted),
 					supplier,
 					reorder:
 						p.available === 0 && supplier

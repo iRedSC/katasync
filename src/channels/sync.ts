@@ -6,6 +6,8 @@ import { recordSyncRun } from "#/diagnostics/runs";
 import { refreshCosts } from "#/orders/cost-refresh";
 import { applySkusToOrders } from "#/orders/remap";
 import { assignOrderPins } from "#/shipping/pins";
+import { stockChannels } from "#/stock-push/channels";
+import { pushChannelStock, pushMode } from "#/stock-push/push";
 import { syncAmazon } from "./amazon";
 import { syncEbay } from "./ebay";
 import { fetchAmazonCharges } from "./finance/amazon";
@@ -17,8 +19,9 @@ import { shippingLocation } from "./stores";
 import { ingestTiktokOrder, syncTiktok } from "./tiktok";
 
 // One sync pass of a channel: pull its orders (and, with `listings`, its
-// listings), catch up its lines that now have a product, record the run for
-// Diagnostics, then pin any new orders to ship.
+// listings), catch up its lines that now have a product, set its stores'
+// listing quantities where stock push is on (src/stock-push), record the run
+// for Diagnostics, then pin any new orders to ship.
 // Shared by `pnpm sync` (scripts/sync.ts) and the Vercel crons
 // (src/routes/api/cron/sync.$channel.ts). Server only.
 
@@ -50,7 +53,20 @@ export async function syncPass(
 			{ channel },
 			await shippingLocation(db),
 		);
-		return { ...pass, problems: [...pass.problems, ...caughtUp.problems] };
+		const pushed = await pushChannelStock(
+			db,
+			channel,
+			stockChannels[channel],
+			pushMode(),
+		);
+		return {
+			...pass,
+			problems: [
+				...pass.problems,
+				...caughtUp.problems,
+				...pushed.flatMap((p) => p.problems),
+			],
+		};
 	});
 	const pinned = await assignOrderPins(db);
 	return { ...result, pinned };

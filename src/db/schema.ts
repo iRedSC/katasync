@@ -102,6 +102,15 @@ export const products = pgTable(
 		// Can't run out: one of these needing ordering counts toward its
 		// supplier's criticalThreshold. A items count without this.
 		critical: boolean().notNull().default(false),
+		// Set while nobody has counted it yet and it sells without limit: stock
+		// push sends every channel a large number (src/inventory/not-counted.ts)
+		// and reordering, stock value, and stockout risk leave it out. Sales
+		// still post to the ledger. Only a shelf count clears it, and nothing
+		// sets it back.
+		notCountedSince: timestamp({ withTimezone: true }),
+		// Stock push shows 0 on every channel once this few or fewer can be
+		// sold, so the last units aren't sold out from under a miscount.
+		closeAt: integer(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
@@ -109,6 +118,12 @@ export const products = pgTable(
 		// Order lines match a SKU in other capitals (resolveProduct), on every
 		// sync pass for each line still without a product.
 		index("products_sku_lower_idx").on(sql`lower(${t.sku})`),
+		check("products_close_at_positive", sql`${t.closeAt} > 0`),
+		// A tool set has no shelf to count; its parts carry the state.
+		check(
+			"products_bundle_never_uncounted",
+			sql`${t.kind} <> 'bundle' or ${t.notCountedSince} is null`,
+		),
 		check(
 			"products_variant_needs_group",
 			sql`${t.variantName} is null or ${t.groupId} is not null`,
@@ -191,7 +206,13 @@ export const movements = pgTable(
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		check("movements_delta_nonzero", sql`${t.delta} <> 0`),
+		// Every movement moves stock, except an opening balance of 0: that
+		// records that the shelf was known to be empty, so a stock pull
+		// (src/stock-push/pull.ts) doesn't take a channel's number over it.
+		check(
+			"movements_delta_nonzero",
+			sql`${t.delta} <> 0 or ${t.reason} = 'opening_balance'`,
+		),
 		index("movements_product_location_idx").on(t.productId, t.locationId),
 		index("movements_created_at_idx").on(t.createdAt),
 	],
@@ -293,12 +314,37 @@ export const stores = pgTable(
 		stockFrom: timestamp({ withTimezone: true }),
 		// Sync resumes from the newest order update seen so far.
 		ordersSyncedThrough: timestamp({ withTimezone: true }),
+		// Whether katasync sets this store's listing quantities
+		// (src/stock-push). Off until the store is moved over from Sumtracker,
+		// so the two never fight over the same listings.
+		pushStock: boolean().notNull().default(false),
+		// When the channel's own quantities were last read back.
+		stockReadAt: timestamp({ withTimezone: true }),
+		// The last push pass that reached the channel, and why the latest one
+		// didn't, if it didn't.
+		stockPushedAt: timestamp({ withTimezone: true }),
+		stockPushError: text(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		uniqueIndex("stores_one_primary").on(t.primary).where(sql`${t.primary}`),
 	],
 );
+
+// What stock push knows about one listing, from the channel's last read:
+//   ready:      where to write its quantity, what the channel shows (null
+//               when unknown), and the last write's error, if it failed.
+//   unpushable: the channel lists it but katasync can't set it, and why.
+// Null until a stock read finds it. `target` is the channel's own shape,
+// checked by its adapter (src/stock-push/channels).
+export type ListingStockPush =
+	| {
+			state: "ready";
+			target: unknown;
+			shows: number | null;
+			error: string | null;
+	  }
+	| { state: "unpushable"; reason: string };
 
 // `fba` listings are stocked and shipped by Amazon; we never push their quantity.
 export const listingFulfillment = pgEnum("listing_fulfillment", [
@@ -337,6 +383,7 @@ export const listings = pgTable(
 		status: text(),
 		// Null until someone maps it.
 		productId: integer().references(() => products.id),
+		stockPush: jsonb().$type<ListingStockPush>(),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

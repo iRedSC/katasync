@@ -39,6 +39,8 @@ const stockRow = type({
 	sku: "string > 0",
 	warehouse: "string",
 	in_stock: "string.integer.parse",
+	booked: "string.integer.parse",
+	close_at_quantity: "string",
 	"+": "delete",
 });
 
@@ -63,6 +65,16 @@ export type ImportPlan = {
 	recipes: Map<string, { sku: string; quantity: number }[]>;
 	aliases: { alias: string; sku: string }[];
 	openingStock: { sku: string; quantity: number }[];
+	// Every simple product's shelf as the export lists it, empty ones too, for
+	// a refresh (src/import/refresh.ts). Booked units are on orders placed but
+	// not shipped yet: still on the shelf, but already sold.
+	// closeAt: show 0 on the channels at or below this many.
+	shelves: {
+		sku: string;
+		inStock: number;
+		booked: number;
+		closeAt: number | null;
+	}[];
 	warnings: string[];
 };
 
@@ -172,6 +184,7 @@ export function planSumtrackerImport(files: {
 	}
 
 	const openingStock: ImportPlan["openingStock"] = [];
+	const shelves: ImportPlan["shelves"] = [];
 	for (const row of stockRows) {
 		if (row.warehouse !== "WAREHOUSE") {
 			errors.push(
@@ -186,8 +199,18 @@ export function planSumtrackerImport(files: {
 			errors.push(
 				`stock-levels.csv: ${row.sku} is not an imported simple product`,
 			);
-		} else if (row.in_stock !== 0) {
-			openingStock.push({ sku: row.sku, quantity: row.in_stock });
+		} else {
+			shelves.push({
+				sku: row.sku,
+				inStock: row.in_stock,
+				booked: row.booked,
+				closeAt:
+					Number(row.close_at_quantity) > 0
+						? Number(row.close_at_quantity)
+						: null,
+			});
+			if (row.in_stock !== 0)
+				openingStock.push({ sku: row.sku, quantity: row.in_stock });
 		}
 	}
 
@@ -199,6 +222,7 @@ export function planSumtrackerImport(files: {
 		recipes,
 		aliases,
 		openingStock,
+		shelves,
 		warnings,
 	};
 }

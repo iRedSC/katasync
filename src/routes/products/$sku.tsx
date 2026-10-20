@@ -93,7 +93,11 @@ function withShelf(d: Loaded, location: string, onHand: number): Loaded {
 
 // A count sets its shelf to what was counted, as recording it does.
 const countPatch = (productId: number, location: string, onHand: number) =>
-	productData.patch(productId, (d) => withShelf(d, location, onHand));
+	productData.patch(productId, (d) => {
+		const next = withShelf(d, location, onHand);
+		// The count ends not counted, as recording it does.
+		return { ...next, product: { ...next.product, notCountedSince: null } };
+	});
 
 const rangePatch = (productId: number, range: StockRange | null) =>
 	productData.patch(productId, (d) => ({
@@ -447,8 +451,18 @@ function ProductPage() {
 function getVerdict(
 	d: ProductDetail,
 ): { tone: Tone; label: string; detail: ReactNode } | null {
+	if (d.product.kind !== "bundle" && d.product.notCountedSince)
+		return {
+			tone: "info",
+			label: "Not counted",
+			detail:
+				"Sells without limit on every channel until its first count. Sales still come off its number.",
+		};
 	if (d.product.kind === "bundle") {
-		const missing = d.components.filter((c) => c.available < c.quantity);
+		// A part that isn't counted yet sells without limit, so it's never short.
+		const missing = d.components.filter(
+			(c) => !c.notCounted && c.available < c.quantity,
+		);
 		if (missing.length > 0) {
 			return {
 				tone: "warning",
@@ -469,7 +483,8 @@ function getVerdict(
 				),
 			};
 		}
-		if (d.available > 3) return null;
+		// Its count leaves out parts without limit, so it isn't worth warning on.
+		if (d.available > 3 || d.components.some((c) => c.notCounted)) return null;
 		const limiting = d.components.filter((c) => limits(d, c));
 		return {
 			tone: "warning",
@@ -518,6 +533,11 @@ function Details({ d }: { d: ProductDetail }) {
 	if (tags.length > 0) rows.push(["Tags", tags.join(", ")]);
 	if (p.unitCost !== null) rows.push(["Cost", formatMoney(p.unitCost)]);
 	if (p.barcode) rows.push(["Barcode", p.barcode]);
+	if (p.closeAt !== null)
+		rows.push([
+			"Close at",
+			`Shows 0 on every channel at ${formatCount(p.closeAt)} or fewer`,
+		]);
 	if (p.weightGrams) rows.push(["Weight", `${formatCount(p.weightGrams)} g`]);
 	if (p.lengthMm && p.widthMm && p.heightMm) {
 		rows.push(["Box", `${p.lengthMm} × ${p.widthMm} × ${p.heightMm} mm`]);

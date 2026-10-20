@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { products, stockLevels } from "#/db/schema";
 import { getBundleBlockers } from "#/inventory/availability";
@@ -22,7 +22,8 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(
 				})
 				.from(stockLevels)
 				.innerJoin(products, eq(products.id, stockLevels.productId))
-				.where(lt(stockLevels.onHand, 0))
+				// Not counted goes below zero by design until its count.
+				.where(and(lt(stockLevels.onHand, 0), isNull(products.notCountedSince)))
 				.orderBy(stockLevels.onHand),
 			ownedLocationIds().then((owned) => getBundleBlockers(db, owned)),
 			db

@@ -40,7 +40,11 @@ export async function postMovements(
 
 	const seen = new Set<string>();
 	for (const line of lines) {
-		if (!Number.isInteger(line.delta) || line.delta === 0) {
+		// An opening balance of 0 is a record that the shelf was empty.
+		if (
+			!Number.isInteger(line.delta) ||
+			(line.delta === 0 && line.reason !== "opening_balance")
+		) {
 			throw new LedgerError(
 				`Delta must be a nonzero integer, got ${line.delta}`,
 			);
@@ -477,6 +481,12 @@ export async function recordCount(
 				),
 			)
 			.for("update");
+		// A count is what ends not counted (src/inventory/not-counted.ts), even
+		// one that matches; undoing the count doesn't bring it back.
+		await tx
+			.update(products)
+			.set({ notCountedSince: null })
+			.where(eq(products.id, input.productId));
 		await tx
 			.update(stockLevels)
 			.set({ lastCountedAt: sql`now()` })
