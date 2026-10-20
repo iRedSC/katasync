@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	type ListingStockPush,
@@ -87,30 +87,33 @@ export async function pushChannelStock<T>(
 }
 
 // One store's push. Never throws: a failure is kept on the store for
-// Settings and returned as a problem for Diagnostics.
+// Settings and returned as a problem for Diagnostics. `only` limits it to
+// those products' listings (src/stock-push/on-change.ts) and skips the
+// read-back, which the next full push does.
+//
+// Pushes to one store take turns, each in a transaction holding the store:
+// each works out its quantities once it holds it, so a push that started
+// earlier, with older numbers, can't write over a later one.
 export async function pushStoreStock<T>(
 	db: Db,
 	store: typeof stores.$inferSelect,
 	adapter: StockChannel<T>,
 	mode: PushMode,
 	now = new Date(),
+	only?: number[],
 ): Promise<StorePush> {
 	try {
-		const blocker = await stockBlocker(db);
-		if (blocker) throw new Blocked(blocker);
-		const due =
-			!store.stockReadAt ||
-			now.getTime() - store.stockReadAt.getTime() >= READ_EVERY_MS;
-		if (due) await readStock(db, store, adapter, now);
-		const result = await pushListings(db, store, adapter, mode);
-		await db
-			.update(stores)
-			.set({
-				stockPushError: null,
-				...(mode === "write" ? { stockPushedAt: now } : {}),
-			})
-			.where(eq(stores.id, store.id));
-		return { store: store.name, ...result };
+		return await db.transaction(async (tx) => {
+			// The transaction waits on the channel's API between statements, and
+			// Neon ends ones idle for 5 minutes; a Vercel function can't outlive 15.
+			await tx.execute(
+				sql`set local idle_in_transaction_session_timeout = '15min'`,
+			);
+			await tx.execute(
+				sql`select pg_advisory_xact_lock(hashtext('stock-push'), ${store.id})`,
+			);
+			return await pushHeld(tx, store, adapter, mode, now, only);
+		});
 	} catch (error) {
 		const message = errorText(error);
 		await db
@@ -124,6 +127,32 @@ export async function pushStoreStock<T>(
 			problems: [`Stock push to ${store.name} stopped: ${message}`],
 		};
 	}
+}
+
+async function pushHeld<T>(
+	db: Db,
+	store: typeof stores.$inferSelect,
+	adapter: StockChannel<T>,
+	mode: PushMode,
+	now: Date,
+	only: number[] | undefined,
+): Promise<StorePush> {
+	const blocker = await stockBlocker(db);
+	if (blocker) throw new Blocked(blocker);
+	const due =
+		!only &&
+		(!store.stockReadAt ||
+			now.getTime() - store.stockReadAt.getTime() >= READ_EVERY_MS);
+	if (due) await readStock(db, store, adapter, now);
+	const result = await pushListings(db, store, adapter, mode, only);
+	await db
+		.update(stores)
+		.set({
+			stockPushError: null,
+			...(mode === "write" ? { stockPushedAt: now } : {}),
+		})
+		.where(eq(stores.id, store.id));
+	return { store: store.name, ...result };
 }
 
 // Records what the channel shows for each of the store's listings. A write
@@ -172,6 +201,7 @@ async function pushListings<T>(
 	store: typeof stores.$inferSelect,
 	adapter: StockChannel<T>,
 	mode: PushMode,
+	only?: number[],
 ): Promise<Omit<StorePush, "store">> {
 	const rows = await db
 		.select({
@@ -192,6 +222,7 @@ async function pushListings<T>(
 				// A deleted listing (TikTok keeps reporting them) sells nothing,
 				// and the channel refuses its stock.
 				sql`coalesce(${listings.status}, '') <> 'DELETED'`,
+				only ? inArray(products.id, only) : undefined,
 			),
 		)
 		.orderBy(products.sku);

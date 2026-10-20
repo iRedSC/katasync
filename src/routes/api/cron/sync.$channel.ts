@@ -4,7 +4,8 @@ import { createFileRoute } from "@tanstack/react-router";
 // One sync pass of a channel, called by Vercel Cron every four hours
 // (vercel.json). Every cron runs at the same minute so the database wakes once
 // and can scale to zero between runs; a cron every few minutes kept it awake
-// around the clock. While the orders page is open it syncs more often itself
+// around the clock. (Amazon and eBay are also asked every five minutes, without
+// the database, whether anything sold: src/routes/api/cron/orders.$channel.ts.) While the orders page is open it syncs more often itself
 // (syncChannels in src/server/sync.ts). `?listings=1` also refreshes the
 // channel's listings. Vercel
 // signs each call with `Authorization: Bearer $CRON_SECRET`; anything else is
