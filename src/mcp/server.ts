@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Db } from "#/db/client";
+import { registerActionTools } from "./server/action-tools";
 import { registerCatalogTools } from "./server/catalog-tools";
 import { INSTRUCTIONS } from "./server/instructions";
 import { registerProductTools } from "./server/product-tools";
@@ -14,8 +15,9 @@ import {
 	registerTransferTools,
 } from "./server/transfer-tools";
 
-// katasync as MCP tools: read anything, change the catalog, draft POs, check
-// supplier invoices, and count stock. Emailing POs, buying labels, and
+// katasync as MCP tools: read anything, change the catalog, draft, close,
+// and cancel POs, check supplier invoices, count and transfer stock, receive
+// returns, switch stock push, and sync. Emailing POs, buying labels, and
 // anything else that reaches suppliers, carriers, or money stays in the app;
 // mark_po_sent only records a PO the supplier already has. Server only.
 
@@ -57,6 +59,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerStockTools(server, db);
 	registerStockSettingsTools(server, db);
 	registerTransferTools(server, db);
+	registerActionTools(server, db);
 	registerProductTools(server, db);
 	registerReceivingTools(server, db);
 }
