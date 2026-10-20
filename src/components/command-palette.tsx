@@ -10,6 +10,7 @@ import {
 	ListChecks,
 	Package,
 	Settings,
+	Shuffle,
 	Trophy,
 	Truck,
 	Undo2,
@@ -94,6 +95,14 @@ export const pages = [
 		keys: "g n",
 		parent: "/products",
 		count: "countsDue",
+	},
+	{
+		to: "/transfers",
+		label: "Transfers",
+		icon: Shuffle,
+		keys: "g t",
+		parent: "/products",
+		count: null,
 	},
 	{
 		to: "/purchasing",

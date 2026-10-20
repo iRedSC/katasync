@@ -260,6 +260,80 @@ export const stockCounts = pgTable("stock_counts", {
 	previousCountedAt: timestamp({ withTimezone: true }),
 });
 
+// A list of stock to move from one of our locations to another, e.g. a
+// refill of the retail store. A draft can change freely; sending it moves
+// every line at once, as one ledger batch (batchId), so undoing it moves it
+// all back and returns it to a draft. Rules live in
+// src/inventory/transfers.ts.
+export const transferStatus = pgEnum("transfer_status", ["draft", "sent"]);
+
+export const transfers = pgTable(
+	"transfers",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		fromLocationId: integer()
+			.notNull()
+			.references(() => locations.id),
+		toLocationId: integer()
+			.notNull()
+			.references(() => locations.id),
+		status: transferStatus().notNull().default("draft"),
+		note: text(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		sentAt: timestamp({ withTimezone: true }),
+		batchId: uuid().unique(),
+	},
+	(t) => [
+		check(
+			"transfers_two_places",
+			sql`${t.fromLocationId} <> ${t.toLocationId}`,
+		),
+		// Sent means it moved stock, and only then.
+		check(
+			"transfers_sent_moved",
+			sql`(${t.status} = 'sent') = (${t.batchId} is not null and ${t.sentAt} is not null)`,
+		),
+		index("transfers_status_idx").on(t.status, t.createdAt),
+	],
+);
+
+export const transferLines = pgTable(
+	"transfer_lines",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		transferId: integer()
+			.notNull()
+			.references(() => transfers.id, { onDelete: "cascade" }),
+		productId: integer()
+			.notNull()
+			.references(() => products.id),
+		quantity: integer().notNull(),
+	},
+	(t) => [
+		unique("transfer_lines_one_per_product").on(t.transferId, t.productId),
+		check("transfer_lines_quantity", sql`${t.quantity} > 0`),
+	],
+);
+
+// How many of a product a location should hold, for refills: a transfer's
+// suggestions top the location back up to this from the warehouse.
+export const shelfTargets = pgTable(
+	"shelf_targets",
+	{
+		productId: integer()
+			.notNull()
+			.references(() => products.id),
+		locationId: integer()
+			.notNull()
+			.references(() => locations.id),
+		target: integer().notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.productId, t.locationId] }),
+		check("shelf_targets_positive", sql`${t.target} > 0`),
+	],
+);
+
 // Every shelf count, matched or not: what the system expected and what was
 // on the shelf. stock_counts only holds counts that moved stock (to undo
 // them); this keeps the clean ones too, so drift can be told from noise

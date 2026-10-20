@@ -36,6 +36,8 @@ import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
+import { Route as TransfersIndexRouteImport } from './routes/transfers/index'
+import { Route as TransfersIdRouteImport } from './routes/transfers/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCronTrackingRouteImport } from './routes/api/cron/tracking'
 import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage-photos/$damageId'
@@ -186,6 +188,16 @@ const ReceiveIdRoute = ReceiveIdRouteImport.update({
   path: '/receive/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TransfersIndexRoute = TransfersIndexRouteImport.update({
+  id: '/transfers/',
+  path: '/transfers/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TransfersIdRoute = TransfersIdRouteImport.update({
+  id: '/transfers/$id',
+  path: '/transfers/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -281,11 +293,13 @@ export interface FileRoutesByFullPath {
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
+  '/transfers/$id': typeof TransfersIdRoute
   '/orders/': typeof OrdersIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/profit/': typeof ProfitIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
@@ -324,11 +338,13 @@ export interface FileRoutesByTo {
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
+  '/transfers/$id': typeof TransfersIdRoute
   '/orders': typeof OrdersIndexRoute
   '/products': typeof ProductsIndexRoute
   '/profit': typeof ProfitIndexRoute
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
+  '/transfers': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
@@ -368,11 +384,13 @@ export interface FileRoutesById {
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
+  '/transfers/$id': typeof TransfersIdRoute
   '/orders/': typeof OrdersIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/profit/': typeof ProfitIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
@@ -413,11 +431,13 @@ export interface FileRouteTypes {
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
+    | '/transfers/$id'
     | '/orders/'
     | '/products/'
     | '/profit/'
     | '/purchasing/'
     | '/receive/'
+    | '/transfers/'
     | '/api/auth/$'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
@@ -456,11 +476,13 @@ export interface FileRouteTypes {
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
+    | '/transfers/$id'
     | '/orders'
     | '/products'
     | '/profit'
     | '/purchasing'
     | '/receive'
+    | '/transfers'
     | '/api/auth/$'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
@@ -499,11 +521,13 @@ export interface FileRouteTypes {
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
+    | '/transfers/$id'
     | '/orders/'
     | '/products/'
     | '/profit/'
     | '/purchasing/'
     | '/receive/'
+    | '/transfers/'
     | '/api/auth/$'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
@@ -543,11 +567,13 @@ export interface RootRouteChildren {
   PurchasingIdRoute: typeof PurchasingIdRoute
   PurchasingSuppliersRoute: typeof PurchasingSuppliersRoute
   ReceiveIdRoute: typeof ReceiveIdRoute
+  TransfersIdRoute: typeof TransfersIdRoute
   OrdersIndexRoute: typeof OrdersIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
   ProfitIndexRoute: typeof ProfitIndexRoute
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
+  TransfersIndexRoute: typeof TransfersIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiCronTrackingRoute: typeof ApiCronTrackingRoute
   ApiDamagePhotosDamageIdRoute: typeof ApiDamagePhotosDamageIdRoute
@@ -755,6 +781,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReceiveIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/transfers/': {
+      id: '/transfers/'
+      path: '/transfers'
+      fullPath: '/transfers/'
+      preLoaderRoute: typeof TransfersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/transfers/$id': {
+      id: '/transfers/$id'
+      path: '/transfers/$id'
+      fullPath: '/transfers/$id'
+      preLoaderRoute: typeof TransfersIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -879,11 +919,13 @@ const rootRouteChildren: RootRouteChildren = {
   PurchasingIdRoute: PurchasingIdRoute,
   PurchasingSuppliersRoute: PurchasingSuppliersRoute,
   ReceiveIdRoute: ReceiveIdRoute,
+  TransfersIdRoute: TransfersIdRoute,
   OrdersIndexRoute: OrdersIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
   ProfitIndexRoute: ProfitIndexRoute,
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
+  TransfersIndexRoute: TransfersIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCronTrackingRoute: ApiCronTrackingRoute,
   ApiDamagePhotosDamageIdRoute: ApiDamagePhotosDamageIdRoute,

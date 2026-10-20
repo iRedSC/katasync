@@ -1,33 +1,29 @@
 import { inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { locations } from "#/db/schema";
+import { locations, products } from "#/db/schema";
 import { ourKinds } from "#/inventory/locations";
-import {
-	assertPositiveInteger,
-	getProduct,
-	LedgerError,
-	postMovements,
-} from "./post";
+import { assertPositiveInteger, LedgerError, postMovements } from "./post";
 
 // Moves stock from one of our shelves to another, e.g. restocking the retail
-// store from the warehouse. Both sides are one batch, so undoing it moves the
-// stock back. Refused when the shelf it leaves doesn't hold that many: a
-// shelf that's off should be counted, not carried below zero.
+// store from the warehouse. Every line is one batch, so undoing it moves the
+// stock back. Refused, changing nothing, when the shelf it leaves doesn't
+// hold that many of any line: a shelf that's off should be counted, not
+// carried below zero.
 export async function transferStock(
 	db: Db,
 	input: {
-		productId: number;
 		fromLocationId: number;
 		toLocationId: number;
-		quantity: number;
+		lines: { productId: number; quantity: number }[];
+		reference?: string;
 		note?: string;
 	},
 ) {
-	assertPositiveInteger(input.quantity);
+	if (input.lines.length === 0) throw new LedgerError("Nothing to move");
+	for (const line of input.lines) assertPositiveInteger(line.quantity);
 	if (input.fromLocationId === input.toLocationId)
 		throw new LedgerError("Pick two different locations");
 	return db.transaction(async (tx) => {
-		const product = await getProduct(tx, input.productId);
 		const ends = await tx
 			.select({ id: locations.id, name: locations.name, kind: locations.kind })
 			.from(locations)
@@ -38,30 +34,46 @@ export async function transferStock(
 			if (!end || !(ourKinds as readonly string[]).includes(end.kind))
 				throw new LedgerError("Stock moves only between our own locations");
 		const result = await postMovements(tx, {
-			reference: "transfer",
+			reference: input.reference ?? "transfer",
 			note: input.note?.trim() || undefined,
-			lines: [
+			lines: input.lines.flatMap((line) => [
 				{
-					productId: product.id,
+					productId: line.productId,
 					locationId: input.fromLocationId,
-					delta: -input.quantity,
-					reason: "transfer_out",
+					delta: -line.quantity,
+					reason: "transfer_out" as const,
 				},
 				{
-					productId: product.id,
+					productId: line.productId,
 					locationId: input.toLocationId,
-					delta: input.quantity,
-					reason: "transfer_in",
+					delta: line.quantity,
+					reason: "transfer_in" as const,
 				},
-			],
+			]),
 		});
-		const left = result.levels.find(
-			(l) => l.locationId === input.fromLocationId,
-		);
-		if (left && left.onHand < 0) {
-			const had = left.onHand + input.quantity;
+		const short = input.lines.flatMap((line) => {
+			const left = result.levels.find(
+				(l) =>
+					l.productId === line.productId &&
+					l.locationId === input.fromLocationId,
+			);
+			return left && left.onHand < 0
+				? [{ ...line, had: Math.max(0, left.onHand + line.quantity) }]
+				: [];
+		});
+		if (short.length > 0) {
+			const skus = await tx
+				.select({ id: products.id, sku: products.sku })
+				.from(products)
+				.where(
+					inArray(
+						products.id,
+						short.map((s) => s.productId),
+					),
+				);
+			const sku = (id: number) => skus.find((s) => s.id === id)?.sku;
 			throw new LedgerError(
-				`${from?.name} has ${Math.max(0, had)} of ${product.sku}, not ${input.quantity}. Count it there if that's wrong.`,
+				`${short.map((s) => `${from?.name} has ${s.had} of ${sku(s.productId)}, not ${s.quantity}`).join("; ")}. Count it there if that's wrong.`,
 			);
 		}
 		return result;

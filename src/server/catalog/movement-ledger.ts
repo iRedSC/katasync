@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { movements, products } from "#/db/schema";
 import { undoBatch } from "#/inventory/ledger";
+import { transferName, transferOfBatch } from "#/inventory/transfers";
 import { purchaseOrderOfBatch } from "#/purchasing/orders";
 
 // The ledger, one row per operation: an import or an assembly reads as one
@@ -44,5 +45,9 @@ export const undoMovement = createServerFn({ method: "POST" })
 		// A PO receipt undone here would leave the PO thinking it arrived.
 		const po = await purchaseOrderOfBatch(db, data.batchId);
 		if (po !== null) throw new Error(`Undo this on PO ${po}.`);
+		// Undone here, a transfer would still say it was sent.
+		const transfer = await transferOfBatch(db, data.batchId);
+		if (transfer !== null)
+			throw new Error(`Undo this on transfer ${transferName(transfer)}.`);
 		await undoBatch(db, data.batchId);
 	});

@@ -32,6 +32,21 @@ describe("over MCP", () => {
 			destructiveHint: true,
 		});
 		expect(byName.has("send_purchase_order")).toBe(false);
+		for (const name of [
+			"receive_return",
+			"mark_no_return",
+			"close_po",
+			"cancel_po",
+			"set_stock_push",
+			"sync_now",
+			"create_transfer",
+			"send_transfer",
+			"set_retail_reserve",
+		])
+			expect(byName.has(name), name).toBe(true);
+		expect(byName.get("delete_transfer")).toMatchObject({
+			destructiveHint: true,
+		});
 		// /mcp logs every tool not listed as reading; the list must be right.
 		const reading = tools
 			.filter(

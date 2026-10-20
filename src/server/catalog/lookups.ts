@@ -6,8 +6,10 @@ export const listProductIndex = createServerFn({ method: "GET" }).handler(
 	async () =>
 		getDb()
 			.select({
+				id: products.id,
 				sku: products.sku,
 				name: products.name,
+				kind: products.kind,
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 			})
