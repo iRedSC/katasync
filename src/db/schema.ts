@@ -335,8 +335,10 @@ export const stores = pgTable(
 //   ready:      where to write its quantity, what the channel shows (null
 //               when unknown), and the last write's error, if it failed.
 //   unpushable: the channel lists it but katasync can't set it, and why.
-// Null until a stock read finds it. `target` is the channel's own shape,
-// checked by its adapter (src/stock-push/channels).
+//   unreported: the last read didn't list it at all.
+// Null until a stock read has looked for it, so a new listing gets read
+// right away instead of waiting out the read interval. `target` is the
+// channel's own shape, checked by its adapter (src/stock-push/channels).
 export type ListingStockPush =
 	| {
 			state: "ready";
@@ -344,7 +346,8 @@ export type ListingStockPush =
 			shows: number | null;
 			error: string | null;
 	  }
-	| { state: "unpushable"; reason: string };
+	| { state: "unpushable"; reason: string }
+	| { state: "unreported" };
 
 // `fba` listings are stocked and shipped by Amazon; we never push their quantity.
 export const listingFulfillment = pgEnum("listing_fulfillment", [

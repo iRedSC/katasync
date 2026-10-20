@@ -281,6 +281,104 @@ describe("pushStoreStock", () => {
 		]);
 	});
 
+	test("a listing made since the last read is read and set in the same pass", async () => {
+		const a = await createProduct(db, "A", "simple");
+		await stock(a, 5);
+		await list("1", a);
+		const fake = fakeChannel({ "1": 5 });
+		const start = new Date();
+		await pushStoreStock(db, store, fake.channel, "write", start);
+		expect(fake.reads()).toBe(1);
+
+		// A new product and its listing arrive well before the next read is due.
+		const b = await createProduct(db, "B", "simple");
+		await stock(b, 3);
+		await list("2", b);
+		fake.shows["2"] = 0;
+		const result = await pushStoreStock(
+			db,
+			await reload(),
+			fake.channel,
+			"write",
+			new Date(start.getTime() + 60_000),
+		);
+		expect(fake.reads()).toBe(2);
+		expect(result.problems).toEqual([]);
+		expect(fake.writes).toEqual([
+			{ externalId: "2", target: { slot: "slot-2" }, quantity: 3 },
+		]);
+	});
+
+	test("a push of what moved reads first only when one of its listings is new", async () => {
+		const a = await createProduct(db, "A", "simple");
+		await stock(a, 5);
+		await list("1", a);
+		const fake = fakeChannel({ "1": 5 });
+		const start = new Date();
+		await pushStoreStock(db, store, fake.channel, "write", start);
+
+		// A received on a PO: its listing is known, so no read.
+		await stock(a, 1);
+		const later = new Date(start.getTime() + 60_000);
+		await pushStoreStock(db, await reload(), fake.channel, "write", later, [a]);
+		expect(fake.reads()).toBe(1);
+		expect(fake.writes.map((w) => w.quantity)).toEqual([6]);
+
+		// A new product's listing has never been read, so this push reads.
+		const b = await createProduct(db, "B", "simple");
+		await stock(b, 3);
+		await list("2", b);
+		fake.shows["2"] = 0;
+		const result = await pushStoreStock(
+			db,
+			await reload(),
+			fake.channel,
+			"write",
+			later,
+			[b],
+		);
+		expect(fake.reads()).toBe(2);
+		expect(result.problems).toEqual([]);
+		expect(fake.writes.at(-1)).toEqual({
+			externalId: "2",
+			target: { slot: "slot-2" },
+			quantity: 3,
+		});
+	});
+
+	test("a listing the channel didn't report waits for the next due read", async () => {
+		const a = await createProduct(db, "A", "simple");
+		await stock(a, 5);
+		await list("missing", a);
+		const fake = fakeChannel({});
+		const start = new Date();
+		const problem =
+			"A: Fake didn't report this listing's stock, so katasync isn't setting it";
+
+		const first = await pushStoreStock(db, store, fake.channel, "write", start);
+		expect(first.problems).toEqual([problem]);
+		expect(await listingPush("missing")).toEqual({ state: "unreported" });
+
+		const second = await pushStoreStock(
+			db,
+			await reload(),
+			fake.channel,
+			"write",
+			new Date(start.getTime() + 60_000),
+		);
+		expect(second.problems).toEqual([problem]);
+		expect(fake.reads()).toBe(1);
+
+		await pushStoreStock(
+			db,
+			await reload(),
+			fake.channel,
+			"write",
+			new Date(start.getTime() + READ_EVERY_MS),
+		);
+		expect(fake.reads()).toBe(2);
+	});
+
 	test("won't push while a store's orders don't take stock", async () => {
 		await db
 			.insert(schema.stores)
