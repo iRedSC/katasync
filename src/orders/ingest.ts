@@ -8,6 +8,7 @@ import {
 	productAliases,
 	productComponents,
 	products,
+	stores,
 } from "#/db/schema";
 import { LedgerError, recordSale, undoBatch } from "#/inventory/ledger";
 
@@ -80,7 +81,19 @@ export async function ingestOrder(
 			.returning({ id: orders.id });
 
 		const problems: string[] = [];
-		const takesStock = orderTakesStock(store, order);
+		// When the store takes stock from, read now rather than trusted from the
+		// caller: a sync pass reads its store once, and a cutover that moves the
+		// date mid-pass (src/import/refresh.ts, which holds orders until it's
+		// done) would otherwise have the pass take stock for orders from before
+		// it.
+		const [current] = await tx
+			.select({ stockFrom: stores.stockFrom })
+			.from(stores)
+			.where(eq(stores.id, store.id));
+		const takesStock = orderTakesStock(
+			{ ...store, stockFrom: current?.stockFrom ?? null },
+			order,
+		);
 
 		for (const line of lines) {
 			const [existing] = await tx
