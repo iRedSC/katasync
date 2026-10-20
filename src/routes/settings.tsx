@@ -173,7 +173,7 @@ function Locations({ locations }: { locations: Location[] }) {
 							{l.kind === "fba"
 								? "Amazon's warehouse"
 								: l.kind === "retail"
-									? "Our store, sells in person"
+									? "Our store; online orders take from it when the warehouse is out"
 									: "Ours, ships orders"}
 						</span>
 					</Row>

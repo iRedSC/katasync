@@ -30,11 +30,10 @@ const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
 	fromDriver: (value) => Buffer.from(value),
 });
 
-// `owned` is the warehouse: orders ship from it and the channels sell its
-// stock. `retail` is our store: its stock is ours (counted, transferred,
-// bought for) but only sells over the counter, so it never ships an order or
-// shows on a channel. `fba` stock is Amazon's: we only mirror what Amazon
-// reports and never route orders to it.
+// `owned` is the warehouse: orders ship from it. `retail` is our store: POS
+// sales take its stock, and shipped orders take from it what the warehouse is
+// out of (someone fetches it), so the channels sell both. `fba` stock is
+// Amazon's: we only mirror what Amazon reports and never route orders to it.
 export const locationKind = pgEnum("location_kind", ["owned", "fba", "retail"]);
 
 export const locations = pgTable("locations", {

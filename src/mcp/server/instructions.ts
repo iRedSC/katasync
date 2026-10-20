@@ -2,7 +2,7 @@ export const INSTRUCTIONS = `katasync runs inventory, purchasing, and order sync
 
 How things count:
 - Products are identified by SKU. Kinds: simple, kit (pre-assembled, own stock), bundle (a "tool set": no stock of its own, sold as its parts).
-- Stock: use the owned_stock view (product_id, sku, on_hand). It's our warehouse and retail store together, leaving out Amazon's FBA stock. Negative means oversold. Per shelf, stock_levels joined to locations: kind owned is the warehouse, which ships every order and is the only stock the channels sell; kind retail is our store, which sells only in person (Shopify POS orders, which take its stock). Stock moves between them with transfer_stock.
+- Stock: use the owned_stock view (product_id, sku, on_hand). It's our warehouse and retail store together, leaving out Amazon's FBA stock. Negative means oversold. Per shelf, stock_levels joined to locations: kind owned is the warehouse, which ships every order; kind retail is our store. Shopify POS orders take the store's stock. Shipped orders take the warehouse's first and the store's for what the warehouse is out of (someone fetches it), so the channels sell both. Stock moves between them with transfer_stock.
 - Sales: use the sales_units view (product_id, order_id, store_id, placed_at, units). Tool sets count as their parts; cancelled and FBA orders are left out. Join stores for the channel.
 - Order history doesn't start at the same time on every channel. Before saying something "hasn't sold in N days", check min(placed_at) per store and say how far back each channel goes.
 - Each product has one supplier (product_suppliers), bought in a unit with a pack size and minimum, e.g. CASE of 12, min 2. PO quantities and prices are per that unit; stock counts single items.

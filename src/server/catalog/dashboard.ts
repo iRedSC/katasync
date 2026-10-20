@@ -4,7 +4,7 @@ import { getDb } from "#/db/client";
 import { products, stockLevels } from "#/db/schema";
 import { getBundleBlockers } from "#/inventory/availability";
 import { aItemsAtRisk } from "#/purchasing/reorder";
-import { ownedLocationIds } from "./owned-locations";
+import { sellableLocationIds } from "./sellable-locations";
 
 // Home shows only what needs someone. Stock totals are deliberately absent:
 // nobody acts on them.
@@ -25,7 +25,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(
 				// Not counted goes below zero by design until its count.
 				.where(and(lt(stockLevels.onHand, 0), isNull(products.notCountedSince)))
 				.orderBy(stockLevels.onHand),
-			ownedLocationIds().then((owned) => getBundleBlockers(db, owned)),
+			sellableLocationIds().then((owned) => getBundleBlockers(db, owned)),
 			db
 				.select({ bundles: sql<number>`count(*)::int` })
 				.from(products)

@@ -11,6 +11,7 @@ import {
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { errorText } from "#/diagnostics/runs";
 import { getAvailability } from "#/inventory/availability";
+import { isOurs } from "#/inventory/locations";
 import { UNLIMITED } from "#/inventory/not-counted";
 import { chunks, type StockChannel, type StockWrite } from "./channel";
 
@@ -248,14 +249,16 @@ async function pushListings<T>(
 		.innerJoin(products, eq(products.id, listings.productId))
 		.where(pushable(store, only))
 		.orderBy(products.sku);
-	const owned = await db
+	// The retail store's stock sells online too: orders take from it when the
+	// warehouse is out (see recordSale).
+	const ours = await db
 		.select({ id: locations.id })
 		.from(locations)
-		.where(eq(locations.kind, "owned"));
+		.where(isOurs);
 	const sellable = await getAvailability(
 		db,
 		[...new Set(rows.map((r) => r.productId))],
-		owned.map((l) => l.id),
+		ours.map((l) => l.id),
 		{ uncounted: UNLIMITED },
 	);
 

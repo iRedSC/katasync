@@ -24,7 +24,7 @@ import {
 	unitsOnOrder,
 } from "#/purchasing/reorder";
 import { setSuppliers } from "#/purchasing/suppliers";
-import { ownedLocationIds } from "./owned-locations";
+import { sellableLocationIds } from "./sellable-locations";
 import { countDue } from "./shelf-counts";
 
 // Every product with what's sellable from owned locations. Small enough
@@ -71,7 +71,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			components,
 			setSupplier,
 		] = await Promise.all([
-			ownedLocationIds().then((owned) => getAvailability(db, ids, owned)),
+			sellableLocationIds().then((owned) => getAvailability(db, ids, owned)),
 			db
 				.select({
 					productId: stockLevels.productId,

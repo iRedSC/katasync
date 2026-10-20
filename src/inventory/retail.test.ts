@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { fromStore } from "#/orders/from-store";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyStoreSales } from "#/orders/remap";
 import { receiveReturn } from "#/orders/returns";
 import { createProduct, createTestDb } from "#/test/db";
 import { postMovements, transferStock, undoBatch } from "./ledger";
+import { setRecipe } from "./recipes";
 
 let db: Db;
 let warehouse: number;
@@ -175,6 +177,157 @@ describe("in-store sales", () => {
 
 		expect(await onHand(wrench, retail)).toBe(4);
 		expect(await onHand(wrench, warehouse)).toBe(0);
+	});
+});
+
+describe("overflow", () => {
+	const shipped = (extra: Partial<ChannelOrder> = {}) =>
+		posOrder({ soldInStore: false, salesChannel: "Online Store", ...extra });
+
+	async function fetchList(orderId: number) {
+		const rows = await db
+			.select({ parts: fromStore })
+			.from(schema.orderLines)
+			.innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+			.where(eq(schema.orderLines.orderId, orderId));
+		return rows.flatMap((r) => r.parts);
+	}
+
+	test("a shipped order takes what the warehouse is out of from the store", async () => {
+		const retail = await addRetail();
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 1);
+		await stock(wrench, retail, 5);
+
+		const { orderId } = await ingestOrder(
+			db,
+			store(),
+			shipped(),
+			await stockLocations(db),
+		);
+
+		expect(await onHand(wrench, warehouse)).toBe(0);
+		expect(await onHand(wrench, retail)).toBe(4);
+		expect(await fetchList(orderId)).toEqual([
+			{ sku: "WRENCH", location: "Store", quantity: 1 },
+		]);
+	});
+
+	test("what neither holds is oversold at the warehouse", async () => {
+		const retail = await addRetail();
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 1);
+
+		const { orderId } = await ingestOrder(
+			db,
+			store(),
+			shipped(),
+			await stockLocations(db),
+		);
+
+		expect(await onHand(wrench, warehouse)).toBe(-1);
+		expect(await onHand(wrench, retail)).toBe(0);
+		expect(await fetchList(orderId)).toEqual([]);
+	});
+
+	test("a tool set's parts each come from wherever they are", async () => {
+		const retail = await addRetail();
+		const set = await createProduct(db, "SET", "bundle");
+		const knife = await createProduct(db, "KNIFE", "simple");
+		const blade = await createProduct(db, "BLADE", "simple");
+		await setRecipe(db, set, [
+			{ productId: knife, quantity: 1 },
+			{ productId: blade, quantity: 1 },
+		]);
+		await stock(knife, warehouse, 5);
+		await stock(blade, retail, 5);
+
+		const { orderId } = await ingestOrder(
+			db,
+			store(),
+			shipped({
+				lines: [
+					{
+						externalId: "line-1",
+						listingExternalId: null,
+						sku: "SET",
+						title: "Set",
+						quantity: 2,
+						unitPrice: 40,
+					},
+				],
+			}),
+			await stockLocations(db),
+		);
+
+		expect(await onHand(knife, warehouse)).toBe(3);
+		expect(await onHand(blade, retail)).toBe(3);
+		expect(await fetchList(orderId)).toEqual([
+			{ sku: "BLADE", location: "Store", quantity: 2 },
+		]);
+	});
+
+	test("cancelling gives each shelf back what it gave", async () => {
+		const retail = await addRetail();
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 1);
+		await stock(wrench, retail, 5);
+		const from = await stockLocations(db);
+		const { orderId } = await ingestOrder(db, store(), shipped(), from);
+
+		await ingestOrder(
+			db,
+			store(),
+			shipped({ cancelledAt: new Date("2026-10-06T00:00:00Z") }),
+			from,
+		);
+
+		expect(await onHand(wrench, warehouse)).toBe(1);
+		expect(await onHand(wrench, retail)).toBe(5);
+		expect(await fetchList(orderId)).toEqual([]);
+	});
+
+	test("a return of a split sale goes back to the warehouse", async () => {
+		const retail = await addRetail();
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 1);
+		await stock(wrench, retail, 5);
+		const { orderId } = await ingestOrder(
+			db,
+			store(),
+			shipped({ fulfillmentStatus: "FULFILLED" }),
+			await stockLocations(db),
+		);
+		const [line] = await db
+			.select()
+			.from(schema.orderLines)
+			.where(eq(schema.orderLines.orderId, orderId));
+
+		await receiveReturn(db, {
+			orderId,
+			lines: [{ lineId: line.id, quantity: 2 }],
+			restock: true,
+		});
+
+		expect(await onHand(wrench, warehouse)).toBe(2);
+		expect(await onHand(wrench, retail)).toBe(4);
+	});
+
+	test("an in-store sale never takes the warehouse's stock", async () => {
+		const retail = await addRetail();
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 10);
+
+		const { orderId } = await ingestOrder(
+			db,
+			store(),
+			posOrder(),
+			await stockLocations(db),
+		);
+
+		expect(await onHand(wrench, warehouse)).toBe(10);
+		expect(await onHand(wrench, retail)).toBe(-2);
+		expect(await fetchList(orderId)).toEqual([]);
 	});
 });
 

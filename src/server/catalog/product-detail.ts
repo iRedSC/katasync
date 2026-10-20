@@ -140,8 +140,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			getAvailability(
 				db,
 				[product.id, ...components.map((c) => c.id)],
-				// Only the warehouse's stock is for sale on the channels.
-				ourLocations.filter((l) => l.kind === "owned").map((l) => l.id),
+				ourLocations.map((l) => l.id),
 			),
 			abcClasses(db),
 			membershipOf(db, product.id),

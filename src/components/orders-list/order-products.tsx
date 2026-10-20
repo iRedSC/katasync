@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { HoverCard } from "radix-ui";
+import { FromStoreBadge } from "#/components/order-page/from-store";
 import { ProductImage } from "#/components/product";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
@@ -82,6 +83,11 @@ function LineRow({ line }: { line: Line }) {
 						<> → {line.productSku}</>
 					)}
 				</p>
+				{line.fromStore.length > 0 && (
+					<div className="mt-1">
+						<FromStoreBadge parts={line.fromStore} sku={line.productSku} />
+					</div>
+				)}
 			</div>
 			<span
 				className={cn(

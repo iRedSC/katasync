@@ -38,8 +38,10 @@ export async function shippingLocation(db: Db): Promise<number | null> {
 }
 
 // Where each kind of sale takes stock from: shipped orders from the
-// warehouse, in-store sales from the retail store. Null where katasync can't
-// tell (none, or several), so the order reports it instead.
+// warehouse, then the retail store for what the warehouse is out of (the
+// order page says to fetch those); in-store sales from the retail store
+// only. Null where katasync can't tell (none, or several), so the order
+// reports it instead.
 export type StockLocations = { shipping: number | null; store: number | null };
 
 export async function stockLocations(db: Db): Promise<StockLocations> {
@@ -53,13 +55,16 @@ export async function stockLocations(db: Db): Promise<StockLocations> {
 	};
 }
 
-// The shelf one order's stock comes off, or why there isn't one.
+// The shelf one order's stock comes off, and the one that covers what it's
+// out of, or why there isn't one.
 export function saleLocation(
 	from: StockLocations,
 	order: { soldInStore: boolean },
-): { locationId: number } | { problem: string } {
-	const locationId = order.soldInStore ? from.store : from.shipping;
-	if (locationId !== null) return { locationId };
+): { locationId: number; overflowId: number | null } | { problem: string } {
+	if (order.soldInStore && from.store !== null)
+		return { locationId: from.store, overflowId: null };
+	if (!order.soldInStore && from.shipping !== null)
+		return { locationId: from.shipping, overflowId: from.store };
 	return {
 		problem: order.soldInStore
 			? "no retail store to take in-store stock from"
