@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Pencil, Trash2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ import {
 	getDefaultMinStock,
 	listLocations,
 	listStores,
+	pullPrimaryNow,
 	saveDefaultMinStock,
 	setPrimaryStore,
 } from "#/server/catalog";
@@ -132,7 +133,17 @@ function Channels({ stores }: { stores: Store[] }) {
 				{channels.flatMap((c) => {
 					const connected = stores.filter((s) => s.channel === c.id);
 					return (connected.length > 0 ? connected : [null]).map((s) => (
-						<Row key={s?.id ?? c.id} actions={s && <PrimaryToggle store={s} />}>
+						<Row
+							key={s?.id ?? c.id}
+							actions={
+								s && (
+									<>
+										{s.primary && <PullNow store={s} />}
+										<PrimaryToggle store={s} />
+									</>
+								)
+							}
+						>
 							<span className="w-24 shrink-0 font-medium">{c.name}</span>
 							<span className="truncate">
 								{s ? (
@@ -463,6 +474,56 @@ function PrimaryToggle({ store }: { store: Store }) {
 		<Tip content="Its new SKUs become products">
 			<Button size="sm" variant="ghost" onClick={() => set(store.id)}>
 				Make primary
+			</Button>
+		</Tip>
+	);
+}
+
+// A full pass of the primary store now, so SKUs just added there become
+// products without waiting for the four-hourly sync. A pass takes a while,
+// so a toast stays up until it's done and then says what came of it.
+function PullNow({ store }: { store: Store }) {
+	const router = useRouter();
+	const [pulling, setPulling] = useState(false);
+
+	async function pull() {
+		setPulling(true);
+		const id = toast.loading(`Pulling listings and orders from ${store.name}…`);
+		try {
+			const r = await pullPrimaryNow();
+			if (r.state === "busy") {
+				toast.info(`${r.store} is already syncing. Try again in a minute.`, {
+					id,
+				});
+			} else if (r.state === "failed") {
+				toast.error(`Couldn't pull from ${r.store}`, {
+					id,
+					description: r.error,
+				});
+			} else {
+				toast.success(
+					`Pulled ${r.store}. ${r.created === 1 ? "1 product" : `${r.created} products`} created.`,
+					{
+						id,
+						description:
+							r.problems.length > 0
+								? `${r.problems.length} problems, see Diagnostics: ${r.problems.slice(0, 3).join("; ")}`
+								: undefined,
+					},
+				);
+			}
+			await router.invalidate();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : String(err), { id });
+		} finally {
+			setPulling(false);
+		}
+	}
+
+	return (
+		<Tip content="Pull listings and orders now. New SKUs become products">
+			<Button size="sm" variant="ghost" disabled={pulling} onClick={pull}>
+				{pulling ? "Pulling…" : "Pull now"}
 			</Button>
 		</Tip>
 	);

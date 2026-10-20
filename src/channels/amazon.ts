@@ -175,6 +175,7 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 	// Listings first, so order lines can resolve to products; then FBA stock,
 	// which goes by the FBA listings' products.
 	let listings = 0;
+	let created = 0;
 	if (options.listings) {
 		const listed = await amazonListings();
 		if (listed) {
@@ -185,6 +186,7 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 					`${unmapped.length} FBA listings were unmatched from tool sets; Amazon needs real units`,
 				);
 			const matched = await matchListings(db);
+			created = matched.created;
 			problems.push(...matched.skipped);
 			// Orders that sold a newly matched listing pick up the product now.
 			const caughtUp = await applyListingsToOrders(
@@ -235,7 +237,7 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 	// Returns after orders, so a return on a new order finds it.
 	if (options.listings)
 		problems.push(...(await importReturns(db, store, recentAmazonReturns)));
-	return { store: store.name, listings, orders: count, problems };
+	return { store: store.name, listings, created, orders: count, problems };
 }
 
 async function orderItems(orderId: string) {

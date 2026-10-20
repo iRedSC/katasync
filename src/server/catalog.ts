@@ -3,6 +3,8 @@ export {
 	createListingProduct,
 	listUnmatchedItems,
 	matchListing,
+	type PulledPrimary,
+	pullPrimaryNow,
 	setPrimaryStore,
 } from "#/server/catalog/listings";
 export {
