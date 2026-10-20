@@ -7,6 +7,7 @@ import { refreshCosts } from "#/orders/cost-refresh";
 import { applySkusToOrders } from "#/orders/remap";
 import { assignOrderPins } from "#/shipping/pins";
 import { stockChannels } from "#/stock-push/channels";
+import { pushMoved } from "#/stock-push/on-change";
 import { pushChannelStock, pushMode } from "#/stock-push/push";
 import { syncAmazon } from "./amazon";
 import { syncEbay } from "./ebay";
@@ -53,6 +54,7 @@ export async function syncPass(
 	options: { listings: boolean },
 ) {
 	const result = await recordSyncRun(db, channel, async () => {
+		const started = new Date();
 		const pass = await passes[channel](db, options.listings);
 		const caughtUp = await applySkusToOrders(
 			db,
@@ -65,12 +67,15 @@ export async function syncPass(
 			stockChannels[channel],
 			pushMode(),
 		);
+		// This channel's sales reach the others now, not at their own passes.
+		const elsewhere = await pushMoved(db, started, { except: channel });
 		return {
 			...pass,
 			problems: [
 				...pass.problems,
 				...caughtUp.problems,
 				...pushed.flatMap((p) => p.problems),
+				...elsewhere.flatMap((p) => p.problems),
 			],
 		};
 	});
@@ -198,6 +203,7 @@ export async function ingestWebhookOrder(
 ) {
 	const ingest = ingestOne[channel];
 	if (!ingest) throw new Error(`${channel} has no webhooks`);
+	const started = new Date();
 	const done = await holdingChannel(
 		channel,
 		{ purpose: "sync-pass" },
@@ -207,7 +213,11 @@ export async function ingestWebhookOrder(
 			return true;
 		},
 	);
-	return done ?? false;
+	if (!done) return false;
+	// Every channel, this one too: its sets share parts with what sold.
+	for (const p of await pushMoved(db, started))
+		for (const problem of p.problems) console.warn(problem);
+	return true;
 }
 
 // Runs `work` while holding this channel's lock for `purpose`, so only one
