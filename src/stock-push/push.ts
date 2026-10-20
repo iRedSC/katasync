@@ -20,7 +20,8 @@ import { chunks, type StockChannel, type StockWrite } from "./channel";
 // within a pass. Only listings whose quantity differs from what the channel
 // last showed are written; every READ_EVERY_MS the channel's own quantities
 // are read back, so anything that drifted (someone edited stock on the
-// channel) is put right.
+// channel) is put right. A listing no read has looked for yet (one made since
+// the last read) brings the read forward, so it's set in the same pass.
 
 export const READ_EVERY_MS = 25 * 60 * 1000;
 
@@ -89,7 +90,8 @@ export async function pushChannelStock<T>(
 // One store's push. Never throws: a failure is kept on the store for
 // Settings and returned as a problem for Diagnostics. `only` limits it to
 // those products' listings (src/stock-push/on-change.ts) and skips the
-// read-back, which the next full push does.
+// read-back, which the next full push does, unless one of them has a
+// listing no read has looked for yet.
 //
 // Pushes to one store take turns, each in a transaction holding the store:
 // each works out its quantities once it holds it, so a push that started
@@ -140,9 +142,10 @@ async function pushHeld<T>(
 	const blocker = await stockBlocker(db);
 	if (blocker) throw new Blocked(blocker);
 	const due =
-		!only &&
-		(!store.stockReadAt ||
-			now.getTime() - store.stockReadAt.getTime() >= READ_EVERY_MS);
+		(!only &&
+			(!store.stockReadAt ||
+				now.getTime() - store.stockReadAt.getTime() >= READ_EVERY_MS)) ||
+		(await hasUnread(db, store, only));
 	if (due) await readStock(db, store, adapter, now);
 	const result = await pushListings(db, store, adapter, mode, only);
 	await db
@@ -153,6 +156,35 @@ async function pushHeld<T>(
 		})
 		.where(eq(stores.id, store.id));
 	return { store: store.name, ...result };
+}
+
+// The listings push sets, of `only`'s products if given: mapped, stocked by
+// us, and not deleted.
+const pushable = (store: typeof stores.$inferSelect, only?: number[]) =>
+	and(
+		eq(listings.storeId, store.id),
+		eq(listings.fulfillment, "merchant"),
+		isNotNull(listings.productId),
+		// A deleted listing (TikTok keeps reporting them) sells nothing,
+		// and the channel refuses its stock.
+		sql`coalesce(${listings.status}, '') <> 'DELETED'`,
+		only ? inArray(listings.productId, only) : undefined,
+	);
+
+// Whether a listing push would set hasn't been looked for by any read yet.
+// One the channel didn't report is `unreported`, not null, so it doesn't
+// bring every read forward.
+async function hasUnread(
+	db: Db,
+	store: typeof stores.$inferSelect,
+	only: number[] | undefined,
+) {
+	const [row] = await db
+		.select({ id: listings.id })
+		.from(listings)
+		.where(and(pushable(store, only), isNull(listings.stockPush)))
+		.limit(1);
+	return row !== undefined;
 }
 
 // Records what the channel shows for each of the store's listings. A write
@@ -177,8 +209,8 @@ async function readStock<T>(
 		rows.map((row) => {
 			const f = found.get(row.externalId);
 			const before = row.stockPush;
-			const next: ListingStockPush | null = !f
-				? null
+			const next: ListingStockPush = !f
+				? { state: "unreported" }
 				: f.state === "unpushable"
 					? f
 					: {
@@ -214,17 +246,7 @@ async function pushListings<T>(
 		})
 		.from(listings)
 		.innerJoin(products, eq(products.id, listings.productId))
-		.where(
-			and(
-				eq(listings.storeId, store.id),
-				eq(listings.fulfillment, "merchant"),
-				isNotNull(listings.productId),
-				// A deleted listing (TikTok keeps reporting them) sells nothing,
-				// and the channel refuses its stock.
-				sql`coalesce(${listings.status}, '') <> 'DELETED'`,
-				only ? inArray(products.id, only) : undefined,
-			),
-		)
+		.where(pushable(store, only))
 		.orderBy(products.sku);
 	const owned = await db
 		.select({ id: locations.id })
@@ -246,7 +268,9 @@ async function pushListings<T>(
 	const settled: { id: number; stockPush: ListingStockPush }[] = [];
 	for (const row of rows) {
 		const sp = row.stockPush;
-		if (!sp) {
+		// Null only if hasUnread raced a listing made mid-pass; the next pass
+		// reads it.
+		if (!sp || sp.state === "unreported") {
 			problems.push(
 				`${row.sku}: ${adapter.name} didn't report this listing's stock, so katasync isn't setting it`,
 			);
@@ -320,7 +344,7 @@ async function pushListings<T>(
 // Writes many listings' stock push state in a few statements.
 async function saveStockPush(
 	db: Db,
-	rows: { id: number; stockPush: ListingStockPush | null }[],
+	rows: { id: number; stockPush: ListingStockPush }[],
 ) {
 	for (const part of chunks(rows, 500)) {
 		await db.execute(sql`
