@@ -53,6 +53,7 @@ export async function orderForShipping(db: Db, pin: number) {
 			channel: stores.channel,
 			salesChannel: orders.salesChannel,
 			marketplaceOrderId: orders.marketplaceOrderId,
+			externalId: orders.externalId,
 			total: orders.total,
 			customerName: orders.customerName,
 			shipAddress1: orders.shipAddress1,
@@ -118,6 +119,7 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 			total: orders.total,
 			channel: stores.channel,
 			salesChannel: orders.salesChannel,
+			shipCountry: orders.shipCountry,
 		})
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))

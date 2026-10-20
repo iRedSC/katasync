@@ -127,6 +127,7 @@ export const quickShipRates = createServerFn({ method: "POST" })
 				channel: stores.channel,
 				salesChannel: orders.salesChannel,
 				marketplaceOrderId: orders.marketplaceOrderId,
+				shipCountry: orders.shipCountry,
 			})
 			.from(orders)
 			.innerJoin(stores, eq(stores.id, orders.storeId))

@@ -4,9 +4,11 @@ import { useEffect, useRef } from "react";
 // Orders whose label comes from the marketplace: Enter opens its page.
 export function ExternalStep({
 	name,
+	why,
 	onOpen,
 }: {
 	name: string;
+	why: string | null;
 	onOpen: () => void;
 }) {
 	const button = useRef<HTMLButtonElement>(null);
@@ -14,6 +16,7 @@ export function ExternalStep({
 	return (
 		<div className="flex flex-col items-center gap-4 py-4 text-center">
 			<p className="text-2xl font-semibold">Ships on {name}'s own label</p>
+			{why && <p className="text-muted-foreground">{why}</p>}
 			<button
 				ref={button}
 				type="button"

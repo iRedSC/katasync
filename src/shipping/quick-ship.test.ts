@@ -59,16 +59,32 @@ describe("needsInsurance and labelSource", () => {
 	});
 
 	test("Amazon and TikTok keep their own labels", () => {
-		expect(labelSource({ channel: "amazon", salesChannel: "Amazon" })).toBe(
-			"amazon",
-		);
-		expect(labelSource({ channel: "shopify", salesChannel: "TikTok" })).toBe(
+		const us = { shipCountry: "US" };
+		expect(
+			labelSource({ channel: "amazon", salesChannel: "Amazon", ...us }),
+		).toBe("amazon");
+		expect(
+			labelSource({ channel: "shopify", salesChannel: "TikTok", ...us }),
+		).toBe("tiktok");
+		expect(labelSource({ channel: "tiktok", salesChannel: null, ...us })).toBe(
 			"tiktok",
 		);
-		expect(labelSource({ channel: "tiktok", salesChannel: null })).toBe(
-			"tiktok",
+		expect(labelSource({ channel: "ebay", salesChannel: null, ...us })).toBe(
+			"shippo",
 		);
-		expect(labelSource({ channel: "ebay", salesChannel: null })).toBe("shippo");
+	});
+
+	test("Shopify orders leaving the US ship on Shopify's labels", () => {
+		const shopify = { channel: "shopify", salesChannel: "Online Store" };
+		expect(labelSource({ ...shopify, shipCountry: "US" })).toBe("shippo");
+		expect(labelSource({ ...shopify, shipCountry: "CA" })).toBe("shopify");
+		expect(labelSource({ ...shopify, shipCountry: " gb " })).toBe("shopify");
+		// No address yet: nothing to route, and Shippo refuses it anyway.
+		expect(labelSource({ ...shopify, shipCountry: null })).toBe("shippo");
+		// Other channels leave the country alone.
+		expect(
+			labelSource({ channel: "ebay", salesChannel: null, shipCountry: "CA" }),
+		).toBe("shippo");
 	});
 });
 
@@ -79,6 +95,8 @@ describe("externalFulfillment", () => {
 				channel: "amazon",
 				salesChannel: "Amazon",
 				marketplaceOrderId: "amazon:111-2557110-8817016",
+				externalId: "111-2557110-8817016",
+				shipCountry: "US",
 			})?.url,
 		).toBe(
 			"https://sellercentral.amazon.com/orders-v3/order/111-2557110-8817016",
@@ -89,6 +107,8 @@ describe("externalFulfillment", () => {
 				channel: "shopify",
 				salesChannel: "TikTok",
 				marketplaceOrderId: "tiktok:5770000000000001",
+				externalId: "gid://shopify/Order/7",
+				shipCountry: "US",
 			}),
 		).toBeNull();
 		expect(
@@ -96,8 +116,26 @@ describe("externalFulfillment", () => {
 				channel: "shopify",
 				salesChannel: "Online Store",
 				marketplaceOrderId: null,
+				externalId: "gid://shopify/Order/8",
+				shipCountry: "US",
 			}),
 		).toBeNull();
+	});
+
+	test("sends international Shopify orders to Shopify's admin", () => {
+		expect(
+			externalFulfillment({
+				channel: "shopify",
+				salesChannel: "Online Store",
+				marketplaceOrderId: null,
+				externalId: "gid://shopify/Order/5550001",
+				shipCountry: "CA",
+			}),
+		).toMatchObject({
+			name: "Shopify",
+			url: "/api/shopify/orders/5550001",
+			why: expect.stringContaining("Markets"),
+		});
 	});
 });
 
@@ -281,20 +319,22 @@ describe("with a database", () => {
 		shipCountry: "US",
 	};
 
-	const candidate = async (id: number) => {
+	const candidate = async (id: number, channel = "shopify") => {
 		const [o] = await db
 			.select()
 			.from(schema.orders)
 			.where(eq(schema.orders.id, id));
-		return { ...o, channel: "shopify", needsShipping: true };
+		return { ...o, channel, needsShipping: true };
 	};
 
 	test("postal codes match however they're written", async () => {
+		// eBay: Shopify's orders to Canada ship on Shopify's labels instead.
+		await db.update(schema.stores).set({ channel: "ebay" });
 		const canada = { ...address, shipCountry: "CA" };
 		const a = await addOrder("#1", { ...canada, shipPostalCode: "K1A 0B1" });
 		await addOrder("#2", { ...canada, shipPostalCode: "k1a0b1" });
 		expect(
-			(await companionsOf(db, await candidate(a))).map((c) => c.name),
+			(await companionsOf(db, await candidate(a, "ebay"))).map((c) => c.name),
 		).toEqual(["#2"]);
 	});
 
@@ -344,6 +384,7 @@ describe("addressKey and whyNotTogether", () => {
 		channel: "shopify",
 		salesChannel: "Online Store",
 		marketplaceOrderId: null,
+		externalId: `gid://shopify/Order/${id}`,
 		needsShipping: true,
 		shipAddress1: "12 Oak St.",
 		shipAddress2: null,
@@ -390,6 +431,10 @@ describe("addressKey and whyNotTogether", () => {
 		).toContain("Seller Center");
 		expect(whyNotTogether([order(1, { channel: "amazon" })], [])).toContain(
 			"Amazon",
+		);
+		// Managed Markets: no Shippo label for an order leaving the US.
+		expect(whyNotTogether([order(1, { shipCountry: "CA" })], [])).toContain(
+			"Shopify",
 		);
 	});
 });
