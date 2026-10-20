@@ -27,6 +27,7 @@ export {
 export {
 	getDefaultMinStock,
 	getDefaultRange,
+	restoreArchivedProduct,
 	saveDefaultMinStock,
 	saveProductStockRange,
 	setAerosol,

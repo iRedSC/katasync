@@ -32,6 +32,7 @@ export async function setRecipe(
 			throw new LedgerError(`${parent.sku} needs at least one component`);
 		}
 
+		// Share-locked so a part can't be archived mid-change.
 		const rows = await tx
 			.select()
 			.from(products)
@@ -40,13 +41,18 @@ export async function setRecipe(
 					products.id,
 					components.map((c) => c.productId),
 				),
-			);
+			)
+			.for("share");
 		const byId = new Map(rows.map((r) => [r.id, r]));
 		const allowed: readonly string[] = allowedComponents[parent.kind];
 		for (const c of components) {
 			const child = byId.get(c.productId);
 			if (!child)
 				throw new LedgerError(`Unknown component product ${c.productId}`);
+			if (child.archivedAt)
+				throw new LedgerError(
+					`${child.sku} is archived; restore it to use it as a part`,
+				);
 			if (!allowed.includes(child.kind)) {
 				throw new LedgerError(
 					`A ${parent.kind} can't contain a ${child.kind} (${parent.sku} → ${child.sku})`,

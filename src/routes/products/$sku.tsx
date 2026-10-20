@@ -17,6 +17,10 @@ import {
 	SetsChip,
 } from "#/components/product";
 import {
+	ArchivedBadge,
+	RestoreButton,
+} from "#/components/product-page/archived";
+import {
 	AerosolToggle,
 	CriticalToggle,
 	InsureToggle,
@@ -132,15 +136,19 @@ function ProductPage() {
 					<span className="truncate">{p.name}</span>
 					{p.kind === "bundle" && <Badge tone="info">Tool set</Badge>}
 					{p.kind === "kit" && <Badge tone="info">Kit</Badge>}
+					{p.archivedAt && <ArchivedBadge />}
 				</span>
 			}
 			actions={
-				canCount && (
-					<Button onClick={() => setCounting(true)}>
-						Count shelf
-						<kbd className="text-xs opacity-60">C</kbd>
-					</Button>
-				)
+				<>
+					{p.archivedAt && <RestoreButton productId={p.id} sku={p.sku} />}
+					{canCount && (
+						<Button onClick={() => setCounting(true)}>
+							Count shelf
+							<kbd className="text-xs opacity-60">C</kbd>
+						</Button>
+					)}
+				</>
 			}
 		>
 			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">

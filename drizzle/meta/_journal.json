@@ -533,6 +533,13 @@
       "when": 1792506180448,
       "tag": "0075_stock_push_and_not_counted",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1792519264328,
+      "tag": "0076_product_archive",
+      "breakpoints": true
     }
   ]
 }

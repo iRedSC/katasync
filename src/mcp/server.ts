@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Db } from "#/db/client";
 import { registerCatalogTools } from "./server/catalog-tools";
 import { INSTRUCTIONS } from "./server/instructions";
+import { registerListingTools } from "./server/listing-tools";
 import { registerProductTools } from "./server/product-tools";
 import { registerPurchasingTools } from "./server/purchasing-tools";
 import { registerReadTools } from "./server/read-tools";
@@ -46,6 +47,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerPurchasingTools(server, db);
 	registerSupplierTools(server, db);
 	registerCatalogTools(server, db);
+	registerListingTools(server, db);
 	registerStockTools(server, db);
 	registerProductTools(server, db);
 	registerReceivingTools(server, db);

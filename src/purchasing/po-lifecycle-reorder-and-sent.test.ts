@@ -75,6 +75,7 @@ describe("a PO from draft to received", () => {
 			added: 0,
 			alreadyOn: 2,
 			moved: 0,
+			archived: 0,
 		});
 		await expect(orderAgain(db, r.id)).rejects.toThrow(/is draft/);
 	});

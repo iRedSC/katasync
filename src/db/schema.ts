@@ -111,6 +111,10 @@ export const products = pgTable(
 		// Stock push shows 0 on every channel once this few or fewer can be
 		// sold, so the last units aren't sold out from under a miscount.
 		closeAt: integer(),
+		// Set when it's no longer carried: left out of lists, pickers,
+		// reordering, counting, and listing matching, its history kept. Only an
+		// inert product is archived (src/products/archive.ts).
+		archivedAt: timestamp({ withTimezone: true }),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

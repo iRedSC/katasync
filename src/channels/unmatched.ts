@@ -18,6 +18,7 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
+import { carried } from "#/products/archive";
 import {
 	type Candidate,
 	itemKey,
@@ -201,7 +202,8 @@ async function loadCatalog(db: Db) {
 				supplierSku: productSuppliers.supplierSku,
 			})
 			.from(products)
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id)),
+			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+			.where(carried),
 		db.select().from(productAliases),
 	]);
 	const codes = new Map<number, string[]>();
