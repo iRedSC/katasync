@@ -4,11 +4,13 @@ import { listUnmatched, suggestProducts } from "#/channels/unmatched";
 import type { Db } from "#/db/client";
 import { type CheckTarget, runCheck } from "#/diagnostics/checks";
 import { diagnosticsOverview } from "#/diagnostics/overview";
+import { COUNT_REASONS, countsDue } from "#/inventory/count-priority";
 import { describeSchema, MAX_ROWS, readOnlyQuery } from "#/mcp/query";
 import { matchInvoice } from "#/purchasing/invoices";
 import { suggestPurchases } from "#/purchasing/reorder";
 import { supplierByRef } from "#/purchasing/suppliers";
 import { listUnits } from "#/purchasing/units";
+import { ownedLocation } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
 import { json, READ } from "./tool-shapes";
 
@@ -73,6 +75,77 @@ export function registerReadTools(server: McpServer, db: Db) {
 			if (!supplier) return json(all);
 			const { id } = await supplierByRef(db, supplier);
 			return json(all.filter((s) => s.supplierId === id));
+		},
+	);
+
+	server.registerTool(
+		"counts_due",
+		{
+			description:
+				"What to count next, across every shelf of ours, most urgent first. A shelf is due when on hand is below zero (oversold), someone asked for a count (requested), or it wasn't counted in the last 60 days (stale). Within each, A before B before C, then shelves whose counts keep missing (misses: counts in the last year that didn't match), then the longest waiting. Filters narrow the list without changing its order; each shelf carries what it was ranked on, so you can re-sort. Counting with record_count takes a shelf off; call again for the next. Returns how many match per reason and the first shelves.",
+			inputSchema: {
+				limit: z.number().int().min(1).max(200).default(10),
+				reasons: z.array(z.enum(COUNT_REASONS)).min(1).optional(),
+				abc: z
+					.array(z.enum(["A", "B", "C", "none"]))
+					.min(1)
+					.optional()
+					.describe("none: no class yet, e.g. sold with no cost"),
+				category: z.string().optional().describe("Product type, e.g. Flat Box"),
+				search: z.string().optional().describe("Part of a SKU or product name"),
+				location: z
+					.string()
+					.optional()
+					.describe("Only this location of ours, by name"),
+			},
+			annotations: READ,
+		},
+		async ({ limit, reasons, abc, category, search, location }) => {
+			if (location) await ownedLocation(db, location);
+			const { due } = await countsDue(db);
+			if (
+				category &&
+				!due.some((s) => s.category?.toLowerCase() === category.toLowerCase())
+			) {
+				const known = [
+					...new Set(due.flatMap((s) => (s.category ? [s.category] : []))),
+				].sort();
+				throw new Error(
+					`No due shelves in category ${category}. Categories with due shelves: ${known.join(", ") || "none"}`,
+				);
+			}
+			const needle = search?.trim().toLowerCase();
+			const matching = due.filter(
+				(s) =>
+					(!reasons || reasons.includes(s.reason)) &&
+					(!abc || abc.includes(s.abc ?? "none")) &&
+					(!category || s.category?.toLowerCase() === category.toLowerCase()) &&
+					(!needle ||
+						s.sku.toLowerCase().includes(needle) ||
+						s.name.toLowerCase().includes(needle)) &&
+					(!location || s.location === location),
+			);
+			return json({
+				due: matching.length,
+				byReason: Object.fromEntries(
+					COUNT_REASONS.map((r) => [
+						r,
+						matching.filter((s) => s.reason === r).length,
+					]),
+				),
+				shelves: matching.slice(0, limit).map((s) => ({
+					sku: s.sku,
+					name: s.name,
+					category: s.category,
+					location: s.location,
+					reason: s.reason,
+					abc: s.abc,
+					onHand: s.onHand,
+					lastCountedAt: s.lastCountedAt,
+					countRequestedAt: s.countRequestedAt,
+					misses: s.misses,
+				})),
+			});
 		},
 	);
 

@@ -20,6 +20,7 @@ export const READ_TOOLS = new Set([
 	"describe_schema",
 	"query",
 	"sync_status",
+	"counts_due",
 	"reorder_suggestions",
 	"get_purchase_order",
 	"list_purchase_units",
