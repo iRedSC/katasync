@@ -16,7 +16,7 @@ import { fetchEbayCharges } from "./finance/ebay";
 import { fetchShopifyCharges } from "./finance/shopify";
 import { fetchTiktokCharges } from "./finance/tiktok";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
-import { shippingLocation } from "./stores";
+import { stockLocations } from "./stores";
 import { ingestTiktokOrder, syncTiktok } from "./tiktok";
 
 // One sync pass of a channel: pull its orders (and, with `listings`, its
@@ -59,7 +59,7 @@ export async function syncPass(
 		const caughtUp = await applySkusToOrders(
 			db,
 			{ channel },
-			await shippingLocation(db),
+			await stockLocations(db),
 		);
 		const pushed = await pushChannelStock(
 			db,

@@ -2,6 +2,7 @@ import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import {
+	locations,
 	orderLines,
 	orderReturns,
 	orders,
@@ -81,6 +82,17 @@ export async function refreshFromSumtracker(
 		const location = await shippingLocation(tx);
 		if (location === null)
 			throw new Error("Stock needs exactly one location of our own");
+		// Sumtracker only knows the warehouse, and starting over wipes every
+		// shelf, so the store's stock and transfers would be lost.
+		const [retail] = await tx
+			.select({ name: locations.name })
+			.from(locations)
+			.where(eq(locations.kind, "retail"))
+			.limit(1);
+		if (retail)
+			throw new Error(
+				`Refreshing would wipe ${retail.name}'s stock, which Sumtracker doesn't have. Nothing changed.`,
+			);
 
 		await tx.execute(
 			sql`truncate purchase_orders, damage_photo_uploads cascade`,
@@ -231,6 +243,7 @@ export async function refreshFromSumtracker(
 				productId: orderLines.productId,
 				quantity: orderLines.quantity,
 				orderName: orders.name,
+				soldInStore: orders.soldInStore,
 			})
 			.from(orderLines)
 			.innerJoin(orders, eq(orders.id, orderLines.orderId))
@@ -249,8 +262,9 @@ export async function refreshFromSumtracker(
 			const problem = await takeStock(
 				tx,
 				{ ...line, productId: line.productId as number },
-				line.orderName,
-				location,
+				{ name: line.orderName, soldInStore: line.soldInStore },
+				// No retail store, as checked above.
+				{ shipping: location, store: null, storeKeeps: 0 },
 			);
 			if (problem) problems.push(problem);
 			else salesRetaken++;

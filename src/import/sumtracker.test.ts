@@ -162,11 +162,10 @@ describe("applySumtrackerImport", () => {
 			(await db.select().from(schema.products)).map((p) => [p.sku, p.id]),
 		);
 		const [warehouse] = await db.select().from(schema.locations);
-		const available = await getAvailability(
-			db,
-			[...ids.values()],
-			[warehouse.id],
-		);
+		const available = await getAvailability(db, [...ids.values()], {
+			locationIds: [warehouse.id],
+			keep: null,
+		});
 		expect(available.get(ids.get("BOX-S") ?? 0)).toBe(3);
 		expect(available.get(ids.get("SET") ?? 0)).toBe(0); // BLADE is oversold
 

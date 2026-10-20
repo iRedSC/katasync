@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Ban, ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { MatchDialog } from "#/components/match-picker";
+import { FromStoreBadge } from "#/components/order-page/from-store";
 import { Line } from "#/components/order-page/line";
 import { ProfitCard } from "#/components/order-page/profit-card";
 import { SendRow } from "#/components/order-page/send-row";
@@ -304,6 +305,7 @@ function OrderPage() {
 											)}
 										</span>
 										{l.quantity === 0 && <Badge>Cancelled</Badge>}
+										<FromStoreBadge parts={l.fromStore} sku={l.productSku} />
 										{l.restocked > 0 && (
 											<Badge tone="info">
 												{formatCount(l.restocked)} returned to shelf

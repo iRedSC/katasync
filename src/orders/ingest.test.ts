@@ -22,6 +22,7 @@ function order(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 		cancelledAt: null,
 		fulfillmentStatus: "UNFULFILLED",
 		fulfilledByChannel: false,
+		soldInStore: false,
 		financialStatus: "PAID",
 		customerName: "Pat Doe",
 		shipCity: "Harrisburg",
@@ -88,13 +89,16 @@ describe("ingestOrder", () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, 10);
 
-		await ingestOrder(db, store(), order(), warehouse);
-		await ingestOrder(
-			db,
-			store(),
-			order({ fulfillmentStatus: "FULFILLED" }),
-			warehouse,
-		);
+		await ingestOrder(db, store(), order(), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
+		await ingestOrder(db, store(), order({ fulfillmentStatus: "FULFILLED" }), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 
 		expect(await onHand(wrench)).toBe(8);
 		const lines = await db.select().from(schema.orderLines);
@@ -110,7 +114,11 @@ describe("ingestOrder", () => {
 			.update(schema.stores)
 			.set({ stockFrom: new Date("2026-10-10T00:00:00Z") })
 			.where(eq(schema.stores.id, storeId));
-		await ingestOrder(db, store(), order(), warehouse);
+		await ingestOrder(db, store(), order(), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 		expect(await onHand(wrench)).toBe(10);
 	});
 
@@ -121,7 +129,7 @@ describe("ingestOrder", () => {
 			db,
 			store(),
 			order({ placedAt: new Date("2026-09-20T00:00:00Z") }),
-			warehouse,
+			{ shipping: warehouse, store: null, storeKeeps: 0 },
 		);
 		expect(await onHand(wrench)).toBe(10);
 		expect(await db.select().from(schema.orders)).toHaveLength(1);
@@ -130,24 +138,40 @@ describe("ingestOrder", () => {
 	test("a cancellation gives back exactly what the order took", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, 10);
-		await ingestOrder(db, store(), order(), warehouse);
+		await ingestOrder(db, store(), order(), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 		const cancelled = order({ cancelledAt: new Date("2026-10-06T00:00:00Z") });
-		await ingestOrder(db, store(), cancelled, warehouse);
-		await ingestOrder(db, store(), cancelled, warehouse);
+		await ingestOrder(db, store(), cancelled, {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
+		await ingestOrder(db, store(), cancelled, {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 		expect(await onHand(wrench)).toBe(10);
 	});
 
 	test("units cancelled from a line give back just their stock", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, 10);
-		await ingestOrder(db, store(), order(), warehouse);
+		await ingestOrder(db, store(), order(), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 		const [line] = order().lines;
 		for (const quantity of [1, 0]) {
 			await ingestOrder(
 				db,
 				store(),
 				order({ lines: [{ ...line, quantity }] }),
-				warehouse,
+				{ shipping: warehouse, store: null, storeKeeps: 0 },
 			);
 			expect(await onHand(wrench)).toBe(10 - quantity);
 		}
@@ -161,7 +185,7 @@ describe("ingestOrder", () => {
 			db,
 			store(),
 			order({ lines: [{ ...line, quantity: 0 }] }),
-			warehouse,
+			{ shipping: warehouse, store: null, storeKeeps: 0 },
 		);
 		const saved = await db
 			.select()
@@ -191,7 +215,11 @@ describe("ingestOrder", () => {
 		await stock(blade, 9);
 
 		const line = { ...order().lines[0], sku: "SET", quantity: 1 };
-		await ingestOrder(db, store(), order({ lines: [line] }), warehouse);
+		await ingestOrder(db, store(), order({ lines: [line] }), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 
 		expect(await onHand(handle)).toBe(4);
 		expect(await onHand(blade)).toBe(6);
@@ -211,12 +239,11 @@ describe("ingestOrder", () => {
 				title: "Mystery",
 			},
 		];
-		const { problems } = await ingestOrder(
-			db,
-			store(),
-			order({ lines }),
-			warehouse,
-		);
+		const { problems } = await ingestOrder(db, store(), order({ lines }), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 
 		expect(problems).toEqual(["#1001: no product for MYSTERY"]);
 		expect(await onHand(wrench)).toBe(8);
@@ -230,7 +257,11 @@ describe("ingestOrder", () => {
 			.values({ alias: "ECDT-12KIT-AMZ", productId: kit });
 		await stock(kit, 3);
 		const line = { ...order().lines[0], sku: "ECDT-12KIT-AMZ", quantity: 1 };
-		await ingestOrder(db, store(), order({ lines: [line] }), warehouse);
+		await ingestOrder(db, store(), order({ lines: [line] }), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 		expect(await onHand(kit)).toBe(2);
 	});
 
@@ -240,7 +271,7 @@ describe("ingestOrder", () => {
 			db,
 			store(),
 			order({ lines: [line] }),
-			warehouse,
+			{ shipping: warehouse, store: null, storeKeeps: 0 },
 		);
 		expect(problems).toEqual([]);
 		expect(await db.select().from(schema.orderLines)).toHaveLength(1);
@@ -251,14 +282,18 @@ describe("ingestOrder", () => {
 			db,
 			store(),
 			order({ marketplaceOrderId: "tiktok:577609" }),
-			warehouse,
+			{ shipping: warehouse, store: null, storeKeeps: 0 },
 		);
 		const otherSource = order({
 			externalId: "tiktok-direct-577609",
 			marketplaceOrderId: "tiktok:577609",
 		});
 		await expect(
-			ingestOrder(db, store(), otherSource, warehouse),
+			ingestOrder(db, store(), otherSource, {
+				shipping: warehouse,
+				store: null,
+				storeKeeps: 0,
+			}),
 		).rejects.toThrow();
 		expect(await db.select().from(schema.orders)).toHaveLength(1);
 	});
@@ -273,7 +308,7 @@ describe("ingestOrder", () => {
 				fulfilledByChannel: true,
 				fulfillmentStatus: "FULFILLMENT_NOT_REQUIRED",
 			}),
-			warehouse,
+			{ shipping: warehouse, store: null, storeKeeps: 0 },
 		);
 		expect(problems).toEqual([]);
 		expect(await onHand(wrench)).toBe(10);

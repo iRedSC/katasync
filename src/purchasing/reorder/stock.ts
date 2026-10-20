@@ -11,6 +11,7 @@ import {
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
+import { isOurs } from "#/inventory/locations";
 import { setsSoldSince } from "#/inventory/sales";
 import { carried } from "#/products/archive";
 import { DEMAND_DAYS, type LeadTime } from "#/purchasing/forecast";
@@ -61,7 +62,8 @@ export async function membershipOf(
 	return setMembership(recipes, onHand, sold).get(productId) ?? null;
 }
 
-// On hand across our own locations. Negative (oversold) stays negative, so it
+// On hand across our own locations, the retail store's included: the
+// warehouse restocks it. Negative (oversold) stays negative, so it
 // gets bought back.
 export async function ownedOnHand(db: Db) {
 	const rows = await db
@@ -71,7 +73,7 @@ export async function ownedOnHand(db: Db) {
 		})
 		.from(stockLevels)
 		.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-		.where(eq(locations.kind, "owned"))
+		.where(isOurs)
 		.groupBy(stockLevels.productId);
 	return new Map(rows.map((r) => [r.productId, r.onHand]));
 }

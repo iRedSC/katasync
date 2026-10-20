@@ -12,7 +12,7 @@ import { Badge, Card, Page } from "#/components/page";
 import { ActionSlot, IconAction, Row } from "#/components/rows";
 import { ListSkeleton } from "#/components/skeleton";
 import { StockPushCard } from "#/components/stock-push-card";
-import { MinStockForm } from "#/components/stock-range-form";
+import { MinStockForm, ReserveForm } from "#/components/stock-range-form";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { channelNames } from "#/lib/format";
@@ -20,10 +20,12 @@ import { optimism, optimistic } from "#/lib/optimism";
 import { listConnections, listDevices } from "#/server/auth";
 import {
 	getDefaultMinStock,
+	getRetailReserve,
 	listLocations,
 	listStores,
 	pullPrimaryNow,
 	saveDefaultMinStock,
+	saveRetailReserve,
 	setPrimaryStore,
 } from "#/server/catalog";
 import {
@@ -52,6 +54,7 @@ export const Route = createFileRoute("/settings")({
 			devices,
 			connections,
 			minStock,
+			reserve,
 		] = await Promise.all([
 			listLocations(),
 			listStores(),
@@ -61,6 +64,7 @@ export const Route = createFileRoute("/settings")({
 			listDevices(),
 			listConnections(),
 			getDefaultMinStock(),
+			getRetailReserve(),
 		]);
 		return {
 			locations,
@@ -71,6 +75,7 @@ export const Route = createFileRoute("/settings")({
 			devices,
 			connections,
 			minStock,
+			reserve,
 		};
 	},
 	component: Settings,
@@ -92,7 +97,8 @@ const plural = (n: number, one: string, many = `${one}s`) =>
 
 function Settings() {
 	const loaded = Route.useLoaderData();
-	const { locations, minStock } = loaded;
+	const { locations, minStock, reserve } = loaded;
+	const retail = locations.find((l) => l.kind === "retail");
 	const stores = storesData.useData("all", loaded.stores);
 	const boxes = boxesData.useData("all", loaded.boxes);
 	const units = unitsData.useData("all", loaded.units);
@@ -113,10 +119,19 @@ function Settings() {
 				<div className="flex flex-col gap-4">
 					<Units units={units} />
 					<Card title="Stock range">
-						<MinStockForm
-							value={minStock}
-							onSave={(min) => saveDefaultMinStock({ data: { min } })}
-						/>
+						<div className="flex flex-col gap-4">
+							<MinStockForm
+								value={minStock}
+								onSave={(min) => saveDefaultMinStock({ data: { min } })}
+							/>
+							{retail && (
+								<ReserveForm
+									value={reserve}
+									store={retail.name}
+									onSave={(units) => saveRetailReserve({ data: { units } })}
+								/>
+							)}
+						</div>
 					</Card>
 					<DevicesCard devices={devices} />
 					<ConnectionsCard endpoint={loaded.connections.endpoint} apps={apps} />
@@ -170,7 +185,11 @@ function Locations({ locations }: { locations: Location[] }) {
 					<Row key={l.id}>
 						<span className="flex-1 font-medium">{l.name}</span>
 						<span className="text-muted-foreground">
-							{l.kind === "fba" ? "Amazon's warehouse" : "Ours"}
+							{l.kind === "fba"
+								? "Amazon's warehouse"
+								: l.kind === "retail"
+									? "Our store; online orders take from it when the warehouse is out"
+									: "Ours, ships orders"}
 						</span>
 					</Row>
 				))}

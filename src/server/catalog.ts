@@ -32,9 +32,11 @@ export {
 export {
 	getDefaultMinStock,
 	getDefaultRange,
+	getRetailReserve,
 	restoreArchivedProduct,
 	saveDefaultMinStock,
 	saveProductStockRange,
+	saveRetailReserve,
 	setAerosol,
 	setCritical,
 	setInsureWhenShipped,

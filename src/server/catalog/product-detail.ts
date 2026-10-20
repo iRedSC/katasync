@@ -10,11 +10,14 @@ import {
 	productComponents,
 	productGroups,
 	products,
+	shelfTargets,
 	stockLevels,
 	stores,
 } from "#/db/schema";
 import { abcClasses } from "#/inventory/abc";
 import { getAvailability } from "#/inventory/availability";
+import { isOurs } from "#/inventory/locations";
+import { onlineStock } from "#/inventory/online-stock";
 import { membershipOf } from "#/purchasing/reorder";
 
 export const getProductDetail = createServerFn({ method: "GET" })
@@ -29,11 +32,12 @@ export const getProductDetail = createServerFn({ method: "GET" })
 
 		// Everything below depends only on the product, so it runs at once:
 		// one round trip of waiting instead of a dozen in a row.
-		const owned = db
-			.select({ id: locations.id, name: locations.name })
+		// Warehouse first, so it's the one picked unless someone picks another.
+		const ours = db
+			.select({ id: locations.id, name: locations.name, kind: locations.kind })
 			.from(locations)
-			.where(eq(locations.kind, "owned"))
-			.orderBy(locations.name);
+			.where(isOurs)
+			.orderBy(locations.kind, locations.name);
 		const [
 			group,
 			variants,
@@ -43,7 +47,8 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			aliases,
 			productListings,
 			history,
-			ownedLocations,
+			ourLocations,
+			targets,
 		] = await Promise.all([
 			product.groupId
 				? db
@@ -130,16 +135,20 @@ export const getProductDetail = createServerFn({ method: "GET" })
 				.where(eq(movements.productId, product.id))
 				.orderBy(desc(movements.id))
 				.limit(50),
-			owned,
+			ours,
+			db
+				.select({
+					locationId: shelfTargets.locationId,
+					target: shelfTargets.target,
+				})
+				.from(shelfTargets)
+				.where(eq(shelfTargets.productId, product.id)),
 		]);
 
 		// The product and its parts in one availability lookup.
+		const online = await onlineStock(db);
 		const [availability, abc, sets] = await Promise.all([
-			getAvailability(
-				db,
-				[product.id, ...components.map((c) => c.id)],
-				ownedLocations.map((l) => l.id),
-			),
+			getAvailability(db, [product.id, ...components.map((c) => c.id)], online),
 			abcClasses(db),
 			membershipOf(db, product.id),
 		]);
@@ -163,8 +172,13 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			history,
 			available: availability.get(product.id) ?? 0,
 			abc: rank ? { ...rank, of: ranking.size, days: abc.days } : null,
-			// Where a count could be recorded. One location means nobody has to pick.
-			locations: ownedLocations,
+			// Where a count or transfer could be recorded. One location means
+			// nobody has to pick.
+			locations: ourLocations,
+			// How the page works out what's sellable after a count or move.
+			online,
+			// What refills top each location up to (src/inventory/refill.ts).
+			targets,
 		};
 	});
 

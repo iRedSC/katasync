@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { shippingLocation } from "#/channels/stores";
+import { saleLocation, stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { orderLines, orderProfit, orderReturns, orders } from "#/db/schema";
 import { recordReturn, undoBatch } from "#/inventory/ledger";
@@ -9,8 +9,10 @@ export class ReturnError extends Error {
 	name = "ReturnError";
 }
 
-// Receives units a customer sent back. Restocked units go back on the
-// shipping location's shelf; written-off ones (damaged) are only recorded.
+// Receives units a customer sent back. Restocked units go back where the
+// order takes stock from: the retail store for an in-store sale, the
+// warehouse for a shipped one (where the box comes back to), even when some
+// of it came from the store. Written-off ones (damaged) are only recorded.
 // A line can't take back more than it sold, counting earlier returns.
 // Returns are received here whatever the channel says: katasync owns stock,
 // so a restock clicked in Shopify would only be overwritten.
@@ -44,9 +46,12 @@ export async function receiveReturn(
 			labeled: isLabeled(profit?.labelsStatus),
 		});
 		if (blocked) throw new ReturnError(blocked);
-		const locationId = input.restock ? await shippingLocation(tx) : null;
-		if (input.restock && locationId === null) {
-			throw new ReturnError("No location to put returned stock in");
+		let restockAt: number | null = null;
+		if (input.restock) {
+			const shelf = saleLocation(await stockLocations(tx), order);
+			if ("problem" in shelf)
+				throw new ReturnError(`Can't restock: ${shelf.problem}`);
+			restockAt = shelf.locationId;
 		}
 
 		const lines = await tx
@@ -90,7 +95,7 @@ export async function receiveReturn(
 				);
 			}
 			let batchId: string | null = null;
-			if (input.restock && locationId !== null) {
+			if (restockAt !== null) {
 				if (line.productId === null) {
 					throw new ReturnError(
 						`Match ${name} to a product before putting it back on the shelf`,
@@ -99,7 +104,7 @@ export async function receiveReturn(
 				({ batchId } = await recordReturn(tx, {
 					productId: line.productId,
 					quantity: want.quantity,
-					locationId,
+					locationId: restockAt,
 					reference: `return:${order.id}:${line.id}`,
 					sale: line.saleBatchId
 						? { batchId: line.saleBatchId, quantity: line.quantity }

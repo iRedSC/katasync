@@ -72,7 +72,7 @@ export async function updateDraft(
 				.select({ kind: locations.kind })
 				.from(locations)
 				.where(eq(locations.id, input.locationId));
-			if (location?.kind !== "owned")
+			if (location?.kind !== "owned" && location?.kind !== "retail")
 				throw new PurchaseOrderError("POs can only go to our own locations");
 		}
 		await tx

@@ -4,7 +4,7 @@ import { listings, orderLines, orders, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
 import { applyListingsToOrders } from "#/orders/remap";
 import { autoMapListings, mapListing } from "./listings";
-import { shippingLocation } from "./stores";
+import { stockLocations } from "./stores";
 import { awaitingProduct } from "./unmatched";
 
 // Changing which product listings sell, after they were matched. Past
@@ -111,7 +111,7 @@ export async function unlinkListings(db: Db, listingIds: number[]) {
 	const caughtUp = await applyListingsToOrders(
 		db,
 		unlinked.rematched.filter((id) => !listingIds.includes(id)),
-		await shippingLocation(db),
+		await stockLocations(db),
 	);
 	return { listings: unlinked.result, problems: caughtUp.problems };
 }

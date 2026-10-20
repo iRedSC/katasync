@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { listings, stores } from "#/db/schema";
 import { pushMode, stockBlocker } from "#/stock-push/push";
+import { setStorePush } from "#/stock-push/switch";
 
 // Each store's stock push, for Settings: whether it's on, how its last pass
 // went, and how many of its mapped listings katasync can set.
@@ -60,21 +61,4 @@ export const listStockPush = createServerFn({ method: "GET" }).handler(
 // read of the channel, so the first pass writes only what really differs.
 export const setStockPush = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0", on: "boolean" }))
-	.handler(async ({ data }) => {
-		const db = getDb();
-		if (data.on) {
-			const blocker = await stockBlocker(db);
-			if (blocker) throw new Error(blocker);
-		}
-		const [store] = await db
-			.update(stores)
-			.set(
-				data.on
-					? { pushStock: true, stockReadAt: null, stockPushError: null }
-					: { pushStock: false },
-			)
-			.where(eq(stores.id, data.id))
-			.returning({ name: stores.name });
-		if (!store) throw new Error(`Unknown store ${data.id}`);
-		return store;
-	});
+	.handler(async ({ data }) => setStorePush(getDb(), data.id, data.on));

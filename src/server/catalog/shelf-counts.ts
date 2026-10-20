@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { shippingLocation } from "#/channels/stores";
 import { type Db, getDb } from "#/db/client";
 import {
 	locations,
@@ -14,7 +15,7 @@ import {
 	recordCount as recordShelfCount,
 	requestCounts,
 } from "#/inventory/ledger";
-import { ownedLocationIds } from "./owned-locations";
+import { isOurs } from "#/inventory/locations";
 
 // Records what someone counted on the shelf. The app works out the change, and
 // the location when there's only one.
@@ -35,9 +36,17 @@ export const recordCount = createServerFn({ method: "POST" })
 			.from(products)
 			.where(eq(products.sku, data.sku));
 		if (!product) throw new Error(`No product ${data.sku}`);
-		const owned = await ownedLocationIds();
+		const ours = await db
+			.select({ id: locations.id, kind: locations.kind })
+			.from(locations)
+			.where(isOurs);
+		if (
+			data.locationId !== undefined &&
+			!ours.some((l) => l.id === data.locationId)
+		)
+			throw new Error("That isn't one of our locations");
 		const locationId =
-			data.locationId ?? (owned.length === 1 ? owned[0] : undefined);
+			data.locationId ?? (ours.length === 1 ? ours[0].id : undefined);
 		if (locationId === undefined) throw new Error("Pick a location");
 
 		const labels = {
@@ -59,7 +68,7 @@ export const recordCount = createServerFn({ method: "POST" })
 export const countDue = and(
 	isNotNull(stockLevels.countRequestedAt),
 	sql`(${stockLevels.lastCountedAt} is null or ${stockLevels.lastCountedAt} < ${stockLevels.countRequestedAt})`,
-	eq(locations.kind, "owned"),
+	isOurs,
 );
 
 // Puts a product on the count list at every shelf of ours holding it, or our
@@ -83,21 +92,22 @@ export const requestCount = createServerFn({ method: "POST" })
 	});
 
 // Puts each of our shelves holding the product on the count list, or the
-// first one when none holds it yet.
+// warehouse when none holds it yet.
 async function requestShelfCounts(db: Db, productId: number) {
-	const [held, owned] = await Promise.all([
+	const [held, warehouse] = await Promise.all([
 		db
 			.select({ locationId: stockLevels.locationId })
 			.from(stockLevels)
 			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(
-				and(eq(stockLevels.productId, productId), eq(locations.kind, "owned")),
-			),
-		ownedLocationIds(),
+			.where(and(eq(stockLevels.productId, productId), isOurs)),
+		shippingLocation(db),
 	]);
-	if (owned.length === 0) throw new Error("Add a location first");
+	if (held.length === 0 && warehouse === null)
+		throw new Error("Add a location first");
 	const at =
-		held.length > 0 ? held.map((h) => h.locationId) : [Math.min(...owned)];
+		held.length > 0 || warehouse === null
+			? held.map((h) => h.locationId)
+			: [warehouse];
 	const added = [];
 	for (const locationId of at)
 		added.push(

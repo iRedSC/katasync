@@ -8,6 +8,7 @@ import {
 	stockLevels,
 	suppliers,
 } from "#/db/schema";
+import { isOurs } from "#/inventory/locations";
 import { setsSoldSince, soldSince } from "#/inventory/sales";
 import { carried } from "#/products/archive";
 import { DEMAND_DAYS } from "#/purchasing/forecast";
@@ -110,9 +111,7 @@ export async function reorderBreakdown(
 			.selectDistinct({ productId: stockLevels.productId })
 			.from(stockLevels)
 			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(
-				and(eq(locations.kind, "owned"), isNotNull(stockLevels.lastCountedAt)),
-			)
+			.where(and(isOurs, isNotNull(stockLevels.lastCountedAt)))
 			.then((rows) => new Set(rows.map((r) => r.productId))),
 		setsSoldSince(db, since),
 		setRecipes(db),

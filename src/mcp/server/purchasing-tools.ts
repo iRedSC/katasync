@@ -19,7 +19,7 @@ import {
 import { supplierByRef } from "#/purchasing/suppliers";
 import { setLineTerms } from "#/purchasing/units";
 import { registerDiscountTools } from "./discount-tools";
-import { ownedLocation, productBySku, sentDay } from "./lookups";
+import { ourLocation, productBySku, sentDay } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
 import { json, unitTerms, WRITE } from "./tool-shapes";
 
@@ -184,7 +184,7 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 			await updateDraft(db, {
 				purchaseOrderId: po,
 				...(notes !== undefined ? { notes } : {}),
-				...(location ? { locationId: await ownedLocation(db, location) } : {}),
+				...(location ? { locationId: await ourLocation(db, location) } : {}),
 			});
 			return json(await orderForClaude(db, po));
 		},

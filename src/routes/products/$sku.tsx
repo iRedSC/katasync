@@ -26,9 +26,11 @@ import {
 	CriticalToggle,
 	InsureToggle,
 } from "#/components/product-page/flag-toggles";
+import { StockTable } from "#/components/product-page/stock-table";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
+import { TransferDialog } from "#/components/transfer-dialog";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { StockRange } from "#/inventory/stock-range";
@@ -89,16 +91,29 @@ type Loaded = ProductDetail & {
 const productData = optimistic<Loaded>("product");
 
 // The shelf holds `onHand` at `location`, and what that makes sellable, as
-// getAvailability works it out: owned stock only, never below zero.
+// getAvailability works it out: our shelves (warehouse and retail store),
+// never below zero.
 function withShelf(d: Loaded, location: string, onHand: number): Loaded {
+	const kind = d.locations.find((l) => l.name === location)?.kind ?? "owned";
 	const stock = d.stock.some((s) => s.location === location)
 		? d.stock.map((s) => (s.location === location ? { ...s, onHand } : s))
-		: [...d.stock, { location, kind: "owned" as const, onHand }];
-	const available = stock.reduce(
-		(n, s) => (s.kind === "owned" ? n + s.onHand : n),
-		0,
+		: [...d.stock, { location, kind, onHand }];
+	// The same rule as getAvailability: the warehouse, then what the retail
+	// store holds above what it keeps.
+	const { keep } = d.online;
+	const kept = d.locations.find((l) => l.id === keep?.locationId)?.name;
+	const selling = stock.filter((s) =>
+		d.locations.some(
+			(l) => l.name === s.location && d.online.locationIds.includes(l.id),
+		),
 	);
-	return { ...d, stock, available: Math.max(0, available) };
+	const main = selling
+		.filter((s) => s.location !== kept)
+		.reduce((n, s) => n + s.onHand, 0);
+	const spare = selling
+		.filter((s) => s.location === kept)
+		.reduce((n, s) => n + Math.max(0, s.onHand - (keep?.units ?? 0)), 0);
+	return { ...d, stock, available: Math.max(0, main) + spare };
 }
 
 // A count sets its shelf to what was counted, as recording it does.
@@ -107,6 +122,20 @@ const countPatch = (productId: number, location: string, onHand: number) =>
 		const next = withShelf(d, location, onHand);
 		// The count ends not counted, as recording it does.
 		return { ...next, product: { ...next.product, notCountedSince: null } };
+	});
+
+// A move takes `quantity` off one shelf and puts it on the other.
+const movePatch = (
+	productId: number,
+	from: string,
+	to: string,
+	quantity: number,
+) =>
+	productData.patch(productId, (d) => {
+		const had = (name: string) =>
+			d.stock.find((s) => s.location === name)?.onHand ?? 0;
+		const left = withShelf(d, from, had(from) - quantity);
+		return withShelf(left, to, had(to) + quantity);
 	});
 
 const rangePatch = (productId: number, range: StockRange | null) =>
@@ -125,11 +154,14 @@ function ProductPage() {
 	const p = d.product;
 	const goBack = useBack({ to: "/products" });
 	const [counting, setCounting] = useState(false);
+	const [moving, setMoving] = useState(false);
 	const canCount = p.kind !== "bundle";
+	const canMove = canCount && d.locations.length > 1;
 	const verdict = getVerdict(d);
 
 	useHotkeys({
 		c: () => canCount && setCounting(true),
+		m: () => canMove && setMoving(true),
 		Escape: goBack,
 	});
 
@@ -266,58 +298,33 @@ function ProductPage() {
 						<Card
 							title="Inventory"
 							aside={
-								<button
-									type="button"
-									onClick={() => setCounting(true)}
-									className="text-link hover:underline"
-								>
-									Count shelf
-								</button>
+								<span className="flex gap-4">
+									{canMove && (
+										<button
+											type="button"
+											onClick={() => setMoving(true)}
+											className="text-link hover:underline"
+										>
+											Move stock
+										</button>
+									)}
+									<button
+										type="button"
+										onClick={() => setCounting(true)}
+										className="text-link hover:underline"
+									>
+										Count shelf
+									</button>
+								</span>
 							}
 							flush
 						>
-							<table className="w-full">
-								<thead>
-									<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
-										<th className="px-4 py-2 font-medium">Location</th>
-										<th className="px-4 py-2 text-right font-medium">
-											On hand
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{d.stock.length === 0 && (
-										<tr>
-											<td
-												className="px-4 py-2.5 text-muted-foreground"
-												colSpan={2}
-											>
-												No stock recorded.
-											</td>
-										</tr>
-									)}
-									{d.stock.map((s) => (
-										<tr key={s.location} className="border-t first:border-t-0">
-											<td className="px-4 py-2.5">
-												{s.location}
-												{s.kind === "fba" && (
-													<span className="ml-2">
-														<Badge>Amazon's, not ours to ship</Badge>
-													</span>
-												)}
-											</td>
-											<td
-												className={cn(
-													"px-4 py-2.5 text-right font-semibold tabular-nums",
-													s.onHand < 0 && "text-critical-text",
-												)}
-											>
-												<NumberFlow value={s.onHand} />
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
+							<StockTable
+								productId={p.id}
+								stock={d.stock}
+								locations={d.locations}
+								targets={d.targets}
+							/>
 							<div className="border-t px-4 py-3">
 								<StockRangeForm
 									value={
@@ -460,6 +467,20 @@ function ProductPage() {
 					})}
 				/>
 			)}
+			{canMove && (
+				<TransferDialog
+					open={moving}
+					onOpenChange={setMoving}
+					sku={p.sku}
+					name={p.variantName ? `${p.name}, ${p.variantName}` : p.name}
+					locations={d.locations}
+					onHandByLocation={new Map(d.stock.map((s) => [s.location, s.onHand]))}
+					patch={({ from, to, quantity }) => ({
+						patch: movePatch(p.id, from, to, quantity),
+						undo: movePatch(p.id, to, from, quantity),
+					})}
+				/>
+			)}
 		</Page>
 	);
 }
@@ -515,7 +536,7 @@ function getVerdict(
 	}
 	// Amazon's FBA stock can't cover our shelf.
 	const onHand = d.stock
-		.filter((s) => s.kind === "owned")
+		.filter((s) => s.kind !== "fba")
 		.reduce((sum, s) => sum + s.onHand, 0);
 	if (onHand < 0) {
 		return {

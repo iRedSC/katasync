@@ -1,6 +1,8 @@
 import { and, eq, max } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, movements, stores } from "#/db/schema";
+import type { Overflow } from "#/inventory/ledger";
+import { retailReserve } from "#/inventory/online-stock";
 
 // The store row for a channel account, created on first sync. A new store
 // starts taking stock from the most recent opening balance, since anything
@@ -35,6 +37,54 @@ export async function shippingLocation(db: Db): Promise<number | null> {
 		.from(locations)
 		.where(eq(locations.kind, "owned"));
 	return owned.length === 1 ? owned[0].id : null;
+}
+
+// Where each kind of sale takes stock from: shipped orders from the
+// warehouse, then the retail store for what the warehouse is out of (the
+// order page says to fetch those); in-store sales from the retail store
+// only. Null where katasync can't tell (none, or several), so the order
+// reports it instead.
+// `storeKeeps` is how many the store holds back for walk-ins
+// (settings.retailReserve); overflow takes only what's above it.
+export type StockLocations = {
+	shipping: number | null;
+	store: number | null;
+	storeKeeps: number;
+};
+
+export async function stockLocations(db: Db): Promise<StockLocations> {
+	const retail = await db
+		.select({ id: locations.id })
+		.from(locations)
+		.where(eq(locations.kind, "retail"));
+	return {
+		shipping: await shippingLocation(db),
+		store: retail.length === 1 ? retail[0].id : null,
+		storeKeeps: await retailReserve(db),
+	};
+}
+
+// The shelf one order's stock comes off, and the one that covers what it's
+// out of, or why there isn't one.
+export function saleLocation(
+	from: StockLocations,
+	order: { soldInStore: boolean },
+): { locationId: number; overflow: Overflow | null } | { problem: string } {
+	if (order.soldInStore && from.store !== null)
+		return { locationId: from.store, overflow: null };
+	if (!order.soldInStore && from.shipping !== null)
+		return {
+			locationId: from.shipping,
+			overflow:
+				from.store === null
+					? null
+					: { locationId: from.store, keep: from.storeKeeps },
+		};
+	return {
+		problem: order.soldInStore
+			? "no retail store to take in-store stock from"
+			: "no location to take stock from",
+	};
 }
 
 // Moves the sync cursor forward. Only ever forward, so a slow or partial pass

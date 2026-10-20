@@ -21,6 +21,7 @@ const order = (extra: Partial<ChannelOrder> = {}): ChannelOrder => ({
 	cancelledAt: null,
 	fulfillmentStatus: "UNFULFILLED",
 	fulfilledByChannel: false,
+	soldInStore: false,
 	financialStatus: "PAID",
 	customerName: null,
 	shipCity: null,
@@ -85,7 +86,11 @@ async function listingId() {
 }
 
 test("an order for an unmatched listing takes stock once the listing is matched", async () => {
-	await ingestOrder(db, store, order(), warehouse);
+	await ingestOrder(db, store, order(), {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 	const product = await createProduct(db, "THING", "simple");
 	await postMovements(db, {
 		lines: [
@@ -99,8 +104,16 @@ test("an order for an unmatched listing takes stock once the listing is matched"
 	});
 
 	await mapListing(db, await listingId(), product);
-	await applyListingsToOrders(db, [await listingId()], warehouse);
-	await applyListingsToOrders(db, [await listingId()], warehouse);
+	await applyListingsToOrders(db, [await listingId()], {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
+	await applyListingsToOrders(db, [await listingId()], {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 
 	expect(await onHand(product)).toBe(3);
 	const [line] = await db.select().from(schema.orderLines);
@@ -112,18 +125,22 @@ test("history-only and FBA orders pick up the product but take no stock", async 
 		db,
 		store,
 		order({ externalId: "old", placedAt: new Date("2026-09-01T00:00:00Z") }),
-		warehouse,
+		{ shipping: warehouse, store: null, storeKeeps: 0 },
 	);
 	await ingestOrder(
 		db,
 		store,
 		order({ externalId: "fba", fulfilledByChannel: true }),
-		warehouse,
+		{ shipping: warehouse, store: null, storeKeeps: 0 },
 	);
 	const product = await createProduct(db, "THING", "simple");
 
 	await mapListing(db, await listingId(), product);
-	await applyListingsToOrders(db, [await listingId()], warehouse);
+	await applyListingsToOrders(db, [await listingId()], {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 
 	expect(await onHand(product)).toBe(0);
 	const lines = await db.select().from(schema.orderLines);
@@ -166,7 +183,11 @@ async function stocked(sku: string, quantity: number) {
 
 test("a SKU in other capitals finds its product", async () => {
 	const product = await stocked("FCI-RAD360", 3);
-	await ingestOrder(db, store, unlisted("FCI-Rad360"), warehouse);
+	await ingestOrder(db, store, unlisted("FCI-Rad360"), {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 
 	const [line] = await db.select().from(schema.orderLines);
 	expect(line.productId).toBe(product);
@@ -176,33 +197,61 @@ test("a SKU in other capitals finds its product", async () => {
 test("a SKU in other capitals is left for a person when two products have it", async () => {
 	await stocked("ab-1", 3);
 	await stocked("AB-1", 3);
-	await ingestOrder(db, store, unlisted("Ab-1"), warehouse);
+	await ingestOrder(db, store, unlisted("Ab-1"), {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 
 	const [line] = await db.select().from(schema.orderLines);
 	expect(line.productId).toBeNull();
 });
 
 test("lines synced before their product existed catch up once, by channel", async () => {
-	await ingestOrder(db, store, unlisted("LATER"), warehouse);
+	await ingestOrder(db, store, unlisted("LATER"), {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 	const product = await stocked("LATER", 3);
 
-	await applySkusToOrders(db, { channel: "ebay" }, warehouse);
+	await applySkusToOrders(
+		db,
+		{ channel: "ebay" },
+		{ shipping: warehouse, store: null, storeKeeps: 0 },
+	);
 	expect(await onHand(product)).toBe(3);
 
-	await applySkusToOrders(db, { channel: "shopify" }, warehouse);
-	await applySkusToOrders(db, { channel: "shopify" }, warehouse);
+	await applySkusToOrders(
+		db,
+		{ channel: "shopify" },
+		{ shipping: warehouse, store: null, storeKeeps: 0 },
+	);
+	await applySkusToOrders(
+		db,
+		{ channel: "shopify" },
+		{ shipping: warehouse, store: null, storeKeeps: 0 },
+	);
 	expect(await onHand(product)).toBe(2);
 });
 
 test("linking a SKU catches up its orders and later ones", async () => {
 	const product = await stocked("SANDER", 5);
-	await ingestOrder(db, store, unlisted("FCI-SAND"), warehouse);
+	await ingestOrder(db, store, unlisted("FCI-SAND"), {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 
 	const linked = await linkSku(db, "FCI-SAND", "SANDER");
 	expect(linked).toEqual({ sku: "SANDER", ordersUpdated: 1, problems: [] });
 	expect(await onHand(product)).toBe(4);
 
-	await ingestOrder(db, store, unlisted("FCI-SAND", "o2"), warehouse);
+	await ingestOrder(db, store, unlisted("FCI-SAND", "o2"), {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 	expect(await onHand(product)).toBe(3);
 
 	// Linking again changes nothing.

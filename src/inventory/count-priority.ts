@@ -2,6 +2,7 @@ import { and, eq, gte, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { countLog, locations, products, stockLevels } from "#/db/schema";
 import { type AbcClass, abcClasses } from "#/inventory/abc";
+import { isOurs } from "#/inventory/locations";
 import { TRUST_DAYS } from "#/inventory/stock-state";
 import { carriedOrStocked } from "#/products/archive";
 
@@ -93,9 +94,9 @@ export async function countableShelves(
 	const since = new Date(now.getTime() - MISS_DAYS * 86_400_000);
 	const [owned, items, levels, misses, abc] = await Promise.all([
 		db
-			.select({ id: locations.id, name: locations.name })
+			.select({ id: locations.id, name: locations.name, kind: locations.kind })
 			.from(locations)
-			.where(eq(locations.kind, "owned")),
+			.where(isOurs),
 		db
 			.select({
 				id: products.id,
@@ -115,7 +116,7 @@ export async function countableShelves(
 			})
 			.from(stockLevels)
 			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(eq(locations.kind, "owned")),
+			.where(isOurs),
 		db
 			.select({
 				productId: countLog.productId,
@@ -136,7 +137,11 @@ export async function countableShelves(
 	if (owned.length === 0) return [];
 
 	const locationName = new Map(owned.map((l) => [l.id, l.name]));
-	const first = Math.min(...owned.map((l) => l.id));
+	// A product on no shelf yet would be counted into the warehouse.
+	const warehouse = owned.filter((l) => l.kind === "owned");
+	const first = Math.min(
+		...(warehouse.length > 0 ? warehouse : owned).map((l) => l.id),
+	);
 	const key = (productId: number, locationId: number) =>
 		`${productId}:${locationId}`;
 	const missed = new Map(

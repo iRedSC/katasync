@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
-import { shippingLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { locations, products, purchaseOrderLines } from "#/db/schema";
+import { isOurs } from "#/inventory/locations";
 import { loadOrder } from "#/purchasing/load";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
@@ -29,20 +29,30 @@ export async function productBySku(db: Db, sku: string) {
 	return product;
 }
 
-export async function ownedLocation(db: Db, name?: string) {
+// One of our locations (warehouse or retail store) by name. Without a name,
+// the only one, since guessing between several would put stock on the wrong
+// shelf.
+export async function ourLocation(db: Db, name?: string) {
+	const ours = await db
+		.select({ id: locations.id, name: locations.name })
+		.from(locations)
+		.where(isOurs)
+		.orderBy(locations.name);
 	if (name) {
-		const [found] = await db
-			.select({ id: locations.id, kind: locations.kind })
-			.from(locations)
-			.where(eq(locations.name, name));
-		if (found?.kind !== "owned")
-			throw new PurchaseOrderError(`No location of ours called ${name}`);
+		const found = ours.find((l) => l.name === name);
+		if (!found)
+			throw new PurchaseOrderError(
+				`No location of ours called ${name}; there's ${ours.map((l) => l.name).join(", ")}`,
+			);
 		return found.id;
 	}
-	const only = await shippingLocation(db);
-	if (only === null)
-		throw new PurchaseOrderError("There are several locations; name one");
-	return only;
+	if (ours.length !== 1)
+		throw new PurchaseOrderError(
+			ours.length === 0
+				? "There's no location of ours yet"
+				: `Name a location: ${ours.map((l) => l.name).join(", ")}`,
+		);
+	return ours[0].id;
 }
 
 // When a PO marked sent outside katasync went out: midday that day, so it's

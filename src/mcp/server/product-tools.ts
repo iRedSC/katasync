@@ -9,7 +9,7 @@ import {
 	restoreProduct,
 } from "#/products/archive";
 import { updateProductDetails } from "#/products/details";
-import { ownedLocation, productBySku } from "./lookups";
+import { ourLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
 
 export function registerProductTools(server: McpServer, db: Db) {
@@ -145,7 +145,7 @@ export function registerProductTools(server: McpServer, db: Db) {
 				const input = {
 					kitProductId: kit.id,
 					quantity,
-					locationId: await ownedLocation(db, location),
+					locationId: await ourLocation(db, location),
 					reference: "via Claude",
 				};
 				return json(

@@ -2,8 +2,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Db } from "#/db/client";
 import { recordCount, requestCounts, undoBatch } from "#/inventory/ledger";
+import { transferName, transferOfBatch } from "#/inventory/transfers";
 import { PurchaseOrderError, purchaseOrderOfBatch } from "#/purchasing/orders";
-import { ownedLocation, productBySku } from "./lookups";
+import { ourLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
 
 export function registerStockTools(server: McpServer, db: Db) {
@@ -36,7 +37,7 @@ export function registerStockTools(server: McpServer, db: Db) {
 			};
 			const result = await recordCount(db, {
 				productId: product.id,
-				locationId: await ownedLocation(db, location),
+				locationId: await ourLocation(db, location),
 				counted,
 				note: [labels[reason], note?.trim(), "via Claude"]
 					.filter(Boolean)
@@ -65,7 +66,7 @@ export function registerStockTools(server: McpServer, db: Db) {
 			for (const sku of skus) productIds.push((await productBySku(db, sku)).id);
 			await requestCounts(db, {
 				productIds,
-				locationId: await ownedLocation(db, location),
+				locationId: await ourLocation(db, location),
 			});
 			return json({ requested: new Set(productIds).size });
 		},
@@ -84,6 +85,11 @@ export function registerStockTools(server: McpServer, db: Db) {
 			if (po !== null)
 				throw new PurchaseOrderError(
 					`This came in on PO ${po}. Undo it on the PO in the app.`,
+				);
+			const transfer = await transferOfBatch(db, batch_id);
+			if (transfer !== null)
+				throw new PurchaseOrderError(
+					`This was transfer ${transferName(transfer)}. Undo it with undo_transfer.`,
 				);
 			return json(await undoBatch(db, batch_id));
 		},

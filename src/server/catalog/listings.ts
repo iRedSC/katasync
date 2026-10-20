@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { eq } from "drizzle-orm";
 import { matchListings } from "#/channels/listings";
-import { shippingLocation } from "#/channels/stores";
+import { stockLocations } from "#/channels/stores";
 import { isSyncedChannel, syncPassAlone } from "#/channels/sync";
 import { listUnmatched } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
@@ -35,7 +35,7 @@ export const setPrimaryStore = createServerFn({ method: "POST" })
 		});
 		if (!data.id) return { created: 0, skipped: [] as string[] };
 		const matched = await matchListings(db);
-		await applyListingsToOrders(db, matched.mapped, await shippingLocation(db));
+		await applyListingsToOrders(db, matched.mapped, await stockLocations(db));
 		return { created: matched.created, skipped: matched.skipped };
 	});
 

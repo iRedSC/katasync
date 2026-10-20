@@ -30,9 +30,11 @@ const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
 	fromDriver: (value) => Buffer.from(value),
 });
 
-// `owned` locations are ours to pick from. `fba` stock is Amazon's: we only
-// mirror what Amazon reports and never route orders to it.
-export const locationKind = pgEnum("location_kind", ["owned", "fba"]);
+// `owned` is the warehouse: orders ship from it. `retail` is our store: POS
+// sales take its stock, and shipped orders take from it what the warehouse is
+// out of (someone fetches it), so the channels sell both. `fba` stock is
+// Amazon's: we only mirror what Amazon reports and never route orders to it.
+export const locationKind = pgEnum("location_kind", ["owned", "fba", "retail"]);
 
 export const locations = pgTable("locations", {
 	id: integer().primaryKey().generatedAlwaysAsIdentity(),
@@ -271,6 +273,80 @@ export const stockCounts = pgTable("stock_counts", {
 	previousCountedAt: timestamp({ withTimezone: true }),
 });
 
+// A list of stock to move from one of our locations to another, e.g. a
+// refill of the retail store. A draft can change freely; sending it moves
+// every line at once, as one ledger batch (batchId), so undoing it moves it
+// all back and returns it to a draft. Rules live in
+// src/inventory/transfers.ts.
+export const transferStatus = pgEnum("transfer_status", ["draft", "sent"]);
+
+export const transfers = pgTable(
+	"transfers",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		fromLocationId: integer()
+			.notNull()
+			.references(() => locations.id),
+		toLocationId: integer()
+			.notNull()
+			.references(() => locations.id),
+		status: transferStatus().notNull().default("draft"),
+		note: text(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		sentAt: timestamp({ withTimezone: true }),
+		batchId: uuid().unique(),
+	},
+	(t) => [
+		check(
+			"transfers_two_places",
+			sql`${t.fromLocationId} <> ${t.toLocationId}`,
+		),
+		// Sent means it moved stock, and only then.
+		check(
+			"transfers_sent_moved",
+			sql`(${t.status} = 'sent') = (${t.batchId} is not null and ${t.sentAt} is not null)`,
+		),
+		index("transfers_status_idx").on(t.status, t.createdAt),
+	],
+);
+
+export const transferLines = pgTable(
+	"transfer_lines",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		transferId: integer()
+			.notNull()
+			.references(() => transfers.id, { onDelete: "cascade" }),
+		productId: integer()
+			.notNull()
+			.references(() => products.id),
+		quantity: integer().notNull(),
+	},
+	(t) => [
+		unique("transfer_lines_one_per_product").on(t.transferId, t.productId),
+		check("transfer_lines_quantity", sql`${t.quantity} > 0`),
+	],
+);
+
+// How many of a product a location should hold, for refills: a transfer's
+// suggestions top the location back up to this from the warehouse.
+export const shelfTargets = pgTable(
+	"shelf_targets",
+	{
+		productId: integer()
+			.notNull()
+			.references(() => products.id),
+		locationId: integer()
+			.notNull()
+			.references(() => locations.id),
+		target: integer().notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.productId, t.locationId] }),
+		check("shelf_targets_positive", sql`${t.target} > 0`),
+	],
+);
+
 // Every shelf count, matched or not: what the system expected and what was
 // on the shelf. stock_counts only holds counts that moved stock (to undo
 // them); this keeps the clean ones too, so drift can be told from noise
@@ -437,6 +513,9 @@ export const orders = pgTable(
 		// The marketplace ships it from its own stock (Amazon FBA); it never
 		// takes ours.
 		fulfilledByChannel: boolean().notNull().default(false),
+		// Rung up at our retail store (Shopify POS): its stock comes off the
+		// store's shelf rather than the warehouse's.
+		soldInStore: boolean().notNull().default(false),
 		financialStatus: text(),
 		customerName: text(),
 		shipAddress1: text(),
@@ -1537,7 +1616,8 @@ export const qzCertificate = pgTable(
 // Views defined in drizzle/0020_reporting_views.sql, so every report counts
 // stock and sales the same way.
 
-// Stock on our own shelves per stocked product (Amazon's FBA stock left out).
+// Stock on our own shelves per stocked product, warehouse and retail store
+// (Amazon's FBA stock left out).
 export const ownedStock = pgView("owned_stock", {
 	productId: integer().notNull(),
 	sku: text().notNull(),
@@ -1751,10 +1831,14 @@ export const settings = pgTable(
 		// The min for products without their own range (products.minStock).
 		// Their max comes from their sales forecast (inventory/stock-range.ts).
 		defaultMinStock: integer().notNull().default(1),
+		// Units the retail store keeps for walk-ins: shipped orders and the
+		// channels only take what it holds above this (see recordSale).
+		retailReserve: integer().notNull().default(0),
 	},
 	(t) => [
 		check("settings_single", sql`${t.id} = 1`),
 		check("settings_stock_range", sql`${t.defaultMinStock} >= 0`),
+		check("settings_retail_reserve", sql`${t.retailReserve} >= 0`),
 	],
 );
 

@@ -21,6 +21,7 @@ const base = {
 	cancelledAt: null,
 	fulfillmentStatus: "UNFULFILLED",
 	fulfilledByChannel: false,
+	soldInStore: false,
 	financialStatus: "PAID",
 	customerName: null,
 	shipAddress1: null,
@@ -105,7 +106,11 @@ beforeEach(async () => {
 			},
 		],
 	});
-	await ingestOrder(db, shopify, relayed, warehouse);
+	await ingestOrder(db, shopify, relayed, {
+		shipping: warehouse,
+		store: null,
+		storeKeeps: 0,
+	});
 	await db
 		.update(schema.orders)
 		.set({ pin: 49 })
@@ -120,7 +125,11 @@ describe("takeOver", () => {
 			moved: true,
 			problems: [],
 		});
-		await ingestOrder(db, tiktok, order, warehouse);
+		await ingestOrder(db, tiktok, order, {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 
 		expect(await onHand()).toBe(8);
 		const [saved] = await db.select().from(schema.orders);
@@ -137,12 +146,16 @@ describe("takeOver", () => {
 
 	test("a cancellation after the move gives the stock back", async () => {
 		await takeOver(db, tiktok.id, direct());
-		await ingestOrder(db, tiktok, direct(), warehouse);
+		await ingestOrder(db, tiktok, direct(), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 		await ingestOrder(
 			db,
 			tiktok,
 			direct({ cancelledAt: new Date("2026-10-06T00:00:00Z") }),
-			warehouse,
+			{ shipping: warehouse, store: null, storeKeeps: 0 },
 		);
 		expect(await onHand()).toBe(10);
 	});
@@ -189,7 +202,11 @@ describe("takeOver", () => {
 			moved: true,
 			problems: [],
 		});
-		await ingestOrder(db, tiktok, order, warehouse);
+		await ingestOrder(db, tiktok, order, {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 
 		expect(await onHand()).toBe(8);
 		const lines = await db.select().from(schema.orderLines);
@@ -220,12 +237,11 @@ function detail(status: string, units: ("TO_SHIP" | "CANCELLED")[]) {
 
 describe("TikTok cancellations through ingestion", () => {
 	const sync = (status: string, units: ("TO_SHIP" | "CANCELLED")[]) =>
-		ingestOrder(
-			db,
-			tiktok,
-			tiktokToChannelOrder(detail(status, units)),
-			warehouse,
-		);
+		ingestOrder(db, tiktok, tiktokToChannelOrder(detail(status, units)), {
+			shipping: warehouse,
+			store: null,
+			storeKeeps: 0,
+		});
 
 	test("a cancelled unit gives its stock back", async () => {
 		await sync("AWAITING_SHIPMENT", ["TO_SHIP", "TO_SHIP"]);

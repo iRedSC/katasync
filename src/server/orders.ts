@@ -37,6 +37,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { cityLine } from "#/lib/format";
+import { fromStore } from "#/orders/from-store";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import {
 	findReturnable,
@@ -125,6 +126,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				productSku: products.sku,
 				productName: products.name,
 				imageUrl: products.imageUrl,
+				fromStore,
 			})
 			.from(orderLines)
 			.leftJoin(products, eq(products.id, orderLines.productId))
@@ -189,6 +191,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				unitPrice: orderLines.unitPrice,
 				unitCost: orderLines.unitCost,
 				tookStock: sql<boolean>`${orderLines.saleBatchId} is not null`,
+				fromStore,
 				// Units received back, and how many of those went on the shelf.
 				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
 				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and ${orderReturns.restocked}), 0)::int`,

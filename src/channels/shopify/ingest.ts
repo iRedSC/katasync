@@ -1,6 +1,10 @@
 import { type } from "arktype";
 import { eq } from "drizzle-orm";
-import { ensureStore, shippingLocation } from "#/channels/stores";
+import {
+	ensureStore,
+	type StockLocations,
+	stockLocations,
+} from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { stores } from "#/db/schema";
 import { ingestOrder } from "#/orders/ingest";
@@ -20,7 +24,7 @@ export async function ingestMatching(
 	db: Db,
 	store: Awaited<ReturnType<typeof ensureStore>>,
 	search: string,
-	locationId: number | null,
+	stock: StockLocations,
 ) {
 	let newest: Date | null = null;
 	let count = 0;
@@ -33,7 +37,7 @@ export async function ingestMatching(
 		);
 		for (const o of page.orders.nodes) {
 			if (!newest || o.updatedAt > newest) newest = o.updatedAt;
-			const result = await ingestNode(db, store, o, locationId, tiktokDirect);
+			const result = await ingestNode(db, store, o, stock, tiktokDirect);
 			if (!result) continue;
 			problems.push(...result.problems);
 			count++;
@@ -52,7 +56,7 @@ async function ingestNode(
 	db: Db,
 	store: Awaited<ReturnType<typeof ensureStore>>,
 	o: typeof orderNode.infer,
-	locationId: number | null,
+	stock: StockLocations,
 	tiktokDirect: boolean,
 ) {
 	if (tiktokDirect && tiktokOrderId(o.tags)) return null;
@@ -81,7 +85,7 @@ async function ingestNode(
 		db,
 		store,
 		shopifyToChannelOrder(order, shipped, remaining),
-		locationId,
+		stock,
 	);
 }
 
@@ -105,7 +109,7 @@ export async function ingestShopifyOrder(db: Db, orderId: string) {
 		db,
 		store,
 		order,
-		await shippingLocation(db),
+		await stockLocations(db),
 		await hasTiktokStore(db),
 	);
 }

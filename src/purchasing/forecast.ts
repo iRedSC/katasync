@@ -10,6 +10,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import type { AbcClass } from "#/inventory/abc";
+import { isOurs } from "#/inventory/locations";
 import { soldByDay } from "#/inventory/sales";
 
 // What reorder knows about a product's demand, from the last DEMAND_DAYS.
@@ -129,8 +130,9 @@ export async function forecasts(
 				>`(select min(${movements.createdAt}) from ${movements})`,
 			})
 			.from(movements)
+			// Both our shelves, so a transfer between them nets to nothing.
 			.innerJoin(locations, eq(locations.id, movements.locationId))
-			.where(eq(locations.kind, "owned"))
+			.where(isOurs)
 			.groupBy(sql`1`, sql`2`),
 	]);
 	const firstAt = ledgerRows[0]?.firstAt;

@@ -15,9 +15,12 @@ import {
 	purchaseOrderSentSets,
 	purchaseOrderSkippedParts,
 	purchaseOrders,
+	shelfTargets,
 	stockCounts,
 	stockLevels,
+	transferLines,
 } from "#/db/schema";
+import { isOurs } from "#/inventory/locations";
 import { ProductError } from "./details";
 
 // Retiring products. One with history is archived: it leaves lists, pickers,
@@ -38,7 +41,7 @@ export const carried = isNull(products.archivedAt);
 // Carried, or archived with stock on our shelves again (a return came back,
 // a kit was taken apart): lists and counting still show those, so stock is
 // never out of sight. Reordering doesn't.
-export const carriedOrStocked = sql`(${carried} or exists (select 1 from ${stockLevels} join ${locations} on ${locations.id} = ${stockLevels.locationId} where ${stockLevels.productId} = ${products.id} and ${locations.kind} = 'owned' and ${stockLevels.onHand} <> 0))`;
+export const carriedOrStocked = sql`(${carried} or exists (select 1 from ${stockLevels} join ${locations} on ${locations.id} = ${stockLevels.locationId} where ${stockLevels.productId} = ${products.id} and ${locations.kind} <> 'fba' and ${stockLevels.onHand} <> 0))`;
 
 // A listing its channel can't sell: deleted (TikTok), archived (Shopify),
 // inactive (Amazon), or gone from the channel's listings altogether.
@@ -76,11 +79,7 @@ async function stillActive(tx: Db, id: number) {
 		.from(stockLevels)
 		.innerJoin(locations, eq(locations.id, stockLevels.locationId))
 		.where(
-			and(
-				eq(stockLevels.productId, id),
-				eq(locations.kind, "owned"),
-				ne(stockLevels.onHand, 0),
-			),
+			and(eq(stockLevels.productId, id), isOurs, ne(stockLevels.onHand, 0)),
 		);
 	if (shelves.length > 0)
 		blockers.push(
@@ -208,10 +207,11 @@ const history = [
 		productComponents,
 		productComponents.componentProductId,
 	],
+	["it's on transfers", transferLines, transferLines.productId],
 ] as const;
 
 // Deletes a product that never did anything, with what's only its own: its
-// parts list, aliases, supplier terms, and empty shelves. Refused, saying
+// parts list, aliases, supplier terms, refill targets, and empty shelves. Refused, saying
 // why, when it has history; archive it instead.
 export async function deleteProduct(db: Db, sku: string) {
 	return db.transaction(async (tx) => {
@@ -238,6 +238,7 @@ export async function deleteProduct(db: Db, sku: string) {
 		await tx
 			.delete(productSuppliers)
 			.where(eq(productSuppliers.productId, product.id));
+		await tx.delete(shelfTargets).where(eq(shelfTargets.productId, product.id));
 		await tx.delete(stockLevels).where(eq(stockLevels.productId, product.id));
 		await tx.delete(products).where(eq(products.id, product.id));
 		return { sku: product.sku, deleted: true };
