@@ -1,13 +1,21 @@
 import { optimistic, type Patch } from "#/lib/optimism";
 import type { View } from "#/products/views";
-import { listProducts, type ProductRow } from "#/server/catalog";
+import {
+	countArchivedProducts,
+	listProducts,
+	type ProductRow,
+} from "#/server/catalog";
 import { listViews } from "#/server/views";
 
 // What the page loads. The optimistic patches below lay changes over it until
 // the reload shows them.
 export const loadPage = async () => {
-	const [products, views] = await Promise.all([listProducts(), listViews()]);
-	return { ...products, views };
+	const [products, views, archived] = await Promise.all([
+		listProducts(),
+		listViews(),
+		countArchivedProducts(),
+	]);
+	return { ...products, views, archived };
 };
 type ProductsPage = Awaited<ReturnType<typeof loadPage>>;
 export const productsData = optimistic<ProductsPage>("products");

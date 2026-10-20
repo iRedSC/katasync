@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, locations, movements, products, stores } from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
@@ -58,6 +58,7 @@ async function stockless(db: Db) {
 		.where(
 			and(
 				ne(products.kind, "bundle"),
+				isNull(products.archivedAt),
 				untracked,
 				eq(listings.fulfillment, "merchant"),
 				sql`coalesce(${listings.status}, '') <> 'DELETED'`,

@@ -179,10 +179,16 @@ export async function applyStoreSales(
 // a product's own, or linked to another product.
 export async function linkSku(db: Db, alias: string, sku: string) {
 	const [product] = await db
-		.select({ id: products.id, sku: products.sku })
+		.select({
+			id: products.id,
+			sku: products.sku,
+			archivedAt: products.archivedAt,
+		})
 		.from(products)
 		.where(eq(products.sku, sku));
 	if (!product) throw new Error(`No product ${sku}`);
+	if (product.archivedAt)
+		throw new Error(`${product.sku} is archived; restore it first`);
 	if (alias === product.sku) throw new Error(`${alias} is that product's SKU`);
 	const [own] = await db
 		.select({ sku: products.sku })

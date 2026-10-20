@@ -1,6 +1,6 @@
 {
-  "id": "d34466c1-6fe3-4eba-b745-9405aae3ab9a",
-  "prevId": "b7b310b9-4d38-47b8-98fb-cfe808302577",
+  "id": "12b7b49c-a4fc-4aa5-b04a-b25bdda4ecb9",
+  "prevId": "dae5e12b-4d40-4d9c-b979-c06f93622d07",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -527,6 +527,12 @@
         "stock_push": {
           "name": "stock_push",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gone_at": {
+          "name": "gone_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -1797,13 +1803,6 @@
           "notNull": true,
           "default": false
         },
-        "sold_in_store": {
-          "name": "sold_in_store",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "financial_status": {
           "name": "financial_status",
           "type": "text",
@@ -2564,6 +2563,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "unit_cost_updated_at": {
+          "name": "unit_cost_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "weight_grams": {
           "name": "weight_grams",
           "type": "integer",
@@ -2630,6 +2635,12 @@
         "close_at": {
           "name": "close_at",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -2718,6 +2729,10 @@
         "products_variant_needs_group": {
           "name": "products_variant_needs_group",
           "value": "\"products\".\"variant_name\" is null or \"products\".\"group_id\" is not null"
+        },
+        "products_cost_date_needs_cost": {
+          "name": "products_cost_date_needs_cost",
+          "value": "\"products\".\"unit_cost_updated_at\" is null or \"products\".\"unit_cost\" is not null"
         },
         "products_stock_range": {
           "name": "products_stock_range",
@@ -4364,13 +4379,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": 1
-        },
-        "retail_reserve": {
-          "name": "retail_reserve",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         }
       },
       "indexes": {},
@@ -4386,10 +4394,6 @@
         "settings_stock_range": {
           "name": "settings_stock_range",
           "value": "\"settings\".\"default_min_stock\" >= 0"
-        },
-        "settings_retail_reserve": {
-          "name": "settings_retail_reserve",
-          "value": "\"settings\".\"retail_reserve\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -4430,77 +4434,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.shelf_targets": {
-      "name": "shelf_targets",
-      "schema": "",
-      "columns": {
-        "product_id": {
-          "name": "product_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "location_id": {
-          "name": "location_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "target": {
-          "name": "target",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "shelf_targets_product_id_products_id_fk": {
-          "name": "shelf_targets_product_id_products_id_fk",
-          "tableFrom": "shelf_targets",
-          "tableTo": "products",
-          "columnsFrom": [
-            "product_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "shelf_targets_location_id_locations_id_fk": {
-          "name": "shelf_targets_location_id_locations_id_fk",
-          "tableFrom": "shelf_targets",
-          "tableTo": "locations",
-          "columnsFrom": [
-            "location_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "shelf_targets_product_id_location_id_pk": {
-          "name": "shelf_targets_product_id_location_id_pk",
-          "columns": [
-            "product_id",
-            "location_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "shelf_targets_positive": {
-          "name": "shelf_targets_positive",
-          "value": "\"shelf_targets\".\"target\" > 0"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.shipments": {
@@ -5476,236 +5409,6 @@
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
-    },
-    "public.transfer_lines": {
-      "name": "transfer_lines",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "transfer_lines_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "transfer_id": {
-          "name": "transfer_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "product_id": {
-          "name": "product_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "quantity": {
-          "name": "quantity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "transfer_lines_transfer_id_transfers_id_fk": {
-          "name": "transfer_lines_transfer_id_transfers_id_fk",
-          "tableFrom": "transfer_lines",
-          "tableTo": "transfers",
-          "columnsFrom": [
-            "transfer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "transfer_lines_product_id_products_id_fk": {
-          "name": "transfer_lines_product_id_products_id_fk",
-          "tableFrom": "transfer_lines",
-          "tableTo": "products",
-          "columnsFrom": [
-            "product_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "transfer_lines_one_per_product": {
-          "name": "transfer_lines_one_per_product",
-          "nullsNotDistinct": false,
-          "columns": [
-            "transfer_id",
-            "product_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "transfer_lines_quantity": {
-          "name": "transfer_lines_quantity",
-          "value": "\"transfer_lines\".\"quantity\" > 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.transfers": {
-      "name": "transfers",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "transfers_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "from_location_id": {
-          "name": "from_location_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "to_location_id": {
-          "name": "to_location_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "transfer_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'draft'"
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "sent_at": {
-          "name": "sent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "batch_id": {
-          "name": "batch_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "transfers_status_idx": {
-          "name": "transfers_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "transfers_from_location_id_locations_id_fk": {
-          "name": "transfers_from_location_id_locations_id_fk",
-          "tableFrom": "transfers",
-          "tableTo": "locations",
-          "columnsFrom": [
-            "from_location_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "transfers_to_location_id_locations_id_fk": {
-          "name": "transfers_to_location_id_locations_id_fk",
-          "tableFrom": "transfers",
-          "tableTo": "locations",
-          "columnsFrom": [
-            "to_location_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "transfers_batchId_unique": {
-          "name": "transfers_batchId_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "batch_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "transfers_two_places": {
-          "name": "transfers_two_places",
-          "value": "\"transfers\".\"from_location_id\" <> \"transfers\".\"to_location_id\""
-        },
-        "transfers_sent_moved": {
-          "name": "transfers_sent_moved",
-          "value": "(\"transfers\".\"status\" = 'sent') = (\"transfers\".\"batch_id\" is not null and \"transfers\".\"sent_at\" is not null)"
-        }
-      },
-      "isRLSEnabled": false
     }
   },
   "enums": {
@@ -5750,8 +5453,7 @@
       "schema": "public",
       "values": [
         "owned",
-        "fba",
-        "retail"
+        "fba"
       ]
     },
     "public.movement_reason": {
@@ -5817,14 +5519,6 @@
         "delivered",
         "closed",
         "cancelled"
-      ]
-    },
-    "public.transfer_status": {
-      "name": "transfer_status",
-      "schema": "public",
-      "values": [
-        "draft",
-        "sent"
       ]
     }
   },

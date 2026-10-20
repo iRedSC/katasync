@@ -1,6 +1,6 @@
 {
-  "id": "b7b310b9-4d38-47b8-98fb-cfe808302577",
-  "prevId": "913b1efd-8ff4-472e-8c17-bd89e92107d2",
+  "id": "dae5e12b-4d40-4d9c-b979-c06f93622d07",
+  "prevId": "08c6f0d4-5278-413a-8e21-d3d93f9ebb05",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1797,13 +1797,6 @@
           "notNull": true,
           "default": false
         },
-        "sold_in_store": {
-          "name": "sold_in_store",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "financial_status": {
           "name": "financial_status",
           "type": "text",
@@ -2564,6 +2557,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "unit_cost_updated_at": {
+          "name": "unit_cost_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "weight_grams": {
           "name": "weight_grams",
           "type": "integer",
@@ -2630,6 +2629,12 @@
         "close_at": {
           "name": "close_at",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -2718,6 +2723,10 @@
         "products_variant_needs_group": {
           "name": "products_variant_needs_group",
           "value": "\"products\".\"variant_name\" is null or \"products\".\"group_id\" is not null"
+        },
+        "products_cost_date_needs_cost": {
+          "name": "products_cost_date_needs_cost",
+          "value": "\"products\".\"unit_cost_updated_at\" is null or \"products\".\"unit_cost\" is not null"
         },
         "products_stock_range": {
           "name": "products_stock_range",
@@ -4364,13 +4373,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": 1
-        },
-        "retail_reserve": {
-          "name": "retail_reserve",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         }
       },
       "indexes": {},
@@ -4386,10 +4388,6 @@
         "settings_stock_range": {
           "name": "settings_stock_range",
           "value": "\"settings\".\"default_min_stock\" >= 0"
-        },
-        "settings_retail_reserve": {
-          "name": "settings_retail_reserve",
-          "value": "\"settings\".\"retail_reserve\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -5449,8 +5447,7 @@
       "schema": "public",
       "values": [
         "owned",
-        "fba",
-        "retail"
+        "fba"
       ]
     },
     "public.movement_reason": {

@@ -1,3 +1,8 @@
+export {
+	archiveProductNow,
+	countArchivedProducts,
+	listArchivedProducts,
+} from "#/server/catalog/archived";
 export { getDashboard } from "#/server/catalog/dashboard";
 export {
 	createListingProduct,
@@ -28,6 +33,7 @@ export {
 	getDefaultMinStock,
 	getDefaultRange,
 	getRetailReserve,
+	restoreArchivedProduct,
 	saveDefaultMinStock,
 	saveProductStockRange,
 	saveRetailReserve,

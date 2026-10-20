@@ -18,6 +18,7 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
+import { carried } from "#/products/archive";
 import {
 	type Candidate,
 	itemKey,
@@ -53,10 +54,11 @@ export type UnmatchedItem = {
 // it never needs a product, and its sales cost nothing (order_line_costs).
 export const intangible = sql`exists (select 1 from unnest(${listings.tags}) t where lower(t) = 'intangible')`;
 
-// A draft, or a listing deleted (TikTok) or archived (Shopify), can't sell
-// now, so until it sells it doesn't need a product; a draft comes back once
-// it's published. One that sold still does, for its past orders.
-const unsellableUnsold = sql`(coalesce(${listings.status}, '') in ('DRAFT', 'DELETED', 'ARCHIVED') and not exists (select 1 from ${orderLines} join ${orders} on ${orders.id} = ${orderLines.orderId} where ${orders.storeId} = ${listings.storeId} and ${orderLines.listingExternalId} = ${listings.externalId}))`;
+// A draft, or a listing deleted (TikTok), archived (Shopify), or gone from
+// its channel, can't sell now, so until it sells it doesn't need a product;
+// a draft comes back once it's published. One that sold still does, for its
+// past orders.
+const unsellableUnsold = sql`((coalesce(${listings.status}, '') in ('DRAFT', 'DELETED', 'ARCHIVED') or ${listings.goneAt} is not null) and not exists (select 1 from ${orderLines} join ${orders} on ${orders.id} = ${orderLines.orderId} where ${orders.storeId} = ${listings.storeId} and ${orderLines.listingExternalId} = ${listings.externalId}))`;
 
 // Listings still waiting for a product.
 export const awaitingProduct = and(
@@ -201,7 +203,8 @@ async function loadCatalog(db: Db) {
 				supplierSku: productSuppliers.supplierSku,
 			})
 			.from(products)
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id)),
+			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+			.where(carried),
 		db.select().from(productAliases),
 	]);
 	const codes = new Map<number, string[]>();

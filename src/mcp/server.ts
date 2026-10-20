@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import { registerActionTools } from "./server/action-tools";
 import { registerCatalogTools } from "./server/catalog-tools";
 import { INSTRUCTIONS } from "./server/instructions";
+import { registerListingTools } from "./server/listing-tools";
 import { registerProductTools } from "./server/product-tools";
 import { registerPurchasingTools } from "./server/purchasing-tools";
 import { registerReadTools } from "./server/read-tools";
@@ -56,6 +57,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerPurchasingTools(server, db);
 	registerSupplierTools(server, db);
 	registerCatalogTools(server, db);
+	registerListingTools(server, db);
 	registerStockTools(server, db);
 	registerStockSettingsTools(server, db);
 	registerTransferTools(server, db);

@@ -1,5 +1,6 @@
 import {
 	createFileRoute,
+	Link,
 	useLocation,
 	useNavigate,
 } from "@tanstack/react-router";
@@ -120,7 +121,7 @@ function Products() {
 
 function ProductList() {
 	const loaded = Route.useLoaderData();
-	const { products, views } = productsData.useData("all", loaded);
+	const { products, views, archived } = productsData.useData("all", loaded);
 	const search = Route.useSearch();
 	// The router hands back a new array on every render, so key it by content:
 	// otherwise each render would count as a change, resetting the selection
@@ -268,19 +269,31 @@ function ProductList() {
 			title="Products"
 			width="wide"
 			actions={
-				<LayoutToggle
-					layout={search.layout ?? "cards"}
-					onLayout={(l) =>
-						navigate({
-							to: "/products",
-							search: (prev) => ({
-								...prev,
-								layout: l === "table" ? "table" : undefined,
-							}),
-							replace: true,
-						})
-					}
-				/>
+				<>
+					{archived > 0 && (
+						<Button variant="ghost" asChild>
+							<Link to="/products/archived">
+								Archived
+								<span className="text-muted-foreground tabular-nums">
+									{formatCount(archived)}
+								</span>
+							</Link>
+						</Button>
+					)}
+					<LayoutToggle
+						layout={search.layout ?? "cards"}
+						onLayout={(l) =>
+							navigate({
+								to: "/products",
+								search: (prev) => ({
+									...prev,
+									layout: l === "table" ? "table" : undefined,
+								}),
+								replace: true,
+							})
+						}
+					/>
+				</>
 			}
 		>
 			<div className="flex items-start gap-6">

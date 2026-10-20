@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getDb } from "#/db/client";
 import { locations, products, stores } from "#/db/schema";
+import { carried } from "#/products/archive";
 
 export const listProductIndex = createServerFn({ method: "GET" }).handler(
 	async () =>
@@ -14,6 +15,7 @@ export const listProductIndex = createServerFn({ method: "GET" }).handler(
 				imageUrl: products.imageUrl,
 			})
 			.from(products)
+			.where(carried)
 			.orderBy(products.sku),
 );
 

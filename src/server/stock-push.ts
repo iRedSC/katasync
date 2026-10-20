@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { listings, stores } from "#/db/schema";
 import { pushMode, stockBlocker } from "#/stock-push/push";
@@ -14,23 +14,21 @@ export const listStockPush = createServerFn({ method: "GET" }).handler(
 		const counts = db
 			.select({
 				storeId: listings.storeId,
-				mapped: sql<number>`count(*)::int`.as("mapped"),
+				listed: sql<number>`count(*)::int`.as("listed"),
+				mapped:
+					sql<number>`count(*) filter (where ${listings.productId} is not null and ${listings.fulfillment} = 'merchant')::int`.as(
+						"mapped",
+					),
 				ready:
-					sql<number>`count(*) filter (where ${listings.stockPush}->>'state' = 'ready')::int`.as(
+					sql<number>`count(*) filter (where ${listings.productId} is not null and ${listings.fulfillment} = 'merchant' and ${listings.stockPush}->>'state' = 'ready')::int`.as(
 						"ready",
 					),
 				failing:
-					sql<number>`count(*) filter (where ${listings.stockPush}->>'error' is not null)::int`.as(
+					sql<number>`count(*) filter (where ${listings.productId} is not null and ${listings.fulfillment} = 'merchant' and ${listings.stockPush}->>'error' is not null)::int`.as(
 						"failing",
 					),
 			})
 			.from(listings)
-			.where(
-				and(
-					isNotNull(listings.productId),
-					eq(listings.fulfillment, "merchant"),
-				),
-			)
 			.groupBy(listings.storeId)
 			.as("counts");
 		const rows = await db
@@ -42,6 +40,7 @@ export const listStockPush = createServerFn({ method: "GET" }).handler(
 				readAt: stores.stockReadAt,
 				pushedAt: stores.stockPushedAt,
 				error: stores.stockPushError,
+				listed: sql<number>`coalesce(${counts.listed}, 0)`,
 				mapped: sql<number>`coalesce(${counts.mapped}, 0)`,
 				ready: sql<number>`coalesce(${counts.ready}, 0)`,
 				failing: sql<number>`coalesce(${counts.failing}, 0)`,

@@ -10,6 +10,7 @@ import {
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
 import { setsSoldSince, soldSince } from "#/inventory/sales";
+import { carried } from "#/products/archive";
 import { DEMAND_DAYS } from "#/purchasing/forecast";
 import { setFloorOf, setMembership, setsBlocked } from "#/purchasing/sets";
 import { DEFAULT_COVER_DAYS, loadPlan, type Plan, planFor } from "./plan";
@@ -100,7 +101,9 @@ export async function reorderBreakdown(
 			.from(products)
 			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
 			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
-			.where(productIds ? inArray(products.id, productIds) : undefined)
+			.where(
+				and(carried, productIds ? inArray(products.id, productIds) : undefined),
+			)
 			.orderBy(products.name, products.variantName),
 		options.plan ?? loadPlan(db, now),
 		// Products counted on any of our own shelves, ever.

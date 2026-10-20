@@ -11,7 +11,7 @@ import {
 import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
 import { needsShipping } from "#/orders/to-ship";
-import { matchListings, syncListings } from "./listings";
+import { markGoneListings, matchListings, syncListings } from "./listings";
 import {
 	advanceOrderCursor,
 	ensureStore,
@@ -575,6 +575,7 @@ const productsPage = type({
 // Records every TikTok SKU as a listing and matches them to products by SKU.
 async function syncTiktokListings(db: Db, storeId: number, cipher: string) {
 	let pageToken: string | undefined;
+	const reported: string[] = [];
 	do {
 		const page = productsPage.assert(
 			await tiktokApi(
@@ -587,20 +588,19 @@ async function syncTiktokListings(db: Db, storeId: number, cipher: string) {
 				{},
 			),
 		);
-		await syncListings(
-			db,
-			storeId,
-			(page.products ?? []).flatMap((p) =>
-				p.skus.map((s) => ({
-					externalId: s.id,
-					externalSku: s.seller_sku || null,
-					title: p.title,
-					fulfillment: "merchant" as const,
-					status: p.status,
-				})),
-			),
+		const listed = (page.products ?? []).flatMap((p) =>
+			p.skus.map((s) => ({
+				externalId: s.id,
+				externalSku: s.seller_sku || null,
+				title: p.title,
+				fulfillment: "merchant" as const,
+				status: p.status,
+			})),
 		);
+		await syncListings(db, storeId, listed);
+		reported.push(...listed.map((l) => l.externalId));
 		pageToken = page.next_page_token || undefined;
 	} while (pageToken);
+	await markGoneListings(db, storeId, reported);
 	return matchListings(db);
 }

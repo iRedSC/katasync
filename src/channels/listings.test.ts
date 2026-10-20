@@ -11,6 +11,7 @@ import {
 	getListingsForProducts,
 	getUnmappedListings,
 	mapListing,
+	markGoneListings,
 	matchListings,
 	syncListings,
 } from "./listings";
@@ -66,6 +67,21 @@ describe("syncListings", () => {
 		expect(changed.updatedAt).not.toEqual(old);
 	});
 
+	test("takes a listing reported twice, and more than one insert holds", async () => {
+		const many = Array.from({ length: 2500 }, (_, i) => listing(`L${i}`));
+		await syncListings(db, shopify, [
+			listing("DUP", { title: "First" }),
+			...many,
+			listing("DUP", { title: "Second" }),
+		]);
+		expect((await getListing(shopify, "DUP")).title).toBe("First");
+		const rows = await db
+			.select()
+			.from(schema.listings)
+			.where(eq(schema.listings.storeId, shopify));
+		expect(rows).toHaveLength(2501);
+	});
+
 	test("updates details on resync without losing the mapping", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await syncListings(db, shopify, [listing("111", { title: "Old title" })]);
@@ -76,6 +92,18 @@ describe("syncListings", () => {
 		const after = await getListing(shopify, "111");
 		expect(after.title).toBe("New title");
 		expect(after.productId).toBe(wrench);
+	});
+
+	test("unmaps a listing whose SKU changed on the channel", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await syncListings(db, shopify, [listing("111", { externalSku: "A" })]);
+		const { id } = await getListing(shopify, "111");
+		await mapListing(db, id, wrench);
+
+		await syncListings(db, shopify, [listing("111", { externalSku: "A" })]);
+		expect((await getListing(shopify, "111")).productId).toBe(wrench);
+		await syncListings(db, shopify, [listing("111", { externalSku: "B" })]);
+		expect((await getListing(shopify, "111")).productId).toBeNull();
 	});
 
 	test("only Amazon listings can be FBA", async () => {
@@ -95,6 +123,20 @@ describe("syncListings", () => {
 		]);
 		expect(unmapped).toEqual([id]);
 		expect((await getListing(amazon, "SET")).productId).toBeNull();
+	});
+});
+
+describe("markGoneListings", () => {
+	test("marks listings a full pass left out, and clears them on return", async () => {
+		await syncListings(db, shopify, [listing("1"), listing("2")]);
+		expect(await markGoneListings(db, shopify, ["1"])).toBe(1);
+		expect((await getListing(shopify, "2")).goneAt).not.toBeNull();
+		expect((await getListing(shopify, "1")).goneAt).toBeNull();
+		// Already gone isn't marked again, and an empty pass marks nothing.
+		expect(await markGoneListings(db, shopify, ["1"])).toBe(0);
+		expect(await markGoneListings(db, shopify, [])).toBe(0);
+		await syncListings(db, shopify, [listing("2")]);
+		expect((await getListing(shopify, "2")).goneAt).toBeNull();
 	});
 });
 

@@ -537,22 +537,29 @@
     {
       "idx": 76,
       "version": "7",
-      "when": 1792514764775,
-      "tag": "0076_retail_store",
+      "when": 1792519264328,
+      "tag": "0076_product_archive",
       "breakpoints": true
     },
     {
       "idx": 77,
       "version": "7",
-      "when": 1792518753186,
-      "tag": "0077_retail_reserve",
+      "when": 1792526023460,
+      "tag": "0077_products_cost_updated_at",
       "breakpoints": true
     },
     {
       "idx": 78,
       "version": "7",
-      "when": 1792526195261,
-      "tag": "0078_transfers",
+      "when": 1792528270021,
+      "tag": "0078_listing_gone",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1792528661563,
+      "tag": "0079_retail_store_and_transfers",
       "breakpoints": true
     }
   ]

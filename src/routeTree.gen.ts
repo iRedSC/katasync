@@ -29,6 +29,7 @@ import { Route as OrdersReturnsRouteImport } from './routes/orders/returns'
 import { Route as PrintInvoicesRouteImport } from './routes/print/invoices'
 import { Route as ProductsIndexRouteImport } from './routes/products/index'
 import { Route as ProductsSkuRouteImport } from './routes/products/$sku'
+import { Route as ProductsArchivedRouteImport } from './routes/products/archived'
 import { Route as ProfitIndexRouteImport } from './routes/profit/index'
 import { Route as ProfitOverviewRouteImport } from './routes/profit/overview'
 import { Route as PurchasingIndexRouteImport } from './routes/purchasing/index'
@@ -151,6 +152,11 @@ const ProductsIndexRoute = ProductsIndexRouteImport.update({
 const ProductsSkuRoute = ProductsSkuRouteImport.update({
   id: '/products/$sku',
   path: '/products/$sku',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProductsArchivedRoute = ProductsArchivedRouteImport.update({
+  id: '/products/archived',
+  path: '/products/archived',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfitIndexRoute = ProfitIndexRouteImport.update({
@@ -289,6 +295,7 @@ export interface FileRoutesByFullPath {
   '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
@@ -334,6 +341,7 @@ export interface FileRoutesByTo {
   '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
@@ -380,6 +388,7 @@ export interface FileRoutesById {
   '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
   '/products/$sku': typeof ProductsSkuRoute
+  '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
@@ -427,6 +436,7 @@ export interface FileRouteTypes {
     | '/orders/returns'
     | '/print/invoices'
     | '/products/$sku'
+    | '/products/archived'
     | '/profit/overview'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
@@ -472,6 +482,7 @@ export interface FileRouteTypes {
     | '/orders/returns'
     | '/print/invoices'
     | '/products/$sku'
+    | '/products/archived'
     | '/profit/overview'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
@@ -517,6 +528,7 @@ export interface FileRouteTypes {
     | '/orders/returns'
     | '/print/invoices'
     | '/products/$sku'
+    | '/products/archived'
     | '/profit/overview'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
@@ -563,6 +575,7 @@ export interface RootRouteChildren {
   OrdersReturnsRoute: typeof OrdersReturnsRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
+  ProductsArchivedRoute: typeof ProductsArchivedRoute
   ProfitOverviewRoute: typeof ProfitOverviewRoute
   PurchasingIdRoute: typeof PurchasingIdRoute
   PurchasingSuppliersRoute: typeof PurchasingSuppliersRoute
@@ -730,6 +743,13 @@ declare module '@tanstack/react-router' {
       path: '/products/$sku'
       fullPath: '/products/$sku'
       preLoaderRoute: typeof ProductsSkuRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/products/archived': {
+      id: '/products/archived'
+      path: '/products/archived'
+      fullPath: '/products/archived'
+      preLoaderRoute: typeof ProductsArchivedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/profit/': {
@@ -915,6 +935,7 @@ const rootRouteChildren: RootRouteChildren = {
   OrdersReturnsRoute: OrdersReturnsRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
   ProductsSkuRoute: ProductsSkuRoute,
+  ProductsArchivedRoute: ProductsArchivedRoute,
   ProfitOverviewRoute: ProfitOverviewRoute,
   PurchasingIdRoute: PurchasingIdRoute,
   PurchasingSuppliersRoute: PurchasingSuppliersRoute,

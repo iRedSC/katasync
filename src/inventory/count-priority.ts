@@ -4,6 +4,7 @@ import { countLog, locations, products, stockLevels } from "#/db/schema";
 import { type AbcClass, abcClasses } from "#/inventory/abc";
 import { isOurs } from "#/inventory/locations";
 import { TRUST_DAYS } from "#/inventory/stock-state";
+import { carriedOrStocked } from "#/products/archive";
 
 // What to count next, across every shelf of ours, not only the requested
 // ones. A shelf is due when its number can't be trusted: it's below zero,
@@ -104,7 +105,7 @@ export async function countableShelves(
 				category: products.category,
 			})
 			.from(products)
-			.where(ne(products.kind, "bundle")),
+			.where(and(ne(products.kind, "bundle"), carriedOrStocked)),
 		db
 			.select({
 				productId: stockLevels.productId,

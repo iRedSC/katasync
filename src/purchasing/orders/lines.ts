@@ -153,11 +153,18 @@ export async function newLine(tx: Db, productId: number) {
 			packSize: productSuppliers.packSize,
 			supplierCount: productSuppliers.supplierCount,
 			minimumQuantity: productSuppliers.minimumQuantity,
+			archivedAt: products.archivedAt,
 		})
 		.from(products)
 		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-		.where(eq(products.id, productId));
+		.where(eq(products.id, productId))
+		// Held until the line is in, so archiving waits (src/products/archive.ts).
+		.for("share", { of: products });
 	if (!product) throw new PurchaseOrderError("That product doesn't exist");
+	if (product.archivedAt)
+		throw new PurchaseOrderError(
+			`${product.sku} is archived; restore it to order it`,
+		);
 	const packSize = product.packSize ?? 1;
 	return {
 		kind: product.kind,

@@ -1,5 +1,5 @@
 {
-  "id": "913b1efd-8ff4-472e-8c17-bd89e92107d2",
+  "id": "08c6f0d4-5278-413a-8e21-d3d93f9ebb05",
   "prevId": "142d4303-ad01-45fb-a5de-28b4072ea36a",
   "version": "7",
   "dialect": "postgresql",
@@ -1797,13 +1797,6 @@
           "notNull": true,
           "default": false
         },
-        "sold_in_store": {
-          "name": "sold_in_store",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "financial_status": {
           "name": "financial_status",
           "type": "text",
@@ -2630,6 +2623,12 @@
         "close_at": {
           "name": "close_at",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -5438,8 +5437,7 @@
       "schema": "public",
       "values": [
         "owned",
-        "fba",
-        "retail"
+        "fba"
       ]
     },
     "public.movement_reason": {

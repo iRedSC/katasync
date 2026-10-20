@@ -17,6 +17,11 @@ import {
 	SetsChip,
 } from "#/components/product";
 import {
+	ArchiveButton,
+	ArchivedBadge,
+	RestoreButton,
+} from "#/components/product-page/archived";
+import {
 	AerosolToggle,
 	CriticalToggle,
 	InsureToggle,
@@ -29,7 +34,12 @@ import { TransferDialog } from "#/components/transfer-dialog";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { StockRange } from "#/inventory/stock-range";
-import { channelName, formatCount, formatMoney } from "#/lib/format";
+import {
+	channelName,
+	formatCount,
+	formatDate,
+	formatMoney,
+} from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimistic } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
@@ -164,15 +174,23 @@ function ProductPage() {
 					<span className="truncate">{p.name}</span>
 					{p.kind === "bundle" && <Badge tone="info">Tool set</Badge>}
 					{p.kind === "kit" && <Badge tone="info">Kit</Badge>}
+					{p.archivedAt && <ArchivedBadge />}
 				</span>
 			}
 			actions={
-				canCount && (
-					<Button onClick={() => setCounting(true)}>
-						Count shelf
-						<kbd className="text-xs opacity-60">C</kbd>
-					</Button>
-				)
+				<>
+					{p.archivedAt ? (
+						<RestoreButton productId={p.id} sku={p.sku} />
+					) : (
+						<ArchiveButton productId={p.id} sku={p.sku} />
+					)}
+					{canCount && (
+						<Button onClick={() => setCounting(true)}>
+							Count shelf
+							<kbd className="text-xs opacity-60">C</kbd>
+						</Button>
+					)}
+				</>
 			}
 		>
 			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -552,7 +570,18 @@ function Details({ d }: { d: ProductDetail }) {
 	if (type) rows.push(["Type", type]);
 	if (vendor) rows.push(["Vendor", vendor]);
 	if (tags.length > 0) rows.push(["Tags", tags.join(", ")]);
-	if (p.unitCost !== null) rows.push(["Cost", formatMoney(p.unitCost)]);
+	if (p.unitCost !== null)
+		rows.push([
+			"Cost",
+			<>
+				{formatMoney(p.unitCost)}
+				<span className="ml-2 text-muted-foreground">
+					{p.unitCostUpdatedAt
+						? `set ${formatDate(p.unitCostUpdatedAt)}`
+						: "date unknown"}
+				</span>
+			</>,
+		]);
 	if (p.barcode) rows.push(["Barcode", p.barcode]);
 	if (p.closeAt !== null)
 		rows.push([

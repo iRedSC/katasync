@@ -1,2 +1,0 @@
-ALTER TABLE "settings" ADD COLUMN "retail_reserve" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
-ALTER TABLE "settings" ADD CONSTRAINT "settings_retail_reserve" CHECK ("settings"."retail_reserve" >= 0);

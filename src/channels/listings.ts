@@ -2,6 +2,7 @@ import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, productAliases, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
+import { listingEnded } from "#/products/archive";
 import { awaitingProduct } from "./unmatched";
 
 export type ChannelListing = {
@@ -17,8 +18,9 @@ export type ChannelListing = {
 };
 
 // Records what a channel currently lists. Updates listing details but never
-// touches mappings, except to unmap a listing that became FBA while mapped to
-// a bundle: Amazon stocks physical units, so a virtual bundle can't back it.
+// touches mappings, except to unmap a listing whose SKU changed, or one that
+// became FBA while mapped to a bundle: Amazon stocks physical units, so a
+// virtual bundle can't back it.
 // Returns the IDs of listings unmapped that way so they can be flagged.
 export async function syncListings(
 	db: Db,
@@ -41,26 +43,15 @@ export async function syncListings(
 			);
 		}
 
-		await tx
-			.insert(listings)
-			.values(incoming.map((l) => ({ ...l, storeId })))
-			.onConflictDoUpdate({
-				target: [listings.storeId, listings.externalId],
-				set: {
-					externalSku: sql`excluded.external_sku`,
-					title: sql`excluded.title`,
-					fulfillment: sql`excluded.fulfillment`,
-					tags: sql`excluded.tags`,
-					productType: sql`excluded.product_type`,
-					vendor: sql`excluded.vendor`,
-					status: sql`excluded.status`,
-					updatedAt: sql`now()`,
-				},
-				// Every listing comes back on every pass and almost none changed;
-				// rewriting them all anyway was most of the database's writes.
-				setWhere: sql`(${listings.externalSku}, ${listings.title}, ${listings.fulfillment}, ${listings.tags}, ${listings.productType}, ${listings.vendor}, ${listings.status})
-					is distinct from (excluded.external_sku, excluded.title, excluded.fulfillment, excluded.tags, excluded.product_type, excluded.vendor, excluded.status)`,
-			});
+		// One insert can't touch a row twice, and a channel can report a
+		// listing twice (eBay, a SKU on two pages), so each counts once.
+		const unique = new Map<string, ChannelListing>();
+		for (const l of incoming)
+			if (!unique.has(l.externalId)) unique.set(l.externalId, l);
+		const rows = [...unique.values()];
+		// Batched: Postgres takes at most 65,535 parameters per query.
+		for (let i = 0; i < rows.length; i += INSERT_BATCH)
+			await upsertListings(tx, storeId, rows.slice(i, i + INSERT_BATCH));
 
 		const unmapped = await tx
 			.update(listings)
@@ -79,8 +70,86 @@ export async function syncListings(
 				),
 			)
 			.returning({ id: listings.id });
+		// A listing back on sale (republished, reactivated) whose product was
+		// archived meanwhile is unmatched, so it shows as needing a product.
+		await tx
+			.update(listings)
+			.set({ productId: null })
+			.where(
+				and(
+					eq(listings.storeId, storeId),
+					sql`not ${listingEnded}`,
+					inArray(
+						listings.productId,
+						tx
+							.select({ id: products.id })
+							.from(products)
+							.where(isNotNull(products.archivedAt)),
+					),
+				),
+			);
 		return { unmapped: unmapped.map((l) => l.id) };
 	});
+}
+
+// After a complete pass of a store's listings (every page read, none
+// failed), marks the ones it didn't report as gone from the channel. Only
+// rows that change are written. An empty pass marks nothing: a channel
+// answering with no listings at all is more likely broken than empty.
+export async function markGoneListings(
+	db: Db,
+	storeId: number,
+	reported: string[],
+): Promise<number> {
+	if (reported.length === 0) return 0;
+	const gone = await db
+		.update(listings)
+		.set({ goneAt: sql`now()` })
+		.where(
+			and(
+				eq(listings.storeId, storeId),
+				isNull(listings.goneAt),
+				sql`${listings.externalId} not in (select jsonb_array_elements_text(${JSON.stringify(reported)}::jsonb))`,
+			),
+		)
+		.returning({ id: listings.id });
+	return gone.length;
+}
+
+// Rows per listings insert, well under Postgres's parameter cap.
+const INSERT_BATCH = 1000;
+
+async function upsertListings(
+	tx: Db,
+	storeId: number,
+	batch: ChannelListing[],
+) {
+	await tx
+		.insert(listings)
+		.values(batch.map((l) => ({ ...l, storeId })))
+		.onConflictDoUpdate({
+			target: [listings.storeId, listings.externalId],
+			set: {
+				// A listing whose SKU changed on the channel may sell something
+				// else now, so it loses its product; matching runs again after.
+				productId: sql`case when nullif(trim(${listings.externalSku}), '') is distinct from nullif(trim(excluded.external_sku), '') then null else ${listings.productId} end`,
+				externalSku: sql`excluded.external_sku`,
+				title: sql`excluded.title`,
+				fulfillment: sql`excluded.fulfillment`,
+				tags: sql`excluded.tags`,
+				productType: sql`excluded.product_type`,
+				vendor: sql`excluded.vendor`,
+				status: sql`excluded.status`,
+				// Reported again, so it's back on the channel.
+				goneAt: null,
+				updatedAt: sql`now()`,
+			},
+			// Every listing comes back on every pass and almost none changed;
+			// rewriting them all anyway was most of the database's writes.
+			setWhere: sql`(${listings.externalSku}, ${listings.title}, ${listings.fulfillment}, ${listings.tags}, ${listings.productType}, ${listings.vendor}, ${listings.status})
+				is distinct from (excluded.external_sku, excluded.title, excluded.fulfillment, excluded.tags, excluded.product_type, excluded.vendor, excluded.status)
+				or ${listings.goneAt} is not null`,
+		});
 }
 
 // Gives products without a photo the one their listing shows on the
@@ -125,11 +194,17 @@ export async function mapListing(
 			.where(eq(listings.id, listingId));
 		if (!listing) throw new LedgerError(`Unknown listing ${listingId}`);
 		if (productId !== null) {
+			// Share-locked so the product can't be archived mid-match.
 			const [sku] = await tx
 				.select()
 				.from(products)
-				.where(eq(products.id, productId));
+				.where(eq(products.id, productId))
+				.for("share");
 			if (!sku) throw new LedgerError(`Unknown product ${productId}`);
+			if (sku.archivedAt)
+				throw new LedgerError(
+					`${sku.sku} is archived; restore it before matching listings to it`,
+				);
 			if (listing.fulfillment === "fba" && sku.kind === "bundle") {
 				throw new LedgerError(
 					`FBA listing ${listing.externalId} can't sell bundle ${sku.sku}; Amazon needs physical units`,
@@ -145,10 +220,15 @@ export async function mapListing(
 
 // Maps every unmapped listing to the product its channel SKU names: an exact
 // SKU or alias first, then the same SKU in different capitals ("tt-052576" for
-// "TT-052576") when exactly one product matches. Returns the listings mapped.
-// Anything else is left for a person.
+// "TT-052576") when exactly one product matches, archived or not. Archived
+// products are never the match. Returns the listings mapped. Anything else is
+// left for a person.
 export async function autoMapListings(db: Db): Promise<number[]> {
-	const notFbaBundle = sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`;
+	// Archived products never take a listing on their own.
+	const notFbaBundle = and(
+		sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`,
+		isNull(products.archivedAt),
+	);
 	return db.transaction(async (tx) => {
 		const bySku = await tx
 			.update(listings)
@@ -264,9 +344,13 @@ export async function createProductNamed(
 	{ sku, name }: { sku: string; name: string },
 ) {
 	const [taken] = await db
-		.select({ sku: products.sku })
+		.select({ sku: products.sku, archivedAt: products.archivedAt })
 		.from(products)
 		.where(sql`lower(${products.sku}) = lower(${sku})`);
+	if (taken?.archivedAt)
+		throw new LedgerError(
+			`${taken.sku} is archived; restore it to sell it again, or change the listing's SKU on the channel`,
+		);
 	if (taken) {
 		throw new LedgerError(
 			`${taken.sku} already exists; match the listing to it instead`,

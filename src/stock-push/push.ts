@@ -169,6 +169,8 @@ const pushable = (store: typeof stores.$inferSelect, only?: number[]) =>
 		// A deleted listing (TikTok keeps reporting them) sells nothing,
 		// and the channel refuses its stock.
 		sql`coalesce(${listings.status}, '') <> 'DELETED'`,
+		// Nor one gone from the channel's listings.
+		isNull(listings.goneAt),
 		only ? inArray(listings.productId, only) : undefined,
 	);
 

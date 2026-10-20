@@ -9,6 +9,7 @@ import {
 	purchaseOrders,
 	suppliers,
 } from "#/db/schema";
+import { carried } from "#/products/archive";
 import {
 	addDraftLine,
 	addLine,
@@ -67,12 +68,15 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 				),
 			)
 			.where(
-				or(
-					sql`${products.sku} ilike ${like}`,
-					sql`${products.name} ilike ${like}`,
-					sql`${products.variantName} ilike ${like}`,
-					sql`${products.barcode} ilike ${like}`,
-					sql`${productSuppliers.supplierSku} ilike ${like}`,
+				and(
+					carried,
+					or(
+						sql`${products.sku} ilike ${like}`,
+						sql`${products.name} ilike ${like}`,
+						sql`${products.variantName} ilike ${like}`,
+						sql`${products.barcode} ilike ${like}`,
+						sql`${productSuppliers.supplierSku} ilike ${like}`,
+					),
 				),
 			)
 			.orderBy(

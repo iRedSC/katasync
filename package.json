@@ -23,6 +23,7 @@
     "import:sumtracker": "tsx scripts/import-sumtracker.ts",
     "import:refresh": "tsx scripts/refresh-sumtracker.ts",
     "import:suppliers": "tsx scripts/import-suppliers.ts",
+    "import:costs": "tsx scripts/import-costs.ts",
     "sync": "tsx scripts/sync.ts",
     "stock-push:preview": "tsx scripts/stock-push-preview.ts",
     "stock:pull": "tsx scripts/stock-pull.ts",

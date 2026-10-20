@@ -2,6 +2,7 @@ import { type } from "arktype";
 import {
 	cleanTitle,
 	fillProductImages,
+	markGoneListings,
 	matchListings,
 	syncListings,
 } from "#/channels/listings";
@@ -88,6 +89,7 @@ export async function syncShopify(
 	let variants = 0;
 	// The variant's own photo, else its product's main one.
 	const images: { externalId: string; imageUrl: string }[] = [];
+	const reported: string[] = [];
 	if (options.listings)
 		do {
 			const page = variantsPage.assert(
@@ -96,6 +98,7 @@ export async function syncShopify(
 			const nodes = page.productVariants.nodes;
 			variants += nodes.length;
 			for (const v of nodes) {
+				reported.push(v.id);
 				const url = v.image?.url ?? v.product.featuredMedia?.preview.image?.url;
 				if (url) images.push({ externalId: v.id, imageUrl: url });
 			}
@@ -117,7 +120,10 @@ export async function syncShopify(
 				? (page.productVariants.pageInfo.endCursor ?? null)
 				: null;
 		} while (cursor);
-	if (options.listings) await syncShipFrom(db);
+	if (options.listings) {
+		await markGoneListings(db, store.id, reported);
+		await syncShipFrom(db);
+	}
 	const stock = await stockLocations(db);
 	const matched = options.listings
 		? await matchListings(db)

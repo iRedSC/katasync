@@ -17,6 +17,7 @@ import { getAvailability } from "#/inventory/availability";
 import { isOurs } from "#/inventory/locations";
 import { onlineStock } from "#/inventory/online-stock";
 import { stockRanges } from "#/inventory/stock-range";
+import { carriedOrStocked } from "#/products/archive";
 import {
 	draftLines,
 	loadPlan,
@@ -42,6 +43,8 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				category: products.category,
 				imageUrl: products.imageUrl,
 				unitCost: products.unitCost,
+				// Shown only while some is still on our shelves.
+				archived: sql<boolean>`${products.archivedAt} is not null`,
 				// Sells without limit until its first count; for a tool set, when
 				// any part does (src/inventory/not-counted.ts).
 				notCounted: sql<boolean>`${products.notCountedSince} is not null`,
@@ -53,6 +56,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			.leftJoin(productGroups, eq(productGroups.id, products.groupId))
 			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
 			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+			.where(carriedOrStocked)
 			.orderBy(products.name, products.variantName);
 		const ranked = abcClasses(db);
 		const plan = loadPlan(db, new Date(), ranked);

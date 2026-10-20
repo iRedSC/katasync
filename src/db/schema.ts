@@ -87,6 +87,11 @@ export const products = pgTable(
 		barcode: text().unique(),
 		// USD per unit, for PO totals and stock value.
 		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
+		// When the cost was last set, to tell when it may have gone stale. A
+		// trigger (drizzle/0077) sets it whenever the cost changes and clears it
+		// with the cost; receiving a PO and editing the cost set it even when the
+		// number stays the same. Null on a cost from before it was tracked.
+		unitCostUpdatedAt: timestamp({ withTimezone: true }),
 		// Shipped weight and box size, for buying labels.
 		weightGrams: integer(),
 		// Always offer insurance when this ships, whatever the order's value.
@@ -113,6 +118,10 @@ export const products = pgTable(
 		// Stock push shows 0 on every channel once this few or fewer can be
 		// sold, so the last units aren't sold out from under a miscount.
 		closeAt: integer(),
+		// Set when it's no longer carried: left out of lists, pickers,
+		// reordering, counting, and listing matching, its history kept. Only an
+		// inert product is archived (src/products/archive.ts).
+		archivedAt: timestamp({ withTimezone: true }),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
@@ -129,6 +138,10 @@ export const products = pgTable(
 		check(
 			"products_variant_needs_group",
 			sql`${t.variantName} is null or ${t.groupId} is not null`,
+		),
+		check(
+			"products_cost_date_needs_cost",
+			sql`${t.unitCostUpdatedAt} is null or ${t.unitCost} is not null`,
 		),
 		check(
 			"products_stock_range",
@@ -463,6 +476,10 @@ export const listings = pgTable(
 		// Null until someone maps it.
 		productId: integer().references(() => products.id),
 		stockPush: jsonb().$type<ListingStockPush>(),
+		// When a full pass of the channel's listings first left it out: it's
+		// gone from the channel. Cleared if it comes back. Set only by
+		// markGoneListings in src/channels/listings.ts.
+		goneAt: timestamp({ withTimezone: true }),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

@@ -103,18 +103,17 @@ export function AerosolToggle({
 		});
 	}
 	return (
-		<label
-			className="flex cursor-pointer items-center gap-2"
-			title="Quick ship marks its boxes hazmat: ground services only, Limited Quantity mark printed"
-		>
-			<input
-				type="checkbox"
-				checked={aerosol}
-				onChange={(e) => set(e.target.checked)}
-				className="size-4 accent-primary"
-			/>
-			Aerosol (hazmat)
-		</label>
+		<Tip content="Quick ship marks its boxes hazmat: ground services only, Limited Quantity mark printed">
+			<label className="flex cursor-pointer items-center gap-2">
+				<input
+					type="checkbox"
+					checked={aerosol}
+					onChange={(e) => set(e.target.checked)}
+					className="size-4 accent-primary"
+				/>
+				Aerosol (hazmat)
+			</label>
+		</Tip>
 	);
 }
 

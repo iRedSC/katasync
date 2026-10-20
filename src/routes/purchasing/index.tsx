@@ -489,10 +489,11 @@ function OrderMenu({ order: o }: { order: OrderRow }) {
 			}),
 		);
 		if (!r) return;
-		const { id, added, alreadyOn, moved } = r.value;
+		const { id, added, alreadyOn, moved, archived } = r.value;
 		const left = [
 			alreadyOn > 0 && `${formatCount(alreadyOn)} already on it`,
 			moved > 0 && `${formatCount(moved)} now bought from another supplier`,
+			archived > 0 && `${formatCount(archived)} archived`,
 		].filter(Boolean);
 		toast.success(
 			`Added ${formatCount(added)} ${added === 1 ? "product" : "products"} from ${name} to PO ${id}`,
