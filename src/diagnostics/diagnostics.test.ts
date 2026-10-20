@@ -14,7 +14,12 @@ import {
 	workerAlive,
 } from "./health";
 import { diagnosticsAttention, diagnosticsOverview } from "./overview";
-import { MAX_ISSUES_PER_RUN, recordSyncRun, splitProblem } from "./runs";
+import {
+	errorText,
+	MAX_ISSUES_PER_RUN,
+	recordSyncRun,
+	splitProblem,
+} from "./runs";
 
 const now = new Date("2026-10-10T12:00:00Z");
 const minutesAgo = (n: number) => new Date(now.getTime() - n * 60_000);
@@ -362,4 +367,14 @@ test("a dismissed sync issue shows again on a new order", async () => {
 			["no product for KNIFE", 1, false],
 		]),
 	);
+});
+
+describe("errorText", () => {
+	test("puts the cause first, so a long query can't cut it off", () => {
+		const cause = new Error("duplicate key value violates unique constraint");
+		const error = new Error(`Failed query: ${"x".repeat(5000)}`, { cause });
+		const text = errorText(error);
+		expect(text.startsWith(cause.message)).toBe(true);
+		expect(text.length).toBeLessThanOrEqual(2001);
+	});
 });

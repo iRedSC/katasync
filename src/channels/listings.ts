@@ -41,26 +41,15 @@ export async function syncListings(
 			);
 		}
 
-		await tx
-			.insert(listings)
-			.values(incoming.map((l) => ({ ...l, storeId })))
-			.onConflictDoUpdate({
-				target: [listings.storeId, listings.externalId],
-				set: {
-					externalSku: sql`excluded.external_sku`,
-					title: sql`excluded.title`,
-					fulfillment: sql`excluded.fulfillment`,
-					tags: sql`excluded.tags`,
-					productType: sql`excluded.product_type`,
-					vendor: sql`excluded.vendor`,
-					status: sql`excluded.status`,
-					updatedAt: sql`now()`,
-				},
-				// Every listing comes back on every pass and almost none changed;
-				// rewriting them all anyway was most of the database's writes.
-				setWhere: sql`(${listings.externalSku}, ${listings.title}, ${listings.fulfillment}, ${listings.tags}, ${listings.productType}, ${listings.vendor}, ${listings.status})
-					is distinct from (excluded.external_sku, excluded.title, excluded.fulfillment, excluded.tags, excluded.product_type, excluded.vendor, excluded.status)`,
-			});
+		// One insert can't touch a row twice, and a channel can report a
+		// listing twice (eBay, a SKU on two pages), so each counts once.
+		const unique = new Map<string, ChannelListing>();
+		for (const l of incoming)
+			if (!unique.has(l.externalId)) unique.set(l.externalId, l);
+		const rows = [...unique.values()];
+		// Batched: Postgres takes at most 65,535 parameters per query.
+		for (let i = 0; i < rows.length; i += INSERT_BATCH)
+			await upsertListings(tx, storeId, rows.slice(i, i + INSERT_BATCH));
 
 		const unmapped = await tx
 			.update(listings)
@@ -81,6 +70,36 @@ export async function syncListings(
 			.returning({ id: listings.id });
 		return { unmapped: unmapped.map((l) => l.id) };
 	});
+}
+
+// Rows per listings insert, well under Postgres's parameter cap.
+const INSERT_BATCH = 1000;
+
+async function upsertListings(
+	tx: Db,
+	storeId: number,
+	batch: ChannelListing[],
+) {
+	await tx
+		.insert(listings)
+		.values(batch.map((l) => ({ ...l, storeId })))
+		.onConflictDoUpdate({
+			target: [listings.storeId, listings.externalId],
+			set: {
+				externalSku: sql`excluded.external_sku`,
+				title: sql`excluded.title`,
+				fulfillment: sql`excluded.fulfillment`,
+				tags: sql`excluded.tags`,
+				productType: sql`excluded.product_type`,
+				vendor: sql`excluded.vendor`,
+				status: sql`excluded.status`,
+				updatedAt: sql`now()`,
+			},
+			// Every listing comes back on every pass and almost none changed;
+			// rewriting them all anyway was most of the database's writes.
+			setWhere: sql`(${listings.externalSku}, ${listings.title}, ${listings.fulfillment}, ${listings.tags}, ${listings.productType}, ${listings.vendor}, ${listings.status})
+				is distinct from (excluded.external_sku, excluded.title, excluded.fulfillment, excluded.tags, excluded.product_type, excluded.vendor, excluded.status)`,
+		});
 }
 
 // Gives products without a photo the one their listing shows on the

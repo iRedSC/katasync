@@ -66,6 +66,21 @@ describe("syncListings", () => {
 		expect(changed.updatedAt).not.toEqual(old);
 	});
 
+	test("takes a listing reported twice, and more than one insert holds", async () => {
+		const many = Array.from({ length: 2500 }, (_, i) => listing(`L${i}`));
+		await syncListings(db, shopify, [
+			listing("DUP", { title: "First" }),
+			...many,
+			listing("DUP", { title: "Second" }),
+		]);
+		expect((await getListing(shopify, "DUP")).title).toBe("First");
+		const rows = await db
+			.select()
+			.from(schema.listings)
+			.where(eq(schema.listings.storeId, shopify));
+		expect(rows).toHaveLength(2501);
+	});
+
 	test("updates details on resync without losing the mapping", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await syncListings(db, shopify, [listing("111", { title: "Old title" })]);

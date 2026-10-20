@@ -424,6 +424,7 @@ describe("stockPushStatus", () => {
 		on: true,
 		pushedAt: null,
 		error: null,
+		listed: 12,
 		mapped: 10,
 		ready: 8,
 		failing: 0,
@@ -438,6 +439,7 @@ describe("stockPushStatus", () => {
 		expect(stockPushStatus({ ...row, error: "denied" }, live).kind).toBe(
 			"stopped",
 		);
+		expect(stockPushStatus({ ...row, listed: 0 }, live).kind).toBe("unlisted");
 		expect(stockPushStatus(row, { ...live, writes: false }).kind).toBe(
 			"preview",
 		);

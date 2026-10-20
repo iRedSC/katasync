@@ -30,9 +30,18 @@ export function splitProblem(problem: string): {
 }
 
 // The useful part of an error: its message, without stack frames, capped.
+// Causes come first: drizzle's message is the whole failed query, and the
+// reason Postgres refused it is only in its cause, which the cap would cut.
 export function errorText(error: unknown) {
-	const raw = error instanceof Error ? error.message : String(error);
-	const text = raw
+	const messages: string[] = [];
+	for (
+		let e: unknown = error, depth = 0;
+		e !== undefined && e !== null && depth < 5;
+		e = e instanceof Error ? e.cause : undefined, depth++
+	)
+		messages.unshift(e instanceof Error ? e.message : String(e));
+	const text = messages
+		.join("\n")
 		.split("\n")
 		.filter((line) => !/^\s+at\s/.test(line))
 		.join("\n")

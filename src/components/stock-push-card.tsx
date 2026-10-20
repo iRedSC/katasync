@@ -111,6 +111,8 @@ function StatusBadge({ status }: { status: StockPushStatus }) {
 		case "blocked":
 		case "stopped":
 			return <Badge tone="critical">Stopped</Badge>;
+		case "unlisted":
+			return <Badge tone="warning">No listings</Badge>;
 		case "preview":
 			return <Badge tone="info">Preview only</Badge>;
 		case "starting":
@@ -132,6 +134,17 @@ function StatusDetail({ status }: { status: StockPushStatus }) {
 		case "blocked":
 		case "stopped":
 			return <span className="text-xs text-critical-text">{status.why}</span>;
+		case "unlisted":
+			return (
+				<span className={text}>
+					katasync has none of this store's listings yet, so there's nothing to
+					set. Its listings sync is failing or hasn't run (
+					<Link to="/diagnostics" className="underline">
+						see Diagnostics
+					</Link>
+					).
+				</span>
+			);
 		case "preview":
 			return (
 				<span className={text}>
