@@ -1,5 +1,5 @@
 {
-  "id": "63cb5205-4576-4af9-8717-d482c2f82318",
+  "id": "dae5e12b-4d40-4d9c-b979-c06f93622d07",
   "prevId": "08c6f0d4-5278-413a-8e21-d3d93f9ebb05",
   "version": "7",
   "dialect": "postgresql",
@@ -527,12 +527,6 @@
         "stock_push": {
           "name": "stock_push",
           "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "gone_at": {
-          "name": "gone_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -2563,6 +2557,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "unit_cost_updated_at": {
+          "name": "unit_cost_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "weight_grams": {
           "name": "weight_grams",
           "type": "integer",
@@ -2723,6 +2723,10 @@
         "products_variant_needs_group": {
           "name": "products_variant_needs_group",
           "value": "\"products\".\"variant_name\" is null or \"products\".\"group_id\" is not null"
+        },
+        "products_cost_date_needs_cost": {
+          "name": "products_cost_date_needs_cost",
+          "value": "\"products\".\"unit_cost_updated_at\" is null or \"products\".\"unit_cost\" is not null"
         },
         "products_stock_range": {
           "name": "products_stock_range",

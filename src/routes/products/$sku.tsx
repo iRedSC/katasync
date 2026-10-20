@@ -32,7 +32,12 @@ import { SupplierCard } from "#/components/supplier-card";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { StockRange } from "#/inventory/stock-range";
-import { channelName, formatCount, formatMoney } from "#/lib/format";
+import {
+	channelName,
+	formatCount,
+	formatDate,
+	formatMoney,
+} from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimistic } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
@@ -544,7 +549,18 @@ function Details({ d }: { d: ProductDetail }) {
 	if (type) rows.push(["Type", type]);
 	if (vendor) rows.push(["Vendor", vendor]);
 	if (tags.length > 0) rows.push(["Tags", tags.join(", ")]);
-	if (p.unitCost !== null) rows.push(["Cost", formatMoney(p.unitCost)]);
+	if (p.unitCost !== null)
+		rows.push([
+			"Cost",
+			<>
+				{formatMoney(p.unitCost)}
+				<span className="ml-2 text-muted-foreground">
+					{p.unitCostUpdatedAt
+						? `set ${formatDate(p.unitCostUpdatedAt)}`
+						: "date unknown"}
+				</span>
+			</>,
+		]);
 	if (p.barcode) rows.push(["Barcode", p.barcode]);
 	if (p.closeAt !== null)
 		rows.push([
