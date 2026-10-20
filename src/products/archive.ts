@@ -40,9 +40,9 @@ export const carried = isNull(products.archivedAt);
 // never out of sight. Reordering doesn't.
 export const carriedOrStocked = sql`(${carried} or exists (select 1 from ${stockLevels} join ${locations} on ${locations.id} = ${stockLevels.locationId} where ${stockLevels.productId} = ${products.id} and ${locations.kind} = 'owned' and ${stockLevels.onHand} <> 0))`;
 
-// A listing its channel can't sell: deleted (TikTok), archived (Shopify), or
-// inactive (Amazon). eBay only reports live listings, so those always sell.
-export const listingEnded = sql`upper(coalesce(${listings.status}, '')) in ('DELETED', 'ARCHIVED', 'INACTIVE')`;
+// A listing its channel can't sell: deleted (TikTok), archived (Shopify),
+// inactive (Amazon), or gone from the channel's listings altogether.
+export const listingEnded = sql`(upper(coalesce(${listings.status}, '')) in ('DELETED', 'ARCHIVED', 'INACTIVE') or ${listings.goneAt} is not null)`;
 
 async function productNamed(tx: Db, sku: string) {
 	const [product] = await tx

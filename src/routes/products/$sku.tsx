@@ -17,6 +17,7 @@ import {
 	SetsChip,
 } from "#/components/product";
 import {
+	ArchiveButton,
 	ArchivedBadge,
 	RestoreButton,
 } from "#/components/product-page/archived";
@@ -141,7 +142,11 @@ function ProductPage() {
 			}
 			actions={
 				<>
-					{p.archivedAt && <RestoreButton productId={p.id} sku={p.sku} />}
+					{p.archivedAt ? (
+						<RestoreButton productId={p.id} sku={p.sku} />
+					) : (
+						<ArchiveButton productId={p.id} sku={p.sku} />
+					)}
 					{canCount && (
 						<Button onClick={() => setCounting(true)}>
 							Count shelf
