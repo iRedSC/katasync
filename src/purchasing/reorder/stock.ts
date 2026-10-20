@@ -12,6 +12,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { setsSoldSince } from "#/inventory/sales";
+import { carried } from "#/products/archive";
 import { DEMAND_DAYS, type LeadTime } from "#/purchasing/forecast";
 import {
 	type SetMembership,
@@ -35,7 +36,7 @@ export async function setRecipes(db: Db): Promise<SetRecipeRow[]> {
 		})
 		.from(productComponents)
 		.innerJoin(products, eq(products.id, productComponents.parentProductId))
-		.where(eq(products.kind, "bundle"));
+		.where(and(eq(products.kind, "bundle"), carried));
 	return rows.map(({ setId, productId, perSet, ...set }) => ({
 		setId,
 		productId,

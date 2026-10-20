@@ -8,6 +8,7 @@ import {
 	products,
 } from "#/db/schema";
 import { soldSince } from "#/inventory/sales";
+import { carried } from "#/products/archive";
 
 // ABC analysis: which products earn the most. Value is margin over ABC_DAYS:
 // what they sold for less what they cost. A stockout costs the sale, so the
@@ -96,7 +97,7 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 			.select({ id: products.id, cost: unitCost })
 			.from(products)
 			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-			.where(ne(products.kind, "bundle")),
+			.where(and(ne(products.kind, "bundle"), carried)),
 		db.select({ at: sql<string | null>`min(${orders.placedAt})` }).from(orders),
 		// What each product sold for and how many, sets as sets, counted the
 		// way soldSince counts with FBA.

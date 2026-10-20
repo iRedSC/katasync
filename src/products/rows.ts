@@ -36,13 +36,15 @@ export function stateOf(p: ProductRow, now: Date): StockState {
 }
 
 // What the search language can filter each product on. Status covers
-// Shopify's (active, draft, archived), the stock level unless healthy, and
-// whether it's a tool set or kit.
+// Shopify's (active, draft, archived), archived here too (listed only while
+// some is on hand), the stock level unless healthy, and whether it's a tool
+// set or kit.
 export function facetsOf(p: ProductRow, state: StockState): Facets {
 	const title = p.variantName ? `${p.name} ${p.variantName}` : p.name;
 	const status = p.status ? [p.status.toLowerCase()] : [];
 	if (state.level !== "healthy") status.push(state.level);
 	if (p.kind === "bundle") status.push("tool set");
+	if (p.archived) status.push("archived");
 	if (p.kind === "kit") status.push("kit");
 	if (p.reorder) status.push("needs ordering");
 	if (p.draft) status.push("on a draft");

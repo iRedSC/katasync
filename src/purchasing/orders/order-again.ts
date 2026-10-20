@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { productSuppliers, purchaseOrderLines } from "#/db/schema";
+import { productSuppliers, products, purchaseOrderLines } from "#/db/schema";
 import { openDraft } from "./drafts";
 import { lockOrder, PurchaseOrderError, poName } from "./lock";
 import { addItems } from "./set-parts";
@@ -10,6 +10,7 @@ import { addItems } from "./set-parts";
 // in at today's terms and price, rounded up to whole units. Products already
 // on the draft keep their line, and products that have since moved to another
 // supplier are left off, so nothing is ordered twice or from the wrong place.
+// Archived products are left off too.
 export async function orderAgain(db: Db, sourceId: number) {
 	const reorderable = async (tx: Db) => {
 		const from = await lockOrder(tx, sourceId, ["closed", "cancelled"]);
@@ -18,8 +19,10 @@ export async function orderAgain(db: Db, sourceId: number) {
 				productId: purchaseOrderLines.productId,
 				items: sql<number>`(coalesce(${purchaseOrderLines.sentQuantity}, ${purchaseOrderLines.quantity}) * ${purchaseOrderLines.packSize})::int`,
 				supplierId: productSuppliers.supplierId,
+				archived: sql<boolean>`${products.archivedAt} is not null`,
 			})
 			.from(purchaseOrderLines)
+			.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
 			.leftJoin(
 				productSuppliers,
 				eq(productSuppliers.productId, purchaseOrderLines.productId),
@@ -31,7 +34,11 @@ export async function orderAgain(db: Db, sourceId: number) {
 	// Checked before opening the draft, so a PO with nothing left to order
 	// doesn't leave an empty draft behind.
 	const first = await db.transaction(reorderable);
-	if (!first.lines.some((l) => l.supplierId === first.from.supplierId))
+	if (
+		!first.lines.some(
+			(l) => l.supplierId === first.from.supplierId && !l.archived,
+		)
+	)
 		throw new PurchaseOrderError(
 			`Nothing on ${poName(sourceId)} is still bought from this supplier`,
 		);
@@ -50,8 +57,10 @@ export async function orderAgain(db: Db, sourceId: number) {
 		let added = 0;
 		let alreadyOn = 0;
 		let moved = 0;
+		let archived = 0;
 		for (const l of lines) {
-			if (l.supplierId !== from.supplierId) moved++;
+			if (l.archived) archived++;
+			else if (l.supplierId !== from.supplierId) moved++;
 			else if (onDraft.has(l.productId)) alreadyOn++;
 			else {
 				await addItems(tx, draftId, l.productId, l.items);
@@ -59,6 +68,6 @@ export async function orderAgain(db: Db, sourceId: number) {
 				added++;
 			}
 		}
-		return { id: draftId, added, alreadyOn, moved };
+		return { id: draftId, added, alreadyOn, moved, archived };
 	});
 }

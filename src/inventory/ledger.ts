@@ -9,6 +9,7 @@ import {
 	stockCounts,
 	stockLevels,
 } from "#/db/schema";
+import { carriedOrStocked } from "#/products/archive";
 
 export class LedgerError extends Error {
 	name = "LedgerError";
@@ -345,6 +346,16 @@ export async function requestCounts(
 	if (bundles.length > 0)
 		throw new LedgerError(
 			`Tool sets can't be counted; ask for their parts: ${bundles.map((b) => b.sku).join(", ")}`,
+		);
+	const archived = await db
+		.select({ sku: products.sku })
+		.from(products)
+		.where(
+			and(inArray(products.id, input.productIds), sql`not ${carriedOrStocked}`),
+		);
+	if (archived.length > 0)
+		throw new LedgerError(
+			`Archived with none on hand, so not on the count list; restore them first: ${archived.map((b) => b.sku).join(", ")}`,
 		);
 	return db
 		.insert(stockLevels)

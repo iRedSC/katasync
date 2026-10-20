@@ -9,6 +9,7 @@ import {
 	setDefaultMinStock,
 	setProductStockRange,
 } from "#/inventory/stock-range";
+import { restoreProduct } from "#/products/archive";
 
 // Quick ship asks about insurance for any order holding this product.
 export const setInsureWhenShipped = createServerFn({ method: "POST" })
@@ -69,3 +70,8 @@ export const saveProductStockRange = createServerFn({ method: "POST" })
 	.handler(async ({ data }) =>
 		setProductStockRange(getDb(), data.productId, data.range),
 	);
+
+// Carried again after being archived (over MCP).
+export const restoreArchivedProduct = createServerFn({ method: "POST" })
+	.validator(type({ sku: "string > 0" }))
+	.handler(async ({ data }) => restoreProduct(getDb(), data.sku));

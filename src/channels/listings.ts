@@ -2,6 +2,7 @@ import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, productAliases, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
+import { listingEnded } from "#/products/archive";
 import { awaitingProduct } from "./unmatched";
 
 export type ChannelListing = {
@@ -17,8 +18,9 @@ export type ChannelListing = {
 };
 
 // Records what a channel currently lists. Updates listing details but never
-// touches mappings, except to unmap a listing that became FBA while mapped to
-// a bundle: Amazon stocks physical units, so a virtual bundle can't back it.
+// touches mappings, except to unmap a listing whose SKU changed, or one that
+// became FBA while mapped to a bundle: Amazon stocks physical units, so a
+// virtual bundle can't back it.
 // Returns the IDs of listings unmapped that way so they can be flagged.
 export async function syncListings(
 	db: Db,
@@ -68,6 +70,24 @@ export async function syncListings(
 				),
 			)
 			.returning({ id: listings.id });
+		// A listing back on sale (republished, reactivated) whose product was
+		// archived meanwhile is unmatched, so it shows as needing a product.
+		await tx
+			.update(listings)
+			.set({ productId: null })
+			.where(
+				and(
+					eq(listings.storeId, storeId),
+					sql`not ${listingEnded}`,
+					inArray(
+						listings.productId,
+						tx
+							.select({ id: products.id })
+							.from(products)
+							.where(isNotNull(products.archivedAt)),
+					),
+				),
+			);
 		return { unmapped: unmapped.map((l) => l.id) };
 	});
 }
@@ -86,6 +106,9 @@ async function upsertListings(
 		.onConflictDoUpdate({
 			target: [listings.storeId, listings.externalId],
 			set: {
+				// A listing whose SKU changed on the channel may sell something
+				// else now, so it loses its product; matching runs again after.
+				productId: sql`case when nullif(trim(${listings.externalSku}), '') is distinct from nullif(trim(excluded.external_sku), '') then null else ${listings.productId} end`,
 				externalSku: sql`excluded.external_sku`,
 				title: sql`excluded.title`,
 				fulfillment: sql`excluded.fulfillment`,
@@ -144,11 +167,17 @@ export async function mapListing(
 			.where(eq(listings.id, listingId));
 		if (!listing) throw new LedgerError(`Unknown listing ${listingId}`);
 		if (productId !== null) {
+			// Share-locked so the product can't be archived mid-match.
 			const [sku] = await tx
 				.select()
 				.from(products)
-				.where(eq(products.id, productId));
+				.where(eq(products.id, productId))
+				.for("share");
 			if (!sku) throw new LedgerError(`Unknown product ${productId}`);
+			if (sku.archivedAt)
+				throw new LedgerError(
+					`${sku.sku} is archived; restore it before matching listings to it`,
+				);
 			if (listing.fulfillment === "fba" && sku.kind === "bundle") {
 				throw new LedgerError(
 					`FBA listing ${listing.externalId} can't sell bundle ${sku.sku}; Amazon needs physical units`,
@@ -164,10 +193,15 @@ export async function mapListing(
 
 // Maps every unmapped listing to the product its channel SKU names: an exact
 // SKU or alias first, then the same SKU in different capitals ("tt-052576" for
-// "TT-052576") when exactly one product matches. Returns the listings mapped.
-// Anything else is left for a person.
+// "TT-052576") when exactly one product matches, archived or not. Archived
+// products are never the match. Returns the listings mapped. Anything else is
+// left for a person.
 export async function autoMapListings(db: Db): Promise<number[]> {
-	const notFbaBundle = sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`;
+	// Archived products never take a listing on their own.
+	const notFbaBundle = and(
+		sql`not (${listings.fulfillment} = 'fba' and ${products.kind} = 'bundle')`,
+		isNull(products.archivedAt),
+	);
 	return db.transaction(async (tx) => {
 		const bySku = await tx
 			.update(listings)
@@ -283,9 +317,13 @@ export async function createProductNamed(
 	{ sku, name }: { sku: string; name: string },
 ) {
 	const [taken] = await db
-		.select({ sku: products.sku })
+		.select({ sku: products.sku, archivedAt: products.archivedAt })
 		.from(products)
 		.where(sql`lower(${products.sku}) = lower(${sku})`);
+	if (taken?.archivedAt)
+		throw new LedgerError(
+			`${taken.sku} is archived; restore it to sell it again, or change the listing's SKU on the channel`,
+		);
 	if (taken) {
 		throw new LedgerError(
 			`${taken.sku} already exists; match the listing to it instead`,

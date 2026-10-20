@@ -3,6 +3,11 @@ import { z } from "zod";
 import type { Db } from "#/db/client";
 import { assembleKits, disassembleKits } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
+import {
+	archiveProduct,
+	deleteProduct,
+	restoreProduct,
+} from "#/products/archive";
 import { updateProductDetails } from "#/products/details";
 import { ownedLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
@@ -80,6 +85,38 @@ export function registerProductTools(server: McpServer, db: Db) {
 			await setRecipe(db, parent.id, parts);
 			return json({ sku, components });
 		},
+	);
+
+	server.registerTool(
+		"archive_product",
+		{
+			description:
+				"Archives a product no longer carried: it leaves product lists, pickers, reordering, counting, and listing matching, and its history stays. Refused, saying what to settle first, while a live listing sells it, any is on our shelves, an active kit or tool set holds it, or an open PO has it. restore_product undoes it.",
+			inputSchema: { sku: z.string() },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku }) => json(await archiveProduct(db, sku)),
+	);
+
+	server.registerTool(
+		"restore_product",
+		{
+			description: "Carries an archived product again.",
+			inputSchema: { sku: z.string() },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku }) => json(await restoreProduct(db, sku)),
+	);
+
+	server.registerTool(
+		"delete_product",
+		{
+			description:
+				"Deletes a product that has no history (e.g. made by mistake), with its parts list, aliases, and supplier terms. Can't be undone. Refused, saying why, when it ever sold, moved stock, was counted, was on a PO, is a part of a kit or tool set, or listings sell it: archive it instead. Ask the user first.",
+			inputSchema: { sku: z.string() },
+			annotations: { ...WRITE, destructiveHint: true },
+		},
+		async ({ sku }) => json(await deleteProduct(db, sku)),
 	);
 
 	for (const [name, direction] of [

@@ -93,6 +93,18 @@ describe("syncListings", () => {
 		expect(after.productId).toBe(wrench);
 	});
 
+	test("unmaps a listing whose SKU changed on the channel", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await syncListings(db, shopify, [listing("111", { externalSku: "A" })]);
+		const { id } = await getListing(shopify, "111");
+		await mapListing(db, id, wrench);
+
+		await syncListings(db, shopify, [listing("111", { externalSku: "A" })]);
+		expect((await getListing(shopify, "111")).productId).toBe(wrench);
+		await syncListings(db, shopify, [listing("111", { externalSku: "B" })]);
+		expect((await getListing(shopify, "111")).productId).toBeNull();
+	});
+
 	test("only Amazon listings can be FBA", async () => {
 		await expect(
 			syncListings(db, shopify, [listing("111", { fulfillment: "fba" })]),
