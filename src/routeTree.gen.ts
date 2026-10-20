@@ -47,6 +47,7 @@ import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id
 import { Route as PurchasingSuggestedSupplierIdRouteImport } from './routes/purchasing/suggested.$supplierId'
 import { Route as ApiCronCostsChannelRouteImport } from './routes/api/cron/costs.$channel'
 import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
+import { Route as ApiShopifyOrdersOrderIdRouteImport } from './routes/api/shopify/orders.$orderId'
 import { Route as ApiUploadsDamageTokenRouteImport } from './routes/api/uploads/damage.$token'
 
 const IndexRoute = IndexRouteImport.update({
@@ -240,6 +241,11 @@ const ApiCronSyncChannelRoute = ApiCronSyncChannelRouteImport.update({
   path: '/api/cron/sync/$channel',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiShopifyOrdersOrderIdRoute = ApiShopifyOrdersOrderIdRouteImport.update({
+  id: '/api/shopify/orders/$orderId',
+  path: '/api/shopify/orders/$orderId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiUploadsDamageTokenRoute = ApiUploadsDamageTokenRouteImport.update({
   id: '/api/uploads/damage/$token',
   path: '/api/uploads/damage/$token',
@@ -285,6 +291,7 @@ export interface FileRoutesByFullPath {
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
+  '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
 }
 export interface FileRoutesByTo {
@@ -326,6 +333,7 @@ export interface FileRoutesByTo {
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
+  '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
 }
 export interface FileRoutesById {
@@ -368,6 +376,7 @@ export interface FileRoutesById {
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
+  '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
 }
 export interface FileRouteTypes {
@@ -411,6 +420,7 @@ export interface FileRouteTypes {
     | '/purchasing/suggested/$supplierId'
     | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
+    | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -452,6 +462,7 @@ export interface FileRouteTypes {
     | '/purchasing/suggested/$supplierId'
     | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
+    | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
   id:
     | '__root__'
@@ -493,6 +504,7 @@ export interface FileRouteTypes {
     | '/purchasing/suggested/$supplierId'
     | '/api/cron/costs/$channel'
     | '/api/cron/sync/$channel'
+    | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
   fileRoutesById: FileRoutesById
 }
@@ -535,6 +547,7 @@ export interface RootRouteChildren {
   PurchasingSuggestedSupplierIdRoute: typeof PurchasingSuggestedSupplierIdRoute
   ApiCronCostsChannelRoute: typeof ApiCronCostsChannelRoute
   ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
+  ApiShopifyOrdersOrderIdRoute: typeof ApiShopifyOrdersOrderIdRoute
   ApiUploadsDamageTokenRoute: typeof ApiUploadsDamageTokenRoute
 }
 
@@ -806,6 +819,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCronSyncChannelRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/shopify/orders/$orderId': {
+      id: '/api/shopify/orders/$orderId'
+      path: '/api/shopify/orders/$orderId'
+      fullPath: '/api/shopify/orders/$orderId'
+      preLoaderRoute: typeof ApiShopifyOrdersOrderIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/uploads/damage/$token': {
       id: '/api/uploads/damage/$token'
       path: '/api/uploads/damage/$token'
@@ -855,6 +875,7 @@ const rootRouteChildren: RootRouteChildren = {
   PurchasingSuggestedSupplierIdRoute: PurchasingSuggestedSupplierIdRoute,
   ApiCronCostsChannelRoute: ApiCronCostsChannelRoute,
   ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,
+  ApiShopifyOrdersOrderIdRoute: ApiShopifyOrdersOrderIdRoute,
   ApiUploadsDamageTokenRoute: ApiUploadsDamageTokenRoute,
 }
 export const routeTree = rootRouteImport

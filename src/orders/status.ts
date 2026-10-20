@@ -27,6 +27,8 @@ export function orderStatus(order: {
 	channel: string;
 	salesChannel: string | null;
 	marketplaceOrderId: string | null;
+	externalId: string;
+	shipCountry: string | null;
 	// Cancelled or refunded with a label still live (see to-ship.ts).
 	labelToVoid?: boolean;
 }): { key: OrderStatusKey; label: string; tone?: Tone } {

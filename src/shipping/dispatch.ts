@@ -126,6 +126,7 @@ const candidateFields = {
 	channel: stores.channel,
 	salesChannel: orders.salesChannel,
 	marketplaceOrderId: orders.marketplaceOrderId,
+	externalId: orders.externalId,
 	total: orders.total,
 	needsShipping,
 	shipAddress1: orders.shipAddress1,
@@ -139,6 +140,7 @@ type Candidate = {
 	channel: string;
 	salesChannel: string | null;
 	marketplaceOrderId: string | null;
+	externalId: string;
 	needsShipping: boolean;
 } & AddressFields;
 

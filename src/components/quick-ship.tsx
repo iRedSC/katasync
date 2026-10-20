@@ -420,6 +420,7 @@ export function QuickShip() {
 					{step === "package" && external && (
 						<ExternalStep
 							name={external.name}
+							why={external.why}
 							onOpen={() => {
 								window.open(external.url, "_blank", "noreferrer");
 								setOpen(false);

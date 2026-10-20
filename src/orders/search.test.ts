@@ -22,6 +22,8 @@ function order(over: Partial<SearchableOrder> = {}): SearchableOrder {
 		channel: "shopify",
 		salesChannel: "Online Store",
 		marketplaceOrderId: null,
+		externalId: "gid://shopify/Order/1001",
+		shipCountry: "US",
 		cancelledAt: null,
 		fulfillmentStatus: "UNFULFILLED",
 		financialStatus: "PAID",

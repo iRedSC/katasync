@@ -33,6 +33,8 @@ export type SearchableOrder = {
 	channel: string;
 	salesChannel: string | null;
 	marketplaceOrderId: string | null;
+	externalId: string;
+	shipCountry: string | null;
 	cancelledAt: Date | null;
 	fulfillmentStatus: string;
 	financialStatus: string | null;

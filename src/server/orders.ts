@@ -13,6 +13,7 @@ import {
 	type SQL,
 	sql,
 } from "drizzle-orm";
+import { shopifyAdminOrderUrl } from "#/channels/shopify/admin-url";
 import { shippingLocation } from "#/channels/stores";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
@@ -88,12 +89,14 @@ export const listOrders = createServerFn({ method: "GET" })
 				pin: orders.pin,
 				salesChannel: orders.salesChannel,
 				marketplaceOrderId: orders.marketplaceOrderId,
+				externalId: orders.externalId,
 				placedAt: orders.placedAt,
 				cancelledAt: orders.cancelledAt,
 				fulfillmentStatus: orders.fulfillmentStatus,
 				financialStatus: orders.financialStatus,
 				customerName: orders.customerName,
 				shipCity: orders.shipCity,
+				shipCountry: orders.shipCountry,
 				shipRegion: orders.shipRegion,
 				total: orders.total,
 				store: stores.name,
@@ -351,16 +354,8 @@ function adminUrls(order: {
 }): { name: string; url: string }[] {
 	const urls: { name: string; url: string }[] = [];
 	if (order.channel === "shopify") {
-		const handle = process.env.SHOPIFY_STORE_DOMAIN?.replace(
-			".myshopify.com",
-			"",
-		);
-		const id = order.externalId.split("/").pop();
-		if (handle && id)
-			urls.push({
-				name: "Shopify",
-				url: `https://admin.shopify.com/store/${handle}/orders/${id}`,
-			});
+		const url = shopifyAdminOrderUrl(order.externalId.split("/").pop() ?? "");
+		if (url) urls.push({ name: "Shopify", url });
 	}
 	if (order.channel === "ebay") {
 		urls.push({
@@ -456,6 +451,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					financialStatus: orders.financialStatus,
 					channel: stores.channel,
 					marketplaceOrderId: orders.marketplaceOrderId,
+					externalId: orders.externalId,
 					needsShipping,
 				})
 				.from(orders)
