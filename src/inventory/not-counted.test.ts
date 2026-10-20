@@ -33,12 +33,21 @@ test("sells without limit for push, while its sales still post", async () => {
 	await postMovements(db, {
 		lines: [{ productId: a, locationId: shelf, delta: -3, reason: "sale" }],
 	});
-	const pushed = await getAvailability(db, [a], [shelf], {
-		uncounted: UNLIMITED,
-	});
+	const pushed = await getAvailability(
+		db,
+		[a],
+		{ locationIds: [shelf], keep: null },
+		{
+			uncounted: UNLIMITED,
+		},
+	);
 	expect(pushed.get(a)).toBe(UNLIMITED);
 	// Everywhere else its number is still its ledger's.
-	expect((await getAvailability(db, [a], [shelf])).get(a)).toBe(0);
+	expect(
+		(await getAvailability(db, [a], { locationIds: [shelf], keep: null })).get(
+			a,
+		),
+	).toBe(0);
 });
 
 test("a set is limited only by its counted parts, and never blocked by the others", async () => {
@@ -57,12 +66,19 @@ test("a set is limited only by its counted parts, and never blocked by the other
 		],
 	});
 	await markNotCounted(db, [free]);
-	const pushed = await getAvailability(db, [set, allFree], [shelf], {
-		uncounted: UNLIMITED,
-	});
+	const pushed = await getAvailability(
+		db,
+		[set, allFree],
+		{ locationIds: [shelf], keep: null },
+		{
+			uncounted: UNLIMITED,
+		},
+	);
 	expect(pushed.get(set)).toBe(4);
 	expect(pushed.get(allFree)).toBe(UNLIMITED);
-	expect(await getBundleBlockers(db, [shelf])).toEqual([]);
+	expect(
+		await getBundleBlockers(db, { locationIds: [shelf], keep: null }),
+	).toEqual([]);
 });
 
 test("a counted part with exactly the limit on hand still divides", async () => {
@@ -79,9 +95,14 @@ test("a counted part with exactly the limit on hand still divides", async () => 
 			},
 		],
 	});
-	const pushed = await getAvailability(db, [set], [shelf], {
-		uncounted: UNLIMITED,
-	});
+	const pushed = await getAvailability(
+		db,
+		[set],
+		{ locationIds: [shelf], keep: null },
+		{
+			uncounted: UNLIMITED,
+		},
+	);
 	expect(pushed.get(set)).toBe(UNLIMITED / 3);
 });
 

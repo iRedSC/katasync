@@ -1,6 +1,8 @@
 import { and, eq, max } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, movements, stores } from "#/db/schema";
+import type { Overflow } from "#/inventory/ledger";
+import { retailReserve } from "#/inventory/online-stock";
 
 // The store row for a channel account, created on first sync. A new store
 // starts taking stock from the most recent opening balance, since anything
@@ -42,7 +44,13 @@ export async function shippingLocation(db: Db): Promise<number | null> {
 // order page says to fetch those); in-store sales from the retail store
 // only. Null where katasync can't tell (none, or several), so the order
 // reports it instead.
-export type StockLocations = { shipping: number | null; store: number | null };
+// `storeKeeps` is how many the store holds back for walk-ins
+// (settings.retailReserve); overflow takes only what's above it.
+export type StockLocations = {
+	shipping: number | null;
+	store: number | null;
+	storeKeeps: number;
+};
 
 export async function stockLocations(db: Db): Promise<StockLocations> {
 	const retail = await db
@@ -52,6 +60,7 @@ export async function stockLocations(db: Db): Promise<StockLocations> {
 	return {
 		shipping: await shippingLocation(db),
 		store: retail.length === 1 ? retail[0].id : null,
+		storeKeeps: await retailReserve(db),
 	};
 }
 
@@ -60,11 +69,17 @@ export async function stockLocations(db: Db): Promise<StockLocations> {
 export function saleLocation(
 	from: StockLocations,
 	order: { soldInStore: boolean },
-): { locationId: number; overflowId: number | null } | { problem: string } {
+): { locationId: number; overflow: Overflow | null } | { problem: string } {
 	if (order.soldInStore && from.store !== null)
-		return { locationId: from.store, overflowId: null };
+		return { locationId: from.store, overflow: null };
 	if (!order.soldInStore && from.shipping !== null)
-		return { locationId: from.shipping, overflowId: from.store };
+		return {
+			locationId: from.shipping,
+			overflow:
+				from.store === null
+					? null
+					: { locationId: from.store, keep: from.storeKeeps },
+		};
 	return {
 		problem: order.soldInStore
 			? "no retail store to take in-store stock from"

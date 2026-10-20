@@ -9,23 +9,28 @@ import {
 	postMovements,
 } from "./post";
 
+// A second shelf a sale may take from, and how many it holds back.
+export type Overflow = { locationId: number; keep: number };
+
 // A bundle sale takes stock from each component. Simple and kit sales take
-// stock from the SKU itself. With `overflowId` (the retail store, for a
-// shipped order), units `locationId` doesn't hold come off that shelf instead,
-// as far as it holds them; what neither holds is oversold at `locationId`.
+// stock from the SKU itself. With an `overflow` (the retail store, for a
+// shipped order), units `locationId` doesn't hold come off that shelf
+// instead, as far as it holds more than it keeps; what neither can give is
+// oversold at `locationId`.
 export async function recordSale(
 	db: Db,
 	input: {
 		productId: number;
 		quantity: number;
 		locationId: number;
-		overflowId?: number | null;
+		overflow?: Overflow | null;
 		reference: string;
 	},
 ) {
-	const { overflowId } = input;
-	if (overflowId == null || overflowId === input.locationId)
+	const { overflow } = input;
+	if (!overflow || overflow.locationId === input.locationId)
 		return postUnits(db, { ...input, sign: -1, reason: "sale" });
+	const overflowId = overflow.locationId;
 	assertPositiveInteger(input.quantity);
 	return db.transaction(async (tx) => {
 		const units = await unitsOf(tx, input.productId, input.quantity);
@@ -61,7 +66,7 @@ export async function recordSale(
 				);
 				const spill = Math.min(
 					u.quantity - first,
-					holds(u.productId, overflowId),
+					Math.max(0, holds(u.productId, overflowId) - overflow.keep),
 				);
 				const main = u.quantity - spill;
 				return [

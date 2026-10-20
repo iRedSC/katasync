@@ -205,7 +205,7 @@ export async function takeStock(
 			productId: line.productId,
 			quantity: line.quantity,
 			locationId: shelf.locationId,
-			overflowId: shelf.overflowId,
+			overflow: shelf.overflow,
 			reference: `order:${line.orderId}:${line.id}`,
 		});
 		await db

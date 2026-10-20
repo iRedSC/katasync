@@ -3,8 +3,8 @@ import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { products, stockLevels } from "#/db/schema";
 import { getBundleBlockers } from "#/inventory/availability";
+import { onlineStock } from "#/inventory/online-stock";
 import { aItemsAtRisk } from "#/purchasing/reorder";
-import { sellableLocationIds } from "./sellable-locations";
 
 // Home shows only what needs someone. Stock totals are deliberately absent:
 // nobody acts on them.
@@ -25,7 +25,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(
 				// Not counted goes below zero by design until its count.
 				.where(and(lt(stockLevels.onHand, 0), isNull(products.notCountedSince)))
 				.orderBy(stockLevels.onHand),
-			sellableLocationIds().then((owned) => getBundleBlockers(db, owned)),
+			onlineStock(db).then((from) => getBundleBlockers(db, from)),
 			db
 				.select({ bundles: sql<number>`count(*)::int` })
 				.from(products)

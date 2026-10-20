@@ -6,6 +6,7 @@ import { registerProductTools } from "./server/product-tools";
 import { registerPurchasingTools } from "./server/purchasing-tools";
 import { registerReadTools } from "./server/read-tools";
 import { registerReceivingTools } from "./server/receiving-tools";
+import { registerStockSettingsTools } from "./server/stock-settings-tools";
 import { registerStockTools } from "./server/stock-tools";
 import { registerSupplierTools } from "./server/supplier-tools";
 
@@ -47,6 +48,7 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerSupplierTools(server, db);
 	registerCatalogTools(server, db);
 	registerStockTools(server, db);
+	registerStockSettingsTools(server, db);
 	registerProductTools(server, db);
 	registerReceivingTools(server, db);
 }

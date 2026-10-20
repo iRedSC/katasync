@@ -16,6 +16,7 @@ import {
 import { abcClasses } from "#/inventory/abc";
 import { getAvailability } from "#/inventory/availability";
 import { isOurs } from "#/inventory/locations";
+import { onlineStock } from "#/inventory/online-stock";
 import { membershipOf } from "#/purchasing/reorder";
 
 export const getProductDetail = createServerFn({ method: "GET" })
@@ -136,12 +137,9 @@ export const getProductDetail = createServerFn({ method: "GET" })
 		]);
 
 		// The product and its parts in one availability lookup.
+		const online = await onlineStock(db);
 		const [availability, abc, sets] = await Promise.all([
-			getAvailability(
-				db,
-				[product.id, ...components.map((c) => c.id)],
-				ourLocations.map((l) => l.id),
-			),
+			getAvailability(db, [product.id, ...components.map((c) => c.id)], online),
 			abcClasses(db),
 			membershipOf(db, product.id),
 		]);
@@ -168,6 +166,8 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			// Where a count or transfer could be recorded. One location means
 			// nobody has to pick.
 			locations: ourLocations,
+			// How the page works out what's sellable after a count or move.
+			online,
 		};
 	});
 

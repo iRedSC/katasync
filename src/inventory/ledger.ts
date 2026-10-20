@@ -22,7 +22,7 @@ export {
 	postMovements,
 	type StockLevel,
 } from "./ledger/post";
-export { recordReturn, recordSale } from "./ledger/sales";
+export { type Overflow, recordReturn, recordSale } from "./ledger/sales";
 export { transferStock } from "./ledger/transfers";
 
 // Builds kits from components at one location. Fails without changing anything

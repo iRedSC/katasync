@@ -87,11 +87,22 @@ function withShelf(d: Loaded, location: string, onHand: number): Loaded {
 	const stock = d.stock.some((s) => s.location === location)
 		? d.stock.map((s) => (s.location === location ? { ...s, onHand } : s))
 		: [...d.stock, { location, kind, onHand }];
-	const available = stock.reduce(
-		(n, s) => (s.kind === "fba" ? n : n + s.onHand),
-		0,
+	// The same rule as getAvailability: the warehouse, then what the retail
+	// store holds above what it keeps.
+	const { keep } = d.online;
+	const kept = d.locations.find((l) => l.id === keep?.locationId)?.name;
+	const selling = stock.filter((s) =>
+		d.locations.some(
+			(l) => l.name === s.location && d.online.locationIds.includes(l.id),
+		),
 	);
-	return { ...d, stock, available: Math.max(0, available) };
+	const main = selling
+		.filter((s) => s.location !== kept)
+		.reduce((n, s) => n + s.onHand, 0);
+	const spare = selling
+		.filter((s) => s.location === kept)
+		.reduce((n, s) => n + Math.max(0, s.onHand - (keep?.units ?? 0)), 0);
+	return { ...d, stock, available: Math.max(0, main) + spare };
 }
 
 // A count sets its shelf to what was counted, as recording it does.

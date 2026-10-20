@@ -264,7 +264,7 @@ export async function refreshFromSumtracker(
 				{ ...line, productId: line.productId as number },
 				{ name: line.orderName, soldInStore: line.soldInStore },
 				// No retail store, as checked above.
-				{ shipping: location, store: null },
+				{ shipping: location, store: null, storeKeeps: 0 },
 			);
 			if (problem) problems.push(problem);
 			else salesRetaken++;

@@ -11,8 +11,8 @@ import {
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { errorText } from "#/diagnostics/runs";
 import { getAvailability } from "#/inventory/availability";
-import { isOurs } from "#/inventory/locations";
 import { UNLIMITED } from "#/inventory/not-counted";
+import { onlineStock } from "#/inventory/online-stock";
 import { chunks, type StockChannel, type StockWrite } from "./channel";
 
 // Stock push: sets each mapped listing's quantity on its channel to what
@@ -251,14 +251,10 @@ async function pushListings<T>(
 		.orderBy(products.sku);
 	// The retail store's stock sells online too: orders take from it when the
 	// warehouse is out (see recordSale).
-	const ours = await db
-		.select({ id: locations.id })
-		.from(locations)
-		.where(isOurs);
 	const sellable = await getAvailability(
 		db,
 		[...new Set(rows.map((r) => r.productId))],
-		ours.map((l) => l.id),
+		await onlineStock(db),
 		{ uncounted: UNLIMITED },
 	);
 

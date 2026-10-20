@@ -1740,10 +1740,14 @@ export const settings = pgTable(
 		// The min for products without their own range (products.minStock).
 		// Their max comes from their sales forecast (inventory/stock-range.ts).
 		defaultMinStock: integer().notNull().default(1),
+		// Units the retail store keeps for walk-ins: shipped orders and the
+		// channels only take what it holds above this (see recordSale).
+		retailReserve: integer().notNull().default(0),
 	},
 	(t) => [
 		check("settings_single", sql`${t.id} = 1`),
 		check("settings_stock_range", sql`${t.defaultMinStock} >= 0`),
+		check("settings_retail_reserve", sql`${t.retailReserve} >= 0`),
 	],
 );
 

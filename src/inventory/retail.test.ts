@@ -8,7 +8,9 @@ import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyStoreSales } from "#/orders/remap";
 import { receiveReturn } from "#/orders/returns";
 import { createProduct, createTestDb } from "#/test/db";
+import { getAvailability } from "./availability";
 import { postMovements, transferStock, undoBatch } from "./ledger";
+import { onlineStock, setRetailReserve } from "./online-stock";
 import { setRecipe } from "./recipes";
 
 let db: Db;
@@ -311,6 +313,24 @@ describe("overflow", () => {
 
 		expect(await onHand(wrench, warehouse)).toBe(2);
 		expect(await onHand(wrench, retail)).toBe(4);
+	});
+
+	test("the store keeps its reserve: online gets only what's above it", async () => {
+		const retail = await addRetail();
+		await setRetailReserve(db, 2);
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, retail, 3);
+
+		expect(
+			(await getAvailability(db, [wrench], await onlineStock(db))).get(wrench),
+		).toBe(1);
+		await ingestOrder(db, store(), shipped(), await stockLocations(db));
+
+		expect(await onHand(wrench, retail)).toBe(2);
+		expect(await onHand(wrench, warehouse)).toBe(-1);
+		expect(
+			(await getAvailability(db, [wrench], await onlineStock(db))).get(wrench),
+		).toBe(0);
 	});
 
 	test("an in-store sale never takes the warehouse's stock", async () => {
