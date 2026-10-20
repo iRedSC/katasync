@@ -10,7 +10,7 @@ import {
 	mirrorFbaStock,
 } from "./amazon-listings";
 import { recentAmazonReturns } from "./amazon-returns";
-import { matchListings, syncListings } from "./listings";
+import { markGoneListings, matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
 // Amazon US orders through the Selling Partner API (Orders v0).
@@ -181,6 +181,11 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 		if (listed) {
 			listings = listed.length;
 			const { unmapped } = await syncListings(db, store.id, listed);
+			await markGoneListings(
+				db,
+				store.id,
+				listed.map((l) => l.externalId),
+			);
 			if (unmapped.length > 0)
 				problems.push(
 					`${unmapped.length} FBA listings were unmatched from tool sets; Amazon needs real units`,

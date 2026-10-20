@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
-import { relinkListings, unlinkListings } from "./listing-edits";
-import { mapListing, syncListings } from "./listings";
+import {
+	deleteListings,
+	relinkListings,
+	unlinkListings,
+} from "./listing-edits";
+import { mapListing, markGoneListings, syncListings } from "./listings";
 
 let db: Db;
 let shopify: number;
@@ -93,4 +97,21 @@ test("relinkListings moves matched listings to another product", async () => {
 	]);
 	expect(await productOf(id)).toBe(hammer);
 	await expect(relinkListings(db, [id], "NOPE")).rejects.toThrow(/No product/);
+});
+
+test("deleteListings takes only listings gone from the channel and never sold", async () => {
+	const gone = await listed(tiktok, "OLD");
+	const live = await listed(tiktok, "LIVE");
+	await markGoneListings(db, tiktok, [`${tiktok}-LIVE`]);
+	await expect(deleteListings(db, [gone, live])).rejects.toThrow(
+		/still on TikTok/,
+	);
+	expect(await deleteListings(db, [gone])).toMatchObject([
+		{ title: "Sells OLD" },
+	]);
+	const left = await db
+		.select({ id: schema.listings.id })
+		.from(schema.listings)
+		.where(eq(schema.listings.storeId, tiktok));
+	expect(left).toEqual([{ id: live }]);
 });

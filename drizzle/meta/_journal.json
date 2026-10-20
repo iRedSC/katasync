@@ -547,6 +547,13 @@
       "when": 1792526023460,
       "tag": "0077_products_cost_updated_at",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1792528270021,
+      "tag": "0078_listing_gone",
+      "breakpoints": true
     }
   ]
 }

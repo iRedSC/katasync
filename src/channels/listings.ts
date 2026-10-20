@@ -92,6 +92,30 @@ export async function syncListings(
 	});
 }
 
+// After a complete pass of a store's listings (every page read, none
+// failed), marks the ones it didn't report as gone from the channel. Only
+// rows that change are written. An empty pass marks nothing: a channel
+// answering with no listings at all is more likely broken than empty.
+export async function markGoneListings(
+	db: Db,
+	storeId: number,
+	reported: string[],
+): Promise<number> {
+	if (reported.length === 0) return 0;
+	const gone = await db
+		.update(listings)
+		.set({ goneAt: sql`now()` })
+		.where(
+			and(
+				eq(listings.storeId, storeId),
+				isNull(listings.goneAt),
+				sql`${listings.externalId} not in (select jsonb_array_elements_text(${JSON.stringify(reported)}::jsonb))`,
+			),
+		)
+		.returning({ id: listings.id });
+	return gone.length;
+}
+
 // Rows per listings insert, well under Postgres's parameter cap.
 const INSERT_BATCH = 1000;
 
@@ -116,12 +140,15 @@ async function upsertListings(
 				productType: sql`excluded.product_type`,
 				vendor: sql`excluded.vendor`,
 				status: sql`excluded.status`,
+				// Reported again, so it's back on the channel.
+				goneAt: null,
 				updatedAt: sql`now()`,
 			},
 			// Every listing comes back on every pass and almost none changed;
 			// rewriting them all anyway was most of the database's writes.
 			setWhere: sql`(${listings.externalSku}, ${listings.title}, ${listings.fulfillment}, ${listings.tags}, ${listings.productType}, ${listings.vendor}, ${listings.status})
-				is distinct from (excluded.external_sku, excluded.title, excluded.fulfillment, excluded.tags, excluded.product_type, excluded.vendor, excluded.status)`,
+				is distinct from (excluded.external_sku, excluded.title, excluded.fulfillment, excluded.tags, excluded.product_type, excluded.vendor, excluded.status)
+				or ${listings.goneAt} is not null`,
 		});
 }
 

@@ -5,7 +5,12 @@ import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
 import { fetchEbayReturns } from "./ebay-returns";
-import { type ChannelListing, matchListings, syncListings } from "./listings";
+import {
+	type ChannelListing,
+	markGoneListings,
+	matchListings,
+	syncListings,
+} from "./listings";
 import { advanceOrderCursor, ensureStore, shippingLocation } from "./stores";
 
 // eBay US through the Sell Fulfillment API, and its listings through the
@@ -289,6 +294,11 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 		const active = await activeListings();
 		listings = active.length;
 		await syncListings(db, store.id, active);
+		await markGoneListings(
+			db,
+			store.id,
+			active.map((l) => l.externalId),
+		);
 		const matched = await matchListings(db);
 		created = matched.created;
 		problems.push(...matched.skipped);

@@ -1,6 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { relinkListings, unlinkListings } from "#/channels/listing-edits";
+import {
+	deleteListings,
+	relinkListings,
+	unlinkListings,
+} from "#/channels/listing-edits";
 import type { Db } from "#/db/client";
 import { json, WRITE } from "./tool-shapes";
 
@@ -33,5 +37,16 @@ export function registerListingTools(server: McpServer, db: Db) {
 		},
 		async ({ listing_ids, sku }) =>
 			json(await relinkListings(db, listing_ids, sku)),
+	);
+
+	server.registerTool(
+		"delete_listings",
+		{
+			description:
+				"Deletes listings gone from their channel (listings.gone_at is set: a full sync stopped reporting them) that never sold, all or none. Refused, saying why, for any still on the channel (the next sync would bring it back) or that sold. Can't be undone. Ask the user first.",
+			inputSchema: { listing_ids: listingIds },
+			annotations: { ...WRITE, destructiveHint: true },
+		},
+		async ({ listing_ids }) => json(await deleteListings(db, listing_ids)),
 	);
 }

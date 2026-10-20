@@ -11,6 +11,7 @@ import {
 	getListingsForProducts,
 	getUnmappedListings,
 	mapListing,
+	markGoneListings,
 	matchListings,
 	syncListings,
 } from "./listings";
@@ -122,6 +123,20 @@ describe("syncListings", () => {
 		]);
 		expect(unmapped).toEqual([id]);
 		expect((await getListing(amazon, "SET")).productId).toBeNull();
+	});
+});
+
+describe("markGoneListings", () => {
+	test("marks listings a full pass left out, and clears them on return", async () => {
+		await syncListings(db, shopify, [listing("1"), listing("2")]);
+		expect(await markGoneListings(db, shopify, ["1"])).toBe(1);
+		expect((await getListing(shopify, "2")).goneAt).not.toBeNull();
+		expect((await getListing(shopify, "1")).goneAt).toBeNull();
+		// Already gone isn't marked again, and an empty pass marks nothing.
+		expect(await markGoneListings(db, shopify, ["1"])).toBe(0);
+		expect(await markGoneListings(db, shopify, [])).toBe(0);
+		await syncListings(db, shopify, [listing("2")]);
+		expect((await getListing(shopify, "2")).goneAt).toBeNull();
 	});
 });
 

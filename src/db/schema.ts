@@ -400,6 +400,10 @@ export const listings = pgTable(
 		// Null until someone maps it.
 		productId: integer().references(() => products.id),
 		stockPush: jsonb().$type<ListingStockPush>(),
+		// When a full pass of the channel's listings first left it out: it's
+		// gone from the channel. Cleared if it comes back. Set only by
+		// markGoneListings in src/channels/listings.ts.
+		goneAt: timestamp({ withTimezone: true }),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

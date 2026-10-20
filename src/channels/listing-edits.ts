@@ -1,6 +1,6 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { listings, products, stores } from "#/db/schema";
+import { listings, orderLines, orders, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
 import { applyListingsToOrders } from "#/orders/remap";
 import { autoMapListings, mapListing } from "./listings";
@@ -135,6 +135,46 @@ export async function relinkListings(
 			title: l.title,
 			was: l.sku,
 			now: product.sku,
+		}));
+	});
+}
+
+// Deletes listings gone from their channel (a full sync stopped reporting
+// them) that never sold, all or none. Anything else is refused, saying why:
+// a listing still on the channel comes back on the next sync, and one that
+// sold is what its past orders are matched through.
+export async function deleteListings(db: Db, listingIds: number[]) {
+	if (listingIds.length === 0) throw new LedgerError("No listings given");
+	return db.transaction(async (tx) => {
+		const rows = await tx
+			.select({
+				id: listings.id,
+				title: listings.title,
+				store: stores.name,
+				goneAt: listings.goneAt,
+				sold: sql<boolean>`exists (select 1 from ${orderLines} join ${orders} on ${orders.id} = ${orderLines.orderId} where ${orders.storeId} = ${listings.storeId} and ${orderLines.listingExternalId} = ${listings.externalId})`,
+			})
+			.from(listings)
+			.innerJoin(stores, eq(stores.id, listings.storeId))
+			.where(inArray(listings.id, listingIds))
+			.for("update", { of: listings });
+		const refused = listingIds.map((id) => {
+			const row = rows.find((r) => r.id === id);
+			if (!row) return `No listing ${id}`;
+			if (!row.goneAt)
+				return `${row.title} is still on ${row.store}, so the next sync brings it back; end it there first`;
+			if (row.sold)
+				return `${row.title} sold, and its past orders are matched through it`;
+			return null;
+		});
+		const why = refused.filter((r) => r !== null);
+		if (why.length > 0) throw new LedgerError(why.join("; "));
+		await tx.delete(listings).where(inArray(listings.id, listingIds));
+		return rows.map((r) => ({
+			listingId: r.id,
+			title: r.title,
+			store: r.store,
+			goneSince: r.goneAt,
 		}));
 	});
 }
