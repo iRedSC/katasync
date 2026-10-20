@@ -102,6 +102,18 @@ describe("ingestOrder", () => {
 		expect(lines[0].saleBatchId).not.toBeNull();
 	});
 
+	test("goes by the store's stockFrom as it is now, not as the caller read it", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, 10);
+		// A cutover moved the date after the sync pass read its store.
+		await db
+			.update(schema.stores)
+			.set({ stockFrom: new Date("2026-10-10T00:00:00Z") })
+			.where(eq(schema.stores.id, storeId));
+		await ingestOrder(db, store(), order(), warehouse);
+		expect(await onHand(wrench)).toBe(10);
+	});
+
 	test("orders from before stockFrom are history only", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, 10);

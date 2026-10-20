@@ -63,7 +63,9 @@ export async function refreshFromSumtracker(
 		throw new Error("The export time is in the future");
 	return db.transaction(async (tx) => {
 		await tx.execute(
-			sql`lock table movements, order_lines in share row exclusive mode`,
+			// orders too: an order syncing in waits here, then sees the new
+			// stockFrom (ingestOrder reads it after saving the order).
+			sql`lock table movements, orders, order_lines in share row exclusive mode`,
 		);
 		// A restock put units back through a movement this would wipe, and
 		// nothing here takes it again.
