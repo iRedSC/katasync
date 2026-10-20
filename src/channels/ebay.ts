@@ -284,11 +284,13 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 	// Listings first, so order lines can resolve to products.
 	const problems: string[] = [];
 	let listings = 0;
+	let created = 0;
 	if (options.listings) {
 		const active = await activeListings();
 		listings = active.length;
 		await syncListings(db, store.id, active);
 		const matched = await matchListings(db);
+		created = matched.created;
 		problems.push(...matched.skipped);
 		// Orders that sold a newly matched listing pick up the product now.
 		const caughtUp = await applyListingsToOrders(
@@ -342,7 +344,7 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 				),
 			)),
 		);
-	return { store: store.name, listings, orders: count, problems };
+	return { store: store.name, listings, created, orders: count, problems };
 }
 
 // eBay's carrier codes for the carriers Shippo sells; anything else is sent

@@ -30,7 +30,13 @@ const passes: Record<
 	(
 		db: Db,
 		listings: boolean,
-	) => Promise<{ store: string; orders: number; problems: string[] }>
+	) => Promise<{
+		store: string;
+		// Products made from the primary store's new SKUs (matchListings).
+		created: number;
+		orders: number;
+		problems: string[];
+	}>
 > = {
 	shopify: (db, listings) => syncShopify(db, { listings }),
 	ebay: (db, listings) => syncEbay(db, { listings }),

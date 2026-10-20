@@ -357,9 +357,11 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	const problems: string[] = [];
 
 	let mapped: number[] = [];
+	let created = 0;
 	if (options.listings) {
 		const matched = await syncTiktokListings(db, store.id, cipher);
 		mapped = matched.mapped;
+		created = matched.created;
 		problems.push(...matched.skipped);
 	}
 	// Orders that sold a newly matched listing pick up the product now.
@@ -424,7 +426,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 				),
 			)),
 		);
-	return { store: store.name, orders: count, problems };
+	return { store: store.name, created, orders: count, problems };
 }
 
 async function ingestDetail(
