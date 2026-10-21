@@ -1,0 +1,188 @@
+import { type } from "arktype";
+import { sql } from "drizzle-orm";
+import { MARKETPLACE_US } from "#/channels/amazon-api";
+import {
+	listReports,
+	reportText,
+	requestReport,
+} from "#/channels/amazon-reports";
+import { shopifyQuery } from "#/channels/shopify";
+import type { Db } from "#/db/client";
+import { marketStanding } from "#/db/schema";
+import { channelEnv, missingEnv } from "#/diagnostics/checks";
+import { errorText } from "#/diagnostics/runs";
+import { amazonListingIssues } from "./amazon-issues";
+import { ebayStanding } from "./ebay-standing";
+import { type Market, STALE_MS } from "./market";
+import {
+	amazonStanding,
+	type Problem,
+	type ShopifyDispute,
+	type Standing,
+	shopifyStanding,
+	standing,
+	withProblems,
+} from "./standing";
+import { tiktokStanding } from "./tiktok-standing";
+
+// Reads each marketplace's standing and keeps it in market_standing. Run by
+// the standing cron, and by Markets when what it holds has gone stale.
+
+const AMAZON_REPORT = "GET_V2_SELLER_PERFORMANCE_REPORT";
+// Amazon recomputes the report daily, so a newer one is asked for only
+// after this long. It's usually ready in seconds.
+const AMAZON_FRESH_MS = 12 * 60 * 60 * 1000;
+const AMAZON_WAIT_MS = 30 * 1000;
+
+async function amazonVerdict(): Promise<Standing> {
+	const reports = await listReports(AMAZON_REPORT, 5);
+	let done = reports.find((r) => r.processingStatus === "DONE");
+	const newest = reports[0];
+	if (!newest || Date.now() - newest.createdTime.getTime() > AMAZON_FRESH_MS) {
+		const fresh = await requestReport(AMAZON_REPORT, {}, AMAZON_WAIT_MS);
+		if (fresh.processingStatus === "DONE") done = fresh;
+	}
+	const text = done ? await reportText(done) : null;
+	if (!text) return standing({ state: "waiting" }, [], []);
+	return amazonStanding(JSON.parse(text), MARKETPLACE_US);
+}
+
+// The account's health, then the listings Amazon blocked. Failing to read
+// the listings doesn't lose the account's health; it says so instead.
+async function amazon(): Promise<Standing> {
+	const [account, issues] = await Promise.all([
+		amazonVerdict(),
+		amazonListingIssues().catch((error): Problem[] => [
+			{
+				level: "watch",
+				text: "Couldn't read Amazon's listing issues",
+				href: null,
+				detail: errorText(error),
+				items: [],
+			},
+		]),
+	]);
+	return withProblems(account, issues);
+}
+
+const disputedOrders = type({
+	orders: {
+		nodes: type({
+			name: "string",
+			legacyResourceId: "string",
+			createdAt: "string",
+			totalPriceSet: {
+				shopMoney: { amount: "string", currencyCode: "string" },
+			},
+			disputes: type({ status: "string", initiatedAs: "string" }).array(),
+		}).array(),
+	},
+});
+
+async function shopifyOrders(search: string) {
+	return disputedOrders.assert(
+		await shopifyQuery(
+			`query ($search: String!) {
+				orders(first: 50, query: $search, sortKey: UPDATED_AT, reverse: true) {
+					nodes {
+						name legacyResourceId createdAt
+						totalPriceSet { shopMoney { amount currencyCode } }
+						disputes { status initiatedAs }
+					}
+				}
+			}`,
+			{ search },
+		),
+	).orders.nodes;
+}
+
+async function shopify(): Promise<Standing> {
+	const since = new Date(Date.now() - 90 * 86_400_000)
+		.toISOString()
+		.slice(0, 10);
+	const [open, lost] = await Promise.all([
+		shopifyOrders(
+			"chargeback_status:needs_response OR chargeback_status:under_review",
+		),
+		shopifyOrders(`chargeback_status:lost updated_at:>=${since}`),
+	]);
+	const domain = process.env.SHOPIFY_STORE_DOMAIN;
+	const disputes: ShopifyDispute[] = open.flatMap((o) =>
+		o.disputes
+			.filter((d) => ["NEEDS_RESPONSE", "UNDER_REVIEW"].includes(d.status))
+			.map((d) => ({
+				orderName: o.name,
+				href: `https://${domain}/admin/orders/${o.legacyResourceId}`,
+				status: d.status,
+				initiatedAs: d.initiatedAs,
+				total: `$${o.totalPriceSet.shopMoney.amount}`,
+				placedAt: o.createdAt,
+			})),
+	);
+	return shopifyStanding(disputes, lost.length);
+}
+
+const fetchers: Record<Market, () => Promise<Standing>> = {
+	amazon,
+	ebay: ebayStanding,
+	shopify,
+	tiktok: tiktokStanding,
+};
+
+// Markets whose credentials are set, so a check can reach them.
+export const checkable = (Object.keys(fetchers) as Market[]).filter(
+	(m) => missingEnv(channelEnv[m]).length === 0,
+);
+
+export async function checkStanding(db: Db, market: Market) {
+	const now = new Date();
+	try {
+		const standing = await fetchers[market]();
+		await db
+			.insert(marketStanding)
+			.values({ market, standing, checkedAt: now, error: null })
+			.onConflictDoUpdate({
+				target: marketStanding.market,
+				set: { standing, checkedAt: now, error: null, erroredAt: null },
+			});
+	} catch (error) {
+		const message = errorText(error);
+		// Keeps the last answer; only says this check failed.
+		await db
+			.insert(marketStanding)
+			.values({ market, error: message, erroredAt: now })
+			.onConflictDoUpdate({
+				target: marketStanding.market,
+				set: { error: message, erroredAt: now },
+			});
+	}
+}
+
+export async function readStanding(db: Db) {
+	return db.select().from(marketStanding);
+}
+
+// When it was last tried, successfully or not, so a failing market isn't
+// retried on every page view.
+const lastTried = (r: typeof marketStanding.$inferSelect) =>
+	Math.max(r.checkedAt?.getTime() ?? 0, r.erroredAt?.getTime() ?? 0);
+
+// Checks every reachable market not tried within maxAgeMs, side by side.
+export async function checkStale(db: Db, maxAgeMs = STALE_MS) {
+	const rows = await readStanding(db);
+	const due = checkable.filter((m) => {
+		const row = rows.find((r) => r.market === m);
+		return !row || Date.now() - lastTried(row) >= maxAgeMs;
+	});
+	await Promise.all(due.map((m) => checkStanding(db, m)));
+	return due;
+}
+
+// Markets at risk by their last answer, for the sidebar.
+export async function countAtRisk(db: Db) {
+	const [row] = await db
+		.select({ n: sql<number>`count(*)::int` })
+		.from(marketStanding)
+		.where(sql`${marketStanding.standing}->>'level' = 'at_risk'`);
+	return row?.n ?? 0;
+}

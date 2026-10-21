@@ -8,6 +8,7 @@ import {
 } from "./server/inbox-tools";
 import { INSTRUCTIONS } from "./server/instructions";
 import { registerListingTools } from "./server/listing-tools";
+import { registerMarketTools } from "./server/market-tools";
 import { registerProductTools } from "./server/product-tools";
 import { registerPurchasingTools } from "./server/purchasing-tools";
 import { registerReadTools } from "./server/read-tools";
@@ -45,6 +46,7 @@ export const READ_TOOLS = new Set([
 	"read_po_email",
 	"search_inbox",
 	"read_inbox_email",
+	"markets",
 ]);
 
 export function buildServer(db: Db, access: { canWrite: boolean }) {
@@ -56,6 +58,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 	registerReadTools(server, db);
 	registerTransferReadTools(server, db);
 	registerInboxReadTools(server, db);
+	registerMarketTools(server, db);
 	if (access.canWrite) registerWriteTools(server, db);
 	return server;
 }

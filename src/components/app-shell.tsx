@@ -196,6 +196,7 @@ const problem: Record<keyof NavCounts, boolean> = {
 	countsDue: false,
 	unmatched: true,
 	attention: true,
+	atRisk: true,
 };
 
 // The item's own count as a pill, or a dot when only its hidden sub-pages

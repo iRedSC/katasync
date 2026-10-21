@@ -1,0 +1,178 @@
+{
+	"accountStatuses": [
+		{
+			"marketplaceId": "ATVPDKIKX0DER",
+			"status": "NORMAL"
+		}
+	],
+	"performanceMetrics": [
+		{
+			"marketplaceId": "ATVPDKIKX0DER",
+			"accountHealthRating": {
+				"ahrStatus": "GREAT",
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-04-24T00:00:00Z",
+					"reportingDateTo": "2026-10-21T23:59:59Z"
+				},
+				"ahrScore": 264.0
+			},
+			"orderDefectRate": {
+				"afn": {
+					"reportingDateRange": {
+						"reportingDateFrom": "2026-08-08T00:00:00Z",
+						"reportingDateTo": "2026-10-06T23:59:59Z"
+					},
+					"status": "GOOD",
+					"targetValue": 0.01,
+					"targetCondition": "LESS_THAN",
+					"orderWithDefects": {
+						"status": "GOOD",
+						"count": 0
+					},
+					"claims": {
+						"status": "NONE",
+						"count": 0
+					},
+					"chargebacks": {
+						"status": "NONE",
+						"count": 0
+					},
+					"negativeFeedback": {
+						"status": "NONE",
+						"count": 0
+					},
+					"orderCount": 120,
+					"rate": 0.0,
+					"fulfillmentType": "AFN"
+				},
+				"mfn": {
+					"reportingDateRange": {
+						"reportingDateFrom": "2026-08-08T00:00:00Z",
+						"reportingDateTo": "2026-10-06T23:59:59Z"
+					},
+					"status": "GOOD",
+					"targetValue": 0.01,
+					"targetCondition": "LESS_THAN",
+					"orderWithDefects": {
+						"status": "GOOD",
+						"count": 0
+					},
+					"claims": {
+						"status": "NONE",
+						"count": 0
+					},
+					"chargebacks": {
+						"status": "NONE",
+						"count": 0
+					},
+					"negativeFeedback": {
+						"status": "NONE",
+						"count": 0
+					},
+					"orderCount": 1299,
+					"rate": 0.0,
+					"fulfillmentType": "MFN"
+				}
+			},
+			"lateShipmentRate": {
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-09-22T00:00:00Z",
+					"reportingDateTo": "2026-10-21T23:59:59Z"
+				},
+				"status": "GOOD",
+				"targetValue": 0.04,
+				"targetCondition": "LESS_THAN",
+				"orderCount": 639,
+				"lateShipmentCount": 0,
+				"rate": 0.0
+			},
+			"preFulfillmentCancellationRate": {
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-10-14T00:00:00Z",
+					"reportingDateTo": "2026-10-20T23:59:59Z"
+				},
+				"status": "GOOD",
+				"targetValue": 0.025,
+				"targetCondition": "LESS_THAN",
+				"orderCount": 133,
+				"cancellationCount": 0,
+				"rate": 0.0
+			},
+			"validTrackingRate": {
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-09-12T00:00:00Z",
+					"reportingDateTo": "2026-10-11T23:59:59Z"
+				},
+				"status": "GOOD",
+				"targetValue": 0.95,
+				"targetCondition": "GREATER_THAN",
+				"shipmentCount": 677,
+				"validTrackingCount": 675,
+				"rate": 0.9970457902511078
+			},
+			"onTimeDeliveryRate": {
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-09-12T00:00:00Z",
+					"reportingDateTo": "2026-10-11T23:59:59Z"
+				},
+				"status": "GOOD",
+				"targetValue": 0.97,
+				"targetCondition": "GREATER_THAN",
+				"shipmentCountWithValidTracking": 675,
+				"onTimeDeliveryCount": 675,
+				"rate": 1.0
+			},
+			"listingPolicyViolations": {
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-04-25T00:00:00Z",
+					"reportingDateTo": "2026-10-21T23:59:59Z"
+				},
+				"status": "BAD",
+				"targetValue": 0,
+				"targetCondition": "EQUALS",
+				"defectsCount": 2
+			},
+			"productAuthenticityCustomerComplaints": {
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-04-25T00:00:00Z",
+					"reportingDateTo": "2026-10-21T23:59:59Z"
+				},
+				"status": "GOOD",
+				"targetValue": 0,
+				"targetCondition": "EQUALS",
+				"defectsCount": 0
+			},
+			"policyViolationWarnings": {
+				"warningsCount": 0,
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-04-24T00:00:00Z",
+					"reportingDateTo": "2026-10-21T23:59:59Z"
+				}
+			},
+			"warningStates": [],
+			"invoiceDefectRate": {
+				"reportingDateRange": {
+					"reportingDateFrom": "2026-10-08T00:00:00Z",
+					"reportingDateTo": "2026-10-14T23:59:59Z"
+				},
+				"status": "GOOD",
+				"targetValue": 0.05,
+				"targetCondition": "LESS_THAN",
+				"invoiceDefect": {
+					"status": "GOOD",
+					"count": 0
+				},
+				"missingInvoice": {
+					"status": "NONE",
+					"count": 0
+				},
+				"lateInvoice": {
+					"status": "NONE",
+					"count": 0
+				},
+				"orderCount": 0,
+				"rate": 0
+			}
+		}
+	]
+}

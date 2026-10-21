@@ -22,12 +22,22 @@ export const API = "https://api.ebay.com";
 // more. The token is shared with profit-margarine, which was granted these
 // plus sell.fulfillment.readonly. sell.fulfillment marks orders shipped;
 // sell.inventory pushes stock to listings.
-const SCOPES = [
+const SYNC_SCOPES = [
 	"https://api.ebay.com/oauth/api_scope",
 	"https://api.ebay.com/oauth/api_scope/sell.fulfillment",
 	"https://api.ebay.com/oauth/api_scope/sell.inventory",
 	"https://api.ebay.com/oauth/api_scope/sell.finances",
-].join(" ");
+];
+const SCOPES = SYNC_SCOPES.join(" ");
+
+// What signing in again (pnpm ebay:authorize) asks for: sync's, what
+// profit-margarine reads with, and seller standards for Markets
+// (src/markets/ebay-standing.ts).
+export const EBAY_CONSENT_SCOPES = [
+	...SYNC_SCOPES,
+	"https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+	"https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
+];
 
 let cachedToken: { value: string; expiresAt: number } | undefined;
 

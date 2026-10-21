@@ -13,6 +13,7 @@
     { "path": "/api/cron/costs/amazon", "schedule": "0 */4 * * *" },
     { "path": "/api/cron/tracking", "schedule": "0 */4 * * *" },
     { "path": "/api/cron/shippo-rebills", "schedule": "30 9 * * *" },
+    { "path": "/api/cron/standing", "schedule": "30 */6 * * *" },
     { "path": "/api/cron/inbox?sweep=1", "schedule": "0 */4 * * *" },
     { "path": "/api/cron/inbox", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/orders/amazon", "schedule": "*/5 * * * *" },
