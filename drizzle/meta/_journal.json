@@ -645,6 +645,13 @@
       "when": 1792618275354,
       "tag": "0091_market_standing",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1792623665650,
+      "tag": "0092_returns_from_shelf",
+      "breakpoints": true
     }
   ]
 }
