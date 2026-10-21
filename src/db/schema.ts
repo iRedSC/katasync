@@ -22,6 +22,7 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
+import type { Standing } from "#/markets/standing";
 
 // Raw bytes, for files kept in the database (label PDFs).
 const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
@@ -2168,4 +2169,17 @@ export const dismissals = pgTable("dismissals", {
 	key: text().primaryKey(),
 	error: text().notNull(),
 	dismissedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// Each marketplace's account standing as last read from it
+// (src/markets/standing.ts), so Markets and the sidebar show it without
+// waiting on four APIs. `standing` is the last answer the marketplace gave
+// (null until it gives one); a failed check leaves it and records why in
+// `error`, so a passing outage never hides a real problem or invents one.
+export const marketStanding = pgTable("market_standing", {
+	market: channel().primaryKey(),
+	standing: jsonb().$type<Standing>(),
+	checkedAt: timestamp({ withTimezone: true }),
+	error: text(),
+	erroredAt: timestamp({ withTimezone: true }),
 });

@@ -14,6 +14,7 @@ import { Route as CountsRouteImport } from './routes/counts'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as MarketsRouteImport } from './routes/markets'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -45,6 +46,7 @@ import { Route as TransfersIdRouteImport } from './routes/transfers/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCronInboxRouteImport } from './routes/api/cron/inbox'
 import { Route as ApiCronShippoRebillsRouteImport } from './routes/api/cron/shippo-rebills'
+import { Route as ApiCronStandingRouteImport } from './routes/api/cron/standing'
 import { Route as ApiCronTrackingRouteImport } from './routes/api/cron/tracking'
 import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage-photos/$damageId'
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
@@ -84,6 +86,11 @@ const ListingsRoute = ListingsRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketsRoute = MarketsRouteImport.update({
+  id: '/markets',
+  path: '/markets',
   getParentRoute: () => rootRouteImport,
 } as any)
 const McpRoute = McpRouteImport.update({
@@ -241,6 +248,11 @@ const ApiCronShippoRebillsRoute = ApiCronShippoRebillsRouteImport.update({
   path: '/api/cron/shippo-rebills',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCronStandingRoute = ApiCronStandingRouteImport.update({
+  id: '/api/cron/standing',
+  path: '/api/cron/standing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCronTrackingRoute = ApiCronTrackingRouteImport.update({
   id: '/api/cron/tracking',
   path: '/api/cron/tracking',
@@ -325,6 +337,7 @@ export interface FileRoutesByFullPath {
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
+  '/markets': typeof MarketsRoute
   '/mcp': typeof McpRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
@@ -356,6 +369,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
+  '/api/cron/standing': typeof ApiCronStandingRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
@@ -378,6 +392,7 @@ export interface FileRoutesByTo {
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
+  '/markets': typeof MarketsRoute
   '/mcp': typeof McpRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
@@ -409,6 +424,7 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
+  '/api/cron/standing': typeof ApiCronStandingRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
@@ -432,6 +448,7 @@ export interface FileRoutesById {
   '/diagnostics': typeof DiagnosticsRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
+  '/markets': typeof MarketsRoute
   '/mcp': typeof McpRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
@@ -463,6 +480,7 @@ export interface FileRoutesById {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
+  '/api/cron/standing': typeof ApiCronStandingRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
@@ -487,6 +505,7 @@ export interface FileRouteTypes {
     | '/diagnostics'
     | '/listings'
     | '/login'
+    | '/markets'
     | '/mcp'
     | '/reports'
     | '/settings'
@@ -518,6 +537,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/cron/inbox'
     | '/api/cron/shippo-rebills'
+    | '/api/cron/standing'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
@@ -540,6 +560,7 @@ export interface FileRouteTypes {
     | '/diagnostics'
     | '/listings'
     | '/login'
+    | '/markets'
     | '/mcp'
     | '/reports'
     | '/settings'
@@ -571,6 +592,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/cron/inbox'
     | '/api/cron/shippo-rebills'
+    | '/api/cron/standing'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
@@ -593,6 +615,7 @@ export interface FileRouteTypes {
     | '/diagnostics'
     | '/listings'
     | '/login'
+    | '/markets'
     | '/mcp'
     | '/reports'
     | '/settings'
@@ -624,6 +647,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/cron/inbox'
     | '/api/cron/shippo-rebills'
+    | '/api/cron/standing'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
@@ -647,6 +671,7 @@ export interface RootRouteChildren {
   DiagnosticsRoute: typeof DiagnosticsRoute
   ListingsRoute: typeof ListingsRoute
   LoginRoute: typeof LoginRoute
+  MarketsRoute: typeof MarketsRoute
   McpRoute: typeof McpRoute
   ReportsRoute: typeof ReportsRoute
   SettingsRoute: typeof SettingsRoute
@@ -678,6 +703,7 @@ export interface RootRouteChildren {
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiCronInboxRoute: typeof ApiCronInboxRoute
   ApiCronShippoRebillsRoute: typeof ApiCronShippoRebillsRoute
+  ApiCronStandingRoute: typeof ApiCronStandingRoute
   ApiCronTrackingRoute: typeof ApiCronTrackingRoute
   ApiDamagePhotosDamageIdRoute: typeof ApiDamagePhotosDamageIdRoute
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
@@ -730,6 +756,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/markets': {
+      id: '/markets'
+      path: '/markets'
+      fullPath: '/markets'
+      preLoaderRoute: typeof MarketsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/mcp': {
@@ -949,6 +982,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCronShippoRebillsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cron/standing': {
+      id: '/api/cron/standing'
+      path: '/api/cron/standing'
+      fullPath: '/api/cron/standing'
+      preLoaderRoute: typeof ApiCronStandingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/cron/tracking': {
       id: '/api/cron/tracking'
       path: '/api/cron/tracking'
@@ -1063,6 +1103,7 @@ const rootRouteChildren: RootRouteChildren = {
   DiagnosticsRoute: DiagnosticsRoute,
   ListingsRoute: ListingsRoute,
   LoginRoute: LoginRoute,
+  MarketsRoute: MarketsRoute,
   McpRoute: McpRoute,
   ReportsRoute: ReportsRoute,
   SettingsRoute: SettingsRoute,
@@ -1094,6 +1135,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCronInboxRoute: ApiCronInboxRoute,
   ApiCronShippoRebillsRoute: ApiCronShippoRebillsRoute,
+  ApiCronStandingRoute: ApiCronStandingRoute,
   ApiCronTrackingRoute: ApiCronTrackingRoute,
   ApiDamagePhotosDamageIdRoute: ApiDamagePhotosDamageIdRoute,
   ApiOauthSplatRoute: ApiOauthSplatRoute,
@@ -1114,3 +1156,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

@@ -22,6 +22,8 @@ export async function profitFixture() {
 			quantity: number;
 			unitCost: number | null;
 			saleBatchId?: string;
+			// The wrench unless given.
+			productId?: number;
 		}[],
 		extra: Partial<typeof schema.orders.$inferInsert> = {},
 	) {

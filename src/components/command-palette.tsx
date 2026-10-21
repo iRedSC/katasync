@@ -12,6 +12,7 @@ import {
 	Package,
 	Settings,
 	Shuffle,
+	Store,
 	Trophy,
 	Truck,
 	Undo2,
@@ -88,6 +89,14 @@ export const pages = [
 		keys: "g a",
 		parent: "/profit",
 		count: null,
+	},
+	{
+		to: "/markets",
+		label: "Markets",
+		icon: Store,
+		keys: "g k",
+		parent: null,
+		count: "atRisk",
 	},
 	{
 		to: "/products",

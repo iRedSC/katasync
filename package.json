@@ -34,6 +34,7 @@
     "webhooks": "tsx scripts/webhooks.ts",
     "auth:setup-link": "tsx scripts/auth-setup-link.ts",
     "tiktok:authorize": "tsx scripts/tiktok-authorize.ts",
+    "ebay:authorize": "tsx scripts/ebay-authorize.ts",
     "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {

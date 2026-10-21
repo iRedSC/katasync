@@ -30,7 +30,7 @@ import { returnReasons } from "./return-reasons";
 // The views' settled year: orders placed 410 to 45 days ago, so each had
 // time to come back. Must match product_return_rates; the tests check the
 // totals agree.
-const settled = and(
+export const settled = and(
 	gte(orderLineReturns.placedAt, sql`now() - interval '410 days'`),
 	lt(orderLineReturns.placedAt, sql`now() - interval '45 days'`),
 );
