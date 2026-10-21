@@ -4,6 +4,7 @@ import { syncRuns } from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { recordSyncRun } from "#/diagnostics/runs";
 import { refreshCosts } from "#/orders/cost-refresh";
+import { retireRefurbs } from "#/orders/refurb-retire";
 import { applySkusToOrders } from "#/orders/remap";
 import { assignOrderPins } from "#/shipping/pins";
 import { stockChannels } from "#/stock-push/channels";
@@ -69,6 +70,8 @@ export async function syncPass(
 		);
 		// This channel's sales reach the others now, not at their own passes.
 		const elsewhere = await pushMoved(db, started, { except: channel });
+		// A refurb this pass sold out is archived, here and in Shopify.
+		const retired = await retireRefurbs(db);
 		return {
 			...pass,
 			problems: [
@@ -76,6 +79,7 @@ export async function syncPass(
 				...caughtUp.problems,
 				...pushed.flatMap((p) => p.problems),
 				...elsewhere.flatMap((p) => p.problems),
+				...retired.problems,
 			],
 		};
 	});

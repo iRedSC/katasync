@@ -10,6 +10,7 @@ import {
 	or,
 	sql,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
 	orderLines,
@@ -248,6 +249,8 @@ async function returnOrders(
 	);
 }
 
+const refurbs = alias(products, "refurbs");
+
 // Returns received in the last 30 days, newest first, one row per order and
 // moment received. One whose order still has a return open on its
 // marketplace links there to confirm it arrived, until a sync sees it closed:
@@ -269,9 +272,15 @@ async function recentlyReceived(db: Db) {
 			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 			quantity: orderReturns.quantity,
 			restocked: orderReturns.restocked,
+			refurb: sql<{
+				id: number;
+				sku: string;
+				condition: string;
+			} | null>`case when ${refurbs.id} is null then null else json_build_object('id', ${refurbs.id}, 'sku', ${refurbs.sku}, 'condition', ${refurbs.condition}) end`,
 			createdAt: orderReturns.createdAt,
 		})
 		.from(orderReturns)
+		.leftJoin(refurbs, eq(refurbs.id, orderReturns.refurbProductId))
 		.innerJoin(orderLines, eq(orderLines.id, orderReturns.orderLineId))
 		.innerJoin(orders, eq(orders.id, orderLines.orderId))
 		.innerJoin(stores, eq(stores.id, orders.storeId))
