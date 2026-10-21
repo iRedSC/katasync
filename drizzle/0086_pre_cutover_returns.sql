@@ -90,11 +90,12 @@ SELECT
 	("quantity" = 0 OR "intangible" OR ("product_id" IS NOT NULL AND "unit_cost" IS NOT NULL)) AS "cost_known",
 	"returning"
 FROM costed;--> statement-breakpoint
--- Refunds older than order_line_costs' 60 days counted their items as lost,
--- though every one came back before katasync counted stock. Those placed
--- before 2026-08-23 (past the window by now) are received as pre-cutover
--- returns, dated when the order was placed since when they arrived isn't
--- known. Partial refunds are left as they are: those are judged one by one.
+-- Full refunds of orders shipped before cutover counted their items as lost:
+-- past order_line_costs' 60 days, or within them without a sale batch to be
+-- returning. Every one came back before katasync counted stock, so those
+-- placed before 2026-10-11 (the last was placed 10-10) are received as
+-- pre-cutover returns, dated when the order was placed since when they
+-- arrived isn't known. Partial refunds are judged one by one below.
 INSERT INTO "order_returns" ("order_line_id", "quantity", "restocked", "pre_cutover", "created_at")
 SELECT l."id", l."quantity", false, true, o."placed_at"
 FROM "orders" o
@@ -102,7 +103,7 @@ JOIN "stores" st ON st."id" = o."store_id"
 JOIN "order_lines" l ON l."order_id" = o."id"
 WHERE NOT o."fulfilled_by_channel" AND o."cancelled_at" IS NULL
 	AND o."no_return_at" IS NULL
-	AND o."placed_at" < '2026-08-23'
+	AND o."placed_at" < '2026-10-11'
 	AND l."quantity" > 0
 	AND NOT EXISTS (
 		SELECT 1 FROM "order_returns" r
