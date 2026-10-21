@@ -86,6 +86,37 @@ export const setProductCost = createServerFn({ method: "POST" })
 		return { sku: saved.sku, unitCost: saved.unitCost };
 	});
 
+// Saves how a product ships: its packed weight, and its box, all three sides
+// or none. Fix postage sets these after a carrier re-bills.
+export const setProductShipping = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			productId: "number.integer > 0",
+			weightOz: "number > 0",
+			box: ["number > 0", "number > 0", "number > 0"],
+		}),
+	)
+	.handler(async ({ data }) => {
+		const [lengthIn, widthIn, heightIn] = data.box;
+		const saved = await updateProductDetails(getDb(), data.productId, {
+			weightOz: data.weightOz,
+			lengthIn,
+			widthIn,
+			heightIn,
+		});
+		return {
+			weightGrams: saved.weightGrams,
+			box:
+				saved.lengthMm && saved.widthMm && saved.heightMm
+					? ([saved.lengthMm, saved.widthMm, saved.heightMm] as [
+							number,
+							number,
+							number,
+						])
+					: null,
+		};
+	});
+
 // This month's profit so far, for Home.
 export const getMonthProfit = createServerFn({ method: "GET" }).handler(
 	async () => {

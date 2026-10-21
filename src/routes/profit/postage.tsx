@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLink, PackageCheck } from "lucide-react";
+import { useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Card, EmptyState, Page } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
@@ -9,6 +10,7 @@ import {
 	RangeTabs,
 	rangeSearch,
 } from "#/components/profit-nav";
+import { ShippingDims } from "#/components/profit-page/shipping-dims";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
@@ -235,55 +237,59 @@ function Products({
 		>
 			<ul>
 				{groups.map((p) => (
-					<li key={p.productId} className="border-t first:border-t-0">
-						<details>
-							<summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2.5 hover:bg-subtle">
-								<ProductImage src={p.imageUrl} className="size-9" />
-								<div className="min-w-0 flex-1">
-									{p.sku ? (
-										<Link
-											to="/products/$sku"
-											params={{ sku: p.sku }}
-											className="block truncate hover:underline"
-											onClick={(e) => e.stopPropagation()}
-										>
-											<ProductName name={p.name} variantName={p.variantName} />
-										</Link>
-									) : (
-										<div className="truncate">{p.name}</div>
-									)}
-									<div className="truncate text-xs text-muted-foreground">
-										{p.sku ?? "No SKU"} ·{" "}
-										{p.weightGrams || p.box ? (
-											<>
-												Saved{" "}
-												{[
-													p.weightGrams && `${formatCount(p.weightGrams)} g`,
-													p.box && `${p.box.join(" × ")} mm`,
-												]
-													.filter(Boolean)
-													.join(", ")}
-											</>
-										) : (
-											<span className="text-warning-text">
-												No weight or box saved
-											</span>
-										)}
-									</div>
-								</div>
-								<Figures
-									rebilled={p.rebilled.length}
-									orders={p.orders}
-									amount={p.amount}
-									labels={p.labels}
-								/>
-							</summary>
-							<Orders orders={p.rebilled} />
-						</details>
-					</li>
+					<ProductRow key={p.productId} product={p} />
 				))}
 			</ul>
 		</Card>
+	);
+}
+
+// A product, how it ships as saved (editable in place), and its re-bills;
+// the figures open the orders behind them.
+function ProductRow({ product: p }: { product: Data["byProduct"][number] }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<li className="border-t first:border-t-0">
+			<div className="flex items-center gap-3 px-4 py-2.5">
+				<ProductImage src={p.imageUrl} className="size-9" />
+				<div className="min-w-0 flex-1">
+					{p.sku ? (
+						<Link
+							to="/products/$sku"
+							params={{ sku: p.sku }}
+							className="block truncate hover:underline"
+						>
+							<ProductName name={p.name} variantName={p.variantName} />
+						</Link>
+					) : (
+						<div className="truncate">{p.name}</div>
+					)}
+					<div className="text-xs text-muted-foreground">
+						{p.sku ?? "No SKU"} ·{" "}
+						<ShippingDims
+							productId={p.productId}
+							sku={p.sku}
+							weightGrams={p.weightGrams}
+							box={p.box}
+						/>
+					</div>
+				</div>
+				<button
+					type="button"
+					aria-expanded={open}
+					onClick={() => setOpen(!open)}
+					className="rounded-md hover:bg-subtle"
+				>
+					<Figures
+						rebilled={p.rebilled.length}
+						orders={p.orders}
+						amount={p.amount}
+						labels={p.labels}
+					/>
+				</button>
+			</div>
+			{open && <Orders orders={p.rebilled} />}
+		</li>
 	);
 }
 
