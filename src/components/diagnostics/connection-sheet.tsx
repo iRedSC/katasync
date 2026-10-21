@@ -10,6 +10,7 @@ import {
 	type ChannelData,
 	emailStatus,
 	HEALTH,
+	inboxStatus,
 	shippoStatus,
 } from "./status";
 
@@ -47,6 +48,17 @@ export function Sheet({
 						d.services.email.configured
 							? `Sends as ${d.services.email.from}`
 							: "RESEND_API_KEY and PO_EMAIL_FROM not set."
+					}
+				/>
+			) : target === "inbox" ? (
+				<ServiceDetail
+					name="PO inbox"
+					target="inbox"
+					status={inboxStatus(d.services.inbox)}
+					detail={
+						d.services.inbox.missing.length === 0
+							? `Reads ${d.services.inbox.address}`
+							: `${d.services.inbox.missing.join(", ")} not set.`
 					}
 				/>
 			) : null}

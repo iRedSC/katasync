@@ -1263,6 +1263,129 @@ export const supplierInvoices = pgTable(
 	],
 );
 
+// How an email from the purchasing inbox came to be on its PO: sent to the
+// PO's own address (purchasing+po1234@), a reply whose subject names the PO
+// from its supplier's domain, or filed by someone in the app or by Claude.
+export const poEmailMatch = pgEnum("po_email_match", [
+	"address",
+	"subject",
+	"staff",
+	"claude",
+]);
+
+// Emails that reached the purchasing inbox, as read from Microsoft 365
+// (src/purchasing/inbox). Each is on a PO, waiting to be filed, or set aside
+// as about no PO. Emails we sent ourselves are never read in.
+export const poEmails = pgTable(
+	"po_emails",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		// The email's Message-ID header, so reading it twice keeps one row.
+		messageId: text().notNull(),
+		purchaseOrderId: integer().references(() => purchaseOrders.id),
+		matchedBy: poEmailMatch(),
+		// When someone decided it's about no PO.
+		setAsideAt: timestamp({ withTimezone: true }),
+		fromAddress: text().notNull(),
+		fromName: text(),
+		// Every To and Cc address, lowercased.
+		recipients: text().array().notNull(),
+		subject: text().notNull(),
+		// Plain text, as Outlook renders it.
+		body: text().notNull(),
+		receivedAt: timestamp({ withTimezone: true }).notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex("po_emails_message_id").on(t.messageId),
+		index("po_emails_po_idx").on(t.purchaseOrderId),
+		check(
+			"po_emails_matched_with_po",
+			sql`(${t.purchaseOrderId} is null) = (${t.matchedBy} is null)`,
+		),
+		check(
+			"po_emails_set_aside_unfiled",
+			sql`${t.setAsideAt} is null or ${t.purchaseOrderId} is null`,
+		),
+	],
+);
+
+// Files attached to a PO email. Logos and pictures inside the body are left
+// out. A file over the size kept has its name and size but no data.
+export const poEmailAttachments = pgTable(
+	"po_email_attachments",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		emailId: integer()
+			.notNull()
+			.references(() => poEmails.id, { onDelete: "cascade" }),
+		filename: text().notNull(),
+		contentType: text().notNull(),
+		size: integer().notNull(),
+		data: bytea(),
+		// A PDF's text, read once when it arrived, for Claude and SQL. Null for
+		// other files and for scans with no text in them.
+		text: text(),
+	},
+	(t) => [
+		index("po_email_attachments_email_idx").on(t.emailId),
+		check("po_email_attachments_size", sql`${t.size} >= 0`),
+		check(
+			"po_email_attachments_data_size",
+			sql`${t.data} is null or octet_length(${t.data}) = ${t.size}`,
+		),
+	],
+);
+
+// Shippo's word for where a package is.
+export const trackingStatus = pgEnum("tracking_status", [
+	"PRE_TRANSIT",
+	"TRANSIT",
+	"DELIVERED",
+	"RETURNED",
+	"FAILURE",
+	"UNKNOWN",
+]);
+
+// Packages a supplier sent for a PO, followed on Shippo. Only ever evidence:
+// a delivery never receives or closes the PO.
+export const purchaseOrderTracking = pgTable(
+	"purchase_order_tracking",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id),
+		// Shippo's carrier token: ups, usps, fedex.
+		carrier: text().notNull(),
+		// Uppercase, no spaces.
+		number: text().notNull(),
+		// The email it was found in; null when added by hand or by Claude.
+		emailId: integer().references(() => poEmails.id, { onDelete: "set null" }),
+		// Null until Shippo has been asked.
+		status: trackingStatus(),
+		statusDetail: text(),
+		statusAt: timestamp({ withTimezone: true }),
+		eta: timestamp({ withTimezone: true }),
+		checkedAt: timestamp({ withTimezone: true }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex("purchase_order_tracking_number").on(
+			t.purchaseOrderId,
+			t.number,
+		),
+		check(
+			"purchase_order_tracking_number_shape",
+			sql`${t.number} ~ '^[0-9A-Z]{8,40}$'`,
+		),
+		check(
+			"purchase_order_tracking_carrier",
+			sql`${t.carrier} in ('ups', 'usps', 'fedex')`,
+		),
+	],
+);
+
 // Each time units of a line are received, and each undo (a negative quantity
 // pointing at the receipt it reverses). Counted in the line's unit, like its
 // quantity. A line's received count is the sum.
@@ -1839,6 +1962,30 @@ export const settings = pgTable(
 		check("settings_single", sql`${t.id} = 1`),
 		check("settings_stock_range", sql`${t.defaultMinStock} >= 0`),
 		check("settings_retail_reserve", sql`${t.retailReserve} >= 0`),
+	],
+);
+
+// The emails katasync sends suppliers, by what they're for.
+export const emailTemplateKind = pgEnum("email_template_kind", [
+	"purchase_order",
+	"damage_report",
+]);
+
+// The wording of an email, edited in Settings: subject and body with
+// {placeholders} filled in when it's sent. The parts katasync lays out (the
+// damage list, attachments) stay in code. No row means the default wording
+// (src/purchasing/email-templates.ts).
+export const emailTemplates = pgTable(
+	"email_templates",
+	{
+		kind: emailTemplateKind().primaryKey(),
+		subject: text().notNull(),
+		body: text().notNull(),
+		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check("email_templates_subject_given", sql`btrim(${t.subject}) <> ''`),
+		check("email_templates_body_given", sql`btrim(${t.body}) <> ''`),
 	],
 );
 

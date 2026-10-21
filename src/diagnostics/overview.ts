@@ -13,6 +13,7 @@ import {
 	syncRuns,
 } from "#/db/schema";
 import { emailConfigured } from "#/purchasing/email";
+import { INBOX_ENV, inboxAddress } from "#/purchasing/inbox/graph";
 import { channelEnv, missingEnv, type SyncedChannel } from "./checks";
 import { dismissalKey, type IsDismissed, loadDismissals } from "./dismissals";
 import {
@@ -79,6 +80,10 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 			email: {
 				configured: emailConfigured(),
 				from: process.env.PO_EMAIL_FROM ?? null,
+			},
+			inbox: {
+				address: inboxAddress(),
+				missing: missingEnv(INBOX_ENV),
 			},
 		},
 	};
