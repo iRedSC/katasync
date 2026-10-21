@@ -2,7 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import { createFileRoute } from "@tanstack/react-router";
 
 // One cost pass of a channel: asks the marketplace what it charged on orders
-// that are due (src/orders/cost-refresh.ts). Called by Vercel Cron every four
+// that are due (src/orders/cost-refresh.ts), then refreshes its payouts
+// (src/payouts/refresh.ts). Called by Vercel Cron every four
 // hours with the sync crons, signed like them. Skips at once if the
 // last cost pass is still running.
 
@@ -28,10 +29,12 @@ export const Route = createFileRoute("/api/cron/costs/$channel")({
 					{ isSyncedChannel, costPassAlone },
 					{ channelEnv, missingEnv },
 					{ getDb },
+					{ refreshPayouts },
 				] = await Promise.all([
 					import("#/channels/sync"),
 					import("#/diagnostics/checks"),
 					import("#/db/client"),
+					import("#/payouts/refresh"),
 				]);
 				const channel = params.channel;
 				if (!isSyncedChannel(channel))
@@ -44,9 +47,13 @@ export const Route = createFileRoute("/api/cron/costs/$channel")({
 				const result = await costPassAlone(getDb(), channel, {
 					keepGoingForMs: 3 * 60_000,
 				});
+				// A few calls, so it runs even when the cost pass was skipped. A
+				// failure is kept on payout_checks for the Reports tab.
+				const deposits = await refreshPayouts(getDb(), channel);
 				if (!result)
 					return Response.json({
 						skipped: "the last cost pass is still running",
+						deposits,
 					});
 				// Single orders that failed are kept on their checks for
 				// Diagnostics; the pass itself worked.
@@ -54,6 +61,7 @@ export const Route = createFileRoute("/api/cron/costs/$channel")({
 					checked: result.checked,
 					reported: result.reported,
 					problems: result.problems.length,
+					deposits,
 				});
 			},
 		},

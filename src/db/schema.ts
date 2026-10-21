@@ -787,6 +787,50 @@ export const orderCostChecks = pgTable(
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
 );
 
+// Where a marketplace's payout stands: sent to the bank, on its way
+// (scheduled or in transit), or bounced back.
+export const payoutStatus = pgEnum("payout_status", [
+	"sent",
+	"pending",
+	"failed",
+]);
+
+// Money a marketplace sent to our bank: one deposit, as it shows on the
+// statement. reference is the marketplace's ID for the transfer that the bank
+// shows (Amazon's trace ID, eBay's bank reference), so a deposit can be ticked
+// off against the statement. Refreshed from the marketplace; rules live in
+// src/payouts/refresh.ts.
+export const payouts = pgTable(
+	"payouts",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		channel: channel().notNull(),
+		externalId: text().notNull(),
+		status: payoutStatus().notNull(),
+		// When it was sent to the bank, or is due to be.
+		depositedAt: timestamp({ withTimezone: true }).notNull(),
+		// What reaches the bank; negative when the marketplace takes money back.
+		amount: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+		currency: text().notNull(),
+		// Last digits of the bank account, as the marketplace shows them.
+		bankTail: text(),
+		reference: text(),
+		fetchedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("payouts_channel_external_id").on(t.channel, t.externalId),
+		index("payouts_deposited_at_idx").on(t.depositedAt),
+	],
+);
+
+// When katasync last asked a marketplace for its payouts, and why that
+// failed, if it did (a missing permission), for the Reports tab.
+export const payoutChecks = pgTable("payout_checks", {
+	channel: channel().primaryKey(),
+	checkedAt: timestamp({ withTimezone: true }).notNull(),
+	error: text(),
+});
+
 export const chargeKind = pgEnum("charge_kind", [
 	"fee",
 	"label",
