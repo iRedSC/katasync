@@ -73,6 +73,7 @@ const LABEL: Record<OrderField, string> = {
 
 const MARKETPLACES = {
 	shopify: "Shopify",
+	shop: "Shop app",
 	amazon: "Amazon",
 	ebay: "eBay",
 	tiktok: "TikTok",

@@ -18,6 +18,10 @@ test("a TikTok sale relayed through Shopify wears TikTok", () => {
 	expect(brandOf("shopify", "TikTok")).toBe("tiktok");
 });
 
+test("a sale on Shopify's Shop app wears Shop", () => {
+	expect(brandOf("shopify", "Shop")).toBe("shop");
+});
+
 test("other Shopify sources get the plain chip", () => {
 	expect(brandOf("shopify", "Draft Orders")).toBeNull();
 	expect(brandOf("shopify", "web")).toBeNull();

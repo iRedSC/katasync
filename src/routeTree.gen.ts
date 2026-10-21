@@ -15,6 +15,7 @@ import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as McpRouteImport } from './routes/mcp'
+import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as StockRouteImport } from './routes/stock'
@@ -27,6 +28,7 @@ import { Route as OrdersIndexRouteImport } from './routes/orders/index'
 import { Route as OrdersIdRouteImport } from './routes/orders/$id'
 import { Route as OrdersReturnsRouteImport } from './routes/orders/returns'
 import { Route as PrintInvoicesRouteImport } from './routes/print/invoices'
+import { Route as PrintReportRouteImport } from './routes/print/report'
 import { Route as ProductsIndexRouteImport } from './routes/products/index'
 import { Route as ProductsSkuRouteImport } from './routes/products/$sku'
 import { Route as ProductsArchivedRouteImport } from './routes/products/archived'
@@ -87,6 +89,11 @@ const McpRoute = McpRouteImport.update({
   path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReportsRoute = ReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -145,6 +152,11 @@ const OrdersReturnsRoute = OrdersReturnsRouteImport.update({
 const PrintInvoicesRoute = PrintInvoicesRouteImport.update({
   id: '/print/invoices',
   path: '/print/invoices',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrintReportRoute = PrintReportRouteImport.update({
+  id: '/print/report',
+  path: '/print/report',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProductsIndexRoute = ProductsIndexRouteImport.update({
@@ -302,6 +314,7 @@ export interface FileRoutesByFullPath {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -313,6 +326,7 @@ export interface FileRoutesByFullPath {
   '/orders/$id': typeof OrdersIdRoute
   '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
+  '/print/report': typeof PrintReportRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
@@ -351,6 +365,7 @@ export interface FileRoutesByTo {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -362,6 +377,7 @@ export interface FileRoutesByTo {
   '/orders/$id': typeof OrdersIdRoute
   '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
+  '/print/report': typeof PrintReportRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
@@ -401,6 +417,7 @@ export interface FileRoutesById {
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/stock': typeof StockRoute
@@ -412,6 +429,7 @@ export interface FileRoutesById {
   '/orders/$id': typeof OrdersIdRoute
   '/orders/returns': typeof OrdersReturnsRoute
   '/print/invoices': typeof PrintInvoicesRoute
+  '/print/report': typeof PrintReportRoute
   '/products/$sku': typeof ProductsSkuRoute
   '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
@@ -452,6 +470,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
+    | '/reports'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -463,6 +482,7 @@ export interface FileRouteTypes {
     | '/orders/$id'
     | '/orders/returns'
     | '/print/invoices'
+    | '/print/report'
     | '/products/$sku'
     | '/products/archived'
     | '/profit/overview'
@@ -501,6 +521,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
+    | '/reports'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -512,6 +533,7 @@ export interface FileRouteTypes {
     | '/orders/$id'
     | '/orders/returns'
     | '/print/invoices'
+    | '/print/report'
     | '/products/$sku'
     | '/products/archived'
     | '/profit/overview'
@@ -550,6 +572,7 @@ export interface FileRouteTypes {
     | '/listings'
     | '/login'
     | '/mcp'
+    | '/reports'
     | '/settings'
     | '/setup'
     | '/stock'
@@ -561,6 +584,7 @@ export interface FileRouteTypes {
     | '/orders/$id'
     | '/orders/returns'
     | '/print/invoices'
+    | '/print/report'
     | '/products/$sku'
     | '/products/archived'
     | '/profit/overview'
@@ -600,6 +624,7 @@ export interface RootRouteChildren {
   ListingsRoute: typeof ListingsRoute
   LoginRoute: typeof LoginRoute
   McpRoute: typeof McpRoute
+  ReportsRoute: typeof ReportsRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   StockRoute: typeof StockRoute
@@ -611,6 +636,7 @@ export interface RootRouteChildren {
   OrdersIdRoute: typeof OrdersIdRoute
   OrdersReturnsRoute: typeof OrdersReturnsRoute
   PrintInvoicesRoute: typeof PrintInvoicesRoute
+  PrintReportRoute: typeof PrintReportRoute
   ProductsSkuRoute: typeof ProductsSkuRoute
   ProductsArchivedRoute: typeof ProductsArchivedRoute
   ProfitOverviewRoute: typeof ProfitOverviewRoute
@@ -685,6 +711,13 @@ declare module '@tanstack/react-router' {
       path: '/mcp'
       fullPath: '/mcp'
       preLoaderRoute: typeof McpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reports': {
+      id: '/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof ReportsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -769,6 +802,13 @@ declare module '@tanstack/react-router' {
       path: '/print/invoices'
       fullPath: '/print/invoices'
       preLoaderRoute: typeof PrintInvoicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/print/report': {
+      id: '/print/report'
+      path: '/print/report'
+      fullPath: '/print/report'
+      preLoaderRoute: typeof PrintReportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/products/': {
@@ -984,6 +1024,7 @@ const rootRouteChildren: RootRouteChildren = {
   ListingsRoute: ListingsRoute,
   LoginRoute: LoginRoute,
   McpRoute: McpRoute,
+  ReportsRoute: ReportsRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   StockRoute: StockRoute,
@@ -995,6 +1036,7 @@ const rootRouteChildren: RootRouteChildren = {
   OrdersIdRoute: OrdersIdRoute,
   OrdersReturnsRoute: OrdersReturnsRoute,
   PrintInvoicesRoute: PrintInvoicesRoute,
+  PrintReportRoute: PrintReportRoute,
   ProductsSkuRoute: ProductsSkuRoute,
   ProductsArchivedRoute: ProductsArchivedRoute,
   ProfitOverviewRoute: ProfitOverviewRoute,

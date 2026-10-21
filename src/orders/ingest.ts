@@ -12,6 +12,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { LedgerError, recordSale, undoBatch } from "#/inventory/ledger";
+import { type OrderTax, saveTax } from "./tax";
 
 // An order as any channel adapter hands it over. Money is in store currency.
 export type ChannelOrder = {
@@ -42,6 +43,7 @@ export type ChannelOrder = {
 	shipPhone: string | null;
 	total: number;
 	shippingCharged: number;
+	tax: OrderTax;
 	sourceUpdatedAt: Date;
 	lines: {
 		externalId: string;
@@ -74,7 +76,7 @@ export async function ingestOrder(
 	from: StockLocations,
 ): Promise<{ orderId: number; problems: string[] }> {
 	return db.transaction(async (tx) => {
-		const { lines, ...fields } = order;
+		const { lines, tax, ...fields } = order;
 		const [saved] = await tx
 			.insert(orders)
 			.values({ ...fields, storeId: store.id })
@@ -83,6 +85,7 @@ export async function ingestOrder(
 				set: { ...fields, syncedAt: new Date() },
 			})
 			.returning({ id: orders.id });
+		await saveTax(tx, saved.id, tax);
 
 		const problems: string[] = [];
 		// When the store takes stock from, read now rather than trusted from the

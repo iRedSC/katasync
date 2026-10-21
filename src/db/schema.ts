@@ -505,6 +505,11 @@ export const listings = pgTable(
 	],
 );
 
+// Marketplaces (Amazon, eBay, TikTok, and TikTok orders Shopify relays)
+// collect sales tax and pay it to the state themselves; on our own Shopify
+// sales, online and in the store, we do.
+export const taxRemitter = pgEnum("tax_remitter", ["marketplace", "seller"]);
+
 // An order as the channel reports it. Money is in the store's currency.
 export const orders = pgTable(
 	"orders",
@@ -556,6 +561,11 @@ export const orders = pgTable(
 		shippingCharged: numeric({ precision: 12, scale: 2, mode: "number" })
 			.notNull()
 			.default(0),
+		// Who pays the order's sales tax to the state; its amounts are in
+		// order_taxes. Null until a sync has read the order's tax, which is not
+		// the same as no tax: orders synced before tax was read have none yet
+		// (scripts/backfill-tax.ts fills them in).
+		taxRemittedBy: taxRemitter(),
 		sourceUpdatedAt: timestamp({ withTimezone: true }).notNull(),
 		syncedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
@@ -595,6 +605,32 @@ export const orderLines = pgTable(
 	(t) => [
 		unique("order_lines_order_external_id").on(t.orderId, t.externalId),
 		index("order_lines_product_idx").on(t.productId),
+	],
+);
+
+// Sales tax the buyer paid on an order, one row per jurisdiction or kind as
+// the channel names it ("CA State Tax", "Sales tax on shipping"). Net of tax
+// refunded where the channel says so. Replaced whole on every sync; an order
+// with taxRemittedBy set and no rows had no tax.
+export const orderTaxes = pgTable(
+	"order_taxes",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id, { onDelete: "cascade" }),
+		jurisdiction: text().notNull(),
+		// As a fraction, 0.0725 for 7.25%, when the channel gives one.
+		rate: numeric({ precision: 8, scale: 6, mode: "number" }),
+		amount: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+	},
+	(t) => [
+		index("order_taxes_order_idx").on(t.orderId),
+		check("order_taxes_amount_not_zero", sql`${t.amount} <> 0`),
+		check(
+			"order_taxes_jurisdiction_given",
+			sql`btrim(${t.jurisdiction}) <> ''`,
+		),
 	],
 );
 
