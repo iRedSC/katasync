@@ -47,6 +47,8 @@ export const READ_TOOLS = new Set([
 	"search_inbox",
 	"read_inbox_email",
 	"markets",
+	"search_marketplace_mail",
+	"read_marketplace_email",
 ]);
 
 export function buildServer(db: Db, access: { canWrite: boolean }) {
