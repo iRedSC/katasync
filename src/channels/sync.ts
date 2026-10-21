@@ -3,7 +3,11 @@ import { type Db, withOwnConnection } from "#/db/client";
 import { syncRuns } from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { recordSyncRun } from "#/diagnostics/runs";
-import { refreshCosts } from "#/orders/cost-refresh";
+import {
+	type PostedLister,
+	refreshCosts,
+	sweepPosted,
+} from "#/orders/cost-refresh";
 import { applySkusToOrders } from "#/orders/remap";
 import { assignOrderPins } from "#/shipping/pins";
 import { stockChannels } from "#/stock-push/channels";
@@ -11,7 +15,7 @@ import { pushMoved } from "#/stock-push/on-change";
 import { pushChannelStock, pushMode } from "#/stock-push/push";
 import { syncAmazon } from "./amazon";
 import { syncEbay } from "./ebay";
-import { fetchAmazonCharges } from "./finance/amazon";
+import { amazonPostedSince, fetchAmazonCharges } from "./finance/amazon";
 import { fetchEbayCharges } from "./finance/ebay";
 import { fetchShopifyCharges } from "./finance/shopify";
 import { fetchTiktokCharges } from "./finance/tiktok";
@@ -146,6 +150,11 @@ const chargeFetchers = {
 	amazon: fetchAmazonCharges,
 };
 
+// Marketplaces that can list what they posted lately, swept first each pass.
+const postedListers: Partial<Record<SyncedChannel, PostedLister>> = {
+	amazon: amazonPostedSince,
+};
+
 // Asks a marketplace again about what it charged on orders that are due
 // (src/orders/cost-refresh.ts). It only writes charges, never orders, so it
 // has a lock of its own and never waits on or holds up the order sync.
@@ -166,6 +175,25 @@ export async function costPassAlone(
 	const until = Date.now() + (options.keepGoingForMs ?? 0);
 	return holdingChannel(channel, { purpose }, async () => {
 		const total = { checked: 0, reported: 0, problems: [] as string[] };
+		const listPosted = postedListers[channel];
+		if (listPosted && !options.history) {
+			try {
+				const swept = await sweepPosted(
+					db,
+					channel,
+					chargeFetchers[channel],
+					listPosted,
+				);
+				total.checked += swept.checked;
+				total.reported += swept.reported;
+				total.problems.push(...swept.problems);
+			} catch (e) {
+				// The regular batches still run.
+				total.problems.push(
+					`Listing what ${channel} posted failed: ${e instanceof Error ? e.message : String(e)}`,
+				);
+			}
+		}
 		for (;;) {
 			const batch = await refreshCosts(
 				db,

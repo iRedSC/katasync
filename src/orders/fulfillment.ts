@@ -55,7 +55,7 @@ export function externalFulfillment(
 		return {
 			name: "Amazon",
 			url: id
-				? `https://sellercentral.amazon.com/orders-v3/order/${encodeURIComponent(id)}`
+				? amazonOrderLink(id)
 				: "https://sellercentral.amazon.com/orders-v3",
 			why: null,
 		};
@@ -69,6 +69,11 @@ export function externalFulfillment(
 	}
 	return null;
 }
+
+// The order on Seller Central, where its label was bought and the package
+// as declared is.
+export const amazonOrderLink = (id: string) =>
+	`https://sellercentral.amazon.com/orders-v3/order/${encodeURIComponent(id)}`;
 
 // Katasync's redirect to the order in Shopify's admin. The store's handle is
 // server-only, so pages link here and the server finishes the address.

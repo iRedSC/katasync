@@ -3,6 +3,7 @@ import {
 	desc,
 	eq,
 	gte,
+	inArray,
 	isNotNull,
 	isNull,
 	lt,
@@ -10,7 +11,13 @@ import {
 	sql,
 } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { type channel, orderCostChecks, orders, stores } from "#/db/schema";
+import {
+	type channel,
+	orderCostChecks,
+	orderCostReports,
+	orders,
+	stores,
+} from "#/db/schema";
 import { type CostReport, saveCostReport } from "./charges";
 
 // Asks each marketplace again about orders whose charges aren't final yet.
@@ -18,6 +25,11 @@ import { type CostReport, saveCostReport } from "./charges";
 // (TikTok settles a week or more later), and refunds come later still, so
 // young orders are asked often and older ones rarely, until the order is old
 // enough that what's on file is taken as final.
+//
+// A marketplace that can list what it posted lately (Amazon) is also swept
+// each pass: an order with money posted since its report is asked again at
+// once, however old. A carrier re-billing a label posts weeks after the sale,
+// up to 60 days for Amazon, when the order's turn may be days off or past.
 
 type Channel = (typeof channel.enumValues)[number];
 
@@ -56,6 +68,12 @@ export type FetchedCharges =
 // Asks about a batch at once, for marketplaces that can (ShopifyQL takes 50
 // order IDs per query); eachOrder wraps a one-at-a-time API.
 export type ChargeFetcher = (orders: DueOrder[]) => Promise<FetchedCharges[]>;
+
+// Each order a marketplace posted money on since a time, by the ID it knows
+// the order by, with when it last did.
+export type PostedLister = (
+	since: Date,
+) => Promise<{ marketplaceId: string; postedAt: Date }[]>;
 
 export function eachOrder(
 	fetchOne: (
@@ -149,7 +167,21 @@ export async function dueOrders(
 			desc(orders.placedAt),
 		)
 		.limit(limit);
-	return rows.map((r) => ({
+	return rows.map((r) => toDue(billedBy, r));
+}
+
+function toDue(
+	billedBy: Channel,
+	r: {
+		orderId: number;
+		name: string;
+		externalId: string;
+		marketplaceOrderId: string | null;
+		storeChannel: Channel;
+		placedAt: Date;
+	},
+): DueOrder {
+	return {
 		orderId: r.orderId,
 		name: r.name,
 		marketplaceId:
@@ -157,7 +189,71 @@ export async function dueOrders(
 				? r.externalId
 				: (r.marketplaceOrderId?.slice(billedBy.length + 1) ?? r.externalId),
 		placedAt: r.placedAt,
-	}));
+	};
+}
+
+// How far back each sweep looks. Passes run every four hours; the overlap
+// covers a few that fail.
+export const SWEEP_BACK_MS = 3 * 24 * HOUR;
+// A report fetched this soon after something posted may predate it showing
+// up, so it's asked again.
+const SHOWS_UP_WITHIN_MS = 2 * HOUR;
+
+// The orders with money posted after their report on file was fetched (or
+// with none on file), cancelled ones aside.
+export async function postedOrders(
+	db: Db,
+	billedBy: Channel,
+	posted: { marketplaceId: string; postedAt: Date }[],
+): Promise<DueOrder[]> {
+	const latest = new Map<string, number>();
+	for (const p of posted) {
+		const t = p.postedAt.getTime();
+		latest.set(p.marketplaceId, Math.max(t, latest.get(p.marketplaceId) ?? t));
+	}
+	if (latest.size === 0) return [];
+	const ids = [...latest.keys()];
+	const rows = await db
+		.select({
+			orderId: orders.id,
+			name: orders.name,
+			externalId: orders.externalId,
+			marketplaceOrderId: orders.marketplaceOrderId,
+			storeChannel: stores.channel,
+			placedAt: orders.placedAt,
+			fetchedAt: orderCostReports.fetchedAt,
+		})
+		.from(orders)
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.leftJoin(
+			orderCostReports,
+			and(
+				eq(orderCostReports.orderId, orders.id),
+				eq(orderCostReports.billedBy, billedBy),
+			),
+		)
+		.where(
+			and(
+				isNull(orders.cancelledAt),
+				or(
+					and(eq(stores.channel, billedBy), inArray(orders.externalId, ids)),
+					inArray(
+						orders.marketplaceOrderId,
+						ids.map((id) => `${billedBy}:${id}`),
+					),
+				),
+			),
+		);
+	return rows
+		.map((r) => ({ due: toDue(billedBy, r), fetchedAt: r.fetchedAt }))
+		.filter(({ due, fetchedAt }) => {
+			const postedAt = latest.get(due.marketplaceId);
+			return (
+				postedAt !== undefined &&
+				(!fetchedAt || fetchedAt.getTime() < postedAt + SHOWS_UP_WITHIN_MS)
+			);
+		})
+		.map(({ due }) => due);
 }
 
 // One pass for one marketplace. One order failing doesn't stop the rest; its
@@ -176,6 +272,31 @@ export async function refreshCosts(
 		options.limit,
 		options.history,
 	);
+	return askAbout(db, billedBy, fetchCharges, due, now);
+}
+
+// Asks again about every order the marketplace posted money on lately whose
+// report on file came before it, however old the order.
+export async function sweepPosted(
+	db: Db,
+	billedBy: Channel,
+	fetchCharges: ChargeFetcher,
+	listPosted: PostedLister,
+	options: { now?: Date } = {},
+) {
+	const now = options.now ?? new Date();
+	const posted = await listPosted(new Date(now.getTime() - SWEEP_BACK_MS));
+	const due = await postedOrders(db, billedBy, posted);
+	return askAbout(db, billedBy, fetchCharges, due, now);
+}
+
+async function askAbout(
+	db: Db,
+	billedBy: Channel,
+	fetchCharges: ChargeFetcher,
+	due: DueOrder[],
+	now: Date,
+) {
 	let reported = 0;
 	const problems: string[] = [];
 	if (due.length === 0) return { checked: 0, reported, problems };

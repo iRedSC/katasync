@@ -9,6 +9,7 @@ import {
 	ProfitViews,
 	RangeTabs,
 	rangeSearch,
+	searchFor,
 } from "#/components/profit-nav";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import {
@@ -24,6 +25,7 @@ import {
 	formatOrderDate,
 } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import type { RangeKey } from "#/orders/profit";
 import { getProfit } from "#/server/profit";
 
 // What the business made over a stretch of time, from the order_profit view:
@@ -103,7 +105,7 @@ function Profit() {
 							/>
 						</dl>
 					</Card>
-					<Breakdown totals={t} />
+					<Breakdown totals={t} range={range} rangeEnd={d.range.end} />
 					<Days days={d.days} />
 					<Marketplaces rows={d.marketplaces} />
 					<div className="grid gap-4 lg:grid-cols-2">
@@ -222,9 +224,22 @@ function Unsure({ totals: t }: { totals: Data["totals"] }) {
 	);
 }
 
-function Breakdown({ totals: t }: { totals: Data["totals"] }) {
-	// Why a row isn't final yet, if it isn't.
-	const rows: [string, number, string?][] = [
+// Carriers re-bill weeks after the sale; Amazon's come up to 60 days on.
+const REBILLS_WITHIN_MS = 60 * 24 * 60 * 60 * 1000;
+
+function Breakdown({
+	totals: t,
+	range,
+	rangeEnd,
+}: {
+	totals: Data["totals"];
+	range: RangeKey;
+	rangeEnd: Date;
+}) {
+	const rebillsToCome =
+		new Date(rangeEnd).getTime() > Date.now() - REBILLS_WITHIN_MS;
+	// Why a row isn't final yet, if it isn't, and where it leads.
+	const rows: [ReactNode, number, string?][] = [
 		["Sales", t.revenue],
 		["Shipping charged", t.shippingCharged],
 		[
@@ -250,14 +265,34 @@ function Breakdown({ totals: t }: { totals: Data["totals"] }) {
 				? `Estimated or missing for ${formatCount(t.labelsStandIn + t.labelsAwaiting + t.labelsMissing)} orders`
 				: undefined,
 		],
+		[
+			<Link
+				key="postage"
+				to="/profit/postage"
+				search={searchFor("/profit/postage", range)}
+				className="hover:text-foreground hover:underline"
+			>
+				Postage adjustments
+				{t.postageAdjusted > 0 && (
+					<span className="ml-1.5 rounded-md bg-critical-fill px-1.5 text-xs font-medium text-critical-text tabular-nums">
+						{formatCount(t.postageAdjusted)} orders
+					</span>
+				)}
+			</Link>,
+			-t.postageAdjustments,
+			rebillsToCome
+				? "More may come: carriers re-bill weeks after the sale"
+				: undefined,
+		],
 		["Refunds", -t.refunds],
 		["Other adjustments", -t.adjustments],
 	];
 	return (
 		<Card title="Where it went">
 			<dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1.5 tabular-nums">
-				{rows.map(([label, amount, unsure]) => (
-					<div key={label} className="contents">
+				{rows.map(([label, amount, unsure], i) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: a fixed list, never reordered
+					<div key={i} className="contents">
 						<dt className="text-muted-foreground">{label}</dt>
 						<dd className="text-right">
 							{unsure ? (

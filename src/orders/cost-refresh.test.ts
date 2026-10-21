@@ -4,7 +4,12 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { saveCostReport } from "./charges";
-import { dueOrders, eachOrder, refreshCosts } from "./cost-refresh";
+import {
+	dueOrders,
+	eachOrder,
+	refreshCosts,
+	sweepPosted,
+} from "./cost-refresh";
 
 let db: Db;
 let shopify: number;
@@ -198,4 +203,74 @@ test("history asks again about old orders whose last ask failed", async () => {
 		(await refreshCosts(db, "shopify", fetch, { now: later, history: true }))
 			.checked,
 	).toBe(0);
+});
+
+describe("sweepPosted", () => {
+	async function amazonOrder(name: string, placedHoursAgo: number) {
+		const [{ id: store }] = await db
+			.insert(schema.stores)
+			.values({ channel: "amazon", name: `Amazon ${name}` })
+			.returning();
+		return order(name, placedHoursAgo, {
+			storeId: store,
+			externalId: name,
+			marketplaceOrderId: `amazon:${name}`,
+		});
+	}
+	const report = (orderId: number, fetchedAt: Date) =>
+		saveCostReport(db, {
+			orderId,
+			billedBy: "amazon",
+			settled: false,
+			charges: [{ kind: "label", description: "Postage", amount: 7 }],
+			fetchedAt,
+		});
+
+	test("asks again about orders with money posted after their report, however old", async () => {
+		// A re-bill posted on a sale 70 days old, past the regular passes.
+		const old = await amazonOrder("111-old", 70 * 24);
+		await report(old, ago(20 * 24));
+		// Its report came after what posted.
+		const current = await amazonOrder("111-current", 20 * 24);
+		await report(current, ago(1));
+		// Asked within two hours of the posting, which may not have shown yet.
+		const close = await amazonOrder("111-close", 20 * 24);
+		await report(close, ago(23));
+		const asked: string[] = [];
+		const result = await sweepPosted(
+			db,
+			"amazon",
+			eachOrder(async (o) => {
+				asked.push(o.marketplaceId);
+				return {
+					settled: false,
+					charges: [
+						{
+							kind: "postage_adjustment",
+							description: "PostageBilling_PostageAdjustment",
+							amount: 12.5,
+						},
+					],
+				};
+			}),
+			async (since) => {
+				expect(since).toEqual(ago(3 * 24));
+				return [
+					{ marketplaceId: "111-old", postedAt: ago(2 * 24) },
+					{ marketplaceId: "111-current", postedAt: ago(30) },
+					{ marketplaceId: "111-close", postedAt: ago(24) },
+					// Not one of ours.
+					{ marketplaceId: "999-unknown", postedAt: ago(5) },
+				];
+			},
+			{ now },
+		);
+		expect(asked.sort()).toEqual(["111-close", "111-old"]);
+		expect(result).toMatchObject({ checked: 2, reported: 2 });
+		const charges = await db
+			.select()
+			.from(schema.orderCharges)
+			.where(eq(schema.orderCharges.orderId, old));
+		expect(charges.map((c) => c.kind)).toEqual(["postage_adjustment"]);
+	});
 });

@@ -32,6 +32,7 @@ import { Route as ProductsSkuRouteImport } from './routes/products/$sku'
 import { Route as ProductsArchivedRouteImport } from './routes/products/archived'
 import { Route as ProfitIndexRouteImport } from './routes/profit/index'
 import { Route as ProfitOverviewRouteImport } from './routes/profit/overview'
+import { Route as ProfitPostageRouteImport } from './routes/profit/postage'
 import { Route as PurchasingIndexRouteImport } from './routes/purchasing/index'
 import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
@@ -169,6 +170,11 @@ const ProfitOverviewRoute = ProfitOverviewRouteImport.update({
   path: '/profit/overview',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProfitPostageRoute = ProfitPostageRouteImport.update({
+  id: '/profit/postage',
+  path: '/profit/postage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PurchasingIndexRoute = PurchasingIndexRouteImport.update({
   id: '/purchasing/',
   path: '/purchasing/',
@@ -297,6 +303,7 @@ export interface FileRoutesByFullPath {
   '/products/$sku': typeof ProductsSkuRoute
   '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
+  '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
@@ -343,6 +350,7 @@ export interface FileRoutesByTo {
   '/products/$sku': typeof ProductsSkuRoute
   '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
+  '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
@@ -390,6 +398,7 @@ export interface FileRoutesById {
   '/products/$sku': typeof ProductsSkuRoute
   '/products/archived': typeof ProductsArchivedRoute
   '/profit/overview': typeof ProfitOverviewRoute
+  '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
@@ -438,6 +447,7 @@ export interface FileRouteTypes {
     | '/products/$sku'
     | '/products/archived'
     | '/profit/overview'
+    | '/profit/postage'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
@@ -484,6 +494,7 @@ export interface FileRouteTypes {
     | '/products/$sku'
     | '/products/archived'
     | '/profit/overview'
+    | '/profit/postage'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
@@ -530,6 +541,7 @@ export interface FileRouteTypes {
     | '/products/$sku'
     | '/products/archived'
     | '/profit/overview'
+    | '/profit/postage'
     | '/purchasing/$id'
     | '/purchasing/suppliers'
     | '/receive/$id'
@@ -577,6 +589,7 @@ export interface RootRouteChildren {
   ProductsSkuRoute: typeof ProductsSkuRoute
   ProductsArchivedRoute: typeof ProductsArchivedRoute
   ProfitOverviewRoute: typeof ProfitOverviewRoute
+  ProfitPostageRoute: typeof ProfitPostageRoute
   PurchasingIdRoute: typeof PurchasingIdRoute
   PurchasingSuppliersRoute: typeof PurchasingSuppliersRoute
   ReceiveIdRoute: typeof ReceiveIdRoute
@@ -766,6 +779,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProfitOverviewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/profit/postage': {
+      id: '/profit/postage'
+      path: '/profit/postage'
+      fullPath: '/profit/postage'
+      preLoaderRoute: typeof ProfitPostageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/purchasing/': {
       id: '/purchasing/'
       path: '/purchasing'
@@ -937,6 +957,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProductsSkuRoute: ProductsSkuRoute,
   ProductsArchivedRoute: ProductsArchivedRoute,
   ProfitOverviewRoute: ProfitOverviewRoute,
+  ProfitPostageRoute: ProfitPostageRoute,
   PurchasingIdRoute: PurchasingIdRoute,
   PurchasingSuppliersRoute: PurchasingSuppliersRoute,
   ReceiveIdRoute: ReceiveIdRoute,

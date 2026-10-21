@@ -68,9 +68,18 @@ export function Row({ item: i, range }: { item: Item; range: string }) {
 				{formatMoney(i.fees)}
 				{i.feesStatus === "estimated" && <Approx />}
 			</td>
-			<td className="px-2.5 py-2 text-right">
+			<td
+				className={cn(
+					"px-2.5 py-2 text-right",
+					i.postageAdjusted && "text-critical-text",
+				)}
+			>
 				<Tip
-					content={`Labels ${formatMoney(i.labels)}, less ${formatMoney(i.shippingCharged)} the buyer paid for shipping`}
+					content={
+						i.postageAdjusted
+							? `Labels ${formatMoney(i.labels)}, re-billed ${formatMoney(i.postageAdjustments)} for size or weight, less ${formatMoney(i.shippingCharged)} the buyer paid`
+							: `Labels ${formatMoney(i.labels)}, less ${formatMoney(i.shippingCharged)} the buyer paid for shipping`
+					}
 				>
 					<span>{formatMoney(shipping(i))}</span>
 				</Tip>

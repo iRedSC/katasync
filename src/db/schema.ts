@@ -728,6 +728,10 @@ export const orderCostChecks = pgTable(
 export const chargeKind = pgEnum("charge_kind", [
 	"fee",
 	"label",
+	// The carrier re-billing a label after the fact, for a size or weight
+	// other than declared. Kept apart from "label" so what the box got wrong
+	// never hides inside the label's price.
+	"postage_adjustment",
 	// Money given back to the buyer.
 	"refund",
 	// Anything else the marketplace adds or takes back, e.g. a reimbursement.
@@ -1663,6 +1667,12 @@ export const orderProfit = pgView("order_profit", {
 			"missing",
 		],
 	}).notNull(),
+	// What carriers re-billed for size or weight, kept out of labels.
+	postageAdjustments: numeric({
+		precision: 12,
+		scale: 2,
+		mode: "number",
+	}).notNull(),
 	refunds: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	adjustments: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	profit: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
@@ -1695,6 +1705,11 @@ export const orderLineProfit = pgView("order_line_profit", {
 	fees: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	labels: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 	shippingCharged: numeric({
+		precision: 12,
+		scale: 2,
+		mode: "number",
+	}).notNull(),
+	postageAdjustments: numeric({
 		precision: 12,
 		scale: 2,
 		mode: "number",
