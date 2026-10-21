@@ -446,8 +446,8 @@ function Jurisdictions({
 
 const HOW: Record<Data["states"][number]["how"], string> = {
 	shipped: "",
-	in_store: " (in store)",
-	no_address: " (picked up or no address)",
+	in_store: " (retail)",
+	no_address: " (pickup)",
 };
 
 function States({ rows, period }: { rows: Data["states"]; period: Period }) {

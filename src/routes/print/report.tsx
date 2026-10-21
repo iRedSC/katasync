@@ -462,8 +462,8 @@ const HOW: Record<
 	{ icon: typeof Store; label: string }
 > = {
 	shipped: { icon: Truck, label: "Shipped" },
-	in_store: { icon: Store, label: "Retail store" },
-	no_address: { icon: Hand, label: "Picked up" },
+	in_store: { icon: Store, label: "Retail" },
+	no_address: { icon: Hand, label: "Pickup" },
 };
 
 const CHIP =
