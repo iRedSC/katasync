@@ -47,7 +47,7 @@ export const amazonItem = type({
 	"ShippingDiscountTax?": money,
 });
 
-const ordersPage = type({
+export const ordersPage = type({
 	payload: {
 		Orders: amazonOrder.array(),
 		"NextToken?": "string",

@@ -211,7 +211,7 @@ export async function shopCipher() {
 	return cachedCipher;
 }
 
-const searchPage = type({
+export const searchPage = type({
 	"orders?": type({ id: "string" }).array(),
 	"next_page_token?": "string",
 });
@@ -302,7 +302,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	return { store: store.name, created, orders: count, problems };
 }
 
-async function ingestDetail(
+export async function ingestDetail(
 	db: Db,
 	store: Awaited<ReturnType<typeof ensureStore>>,
 	raw: typeof tiktokOrder.infer,

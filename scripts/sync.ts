@@ -8,9 +8,10 @@
 //   pnpm sync --costs-history
 //                            one-time: ask each marketplace once about every
 //                            order too old for cost passes that never was
-//   pnpm sync --shopify-history 365
-//                            one-time import of Shopify orders placed in the
-//                            last 365 days that the regular sync hasn't seen
+//   pnpm sync --orders-history 365
+//                            one-time import of orders placed in the last
+//                            365 days that the regular sync hasn't seen, on
+//                            every channel at once (--only one of them)
 //   pnpm sync --returns-history 365
 //                            one-time import of returns buyers opened in the
 //                            last 365 days on Amazon, Shopify, eBay and
@@ -24,7 +25,11 @@ import {
 	type ReturnChannel,
 	returnChannels,
 } from "#/channels/returns-history";
-import { backfillShopify } from "#/channels/shopify";
+import {
+	backfillOrders,
+	type OrderChannel,
+	orderChannels,
+} from "#/channels/orders-history";
 import { costPassAlone, syncPass } from "#/channels/sync";
 import { getDb } from "#/db/client";
 import { channelEnv } from "#/diagnostics/checks";
@@ -41,7 +46,7 @@ const { values } = parseArgs({
 		costs: { type: "boolean", default: false },
 		"costs-history": { type: "boolean", default: false },
 		only: { type: "string" },
-		"shopify-history": { type: "string" },
+		"orders-history": { type: "string" },
 		"returns-history": { type: "string" },
 	},
 });
@@ -124,18 +129,22 @@ if (values["costs-history"]) {
 	process.exit(0);
 }
 
-if (values["shopify-history"]) {
-	const days = Number(values["shopify-history"]);
+if (values["orders-history"]) {
+	const days = Number(values["orders-history"]);
 	if (!Number.isInteger(days) || days <= 0) throw new Error("Give a number of days");
-	// The regular sync already covers the newest 60 days.
-	const until = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
-	const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-	const started = Date.now();
-	const result = await backfillShopify(getDb(), from, until);
-	console.log(
-		`${result.store}: ${result.orders} older orders in ${((Date.now() - started) / 1000).toFixed(0)}s`,
+	const wanted = orderChannels.filter(
+		(c): c is OrderChannel =>
+			(!values.only || c === values.only) &&
+			channelEnv[c].every((name) => process.env[name]),
 	);
-	for (const problem of result.problems) console.log(`  ${problem}`);
+	// At once: Amazon's rate limits take hours, which the rest shouldn't wait on.
+	await Promise.all(
+		wanted.map((channel) =>
+			backfillOrders(getDb(), channel, days, console.log).catch((error) =>
+				console.error(`${channel} history stopped:`, error),
+			),
+		),
+	);
 	process.exit(0);
 }
 
