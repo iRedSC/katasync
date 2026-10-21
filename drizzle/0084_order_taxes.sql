@@ -11,4 +11,6 @@ CREATE TABLE "order_taxes" (
 --> statement-breakpoint
 ALTER TABLE "orders" ADD COLUMN "tax_remitted_by" "tax_remitter";--> statement-breakpoint
 ALTER TABLE "order_taxes" ADD CONSTRAINT "order_taxes_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "order_taxes_order_idx" ON "order_taxes" USING btree ("order_id");
+CREATE INDEX "order_taxes_order_idx" ON "order_taxes" USING btree ("order_id");--> statement-breakpoint
+-- The read-only MCP role sees sales tax like every other table.
+GRANT SELECT ON "order_taxes" TO katasync_mcp;

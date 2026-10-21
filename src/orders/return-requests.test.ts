@@ -124,6 +124,7 @@ describe("saveReturns", () => {
 		).toEqual({
 			saved: 1,
 			skipped: 0,
+			missing: [],
 		});
 		const [saved] = await db.select().from(schema.returnRequestLines);
 		expect(saved.orderLineId).toBe(line.id);
@@ -140,6 +141,7 @@ describe("saveReturns", () => {
 		).toEqual({
 			saved: 1,
 			skipped: 1,
+			missing: ["999"],
 		});
 		await saveReturns(db, store, [amazonReturn("closed")]);
 

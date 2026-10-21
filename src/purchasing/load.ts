@@ -12,6 +12,7 @@ import {
 } from "#/db/schema";
 import { discountOf } from "#/purchasing/discount";
 import { renderPurchaseOrder } from "#/purchasing/document";
+import { poAddress } from "#/purchasing/inbox/graph";
 import { PurchaseOrderError, poName } from "#/purchasing/orders";
 
 // Reading a PO and building its PDF. Server only: the PDF renderer can't run
@@ -191,7 +192,9 @@ export async function documentFor(db: Db, poId: number) {
 				postalCode: po.location.postalCode,
 				country: po.location.country,
 				phone: po.location.phone,
-				email: process.env.PO_EMAIL_REPLY_TO ?? po.location.email,
+				// The PO's own inbox address, so mail to it lands on this PO.
+				email:
+					poAddress(poId) ?? process.env.PO_EMAIL_REPLY_TO ?? po.location.email,
 			},
 			supplier: po.supplier,
 			notes,

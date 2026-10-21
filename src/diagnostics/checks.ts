@@ -6,6 +6,13 @@ import {
 } from "#/channels/ebay";
 import { shopifyQuery } from "#/channels/shopify";
 import { tiktokApi } from "#/channels/tiktok";
+import {
+	graphToken,
+	INBOX_ENV,
+	inboxAddress,
+	newestMessageAt,
+	tokenRoles,
+} from "#/purchasing/inbox/graph";
 import { errorText } from "./runs";
 
 // Live, step-by-step checks of each outside service katasync depends on.
@@ -21,7 +28,7 @@ export const channelEnv = {
 } as const;
 
 export type SyncedChannel = keyof typeof channelEnv;
-export type CheckTarget = SyncedChannel | "shippo" | "email";
+export type CheckTarget = SyncedChannel | "shippo" | "email" | "inbox";
 
 export const missingEnv = (names: readonly string[]) =>
 	names.filter((name) => !process.env[name]);
@@ -258,6 +265,31 @@ async function checkEmail(s: Steps) {
 	});
 }
 
+async function checkInbox(s: Steps) {
+	await needEnv(s, INBOX_ENV);
+	let token = "";
+	await s.step("Sign in to Microsoft 365", async () => {
+		token = await graphToken();
+		return "Token issued";
+	});
+	await s.step("Limited to the purchasing mailbox", async () => {
+		// Exchange scopes the app to one mailbox without a role in the token. A
+		// Mail role here comes from Entra and reaches every mailbox.
+		const broad = tokenRoles(token).filter((r) => /^Mail\./.test(r));
+		if (broad.length > 0)
+			throw new Error(
+				`Entra grants ${broad.join(", ")}, which reads every mailbox in the company. Revoke its admin consent under App registrations, KataSync mail, API permissions.`,
+			);
+		return "No company-wide mail permission";
+	});
+	await s.step("Read the inbox", async () => {
+		const newest = await newestMessageAt();
+		return newest
+			? `${inboxAddress()}: newest email ${newest.toISOString().slice(0, 16).replace("T", " ")} UTC`
+			: `${inboxAddress()}: empty`;
+	});
+}
+
 const checks: Record<CheckTarget, (s: Steps) => Promise<void>> = {
 	shopify: checkShopify,
 	ebay: checkEbay,
@@ -265,6 +297,7 @@ const checks: Record<CheckTarget, (s: Steps) => Promise<void>> = {
 	tiktok: checkTiktok,
 	shippo: checkShippo,
 	email: checkEmail,
+	inbox: checkInbox,
 };
 
 export async function runCheck(target: CheckTarget) {

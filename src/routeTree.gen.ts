@@ -42,10 +42,13 @@ import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
 import { Route as TransfersIndexRouteImport } from './routes/transfers/index'
 import { Route as TransfersIdRouteImport } from './routes/transfers/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiCronInboxRouteImport } from './routes/api/cron/inbox'
 import { Route as ApiCronTrackingRouteImport } from './routes/api/cron/tracking'
 import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage-photos/$damageId'
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
+import { Route as ApiPoEmailAttachmentsAttachmentIdRouteImport } from './routes/api/po-email-attachments/$attachmentId'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
+import { Route as LabelsRefurbsReturnIdRouteImport } from './routes/labels/refurbs.$returnId'
 import { Route as OrdersReturnsInsightsRouteImport } from './routes/orders/returns_.insights'
 import { Route as PurchasingDamagePhotoIdRouteImport } from './routes/purchasing/damage-photo.$id'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
@@ -221,6 +224,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCronInboxRoute = ApiCronInboxRouteImport.update({
+  id: '/api/cron/inbox',
+  path: '/api/cron/inbox',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCronTrackingRoute = ApiCronTrackingRouteImport.update({
   id: '/api/cron/tracking',
   path: '/api/cron/tracking',
@@ -236,9 +244,20 @@ const ApiOauthSplatRoute = ApiOauthSplatRouteImport.update({
   path: '/api/oauth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPoEmailAttachmentsAttachmentIdRoute =
+  ApiPoEmailAttachmentsAttachmentIdRouteImport.update({
+    id: '/api/po-email-attachments/$attachmentId',
+    path: '/api/po-email-attachments/$attachmentId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
   id: '/api/webhooks/$channel',
   path: '/api/webhooks/$channel',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LabelsRefurbsReturnIdRoute = LabelsRefurbsReturnIdRouteImport.update({
+  id: '/labels/refurbs/$returnId',
+  path: '/labels/refurbs/$returnId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrdersReturnsInsightsRoute = OrdersReturnsInsightsRouteImport.update({
@@ -322,10 +341,13 @@ export interface FileRoutesByFullPath {
   '/receive/': typeof ReceiveIndexRoute
   '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
+  '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
@@ -370,10 +392,13 @@ export interface FileRoutesByTo {
   '/receive': typeof ReceiveIndexRoute
   '/transfers': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
+  '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
@@ -419,10 +444,13 @@ export interface FileRoutesById {
   '/receive/': typeof ReceiveIndexRoute
   '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/cron/inbox': typeof ApiCronInboxRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
+  '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns_/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
@@ -469,10 +497,13 @@ export interface FileRouteTypes {
     | '/receive/'
     | '/transfers/'
     | '/api/auth/$'
+    | '/api/cron/inbox'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
+    | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
+    | '/labels/refurbs/$returnId'
     | '/orders/returns/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
@@ -517,10 +548,13 @@ export interface FileRouteTypes {
     | '/receive'
     | '/transfers'
     | '/api/auth/$'
+    | '/api/cron/inbox'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
+    | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
+    | '/labels/refurbs/$returnId'
     | '/orders/returns/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
@@ -565,10 +599,13 @@ export interface FileRouteTypes {
     | '/receive/'
     | '/transfers/'
     | '/api/auth/$'
+    | '/api/cron/inbox'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
+    | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
+    | '/labels/refurbs/$returnId'
     | '/orders/returns_/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
@@ -614,10 +651,13 @@ export interface RootRouteChildren {
   ReceiveIndexRoute: typeof ReceiveIndexRoute
   TransfersIndexRoute: typeof TransfersIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiCronInboxRoute: typeof ApiCronInboxRoute
   ApiCronTrackingRoute: typeof ApiCronTrackingRoute
   ApiDamagePhotosDamageIdRoute: typeof ApiDamagePhotosDamageIdRoute
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
+  ApiPoEmailAttachmentsAttachmentIdRoute: typeof ApiPoEmailAttachmentsAttachmentIdRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
+  LabelsRefurbsReturnIdRoute: typeof LabelsRefurbsReturnIdRoute
   OrdersReturnsInsightsRoute: typeof OrdersReturnsInsightsRoute
   PurchasingDamagePhotoIdRoute: typeof PurchasingDamagePhotoIdRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
@@ -862,6 +902,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cron/inbox': {
+      id: '/api/cron/inbox'
+      path: '/api/cron/inbox'
+      fullPath: '/api/cron/inbox'
+      preLoaderRoute: typeof ApiCronInboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/cron/tracking': {
       id: '/api/cron/tracking'
       path: '/api/cron/tracking'
@@ -883,11 +930,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiOauthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/po-email-attachments/$attachmentId': {
+      id: '/api/po-email-attachments/$attachmentId'
+      path: '/api/po-email-attachments/$attachmentId'
+      fullPath: '/api/po-email-attachments/$attachmentId'
+      preLoaderRoute: typeof ApiPoEmailAttachmentsAttachmentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/webhooks/$channel': {
       id: '/api/webhooks/$channel'
       path: '/api/webhooks/$channel'
       fullPath: '/api/webhooks/$channel'
       preLoaderRoute: typeof ApiWebhooksChannelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/labels/refurbs/$returnId': {
+      id: '/labels/refurbs/$returnId'
+      path: '/labels/refurbs/$returnId'
+      fullPath: '/labels/refurbs/$returnId'
+      preLoaderRoute: typeof LabelsRefurbsReturnIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/orders/returns_/insights': {
@@ -990,10 +1051,14 @@ const rootRouteChildren: RootRouteChildren = {
   ReceiveIndexRoute: ReceiveIndexRoute,
   TransfersIndexRoute: TransfersIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiCronInboxRoute: ApiCronInboxRoute,
   ApiCronTrackingRoute: ApiCronTrackingRoute,
   ApiDamagePhotosDamageIdRoute: ApiDamagePhotosDamageIdRoute,
   ApiOauthSplatRoute: ApiOauthSplatRoute,
+  ApiPoEmailAttachmentsAttachmentIdRoute:
+    ApiPoEmailAttachmentsAttachmentIdRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
+  LabelsRefurbsReturnIdRoute: LabelsRefurbsReturnIdRoute,
   OrdersReturnsInsightsRoute: OrdersReturnsInsightsRoute,
   PurchasingDamagePhotoIdRoute: PurchasingDamagePhotoIdRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,

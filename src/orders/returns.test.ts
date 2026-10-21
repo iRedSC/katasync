@@ -103,12 +103,25 @@ describe("receiveReturn", () => {
 		const { ids } = await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId, quantity: 2 }],
-			restock: true,
+			outcome: "restock",
 		});
 		expect(await onHand(wrench)).toBe(2);
 		await undoReturns(db, ids);
 		expect(await onHand(wrench)).toBe(0);
 		expect(await db.select().from(schema.orderReturns)).toEqual([]);
+	});
+
+	test("undoing a return twice fails rather than taking stock off again", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const lineId = await shippedOrder(wrench, 2);
+		const { ids } = await receiveReturn(db, {
+			orderId,
+			lines: [{ lineId, quantity: 2 }],
+			outcome: "restock",
+		});
+		await undoReturns(db, ids);
+		await expect(undoReturns(db, ids)).rejects.toThrow("already undone");
+		expect(await onHand(wrench)).toBe(0);
 	});
 
 	test("written-off units are recorded without moving stock", async () => {
@@ -117,7 +130,7 @@ describe("receiveReturn", () => {
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId, quantity: 1 }],
-			restock: false,
+			outcome: "write_off",
 		});
 		expect(await onHand(wrench)).toBe(0);
 		const [row] = await db.select().from(schema.orderReturns);
@@ -130,13 +143,13 @@ describe("receiveReturn", () => {
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId, quantity: 1 }],
-			restock: true,
+			outcome: "restock",
 		});
 		await expect(
 			receiveReturn(db, {
 				orderId,
 				lines: [{ lineId, quantity: 2 }],
-				restock: true,
+				outcome: "restock",
 			}),
 		).rejects.toThrow("Only 1 of WRENCH can still come back");
 		// Nothing from the refused try stuck.
@@ -151,13 +164,13 @@ describe("receiveReturn", () => {
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId, quantity: 1 }],
-			restock: false,
+			outcome: "write_off",
 		});
 		await expect(
 			receiveReturn(db, {
 				orderId,
 				lines: [{ lineId, quantity: 2 }],
-				restock: false,
+				outcome: "write_off",
 			}),
 		).rejects.toThrow("Only 1 of WRENCH");
 	});
@@ -174,7 +187,7 @@ describe("receiveReturn", () => {
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId, quantity: 1 }],
-			restock: true,
+			outcome: "restock",
 		});
 		expect(await onHand(handle)).toBe(1);
 		expect(await onHand(blade)).toBe(3);
@@ -190,7 +203,7 @@ describe("receiveReturn", () => {
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId, quantity: 1 }],
-			restock: true,
+			outcome: "restock",
 		});
 		expect(await onHand(original)).toBe(3);
 		expect(await onHand(replacement)).toBe(0);
@@ -205,7 +218,7 @@ describe("receiveReturn", () => {
 			receiveReturn(db, {
 				orderId,
 				lines: [{ lineId, quantity: 3 }],
-				restock: true,
+				outcome: "restock",
 			}),
 		).rejects.toThrow("remaining items");
 		expect(await onHand(wrench)).toBe(0);
@@ -235,7 +248,7 @@ describe("receiveReturn", () => {
 				receiveReturn(db, {
 					orderId,
 					lines: [{ lineId, quantity: 1 }],
-					restock: true,
+					outcome: "restock",
 				}),
 			).rejects.toThrow(message);
 		}
@@ -256,7 +269,7 @@ describe("receiveReturn", () => {
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId, quantity: 1 }],
-			restock: true,
+			outcome: "restock",
 		});
 		expect(await onHand(wrench)).toBe(1);
 	});
@@ -277,7 +290,7 @@ describe("receiveReturn", () => {
 			receiveReturn(db, {
 				orderId,
 				lines: [{ lineId, quantity: 1 }],
-				restock: true,
+				outcome: "restock",
 			}),
 		).rejects.toThrow("hasn't shipped");
 	});
@@ -288,13 +301,13 @@ describe("receiveReturn", () => {
 			receiveReturn(db, {
 				orderId,
 				lines: [{ lineId, quantity: 1 }],
-				restock: true,
+				outcome: "restock",
 			}),
 		).rejects.toThrow("Match WRENCH");
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId, quantity: 1 }],
-			restock: false,
+			outcome: "write_off",
 		});
 	});
 });

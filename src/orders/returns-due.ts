@@ -10,6 +10,7 @@ import {
 	or,
 	sql,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
 	orderLines,
@@ -19,9 +20,11 @@ import {
 	orders,
 	products,
 	type ReturnState,
+	returnRequestLines,
 	returnRequests,
 	stores,
 } from "#/db/schema";
+import { returnPage } from "./admin-urls";
 import { isLabeled, returnBlocker } from "./status";
 
 // What the Returns tab shows: orders with something due back (rules in the
@@ -50,6 +53,9 @@ export type ReturnOrder = {
 		carrier: string | null;
 		requestedAt: Date;
 	}[];
+	// Items an open request names that no line matched, so which line
+	// they are is decided when the box is opened.
+	unmatched: { sku: string | null; quantity: number }[];
 	lines: {
 		id: number;
 		title: string;
@@ -60,6 +66,13 @@ export type ReturnOrder = {
 		expected: number;
 	}[];
 };
+
+// A marketplace return still waiting on the buyer or on us.
+const openStatuses: (typeof returnRequests.$inferSelect)["status"][] = [
+	"requested",
+	"shipped",
+	"delivered",
+];
 
 const stateOrder: ReturnState[] = [
 	"on_its_way",
@@ -141,7 +154,8 @@ async function returnOrders(
 	expected: Map<number, number>,
 ): Promise<ReturnOrder[]> {
 	if (ids.length === 0) return [];
-	const [found, lines, requests] = await Promise.all([
+	const open = inArray(returnRequests.status, openStatuses);
+	const [found, lines, requests, unmatched] = await Promise.all([
 		db
 			.select({
 				id: orders.id,
@@ -187,13 +201,27 @@ async function returnOrders(
 				requestedAt: returnRequests.requestedAt,
 			})
 			.from(returnRequests)
+			.where(and(inArray(returnRequests.orderId, ids), open))
+			.orderBy(desc(returnRequests.requestedAt)),
+		db
+			.select({
+				orderId: returnRequests.orderId,
+				sku: returnRequestLines.sku,
+				quantity: returnRequestLines.quantity,
+			})
+			.from(returnRequestLines)
+			.innerJoin(
+				returnRequests,
+				eq(returnRequests.id, returnRequestLines.requestId),
+			)
 			.where(
 				and(
 					inArray(returnRequests.orderId, ids),
-					inArray(returnRequests.status, ["requested", "shipped", "delivered"]),
+					open,
+					isNull(returnRequestLines.orderLineId),
 				),
 			)
-			.orderBy(desc(returnRequests.requestedAt)),
+			.orderBy(returnRequestLines.id),
 	]);
 	return found.map(
 		({ cancelledAt, fulfilledByChannel, labelsStatus, ...o }) => ({
@@ -208,6 +236,9 @@ async function returnOrders(
 			requests: requests
 				.filter((r) => r.orderId === o.id)
 				.map(({ orderId: _, ...r }) => r),
+			unmatched: unmatched
+				.filter((u) => u.orderId === o.id)
+				.map(({ orderId: _, ...u }) => u),
 			lines: lines
 				.filter((l) => l.orderId === o.id && l.left > 0)
 				.map(({ orderId: _, ...l }) => ({
@@ -218,24 +249,38 @@ async function returnOrders(
 	);
 }
 
+const refurbs = alias(products, "refurbs");
+
 // Returns received in the last 30 days, newest first, one row per order and
-// moment received.
+// moment received. One whose order still has a return open on its
+// marketplace links there to confirm it arrived, until a sync sees it closed:
+// katasync doesn't tell marketplaces itself, since accepting a return can
+// refund the buyer.
 async function recentlyReceived(db: Db) {
 	const rows = await db
 		.select({
 			id: orderReturns.id,
 			orderId: orders.id,
+			lineId: orderReturns.orderLineId,
 			name: orders.name,
 			channel: stores.channel,
+			externalId: orders.externalId,
+			marketplaceOrderId: orders.marketplaceOrderId,
 			salesChannel: orders.salesChannel,
 			customerName: orders.customerName,
 			title: orderLines.title,
 			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 			quantity: orderReturns.quantity,
 			restocked: orderReturns.restocked,
+			refurb: sql<{
+				id: number;
+				sku: string;
+				condition: string;
+			} | null>`case when ${refurbs.id} is null then null else json_build_object('id', ${refurbs.id}, 'sku', ${refurbs.sku}, 'condition', ${refurbs.condition}) end`,
 			createdAt: orderReturns.createdAt,
 		})
 		.from(orderReturns)
+		.leftJoin(refurbs, eq(refurbs.id, orderReturns.refurbProductId))
 		.innerJoin(orderLines, eq(orderLines.id, orderReturns.orderLineId))
 		.innerJoin(orders, eq(orders.id, orderLines.orderId))
 		.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -243,7 +288,34 @@ async function recentlyReceived(db: Db) {
 		.where(gte(orderReturns.createdAt, sql`now() - interval '30 days'`))
 		.orderBy(desc(orderReturns.createdAt), orderReturns.id)
 		.limit(200);
-	return rows;
+	const orderIds = [...new Set(rows.map((r) => r.orderId))];
+	const open =
+		orderIds.length > 0
+			? await db
+					.select({
+						orderId: returnRequests.orderId,
+						billedBy: returnRequests.billedBy,
+					})
+					.from(returnRequests)
+					.where(
+						and(
+							inArray(returnRequests.orderId, orderIds),
+							inArray(returnRequests.status, openStatuses),
+						),
+					)
+			: [];
+	return rows.map(({ externalId, marketplaceOrderId, ...r }) => {
+		const request = open.find((o) => o.orderId === r.orderId);
+		return {
+			...r,
+			confirmOn: request
+				? returnPage(
+						{ channel: r.channel, externalId, marketplaceOrderId },
+						request.billedBy,
+					)
+				: null,
+		};
+	});
 }
 
 export class NoReturnError extends Error {
