@@ -9,6 +9,9 @@ import { type } from "arktype";
 //   MS_GRAPH_TENANT_ID, MS_GRAPH_CLIENT_ID, MS_GRAPH_CLIENT_SECRET
 //   PO_INBOX   the mailbox, e.g. purchasing@eastcoastdrywall.com. Each PO is
 //              sent with its own reply address in it: purchasing+po1234@...
+//   MARKETPLACE_INBOX  where the marketplaces send their notices,
+//              marketplaces@eastcoastdrywall.com; read the same way, through
+//              a second RBAC scope. Only Claude reads it (src/mcp/server).
 
 export const INBOX_ENV = [
 	"MS_GRAPH_TENANT_ID",
@@ -18,6 +21,10 @@ export const INBOX_ENV = [
 ] as const;
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
+
+// The mailboxes katasync reads. Purchasing is the PO inbox; marketplaces
+// holds Amazon's, TikTok's, and eBay's notices.
+export type Mailbox = "purchasing" | "marketplaces";
 
 export class InboxNotConfiguredError extends Error {
 	name = "InboxNotConfiguredError";
@@ -49,17 +56,36 @@ export function poOfAddress(address: string) {
 	return Number(m[2]);
 }
 
-function credentials() {
+function appCredentials() {
 	const tenant = process.env.MS_GRAPH_TENANT_ID;
 	const client = process.env.MS_GRAPH_CLIENT_ID;
 	const secret = process.env.MS_GRAPH_CLIENT_SECRET;
-	const inbox = inboxAddress();
-	if (!tenant || !client || !secret || !inbox)
+	if (!tenant || !client || !secret)
 		throw new InboxNotConfiguredError(
 			`The purchasing inbox isn't set up: set ${INBOX_ENV.join(", ")}`,
 		);
-	return { tenant, client, secret, inbox };
+	return { tenant, client, secret };
 }
+
+function credentials() {
+	const inbox = inboxAddress();
+	if (!inbox)
+		throw new InboxNotConfiguredError(
+			`The purchasing inbox isn't set up: set ${INBOX_ENV.join(", ")}`,
+		);
+	return { ...appCredentials(), inbox };
+}
+
+const address = (box: Mailbox) => {
+	if (box === "purchasing") return credentials().inbox;
+	const inbox = process.env.MARKETPLACE_INBOX?.trim().toLowerCase();
+	if (!inbox || !/^[^@\s+]+@[^@\s]+$/.test(inbox))
+		throw new InboxNotConfiguredError(
+			"The marketplaces mailbox isn't set up: set MARKETPLACE_INBOX, e.g. marketplaces@eastcoastdrywall.com",
+		);
+	appCredentials();
+	return inbox;
+};
 
 const tokenResponse = type({
 	access_token: "string",
@@ -70,7 +96,7 @@ let cached: { token: string; until: number } | null = null;
 
 export async function graphToken() {
 	if (cached && cached.until > Date.now()) return cached.token;
-	const { tenant, client, secret } = credentials();
+	const { tenant, client, secret } = appCredentials();
 	const res = await fetch(
 		`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
 		{
@@ -128,7 +154,7 @@ async function graph(path: string, init?: { headers?: HeadersInit }) {
 	return res;
 }
 
-const address = type({
+const emailAddress = type({
 	emailAddress: { "address?": "string", "name?": "string" },
 });
 
@@ -137,9 +163,9 @@ const messageSummary = type({
 	"internetMessageId?": "string | null",
 	receivedDateTime: "string",
 	"subject?": "string | null",
-	"from?": address.or("null"),
-	"toRecipients?": address.array(),
-	"ccRecipients?": address.array(),
+	"from?": emailAddress.or("null"),
+	"toRecipients?": emailAddress.array(),
+	"ccRecipients?": emailAddress.array(),
 	"isDraft?": "boolean",
 });
 
@@ -153,7 +179,7 @@ export type InboxMessage = {
 	recipients: string[];
 };
 
-const addressOf = (a: typeof address.infer) =>
+const addressOf = (a: typeof emailAddress.infer) =>
 	a.emailAddress.address?.trim().toLowerCase() ?? "";
 
 // Who we send as, so copies of our own POs aren't read in as replies.
@@ -187,7 +213,8 @@ function toMessage(m: typeof messageSummary.infer, ours: Set<string>) {
 	};
 }
 
-const mailbox = () => `/users/${encodeURIComponent(credentials().inbox)}`;
+const mailbox = (box: Mailbox = "purchasing") =>
+	`/users/${encodeURIComponent(address(box))}`;
 
 // Pages a search reads at most looking for matches the filter keeps.
 const MAX_SEARCH_PAGES = 20;
@@ -198,8 +225,9 @@ async function pages(
 	first: string,
 	limit = Number.POSITIVE_INFINITY,
 	keep?: (m: InboxMessage) => boolean,
+	box: Mailbox = "purchasing",
 ) {
-	const ours = ourAddresses(credentials().inbox);
+	const ours = ourAddresses(address(box));
 	const found: (InboxMessage & { ours: boolean })[] = [];
 	let next: string | null = first;
 	let read = 0;
@@ -231,11 +259,13 @@ export async function messagesSince(since: Date): Promise<InboxMessage[]> {
 // sender, subject, body, attachment names) or newest first in a date range.
 // Includes what we sent, marked `ours`.
 export async function searchMailbox(input: {
+	box?: Mailbox;
 	words?: string;
 	since?: Date;
 	until?: Date;
 	limit: number;
 }) {
+	const box = input.box ?? "purchasing";
 	const top = Math.min(input.limit, 50);
 	if (input.words) {
 		// Graph can't sort or filter by date alongside a word search, so the
@@ -243,13 +273,14 @@ export async function searchMailbox(input: {
 		const words = input.words.replace(/"/g, "");
 		const { since, until } = input;
 		return pages(
-			`${mailbox()}/messages?$search="${encodeURIComponent(words)}"&$select=${SELECT}&$top=${top}`,
+			`${mailbox(box)}/messages?$search="${encodeURIComponent(words)}"&$select=${SELECT}&$top=${top}`,
 			input.limit,
 			since || until
 				? (m) =>
 						(!since || m.receivedAt >= since) &&
 						(!until || m.receivedAt < until)
 				: undefined,
+			box,
 		);
 	}
 	const range = [
@@ -258,21 +289,26 @@ export async function searchMailbox(input: {
 	].filter(Boolean);
 	const filter = range.length > 0 ? `$filter=${range.join(" and ")}&` : "";
 	return pages(
-		`${mailbox()}/messages?${filter}$orderby=receivedDateTime desc&$select=${SELECT}&$top=${top}`,
+		`${mailbox(box)}/messages?${filter}$orderby=receivedDateTime desc&$select=${SELECT}&$top=${top}`,
 		input.limit,
+		undefined,
+		box,
 	);
 }
 
 // One email by Graph id, as searchMailbox lists it.
-export async function mailboxMessage(graphId: string) {
+export async function mailboxMessage(
+	graphId: string,
+	box: Mailbox = "purchasing",
+) {
 	const m = messageSummary.assert(
 		await (
 			await graph(
-				`${mailbox()}/messages/${encodeURIComponent(graphId)}?$select=${SELECT}`,
+				`${mailbox(box)}/messages/${encodeURIComponent(graphId)}?$select=${SELECT}`,
 			)
 		).json(),
 	);
-	return toMessage(m, ourAddresses(credentials().inbox));
+	return toMessage(m, ourAddresses(address(box)));
 }
 
 // Files larger than this keep their name and size only.
@@ -297,8 +333,11 @@ const attachmentList = type({
 });
 
 // The body as plain text, and the files attached (not pictures inside it).
-export async function messageContent(graphId: string) {
-	const base = `${mailbox()}/messages/${encodeURIComponent(graphId)}`;
+export async function messageContent(
+	graphId: string,
+	box: Mailbox = "purchasing",
+) {
+	const base = `${mailbox(box)}/messages/${encodeURIComponent(graphId)}`;
 	const { body } = type({ body: { content: "string" } }).assert(
 		await (
 			await graph(`${base}?$select=body`, {
