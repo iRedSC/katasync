@@ -47,7 +47,7 @@ export const TIKTOK_SCOPES = [
 ] as const;
 // Refreshing has its own path; /token/get only trades an authorization code.
 const AUTH = "https://auth.tiktok-shops.com/api/v2/token/refresh";
-const STORE_NAME = "TikTok Shop";
+const STORE = { id: "tiktok-shop", name: "TikTok Shop" };
 
 function credentials() {
 	const { TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REFRESH_TOKEN } =
@@ -211,7 +211,7 @@ export async function shopCipher() {
 	return cachedCipher;
 }
 
-const searchPage = type({
+export const searchPage = type({
 	"orders?": type({ id: "string" }).array(),
 	"next_page_token?": "string",
 });
@@ -225,7 +225,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	const cipher = await shopCipher();
 	// Created only once TikTok answers, because its existence is what stops
 	// Shopify from importing TikTok orders.
-	const store = await ensureStore(db, "tiktok", STORE_NAME);
+	const store = await ensureStore(db, "tiktok", STORE);
 	const stock = await stockLocations(db);
 	const problems: string[] = [];
 
@@ -302,7 +302,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	return { store: store.name, created, orders: count, problems };
 }
 
-async function ingestDetail(
+export async function ingestDetail(
 	db: Db,
 	store: Awaited<ReturnType<typeof ensureStore>>,
 	raw: typeof tiktokOrder.infer,
@@ -320,7 +320,7 @@ async function ingestDetail(
 // pass sees the order again and reports any problems with it on Diagnostics.
 export async function ingestTiktokOrder(db: Db, orderId: string) {
 	const cipher = await shopCipher();
-	const store = await ensureStore(db, "tiktok", STORE_NAME);
+	const store = await ensureStore(db, "tiktok", STORE);
 	const details = detailPage.assert(
 		await tiktokApi("/order/202309/orders", {
 			shop_cipher: cipher,

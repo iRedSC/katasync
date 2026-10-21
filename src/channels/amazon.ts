@@ -47,7 +47,7 @@ export const amazonItem = type({
 	"ShippingDiscountTax?": money,
 });
 
-const ordersPage = type({
+export const ordersPage = type({
 	payload: {
 		Orders: amazonOrder.array(),
 		"NextToken?": "string",
@@ -195,7 +195,10 @@ export function planAmazonWindows(
 }
 
 export async function syncAmazon(db: Db, options: { listings: boolean }) {
-	const store = await ensureStore(db, "amazon", "Amazon US");
+	const store = await ensureStore(db, "amazon", {
+		id: "amazon-us",
+		name: "Amazon US",
+	});
 	const stock = await stockLocations(db);
 	const problems: string[] = [];
 

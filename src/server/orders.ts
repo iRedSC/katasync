@@ -195,8 +195,8 @@ export const getOrder = createServerFn({ method: "GET" })
 				fromStore,
 				// Units received back, and how many of those went on the shelf.
 				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
-				// Back on a shelf, as itself or as a refurb.
-				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and (${orderReturns.restocked} or ${orderReturns.refurbProductId} is not null)), 0)::int`,
+				// Back on a shelf, as itself or as a refurb, or before cutover.
+				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and (${orderReturns.restocked} or ${orderReturns.refurbProductId} is not null or ${orderReturns.preCutover})), 0)::int`,
 				productSku: products.sku,
 				productName: products.name,
 				imageUrl: products.imageUrl,

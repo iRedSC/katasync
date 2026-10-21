@@ -1,29 +1,57 @@
-import { and, eq, max } from "drizzle-orm";
+import { and, eq, isNull, max } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, movements, stores } from "#/db/schema";
 import type { Overflow } from "#/inventory/ledger";
 import { retailReserve } from "#/inventory/online-stock";
 
-// The store row for a channel account, created on first sync. A new store
-// starts taking stock from the most recent opening balance, since anything
-// sold before that is already reflected in it.
+// The store row for a channel account, created on first sync and found by
+// the channel's own account ID after that, so renaming the store on the
+// channel renames the row instead of starting a second store. A row from
+// before account IDs were kept is claimed by name. A new store starts taking
+// stock from the most recent opening balance, since anything sold before
+// that is already reflected in it.
 export async function ensureStore(
 	db: Db,
 	channel: (typeof stores.$inferInsert)["channel"],
-	name: string,
+	account: { id: string; name: string },
 ) {
-	const [existing] = await db
+	const [known] = await db
 		.select()
 		.from(stores)
-		.where(and(eq(stores.channel, channel), eq(stores.name, name)));
-	if (existing) return existing;
+		.where(and(eq(stores.channel, channel), eq(stores.accountId, account.id)));
+	if (known) {
+		if (known.name === account.name) return known;
+		const [renamed] = await db
+			.update(stores)
+			.set({ name: account.name })
+			.where(eq(stores.id, known.id))
+			.returning();
+		return renamed;
+	}
+	const [unclaimed] = await db
+		.update(stores)
+		.set({ accountId: account.id })
+		.where(
+			and(
+				eq(stores.channel, channel),
+				eq(stores.name, account.name),
+				isNull(stores.accountId),
+			),
+		)
+		.returning();
+	if (unclaimed) return unclaimed;
 	const [{ openedAt }] = await db
 		.select({ openedAt: max(movements.createdAt) })
 		.from(movements)
 		.where(eq(movements.reason, "opening_balance"));
 	const [created] = await db
 		.insert(stores)
-		.values({ channel, name, stockFrom: openedAt })
+		.values({
+			channel,
+			accountId: account.id,
+			name: account.name,
+			stockFrom: openedAt,
+		})
 		.returning();
 	return created;
 }

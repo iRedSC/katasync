@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
@@ -309,5 +309,35 @@ describe("receiveReturn", () => {
 			lines: [{ lineId, quantity: 1 }],
 			outcome: "write_off",
 		});
+	});
+
+	test("a pre-cutover return costs nothing, and is only that", async () => {
+		const lineId = await shippedOrder(null, 2);
+		await db
+			.update(schema.orderLines)
+			.set({ unitCost: 5 })
+			.where(eq(schema.orderLines.id, lineId));
+		const cost = async () => {
+			const { rows } = (await db.execute(
+				sql`select cost from order_line_costs where line_id = ${lineId}`,
+			)) as unknown as { rows: { cost: string }[] };
+			return rows[0].cost;
+		};
+		expect(Number(await cost())).toBe(10);
+		await db.insert(schema.orderReturns).values({
+			orderLineId: lineId,
+			quantity: 2,
+			restocked: false,
+			preCutover: true,
+		});
+		expect(Number(await cost())).toBe(0);
+		await expect(
+			db.insert(schema.orderReturns).values({
+				orderLineId: lineId,
+				quantity: 1,
+				restocked: true,
+				preCutover: true,
+			}),
+		).rejects.toThrow();
 	});
 });
