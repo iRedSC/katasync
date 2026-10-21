@@ -312,7 +312,10 @@ async function activeListings(): Promise<ChannelListing[]> {
 const FIRST_SYNC_DAYS = 60;
 
 export async function syncEbay(db: Db, options: { listings: boolean }) {
-	const store = await ensureStore(db, "ebay", "eBay US");
+	const store = await ensureStore(db, "ebay", {
+		id: "ebay-us",
+		name: "eBay US",
+	});
 	const stock = await stockLocations(db);
 
 	// Listings first, so order lines can resolve to products.

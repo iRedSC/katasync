@@ -69,7 +69,7 @@ query Variants($cursor: String) {
 	}
 }`;
 
-const shopInfo = type({ shop: { name: "string" } });
+const shopInfo = type({ shop: { id: "string", name: "string" } });
 
 // Shopify's 60-day window is the furthest back read_orders reaches.
 const FIRST_SYNC_DAYS = 60;
@@ -81,8 +81,10 @@ export async function syncShopify(
 	db: Db,
 	options: { listings: boolean } = { listings: true },
 ) {
-	const { shop } = shopInfo.assert(await shopifyQuery("{ shop { name } }", {}));
-	const store = await ensureStore(db, "shopify", shop.name);
+	const { shop } = shopInfo.assert(
+		await shopifyQuery("{ shop { id name } }", {}),
+	);
+	const store = await ensureStore(db, "shopify", shop);
 
 	// Listings first, so order lines can resolve to products.
 	let cursor: string | null = null;
@@ -170,8 +172,10 @@ export async function syncShopify(
 // come in. It never moves the sync cursor, and orders from before the stock
 // snapshot are history only, so it can't touch stock.
 export async function backfillShopify(db: Db, from: Date, until: Date) {
-	const { shop } = shopInfo.assert(await shopifyQuery("{ shop { name } }", {}));
-	const store = await ensureStore(db, "shopify", shop.name);
+	const { shop } = shopInfo.assert(
+		await shopifyQuery("{ shop { id name } }", {}),
+	);
+	const store = await ensureStore(db, "shopify", shop);
 	const result = await ingestMatching(
 		db,
 		store,
