@@ -215,6 +215,22 @@ describe("order_returns_due", () => {
 		expect(await due()).toEqual([]);
 	});
 
+	test("orders shipped before the store's cutover are still due", async () => {
+		// Cutover cleared their sale batches, but the units left our shelf.
+		await db
+			.update(schema.stores)
+			.set({ stockFrom: new Date(Date.now() + 60_000) })
+			.where(eq(schema.stores.id, shopify));
+		const asked = await order("#13", { tookStock: false });
+		await request(asked, "shipped");
+		const refunded = await order("#14", { tookStock: false });
+		await refund(refunded.id, 40);
+		expect(await due()).toEqual([
+			{ name: "#13", state: "on_its_way", expected: 1 },
+			{ name: "#14", state: "refunded", expected: 2 },
+		]);
+	});
+
 	test("a due order that can't take a return here says why", async () => {
 		const o = await order("#11", {
 			extra: { fulfillmentStatus: "PARTIALLY_FULFILLED" },
