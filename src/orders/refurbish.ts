@@ -8,6 +8,7 @@ import {
 	shopifyConditions,
 	shopifyOriginal,
 	shopifySkuTaken,
+	shopifyTags,
 } from "#/channels/shopify/refurbish";
 import type { Db } from "#/db/client";
 import {
@@ -53,6 +54,8 @@ export type RefurbDetails = {
 export type RefurbishOptions = {
 	original: { sku: string; name: string };
 	conditions: Condition[];
+	// Every tag in the shop, to suggest.
+	shopTags: string[];
 	// The dialog's fields as the original has them; condition left to choose.
 	details: Omit<RefurbDetails, "condition">;
 	sku: string;
@@ -132,6 +135,13 @@ async function nextRefurbSku(db: Db, base: string) {
 	}
 }
 
+// What Google Shopping is told for a condition: worn ones are used, the
+// rest refurbished, unless it's new.
+export function googleCondition(handle: string) {
+	if (handle.startsWith("new")) return "new";
+	return handle === "good" || handle === "poor" ? "used" : "refurbished";
+}
+
 // Grams in a Shopify weight.
 const GRAMS = { GRAMS: 1, KILOGRAMS: 1000, OUNCES: 28.3495, POUNDS: 453.592 };
 function gramsOf(shop: ShopifyOriginal | null) {
@@ -156,9 +166,10 @@ export async function refurbishOptions(
 		input.orderId,
 		input.lineId,
 	);
-	const [shop, conditions, { sku }, existing] = await Promise.all([
+	const [shop, conditions, shopTags, { sku }, existing] = await Promise.all([
 		listing ? shopifyOriginal(listing.variantId) : null,
 		shopifyConditions(),
+		shopifyTags(),
 		nextRefurbSku(db, product.sku),
 		db
 			.select({
@@ -183,10 +194,13 @@ export async function refurbishOptions(
 	return {
 		original: { sku: product.sku, name: product.name },
 		conditions,
+		shopTags,
 		details: {
 			title: shop?.product.title ?? product.name,
 			price: shop ? Number(shop.price) : line.unitPrice,
-			compareAtPrice: null,
+			// What it costs new, so the listing shows the saving once the
+			// price comes down.
+			compareAtPrice: shop ? Number(shop.price) : line.unitPrice,
 			weightGrams: gramsOf(shop) ?? product.weightGrams,
 			vendor: shop?.product.vendor ?? "",
 			productType: shop?.product.productType ?? "",
@@ -247,9 +261,7 @@ export async function refurbishReturn(
 			productType: input.productType.trim(),
 			tags: input.tags.map((t) => t.trim()).filter(Boolean),
 			conditionId: condition.id,
-			googleCondition: condition.handle.startsWith("new")
-				? "new"
-				: "refurbished",
+			googleCondition: googleCondition(condition.handle),
 			notes: input.notes,
 			sku,
 			price: input.price,

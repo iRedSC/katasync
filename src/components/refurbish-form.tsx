@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { TagInput } from "#/components/tag-input";
 import { Button } from "#/components/ui/button";
 import {
 	DialogFooter,
@@ -53,9 +54,9 @@ export function RefurbishForm({
 		weight: "",
 		vendor: "",
 		productType: "",
-		tags: "",
 		notes: "",
 	});
+	const [tags, setTags] = useState<string[]>([]);
 	const field =
 		(key: keyof typeof form) => (e: { target: { value: string } }) =>
 			setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -77,9 +78,9 @@ export function RefurbishForm({
 							: String(Math.round((d.weightGrams / GRAMS_PER_LB) * 100) / 100),
 					vendor: d.vendor,
 					productType: d.productType,
-					tags: d.tags.join(", "),
 					notes: d.notes,
 				});
+				setTags(d.tags);
 			},
 			(error) =>
 				live &&
@@ -130,8 +131,8 @@ export function RefurbishForm({
 	const compareAt = amount(form.compareAt);
 	const weight = amount(form.weight);
 	const priceBad = !(price !== null && price > 0);
-	const compareBad =
-		compareAt !== null && !(price !== null && compareAt > price);
+	// Below the price is a typo; at the price shows no saving, so it's left off.
+	const compareBad = compareAt !== null && price !== null && compareAt < price;
 	const weightBad = weight !== null && !(weight > 0);
 	const ready =
 		chosen !== undefined &&
@@ -159,12 +160,13 @@ export function RefurbishForm({
 						condition: chosen.handle,
 						title: form.title.trim(),
 						price,
-						compareAtPrice: compareAt,
+						compareAtPrice:
+							compareAt !== null && price < compareAt ? compareAt : null,
 						weightGrams:
 							weight === null ? null : Math.round(weight * GRAMS_PER_LB),
 						vendor: form.vendor,
 						productType: form.productType,
-						tags: form.tags.split(","),
+						tags,
 						notes: form.notes,
 					},
 		);
@@ -173,8 +175,8 @@ export function RefurbishForm({
 	return (
 		<form onSubmit={submit} className="flex min-w-0 flex-col gap-4">
 			{header}
-			<div className="grid grid-cols-2 gap-3">
-				<Field label="Condition">
+			<div className="grid grid-cols-3 gap-3">
+				<Field label="Condition" className="col-span-2">
 					<div className="relative">
 						<span
 							className="pointer-events-none absolute top-1/2 left-2.5 size-2.5 -translate-y-1/2 rounded-full transition-colors"
@@ -199,27 +201,36 @@ export function RefurbishForm({
 						</select>
 					</div>
 				</Field>
-				{same.length > 0 && (
-					<Field label="Into">
-						<select
-							value={into}
-							onChange={(e) =>
-								setInto(
-									e.target.value === "new" ? "new" : Number(e.target.value),
-								)
-							}
-							className={input}
-						>
-							{same.map((e) => (
-								<option key={e.id} value={e.id}>
-									{e.sku} ({formatCount(e.onHand)} on shelf)
-								</option>
-							))}
-							<option value="new">New {options.sku}</option>
-						</select>
+				{!target && (
+					<Field label="Weight (lb)">
+						<input
+							inputMode="decimal"
+							value={form.weight}
+							onChange={field("weight")}
+							aria-invalid={weightBad}
+							className={cn(input, "tabular-nums")}
+						/>
 					</Field>
 				)}
 			</div>
+			{same.length > 0 && (
+				<Field label="Into">
+					<select
+						value={into}
+						onChange={(e) =>
+							setInto(e.target.value === "new" ? "new" : Number(e.target.value))
+						}
+						className={input}
+					>
+						{same.map((e) => (
+							<option key={e.id} value={e.id}>
+								{e.sku} ({formatCount(e.onHand)} on shelf)
+							</option>
+						))}
+						<option value="new">New {options.sku}</option>
+					</select>
+				</Field>
+			)}
 
 			{!target && (
 				<>
@@ -231,7 +242,7 @@ export function RefurbishForm({
 							className={input}
 						/>
 					</Field>
-					<div className="grid grid-cols-3 gap-3">
+					<div className="grid grid-cols-2 gap-3">
 						<Field label="Price">
 							<input
 								inputMode="decimal"
@@ -247,15 +258,6 @@ export function RefurbishForm({
 								value={form.compareAt}
 								onChange={field("compareAt")}
 								aria-invalid={compareBad}
-								className={cn(input, "tabular-nums")}
-							/>
-						</Field>
-						<Field label="Weight (lb)">
-							<input
-								inputMode="decimal"
-								value={form.weight}
-								onChange={field("weight")}
-								aria-invalid={weightBad}
 								className={cn(input, "tabular-nums")}
 							/>
 						</Field>
@@ -277,10 +279,10 @@ export function RefurbishForm({
 						</Field>
 					</div>
 					<Field label="Tags">
-						<input
-							value={form.tags}
-							onChange={field("tags")}
-							className={input}
+						<TagInput
+							value={tags}
+							onChange={setTags}
+							suggestions={options.shopTags}
 						/>
 					</Field>
 					<Field label="About this unit">
@@ -304,10 +306,18 @@ export function RefurbishForm({
 	);
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+	label,
+	className,
+	children,
+}: {
+	label: string;
+	className?: string;
+	children: ReactNode;
+}) {
 	return (
 		// biome-ignore lint/a11y/noLabelWithoutControl: the control is passed as children
-		<label className="flex min-w-0 flex-col gap-1">
+		<label className={cn("flex min-w-0 flex-col gap-1", className)}>
 			<span className="text-muted-foreground">{label}</span>
 			{children}
 		</label>

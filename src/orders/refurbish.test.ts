@@ -7,7 +7,11 @@ import { postMovements, recordSale } from "#/inventory/ledger";
 import { refurbLabel, renderRefurbLabel } from "#/printing/refurb-label";
 import { createProduct, createTestDb } from "#/test/db";
 import { retireRefurbs } from "./refurb-retire";
-import { refurbishOptions, refurbishReturn } from "./refurbish";
+import {
+	googleCondition,
+	refurbishOptions,
+	refurbishReturn,
+} from "./refurbish";
 import { receiveReturn, undoReturns } from "./returns";
 
 vi.mock("#/channels/shopify/refurbish", () => ({
@@ -21,6 +25,7 @@ vi.mock("#/channels/shopify/refurbish", () => ({
 		},
 	]),
 	shopifyOriginal: vi.fn(async () => null),
+	shopifyTags: vi.fn(async () => ["refurb", "Drywall"]),
 	createRefurbDraft: vi.fn(async (_original: unknown, r: { sku: string }) => ({
 		productId: `gid://shopify/Product/${r.sku}`,
 		variantId: `gid://shopify/ProductVariant/${r.sku}`,
@@ -181,6 +186,9 @@ describe("refurbishReturn", () => {
 		const options = await refurbishOptions(db, o);
 		expect(options).toMatchObject({
 			sku: "WRENCH-RFB2",
+			shopTags: ["refurb", "Drywall"],
+			// What it costs new, to show the saving.
+			details: { price: 20, compareAtPrice: 20 },
 			existing: [{ sku: "WRENCH-RFB1", condition: "excellent", onHand: 1 }],
 		});
 		await receiveReturn(db, {
@@ -232,6 +240,14 @@ describe("refurbishReturn", () => {
 			}),
 		).rejects.toThrow("isn't made from");
 	});
+});
+
+test("Google hears new, used for worn, refurbished for the rest", () => {
+	expect(
+		["new", "new-previous-gen", "excellent", "great", "good", "poor"].map(
+			googleCondition,
+		),
+	).toEqual(["new", "new", "refurbished", "refurbished", "used", "used"]);
 });
 
 describe("refurbLabel", () => {

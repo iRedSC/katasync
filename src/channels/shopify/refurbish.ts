@@ -117,6 +117,32 @@ export async function shopifyOriginal(
 	return productVariant;
 }
 
+const tagsPage = type({
+	productTags: {
+		nodes: "string[]",
+		pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
+	},
+});
+
+// Every tag the shop's products use, to suggest while tagging.
+export async function shopifyTags(): Promise<string[]> {
+	const tags: string[] = [];
+	let cursor: string | null = null;
+	do {
+		const { productTags } = tagsPage.assert(
+			await shopifyQuery(
+				"query($cursor: String) { productTags(first: 250, after: $cursor) { nodes pageInfo { hasNextPage endCursor } } }",
+				{ cursor },
+			),
+		);
+		tags.push(...productTags.nodes);
+		cursor = productTags.pageInfo.hasNextPage
+			? (productTags.pageInfo.endCursor ?? null)
+			: null;
+	} while (cursor);
+	return tags;
+}
+
 const skuRead = type({
 	productVariants: { nodes: type({ sku: "string | null" }).array() },
 });
@@ -159,8 +185,8 @@ export type RefurbListing = {
 	productType: string;
 	tags: string[];
 	conditionId: string;
-	// What Google Shopping is told: "new" or "refurbished".
-	googleCondition: "new" | "refurbished";
+	// What Google Shopping is told.
+	googleCondition: "new" | "refurbished" | "used";
 	// About this unit, shown on its page (metafield custom.details).
 	notes: string;
 	sku: string;
