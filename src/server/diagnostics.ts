@@ -19,7 +19,8 @@ export type Diagnostics = Awaited<ReturnType<typeof getDiagnostics>>;
 export const runConnectionCheck = createServerFn({ method: "POST" })
 	.validator(
 		type({
-			target: "'shopify' | 'ebay' | 'amazon' | 'tiktok' | 'shippo' | 'email'",
+			target:
+				"'shopify' | 'ebay' | 'amazon' | 'tiktok' | 'shippo' | 'email' | 'inbox'",
 		}),
 	)
 	.handler(async ({ data }) => runCheck(data.target));

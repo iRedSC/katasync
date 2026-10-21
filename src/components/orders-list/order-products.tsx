@@ -9,18 +9,18 @@ import type { OrderRow } from "#/server/orders";
 type Line = OrderRow["lines"][number];
 
 // What an order is, at a glance: one product's photo, title, and quantity, or
-// the first photo and how many products. Hovering lists every line. Clicking
-// still opens the order, as anywhere else on its row.
+// up to three photos, a +N square for the rest, and how many products.
+// Hovering lists every line. Clicking still opens the order, as anywhere else
+// on its row.
 export function OrderProducts({ lines }: { lines: readonly Line[] }) {
 	const [first] = lines;
 	if (!first) return <span className="text-faint">No products</span>;
-	const photo = lines.find((l) => l.imageUrl)?.imageUrl ?? null;
 	const items = lines.reduce((n, l) => n + l.quantity, 0);
 	return (
 		<HoverCard.Root openDelay={150} closeDelay={100}>
 			<HoverCard.Trigger asChild>
-				<div className="flex min-w-0 items-center gap-2">
-					<ProductImage src={photo} className="size-8" />
+				<div className="@container flex min-w-0 items-center gap-2">
+					<Photos lines={lines} />
 					<span
 						className={cn(
 							"truncate",
@@ -65,6 +65,57 @@ export function OrderProducts({ lines }: { lines: readonly Line[] }) {
 				</HoverCard.Content>
 			</HoverCard.Portal>
 		</HoverCard.Root>
+	);
+}
+
+// How many squares fit beside the "N products" label, by the cell's width.
+// Each wider step fits one more. Tailwind only sees literal class names, so
+// every step is spelled out.
+const SQUARES = [1, 2, 3, 4] as const;
+type Squares = (typeof SQUARES)[number];
+const AT_LEAST: Record<Squares, string> = {
+	1: "block",
+	2: "hidden @min-[10.5rem]:block",
+	3: "hidden @min-[12.75rem]:block",
+	4: "hidden @min-[15rem]:block",
+};
+const EXACTLY: Record<Squares, string> = {
+	1: "flex @min-[10.5rem]:hidden",
+	2: "hidden @min-[10.5rem]:@max-[12.75rem]:flex",
+	3: "hidden @min-[12.75rem]:@max-[15rem]:flex",
+	4: "hidden @min-[15rem]:flex",
+};
+
+// With room for s squares, every photo shows when they all fit; otherwise
+// s - 1 photos and a +N square for the rest. As the cell narrows, the +N
+// square eats photos until it is the only square left.
+function Photos({ lines }: { lines: readonly Line[] }) {
+	const max = SQUARES.length - 1;
+	const photos = lines.slice(0, max);
+	return (
+		<div className="flex shrink-0 gap-1">
+			{photos.map((l, i) => (
+				// Photo i shows once there is room for it and a +N after it, or
+				// for every photo.
+				<span
+					key={l.id}
+					className={AT_LEAST[Math.min(i + 2, lines.length) as Squares]}
+				>
+					<ProductImage src={l.imageUrl} className="size-8" />
+				</span>
+			))}
+			{SQUARES.filter((s) => lines.length > Math.min(s, max)).map((s) => (
+				<span
+					key={s}
+					className={cn(
+						EXACTLY[s],
+						"size-8 items-center justify-center rounded-lg border bg-subtle text-xs font-semibold text-muted-foreground tabular-nums",
+					)}
+				>
+					+{formatCount(lines.length - s + 1)}
+				</span>
+			))}
+		</div>
 	);
 }
 

@@ -7,6 +7,10 @@ import {
 	connectionsData,
 } from "#/components/connections-card";
 import { DevicesCard, devicesData } from "#/components/devices-card";
+import {
+	EmailTemplatesCard,
+	templatesData,
+} from "#/components/email-templates-card";
 import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
 import { ActionSlot, IconAction, Row } from "#/components/rows";
@@ -28,6 +32,7 @@ import {
 	saveRetailReserve,
 	setPrimaryStore,
 } from "#/server/catalog";
+import { listEmailTemplates } from "#/server/email-templates";
 import {
 	addPurchaseUnit,
 	deletePurchaseUnit,
@@ -55,6 +60,7 @@ export const Route = createFileRoute("/settings")({
 			connections,
 			minStock,
 			reserve,
+			templates,
 		] = await Promise.all([
 			listLocations(),
 			listStores(),
@@ -65,6 +71,7 @@ export const Route = createFileRoute("/settings")({
 			listConnections(),
 			getDefaultMinStock(),
 			getRetailReserve(),
+			listEmailTemplates(),
 		]);
 		return {
 			locations,
@@ -76,6 +83,7 @@ export const Route = createFileRoute("/settings")({
 			connections,
 			minStock,
 			reserve,
+			templates,
 		};
 	},
 	component: Settings,
@@ -104,6 +112,7 @@ function Settings() {
 	const units = unitsData.useData("all", loaded.units);
 	const devices = devicesData.useData("all", loaded.devices);
 	const apps = connectionsData.useData("all", loaded.connections.apps);
+	const templates = templatesData.useData("all", loaded.templates);
 	// Two columns of cards sized to what they hold: stores and shipping on
 	// the left, purchasing and access on the right.
 	return (
@@ -133,6 +142,7 @@ function Settings() {
 							)}
 						</div>
 					</Card>
+					<EmailTemplatesCard templates={templates} />
 					<DevicesCard devices={devices} />
 					<ConnectionsCard endpoint={loaded.connections.endpoint} apps={apps} />
 				</div>

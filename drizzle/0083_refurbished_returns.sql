@@ -2,6 +2,7 @@ ALTER TABLE "order_returns" DROP CONSTRAINT "order_returns_restocked_has_batch";
 ALTER TABLE "order_returns" ADD COLUMN "refurb_product_id" integer;--> statement-breakpoint
 ALTER TABLE "products" ADD COLUMN "refurbished_from_id" integer;--> statement-breakpoint
 ALTER TABLE "products" ADD COLUMN "condition" text;--> statement-breakpoint
+ALTER TABLE "products" ADD COLUMN "notes" text;--> statement-breakpoint
 ALTER TABLE "order_returns" ADD CONSTRAINT "order_returns_refurb_product_id_products_id_fk" FOREIGN KEY ("refurb_product_id") REFERENCES "public"."products"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "products" ADD CONSTRAINT "products_refurbished_from_id_products_id_fk" FOREIGN KEY ("refurbished_from_id") REFERENCES "public"."products"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "order_returns" ADD CONSTRAINT "order_returns_one_shelf" CHECK (not ("order_returns"."restocked" and "order_returns"."refurb_product_id" is not null));--> statement-breakpoint

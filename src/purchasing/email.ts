@@ -1,10 +1,15 @@
+import { poAddress } from "#/purchasing/inbox/graph";
+
 // Emails a PO through Resend (https://resend.com/docs/api-reference/emails).
 //
 //   RESEND_API_KEY     an API key with sending access
 //   PO_EMAIL_FROM      a sender on a domain verified in Resend, e.g.
 //                      "East Coast Drywall Tools <purchasing@ecdrywalltools.com>"
-//   PO_EMAIL_REPLY_TO  where supplier replies go; also gets a copy (Bcc) of
-//                      every PO, since Resend keeps no Sent folder
+//   PO_EMAIL_REPLY_TO  gets a copy (Bcc) of every PO, since Resend keeps no
+//                      Sent folder; also where replies go without PO_INBOX
+//
+// With the purchasing inbox set up (PO_INBOX, src/purchasing/inbox), replies
+// go to the PO's own address, purchasing+po1234@, which files them on it.
 
 export class EmailNotConfiguredError extends Error {
 	name = "EmailNotConfiguredError";
@@ -15,6 +20,8 @@ export function emailConfigured() {
 }
 
 export async function sendEmail(message: {
+	// The PO it's about, whose address replies go to.
+	purchaseOrderId: number;
 	to: string;
 	subject: string;
 	text: string;
@@ -26,7 +33,8 @@ export async function sendEmail(message: {
 		throw new EmailNotConfiguredError(
 			"Email isn't set up: add RESEND_API_KEY and PO_EMAIL_FROM",
 		);
-	const replyTo = process.env.PO_EMAIL_REPLY_TO;
+	const copyTo = process.env.PO_EMAIL_REPLY_TO;
+	const replyTo = poAddress(message.purchaseOrderId) ?? copyTo;
 	const res = await fetch("https://api.resend.com/emails", {
 		method: "POST",
 		headers: {
@@ -36,7 +44,8 @@ export async function sendEmail(message: {
 		body: JSON.stringify({
 			from,
 			to: [message.to],
-			...(replyTo ? { reply_to: replyTo, bcc: [replyTo] } : {}),
+			...(replyTo ? { reply_to: replyTo } : {}),
+			...(copyTo ? { bcc: [copyTo] } : {}),
 			subject: message.subject,
 			text: message.text,
 			attachments: message.attachments.map((a) => ({

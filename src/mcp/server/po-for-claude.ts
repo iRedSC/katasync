@@ -7,8 +7,10 @@ import {
 	discountValues,
 	lineCents,
 } from "#/purchasing/discount";
+import { emailsOf } from "#/purchasing/inbox/ingest";
 import { invoicesOf } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
+import { trackingOf } from "#/purchasing/tracking";
 
 // A PO as Claude reads it: totals up front, and per line only what tells
 // lines apart. Images, ids, and defaults equal to the line's terms are left
@@ -17,6 +19,8 @@ export async function orderForClaude(db: Db, id: number) {
 	const po = await loadOrder(db, id);
 	const invoices = await invoicesOf(db, id);
 	const damages = await damagesOf(db, id);
+	const emails = await emailsOf(db, id);
+	const tracking = await trackingOf(db, id);
 	const priced = po.lines.filter((l) => l.unitCost !== null);
 	const before = priced.reduce(
 		(n, l) => n + Math.round(l.quantity * (l.unitCost ?? 0) * 100),
@@ -59,6 +63,26 @@ export async function orderForClaude(db: Db, id: number) {
 			invoicedOn: i.invoicedOn,
 			dueOn: i.dueOn,
 			total: i.total,
+		})),
+		// Read one with read_po_email.
+		emails: emails.map((e) => ({
+			id: e.id,
+			from: e.fromName ? `${e.fromName} <${e.fromAddress}>` : e.fromAddress,
+			subject: e.subject,
+			receivedAt: e.receivedAt,
+			matchedBy: e.matchedBy,
+			attachments: e.attachments.map((a) => a.filename),
+		})),
+		tracking: tracking.map((t) => ({
+			id: t.id,
+			carrier: t.carrier,
+			number: t.number,
+			status: t.status,
+			statusDetail: t.statusDetail,
+			statusAt: t.statusAt,
+			eta: t.eta,
+			checkedAt: t.checkedAt,
+			fromEmail: t.emailId,
 		})),
 		damages: damages.map((d) => ({
 			damageId: d.id,
