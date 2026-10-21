@@ -8,7 +8,7 @@ export {
 	undoAddToPurchaseOrder,
 } from "#/server/purchasing/add-products";
 export {
-	damageEmail,
+	previewDamageReport,
 	recordPurchaseDamage,
 	removePurchaseDamage,
 	removePurchaseDamagePhoto,
@@ -41,6 +41,7 @@ export {
 	closePurchaseOrder,
 	deleteDraftPurchaseOrder,
 	orderPurchaseOrderAgain,
+	previewPurchaseOrderEmail,
 	restoreDraftPurchaseOrder,
 	restorePurchaseOrder,
 	sendPurchaseOrder,

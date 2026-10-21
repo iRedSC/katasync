@@ -1965,6 +1965,30 @@ export const settings = pgTable(
 	],
 );
 
+// The emails katasync sends suppliers, by what they're for.
+export const emailTemplateKind = pgEnum("email_template_kind", [
+	"purchase_order",
+	"damage_report",
+]);
+
+// The wording of an email, edited in Settings: subject and body with
+// {placeholders} filled in when it's sent. The parts katasync lays out (the
+// damage list, attachments) stay in code. No row means the default wording
+// (src/purchasing/email-templates.ts).
+export const emailTemplates = pgTable(
+	"email_templates",
+	{
+		kind: emailTemplateKind().primaryKey(),
+		subject: text().notNull(),
+		body: text().notNull(),
+		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check("email_templates_subject_given", sql`btrim(${t.subject}) <> ''`),
+		check("email_templates_body_given", sql`btrim(${t.body}) <> ''`),
+	],
+);
+
 // Problems dismissed on Diagnostics. `key` names the thing (see
 // src/diagnostics/dismissals.ts). It stays hidden while its error reads the
 // same, and shows again once the error changes.

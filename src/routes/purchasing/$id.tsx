@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { FileText, Mail, ShieldAlert, Smartphone } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
 	DamageDetailsDialog,
@@ -35,6 +35,7 @@ import {
 	FrozenBar,
 	SuggestedBar,
 } from "#/components/purchase-order/reorder-bar";
+import { SendDialog } from "#/components/purchase-order/send-dialog";
 import { SupplierPanel } from "#/components/purchase-order/supplier-panel";
 import { Timeline } from "#/components/purchase-order/timeline";
 import { TrackingCard } from "#/components/purchase-order/tracking-card";
@@ -73,6 +74,8 @@ function PurchaseOrderPage() {
 	const editable = po.status !== "cancelled";
 	const [damageTarget, setDamageTarget] = useState<DamageTarget | null>(null);
 	const [reportingDamage, setReportingDamage] = useState(false);
+	const [composing, setComposing] = useState(false);
+	const stopComposing = useCallback(() => setComposing(false), []);
 	// Looked up by id, so it closes itself once the damage is removed.
 	const [openDamageId, setOpenDamageId] = useState<number | null>(null);
 	const openDamage = d.damages.find((x) => x.id === openDamageId);
@@ -258,13 +261,11 @@ function PurchaseOrderPage() {
 		});
 	}
 
-	const send = (email: boolean) =>
+	// Ordered some other way: on order, no email.
+	const markSent = () =>
 		run(
-			() => sendPurchaseOrder({ data: { id: po.id, email } }),
-			(r) =>
-				r.sentTo
-					? `PO ${po.id} emailed to ${r.sentTo}`
-					: `PO ${po.id} is on order`,
+			() => sendPurchaseOrder({ data: { id: po.id, email: false } }),
+			() => `PO ${po.id} is on order`,
 		);
 
 	return (
@@ -339,7 +340,7 @@ function PurchaseOrderPage() {
 								<Button
 									size="sm"
 									disabled={busy || d.lines.length === 0 || !d.emailConfigured}
-									onClick={() => send(true)}
+									onClick={() => setComposing(true)}
 								>
 									<Mail />
 									Send to supplier
@@ -443,6 +444,9 @@ function PurchaseOrderPage() {
 							}}
 						/>
 					)}
+					{composing && (
+						<SendDialog purchaseOrderId={po.id} onClose={stopComposing} />
+					)}
 					{reportingDamage && unreported.length > 0 && (
 						<DamageReportDialog
 							detail={d}
@@ -458,7 +462,7 @@ function PurchaseOrderPage() {
 					<OtherActions
 						detail={d}
 						received={received}
-						onSent={() => send(false)}
+						onSent={markSent}
 						busy={busy}
 						run={run}
 					/>

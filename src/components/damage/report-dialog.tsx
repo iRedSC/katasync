@@ -1,6 +1,12 @@
 import { Mail } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import {
+	EmailComposer,
+	type EmailEdit,
+	type EmailPreview,
+	useCloseGuard,
+} from "#/components/email-composer";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -16,6 +22,7 @@ import { cn } from "#/lib/utils";
 import { EMAIL_PHOTO_BYTES } from "#/purchasing/damage-limits";
 import {
 	type PurchaseOrderDetail,
+	previewDamageReport,
 	sendPurchaseDamageReport,
 } from "#/server/purchasing";
 
@@ -27,8 +34,9 @@ const productName = (d: Pick<Damage, "name" | "variantName">) =>
 
 // Emails the supplier every damage not yet reported, with its photos. Each
 // one needs credit or replacement chosen first; nothing is picked for you,
-// since a replacement makes the PO wait for more. Sending stays in the
-// dialog until the email has gone.
+// since a replacement makes the PO wait for more. Then the email, to read
+// and edit; Back keeps the choices. Sending stays in the dialog until the
+// email has gone.
 export function DamageReportDialog({
 	detail: d,
 	damages,
@@ -41,6 +49,8 @@ export function DamageReportDialog({
 }) {
 	const [remedies, setRemedies] = useState(new Map<number, Remedy>());
 	const [sending, setSending] = useState(false);
+	const [preview, setPreview] = useState<EmailPreview | null>(null);
+	const guard = useCloseGuard();
 	const unchosen = damages.filter((x) => !remedies.has(x.id)).length;
 	const to = d.supplier.email;
 	const photoBytes = damages.reduce((n, x) => n + x.photoBytes, 0);
@@ -55,18 +65,30 @@ export function DamageReportDialog({
 					: null;
 	const replacing = damages.filter((x) => remedies.get(x.id) === "replacement");
 
-	async function send() {
+	const chosen = () =>
+		[...remedies].map(([damageId, remedy]) => ({ damageId, remedy }));
+
+	// The email, worded by its template, to read and edit before it goes.
+	async function review() {
+		setSending(true);
+		try {
+			setPreview(
+				await previewDamageReport({
+					data: { purchaseOrderId: d.order.id, remedies: chosen() },
+				}),
+			);
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : String(error));
+		}
+		setSending(false);
+	}
+
+	async function send(email: EmailEdit) {
 		setSending(true);
 		const r = await optimism.change({
 			send: () =>
 				sendPurchaseDamageReport({
-					data: {
-						purchaseOrderId: d.order.id,
-						remedies: [...remedies].map(([damageId, remedy]) => ({
-							damageId,
-							remedy,
-						})),
-					},
+					data: { purchaseOrderId: d.order.id, remedies: chosen(), ...email },
 				}),
 		});
 		setSending(false);
@@ -74,6 +96,29 @@ export function DamageReportDialog({
 		toast.success(`Damage report emailed to ${r.value.sentTo}`);
 		onClose();
 	}
+
+	if (preview)
+		return (
+			<Dialog open onOpenChange={(open) => !open && !sending && onClose()}>
+				<DialogContent className="sm:max-w-2xl" {...guard.contentProps}>
+					<DialogHeader>
+						<DialogTitle>Damage report</DialogTitle>
+					</DialogHeader>
+					<EmailComposer
+						preview={preview}
+						sending={sending}
+						blocked={guard.blocked}
+						onDirty={guard.setDirty}
+						onSend={send}
+						cancelLabel="Back"
+						onCancel={() => {
+							guard.setDirty(false);
+							setPreview(null);
+						}}
+					/>
+				</DialogContent>
+			</Dialog>
+		);
 
 	return (
 		<Dialog open onOpenChange={(open) => !open && !sending && onClose()}>
@@ -176,9 +221,9 @@ export function DamageReportDialog({
 					<Button variant="outline" disabled={sending} onClick={onClose}>
 						Cancel
 					</Button>
-					<Button disabled={Boolean(why) || sending} onClick={send}>
+					<Button disabled={Boolean(why) || sending} onClick={review}>
 						<Mail />
-						{sending ? "Sending…" : "Send to supplier"}
+						Review email
 					</Button>
 				</DialogFooter>
 			</DialogContent>

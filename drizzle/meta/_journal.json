@@ -568,6 +568,13 @@
       "when": 1792598582384,
       "tag": "0080_po_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792600503513,
+      "tag": "0081_email_templates",
+      "breakpoints": true
     }
   ]
 }

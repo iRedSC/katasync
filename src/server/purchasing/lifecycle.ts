@@ -2,7 +2,12 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
 import { sendEmail } from "#/purchasing/email";
-import { documentFor } from "#/purchasing/load";
+import {
+	greetingFor,
+	renderTemplate,
+	templateFor,
+} from "#/purchasing/email-templates";
+import { documentFor, loadOrder } from "#/purchasing/load";
 import {
 	cancelOrder,
 	closeOrder,
@@ -10,25 +15,54 @@ import {
 	markSent,
 	orderAgain,
 	PurchaseOrderError,
+	poName,
 	restoreDraft,
 	restoreOrder,
 } from "#/purchasing/orders";
 import { discount } from "./discount-input";
 import { id } from "./id-input";
 
-// Emails the PO to the supplier and puts it on order. With `email: false` it's
-// only marked sent, for orders placed by phone or on the supplier's website.
-export const sendPurchaseOrder = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0", email: "boolean" }))
+// The PO email as it would go, for staff to read and edit before sending.
+export const previewPurchaseOrderEmail = createServerFn({ method: "GET" })
+	.validator(id)
 	.handler(async ({ data }) => {
 		const db = getDb();
-		if (!data.email) {
+		const po = await loadOrder(db, data.id);
+		const template = await templateFor(db, "purchase_order");
+		const lines = po.lines.length;
+		return {
+			to: po.supplier.email,
+			...renderTemplate<"purchase_order">(template, {
+				greeting: greetingFor(po.supplier.contactName),
+				po: String(data.id),
+				supplier: po.supplier.name,
+				from: po.location.shipFromName ?? po.location.name,
+				items: `${lines} ${lines === 1 ? "item" : "items"}`,
+			}),
+			attachments: [`${poName(data.id).replace(" ", "-")}.pdf`],
+		};
+	});
+
+// Emails the PO to the supplier, worded as previewed and edited, and puts it
+// on order. With `email: false` it's only marked sent, for orders placed by
+// phone or on the supplier's website.
+export const sendPurchaseOrder = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			id: "number.integer > 0",
+			email: type("false").or({ subject: "/\\S/", text: "/\\S/" }),
+		}),
+	)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const { email } = data;
+		if (email === false) {
 			await markSent(db, { purchaseOrderId: data.id, sentTo: null });
 			return { sentTo: null };
 		}
 		const sentTo = await markSent(db, {
 			purchaseOrderId: data.id,
-			// Built inside the send, with the PO locked, so the email matches
+			// Built inside the send, with the PO locked, so the PDF matches
 			// exactly what's saved as sent.
 			deliver: async (tx) => {
 				const { po, pdf, filename } = await documentFor(tx, data.id);
@@ -37,21 +71,11 @@ export const sendPurchaseOrder = createServerFn({ method: "POST" })
 					throw new PurchaseOrderError(
 						`${po.supplier.name} has no email. Add one in Suppliers, or mark it sent.`,
 					);
-				const from = po.location.shipFromName ?? po.location.name;
 				await sendEmail({
 					purchaseOrderId: data.id,
 					to,
-					subject: `Purchase order ${data.id} from ${from}`,
-					text: [
-						po.supplier.contactName
-							? `Hi ${po.supplier.contactName},`
-							: "Hello,",
-						"",
-						`Please find purchase order ${data.id} attached (${po.lines.length} ${po.lines.length === 1 ? "item" : "items"}). Reply to this email to confirm, or with any changes or backorders.`,
-						"",
-						"Thank you,",
-						from,
-					].join("\n"),
+					subject: email.subject,
+					text: email.text,
 					attachments: [{ filename, content: pdf }],
 				});
 				return to;
