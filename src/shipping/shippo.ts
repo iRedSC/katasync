@@ -52,7 +52,7 @@ export function toShippoParcel(p: Parcel) {
 	};
 }
 
-async function shippo(path: string, body: unknown): Promise<unknown> {
+export async function shippo(path: string, body: unknown): Promise<unknown> {
 	const response = await fetch(`${API}${path}`, {
 		method: "POST",
 		headers: {
@@ -70,7 +70,7 @@ async function shippo(path: string, body: unknown): Promise<unknown> {
 	return json;
 }
 
-async function shippoGet(path: string): Promise<unknown> {
+export async function shippoGet(path: string): Promise<unknown> {
 	const response = await fetch(`${API}${path}`, {
 		headers: { Authorization: `ShippoToken ${apiKey()}` },
 	});

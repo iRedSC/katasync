@@ -1,7 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
-import { groupPostage, postageLines } from "#/orders/postage-adjustments";
+import {
+	groupBoxes,
+	groupPostage,
+	postageBoxes,
+	postageLines,
+} from "#/orders/postage-adjustments";
 import {
 	ordersNeedingCosts,
 	ordersWaiting,
@@ -69,10 +74,11 @@ export const getPostageAdjustments = createServerFn({ method: "GET" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const range = await resolveRange(db, data.range);
-		return {
-			range,
-			...groupPostage(await postageLines(db, range.start, range.end)),
-		};
+		const [lines, boxes] = await Promise.all([
+			postageLines(db, range.start, range.end),
+			postageBoxes(db, range.start, range.end),
+		]);
+		return { range, ...groupPostage(lines), byBox: groupBoxes(boxes) };
 	});
 
 // Sets what one of a product costs. Sales already in with no cost of their

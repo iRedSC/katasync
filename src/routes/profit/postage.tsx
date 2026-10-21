@@ -10,7 +10,11 @@ import {
 	RangeTabs,
 	rangeSearch,
 } from "#/components/profit-nav";
-import { ShippingDims } from "#/components/profit-page/shipping-dims";
+import {
+	formatBox,
+	poundsOunces,
+	ShippingDims,
+} from "#/components/profit-page/shipping-dims";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
@@ -77,6 +81,7 @@ function Postage() {
 							order's package as declared.
 						</p>
 					</Card>
+					{d.byBox.length > 0 && <Boxes groups={d.byBox} />}
 					<Contents groups={d.byContents} />
 					<Products groups={d.byProduct} unmatched={d.unmatched} />
 				</>
@@ -137,20 +142,23 @@ function Figures({
 	orders,
 	amount,
 	labels,
+	noun = "orders",
 }: {
 	rebilled: number;
 	orders: number;
 	amount: number;
 	labels: number;
+	// What was counted: orders, or katasync's own labels.
+	noun?: string;
 }) {
 	return (
 		<div className="flex shrink-0 items-center gap-4 tabular-nums">
 			<Tip
-				content={`Re-billed on ${pct(rate(rebilled, orders))} of the orders it shipped in`}
+				content={`Re-billed on ${pct(rate(rebilled, orders))} of the ${noun} it shipped in`}
 			>
 				<div className="flex w-28 flex-col items-end gap-1">
 					<span className="text-xs text-muted-foreground">
-						{formatCount(rebilled)} of {formatCount(orders)} orders
+						{formatCount(rebilled)} of {formatCount(orders)} {noun}
 					</span>
 					<Share value={rate(rebilled, orders)} />
 				</div>
@@ -164,6 +172,52 @@ function Figures({
 				</div>
 			</div>
 		</div>
+	);
+}
+
+// katasync's own labels by the box they went in: a saved box (fixed in
+// Settings, where its size and empty weight live) or a size typed for that
+// label alone. Each opens to its re-billed labels with the weight declared.
+function Boxes({ groups }: { groups: Data["byBox"] }) {
+	return (
+		<Card title="By box" flush>
+			<ul>
+				{groups.map((g) => (
+					<li key={g.key} className="border-t first:border-t-0">
+						<details>
+							<summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2.5 hover:bg-subtle">
+								<div className="min-w-0 flex-1">
+									<div className="truncate">
+										{g.packageId === null
+											? "Typed in"
+											: (g.name ?? "Saved box")}{" "}
+										<span className="text-muted-foreground">
+											{formatBox(g.box)}
+										</span>
+									</div>
+									{g.packageId !== null && (
+										<Link
+											to="/settings"
+											className="text-xs text-link hover:underline"
+										>
+											Fix in Settings
+										</Link>
+									)}
+								</div>
+								<Figures
+									rebilled={g.rebilled.length}
+									orders={g.labels}
+									amount={g.amount}
+									labels={g.cost}
+									noun="labels"
+								/>
+							</summary>
+							<Orders orders={g.rebilled} />
+						</details>
+					</li>
+				))}
+			</ul>
+		</Card>
 	);
 }
 
@@ -295,7 +349,11 @@ function ProductRow({ product: p }: { product: Data["byProduct"][number] }) {
 
 // The re-billed orders behind a group, each opening in katasync and, for
 // Amazon, on Seller Central where the package as declared is.
-function Orders({ orders }: { orders: RebilledOrder[] }) {
+function Orders({
+	orders,
+}: {
+	orders: (RebilledOrder & { weightGrams?: number; serviceName?: string })[];
+}) {
 	return (
 		<ul className="border-t bg-subtle px-4 py-1.5">
 			{orders.map((o) => (
@@ -324,6 +382,11 @@ function Orders({ orders }: { orders: RebilledOrder[] }) {
 							Seller Central
 							<ExternalLink className="size-3" />
 						</a>
+					)}
+					{o.weightGrams !== undefined && (
+						<span className="text-muted-foreground">
+							declared {poundsOunces(o.weightGrams)} · {o.serviceName}
+						</span>
 					)}
 					<span className="flex-1 text-right text-muted-foreground">
 						{o.labels === 0

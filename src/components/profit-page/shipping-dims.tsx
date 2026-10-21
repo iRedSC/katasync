@@ -10,7 +10,7 @@ const input =
 	"h-7 w-14 rounded-md border border-input bg-white px-1.5 text-right tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring";
 
 // Packed weight as Seller Central takes it, pounds and ounces.
-function poundsOunces(grams: number) {
+export function poundsOunces(grams: number) {
 	const oz = Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10;
 	const lb = Math.floor(oz / 16);
 	const rest = Math.round((oz - lb * 16) * 10) / 10;

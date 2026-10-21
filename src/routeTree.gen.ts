@@ -44,6 +44,7 @@ import { Route as TransfersIndexRouteImport } from './routes/transfers/index'
 import { Route as TransfersIdRouteImport } from './routes/transfers/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCronInboxRouteImport } from './routes/api/cron/inbox'
+import { Route as ApiCronShippoRebillsRouteImport } from './routes/api/cron/shippo-rebills'
 import { Route as ApiCronTrackingRouteImport } from './routes/api/cron/tracking'
 import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage-photos/$damageId'
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
@@ -235,6 +236,11 @@ const ApiCronInboxRoute = ApiCronInboxRouteImport.update({
   path: '/api/cron/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCronShippoRebillsRoute = ApiCronShippoRebillsRouteImport.update({
+  id: '/api/cron/shippo-rebills',
+  path: '/api/cron/shippo-rebills',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCronTrackingRoute = ApiCronTrackingRouteImport.update({
   id: '/api/cron/tracking',
   path: '/api/cron/tracking',
@@ -349,6 +355,7 @@ export interface FileRoutesByFullPath {
   '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
+  '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
@@ -401,6 +408,7 @@ export interface FileRoutesByTo {
   '/transfers': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
+  '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
@@ -454,6 +462,7 @@ export interface FileRoutesById {
   '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
+  '/api/cron/shippo-rebills': typeof ApiCronShippoRebillsRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
@@ -508,6 +517,7 @@ export interface FileRouteTypes {
     | '/transfers/'
     | '/api/auth/$'
     | '/api/cron/inbox'
+    | '/api/cron/shippo-rebills'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
@@ -560,6 +570,7 @@ export interface FileRouteTypes {
     | '/transfers'
     | '/api/auth/$'
     | '/api/cron/inbox'
+    | '/api/cron/shippo-rebills'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
@@ -612,6 +623,7 @@ export interface FileRouteTypes {
     | '/transfers/'
     | '/api/auth/$'
     | '/api/cron/inbox'
+    | '/api/cron/shippo-rebills'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
     | '/api/oauth/$'
@@ -665,6 +677,7 @@ export interface RootRouteChildren {
   TransfersIndexRoute: typeof TransfersIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiCronInboxRoute: typeof ApiCronInboxRoute
+  ApiCronShippoRebillsRoute: typeof ApiCronShippoRebillsRoute
   ApiCronTrackingRoute: typeof ApiCronTrackingRoute
   ApiDamagePhotosDamageIdRoute: typeof ApiDamagePhotosDamageIdRoute
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
@@ -929,6 +942,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCronInboxRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cron/shippo-rebills': {
+      id: '/api/cron/shippo-rebills'
+      path: '/api/cron/shippo-rebills'
+      fullPath: '/api/cron/shippo-rebills'
+      preLoaderRoute: typeof ApiCronShippoRebillsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/cron/tracking': {
       id: '/api/cron/tracking'
       path: '/api/cron/tracking'
@@ -1073,6 +1093,7 @@ const rootRouteChildren: RootRouteChildren = {
   TransfersIndexRoute: TransfersIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCronInboxRoute: ApiCronInboxRoute,
+  ApiCronShippoRebillsRoute: ApiCronShippoRebillsRoute,
   ApiCronTrackingRoute: ApiCronTrackingRoute,
   ApiDamagePhotosDamageIdRoute: ApiDamagePhotosDamageIdRoute,
   ApiOauthSplatRoute: ApiOauthSplatRoute,

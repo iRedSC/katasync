@@ -1042,6 +1042,34 @@ export const shipments = pgTable(
 	(t) => [index("shipments_dispatch_idx").on(t.dispatchId)],
 );
 
+// What a label's provider billed on it after purchase: the carrier re-billing
+// for a size or weight other than declared, a surcharge, or a credit back
+// (negative). One row per line of the provider's invoice, so importing again
+// changes nothing. Shippo's come from its invoice report
+// (src/shipping/shippo-adjustments.ts); order_profit shares each label's
+// across its orders, like the label.
+export const shipmentAdjustments = pgTable(
+	"shipment_adjustments",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		shipmentId: integer()
+			.notNull()
+			.references(() => shipments.id),
+		// The provider's own ID for the line, e.g. Shippo's invoice item.
+		externalId: text().notNull().unique(),
+		// The provider's word for it, e.g. "LABEL_PAYMENT_ADJUSTMENT".
+		type: text().notNull(),
+		description: text().notNull(),
+		// Positive is money we lose.
+		amount: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+		postedAt: timestamp({ withTimezone: true }).notNull(),
+	},
+	(t) => [
+		index("shipment_adjustments_shipment_idx").on(t.shipmentId),
+		check("shipment_adjustments_amount_not_zero", sql`${t.amount} <> 0`),
+	],
+);
+
 // A company we buy from. `code` is the short name Sumtracker used, e.g. "CANAM".
 export const suppliers = pgTable(
 	"suppliers",
@@ -1975,6 +2003,13 @@ export const orderLineProfit = pgView("order_line_profit", {
 	shipped: boolean().notNull(),
 	// Units refunded and presumed on their way back, which cost nothing yet.
 	returning: integer().notNull(),
+	// Its whole order's postage adjustments, so a line whose share rounds to
+	// nothing still says its order was re-billed.
+	orderPostageAdjustments: numeric({
+		precision: 12,
+		scale: 2,
+		mode: "number",
+	}).notNull(),
 }).existing();
 
 // What's due back, one row per line expected (or, when a request names an
