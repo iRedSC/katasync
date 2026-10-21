@@ -35,11 +35,22 @@ const COLUMNS = [
 	"transaction_object_id",
 ] as const;
 
-const catalog = type({ data_availability: { end: "number" } });
+// What the report covers so far, in epoch seconds; nothing while Shippo is
+// still building it.
+const catalog = type({
+	data_availability: {
+		"start?": "number | null",
+		"end?": "number | null",
+	},
+});
+// A finished run's file may not be ready to download yet, and its link
+// expires; fetching the run again gives a fresh one.
 const run = type({
 	id: "string",
 	status: "'QUEUED' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED'",
-	"result?": type({ download: { url: "string" } }).or("null"),
+	"result?": type({
+		"download?": type({ "status?": "string", "url?": "string" }).or("null"),
+	}).or("null"),
 	"error?": "unknown",
 });
 const row = type({
@@ -81,40 +92,68 @@ export function readRebills(csv: string): ShippoRebill[] {
 		}));
 }
 
-// Shippo's re-bills over the last 92 days its reports cover.
-export async function fetchShippoRebills(): Promise<ShippoRebill[]> {
-	const { data_availability } = catalog.assert(
-		await shippoGet("/v2/reporting/reports/invoice.v1"),
+// How the import reaches Shippo; tests stand in for it.
+export type ReportApi = {
+	get: (path: string) => Promise<unknown>;
+	post: (path: string, body: unknown) => Promise<unknown>;
+	download: (url: string) => Promise<Response>;
+	sleep: (ms: number) => Promise<void>;
+};
+
+const live: ReportApi = {
+	get: shippoGet,
+	post: shippo,
+	download: (url) => fetch(url),
+	sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+// Shippo's re-bills over the last 92 days its reports cover, or as many as
+// it has. Until the file comes down, the run is asked again: still running,
+// its file not ready, or a link that expired (a run asked for twice comes
+// back finished, with the link it had). All within two minutes.
+export async function fetchShippoRebills(
+	api: ReportApi = live,
+): Promise<ShippoRebill[]> {
+	const { data_availability: covers } = catalog.assert(
+		await api.get("/v2/reporting/reports/invoice.v1"),
 	);
-	const end = data_availability.end;
-	const start = end - BACK_MS / 1000;
+	const end = covers.end;
+	if (end == null) return [];
+	const start = Math.max(covers.start ?? 0, end - BACK_MS / 1000);
+	if (start >= end) return [];
 	let r = run.assert(
-		await shippo("/v2/reporting/runs", {
+		await api.post("/v2/reporting/runs", {
 			report_type: "invoice.v1",
 			interval: { start, end },
 			columns: COLUMNS,
 			output_format: "csv_gzip",
 			// The same window twice is the same report.
-			idempotency_key: `katasync-rebills-${end}`,
+			idempotency_key: `katasync-rebills-${start}-${end}`,
 		}),
 	);
 	const until = Date.now() + WAIT_MS;
-	while (r.status === "QUEUED" || r.status === "PROCESSING") {
+	let failedDownload = "";
+	for (;;) {
+		if (r.status === "FAILED")
+			throw new Error(
+				`Shippo's invoice report failed: ${JSON.stringify(r.error)}`,
+			);
+		const url = r.status === "SUCCEEDED" ? r.result?.download?.url : undefined;
+		if (url) {
+			const file = await api.download(url);
+			if (file.ok)
+				return readRebills(
+					gunzipSync(Buffer.from(await file.arrayBuffer())).toString("utf8"),
+				);
+			failedDownload = ` (its download answered ${file.status})`;
+		}
 		if (Date.now() > until)
-			throw new Error("Shippo's invoice report took too long; next time");
-		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-		r = run.assert(await shippoGet(`/v2/reporting/runs/${r.id}`));
+			throw new Error(
+				`Shippo's invoice report didn't come through in time${failedDownload}; next time`,
+			);
+		await api.sleep(POLL_MS);
+		r = run.assert(await api.get(`/v2/reporting/runs/${r.id}`));
 	}
-	if (r.status === "FAILED" || !r.result)
-		throw new Error(
-			`Shippo's invoice report failed: ${JSON.stringify(r.error)}`,
-		);
-	const file = await fetch(r.result.download.url);
-	if (!file.ok)
-		throw new Error(`Shippo's report download answered ${file.status}`);
-	return readRebills(
-		gunzipSync(Buffer.from(await file.arrayBuffer())).toString("utf8"),
-	);
 }
 
 // Saves re-bills on katasync's labels, matched by Shippo transaction.

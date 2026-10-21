@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { beforeEach, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
@@ -10,7 +11,12 @@ import {
 } from "#/orders/postage-adjustments";
 import { type ProfitFixture, profitFixture } from "#/orders/profit.fixtures";
 import { addDispatch } from "#/test/db";
-import { readRebills, saveShippoRebills } from "./shippo-adjustments";
+import {
+	fetchShippoRebills,
+	type ReportApi,
+	readRebills,
+	saveShippoRebills,
+} from "./shippo-adjustments";
 
 let db: Db;
 let order: ProfitFixture["order"];
@@ -134,4 +140,89 @@ test("saves re-bills on katasync's labels, shared across the label's orders, aga
 		weightGrams: 600,
 		soldOn: "shopify",
 	});
+});
+
+// Shippo's reporting API as a script: each call takes the next answer.
+function scripted(answers: {
+	catalog: unknown;
+	runs: unknown[];
+	downloads?: Response[];
+}) {
+	const calls: string[] = [];
+	const posted: unknown[] = [];
+	const runs = [...answers.runs];
+	const downloads = [...(answers.downloads ?? [])];
+	const api: ReportApi = {
+		get: async (path) => {
+			calls.push(`GET ${path}`);
+			return path.includes("/reports/") ? answers.catalog : runs.shift();
+		},
+		post: async (path, body) => {
+			calls.push(`POST ${path}`);
+			posted.push(body);
+			return runs.shift();
+		},
+		download: async (url) => {
+			calls.push(`DOWNLOAD ${url}`);
+			return downloads.shift() ?? new Response(null, { status: 404 });
+		},
+		sleep: async () => {},
+	};
+	return { api, calls, posted };
+}
+const file = () =>
+	new Response(
+		gzipSync(
+			`${HEADER}\nb1,LABEL_SURCHARGE,Fuel,1.50,2026-11-01T00:00:00Z,tx-1\n`,
+		),
+	);
+const done = (url?: string) => ({
+	id: "run-1",
+	status: "SUCCEEDED",
+	result: { download: url ? { url } : { status: "unavailable" } },
+});
+
+test("asks only for days Shippo has, and nothing when it has none", async () => {
+	const { api, posted } = scripted({
+		catalog: { data_availability: { start: 1_000_000, end: 1_500_000 } },
+		runs: [done("https://x/1")],
+		downloads: [file()],
+	});
+	expect((await fetchShippoRebills(api)).map((r) => r.externalId)).toEqual([
+		"b1",
+	]);
+	expect(posted[0]).toMatchObject({
+		interval: { start: 1_000_000, end: 1_500_000 },
+	});
+
+	const empty = scripted({
+		catalog: { data_availability: { start: null, end: null } },
+		runs: [],
+	});
+	expect(await fetchShippoRebills(empty.api)).toEqual([]);
+	expect(empty.calls).toEqual(["GET /v2/reporting/reports/invoice.v1"]);
+});
+
+test("waits for the file, and asks the run again for a link that expired", async () => {
+	const { api, calls } = scripted({
+		catalog: { data_availability: { start: 0, end: 10_000_000 } },
+		runs: [
+			// Asked for before: finished, with its old link.
+			done("https://x/old"),
+			// Asked again: finished, file not ready.
+			done(),
+			done("https://x/new"),
+		],
+		downloads: [new Response(null, { status: 403 }), file()],
+	});
+	expect(await fetchShippoRebills(api)).toHaveLength(1);
+	expect(
+		calls.filter((c) => !c.startsWith("GET /v2/reporting/reports")),
+	).toEqual([
+		"POST /v2/reporting/runs",
+		"DOWNLOAD https://x/old",
+		"GET /v2/reporting/runs/run-1",
+		"GET /v2/reporting/runs/run-1",
+		"DOWNLOAD https://x/new",
+	]);
 });
