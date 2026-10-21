@@ -111,6 +111,19 @@ describe("receiveReturn", () => {
 		expect(await db.select().from(schema.orderReturns)).toEqual([]);
 	});
 
+	test("undoing a return twice fails rather than taking stock off again", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const lineId = await shippedOrder(wrench, 2);
+		const { ids } = await receiveReturn(db, {
+			orderId,
+			lines: [{ lineId, quantity: 2 }],
+			restock: true,
+		});
+		await undoReturns(db, ids);
+		await expect(undoReturns(db, ids)).rejects.toThrow("already undone");
+		expect(await onHand(wrench)).toBe(0);
+	});
+
 	test("written-off units are recorded without moving stock", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		const lineId = await shippedOrder(wrench, 2);
