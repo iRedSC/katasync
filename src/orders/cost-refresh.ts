@@ -202,7 +202,8 @@ export const SWEEP_BACK_MS = 3 * 24 * HOUR;
 
 // The orders with money posted after their report on file was fetched (or
 // with none on file), or too soon after to be sure it's in, cancelled ones
-// aside.
+// aside. Those whose last ask failed go last, longest-waiting first, so a few
+// orders that always fail can't hold up the rest pass after pass.
 export async function postedOrders(
 	db: Db,
 	billedBy: Channel,
@@ -225,6 +226,8 @@ export async function postedOrders(
 			storeChannel: stores.channel,
 			placedAt: orders.placedAt,
 			fetchedAt: orderCostReports.fetchedAt,
+			failed: sql<boolean>`${orderCostChecks.error} is not null`,
+			checkedAt: orderCostChecks.checkedAt,
 		})
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -233,6 +236,13 @@ export async function postedOrders(
 			and(
 				eq(orderCostReports.orderId, orders.id),
 				eq(orderCostReports.billedBy, billedBy),
+			),
+		)
+		.leftJoin(
+			orderCostChecks,
+			and(
+				eq(orderCostChecks.orderId, orders.id),
+				eq(orderCostChecks.billedBy, billedBy),
 			),
 		)
 		.where(
@@ -247,7 +257,9 @@ export async function postedOrders(
 				),
 			),
 		);
+	const asked = (r: (typeof rows)[number]) => r.checkedAt?.getTime() ?? 0;
 	return rows
+		.sort((a, b) => Number(a.failed) - Number(b.failed) || asked(a) - asked(b))
 		.map((r) => ({ due: toDue(billedBy, r), fetchedAt: r.fetchedAt }))
 		.filter(({ due, fetchedAt }) => {
 			const postedAt = latest.get(due.marketplaceId);

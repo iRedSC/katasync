@@ -116,3 +116,25 @@ test("groups re-bills by what was in the box and by product, against how often e
 	const totals = await profitTotals(db, start, end);
 	expect(totals).toMatchObject({ postageAdjustments: 24, postageAdjusted: 2 });
 });
+
+test("a re-bill whose label never came through still counts", async () => {
+	const { id } = await order(
+		"111-9",
+		[{ unitPrice: 40, quantity: 1, unitCost: 10 }],
+		{
+			storeId: amazon,
+			externalId: "111-9",
+			marketplaceOrderId: "amazon:111-9",
+		},
+	);
+	await saveCostReport(db, {
+		orderId: id,
+		billedBy: "amazon",
+		settled: false,
+		charges: [rebill(3)],
+	});
+	const g = groupPostage(await postageLines(db, start, end));
+	expect(g.amount).toBe(3);
+	expect(g.rebilled.map((o) => [o.id, o.labels])).toEqual([[id, 0]]);
+	expect((await profitTotals(db, start, end)).postageAdjustments).toBe(3);
+});

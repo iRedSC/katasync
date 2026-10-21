@@ -320,7 +320,9 @@ function Orders({ orders }: { orders: RebilledOrder[] }) {
 						</a>
 					)}
 					<span className="flex-1 text-right text-muted-foreground">
-						label {formatMoney(o.labels)}
+						{o.labels === 0
+							? "no label cost"
+							: `label ${formatMoney(o.labels)}`}
 					</span>
 					<span className="w-16 text-right font-medium text-critical-text">
 						{formatMoney(o.amount)}

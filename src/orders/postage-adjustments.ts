@@ -22,7 +22,8 @@ import { contentsKey } from "#/shipping/contents";
 const lp = orderLineProfit;
 
 // Orders in the range from marketplaces that re-bill (those with a re-bill on
-// record), shipped with a label they billed, one row per item.
+// record), shipped with a label they billed or re-billed, one row per item.
+// A re-bill whose label never came through still counts.
 export async function postageLines(db: Db, start: Date, end: Date) {
 	const rebillers = db
 		.selectDistinct({ billedBy: orderCharges.billedBy })
@@ -33,7 +34,7 @@ export async function postageLines(db: Db, start: Date, end: Date) {
 		.from(orderCharges)
 		.where(
 			and(
-				eq(orderCharges.kind, "label"),
+				inArray(orderCharges.kind, ["label", "postage_adjustment"]),
 				inArray(orderCharges.billedBy, rebillers),
 			),
 		);

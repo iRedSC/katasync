@@ -296,4 +296,31 @@ describe("sweepPosted", () => {
 		const next = await sweepPosted(db, "amazon", fetch, list, { now });
 		expect(next.checked).toBe(1);
 	});
+
+	test("orders that keep failing go last, so they can't hold up the rest", async () => {
+		const names = ["111-bad1", "111-bad2", "111-good"];
+		for (const name of names) await amazonOrder(name, 70 * 24);
+		const asked: string[] = [];
+		const fetch = eachOrder(async (o) => {
+			asked.push(o.marketplaceId);
+			if (o.marketplaceId.startsWith("111-bad")) throw new Error("Bad data");
+			return { settled: false, charges: [] };
+		});
+		const list = async () =>
+			names.map((marketplaceId) => ({ marketplaceId, postedAt: ago(5) }));
+		// The first pass happens to take the failing ones alone, and stops.
+		const first = await sweepPosted(db, "amazon", fetch, list, {
+			now,
+			limit: 2,
+		});
+		expect(first.checked).toBe(2);
+		expect(asked.sort()).toEqual(["111-bad1", "111-bad2"]);
+		asked.length = 0;
+		const next = await sweepPosted(db, "amazon", fetch, list, {
+			now: new Date(now.getTime() + 4 * HOUR),
+			limit: 2,
+		});
+		expect(asked[0]).toBe("111-good");
+		expect(next.reported).toBe(1);
+	});
 });
