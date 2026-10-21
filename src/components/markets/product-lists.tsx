@@ -18,32 +18,85 @@ import type {
 
 const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
 
+// Each chip says on hover what it means, since "ended" or "shows 0" alone
+// doesn't say where the problem is.
+const LISTING_TIPS = {
+	none: "No listing for this product on this marketplace.",
+	ended:
+		"Its listing here can't sell: the marketplace has it deleted, archived, or inactive, or it's gone from the marketplace's listings.",
+	draft: "Its listing here is a draft, so buyers can't see it.",
+	shows_zero:
+		"The marketplace shows 0 available while we have stock, so it can't sell here.",
+} as const;
+
+function Tipped({
+	tip,
+	tone,
+	children,
+}: {
+	tip: string;
+	tone?: "warning" | "critical";
+	children: string;
+}) {
+	return (
+		<Tip content={tip}>
+			<span className="cursor-help">
+				<Badge tone={tone}>{children}</Badge>
+			</span>
+		</Tip>
+	);
+}
+
 export function ListingChip({ listing }: { listing: ListingState }) {
 	switch (listing.kind) {
 		case "none":
-			return <Badge>Not listed here</Badge>;
+			return <Tipped tip={LISTING_TIPS.none}>Not listed here</Tipped>;
 		case "ended":
-			return <Badge tone="warning">Ended here</Badge>;
+			return (
+				<Tipped tip={LISTING_TIPS.ended} tone="warning">
+					Ended here
+				</Tipped>
+			);
 		case "draft":
-			return <Badge tone="warning">Draft here</Badge>;
+			return (
+				<Tipped tip={LISTING_TIPS.draft} tone="warning">
+					Draft here
+				</Tipped>
+			);
 		case "live": {
 			const p = listing.problem;
 			if (!p) return null;
 			if (p.kind === "shows_zero")
-				return <Badge tone="critical">Shows 0 here</Badge>;
-			return (
-				<Tip content={p.kind === "push_failed" ? p.error : p.reason}>
-					<Badge tone={p.kind === "push_failed" ? "critical" : "warning"}>
-						{p.kind === "push_failed" ? "Stock push failed" : "Can't set stock"}
-					</Badge>
-				</Tip>
+				return (
+					<Tipped tip={LISTING_TIPS.shows_zero} tone="critical">
+						Shows 0 here
+					</Tipped>
+				);
+			return p.kind === "push_failed" ? (
+				<Tipped
+					tip={`katasync couldn't set its stock: ${p.error}`}
+					tone="critical"
+				>
+					Stock push failed
+				</Tipped>
+			) : (
+				<Tipped
+					tip={`katasync can't set its stock: ${p.reason}`}
+					tone="warning"
+				>
+					Can't set stock
+				</Tipped>
 			);
 		}
 	}
 }
 
 function StockChip({ available }: { available: number }) {
-	return available > 0 ? null : <Badge tone="critical">Out of stock</Badge>;
+	return available > 0 ? null : (
+		<Tipped tip="None on our shelves to sell." tone="critical">
+			Out of stock
+		</Tipped>
+	);
 }
 
 function Row({
