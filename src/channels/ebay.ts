@@ -114,7 +114,7 @@ export const ebayOrder = type({
 	}).array(),
 });
 
-const ordersPage = type({
+export const ordersPage = type({
 	"orders?": ebayOrder.array(),
 	"next?": "string",
 });
