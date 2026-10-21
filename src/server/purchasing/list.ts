@@ -8,9 +8,9 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { discountOf, lineCents } from "#/purchasing/discount";
+import { unfiledForList } from "#/purchasing/inbox/unfiled";
 import { receivedByLine } from "#/purchasing/load";
 import { readyToOrder, suggestPurchases } from "#/purchasing/reorder";
-import { unfiledForList } from "./inbox";
 
 // Suggestions ready to order, and every PO still open plus the latest finished ones.
 export const listPurchasing = createServerFn({ method: "GET" }).handler(

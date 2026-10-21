@@ -1,6 +1,7 @@
-import { sql } from "drizzle-orm";
+import { and, asc, gte, isNotNull, lt, sql } from "drizzle-orm";
 import { SHOP_APP } from "#/channels/shopify/channel-order";
 import type { Db } from "#/db/client";
+import { payoutChecks, payouts } from "#/db/schema";
 import { US_STATES } from "#/lib/places";
 import { TIME_ZONE } from "./profit";
 
@@ -271,8 +272,34 @@ export async function salesReport(db: Db, period: Period) {
 		firstOrder: string;
 	}>;
 
+	// Money the marketplaces sent to the bank during the month, by the day it
+	// was sent: cash, not order dates, so it won't add up to the month's sales.
+	const deposits = await db
+		.select({
+			channel: payouts.channel,
+			status: payouts.status,
+			depositedAt: payouts.depositedAt,
+			amount: payouts.amount,
+			currency: payouts.currency,
+			bankTail: payouts.bankTail,
+			reference: payouts.reference,
+		})
+		.from(payouts)
+		.where(and(gte(payouts.depositedAt, start), lt(payouts.depositedAt, end)))
+		.orderBy(asc(payouts.depositedAt));
+	// Marketplaces whose payouts couldn't be read last time, and why.
+	const payoutErrors = await db
+		.select({ channel: payoutChecks.channel, error: payoutChecks.error })
+		.from(payoutChecks)
+		.where(isNotNull(payoutChecks.error));
+
 	return {
 		business: { name, homeState },
+		deposits,
+		payoutErrors: payoutErrors.map((e) => ({
+			channel: e.channel,
+			error: e.error ?? "",
+		})),
 		partial: partial.rows.map((r) => ({
 			channel: r.channel,
 			firstOrder: new Date(r.firstOrder),
