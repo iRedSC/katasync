@@ -48,3 +48,9 @@ export function emailStatus(s: Diagnostics["services"]["email"]) {
 		? { label: "Set up", tone: "success" as const }
 		: { label: "Not set up", tone: "warning" as const };
 }
+
+export function inboxStatus(s: Diagnostics["services"]["inbox"]) {
+	return s.missing.length === 0
+		? { label: "Set up", tone: "success" as const }
+		: { label: "Not set up", tone: "warning" as const };
+}

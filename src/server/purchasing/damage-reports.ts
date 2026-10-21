@@ -3,12 +3,20 @@ import { type } from "arktype";
 import { getDb } from "#/db/client";
 import {
 	type DamageReportItem,
+	damagesOf,
+	type Remedy,
 	recordDamage,
 	removeDamage,
 	removeDamagePhoto,
 	sendDamageReport,
 } from "#/purchasing/damage";
 import { sendEmail } from "#/purchasing/email";
+import {
+	greetingFor,
+	renderTemplate,
+	templateFor,
+	type Values,
+} from "#/purchasing/email-templates";
 import { loadOrder } from "#/purchasing/load";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { id } from "./id-input";
@@ -35,51 +43,87 @@ export const removePurchaseDamagePhoto = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => removeDamagePhoto(getDb(), data.id));
 
 const REMEDY_WORDS = {
-	credit: "please credit us",
-	replacement: "please send replacements",
+	credit: "Please credit us",
+	replacement: "Please send replacements",
 } as const;
 
-// The report as the supplier reads it: each item, what's wrong, and what we
-// ask for, with every photo attached and named for its item.
-export function damageEmail(
-	input: {
-		purchaseOrderId: number;
-		contactName: string | null;
-		from: string;
-	},
-	items: DamageReportItem[],
-) {
-	const photoCount = items.reduce((n, i) => n + i.photos.length, 0);
-	const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+type ReportLine = Pick<
+	DamageReportItem,
+	"sku" | "name" | "quantity" | "description" | "remedy"
+> & { photos: number };
+
+// The report's wording, from the template; the damage list is laid out here.
+function damageEmailValues(
+	po: Awaited<ReturnType<typeof loadOrder>>,
+	items: ReportLine[],
+): Values<"damage_report"> {
+	const photos = items.reduce((n, i) => n + i.photos, 0);
 	return {
-		subject: `Damage on purchase order ${input.purchaseOrderId} from ${input.from}`,
-		text: [
-			input.contactName ? `Hi ${input.contactName},` : "Hello,",
-			"",
-			`Some of what arrived on purchase order ${input.purchaseOrderId} was damaged:`,
-			"",
-			...items.map(
+		greeting: greetingFor(po.supplier.contactName),
+		po: String(po.order.id),
+		supplier: po.supplier.name,
+		from: po.location.shipFromName ?? po.location.name,
+		damage_list: items
+			.map(
 				(i) =>
-					`- ${i.quantity} × ${i.name} (${i.sku}): ${i.description}. ${REMEDY_WORDS[i.remedy][0].toUpperCase()}${REMEDY_WORDS[i.remedy].slice(1)}.`,
-			),
-			"",
-			...(photoCount > 0
-				? [
-						`${photoCount === 1 ? "A photo is" : `${photoCount} photos are`} attached.`,
-						"",
-					]
-				: []),
-			"Thank you,",
-			input.from,
-		].join("\n"),
-		attachments: items.flatMap((i) =>
-			i.photos.map((p, n) => ({
-				filename: `${i.sku}-${n + 1}.${ext[p.contentType as keyof typeof ext] ?? "jpg"}`,
-				content: p.data,
-			})),
-		),
+					`- ${i.quantity} × ${i.name} (${i.sku}): ${i.description}. ${REMEDY_WORDS[i.remedy]}.`,
+			)
+			.join("\n"),
+		photos:
+			photos === 0
+				? ""
+				: `${photos === 1 ? "A photo is" : `${photos} photos are`} attached.`,
 	};
 }
+
+const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+
+// Every photo, named for its item.
+function photoFiles(
+	items: { sku: string; photos: { contentType: string }[] }[],
+) {
+	return items.flatMap((i) =>
+		i.photos.map((p, n) => ({
+			filename: `${i.sku}-${n + 1}.${EXT[p.contentType as keyof typeof EXT] ?? "jpg"}`,
+		})),
+	);
+}
+
+const remediesInput = {
+	purchaseOrderId: "number.integer > 0",
+	remedies: type({
+		damageId: "number.integer > 0",
+		remedy: "'credit' | 'replacement'",
+	}).array(),
+} as const;
+
+// The report as it would go, for staff to read and edit before sending.
+export const previewDamageReport = createServerFn({ method: "POST" })
+	.validator(type(remediesInput))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const po = await loadOrder(db, data.purchaseOrderId);
+		const chosen = new Map(data.remedies.map((r) => [r.damageId, r.remedy]));
+		const pending = (await damagesOf(db, po.order.id)).filter(
+			(d) => d.reportedAt === null && chosen.has(d.id),
+		);
+		const items = pending.map((d) => ({
+			sku: d.sku,
+			name: d.variantName ? `${d.name} (${d.variantName})` : d.name,
+			quantity: d.quantity,
+			description: d.description,
+			remedy: chosen.get(d.id) as Remedy,
+			photos: d.photoIds.length,
+		}));
+		const template = await templateFor(db, "damage_report");
+		return {
+			to: po.supplier.email,
+			...renderTemplate(template, damageEmailValues(po, items)),
+			attachments: pending.flatMap((d) =>
+				d.photoIds.map((_, n) => `${d.sku}-${n + 1}`),
+			),
+		};
+	});
 
 // Emails the supplier every damage on the PO not yet reported, each with
 // credit or replacement, and records it as sent. Nothing is recorded if the
@@ -87,16 +131,16 @@ export function damageEmail(
 export const sendPurchaseDamageReport = createServerFn({ method: "POST" })
 	.validator(
 		type({
-			purchaseOrderId: "number.integer > 0",
-			remedies: type({
-				damageId: "number.integer > 0",
-				remedy: "'credit' | 'replacement'",
-			}).array(),
+			...remediesInput,
+			// As previewed, and edited there.
+			subject: "/\\S/",
+			text: "/\\S/",
 		}),
 	)
 	.handler(async ({ data }) =>
 		sendDamageReport(getDb(), {
-			...data,
+			purchaseOrderId: data.purchaseOrderId,
+			remedies: data.remedies,
 			deliver: async (tx, items) => {
 				const po = await loadOrder(tx, data.purchaseOrderId);
 				const to = po.supplier.email;
@@ -104,16 +148,15 @@ export const sendPurchaseDamageReport = createServerFn({ method: "POST" })
 					throw new PurchaseOrderError(
 						`${po.supplier.name} has no email. Add one in Suppliers.`,
 					);
+				const names = photoFiles(items);
 				await sendEmail({
+					purchaseOrderId: data.purchaseOrderId,
 					to,
-					...damageEmail(
-						{
-							purchaseOrderId: data.purchaseOrderId,
-							contactName: po.supplier.contactName,
-							from: po.location.shipFromName ?? po.location.name,
-						},
-						items,
-					),
+					subject: data.subject,
+					text: data.text,
+					attachments: items
+						.flatMap((i) => i.photos)
+						.map((p, n) => ({ filename: names[n].filename, content: p.data })),
 				});
 				return to;
 			},

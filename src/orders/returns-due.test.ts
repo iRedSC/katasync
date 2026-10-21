@@ -11,7 +11,7 @@ import {
 	restoreNoReturn,
 } from "./returns-due";
 
-// The order_returns_due view (drizzle/0080_returns_due_unmatched.sql) and the Returns
+// The order_returns_due view (drizzle/0082_returns_due_unmatched.sql) and the Returns
 // tab's reads.
 
 let db: Db;

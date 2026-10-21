@@ -15,6 +15,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { cancelWithUndo } from "#/components/po-cancel";
+import { PurchasingInbox } from "#/components/purchasing-inbox";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
@@ -83,10 +84,8 @@ async function whileWorking<T>(message: string, work: Promise<T>): Promise<T> {
 
 function Purchasing() {
 	const loaded = Route.useLoaderData();
-	const { ready, open, incoming, done, suppliers } = purchasingData.useData(
-		"all",
-		loaded,
-	);
+	const { ready, open, incoming, done, suppliers, inbox } =
+		purchasingData.useData("all", loaded);
 	const nothing =
 		ready.length === 0 &&
 		open.length === 0 &&
@@ -105,6 +104,7 @@ function Purchasing() {
 				</>
 			}
 		>
+			<PurchasingInbox inbox={inbox} />
 			{nothing ? (
 				<Card>
 					<EmptyState icon={ClipboardList} title="Nothing to reorder">

@@ -47,7 +47,15 @@ export function registerReadTools(server: McpServer, db: Db) {
 				"Health of order sync per channel (Shopify, eBay, Amazon, TikTok): last good sync, the exact latest error, a hint for known causes, problems in the latest pass, and recent passes. Also whether the sync worker runs, labels whose tracking didn't reach a marketplace, and sold SKUs matching no product. With check, also runs a live step-by-step connection check.",
 			inputSchema: {
 				check: z
-					.enum(["shopify", "ebay", "amazon", "tiktok", "shippo", "email"])
+					.enum([
+						"shopify",
+						"ebay",
+						"amazon",
+						"tiktok",
+						"shippo",
+						"email",
+						"inbox",
+					])
 					.optional()
 					.describe("Run a live connection check of this service"),
 			},
@@ -153,7 +161,7 @@ export function registerReadTools(server: McpServer, db: Db) {
 		"get_purchase_order",
 		{
 			description:
-				"A PO: status, supplier, totals (lines, quantity, items, dollars, received), recorded invoices, and lines (SKU, supplier SKU, unit and pack size, quantity, price, extended, received). A line shows what was sent only when it has changed since, and its default terms only when they differ.",
+				"A PO: status, supplier, totals (lines, quantity, items, dollars, received), recorded invoices, emails from the supplier (read_po_email), tracking (followed on Shippo), and lines (SKU, supplier SKU, unit and pack size, quantity, price, extended, received). A line shows what was sent only when it has changed since, and its default terms only when they differ.",
 			inputSchema: { id: z.number().int().positive() },
 			annotations: READ,
 		},

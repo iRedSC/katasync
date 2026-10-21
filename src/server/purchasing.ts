@@ -8,7 +8,7 @@ export {
 	undoAddToPurchaseOrder,
 } from "#/server/purchasing/add-products";
 export {
-	damageEmail,
+	previewDamageReport,
 	recordPurchaseDamage,
 	removePurchaseDamage,
 	removePurchaseDamagePhoto,
@@ -31,10 +31,17 @@ export {
 	updateDraftFromSuggestions,
 } from "#/server/purchasing/drafts";
 export {
+	addPoTracking,
+	filePoEmail,
+	removePoTracking,
+	setAsidePoEmail,
+} from "#/server/purchasing/inbox";
+export {
 	cancelPurchaseOrder,
 	closePurchaseOrder,
 	deleteDraftPurchaseOrder,
 	orderPurchaseOrderAgain,
+	previewPurchaseOrderEmail,
 	restoreDraftPurchaseOrder,
 	restorePurchaseOrder,
 	sendPurchaseOrder,
