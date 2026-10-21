@@ -402,7 +402,7 @@ function Owed({ rows }: { rows: Data["jurisdictions"] }) {
 // Every marketplace with tax, or whose tax isn't read yet: leaving that one
 // out would make the page look complete while its tax is missing. Tax on our
 // own Shopify sales that someone else paid is Managed Markets', on orders it
-// sold abroad for us.
+// sold abroad for us, so it reads as International.
 function paidByMarketplaces(rows: ChannelRow[]): TableProps | null {
 	const paid = SOURCES.flatMap(([s, name]) => {
 		const r = rows.find((x) => x.source === s);
@@ -413,7 +413,7 @@ function paidByMarketplaces(rows: ChannelRow[]): TableProps | null {
 				key="who"
 				channel="shopify"
 				salesChannel="Online Store"
-				label="Managed Markets"
+				label="International"
 			/>
 		) : (
 			CHIPS[s]
