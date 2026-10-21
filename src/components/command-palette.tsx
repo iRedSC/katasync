@@ -6,6 +6,7 @@ import {
 	ClipboardList,
 	Factory,
 	FileSpreadsheet,
+	Inbox,
 	LayoutDashboard,
 	Link2,
 	ListChecks,
@@ -137,6 +138,14 @@ export const pages = [
 		keys: "g v",
 		parent: "/purchasing",
 		count: null,
+	},
+	{
+		to: "/purchasing/emails",
+		label: "Supplier emails",
+		icon: Inbox,
+		keys: "g f",
+		parent: "/purchasing",
+		count: "emailsToFile",
 	},
 	{
 		to: "/settings",

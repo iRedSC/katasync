@@ -1,9 +1,24 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
-import { fileEmail, setAside } from "#/purchasing/inbox/ingest";
+import { countUnfiled, fileEmail, setAside } from "#/purchasing/inbox/ingest";
+import { emailsToLink, inboxPage } from "#/purchasing/inbox/views";
 import { addTracking, removeTracking } from "#/purchasing/tracking";
 import { id } from "./id-input";
+
+// One list of the supplier-email inbox page.
+export const listPoEmails = createServerFn({ method: "GET" })
+	.validator(type({ view: "'to-file' | 'set-aside' | 'filed'" }))
+	.handler(async ({ data }) => inboxPage(getDb(), data.view));
+
+// Unfiled emails, the ones likeliest about this PO first.
+export const emailsToLinkTo = createServerFn({ method: "GET" })
+	.validator(id)
+	.handler(async ({ data }) => emailsToLink(getDb(), data.id));
+
+export const countEmailsToFile = createServerFn({ method: "GET" }).handler(
+	async () => (await countUnfiled(getDb())).toFile,
+);
 
 export const filePoEmail = createServerFn({ method: "POST" })
 	.validator(

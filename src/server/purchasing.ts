@@ -32,7 +32,10 @@ export {
 } from "#/server/purchasing/drafts";
 export {
 	addPoTracking,
+	countEmailsToFile,
+	emailsToLinkTo,
 	filePoEmail,
+	listPoEmails,
 	removePoTracking,
 	setAsidePoEmail,
 } from "#/server/purchasing/inbox";

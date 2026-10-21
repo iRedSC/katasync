@@ -38,6 +38,7 @@ import { Route as ProfitOverviewRouteImport } from './routes/profit/overview'
 import { Route as ProfitPostageRouteImport } from './routes/profit/postage'
 import { Route as PurchasingIndexRouteImport } from './routes/purchasing/index'
 import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
+import { Route as PurchasingEmailsRouteImport } from './routes/purchasing/emails'
 import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
@@ -208,6 +209,11 @@ const PurchasingIdRoute = PurchasingIdRouteImport.update({
   path: '/purchasing/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PurchasingEmailsRoute = PurchasingEmailsRouteImport.update({
+  id: '/purchasing/emails',
+  path: '/purchasing/emails',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PurchasingSuppliersRoute = PurchasingSuppliersRouteImport.update({
   id: '/purchasing/suppliers',
   path: '/purchasing/suppliers',
@@ -357,6 +363,7 @@ export interface FileRoutesByFullPath {
   '/profit/overview': typeof ProfitOverviewRoute
   '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
+  '/purchasing/emails': typeof PurchasingEmailsRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/transfers/$id': typeof TransfersIdRoute
@@ -412,6 +419,7 @@ export interface FileRoutesByTo {
   '/profit/overview': typeof ProfitOverviewRoute
   '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
+  '/purchasing/emails': typeof PurchasingEmailsRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/transfers/$id': typeof TransfersIdRoute
@@ -468,6 +476,7 @@ export interface FileRoutesById {
   '/profit/overview': typeof ProfitOverviewRoute
   '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
+  '/purchasing/emails': typeof PurchasingEmailsRoute
   '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/transfers/$id': typeof TransfersIdRoute
@@ -525,6 +534,7 @@ export interface FileRouteTypes {
     | '/profit/overview'
     | '/profit/postage'
     | '/purchasing/$id'
+    | '/purchasing/emails'
     | '/purchasing/suppliers'
     | '/receive/$id'
     | '/transfers/$id'
@@ -580,6 +590,7 @@ export interface FileRouteTypes {
     | '/profit/overview'
     | '/profit/postage'
     | '/purchasing/$id'
+    | '/purchasing/emails'
     | '/purchasing/suppliers'
     | '/receive/$id'
     | '/transfers/$id'
@@ -635,6 +646,7 @@ export interface FileRouteTypes {
     | '/profit/overview'
     | '/profit/postage'
     | '/purchasing/$id'
+    | '/purchasing/emails'
     | '/purchasing/suppliers'
     | '/receive/$id'
     | '/transfers/$id'
@@ -691,6 +703,7 @@ export interface RootRouteChildren {
   ProfitOverviewRoute: typeof ProfitOverviewRoute
   ProfitPostageRoute: typeof ProfitPostageRoute
   PurchasingIdRoute: typeof PurchasingIdRoute
+  PurchasingEmailsRoute: typeof PurchasingEmailsRoute
   PurchasingSuppliersRoute: typeof PurchasingSuppliersRoute
   ReceiveIdRoute: typeof ReceiveIdRoute
   TransfersIdRoute: typeof TransfersIdRoute
@@ -926,6 +939,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchasingIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/purchasing/emails': {
+      id: '/purchasing/emails'
+      path: '/purchasing/emails'
+      fullPath: '/purchasing/emails'
+      preLoaderRoute: typeof PurchasingEmailsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/purchasing/suppliers': {
       id: '/purchasing/suppliers'
       path: '/purchasing/suppliers'
@@ -1123,6 +1143,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfitOverviewRoute: ProfitOverviewRoute,
   ProfitPostageRoute: ProfitPostageRoute,
   PurchasingIdRoute: PurchasingIdRoute,
+  PurchasingEmailsRoute: PurchasingEmailsRoute,
   PurchasingSuppliersRoute: PurchasingSuppliersRoute,
   ReceiveIdRoute: ReceiveIdRoute,
   TransfersIdRoute: TransfersIdRoute,
@@ -1156,13 +1177,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

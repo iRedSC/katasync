@@ -1,5 +1,6 @@
 import { ChevronRight, Paperclip, X } from "lucide-react";
 import { useState } from "react";
+import { attachmentUrl, EmailReader, kb } from "#/components/emails/reader";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { optimism } from "#/lib/optimism";
@@ -9,11 +10,6 @@ import { filePoEmail, type PurchaseOrderDetail } from "#/server/purchasing";
 import { poData } from "./po-data";
 
 type Email = PurchaseOrderDetail["emails"][number];
-
-const kb = (bytes: number) =>
-	bytes < 1_000_000
-		? `${Math.max(1, Math.round(bytes / 1000))} KB`
-		: `${(bytes / 1_000_000).toFixed(1)} MB`;
 
 // Files open in a new tab; one too large to keep is named but not linked.
 export function AttachmentChips({
@@ -28,7 +24,7 @@ export function AttachmentChips({
 				a.kept ? (
 					<a
 						key={a.id}
-						href={`/api/po-email-attachments/${a.id}`}
+						href={attachmentUrl(a)}
 						target="_blank"
 						rel="noreferrer"
 						className="inline-flex max-w-64 items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs hover:bg-muted"
@@ -96,25 +92,25 @@ export function EmailEntry({ email: e, poId }: { email: Email; poId: number }) {
 					{e.subject || "(no subject)"}
 				</span>
 			</button>
-			<AttachmentChips attachments={e.attachments} />
-			{open && (
-				<span className="mt-2 block rounded-md bg-muted/50 p-3">
-					<span className="block text-xs text-muted-foreground">
-						{e.fromAddress}
-					</span>
-					<span className="mt-2 block max-h-96 overflow-y-auto text-sm whitespace-pre-wrap">
-						{e.body || "(empty)"}
-					</span>
-					<Button
-						size="sm"
-						variant="ghost"
-						className="mt-2 -ml-2 text-muted-foreground"
-						onClick={unfile}
-					>
-						<X />
-						Not about this PO
-					</Button>
-				</span>
+			{open ? (
+				<EmailReader
+					email={e}
+					heading={false}
+					className="mt-2 max-h-[80vh] rounded-md bg-muted/50"
+					actions={
+						<Button
+							size="sm"
+							variant="ghost"
+							className="text-muted-foreground"
+							onClick={unfile}
+						>
+							<X />
+							Not about this PO
+						</Button>
+					}
+				/>
+			) : (
+				<AttachmentChips attachments={e.attachments} />
 			)}
 		</span>
 	);
