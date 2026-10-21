@@ -2,6 +2,7 @@ import { Plus, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import { formatDate, formatDateTime } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
@@ -130,17 +131,16 @@ export function TrackingCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 									{CARRIER[t.carrier as keyof typeof CARRIER] ?? t.carrier}{" "}
 									{t.number}
 								</a>
-								<span
-									className="block text-xs text-muted-foreground"
-									title={t.statusDetail ?? undefined}
-								>
-									{s ? s.label : "Asking Shippo"}
-									{t.status === "DELIVERED" && t.statusAt
-										? ` ${formatDateTime(t.statusAt)}`
-										: t.eta
-											? `, due ${formatDate(t.eta)}`
-											: ""}
-								</span>
+								<Tip content={t.statusDetail}>
+									<span className="block text-xs text-muted-foreground">
+										{s ? s.label : "Asking Shippo"}
+										{t.status === "DELIVERED" && t.statusAt
+											? ` ${formatDateTime(t.statusAt)}`
+											: t.eta
+												? `, due ${formatDate(t.eta)}`
+												: ""}
+									</span>
+								</Tip>
 							</span>
 							<Button
 								size="icon"

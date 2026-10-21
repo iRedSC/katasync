@@ -6,6 +6,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { RefurbDetails, RefurbishOptions } from "#/orders/refurbish";
@@ -182,23 +183,24 @@ export function RefurbishForm({
 							className="pointer-events-none absolute top-1/2 left-2.5 size-2.5 -translate-y-1/2 rounded-full transition-colors"
 							style={{ backgroundColor: chosen?.color ?? "transparent" }}
 						/>
-						<select
-							// biome-ignore lint/a11y/noAutofocus: the first choice at the bench
-							autoFocus
-							value={condition}
-							onChange={(e) => pick(e.target.value)}
-							title={chosen?.description ?? undefined}
-							className={cn(input, chosen && "pl-7")}
-						>
-							<option value="" disabled>
-								Choose…
-							</option>
-							{options.conditions.map((c) => (
-								<option key={c.handle} value={c.handle}>
-									{c.label}
+						<Tip content={chosen?.description}>
+							<select
+								// biome-ignore lint/a11y/noAutofocus: the first choice at the bench
+								autoFocus
+								value={condition}
+								onChange={(e) => pick(e.target.value)}
+								className={cn(input, chosen && "pl-7")}
+							>
+								<option value="" disabled>
+									Choose…
 								</option>
-							))}
-						</select>
+								{options.conditions.map((c) => (
+									<option key={c.handle} value={c.handle}>
+										{c.label}
+									</option>
+								))}
+							</select>
+						</Tip>
 					</div>
 				</Field>
 				{!target && (
