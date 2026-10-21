@@ -1,16 +1,18 @@
+import { SHOP_APP } from "#/channels/shopify/channel-order";
 import { Tip } from "#/components/ui/tooltip";
 import { channelName } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { isShopifyRelayedTiktok } from "#/orders/fulfillment";
 
-type Mark = { d: string; fill?: string };
+// A filled shape, or with stroke a line that thick (Shop's swirl).
+type Mark = { d: string; fill?: string; stroke?: number };
 
 // Logos drawn in a 24x24 box. Single-color marks are from Simple Icons (CC0)
 // and take the brand color; eBay's is its four-color bag, so each path
 // carries its own fill. Chip colors are a soft tint of each brand so a
 // column of chips sorts by eye.
 const brands: Record<
-	"shopify" | "amazon" | "ebay" | "tiktok",
+	"shopify" | "shop" | "amazon" | "ebay" | "tiktok",
 	{ paths: Mark[]; logo?: string; chip: string }
 > = {
 	shopify: {
@@ -21,6 +23,18 @@ const brands: Record<
 		],
 		logo: "text-[#5e8e3e]",
 		chip: "bg-[#e3f1df] text-[#2f4a1f]",
+	},
+	// Shopify's Shop app: its swirl, traced as one thick line (Simple Icons
+	// has no Shop mark).
+	shop: {
+		paths: [
+			{
+				d: "M10.6 3.0 L11.9 3.0 L13.2 3.3 L14.4 3.9 L15.4 4.8 L16.2 5.7 L16.8 6.8 L17.3 7.8 L17.6 8.7 L17.9 9.6 L18.3 10.3 L18.7 11.1 L18.9 11.8 L19.1 12.6 L19.2 13.4 L19.2 14.3 L19.0 15.1 L18.8 15.9 L18.5 16.6 L18.1 17.3 L17.6 18.0 L17.0 18.5 L16.4 19.0 L15.7 19.5 L15.0 19.8 L14.2 20.1 L13.4 20.2 L12.6 20.3 L11.8 20.2 L11.0 20.1 L10.2 19.8 L9.5 19.5 L8.8 19.1 L8.2 18.6 L7.6 18.0 L7.2 17.4 L6.7 16.7 L6.4 16.0 L6.2 15.2 L6.0 14.5 L6.0 13.7 L6.2 12.9 L6.8 12.3 L7.6 11.8 L8.3 11.4 L8.7 11.1",
+				stroke: 4.6,
+			},
+		],
+		logo: "text-[#5a31f4]",
+		chip: "bg-[#ece6fe] text-[#2e1580]",
 	},
 	amazon: {
 		paths: [
@@ -71,6 +85,7 @@ export function brandOf(
 		return channel;
 	if (channel !== "shopify") return null;
 	if (isShopifyRelayedTiktok({ salesChannel })) return "tiktok";
+	if (salesChannel === SHOP_APP) return "shop";
 	if (!salesChannel || shopifySources.has(salesChannel)) return "shopify";
 	return null;
 }
@@ -81,15 +96,18 @@ export function brandOf(
 export function ChannelBadge({
 	channel,
 	salesChannel,
+	label,
 	compact = false,
 }: {
 	channel: string;
 	salesChannel: string | null;
+	// Wording in place of the channel's own, e.g. "Retail store".
+	label?: string;
 	compact?: boolean;
 }) {
 	const brand = brandOf(channel, salesChannel);
 	const b = brand && brands[brand];
-	const name = salesChannel ?? channelName(channel);
+	const name = label ?? salesChannel ?? channelName(channel);
 	const logoOnly = compact && Boolean(b);
 	const badge = (
 		<span
@@ -105,9 +123,21 @@ export function ChannelBadge({
 					aria-hidden="true"
 					className={cn("size-3 shrink-0 fill-current", b.logo)}
 				>
-					{b.paths.map((p) => (
-						<path key={p.d} d={p.d} fill={p.fill} />
-					))}
+					{b.paths.map((p) =>
+						p.stroke ? (
+							<path
+								key={p.d}
+								d={p.d}
+								fill="none"
+								stroke="currentColor"
+								strokeWidth={p.stroke}
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+						) : (
+							<path key={p.d} d={p.d} fill={p.fill} />
+						),
+					)}
 				</svg>
 			)}
 			{!logoOnly && name}

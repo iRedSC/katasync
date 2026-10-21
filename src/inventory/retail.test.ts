@@ -68,6 +68,7 @@ function posOrder(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 		shipPhone: null,
 		total: 40,
 		shippingCharged: 0,
+		tax: { remittedBy: "seller", lines: [] },
 		sourceUpdatedAt: new Date("2026-10-05T12:00:00Z"),
 		lines: [
 			{

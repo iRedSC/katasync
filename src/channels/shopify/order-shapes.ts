@@ -18,6 +18,12 @@ export const orderNode = type({
 	displayFinancialStatus: "string | null",
 	totalPriceSet: money,
 	totalShippingPriceSet: money,
+	// What's left of its tax after refunds and removed items.
+	currentTaxLines: type({
+		title: "string",
+		rate: "number | null",
+		priceSet: money,
+	}).array(),
 	shippingAddress: type({
 		name: "string | null",
 		address1: "string | null",
@@ -56,6 +62,7 @@ export const ORDER_FIELDS = `
 	displayFulfillmentStatus displayFinancialStatus
 	totalPriceSet { shopMoney { amount } }
 	totalShippingPriceSet { shopMoney { amount } }
+	currentTaxLines { title rate priceSet { shopMoney { amount } } }
 	shippingAddress { name address1 address2 city provinceCode zip countryCodeV2 phone }
 	lineItems(first: 30) {
 		pageInfo { hasNextPage endCursor }

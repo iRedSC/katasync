@@ -29,6 +29,7 @@
     "stock:pull": "tsx scripts/stock-pull.ts",
     "stock:not-counted": "tsx scripts/mark-not-counted.ts",
     "location:add-retail": "tsx scripts/add-retail-store.ts",
+    "tax:backfill": "tsx scripts/backfill-tax.ts",
     "webhooks": "tsx scripts/webhooks.ts",
     "auth:setup-link": "tsx scripts/auth-setup-link.ts",
     "tiktok:authorize": "tsx scripts/tiktok-authorize.ts",

@@ -33,6 +33,7 @@ const order = (extra: Partial<ChannelOrder> = {}): ChannelOrder => ({
 	shipPhone: null,
 	total: 10,
 	shippingCharged: 0,
+	tax: { remittedBy: "seller", lines: [] },
 	sourceUpdatedAt: new Date("2026-10-05T00:00:00Z"),
 	lines: [
 		{
