@@ -2,6 +2,7 @@ import { type AnyColumn, and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import type { Db } from "#/db/client";
 import {
+	orderCharges,
 	orderLineProfit,
 	orderLines,
 	orderProfit,
@@ -117,6 +118,8 @@ const totalsFields = {
 	cost: sum(p.cost),
 	fees: sum(p.fees),
 	labels: sum(p.labels),
+	postageAdjustments: sum(p.postageAdjustments),
+	postageAdjusted: count(sql`${p.postageAdjustments} <> 0`),
 	refunds: sum(p.refunds),
 	adjustments: sum(p.adjustments),
 	profit: sum(p.profit),
@@ -243,6 +246,15 @@ export async function profitItems(db: Db, start: Date, end: Date) {
 			costKnown: lp.costKnown,
 			fees: lp.fees,
 			labels: lp.labels,
+			postageAdjustments: lp.postageAdjustments,
+			// Its order was re-billed, even if this item's share rounds to
+			// nothing.
+			postageAdjusted: sql<boolean>`(
+				select coalesce(sum(${orderCharges.amount}), 0) <> 0
+				from ${orderCharges}
+				where ${orderCharges.orderId} = ${lp.orderId}
+					and ${orderCharges.kind} = 'postage_adjustment'
+			)`,
 			shippingCharged: lp.shippingCharged,
 			refunds: lp.refunds,
 			adjustments: lp.adjustments,

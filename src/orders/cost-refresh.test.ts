@@ -4,7 +4,12 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { saveCostReport } from "./charges";
-import { dueOrders, eachOrder, refreshCosts } from "./cost-refresh";
+import {
+	dueOrders,
+	eachOrder,
+	refreshCosts,
+	sweepPosted,
+} from "./cost-refresh";
 
 let db: Db;
 let shopify: number;
@@ -198,4 +203,124 @@ test("history asks again about old orders whose last ask failed", async () => {
 		(await refreshCosts(db, "shopify", fetch, { now: later, history: true }))
 			.checked,
 	).toBe(0);
+});
+
+describe("sweepPosted", () => {
+	async function amazonOrder(name: string, placedHoursAgo: number) {
+		const [{ id: store }] = await db
+			.insert(schema.stores)
+			.values({ channel: "amazon", name: `Amazon ${name}` })
+			.returning();
+		return order(name, placedHoursAgo, {
+			storeId: store,
+			externalId: name,
+			marketplaceOrderId: `amazon:${name}`,
+		});
+	}
+	const report = (orderId: number, fetchedAt: Date) =>
+		saveCostReport(db, {
+			orderId,
+			billedBy: "amazon",
+			settled: false,
+			charges: [{ kind: "label", description: "Postage", amount: 7 }],
+			fetchedAt,
+		});
+
+	test("asks again about orders with money posted after their report, however old", async () => {
+		// A re-bill posted on a sale 70 days old, past the regular passes.
+		const old = await amazonOrder("111-old", 70 * 24);
+		await report(old, ago(20 * 24));
+		// Its report came after what posted, recently enough to wait.
+		const current = await amazonOrder("111-current", 20 * 24);
+		await report(current, ago(1));
+		// Asked an hour after the posting, which may not have shown yet.
+		const close = await amazonOrder("111-close", 20 * 24);
+		await report(close, ago(23));
+		const settled = await amazonOrder("111-settled", 20 * 24);
+		await report(settled, ago(10));
+		const asked: string[] = [];
+		const result = await sweepPosted(
+			db,
+			"amazon",
+			eachOrder(async (o) => {
+				asked.push(o.marketplaceId);
+				return {
+					settled: false,
+					charges: [
+						{
+							kind: "postage_adjustment",
+							description: "PostageBilling_PostageAdjustment",
+							amount: 12.5,
+						},
+					],
+				};
+			}),
+			async (since) => {
+				expect(since).toEqual(ago(3 * 24));
+				return [
+					// Its report came 60 hours after, past any lag.
+					{ marketplaceId: "111-settled", postedAt: ago(70) },
+					{ marketplaceId: "111-old", postedAt: ago(2 * 24) },
+					{ marketplaceId: "111-current", postedAt: ago(30) },
+					{ marketplaceId: "111-close", postedAt: ago(24) },
+					// Not one of ours.
+					{ marketplaceId: "999-unknown", postedAt: ago(5) },
+				];
+			},
+			{ now },
+		);
+		expect(asked.sort()).toEqual(["111-close", "111-old"]);
+		expect(result).toMatchObject({ checked: 2, reported: 2 });
+		const charges = await db
+			.select()
+			.from(schema.orderCharges)
+			.where(eq(schema.orderCharges.orderId, old));
+		expect(charges.map((c) => c.kind)).toEqual(["postage_adjustment"]);
+	});
+
+	test("a backlog goes in saved batches and stops at the deadline", async () => {
+		for (const name of ["111-a", "111-b", "111-c"])
+			await amazonOrder(name, 30 * 24);
+		const fetch = eachOrder(async () => ({ settled: false, charges: [] }));
+		const list = async () =>
+			["111-a", "111-b", "111-c"].map((marketplaceId) => ({
+				marketplaceId,
+				postedAt: ago(5),
+			}));
+		const first = await sweepPosted(db, "amazon", fetch, list, {
+			now,
+			limit: 2,
+			until: 0,
+		});
+		expect(first.checked).toBe(2);
+		const next = await sweepPosted(db, "amazon", fetch, list, { now });
+		expect(next.checked).toBe(1);
+	});
+
+	test("orders that keep failing go last, so they can't hold up the rest", async () => {
+		const names = ["111-bad1", "111-bad2", "111-good"];
+		for (const name of names) await amazonOrder(name, 70 * 24);
+		const asked: string[] = [];
+		const fetch = eachOrder(async (o) => {
+			asked.push(o.marketplaceId);
+			if (o.marketplaceId.startsWith("111-bad")) throw new Error("Bad data");
+			return { settled: false, charges: [] };
+		});
+		const list = async () =>
+			names.map((marketplaceId) => ({ marketplaceId, postedAt: ago(5) }));
+		// The first pass happens to take the failing ones alone, and stops.
+		const first = await sweepPosted(db, "amazon", fetch, list, {
+			now,
+			limit: 2,
+		});
+		expect(first.checked).toBe(2);
+		expect(asked.sort()).toEqual(["111-bad1", "111-bad2"]);
+		asked.length = 0;
+		const next = await sweepPosted(db, "amazon", fetch, list, {
+			now: new Date(now.getTime() + 4 * HOUR),
+			limit: 2,
+		});
+		expect(asked[0]).toBe("111-good");
+		expect(next.reported).toBe(1);
+	});
 });

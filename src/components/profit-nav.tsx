@@ -2,14 +2,17 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { cn } from "#/lib/utils";
 import { RANGES, type RangeKey } from "#/orders/profit";
 
-// The two profit pages: every item sold, and the totals and rankings. Each
-// opens on its own range; switching keeps the one picked.
+// The profit pages: every item sold, the totals and rankings, and what
+// carriers re-billed with what to fix. Each opens on its own range; switching
+// keeps the one picked.
 
-export type ProfitView = "/profit" | "/profit/overview";
+export type ProfitView = "/profit" | "/profit/overview" | "/profit/postage";
 
 export const PROFIT_DEFAULTS: Record<ProfitView, RangeKey> = {
 	"/profit": "today",
 	"/profit/overview": "this_month",
+	// Re-bills post weeks after the sale, so a short range shows few.
+	"/profit/postage": "last_90_days",
 };
 
 const isRange = (v: unknown): v is RangeKey =>
@@ -24,7 +27,7 @@ export function rangeSearch(view: ProfitView) {
 			: {};
 }
 
-const searchFor = (view: ProfitView, range: RangeKey) =>
+export const searchFor = (view: ProfitView, range: RangeKey) =>
 	range === PROFIT_DEFAULTS[view] ? {} : { range };
 
 const tab = (active: boolean) =>
@@ -45,6 +48,7 @@ export function ProfitViews({
 	const views: [ProfitView, string][] = [
 		["/profit", "Items sold"],
 		["/profit/overview", "Overview"],
+		["/profit/postage", "Fix postage"],
 	];
 	return (
 		<div className="flex gap-1 rounded-lg border p-0.5">

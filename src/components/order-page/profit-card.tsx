@@ -63,6 +63,12 @@ export function ProfitCard({
 					value={formatMoney(-p.labels)}
 					note={labelsNote[p.labelsStatus]}
 				/>
+				{p.postageAdjustments !== 0 && (
+					<Line
+						label="Postage adjustments"
+						value={formatMoney(-p.postageAdjustments)}
+					/>
+				)}
 				{p.refunds !== 0 && (
 					<Line label="Refunds" value={formatMoney(-p.refunds)} />
 				)}

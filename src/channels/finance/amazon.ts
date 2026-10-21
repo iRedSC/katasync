@@ -1,11 +1,16 @@
 import { type } from "arktype";
 import type { ReportedCharge } from "#/orders/charges";
-import { type ChargeFetcher, eachOrder } from "#/orders/cost-refresh";
+import {
+	type ChargeFetcher,
+	eachOrder,
+	type PostedLister,
+} from "#/orders/cost-refresh";
 import { MARKETPLACE_US, spApi } from "../amazon-api";
 
 // What Amazon charged on an order, from Finances 2024-06-19 transactions:
 // referral and FBA fees on the shipment, labels bought through Amazon
-// (PostageBilling), refunds, and adjustments. The older v0 events skip
+// (PostageBilling), what the carrier re-billed on them afterwards, refunds,
+// and adjustments. The older v0 events skip
 // shipments Amazon holds back for a week (DD7), so they aren't used.
 // Amounts come signed from Amazon's side: negative is what it kept from us.
 
@@ -24,6 +29,7 @@ type Breakdown = typeof breakdown.infer;
 
 export const amazonTransaction = type({
 	transactionType: "string",
+	"postedDate?": "string",
 	"transactionStatus?": "string",
 	"relatedIdentifiers?": type({
 		relatedIdentifierName: "string",
@@ -46,6 +52,9 @@ export type AmazonTransaction = typeof amazonTransaction.infer;
 const KIND: Record<string, ReportedCharge["kind"]> = {
 	AmazonFees: "fee",
 	ShippingServiceCharges: "label",
+	// A LabmanLabelChargeBack: the carrier found the box bigger or heavier
+	// than declared. Posts two to eight weeks after the sale.
+	ShippingServiceChargebacks: "postage_adjustment",
 };
 
 // A category's own entries, e.g. AmazonFees' Commission and
@@ -60,8 +69,14 @@ function cost(b: Breakdown) {
 }
 
 // Postage Amazon billed, outbound or for a return, whatever category it's
-// filed under.
-function kindOf(category: Breakdown, entry: Breakdown) {
+// filed under, unless it's a re-bill. Its oversize surcharge comes with the
+// label (under Other), so it's the label's.
+function kindOf(category: Breakdown, entry: Breakdown): ReportedCharge["kind"] {
+	if (
+		KIND[category.breakdownType] === "postage_adjustment" ||
+		entry.breakdownType.includes("PostageAdjustment")
+	)
+		return "postage_adjustment";
 	if (entry.breakdownType.includes("PostageBilling")) return "label";
 	return KIND[category.breakdownType] ?? "adjustment";
 }
@@ -146,13 +161,19 @@ export function amazonCharges(
 }
 
 export async function amazonTransactions(orderId: string) {
+	return listTransactions({
+		relatedIdentifierName: "ORDER_ID",
+		relatedIdentifierValue: orderId,
+		marketplaceId: MARKETPLACE_US,
+	});
+}
+
+async function listTransactions(filter: Record<string, string>) {
 	const all: AmazonTransaction[] = [];
 	let nextToken: string | null | undefined;
 	do {
 		const query = new URLSearchParams({
-			relatedIdentifierName: "ORDER_ID",
-			relatedIdentifierValue: orderId,
-			marketplaceId: MARKETPLACE_US,
+			...filter,
 			...(nextToken ? { nextToken } : {}),
 		});
 		const { payload } = response.assert(
@@ -171,3 +192,24 @@ export const fetchAmazonCharges: ChargeFetcher = eachOrder(async (order) => {
 	if (transactions.length === 0) return null;
 	return { settled: false, charges: amazonCharges(transactions) };
 });
+
+// The orders Amazon posted money on since a time: a label's re-bill, a
+// refund, a held-back shipment released. A day's postings fit in a page or
+// two. No marketplace: Amazon documents that filter as leaving out orders we
+// ship ourselves. Another marketplace's orders just match none of ours.
+export const amazonPostedSince: PostedLister = async (since) => {
+	const posted = [];
+	for (const t of await listTransactions({
+		postedAfter: since.toISOString(),
+	})) {
+		const order = t.relatedIdentifiers?.find(
+			(r) => r.relatedIdentifierName === "ORDER_ID",
+		);
+		if (!order || !t.postedDate) continue;
+		posted.push({
+			marketplaceId: order.relatedIdentifierValue,
+			postedAt: new Date(t.postedDate),
+		});
+	}
+	return posted;
+};

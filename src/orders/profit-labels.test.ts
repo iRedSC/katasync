@@ -1,5 +1,7 @@
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
+import * as schema from "#/db/schema";
 import { addDispatch } from "#/test/db";
 import { saveCostReport } from "./charges";
 import { type ProfitFixture, profitFixture } from "./profit.fixtures";
@@ -42,6 +44,75 @@ describe("order_profit", () => {
 			// 40 + 6.50 - 16 - 1.46 - 5.72
 			profit: 23.32,
 			complete: true,
+		});
+	});
+
+	test("a carrier's re-bill is its own figure, not the label's, and still costs", async () => {
+		const { id } = await order(
+			"#rebilled",
+			[
+				{ unitPrice: 30, quantity: 1, unitCost: 10 },
+				{ unitPrice: 10, quantity: 1, unitCost: 4 },
+			],
+			{ storeId: amazon, marketplaceOrderId: "amazon:rebilled" },
+		);
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "amazon",
+			settled: false,
+			charges: [
+				{ kind: "fee", description: "Commission", amount: 6 },
+				{ kind: "label", description: "PostageBilling_Postage", amount: 8 },
+				{
+					kind: "postage_adjustment",
+					description: "PostageBilling_PostageAdjustment",
+					amount: 12,
+				},
+			],
+		});
+		expect(await profit(id)).toMatchObject({
+			labels: 8,
+			labelsStatus: "known",
+			postageAdjustments: 12,
+			// 40 - 14 - 6 - 8 - 12
+			profit: 0,
+			complete: true,
+		});
+		const lines = await db
+			.select()
+			.from(schema.orderLineProfit)
+			.where(eq(schema.orderLineProfit.orderId, id))
+			.orderBy(schema.orderLineProfit.lineId);
+		// Shared by sales, like the label: 30 - 10 - 0.75 × 26, 10 - 4 - 0.25 × 26.
+		expect(lines.map((l) => [l.postageAdjustments, l.profit])).toEqual([
+			[9, 0.5],
+			[3, -0.5],
+		]);
+	});
+
+	test("a re-bill alone doesn't make the label known", async () => {
+		const { id } = await order(
+			"#rebill-only",
+			[{ unitPrice: 40, quantity: 1, unitCost: 10 }],
+			{ storeId: amazon, marketplaceOrderId: "amazon:rebill-only" },
+		);
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "amazon",
+			settled: false,
+			charges: [
+				{ kind: "fee", description: "Commission", amount: 6 },
+				{
+					kind: "postage_adjustment",
+					description: "PostageBilling_PostageAdjustment",
+					amount: 3,
+				},
+			],
+		});
+		expect(await profit(id)).toMatchObject({
+			labels: 0,
+			labelsStatus: "missing",
+			postageAdjustments: 3,
 		});
 	});
 

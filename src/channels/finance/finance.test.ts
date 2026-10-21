@@ -281,6 +281,83 @@ describe("Amazon", () => {
 			},
 		]);
 	});
+
+	// As Amazon answered for a real order: the label at purchase, then the
+	// carrier's re-bill 16 days later, ten times the label.
+	test("a carrier's re-bill is a postage adjustment, apart from the label", () => {
+		const labelTransaction = (
+			description: string,
+			category: string,
+			entry: string,
+			value: number,
+		) =>
+			({
+				transactionType: "Adjustment",
+				description,
+				breakdowns: [
+					{ breakdownType: "Sales", breakdownAmount: amount(0) },
+					{
+						breakdownType: "Expenses",
+						breakdownAmount: amount(value),
+						breakdowns: [
+							{
+								breakdownType: category,
+								breakdownAmount: amount(value),
+								breakdowns: [
+									{ breakdownType: entry, breakdownAmount: amount(value) },
+								],
+							},
+						],
+					},
+				],
+			}) as AmazonTransaction;
+		expect(
+			amazonCharges([
+				labelTransaction(
+					"LabmanLabelPurchase",
+					"ShippingServiceCharges",
+					"PostageBilling_Postage",
+					-32.85,
+				),
+				labelTransaction(
+					"LabmanLabelPurchase",
+					"Other",
+					"PostageBilling_OversizeSurcharge",
+					-10,
+				),
+				labelTransaction(
+					"LabmanLabelChargeBack",
+					"ShippingServiceChargebacks",
+					"PostageBilling_PostageAdjustment",
+					-319.75,
+				),
+				// Whatever else a chargeback carries is the re-bill's too.
+				labelTransaction(
+					"LabmanLabelChargeBack",
+					"ShippingServiceChargebacks",
+					"PostageBilling_FuelSurcharge",
+					-1.2,
+				),
+			]),
+		).toEqual([
+			{ kind: "label", description: "PostageBilling_Postage", amount: 32.85 },
+			{
+				kind: "label",
+				description: "PostageBilling_OversizeSurcharge",
+				amount: 10,
+			},
+			{
+				kind: "postage_adjustment",
+				description: "PostageBilling_PostageAdjustment",
+				amount: 319.75,
+			},
+			{
+				kind: "postage_adjustment",
+				description: "PostageBilling_FuelSurcharge",
+				amount: 1.2,
+			},
+		]);
+	});
 });
 
 describe("TikTok", () => {

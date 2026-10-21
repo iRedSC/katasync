@@ -3,6 +3,7 @@ import {
 	desc,
 	eq,
 	gte,
+	inArray,
 	isNotNull,
 	isNull,
 	lt,
@@ -10,7 +11,13 @@ import {
 	sql,
 } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { type channel, orderCostChecks, orders, stores } from "#/db/schema";
+import {
+	type channel,
+	orderCostChecks,
+	orderCostReports,
+	orders,
+	stores,
+} from "#/db/schema";
 import { type CostReport, saveCostReport } from "./charges";
 
 // Asks each marketplace again about orders whose charges aren't final yet.
@@ -18,6 +25,11 @@ import { type CostReport, saveCostReport } from "./charges";
 // (TikTok settles a week or more later), and refunds come later still, so
 // young orders are asked often and older ones rarely, until the order is old
 // enough that what's on file is taken as final.
+//
+// A marketplace that can list what it posted lately (Amazon) is also swept
+// each pass: an order with money posted since its report is asked again at
+// once, however old. A carrier re-billing a label posts weeks after the sale,
+// up to 60 days for Amazon, when the order's turn may be days off or past.
 
 type Channel = (typeof channel.enumValues)[number];
 
@@ -56,6 +68,12 @@ export type FetchedCharges =
 // Asks about a batch at once, for marketplaces that can (ShopifyQL takes 50
 // order IDs per query); eachOrder wraps a one-at-a-time API.
 export type ChargeFetcher = (orders: DueOrder[]) => Promise<FetchedCharges[]>;
+
+// Each order a marketplace posted money on since a time, by the ID it knows
+// the order by, with when it last did.
+export type PostedLister = (
+	since: Date,
+) => Promise<{ marketplaceId: string; postedAt: Date }[]>;
 
 export function eachOrder(
 	fetchOne: (
@@ -149,7 +167,21 @@ export async function dueOrders(
 			desc(orders.placedAt),
 		)
 		.limit(limit);
-	return rows.map((r) => ({
+	return rows.map((r) => toDue(billedBy, r));
+}
+
+function toDue(
+	billedBy: Channel,
+	r: {
+		orderId: number;
+		name: string;
+		externalId: string;
+		marketplaceOrderId: string | null;
+		storeChannel: Channel;
+		placedAt: Date;
+	},
+): DueOrder {
+	return {
 		orderId: r.orderId,
 		name: r.name,
 		marketplaceId:
@@ -157,7 +189,88 @@ export async function dueOrders(
 				? r.externalId
 				: (r.marketplaceOrderId?.slice(billedBy.length + 1) ?? r.externalId),
 		placedAt: r.placedAt,
-	}));
+	};
+}
+
+// Amazon's finances can show a posting up to 48 hours late, so a report
+// fetched within that of it may not have it yet; such an order is asked again
+// every 12 hours until a report comes after it. Each sweep looks back past
+// that, with room for a few failed passes.
+const SHOWS_UP_WITHIN_MS = 48 * HOUR;
+const UNSURE_EVERY_MS = 12 * HOUR;
+export const SWEEP_BACK_MS = 3 * 24 * HOUR;
+
+// The orders with money posted after their report on file was fetched (or
+// with none on file), or too soon after to be sure it's in, cancelled ones
+// aside. Those whose last ask failed go last, longest-waiting first, so a few
+// orders that always fail can't hold up the rest pass after pass.
+export async function postedOrders(
+	db: Db,
+	billedBy: Channel,
+	posted: { marketplaceId: string; postedAt: Date }[],
+	now: Date,
+): Promise<DueOrder[]> {
+	const latest = new Map<string, number>();
+	for (const p of posted) {
+		const t = p.postedAt.getTime();
+		latest.set(p.marketplaceId, Math.max(t, latest.get(p.marketplaceId) ?? t));
+	}
+	if (latest.size === 0) return [];
+	const ids = [...latest.keys()];
+	const rows = await db
+		.select({
+			orderId: orders.id,
+			name: orders.name,
+			externalId: orders.externalId,
+			marketplaceOrderId: orders.marketplaceOrderId,
+			storeChannel: stores.channel,
+			placedAt: orders.placedAt,
+			fetchedAt: orderCostReports.fetchedAt,
+			failed: sql<boolean>`${orderCostChecks.error} is not null`,
+			checkedAt: orderCostChecks.checkedAt,
+		})
+		.from(orders)
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.leftJoin(
+			orderCostReports,
+			and(
+				eq(orderCostReports.orderId, orders.id),
+				eq(orderCostReports.billedBy, billedBy),
+			),
+		)
+		.leftJoin(
+			orderCostChecks,
+			and(
+				eq(orderCostChecks.orderId, orders.id),
+				eq(orderCostChecks.billedBy, billedBy),
+			),
+		)
+		.where(
+			and(
+				isNull(orders.cancelledAt),
+				or(
+					and(eq(stores.channel, billedBy), inArray(orders.externalId, ids)),
+					inArray(
+						orders.marketplaceOrderId,
+						ids.map((id) => `${billedBy}:${id}`),
+					),
+				),
+			),
+		);
+	const asked = (r: (typeof rows)[number]) => r.checkedAt?.getTime() ?? 0;
+	return rows
+		.sort((a, b) => Number(a.failed) - Number(b.failed) || asked(a) - asked(b))
+		.map((r) => ({ due: toDue(billedBy, r), fetchedAt: r.fetchedAt }))
+		.filter(({ due, fetchedAt }) => {
+			const postedAt = latest.get(due.marketplaceId);
+			if (postedAt === undefined) return false;
+			if (!fetchedAt || fetchedAt.getTime() < postedAt) return true;
+			return (
+				fetchedAt.getTime() < postedAt + SHOWS_UP_WITHIN_MS &&
+				now.getTime() - fetchedAt.getTime() >= UNSURE_EVERY_MS
+			);
+		})
+		.map(({ due }) => due);
 }
 
 // One pass for one marketplace. One order failing doesn't stop the rest; its
@@ -176,6 +289,50 @@ export async function refreshCosts(
 		options.limit,
 		options.history,
 	);
+	return askAbout(db, billedBy, fetchCharges, due, now);
+}
+
+// Asks again about every order the marketplace posted money on lately whose
+// report on file came before it, however old the order. In batches, each
+// saved as it's done, until `until`: a backlog (the first sweep, an outage)
+// carries over to the next pass instead of running past the cron's limit.
+export async function sweepPosted(
+	db: Db,
+	billedBy: Channel,
+	fetchCharges: ChargeFetcher,
+	listPosted: PostedLister,
+	options: { now?: Date; until?: number; limit?: number } = {},
+) {
+	const now = options.now ?? new Date();
+	const limit = options.limit ?? PER_PASS;
+	const posted = await listPosted(new Date(now.getTime() - SWEEP_BACK_MS));
+	const due = await postedOrders(db, billedBy, posted, now);
+	const total = { checked: 0, reported: 0, problems: [] as string[] };
+	for (let i = 0; i < due.length; i += limit) {
+		const batch = await askAbout(
+			db,
+			billedBy,
+			fetchCharges,
+			due.slice(i, i + limit),
+			now,
+		);
+		total.checked += batch.checked;
+		total.reported += batch.reported;
+		total.problems.push(...batch.problems);
+		// Every order failing is likely an outage; more would fail the same.
+		const allFailed = batch.problems.length >= batch.checked;
+		if (allFailed || Date.now() >= (options.until ?? Infinity)) break;
+	}
+	return total;
+}
+
+async function askAbout(
+	db: Db,
+	billedBy: Channel,
+	fetchCharges: ChargeFetcher,
+	due: DueOrder[],
+	now: Date,
+) {
 	let reported = 0;
 	const problems: string[] = [];
 	if (due.length === 0) return { checked: 0, reported, problems };
