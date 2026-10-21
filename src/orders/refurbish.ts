@@ -4,8 +4,10 @@ import {
 	type Condition,
 	createRefurbDraft,
 	deleteShopifyVariant,
+	type ShopifyOriginal,
 	shopifyConditions,
 	shopifyOriginal,
+	shopifySkuTaken,
 } from "#/channels/shopify/refurbish";
 import type { Db } from "#/db/client";
 import {
@@ -23,18 +25,36 @@ import { ReturnError, receiveReturn } from "./returns";
 
 // Refurbished one-offs, made from a returned unit at the bench: a draft in
 // Shopify (condition in metafield custom.condition, which the theme shows)
-// and a product here, linked, with the returned units as its stock. Its
+// and a product here, linked, with the returned units as its stock. The
+// draft copies everything about the original but its photos; what may
+// differ for this unit is chosen in the dialog first. Its SKU, which is
+// also its barcode in both places, is "<SKU>-RFB<n>", used nowhere else. Its
 // cost is what the unit cost when it sold, so the order it came back from
 // isn't charged for it and its own sale is. A refurb of the same thing in
 // the same condition can take more units instead. Retired once sold out
 // (src/orders/refurb-retire.ts).
 
+// What may differ for this unit, set in the dialog. Everything else is
+// copied from the original's Shopify listing.
+export type RefurbDetails = {
+	condition: string;
+	title: string;
+	price: number;
+	compareAtPrice: number | null;
+	weightGrams: number | null;
+	vendor: string;
+	productType: string;
+	tags: string[];
+	// About this unit, for its page and its label.
+	notes: string;
+};
+
 // What the refurb dialog starts from.
 export type RefurbishOptions = {
 	original: { sku: string; name: string };
 	conditions: Condition[];
-	title: string;
-	price: number;
+	// The dialog's fields as the original has them; condition left to choose.
+	details: Omit<RefurbDetails, "condition">;
 	sku: string;
 	// Refurbs of it still carried, to add the units to instead.
 	existing: { id: number; sku: string; condition: string; onHand: number }[];
@@ -76,24 +96,49 @@ async function originalOf(db: Db, orderId: number, lineId: number) {
 	return { line, product, listing: listing ?? null };
 }
 
-// The next free "<SKU>-R<n>", in any capitals, counting aliases.
+// The next "<SKU>-RFB<n>" that's nobody's SKU, barcode or alias here, no
+// listing's SKU on any channel, and no SKU or barcode in Shopify.
 async function nextRefurbSku(db: Db, base: string) {
-	const pattern = `${base.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}-r%`;
+	const prefix = `${base}-RFB`.toLowerCase();
+	const pattern = `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 	const taken = await db
 		.select({ sku: products.sku })
 		.from(products)
 		.where(sql`lower(${products.sku}) like ${pattern}`)
 		.union(
 			db
+				.select({ sku: sql<string>`${products.barcode}` })
+				.from(products)
+				.where(sql`lower(${products.barcode}) like ${pattern}`),
+		)
+		.union(
+			db
 				.select({ sku: productAliases.alias })
 				.from(productAliases)
 				.where(sql`lower(${productAliases.alias}) like ${pattern}`),
+		)
+		.union(
+			db
+				.select({ sku: sql<string>`${listings.externalSku}` })
+				.from(listings)
+				.where(sql`lower(${listings.externalSku}) like ${pattern}`),
 		);
-	const used = taken.flatMap(
-		(t) => t.sku.slice(base.length).match(/^-r(\d+)$/i)?.[1] ?? [],
-	);
-	const n = Math.max(0, ...used.map(Number)) + 1;
-	return { sku: `${base}-R${n}`, n };
+	const used = new Set(taken.map((t) => t.sku.toLowerCase()));
+	for (let n = 1; ; n++) {
+		const sku = `${base}-RFB${n}`;
+		if (used.has(sku.toLowerCase())) continue;
+		if (await shopifySkuTaken(sku)) continue;
+		return { sku, n };
+	}
+}
+
+// Grams in a Shopify weight.
+const GRAMS = { GRAMS: 1, KILOGRAMS: 1000, OUNCES: 28.3495, POUNDS: 453.592 };
+function gramsOf(shop: ShopifyOriginal | null) {
+	const weight = shop?.inventoryItem.measurement.weight;
+	if (!weight || weight.value <= 0) return null;
+	const per = GRAMS[weight.unit as keyof typeof GRAMS];
+	return per ? Math.round(weight.value * per) : null;
 }
 
 const slug = (s: string) =>
@@ -138,8 +183,16 @@ export async function refurbishOptions(
 	return {
 		original: { sku: product.sku, name: product.name },
 		conditions,
-		title: shop?.product.title ?? product.name,
-		price: shop ? Number(shop.price) : line.unitPrice,
+		details: {
+			title: shop?.product.title ?? product.name,
+			price: shop ? Number(shop.price) : line.unitPrice,
+			compareAtPrice: null,
+			weightGrams: gramsOf(shop) ?? product.weightGrams,
+			vendor: shop?.product.vendor ?? "",
+			productType: shop?.product.productType ?? "",
+			tags: shop?.product.tags ?? [],
+			notes: "",
+		},
 		sku,
 		existing,
 	};
@@ -151,18 +204,13 @@ export async function refurbishOptions(
 // it, the draft is deleted again and nothing is left half made.
 export async function refurbishReturn(
 	db: Db,
-	input: {
-		orderId: number;
-		lineId: number;
-		quantity: number;
-		condition: string;
-		title: string;
-		price: number;
-	},
+	input: { orderId: number; lineId: number; quantity: number } & RefurbDetails,
 ) {
 	const title = input.title.trim();
 	if (!title) throw new ReturnError("Give it a title");
 	if (!(input.price > 0)) throw new ReturnError("Give it a price");
+	if (input.compareAtPrice !== null && !(input.compareAtPrice > input.price))
+		throw new ReturnError("A compare-at price is more than the price");
 	const condition = (await shopifyConditions()).find(
 		(c) => c.handle === input.condition,
 	);
@@ -192,16 +240,22 @@ export async function refurbishReturn(
 			.where(eq(products.id, product.id))
 			.for("update");
 		const { sku, n } = await nextRefurbSku(tx, product.sku);
-		const draft = await createRefurbDraft({
+		const draft = await createRefurbDraft(shop, {
 			handle: `${shop?.product.handle ?? slug(title)}-refurbished-${n}`,
 			title,
-			descriptionHtml: shop?.product.descriptionHtml ?? "",
-			vendor: shop?.product.vendor ?? "",
-			productType: shop?.product.productType ?? "",
+			vendor: input.vendor.trim(),
+			productType: input.productType.trim(),
+			tags: input.tags.map((t) => t.trim()).filter(Boolean),
 			conditionId: condition.id,
+			googleCondition: condition.handle.startsWith("new")
+				? "new"
+				: "refurbished",
+			notes: input.notes,
 			sku,
 			price: input.price,
+			compareAtPrice: input.compareAtPrice,
 			unitCost,
+			weightGrams: input.weightGrams,
 			quantity: input.quantity,
 		});
 		try {
@@ -209,13 +263,15 @@ export async function refurbishReturn(
 				.insert(products)
 				.values({
 					sku,
+					barcode: sku,
 					name: title,
 					kind: "simple",
 					refurbishedFromId: product.id,
 					condition: condition.handle,
+					notes: input.notes.trim() || null,
 					unitCost,
 					category: product.category,
-					weightGrams: product.weightGrams,
+					weightGrams: input.weightGrams ?? product.weightGrams,
 					lengthMm: product.lengthMm,
 					widthMm: product.widthMm,
 					heightMm: product.heightMm,
@@ -229,8 +285,8 @@ export async function refurbishReturn(
 				externalSku: sku,
 				title,
 				status: "DRAFT",
-				vendor: shop?.product.vendor || null,
-				productType: shop?.product.productType || null,
+				vendor: input.vendor.trim() || null,
+				productType: input.productType.trim() || null,
 				productId: refurb.id,
 			});
 			const { ids } = await receiveReturn(tx, {

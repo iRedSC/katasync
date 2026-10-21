@@ -128,6 +128,9 @@ export const products = pgTable(
 		// and in Shopify, once its last unit sells.
 		refurbishedFromId: integer().references((): AnyPgColumn => products.id),
 		condition: text(),
+		// About this one unit, for a refurb: on its Shopify page (metafield
+		// custom.details) and its box label.
+		notes: text(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

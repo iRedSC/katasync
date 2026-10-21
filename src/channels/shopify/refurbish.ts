@@ -50,16 +50,40 @@ export async function shopifyConditions(): Promise<Condition[]> {
 	});
 }
 
+const metafield = type({
+	namespace: "string",
+	key: "string",
+	type: "string",
+	value: "string",
+});
+type Metafield = typeof metafield.infer;
+
 const originalRead = type({
 	productVariant: type({
 		price: "string",
+		compareAtPrice: "string | null",
+		taxable: "boolean",
+		inventoryItem: {
+			requiresShipping: "boolean",
+			harmonizedSystemCode: "string | null",
+			countryCodeOfOrigin: "string | null",
+			measurement: {
+				weight: type({ value: "number", unit: "string" }).or("null"),
+			},
+		},
+		metafields: { nodes: metafield.array() },
 		product: {
-			id: "string",
 			handle: "string",
 			title: "string",
 			descriptionHtml: "string",
 			vendor: "string",
 			productType: "string",
+			tags: "string[]",
+			category: type({ id: "string" }).or("null"),
+			collections: {
+				nodes: type({ id: "string", ruleSet: "object | null" }).array(),
+			},
+			metafields: { nodes: metafield.array() },
 		},
 	}).or("null"),
 });
@@ -68,17 +92,46 @@ export type ShopifyOriginal = NonNullable<
 	(typeof originalRead.infer)["productVariant"]
 >;
 
-// The product a variant belongs to, to make its refurb from.
+// The product a variant belongs to, to make its refurb from: everything a
+// refurb copies, which is all of it but its photos (the refurb gets its
+// own, of the unit itself).
 export async function shopifyOriginal(
 	variantId: string,
 ): Promise<ShopifyOriginal | null> {
 	const { productVariant } = originalRead.assert(
 		await shopifyQuery(
-			`query($id: ID!) { productVariant(id: $id) { price product { id handle title descriptionHtml vendor productType } } }`,
+			`query($id: ID!) { productVariant(id: $id) {
+				price compareAtPrice taxable
+				inventoryItem { requiresShipping harmonizedSystemCode countryCodeOfOrigin measurement { weight { value unit } } }
+				metafields(first: 50) { nodes { namespace key type value } }
+				product {
+					handle title descriptionHtml vendor productType tags
+					category { id }
+					collections(first: 50) { nodes { id ruleSet { appliedDisjunctively } } }
+					metafields(first: 100) { nodes { namespace key type value } }
+				}
+			} }`,
 			{ id: variantId },
 		),
 	);
 	return productVariant;
+}
+
+const skuRead = type({
+	productVariants: { nodes: type({ sku: "string | null" }).array() },
+});
+
+// Whether any variant in Shopify, of any product and status, has this SKU or
+// barcode.
+export async function shopifySkuTaken(sku: string) {
+	const quoted = JSON.stringify(sku);
+	const { productVariants } = skuRead.assert(
+		await shopifyQuery(
+			"query($q: String!) { productVariants(first: 5, query: $q) { nodes { sku } } }",
+			{ q: `sku:${quoted} OR barcode:${quoted}` },
+		),
+	);
+	return productVariants.nodes.length > 0;
 }
 
 const primaryRead = type({
@@ -98,21 +151,50 @@ const productSetResult = type({
 const refused = (errors: typeof userErrors.infer) =>
 	new Error(`Shopify refused: ${errors.map((e) => e.message).join("; ")}`);
 
-// Makes the refurb's product as a draft with its stock at the primary
-// location (where stock push sets it). Keyed by handle, so trying again
-// after a failure updates the same draft instead of making another.
-export async function createRefurbDraft(input: {
+// What's set for the refurb itself, not copied: chosen at the bench.
+export type RefurbListing = {
 	handle: string;
 	title: string;
-	descriptionHtml: string;
 	vendor: string;
 	productType: string;
+	tags: string[];
 	conditionId: string;
+	// What Google Shopping is told: "new" or "refurbished".
+	googleCondition: "new" | "refurbished";
+	// About this unit, shown on its page (metafield custom.details).
+	notes: string;
 	sku: string;
 	price: number;
+	compareAtPrice: number | null;
 	unitCost: number | null;
+	weightGrams: number | null;
 	quantity: number;
-}): Promise<{ productId: string; variantId: string }> {
+};
+
+// Metafields the refurb sets itself, or that belong to another app.
+const own = (m: Metafield) =>
+	(m.namespace === "custom" &&
+		(m.key === "condition" || m.key === "details")) ||
+	(m.namespace === "mm-google-shopping" && m.key === "condition") ||
+	m.namespace === "bundly" ||
+	m.namespace.startsWith("app--");
+
+const GRAMS_PER = {
+	GRAMS: 1,
+	KILOGRAMS: 1000,
+	OUNCES: 28.3495,
+	POUNDS: 453.592,
+};
+
+// Makes the refurb's product as a draft: a copy of the original (but its
+// photos), with what was chosen at the bench, its barcode its SKU, and its
+// stock at the primary location (where stock push sets it). Keyed by
+// handle, so trying again after a failure updates the same draft instead
+// of making another.
+export async function createRefurbDraft(
+	original: ShopifyOriginal | null,
+	r: RefurbListing,
+): Promise<{ productId: string; variantId: string }> {
 	const { locations } = primaryRead.assert(
 		await shopifyQuery(
 			"{ locations(first: 50) { nodes { id isPrimary } } }",
@@ -121,6 +203,14 @@ export async function createRefurbDraft(input: {
 	);
 	const primary = locations.nodes.find((l) => l.isPrimary);
 	if (!primary) throw new Error("Shopify has no primary location");
+	const unit = original?.inventoryItem.measurement.weight?.unit ?? "POUNDS";
+	const perUnit = GRAMS_PER[unit as keyof typeof GRAMS_PER] ?? GRAMS_PER.POUNDS;
+	const strip = ({ namespace, key, type, value }: Metafield) => ({
+		namespace,
+		key,
+		type,
+		value,
+	});
 	const { productSet } = productSetResult.assert(
 		await shopifyQuery(
 			`mutation($input: ProductSetInput!, $identifier: ProductSetIdentifiers) {
@@ -130,21 +220,43 @@ export async function createRefurbDraft(input: {
 				}
 			}`,
 			{
-				identifier: { handle: input.handle },
+				identifier: { handle: r.handle },
 				input: {
-					handle: input.handle,
-					title: input.title,
-					descriptionHtml: input.descriptionHtml,
-					vendor: input.vendor,
-					productType: input.productType,
+					handle: r.handle,
+					title: r.title,
+					descriptionHtml: original?.product.descriptionHtml ?? "",
+					vendor: r.vendor,
+					productType: r.productType,
+					tags: r.tags,
 					status: "DRAFT",
+					...(original?.product.category && {
+						category: original.product.category.id,
+					}),
+					// Only hand-picked collections take products; rule-based ones
+					// pick it up themselves.
+					collections: (original?.product.collections.nodes ?? [])
+						.filter((c) => c.ruleSet === null)
+						.map((c) => c.id),
 					metafields: [
+						...(original?.product.metafields.nodes ?? [])
+							.filter((m) => !own(m))
+							.map(strip),
 						{
 							namespace: "custom",
 							key: "condition",
 							type: "metaobject_reference",
-							value: input.conditionId,
+							value: r.conditionId,
 						},
+						...(r.notes.trim()
+							? [
+									{
+										namespace: "custom",
+										key: "details",
+										type: "multi_line_text_field",
+										value: r.notes.trim(),
+									},
+								]
+							: []),
 					],
 					productOptions: [
 						{ name: "Title", values: [{ name: "Default Title" }] },
@@ -152,19 +264,49 @@ export async function createRefurbDraft(input: {
 					variants: [
 						{
 							optionValues: [{ optionName: "Title", name: "Default Title" }],
-							sku: input.sku,
-							price: input.price.toFixed(2),
+							sku: r.sku,
+							barcode: r.sku,
+							price: r.price.toFixed(2),
+							compareAtPrice: r.compareAtPrice?.toFixed(2) ?? null,
+							taxable: original?.taxable ?? true,
+							metafields: [
+								...(original?.metafields.nodes ?? [])
+									.filter((m) => !own(m))
+									.map(strip),
+								{
+									namespace: "mm-google-shopping",
+									key: "condition",
+									type: "single_line_text_field",
+									value: r.googleCondition,
+								},
+							],
 							inventoryItem: {
 								tracked: true,
-								...(input.unitCost !== null && {
-									cost: input.unitCost.toFixed(2),
+								requiresShipping:
+									original?.inventoryItem.requiresShipping ?? true,
+								...(original?.inventoryItem.harmonizedSystemCode && {
+									harmonizedSystemCode:
+										original.inventoryItem.harmonizedSystemCode,
+								}),
+								...(original?.inventoryItem.countryCodeOfOrigin && {
+									countryCodeOfOrigin:
+										original.inventoryItem.countryCodeOfOrigin,
+								}),
+								...(r.unitCost !== null && { cost: r.unitCost.toFixed(2) }),
+								...(r.weightGrams !== null && {
+									measurement: {
+										weight: {
+											value: Math.round((r.weightGrams / perUnit) * 100) / 100,
+											unit,
+										},
+									},
 								}),
 							},
 							inventoryQuantities: [
 								{
 									locationId: primary.id,
 									name: "available",
-									quantity: input.quantity,
+									quantity: r.quantity,
 								},
 							],
 						},

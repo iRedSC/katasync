@@ -385,6 +385,12 @@ export const refurbishOrderReturn = createServerFn({ method: "POST" })
 			condition: "string > 0",
 			title: "string > 0",
 			price: "number > 0",
+			compareAtPrice: "number > 0 | null",
+			weightGrams: "number.integer > 0 | null",
+			vendor: "string",
+			productType: "string",
+			tags: "string[]",
+			notes: "string",
 		}),
 	)
 	.handler(({ data }) => refurbishReturn(getDb(), data));

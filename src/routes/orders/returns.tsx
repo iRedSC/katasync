@@ -1,5 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Ban, ExternalLink, PackageOpen, Search, Undo2 } from "lucide-react";
+import {
+	Ban,
+	ExternalLink,
+	PackageOpen,
+	Printer,
+	Search,
+	Undo2,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
@@ -16,6 +23,7 @@ import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
+import { printPdf } from "#/printing/qz-client";
 import {
 	getReturns,
 	markOrderNoReturn,
@@ -379,6 +387,20 @@ function Returns() {
 										Confirm on {r.confirmOn.name}
 										<ExternalLink className="size-3.5" />
 									</a>
+								)}
+								{r.refurb && (
+									<Tip content="Print its box label">
+										<button
+											type="button"
+											aria-label="Print its box label"
+											onClick={() =>
+												printPdf(`/labels/refurbs/${r.id}`, "Box label")
+											}
+											className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
+										>
+											<Printer className="size-4" />
+										</button>
+									</Tip>
 								)}
 								<Tip content="Take this return back">
 									<button

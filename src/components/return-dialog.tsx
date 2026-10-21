@@ -15,6 +15,7 @@ import {
 import { formatCount } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
+import { printPdf } from "#/printing/qz-client";
 import {
 	receiveOrderReturn,
 	refurbishOrderReturn,
@@ -114,20 +115,20 @@ export function ReturnDialog({
 						},
 					}),
 				() => ({ message: `${n} added to ${choice.sku}` }),
+				printBoxLabel,
 			);
-		else
+		else {
+			const { kind: _, ...details } = choice;
 			record(
 				[single],
 				"refurbish",
 				() =>
 					refurbishOrderReturn({
 						data: {
+							...details,
 							orderId,
 							lineId: single.lineId,
 							quantity: single.quantity,
-							condition: choice.condition,
-							title: choice.title,
-							price: choice.price,
 						},
 					}),
 				(r) => ({
@@ -144,14 +145,22 @@ export function ReturnDialog({
 						</a>
 					),
 				}),
+				printBoxLabel,
 			);
+		}
 	}
+
+	// Every refurbished box gets its label, to find it by and ship it from.
+	const printBoxLabel = (r: { ids: number[] }) =>
+		r.ids[0] !== undefined &&
+		void printPdf(`/labels/refurbs/${r.ids[0]}`, "Box label");
 
 	async function record<R extends { ids: number[] }>(
 		got: Received[],
 		outcome: Outcome,
 		send: () => Promise<R>,
 		said: (r: R) => { message: string; description?: ReactNode },
+		then?: (r: R) => void,
 	) {
 		const r = await optimism.change({
 			label: `Return on ${orderName}`,
@@ -159,6 +168,7 @@ export function ReturnDialog({
 			send,
 		});
 		if (!r) return;
+		then?.(r.value);
 		const { message, description } = said(r.value);
 		offerUndo(message, {
 			tone: "success",
@@ -183,7 +193,7 @@ export function ReturnDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="sm:max-w-lg">
+			<DialogContent className={refurbishing ? "sm:max-w-xl" : "sm:max-w-lg"}>
 				{refurbishing && single && singleLine ? (
 					<RefurbishForm
 						orderId={orderId}

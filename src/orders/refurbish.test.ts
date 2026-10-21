@@ -4,6 +4,7 @@ import * as shopify from "#/channels/shopify/refurbish";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { postMovements, recordSale } from "#/inventory/ledger";
+import { refurbLabel, renderRefurbLabel } from "#/printing/refurb-label";
 import { createProduct, createTestDb } from "#/test/db";
 import { retireRefurbs } from "./refurb-retire";
 import { refurbishOptions, refurbishReturn } from "./refurbish";
@@ -20,10 +21,11 @@ vi.mock("#/channels/shopify/refurbish", () => ({
 		},
 	]),
 	shopifyOriginal: vi.fn(async () => null),
-	createRefurbDraft: vi.fn(async (input: { sku: string }) => ({
-		productId: `gid://shopify/Product/${input.sku}`,
-		variantId: `gid://shopify/ProductVariant/${input.sku}`,
+	createRefurbDraft: vi.fn(async (_original: unknown, r: { sku: string }) => ({
+		productId: `gid://shopify/Product/${r.sku}`,
+		variantId: `gid://shopify/ProductVariant/${r.sku}`,
 	})),
+	shopifySkuTaken: vi.fn(async (sku: string) => sku === "WRENCH-RFB3"),
 	deleteShopifyVariant: vi.fn(async () => {}),
 	archiveShopifyVariant: vi.fn(async () => {}),
 }));
@@ -101,6 +103,12 @@ const refurbish = (o: { orderId: number; lineId: number }, quantity = 1) =>
 		condition: "excellent",
 		title: "Wrench",
 		price: 15,
+		compareAtPrice: null,
+		weightGrams: 600,
+		vendor: "Kata",
+		productType: "Hand tools",
+		tags: ["refurb", " "],
+		notes: "Scuffed handle",
 	});
 
 beforeEach(async () => {
@@ -121,14 +129,19 @@ describe("refurbishReturn", () => {
 	test("drafts it in Shopify and puts the unit on its shelf, at what it cost", async () => {
 		const o = await shippedOrder();
 		const made = await refurbish(o);
-		expect(made.sku).toBe("WRENCH-R1");
+		expect(made.sku).toBe("WRENCH-RFB1");
 		expect(shopify.createRefurbDraft).toHaveBeenCalledWith(
+			null,
 			expect.objectContaining({
-				sku: "WRENCH-R1",
+				sku: "WRENCH-RFB1",
 				handle: "wrench-refurbished-1",
 				conditionId: "gid://shopify/Metaobject/1",
 				quantity: 1,
 				unitCost: 8,
+				googleCondition: "refurbished",
+				tags: ["refurb"],
+				notes: "Scuffed handle",
+				weightGrams: 600,
 			}),
 		);
 		const [refurb] = await db
@@ -136,17 +149,19 @@ describe("refurbishReturn", () => {
 			.from(schema.products)
 			.where(eq(schema.products.id, made.productId));
 		expect(refurb).toMatchObject({
+			barcode: "WRENCH-RFB1",
 			refurbishedFromId: wrench,
 			condition: "excellent",
+			notes: "Scuffed handle",
 			unitCost: 8,
-			weightGrams: 500,
+			weightGrams: 600,
 		});
 		const [listing] = await db
 			.select()
 			.from(schema.listings)
 			.where(eq(schema.listings.productId, made.productId));
 		expect(listing).toMatchObject({
-			externalId: "gid://shopify/ProductVariant/WRENCH-R1",
+			externalId: "gid://shopify/ProductVariant/WRENCH-RFB1",
 			status: "DRAFT",
 		});
 		expect(await onHand(made.productId)).toBe(1);
@@ -165,8 +180,8 @@ describe("refurbishReturn", () => {
 		const first = await refurbish(o);
 		const options = await refurbishOptions(db, o);
 		expect(options).toMatchObject({
-			sku: "WRENCH-R2",
-			existing: [{ sku: "WRENCH-R1", condition: "excellent", onHand: 1 }],
+			sku: "WRENCH-RFB2",
+			existing: [{ sku: "WRENCH-RFB1", condition: "excellent", onHand: 1 }],
 		});
 		await receiveReturn(db, {
 			orderId: o.orderId,
@@ -176,16 +191,33 @@ describe("refurbishReturn", () => {
 		expect(await onHand(first.productId)).toBe(2);
 	});
 
+	test("an RFB SKU taken anywhere, here or in Shopify, is skipped", async () => {
+		const o = await shippedOrder();
+		await db
+			.update(schema.products)
+			.set({ barcode: "wrench-rfb1" })
+			.where(eq(schema.products.id, wrench));
+		const [store] = await db.select().from(schema.stores).limit(1);
+		await db.insert(schema.listings).values({
+			storeId: store.id,
+			externalId: "ebay-1",
+			externalSku: "WRENCH-RFB2",
+			title: "Wrench on eBay",
+		});
+		// WRENCH-RFB3 is a SKU in Shopify (see the mock).
+		expect((await refurbishOptions(db, o)).sku).toBe("WRENCH-RFB4");
+	});
+
 	test("a refusal after the draft deletes it again and leaves nothing", async () => {
 		const o = await shippedOrder();
 		await expect(refurbish(o, 3)).rejects.toThrow("Only 2");
 		expect(shopify.deleteShopifyVariant).toHaveBeenCalledWith(
-			"gid://shopify/ProductVariant/WRENCH-R1",
+			"gid://shopify/ProductVariant/WRENCH-RFB1",
 		);
 		const refurbs = await db
 			.select()
 			.from(schema.products)
-			.where(eq(schema.products.sku, "WRENCH-R1"));
+			.where(eq(schema.products.sku, "WRENCH-RFB1"));
 		expect(refurbs).toEqual([]);
 	});
 
@@ -202,6 +234,24 @@ describe("refurbishReturn", () => {
 	});
 });
 
+describe("refurbLabel", () => {
+	test("labels the box with what it is and where it came from", async () => {
+		const o = await shippedOrder();
+		const made = await refurbish(o);
+		const label = await refurbLabel(db, made.ids[0]);
+		expect(label).toMatchObject({
+			sku: "WRENCH-RFB1",
+			condition: "Excellent",
+			notes: "Scuffed handle",
+			originalSku: "WRENCH",
+			orderName: "#1001",
+		});
+		if (!label) throw new Error("no label");
+		const pdf = Buffer.from(await renderRefurbLabel(label));
+		expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+	});
+});
+
 describe("retiring refurbs", () => {
 	test("undoing its return deletes the draft and archives it", async () => {
 		const o = await shippedOrder();
@@ -209,7 +259,7 @@ describe("retiring refurbs", () => {
 		expect(await undoReturns(db, made.ids)).toEqual({ problems: [] });
 		expect(await onHand(made.productId)).toBe(0);
 		expect(shopify.deleteShopifyVariant).toHaveBeenCalledWith(
-			"gid://shopify/ProductVariant/WRENCH-R1",
+			"gid://shopify/ProductVariant/WRENCH-RFB1",
 		);
 		const [refurb] = await db
 			.select()
@@ -231,7 +281,7 @@ describe("retiring refurbs", () => {
 
 		expect(await retireRefurbs(db)).toEqual({ problems: [] });
 		expect(shopify.archiveShopifyVariant).toHaveBeenCalledWith(
-			"gid://shopify/ProductVariant/WRENCH-R1",
+			"gid://shopify/ProductVariant/WRENCH-RFB1",
 		);
 		expect(shopify.deleteShopifyVariant).not.toHaveBeenCalled();
 		const [refurb] = await db
