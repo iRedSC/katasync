@@ -7,6 +7,7 @@
 //
 //   pnpm tax:backfill            # how many orders, per channel
 //   pnpm tax:backfill --write
+//   pnpm tax:backfill --write --channel ebay   # one marketplace only
 import { type } from "arktype";
 import { and, eq, isNull } from "drizzle-orm";
 import { amazonTax, orderItems } from "#/channels/amazon";
@@ -31,6 +32,7 @@ try {
 }
 
 const write = process.argv.includes("--write");
+const only = process.argv[process.argv.indexOf("--channel") + 1];
 const db = getDb();
 type Channel = (typeof stores.$inferSelect)["channel"];
 
@@ -106,7 +108,14 @@ const missing = await db
 	})
 	.from(orders)
 	.innerJoin(stores, eq(stores.id, orders.storeId))
-	.where(isNull(orders.taxRemittedBy))
+	.where(
+		and(
+			isNull(orders.taxRemittedBy),
+			process.argv.includes("--channel")
+				? eq(stores.channel, only as Channel)
+				: undefined,
+		),
+	)
 	.orderBy(orders.placedAt);
 
 const byChannel = new Map<Channel, typeof missing>();

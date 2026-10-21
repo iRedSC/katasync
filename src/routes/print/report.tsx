@@ -354,24 +354,40 @@ function Owed({ rows }: { rows: Data["jurisdictions"] }) {
 	);
 }
 
+// Every marketplace with tax, or whose tax isn't read yet: leaving that one
+// out would make the page look complete while its tax is missing.
 function PaidByMarketplaces({ rows }: { rows: ChannelRow[] }) {
 	const paid = SOURCES.flatMap(([s, name]) => {
 		const r = rows.find((x) => x.source === s);
-		return r && r.marketplaceTax !== 0
-			? [{ s, name, tax: r.marketplaceTax }]
+		if (!r || s === "shopify" || s === "retail") return [];
+		return r.marketplaceTax !== 0 || r.taxUnknown > 0
+			? [{ s, name, tax: r.marketplaceTax, unread: r.taxUnknown }]
 			: [];
 	});
 	if (paid.length === 0) return <p>None.</p>;
+	const unread = paid.some((p) => p.unread > 0);
 	return (
 		<Table
 			head={["", "Tax"]}
 			rows={paid.map((p) => ({
 				key: p.name,
-				cells: [CHIPS[p.s], formatMoney(p.tax)],
+				cells: [
+					CHIPS[p.s],
+					p.unread === 0 ? (
+						formatMoney(p.tax)
+					) : (
+						<span key="tax" className="text-muted-foreground">
+							{p.tax === 0 ? "Not read yet" : `${formatMoney(p.tax)} so far`}
+						</span>
+					),
+				],
 			}))}
 			total={
 				paid.length > 1
-					? ["Total", formatMoney(sum(paid, (p) => p.tax))]
+					? [
+							unread ? "Total so far" : "Total",
+							formatMoney(sum(paid, (p) => p.tax)),
+						]
 					: undefined
 			}
 		/>
