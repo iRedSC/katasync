@@ -41,7 +41,7 @@ export function registerActionTools(server: McpServer, db: Db) {
 						lineId: l.line_id,
 						quantity: l.quantity,
 					})),
-					restock,
+					outcome: restock ? "restock" : "write_off",
 				}),
 			),
 	);
@@ -55,8 +55,8 @@ export function registerActionTools(server: McpServer, db: Db) {
 			annotations: WRITE,
 		},
 		async ({ return_ids }) => {
-			await undoReturns(db, return_ids);
-			return json({ undone: return_ids });
+			const { problems } = await undoReturns(db, return_ids);
+			return json({ undone: return_ids, problems });
 		},
 	);
 

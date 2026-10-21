@@ -46,6 +46,7 @@ import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
 import { Route as ApiPoEmailAttachmentsAttachmentIdRouteImport } from './routes/api/po-email-attachments/$attachmentId'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
+import { Route as LabelsRefurbsReturnIdRouteImport } from './routes/labels/refurbs.$returnId'
 import { Route as OrdersReturnsInsightsRouteImport } from './routes/orders/returns_.insights'
 import { Route as PurchasingDamagePhotoIdRouteImport } from './routes/purchasing/damage-photo.$id'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
@@ -242,6 +243,11 @@ const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
   path: '/api/webhooks/$channel',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LabelsRefurbsReturnIdRoute = LabelsRefurbsReturnIdRouteImport.update({
+  id: '/labels/refurbs/$returnId',
+  path: '/labels/refurbs/$returnId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OrdersReturnsInsightsRoute = OrdersReturnsInsightsRouteImport.update({
   id: '/orders/returns_/insights',
   path: '/orders/returns/insights',
@@ -327,6 +333,7 @@ export interface FileRoutesByFullPath {
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
@@ -375,6 +382,7 @@ export interface FileRoutesByTo {
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
@@ -424,6 +432,7 @@ export interface FileRoutesById {
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns_/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
@@ -474,6 +483,7 @@ export interface FileRouteTypes {
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
+    | '/labels/refurbs/$returnId'
     | '/orders/returns/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
@@ -522,6 +532,7 @@ export interface FileRouteTypes {
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
+    | '/labels/refurbs/$returnId'
     | '/orders/returns/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
@@ -570,6 +581,7 @@ export interface FileRouteTypes {
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
+    | '/labels/refurbs/$returnId'
     | '/orders/returns_/insights'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
@@ -619,6 +631,7 @@ export interface RootRouteChildren {
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
   ApiPoEmailAttachmentsAttachmentIdRoute: typeof ApiPoEmailAttachmentsAttachmentIdRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
+  LabelsRefurbsReturnIdRoute: typeof LabelsRefurbsReturnIdRoute
   OrdersReturnsInsightsRoute: typeof OrdersReturnsInsightsRoute
   PurchasingDamagePhotoIdRoute: typeof PurchasingDamagePhotoIdRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
@@ -891,6 +904,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWebhooksChannelRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/labels/refurbs/$returnId': {
+      id: '/labels/refurbs/$returnId'
+      path: '/labels/refurbs/$returnId'
+      fullPath: '/labels/refurbs/$returnId'
+      preLoaderRoute: typeof LabelsRefurbsReturnIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/orders/returns_/insights': {
       id: '/orders/returns_/insights'
       path: '/orders/returns/insights'
@@ -996,6 +1016,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPoEmailAttachmentsAttachmentIdRoute:
     ApiPoEmailAttachmentsAttachmentIdRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
+  LabelsRefurbsReturnIdRoute: LabelsRefurbsReturnIdRoute,
   OrdersReturnsInsightsRoute: OrdersReturnsInsightsRoute,
   PurchasingDamagePhotoIdRoute: PurchasingDamagePhotoIdRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
@@ -1009,3 +1030,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

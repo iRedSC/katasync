@@ -1,5 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Ban, ExternalLink, PackageOpen, Search, Undo2 } from "lucide-react";
+import {
+	Ban,
+	ExternalLink,
+	PackageOpen,
+	Printer,
+	Search,
+	Undo2,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
@@ -16,6 +23,7 @@ import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
+import { printPdf } from "#/printing/qz-client";
 import {
 	getReturns,
 	markOrderNoReturn,
@@ -84,6 +92,10 @@ const dismissedPatch = (orderId: number): Patch =>
 	}));
 
 type ReceivedRow = ReturnsData["received"][number];
+
+// A Shopify condition handle as words: "new-previous-gen" → "New previous gen".
+const conditionName = (handle: string) =>
+	handle.charAt(0).toUpperCase() + handle.slice(1).replace(/-/g, " ");
 
 const unreceivedPatch = (id: number): Patch =>
 	returnsData.patch("all", (d) => ({
@@ -201,8 +213,10 @@ function Returns() {
 			send: () => undoOrderReturn({ data: { ids: [r.id] } }),
 		});
 		if (!done) return;
+		if (done.value.problems.length > 0)
+			toast.error(done.value.problems.join("; "));
 		offerUndo(`Return on ${r.name} taken back`, {
-			description: r.restocked ? `${what} off the shelf` : what,
+			description: r.restocked || r.refurb ? `${what} off the shelf` : what,
 			undo: async () => {
 				const again = await optimism.change({
 					label: `Return on ${r.name}`,
@@ -212,7 +226,11 @@ function Returns() {
 							data: {
 								orderId: r.orderId,
 								lines: [{ lineId: r.lineId, quantity: r.quantity }],
-								restock: r.restocked,
+								outcome: r.refurb
+									? { refurbishInto: r.refurb.id }
+									: r.restocked
+										? "restock"
+										: "write_off",
 							},
 						}),
 				});
@@ -349,9 +367,15 @@ function Returns() {
 									<span className="min-w-0 flex-1 truncate">
 										{formatCount(r.quantity)} × {r.sku ?? r.title}
 									</span>
-									<Badge tone={r.restocked ? "success" : undefined}>
-										{r.restocked ? "Back on shelf" : "Written off"}
-									</Badge>
+									{r.refurb ? (
+										<Badge tone="success">
+											{conditionName(r.refurb.condition)} · {r.refurb.sku}
+										</Badge>
+									) : (
+										<Badge tone={r.restocked ? "success" : undefined}>
+											{r.restocked ? "Back on shelf" : "Written off"}
+										</Badge>
+									)}
 								</Link>
 								{r.confirmOn && (
 									<a
@@ -363,6 +387,20 @@ function Returns() {
 										Confirm on {r.confirmOn.name}
 										<ExternalLink className="size-3.5" />
 									</a>
+								)}
+								{r.refurb && (
+									<Tip content="Print its box label">
+										<button
+											type="button"
+											aria-label="Print its box label"
+											onClick={() =>
+												printPdf(`/labels/refurbs/${r.id}`, "Box label")
+											}
+											className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
+										>
+											<Printer className="size-4" />
+										</button>
+									</Tip>
 								)}
 								<Tip content="Take this return back">
 									<button

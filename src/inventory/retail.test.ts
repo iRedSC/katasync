@@ -173,7 +173,7 @@ describe("in-store sales", () => {
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId: line.id, quantity: 1 }],
-			restock: true,
+			outcome: "restock",
 		});
 
 		expect(await onHand(wrench, retail)).toBe(4);
@@ -307,7 +307,7 @@ describe("overflow", () => {
 		await receiveReturn(db, {
 			orderId,
 			lines: [{ lineId: line.id, quantity: 2 }],
-			restock: true,
+			outcome: "restock",
 		});
 
 		expect(await onHand(wrench, warehouse)).toBe(2);

@@ -38,6 +38,7 @@ import {
 import { cityLine } from "#/lib/format";
 import { adminUrls } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
+import { refurbishOptions, refurbishReturn } from "#/orders/refurbish";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import {
 	findReturnable,
@@ -194,7 +195,8 @@ export const getOrder = createServerFn({ method: "GET" })
 				fromStore,
 				// Units received back, and how many of those went on the shelf.
 				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
-				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and ${orderReturns.restocked}), 0)::int`,
+				// Back on a shelf, as itself or as a refurb.
+				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and (${orderReturns.restocked} or ${orderReturns.refurbProductId} is not null)), 0)::int`,
 				productSku: products.sku,
 				productName: products.name,
 				imageUrl: products.imageUrl,
@@ -356,7 +358,9 @@ export const receiveOrderReturn = createServerFn({ method: "POST" })
 				lineId: "number.integer > 0",
 				quantity: "number.integer >= 0",
 			}).array(),
-			restock: "boolean",
+			outcome: type("'restock' | 'write_off'").or({
+				refurbishInto: "number.integer > 0",
+			}),
 		}),
 	)
 	.handler(({ data }) => receiveReturn(getDb(), data));
@@ -364,6 +368,32 @@ export const receiveOrderReturn = createServerFn({ method: "POST" })
 export const undoOrderReturn = createServerFn({ method: "POST" })
 	.validator(type({ ids: "(number.integer > 0)[]" }))
 	.handler(({ data }) => undoReturns(getDb(), data.ids));
+
+// The refurb dialog: what a returned line's refurb starts as.
+export const getRefurbishOptions = createServerFn({ method: "POST" })
+	.validator(
+		type({ orderId: "number.integer > 0", lineId: "number.integer > 0" }),
+	)
+	.handler(({ data }) => refurbishOptions(getDb(), data));
+
+export const refurbishOrderReturn = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			orderId: "number.integer > 0",
+			lineId: "number.integer > 0",
+			quantity: "number.integer > 0",
+			condition: "string > 0",
+			title: "string > 0",
+			price: "number > 0",
+			compareAtPrice: "number > 0 | null",
+			weightGrams: "number.integer > 0 | null",
+			vendor: "string",
+			productType: "string",
+			tags: "string[]",
+			notes: "string",
+		}),
+	)
+	.handler(({ data }) => refurbishReturn(getDb(), data));
 
 // The Returns tab: what's due back, and what came back lately.
 export const getReturns = createServerFn({ method: "GET" }).handler(() =>

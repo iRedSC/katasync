@@ -122,10 +122,27 @@ export const products = pgTable(
 		// reordering, counting, and listing matching, its history kept. Only an
 		// inert product is archived (src/products/archive.ts).
 		archivedAt: timestamp({ withTimezone: true }),
+		// A refurbished one-off made from a returned unit of refurbishedFromId
+		// (src/orders/refurbish.ts), in condition: the handle of a Shopify
+		// "condition" metaobject, which the theme styles. It's archived, here
+		// and in Shopify, once its last unit sells.
+		refurbishedFromId: integer().references((): AnyPgColumn => products.id),
+		condition: text(),
+		// About this one unit, for a refurb: on its Shopify page (metafield
+		// custom.details) and its box label.
+		notes: text(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		index("products_group_idx").on(t.groupId),
+		check(
+			"products_refurb_has_condition",
+			sql`(${t.refurbishedFromId} is null) = (${t.condition} is null)`,
+		),
+		check(
+			"products_refurb_is_simple",
+			sql`${t.refurbishedFromId} is null or ${t.kind} = 'simple'`,
+		),
 		// Order lines match a SKU in other capitals (resolveProduct), on every
 		// sync pass for each line still without a product.
 		index("products_sku_lower_idx").on(sql`lower(${t.sku})`),
@@ -581,10 +598,14 @@ export const orderLines = pgTable(
 	],
 );
 
-// Units a customer sent back, received against the line they were sold on.
-// Restocked units went back on the shelf through the movement in batchId;
-// the rest were written off as damaged and moved nothing. Undoing a return
-// reverses its batch and deletes the row. Rules live in src/orders/returns.ts.
+// Units a customer sent back, received against the line they were sold on,
+// in one of three ways:
+//   restocked:    back on the shelf as what they were sold as
+//   refurbished:  on the shelf as refurbProductId, a refurbished one-off
+//   written off:  damaged, moving nothing
+// The first two moved stock through the movement in batchId. Undoing a
+// return reverses its batch and deletes the row. Rules live in
+// src/orders/returns.ts.
 export const orderReturns = pgTable(
 	"order_returns",
 	{
@@ -594,6 +615,7 @@ export const orderReturns = pgTable(
 			.references(() => orderLines.id),
 		quantity: integer().notNull(),
 		restocked: boolean().notNull(),
+		refurbProductId: integer().references(() => products.id),
 		batchId: uuid(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
@@ -601,7 +623,11 @@ export const orderReturns = pgTable(
 		check("order_returns_quantity_positive", sql`${t.quantity} > 0`),
 		check(
 			"order_returns_restocked_has_batch",
-			sql`${t.restocked} = (${t.batchId} is not null)`,
+			sql`(${t.restocked} or ${t.refurbProductId} is not null) = (${t.batchId} is not null)`,
+		),
+		check(
+			"order_returns_one_shelf",
+			sql`not (${t.restocked} and ${t.refurbProductId} is not null)`,
 		),
 		index("order_returns_line_idx").on(t.orderLineId),
 	],

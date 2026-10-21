@@ -1,6 +1,8 @@
-import { Minus, Plus } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { ExternalLink, Minus, Plus } from "lucide-react";
+import { type FormEvent, type ReactNode, useState } from "react";
+import { toast } from "sonner";
 import { ProductImage } from "#/components/product";
+import { type RefurbChoice, RefurbishForm } from "#/components/refurbish-form";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -13,7 +15,12 @@ import {
 import { formatCount } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
-import { receiveOrderReturn, undoOrderReturn } from "#/server/orders";
+import { printPdf } from "#/printing/qz-client";
+import {
+	receiveOrderReturn,
+	refurbishOrderReturn,
+	undoOrderReturn,
+} from "#/server/orders";
 
 type ReturnLine = {
 	id: number;
@@ -28,10 +35,14 @@ type ReturnLine = {
 
 export type Received = { lineId: number; quantity: number };
 
+// Where the units went: their shelf, a refurb's, or nowhere.
+export type Outcome = "restock" | "refurbish" | "write_off";
+
 // What came back in the box, line by line. Starts at everything still
 // returnable (or what's expected), since most returns are the whole order; Enter puts it all
-// back on the shelf. It closes at once: the page shows the return before the
-// server has it, and a failure says why in a toast.
+// back on the shelf. Refurbish (one line at a time) turns to choosing the
+// refurb. It closes at once: the page shows the return before the server
+// has it, and a failure says why in a toast.
 export function ReturnDialog({
 	open,
 	onOpenChange,
@@ -48,10 +59,11 @@ export function ReturnDialog({
 	// The page's data with a return laid over it, and with it taken off again
 	// for Undo.
 	patches: {
-		receive: (received: Received[], restock: boolean) => Patch;
-		undo: (received: Received[], restock: boolean) => Patch;
+		receive: (received: Received[], outcome: Outcome) => Patch;
+		undo: (received: Received[], outcome: Outcome) => Patch;
 	};
 }) {
+	const [refurbishing, setRefurbishing] = useState(false);
 	const [counts, setCounts] = useState(
 		() =>
 			new Map(lines.map((l) => [l.id, Math.min(l.start ?? l.left, l.left)])),
@@ -63,41 +75,115 @@ export function ReturnDialog({
 			new Map(counts).set(line.id, Math.max(0, Math.min(line.left, n))),
 		);
 
+	const received = [...counts]
+		.filter(([, quantity]) => quantity > 0)
+		.map(([lineId, quantity]) => ({ lineId, quantity }));
+	// A refurb is one thing: one line's units.
+	const single = received.length === 1 ? received[0] : null;
+	const singleLine = single && lines.find((l) => l.id === single.lineId);
+
 	function receive(restock: boolean) {
-		const received = [...counts].map(([lineId, quantity]) => ({
-			lineId,
-			quantity,
-		}));
 		onOpenChange(false);
-		record(received, restock);
+		const outcome = restock ? "restock" : "write_off";
+		const count = received.reduce((sum, l) => sum + l.quantity, 0);
+		record(
+			received,
+			outcome,
+			() => receiveOrderReturn({ data: { orderId, lines: received, outcome } }),
+			() => ({
+				message: restock
+					? `${formatCount(count)} back on the shelf`
+					: `${formatCount(count)} written off as damaged`,
+			}),
+		);
 	}
 
-	async function record(received: Received[], restock: boolean) {
-		const count = received.reduce((sum, l) => sum + l.quantity, 0);
+	function refurbish(choice: RefurbChoice) {
+		if (!single) return;
+		onOpenChange(false);
+		const n = formatCount(single.quantity);
+		if (choice.kind === "add")
+			record(
+				[single],
+				"refurbish",
+				() =>
+					receiveOrderReturn({
+						data: {
+							orderId,
+							lines: [single],
+							outcome: { refurbishInto: choice.productId },
+						},
+					}),
+				() => ({ message: `${n} added to ${choice.sku}` }),
+				printBoxLabel,
+			);
+		else {
+			const { kind: _, ...details } = choice;
+			record(
+				[single],
+				"refurbish",
+				() =>
+					refurbishOrderReturn({
+						data: {
+							...details,
+							orderId,
+							lineId: single.lineId,
+							quantity: single.quantity,
+						},
+					}),
+				(r) => ({
+					message: `${r.sku} drafted in Shopify`,
+					description: r.shopifyUrl && (
+						<a
+							href={r.shopifyUrl}
+							target="_blank"
+							rel="noreferrer"
+							className="inline-flex items-center gap-1 text-link underline"
+						>
+							Add photos and publish
+							<ExternalLink className="size-3" />
+						</a>
+					),
+				}),
+				printBoxLabel,
+			);
+		}
+	}
+
+	// Every refurbished box gets its label, to find it by and ship it from.
+	const printBoxLabel = (r: { ids: number[] }) =>
+		r.ids[0] !== undefined &&
+		void printPdf(`/labels/refurbs/${r.ids[0]}`, "Box label");
+
+	async function record<R extends { ids: number[] }>(
+		got: Received[],
+		outcome: Outcome,
+		send: () => Promise<R>,
+		said: (r: R) => { message: string; description?: ReactNode },
+		then?: (r: R) => void,
+	) {
 		const r = await optimism.change({
 			label: `Return on ${orderName}`,
-			patch: patches.receive(received, restock),
-			send: () =>
-				receiveOrderReturn({ data: { orderId, lines: received, restock } }),
+			patch: patches.receive(got, outcome),
+			send,
 		});
 		if (!r) return;
-		offerUndo(
-			restock
-				? `${formatCount(count)} back on the shelf`
-				: `${formatCount(count)} written off as damaged`,
-			{
-				tone: "success",
-				description: `Return on ${orderName}`,
-				undo: async () => {
-					const undone = await optimism.change({
-						label: `Undoing return on ${orderName}`,
-						patch: patches.undo(received, restock),
-						send: () => undoOrderReturn({ data: { ids: r.value.ids } }),
-					});
-					return undone && `Return on ${orderName} undone`;
-				},
+		then?.(r.value);
+		const { message, description } = said(r.value);
+		offerUndo(message, {
+			tone: "success",
+			description: description ?? `Return on ${orderName}`,
+			undo: async () => {
+				const undone = await optimism.change({
+					label: `Undoing return on ${orderName}`,
+					patch: patches.undo(got, outcome),
+					send: () => undoOrderReturn({ data: { ids: r.value.ids } }),
+				});
+				if (undone && undone.value.problems.length > 0)
+					toast.error(undone.value.problems.join("; "));
+				return undone && `Return on ${orderName} undone`;
 			},
-		);
+		});
 	}
 
 	function submit(e: FormEvent) {
@@ -107,73 +193,94 @@ export function ReturnDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="sm:max-w-lg">
-				<form onSubmit={submit} className="flex min-w-0 flex-col gap-6">
-					<DialogHeader>
-						<DialogTitle>What came back?</DialogTitle>
-						<DialogDescription>Return on {orderName}</DialogDescription>
-					</DialogHeader>
+			<DialogContent className={refurbishing ? "sm:max-w-xl" : "sm:max-w-lg"}>
+				{refurbishing && single && singleLine ? (
+					<RefurbishForm
+						orderId={orderId}
+						lineId={single.lineId}
+						quantity={single.quantity}
+						name={singleLine.sku ?? singleLine.title}
+						onBack={() => setRefurbishing(false)}
+						onChoose={refurbish}
+					/>
+				) : (
+					<form onSubmit={submit} className="flex min-w-0 flex-col gap-6">
+						<DialogHeader>
+							<DialogTitle>What came back?</DialogTitle>
+							<DialogDescription>Return on {orderName}</DialogDescription>
+						</DialogHeader>
 
-					<ul className="flex flex-col gap-3">
-						{lines.map((l) => {
-							const n = counts.get(l.id) ?? 0;
-							return (
-								<li key={l.id} className="flex items-center gap-3">
-									<ProductImage src={l.imageUrl} className="size-10" />
-									<div className="min-w-0 flex-1">
-										<div className="truncate font-medium">{l.title}</div>
-										<div className="text-xs text-muted-foreground">
-											{l.sku ?? "No SKU"}
+						<ul className="flex flex-col gap-3">
+							{lines.map((l) => {
+								const n = counts.get(l.id) ?? 0;
+								return (
+									<li key={l.id} className="flex items-center gap-3">
+										<ProductImage src={l.imageUrl} className="size-10" />
+										<div className="min-w-0 flex-1">
+											<div className="truncate font-medium">{l.title}</div>
+											<div className="text-xs text-muted-foreground">
+												{l.sku ?? "No SKU"}
+											</div>
 										</div>
-									</div>
-									<div className="flex items-center gap-1">
-										<Button
-											type="button"
-											size="icon"
-											variant="outline"
-											aria-label={`One fewer ${l.title}`}
-											disabled={n === 0}
-											onClick={() => set(l, n - 1)}
-										>
-											<Minus />
-										</Button>
-										<span className="w-16 text-center text-2xl font-semibold tabular-nums">
-											{n}
-											<span className="text-sm font-normal text-muted-foreground">
-												{" "}
-												/ {l.left}
+										<div className="flex items-center gap-1">
+											<Button
+												type="button"
+												size="icon"
+												variant="outline"
+												aria-label={`One fewer ${l.title}`}
+												disabled={n === 0}
+												onClick={() => set(l, n - 1)}
+											>
+												<Minus />
+											</Button>
+											<span className="w-16 text-center text-2xl font-semibold tabular-nums">
+												{n}
+												<span className="text-sm font-normal text-muted-foreground">
+													{" "}
+													/ {l.left}
+												</span>
 											</span>
-										</span>
-										<Button
-											type="button"
-											size="icon"
-											variant="outline"
-											aria-label={`One more ${l.title}`}
-											disabled={n === l.left}
-											onClick={() => set(l, n + 1)}
-										>
-											<Plus />
-										</Button>
-									</div>
-								</li>
-							);
-						})}
-					</ul>
+											<Button
+												type="button"
+												size="icon"
+												variant="outline"
+												aria-label={`One more ${l.title}`}
+												disabled={n === l.left}
+												onClick={() => set(l, n + 1)}
+											>
+												<Plus />
+											</Button>
+										</div>
+									</li>
+								);
+							})}
+						</ul>
 
-					<DialogFooter className="gap-2 sm:justify-between">
-						<Button
-							type="button"
-							variant="outline"
-							disabled={total === 0}
-							onClick={() => receive(false)}
-						>
-							Damaged, write off
-						</Button>
-						<Button type="submit" disabled={total === 0}>
-							Put {formatCount(total)} back on shelf
-						</Button>
-					</DialogFooter>
-				</form>
+						<DialogFooter className="gap-2 sm:justify-between">
+							<div className="flex gap-2">
+								<Button
+									type="button"
+									variant="outline"
+									disabled={total === 0}
+									onClick={() => receive(false)}
+								>
+									Damaged, write off
+								</Button>
+								<Button
+									type="button"
+									variant="outline"
+									disabled={!single}
+									onClick={() => setRefurbishing(true)}
+								>
+									Refurbish
+								</Button>
+							</div>
+							<Button type="submit" disabled={total === 0}>
+								Put {formatCount(total)} back on shelf
+							</Button>
+						</DialogFooter>
+					</form>
+				)}
 			</DialogContent>
 		</Dialog>
 	);
