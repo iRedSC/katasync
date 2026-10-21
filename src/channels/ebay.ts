@@ -4,6 +4,7 @@ import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
+import type { OrderTax } from "#/orders/tax";
 import { fetchEbayReturns } from "./ebay-returns";
 import {
 	type ChannelListing,
@@ -106,10 +107,14 @@ export const ebayOrder = type({
 		quantity: "number.integer",
 		lineItemCost: money,
 		"appliedPromotions?": type({ "discountAmount?": money }).array(),
+		"ebayCollectAndRemitTaxes?": type({
+			"taxType?": "string",
+			amount: money,
+		}).array(),
 	}).array(),
 });
 
-const ordersPage = type({
+export const ordersPage = type({
 	"orders?": ebayOrder.array(),
 	"next?": "string",
 });
@@ -127,6 +132,28 @@ const payment: Record<string, string> = {
 	FULLY_REFUNDED: "REFUNDED",
 	PARTIALLY_REFUNDED: "PARTIALLY_REFUNDED",
 };
+
+// eBay collects US sales tax and pays it itself, per line, by kind
+// (STATE_SALES_TAX → "State sales tax").
+export function ebayTax(
+	order: Pick<typeof ebayOrder.infer, "lineItems">,
+): OrderTax {
+	return {
+		remittedBy: "marketplace",
+		lines: order.lineItems.flatMap((l) =>
+			(l.ebayCollectAndRemitTaxes ?? []).map((t) => {
+				const kind = (t.taxType ?? "SALES_TAX")
+					.toLowerCase()
+					.replaceAll("_", " ");
+				return {
+					jurisdiction: kind.charAt(0).toUpperCase() + kind.slice(1),
+					rate: null,
+					amount: t.amount.value,
+				};
+			}),
+		),
+	};
+}
 
 export function ebayToChannelOrder(
 	order: typeof ebayOrder.infer,
@@ -157,6 +184,7 @@ export function ebayToChannelOrder(
 		shipPhone: shipTo?.primaryPhone?.phoneNumber ?? null,
 		total: order.pricingSummary.total.value,
 		shippingCharged: order.pricingSummary.deliveryCost?.value ?? 0,
+		tax: ebayTax(order),
 		sourceUpdatedAt: order.lastModifiedDate,
 		lines: order.lineItems.map((l) => {
 			const discount = (l.appliedPromotions ?? []).reduce(
@@ -284,7 +312,10 @@ async function activeListings(): Promise<ChannelListing[]> {
 const FIRST_SYNC_DAYS = 60;
 
 export async function syncEbay(db: Db, options: { listings: boolean }) {
-	const store = await ensureStore(db, "ebay", "eBay US");
+	const store = await ensureStore(db, "ebay", {
+		id: "ebay-us",
+		name: "eBay US",
+	});
 	const stock = await stockLocations(db);
 
 	// Listings first, so order lines can resolve to products.

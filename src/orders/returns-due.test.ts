@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
@@ -11,7 +11,7 @@ import {
 	restoreNoReturn,
 } from "./returns-due";
 
-// The order_returns_due view (drizzle/0061_returns_tab.sql) and the Returns
+// The order_returns_due view (drizzle/0082_returns_due_unmatched.sql) and the Returns
 // tab's reads.
 
 let db: Db;
@@ -164,6 +164,30 @@ describe("order_returns_due", () => {
 		]);
 	});
 
+	test("an item no line matched still puts its order on Returns", async () => {
+		const o = await order("#8");
+		const id = await request(o, "shipped");
+		await db
+			.update(schema.returnRequestLines)
+			.set({ orderLineId: null, sku: "MYSTERY" })
+			.where(eq(schema.returnRequestLines.requestId, id));
+		const {
+			due: [found],
+		} = await listReturns(db);
+		expect(found).toMatchObject({
+			name: "#8",
+			state: "on_its_way",
+			unmatched: [{ sku: "MYSTERY", quantity: 1 }],
+			lines: [{ id: o.lineId, left: 2, expected: 0 }],
+		});
+
+		// Everything came back: nothing left it could be.
+		await db
+			.insert(schema.orderReturns)
+			.values({ orderLineId: o.lineId, quantity: 2, restocked: false });
+		expect(await due()).toEqual([]);
+	});
+
 	test("nothing coming back ends requests opened before it, not after", async () => {
 		const o = await order("#7");
 		await request(o, "requested", {
@@ -207,8 +231,35 @@ describe("order_returns_due", () => {
 			.values({ orderLineId: o.lineId, quantity: 2, restocked: false });
 		const { received } = await listReturns(db);
 		expect(received).toMatchObject([
-			{ name: "#12", sku: "WRENCH", quantity: 2, restocked: false },
+			{
+				name: "#12",
+				sku: "WRENCH",
+				quantity: 2,
+				restocked: false,
+				confirmOn: null,
+			},
 		]);
+	});
+
+	test("a received return links to its marketplace until it closes there", async () => {
+		vi.stubEnv("SHOPIFY_STORE_DOMAIN", "kata.myshopify.com");
+		const o = await order("#13");
+		const requestId = await request(o, "delivered");
+		await db
+			.insert(schema.orderReturns)
+			.values({ orderLineId: o.lineId, quantity: 1, restocked: false });
+		expect((await listReturns(db)).received[0].confirmOn).toEqual({
+			channel: "shopify",
+			name: "Shopify",
+			url: "https://admin.shopify.com/store/kata/orders/%2313",
+		});
+
+		await db
+			.update(schema.returnRequests)
+			.set({ status: "closed" })
+			.where(eq(schema.returnRequests.id, requestId));
+		expect((await listReturns(db)).received[0].confirmOn).toBeNull();
+		vi.unstubAllEnvs();
 	});
 });
 

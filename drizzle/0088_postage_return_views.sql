@@ -1,5 +1,5 @@
--- The returns views 0080 dropped to change charge_kind, back exactly as they
--- were: order_returns_due as in 0061, order_line_returns as in 0065,
+-- The returns views 0087 dropped to change charge_kind, back exactly as they
+-- were: order_returns_due as in 0082, order_line_returns as in 0065,
 -- product_return_rates as in 0067. Pending migrations run in one
 -- transaction, so they're never missing in between.
 CREATE VIEW "order_returns_due" AS
@@ -8,7 +8,7 @@ WITH received AS (
 	FROM "order_returns" GROUP BY "order_line_id"
 ),
 open_requests AS (
-	SELECT rr."id", rr."status", rr."tracking_number"
+	SELECT rr."id", rr."order_id", rr."status", rr."tracking_number"
 	FROM "return_requests" rr
 	JOIN "orders" o ON o."id" = rr."order_id"
 	WHERE rr."status" IN ('requested', 'shipped', 'delivered')
@@ -22,6 +22,15 @@ requested AS (
 	JOIN open_requests r ON r."id" = rl."request_id"
 	WHERE rl."order_line_id" IS NOT NULL
 	GROUP BY rl."order_line_id"
+),
+-- Orders with an open request for an item no line matched.
+unmatched AS (
+	SELECT r."order_id",
+		bool_or(r."status" <> 'requested' OR r."tracking_number" IS NOT NULL) AS "sent"
+	FROM "return_request_lines" rl
+	JOIN open_requests r ON r."id" = rl."request_id"
+	WHERE rl."order_line_id" IS NULL
+	GROUP BY r."order_id"
 ),
 -- Refunds as order_profit counts them: only from where it really sold.
 refunds AS (
@@ -40,6 +49,8 @@ lines AS (
 		l."quantity" - coalesce(rc."returned", 0) AS "left",
 		greatest(least(coalesce(rq."quantity", 0), l."quantity") - coalesce(rc."returned", 0), 0) AS "requested",
 		coalesce(rq."sent", false) AS "sent",
+		um."order_id" IS NOT NULL AS "unmatched",
+		coalesce(um."sent", false) AS "unmatched_sent",
 		lc."returning",
 		coalesce(rc."returned", 0) AS "returned",
 		o."no_return_at",
@@ -50,15 +61,20 @@ lines AS (
 	JOIN "order_line_costs" lc ON lc."line_id" = l."id"
 	LEFT JOIN received rc ON rc."order_line_id" = l."id"
 	LEFT JOIN requested rq ON rq."order_line_id" = l."id"
+	LEFT JOIN unmatched um ON um."order_id" = l."order_id"
 	LEFT JOIN refunds rf ON rf."order_id" = l."order_id"
 	WHERE l."sale_batch_id" IS NOT NULL
 		AND NOT o."fulfilled_by_channel" AND o."cancelled_at" IS NULL
 ),
 states AS (
 	SELECT "order_id",
+		-- An unmatched item counts only while some line still has units left.
+		bool_or("unmatched" AND "left" > 0) AS "unmatched",
 		CASE
-			WHEN bool_or("requested" > 0 AND "sent") THEN 'on_its_way'
-			WHEN bool_or("requested" > 0) THEN 'requested'
+			WHEN bool_or("requested" > 0 AND "sent")
+				OR bool_or("unmatched" AND "unmatched_sent" AND "left" > 0) THEN 'on_its_way'
+			WHEN bool_or("requested" > 0)
+				OR bool_or("unmatched" AND "left" > 0) THEN 'requested'
 			WHEN bool_or("returning" > 0) THEN 'refunded'
 			WHEN max("refunds") > 0 AND sum("returned") = 0 AND bool_or("left" > 0)
 				AND max("no_return_at") IS NULL
@@ -78,10 +94,11 @@ SELECT
 FROM lines l
 JOIN states s ON s."order_id" = l."order_id"
 WHERE s."state" IS NOT NULL
-	AND (CASE s."state"
+	AND ((CASE s."state"
 		WHEN 'maybe' THEN l."left"
 		ELSE greatest(l."requested", l."returning")
-	END) > 0;
+	END) > 0
+		OR (s."unmatched" AND l."left" > 0));
 --> statement-breakpoint
 CREATE VIEW "order_line_returns" AS
 WITH received AS (

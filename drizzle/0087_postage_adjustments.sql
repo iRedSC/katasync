@@ -8,7 +8,7 @@
 -- charge_kind is made anew instead, whose values can be. Changing the
 -- column's type means dropping every view that reads it, and those built on
 -- them. All but order_profit and order_line_profit come back exactly as they
--- were: order_line_costs here as in 0061, the returns views in 0081.
+-- were: order_line_costs here as in 0086, the returns views in 0088.
 DROP VIEW "product_return_rates";
 --> statement-breakpoint
 DROP VIEW "order_line_returns";
@@ -49,7 +49,10 @@ WITH bundle_costs AS (
 returns AS (
 	SELECT "order_line_id",
 		sum("quantity") AS "returned",
-		sum("quantity") FILTER (WHERE "restocked") AS "restocked"
+		-- Refurbished units are back on a shelf too, as their refurb, which
+		-- carries their cost to its own sale.
+		sum("quantity") FILTER (WHERE "restocked" OR "refurb_product_id" IS NOT NULL
+			OR "pre_cutover") AS "restocked"
 	FROM "order_returns" GROUP BY "order_line_id"
 ),
 order_revenue AS (

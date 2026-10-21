@@ -1,6 +1,6 @@
 {
-  "id": "db17a7c6-95ea-433a-9dcc-696e7141aff9",
-  "prevId": "0f01b18f-5d6e-431d-af39-7112af8df646",
+  "id": "d67bb531-40a8-41b7-8b9a-a2c21598da55",
+  "prevId": "6f01f967-bb9c-4168-8e8b-ff3d73707fa8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -438,6 +438,54 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.email_templates": {
+      "name": "email_templates",
+      "schema": "",
+      "columns": {
+        "kind": {
+          "name": "kind",
+          "type": "email_template_kind",
+          "typeSchema": "public",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "email_templates_subject_given": {
+          "name": "email_templates_subject_given",
+          "value": "btrim(\"email_templates\".\"subject\") <> ''"
+        },
+        "email_templates_body_given": {
+          "name": "email_templates_body_given",
+          "value": "btrim(\"email_templates\".\"body\") <> ''"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.listings": {
@@ -2113,6 +2161,263 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.po_email_attachments": {
+      "name": "po_email_attachments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "po_email_attachments_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "email_id": {
+          "name": "email_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "filename": {
+          "name": "filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_type": {
+          "name": "content_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "size": {
+          "name": "size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "data": {
+          "name": "data",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "po_email_attachments_email_idx": {
+          "name": "po_email_attachments_email_idx",
+          "columns": [
+            {
+              "expression": "email_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "po_email_attachments_email_id_po_emails_id_fk": {
+          "name": "po_email_attachments_email_id_po_emails_id_fk",
+          "tableFrom": "po_email_attachments",
+          "tableTo": "po_emails",
+          "columnsFrom": [
+            "email_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "po_email_attachments_size": {
+          "name": "po_email_attachments_size",
+          "value": "\"po_email_attachments\".\"size\" >= 0"
+        },
+        "po_email_attachments_data_size": {
+          "name": "po_email_attachments_data_size",
+          "value": "\"po_email_attachments\".\"data\" is null or octet_length(\"po_email_attachments\".\"data\") = \"po_email_attachments\".\"size\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.po_emails": {
+      "name": "po_emails",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "po_emails_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purchase_order_id": {
+          "name": "purchase_order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "matched_by": {
+          "name": "matched_by",
+          "type": "po_email_match",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "set_aside_at": {
+          "name": "set_aside_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "from_address": {
+          "name": "from_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_name": {
+          "name": "from_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recipients": {
+          "name": "recipients",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "po_emails_message_id": {
+          "name": "po_emails_message_id",
+          "columns": [
+            {
+              "expression": "message_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "po_emails_po_idx": {
+          "name": "po_emails_po_idx",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "po_emails_purchase_order_id_purchase_orders_id_fk": {
+          "name": "po_emails_purchase_order_id_purchase_orders_id_fk",
+          "tableFrom": "po_emails",
+          "tableTo": "purchase_orders",
+          "columnsFrom": [
+            "purchase_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "po_emails_matched_with_po": {
+          "name": "po_emails_matched_with_po",
+          "value": "(\"po_emails\".\"purchase_order_id\" is null) = (\"po_emails\".\"matched_by\" is null)"
+        },
+        "po_emails_set_aside_unfiled": {
+          "name": "po_emails_set_aside_unfiled",
+          "value": "\"po_emails\".\"set_aside_at\" is null or \"po_emails\".\"purchase_order_id\" is null"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.product_aliases": {
@@ -3828,6 +4133,156 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.purchase_order_tracking": {
+      "name": "purchase_order_tracking",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "purchase_order_tracking_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "purchase_order_id": {
+          "name": "purchase_order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "carrier": {
+          "name": "carrier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "number": {
+          "name": "number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_id": {
+          "name": "email_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "tracking_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status_detail": {
+          "name": "status_detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status_at": {
+          "name": "status_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "eta": {
+          "name": "eta",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "purchase_order_tracking_number": {
+          "name": "purchase_order_tracking_number",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "purchase_order_tracking_purchase_order_id_purchase_orders_id_fk": {
+          "name": "purchase_order_tracking_purchase_order_id_purchase_orders_id_fk",
+          "tableFrom": "purchase_order_tracking",
+          "tableTo": "purchase_orders",
+          "columnsFrom": [
+            "purchase_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "purchase_order_tracking_email_id_po_emails_id_fk": {
+          "name": "purchase_order_tracking_email_id_po_emails_id_fk",
+          "tableFrom": "purchase_order_tracking",
+          "tableTo": "po_emails",
+          "columnsFrom": [
+            "email_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "purchase_order_tracking_number_shape": {
+          "name": "purchase_order_tracking_number_shape",
+          "value": "\"purchase_order_tracking\".\"number\" ~ '^[0-9A-Z]{8,40}$'"
+        },
+        "purchase_order_tracking_carrier": {
+          "name": "purchase_order_tracking_carrier",
+          "value": "\"purchase_order_tracking\".\"carrier\" in ('ups', 'usps', 'fedex')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.purchase_orders": {
@@ -5747,7 +6202,6 @@
       "values": [
         "fee",
         "label",
-        "postage_adjustment",
         "refund",
         "adjustment"
       ]
@@ -5758,6 +6212,14 @@
       "values": [
         "credit",
         "replacement"
+      ]
+    },
+    "public.email_template_kind": {
+      "name": "email_template_kind",
+      "schema": "public",
+      "values": [
+        "purchase_order",
+        "damage_report"
       ]
     },
     "public.listing_fulfillment": {
@@ -5801,6 +6263,16 @@
         "refresh"
       ]
     },
+    "public.po_email_match": {
+      "name": "po_email_match",
+      "schema": "public",
+      "values": [
+        "address",
+        "subject",
+        "staff",
+        "claude"
+      ]
+    },
     "public.product_kind": {
       "name": "product_kind",
       "schema": "public",
@@ -5840,6 +6312,18 @@
         "delivered",
         "closed",
         "cancelled"
+      ]
+    },
+    "public.tracking_status": {
+      "name": "tracking_status",
+      "schema": "public",
+      "values": [
+        "PRE_TRANSIT",
+        "TRANSIT",
+        "DELIVERED",
+        "RETURNED",
+        "FAILURE",
+        "UNKNOWN"
       ]
     },
     "public.transfer_status": {
@@ -5995,12 +6479,6 @@
         },
         "shippingCharged": {
           "name": "shippingCharged",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "postageAdjustments": {
-          "name": "postageAdjustments",
           "type": "numeric(12, 2)",
           "primaryKey": false,
           "notNull": true
@@ -6212,12 +6690,6 @@
         "labelsStatus": {
           "name": "labelsStatus",
           "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "postageAdjustments": {
-          "name": "postageAdjustments",
-          "type": "numeric(12, 2)",
           "primaryKey": false,
           "notNull": true
         },

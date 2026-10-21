@@ -6,6 +6,7 @@ import {
 	type PurchaseOrderDetail,
 	undoPurchaseReceipt,
 } from "#/server/purchasing";
+import { EmailEntry } from "./email-entry";
 import { poData } from "./po-data";
 import { useAction } from "./use-action";
 
@@ -163,6 +164,12 @@ export function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 			),
 		});
 	}
+	for (const e of d.emails)
+		events.push({
+			key: `e${e.id}`,
+			at: new Date(e.receivedAt),
+			body: <EmailEntry email={e} poId={po.id} />,
+		});
 	if (po.closedAt)
 		events.push({
 			key: "closed",

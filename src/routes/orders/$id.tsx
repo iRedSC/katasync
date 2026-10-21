@@ -9,7 +9,11 @@ import { SendRow } from "#/components/order-page/send-row";
 import { Badge, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
-import { type Received, ReturnDialog } from "#/components/return-dialog";
+import {
+	type Outcome,
+	type Received,
+	ReturnDialog,
+} from "#/components/return-dialog";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
@@ -50,10 +54,11 @@ export const Route = createFileRoute("/orders/$id")({
 const orderData = optimistic<OrderDetail>("order");
 
 // Receiving a return counts it against each line, and against the line's
-// restocked count when it went back on the shelf. Undo takes it off again.
+// restocked count when it went back on a shelf (its own or a refurb's).
+// Undo takes it off again.
 const returnedPatch =
 	(orderId: number, sign: 1 | -1) =>
-	(received: Received[], restock: boolean): Patch =>
+	(received: Received[], outcome: Outcome): Patch =>
 		orderData.patch(orderId, (d) => ({
 			...d,
 			lines: d.lines.map((l) => {
@@ -63,7 +68,7 @@ const returnedPatch =
 				return {
 					...l,
 					returned: l.returned + n,
-					restocked: restock ? l.restocked + n : l.restocked,
+					restocked: outcome === "write_off" ? l.restocked : l.restocked + n,
 				};
 			}),
 		}));

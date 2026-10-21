@@ -33,6 +33,7 @@ const base = {
 	shipPhone: null,
 	total: 40,
 	shippingCharged: 0,
+	tax: { remittedBy: "marketplace" as const, lines: [] },
 	sourceUpdatedAt: new Date("2026-10-05T12:00:00Z"),
 };
 

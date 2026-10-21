@@ -1,5 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Ban, PackageOpen, Search } from "lucide-react";
+import {
+	Ban,
+	ExternalLink,
+	PackageOpen,
+	Printer,
+	Search,
+	Undo2,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
@@ -16,12 +23,15 @@ import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
+import { printPdf } from "#/printing/qz-client";
 import {
 	getReturns,
 	markOrderNoReturn,
 	type ReturnsData,
+	receiveOrderReturn,
 	searchReturnable,
 	undoOrderNoReturn,
+	undoOrderReturn,
 } from "#/server/orders";
 
 export const Route = createFileRoute("/orders/returns")({
@@ -81,6 +91,18 @@ const dismissedPatch = (orderId: number): Patch =>
 		due: d.due.filter((o) => o.id !== orderId),
 	}));
 
+type ReceivedRow = ReturnsData["received"][number];
+
+// A Shopify condition handle as words: "new-previous-gen" → "New previous gen".
+const conditionName = (handle: string) =>
+	handle.charAt(0).toUpperCase() + handle.slice(1).replace(/-/g, " ");
+
+const unreceivedPatch = (id: number): Patch =>
+	returnsData.patch("all", (d) => ({
+		...d,
+		received: d.received.filter((r) => r.id !== id),
+	}));
+
 // Nothing to lay over: the reload shows the order again.
 const reloadOnly = returnsData.patch("all", (d) => d);
 
@@ -95,6 +117,7 @@ function matches(o: ReturnOrder, q: string) {
 		o.shipPostalCode,
 		...o.lines.flatMap((l) => [l.sku, l.title]),
 		...o.requests.map((r) => r.trackingNumber),
+		...o.unmatched.map((u) => u.sku),
 	]
 		.filter(Boolean)
 		.join(" ")
@@ -180,6 +203,42 @@ function Returns() {
 		});
 	}
 
+	// Takes a received return back off, long after its own Undo toast is
+	// gone: restocked units leave the shelf and the order is due again.
+	async function unreceive(r: ReceivedRow) {
+		const what = `${formatCount(r.quantity)} × ${r.sku ?? r.title}`;
+		const done = await optimism.change({
+			label: `Taking back return on ${r.name}`,
+			patch: unreceivedPatch(r.id),
+			send: () => undoOrderReturn({ data: { ids: [r.id] } }),
+		});
+		if (!done) return;
+		if (done.value.problems.length > 0)
+			toast.error(done.value.problems.join("; "));
+		offerUndo(`Return on ${r.name} taken back`, {
+			description: r.restocked || r.refurb ? `${what} off the shelf` : what,
+			undo: async () => {
+				const again = await optimism.change({
+					label: `Return on ${r.name}`,
+					patch: reloadOnly,
+					send: () =>
+						receiveOrderReturn({
+							data: {
+								orderId: r.orderId,
+								lines: [{ lineId: r.lineId, quantity: r.quantity }],
+								outcome: r.refurb
+									? { refurbishInto: r.refurb.id }
+									: r.restocked
+										? "restock"
+										: "write_off",
+							},
+						}),
+				});
+				return again && `Return on ${r.name} received again`;
+			},
+		});
+	}
+
 	useHotkeys({
 		"/": (e) => {
 			e.preventDefault();
@@ -258,9 +317,8 @@ function Returns() {
 							</EmptyState>
 						) : (
 							<EmptyState icon={PackageOpen} title="Nothing due back">
-								Orders refunded in full, and partial refunds, show here until
-								their items are received. Return requests from the marketplaces
-								aren't synced yet, so only refunds show for now.
+								Refunds and return requests show here until their items are
+								received.
 							</EmptyState>
 						)
 					) : (
@@ -291,11 +349,14 @@ function Returns() {
 				<Card title="Received in the last 30 days" flush>
 					<ul>
 						{received.map((r) => (
-							<li key={r.id}>
+							<li
+								key={r.id}
+								className="flex items-center border-t pr-2 first:border-t-0 hover:bg-subtle"
+							>
 								<Link
 									to="/orders/$id"
 									params={{ id: String(r.orderId) }}
-									className="flex items-center gap-3 border-t px-4 py-2.5 first:border-t-0 hover:bg-subtle"
+									className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5"
 								>
 									<span className="w-28 shrink-0 text-muted-foreground">
 										{formatOrderDate(r.createdAt)}
@@ -306,10 +367,51 @@ function Returns() {
 									<span className="min-w-0 flex-1 truncate">
 										{formatCount(r.quantity)} × {r.sku ?? r.title}
 									</span>
-									<Badge tone={r.restocked ? "success" : undefined}>
-										{r.restocked ? "Back on shelf" : "Written off"}
-									</Badge>
+									{r.refurb ? (
+										<Badge tone="success">
+											{conditionName(r.refurb.condition)} · {r.refurb.sku}
+										</Badge>
+									) : (
+										<Badge tone={r.restocked ? "success" : undefined}>
+											{r.restocked ? "Back on shelf" : "Written off"}
+										</Badge>
+									)}
 								</Link>
+								{r.confirmOn && (
+									<a
+										href={r.confirmOn.url}
+										target="_blank"
+										rel="noreferrer"
+										className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-link hover:bg-surface-strong"
+									>
+										Confirm on {r.confirmOn.name}
+										<ExternalLink className="size-3.5" />
+									</a>
+								)}
+								{r.refurb && (
+									<Tip content="Print its box label">
+										<button
+											type="button"
+											aria-label="Print its box label"
+											onClick={() =>
+												printPdf(`/labels/refurbs/${r.id}`, "Box label")
+											}
+											className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
+										>
+											<Printer className="size-4" />
+										</button>
+									</Tip>
+								)}
+								<Tip content="Take this return back">
+									<button
+										type="button"
+										aria-label="Take this return back"
+										onClick={() => unreceive(r)}
+										className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
+									>
+										<Undo2 className="size-4" />
+									</button>
+								</Tip>
 							</li>
 						))}
 					</ul>
@@ -427,6 +529,15 @@ function ReturnRow({
 							`${request.carrier ? `${request.carrier} ` : ""}${request.trackingNumber}`}
 					</li>
 				)}
+				{o.unmatched.map((u, i) => (
+					<li
+						// biome-ignore lint/suspicious/noArrayIndexKey: two requests can name the same SKU
+						key={i}
+						className="truncate text-xs text-warning-text"
+					>
+						{formatCount(u.quantity)} × {u.sku ?? "an item"}, line unclear
+					</li>
+				))}
 				{o.blocker && (
 					<li className="text-xs text-warning-text">{o.blocker}</li>
 				)}

@@ -1,4 +1,5 @@
 import type { ChannelOrder } from "#/orders/ingest";
+import type { OrderTax } from "#/orders/tax";
 import type { ShopifyOrder } from "./order-shapes";
 
 // Shopify's TikTok channel tags each order "TikTokOrderID:<id>".
@@ -19,6 +20,55 @@ export function isPosOrder(
 	);
 }
 
+// Where on Shopify the sale happened: "Online Store", "Point of Sale",
+// "Shop", "Draft Orders".
+export function shopifySalesChannel(
+	o: Pick<ShopifyOrder, "channelInformation" | "app" | "sourceName">,
+) {
+	return (
+		o.channelInformation?.channelDefinition?.channelName ??
+		o.app?.name ??
+		o.sourceName
+	);
+}
+
+// Shopify's Shop app is a marketplace: since 2025 Shopify collects and pays
+// US sales tax on its orders itself, like Amazon.
+export const SHOP_APP = "Shop";
+
+// Tax on our own Shopify sales, online and in the store, is ours to pay, by
+// the jurisdictions Shopify charged it for. Shop app orders are Shopify's to
+// pay. An order Shopify relays from a marketplace (TikTok) was taxed by that
+// marketplace, which pays it. Its tax comes titled per product ("Product
+// Sales tax: <title>"), so it's named the way TikTok's own orders are
+// instead, and adds up the same way.
+export function shopifyTax(
+	o: Pick<
+		ShopifyOrder,
+		"tags" | "currentTaxLines" | "channelInformation" | "app" | "sourceName"
+	>,
+): OrderTax {
+	if (tiktokOrderId(o.tags))
+		return {
+			remittedBy: "marketplace",
+			lines: o.currentTaxLines.map((t) => ({
+				jurisdiction: /shipping/i.test(t.title)
+					? "Sales tax on shipping"
+					: "Sales tax on items",
+				rate: null,
+				amount: t.priceSet.shopMoney.amount,
+			})),
+		};
+	return {
+		remittedBy: shopifySalesChannel(o) === SHOP_APP ? "marketplace" : "seller",
+		lines: o.currentTaxLines.map((t) => ({
+			jurisdiction: t.title,
+			rate: t.rate,
+			amount: t.priceSet.shopMoney.amount,
+		})),
+	};
+}
+
 // `shipped` is units shipped per line ID, needed when any line has refunded
 // or removed units (see shopifyLineQuantity).
 export function shopifyToChannelOrder(
@@ -29,10 +79,7 @@ export function shopifyToChannelOrder(
 	return {
 		externalId: o.id,
 		name: o.name,
-		salesChannel:
-			o.channelInformation?.channelDefinition?.channelName ??
-			o.app?.name ??
-			o.sourceName,
+		salesChannel: shopifySalesChannel(o),
 		marketplaceOrderId: tiktokOrderId(o.tags),
 		placedAt: o.createdAt,
 		cancelledAt: o.cancelledAt,
@@ -50,6 +97,7 @@ export function shopifyToChannelOrder(
 		shipPhone: o.shippingAddress?.phone ?? null,
 		total: o.totalPriceSet.shopMoney.amount,
 		shippingCharged: o.totalShippingPriceSet.shopMoney.amount,
+		tax: shopifyTax(o),
 		sourceUpdatedAt: o.updatedAt,
 		lines: o.lineItems.nodes.map((l) => ({
 			externalId: l.id,

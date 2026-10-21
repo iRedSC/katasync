@@ -18,7 +18,14 @@ import {
 	type StockLocations,
 	stockLocations,
 } from "./stores";
+import { tiktokOrder, tiktokToChannelOrder } from "./tiktok/channel-order";
 import { fetchTiktokReturns } from "./tiktok-returns";
+
+export {
+	tiktokOrder,
+	tiktokTax,
+	tiktokToChannelOrder,
+} from "./tiktok/channel-order";
 
 // TikTok Shop US through the Partner API (202309 versions). The app is shared
 // with profit-margarine and needs TIKTOK_SCOPES in Partner Center; the shop
@@ -40,7 +47,7 @@ export const TIKTOK_SCOPES = [
 ] as const;
 // Refreshing has its own path; /token/get only trades an authorization code.
 const AUTH = "https://auth.tiktok-shops.com/api/v2/token/refresh";
-const STORE_NAME = "TikTok Shop";
+const STORE = { id: "tiktok-shop", name: "TikTok Shop" };
 
 function credentials() {
 	const { TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, TIKTOK_REFRESH_TOKEN } =
@@ -204,152 +211,12 @@ export async function shopCipher() {
 	return cachedCipher;
 }
 
-export const tiktokOrder = type({
-	id: "string",
-	// UNPAID, ON_HOLD, AWAITING_SHIPMENT, PARTIALLY_SHIPPING,
-	// AWAITING_COLLECTION, IN_TRANSIT, DELIVERED, COMPLETED, CANCELLED.
-	status: "string",
-	// Unix seconds.
-	create_time: "number",
-	update_time: "number",
-	"cancel_time?": "number",
-	// FULFILLMENT_BY_SELLER, or FULFILLMENT_BY_TIKTOK from TikTok's warehouse.
-	"fulfillment_type?": "string",
-	"payment?": {
-		"total_amount?": "string",
-		"shipping_fee?": "string",
-	},
-	"recipient_address?": {
-		"name?": "string",
-		"phone_number?": "string",
-		"address_line1?": "string",
-		"address_line2?": "string",
-		"postal_code?": "string",
-		"region_code?": "string",
-		"district_info?": type({
-			address_level_name: "string",
-			address_name: "string",
-			// "TX" for a state, like Shopify's province code.
-			"iso_code?": "string",
-		}).array(),
-	},
-	line_items: type({
-		id: "string",
-		sku_id: "string",
-		"seller_sku?": "string",
-		product_name: "string",
-		"sku_name?": "string",
-		sale_price: "string",
-		// Taken off sale_price but paid to us by TikTok, not lost.
-		"platform_discount?": "string",
-		"display_status?": "string",
-	}).array(),
-});
-
-const fulfillment: Record<string, string> = {
-	// Paid, but TikTok holds it an hour in case the buyer cancels.
-	ON_HOLD: "ON_HOLD",
-	UNPAID: "AWAITING_PAYMENT",
-	AWAITING_SHIPMENT: "UNFULFILLED",
-	PARTIALLY_SHIPPING: "PARTIALLY_FULFILLED",
-	// The label is bought on TikTok; the carrier just hasn't scanned it.
-	AWAITING_COLLECTION: "FULFILLED",
-	IN_TRANSIT: "FULFILLED",
-	DELIVERED: "FULFILLED",
-	COMPLETED: "FULFILLED",
-	CANCELLED: "FULFILLMENT_NOT_REQUIRED",
-};
-
-// When TikTok buys the label, it hides the buyer behind asterisks ("J***n");
-// a hidden value is no value.
-function shown(value: string | undefined) {
-	return value && !value.includes("*") ? value : null;
-}
-
-const money = (value: string | undefined) => Number(value ?? 0) || 0;
-const fromUnix = (seconds: number) => new Date(seconds * 1000);
-
-export function tiktokToChannelOrder(
-	order: typeof tiktokOrder.infer,
-): ChannelOrder {
-	const fbt = order.fulfillment_type === "FULFILLMENT_BY_TIKTOK";
-	const address = order.recipient_address;
-	const district = (level: string) => {
-		const found = address?.district_info?.find(
-			(d) => d.address_level_name.toLowerCase() === level,
-		);
-		return shown(found?.iso_code || found?.address_name);
-	};
-	// TikTok lists every unit as its own line item; one line per SKU reads
-	// like the other channels and stays stable if a unit is cancelled. A
-	// cancelled unit doesn't count, but its line stays (at 0 if all its units
-	// went) so ingestion can give back the stock it took. A cancelled order
-	// keeps the quantities it was placed with.
-	const bySku = new Map<string, ChannelOrder["lines"][number]>();
-	for (const item of order.line_items) {
-		const units =
-			item.display_status === "CANCELLED" && order.status !== "CANCELLED"
-				? 0
-				: 1;
-		const line = bySku.get(item.sku_id);
-		if (line) {
-			line.quantity += units;
-			continue;
-		}
-		bySku.set(item.sku_id, {
-			externalId: item.sku_id,
-			listingExternalId: item.sku_id,
-			sku: item.seller_sku || null,
-			title:
-				item.sku_name && item.sku_name !== "Default"
-					? `${item.product_name} - ${item.sku_name}`
-					: item.product_name,
-			quantity: units,
-			// What we're paid per unit: the buyer's price after every discount,
-			// plus the part of the discount TikTok funds.
-			unitPrice: money(item.sale_price) + money(item.platform_discount),
-		});
-	}
-	return {
-		externalId: order.id,
-		name: order.id,
-		// Shopify's TikTok channel used the same name, so older relayed orders
-		// and direct ones read alike.
-		salesChannel: "TikTok",
-		marketplaceOrderId: `tiktok:${order.id}`,
-		placedAt: fromUnix(order.create_time),
-		cancelledAt:
-			order.status === "CANCELLED"
-				? fromUnix(order.cancel_time ?? order.update_time)
-				: null,
-		fulfillmentStatus: fbt
-			? "FULFILLMENT_NOT_REQUIRED"
-			: (fulfillment[order.status] ?? "UNFULFILLED"),
-		fulfilledByChannel: fbt,
-		soldInStore: false,
-		financialStatus: order.status === "UNPAID" ? "PENDING" : "PAID",
-		// A masked name ("D*****") still tells orders apart on the dashboard.
-		customerName: address?.name || null,
-		shipAddress1: shown(address?.address_line1),
-		shipAddress2: shown(address?.address_line2),
-		shipCity: district("city"),
-		shipRegion: district("state"),
-		shipPostalCode: shown(address?.postal_code),
-		shipCountry: address?.region_code ?? null,
-		shipPhone: shown(address?.phone_number),
-		total: money(order.payment?.total_amount),
-		shippingCharged: money(order.payment?.shipping_fee),
-		sourceUpdatedAt: fromUnix(order.update_time),
-		lines: [...bySku.values()],
-	};
-}
-
-const searchPage = type({
+export const searchPage = type({
 	"orders?": type({ id: "string" }).array(),
 	"next_page_token?": "string",
 });
 
-const detailPage = type({ "orders?": tiktokOrder.array() });
+export const detailPage = type({ "orders?": tiktokOrder.array() });
 
 const DAY = 24 * 60 * 60 * 1000;
 const FIRST_SYNC_DAYS = 60;
@@ -358,7 +225,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	const cipher = await shopCipher();
 	// Created only once TikTok answers, because its existence is what stops
 	// Shopify from importing TikTok orders.
-	const store = await ensureStore(db, "tiktok", STORE_NAME);
+	const store = await ensureStore(db, "tiktok", STORE);
 	const stock = await stockLocations(db);
 	const problems: string[] = [];
 
@@ -435,7 +302,7 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	return { store: store.name, created, orders: count, problems };
 }
 
-async function ingestDetail(
+export async function ingestDetail(
 	db: Db,
 	store: Awaited<ReturnType<typeof ensureStore>>,
 	raw: typeof tiktokOrder.infer,
@@ -453,7 +320,7 @@ async function ingestDetail(
 // pass sees the order again and reports any problems with it on Diagnostics.
 export async function ingestTiktokOrder(db: Db, orderId: string) {
 	const cipher = await shopCipher();
-	const store = await ensureStore(db, "tiktok", STORE_NAME);
+	const store = await ensureStore(db, "tiktok", STORE);
 	const details = detailPage.assert(
 		await tiktokApi("/order/202309/orders", {
 			shop_cipher: cipher,

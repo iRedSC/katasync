@@ -95,16 +95,16 @@ async function ingestNode(
 // problems with it on Diagnostics.
 export async function ingestShopifyOrder(db: Db, orderId: string) {
 	const { shop, order } = type({
-		shop: { name: "string" },
+		shop: { id: "string", name: "string" },
 		order: orderNode.or("null"),
 	}).assert(
 		await shopifyQuery(
-			`query Order($id: ID!) { shop { name } order(id: $id) { ${ORDER_FIELDS} } }`,
+			`query Order($id: ID!) { shop { id name } order(id: $id) { ${ORDER_FIELDS} } }`,
 			{ id: orderId },
 		),
 	);
 	if (!order) return;
-	const store = await ensureStore(db, "shopify", shop.name);
+	const store = await ensureStore(db, "shopify", shop);
 	await ingestNode(
 		db,
 		store,

@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
+import type { OrderTax } from "#/orders/tax";
 import { MARKETPLACE_US, spApi } from "./amazon-api";
 import {
 	amazonListings,
@@ -40,9 +41,13 @@ export const amazonItem = type({
 	"PromotionDiscount?": money,
 	"ShippingPrice?": money,
 	"ShippingDiscount?": money,
+	"ItemTax?": money,
+	"ShippingTax?": money,
+	"PromotionDiscountTax?": money,
+	"ShippingDiscountTax?": money,
 });
 
-const ordersPage = type({
+export const ordersPage = type({
 	payload: {
 		Orders: amazonOrder.array(),
 		"NextToken?": "string",
@@ -65,6 +70,26 @@ const fulfillment: Record<string, string> = {
 };
 
 const amount = (m: { Amount: number } | undefined) => m?.Amount ?? 0;
+
+// Amazon collects US sales tax and pays it itself. Each item's tax comes
+// with the tax on its discounts, which comes off.
+export function amazonTax(items: (typeof amazonItem.infer)[]): OrderTax {
+	return {
+		remittedBy: "marketplace",
+		lines: items.flatMap((i) => [
+			{
+				jurisdiction: "Sales tax on items",
+				rate: null,
+				amount: amount(i.ItemTax) - amount(i.PromotionDiscountTax),
+			},
+			{
+				jurisdiction: "Sales tax on shipping",
+				rate: null,
+				amount: amount(i.ShippingTax) - amount(i.ShippingDiscountTax),
+			},
+		]),
+	};
+}
 
 export function amazonToChannelOrder(
 	order: typeof amazonOrder.infer,
@@ -108,6 +133,7 @@ export function amazonToChannelOrder(
 			(sum, i) => sum + amount(i.ShippingPrice) - amount(i.ShippingDiscount),
 			0,
 		),
+		tax: amazonTax(items),
 		sourceUpdatedAt: order.LastUpdateDate,
 		// A cancelled item stays at 0 rather than being dropped, so ingestion
 		// gives back the stock it took.
@@ -169,7 +195,10 @@ export function planAmazonWindows(
 }
 
 export async function syncAmazon(db: Db, options: { listings: boolean }) {
-	const store = await ensureStore(db, "amazon", "Amazon US");
+	const store = await ensureStore(db, "amazon", {
+		id: "amazon-us",
+		name: "Amazon US",
+	});
 	const stock = await stockLocations(db);
 	const problems: string[] = [];
 
@@ -242,7 +271,7 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 	return { store: store.name, listings, created, orders: count, problems };
 }
 
-async function orderItems(orderId: string) {
+export async function orderItems(orderId: string) {
 	const items: (typeof amazonItem.infer)[] = [];
 	let nextToken: string | undefined;
 	do {

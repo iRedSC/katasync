@@ -34,6 +34,7 @@ function order(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 		shipPhone: null,
 		total: 50,
 		shippingCharged: 10,
+		tax: { remittedBy: "seller", lines: [] },
 		sourceUpdatedAt: new Date("2026-10-05T12:00:00Z"),
 		lines: [
 			{
