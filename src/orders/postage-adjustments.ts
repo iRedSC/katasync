@@ -1,11 +1,17 @@
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	dispatches,
+	dispatchOrders,
 	orderCharges,
 	orderLineProfit,
 	orderLines,
 	orders,
+	packages,
 	products,
+	shipmentAdjustments,
+	shipments,
+	stores,
 } from "#/db/schema";
 import { contentsKey } from "#/shipping/contents";
 
@@ -13,17 +19,29 @@ import { contentsKey } from "#/shipping/contents";
 // (postage_adjustment charges), grouped so the cause can be fixed: by what was
 // in the box, and by product.
 //
-// Only Amazon reports re-bills so far, and its labels are bought on Seller
-// Central, so katasync has no box for them: Amazon names the order, not the
-// package, and says neither why nor what the carrier measured. What was in
-// the box is the closest thing to the box. Each re-billed order links to
-// Seller Central, whose order page shows the package as it was declared.
+// Amazon's labels are bought on Seller Central, so katasync has no box for
+// them: Amazon names the order, not the package, and says neither why nor
+// what the carrier measured. What was in the box is the closest thing to the
+// box, and each re-billed order links to Seller Central, whose order page
+// shows the package as declared. Labels katasync buys from Shippo do have a
+// box, re-billed per label (shipment_adjustments), so those also group by
+// box, with what was declared.
 
 const lp = orderLineProfit;
 
-// Orders in the range from marketplaces that re-bill (those with a re-bill on
-// record), shipped with a label they billed or re-billed, one row per item.
-// A re-bill whose label never came through still counts.
+// A label katasync bought from Shippo that's still good, joined to its
+// dispatch's orders.
+const liveLabel = and(
+	eq(dispatchOrders.dispatchId, shipments.dispatchId),
+	eq(shipments.provider, "shippo"),
+	eq(shipments.test, false),
+	isNull(shipments.voidedAt),
+);
+
+// Orders in the range shipped on a label that can be re-billed, one row per
+// item: one katasync bought from Shippo, or one billed (or re-billed) by a
+// marketplace that re-bills (one with a re-bill on record). A re-bill whose
+// label never came through still counts.
 export async function postageLines(db: Db, start: Date, end: Date) {
 	const rebillers = db
 		.selectDistinct({ billedBy: orderCharges.billedBy })
@@ -38,6 +56,10 @@ export async function postageLines(db: Db, start: Date, end: Date) {
 				inArray(orderCharges.billedBy, rebillers),
 			),
 		);
+	const shippoShipped = db
+		.selectDistinct({ orderId: dispatchOrders.orderId })
+		.from(shipments)
+		.innerJoin(dispatchOrders, liveLabel);
 	return db
 		.select({
 			orderId: lp.orderId,
@@ -47,12 +69,7 @@ export async function postageLines(db: Db, start: Date, end: Date) {
 			placedAt: lp.placedAt,
 			// The order's whole re-bill, and this item's share of it and of the
 			// label, shared by sales as order_line_profit shares them.
-			orderAdjustment: sql<number>`(
-				select coalesce(sum(${orderCharges.amount}), 0)::float8
-				from ${orderCharges}
-				where ${orderCharges.orderId} = ${lp.orderId}
-					and ${orderCharges.kind} = 'postage_adjustment'
-			)`,
+			orderAdjustment: lp.orderPostageAdjustments,
 			adjustment: lp.postageAdjustments,
 			labels: lp.labels,
 			productId: lp.productId,
@@ -76,7 +93,7 @@ export async function postageLines(db: Db, start: Date, end: Date) {
 				gte(lp.placedAt, start),
 				lt(lp.placedAt, end),
 				eq(lp.shipped, true),
-				inArray(lp.orderId, labelled),
+				or(inArray(lp.orderId, labelled), inArray(lp.orderId, shippoShipped)),
 			),
 		);
 }
@@ -233,4 +250,114 @@ export function groupPostage(lines: PostageLine[]) {
 				.reduce((s, l) => s + l.adjustment, 0),
 		),
 	};
+}
+
+// Each Shippo label katasync bought for orders placed in the range, with its
+// box as declared and what was re-billed on it. A label for several orders
+// is one label.
+export async function postageBoxes(db: Db, start: Date, end: Date) {
+	const rebilled = db
+		.select({
+			shipmentId: shipmentAdjustments.shipmentId,
+			amount: sql<number>`sum(${shipmentAdjustments.amount})::float8`.as(
+				"amount",
+			),
+		})
+		.from(shipmentAdjustments)
+		.groupBy(shipmentAdjustments.shipmentId)
+		.as("rebilled");
+	return db
+		.selectDistinctOn([shipments.id], {
+			shipmentId: shipments.id,
+			orderId: orders.id,
+			orderName: orders.name,
+			storeChannel: stores.channel,
+			marketplaceOrderId: orders.marketplaceOrderId,
+			placedAt: orders.placedAt,
+			packageId: shipments.packageId,
+			packageName: packages.name,
+			lengthMm: shipments.lengthMm,
+			widthMm: shipments.widthMm,
+			heightMm: shipments.heightMm,
+			weightGrams: shipments.weightGrams,
+			serviceName: shipments.serviceName,
+			cost: shipments.cost,
+			rebilled: sql<number>`coalesce(${rebilled.amount}, 0)`,
+		})
+		.from(shipments)
+		.innerJoin(
+			dispatches,
+			and(
+				eq(dispatches.id, shipments.dispatchId),
+				sql`${dispatches.boughtAt} is not null`,
+			),
+		)
+		.innerJoin(dispatchOrders, liveLabel)
+		.innerJoin(
+			orders,
+			and(eq(orders.id, dispatchOrders.orderId), isNull(orders.cancelledAt)),
+		)
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.leftJoin(packages, eq(packages.id, shipments.packageId))
+		.leftJoin(rebilled, eq(rebilled.shipmentId, shipments.id))
+		.where(and(gte(orders.placedAt, start), lt(orders.placedAt, end)))
+		.orderBy(shipments.id, orders.id);
+}
+
+export type PostageBox = Awaited<ReturnType<typeof postageBoxes>>[number];
+
+export type BoxGroup = {
+	// Saved box, or the size typed in for that label alone.
+	key: string;
+	packageId: number | null;
+	name: string | null;
+	box: [number, number, number];
+	labels: number;
+	rebilled: (RebilledOrder & { weightGrams: number; serviceName: string })[];
+	amount: number;
+	cost: number;
+};
+
+// Labels by box, worst re-billed first, only boxes with a re-bill.
+export function groupBoxes(boxes: PostageBox[]): BoxGroup[] {
+	const groups = new Map<string, BoxGroup>();
+	for (const b of boxes) {
+		const box: [number, number, number] = [b.lengthMm, b.widthMm, b.heightMm];
+		const key =
+			b.packageId === null ? `size:${box.join("x")}` : `box:${b.packageId}`;
+		const g = groups.get(key) ?? {
+			key,
+			packageId: b.packageId,
+			name: b.packageName,
+			box,
+			labels: 0,
+			rebilled: [],
+			amount: 0,
+			cost: 0,
+		};
+		g.labels++;
+		if (b.rebilled !== 0) {
+			g.rebilled.push({
+				id: b.orderId,
+				name: b.orderName,
+				// Where it really sold: a relayed order is its marketplace's.
+				soldOn: (b.marketplaceOrderId?.split(":")[0] ??
+					b.storeChannel) as PostageLine["soldOn"],
+				marketplaceId: null,
+				placedAt: b.placedAt,
+				amount: b.rebilled,
+				labels: b.cost,
+				weightGrams: b.weightGrams,
+				serviceName: b.serviceName,
+			});
+			g.amount = cents(g.amount + b.rebilled);
+			g.cost = cents(g.cost + b.cost);
+		}
+		groups.set(key, g);
+	}
+	return [...groups.values()]
+		.filter((g) => g.rebilled.length > 0)
+		.sort(
+			(a, b) => b.amount - a.amount || b.rebilled.length - a.rebilled.length,
+		);
 }
