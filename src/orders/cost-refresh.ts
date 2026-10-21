@@ -192,19 +192,22 @@ function toDue(
 	};
 }
 
-// How far back each sweep looks. Passes run every four hours; the overlap
-// covers a few that fail.
+// Amazon's finances can show a posting up to 48 hours late, so a report
+// fetched within that of it may not have it yet; such an order is asked again
+// every 12 hours until a report comes after it. Each sweep looks back past
+// that, with room for a few failed passes.
+const SHOWS_UP_WITHIN_MS = 48 * HOUR;
+const UNSURE_EVERY_MS = 12 * HOUR;
 export const SWEEP_BACK_MS = 3 * 24 * HOUR;
-// A report fetched this soon after something posted may predate it showing
-// up, so it's asked again.
-const SHOWS_UP_WITHIN_MS = 2 * HOUR;
 
 // The orders with money posted after their report on file was fetched (or
-// with none on file), cancelled ones aside.
+// with none on file), or too soon after to be sure it's in, cancelled ones
+// aside.
 export async function postedOrders(
 	db: Db,
 	billedBy: Channel,
 	posted: { marketplaceId: string; postedAt: Date }[],
+	now: Date,
 ): Promise<DueOrder[]> {
 	const latest = new Map<string, number>();
 	for (const p of posted) {
@@ -248,9 +251,11 @@ export async function postedOrders(
 		.map((r) => ({ due: toDue(billedBy, r), fetchedAt: r.fetchedAt }))
 		.filter(({ due, fetchedAt }) => {
 			const postedAt = latest.get(due.marketplaceId);
+			if (postedAt === undefined) return false;
+			if (!fetchedAt || fetchedAt.getTime() < postedAt) return true;
 			return (
-				postedAt !== undefined &&
-				(!fetchedAt || fetchedAt.getTime() < postedAt + SHOWS_UP_WITHIN_MS)
+				fetchedAt.getTime() < postedAt + SHOWS_UP_WITHIN_MS &&
+				now.getTime() - fetchedAt.getTime() >= UNSURE_EVERY_MS
 			);
 		})
 		.map(({ due }) => due);
@@ -276,18 +281,37 @@ export async function refreshCosts(
 }
 
 // Asks again about every order the marketplace posted money on lately whose
-// report on file came before it, however old the order.
+// report on file came before it, however old the order. In batches, each
+// saved as it's done, until `until`: a backlog (the first sweep, an outage)
+// carries over to the next pass instead of running past the cron's limit.
 export async function sweepPosted(
 	db: Db,
 	billedBy: Channel,
 	fetchCharges: ChargeFetcher,
 	listPosted: PostedLister,
-	options: { now?: Date } = {},
+	options: { now?: Date; until?: number; limit?: number } = {},
 ) {
 	const now = options.now ?? new Date();
+	const limit = options.limit ?? PER_PASS;
 	const posted = await listPosted(new Date(now.getTime() - SWEEP_BACK_MS));
-	const due = await postedOrders(db, billedBy, posted);
-	return askAbout(db, billedBy, fetchCharges, due, now);
+	const due = await postedOrders(db, billedBy, posted, now);
+	const total = { checked: 0, reported: 0, problems: [] as string[] };
+	for (let i = 0; i < due.length; i += limit) {
+		const batch = await askAbout(
+			db,
+			billedBy,
+			fetchCharges,
+			due.slice(i, i + limit),
+			now,
+		);
+		total.checked += batch.checked;
+		total.reported += batch.reported;
+		total.problems.push(...batch.problems);
+		// Every order failing is likely an outage; more would fail the same.
+		const allFailed = batch.problems.length >= batch.checked;
+		if (allFailed || Date.now() >= (options.until ?? Infinity)) break;
+	}
+	return total;
 }
 
 async function askAbout(

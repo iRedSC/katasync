@@ -178,11 +178,13 @@ export async function costPassAlone(
 		const listPosted = postedListers[channel];
 		if (listPosted && !options.history) {
 			try {
+				// Half the pass at most, so the regular batches still get a turn.
 				const swept = await sweepPosted(
 					db,
 					channel,
 					chargeFetchers[channel],
 					listPosted,
+					{ until: Date.now() + (options.keepGoingForMs ?? 0) / 2 },
 				);
 				total.checked += swept.checked;
 				total.reported += swept.reported;

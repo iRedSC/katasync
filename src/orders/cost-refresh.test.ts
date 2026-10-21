@@ -230,12 +230,14 @@ describe("sweepPosted", () => {
 		// A re-bill posted on a sale 70 days old, past the regular passes.
 		const old = await amazonOrder("111-old", 70 * 24);
 		await report(old, ago(20 * 24));
-		// Its report came after what posted.
+		// Its report came after what posted, recently enough to wait.
 		const current = await amazonOrder("111-current", 20 * 24);
 		await report(current, ago(1));
-		// Asked within two hours of the posting, which may not have shown yet.
+		// Asked an hour after the posting, which may not have shown yet.
 		const close = await amazonOrder("111-close", 20 * 24);
 		await report(close, ago(23));
+		const settled = await amazonOrder("111-settled", 20 * 24);
+		await report(settled, ago(10));
 		const asked: string[] = [];
 		const result = await sweepPosted(
 			db,
@@ -256,6 +258,8 @@ describe("sweepPosted", () => {
 			async (since) => {
 				expect(since).toEqual(ago(3 * 24));
 				return [
+					// Its report came 60 hours after, past any lag.
+					{ marketplaceId: "111-settled", postedAt: ago(70) },
 					{ marketplaceId: "111-old", postedAt: ago(2 * 24) },
 					{ marketplaceId: "111-current", postedAt: ago(30) },
 					{ marketplaceId: "111-close", postedAt: ago(24) },
@@ -272,5 +276,24 @@ describe("sweepPosted", () => {
 			.from(schema.orderCharges)
 			.where(eq(schema.orderCharges.orderId, old));
 		expect(charges.map((c) => c.kind)).toEqual(["postage_adjustment"]);
+	});
+
+	test("a backlog goes in saved batches and stops at the deadline", async () => {
+		for (const name of ["111-a", "111-b", "111-c"])
+			await amazonOrder(name, 30 * 24);
+		const fetch = eachOrder(async () => ({ settled: false, charges: [] }));
+		const list = async () =>
+			["111-a", "111-b", "111-c"].map((marketplaceId) => ({
+				marketplaceId,
+				postedAt: ago(5),
+			}));
+		const first = await sweepPosted(db, "amazon", fetch, list, {
+			now,
+			limit: 2,
+			until: 0,
+		});
+		expect(first.checked).toBe(2);
+		const next = await sweepPosted(db, "amazon", fetch, list, { now });
+		expect(next.checked).toBe(1);
 	});
 });

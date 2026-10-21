@@ -164,6 +164,7 @@ export async function amazonTransactions(orderId: string) {
 	return listTransactions({
 		relatedIdentifierName: "ORDER_ID",
 		relatedIdentifierValue: orderId,
+		marketplaceId: MARKETPLACE_US,
 	});
 }
 
@@ -173,7 +174,6 @@ async function listTransactions(filter: Record<string, string>) {
 	do {
 		const query = new URLSearchParams({
 			...filter,
-			marketplaceId: MARKETPLACE_US,
 			...(nextToken ? { nextToken } : {}),
 		});
 		const { payload } = response.assert(
@@ -195,7 +195,8 @@ export const fetchAmazonCharges: ChargeFetcher = eachOrder(async (order) => {
 
 // The orders Amazon posted money on since a time: a label's re-bill, a
 // refund, a held-back shipment released. A day's postings fit in a page or
-// two.
+// two. No marketplace: Amazon documents that filter as leaving out orders we
+// ship ourselves. Another marketplace's orders just match none of ours.
 export const amazonPostedSince: PostedLister = async (since) => {
 	const posted = [];
 	for (const t of await listTransactions({
