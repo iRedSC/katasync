@@ -47,8 +47,8 @@ type Source = ChannelRow["source"];
 
 // Columns in a fixed order, so every report reads the same way.
 const SOURCES: [Source, string][] = [
-	["shopify", "Shopify online"],
-	["retail", "Retail store"],
+	["shopify", "Online Store"],
+	["retail", "Point of Sale"],
 	["shop", "Shop app"],
 	["amazon", "Amazon"],
 	["ebay", "eBay"],
@@ -132,12 +132,18 @@ function PrintReport() {
 								<Owed rows={d.jurisdictions} />
 							</Section>
 							<div className="grid grid-cols-2 gap-6">
-								<Section icon={ShieldCheck} title="Paid by marketplaces">
-									<PaidByMarketplaces rows={d.channels} />
-								</Section>
-								<Section icon={Banknote} title="Deposits to the bank">
-									<Deposits rows={d.deposits} />
-								</Section>
+								<SideBySide
+									left={{
+										icon: ShieldCheck,
+										title: "Paid by marketplaces",
+										table: paidByMarketplaces(d.channels),
+									}}
+									right={{
+										icon: Banknote,
+										title: "Deposits to the bank",
+										table: deposits(d.deposits),
+									}}
+								/>
 							</div>
 							<Section icon={MapPin} title="Your Shopify sales by state">
 								<States rows={d.states} home={home} />
@@ -236,15 +242,44 @@ function Totals({ channels }: { channels: ChannelRow[] }) {
 
 // A plain table: first column text, the rest right-aligned numbers, and a
 // bold total row under a rule.
+type TableProps = {
+	head: string[];
+	rows: { key: string; cells: ReactNode[] }[];
+	total?: ReactNode[];
+};
+
+// Lines a table takes below its heading.
+const lines = (t: TableProps) => t.rows.length + (t.total ? 1 : 0);
+
+// Two tables side by side, the shorter padded with blank lines above its
+// total so both end level.
+function SideBySide({
+	left,
+	right,
+}: {
+	left: { icon: typeof Store; title: string; table: TableProps | null };
+	right: { icon: typeof Store; title: string; table: TableProps | null };
+}) {
+	const tall = Math.max(
+		...[left.table, right.table].map((t) => (t ? lines(t) : 0)),
+	);
+	return [left, right].map((s) => (
+		<Section key={s.title} icon={s.icon} title={s.title}>
+			{s.table ? <Table {...s.table} height={tall} /> : <p>None.</p>}
+		</Section>
+	));
+}
+
 function Table({
 	head,
 	rows,
 	total,
-}: {
-	head: string[];
-	rows: { key: string; cells: ReactNode[] }[];
-	total?: ReactNode[];
-}) {
+	height = 0,
+}: TableProps & { height?: number }) {
+	const blanks = Array.from(
+		{ length: Math.max(0, height - lines({ head, rows, total })) },
+		(_, i) => `blank-${i}`,
+	);
 	const cell = (i: number) =>
 		cn(
 			"py-0.5",
@@ -272,6 +307,16 @@ function Table({
 								{c}
 							</td>
 						))}
+					</tr>
+				))}
+				{blanks.map((key) => (
+					<tr key={key}>
+						<td className={cell(0)} colSpan={head.length}>
+							{/* An unseen chip, so the line is exactly as tall as the others. */}
+							<span className="invisible" aria-hidden="true">
+								{CHIPS.amazon}
+							</span>
+						</td>
 					</tr>
 				))}
 				{total && (
@@ -357,8 +402,8 @@ function Owed({ rows }: { rows: Data["jurisdictions"] }) {
 // Every marketplace with tax, or whose tax isn't read yet: leaving that one
 // out would make the page look complete while its tax is missing. Tax on our
 // own Shopify sales that someone else paid is Managed Markets', on orders it
-// sold abroad for us.
-function PaidByMarketplaces({ rows }: { rows: ChannelRow[] }) {
+// sold abroad for us, so it reads as International.
+function paidByMarketplaces(rows: ChannelRow[]): TableProps | null {
 	const paid = SOURCES.flatMap(([s, name]) => {
 		const r = rows.find((x) => x.source === s);
 		if (!r) return [];
@@ -368,7 +413,7 @@ function PaidByMarketplaces({ rows }: { rows: ChannelRow[] }) {
 				key="who"
 				channel="shopify"
 				salesChannel="Online Store"
-				label="Managed Markets"
+				label="International"
 			/>
 		) : (
 			CHIPS[s]
@@ -384,34 +429,31 @@ function PaidByMarketplaces({ rows }: { rows: ChannelRow[] }) {
 				]
 			: [];
 	});
-	if (paid.length === 0) return <p>None.</p>;
+	if (paid.length === 0) return null;
 	const unread = paid.some((p) => p.unread > 0);
-	return (
-		<Table
-			head={["", "Tax"]}
-			rows={paid.map((p) => ({
-				key: p.name,
-				cells: [
-					p.chip,
-					p.unread === 0 ? (
-						formatMoney(p.tax)
-					) : (
-						<span key="tax" className="text-muted-foreground">
-							{p.tax === 0 ? "Not read yet" : `${formatMoney(p.tax)} so far`}
-						</span>
-					),
-				],
-			}))}
-			total={
-				paid.length > 1
-					? [
-							unread ? "Total so far" : "Total",
-							formatMoney(sum(paid, (p) => p.tax)),
-						]
-					: undefined
-			}
-		/>
-	);
+	return {
+		head: ["", "Tax"],
+		rows: paid.map((p) => ({
+			key: p.name,
+			cells: [
+				p.chip,
+				p.unread === 0 ? (
+					formatMoney(p.tax)
+				) : (
+					<span key="tax" className="text-muted-foreground">
+						{p.tax === 0 ? "Not read yet" : `${formatMoney(p.tax)} so far`}
+					</span>
+				),
+			],
+		})),
+		total:
+			paid.length > 1
+				? [
+						unread ? "Total so far" : "Total",
+						formatMoney(sum(paid, (p) => p.tax)),
+					]
+				: undefined,
+	};
 }
 
 // How a sale reached the buyer, as a chip.
@@ -526,8 +568,14 @@ function States({ rows, home }: { rows: Place[]; home: string | null }) {
 
 // Each marketplace's deposits in the month, counted and added up. Failed
 // ones never arrived and are left out; ones still on their way are counted.
-function Deposits({ rows }: { rows: Data["deposits"] }) {
-	if (rows.length === 0) return <p>None.</p>;
+// Who sent it: Shopify pays out for every Shopify channel at once.
+const depositorName = (channel: Data["deposits"][number]["channel"]) =>
+	channel === "shopify"
+		? "Shopify"
+		: (SOURCES.find(([s]) => s === channel)?.[1] ?? channel);
+
+function deposits(rows: Data["deposits"]): TableProps | null {
+	if (rows.length === 0) return null;
 	const arrived = rows.filter((r) => r.status !== "failed");
 	const channels = [...new Set(arrived.map((r) => r.channel))];
 	const line = (channel: (typeof channels)[number]) => {
@@ -535,25 +583,27 @@ function Deposits({ rows }: { rows: Data["deposits"] }) {
 		return {
 			key: channel,
 			cells: [
-				CHIPS[channel],
+				<ChannelBadge
+					key="from"
+					channel={channel}
+					salesChannel={null}
+					label={depositorName(channel)}
+				/>,
 				formatCount(mine.length),
 				formatMoney(sum(mine, (r) => r.amount)),
 			],
 		};
 	};
-	return (
-		<Table
-			head={["", "Deposits", "Amount"]}
-			rows={channels.map(line)}
-			total={
-				channels.length > 1
-					? [
-							"Total",
-							formatCount(arrived.length),
-							formatMoney(sum(arrived, (r) => r.amount)),
-						]
-					: undefined
-			}
-		/>
-	);
+	return {
+		head: ["", "Deposits", "Amount"],
+		rows: channels.map(line),
+		total:
+			channels.length > 1
+				? [
+						"Total",
+						formatCount(arrived.length),
+						formatMoney(sum(arrived, (r) => r.amount)),
+					]
+				: undefined,
+	};
 }

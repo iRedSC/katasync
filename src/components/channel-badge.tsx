@@ -101,7 +101,7 @@ export function ChannelBadge({
 }: {
 	channel: string;
 	salesChannel: string | null;
-	// Wording in place of the channel's own, e.g. "Retail store".
+	// Wording in place of the channel's own, e.g. "Shop app".
 	label?: string;
 	compact?: boolean;
 }) {
