@@ -23,8 +23,19 @@ describe("shopifyTax", () => {
 	const online = {
 		sourceName: "web",
 		app: null,
+		merchantOfRecordApp: null,
 		channelInformation: { channelDefinition: { channelName: "Online Store" } },
 	};
+
+	it("is the merchant of record's on orders it sold for us abroad", () => {
+		const tax = shopifyTax({
+			...online,
+			merchantOfRecordApp: { name: "Managed Markets" },
+			tags: [],
+			currentTaxLines: [{ title: "Tax", rate: 0.23, priceSet: money(8.59) }],
+		});
+		expect(tax.remittedBy).toBe("marketplace");
+	});
 
 	it("is Shopify's to pay on Shop app orders", () => {
 		const tax = shopifyTax({

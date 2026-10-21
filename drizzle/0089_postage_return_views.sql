@@ -1,4 +1,4 @@
--- The returns views 0087 dropped to change charge_kind, back exactly as they
+-- The returns views 0088 dropped to change charge_kind, back exactly as they
 -- were: order_returns_due as in 0082, order_line_returns as in 0065,
 -- product_return_rates as in 0067. Pending migrations run in one
 -- transaction, so they're never missing in between.

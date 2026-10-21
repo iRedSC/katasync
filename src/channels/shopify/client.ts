@@ -81,3 +81,32 @@ export const userErrors = type({
 	field: "string[] | null",
 	message: "string",
 }).array();
+
+// Calls the Admin REST API, for the few things GraphQL can't reach with the
+// app's scopes (Shopify Payments payouts need account access there, but only
+// read_shopify_payments_payouts here). Follows the Link header's next page.
+export async function shopifyRest(
+	path: string,
+): Promise<{ body: unknown; next: string | null }> {
+	const { domain, token } = credentials();
+	const url = path.startsWith("https://")
+		? path
+		: `https://${domain}/admin/api/${API_VERSION}/${path}`;
+	for (let attempt = 1; ; attempt++) {
+		const response = await fetch(url, {
+			headers: { "X-Shopify-Access-Token": token },
+		});
+		if (response.status === 429 && attempt < 6) {
+			const wait = Number(response.headers.get("retry-after") ?? "2");
+			await new Promise((done) => setTimeout(done, wait * 1000));
+			continue;
+		}
+		if (!response.ok)
+			throw new Error(
+				`Shopify answered ${response.status}: ${await response.text()}`,
+			);
+		const link = response.headers.get("link") ?? "";
+		const next = /<([^>]+)>;\s*rel="next"/.exec(link)?.[1] ?? null;
+		return { body: await response.json(), next };
+	}
+}

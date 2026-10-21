@@ -8,7 +8,7 @@
 -- charge_kind is made anew instead, whose values can be. Changing the
 -- column's type means dropping every view that reads it, and those built on
 -- them. All but order_profit and order_line_profit come back exactly as they
--- were: order_line_costs here as in 0086, the returns views in 0088.
+-- were: order_line_costs here as in 0086, the returns views in 0089.
 DROP VIEW "product_return_rates";
 --> statement-breakpoint
 DROP VIEW "order_line_returns";

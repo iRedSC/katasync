@@ -8,6 +8,9 @@ export const orderNode = type({
 	sourceName: "string | null",
 	tags: "string[]",
 	app: type({ name: "string" }).or("null"),
+	// Who sold it in law, when not us: "Managed Markets" (Global-e) on
+	// orders to other countries.
+	merchantOfRecordApp: type({ name: "string" }).or("null"),
 	channelInformation: type({
 		channelDefinition: type({ channelName: "string" }).or("null"),
 	}).or("null"),
@@ -58,6 +61,7 @@ export const ordersPage = type({
 export const ORDER_FIELDS = `
 	id name createdAt updatedAt cancelledAt sourceName tags
 	app { name }
+	merchantOfRecordApp { name }
 	channelInformation { channelDefinition { channelName } }
 	displayFulfillmentStatus displayFinancialStatus
 	totalPriceSet { shopMoney { amount } }

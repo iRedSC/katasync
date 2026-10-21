@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
+	Banknote,
 	Globe,
 	Hand,
 	Landmark,
@@ -8,7 +9,7 @@ import {
 	Store,
 	Truck,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { formatCount, formatMoney } from "#/lib/format";
 import { placeName, taxName } from "#/lib/places";
@@ -103,43 +104,81 @@ function PrintReport() {
 				</button>
 			</div>
 
-			<article className="mx-auto flex max-w-[8.5in] flex-col gap-5 bg-white p-[0.6in] text-[10pt] text-black shadow-card print:max-w-none print:p-0 print:shadow-none">
-				<header className="flex items-end justify-between gap-6 border-b-2 border-black pb-2">
-					<div>
-						<p className="font-semibold">{d.business.name}</p>
-						<h1 className="text-[17pt] leading-tight font-bold">
-							Sales and Sales Tax, {periodName(period)}
-						</h1>
-					</div>
-					<p className="shrink-0 text-right text-[9pt]">
-						{periodDays(period)}
-						<br />
-						By order date
-					</p>
-				</header>
+			<article className="mx-auto max-w-[8.5in] bg-white p-[0.6in] text-[10pt] text-black shadow-card print:max-w-none print:p-0 print:shadow-none">
+				<OnePage>
+					<header className="flex items-end justify-between gap-6 border-b-2 border-black pb-2">
+						<div>
+							<p className="font-semibold">{d.business.name}</p>
+							<h1 className="text-[17pt] leading-tight font-bold">
+								Sales and Sales Tax, {periodName(period)}
+							</h1>
+						</div>
+						<p className="shrink-0 text-right text-[9pt]">
+							{periodDays(period)}
+							<br />
+							By order date
+						</p>
+					</header>
 
-				{d.channels.length === 0 ? (
-					<p>katasync has no orders in this month.</p>
-				) : (
-					<>
-						<Totals channels={d.channels} />
-						<Section icon={Store} title="Sales by channel">
-							<Channels rows={d.channels} />
-						</Section>
-						<div className="grid grid-cols-[3fr_2fr] gap-6">
+					{d.channels.length === 0 ? (
+						<p>katasync has no orders in this month.</p>
+					) : (
+						<>
+							<Totals channels={d.channels} />
+							<Section icon={Store} title="Sales by channel">
+								<Channels rows={d.channels} />
+							</Section>
 							<Section icon={Landmark} title="Sales tax you owe">
 								<Owed rows={d.jurisdictions} />
 							</Section>
-							<Section icon={ShieldCheck} title="Paid by marketplaces">
-								<PaidByMarketplaces rows={d.channels} />
+							<div className="grid grid-cols-2 gap-6">
+								<Section icon={ShieldCheck} title="Paid by marketplaces">
+									<PaidByMarketplaces rows={d.channels} />
+								</Section>
+								<Section icon={Banknote} title="Deposits to the bank">
+									<Deposits rows={d.deposits} />
+								</Section>
+							</div>
+							<Section icon={MapPin} title="Your Shopify sales by state">
+								<States rows={d.states} home={home} />
 							</Section>
-						</div>
-						<Section icon={MapPin} title="Your Shopify sales by state">
-							<States rows={d.states} home={home} />
-						</Section>
-					</>
-				)}
+						</>
+					)}
+				</OnePage>
 			</article>
+		</div>
+	);
+}
+
+// What fits inside the page's margins: letter is 11in tall, less 0.6in top
+// and bottom, with a little to spare so rounding never spills a line over.
+const PAGE_HEIGHT_PX = (11 - 1.2) * 96 * 0.97;
+
+// Lays the report out, then scales it down just enough to fit one page if a
+// busy month (many jurisdictions, many states taxed) runs over. The screen
+// shows exactly what prints.
+function OnePage({ children }: { children: ReactNode }) {
+	const ref = useRef<HTMLDivElement>(null);
+	const [zoom, setZoom] = useState(1);
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!el) return;
+		// Fonts and photos arriving later change the height, so keep measuring.
+		// offsetHeight is the layout height, before the zoom set here.
+		const rescale = () =>
+			setZoom(
+				el.offsetHeight > PAGE_HEIGHT_PX ? PAGE_HEIGHT_PX / el.offsetHeight : 1,
+			);
+		rescale();
+		const watch = new ResizeObserver(rescale);
+		watch.observe(el);
+		return () => watch.disconnect();
+	}, []);
+	return (
+		<div className="origin-top" style={{ zoom }}>
+			<div ref={ref} className="flex flex-col gap-5">
+				{children}
+			</div>
 		</div>
 	);
 }
@@ -315,24 +354,60 @@ function Owed({ rows }: { rows: Data["jurisdictions"] }) {
 	);
 }
 
+// Every marketplace with tax, or whose tax isn't read yet: leaving that one
+// out would make the page look complete while its tax is missing. Tax on our
+// own Shopify sales that someone else paid is Managed Markets', on orders it
+// sold abroad for us.
 function PaidByMarketplaces({ rows }: { rows: ChannelRow[] }) {
 	const paid = SOURCES.flatMap(([s, name]) => {
 		const r = rows.find((x) => x.source === s);
-		return r && r.marketplaceTax !== 0
-			? [{ s, name, tax: r.marketplaceTax }]
+		if (!r) return [];
+		const ours = s === "shopify" || s === "retail";
+		const chip = ours ? (
+			<ChannelBadge
+				key="who"
+				channel="shopify"
+				salesChannel="Online Store"
+				label="Managed Markets"
+			/>
+		) : (
+			CHIPS[s]
+		);
+		return r.marketplaceTax !== 0 || (!ours && r.taxUnknown > 0)
+			? [
+					{
+						chip,
+						name,
+						tax: r.marketplaceTax,
+						unread: ours ? 0 : r.taxUnknown,
+					},
+				]
 			: [];
 	});
 	if (paid.length === 0) return <p>None.</p>;
+	const unread = paid.some((p) => p.unread > 0);
 	return (
 		<Table
 			head={["", "Tax"]}
 			rows={paid.map((p) => ({
 				key: p.name,
-				cells: [CHIPS[p.s], formatMoney(p.tax)],
+				cells: [
+					p.chip,
+					p.unread === 0 ? (
+						formatMoney(p.tax)
+					) : (
+						<span key="tax" className="text-muted-foreground">
+							{p.tax === 0 ? "Not read yet" : `${formatMoney(p.tax)} so far`}
+						</span>
+					),
+				],
 			}))}
 			total={
 				paid.length > 1
-					? ["Total", formatMoney(sum(paid, (p) => p.tax))]
+					? [
+							unread ? "Total so far" : "Total",
+							formatMoney(sum(paid, (p) => p.tax)),
+						]
 					: undefined
 			}
 		/>
@@ -445,6 +520,40 @@ function States({ rows, home }: { rows: Place[]; home: string | null }) {
 				formatMoney(sum(rows, (r) => r.sales)),
 				formatMoney(sum(rows, (r) => r.tax)),
 			]}
+		/>
+	);
+}
+
+// Each marketplace's deposits in the month, counted and added up. Failed
+// ones never arrived and are left out; ones still on their way are counted.
+function Deposits({ rows }: { rows: Data["deposits"] }) {
+	if (rows.length === 0) return <p>None.</p>;
+	const arrived = rows.filter((r) => r.status !== "failed");
+	const channels = [...new Set(arrived.map((r) => r.channel))];
+	const line = (channel: (typeof channels)[number]) => {
+		const mine = arrived.filter((r) => r.channel === channel);
+		return {
+			key: channel,
+			cells: [
+				CHIPS[channel],
+				formatCount(mine.length),
+				formatMoney(sum(mine, (r) => r.amount)),
+			],
+		};
+	};
+	return (
+		<Table
+			head={["", "Deposits", "Amount"]}
+			rows={channels.map(line)}
+			total={
+				channels.length > 1
+					? [
+							"Total",
+							formatCount(arrived.length),
+							formatMoney(sum(arrived, (r) => r.amount)),
+						]
+					: undefined
+			}
 		/>
 	);
 }

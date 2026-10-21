@@ -131,6 +131,14 @@ function Reports() {
 							{unknown === 1 ? "order" : "orders"}
 						</p>
 					)}
+					{d.payoutErrors.map((e) => (
+						<p
+							key={e.channel}
+							className="rounded-lg bg-warning-surface px-3 py-2 font-medium text-warning-text"
+						>
+							{payoutProblem(e)}
+						</p>
+					))}
 					{d.taxedElsewhere.map((s) => (
 						<p
 							key={`${s.country}|${s.state}|${s.how}`}
@@ -150,6 +158,7 @@ function Reports() {
 							.reduce((n, c) => n + c.taxUnknown, 0)}
 					/>
 					<States rows={d.states} period={period} />
+					<Deposits rows={d.deposits} period={period} />
 				</>
 			)}
 		</Page>
@@ -475,6 +484,102 @@ function States({ rows, period }: { rows: Data["states"]; period: Period }) {
 			]}
 			rows={rows}
 			keyOf={(r) => `${r.country}|${r.state}|${r.how}`}
+		/>
+	);
+}
+
+// Why a marketplace's deposits are missing, in a line.
+function payoutProblem(e: Data["payoutErrors"][number]) {
+	const name = channelName(e.channel);
+	if (/access denied|scope/i.test(e.error))
+		return e.channel === "shopify"
+			? "Shopify deposits need the app's read_shopify_payments_payouts permission"
+			: `${name} deposits need a permission katasync doesn't have`;
+	return `${name} deposits couldn't be read: ${e.error}`;
+}
+
+const STATUS: Record<Data["deposits"][number]["status"], string> = {
+	sent: "Sent",
+	pending: "On its way",
+	failed: "Failed",
+};
+
+// What reached the bank in the month, deposit by deposit, with the reference
+// the bank statement shows. Failed deposits never arrived, so the total
+// leaves them out.
+type Deposit = Data["deposits"][number];
+type DepositLine = Deposit | { total: number };
+
+function Deposits({ rows, period }: { rows: Deposit[]; period: Period }) {
+	if (rows.length === 0) return null;
+	const of =
+		<T,>(f: (r: Deposit) => T, otherwise: T) =>
+		(l: DepositLine) =>
+			"total" in l ? otherwise : f(l);
+	const day = (r: Deposit) =>
+		r.depositedAt.toLocaleDateString("en-US", {
+			month: "short",
+			day: "numeric",
+			timeZone: "America/New_York",
+		});
+	return (
+		<Table<DepositLine>
+			title="Deposits"
+			file={`deposits-${periodText(period)}`}
+			columns={[
+				{
+					label: "Date",
+					cell: of(day, "Total"),
+					csv: of((r) => r.depositedAt.toISOString().slice(0, 10), "Total"),
+				},
+				{
+					label: "From",
+					cell: of(
+						(r) => <ChannelBadge channel={r.channel} salesChannel={null} />,
+						null,
+					),
+					csv: of((r) => channelName(r.channel), null),
+				},
+				{
+					label: "Status",
+					cell: of(
+						(r) => (
+							<span
+								className={cn(
+									r.status === "pending" && "text-warning-text",
+									r.status === "failed" && "text-critical-text",
+								)}
+							>
+								{STATUS[r.status]}
+							</span>
+						),
+						null,
+					),
+					csv: of((r) => STATUS[r.status], null),
+				},
+				{
+					label: "Account",
+					cell: of((r) => (r.bankTail ? `••${r.bankTail}` : ""), null),
+					csv: of((r) => r.bankTail, null),
+				},
+				{
+					label: "Reference",
+					cell: of((r) => r.reference ?? "", null),
+					csv: of((r) => r.reference, null),
+				},
+				money("Amount", (l) => ("total" in l ? l.total : l.amount)),
+			]}
+			rows={rows}
+			total={{
+				total: rows.reduce(
+					(n, r) => n + (r.status === "failed" ? 0 : r.amount),
+					0,
+				),
+			}}
+			keyOf={of(
+				(r) => `${r.channel}|${r.depositedAt.toISOString()}|${r.amount}`,
+				"total",
+			)}
 		/>
 	);
 }
