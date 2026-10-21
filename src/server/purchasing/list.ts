@@ -8,7 +8,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { discountOf, lineCents } from "#/purchasing/discount";
-import { unfiledForList } from "#/purchasing/inbox/unfiled";
+import { countUnfiled } from "#/purchasing/inbox/ingest";
 import { receivedByLine } from "#/purchasing/load";
 import { readyToOrder, suggestPurchases } from "#/purchasing/reorder";
 
@@ -17,7 +17,7 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
 		const received = receivedByLine(db);
-		const [suggestions, orders, supplierNames, inbox] = await Promise.all([
+		const [suggestions, orders, supplierNames, unfiled] = await Promise.all([
 			suggestPurchases(db),
 			db
 				.select({
@@ -52,7 +52,7 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 				.select({ id: suppliers.id, name: suppliers.name })
 				.from(suppliers)
 				.orderBy(suppliers.name),
-			unfiledForList(db),
+			countUnfiled(db),
 		]);
 		// Totals above are before discounts; take those off line by line.
 		const off = await discountsOff(
@@ -74,7 +74,7 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 			done,
 			suppliers: supplierNames,
 			// Supplier emails waiting to be put on a PO.
-			inbox,
+			emailsToFile: unfiled.toFile,
 		};
 	},
 );

@@ -15,7 +15,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { cancelWithUndo } from "#/components/po-cancel";
-import { PurchasingInbox } from "#/components/purchasing-inbox";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import {
@@ -84,7 +83,7 @@ async function whileWorking<T>(message: string, work: Promise<T>): Promise<T> {
 
 function Purchasing() {
 	const loaded = Route.useLoaderData();
-	const { ready, open, incoming, done, suppliers, inbox } =
+	const { ready, open, incoming, done, suppliers, emailsToFile } =
 		purchasingData.useData("all", loaded);
 	const nothing =
 		ready.length === 0 &&
@@ -100,11 +99,21 @@ function Purchasing() {
 					<Button asChild variant="outline" size="sm">
 						<Link to="/purchasing/suppliers">Suppliers</Link>
 					</Button>
+					<Button asChild variant="outline" size="sm">
+						<Link to="/purchasing/emails">
+							<Mail />
+							Emails
+							{emailsToFile > 0 && (
+								<span className="rounded-md bg-surface-strong px-1.5 text-xs tabular-nums">
+									{emailsToFile}
+								</span>
+							)}
+						</Link>
+					</Button>
 					<NewPurchaseOrder suppliers={suppliers} />
 				</>
 			}
 		>
-			<PurchasingInbox inbox={inbox} />
 			{nothing ? (
 				<Card>
 					<EmptyState icon={ClipboardList} title="Nothing to reorder">

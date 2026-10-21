@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	poEmailAttachments,
@@ -382,6 +382,44 @@ export async function unfiledEmails(
 		.orderBy(desc(poEmails.receivedAt))
 		.limit(options.limit ?? 100);
 	return withAttachments(db, rows);
+}
+
+// Which emails the inbox page lists: waiting to be filed, set aside as about
+// no PO, or already on a PO.
+export type InboxView = "to-file" | "set-aside" | "filed";
+
+// One of the inbox page's lists, newest first, each email with the supplier
+// of the PO it's on.
+export async function inboxEmails(db: Db, view: InboxView, limit = 100) {
+	const rows = await db
+		.select({ ...summary, body: poEmails.body, poSupplier: suppliers.name })
+		.from(poEmails)
+		.leftJoin(purchaseOrders, eq(purchaseOrders.id, poEmails.purchaseOrderId))
+		.leftJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
+		.where(
+			view === "filed"
+				? isNotNull(poEmails.purchaseOrderId)
+				: and(
+						isNull(poEmails.purchaseOrderId),
+						view === "set-aside"
+							? isNotNull(poEmails.setAsideAt)
+							: isNull(poEmails.setAsideAt),
+					),
+		)
+		.orderBy(desc(poEmails.receivedAt))
+		.limit(limit);
+	return withAttachments(db, rows);
+}
+
+export async function countUnfiled(db: Db) {
+	const [row] = await db
+		.select({
+			toFile: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is null)::int`,
+			setAside: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is not null)::int`,
+		})
+		.from(poEmails)
+		.where(isNull(poEmails.purchaseOrderId));
+	return row;
 }
 
 export async function emailWithFiles(db: Db, id: number) {

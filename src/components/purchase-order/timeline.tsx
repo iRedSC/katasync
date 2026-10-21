@@ -7,6 +7,7 @@ import {
 	undoPurchaseReceipt,
 } from "#/server/purchasing";
 import { EmailEntry } from "./email-entry";
+import { LinkEmail } from "./link-email";
 import { poData } from "./po-data";
 import { useAction } from "./use-action";
 
@@ -187,7 +188,10 @@ export function Timeline({ detail: d }: { detail: PurchaseOrderDetail }) {
 
 	return (
 		<section>
-			<h2 className="px-1 pb-2 text-sm font-semibold">Timeline</h2>
+			<div className="flex items-center justify-between px-1 pb-2">
+				<h2 className="text-sm font-semibold">Timeline</h2>
+				<LinkEmail purchaseOrderId={po.id} />
+			</div>
 			<ol className="relative ml-3 border-l-2 border-border pb-1">
 				{days.map((g) => (
 					<li key={g.day}>
