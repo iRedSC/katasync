@@ -52,20 +52,8 @@ export const Route = createFileRoute("/reports")({
 type Data = Awaited<ReturnType<typeof getSalesReport>>;
 
 const SOURCES: Record<ChannelRow["source"], ReactNode> = {
-	shopify: (
-		<ChannelBadge
-			channel="shopify"
-			salesChannel="Online Store"
-			label="Shopify online"
-		/>
-	),
-	retail: (
-		<ChannelBadge
-			channel="shopify"
-			salesChannel="Point of Sale"
-			label="Retail store"
-		/>
-	),
+	shopify: <ChannelBadge channel="shopify" salesChannel="Online Store" />,
+	retail: <ChannelBadge channel="shopify" salesChannel="Point of Sale" />,
 	shop: <ChannelBadge channel="shopify" salesChannel="Shop" label="Shop app" />,
 	amazon: <ChannelBadge channel="amazon" salesChannel={null} />,
 	ebay: <ChannelBadge channel="ebay" salesChannel={null} />,
@@ -73,11 +61,11 @@ const SOURCES: Record<ChannelRow["source"], ReactNode> = {
 };
 const sourceName = (s: ChannelRow["source"]) =>
 	s === "retail"
-		? "Retail store"
+		? "Point of Sale"
 		: s === "shop"
 			? "Shop app"
 			: s === "shopify"
-				? "Shopify online"
+				? "Online Store"
 				: channelName(s);
 
 function Reports() {
