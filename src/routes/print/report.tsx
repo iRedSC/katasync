@@ -355,13 +355,33 @@ function Owed({ rows }: { rows: Data["jurisdictions"] }) {
 }
 
 // Every marketplace with tax, or whose tax isn't read yet: leaving that one
-// out would make the page look complete while its tax is missing.
+// out would make the page look complete while its tax is missing. Tax on our
+// own Shopify sales that someone else paid is Managed Markets', on orders it
+// sold abroad for us.
 function PaidByMarketplaces({ rows }: { rows: ChannelRow[] }) {
 	const paid = SOURCES.flatMap(([s, name]) => {
 		const r = rows.find((x) => x.source === s);
-		if (!r || s === "shopify" || s === "retail") return [];
-		return r.marketplaceTax !== 0 || r.taxUnknown > 0
-			? [{ s, name, tax: r.marketplaceTax, unread: r.taxUnknown }]
+		if (!r) return [];
+		const ours = s === "shopify" || s === "retail";
+		const chip = ours ? (
+			<ChannelBadge
+				key="who"
+				channel="shopify"
+				salesChannel="Online Store"
+				label="Managed Markets"
+			/>
+		) : (
+			CHIPS[s]
+		);
+		return r.marketplaceTax !== 0 || (!ours && r.taxUnknown > 0)
+			? [
+					{
+						chip,
+						name,
+						tax: r.marketplaceTax,
+						unread: ours ? 0 : r.taxUnknown,
+					},
+				]
 			: [];
 	});
 	if (paid.length === 0) return <p>None.</p>;
@@ -372,7 +392,7 @@ function PaidByMarketplaces({ rows }: { rows: ChannelRow[] }) {
 			rows={paid.map((p) => ({
 				key: p.name,
 				cells: [
-					CHIPS[p.s],
+					p.chip,
 					p.unread === 0 ? (
 						formatMoney(p.tax)
 					) : (

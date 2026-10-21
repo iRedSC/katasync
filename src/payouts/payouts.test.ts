@@ -103,20 +103,23 @@ describe("tiktokPayout", () => {
 describe("shopifyToPayout", () => {
 	const payout = (status: string) =>
 		shopifyPayout.assert({
-			id: "gid://shopify/ShopifyPaymentsPayout/1",
-			issuedAt: "2026-10-01T00:00:00Z",
+			id: 123,
 			status,
-			net: { amount: "120.50", currencyCode: "USD" },
+			date: "2026-10-01",
+			amount: "120.50",
+			currency: "USD",
 		});
 
-	it("reads a paid payout", () => {
-		expect(shopifyToPayout(payout("PAID"))).toMatchObject({
+	it("reads a paid payout on its own day", () => {
+		expect(shopifyToPayout(payout("paid"))).toMatchObject({
+			externalId: "123",
 			status: "sent",
 			amount: 120.5,
+			depositedAt: new Date("2026-10-01T12:00:00Z"),
 		});
 	});
 
 	it("leaves out a cancelled one: it never went", () => {
-		expect(shopifyToPayout(payout("CANCELED"))).toBeNull();
+		expect(shopifyToPayout(payout("canceled"))).toBeNull();
 	});
 });

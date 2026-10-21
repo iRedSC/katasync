@@ -1,51 +1,38 @@
 import { type } from "arktype";
-import { shopifyQuery } from "#/channels/shopify/client";
+import { shopifyRest } from "#/channels/shopify/client";
 import type { FetchedPayout } from "./types";
 
-// Shopify Payments payouts. Reading them needs the app's
-// read_shopify_payments_payouts scope; without it Shopify refuses and the
-// Reports tab says so.
+// Shopify Payments payouts, from the REST API: GraphQL only reaches them
+// through the payments account, which needs more access than the app's
+// read_shopify_payments_payouts scope.
 
 export const shopifyPayout = type({
-	id: "string",
-	issuedAt: "string.date.iso.parse",
+	id: "number",
 	status: "string",
-	net: { amount: "string.numeric.parse", currencyCode: "string" },
+	date: "string",
+	amount: "string.numeric.parse",
+	currency: "string",
 });
-const page = type({
-	shopifyPaymentsAccount: type({
-		payouts: {
-			pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
-			nodes: shopifyPayout.array(),
-		},
-	}).or("null"),
-});
+const page = type({ payouts: shopifyPayout.array() });
 
-const QUERY = `query Payouts($cursor: String, $query: String) {
-	shopifyPaymentsAccount {
-		payouts(first: 100, after: $cursor, query: $query) {
-			pageInfo { hasNextPage endCursor }
-			nodes { id issuedAt status net { amount currencyCode } }
-		}
-	}
-}`;
-
-// SCHEDULED and IN_TRANSIT are on their way; CANCELED never went.
+// scheduled and in_transit are on their way; canceled never went.
 export function shopifyToPayout(
 	p: typeof shopifyPayout.infer,
 ): FetchedPayout | null {
-	if (p.status === "CANCELED") return null;
+	if (p.status === "canceled") return null;
 	return {
-		externalId: p.id,
+		externalId: String(p.id),
 		status:
-			p.status === "PAID"
+			p.status === "paid"
 				? "sent"
-				: p.status === "FAILED"
+				: p.status === "failed"
 					? "failed"
 					: "pending",
-		depositedAt: p.issuedAt,
-		amount: p.net.amount,
-		currency: p.net.currencyCode,
+		// The day it's sent, as Shopify dates it: noon, so no time zone moves it
+		// to the day before.
+		depositedAt: new Date(`${p.date}T12:00:00Z`),
+		amount: p.amount,
+		currency: p.currency,
 		bankTail: null,
 		reference: null,
 	};
@@ -53,21 +40,16 @@ export function shopifyToPayout(
 
 export async function fetchShopifyPayouts(since: Date) {
 	const found: FetchedPayout[] = [];
-	let cursor: string | null | undefined = null;
-	do {
-		const data = page.assert(
-			await shopifyQuery(QUERY, {
-				cursor,
-				query: `issued_at:>=${since.toISOString().slice(0, 10)}`,
-			}),
-		);
-		const payouts = data.shopifyPaymentsAccount?.payouts;
-		if (!payouts) return found;
-		for (const p of payouts.nodes) {
+	let path: string | null =
+		`shopify_payments/payouts.json?limit=250&date_min=${since.toISOString().slice(0, 10)}`;
+	while (path) {
+		const { body, next }: { body: unknown; next: string | null } =
+			await shopifyRest(path);
+		for (const p of page.assert(body).payouts) {
 			const payout = shopifyToPayout(p);
 			if (payout) found.push(payout);
 		}
-		cursor = payouts.pageInfo.hasNextPage ? payouts.pageInfo.endCursor : null;
-	} while (cursor);
+		path = next;
+	}
 	return found;
 }

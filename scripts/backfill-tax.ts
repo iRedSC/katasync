@@ -8,6 +8,8 @@
 //   pnpm tax:backfill            # how many orders, per channel
 //   pnpm tax:backfill --write
 //   pnpm tax:backfill --write --channel ebay   # one marketplace only
+//   pnpm tax:backfill --write --channel shopify --reread
+//                        # read orders again too, after a rule changes
 import { type } from "arktype";
 import { and, eq, isNull } from "drizzle-orm";
 import { amazonTax, orderItems } from "#/channels/amazon";
@@ -33,6 +35,7 @@ try {
 
 const write = process.argv.includes("--write");
 const only = process.argv[process.argv.indexOf("--channel") + 1];
+const reread = process.argv.includes("--reread");
 const db = getDb();
 type Channel = (typeof stores.$inferSelect)["channel"];
 
@@ -51,11 +54,12 @@ const readers: Record<
 					"channelInformation",
 					"app",
 					"sourceName",
+					"merchantOfRecordApp",
 				)).or("null").array(),
 		}).assert(
 			await shopifyQuery(
 				`query($ids: [ID!]!) { nodes(ids: $ids) { ... on Order {
-					id tags sourceName app { name }
+					id tags sourceName app { name } merchantOfRecordApp { name }
 					channelInformation { channelDefinition { channelName } }
 					currentTaxLines { title rate priceSet { shopMoney { amount } } }
 				} } }`,
@@ -110,7 +114,7 @@ const missing = await db
 	.innerJoin(stores, eq(stores.id, orders.storeId))
 	.where(
 		and(
-			isNull(orders.taxRemittedBy),
+			reread ? undefined : isNull(orders.taxRemittedBy),
 			process.argv.includes("--channel")
 				? eq(stores.channel, only as Channel)
 				: undefined,
@@ -122,7 +126,7 @@ const byChannel = new Map<Channel, typeof missing>();
 for (const o of missing)
 	byChannel.set(o.channel, [...(byChannel.get(o.channel) ?? []), o]);
 for (const [channel, rows] of byChannel)
-	console.log(`${channel}: ${rows.length} orders without tax`);
+	console.log(`${channel}: ${rows.length} orders ${reread ? "to read again" : "without tax"}`);
 if (!write) {
 	if (missing.length > 0) console.log("Run with --write to read their tax.");
 	process.exit(0);
@@ -145,7 +149,12 @@ for (const [channel, rows] of byChannel) {
 				const [still] = await tx
 					.select({ id: orders.id })
 					.from(orders)
-					.where(and(eq(orders.id, row.id), isNull(orders.taxRemittedBy)))
+					.where(
+						and(
+							eq(orders.id, row.id),
+							reread ? undefined : isNull(orders.taxRemittedBy),
+						),
+					)
 					.for("update");
 				if (still) await saveTax(tx, row.id, tax);
 			});

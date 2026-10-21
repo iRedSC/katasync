@@ -38,14 +38,20 @@ export const SHOP_APP = "Shop";
 
 // Tax on our own Shopify sales, online and in the store, is ours to pay, by
 // the jurisdictions Shopify charged it for. Shop app orders are Shopify's to
-// pay. An order Shopify relays from a marketplace (TikTok) was taxed by that
+// pay, and so is any order another merchant of record sold for us: Managed
+// Markets (Global-e) sells to other countries and pays their VAT and GST. An order Shopify relays from a marketplace (TikTok) was taxed by that
 // marketplace, which pays it. Its tax comes titled per product ("Product
 // Sales tax: <title>"), so it's named the way TikTok's own orders are
 // instead, and adds up the same way.
 export function shopifyTax(
 	o: Pick<
 		ShopifyOrder,
-		"tags" | "currentTaxLines" | "channelInformation" | "app" | "sourceName"
+		| "tags"
+		| "currentTaxLines"
+		| "channelInformation"
+		| "app"
+		| "sourceName"
+		| "merchantOfRecordApp"
 	>,
 ): OrderTax {
 	if (tiktokOrderId(o.tags))
@@ -60,7 +66,10 @@ export function shopifyTax(
 			})),
 		};
 	return {
-		remittedBy: shopifySalesChannel(o) === SHOP_APP ? "marketplace" : "seller",
+		remittedBy:
+			shopifySalesChannel(o) === SHOP_APP || o.merchantOfRecordApp
+				? "marketplace"
+				: "seller",
 		lines: o.currentTaxLines.map((t) => ({
 			jurisdiction: t.title,
 			rate: t.rate,
