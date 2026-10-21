@@ -39,6 +39,7 @@ export const sendPurchaseOrder = createServerFn({ method: "POST" })
 					);
 				const from = po.location.shipFromName ?? po.location.name;
 				await sendEmail({
+					purchaseOrderId: data.id,
 					to,
 					subject: `Purchase order ${data.id} from ${from}`,
 					text: [

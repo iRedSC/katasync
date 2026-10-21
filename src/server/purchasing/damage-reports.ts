@@ -105,6 +105,7 @@ export const sendPurchaseDamageReport = createServerFn({ method: "POST" })
 						`${po.supplier.name} has no email. Add one in Suppliers.`,
 					);
 				await sendEmail({
+					purchaseOrderId: data.purchaseOrderId,
 					to,
 					...damageEmail(
 						{

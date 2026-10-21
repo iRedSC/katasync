@@ -2,7 +2,13 @@ import { Tile, TileGrid } from "#/components/panel";
 import type { CheckTarget } from "#/diagnostics/checks";
 import { channelName } from "#/lib/format";
 import type { Diagnostics } from "#/server/diagnostics";
-import { channelDetail, emailStatus, HEALTH, shippoStatus } from "./status";
+import {
+	channelDetail,
+	emailStatus,
+	HEALTH,
+	inboxStatus,
+	shippoStatus,
+} from "./status";
 
 export function Connections({
 	d,
@@ -13,6 +19,7 @@ export function Connections({
 }) {
 	const shippo = shippoStatus(d.services.shippo);
 	const email = emailStatus(d.services.email);
+	const inbox = inboxStatus(d.services.inbox);
 	return (
 		<TileGrid>
 			{d.channels.map((c) => (
@@ -35,6 +42,12 @@ export function Connections({
 				status={email.tone}
 				detail={email.label}
 				onClick={() => open("email")}
+			/>
+			<Tile
+				name="PO inbox"
+				status={inbox.tone}
+				detail={inbox.label}
+				onClick={() => open("inbox")}
 			/>
 		</TileGrid>
 	);

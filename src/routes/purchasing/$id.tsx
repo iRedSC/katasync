@@ -37,6 +37,7 @@ import {
 } from "#/components/purchase-order/reorder-bar";
 import { SupplierPanel } from "#/components/purchase-order/supplier-panel";
 import { Timeline } from "#/components/purchase-order/timeline";
+import { TrackingCard } from "#/components/purchase-order/tracking-card";
 import type { Line, LineFocus } from "#/components/purchase-order/types";
 import { useAction } from "#/components/purchase-order/use-action";
 import { PurchaseOrderSkeleton } from "#/components/skeleton";
@@ -410,6 +411,7 @@ function PurchaseOrderPage() {
 
 				<div className="flex flex-col gap-4">
 					<SupplierPanel detail={d} />
+					<TrackingCard detail={d} />
 					<BrowseProducts
 						purchaseOrderId={po.id}
 						supplierName={d.supplier.name}
