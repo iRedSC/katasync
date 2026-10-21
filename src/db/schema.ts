@@ -642,10 +642,12 @@ export const orderTaxes = pgTable(
 );
 
 // Units a customer sent back, received against the line they were sold on,
-// in one of three ways:
+// in one of four ways:
 //   restocked:    back on the shelf as what they were sold as
 //   refurbished:  on the shelf as refurbProductId, a refurbished one-off
 //   written off:  damaged, moving nothing
+//   preCutover:   came back before katasync counted stock, so the count
+//                 at cutover already has them; costs nothing, moves nothing
 // The first two moved stock through the movement in batchId. Undoing a
 // return reverses its batch and deletes the row. Rules live in
 // src/orders/returns.ts.
@@ -659,11 +661,16 @@ export const orderReturns = pgTable(
 		quantity: integer().notNull(),
 		restocked: boolean().notNull(),
 		refurbProductId: integer().references(() => products.id),
+		preCutover: boolean().notNull().default(false),
 		batchId: uuid(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		check("order_returns_quantity_positive", sql`${t.quantity} > 0`),
+		check(
+			"order_returns_pre_cutover_alone",
+			sql`not (${t.preCutover} and (${t.restocked} or ${t.refurbProductId} is not null))`,
+		),
 		check(
 			"order_returns_restocked_has_batch",
 			sql`(${t.restocked} or ${t.refurbProductId} is not null) = (${t.batchId} is not null)`,

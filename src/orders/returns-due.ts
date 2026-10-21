@@ -285,7 +285,14 @@ async function recentlyReceived(db: Db) {
 		.innerJoin(orders, eq(orders.id, orderLines.orderId))
 		.innerJoin(stores, eq(stores.id, orders.storeId))
 		.leftJoin(products, eq(products.id, orderLines.productId))
-		.where(gte(orderReturns.createdAt, sql`now() - interval '30 days'`))
+		// A pre-cutover return can't be received again as one, so it isn't
+		// offered for taking back.
+		.where(
+			and(
+				gte(orderReturns.createdAt, sql`now() - interval '30 days'`),
+				eq(orderReturns.preCutover, false),
+			),
+		)
 		.orderBy(desc(orderReturns.createdAt), orderReturns.id)
 		.limit(200);
 	const orderIds = [...new Set(rows.map((r) => r.orderId))];
