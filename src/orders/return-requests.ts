@@ -59,13 +59,14 @@ export function matchLine(
 
 // Saves each return against its order in this store, replacing what the
 // marketplace said before. A return for an order katasync doesn't have
-// (older than its history, or never synced) is skipped and counted.
+// (older than its history, or never synced) is skipped, and its order named
+// in missing.
 export async function saveReturns(
 	db: Db,
 	store: { id: number; channel: ChannelReturnChannel },
 	returns: ChannelReturn[],
-): Promise<{ saved: number; skipped: number }> {
-	if (returns.length === 0) return { saved: 0, skipped: 0 };
+): Promise<{ saved: number; skipped: number; missing: string[] }> {
+	if (returns.length === 0) return { saved: 0, skipped: 0, missing: [] };
 	const known = await db
 		.select({ id: orders.id, externalId: orders.externalId })
 		.from(orders)
@@ -88,11 +89,16 @@ export async function saveReturns(
 			: [];
 	const movedIds = new Map(moved.map((o) => [o.key, o.id]));
 	let saved = 0;
+	const missing = new Set<string>();
 	for (const r of returns) {
 		const orderId =
 			orderIds.get(r.orderExternalId) ??
 			(r.marketplaceOrderId ? movedIds.get(r.marketplaceOrderId) : undefined);
-		if (orderId === undefined) continue;
+		if (orderId === undefined) {
+			// A Shopify gid reads as its number.
+			missing.add(r.orderExternalId.split("/").pop() ?? r.orderExternalId);
+			continue;
+		}
 		await db.transaction(async (tx) => {
 			const lines = await tx
 				.select({
@@ -138,15 +144,16 @@ export async function saveReturns(
 		});
 		saved++;
 	}
-	return { saved, skipped: returns.length - saved };
+	return { saved, skipped: returns.length - saved, missing: [...missing] };
 }
 
 type ChannelReturnChannel = (typeof returnRequests.$inferInsert)["billedBy"];
 
 // One sync pass's returns for a channel, as problems to report. Returns
 // come from their own API, often with a permission of its own; when that
-// fails the pass names it and orders still sync. Null from fetch means
-// nothing to read yet (a report still being built).
+// fails the pass names it and orders still sync. A return for an order
+// katasync doesn't have is named too: its box would turn up unexpected.
+// Null from fetch means nothing to read yet (a report still being built).
 export async function importReturns(
 	db: Db,
 	store: { id: number; channel: ChannelReturnChannel; name: string },
@@ -160,7 +167,11 @@ export async function importReturns(
 		const { returns, problems } = Array.isArray(found)
 			? { returns: found, problems: [] }
 			: found;
-		await saveReturns(db, store, returns);
+		const { missing } = await saveReturns(db, store, returns);
+		if (missing.length > 0)
+			problems.push(
+				`${store.name} returns for orders katasync doesn't have: ${missing.join(", ")}`,
+			);
 		return problems;
 	} catch (error) {
 		return [

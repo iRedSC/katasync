@@ -128,7 +128,8 @@ export async function receiveReturn(
 }
 
 // Takes returns back off, e.g. from the Undo after receiving: restocked
-// units leave the shelf again.
+// units leave the shelf again. All or none: one already taken off (a second
+// click, or another tab) fails the lot rather than half undoing it.
 export async function undoReturns(db: Db, ids: number[]) {
 	if (ids.length === 0) return;
 	await db.transaction(async (tx) => {
@@ -136,6 +137,8 @@ export async function undoReturns(db: Db, ids: number[]) {
 			.delete(orderReturns)
 			.where(inArray(orderReturns.id, ids))
 			.returning();
+		if (rows.length !== new Set(ids).size)
+			throw new ReturnError("That return was already undone");
 		for (const row of rows) {
 			if (row.batchId) await undoBatch(tx, row.batchId);
 		}

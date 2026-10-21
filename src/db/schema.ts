@@ -619,7 +619,7 @@ export const returnRequestStatus = pgEnum("return_request_status", [
 
 // A return a buyer opened on the marketplace the order was billed by, as it
 // last reported it. What's due back is worked out from these and refunds in
-// the order_returns_due view (drizzle/0061_returns_tab.sql).
+// the order_returns_due view (drizzle/0082_returns_due_unmatched.sql).
 export const returnRequests = pgTable(
 	"return_requests",
 	{
@@ -1842,8 +1842,10 @@ export const orderLineProfit = pgView("order_line_profit", {
 	returning: integer().notNull(),
 }).existing();
 
-// What's due back, one row per line expected, defined in
-// drizzle/0061_returns_tab.sql. Every line of an order has its order's state.
+// What's due back, one row per line expected (or, when a request names an
+// item no line matched, per line it could be), defined in
+// drizzle/0082_returns_due_unmatched.sql. Every line of an order has its
+// order's state.
 export const returnStates = [
 	"on_its_way",
 	"requested",
