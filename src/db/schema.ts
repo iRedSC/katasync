@@ -410,6 +410,12 @@ export const stores = pgTable(
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity(),
 		channel: channel().notNull(),
+		// The channel's own ID for the account, which survives a rename:
+		// Shopify's shop GID, or a fixed key where katasync connects only one
+		// account. Null on rows from before it was kept, until a sync claims
+		// them by name (ensureStore).
+		accountId: text(),
+		// What the channel calls it, kept current by every sync.
 		name: text().notNull().unique(),
 		// The store whose listings become products when no product has their
 		// SKU yet. Other stores' listings only match. At most one.
@@ -434,6 +440,7 @@ export const stores = pgTable(
 	},
 	(t) => [
 		uniqueIndex("stores_one_primary").on(t.primary).where(sql`${t.primary}`),
+		uniqueIndex("stores_channel_account").on(t.channel, t.accountId),
 	],
 );
 

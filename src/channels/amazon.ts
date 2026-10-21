@@ -195,7 +195,10 @@ export function planAmazonWindows(
 }
 
 export async function syncAmazon(db: Db, options: { listings: boolean }) {
-	const store = await ensureStore(db, "amazon", "Amazon US");
+	const store = await ensureStore(db, "amazon", {
+		id: "amazon-us",
+		name: "Amazon US",
+	});
 	const stock = await stockLocations(db);
 	const problems: string[] = [];
 
