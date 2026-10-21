@@ -26,11 +26,14 @@ describe("email templates", () => {
 	});
 
 	test("an empty placeholder leaves no gap", () => {
-		const { text } = renderTemplate(DEFAULT_TEMPLATES.damage_report, {
-			...poValues,
-			damage_list: "- 2 × Blade (BLADE): bent. Please credit us.",
-			photos: "",
-		});
+		const { text } = renderTemplate<"damage_report">(
+			DEFAULT_TEMPLATES.damage_report,
+			{
+				...poValues,
+				damage_list: "- 2 × Blade (BLADE): bent. Please credit us.",
+				photos: "",
+			},
+		);
 		expect(text).toContain("Please credit us.\n\nThank you,");
 	});
 
