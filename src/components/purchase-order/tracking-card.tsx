@@ -9,7 +9,7 @@ import {
 	Undo2,
 	X,
 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
@@ -25,8 +25,10 @@ import { formatDate, formatDateTime } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { lacksHistory } from "#/purchasing/tracking-history";
 import {
 	addPoTracking,
+	fillPoTrackingHistory,
 	type PurchaseOrderDetail,
 	removePoTracking,
 } from "#/server/purchasing";
@@ -74,21 +76,18 @@ const TONES = {
 		icon: "text-info-text",
 		line: "bg-info-border",
 		ring: "ring-info-border",
-		dot: "bg-info-text",
 	},
 	arrived: {
 		soft: "bg-success-fill",
 		icon: "text-success-text",
 		line: "bg-success-border",
 		ring: "ring-success-border",
-		dot: "bg-success-text",
 	},
 	trouble: {
 		soft: "bg-critical-fill",
 		icon: "text-critical-text",
 		line: "bg-critical-border",
 		ring: "ring-critical-border",
-		dot: "bg-critical-text",
 	},
 } as const;
 
@@ -101,8 +100,8 @@ function toneOf(status: Tracking["status"]) {
 			: TONES.moving;
 }
 
-// Stops joined by lines, filled as far as the package has got. A dot runs
-// along the line to the next stop while it's moving.
+// Stops joined by lines, filled as far as the package has got. While it's
+// moving, the line to the next stop fills halfway as it appears.
 function Timeline({ status }: { status: Tracking["status"] }) {
 	const s = status ? STATUS[status] : null;
 	const reached = s?.reached ?? -1;
@@ -122,8 +121,8 @@ function Timeline({ status }: { status: Tracking["status"] }) {
 							{moving && i === reached + 1 && (
 								<span
 									className={cn(
-										"absolute top-0 size-1.5 -translate-y-[0.0625rem] rounded-full motion-safe:animate-travel",
-										tone.dot,
+										"absolute inset-y-0 left-0 w-1/2 rounded-full motion-safe:animate-half-fill",
+										tone.line,
 									)}
 								/>
 							)}
@@ -157,18 +156,19 @@ function Timeline({ status }: { status: Tracking["status"] }) {
 
 // Everything Shippo told us about one package, for its hover card: the
 // service and route, the date it's due (and the one first promised, if
-// that slipped), and every scan, newest first.
+// that slipped), every scan newest first, and when Shippo was last asked.
 function Details({ t }: { t: Tracking }) {
 	const route = [t.origin, t.destination].filter(Boolean).join(" → ");
 	const scans = [...t.history].reverse();
+	const carrier = CARRIER[t.carrier as keyof typeof CARRIER] ?? t.carrier;
 	return (
 		<div className="flex flex-col gap-2 py-0.5">
-			{(t.service || route) && (
-				<div>
-					{t.service && <div className="font-medium">{t.service}</div>}
-					{route && <div className="text-white/70">{route}</div>}
+			<div>
+				<div className="font-medium">
+					{[carrier, t.service].filter(Boolean).join(" ")}
 				</div>
-			)}
+				{route && <div className="text-white/70">{route}</div>}
+			</div>
 			{t.eta && t.status !== "DELIVERED" && (
 				<div>
 					Due {formatDate(t.eta)}
@@ -204,6 +204,11 @@ function Details({ t }: { t: Tracking }) {
 			) : (
 				t.statusDetail && <div>{t.statusDetail}</div>
 			)}
+			{t.checkedAt && (
+				<div className="text-white/55">
+					Checked {formatDateTime(t.checkedAt)}
+				</div>
+			)}
 		</div>
 	);
 }
@@ -222,6 +227,17 @@ export function TrackingCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const [adding, setAdding] = useState(false);
 	const [sending, setSending] = useState(false);
 	const [failed, setFailed] = useState(false);
+
+	// Packages without their scans yet get them now rather than at the next
+	// sweep; the page reloads with them when Shippo has answered.
+	const missing = d.tracking.some((t) => lacksHistory(t));
+	useEffect(() => {
+		if (!missing) return;
+		optimism.change({
+			send: () => fillPoTrackingHistory({ data: { purchaseOrderId: po.id } }),
+		});
+	}, [missing, po.id]);
+
 	if (po.status !== "sent" && po.status !== "closed") return null;
 	if (d.tracking.length === 0 && po.status === "closed") return null;
 

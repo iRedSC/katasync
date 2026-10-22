@@ -8,7 +8,11 @@ import {
 	setRead,
 } from "#/purchasing/inbox/ingest";
 import { emailsToLink, inboxPage } from "#/purchasing/inbox/views";
-import { addTracking, removeTracking } from "#/purchasing/tracking";
+import {
+	addTracking,
+	fillHistory,
+	removeTracking,
+} from "#/purchasing/tracking";
 import { id } from "./id-input";
 
 // One list of the supplier-email inbox page.
@@ -52,6 +56,10 @@ export const addPoTracking = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => addTracking(getDb(), data));
+
+export const fillPoTrackingHistory = createServerFn({ method: "POST" })
+	.validator(type({ purchaseOrderId: "number.integer > 0" }))
+	.handler(async ({ data }) => fillHistory(getDb(), data.purchaseOrderId));
 
 export const removePoTracking = createServerFn({ method: "POST" })
 	.validator(id)

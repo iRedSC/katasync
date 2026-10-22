@@ -17,6 +17,7 @@ import {
 	type TrackingEvent,
 } from "#/db/schema";
 import { PurchaseOrderError } from "#/purchasing/orders";
+import { lacksHistory } from "#/purchasing/tracking-history";
 import {
 	type Carrier,
 	guessCarrier,
@@ -264,6 +265,16 @@ export async function refreshTracking(db: Db) {
 		await eachLimit(rows, CONCURRENCY, (r) => check(db, r))
 	).filter((p): p is string => p !== null);
 	return { checked: rows.length, problems };
+}
+
+// Asks Shippo about a PO's packages that have no scans saved yet (see
+// lacksHistory), so its page can show them without waiting for the sweep.
+export async function fillHistory(db: Db, purchaseOrderId: number) {
+	const rows = (await trackingOf(db, purchaseOrderId)).filter((t) =>
+		lacksHistory(t),
+	);
+	await eachLimit(rows, CONCURRENCY, (r) => check(db, r));
+	return rows.length;
 }
 
 export type { Carrier };
