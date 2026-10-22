@@ -338,8 +338,16 @@ const attachmentList = type({
 		"contentType?": "string | null",
 		size: "number",
 		"isInline?": "boolean",
-		"contentId?": "string | null",
 	}).array(),
+});
+
+// One file attached, with its bytes and, for a picture, the cid: its HTML
+// names it by. Only one by one: the list is typed as any attachment, and
+// Graph refuses a $select of a file's own fields (contentId, contentBytes)
+// there and fails the whole request.
+const fileAttachment = type({
+	contentBytes: "string",
+	"contentId?": "string | null",
 });
 
 // The body as plain text (for search, lists, and Claude) and as sent (to
@@ -373,9 +381,9 @@ export async function messageHtml(graphId: string, box: Mailbox) {
 	const base = `${mailbox(box)}/messages/${encodeURIComponent(graphId)}`;
 	const [html, list] = await Promise.all([
 		bodyOf(base, "html"),
-		graph(
-			`${base}/attachments?$select=id,name,contentType,size,isInline,contentId`,
-		).then(async (r) => attachmentList.assert(await r.json())),
+		graph(`${base}/attachments?$select=id,name,contentType,size,isInline`).then(
+			async (r) => attachmentList.assert(await r.json()),
+		),
 	]);
 	const attachments: InboxAttachment[] = [];
 	const inline: InlinePicture[] = [];
@@ -383,18 +391,23 @@ export async function messageHtml(graphId: string, box: Mailbox) {
 		// Item attachments (a forwarded email) and links to OneDrive files have
 		// no bytes of their own here.
 		if (a["@odata.type"] !== "#microsoft.graph.fileAttachment") continue;
-		const contentId = a.contentId?.replace(/^<|>$/g, "").trim() || null;
+		// Too big a picture can't be shown, so it's left out like any other.
+		if (a.size > MAX_ATTACHMENT_BYTES && a.isInline) continue;
+		let data: Buffer | null = null;
+		let contentId: string | null = null;
+		if (a.size <= MAX_ATTACHMENT_BYTES) {
+			const one = fileAttachment.assert(
+				await (
+					await graph(`${base}/attachments/${encodeURIComponent(a.id)}`)
+				).json(),
+			);
+			data = Buffer.from(one.contentBytes, "base64");
+			contentId = one.contentId?.replace(/^<|>$/g, "").trim() || null;
+		}
 		// A picture the HTML doesn't show (a signature logo it only attaches)
 		// is neither a file nor worth keeping.
 		const shown = contentId !== null && html.includes(`cid:${contentId}`);
 		if (a.isInline && !shown) continue;
-		let data: Buffer | null = null;
-		if (a.size <= MAX_ATTACHMENT_BYTES) {
-			const res = await graph(
-				`${base}/attachments/${encodeURIComponent(a.id)}/$value`,
-			);
-			data = Buffer.from(await res.arrayBuffer());
-		}
 		const file = {
 			filename: a.name?.trim() || "attachment",
 			contentType: a.contentType?.toLowerCase() || "application/octet-stream",

@@ -428,7 +428,17 @@ export async function readMarketMail(options: {
 				readHtml(graph, messageId, "marketplaces"),
 			)
 		: 0;
-	await recordCheck(db, "marketplaces", null);
+	// Reading the list but none of the emails isn't working: say so.
+	const [first, ...rest] = result.problems;
+	await recordCheck(
+		db,
+		"marketplaces",
+		first === undefined
+			? null
+			: rest.length === 0
+				? `Couldn't read ${first}`
+				: `Couldn't read ${result.problems.length} emails, e.g. ${first}`,
+	);
 	return { ...result, resorted, formatted };
 }
 
