@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import { countWaiting } from "#/buyers/threads";
 import { getDb } from "#/db/client";
 import { marketEmails } from "#/db/schema";
 import {
@@ -67,14 +68,15 @@ export const checkMarketMailNow = createServerFn({ method: "POST" }).handler(
 	async () => readMarketMail({ since: new Date(), sweep: true, db: getDb }),
 );
 
-// What waits in every folder, for the side list: unread open marketplace emails
+// What waits in every folder, for the side list: buyers waiting on a reply,
+// unread open marketplace emails
 // per folder and important (within one market, when filtered), and supplier
 // emails to file and set aside, unread.
 export const inboxCounts = createServerFn({ method: "GET" })
 	.validator(type({ market: `${market} | null` }))
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const [rows, unfiled] = await Promise.all([
+		const [rows, unfiled, buyers] = await Promise.all([
 			db
 				.select({
 					folder: marketEmails.folder,
@@ -91,12 +93,14 @@ export const inboxCounts = createServerFn({ method: "GET" })
 				)
 				.groupBy(marketEmails.folder),
 			countUnfiled(db),
+			countWaiting(db, data.market),
 		]);
 		return {
 			important: rows.reduce((s, r) => s + r.important, 0),
 			...(Object.fromEntries(
 				FOLDERS.map((f) => [f, rows.find((r) => r.folder === f)?.n ?? 0]),
 			) as Record<(typeof FOLDERS)[number], number>),
+			buyers,
 			toFile: unfiled.toFileUnread,
 			setAside: unfiled.setAsideUnread,
 		};

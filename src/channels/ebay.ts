@@ -37,12 +37,14 @@ const SYNC_SCOPES = [
 const SCOPES = SYNC_SCOPES.join(" ");
 
 // What signing in again (pnpm ebay:authorize) asks for: sync's, what
-// profit-margarine reads with, and seller standards for Markets
-// (src/markets/ebay-standing.ts).
+// profit-margarine reads with, seller standards for Markets
+// (src/markets/ebay-standing.ts), and buyer messages.
 export const EBAY_CONSENT_SCOPES = [
 	...SYNC_SCOPES,
 	"https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
 	"https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
+	// Buyer messages (src/buyers/ebay-messages.ts).
+	"https://api.ebay.com/oauth/api_scope/commerce.message",
 ];
 
 let cachedToken: { value: string; expiresAt: number } | undefined;

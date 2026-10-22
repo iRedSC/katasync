@@ -12,8 +12,10 @@ import { cn } from "#/lib/utils";
 import { MARKETS, type Market } from "#/markets/market";
 import { checkMarketMailNow, type InboxCounts } from "#/server/inbox";
 import {
+	BUYERS,
 	type InboxFolder,
 	MARKET_FOLDERS,
+	PRECEDENTS,
 	PURCHASING_FOLDERS,
 	RULES,
 } from "./folders";
@@ -69,7 +71,9 @@ export function InboxFrame({
 						"size-4 shrink-0",
 						e.folder === "important" && n
 							? "fill-warning-fill text-warning-text"
-							: "",
+							: e.folder === "buyers" && n
+								? "text-critical-text"
+								: "",
 					)}
 				/>
 				<span className="flex-1 truncate">{e.name}</span>
@@ -88,10 +92,16 @@ export function InboxFrame({
 		<Card flush>
 			<div className="grid md:grid-cols-[12rem_minmax(0,1fr)]">
 				<nav className="flex gap-0.5 overflow-x-auto border-b p-2 md:flex-col md:overflow-visible md:border-r md:border-b-0">
+					{item(BUYERS)}
+					<Group>Marketplaces</Group>
 					{MARKET_FOLDERS.map(item)}
 					<Group>Purchasing</Group>
 					{PURCHASING_FOLDERS.map(item)}
-					<div className="md:mt-auto md:border-t md:pt-2">{item(RULES)}</div>
+					{/* What sorts the mail and what the reply agent follows. */}
+					<div className="flex gap-0.5 md:mt-auto md:flex-col md:border-t md:pt-2">
+						{item(PRECEDENTS)}
+						{item(RULES)}
+					</div>
 				</nav>
 				<div className="min-w-0">{children}</div>
 			</div>
@@ -107,7 +117,8 @@ function Group({ children }: { children: ReactNode }) {
 	);
 }
 
-// Which marketplace's mail shows, and reading the mailbox now.
+// Which marketplace's mail shows, and reading the mailbox now (left out
+// without a check: Buyers reads its own sources).
 export function MarketFilter({
 	folder,
 	market,
@@ -115,7 +126,7 @@ export function MarketFilter({
 }: {
 	folder: InboxFolder;
 	market: Market | null;
-	check: MarketMailPage["check"];
+	check?: MarketMailPage["check"];
 }) {
 	return (
 		<>
@@ -138,7 +149,7 @@ export function MarketFilter({
 					</Link>
 				))}
 			</div>
-			<CheckNow check={check} />
+			{check !== undefined && <CheckNow check={check} />}
 		</>
 	);
 }
