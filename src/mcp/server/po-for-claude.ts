@@ -11,6 +11,7 @@ import { poFilesOf } from "#/purchasing/files";
 import { emailsOf } from "#/purchasing/inbox/ingest";
 import { invoicesOf } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
+import { isBackOrdered } from "#/purchasing/status";
 import { trackingOf } from "#/purchasing/tracking";
 
 // A PO as Claude reads it: totals up front, and per line only what tells
@@ -136,6 +137,7 @@ export async function orderForClaude(db: Db, id: number) {
 				? { sent: { quantity: l.sentQuantity, unitCost: l.sentUnitCost } }
 				: {}),
 			...(l.locked ? { locked: true } : {}),
+			...(isBackOrdered(l) ? { backOrderedSince: l.backOrderedAt } : {}),
 			...(l.receivingNote ? { receivingNote: l.receivingNote } : {}),
 			...(l.linkSupplierId !== po.supplier.id
 				? { note: "now bought from another supplier" }

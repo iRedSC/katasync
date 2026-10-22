@@ -3,6 +3,7 @@ import {
 	Copy,
 	ExternalLink,
 	FileText,
+	Hourglass,
 	NotebookPen,
 	PackageCheck,
 	Pencil,
@@ -16,8 +17,9 @@ import {
 } from "#/components/ui/context-menu";
 import { copyText } from "#/lib/copy";
 import { formatCount } from "#/lib/format";
+import { isBackOrdered } from "#/purchasing/status";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
-import { receiveWithUndo, takeOff } from "./line-actions";
+import { backOrderWithUndo, receiveWithUndo, takeOff } from "./line-actions";
 import { damageable } from "./line-damage";
 import type { Line } from "./types";
 
@@ -73,6 +75,14 @@ export function LineMenu({
 					<PackageCheck />
 					Receive the rest ({formatCount(remaining)}
 					{l.packSize === 1 ? "" : ` ${l.unit}`})
+				</ContextMenuItem>
+			)}
+			{po.status === "sent" && remaining > 0 && (
+				<ContextMenuItem
+					onSelect={() => backOrderWithUndo(l, !isBackOrdered(l), po.id)}
+				>
+					<Hourglass />
+					{isBackOrdered(l) ? "No longer back-ordered" : "Back-ordered"}
 				</ContextMenuItem>
 			)}
 			{(po.status === "sent" || po.status === "closed") &&

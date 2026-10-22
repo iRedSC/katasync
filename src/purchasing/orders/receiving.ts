@@ -258,6 +258,44 @@ export async function setReceivingNote(
 	});
 }
 
+// Marks a line back-ordered, or not. Only on a PO on order, and only while
+// some of the line hasn't come: that's what's back-ordered. Marking one
+// already marked keeps the day it was first marked. Returns whether it was,
+// for undo.
+export async function setBackOrdered(
+	db: Db,
+	input: { lineId: number; backOrdered: boolean },
+) {
+	return db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		if (!found) throw new PurchaseOrderError("That line doesn't exist");
+		await lockOrder(tx, found.purchaseOrderId, ["sent"]);
+		const [line] = await tx
+			.select({
+				quantity: purchaseOrderLines.quantity,
+				backOrderedAt: purchaseOrderLines.backOrderedAt,
+			})
+			.from(purchaseOrderLines)
+			.where(eq(purchaseOrderLines.id, input.lineId));
+		if (
+			input.backOrdered &&
+			(await receivedOf(tx, input.lineId)) >= line.quantity
+		)
+			throw new PurchaseOrderError(
+				"All of it has come, so none of it is back-ordered",
+			);
+		if (input.backOrdered !== (line.backOrderedAt !== null))
+			await tx
+				.update(purchaseOrderLines)
+				.set({ backOrderedAt: input.backOrdered ? sql`now()` : null })
+				.where(eq(purchaseOrderLines.id, input.lineId));
+		return { was: line.backOrderedAt !== null };
+	});
+}
+
 export async function receivedOf(tx: Db, lineId: number) {
 	const [row] = await tx
 		.select({

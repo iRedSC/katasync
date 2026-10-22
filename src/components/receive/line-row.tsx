@@ -1,6 +1,7 @@
 import { Check, ImageOff, NotebookPen } from "lucide-react";
 import { formatUnit } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { isBackOrdered } from "#/purchasing/status";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { holdable, useLongPress } from "./use-long-press";
 
@@ -22,6 +23,7 @@ export type ReceiveLine = Pick<
 	| "received"
 	| "sentQuantity"
 	| "receivingNote"
+	| "backOrderedAt"
 >;
 
 // One product on the PO. Tap the big button to receive what's left; hold it
@@ -98,6 +100,11 @@ export function LineRow({
 					<p className="truncate font-mono text-xs text-muted-foreground">
 						{line.sku}
 					</p>
+					{isBackOrdered(line) && (
+						<p className="text-sm font-semibold text-warning-text">
+							Back-ordered
+						</p>
+					)}
 					{damaged > 0 && (
 						<p className="text-sm font-semibold text-critical-text">
 							{damaged} damaged

@@ -9,7 +9,7 @@ import {
 } from "#/db/schema";
 import { discountOf, lineCents } from "#/purchasing/discount";
 import { countUnfiled } from "#/purchasing/inbox/ingest";
-import { receivedByLine } from "#/purchasing/load";
+import { backOrderedUnits, receivedByLine } from "#/purchasing/load";
 import { readyToOrder, suggestPurchases } from "#/purchasing/reorder";
 
 // Suggestions ready to order, and every PO still open plus the latest finished ones.
@@ -34,6 +34,7 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 					// Counted in the product itself, so cases and eaches add up.
 					ordered: sql<number>`coalesce(sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize}), 0)::int`,
 					received: sql<number>`coalesce(sum(least(coalesce(${received.units}, 0), ${purchaseOrderLines.quantity}) * ${purchaseOrderLines.packSize}), 0)::int`,
+					backOrdered: backOrderedUnits(received),
 					total: sql<number>`coalesce(sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.unitCost}), 0)::float`,
 				})
 				.from(purchaseOrders)

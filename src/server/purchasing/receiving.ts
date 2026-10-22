@@ -3,10 +3,11 @@ import { type } from "arktype";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { purchaseOrderLines, purchaseOrders, suppliers } from "#/db/schema";
-import { receivedByLine } from "#/purchasing/load";
+import { backOrderedUnits, receivedByLine } from "#/purchasing/load";
 import {
 	receive,
 	receiveExtra,
+	setBackOrdered,
 	setReceivingNote,
 	undoReceipt,
 } from "#/purchasing/orders";
@@ -17,6 +18,11 @@ import { id } from "./id-input";
 export const setLineReceivingNote = createServerFn({ method: "POST" })
 	.validator(type({ lineId: "number.integer > 0", note: "string | null" }))
 	.handler(async ({ data }) => setReceivingNote(getDb(), data));
+
+// The supplier said what hasn't come of a line is back-ordered, or no longer.
+export const setLineBackOrdered = createServerFn({ method: "POST" })
+	.validator(type({ lineId: "number.integer > 0", backOrdered: "boolean" }))
+	.handler(async ({ data }) => setBackOrdered(getDb(), data));
 
 // `last`: nothing more of it is coming, so the line expects only what came.
 export const receiveLine = createServerFn({ method: "POST" })
@@ -59,6 +65,7 @@ export const listReceivable = createServerFn({ method: "GET" }).handler(
 				lines: sql<number>`count(*)::int`,
 				ordered: sql<number>`sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize})::int`,
 				received: sql<number>`coalesce(sum(least(coalesce(${received.units}, 0), ${purchaseOrderLines.quantity}) * ${purchaseOrderLines.packSize}), 0)::int`,
+				backOrdered: backOrderedUnits(received),
 			})
 			.from(purchaseOrders)
 			.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))

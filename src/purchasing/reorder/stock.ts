@@ -140,7 +140,8 @@ export async function draftLines(db: Db) {
 // Unreceived products on sent POs, counted like unitsOnOrder, with the day
 // each is due, soonest first. A PO without an expected date is due its
 // supplier's lead time after it was sent. Ones already past due aren't coming
-// on any day we can plan around, so they are left out.
+// on any day we can plan around, so they are left out, as are back-ordered
+// ones.
 async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
 	const received = receivedByLine(db);
 	const rows = await db
@@ -159,7 +160,12 @@ async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
 		)
 		.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
 		.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
-		.where(eq(purchaseOrders.status, "sent"));
+		.where(
+			and(
+				eq(purchaseOrders.status, "sent"),
+				isNull(purchaseOrderLines.backOrderedAt),
+			),
+		);
 
 	const byProduct = new Map<number, { units: number; arrivesAt: number }[]>();
 	for (const r of rows) {
