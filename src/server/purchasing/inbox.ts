@@ -1,7 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
-import { countUnfiled, fileEmail, setAside } from "#/purchasing/inbox/ingest";
+import {
+	countUnfiled,
+	fileEmail,
+	setAside,
+	setRead,
+} from "#/purchasing/inbox/ingest";
 import { emailsToLink, inboxPage } from "#/purchasing/inbox/views";
 import { addTracking, removeTracking } from "#/purchasing/tracking";
 import { id } from "./id-input";
@@ -16,9 +21,14 @@ export const emailsToLinkTo = createServerFn({ method: "GET" })
 	.validator(id)
 	.handler(async ({ data }) => emailsToLink(getDb(), data.id));
 
+// Unread emails waiting to be filed, for the sidebar.
 export const countEmailsToFile = createServerFn({ method: "GET" }).handler(
-	async () => (await countUnfiled(getDb())).toFile,
+	async () => (await countUnfiled(getDb())).toFileUnread,
 );
+
+export const setPoEmailRead = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", read: "boolean" }))
+	.handler(async ({ data }) => setRead(getDb(), data.id, data.read));
 
 export const filePoEmail = createServerFn({ method: "POST" })
 	.validator(

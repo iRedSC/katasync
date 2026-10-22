@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { countUnmatched } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import { diagnosticsAttention } from "#/diagnostics/overview";
-import { countAttention } from "#/inbox/market-mail";
+import { countImportant } from "#/inbox/market-mail";
 import { countAtRisk } from "#/markets/refresh";
 import { countReturnsDue } from "#/orders/return-rates";
 import { countCountsDue } from "#/server/catalog";
@@ -29,7 +29,7 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 			countReturnsDue(db),
 			countPosReady(),
 			countEmailsToFile(),
-			countAttention(db),
+			countImportant(db),
 			countCountsDue(db),
 			countUnmatched(db),
 			diagnosticsAttention(db),
@@ -39,7 +39,7 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 			toShip,
 			returnsDue,
 			posReady,
-			// Marketplace notices needing someone, and supplier emails to file.
+			// Important marketplace notices, and supplier emails to file.
 			inbox: emailsNeedingAttention + emailsToFile,
 			countsDue: due,
 			unmatched,

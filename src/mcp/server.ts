@@ -9,6 +9,10 @@ import {
 } from "./server/inbox-tools";
 import { INSTRUCTIONS } from "./server/instructions";
 import { registerListingTools } from "./server/listing-tools";
+import {
+	registerMailRuleReadTools,
+	registerMailRuleWriteTools,
+} from "./server/mail-rule-tools";
 import { registerMarketTools } from "./server/market-tools";
 import { registerProductTools } from "./server/product-tools";
 import { registerPurchasingTools } from "./server/purchasing-tools";
@@ -51,6 +55,7 @@ export const READ_TOOLS = new Set([
 	"markets",
 	"search_marketplace_mail",
 	"read_marketplace_email",
+	"mail_rules",
 ]);
 
 export function buildServer(db: Db, access: { canWrite: boolean }) {
@@ -64,6 +69,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 	registerInboxReadTools(server, db);
 	registerFileReadTools(server, db);
 	registerMarketTools(server, db);
+	registerMailRuleReadTools(server, db);
 	if (access.canWrite) registerWriteTools(server, db);
 	return server;
 }
@@ -83,4 +89,5 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerReceivingTools(server, db);
 	registerFileTools(server, db);
 	registerInboxWriteTools(server, db);
+	registerMailRuleWriteTools(server, db);
 }

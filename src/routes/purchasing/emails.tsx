@@ -7,10 +7,14 @@ export const Route = createFileRoute("/purchasing/emails")({
 		const view = (search as { view?: unknown }).view;
 		throw redirect({
 			to: "/inbox",
-			search:
-				view === "set-aside" || view === "filed"
-					? { box: "purchasing", view }
-					: { box: "purchasing" },
+			search: {
+				folder:
+					view === "set-aside"
+						? "set-aside"
+						: view === "filed"
+							? "on-po"
+							: "to-file",
+			},
 			replace: true,
 		});
 	},

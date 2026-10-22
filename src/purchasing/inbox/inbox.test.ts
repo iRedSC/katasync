@@ -4,7 +4,14 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { callTool, freshDb } from "#/mcp/mcp.fixtures";
 import { poAddress, poOfAddress } from "./graph";
-import { fileEmail, ingest, type ReadContent } from "./ingest";
+import {
+	countUnfiled,
+	fileEmail,
+	ingest,
+	type ReadContent,
+	setAside,
+	setRead,
+} from "./ingest";
 import { findTracking, guessCarrier } from "./tracking-numbers";
 
 describe("tracking numbers in an email", () => {
@@ -273,6 +280,23 @@ describe("reading the inbox", () => {
 		expect(await tracked()).toEqual([{ po: other }]);
 		await fileEmail(db, { emailId: e.id, purchaseOrderId: null, by: "staff" });
 		expect(await tracked()).toEqual([]);
+	});
+
+	test("new emails arrive unread; only unread ones are counted", async () => {
+		await ingest(db, [message({}), message({ subject: "Newsletter" })], read);
+		const [first, second] = await emails();
+		expect(await countUnfiled(db)).toMatchObject({
+			toFile: 2,
+			toFileUnread: 2,
+		});
+		await setRead(db, first.id, true);
+		await setAside(db, second.id);
+		expect(await countUnfiled(db)).toEqual({
+			toFile: 1,
+			setAside: 1,
+			toFileUnread: 0,
+			setAsideUnread: 1,
+		});
 	});
 
 	test("Claude lists, reads, files, and sets aside emails", async () => {
