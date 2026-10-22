@@ -94,7 +94,7 @@ export function MailPane<E extends ReadableEmail>({
 
 	if (selected === null) return empty;
 	return (
-		<div className="grid md:h-[calc(100svh-14rem)] md:min-h-[30rem] md:grid-cols-[22rem_minmax(0,1fr)]">
+		<div className="grid md:min-h-0 md:flex-1 md:grid-cols-[22rem_minmax(0,1fr)]">
 			<ContextMenu>
 				<ContextMenuTrigger asChild disabled={!menuOf}>
 					<ul

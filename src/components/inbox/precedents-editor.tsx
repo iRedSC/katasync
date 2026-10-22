@@ -56,7 +56,7 @@ export function PrecedentsEditor({ precedents }: { precedents: Precedent[] }) {
 	}
 
 	return (
-		<div className="flex flex-col gap-3 p-4">
+		<div className="flex flex-col gap-3 p-4 md:min-h-0 md:flex-1 md:overflow-y-auto">
 			<div className="flex items-center">
 				<Button size="sm" onClick={() => setAdding(true)} disabled={adding}>
 					<Plus />

@@ -28,9 +28,6 @@ import { tabClass } from "./mail-pane";
 // every source of messages is being read, since a quiet list must mean no
 // messages, not a source that stopped.
 
-// A source unread this long is behind: the cron reads every five minutes.
-const STALE_MS = 20 * 60_000;
-
 export function BuyerBox({
 	view,
 	market,
@@ -133,7 +130,7 @@ export function BuyerBox({
 					title={view === "open" ? "No one's waiting" : "Nothing done yet"}
 				/>
 			) : (
-				<div className="grid md:h-[calc(100svh-17rem)] md:min-h-[30rem] md:grid-cols-[22rem_minmax(0,1fr)]">
+				<div className="grid md:min-h-0 md:flex-1 md:grid-cols-[22rem_minmax(0,1fr)]">
 					<ul
 						className={cn(
 							"min-h-0 divide-y overflow-y-auto md:border-r",
@@ -238,13 +235,10 @@ function ThreadRow({
 function Sources({ sources }: { sources: MessageSource[] }) {
 	const router = useRouter();
 	const [busy, setBusy] = useState(false);
-	const now = Date.now();
 	return (
 		<span className="ml-auto flex items-center gap-3">
 			{sources.map((s) => {
-				const behind =
-					!s.checkedAt || now - new Date(s.checkedAt).getTime() > STALE_MS;
-				const broken = Boolean(s.error) || behind;
+				const broken = Boolean(s.error) || s.behind;
 				return (
 					<Tip
 						key={s.market}

@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { type Db, getDb } from "#/db/client";
 import {
@@ -10,11 +10,11 @@ import {
 	stockLevels,
 } from "#/db/schema";
 import { abcClasses } from "#/inventory/abc";
+import { countDue } from "#/inventory/counts-due";
 import {
 	cancelCountRequests,
 	recordCount as recordShelfCount,
 	requestCounts,
-	requestOutstanding,
 } from "#/inventory/ledger";
 import { isOurs } from "#/inventory/locations";
 
@@ -63,10 +63,6 @@ export const recordCount = createServerFn({ method: "POST" })
 			note: [labels[data.reason], data.note?.trim()].filter(Boolean).join(": "),
 		});
 	});
-
-// A shelf is due once someone asks for a count, until a count lands after
-// the request.
-export const countDue = and(requestOutstanding, isOurs);
 
 // Puts a product on the count list at every shelf of ours holding it, or our
 // first location when none does yet. Returns the shelves this put on the list,
@@ -166,12 +162,3 @@ export const listCountsDue = createServerFn({ method: "GET" }).handler(
 			);
 	},
 );
-
-export async function countCountsDue(db: Db) {
-	const [{ count }] = await db
-		.select({ count: sql<number>`count(*)::int` })
-		.from(stockLevels)
-		.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-		.where(countDue);
-	return count;
-}

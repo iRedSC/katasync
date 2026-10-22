@@ -179,7 +179,7 @@ export function RulesEditor({
 	);
 
 	return (
-		<div className="space-y-2 p-4 md:h-[calc(100svh-14rem)] md:min-h-[30rem] md:overflow-y-auto">
+		<div className="space-y-2 p-4 md:min-h-0 md:flex-1 md:overflow-y-auto">
 			<header className="flex items-center gap-2 pb-2">
 				<p className="flex-1 text-sm text-muted-foreground">
 					The first rule to move an email picks its folder; the rest go to{" "}

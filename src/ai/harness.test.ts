@@ -113,4 +113,11 @@ describe("the harness", () => {
 		).rejects.toThrow(/Out of time/);
 		expect(sent).toEqual([]);
 	});
+
+	test("an address ending in /v1 works too", async () => {
+		vi.stubEnv("AI_PROXY_URL", "https://ai.example.com/v1/");
+		const { sent, fetchImpl } = proxy([{ content: '{"answer": 1}' }]);
+		await runAgent(agent, "?", { fetchImpl });
+		expect(sent[0]?.url).toBe("https://ai.example.com/v1/chat/completions");
+	});
 });

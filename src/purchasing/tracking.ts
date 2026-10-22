@@ -101,8 +101,9 @@ async function fetchShippo(url: string, key: string): Promise<Response> {
 	}
 }
 
-// What Shippo knows now. Throws when Shippo can't be asked.
-async function askShippo(carrier: Carrier, number: string) {
+// What Shippo knows now. Throws when Shippo can't be asked. Also asked
+// about the packages we send buyers (src/buyers/order.ts).
+export async function askShippo(carrier: Carrier, number: string) {
 	const key = process.env.SHIPPO_API_KEY;
 	if (!key) throw new Error("Set SHIPPO_API_KEY to follow tracking");
 	const res = await fetchShippo(

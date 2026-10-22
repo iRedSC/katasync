@@ -22,6 +22,7 @@ import { formatDateTime } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { translateReply } from "#/server/buyer-drafts";
 import { replyToBuyer } from "#/server/buyers";
+import { BuyerOrder } from "./buyer-order";
 import { DueChip } from "./due-chip";
 import { Suggestion } from "./suggestion";
 
@@ -176,36 +177,45 @@ export function BuyerConversation({
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col animate-in fade-in-0 slide-in-from-right-2">
-			<header className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
-				<div className="mr-auto min-w-0">
-					<p className="truncate font-semibold">{t.buyerName ?? "Buyer"}</p>
-					<p className="truncate text-sm text-muted-foreground">
-						{t.orderId ? (
-							<Link
-								to="/orders/$id"
-								params={{ id: String(t.orderId) }}
-								className="hover:underline"
-							>
-								Order {t.orderName}
-							</Link>
-						) : t.orderRef ? (
-							`Order ${t.orderRef}`
-						) : t.itemRef ? (
-							<a
-								href={`https://www.ebay.com/itm/${t.itemRef}`}
-								target="_blank"
-								rel="noreferrer"
-								className="inline-flex items-center gap-1 hover:underline"
-							>
-								{t.subject}
-								<ExternalLink className="size-3" />
-							</a>
-						) : (
-							t.subject
-						)}
+			<header className="flex items-start gap-3 border-b px-4 py-4">
+				<div className="mr-auto flex min-w-0 flex-col gap-2">
+					<p className="flex min-w-0 items-center gap-2">
+						<span className="truncate text-base font-semibold">
+							{t.buyerName ?? "Buyer"}
+						</span>
+						{t.waiting && <DueChip due={t.waiting.due} now={Date.now()} />}
 					</p>
+					<BuyerOrder
+						threadId={t.id}
+						fallback={
+							<p className="truncate text-sm text-muted-foreground">
+								{t.orderId ? (
+									<Link
+										to="/orders/$id"
+										params={{ id: String(t.orderId) }}
+										className="hover:underline"
+									>
+										Order {t.orderName}
+									</Link>
+								) : t.orderRef ? (
+									`Order ${t.orderRef}`
+								) : t.itemRef ? (
+									<a
+										href={`https://www.ebay.com/itm/${t.itemRef}`}
+										target="_blank"
+										rel="noreferrer"
+										className="inline-flex items-center gap-1 hover:underline"
+									>
+										{t.subject}
+										<ExternalLink className="size-3" />
+									</a>
+								) : (
+									t.subject
+								)}
+							</p>
+						}
+					/>
 				</div>
-				{t.waiting && <DueChip due={t.waiting.due} now={Date.now()} />}
 				{t.doneAt === null ? (
 					<Tip content="Needs no reply (E)">
 						<Button size="sm" variant="secondary" onClick={() => onDone(true)}>
@@ -226,16 +236,6 @@ export function BuyerConversation({
 				))}
 				<div ref={end} />
 			</div>
-			<Suggestion
-				thread={t}
-				ai={ai}
-				onSend={send}
-				onEdit={(body, english) => {
-					setText(body);
-					setGloss(english ? { english, for: body.trim() } : null);
-					box.current?.focus();
-				}}
-			/>
 			<form
 				className="border-t p-3"
 				onSubmit={(e) => {
@@ -243,7 +243,22 @@ export function BuyerConversation({
 					send(text);
 				}}
 			>
-				<div className="flex items-end gap-2">
+				<Suggestion
+					thread={t}
+					ai={ai}
+					onSend={send}
+					onEdit={(body, english) => {
+						setText(body);
+						setGloss(english ? { english, for: body.trim() } : null);
+						box.current?.focus();
+					}}
+				/>
+				<div
+					className={cn(
+						"rounded-lg border bg-background focus-within:ring-2 focus-within:ring-ring",
+						(over || why) && "border-critical-text",
+					)}
+				>
 					<textarea
 						ref={box}
 						value={text}
@@ -260,29 +275,28 @@ export function BuyerConversation({
 							}
 						}}
 						placeholder={`Reply to ${t.buyerName ?? "the buyer"}`}
-						className={cn(
-							"min-w-0 flex-1 resize-none rounded-lg border bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring",
-							(over || why) && "border-critical-text",
-						)}
+						className="block w-full resize-none rounded-t-lg bg-transparent px-3 pt-2 outline-none"
 					/>
-					{foreign && (
-						<Tip content={`Into ${languageName(t.language)}`}>
-							<Button
-								type="button"
-								variant="ghost"
-								aria-label="Translate"
-								disabled={!text.trim() || translating}
-								onClick={translate}
-							>
-								<Languages className={cn(translating && "animate-pulse")} />
+					<div className="flex items-center justify-end gap-1 px-1.5 pb-1.5">
+						{foreign && (
+							<Tip content={`Into ${languageName(t.language)}`}>
+								<Button
+									type="button"
+									variant="ghost"
+									aria-label="Translate"
+									disabled={!text.trim() || translating}
+									onClick={translate}
+								>
+									<Languages className={cn(translating && "animate-pulse")} />
+								</Button>
+							</Tip>
+						)}
+						<Tip content="Send (Ctrl+Enter)">
+							<Button type="submit" aria-label="Send" disabled={!text.trim()}>
+								<SendHorizontal />
 							</Button>
 						</Tip>
-					)}
-					<Tip content="Send (Ctrl+Enter)">
-						<Button type="submit" aria-label="Send" disabled={!text.trim()}>
-							<SendHorizontal />
-						</Button>
-					</Tip>
+					</div>
 				</div>
 				{glossShown && !why && (
 					<p className="mt-1 truncate text-xs text-muted-foreground">

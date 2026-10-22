@@ -14,6 +14,7 @@ import {
 } from "#/db/schema";
 import { abcClasses } from "#/inventory/abc";
 import { getAvailability } from "#/inventory/availability";
+import { countDue } from "#/inventory/counts-due";
 import { isOurs } from "#/inventory/locations";
 import { onlineStock } from "#/inventory/online-stock";
 import { stockRanges } from "#/inventory/stock-range";
@@ -26,7 +27,6 @@ import {
 	unitsOnOrder,
 } from "#/purchasing/reorder";
 import { setSuppliers } from "#/purchasing/suppliers";
-import { countDue } from "./shelf-counts";
 import { shopifyFiling } from "./shopify-filing";
 
 // Every product with what's sellable from owned locations. Small enough

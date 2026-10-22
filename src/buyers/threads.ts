@@ -306,10 +306,17 @@ export async function countWaiting(db: Db, market: Market | null) {
 	return open.filter((t) => t.waiting).length;
 }
 
-// When each source of buyer messages was last read in full, and the error
-// when the latest try failed. Amazon's needs both the marketplaces mailbox
-// read and its emails put in threads.
-export async function messageSources(db: Db) {
+// Behind when a source hasn't been read this long. The messages cron runs
+// every five minutes. The mailbox records a read only when there's new mail
+// or on its sweep, every four hours, so a quiet mailbox is behind only past
+// that.
+const RUN_STALE_MS = 20 * 60_000;
+const MAILBOX_STALE_MS = 4.5 * 3_600_000;
+
+// When each source of buyer messages was last read in full, the error when
+// the latest try failed, and whether it's behind. Amazon's needs both the
+// marketplaces mailbox read and its emails put in threads.
+export async function messageSources(db: Db, now = Date.now()) {
 	const [mailbox, checks] = await Promise.all([
 		db
 			.select()
@@ -321,18 +328,22 @@ export async function messageSources(db: Db) {
 	const box = mailbox[0];
 	const amazon = of("amazon");
 	const ebay = of("ebay");
-	const older = (a: Date | null | undefined, b: Date | null | undefined) =>
-		a && b ? (a < b ? a : b) : null;
+	const stale = (at: Date | null | undefined, ms: number) =>
+		!at || now - at.getTime() > ms;
 	return [
 		{
 			market: "amazon" as const,
-			checkedAt: older(box?.checkedAt, amazon?.checkedAt),
+			checkedAt: amazon?.checkedAt ?? null,
 			error: box?.error ?? amazon?.error ?? null,
+			behind:
+				stale(amazon?.checkedAt, RUN_STALE_MS) ||
+				stale(box?.checkedAt, MAILBOX_STALE_MS),
 		},
 		{
 			market: "ebay" as const,
 			checkedAt: ebay?.checkedAt ?? null,
 			error: ebay?.error ?? null,
+			behind: stale(ebay?.checkedAt, RUN_STALE_MS),
 		},
 	];
 }

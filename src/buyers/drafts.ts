@@ -12,6 +12,7 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import { buyerOrder } from "./order";
 import { listPrecedents } from "./precedents";
 import { threadsPage } from "./threads";
 
@@ -203,7 +204,17 @@ async function brief(db: Db, threadId: number) {
 						status: order.cancelledAt ? "cancelled" : order.status,
 						ships_to: [order.city, order.region].filter(Boolean).join(", "),
 						items: lines,
-						shipments: sent,
+						// Where each package is now, by the carrier.
+						packages:
+							(await buyerOrder(db, threadId))?.packages.map((p) => ({
+								carrier: p.carrier,
+								tracking: p.number,
+								shipped: p.shippedAt,
+								status: p.status,
+								detail: p.statusDetail,
+								arrives: p.eta,
+								delivered: p.deliveredAt,
+							})) ?? sent,
 					}
 				: thread.orderRef
 					? { number: thread.orderRef, note: "not in our records yet" }

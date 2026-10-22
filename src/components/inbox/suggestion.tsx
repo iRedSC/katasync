@@ -62,7 +62,7 @@ export function Suggestion({
 
 	if (d.state === "drafting" || redrafting)
 		return (
-			<div className="mx-3 mt-3 flex items-center gap-2 rounded-xl border border-dashed px-3 py-3 text-sm text-muted-foreground">
+			<div className="mb-2 flex items-center gap-2 rounded-xl border border-dashed px-3 py-3 text-sm text-muted-foreground">
 				<Sparkles className="size-4 animate-pulse" />
 				<span className="h-3 flex-1 animate-pulse rounded bg-surface-strong" />
 			</div>
@@ -70,7 +70,7 @@ export function Suggestion({
 
 	if (d.state === "failed")
 		return (
-			<div className="mx-3 mt-3 flex items-center gap-2 rounded-xl border border-critical-text/40 bg-critical-surface px-3 py-2 text-sm text-critical-text">
+			<div className="mb-2 flex items-center gap-2 rounded-xl border border-critical-text/40 bg-critical-surface px-3 py-2 text-sm text-critical-text">
 				<Sparkles className="size-4" />
 				<span className="min-w-0 flex-1 truncate">{d.error}</span>
 				<Button size="sm" variant="ghost" onClick={redraft}>
@@ -85,7 +85,7 @@ export function Suggestion({
 		<div
 			key={d.updatedAt.toString()}
 			className={cn(
-				"mx-3 mt-3 rounded-xl border bg-surface px-3 py-2.5 animate-in fade-in-0 slide-in-from-bottom-2",
+				"mb-2 rounded-xl border bg-surface px-3 py-2.5 animate-in fade-in-0 slide-in-from-bottom-2",
 				d.stale && "opacity-60",
 			)}
 		>
