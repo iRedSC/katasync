@@ -142,24 +142,26 @@ export function AddressInput({
 				/>
 			)}
 			{visible && (
-				<ul
+				<div
 					id={listId}
 					role="listbox"
 					aria-busy={loading}
 					className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded-lg border bg-white shadow-lg"
 				>
 					{status && (
-						<li className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground">
+						<div className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground">
 							{loading && <LoaderCircle className="size-3.5 animate-spin" />}
 							{status}
-						</li>
+						</div>
 					)}
 					{showing &&
 						options.map((o, i) => (
-							<li
+							// Focus stays in the input; aria-activedescendant points here.
+							<div
 								key={o.placeId}
 								id={`${listId}-${i}`}
 								role="option"
+								tabIndex={-1}
 								aria-selected={i === active}
 								// Mouse down, not click, so the input keeps focus.
 								onMouseDown={(e) => {
@@ -176,9 +178,9 @@ export function AddressInput({
 								{o.rest && (
 									<span className="text-muted-foreground"> {o.rest}</span>
 								)}
-							</li>
+							</div>
 						))}
-				</ul>
+				</div>
 			)}
 			{error && (
 				<p className="mt-1 text-xs text-critical-text">
