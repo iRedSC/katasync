@@ -1,9 +1,9 @@
-import { and, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
+import { mapListings } from "#/channels/listing-claims";
 import {
 	autoMapListings,
 	cleanTitle,
 	createProductNamed as createProduct,
-	mapListing,
 } from "#/channels/listings";
 import { type StockLocations, stockLocations } from "#/channels/stores";
 import { unmatchedListings } from "#/channels/unmatched";
@@ -95,6 +95,25 @@ export async function applyListingsToOrders(
 	});
 }
 
+// Lines per transaction when catching up. Each batch locks only its own lines
+// and commits before the next, so a long backlog never holds one long lock,
+// and a run that stops part way resumes where it stopped.
+const CATCH_UP_BATCH = 200;
+
+// What a line's listing and SKU resolve to, asked once per call: a SKU that
+// stays unknown isn't looked up again in every batch it's in.
+async function resolveOnce(
+	tx: Db,
+	resolved: Map<string, number | null>,
+	storeId: number,
+	line: Pending["line"],
+) {
+	const key = JSON.stringify([storeId, line.listingExternalId, line.sku]);
+	if (!resolved.has(key))
+		resolved.set(key, await resolveProduct(tx, storeId, line));
+	return resolved.get(key) ?? null;
+}
+
 // Catches up lines still without a product that now resolve to one the way a
 // new order's lines do (listing, SKU, alias, SKU in other capitals): after an
 // alias is added, or a line synced before its product existed. Only one
@@ -106,32 +125,46 @@ export async function applySkusToOrders(
 ): Promise<{ lines: number; problems: string[] }> {
 	if ("skus" in only && only.skus.length === 0)
 		return { lines: 0, problems: [] };
-	return db.transaction(async (tx) => {
-		const pending = await tx
-			.select(pendingColumns)
-			.from(orderLines)
-			.innerJoin(orders, eq(orders.id, orderLines.orderId))
-			.innerJoin(stores, eq(stores.id, orders.storeId))
-			.where(
-				and(
-					isNull(orderLines.productId),
-					isNotNull(orderLines.sku),
-					"skus" in only
-						? inArray(orderLines.sku, only.skus)
-						: eq(stores.channel, only.channel),
-				),
-			)
-			.for("update", { of: orderLines });
-		const found: (Pending & { productId: number })[] = [];
-		for (const p of pending) {
-			const productId = await resolveProduct(tx, p.store.id, p.line);
-			if (productId !== null) found.push({ ...p, productId });
-		}
-		return {
-			lines: found.length,
-			problems: await catchUp(tx, found, from),
-		};
-	});
+	const resolved = new Map<string, number | null>();
+	const result = { lines: 0, problems: [] as string[] };
+	let after = 0;
+	for (;;) {
+		const batch = await db.transaction(async (tx) => {
+			const pending = await tx
+				.select(pendingColumns)
+				.from(orderLines)
+				.innerJoin(orders, eq(orders.id, orderLines.orderId))
+				.innerJoin(stores, eq(stores.id, orders.storeId))
+				.where(
+					and(
+						gt(orderLines.id, after),
+						isNull(orderLines.productId),
+						isNotNull(orderLines.sku),
+						"skus" in only
+							? inArray(orderLines.sku, only.skus)
+							: eq(stores.channel, only.channel),
+					),
+				)
+				.orderBy(asc(orderLines.id))
+				.limit(CATCH_UP_BATCH)
+				.for("update", { of: orderLines });
+			const found: (Pending & { productId: number })[] = [];
+			for (const p of pending) {
+				const productId = await resolveOnce(tx, resolved, p.store.id, p.line);
+				if (productId !== null) found.push({ ...p, productId });
+			}
+			return {
+				scanned: pending.length,
+				lastId: pending.at(-1)?.line.id ?? after,
+				lines: found.length,
+				problems: await catchUp(tx, found, from),
+			};
+		});
+		result.lines += batch.lines;
+		result.problems.push(...batch.problems);
+		if (batch.scanned < CATCH_UP_BATCH) return result;
+		after = batch.lastId;
+	}
 }
 
 // Takes stock now for in-store sales that couldn't take it when they came
@@ -222,13 +255,13 @@ export async function linkSku(db: Db, alias: string, sku: string) {
 // or none, then catches up the orders that already sold them.
 export async function matchListing(db: Db, listingIds: number[], sku: string) {
 	const product = await db.transaction(async (tx) => {
-		await unmatchedListings(tx, listingIds);
+		const locked = await unmatchedListings(tx, listingIds);
 		const [found] = await tx
 			.select({ id: products.id, sku: products.sku })
 			.from(products)
 			.where(eq(products.sku, sku));
 		if (!found) throw new Error(`No product ${sku}`);
-		for (const id of listingIds) await mapListing(tx, id, found.id);
+		await mapListings(tx, locked, found.id);
 		return found;
 	});
 	return catchUpListings(db, listingIds, product.sku);
@@ -242,14 +275,15 @@ export async function productFromListing(
 	given: { sku?: string; name?: string } = {},
 ) {
 	const product = await db.transaction(async (tx) => {
-		const [lead] = await unmatchedListings(tx, listingIds);
+		const locked = await unmatchedListings(tx, listingIds);
+		const [lead] = locked;
 		const sku = given.sku?.trim() || lead.externalSku?.trim();
 		if (!sku) throw new Error("This listing has no SKU; give the product one");
 		const made = await createProduct(tx, {
 			sku,
 			name: given.name?.trim() || cleanTitle(lead.title),
 		});
-		for (const id of listingIds) await mapListing(tx, id, made.id);
+		await mapListings(tx, locked, made.id);
 		return made;
 	});
 	return catchUpListings(db, listingIds, product.sku);

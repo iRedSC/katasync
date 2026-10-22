@@ -1,9 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { type Db, getDb } from "#/db/client";
 import {
 	purchaseOrderDiscounts,
 	purchaseOrderLines,
+	type purchaseOrderStatus,
 	purchaseOrders,
 	purchaseOrderTracking,
 	suppliers,
@@ -13,49 +14,28 @@ import { countUnfiled } from "#/purchasing/inbox/ingest";
 import { backOrderedUnits, receivedByLine } from "#/purchasing/load";
 import { readyToOrder, suggestPurchases } from "#/purchasing/reorder";
 
-// Suggestions ready to order, and every PO still open plus the latest finished ones.
+type Status = (typeof purchaseOrderStatus.enumValues)[number];
+
+// Suggestions ready to order, every PO still open or incoming, plus the latest
+// finished ones.
 export const listPurchasing = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
 		const received = receivedByLine(db);
-		const [suggestions, orders, supplierNames, unfiled] = await Promise.all([
-			suggestPurchases(db),
-			db
-				.select({
-					id: purchaseOrders.id,
-					status: purchaseOrders.status,
-					supplierId: suppliers.id,
-					supplierName: suppliers.name,
-					supplierEmail: suppliers.email,
-					sentAt: purchaseOrders.sentAt,
-					expectedAt: purchaseOrders.expectedAt,
-					closedAt: purchaseOrders.closedAt,
-					createdAt: purchaseOrders.createdAt,
-					lines: sql<number>`count(${purchaseOrderLines.id})::int`,
-					// Counted in the product itself, so cases and eaches add up.
-					ordered: sql<number>`coalesce(sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize}), 0)::int`,
-					received: sql<number>`coalesce(sum(least(coalesce(${received.units}, 0), ${purchaseOrderLines.quantity}) * ${purchaseOrderLines.packSize}), 0)::int`,
-					backOrdered: backOrderedUnits(received),
-					total: sql<number>`coalesce(sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.unitCost}), 0)::float`,
-				})
-				.from(purchaseOrders)
-				.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
-				.leftJoin(
-					purchaseOrderLines,
-					eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
-				)
-				.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
-				// Suggested POs show as their suggestion, under Ready to order.
-				.where(ne(purchaseOrders.status, "suggested"))
-				.groupBy(purchaseOrders.id, suppliers.id)
-				.orderBy(desc(purchaseOrders.id))
-				.limit(200),
-			db
-				.select({ id: suppliers.id, name: suppliers.name })
-				.from(suppliers)
-				.orderBy(suppliers.name),
-			countUnfiled(db),
-		]);
+		const [suggestions, active, finished, supplierNames, unfiled] =
+			await Promise.all([
+				suggestPurchases(db),
+				// Not capped: an old PO still out for delivery stays listed however
+				// many finished ones follow it.
+				orderRows(db, received, ["draft", "sent"]),
+				orderRows(db, received, ["closed", "cancelled"]).limit(30),
+				db
+					.select({ id: suppliers.id, name: suppliers.name })
+					.from(suppliers)
+					.orderBy(suppliers.name),
+				countUnfiled(db),
+			]);
+		const orders = [...active, ...finished];
 		const ids = orders.map((o) => o.id);
 		// Totals above are before discounts; take those off line by line.
 		const [off, packages] = await Promise.all([
@@ -71,9 +51,9 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 		// deliveries.
 		const open = withPackages.filter((o) => o.status === "draft");
 		const incoming = withPackages.filter((o) => o.status === "sent");
-		const done = withPackages
-			.filter((o) => o.status === "closed" || o.status === "cancelled")
-			.slice(0, 30);
+		const done = withPackages.filter(
+			(o) => o.status === "closed" || o.status === "cancelled",
+		);
 		return {
 			ready: readyToOrder(suggestions),
 			open,
@@ -110,6 +90,46 @@ async function packagesOf(db: Db, purchaseOrderIds: number[]) {
 	for (const { purchaseOrderId, ...p } of rows)
 		of.set(purchaseOrderId, { ...p, trouble: p.trouble === true });
 	return of;
+}
+
+// The POs in these statuses, newest first, with their totals. The caller
+// caps the rows when it needs to.
+function orderRows(
+	db: Db,
+	received: ReturnType<typeof receivedByLine>,
+	statuses: Status[],
+) {
+	return (
+		db
+			.select({
+				id: purchaseOrders.id,
+				status: purchaseOrders.status,
+				supplierId: suppliers.id,
+				supplierName: suppliers.name,
+				supplierEmail: suppliers.email,
+				sentAt: purchaseOrders.sentAt,
+				expectedAt: purchaseOrders.expectedAt,
+				closedAt: purchaseOrders.closedAt,
+				createdAt: purchaseOrders.createdAt,
+				lines: sql<number>`count(${purchaseOrderLines.id})::int`,
+				// Counted in the product itself, so cases and eaches add up.
+				ordered: sql<number>`coalesce(sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.packSize}), 0)::int`,
+				received: sql<number>`coalesce(sum(least(coalesce(${received.units}, 0), ${purchaseOrderLines.quantity}) * ${purchaseOrderLines.packSize}), 0)::int`,
+				backOrdered: backOrderedUnits(received),
+				total: sql<number>`coalesce(sum(${purchaseOrderLines.quantity} * ${purchaseOrderLines.unitCost}), 0)::float`,
+			})
+			.from(purchaseOrders)
+			.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
+			.leftJoin(
+				purchaseOrderLines,
+				eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
+			)
+			.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
+			// Suggested POs show as their suggestion, under Ready to order.
+			.where(inArray(purchaseOrders.status, statuses))
+			.groupBy(purchaseOrders.id, suppliers.id)
+			.orderBy(desc(purchaseOrders.id))
+	);
 }
 
 // Dollars of discounts on each of these POs.

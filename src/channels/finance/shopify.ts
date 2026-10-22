@@ -275,6 +275,8 @@ export const fetchShopifyCharges: ChargeFetcher = async (due: DueOrder[]) => {
 				report: {
 					settled: false,
 					noLabel: shippedWithoutLabel(parsed),
+					// Without a ShopifyQL row, the timeline's figures only stand in.
+					labelsAuthoritative: labels.has(numericOrderId(o.marketplaceId)),
 					...shopifyCharges(
 						parsed,
 						labels.get(numericOrderId(o.marketplaceId)),

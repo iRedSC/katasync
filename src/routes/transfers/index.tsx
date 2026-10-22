@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Shuffle } from "lucide-react";
+import { Loader2, Shuffle } from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
@@ -32,30 +33,55 @@ function Transfers() {
 		navigate({ to: "/transfers/$id", params: { id: String(id) } });
 	const [from, to] = places;
 
+	// Both create buttons share this: while one draft is being made, neither
+	// makes another. The ref is set at once, so a second click that lands before
+	// the state re-renders still counts.
+	const [making, setMaking] = useState<"refill" | "blank" | null>(null);
+	const busy = useRef(false);
+	async function create(kind: "refill" | "blank", make: () => Promise<void>) {
+		if (busy.current) return;
+		busy.current = true;
+		setMaking(kind);
+		try {
+			await make();
+		} finally {
+			busy.current = false;
+			setMaking(null);
+		}
+	}
+
 	async function startRefill() {
-		const r = await optimism.change({ send: () => newRefill() });
-		if (!r) return;
-		if (r.value.none.length > 0)
-			toast.warning(
-				`The warehouse has none of ${formatCount(r.value.none.length)} ${r.value.none.length === 1 ? "product" : "products"} Retail needs`,
-				{ description: r.value.none.join(", ") },
-			);
-		open(r.value.id);
+		await create("refill", async () => {
+			const r = await optimism.change({ send: () => newRefill() });
+			if (!r) return;
+			if (r.value.none.length > 0)
+				toast.warning(
+					`The warehouse has none of ${formatCount(r.value.none.length)} ${r.value.none.length === 1 ? "product" : "products"} Retail needs`,
+					{ description: r.value.none.join(", ") },
+				);
+			open(r.value.id);
+		});
 	}
 
 	async function startBlank() {
 		if (!from || !to) return;
-		const r = await optimism.change({
-			send: () =>
-				newTransfer({
-					data: { fromLocationId: from.id, toLocationId: to.id },
-				}),
+		await create("blank", async () => {
+			const r = await optimism.change({
+				send: () =>
+					newTransfer({
+						data: { fromLocationId: from.id, toLocationId: to.id },
+					}),
+			});
+			if (r) open(r.value.id);
 		});
-		if (r) open(r.value.id);
 	}
 
 	const refillButton = (
-		<Button onClick={startRefill} disabled={refill.ready === 0}>
+		<Button
+			onClick={startRefill}
+			disabled={refill.ready === 0 || making !== null}
+		>
+			{making === "refill" && <Loader2 className="animate-spin" />}
 			Refill{refill.ready > 0 && ` ${formatCount(refill.ready)}`}
 		</Button>
 	);
@@ -87,7 +113,12 @@ function Transfers() {
 							</span>
 						</Tip>
 					) : (
-						<Button variant="outline" onClick={startBlank}>
+						<Button
+							variant="outline"
+							onClick={startBlank}
+							disabled={making !== null}
+						>
+							{making === "blank" && <Loader2 className="animate-spin" />}
 							New transfer
 						</Button>
 					)}

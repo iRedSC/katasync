@@ -3,6 +3,7 @@ import { shopCipher, tiktokApi } from "#/channels/tiktok";
 import {
 	type Level,
 	type Problem,
+	type ProblemItem,
 	STANDING_PAGES,
 	type Standing,
 	standing,
@@ -96,11 +97,15 @@ const plain = (html: string) =>
 		.replace(/\s+/g, " ")
 		.trim();
 
-// One problem per status and reason, listing the products it's about.
+// One problem per status and reason, listing the products it's about. A
+// product is one item however often a reason names it, keyed by its ID: two
+// products can share a seller SKU, and a blank one names nothing.
 export function tiktokProblems(products: StoppedProduct[]): Problem[] {
 	const groups = new Map<string, Problem>();
+	const listed = new Map<string, { item: ProblemItem; pieces: Set<string> }>();
 	for (const p of products) {
 		const stopped = STOPPED[p.status];
+		const sku = p.sellerSku?.trim() || null;
 		const reasons = p.detail.audit_failed_reasons ?? [];
 		const flat = reasons.length
 			? reasons.flatMap((r) =>
@@ -122,17 +127,26 @@ export function tiktokProblems(products: StoppedProduct[]): Problem[] {
 				detail: r.suggestion,
 				items: [],
 			};
-			if (!group.items.some((i) => i.ref === (p.sellerSku ?? p.id)))
-				group.items.push({
+			const itemKey = JSON.stringify([key, p.id]);
+			let entry = listed.get(itemKey);
+			if (!entry) {
+				const item: ProblemItem = {
 					listingId: p.skuId,
-					ref: p.sellerSku ?? p.id,
+					ref: sku ?? p.id,
 					label: p.title,
-					detail:
-						r.suggestion && r.suggestion !== group.detail
-							? r.suggestion
-							: r.position && `In ${r.position.toLowerCase()}`,
+					detail: null,
 					href: null,
-				});
+				};
+				entry = { item, pieces: new Set() };
+				listed.set(itemKey, entry);
+				group.items.push(item);
+			}
+			// Repeated evidence for the same product adds its corrections rather
+			// than replacing them.
+			if (r.suggestion && r.suggestion !== group.detail)
+				entry.pieces.add(r.suggestion);
+			if (r.position) entry.pieces.add(`In ${r.position.toLowerCase()}`);
+			entry.item.detail = [...entry.pieces].join(" ") || null;
 			groups.set(key, group);
 		}
 	}

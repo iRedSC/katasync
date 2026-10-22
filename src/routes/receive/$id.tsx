@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, PackagePlus } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { PurchaseOrderMatch } from "#/components/po-product-picker";
 import { DamageSheet } from "#/components/receive/damage-sheet";
 import { ExtraSheet } from "#/components/receive/extra-sheet";
@@ -29,20 +29,22 @@ import {
 } from "#/components/receive/receive-data";
 import { Saving } from "#/components/saving";
 import { ReceiveSkeleton } from "#/components/skeleton";
+import { groupBy } from "#/lib/group-by";
 import { ids, optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { isBackOrdered } from "#/purchasing/status";
 import {
 	amendPurchaseLine,
 	closePurchaseOrder,
-	getPurchaseOrder,
 	receiveExtraLine,
 	receiveLine,
 } from "#/server/purchasing";
+import { getReceivePurchaseOrder } from "#/server/purchasing/detail";
 
 export const Route = createFileRoute("/receive/$id")({
 	head: receiveHead,
-	loader: ({ params }) => getPurchaseOrder({ data: { id: Number(params.id) } }),
+	loader: ({ params }) =>
+		getReceivePurchaseOrder({ data: { id: Number(params.id) } }),
 	component: ReceivePurchaseOrder,
 	pendingComponent: () => <ReceiveSkeleton />,
 });
@@ -52,14 +54,20 @@ function ReceivePurchaseOrder() {
 	const d = receiveData.useData(loaded.order.id, loaded);
 	const navigate = useNavigate();
 	const { order, supplier, lines, receipts } = d;
+	// Damage by line, grouped once per data version rather than scanned per row.
+	const damagesByLine = useMemo(
+		() => groupBy(d.damages, (r) => r.lineId),
+		[d.damages],
+	);
 	const [sheetLineId, setSheetLineId] = useState<number | null>(null);
 	const [noteLineId, setNoteLineId] = useState<number | null>(null);
 	const [damageLineId, setDamageLineId] = useState<number | null>(null);
 	// Single items of a line recorded as damaged, and what could still be.
 	const damagedOn = (l: ReceiveLine) =>
-		d.damages
-			.filter((x) => ids.same(x.lineId, l.id))
-			.reduce((n, x) => n + x.quantity, 0);
+		(damagesByLine.get(ids.current(l.id)) ?? []).reduce(
+			(n, x) => n + x.quantity,
+			0,
+		);
 	const damageable = (l: ReceiveLine) =>
 		Math.max(0, l.received * l.packSize - damagedOn(l));
 	// Something that isn't on the PO: finding it, then counting it.

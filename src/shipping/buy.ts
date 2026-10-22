@@ -10,6 +10,7 @@ import {
 } from "./dispatch";
 import { signatureRequired } from "./quick-ship";
 import {
+	type AccountReads,
 	buyLabel,
 	getRate,
 	getRates,
@@ -99,7 +100,11 @@ export async function buyDispatch(
 	}
 	return outside.lock(input.orderIds, async () => {
 		const list = await assertTogether(db, input.orderIds);
-		const tiktok = labelSource(list[0]) === "tiktok";
+		// The pin's order is the destination, as in the preview. Named by ID,
+		// since the query's own order says nothing about it.
+		const lead = list.find((o) => o.id === input.orderIds[0]);
+		if (!lead) throw new Error("One of these orders no longer exists");
+		const tiktok = labelSource(lead) === "tiktok";
 		// TikTok sells one label per order package; combining or splitting
 		// happens in Seller Center.
 		if (tiktok && (list.length > 1 || boxes.length > 1)) {
@@ -114,7 +119,7 @@ export async function buyDispatch(
 			!tiktok && (input.signature || signatureRequired(list) !== null);
 		const rates = tiktok
 			? []
-			: await quoteEach(db, list[0].id, boxes, choice, signature, outside);
+			: await quoteEach(db, lead.id, boxes, choice, signature, outside);
 
 		const dispatchId = await db.transaction(async (tx) => {
 			const [dispatch] = await tx
@@ -144,7 +149,7 @@ export async function buyDispatch(
 					// A package TikTok already made for this order is recorded,
 					// not bought again (a retry after a lost response).
 					const label = await outside.tiktokBuy(
-						tiktokOrderId(list[0].marketplaceOrderId),
+						tiktokOrderId(lead.marketplaceOrderId),
 						plan,
 						choice.id,
 					);
@@ -244,6 +249,7 @@ async function quoteEach(
 	outside: BuyOutside,
 ): Promise<Awaited<ReturnType<typeof getRate>>[]> {
 	const where = await shipAddresses(db, orderId);
+	const accounts: AccountReads = new Map();
 	const quoted = await Promise.all(
 		boxes.map((b) =>
 			outside.getRates({
@@ -267,7 +273,8 @@ async function quoteEach(
 					`${choice.carrier} no longer offers that service${boxes.length > 1 ? ` for box ${i + 1}` : ""}; price again`,
 				);
 			}
-			const confirmed = await outside.getRate(rate.id);
+			// Boxes on one account share its read (see getRate).
+			const confirmed = await outside.getRate(rate.id, accounts);
 			if (
 				confirmed.carrier !== choice.carrier ||
 				confirmed.service !== choice.service

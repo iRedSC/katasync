@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { MARKETPLACE_US } from "#/channels/amazon-api";
 import {
 	listReports,
@@ -33,8 +33,11 @@ const AMAZON_REPORT = "GET_V2_SELLER_PERFORMANCE_REPORT";
 // after this long. It's usually ready in seconds.
 const AMAZON_FRESH_MS = 12 * 60 * 60 * 1000;
 const AMAZON_WAIT_MS = 30 * 1000;
+const LISTINGS_UNREADABLE = "Couldn't read Amazon's listing issues";
 
-async function amazonVerdict(): Promise<Standing> {
+// Amazon's account verdict. A new report takes Amazon a while to build, so
+// until one is ready the last accepted verdict stands, warnings and all.
+async function amazonVerdict(previous: Standing | null): Promise<Standing> {
 	const reports = await listReports(AMAZON_REPORT, 5);
 	let done = reports.find((r) => r.processingStatus === "DONE");
 	const newest = reports[0];
@@ -43,19 +46,32 @@ async function amazonVerdict(): Promise<Standing> {
 		if (fresh.processingStatus === "DONE") done = fresh;
 	}
 	const text = done ? await reportText(done) : null;
-	if (!text) return standing({ state: "waiting" }, [], []);
-	return amazonStanding(JSON.parse(text), MARKETPLACE_US);
+	if (text) return amazonStanding(JSON.parse(text), MARKETPLACE_US);
+	if (previous?.verdict.state === "read") return accountOf(previous);
+	return standing({ state: "waiting" }, [], []);
+}
+
+// What Amazon said about the account in a standing: its verdict, its metrics,
+// and the problems that aren't listings (those are read again every check).
+function accountOf(s: Standing): Standing {
+	return standing(
+		s.verdict,
+		s.metrics,
+		s.problems.filter(
+			(p) => p.items.length === 0 && p.text !== LISTINGS_UNREADABLE,
+		),
+	);
 }
 
 // The account's health, then the listings Amazon blocked. Failing to read
 // the listings doesn't lose the account's health; it says so instead.
-async function amazon(): Promise<Standing> {
+async function amazon(previous: Standing | null): Promise<Standing> {
 	const [account, issues] = await Promise.all([
-		amazonVerdict(),
+		amazonVerdict(previous),
 		amazonListingIssues().catch((error): Problem[] => [
 			{
 				level: "watch",
-				text: "Couldn't read Amazon's listing issues",
+				text: LISTINGS_UNREADABLE,
 				href: null,
 				detail: errorText(error),
 				items: [],
@@ -122,7 +138,11 @@ async function shopify(): Promise<Standing> {
 	return shopifyStanding(disputes, lost.length);
 }
 
-const fetchers: Record<Market, () => Promise<Standing>> = {
+// Each is given the standing saved last; Amazon keeps its verdict from it.
+const fetchers: Record<
+	Market,
+	(previous: Standing | null) => Promise<Standing>
+> = {
 	amazon,
 	ebay: ebayStanding,
 	shopify,
@@ -137,7 +157,11 @@ export const checkable = (Object.keys(fetchers) as Market[]).filter(
 export async function checkStanding(db: Db, market: Market) {
 	const now = new Date();
 	try {
-		const standing = await fetchers[market]();
+		const [last] = await db
+			.select({ standing: marketStanding.standing })
+			.from(marketStanding)
+			.where(eq(marketStanding.market, market));
+		const standing = await fetchers[market](last?.standing ?? null);
 		await db
 			.insert(marketStanding)
 			.values({ market, standing, checkedAt: now, error: null })

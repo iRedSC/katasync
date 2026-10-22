@@ -19,12 +19,15 @@ if (Number.isNaN(since.getTime())) {
 	process.exit(1);
 }
 const db = getDb();
+let failures = 0;
 for (const channel of Object.keys(channelEnv) as SyncedChannel[]) {
 	if (missingEnv(channelEnv[channel]).length > 0) {
 		console.log(`${channel}: not connected`);
 		continue;
 	}
 	const { saved, error } = await refreshPayouts(db, channel, since);
+	if (error) failures++;
 	console.log(error ? `${channel}: ${error}` : `${channel}: ${saved} payouts`);
 }
-process.exit(0);
+// Every channel was still tried; the exit status says whether they all worked.
+process.exit(failures > 0 ? 1 : 0);

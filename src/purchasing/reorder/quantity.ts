@@ -31,11 +31,7 @@ function position(p: ReorderInput) {
 // Below this, a product needs ordering: what sells before a PO sent today
 // arrives plus its safety stock, or its min stock if that's more.
 function reorderPoint(p: ReorderInput) {
-	return Math.max(
-		p.dailyDemand * p.leadTimeDays + p.safetyStock,
-		floorOf(p),
-		oversoldFloor(p),
-	);
+	return Math.max(p.dailyDemand * p.leadTimeDays + p.safetyStock, floorOf(p));
 }
 
 // Oversold with nothing on order: the shelf owes units nobody is bringing,
@@ -44,17 +40,16 @@ function oversoldFloor(p: ReorderInput) {
 	return p.onHand < 0 && p.onOrder === 0 ? 1 : 0;
 }
 
-// The least shelf plus on order may be: min stock, or one of each of its
-// tool sets if that's more.
-const floorOf = (p: ReorderInput) => Math.max(p.minStock, p.setFloor);
+// The least shelf plus on order may be: min stock, one of each of its tool
+// sets if that's more, or the oversold floor.
+const floorOf = (p: ReorderInput) =>
+	Math.max(p.minStock, p.setFloor, oversoldFloor(p));
 
 // How many of the supplier's unit it takes to top stock up to its target
-// (stockTarget, or its floor or the oversold floor if more), rounded up to
-// whole units and to at least the supplier's minimum. 0 when it's already
-// there.
+// (stockTarget, or its floor if more), rounded up to whole units and to at
+// least the supplier's minimum. 0 when it's already there.
 function topUp(p: ReorderInput) {
-	const need =
-		Math.max(stockTarget(p), floorOf(p), oversoldFloor(p)) - position(p);
+	const need = Math.max(stockTarget(p), floorOf(p)) - position(p);
 	if (need <= 0) return 0;
 	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
 }
@@ -147,9 +142,10 @@ export type ReorderWhy = {
 		// The floor (minStock) is more than the forecast's aim, so it is the aim.
 		| { kind: "min"; total: number; forecast: number };
 	// The least shelf plus on order may be, and where it comes from: the
-	// product's min stock, or one of each of its tool sets when that's more.
+	// product's min stock, one of each of its tool sets when that's more, or
+	// one unit to restore oversold stock.
 	minStock: number;
-	minFrom: "stock" | "sets";
+	minFrom: "stock" | "sets" | "oversold";
 	// The tool sets it's a part of, and its shelf to build them from.
 	sets: SetMembership;
 	// Reorder happens once shelf plus on order is below this.
@@ -190,6 +186,12 @@ export function explainReorder(
 ): ReorderWhy {
 	const forecastAim = stockTarget(p);
 	const floor = floorOf(p);
+	const minFrom: ReorderWhy["minFrom"] =
+		oversoldFloor(p) > Math.max(p.minStock, p.setFloor)
+			? "oversold"
+			: p.setFloor > p.minStock
+				? "sets"
+				: "stock";
 	// Rounded the way reorderPoint compares: whole units under it reorder.
 	const restock = Math.ceil(p.dailyDemand * p.leadTimeDays);
 	const aim: ReorderWhy["aim"] =
@@ -234,7 +236,7 @@ export function explainReorder(
 		onOrder: p.onOrder,
 		aim,
 		minStock: floor,
-		minFrom: p.setFloor > p.minStock ? "sets" : "stock",
+		minFrom,
 		sets: context.sets,
 		orderBelow: Math.ceil(reorderPoint(p)),
 		purchase: context.purchase,

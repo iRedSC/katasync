@@ -12,11 +12,19 @@ import {
 
 export type { PurchaseOrderMatch };
 
-type SearchState =
+export type SearchState =
 	| { state: "idle" }
 	| { state: "searching"; query: string; results: PurchaseOrderMatch[] }
 	| { state: "done"; query: string; results: PurchaseOrderMatch[] }
 	| { state: "failed"; query: string; message: string };
+
+// The results a pick may use: only a finished search for the text in the box
+// now. Earlier results stay up, dimmed, while the next search runs.
+export function pickable(search: SearchState, query: string) {
+	return search.state === "done" && search.query === query.trim()
+		? search.results
+		: null;
+}
 
 // Searches products to add to a PO as someone types. Waits for a pause, and
 // only the newest query's answer is kept, so a slow early reply can't
@@ -92,9 +100,10 @@ export function ProductPicker({
 	const search = usePurchaseOrderSearch(purchaseOrderId, query);
 	const results =
 		search.state === "idle" || search.state === "failed" ? [] : search.results;
+	const settled = pickable(search, query) !== null;
 
 	async function pick(m: PurchaseOrderMatch) {
-		if (busy) return;
+		if (busy || !settled) return;
 		if (await onPick(m)) setQuery("");
 	}
 
@@ -148,7 +157,7 @@ export function ProductPicker({
 							<CommandPrimitive.Item
 								key={m.productId}
 								value={String(m.productId)}
-								disabled={warning?.blocks}
+								disabled={!settled || warning?.blocks}
 								onSelect={() => pick(m)}
 								className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 data-[disabled=true]:cursor-not-allowed data-[disabled=true]:opacity-50 data-[selected=true]:bg-surface"
 							>

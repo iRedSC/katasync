@@ -547,6 +547,40 @@ describe("undoBatch", () => {
 			expect(await lastCountedAt(wrench)).toEqual(firstAt);
 		});
 
+		test("skips earlier counts that were undone too", async () => {
+			const wrench = await sku("WRENCH", "simple");
+			await receive(wrench, warehouse, 5);
+			const asked = await requestCounts(db, {
+				productIds: [wrench],
+				locationId: warehouse,
+			});
+			const first = await count(wrench, 2);
+			const second = await count(wrench, 3);
+			if (!first || !second) throw new Error("expected batches");
+
+			await undoBatch(db, first);
+			await undoBatch(db, second);
+			expect(await onHand(wrench, warehouse)).toBe(5);
+			// Nothing counted since the request, so the shelf is due again.
+			expect(asked).toHaveLength(1);
+			expect(await lastCountedAt(wrench)).toBeNull();
+		});
+
+		test("a later matching count stays authoritative", async () => {
+			const wrench = await sku("WRENCH", "simple");
+			await receive(wrench, warehouse, 5);
+			const changed = await count(wrench, 2);
+			await count(wrench, 2);
+			const matchedAt = await lastCountedAt(wrench);
+			const later = await count(wrench, 3);
+
+			if (!changed || !later) throw new Error("expected batches");
+			await undoBatch(db, changed);
+			await undoBatch(db, later);
+			expect(await onHand(wrench, warehouse)).toBe(5);
+			expect(await lastCountedAt(wrench)).toEqual(matchedAt);
+		});
+
 		test("stays as it is when a later count replaced it", async () => {
 			const wrench = await sku("WRENCH", "simple");
 			await receive(wrench, warehouse, 5);

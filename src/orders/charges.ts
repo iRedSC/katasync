@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	type channel,
@@ -32,6 +32,10 @@ export type CostReport = {
 	// Its label figures are a stand-in until it catches up (Shopify's
 	// timeline, before its labels report has the order).
 	labelsPending?: boolean;
+	// False when the label figures are only a fallback, with no authoritative
+	// label section behind them. Authoritative label charges already on file are
+	// kept instead; fees and refunds still update. Defaults to true.
+	labelsAuthoritative?: boolean;
 	charges: ReportedCharge[];
 	// When the marketplace was asked; defaults to now.
 	fetchedAt?: Date;
@@ -81,6 +85,12 @@ export async function saveCostReport(
 			);
 		}
 
+		// A fallback doesn't replace the authoritative label charges on file.
+		const keepLabels =
+			report.labelsAuthoritative === false &&
+			(await hasAuthoritativeLabels(tx, report.orderId, report.billedBy));
+		const labelsPending = !keepLabels && (report.labelsPending ?? false);
+
 		const saved = await tx
 			.insert(orderCostReports)
 			.values({
@@ -88,7 +98,7 @@ export async function saveCostReport(
 				billedBy: report.billedBy,
 				settled: report.settled,
 				noLabel: report.noLabel ?? false,
-				labelsPending: report.labelsPending ?? false,
+				labelsPending,
 				fetchedAt,
 			})
 			.onConflictDoUpdate({
@@ -96,7 +106,7 @@ export async function saveCostReport(
 				set: {
 					settled: report.settled,
 					noLabel: report.noLabel ?? false,
-					labelsPending: report.labelsPending ?? false,
+					labelsPending,
 					fetchedAt,
 				},
 				setWhere: sql`${orderCostReports.fetchedAt} <= excluded.fetched_at
@@ -111,11 +121,15 @@ export async function saveCostReport(
 				and(
 					eq(orderCharges.orderId, report.orderId),
 					eq(orderCharges.billedBy, report.billedBy),
+					keepLabels ? ne(orderCharges.kind, "label") : undefined,
 				),
 			);
-		if (charges.length > 0) {
+		const kept = keepLabels
+			? charges.filter((c) => c.kind !== "label")
+			: charges;
+		if (kept.length > 0) {
 			await tx.insert(orderCharges).values(
-				charges.map((c) => ({
+				kept.map((c) => ({
 					...c,
 					orderId: report.orderId,
 					billedBy: report.billedBy,
@@ -124,4 +138,34 @@ export async function saveCostReport(
 		}
 		return true;
 	});
+}
+
+// Whether the report on file has label charges from an authoritative label
+// section, one saved with labelsPending false. An authoritative zero has no
+// rows to show it, so a fallback still replaces it.
+async function hasAuthoritativeLabels(
+	db: Db,
+	orderId: number,
+	billedBy: Channel,
+) {
+	const [found] = await db
+		.select({ id: orderCharges.id })
+		.from(orderCharges)
+		.innerJoin(
+			orderCostReports,
+			and(
+				eq(orderCostReports.orderId, orderCharges.orderId),
+				eq(orderCostReports.billedBy, orderCharges.billedBy),
+			),
+		)
+		.where(
+			and(
+				eq(orderCharges.orderId, orderId),
+				eq(orderCharges.billedBy, billedBy),
+				eq(orderCharges.kind, "label"),
+				eq(orderCostReports.labelsPending, false),
+			),
+		)
+		.limit(1);
+	return found !== undefined;
 }

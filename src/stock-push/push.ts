@@ -88,6 +88,15 @@ export async function pushChannelStock<T>(
 	return results;
 }
 
+// Holds a store's push lock until the transaction ends. Anything that reads or
+// changes a store's push settings takes it first, so it waits for a push in
+// flight and a queued push sees the change.
+export async function holdStore(tx: Db, storeId: number) {
+	await tx.execute(
+		sql`select pg_advisory_xact_lock(hashtext('stock-push'), ${storeId})`,
+	);
+}
+
 // One store's push. Never throws: a failure is kept on the store for
 // Settings and returned as a problem for Diagnostics. `only` limits it to
 // those products' listings (src/stock-push/on-change.ts) and skips the
@@ -95,8 +104,9 @@ export async function pushChannelStock<T>(
 // listing no read has looked for yet.
 //
 // Pushes to one store take turns, each in a transaction holding the store:
-// each works out its quantities once it holds it, so a push that started
-// earlier, with older numbers, can't write over a later one.
+// each reads the store's settings and works out its quantities once it holds
+// it, so a push that started earlier, with older numbers or a since-disabled
+// store, can't write over a later one.
 export async function pushStoreStock<T>(
 	db: Db,
 	store: typeof stores.$inferSelect,
@@ -112,16 +122,22 @@ export async function pushStoreStock<T>(
 			await tx.execute(
 				sql`set local idle_in_transaction_session_timeout = '15min'`,
 			);
-			await tx.execute(
-				sql`select pg_advisory_xact_lock(hashtext('stock-push'), ${store.id})`,
-			);
-			return await pushHeld(tx, store, adapter, mode, now, only);
+			await holdStore(tx, store.id);
+			const [held] = await tx
+				.select()
+				.from(stores)
+				.where(eq(stores.id, store.id));
+			if (!held?.pushStock)
+				return { store: store.name, changes: [], failed: 0, problems: [] };
+			return await pushHeld(tx, held, adapter, mode, now, only);
 		});
 	} catch (error) {
 		const message = errorText(error);
+		// The rollback forgot any quantities a failed write had already set on the
+		// channel, so the next push reads the channel before trusting what's cached.
 		await db
 			.update(stores)
-			.set({ stockPushError: message })
+			.set({ stockPushError: message, stockReadAt: null })
 			.where(eq(stores.id, store.id));
 		return {
 			store: store.name,

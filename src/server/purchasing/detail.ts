@@ -1,12 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { getDb } from "#/db/client";
+import { type Db, getDb } from "#/db/client";
 import {
 	locations,
 	products,
 	purchaseOrderAmendments,
+	purchaseOrderDamages,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
+	purchaseOrders,
+	suppliers,
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
 import { stockRanges } from "#/inventory/stock-range";
@@ -16,10 +19,12 @@ import { poFilesOf } from "#/purchasing/files";
 import { leadTimes } from "#/purchasing/forecast";
 import { emailsOf } from "#/purchasing/inbox/ingest";
 import { invoicesOf } from "#/purchasing/invoices";
-import { loadOrder } from "#/purchasing/load";
+import { loadOrder, receivedByLine } from "#/purchasing/load";
 import {
 	draftChanges,
+	PurchaseOrderError,
 	partsOfSets,
+	poName,
 	refreshSuggested,
 	setPartsOf,
 } from "#/purchasing/orders";
@@ -33,6 +38,35 @@ import { listUnits } from "#/purchasing/units";
 import { id } from "./id-input";
 import { onHandOf } from "./on-hand";
 import { leadTimeOf } from "./suppliers";
+
+// The receipts on a PO that can still be undone, newest first. All of them,
+// not a count for the whole PO: each line's undo steps back through its own
+// receipts, so a cap would cut off undos that are still open.
+function undoableReceipts(db: Db, poId: number) {
+	return db
+		.select({
+			id: purchaseOrderReceipts.id,
+			lineId: purchaseOrderReceipts.lineId,
+			quantity: purchaseOrderReceipts.quantity,
+			// Set when the receipt changed what the line expects.
+			quantityBefore: purchaseOrderReceipts.quantityBefore,
+			quantityAfter: purchaseOrderReceipts.quantityAfter,
+			createdAt: purchaseOrderReceipts.createdAt,
+		})
+		.from(purchaseOrderReceipts)
+		.innerJoin(
+			purchaseOrderLines,
+			eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
+		)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, poId),
+				isNull(purchaseOrderReceipts.undoesId),
+				sql`not exists (select 1 from ${purchaseOrderReceipts} u where u.undoes_id = ${purchaseOrderReceipts.id})`,
+			),
+		)
+		.orderBy(desc(purchaseOrderReceipts.id));
+}
 
 export const getPurchaseOrder = createServerFn({ method: "GET" })
 	.validator(id)
@@ -70,31 +104,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 		] = await Promise.all([
 			onHandOf(db, productIds),
 			stockRanges(db, productIds),
-			// The latest receipts that can still be undone.
-			db
-				.select({
-					id: purchaseOrderReceipts.id,
-					lineId: purchaseOrderReceipts.lineId,
-					quantity: purchaseOrderReceipts.quantity,
-					// Set when the receipt changed what the line expects.
-					quantityBefore: purchaseOrderReceipts.quantityBefore,
-					quantityAfter: purchaseOrderReceipts.quantityAfter,
-					createdAt: purchaseOrderReceipts.createdAt,
-				})
-				.from(purchaseOrderReceipts)
-				.innerJoin(
-					purchaseOrderLines,
-					eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
-				)
-				.where(
-					and(
-						eq(purchaseOrderLines.purchaseOrderId, data.id),
-						isNull(purchaseOrderReceipts.undoesId),
-						sql`not exists (select 1 from ${purchaseOrderReceipts} u where u.undoes_id = ${purchaseOrderReceipts.id})`,
-					),
-				)
-				.orderBy(desc(purchaseOrderReceipts.id))
-				.limit(50),
+			undoableReceipts(db, data.id),
 			db
 				.select({ id: locations.id, name: locations.name })
 				.from(locations)
@@ -194,3 +204,66 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 	});
 
 export type PurchaseOrderDetail = Awaited<ReturnType<typeof getPurchaseOrder>>;
+
+// What the receive page reads of a PO: its lines, what can still be undone,
+// and damage. Not the desktop page's planning, costs, or mail. Receiving
+// reloads after each change, so a lighter read pays on every one.
+export const getReceivePurchaseOrder = createServerFn({ method: "GET" })
+	.validator(id)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [po] = await db
+			.select({
+				id: purchaseOrders.id,
+				status: purchaseOrders.status,
+				supplierName: suppliers.name,
+			})
+			.from(purchaseOrders)
+			.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
+			.where(eq(purchaseOrders.id, data.id));
+		if (!po) throw new PurchaseOrderError(`${poName(data.id)} doesn't exist`);
+		const received = receivedByLine(db);
+		const [lines, receipts, damages] = await Promise.all([
+			db
+				.select({
+					id: purchaseOrderLines.id,
+					productId: products.id,
+					sku: products.sku,
+					name: products.name,
+					variantName: products.variantName,
+					imageUrl: products.imageUrl,
+					unit: purchaseOrderLines.unit,
+					packSize: purchaseOrderLines.packSize,
+					supplierCount: purchaseOrderLines.supplierCount,
+					quantity: purchaseOrderLines.quantity,
+					sentQuantity: purchaseOrderLines.sentQuantity,
+					receivingNote: purchaseOrderLines.receivingNote,
+					backOrderedAt: purchaseOrderLines.backOrderedAt,
+					received: sql<number>`coalesce(${received.units}, 0)::int`,
+				})
+				.from(purchaseOrderLines)
+				.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
+				.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
+				.where(eq(purchaseOrderLines.purchaseOrderId, data.id))
+				.orderBy(purchaseOrderLines.addedAt, purchaseOrderLines.id),
+			undoableReceipts(db, data.id),
+			db
+				.select({
+					lineId: purchaseOrderDamages.lineId,
+					quantity: purchaseOrderDamages.quantity,
+				})
+				.from(purchaseOrderDamages)
+				.innerJoin(
+					purchaseOrderLines,
+					eq(purchaseOrderLines.id, purchaseOrderDamages.lineId),
+				)
+				.where(eq(purchaseOrderLines.purchaseOrderId, data.id)),
+		]);
+		return {
+			order: { id: po.id, status: po.status },
+			supplier: { name: po.supplierName },
+			lines,
+			receipts,
+			damages,
+		};
+	});

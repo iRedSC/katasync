@@ -25,13 +25,48 @@ const trackResponse = type({
 	}).or("null"),
 });
 
+// Shippo is asked about this many numbers at once, so a backlog can't turn
+// into a burst of requests.
+const CONCURRENCY = 4;
+// One request, throttle waits included, gets this long before it counts as
+// failed.
+const REQUEST_MS = 10_000;
+// Waits before trying again after a throttled or failed request. Each wait
+// is one more try, so a request is sent at most this many times plus one.
+const RETRY_WAITS_MS = [1_000, 3_000];
+
+// Sends one request to Shippo. Throttling (429) and server errors are tried
+// again after a wait; the last answer, or the last failure, is final.
+async function fetchShippo(url: string, key: string): Promise<Response> {
+	for (let attempt = 0; ; attempt++) {
+		const canRetry = attempt < RETRY_WAITS_MS.length;
+		try {
+			const res = await fetch(url, {
+				headers: { Authorization: `ShippoToken ${key}` },
+				signal: AbortSignal.timeout(REQUEST_MS),
+			});
+			const busy = res.status === 429 || res.status >= 500;
+			if (!canRetry || !busy) return res;
+		} catch (error) {
+			if (!canRetry) {
+				throw error instanceof Error && error.name === "TimeoutError"
+					? new Error(`Shippo didn't answer within ${REQUEST_MS}ms`)
+					: error;
+			}
+		}
+		await new Promise((resolve) =>
+			setTimeout(resolve, RETRY_WAITS_MS[attempt]),
+		);
+	}
+}
+
 // What Shippo knows now. Throws when Shippo can't be asked.
 async function askShippo(carrier: Carrier, number: string) {
 	const key = process.env.SHIPPO_API_KEY;
 	if (!key) throw new Error("Set SHIPPO_API_KEY to follow tracking");
-	const res = await fetch(
+	const res = await fetchShippo(
 		`https://api.goshippo.com/tracks/${carrier}/${encodeURIComponent(number)}`,
-		{ headers: { Authorization: `ShippoToken ${key}` } },
+		key,
 	);
 	if (!res.ok)
 		throw new Error(`Shippo answered ${res.status}: ${await res.text()}`);
@@ -63,6 +98,24 @@ async function check(
 	} catch (error) {
 		return `${row.number}: ${error instanceof Error ? error.message : String(error)}`;
 	}
+}
+
+// Runs `run` on every item, at most `limit` at a time. Results keep the order
+// of `items`.
+async function eachLimit<T, R>(
+	items: T[],
+	limit: number,
+	run: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = [];
+	const queue = items.entries();
+	const worker = async () => {
+		for (const [i, item] of queue) results[i] = await run(item);
+	};
+	await Promise.all(
+		Array.from({ length: Math.min(limit, items.length) }, worker),
+	);
+	return results;
 }
 
 const FOLLOWABLE = ["sent", "closed"] as const;
@@ -151,9 +204,9 @@ export async function refreshTracking(db: Db) {
 				gte(purchaseOrderTracking.createdAt, new Date(Date.now() - GIVE_UP_MS)),
 			),
 		);
-	const problems = (await Promise.all(rows.map((r) => check(db, r)))).filter(
-		(p): p is string => p !== null,
-	);
+	const problems = (
+		await eachLimit(rows, CONCURRENCY, (r) => check(db, r))
+	).filter((p): p is string => p !== null);
 	return { checked: rows.length, problems };
 }
 

@@ -6,13 +6,64 @@ import { type CheckTarget, runCheck } from "#/diagnostics/checks";
 import { diagnosticsOverview } from "#/diagnostics/overview";
 import { COUNT_REASONS, countsDue } from "#/inventory/count-priority";
 import { describeSchema, MAX_ROWS, readOnlyQuery } from "#/mcp/query";
-import { matchInvoice } from "#/purchasing/invoices";
+import { type InvoiceLine, matchInvoice } from "#/purchasing/invoices";
 import { suggestPurchases } from "#/purchasing/reorder";
 import { supplierByRef } from "#/purchasing/suppliers";
 import { listUnits } from "#/purchasing/units";
 import { ourLocation } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
 import { json, READ } from "./tool-shapes";
+
+// Their line number on the invoice; defaults to its place in the list.
+const theirLine = z
+	.number()
+	.int()
+	.positive()
+	.optional()
+	.describe("Their line number; defaults to its place in this list");
+
+// A line as the invoice shows it: merchandise, or a credit taking money off.
+const invoiceLineInput = z.union([
+	z.object({
+		kind: z.literal("merchandise").optional(),
+		line: theirLine,
+		sku: z.string().optional().describe("Our SKU, if shown"),
+		supplier_sku: z.string().optional().describe("Their item number, if shown"),
+		description: z.string().optional(),
+		quantity: z
+			.number()
+			.int()
+			.min(0)
+			.describe("Shipped or billed, in their unit"),
+		unit_cost: z.number().min(0).describe("Per their unit"),
+	}),
+	z.object({
+		kind: z.literal("credit"),
+		line: theirLine,
+		description: z.string().optional(),
+		amount: z.number().positive().describe("Dollars taken off the invoice"),
+	}),
+]);
+
+// As matchInvoice takes it. A credit is never a negative price.
+function toInvoiceLine(l: z.infer<typeof invoiceLineInput>): InvoiceLine {
+	if (l.kind === "credit")
+		return {
+			kind: "credit",
+			line: l.line,
+			description: l.description,
+			amount: l.amount,
+		};
+	return {
+		kind: "merchandise",
+		line: l.line,
+		sku: l.sku,
+		supplierSku: l.supplier_sku,
+		description: l.description,
+		quantity: l.quantity,
+		unitCost: l.unit_cost,
+	};
+}
 
 export function registerReadTools(server: McpServer, db: Db) {
 	// Reading
@@ -109,29 +160,37 @@ export function registerReadTools(server: McpServer, db: Db) {
 			annotations: READ,
 		},
 		async ({ limit, reasons, abc, category, search, location }) => {
-			if (location) await ourLocation(db, location);
-			const { due } = await countsDue(db);
+			const locationId = location ? await ourLocation(db, location) : undefined;
+			const now = new Date();
+			const scope = {
+				category: category || undefined,
+				search: search?.trim() || undefined,
+				locationId,
+			};
+			const { due } = await countsDue(db, now, scope);
+			// A search or location that matches nothing isn't the same as a
+			// category with no shelves due, so the category is checked alone.
 			if (
-				category &&
-				!due.some((s) => s.category?.toLowerCase() === category.toLowerCase())
+				scope.category &&
+				due.length === 0 &&
+				(await countsDue(db, now, { category: scope.category })).due.length ===
+					0
 			) {
 				const known = [
-					...new Set(due.flatMap((s) => (s.category ? [s.category] : []))),
+					...new Set(
+						(await countsDue(db, now)).due.flatMap((s) =>
+							s.category ? [s.category] : [],
+						),
+					),
 				].sort();
 				throw new Error(
 					`No due shelves in category ${category}. Categories with due shelves: ${known.join(", ") || "none"}`,
 				);
 			}
-			const needle = search?.trim().toLowerCase();
 			const matching = due.filter(
 				(s) =>
 					(!reasons || reasons.includes(s.reason)) &&
-					(!abc || abc.includes(s.abc ?? "none")) &&
-					(!category || s.category?.toLowerCase() === category.toLowerCase()) &&
-					(!needle ||
-						s.sku.toLowerCase().includes(needle) ||
-						s.name.toLowerCase().includes(needle)) &&
-					(!location || s.location === location),
+					(!abc || abc.includes(s.abc ?? "none")),
 			);
 			return json({
 				due: matching.length,
@@ -172,7 +231,7 @@ export function registerReadTools(server: McpServer, db: Db) {
 		"match_invoice",
 		{
 			description:
-				"Checks a supplier invoice against its PO and changes nothing. Lines match by our SKU, then their item number (supplier_sku), then a description naming exactly one PO line. Returns whether it matches, totals, each line whose quantity or price differs, invoice lines not on the PO, PO lines not on the invoice, item numbers the products don't have yet (supplierSkusToSave, for set_supplier_skus), and whether the invoice number is already recorded. Quantities and prices are per the PO line's unit, as the invoice counts them.",
+				"Checks a supplier invoice against its PO and changes nothing. Lines match by our SKU, then their item number (supplier_sku), then a description naming exactly one PO line. Returns whether it matches, totals, each line whose quantity or price differs, invoice lines not on the PO, PO lines not on the invoice, item numbers the products don't have yet (supplierSkusToSave, for set_supplier_skus), and whether the invoice number is already recorded. Quantities and prices are per the PO line's unit, as the invoice counts them. A discount or other deduction is a line with kind credit and its amount, not a negative price.",
 			inputSchema: {
 				po: z.number().int().positive(),
 				invoice_number: z.string().optional(),
@@ -183,32 +242,7 @@ export function registerReadTools(server: McpServer, db: Db) {
 					.describe("Total due on the invoice, freight and tax included"),
 				freight: z.number().min(0).optional(),
 				tax: z.number().min(0).optional(),
-				lines: z
-					.array(
-						z.object({
-							line: z
-								.number()
-								.int()
-								.positive()
-								.optional()
-								.describe(
-									"Their line number; defaults to its place in this list",
-								),
-							sku: z.string().optional().describe("Our SKU, if shown"),
-							supplier_sku: z
-								.string()
-								.optional()
-								.describe("Their item number, if shown"),
-							description: z.string().optional(),
-							quantity: z
-								.number()
-								.int()
-								.min(0)
-								.describe("Shipped or billed, in their unit"),
-							unit_cost: z.number().min(0).describe("Per their unit"),
-						}),
-					)
-					.min(1),
+				lines: z.array(invoiceLineInput).min(1),
 			},
 			annotations: READ,
 		},
@@ -220,14 +254,7 @@ export function registerReadTools(server: McpServer, db: Db) {
 					total,
 					freight,
 					tax,
-					lines: lines.map((l) => ({
-						line: l.line,
-						sku: l.sku,
-						supplierSku: l.supplier_sku,
-						description: l.description,
-						quantity: l.quantity,
-						unitCost: l.unit_cost,
-					})),
+					lines: lines.map(toInvoiceLine),
 				}),
 			),
 	);

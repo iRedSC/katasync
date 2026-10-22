@@ -51,6 +51,12 @@ export type DueOrder = {
 	placedAt: Date;
 };
 
+// What a marketplace says it charged on one order, as saveCostReport takes it.
+export type ReportedFigures = Pick<
+	CostReport,
+	"settled" | "noLabel" | "labelsPending" | "labelsAuthoritative" | "charges"
+>;
+
 // What a marketplace says about each order it's asked about. report is null
 // when it has nothing yet (its finance report lags the sale); null is not
 // "charged nothing", which is a report with no charges. A failed order has
@@ -58,10 +64,7 @@ export type DueOrder = {
 export type FetchedCharges =
 	| {
 			orderId: number;
-			report: Pick<
-				CostReport,
-				"settled" | "noLabel" | "labelsPending" | "charges"
-			> | null;
+			report: ReportedFigures | null;
 	  }
 	| { orderId: number; error: string };
 
@@ -76,12 +79,7 @@ export type PostedLister = (
 ) => Promise<{ marketplaceId: string; postedAt: Date }[]>;
 
 export function eachOrder(
-	fetchOne: (
-		order: DueOrder,
-	) => Promise<Pick<
-		CostReport,
-		"settled" | "noLabel" | "labelsPending" | "charges"
-	> | null>,
+	fetchOne: (order: DueOrder) => Promise<ReportedFigures | null>,
 ): ChargeFetcher {
 	return async (due) => {
 		const results: FetchedCharges[] = [];
@@ -148,15 +146,24 @@ export async function dueOrders(
 								),
 							),
 						)
-					: and(
-							gte(orders.placedAt, finalFrom),
-							// Asked again after a quarter of the order's age, between an
-							// hour and a week: about 30 asks over the window, not one per
-							// pass. Settled ones too, since a refund can follow settlement.
-							or(
-								isNull(orderCostChecks.checkedAt),
-								sql`extract(epoch from (${now}::timestamptz - ${orderCostChecks.checkedAt})) * 1000
-									>= greatest(${HOUR}, least(${LONGEST_WAIT}, ${age} / 4))`,
+					: or(
+							and(
+								gte(orders.placedAt, finalFrom),
+								// Asked again after a quarter of the order's age, between an
+								// hour and a week: about 30 asks over the window, not one per
+								// pass. Settled ones too, since a refund can follow settlement.
+								or(
+									isNull(orderCostChecks.checkedAt),
+									sql`extract(epoch from (${now}::timestamptz - ${orderCostChecks.checkedAt})) * 1000
+										>= greatest(${HOUR}, least(${LONGEST_WAIT}, ${age} / 4))`,
+								),
+							),
+							// Older than that, but changed since it was last asked: asked once
+							// more, whatever its age. Any ask after the change ends it, even a
+							// failed one, so each revision is asked for once.
+							and(
+								lt(orders.placedAt, finalFrom),
+								lt(orderCostChecks.checkedAt, orders.sourceUpdatedAt),
 							),
 						),
 			),

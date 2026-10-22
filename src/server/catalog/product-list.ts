@@ -27,6 +27,7 @@ import {
 } from "#/purchasing/reorder";
 import { setSuppliers } from "#/purchasing/suppliers";
 import { countDue } from "./shelf-counts";
+import { shopifyFiling } from "./shopify-filing";
 
 // Every product with what's sellable from owned locations. Small enough
 // (a few thousand rows) to filter in the browser.
@@ -92,6 +93,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 					productType: listings.productType,
 					vendor: listings.vendor,
 					status: listings.status,
+					goneAt: listings.goneAt,
 				})
 				.from(listings)
 				.innerJoin(stores, eq(stores.id, listings.storeId))
@@ -220,51 +222,6 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 		};
 	},
 );
-
-// A product can sell through several Shopify listings (variants, or a second
-// store). Tags are pooled; for status, the most visible listing wins, so a
-// product that's live anywhere reads as active.
-const STATUS_RANK = ["ACTIVE", "DRAFT", "ARCHIVED"];
-function shopifyFiling(
-	rows: {
-		productId: number | null;
-		tags: string[];
-		productType: string | null;
-		vendor: string | null;
-		status: string | null;
-	}[],
-) {
-	const byProduct = new Map<
-		number,
-		{
-			tags: Set<string>;
-			productType: string | null;
-			vendor: string | null;
-			status: string | null;
-		}
-	>();
-	// Unknown statuses (Shopify adds them now and then) rank after the known ones.
-	const rank = (s: string | null) => {
-		if (s === null) return Infinity;
-		const i = STATUS_RANK.indexOf(s);
-		return i === -1 ? STATUS_RANK.length : i;
-	};
-	for (const row of rows) {
-		if (row.productId === null) continue;
-		const f = byProduct.get(row.productId) ?? {
-			tags: new Set<string>(),
-			productType: null,
-			vendor: null,
-			status: null,
-		};
-		for (const tag of row.tags) f.tags.add(tag);
-		f.productType ??= row.productType;
-		f.vendor ??= row.vendor;
-		if (rank(row.status) < rank(f.status)) f.status = row.status;
-		byProduct.set(row.productId, f);
-	}
-	return byProduct;
-}
 
 export type ProductRow = Awaited<
 	ReturnType<typeof listProducts>

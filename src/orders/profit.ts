@@ -8,12 +8,14 @@ import {
 	orders,
 	products,
 } from "#/db/schema";
+import { SHOP_TIME_ZONE } from "#/lib/format";
 
 // Profit over a stretch of time, from the order_profit and order_line_profit
 // views (drizzle/0050_order_profit.sql, 0051_order_line_profit.sql). Days
 // and weeks are the shop's, in Eastern time, and weeks start on Saturday.
 
-export const TIME_ZONE = "America/New_York";
+// The shop's zone, the same one every date is shown in.
+export const TIME_ZONE = SHOP_TIME_ZONE;
 
 export const RANGES = {
 	today: "Today",

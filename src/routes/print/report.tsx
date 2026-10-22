@@ -16,8 +16,11 @@ import { placeName, taxName } from "#/lib/places";
 import { cn } from "#/lib/utils";
 import {
 	type ChannelRow,
+	formatAmount,
 	lastMonth,
 	parsePeriod,
+	payoutProblem,
+	payoutTotals,
 	periodDays,
 	periodName,
 	periodText,
@@ -131,24 +134,33 @@ function PrintReport() {
 							<Section icon={Landmark} title="Sales tax you owe">
 								<Owed rows={d.jurisdictions} />
 							</Section>
-							<div className="grid grid-cols-2 gap-6">
-								<SideBySide
-									left={{
-										icon: ShieldCheck,
-										title: "Paid by marketplaces",
-										table: paidByMarketplaces(d.channels),
-									}}
-									right={{
-										icon: Banknote,
-										title: "Deposits to the bank",
-										table: deposits(d.deposits),
-									}}
-								/>
-							</div>
-							<Section icon={MapPin} title="Your Shopify sales by state">
-								<States rows={d.states} home={home} />
-							</Section>
 						</>
+					)}
+					{/* Payouts stand apart from sales: a month with deposits and no orders still prints them. */}
+					<div className="grid grid-cols-2 gap-6">
+						<SideBySide
+							left={{
+								icon: ShieldCheck,
+								title: "Paid by marketplaces",
+								table: paidByMarketplaces(d.channels),
+							}}
+							right={{
+								icon: Banknote,
+								title: "Payouts from marketplaces",
+								table: deposits(d.deposits),
+								empty: d.payoutErrors.length > 0 ? "Not read yet" : "None.",
+							}}
+						/>
+					</div>
+					{d.payoutErrors.map((e) => (
+						<p key={e.channel} className="font-medium">
+							{payoutProblem(e)}
+						</p>
+					))}
+					{d.channels.length > 0 && (
+						<Section icon={MapPin} title="Your Shopify sales by state">
+							<States rows={d.states} home={home} />
+						</Section>
 					)}
 				</OnePage>
 			</article>
@@ -252,20 +264,25 @@ type TableProps = {
 const lines = (t: TableProps) => t.rows.length + (t.total ? 1 : 0);
 
 // Two tables side by side, the shorter padded with blank lines above its
-// total so both end level.
-function SideBySide({
-	left,
-	right,
-}: {
-	left: { icon: typeof Store; title: string; table: TableProps | null };
-	right: { icon: typeof Store; title: string; table: TableProps | null };
-}) {
+// total so both end level. Each says what to print instead of a table.
+type Side = {
+	icon: typeof Store;
+	title: string;
+	table: TableProps | null;
+	empty?: string;
+};
+
+function SideBySide({ left, right }: { left: Side; right: Side }) {
 	const tall = Math.max(
 		...[left.table, right.table].map((t) => (t ? lines(t) : 0)),
 	);
 	return [left, right].map((s) => (
 		<Section key={s.title} icon={s.icon} title={s.title}>
-			{s.table ? <Table {...s.table} height={tall} /> : <p>None.</p>}
+			{s.table ? (
+				<Table {...s.table} height={tall} />
+			) : (
+				<p>{s.empty ?? "None."}</p>
+			)}
 		</Section>
 	));
 }
@@ -335,7 +352,7 @@ function Table({
 }
 
 // One row per channel. Fees take in the marketplace's other adjustments, so
-// gross less refunds, fees and labels is net.
+// gross less refunds, fees, labels and postage is net.
 function Channels({ rows }: { rows: ChannelRow[] }) {
 	const ordered = SOURCES.flatMap(([s, name]) => {
 		const r = rows.find((x) => x.source === s);
@@ -349,12 +366,22 @@ function Channels({ rows }: { rows: ChannelRow[] }) {
 		formatMoney(r.refunds),
 		formatMoney(fees(r as ChannelRow)),
 		formatMoney(r.labels),
+		formatMoney(r.postageAdjustments),
 		formatMoney(r.net),
 	];
 	const all = (get: (r: ChannelRow) => number) => sum(rows, get);
 	return (
 		<Table
-			head={["", "Orders", "Gross sales", "Refunds", "Fees", "Labels", "Net"]}
+			head={[
+				"",
+				"Orders",
+				"Gross sales",
+				"Refunds",
+				"Fees",
+				"Labels",
+				"Postage",
+				"Net",
+			]}
 			rows={ordered.map(({ s, name, r }) => ({
 				key: name,
 				cells: line(CHIPS[s], r),
@@ -368,6 +395,7 @@ function Channels({ rows }: { rows: ChannelRow[] }) {
 							formatMoney(all((r) => r.refunds)),
 							formatMoney(all(fees)),
 							formatMoney(all((r) => r.labels)),
+							formatMoney(all((r) => r.postageAdjustments)),
 							formatMoney(all((r) => r.net)),
 						]
 					: undefined
@@ -380,13 +408,13 @@ function Owed({ rows }: { rows: Data["jurisdictions"] }) {
 	if (rows.length === 0) return <p>None.</p>;
 	return (
 		<Table
-			head={["", "Rate", "Taxable sales", "Tax"]}
+			head={["", "Rate", "Sales on taxed orders", "Tax"]}
 			rows={rows.map((r) => ({
 				key: `${r.country}|${r.jurisdiction}|${r.rate}`,
 				cells: [
 					taxName(r),
 					r.rate === null ? "" : `${+(r.rate * 100).toFixed(4)}%`,
-					formatMoney(r.taxableSales),
+					formatMoney(r.taxedSales),
 					formatMoney(r.tax),
 				],
 			}))}
@@ -566,44 +594,69 @@ function States({ rows, home }: { rows: Place[]; home: string | null }) {
 	);
 }
 
-// Each marketplace's deposits in the month, counted and added up. Failed
-// ones never arrived and are left out; ones still on their way are counted.
 // Who sent it: Shopify pays out for every Shopify channel at once.
 const depositorName = (channel: Data["deposits"][number]["channel"]) =>
 	channel === "shopify"
 		? "Shopify"
 		: (SOURCES.find(([s]) => s === channel)?.[1] ?? channel);
 
+// What each marketplace sent in the month, sent and on its way in their own
+// columns, so a payout still on its way never reads as paid. Failed ones
+// never arrived and are left out. Each currency gets its own rows and totals.
 function deposits(rows: Data["deposits"]): TableProps | null {
-	if (rows.length === 0) return null;
 	const arrived = rows.filter((r) => r.status !== "failed");
-	const channels = [...new Set(arrived.map((r) => r.channel))];
-	const line = (channel: (typeof channels)[number]) => {
-		const mine = arrived.filter((r) => r.channel === channel);
-		return {
-			key: channel,
-			cells: [
-				<ChannelBadge
-					key="from"
-					channel={channel}
-					salesChannel={null}
-					label={depositorName(channel)}
-				/>,
-				formatCount(mine.length),
-				formatMoney(sum(mine, (r) => r.amount)),
-			],
-		};
-	};
+	if (arrived.length === 0) return null;
+	const lines = [
+		...new Map(
+			arrived.map((r) => [`${r.channel}|${r.currency}`, r] as const),
+		).values(),
+	];
+	const currencies = [...new Set(arrived.map((r) => r.currency))];
+	// A dash where nothing arrived in that status.
+	const amount = (
+		mine: Data["deposits"],
+		status: "sent" | "pending",
+		currency: string,
+	) =>
+		formatAmount(
+			mine.some((r) => r.status === status) ? payoutTotals(mine)[status] : null,
+			currency,
+		);
+	// Currencies don't add up, so each one's total is joined, not summed.
+	const total = (status: "sent" | "pending") =>
+		currencies
+			.filter((c) =>
+				arrived.some((r) => r.currency === c && r.status === status),
+			)
+			.map((c) =>
+				amount(
+					arrived.filter((r) => r.currency === c),
+					status,
+					c,
+				),
+			)
+			.join(" + ") || formatMoney(null);
 	return {
-		head: ["", "Deposits", "Amount"],
-		rows: channels.map(line),
+		head: ["", "Sent", "On its way"],
+		rows: lines.map((line) => {
+			const mine = arrived.filter(
+				(r) => r.channel === line.channel && r.currency === line.currency,
+			);
+			return {
+				key: `${line.channel}|${line.currency}`,
+				cells: [
+					<ChannelBadge
+						key="from"
+						channel={line.channel}
+						salesChannel={null}
+						label={depositorName(line.channel)}
+					/>,
+					amount(mine, "sent", line.currency),
+					amount(mine, "pending", line.currency),
+				],
+			};
+		}),
 		total:
-			channels.length > 1
-				? [
-						"Total",
-						formatCount(arrived.length),
-						formatMoney(sum(arrived, (r) => r.amount)),
-					]
-				: undefined,
+			lines.length > 1 ? ["Total", total("sent"), total("pending")] : undefined,
 	};
 }

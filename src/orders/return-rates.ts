@@ -4,6 +4,7 @@ import {
 	eq,
 	gt,
 	gte,
+	inArray,
 	isNotNull,
 	lt,
 	ne,
@@ -46,6 +47,10 @@ export const evidence = {
 // Lines that came back among orders matching `placed`, newest first, each
 // with what its buyers wrote.
 export async function returnedLinesWhere(db: Db, placed: SQL | undefined) {
+	const returnedIds = db
+		.select({ id: orderLineReturns.lineId })
+		.from(orderLineReturns)
+		.where(and(placed, gt(orderLineReturns.returned, 0)));
 	const [lines, notes] = await Promise.all([
 		db
 			.select({
@@ -80,16 +85,23 @@ export async function returnedLinesWhere(db: Db, placed: SQL | undefined) {
 			)
 			.where(
 				and(
+					inArray(returnRequestLines.orderLineId, returnedIds),
 					isNotNull(returnRequests.note),
 					ne(returnRequests.status, "cancelled"),
 				),
 			),
 	]);
+	// Grouped once, so each line finds its notes without scanning them all.
+	const notesByLine = new Map<number, string[]>();
+	for (const n of notes) {
+		if (n.lineId === null || !n.note) continue;
+		const written = notesByLine.get(n.lineId);
+		if (written) written.push(n.note);
+		else notesByLine.set(n.lineId, [n.note]);
+	}
 	return lines.map((l) => ({
 		...l,
-		notes: notes.flatMap((n) =>
-			n.lineId === l.lineId && n.note ? [n.note] : [],
-		),
+		notes: notesByLine.get(l.lineId) ?? [],
 	}));
 }
 

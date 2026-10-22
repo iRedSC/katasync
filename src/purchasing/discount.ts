@@ -51,6 +51,11 @@ export function coveredUnits(quantity: number, discounts: Discount[]) {
 	return discounts.map((d) => (d.units === "rest" ? rest : d.units));
 }
 
+// Units of a delivery that its discounts don't cover yet. Discounts that came
+// with the delivery, together, can't cover more than it brought.
+export const receiptLeft = (received: number, discounts: Discount[]) =>
+	received - fixedUnits(discounts);
+
 // Cents off, or null when it's a percent of a price nobody knows yet.
 function centsOff(off: DiscountOff, units: number, unitCost: number | null) {
 	if (off.kind === "amount") return Math.round(off.amount * 100);

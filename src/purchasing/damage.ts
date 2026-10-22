@@ -168,6 +168,19 @@ export async function addDamagePhoto(
 		);
 	return db.transaction(async (tx) => {
 		const damage = await unreported(tx, input.damageId);
+		// A photo the damage already has, byte for byte, is that photo: a retry after
+		// a lost response gets its id back rather than a second copy.
+		const [same] = await tx
+			.select({ id: purchaseOrderDamagePhotos.id })
+			.from(purchaseOrderDamagePhotos)
+			.where(
+				and(
+					eq(purchaseOrderDamagePhotos.damageId, damage.id),
+					eq(purchaseOrderDamagePhotos.data, Buffer.from(input.bytes)),
+				),
+			)
+			.limit(1);
+		if (same) return { photoId: same.id };
 		const [{ count }] = await tx
 			.select({ count: sql<number>`count(*)::int` })
 			.from(purchaseOrderDamagePhotos)

@@ -117,8 +117,11 @@ export async function applyCostImport(db: Db, plan: CostPlan) {
 	return db.transaction(async (tx) => {
 		// Dated even when unchanged: the list confirms it.
 		const byCost = new Map<number, number[]>();
-		for (const c of plan.set)
-			byCost.set(c.to, [...(byCost.get(c.to) ?? []), c.productId]);
+		for (const c of plan.set) {
+			const ids = byCost.get(c.to);
+			if (ids) ids.push(c.productId);
+			else byCost.set(c.to, [c.productId]);
+		}
 		for (const [cost, ids] of byCost)
 			for (const batch of chunks(ids, 1000))
 				await tx
@@ -138,25 +141,29 @@ export async function applyCostImport(db: Db, plan: CostPlan) {
 		// Every sale takes its product's cost as it is now, as a new sale would
 		// (costOf in src/orders/ingest.ts): a tool set the sum of its parts,
 		// unknown if any part is.
+		// Counted in SQL: only the count comes back, not every sale's id.
 		const { rows } = (await tx.execute(sql`
-			UPDATE order_lines l SET unit_cost = c.cost
-			FROM (
-				SELECT p.id, CASE WHEN p.kind = 'bundle' THEN (
-					SELECT CASE WHEN count(*) > 0 AND bool_and(cp.unit_cost IS NOT NULL)
-						THEN sum(cp.unit_cost * pc.quantity) END
-					FROM product_components pc
-					JOIN products cp ON cp.id = pc.component_product_id
-					WHERE pc.parent_product_id = p.id
-				) ELSE p.unit_cost END AS cost
-				FROM products p
-			) c
-			WHERE l.product_id = c.id AND l.unit_cost IS DISTINCT FROM c.cost
-			RETURNING l.id
-		`)) as unknown as { rows: unknown[] };
+			WITH recosted AS (
+				UPDATE order_lines l SET unit_cost = c.cost
+				FROM (
+					SELECT p.id, CASE WHEN p.kind = 'bundle' THEN (
+						SELECT CASE WHEN count(*) > 0 AND bool_and(cp.unit_cost IS NOT NULL)
+							THEN sum(cp.unit_cost * pc.quantity) END
+						FROM product_components pc
+						JOIN products cp ON cp.id = pc.component_product_id
+						WHERE pc.parent_product_id = p.id
+					) ELSE p.unit_cost END AS cost
+					FROM products p
+				) c
+				WHERE l.product_id = c.id AND l.unit_cost IS DISTINCT FROM c.cost
+				RETURNING l.id
+			)
+			SELECT count(*)::int AS n FROM recosted
+		`)) as unknown as { rows: { n: number }[] };
 		return {
 			costed: plan.set.length,
 			cleared: plan.clear.length,
-			salesRecosted: rows.length,
+			salesRecosted: rows[0].n,
 		};
 	});
 }

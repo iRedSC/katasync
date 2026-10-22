@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useState } from "react";
+import { AlertCircle, Check, Loader2 } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { cityLine, formatMoney, formatPhone } from "#/lib/format";
 import { listInvoices, markInvoicesPrinted } from "#/server/orders";
 
@@ -46,9 +47,27 @@ function payment(status: string | null): Payment {
 
 type Data = Awaited<ReturnType<typeof listInvoices>>;
 
+// Whether the printed invoices were recorded as printed. A failed record keeps
+// its ids, so retrying it never prints anything again.
+type Marking =
+	| { state: "idle" }
+	| { state: "saving" }
+	| { state: "saved" }
+	| { state: "failed"; ids: number[] };
+
 function Invoices() {
 	const { from, invoices } = Route.useLoaderData();
 	const { ids } = Route.useSearch();
+	const [marking, setMarking] = useState<Marking>({ state: "idle" });
+	const markPrinted = useCallback(async (printed: number[]) => {
+		setMarking({ state: "saving" });
+		try {
+			await markInvoicesPrinted({ data: { ids: printed } });
+			setMarking({ state: "saved" });
+		} catch {
+			setMarking({ state: "failed", ids: printed });
+		}
+	}, []);
 
 	// Item photos load from the stores' CDNs; printing before they arrive
 	// prints empty boxes. Waits for each to load or fail, at most a few
@@ -81,10 +100,10 @@ function Invoices() {
 	useEffect(() => {
 		if (invoices.length === 0) return;
 		const ids = invoices.map((o) => o.id);
-		const mark = () => markInvoicesPrinted({ data: { ids } });
+		const mark = () => void markPrinted(ids);
 		window.addEventListener("afterprint", mark);
 		return () => window.removeEventListener("afterprint", mark);
-	}, [printedIds]);
+	}, [printedIds, markPrinted]);
 
 	return (
 		<div className="min-h-svh bg-surface py-6 print:bg-white print:py-0">
@@ -93,13 +112,40 @@ function Invoices() {
 				<span className="text-muted-foreground">
 					{invoices.length} {invoices.length === 1 ? "invoice" : "invoices"}
 				</span>
-				<button
-					type="button"
-					onClick={() => window.print()}
-					className="h-8 rounded-lg bg-primary px-3 font-semibold text-white hover:bg-primary-hover"
-				>
-					Print
-				</button>
+				<div className="flex items-center gap-3">
+					{marking.state === "saving" && (
+						<Loader2
+							aria-label="Recording as printed"
+							className="size-4 animate-spin text-muted-foreground"
+						/>
+					)}
+					{marking.state === "saved" && (
+						<Check
+							aria-label="Recorded as printed"
+							className="size-4 text-success-icon"
+						/>
+					)}
+					{marking.state === "failed" && (
+						<>
+							<AlertCircle className="size-4 text-critical-text" />
+							<span className="text-critical-text">Not marked printed</span>
+							<button
+								type="button"
+								onClick={() => void markPrinted(marking.ids)}
+								className="h-8 px-2 font-semibold text-primary hover:underline"
+							>
+								Retry
+							</button>
+						</>
+					)}
+					<button
+						type="button"
+						onClick={() => window.print()}
+						className="h-8 rounded-lg bg-primary px-3 font-semibold text-white hover:bg-primary-hover"
+					>
+						Print
+					</button>
+				</div>
 			</div>
 			{invoices.length === 0 && (
 				<p className="text-center text-muted-foreground">

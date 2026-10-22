@@ -15,17 +15,15 @@ export const shopifyPayout = type({
 });
 const page = type({ payouts: shopifyPayout.array() });
 
-// scheduled and in_transit are on their way; canceled never went.
-export function shopifyToPayout(
-	p: typeof shopifyPayout.infer,
-): FetchedPayout | null {
-	if (p.status === "canceled") return null;
+// scheduled and in_transit are on their way. canceled never went, so it's
+// failed: left out, a payout that was pending would stay pending forever.
+export function shopifyToPayout(p: typeof shopifyPayout.infer): FetchedPayout {
 	return {
 		externalId: String(p.id),
 		status:
 			p.status === "paid"
 				? "sent"
-				: p.status === "failed"
+				: p.status === "failed" || p.status === "canceled"
 					? "failed"
 					: "pending",
 		// The day it's sent, as Shopify dates it: noon, so no time zone moves it
@@ -45,10 +43,7 @@ export async function fetchShopifyPayouts(since: Date) {
 	while (path) {
 		const { body, next }: { body: unknown; next: string | null } =
 			await shopifyRest(path);
-		for (const p of page.assert(body).payouts) {
-			const payout = shopifyToPayout(p);
-			if (payout) found.push(payout);
-		}
+		for (const p of page.assert(body).payouts) found.push(shopifyToPayout(p));
 		path = next;
 	}
 	return found;

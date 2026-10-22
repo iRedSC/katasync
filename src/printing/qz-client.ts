@@ -163,7 +163,7 @@ async function printPdfs(paths: string[], what: string) {
 	const [first] = paths;
 	if (first === undefined) return;
 	const printer = labelPrinter();
-	const open = () => window.open(first, "_blank");
+	const open = () => openPdfs(paths);
 	if (!printer) return void open();
 	try {
 		await qzRequest(async (qz) => {
@@ -174,18 +174,7 @@ async function printPdfs(paths: string[], what: string) {
 					`Printer "${printer}" was not found; choose a printer in Settings`,
 				);
 			}
-			const data = await Promise.all(
-				paths.map(async (path) => {
-					const response = await fetch(path);
-					if (!response.ok) throw new Error(await response.text());
-					return {
-						type: "pixel" as const,
-						format: "pdf" as const,
-						flavor: "base64" as const,
-						data: toBase64(await response.arrayBuffer()),
-					};
-				}),
-			);
+			const data = await downloadLabels(paths);
 			const config = qz.configs.create(printer, {
 				size: { width: 4, height: 6 },
 				units: "in",
@@ -199,6 +188,61 @@ async function printPdfs(paths: string[], what: string) {
 			action: { label: "Open PDF", onClick: open },
 			duration: 15_000,
 		});
+	}
+}
+
+// Every label's data, or none. A failed download cancels the rest and waits
+// for them to stop, so no reader outlives the attempt. Only this download can
+// be cancelled: once QZ has the job, it prints.
+async function downloadLabels(paths: string[]) {
+	const abort = new AbortController();
+	const failures: unknown[] = [];
+	const settled = await Promise.allSettled(
+		paths.map(async (path) => {
+			try {
+				const response = await fetch(path, { signal: abort.signal });
+				if (!response.ok) throw new Error(await response.text());
+				return {
+					type: "pixel" as const,
+					format: "pdf" as const,
+					flavor: "base64" as const,
+					data: toBase64(await response.arrayBuffer()),
+				};
+			} catch (error) {
+				// The first failure is the one reported; the rest are its cancellations.
+				failures.push(error);
+				abort.abort();
+				throw error;
+			}
+		}),
+	);
+	if (failures.length > 0) throw failures[0];
+	return settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+}
+
+// Opens the labels in one tab, joined into one PDF; a single label opens as it
+// is. The tab opens first, while the click still allows one, and the PDF goes
+// into it once the labels are joined.
+async function openPdfs(paths: string[]) {
+	if (paths.length === 1) return void window.open(paths[0], "_blank");
+	const tab = window.open("", "_blank");
+	try {
+		if (!tab) throw new Error("the browser blocked the new tab");
+		const { PDFDocument } = await import("pdf-lib");
+		const joined = await PDFDocument.create();
+		for (const path of paths) {
+			const response = await fetch(path);
+			if (!response.ok) throw new Error(await response.text());
+			const label = await PDFDocument.load(await response.arrayBuffer());
+			const pages = await joined.copyPages(label, label.getPageIndices());
+			for (const page of pages) joined.addPage(page);
+		}
+		const pdf = new Uint8Array(await joined.save());
+		const blob = new Blob([pdf], { type: "application/pdf" });
+		tab.location.href = URL.createObjectURL(blob);
+	} catch (err) {
+		tab?.close();
+		toast.error(`The labels didn't open: ${message(err)}`);
 	}
 }
 

@@ -18,10 +18,13 @@ export async function setRecipe(
 	components: { productId: number; quantity: number }[],
 ) {
 	return db.transaction(async (tx) => {
+		// Locked first, so two replacements of one parent run one after the other
+		// and the last one's whole list is what's left.
 		const [parent] = await tx
 			.select()
 			.from(products)
-			.where(eq(products.id, parentProductId));
+			.where(eq(products.id, parentProductId))
+			.for("update");
 		if (!parent) throw new LedgerError(`Unknown product ${parentProductId}`);
 		if (parent.kind === "simple") {
 			throw new LedgerError(

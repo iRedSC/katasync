@@ -117,6 +117,47 @@ async function explain(db: Db, error: unknown) {
 
 export const MCP_ROLE = "katasync_mcp";
 
+// Isolated connections the query tool may hold at once. Each one is on top of
+// the app's pool, so parallel calls wait their turn rather than use up the
+// database's connections, and a call that waits too long is told to retry.
+const MAX_CONNECTIONS = 4;
+const SLOT_WAIT_MS = 10_000;
+const CONNECT_TIMEOUT_MS = 5_000;
+let inUse = 0;
+const waiting: (() => void)[] = [];
+
+export async function withConnectionSlot<T>(run: () => Promise<T>): Promise<T> {
+	await takeSlot();
+	try {
+		return await run();
+	} finally {
+		// The slot goes straight to the next caller in line, if there is one.
+		const next = waiting.shift();
+		if (next) next();
+		else inUse--;
+	}
+}
+
+async function takeSlot() {
+	if (inUse < MAX_CONNECTIONS) {
+		inUse++;
+		return;
+	}
+	await new Promise<void>((resolve, reject) => {
+		const admit = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		const timer = setTimeout(() => {
+			waiting.splice(waiting.indexOf(admit), 1);
+			reject(
+				new QueryError("Too many queries are running. Try again in a moment."),
+			);
+		}, SLOT_WAIT_MS);
+		waiting.push(admit);
+	});
+}
+
 // A connection of its own, logged in as katasync_mcp, and checked to be.
 export async function withMcpConnection<T>(
 	use: (db: Db) => Promise<T>,
@@ -124,16 +165,22 @@ export async function withMcpConnection<T>(
 	// getDb first: it says clearly when DATABASE_URL is missing.
 	const password = await mcpPassword(getDb());
 	const url = mcpConnectionString(process.env.DATABASE_URL ?? "", password);
-	return withOwnConnection(async (db) => {
-		const { rows } = (await db.execute(
-			sql`select session_user as who`,
-		)) as unknown as { rows: { who: string }[] };
-		if (rows[0]?.who !== MCP_ROLE)
-			throw new Error(
-				`The query tool logged in as ${rows[0]?.who}, not ${MCP_ROLE}`,
-			);
-		return use(db);
-	}, url);
+	return withConnectionSlot(() =>
+		withOwnConnection(
+			async (db) => {
+				const { rows } = (await db.execute(
+					sql`select session_user as who`,
+				)) as unknown as { rows: { who: string }[] };
+				if (rows[0]?.who !== MCP_ROLE)
+					throw new Error(
+						`The query tool logged in as ${rows[0]?.who}, not ${MCP_ROLE}`,
+					);
+				return use(db);
+			},
+			url,
+			{ connectTimeoutMs: CONNECT_TIMEOUT_MS },
+		),
+	);
 }
 
 // DATABASE_URL with katasync_mcp's login in place of the owner's. pg lets

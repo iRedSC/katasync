@@ -10,7 +10,8 @@ import {
 } from "#/server/places";
 
 // A street address field that suggests addresses and businesses as you type.
-// Picking one hands back the whole address to fill the other fields with.
+// Picking one hands over the lookup of the whole address to fill the other
+// fields with. The caller decides whether it still applies.
 export function AddressInput({
 	name,
 	defaultValue,
@@ -20,7 +21,7 @@ export function AddressInput({
 	name: string;
 	defaultValue: string;
 	className?: string;
-	onPick: (address: PlaceAddress) => void;
+	onPick: (address: Promise<PlaceAddress>) => Promise<void>;
 }) {
 	const listId = useId();
 	const [query, setQuery] = useState("");
@@ -31,6 +32,9 @@ export function AddressInput({
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const session = useRef(crypto.randomUUID());
+	// A picked address being looked up. Only the latest pick's result counts.
+	const [picking, setPicking] = useState(false);
+	const picks = useRef(0);
 
 	useEffect(() => {
 		if (query.trim().length < 3) {
@@ -64,15 +68,18 @@ export function AddressInput({
 	async function pick(option: PlaceSuggestion) {
 		setOpen(false);
 		setOptions([]);
+		const ticket = ++picks.current;
+		setPicking(true);
 		try {
-			onPick(
-				await placeAddress({
+			await onPick(
+				placeAddress({
 					data: { placeId: option.placeId, sessionToken: session.current },
 				}),
 			);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : String(err));
 		}
+		if (ticket === picks.current) setPicking(false);
 		session.current = crypto.randomUUID();
 	}
 
@@ -128,7 +135,7 @@ export function AddressInput({
 				}}
 				className={cn(className, "pr-7")}
 			/>
-			{loading && (
+			{(loading || picking) && (
 				<LoaderCircle
 					aria-hidden
 					className="pointer-events-none absolute top-2 right-2 size-4 animate-spin text-muted-foreground"

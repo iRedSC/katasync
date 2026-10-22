@@ -1,4 +1,10 @@
-import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import {
+	type FormEvent,
+	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { AddressInput } from "#/components/address-input";
 import { Button } from "#/components/ui/button";
@@ -20,6 +26,17 @@ type Supplier = SupplierRow["supplier"];
 
 const input =
 	"h-8 w-full rounded-lg border border-input bg-white px-2 outline-none focus:border-ring";
+
+// The fields a picked address fills in. Editing any of them makes a pick that's
+// still waiting on its details stale.
+const addressFields = new Set([
+	"address1",
+	"address2",
+	"city",
+	"region",
+	"postalCode",
+	"country",
+]);
 
 // Edits a supplier's details. With unsaved changes, clicking outside doesn't
 // close it, so a stray click can't lose them; it shakes and says why instead.
@@ -137,6 +154,17 @@ function SupplierForm({
 }) {
 	const [busy, setBusy] = useState(false);
 	const form = useRef<HTMLFormElement>(null);
+	// Bumped by each edit to an address field.
+	const addressEdits = useRef(0);
+	// The latest address pick. Only it may still fill the address in.
+	const latestPick = useRef<symbol | null>(null);
+	// A pick still waiting on its details is dropped once the form is gone.
+	useEffect(
+		() => () => {
+			latestPick.current = null;
+		},
+		[],
+	);
 
 	// Dirty while any field differs from what was saved, so undoing an edit by
 	// hand counts as clean again.
@@ -147,16 +175,45 @@ function SupplierForm({
 			),
 		);
 
-	function fillAddress(address: PlaceAddress) {
-		for (const [name, value] of Object.entries(address)) {
-			const el = form.current?.elements.namedItem(name);
-			if (el instanceof HTMLInputElement) el.value = value;
-		}
-		checkDirty();
+	// Fills in a picked address once its lookup finishes, if it's still wanted:
+	// no newer pick, no edit to an address field, and no save since. Otherwise it
+	// is dropped and the form keeps what's in it. A failed lookup is shown only
+	// while it's wanted.
+	function pickAddress(lookup: Promise<PlaceAddress>) {
+		const pick = Symbol();
+		const edits = addressEdits.current;
+		latestPick.current = pick;
+		const wanted = () =>
+			latestPick.current === pick && addressEdits.current === edits;
+		return lookup.then(
+			(address) => {
+				if (!wanted()) return;
+				for (const [name, value] of Object.entries(address)) {
+					const el = form.current?.elements.namedItem(name);
+					if (el instanceof HTMLInputElement) el.value = value;
+				}
+				checkDirty();
+			},
+			(error: unknown) => {
+				if (wanted()) throw error;
+			},
+		);
 	}
+
+	const onInput = (e: FormEvent<HTMLFormElement>) => {
+		if (
+			e.target instanceof HTMLInputElement &&
+			addressFields.has(e.target.name)
+		)
+			addressEdits.current++;
+		checkDirty();
+	};
 
 	async function submit(e: FormEvent<HTMLFormElement>) {
 		e.preventDefault();
+		// What's saved is what's on the form now, so a pick still looking up
+		// its address can't change it after this.
+		latestPick.current = null;
 		const f = new FormData(e.currentTarget);
 		const str = (k: string) => String(f.get(k) ?? "");
 		// As the server stores them: blanks become empty, and the name is trimmed.
@@ -211,7 +268,7 @@ function SupplierForm({
 		<form
 			ref={form}
 			onSubmit={submit}
-			onInput={checkDirty}
+			onInput={onInput}
 			className="grid gap-3 md:grid-cols-2"
 		>
 			<Field label="Name">
@@ -239,7 +296,7 @@ function SupplierForm({
 				<AddressInput
 					name="address1"
 					defaultValue={s.address1 ?? ""}
-					onPick={fillAddress}
+					onPick={pickAddress}
 					className={input}
 				/>
 			</Field>

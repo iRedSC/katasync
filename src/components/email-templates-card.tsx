@@ -56,6 +56,10 @@ export function EmailTemplatesCard({
 	const set = (t: Template) => setDrafts((d) => ({ ...d, [kind]: t }));
 	const drop = (k: TemplateKind) =>
 		setDrafts((d) => ({ ...d, [k]: undefined }));
+	// Clears a draft once the save or reset that sent it is acknowledged, but
+	// only that revision: one typed while it was in flight stays.
+	const settle = (k: TemplateKind, sent: Template | undefined) =>
+		setDrafts((d) => (d[k] === sent ? { ...d, [k]: undefined } : d));
 
 	const unsaved = (k: TemplateKind) => {
 		const d = drafts[k];
@@ -74,19 +78,20 @@ export function EmailTemplatesCard({
 			patch: patchRow(t, custom),
 			send: () => saveEmailTemplate({ data: { kind, ...t } }),
 		});
-		if (r) drop(kind);
+		if (r) settle(kind, t);
 		return r;
 	}
 
 	async function reset() {
 		const was = { subject: saved.subject, body: saved.body };
+		const typed = drafts[kind];
 		const r = await optimism.change({
 			label: `${TEMPLATE_NAMES[kind]} email`,
 			patch: patchRow(DEFAULT_TEMPLATES[kind], false),
 			send: () => resetEmailTemplate({ data: { kind } }),
 		});
 		if (!r) return;
-		drop(kind);
+		settle(kind, typed);
 		offerUndo(`${TEMPLATE_NAMES[kind]} email back to the default wording`, {
 			undo: async () => ((await save(was)) ? "Your wording is back" : null),
 		});

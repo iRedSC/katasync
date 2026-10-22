@@ -156,7 +156,7 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 		}
 		setSales.push({ setId: r.productId, units: r.units, revenue: r.revenue });
 		const cost = setCost(r.productId);
-		if (!cost) {
+		if (cost === null) {
 			for (const part of partsOf.get(r.productId) ?? [])
 				unvalued.set(
 					part.partId,
@@ -164,8 +164,14 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 				);
 			continue;
 		}
-		for (const part of partsOf.get(r.productId) ?? [])
-			add(part.partId, (r.revenue * part.quantity * (part.cost ?? 0)) / cost);
+		// Split by each part's share of the set's cost. When every part is known
+		// to be free there's no cost to split by, so the parts share it by quantity.
+		const parts = partsOf.get(r.productId) ?? [];
+		const weight = (part: { quantity: number; cost: number | null }) =>
+			cost > 0 ? part.quantity * (part.cost ?? 0) : part.quantity;
+		const whole = parts.reduce((sum, part) => sum + weight(part), 0);
+		for (const part of parts)
+			add(part.partId, (r.revenue * weight(part)) / whole);
 	}
 
 	let unpriced = 0;

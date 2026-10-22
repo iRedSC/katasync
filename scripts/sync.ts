@@ -18,7 +18,8 @@
 //                            TikTok, with their reasons (--only one of them)
 //
 // A channel without credentials in the environment is skipped. Every pass is
-// recorded for Diagnostics (/diagnostics).
+// recorded for Diagnostics (/diagnostics). A one-shot run still tries every
+// channel, then exits nonzero if any of them failed.
 import { parseArgs } from "node:util";
 import {
 	backfillReturns,
@@ -68,7 +69,8 @@ const COSTS_EVERY = 10 * MINUTE;
 const listingsAt = new Map<string, number>();
 const selected = channels.filter((c) => !values.only || c.name === values.only);
 
-async function pass(channel: (typeof channels)[number]) {
+// Each returns whether the pass worked, for the one-shot exit status.
+async function pass(channel: (typeof channels)[number]): Promise<boolean> {
 	const started = Date.now();
 	const listings =
 		"listingsEvery" in channel &&
@@ -83,22 +85,29 @@ async function pass(channel: (typeof channels)[number]) {
 		for (const problem of result.problems) console.log(`  ${problem}`);
 		if (result.pinned > 0)
 			console.log(`  ${result.pinned} new orders to ship got pins`);
+		return true;
 	} catch (error) {
 		// One channel failing (an outage, an expired token) doesn't stop the rest.
 		console.error(`${new Date().toISOString()} ${channel.name} failed:`, error);
+		return false;
 	}
 }
 
-async function costPass(channel: (typeof channels)[number]) {
+async function costPass(channel: (typeof channels)[number]): Promise<boolean> {
 	try {
 		const result = await costPassAlone(getDb(), channel.name);
-		if (!result) return console.log(`${channel.name} costs: last pass still running`);
+		if (!result) {
+			console.log(`${channel.name} costs: last pass still running`);
+			return true;
+		}
 		console.log(
 			`${new Date().toISOString()} ${channel.name} costs: ${result.reported} of ${result.checked} orders reported`,
 		);
 		for (const problem of result.problems) console.log(`  ${problem}`);
+		return true;
 	} catch (error) {
 		console.error(`${new Date().toISOString()} ${channel.name} costs failed:`, error);
+		return false;
 	}
 }
 
@@ -138,14 +147,18 @@ if (values["orders-history"]) {
 			channelEnv[c].every((name) => process.env[name]),
 	);
 	// At once: Amazon's rate limits take hours, which the rest shouldn't wait on.
-	await Promise.all(
+	const results = await Promise.all(
 		wanted.map((channel) =>
-			backfillOrders(getDb(), channel, days, console.log).catch((error) =>
-				console.error(`${channel} history stopped:`, error),
+			backfillOrders(getDb(), channel, days, console.log).then(
+				() => true,
+				(error) => {
+					console.error(`${channel} history stopped:`, error);
+					return false;
+				},
 			),
 		),
 	);
-	process.exit(0);
+	process.exit(results.every(Boolean) ? 0 : 1);
 }
 
 if (values["returns-history"]) {
@@ -156,9 +169,18 @@ if (values["returns-history"]) {
 			(!values.only || c === values.only) &&
 			channelEnv[c].every((name) => process.env[name]),
 	);
+	const results: boolean[] = [];
 	for (const channel of wanted)
-		await backfillReturns(getDb(), channel, days, console.log);
-	process.exit(0);
+		results.push(
+			await backfillReturns(getDb(), channel, days, console.log).then(
+				() => true,
+				(error) => {
+					console.error(`${channel} returns history stopped:`, error);
+					return false;
+				},
+			),
+		);
+	process.exit(results.every(Boolean) ? 0 : 1);
 }
 
 const ready = selected.filter((c) => {
@@ -168,8 +190,10 @@ const ready = selected.filter((c) => {
 });
 
 if (!values.watch) {
-	for (const channel of ready) await (values.costs ? costPass : pass)(channel);
-	process.exit(0);
+	const results: boolean[] = [];
+	for (const channel of ready)
+		results.push(await (values.costs ? costPass : pass)(channel));
+	process.exit(results.every(Boolean) ? 0 : 1);
 }
 for (const channel of ready) {
 	(async () => {

@@ -3,39 +3,23 @@ import type { Db } from "#/db/client";
 import { listings, orderLines, orders, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
 import { applyListingsToOrders } from "#/orders/remap";
-import { autoMapListings, mapListing } from "./listings";
+import { isMatched, lockListings, mapListings } from "./listing-claims";
+import { autoMapListings } from "./listings";
 import { stockLocations } from "./stores";
 import { awaitingProduct } from "./unmatched";
 
 // Changing which product listings sell, after they were matched. Past
 // orders keep the product (and stock) they took; only later sales change.
 
-type Linked = { id: number; title: string; productId: number; sku: string };
-
 // The listings, each matched to a product. Locked until the change commits.
 async function linkedListings(tx: Db, listingIds: number[]) {
-	if (listingIds.length === 0) throw new LedgerError("No listings given");
-	const rows = await tx
-		.select({
-			id: listings.id,
-			title: listings.title,
-			productId: listings.productId,
-			sku: products.sku,
-		})
-		.from(listings)
-		.leftJoin(products, eq(products.id, listings.productId))
-		.where(inArray(listings.id, listingIds))
-		.for("update", { of: listings });
-	const missing = listingIds.filter((id) => !rows.some((r) => r.id === id));
-	if (missing.length > 0)
-		throw new LedgerError(`No listing ${missing.join(", ")}`);
-	const loose = rows.filter((r) => r.productId === null);
+	const locked = await lockListings(tx, listingIds);
+	const loose = locked.filter((r) => !isMatched(r));
 	if (loose.length > 0)
 		throw new LedgerError(
 			`Not matched to a product: ${loose.map((r) => r.title).join(", ")}`,
 		);
-	// In the order given, so results line up with what was asked.
-	return listingIds.map((id) => rows.find((r) => r.id === id)) as Linked[];
+	return locked.filter(isMatched);
 }
 
 export type UnlinkedListing = {
@@ -129,7 +113,7 @@ export async function relinkListings(
 			.from(products)
 			.where(eq(products.sku, sku.trim()));
 		if (!product) throw new LedgerError(`No product with SKU ${sku}`);
-		for (const l of before) await mapListing(tx, l.id, product.id);
+		await mapListings(tx, before, product.id);
 		return before.map((l) => ({
 			listingId: l.id,
 			title: l.title,

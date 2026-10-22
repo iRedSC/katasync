@@ -1,4 +1,14 @@
-import { and, asc, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNotNull,
+	or,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	dispatches,
@@ -162,7 +172,9 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 		// Insurance starts at full coverage.
 		insure: shippo && needsInsurance({ total, lines }),
 		signatureRequired: shippo ? signatureRequired(members) : null,
-		// The boxes these contents went out in last time, if ever.
+		// The boxes these contents went out in last time, if ever. A box's gross
+		// weight is only a default for that same packaging (see
+		// components/quick-ship/packaging.ts).
 		last: await lastBoxes(db, key),
 		// The items' own weights, when every one is known; the box is added
 		// once it's chosen.
@@ -273,6 +285,8 @@ export function rankRates<R extends { service: string; cost: number }>(
 	);
 }
 
+// Only shipments with these contents, or in this box, are counted: the rest
+// would only add services that rank at zero.
 export async function serviceHistory(
 	db: Db,
 	key: string,
@@ -289,6 +303,12 @@ export async function serviceHistory(
 		})
 		.from(shipments)
 		.innerJoin(dispatches, eq(dispatches.id, shipments.dispatchId))
+		.where(
+			or(
+				eq(dispatches.contentsKey, key),
+				packageId === null ? undefined : eq(shipments.packageId, packageId),
+			),
+		)
 		.groupBy(shipments.service);
 }
 

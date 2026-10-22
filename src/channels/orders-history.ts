@@ -1,11 +1,12 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { orders, stores } from "#/db/schema";
+import { stores } from "#/db/schema";
 import { ingestOrder } from "#/orders/ingest";
 import {
 	ordersPage as amazonPage,
 	amazonToChannelOrder,
 	orderItems,
+	unchangedOrderIds,
 } from "./amazon";
 import { MARKETPLACE_US, spApi } from "./amazon-api";
 import {
@@ -111,30 +112,9 @@ async function amazonWindow({ db, store, stock, from, until }: Window) {
 			),
 		);
 		const listed = page.payload.Orders;
-		const saved =
-			listed.length === 0
-				? []
-				: await db
-						.select({
-							externalId: orders.externalId,
-							sourceUpdatedAt: orders.sourceUpdatedAt,
-						})
-						.from(orders)
-						.where(
-							and(
-								eq(orders.storeId, store.id),
-								inArray(
-									orders.externalId,
-									listed.map((o) => o.AmazonOrderId),
-								),
-							),
-						);
-		const savedAt = new Map(
-			saved.map((s) => [s.externalId, s.sourceUpdatedAt]),
-		);
+		const unchanged = await unchangedOrderIds(db, store.id, listed);
 		for (const order of listed) {
-			const at = savedAt.get(order.AmazonOrderId);
-			if (at && at >= order.LastUpdateDate) continue;
+			if (unchanged.has(order.AmazonOrderId)) continue;
 			const items = await orderItems(order.AmazonOrderId);
 			const result = await ingestOrder(
 				db,

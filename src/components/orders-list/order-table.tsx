@@ -49,6 +49,12 @@ export function OrderTable({
 }) {
 	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
 	const header = headerState(ticks, rows);
+	// No clock until mounted, so the server and the first client render print
+	// the same dates; "Today" and "Yesterday" come in once the browser has one.
+	const [now, setNow] = useState<Date | null>(null);
+	useEffect(() => {
+		setNow(new Date());
+	}, []);
 
 	return (
 		// No cell wraps; the customer and products columns share what's left and
@@ -134,7 +140,7 @@ export function OrderTable({
 										)}
 									</td>
 									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
-										{formatOrderDate(o.placedAt)}
+										{formatOrderDate(o.placedAt, now)}
 									</td>
 									{/* Shares the leftover width; long names end in "…". */}
 									<td className="w-2/5 max-w-0 px-4 py-2.5">

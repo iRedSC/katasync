@@ -165,9 +165,13 @@ function CheckNow({ check }: { check: MarketMailPage["check"] }) {
 					try {
 						const r = await checkMarketMailNow();
 						if ("error" in r && r.error)
-							toast.error("Couldn't read the mailbox", {
-								description: r.error,
-							});
+							// Some mail read and some didn't is not the same as none.
+							toast.error(
+								"read" in r && r.read > 0
+									? "Some emails didn't read"
+									: "Couldn't read the mailbox",
+								{ description: r.error },
+							);
 						else if ("skipped" in r && r.skipped)
 							toast.error("The mailbox isn't set up", {
 								description: r.skipped,

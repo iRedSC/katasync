@@ -49,14 +49,16 @@ import {
 	type ProductDetail,
 	saveProductStockRange,
 } from "#/server/catalog";
+import { getProductId } from "#/server/catalog/product-detail";
 import { getProductSupplier } from "#/server/purchasing";
 
 export const Route = createFileRoute("/products/$sku")({
 	loader: async ({ params }) => {
-		const detail = await getProductDetail({ data: { sku: params.sku } });
-		const [supplier, defaultRange] = await Promise.all([
-			getProductSupplier({ data: { productId: detail.product.id } }),
-			getDefaultRange({ data: { productId: detail.product.id } }),
+		const productId = await getProductId({ data: { sku: params.sku } });
+		const [detail, supplier, defaultRange] = await Promise.all([
+			getProductDetail({ data: { productId } }),
+			getProductSupplier({ data: { productId } }),
+			getDefaultRange({ data: { productId } }),
 		]);
 		return { ...detail, supplier, defaultRange };
 	},

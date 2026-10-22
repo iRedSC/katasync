@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
-import { productSuppliers } from "#/db/schema";
+import { productSuppliers, products } from "#/db/schema";
 import {
 	fillSupplierSkus,
 	setProductSupplier,
@@ -50,36 +50,55 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 		"set_supplier_skus",
 		{
 			description:
-				"Fills in a supplier's item numbers for many products at once, e.g. supplierSkusToSave from match_invoice. Only products bought from that supplier change. One that already has a different number keeps it unless replace is true. Reports filled, unchanged, kept, and skipped.",
+				"Fills in a supplier's item numbers for many products at once, e.g. supplierSkusToSave from match_invoice. Only products bought from that supplier change. One that already has a different number keeps it unless replace is true. Reports filled, unchanged, kept, and skipped. Up to 200 per call.",
 			inputSchema: {
 				supplier: z.string().describe("Code or name"),
 				items: z
 					.array(z.object({ sku: z.string(), supplier_sku: z.string() }))
-					.min(1),
+					.min(1)
+					.max(200),
 				replace: z.boolean().default(false),
 			},
 			annotations: { ...WRITE, idempotentHint: true },
 		},
 		async ({ supplier, items, replace }) => {
 			const { id } = await supplierByRef(db, supplier);
+			// One lookup for all the SKUs. A database error fails the call here,
+			// rather than reading as a SKU that isn't there.
+			const found = await db
+				.select({ id: products.id, sku: products.sku })
+				.from(products)
+				.where(
+					inArray(
+						products.sku,
+						items.map((item) => item.sku.trim()),
+					),
+				);
+			const bySku = new Map(found.map((p) => [p.sku, p]));
 			const entries = [];
-			const unknown = [];
+			const skipped = [];
+			const listed = new Set<string>();
 			for (const item of items) {
-				const product = await productBySku(db, item.sku).catch(() => null);
-				if (!product) unknown.push({ sku: item.sku, reason: "no such SKU" });
-				else
+				const sku = item.sku.trim();
+				const product = bySku.get(sku);
+				if (!product) skipped.push({ sku: item.sku, reason: "no such SKU" });
+				else if (listed.has(sku))
+					skipped.push({ sku: item.sku, reason: "listed more than once" });
+				else {
+					listed.add(sku);
 					entries.push({
 						productId: product.id,
 						sku: product.sku,
 						supplierSku: item.supplier_sku,
 					});
+				}
 			}
 			const result = await fillSupplierSkus(db, {
 				supplierId: id,
 				entries,
 				replace,
 			});
-			return json({ ...result, skipped: [...unknown, ...result.skipped] });
+			return json({ ...result, skipped: [...skipped, ...result.skipped] });
 		},
 	);
 

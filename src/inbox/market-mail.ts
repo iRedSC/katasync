@@ -1,10 +1,21 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	or,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	mailboxChecks,
 	marketEmailAttachments,
 	marketEmails,
 } from "#/db/schema";
+import { groupBy } from "#/lib/group-by";
 import type { Market } from "#/markets/market";
 import type { InboxMessage, InlinePicture } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
@@ -56,7 +67,7 @@ export async function ingestMarketMail(
 		try {
 			const content = await read(m.graphId);
 			const market = marketOf(m.fromAddress);
-			await db.transaction(async (tx) => {
+			const inserted = await db.transaction(async (tx) => {
 				// Sorted under the lock, so a rule saved meanwhile isn't missed.
 				await lockRules(tx);
 				const sorted = sortEmail(await listRules(tx), {
@@ -82,8 +93,7 @@ export async function ingestMarketMail(
 					// Another run read it first.
 					.onConflictDoNothing()
 					.returning({ id: marketEmails.id });
-				if (!row) return;
-				count++;
+				if (!row) return false;
 				if (content.attachments.length > 0)
 					await tx.insert(marketEmailAttachments).values(
 						content.attachments.map((a) => ({
@@ -96,7 +106,10 @@ export async function ingestMarketMail(
 					);
 				if (content.html !== undefined)
 					await keepHtml(tx, row.id, content.html, content.inline ?? []);
+				return true;
 			});
+			// Counted once the transaction has committed, not while it runs.
+			if (inserted) count++;
 		} catch (error) {
 			problems.push(
 				`${m.subject || m.messageId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -106,21 +119,45 @@ export async function ingestMarketMail(
 	return { read: count, problems };
 }
 
-// Records how reading a mailbox went: a time when it worked, the error
-// when it didn't (the last success stays).
+// How a read of the mailbox went. Partial and failed name the first email
+// that didn't read, and stand until a sweep reads clean: only a sweep looks
+// back far enough to read those emails again.
+export type ReadOutcome =
+	| { state: "complete" }
+	| { state: "partial" | "failed"; error: string };
+
+// Records how reading a mailbox went: a time when it worked, the error when
+// it didn't. A clean run that isn't a sweep leaves an error standing, since it
+// never looked at the emails that failed.
 export async function recordCheck(
 	db: Db,
 	mailbox: "purchasing" | "marketplaces",
-	error: string | null,
+	outcome: ReadOutcome,
+	sweep: boolean,
 ) {
 	const now = new Date();
-	const set = error
-		? { error, erroredAt: now }
-		: { checkedAt: now, error: null, erroredAt: null };
+	const set =
+		outcome.state !== "complete"
+			? { error: outcome.error, erroredAt: now }
+			: sweep
+				? { checkedAt: now, error: null, erroredAt: null }
+				: { checkedAt: now };
 	await db
 		.insert(mailboxChecks)
 		.values({ mailbox, ...set })
 		.onConflictDoUpdate({ target: mailboxChecks.mailbox, set });
+}
+
+// Complete when nothing failed; partial when some mail read anyway, else
+// failed. The error names the first email that didn't read, and how many.
+function outcomeOf(result: { read: number; problems: string[] }): ReadOutcome {
+	const [first, ...rest] = result.problems;
+	if (first === undefined) return { state: "complete" };
+	const error =
+		rest.length === 0
+			? `Couldn't read ${first}`
+			: `Couldn't read ${result.problems.length} emails, e.g. ${first}`;
+	return { state: result.read > 0 ? "partial" : "failed", error };
 }
 
 // The newest email kept, so the first sweep reads further back.
@@ -183,12 +220,18 @@ function why(
 	};
 }
 
+// Where the next page of a view starts: the sort time and id of the page's last
+// email. The id tells apart emails at the same moment, so none is skipped.
+export type MarketCursor = { at: number; id: number };
+
 export async function marketMailPage(
 	db: Db,
 	view: MarketView,
 	market: Market | null,
-	limit = 150,
+	{ limit = 150, after }: { limit?: number; after?: MarketCursor } = {},
 ) {
+	const sortAt =
+		view === "done" ? marketEmails.doneAt : marketEmails.receivedAt;
 	const where = and(
 		view === "done"
 			? isNotNull(marketEmails.doneAt)
@@ -199,16 +242,20 @@ export async function marketMailPage(
 						: eq(marketEmails.folder, view),
 				),
 		market ? eq(marketEmails.market, market) : undefined,
+		after
+			? or(
+					lt(sortAt, new Date(after.at)),
+					and(eq(sortAt, new Date(after.at)), lt(marketEmails.id, after.id)),
+				)
+			: undefined,
 	);
-	const [rows, counts, [check], rules] = await Promise.all([
+	const [fetched, counts, [check], rules] = await Promise.all([
 		db
 			.select(summary)
 			.from(marketEmails)
 			.where(where)
-			.orderBy(
-				desc(view === "done" ? marketEmails.doneAt : marketEmails.receivedAt),
-			)
-			.limit(limit),
+			.orderBy(desc(sortAt), desc(marketEmails.id))
+			.limit(limit + 1),
 		db
 			.select({
 				folder: marketEmails.folder,
@@ -225,6 +272,13 @@ export async function marketMailPage(
 			.where(eq(mailboxChecks.mailbox, "marketplaces")),
 		listRules(db),
 	]);
+	// One more than a page, to know whether there's a next one.
+	const more = fetched.length > limit;
+	const rows = more ? fetched.slice(0, limit) : fetched;
+	const last = rows.at(-1);
+	const lastAt = view === "done" ? last?.doneAt : last?.receivedAt;
+	const next =
+		more && last && lastAt ? { at: lastAt.getTime(), id: last.id } : null;
 	const shown = counts.filter((c) => !market || c.market === market);
 	const files =
 		rows.length === 0
@@ -249,9 +303,12 @@ export async function marketMailPage(
 						),
 					)
 					.orderBy(marketEmailAttachments.id);
+	const byEmail = groupBy(files, (f) => f.emailId);
 	return {
 		connected: Boolean(process.env.MARKETPLACE_INBOX?.trim()),
 		check: check ?? null,
+		// Where the page after this one starts; null when this is all of them.
+		next,
 		// Unread open emails per folder, and important, within the market
 		// shown.
 		counts: {
@@ -266,9 +323,7 @@ export async function marketMailPage(
 		emails: rows.map(({ relabelledAt, importanceSetAt, ...r }) => ({
 			...r,
 			why: why(rules, { ...r, relabelledAt, importanceSetAt }),
-			attachments: files
-				.filter((f) => f.emailId === r.id)
-				.map(({ emailId: _, ...f }) => f),
+			attachments: (byEmail.get(r.id) ?? []).map(({ emailId: _, ...f }) => f),
 		})),
 	};
 }
@@ -470,7 +525,13 @@ export async function readMarketMail(options: {
 		messages = await graph.messagesSince(since, "marketplaces");
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		if (options.sweep) await recordCheck(options.db(), "marketplaces", message);
+		if (options.sweep)
+			await recordCheck(
+				options.db(),
+				"marketplaces",
+				{ state: "failed", error: message },
+				options.sweep,
+			);
 		return { error: message };
 	}
 	if (messages.length === 0 && !options.sweep) return { quiet: true };
@@ -484,18 +545,17 @@ export async function readMarketMail(options: {
 				readHtml(graph, messageId, "marketplaces"),
 			)
 		: 0;
-	// Reading the list but none of the emails isn't working: say so.
-	const [first, ...rest] = result.problems;
-	await recordCheck(
-		db,
-		"marketplaces",
-		first === undefined
-			? null
-			: rest.length === 0
-				? `Couldn't read ${first}`
-				: `Couldn't read ${result.problems.length} emails, e.g. ${first}`,
-	);
-	return { ...result, resorted, formatted };
+	// Reading the list but none of the emails isn't working: say so. A run that
+	// read some and missed others says so too, with the error, so the caller
+	// can show it.
+	const outcome = outcomeOf(result);
+	await recordCheck(db, "marketplaces", outcome, options.sweep);
+	return {
+		...result,
+		resorted,
+		formatted,
+		...(outcome.state === "complete" ? {} : { error: outcome.error }),
+	};
 }
 
 // One kept email's HTML from the mailbox, or null when it's gone.

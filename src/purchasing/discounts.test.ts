@@ -9,7 +9,7 @@ import {
 	lineTotal,
 	receiptUnitCost,
 } from "./discount";
-import { matchInvoice } from "./invoices";
+import { type InvoiceLine, matchInvoice } from "./invoices";
 import { loadOrder, printedLines } from "./load";
 import {
 	addDraftLine,
@@ -267,7 +267,12 @@ describe("discounts on a PO", () => {
 			discount: { units: "rest", off: pct(10) },
 		});
 		await markSent(db, { purchaseOrderId: po, sentTo: null });
-		const billed = { sku: "BLADE", quantity: 10, unitCost: 5 };
+		const billed: InvoiceLine = {
+			kind: "merchandise",
+			sku: "BLADE",
+			quantity: 10,
+			unitCost: 5,
+		};
 		const without = await matchInvoice(db, {
 			purchaseOrderId: po,
 			lines: [billed],
@@ -279,14 +284,21 @@ describe("discounts on a PO", () => {
 		expect(without.note).toMatch(/\$5\.00 of discounts/);
 		const credited = await matchInvoice(db, {
 			purchaseOrderId: po,
-			lines: [billed, { description: "Discount", quantity: 1, unitCost: -5 }],
+			lines: [billed, { kind: "credit", description: "Discount", amount: 5 }],
 		});
-		expect(credited).toMatchObject({ matches: true, notOnPo: [] });
+		// $50 of blades, less the $5 credit, is the $45 the PO bills.
+		expect(credited).toMatchObject({
+			matches: true,
+			notOnPo: [],
+			totals: { invoiceLinesTotal: 45 },
+		});
 		expect(credited.credits).toHaveLength(1);
 		// Billed net instead.
 		const net = await matchInvoice(db, {
 			purchaseOrderId: po,
-			lines: [{ sku: "BLADE", quantity: 10, unitCost: 4.5 }],
+			lines: [
+				{ kind: "merchandise", sku: "BLADE", quantity: 10, unitCost: 4.5 },
+			],
 		});
 		expect(net.matches).toBe(true);
 	});
