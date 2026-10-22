@@ -172,6 +172,41 @@ describe("the mailbox", () => {
 		expect(page.check?.error).toContain("Access is denied");
 	});
 
+	test("a run that lists emails but can't read them records why", async () => {
+		vi.stubEnv("MS_GRAPH_TENANT_ID", "t");
+		vi.stubEnv("MS_GRAPH_CLIENT_ID", "c");
+		vi.stubEnv("MS_GRAPH_CLIENT_SECRET", "s");
+		vi.stubEnv("MARKETPLACE_INBOX", "marketplaces@eastcoastdrywall.com");
+		vi.stubGlobal("fetch", async (url: string) => {
+			if (url.includes("login.microsoftonline.com"))
+				return Response.json({ access_token: "token", expires_in: 3600 });
+			if (url.includes("$filter=receivedDateTime"))
+				return Response.json({
+					value: [
+						{
+							id: "g1",
+							internetMessageId: "<1@ebay>",
+							receivedDateTime: new Date().toISOString(),
+							subject: "You made a sale",
+							from: { emailAddress: { address: "ebay@ebay.com" } },
+						},
+					],
+				});
+			return Response.json(
+				{ error: { message: "Bad request" } },
+				{ status: 400 },
+			);
+		});
+		const result = await readMarketMail({
+			since: new Date(),
+			sweep: false,
+			db: () => db,
+		});
+		expect(result).toMatchObject({ read: 0 });
+		const page = await marketMailPage(db, "attention", null);
+		expect(page.check?.error).toContain("You made a sale");
+	});
+
 	test("without the mailbox set up, nothing is read", async () => {
 		vi.stubEnv("MARKETPLACE_INBOX", "");
 		const fetch = vi.fn();

@@ -120,22 +120,34 @@ describe("reading an email from Microsoft 365", () => {
 				return Response.json({
 					body: { content: '<img src="cid:shown@x"> hello' },
 				});
-			if (url.endsWith("/$value")) return new Response("abc");
-			const a = (id: string, isInline: boolean, contentId: string | null) => ({
+			const contentIds: Record<string, string | null> = {
+				shown: "<shown@x>",
+				signature: "sig@x",
+				invoice: null,
+			};
+			const one = url.match(/\/attachments\/(\w+)$/)?.[1];
+			if (one)
+				return Response.json({
+					contentBytes: Buffer.from("abc").toString("base64"),
+					contentId: contentIds[one],
+				});
+			// As Graph does: the list is of any attachment, so a file's own
+			// fields can't be selected there.
+			if (/\$select=[^&]*(contentId|contentBytes)/.test(url))
+				return Response.json(
+					{ error: { message: "Could not find a property named 'contentId'" } },
+					{ status: 400 },
+				);
+			const a = (id: string, isInline: boolean) => ({
 				"@odata.type": "#microsoft.graph.fileAttachment",
 				id,
 				name: `${id}.png`,
 				contentType: "image/png",
 				size: 3,
 				isInline,
-				contentId,
 			});
 			return Response.json({
-				value: [
-					a("shown", true, "<shown@x>"),
-					a("signature", true, "sig@x"),
-					a("invoice", false, null),
-				],
+				value: [a("shown", true), a("signature", true), a("invoice", false)],
 			});
 		});
 		const got = await messageHtml("g1", "marketplaces");
@@ -143,6 +155,7 @@ describe("reading an email from Microsoft 365", () => {
 		expect(got.inline.map((p) => [p.filename, p.contentId])).toEqual([
 			["shown.png", "shown@x"],
 		]);
+		expect(got.inline[0]?.data?.toString()).toBe("abc");
 		expect(got.attachments.map((a) => a.filename)).toEqual(["invoice.png"]);
 	});
 });
