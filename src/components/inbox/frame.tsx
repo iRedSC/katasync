@@ -15,6 +15,7 @@ import {
 	BUYERS,
 	type InboxFolder,
 	MARKET_FOLDERS,
+	PRECEDENTS,
 	PURCHASING_FOLDERS,
 	RULES,
 } from "./folders";
@@ -92,6 +93,7 @@ export function InboxFrame({
 			<div className="grid md:grid-cols-[12rem_minmax(0,1fr)]">
 				<nav className="flex gap-0.5 overflow-x-auto border-b p-2 md:flex-col md:overflow-visible md:border-r md:border-b-0">
 					{item(BUYERS)}
+					{item(PRECEDENTS)}
 					<Group>Marketplaces</Group>
 					{MARKET_FOLDERS.map(item)}
 					<Group>Purchasing</Group>

@@ -6,6 +6,7 @@ import {
 	CircleAlert,
 	CircleHelp,
 	ExternalLink,
+	Languages,
 	LoaderCircle,
 	RotateCw,
 	SendHorizontal,
@@ -19,8 +20,15 @@ import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { formatDateTime } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { translateReply } from "#/server/buyer-drafts";
 import { replyToBuyer } from "#/server/buyers";
 import { DueChip } from "./due-chip";
+import { Suggestion } from "./suggestion";
+
+// "Spanish" for es, in English.
+const languages = new Intl.DisplayNames(["en"], { type: "language" });
+const languageName = (code: string | null) =>
+	code ? (languages.of(code) ?? code) : "their language";
 
 // One conversation: the buyer's messages on the left, ours on the right,
 // each of ours marked with how far it got, and a reply box under them.
@@ -39,6 +47,8 @@ type Shown = {
 	at: Date;
 	status: Status | null;
 	error: string | null;
+	// The buyer's words in English, when they wrote in another language.
+	english?: string | null;
 };
 
 // Replies written here, until the server's list has them by their key.
@@ -55,6 +65,26 @@ export function BuyerConversation({
 	const [local, setLocal] = useState<Local[]>([]);
 	const [text, setText] = useState("");
 	const [why, setWhy] = useState<string | null>(null);
+	// The English the box's words were translated from.
+	const [gloss, setGloss] = useState<string | null>(null);
+	const [translating, setTranslating] = useState(false);
+	const foreign = t.language !== null && t.language !== "en";
+
+	async function translate() {
+		const words = text.trim();
+		if (!words) return shake(box.current);
+		setTranslating(true);
+		try {
+			const r = await translateReply({ data: { threadId: t.id, text: words } });
+			setGloss(words);
+			setText(r.text);
+		} catch (error) {
+			setWhy(error instanceof Error ? error.message : String(error));
+			shake(box.current);
+		} finally {
+			setTranslating(false);
+		}
+	}
 	const box = useRef<HTMLTextAreaElement>(null);
 	const end = useRef<HTMLDivElement>(null);
 
@@ -116,6 +146,7 @@ export function BuyerConversation({
 		};
 		setLocal((l) => [...l, mine]);
 		setText("");
+		setGloss(null);
 		setWhy(null);
 		void deliver(mine);
 	}
@@ -179,6 +210,15 @@ export function BuyerConversation({
 				))}
 				<div ref={end} />
 			</div>
+			<Suggestion
+				thread={t}
+				onSend={send}
+				onEdit={(body, english) => {
+					setText(body);
+					setGloss(english);
+					box.current?.focus();
+				}}
+			/>
 			<form
 				className="border-t p-3"
 				onSubmit={(e) => {
@@ -194,6 +234,7 @@ export function BuyerConversation({
 						onChange={(e) => {
 							setText(e.target.value);
 							setWhy(null);
+							if (!e.target.value.trim()) setGloss(null);
 						}}
 						onKeyDown={(e) => {
 							if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -207,12 +248,28 @@ export function BuyerConversation({
 							(over || why) && "border-critical-text",
 						)}
 					/>
+					{foreign && (
+						<Tip content={`Into ${languageName(t.language)}`}>
+							<Button
+								type="button"
+								variant="ghost"
+								aria-label="Translate"
+								disabled={!text.trim() || translating}
+								onClick={translate}
+							>
+								<Languages className={cn(translating && "animate-pulse")} />
+							</Button>
+						</Tip>
+					)}
 					<Tip content="Send (Ctrl+Enter)">
 						<Button type="submit" aria-label="Send" disabled={!text.trim()}>
 							<SendHorizontal />
 						</Button>
 					</Tip>
 				</div>
+				{gloss && !why && (
+					<p className="mt-1 truncate text-xs text-muted-foreground">{gloss}</p>
+				)}
 				{(why || (limit !== null && text.length > limit - 200)) && (
 					<p
 						className={cn(
@@ -271,6 +328,8 @@ function Bubble({
 	onAgain: () => void;
 }) {
 	const s = m.status ? STATUS[m.status] : null;
+	const [original, setOriginal] = useState(false);
+	const translated = Boolean(m.english) && !original;
 	return (
 		<div
 			className={cn(
@@ -290,10 +349,20 @@ function Bubble({
 						"bg-warning-surface text-warning-text ring-1 ring-warning-text",
 				)}
 			>
-				{m.body}
+				{translated ? m.english : m.body}
 			</div>
 			<span className="flex items-center gap-1 text-xs text-muted-foreground">
 				{formatDateTime(m.at)}
+				{m.english && (
+					<button
+						type="button"
+						onClick={() => setOriginal((o) => !o)}
+						className="inline-flex items-center gap-1 rounded px-1 hover:bg-surface hover:text-foreground"
+					>
+						<Languages className="size-3" />
+						{translated ? "Original" : "English"}
+					</button>
+				)}
 				{s && (
 					<Tip content={m.error ?? s.label}>
 						<s.icon

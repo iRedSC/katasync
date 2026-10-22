@@ -1,6 +1,8 @@
+import { aiConfigured } from "#/ai/harness";
 import type { Db } from "#/db/client";
 import { buyerMessageChecks } from "#/db/schema";
 import { threadAmazonMail } from "./amazon-mail";
+import { draftWaiting, readNewMessages } from "./drafts";
 import { syncEbayMessages } from "./ebay-messages";
 import { settleReplies } from "./send";
 
@@ -25,5 +27,13 @@ export async function runBuyerMessages(db: Db, { sweep = false } = {}) {
 	const ebay = process.env.EBAY_REFRESH_TOKEN
 		? await syncEbayMessages(db, { sweep })
 		: { skipped: "set EBAY_REFRESH_TOKEN" };
-	return { amazon, ebay };
+	// Then the agent: buyers' words in English, and replies suggested.
+	const ai = aiConfigured()
+		? await readNewMessages(db)
+				.then(async (read) => ({ ...read, drafted: await draftWaiting(db) }))
+				.catch((e: unknown) => ({
+					problems: [e instanceof Error ? e.message : String(e)],
+				}))
+		: { skipped: "set AI_PROXY_URL and AI_PROXY_KEY" };
+	return { amazon, ebay, ai };
 }

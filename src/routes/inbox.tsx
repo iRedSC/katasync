@@ -10,12 +10,14 @@ import {
 } from "#/components/inbox/folders";
 import { InboxFrame, MarketFilter } from "#/components/inbox/frame";
 import { MarketplaceBox } from "#/components/inbox/marketplace-box";
+import { PrecedentsEditor } from "#/components/inbox/precedents-editor";
 import { PurchasingBox } from "#/components/inbox/purchasing-box";
 import { RulesEditor } from "#/components/inbox/rules-editor";
 import { Page } from "#/components/page";
 import { ListSkeleton } from "#/components/skeleton";
 import type { Folder } from "#/inbox/rules";
 import { MARKETS, type Market } from "#/markets/market";
+import { getPrecedents } from "#/server/buyer-drafts";
 import { listBuyerThreads } from "#/server/buyers";
 import { getMailRules, inboxCounts, listMarketMail } from "#/server/inbox";
 import { listPoEmails } from "#/server/purchasing";
@@ -75,6 +77,12 @@ export const Route = createFileRoute("/inbox")({
 	}),
 	loader: async ({ deps: { folder, market, threads } }) => {
 		const counts = inboxCounts({ data: { market } });
+		if (folder === "precedents")
+			return {
+				kind: "precedents" as const,
+				precedents: await getPrecedents(),
+				counts: await counts,
+			};
 		if (folder === "buyers")
 			return {
 				kind: "buyers" as const,
@@ -131,6 +139,14 @@ function InboxPage() {
 					page={d.page}
 					counts={d.counts}
 				/>
+			) : d.kind === "precedents" ? (
+				<InboxFrame
+					folder="precedents"
+					market={market ?? null}
+					counts={d.counts}
+				>
+					<PrecedentsEditor precedents={d.precedents} />
+				</InboxFrame>
 			) : d.kind === "marketplaces" ? (
 				<MarketplaceBox
 					view={d.folder}

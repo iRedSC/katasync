@@ -2457,6 +2457,10 @@ export const buyerMessages = pgTable(
 		// Amazon's notice that it didn't pass this reply on; each notice
 		// fails one reply at most.
 		refusedBy: integer().references(() => marketEmails.id),
+		// The buyer's language (ISO 639-1, e.g. es) and their words in
+		// English when it isn't English, read by src/ai. Null until read.
+		language: text(),
+		english: text(),
 		// Ours only, from here down.
 		status: buyerReplyStatus(),
 		// Sent with every try, so a retry never sends it twice (Resend's
@@ -2516,3 +2520,60 @@ export const buyerMessageChecks = pgTable("buyer_message_checks", {
 	error: text(),
 	erroredAt: timestamp({ withTimezone: true }),
 });
+
+// What staff have decided to do in a kind of case, for the reply agent
+// (src/ai) to follow: when a buyer says or needs this, then do that.
+export const replyPrecedents = pgTable("reply_precedents", {
+	id: integer().primaryKey().generatedAlwaysAsIdentity(),
+	when: text().notNull(),
+	// What to do then; "then" in the database.
+	action: text("then").notNull(),
+	// Who wrote it last: staff on the page, or Claude over MCP.
+	by: text().$type<"staff" | "claude">().notNull().default("staff"),
+	updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// Where a thread's suggested reply stands. drafting: the agent is writing
+// it. ready: there's one to send. failed: the agent couldn't, and why.
+export const replyDraftState = pgEnum("reply_draft_state", [
+	"drafting",
+	"ready",
+	"failed",
+]);
+
+// The reply suggested for a thread, one at most: written by the agent, or
+// edited by staff or Claude. Sending a reply uses it up.
+export const replyDrafts = pgTable(
+	"reply_drafts",
+	{
+		threadId: integer()
+			.primaryKey()
+			.references(() => buyerThreads.id),
+		state: replyDraftState().notNull(),
+		// What would be sent, in the buyer's language.
+		body: text(),
+		// The same in English, when the buyer's language isn't.
+		english: text(),
+		// The buyer's latest message when it was written: a newer one means
+		// it's out of date and drafted again.
+		forMessageId: integer().references(() => buyerMessages.id),
+		by: text().$type<"ai" | "staff" | "claude">().notNull(),
+		// The precedents it followed.
+		precedentIds: integer().array().notNull().default(sql`'{}'::integer[]`),
+		// What the agent says staff should check before sending.
+		note: text(),
+		error: text(),
+		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			"reply_drafts_ready_has_body",
+			sql`${t.state} <> 'ready' or ${t.body} is not null`,
+		),
+		check(
+			"reply_drafts_failed_says_why",
+			sql`(${t.state} = 'failed') = (${t.error} is not null)`,
+		),
+		check("reply_drafts_by_known", sql`${t.by} in ('ai', 'staff', 'claude')`),
+	],
+);

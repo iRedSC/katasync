@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Db } from "#/db/client";
 import { registerActionTools } from "./server/action-tools";
+import { registerBuyerWriteTools } from "./server/buyer-tools";
 import { registerCatalogTools } from "./server/catalog-tools";
 import { registerFileReadTools, registerFileTools } from "./server/file-tools";
 import {
@@ -90,4 +91,5 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerFileTools(server, db);
 	registerInboxWriteTools(server, db);
 	registerMailRuleWriteTools(server, db);
+	registerBuyerWriteTools(server, db);
 }

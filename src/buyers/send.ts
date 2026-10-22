@@ -6,6 +6,7 @@ import {
 	applyAmazonRefusals,
 	sendAmazonReply,
 } from "./amazon-mail";
+import { clearDraft } from "./drafts";
 import {
 	EBAY_MAX_CHARS,
 	rereadEbayThread,
@@ -72,6 +73,8 @@ export async function reply(
 			.update(buyerThreads)
 			.set({ doneAt: null })
 			.where(eq(buyerThreads.id, threadId));
+		// The suggestion is used up: a reply went instead.
+		await clearDraft(db, threadId);
 		await attempt(db, thread, row);
 	}
 	const [now_] = await db

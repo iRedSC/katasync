@@ -7,6 +7,8 @@ import {
 	buyerThreads,
 	mailboxChecks,
 	orders,
+	replyDrafts,
+	replyPrecedents,
 	stores,
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
@@ -227,6 +229,8 @@ export async function threadsPage(
 						status: buyerMessages.status,
 						error: buyerMessages.error,
 						requestKey: buyerMessages.requestKey,
+						language: buyerMessages.language,
+						english: buyerMessages.english,
 					})
 					.from(buyerMessages)
 					.where(
@@ -236,16 +240,54 @@ export async function threadsPage(
 						),
 					)
 					.orderBy(asc(buyerMessages.at), asc(buyerMessages.id));
+	const [drafts, precedents] =
+		unique.length === 0
+			? [[], []]
+			: await Promise.all([
+					db
+						.select()
+						.from(replyDrafts)
+						.where(
+							inArray(
+								replyDrafts.threadId,
+								unique.map((t) => t.id),
+							),
+						),
+					db
+						.select({ id: replyPrecedents.id, when: replyPrecedents.when })
+						.from(replyPrecedents),
+				]);
 	const shaped = unique.map((t) => {
 		const own = messages
 			.filter((m) => m.threadId === t.id)
 			.map(({ threadId: _, ...m }) => m);
 		const last = own.at(-1);
+		const latestTheirs = own.filter((m) => m.fromBuyer).at(-1);
+		const d = drafts.find((x) => x.threadId === t.id);
 		return {
 			...t,
 			messages: own,
 			lastAt: last?.at ?? null,
 			waiting: t.doneAt ? null : waitingOn(t.market, own),
+			// The buyer's language, from their latest message read.
+			language:
+				own.filter((m) => m.fromBuyer && m.language).at(-1)?.language ?? null,
+			draft: d
+				? {
+						state: d.state,
+						body: d.body,
+						english: d.english,
+						note: d.note,
+						by: d.by,
+						error: d.error,
+						updatedAt: d.updatedAt,
+						// Written before the buyer's latest message.
+						stale:
+							latestTheirs !== undefined &&
+							(d.forMessageId ?? 0) < latestTheirs.id,
+						precedents: precedents.filter((p) => d.precedentIds.includes(p.id)),
+					}
+				: null,
 		};
 	});
 	return shaped.sort((a, b) => {

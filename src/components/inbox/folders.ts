@@ -6,6 +6,7 @@ import {
 	Inbox,
 	type LucideIcon,
 	MessagesSquare,
+	Scale,
 	ShieldAlert,
 	ShoppingCart,
 	Star,
@@ -20,7 +21,12 @@ import { FOLDER_NAMES, FOLDERS, type Folder } from "#/inbox/rules";
 
 export type MarketView = "important" | Folder | "done";
 export type PurchasingView = "to-file" | "set-aside" | "on-po";
-export type InboxFolder = "buyers" | MarketView | PurchasingView | "rules";
+export type InboxFolder =
+	| "buyers"
+	| "precedents"
+	| MarketView
+	| PurchasingView
+	| "rules";
 
 type Entry = { folder: InboxFolder; name: string; icon: LucideIcon };
 
@@ -54,6 +60,13 @@ export const BUYERS: Entry = {
 	icon: MessagesSquare,
 };
 
+// What the reply agent follows.
+export const PRECEDENTS: Entry = {
+	folder: "precedents",
+	name: "Precedents",
+	icon: Scale,
+};
+
 export const RULES: Entry = { folder: "rules", name: "Rules", icon: Wand2 };
 
 export const folderIcon = (f: Folder) => folderIcons[f];
@@ -64,7 +77,13 @@ export const isMarketView = (f: InboxFolder): f is MarketView =>
 export const isPurchasingView = (f: InboxFolder): f is PurchasingView =>
 	PURCHASING_FOLDERS.some((e) => e.folder === f);
 
-const ALL = [BUYERS, ...MARKET_FOLDERS, ...PURCHASING_FOLDERS, RULES];
+const ALL = [
+	BUYERS,
+	PRECEDENTS,
+	...MARKET_FOLDERS,
+	...PURCHASING_FOLDERS,
+	RULES,
+];
 export const isInboxFolder = (v: unknown): v is InboxFolder =>
 	ALL.some((e) => e.folder === v);
 

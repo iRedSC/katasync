@@ -1,0 +1,175 @@
+import { type Type, type } from "arktype";
+
+// A small agent harness over the CLI proxy (CLIProxyAPI): its
+// OpenAI-compatible chat completions, so any model the proxy routes works.
+// An agent is instructions, the tools it may call, and the shape of its
+// answer; runAgent loops while the model calls tools, then reads and checks
+// the answer, asking once more when it doesn't fit.
+//
+//   AI_PROXY_URL  the proxy's address, e.g. https://ai.example.com
+//   AI_PROXY_KEY  one of its api-keys
+//   AI_MODEL      the model to ask, as the proxy names it (default below)
+//
+// Server only.
+
+export const DEFAULT_MODEL = "claude-sonnet-5-5";
+
+export function aiConfigured() {
+	return Boolean(process.env.AI_PROXY_URL && process.env.AI_PROXY_KEY);
+}
+
+export class AiNotConfiguredError extends Error {
+	name = "AiNotConfiguredError";
+}
+
+export type Tool = {
+	name: string;
+	description: string;
+	// JSON Schema of its input.
+	parameters: Record<string, unknown>;
+	run: (input: Record<string, unknown>) => Promise<unknown>;
+};
+
+export type Agent<Out> = {
+	name: string;
+	instructions: string;
+	tools?: Tool[];
+	// What its answer must be: JSON this type accepts.
+	output: Type<Out>;
+	// How many rounds of tool calls before it must answer.
+	maxSteps?: number;
+};
+
+type Message =
+	| { role: "system" | "user"; content: string }
+	| { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+	| { role: "tool"; tool_call_id: string; content: string };
+
+type ToolCall = {
+	id: string;
+	type: "function";
+	function: { name: string; arguments: string };
+};
+
+type Choice = { message: { content: string | null; tool_calls?: ToolCall[] } };
+
+// One request to the proxy.
+async function complete(
+	messages: Message[],
+	tools: Tool[],
+	fetchImpl: typeof fetch,
+): Promise<Choice["message"]> {
+	const { AI_PROXY_URL, AI_PROXY_KEY, AI_MODEL } = process.env;
+	if (!AI_PROXY_URL || !AI_PROXY_KEY)
+		throw new AiNotConfiguredError("Set AI_PROXY_URL and AI_PROXY_KEY");
+	const res = await fetchImpl(
+		`${AI_PROXY_URL.replace(/\/+$/, "")}/v1/chat/completions`,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${AI_PROXY_KEY}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				model: AI_MODEL?.trim() || DEFAULT_MODEL,
+				messages,
+				...(tools.length > 0
+					? {
+							tools: tools.map((t) => ({
+								type: "function",
+								function: {
+									name: t.name,
+									description: t.description,
+									parameters: t.parameters,
+								},
+							})),
+						}
+					: {}),
+			}),
+			signal: AbortSignal.timeout(120_000),
+		},
+	);
+	const text = await res.text();
+	if (!res.ok)
+		throw new Error(
+			`The AI proxy answered ${res.status}: ${text.slice(0, 500)}`,
+		);
+	const body = JSON.parse(text) as { choices?: Choice[] };
+	const message = body.choices?.[0]?.message;
+	if (!message)
+		throw new Error(`The AI proxy sent no answer: ${text.slice(0, 500)}`);
+	return message;
+}
+
+// The JSON in an answer: bare, or in a ``` block.
+export function jsonIn(text: string): unknown {
+	const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1];
+	const raw = (fenced ?? text).trim();
+	const start = raw.search(/[{[]/);
+	return JSON.parse(start > 0 ? raw.slice(start) : raw);
+}
+
+export async function runAgent<Out>(
+	agent: Agent<Out>,
+	input: string,
+	{ fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {},
+): Promise<Out> {
+	const tools = agent.tools ?? [];
+	const messages: Message[] = [
+		{
+			role: "system",
+			content: `${agent.instructions}\n\nAnswer with JSON only, no other words.`,
+		},
+		{ role: "user", content: input },
+	];
+	const maxSteps = agent.maxSteps ?? 4;
+	let retried = false;
+	for (let step = 0; ; step++) {
+		const reply = await complete(
+			messages,
+			step < maxSteps ? tools : [],
+			fetchImpl,
+		);
+		messages.push({
+			role: "assistant",
+			content: reply.content,
+			...(reply.tool_calls?.length ? { tool_calls: reply.tool_calls } : {}),
+		});
+		if (reply.tool_calls?.length) {
+			for (const call of reply.tool_calls)
+				messages.push({
+					role: "tool",
+					tool_call_id: call.id,
+					content: await callTool(tools, call),
+				});
+			continue;
+		}
+		let problem: string;
+		try {
+			const out = agent.output(jsonIn(reply.content ?? ""));
+			if (!(out instanceof type.errors)) return out as Out;
+			problem = out.summary;
+		} catch (error) {
+			problem = error instanceof Error ? error.message : String(error);
+		}
+		if (retried)
+			throw new Error(`${agent.name} answered in the wrong shape: ${problem}`);
+		retried = true;
+		messages.push({
+			role: "user",
+			content: `That answer didn't fit: ${problem}. Answer again with the JSON only.`,
+		});
+	}
+}
+
+// A tool's result for the model; its failure too, so the model can go on.
+async function callTool(tools: Tool[], call: ToolCall) {
+	const tool = tools.find((t) => t.name === call.function.name);
+	if (!tool) return `There's no tool ${call.function.name}`;
+	try {
+		const input = JSON.parse(call.function.arguments || "{}");
+		return JSON.stringify(await tool.run(input));
+	} catch (error) {
+		return `Failed: ${error instanceof Error ? error.message : String(error)}`;
+	}
+}

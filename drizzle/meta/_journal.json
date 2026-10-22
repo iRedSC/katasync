@@ -715,6 +715,13 @@
       "when": 1792696730768,
       "tag": "0101_buyer_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1792698595542,
+      "tag": "0102_reply_drafts",
+      "breakpoints": true
     }
   ]
 }

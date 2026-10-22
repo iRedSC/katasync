@@ -40,6 +40,12 @@ The dev server doesn't sign QZ requests or hand out the setup script, since it s
 
 Each computer then picks its label printer in Settings; the choice is kept in that browser. Labels (4x6 PDFs from Shippo and TikTok) go straight to it, signed by the server (`src/server/printing.ts`, `src/printing/qz-client.ts`). The saved printer name must match an installed printer exactly; a renamed or missing printer is never silently replaced. Without a printer picked, labels open as PDFs in a new tab, as on phones. A failed print says why and offers the PDF. Use Test print on the packing computer to verify its Windows setup, driver, and physical 4x6 output.
 
+## Buyer messages and AI replies
+
+The Inbox's Buyers folder answers Amazon and eBay buyers in place (`src/buyers`). Amazon's messages come from the marketplaces mailbox and replies go through Resend from `MARKETPLACE_INBOX` (or `BUYER_REPLY_FROM`), which must be an approved sender in Seller Central. eBay's need the `commerce.message` scope: run `pnpm ebay:authorize` once.
+
+An agent drafts a suggested reply for each thread waiting on us, following the Precedents folder (when this, then that), and reads buyers' messages into English (`src/ai`). It calls models through a CLIProxyAPI: set `AI_PROXY_URL`, `AI_PROXY_KEY`, and optionally `AI_MODEL` (default `claude-sonnet-5-5`). The proxy must be reachable from Vercel. Without them, everything else works and nothing is drafted.
+
 ## Claude (MCP)
 
 `/mcp` is an MCP server (Streamable HTTP, stateless) for Claude and other MCP clients, signed in with OAuth (`src/auth/oauth.ts`). Settings shows the address to add as a custom connector (or the `claude mcp add` command); the client registers itself and opens `/oauth/authorize`, where a signed-in device approves it as read only or able to make changes. Connected apps are listed in Settings and can be disconnected there. Claude can read anything (including read-only SQL), draft POs, receive sent ones, change products and the setup, count stock, ask staff for cycle counts, and build kits; an app approved read only gets only the reading tools. Every change it makes is listed on Diagnostics. Sending POs and buying labels stay in the app. Tools live in `src/mcp/server.ts`; the counting rules they rely on are the `owned_stock` and `sales_units` views.
