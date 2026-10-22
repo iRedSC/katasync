@@ -5,25 +5,44 @@ import {
 	CheckCheck,
 	CircleAlert,
 	CircleHelp,
+	Clock,
 	ExternalLink,
 	Languages,
 	LoaderCircle,
+	NotebookPen,
 	RotateCw,
 	SendHorizontal,
 	Undo2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ReplyStatus } from "#/buyers/states";
 import type { BuyerThread } from "#/buyers/threads";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
 import { formatDateTime } from "#/lib/format";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { translateReply } from "#/server/buyer-drafts";
-import { replyToBuyer } from "#/server/buyers";
+import { logBuyerReply, unlogBuyerReply } from "#/server/buyers";
 import { BuyerOrder } from "./buyer-order";
 import { DueChip } from "./due-chip";
+import {
+	HOLD_MS,
+	hold,
+	type OutStatus,
+	retry,
+	sendNow,
+	setRefresh,
+	takeReturned,
+	undo,
+	useOutgoing,
+} from "./outgoing";
 import { Suggestion } from "./suggestion";
 
 // "Spanish" for es, in English.
@@ -37,11 +56,14 @@ const languageName = (code: string | null) =>
 
 const EBAY_MAX = 2000;
 
-// unheard: the browser never got the server's answer, so it may or may not
-// have gone; trying again with the same key can only send it once.
-type Status = ReplyStatus | "unheard";
+type Status = OutStatus;
 
 type Shown = {
+	// Added by staff after sending it on the marketplace; katasync sent
+	// nothing.
+	logged?: boolean;
+	// When a held reply goes.
+	sendAt?: number;
 	key: string;
 	fromBuyer: boolean;
 	body: string;
@@ -51,9 +73,6 @@ type Shown = {
 	// The buyer's words in English, when they wrote in another language.
 	english?: string | null;
 };
-
-// Replies written here, until the server's list has them by their key.
-type Local = Shown & { requestKey: string };
 
 export function BuyerConversation({
 	thread: t,
@@ -66,8 +85,17 @@ export function BuyerConversation({
 	onDone: (done: boolean) => void;
 }) {
 	const router = useRouter();
-	const [local, setLocal] = useState<Local[]>([]);
-	const [text, setText] = useState("");
+	const outgoing = useOutgoing();
+	const [text, setText] = useState(() => takeReturned(t.id) ?? "");
+	// Undo puts the words back in the box, also while this thread is open.
+	useEffect(() => {
+		setRefresh(() => router.invalidate());
+		const back = takeReturned(t.id);
+		if (back !== undefined) {
+			setText(back);
+			box.current?.focus();
+		}
+	});
 	const [why, setWhy] = useState<string | null>(null);
 	// The English the box's words say, kept with the exact words it's for:
 	// any change to them hides it, since it no longer says what they do.
@@ -104,7 +132,10 @@ export function BuyerConversation({
 	const kept = new Set(t.messages.map((m) => m.requestKey));
 	const shown: Shown[] = [
 		...t.messages.map((m) => ({ ...m, key: `m${m.id}` })),
-		...local.filter((l) => !kept.has(l.requestKey)),
+		// Ours on their way, until the server's list has them by their key.
+		...outgoing
+			.filter((o) => o.threadId === t.id && !kept.has(o.key))
+			.map((o) => ({ ...o, fromBuyer: false })),
 	];
 	const count = shown.length;
 	useEffect(() => {
@@ -114,37 +145,11 @@ export function BuyerConversation({
 	const limit = t.market === "ebay" ? EBAY_MAX : null;
 	const over = limit !== null && text.trim().length > limit;
 
-	// Sends a reply under its key: a new one from the box, or one whose
-	// answer never came, again under the same key.
-	async function deliver(mine: Local) {
-		const set = (patch: Partial<Local>) =>
-			setLocal((l) =>
-				l.map((m) =>
-					m.requestKey === mine.requestKey ? { ...m, ...patch } : m,
-				),
-			);
-		set({ status: "sending", error: null });
-		try {
-			const r = await replyToBuyer({
-				data: { threadId: t.id, text: mine.body, requestKey: mine.requestKey },
-			});
-			set({ status: r.status });
-		} catch (error) {
-			set({
-				status: "unheard",
-				error: error instanceof Error ? error.message : String(error),
-			});
-		}
-		// The list catching up is apart from whether it sent.
-		await router.invalidate().catch(() => {});
-	}
-
-	// Sends words as a reply. A key given (a suggestion's) sends them once
-	// however many times it's clicked.
+	// Holds words as a reply, then sends them; undo takes them back. A key
+	// given (a suggestion's) sends them once however many times it's clicked.
 	function send(body: string, key?: string) {
 		const words = body.trim();
 		const tooLong = limit !== null && words.length > limit;
-		if (key && local.some((l) => l.requestKey === key)) return;
 		if (!words || tooLong) {
 			shake(box.current);
 			setWhy(tooLong ? `eBay takes ${limit} characters` : null);
@@ -152,26 +157,53 @@ export function BuyerConversation({
 			return;
 		}
 		const requestKey = key ?? crypto.randomUUID();
-		const mine: Local = {
-			key: requestKey,
-			requestKey,
-			fromBuyer: false,
-			body: words,
-			at: new Date(),
-			status: "sending",
-			error: null,
-		};
-		setLocal((l) => [...l, mine]);
+		if (!hold({ key: requestKey, threadId: t.id, body: words })) return;
 		setText("");
 		setGloss(null);
 		setWhy(null);
-		void deliver(mine);
+		offerUndo(`Sending in ${HOLD_MS / 1000}s`, {
+			duration: HOLD_MS,
+			undo: async () => (undo(requestKey) ? "Not sent" : null),
+		});
+	}
+
+	// A reply sent on the marketplace itself, added so the thread matches.
+	// Nothing goes to the buyer; undo takes it out and gives the words back.
+	async function addWithoutSending() {
+		const words = text.trim();
+		if (!words) {
+			shake(box.current);
+			box.current?.focus();
+			return;
+		}
+		const requestKey = crypto.randomUUID();
+		setText("");
+		setGloss(null);
+		setWhy(null);
+		try {
+			await logBuyerReply({
+				data: { threadId: t.id, text: words, requestKey },
+			});
+		} catch (error) {
+			setText(words);
+			setWhy(error instanceof Error ? error.message : String(error));
+			shake(box.current);
+			return;
+		}
+		await router.invalidate();
+		offerUndo("Added without sending", {
+			undo: async () => {
+				await unlogBuyerReply({ data: { requestKey } });
+				await router.invalidate();
+				setText(words);
+				return "Taken out";
+			},
+		});
 	}
 
 	const again = (m: Shown) => {
-		const mine = local.find((l) => l.key === m.key);
 		// Unheard: the same reply again. Failed or unconfirmed: a new one.
-		if (mine && m.status === "unheard") void deliver(mine);
+		if (m.status === "unheard") retry(m.key);
 		else send(m.body);
 	};
 
@@ -236,92 +268,124 @@ export function BuyerConversation({
 				))}
 				<div ref={end} />
 			</div>
-			<form
-				className="border-t p-3"
-				onSubmit={(e) => {
-					e.preventDefault();
-					send(text);
-				}}
-			>
+			{/* The suggestion sits outside the form, so none of its buttons can
+			    submit a reply. */}
+			<div className="border-t p-3">
 				<Suggestion
 					thread={t}
 					ai={ai}
-					onSend={send}
 					onEdit={(body, english) => {
 						setText(body);
 						setGloss(english ? { english, for: body.trim() } : null);
 						box.current?.focus();
 					}}
 				/>
-				<div
-					className={cn(
-						"rounded-lg border bg-background focus-within:ring-2 focus-within:ring-ring",
-						(over || why) && "border-critical-text",
-					)}
+				<form
+					onSubmit={(e) => {
+						e.preventDefault();
+						send(text);
+					}}
 				>
-					<textarea
-						ref={box}
-						value={text}
-						rows={Math.min(8, Math.max(2, text.split("\n").length))}
-						onChange={(e) => {
-							setText(e.target.value);
-							setWhy(null);
-							if (!e.target.value.trim()) setGloss(null);
-						}}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-								e.preventDefault();
-								send(text);
-							}
-						}}
-						placeholder={`Reply to ${t.buyerName ?? "the buyer"}`}
-						className="block w-full resize-none rounded-t-lg bg-transparent px-3 pt-2 outline-none"
-					/>
-					<div className="flex items-center justify-end gap-1 px-1.5 pb-1.5">
-						{foreign && (
-							<Tip content={`Into ${languageName(t.language)}`}>
-								<Button
-									type="button"
-									variant="ghost"
-									aria-label="Translate"
-									disabled={!text.trim() || translating}
-									onClick={translate}
-								>
-									<Languages className={cn(translating && "animate-pulse")} />
-								</Button>
-							</Tip>
-						)}
-						<Tip content="Send (Ctrl+Enter)">
-							<Button type="submit" aria-label="Send" disabled={!text.trim()}>
-								<SendHorizontal />
-							</Button>
-						</Tip>
-					</div>
-				</div>
-				{glossShown && !why && (
-					<p className="mt-1 truncate text-xs text-muted-foreground">
-						{glossShown}
-					</p>
-				)}
-				{(why || (limit !== null && text.length > limit - 200)) && (
-					<p
+					<div
 						className={cn(
-							"mt-1 text-xs tabular-nums",
-							why || over ? "text-critical-text" : "text-muted-foreground",
+							"rounded-lg border bg-background focus-within:ring-2 focus-within:ring-ring",
+							(over || why) && "border-critical-text",
 						)}
 					>
-						{why ?? `${text.trim().length} / ${limit}`}
-					</p>
-				)}
-			</form>
+						<textarea
+							ref={box}
+							value={text}
+							rows={Math.min(8, Math.max(2, text.split("\n").length))}
+							onChange={(e) => {
+								setText(e.target.value);
+								setWhy(null);
+								if (!e.target.value.trim()) setGloss(null);
+							}}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+									e.preventDefault();
+									send(text);
+								}
+							}}
+							placeholder={`Reply to ${t.buyerName ?? "the buyer"}`}
+							className="block w-full resize-none rounded-t-lg bg-transparent px-3 pt-2 outline-none"
+						/>
+						<div className="flex items-center justify-end gap-1 px-1.5 pb-1.5">
+							{foreign && (
+								<Tip content={`Into ${languageName(t.language)}`}>
+									<Button
+										type="button"
+										variant="ghost"
+										aria-label="Translate"
+										disabled={!text.trim() || translating}
+										onClick={translate}
+									>
+										<Languages className={cn(translating && "animate-pulse")} />
+									</Button>
+								</Tip>
+							)}
+							<ContextMenu>
+								<ContextMenuTrigger asChild>
+									<span>
+										<Tip content="Send (Ctrl+Enter) · right-click for more">
+											<Button
+												type="submit"
+												aria-label="Send"
+												disabled={!text.trim()}
+											>
+												<SendHorizontal />
+											</Button>
+										</Tip>
+									</span>
+								</ContextMenuTrigger>
+								<ContextMenuContent>
+									<ContextMenuItem
+										disabled={!text.trim()}
+										onSelect={addWithoutSending}
+									>
+										<NotebookPen />
+										Add to conversation without sending
+									</ContextMenuItem>
+								</ContextMenuContent>
+							</ContextMenu>
+						</div>
+					</div>
+					{glossShown && !why && (
+						<p className="mt-1 truncate text-xs text-muted-foreground">
+							{glossShown}
+						</p>
+					)}
+					{(why || (limit !== null && text.length > limit - 200)) && (
+						<p
+							className={cn(
+								"mt-1 text-xs tabular-nums",
+								why || over ? "text-critical-text" : "text-muted-foreground",
+							)}
+						>
+							{why ?? `${text.trim().length} / ${limit}`}
+						</p>
+					)}
+				</form>
+			</div>
 		</div>
 	);
+}
+
+// A held reply's seconds left, ticking.
+function Countdown({ at }: { at: number }) {
+	const [, tick] = useState(0);
+	useEffect(() => {
+		const timer = setInterval(() => tick((n) => n + 1), 250);
+		return () => clearInterval(timer);
+	}, []);
+	return <>{Math.max(0, Math.ceil((at - Date.now()) / 1000))}s</>;
 }
 
 const STATUS: Record<
 	Status,
 	{ icon: typeof Check; label: string; className?: string }
 > = {
+	held: { icon: Clock, label: "Not sent yet" },
 	sending: {
 		icon: LoaderCircle,
 		label: "Sending",
@@ -346,6 +410,12 @@ const STATUS: Record<
 	},
 };
 
+const LOGGED = {
+	icon: NotebookPen,
+	label: "Added without sending: sent on the marketplace",
+	className: undefined,
+};
+
 // What a reply that isn't through offers: the same send again, or a new one.
 const AGAIN: Partial<Record<Status, string>> = {
 	failed: "Send again",
@@ -360,7 +430,7 @@ function Bubble({
 	message: Shown;
 	onAgain: () => void;
 }) {
-	const s = m.status ? STATUS[m.status] : null;
+	const s = m.logged ? LOGGED : m.status ? STATUS[m.status] : null;
 	const [original, setOriginal] = useState(false);
 	const translated = Boolean(m.english) && !original;
 	return (
@@ -380,6 +450,9 @@ function Bubble({
 						"bg-critical-surface text-critical-text ring-1 ring-critical-text",
 					(m.status === "unconfirmed" || m.status === "unheard") &&
 						"bg-warning-surface text-warning-text ring-1 ring-warning-text",
+					// Not gone yet: dashed and faded until the hold runs out.
+					m.status === "held" &&
+						"bg-primary/60 outline-2 outline-primary outline-dashed outline-offset-2",
 				)}
 			>
 				{translated ? m.english : m.body}
@@ -406,6 +479,29 @@ function Bubble({
 					</Tip>
 				)}
 			</span>
+			{m.status === "held" && m.sendAt !== undefined && (
+				<span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
+					Sends in <Countdown at={m.sendAt} />
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						onClick={() => undo(m.key)}
+					>
+						<Undo2 />
+						Undo
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						onClick={() => sendNow(m.key)}
+					>
+						<SendHorizontal />
+						Send now
+					</Button>
+				</span>
+			)}
 			{m.status && AGAIN[m.status] && (
 				<span
 					className={cn(
@@ -414,7 +510,7 @@ function Bubble({
 					)}
 				>
 					{m.error}
-					<Button size="sm" variant="ghost" onClick={onAgain}>
+					<Button type="button" size="sm" variant="ghost" onClick={onAgain}>
 						<RotateCw />
 						{AGAIN[m.status]}
 					</Button>

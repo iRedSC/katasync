@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { DEFAULT_BASE_PROMPT } from "#/ai/agents";
 import { type Agent, OutOfTimeError } from "#/ai/harness";
 import type { Db } from "#/db/client";
 import { buyerMessages, replyDrafts } from "#/db/schema";
@@ -10,7 +11,7 @@ import {
 	setDraft,
 	translateForBuyer,
 } from "./drafts";
-import { savePrecedent } from "./precedents";
+import { basePrompt, savePrecedent, setBasePrompt } from "./precedents";
 import { runBuyerMessages } from "./run";
 import { reply } from "./send";
 import { ensureThread, recordFromBuyer, threadsPage } from "./threads";
@@ -68,7 +69,11 @@ describe("suggested replies", () => {
 		const p = await savePrecedent(
 			db,
 			null,
-			{ when: "Buyer asks when it arrives", action: "Give the ship date" },
+			{
+				name: "Arrival",
+				when: "Buyer asks when it arrives",
+				action: "Give the ship date",
+			},
 			"staff",
 		);
 		const run = fake(spanish);
@@ -89,7 +94,7 @@ describe("suggested replies", () => {
 			by: "ai",
 			stale: false,
 			// The made-up 999 is dropped.
-			precedents: [{ id: p.id, when: "Buyer asks when it arrives" }],
+			precedents: [{ id: p.id, name: "Arrival" }],
 		});
 	});
 
@@ -209,5 +214,33 @@ describe("suggested replies", () => {
 		const [d] = await db.select().from(replyDrafts);
 		expect(d?.state).toBe("drafting");
 		expect(await draftWaiting(db, 4, fake(spanish))).toBe(1);
+	});
+
+	test("drafts start from staff's base prompt, or the default", async () => {
+		const seen: string[] = [];
+		const run = async <O>(agent: Agent<O>): Promise<O> => {
+			seen.push(agent.instructions);
+			return {
+				reply: "Hola",
+				english: "Hi",
+				precedents: [],
+				note: null,
+			} as O;
+		};
+		await draftThread(db, threadId, { force: true, run });
+		expect(seen[0]).toContain(DEFAULT_BASE_PROMPT);
+		await setBasePrompt(
+			db,
+			"We are a friendly drywall tool shop. Sign off as Sam.",
+			"staff",
+		);
+		await draftThread(db, threadId, { force: true, run });
+		expect(seen[1]).toMatch(
+			/^We are a friendly drywall tool shop\. Sign off as Sam\./,
+		);
+		// What follows the base is fixed: precedents and the answer's shape.
+		expect(seen[1]).toContain("Follow the precedents");
+		expect((await setBasePrompt(db, null, "staff")).isDefault).toBe(true);
+		expect((await basePrompt(db)).prompt).toBe(DEFAULT_BASE_PROMPT);
 	});
 });

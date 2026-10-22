@@ -5,7 +5,7 @@ import { scopedToken } from "#/channels/ebay-scoped-token";
 import type { Db } from "#/db/client";
 import { buyerMessageChecks, buyerMessages, buyerThreads } from "#/db/schema";
 import { Refused, settleReply, Unsure, unsureStatus } from "./states";
-import { ensureThread, recordFromBuyer, recordOurs } from "./threads";
+import { ensureThread, isLogged, recordFromBuyer, recordOurs } from "./threads";
 
 // eBay buyer messages through its Message API (commerce/message/v1): every
 // conversation members started with us, read in each run from a little
@@ -122,10 +122,12 @@ async function readConversation(
 	// eBay's IDs already on a message here: never given to another.
 	const claimed = new Set(kept.map((k) => k.externalId).filter(Boolean));
 	// Ours whose send didn't say how it went, oldest first.
+	// And ours staff added without sending, which eBay now reads back.
 	const waiting = kept.filter(
 		(k) =>
-			k.externalId === null &&
-			(k.status === "sending" || k.status === "unconfirmed"),
+			isLogged(k.externalId) ||
+			(k.externalId === null &&
+				(k.status === "sending" || k.status === "unconfirmed")),
 	);
 	all.sort((a, b) => a.createdDate.getTime() - b.createdDate.getTime());
 	for (const m of all) {
@@ -141,13 +143,23 @@ async function readConversation(
 		if (claimed.has(m.messageId)) continue;
 		// The same words, sent no earlier than we wrote them (allowing for
 		// clocks).
+		// One added without sending was sent on eBay before it was added.
 		const match = waiting.findIndex(
 			(w) =>
 				same(w.body, body) &&
-				m.createdDate.getTime() >= w.at.getTime() - CLOCK_SLACK_MS,
+				m.createdDate.getTime() >=
+					w.at.getTime() -
+						(isLogged(w.externalId) ? LOGGED_SLACK_MS : CLOCK_SLACK_MS),
 		);
 		const pending = match >= 0 ? waiting.splice(match, 1)[0] : undefined;
 		claimed.add(m.messageId);
+		if (pending && isLogged(pending.externalId)) {
+			await db
+				.update(buyerMessages)
+				.set({ externalId: m.messageId })
+				.where(eq(buyerMessages.id, pending.id));
+			continue;
+		}
 		if (
 			pending &&
 			(await settleReply(db, pending.id, {
@@ -165,6 +177,7 @@ async function readConversation(
 }
 
 const CLOCK_SLACK_MS = 2 * 60_000;
+const LOGGED_SLACK_MS = 24 * 3_600_000;
 
 // Reads conversations with anything since a little before the last full
 // read; on a sweep, two weeks. Records how it went, so a source that stops

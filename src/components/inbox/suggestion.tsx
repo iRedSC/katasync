@@ -1,6 +1,6 @@
 import { useRouter } from "@tanstack/react-router";
-import { PenLine, RefreshCw, SendHorizontal, Sparkles } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ArrowDown, RefreshCw, Sparkles } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import type { BuyerThread } from "#/buyers/threads";
 import { Button } from "#/components/ui/button";
@@ -8,8 +8,8 @@ import { Tip } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
 import { draftReplyNow } from "#/server/buyer-drafts";
 
-// The reply suggested for a thread, above the reply box: sent as it is in
-// one click, or taken into the box to change. Who wrote it shows as a
+// The reply suggested for a thread, above the reply box. The arrow pulls it
+// into the box, to send as it is or change first: nothing here sends. Who wrote it shows as a
 // chip; the precedents it followed and what to check sit under it.
 
 type Draft = NonNullable<BuyerThread["draft"]>;
@@ -23,25 +23,21 @@ const BY: Record<Draft["by"], string> = {
 export function Suggestion({
 	thread: t,
 	ai,
-	onSend,
 	onEdit,
 }: {
 	thread: BuyerThread;
 	// Without the AI, a suggestion Claude or staff saved still shows, with
 	// nothing to draft it again.
 	ai: boolean;
-	onSend: (body: string, key: string) => void;
 	onEdit: (body: string, english: string | null) => void;
 }) {
 	const router = useRouter();
 	const [redrafting, setRedrafting] = useState(false);
 	const d = t.draft;
-	// One key per version of the suggestion, so it goes once however it's
-	// clicked; sent, it leaves at once rather than when the list catches up.
+	// The version pulled into the box, which then leaves until a new one.
 	const version = d?.updatedAt.toString() ?? "";
-	const key = useMemo(() => (version ? crypto.randomUUID() : ""), [version]);
-	const [sent, setSent] = useState<string | null>(null);
-	if (!t.waiting || !d || sent === version) return null;
+	const [pulled, setPulled] = useState<string | null>(null);
+	if (!t.waiting || !d || pulled === version) return null;
 	// Drafting and failing are the agent's; without it, only a saved one shows.
 	if (!ai && d.state !== "ready") return null;
 
@@ -73,7 +69,7 @@ export function Suggestion({
 			<div className="mb-2 flex items-center gap-2 rounded-xl border border-critical-text/40 bg-critical-surface px-3 py-2 text-sm text-critical-text">
 				<Sparkles className="size-4" />
 				<span className="min-w-0 flex-1 truncate">{d.error}</span>
-				<Button size="sm" variant="ghost" onClick={redraft}>
+				<Button type="button" size="sm" variant="ghost" onClick={redraft}>
 					<RefreshCw />
 					Draft again
 				</Button>
@@ -99,6 +95,7 @@ export function Suggestion({
 					{ai && (
 						<Tip content="Draft again">
 							<Button
+								type="button"
 								size="sm"
 								variant="ghost"
 								aria-label="Draft again"
@@ -108,26 +105,20 @@ export function Suggestion({
 							</Button>
 						</Tip>
 					)}
-					<Tip content="Change it">
+					<Tip content="Into the reply box">
 						<Button
+							type="button"
 							size="sm"
-							variant="ghost"
-							aria-label="Change it"
-							onClick={() => onEdit(body, d.english)}
+							variant="secondary"
+							aria-label="Into the reply box"
+							onClick={() => {
+								setPulled(version);
+								onEdit(body, d.english);
+							}}
 						>
-							<PenLine />
+							<ArrowDown />
 						</Button>
 					</Tip>
-					<Button
-						size="sm"
-						onClick={() => {
-							setSent(version);
-							onSend(body, key);
-						}}
-					>
-						<SendHorizontal />
-						Send
-					</Button>
 				</span>
 			</div>
 			<p className="whitespace-pre-wrap">{body}</p>
@@ -143,7 +134,7 @@ export function Suggestion({
 							key={p.id}
 							className="rounded-md bg-surface-strong px-1.5 py-0.5 text-muted-foreground"
 						>
-							{p.when}
+							{p.name}
 						</span>
 					))}
 					{d.note && <span className="text-warning-text">{d.note}</span>}

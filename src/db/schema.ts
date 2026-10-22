@@ -2562,6 +2562,8 @@ export const buyerMessageChecks = pgTable("buyer_message_checks", {
 // (src/ai) to follow: when a buyer says or needs this, then do that.
 export const replyPrecedents = pgTable("reply_precedents", {
 	id: integer().primaryKey().generatedAlwaysAsIdentity(),
+	// What staff call it, e.g. "Empty box".
+	name: text().notNull(),
 	when: text().notNull(),
 	// What to do then; "then" in the database.
 	action: text("then").notNull(),
@@ -2612,5 +2614,23 @@ export const replyDrafts = pgTable(
 			sql`(${t.state} = 'failed') = (${t.error} is not null)`,
 		),
 		check("reply_drafts_by_known", sql`${t.by} in ('ai', 'staff', 'claude')`),
+	],
+);
+
+// The reply agent's base prompt as staff wrote it: who we are, the tone,
+// the marketplace rules, how replies open and close. One row; none means
+// the default in src/ai/agents.ts. The precedents and the answer's shape are
+// added in code, so an edit here can't break drafting.
+export const replyBasePrompt = pgTable(
+	"reply_base_prompt",
+	{
+		id: smallint().primaryKey().default(1),
+		prompt: text().notNull(),
+		by: text().$type<"staff" | "claude">().notNull().default("staff"),
+		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check("reply_base_prompt_one_row", sql`${t.id} = 1`),
+		check("reply_base_prompt_by_known", sql`${t.by} in ('staff', 'claude')`),
 	],
 );

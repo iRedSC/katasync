@@ -4,7 +4,13 @@ import { aiConfigured } from "#/ai/harness";
 import { buyerOrder } from "#/buyers/order";
 import { runBuyerMessages } from "#/buyers/run";
 import { reply } from "#/buyers/send";
-import { messageSources, setThreadDone, threadsPage } from "#/buyers/threads";
+import {
+	logOurs,
+	messageSources,
+	setThreadDone,
+	threadsPage,
+	unlogOurs,
+} from "#/buyers/threads";
 import { getDb } from "#/db/client";
 import { readMarketMail } from "#/inbox/market-mail";
 
@@ -42,6 +48,24 @@ export const replyToBuyer = createServerFn({ method: "POST" })
 	.handler(async ({ data }) =>
 		reply(getDb(), data.threadId, data.text, data.requestKey),
 	);
+
+// A reply sent on the marketplace itself, added without sending, and its
+// undo.
+export const logBuyerReply = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			threadId: "number.integer > 0",
+			text: "string > 0",
+			requestKey: "string.uuid",
+		}),
+	)
+	.handler(async ({ data }) =>
+		logOurs(getDb(), data.threadId, data.text, data.requestKey),
+	);
+
+export const unlogBuyerReply = createServerFn({ method: "POST" })
+	.validator(type({ requestKey: "string.uuid" }))
+	.handler(async ({ data }) => unlogOurs(getDb(), data.requestKey));
 
 // The thread's order and its packages, asked of the carriers as it opens.
 export const getBuyerOrder = createServerFn({ method: "GET" })

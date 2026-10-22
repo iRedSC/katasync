@@ -4,11 +4,14 @@ import { z } from "zod";
 import { aiConfigured } from "#/ai/harness";
 import { draftThread, setDraft, translateForBuyer } from "#/buyers/drafts";
 import {
+	basePrompt,
+	basePromptSchema,
 	deletePrecedent,
 	listPrecedents,
 	precedentSchema,
 	restorePrecedent,
 	savePrecedent,
+	setBasePrompt,
 } from "#/buyers/precedents";
 import { getDb } from "#/db/client";
 
@@ -43,9 +46,24 @@ export const translateReply = createServerFn({ method: "POST" })
 			: { language: null, text: data.text },
 	);
 
+// The precedents and the base prompt they follow on.
 export const getPrecedents = createServerFn({ method: "GET" }).handler(
-	async () => listPrecedents(getDb()),
+	async () => {
+		const db = getDb();
+		const [precedents, base] = await Promise.all([
+			listPrecedents(db),
+			basePrompt(db),
+		]);
+		return { precedents, base };
+	},
 );
+
+export type PrecedentsPage = Awaited<ReturnType<typeof getPrecedents>>;
+
+// Staff's base prompt; null puts the default back.
+export const saveBasePrompt = createServerFn({ method: "POST" })
+	.validator(z.object({ prompt: basePromptSchema.nullable() }))
+	.handler(async ({ data }) => setBasePrompt(getDb(), data.prompt, "staff"));
 
 export const savePrecedentFn = createServerFn({ method: "POST" })
 	.validator(
@@ -66,6 +84,7 @@ export const restorePrecedentFn = createServerFn({ method: "POST" })
 	.validator(
 		z.object({
 			id: z.number().int().positive(),
+			name: z.string(),
 			when: z.string(),
 			action: z.string(),
 			by: z.enum(["staff", "claude"]),
