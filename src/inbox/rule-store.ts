@@ -1,8 +1,12 @@
 import { asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import type { z } from "zod";
 import type { Db } from "#/db/client";
 import { mailRules, marketEmails } from "#/db/schema";
 import {
 	type Folder,
+	flagsOf,
+	type Level,
+	levelOf,
 	matches,
 	type Rule,
 	type RuleInput,
@@ -25,16 +29,18 @@ export async function listRules(db: Db): Promise<Rule[]> {
 		id: r.id,
 		position: r.position,
 		name: r.name,
+		match: r.match,
 		conditions: r.conditions,
 		folder: r.folder,
 		important: r.important,
+		critical: r.critical,
 		markRead: r.markRead,
 		by: r.by,
 	}));
 }
 
 // What sorting changed: emails moved to another folder, and emails whose
-// importance changed.
+// importance (important, critical, or neither) changed.
 export type Resorted = { moved: number; marked: number };
 
 // Holds the rules still until the transaction ends: every change to them,
@@ -73,6 +79,7 @@ async function sortAgain(db: Db, only?: number[]): Promise<Resorted> {
 				market: marketEmails.market,
 				folder: marketEmails.folder,
 				important: marketEmails.important,
+				critical: marketEmails.critical,
 				relabelledAt: marketEmails.relabelledAt,
 				importanceSetAt: marketEmails.importanceSetAt,
 			})
@@ -80,16 +87,13 @@ async function sortAgain(db: Db, only?: number[]): Promise<Resorted> {
 			.where(only ? inArray(marketEmails.id, only) : undefined),
 	]);
 	const toFolder = new Map<Folder, number[]>();
-	const toImportant = new Map<boolean, number[]>();
+	const toLevel = new Map<Level, number[]>();
 	for (const r of rows) {
 		const s = sortEmail(rules, r);
 		if (r.relabelledAt === null && s.folder !== r.folder)
 			toFolder.set(s.folder, [...(toFolder.get(s.folder) ?? []), r.id]);
-		if (r.importanceSetAt === null && s.important !== r.important)
-			toImportant.set(s.important, [
-				...(toImportant.get(s.important) ?? []),
-				r.id,
-			]);
+		if (r.importanceSetAt === null && s.level !== levelOf(r))
+			toLevel.set(s.level, [...(toLevel.get(s.level) ?? []), r.id]);
 	}
 	// Re-checked in the update, so one moved by hand meanwhile stays.
 	for (const [folder, ids] of toFolder)
@@ -99,16 +103,16 @@ async function sortAgain(db: Db, only?: number[]): Promise<Resorted> {
 			.where(
 				sql`${inArray(marketEmails.id, ids)} and ${isNull(marketEmails.relabelledAt)}`,
 			);
-	for (const [important, ids] of toImportant)
+	for (const [level, ids] of toLevel)
 		await db
 			.update(marketEmails)
-			.set({ important })
+			.set(flagsOf(level))
 			.where(
 				sql`${inArray(marketEmails.id, ids)} and ${isNull(marketEmails.importanceSetAt)}`,
 			);
 	return {
 		moved: [...toFolder.values()].reduce((n, ids) => n + ids.length, 0),
-		marked: [...toImportant.values()].reduce((n, ids) => n + ids.length, 0),
+		marked: [...toLevel.values()].reduce((n, ids) => n + ids.length, 0),
 	};
 }
 
@@ -178,7 +182,10 @@ export async function deleteRule(db: Db, id: number) {
 // one's gone too.
 export async function restoreRule(
 	db: Db,
-	rule: RuleInput & { before: number | null; by: Rule["by"] },
+	rule: z.input<typeof ruleSchema> & {
+		before: number | null;
+		by: Rule["by"];
+	},
 ) {
 	const parsed = parse(rule);
 	return locked(db, async (tx) => {
@@ -245,6 +252,7 @@ export async function previewRule(db: Db, input: unknown, limit = 8) {
 			market: marketEmails.market,
 			folder: marketEmails.folder,
 			important: marketEmails.important,
+			critical: marketEmails.critical,
 			done: sql<boolean>`${marketEmails.doneAt} is not null`,
 			read: sql<boolean>`${marketEmails.readAt} is not null`,
 			pinned: sql<boolean>`${marketEmails.relabelledAt} is not null`,

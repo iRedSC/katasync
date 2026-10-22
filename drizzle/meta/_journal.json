@@ -729,6 +729,13 @@
       "when": 1792700457187,
       "tag": "0103_buyer_messages_and_replies",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1792701246746,
+      "tag": "0104_mail_critical_and_any",
+      "breakpoints": true
     }
   ]
 }

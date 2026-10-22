@@ -186,16 +186,23 @@ function NavItem({
 }
 
 // Work is routine (orders to ship); a problem means something is broken and
-// shows red. Every count has to say which it is.
-const problem: Record<keyof NavCounts, boolean> = {
-	toShip: false,
-	returnsDue: false,
-	posReady: false,
-	inbox: false,
-	countsDue: false,
-	unmatched: true,
-	attention: true,
-	atRisk: true,
+// shows red. Every count has to say which it is; the inbox's is a problem
+// while a critical email waits in it.
+const problem: Record<keyof NavCounts, boolean | ((c: NavCounts) => boolean)> =
+	{
+		toShip: false,
+		returnsDue: false,
+		posReady: false,
+		inbox: (c) => c.criticalMail > 0,
+		criticalMail: true,
+		countsDue: false,
+		unmatched: true,
+		attention: true,
+		atRisk: true,
+	};
+const isProblem = (k: keyof NavCounts, c: NavCounts) => {
+	const p = problem[k];
+	return typeof p === "function" ? p(c) : p;
 };
 
 // The item's own count as a pill, or a dot when only its hidden sub-pages
@@ -216,7 +223,7 @@ function Waiting({
 			<span
 				className={cn(
 					"rounded-md px-1.5 text-xs font-medium tabular-nums",
-					problem[own]
+					isProblem(own, c)
 						? "bg-critical-fill text-critical-text"
 						: "bg-surface-strong",
 				)}
@@ -224,7 +231,7 @@ function Waiting({
 				{c[own] > 999 ? "999+" : c[own]}
 			</span>
 		);
-	if (hidden.some((k) => problem[k] && c[k] > 0))
+	if (hidden.some((k) => isProblem(k, c) && c[k] > 0))
 		return <span className="size-1.5 rounded-full bg-critical-icon" />;
 	return null;
 }

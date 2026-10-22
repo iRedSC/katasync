@@ -1,4 +1,12 @@
-import { Hand, MailOpen, Plus, Star, Trash2, X } from "lucide-react";
+import {
+	Hand,
+	MailOpen,
+	OctagonAlert,
+	Plus,
+	Star,
+	Trash2,
+	X,
+} from "lucide-react";
 import { type Ref, useEffect, useState } from "react";
 import { Badge } from "#/components/page";
 import { Button } from "#/components/ui/button";
@@ -12,6 +20,7 @@ import {
 	type Folder,
 	fieldName,
 	MARKET_CHOICES,
+	type Match,
 	marketName,
 	type RuleInput,
 	ruleSchema,
@@ -105,7 +114,10 @@ export function RuleForm({
 						// biome-ignore lint/suspicious/noArrayIndexKey: conditions have no id; rows only append and remove
 						key={i}
 						condition={c}
-						first={i === 0}
+						joiner={i === 0 ? null : d.match}
+						onJoin={() =>
+							set({ ...d, match: d.match === "all" ? "any" : "all" })
+						}
 						onChange={(next) => setCondition(i, next)}
 						onRemove={
 							d.conditions.length > 1
@@ -127,7 +139,7 @@ export function RuleForm({
 					}
 				>
 					<Plus />
-					And
+					{d.match === "any" ? "Or" : "And"}
 				</Button>
 			</section>
 
@@ -154,9 +166,16 @@ export function RuleForm({
 						);
 					})}
 					<span className="mx-1 h-5 w-px bg-border" />
+					{/* Critical is important too: unmarking important unmarks both. */}
 					<Choice
-						active={d.important}
-						onClick={() => set({ ...d, important: !d.important })}
+						active={d.important && !d.critical}
+						onClick={() =>
+							set({
+								...d,
+								important: !(d.important && !d.critical),
+								critical: false,
+							})
+						}
 					>
 						<Star
 							className={cn(
@@ -165,6 +184,20 @@ export function RuleForm({
 							)}
 						/>
 						Important
+					</Choice>
+					<Choice
+						active={d.critical}
+						onClick={() =>
+							set({ ...d, important: !d.critical, critical: !d.critical })
+						}
+					>
+						<OctagonAlert
+							className={cn(
+								"size-4",
+								d.critical && "fill-critical-fill text-critical-icon",
+							)}
+						/>
+						Critical
 					</Choice>
 					<Tip content="Not when important">
 						<span>
@@ -220,20 +253,39 @@ export function RuleForm({
 
 function ConditionRow({
 	condition: c,
-	first,
+	joiner,
+	onJoin,
 	onChange,
 	onRemove,
 }: {
 	condition: Condition;
-	first: boolean;
+	// How it joins the ones before: null for the first.
+	joiner: Match | null;
+	// Flips every joiner between and and or.
+	onJoin: () => void;
 	onChange: (c: Condition) => void;
 	onRemove?: () => void;
 }) {
 	return (
 		<div className="flex flex-wrap items-start gap-1.5">
-			<span className="w-9 pt-2 text-right text-sm text-muted-foreground">
-				{first ? "" : "and"}
-			</span>
+			{joiner === null ? (
+				<span className="w-9" />
+			) : (
+				<Tip content={joiner === "all" ? "Switch to or" : "Switch to and"}>
+					<button
+						type="button"
+						onClick={onJoin}
+						className="mt-1.5 h-6 w-9 rounded-md text-right text-sm font-medium text-muted-foreground underline decoration-dotted underline-offset-4 hover:bg-surface hover:text-foreground"
+					>
+						<span
+							key={joiner}
+							className="inline-block pr-1 animate-in zoom-in-75"
+						>
+							{joiner === "all" ? "and" : "or"}
+						</span>
+					</button>
+				</Tip>
+			)}
 			<select
 				aria-label="Field"
 				value={c.field}
@@ -367,8 +419,12 @@ function Preview({ rule }: { rule: Draft | null }) {
 							{e.from}
 						</span>
 						<span className="min-w-0 flex-1 truncate">{e.subject}</span>
-						{e.important && (
-							<Star className="size-3.5 shrink-0 fill-warning-fill text-warning-text" />
+						{e.critical ? (
+							<OctagonAlert className="size-3.5 shrink-0 fill-critical-fill text-critical-icon" />
+						) : (
+							e.important && (
+								<Star className="size-3.5 shrink-0 fill-warning-fill text-warning-text" />
+							)
 						)}
 						{e.pinned && (
 							<Hand

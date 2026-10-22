@@ -19,7 +19,7 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 			returnsDue,
 			posReady,
 			emailsToFile,
-			emailsNeedingAttention,
+			importantMail,
 			due,
 			unmatched,
 			attention,
@@ -40,7 +40,9 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 			returnsDue,
 			posReady,
 			// Important marketplace notices, and supplier emails to file.
-			inbox: emailsNeedingAttention + emailsToFile,
+			inbox: importantMail.important + emailsToFile,
+			// Critical notices among them, which turn the inbox's count red.
+			criticalMail: importantMail.critical,
 			countsDue: due,
 			unmatched,
 			attention,

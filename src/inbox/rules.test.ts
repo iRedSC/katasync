@@ -32,7 +32,10 @@ const email = (subject: string, more: Partial<Sortable> = {}): Sortable => ({
 });
 const has = (field: "subject" | "sender" | "body", ...terms: string[]) =>
 	({ field, has: terms, not: false }) satisfies Condition;
-const when = (...conditions: Condition[]) => ({ conditions });
+const when = (...conditions: Condition[]) => ({
+	match: "all" as const,
+	conditions,
+});
 
 describe("a condition", () => {
 	test("matches whole words, stems with *, and phrases", () => {
@@ -93,6 +96,18 @@ describe("a condition", () => {
 		expect(matches(rule, email("Refund", { market: "ebay" }))).toBe(false);
 		expect(matches(rule, email("Sold"))).toBe(false);
 	});
+
+	test("any needs only one to hold", () => {
+		const rule = {
+			match: "any" as const,
+			conditions: [has("subject", "refund"), has("sender", "ebay.com")],
+		};
+		expect(matches(rule, email("Refund issued"))).toBe(true);
+		expect(matches(rule, email("Sold", { fromAddress: "ebay@ebay.com" }))).toBe(
+			true,
+		);
+		expect(matches(rule, email("Sold"))).toBe(false);
+	});
 });
 
 describe("a rule", () => {
@@ -108,6 +123,10 @@ describe("a rule", () => {
 			false,
 		);
 		expect(ruleSchema.safeParse({ ...ok, conditions: [] }).success).toBe(false);
+		// Critical alone is important too.
+		expect(
+			ruleSchema.parse({ ...ok, important: false, critical: true }),
+		).toMatchObject({ important: true, critical: true, match: "all" });
 		expect(
 			ruleSchema.safeParse({
 				...ok,
@@ -127,7 +146,7 @@ describe("the default rules", () => {
 		const rules = await listRules(db);
 		const sorted = (s: string) => {
 			const r = sortEmail(rules, email(s));
-			return [r.folder, r.important];
+			return [r.folder, r.level !== "normal"];
 		};
 		expect(sorted("Policy Warning: Listing removed")).toEqual([
 			"violations",
@@ -238,6 +257,52 @@ describe("keeping rules", () => {
 		const at = back.findIndex((r) => r.name === "eBay payouts");
 		expect(back[at + 1].id).toBe(next);
 		expect(new Set(back.map((r) => r.position)).size).toBe(back.length);
+	});
+
+	test("a critical rule marks mail critical and important, and stays first in line", async () => {
+		await db.insert(marketEmails).values({
+			messageId: "<1>",
+			market: "ebay",
+			folder: "updates",
+			fromAddress: "ebay@ebay.com",
+			recipients: [],
+			subject: "Your payout is on its way",
+			body: "",
+			receivedAt: new Date(),
+		});
+		const { id, marked } = await createRule(
+			db,
+			{ ...rule, critical: true },
+			"staff",
+		);
+		expect(marked).toBe(1);
+		expect((await db.select().from(marketEmails))[0]).toMatchObject({
+			important: true,
+			critical: true,
+		});
+		// Down to important, it stops being critical.
+		await updateRule(db, id, { ...rule, important: true }, "staff");
+		expect((await db.select().from(marketEmails))[0]).toMatchObject({
+			important: true,
+			critical: false,
+		});
+		const counts = (await marketMailPage(db, "important", null)).counts;
+		expect(counts).toMatchObject({ important: 1, critical: 0 });
+	});
+
+	test("critical without important can't be stored", async () => {
+		await expect(
+			db.insert(marketEmails).values({
+				messageId: "<2>",
+				folder: "updates",
+				fromAddress: "x@ebay.com",
+				recipients: [],
+				subject: "x",
+				body: "",
+				receivedAt: new Date(),
+				critical: true,
+			}),
+		).rejects.toThrow();
 	});
 
 	test("reordering needs every rule once", async () => {

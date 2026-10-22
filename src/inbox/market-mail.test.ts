@@ -78,6 +78,7 @@ describe("the mailbox", () => {
 		// The sale arrives read (the default orders rule), so isn't counted.
 		expect(page.counts).toEqual({
 			important: 1,
+			critical: 0,
 			violations: 1,
 			orders: 0,
 			returns: 0,
@@ -104,7 +105,7 @@ describe("the mailbox", () => {
 				],
 			}),
 		]);
-		expect(await countImportant(db)).toBe(1);
+		expect(await countImportant(db)).toEqual({ important: 1, critical: 0 });
 	});
 
 	test("done leaves its list; moved stays moved; the market filter narrows", async () => {
@@ -121,7 +122,7 @@ describe("the mailbox", () => {
 		).emails.sort((a, b) => a.id - b.id);
 		await setDone(db, amazon.id, true);
 		await moveTo(db, tiktok.id, "orders");
-		await setImportant(db, tiktok.id, false);
+		await setImportant(db, tiktok.id, "normal");
 
 		expect((await marketMailPage(db, "important", null)).emails).toEqual([]);
 		expect(
@@ -229,7 +230,7 @@ describe("by hand", () => {
 		);
 		expect(first.folder).toBe("returns");
 		await moveTo(db, second.id, "updates");
-		await setImportant(db, second.id, true);
+		await setImportant(db, second.id, "important");
 
 		// A rule that sends refunds elsewhere moves the one left to the rules.
 		await createRule(

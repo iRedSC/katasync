@@ -31,7 +31,7 @@ export const folderSearch = (folder: InboxFolder, market: Market | null) => ({
 	...(market ? { market } : {}),
 });
 
-const waiting = (folder: InboxFolder, c: InboxCounts) =>
+const waiting = (folder: InboxFolder, c: InboxCounts): number | null =>
 	folder === "to-file"
 		? c.toFile
 		: folder === "set-aside"
@@ -52,7 +52,9 @@ export function InboxFrame({
 	children: ReactNode;
 }) {
 	const item = (e: (typeof MARKET_FOLDERS)[number]) => {
-		const n = waiting(e.folder, counts);
+		// Important counts its critical emails apart, in red, and the rest after.
+		const critical = e.folder === "important" ? counts.critical : 0;
+		const n = (waiting(e.folder, counts) ?? 0) - critical;
 		const active = e.folder === folder;
 		return (
 			<Link
@@ -69,14 +71,24 @@ export function InboxFrame({
 				<e.icon
 					className={cn(
 						"size-4 shrink-0",
-						e.folder === "important" && n
-							? "fill-warning-fill text-warning-text"
-							: e.folder === "buyers" && n
-								? "text-critical-text"
-								: "",
+						e.folder === "important" && critical
+							? "fill-critical-icon text-critical-icon"
+							: e.folder === "important" && n
+								? "fill-warning-fill text-warning-text"
+								: e.folder === "buyers" && n
+									? "text-critical-text"
+									: "",
 					)}
 				/>
 				<span className="flex-1 truncate">{e.name}</span>
+				{critical > 0 && (
+					<span
+						key={`c${critical}`}
+						className="rounded-md bg-critical-icon px-1.5 text-xs font-semibold text-white tabular-nums animate-in fade-in-0 zoom-in-90"
+					>
+						{critical}
+					</span>
+				)}
 				{n ? (
 					<span
 						key={n}

@@ -60,8 +60,13 @@ export const moveMarketEmail = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => moveTo(getDb(), data.id, data.folder));
 
 export const markMarketEmailImportant = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0", important: "boolean | null" }))
-	.handler(async ({ data }) => setImportant(getDb(), data.id, data.important));
+	.validator(
+		type({
+			id: "number.integer > 0",
+			level: "'normal' | 'important' | 'critical' | null",
+		}),
+	)
+	.handler(async ({ data }) => setImportant(getDb(), data.id, data.level));
 
 // Reads the mailbox now, as the sweep does, so staff needn't wait for it.
 export const checkMarketMailNow = createServerFn({ method: "POST" }).handler(
@@ -69,9 +74,9 @@ export const checkMarketMailNow = createServerFn({ method: "POST" }).handler(
 );
 
 // What waits in every folder, for the side list: buyers waiting on a reply,
-// unread open marketplace emails
-// per folder and important (within one market, when filtered), and supplier
-// emails to file and set aside, unread.
+// unread open marketplace emails per folder and important, critical among
+// them (within one market, when filtered), and supplier emails to file and
+// set aside, unread.
 export const inboxCounts = createServerFn({ method: "GET" })
 	.validator(type({ market: `${market} | null` }))
 	.handler(async ({ data }) => {
@@ -82,6 +87,7 @@ export const inboxCounts = createServerFn({ method: "GET" })
 					folder: marketEmails.folder,
 					n: sql<number>`count(*)::int`,
 					important: sql<number>`(count(*) filter (where ${marketEmails.important}))::int`,
+					critical: sql<number>`(count(*) filter (where ${marketEmails.critical}))::int`,
 				})
 				.from(marketEmails)
 				.where(
@@ -97,6 +103,7 @@ export const inboxCounts = createServerFn({ method: "GET" })
 		]);
 		return {
 			important: rows.reduce((s, r) => s + r.important, 0),
+			critical: rows.reduce((s, r) => s + r.critical, 0),
 			...(Object.fromEntries(
 				FOLDERS.map((f) => [f, rows.find((r) => r.folder === f)?.n ?? 0]),
 			) as Record<(typeof FOLDERS)[number], number>),

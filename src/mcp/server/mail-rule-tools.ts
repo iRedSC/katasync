@@ -12,7 +12,7 @@ import {
 	reorderRules,
 	updateRule,
 } from "#/inbox/rule-store";
-import { conditionSchema, FOLDERS } from "#/inbox/rules";
+import { conditionSchema, FOLDERS, MATCHES } from "#/inbox/rules";
 import { json, READ, WRITE } from "./tool-shapes";
 
 // The rules that sort the marketplaces mailbox on the Inbox page, and its
@@ -20,7 +20,7 @@ import { json, READ, WRITE } from "./tool-shapes";
 // moving it, all like it by a rule.
 
 const SEMANTICS =
-	"Rules run in order (position, smaller first). Each has conditions that must all hold; a text condition (subject, sender = name and address, body) holds when the text has any of its terms: whole words or phrases, case-insensitive, a trailing * matching any ending (violat* = violation, violated); a market condition when the email's marketplace is any listed (other = none). not inverts one. The first matching rule with a folder decides the email's folder (none: updates); every matching rule with important marks it important; one with markRead (mark_read when saving) has it arrive read, only as it arrives and never when a rule marks it important. Emails staff moved or marked by hand keep that. Body text carries footers (\"see our return policy\"), so prefer subject and sender.";
+	"Rules run in order (position, smaller first). Each has conditions; match all (the default) needs every one to hold, match any needs one. A text condition (subject, sender = name and address, body) holds when the text has any of its terms: whole words or phrases, case-insensitive, a trailing * matching any ending (violat* = violation, violated); a market condition when the email's marketplace is any listed (other = none). not inverts one. The first matching rule with a folder decides the email's folder (none: updates); every matching rule with important marks it important, and one with critical marks it critical (critical needs someone now: important too, shown red on the Inbox page; save critical alone and it marks both); one with markRead (mark_read when saving) has it arrive read, only as it arrives and never when a rule marks it important. Emails staff moved or marked by hand keep that. Body text carries footers (\"see our return policy\"), so prefer subject and sender.";
 
 export function registerMailRuleReadTools(server: McpServer, db: Db) {
 	server.registerTool(
@@ -36,12 +36,20 @@ export function registerMailRuleReadTools(server: McpServer, db: Db) {
 
 const ruleInput = {
 	name: z.string().min(1).max(80),
+	match: z
+		.enum(MATCHES)
+		.optional()
+		.describe("all (default): every condition holds; any: one is enough"),
 	conditions: z.array(conditionSchema).min(1).max(10),
 	folder: z
 		.enum(FOLDERS)
 		.nullable()
 		.describe("Moves to it; null leaves the folder"),
 	important: z.boolean().describe("Marks matching emails important"),
+	critical: z
+		.boolean()
+		.optional()
+		.describe("Marks matching emails critical, which is important too"),
 	mark_read: z
 		.boolean()
 		.optional()
@@ -105,11 +113,13 @@ export function registerMailRuleWriteTools(server: McpServer, db: Db) {
 		"sort_marketplace_email",
 		{
 			description:
-				'Fixes one email in the marketplaces mailbox (an id from market_emails): folder moves it there and keeps it there whatever the rules say; important marks it or not, likewise; "rules" for either hands it back to the rules. read marks it read or unread (the Inbox page counts unread emails). done true takes it off its folder\'s list (staff are done with it), false puts it back. To fix every email like it, save_mail_rule instead.',
+				'Fixes one email in the marketplaces mailbox (an id from market_emails): folder moves it there and keeps it there whatever the rules say; important marks it important (true), critical ("critical", important too), or neither (false), likewise; "rules" for either hands it back to the rules. read marks it read or unread (the Inbox page counts unread emails). done true takes it off its folder\'s list (staff are done with it), false puts it back. To fix every email like it, save_mail_rule instead.',
 			inputSchema: {
 				id: z.number().int().positive(),
 				folder: z.enum([...FOLDERS, "rules"]).optional(),
-				important: z.union([z.boolean(), z.literal("rules")]).optional(),
+				important: z
+					.union([z.boolean(), z.literal("critical"), z.literal("rules")])
+					.optional(),
 				read: z.boolean().optional(),
 				done: z.boolean().optional(),
 			},
@@ -122,13 +132,24 @@ export function registerMailRuleWriteTools(server: McpServer, db: Db) {
 			if (folder !== undefined)
 				await moveTo(db, id, folder === "rules" ? null : folder);
 			if (important !== undefined)
-				await setImportant(db, id, important === "rules" ? null : important);
+				await setImportant(
+					db,
+					id,
+					important === "rules"
+						? null
+						: important === "critical"
+							? "critical"
+							: important
+								? "important"
+								: "normal",
+				);
 			if (done !== undefined) await setDone(db, id, done);
 			const [now] = await db
 				.select({
 					id: marketEmails.id,
 					folder: marketEmails.folder,
 					important: marketEmails.important,
+					critical: marketEmails.critical,
 					done: sql<boolean>`${marketEmails.doneAt} is not null`,
 					read: sql<boolean>`${marketEmails.readAt} is not null`,
 					byHand: sql<boolean>`${marketEmails.relabelledAt} is not null or ${marketEmails.importanceSetAt} is not null`,

@@ -4,6 +4,7 @@ import {
 	ArrowUp,
 	Bot,
 	MailOpen,
+	OctagonAlert,
 	Plus,
 	Star,
 	Wand2,
@@ -14,7 +15,7 @@ import { Badge, EmptyState } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import type { Resorted } from "#/inbox/rule-store";
 import {
-	describe,
+	describeAll,
 	FALLBACK_FOLDER,
 	FOLDER_NAMES,
 	type Folder,
@@ -203,7 +204,9 @@ export function RulesEditor({
 					],
 					folder: draft?.folder ?? null,
 					important: false,
+					critical: false,
 					markRead: false,
+					match: "all",
 				})}
 			{rules.length === 0 && editing !== "new" && (
 				<EmptyState icon={Wand2} title="No rules: everything goes to Updates" />
@@ -233,7 +236,7 @@ export function RulesEditor({
 										)}
 									</span>
 									<span className="block truncate text-sm text-muted-foreground">
-										{r.conditions.map((c) => describe(c)).join(" and ")}
+										{describeAll(r)}
 									</span>
 								</span>
 								<Effects rule={r} />
@@ -268,7 +271,8 @@ export function RulesEditor({
 	);
 }
 
-// What a rule does, as chips: its folder, and a star when it marks.
+// What a rule does, as chips: its folder, and a star when it marks important
+// (a red octagon when critical).
 function Effects({ rule: r }: { rule: Rule }) {
 	const Icon = r.folder ? folderIcon(r.folder) : null;
 	return (
@@ -279,11 +283,18 @@ function Effects({ rule: r }: { rule: Rule }) {
 					{FOLDER_NAMES[r.folder]}
 				</span>
 			)}
-			{r.important && (
-				<Star
-					aria-label="Marks important"
-					className="size-4 fill-warning-fill text-warning-text"
+			{r.critical ? (
+				<OctagonAlert
+					aria-label="Marks critical"
+					className="size-4 fill-critical-fill text-critical-icon"
 				/>
+			) : (
+				r.important && (
+					<Star
+						aria-label="Marks important"
+						className="size-4 fill-warning-fill text-warning-text"
+					/>
+				)
 			)}
 			{r.markRead && (
 				<MailOpen
