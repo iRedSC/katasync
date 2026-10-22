@@ -165,7 +165,12 @@ describe("answering", () => {
 		await threadAmazonMail(db);
 		const [thread] = await threadsPage(db, "open", null);
 		const calls = resend([json(200, { id: "re_1" })]);
-		const r = await reply(db, thread?.id ?? 0, "  Sending another today.  ");
+		const r = await reply(
+			db,
+			thread?.id ?? 0,
+			"  Sending another today.  ",
+			crypto.randomUUID(),
+		);
 		expect(r.status).toBe("sent");
 		const sent = JSON.parse(String(calls[0]?.init?.body));
 		expect(sent).toMatchObject({
@@ -188,7 +193,9 @@ describe("answering", () => {
 		await threadAmazonMail(db);
 		const [thread] = await threadsPage(db, "open", null);
 		const calls = resend([json(500, { message: "down" })]);
-		expect((await reply(db, thread?.id ?? 0, "One")).status).toBe("sending");
+		expect(
+			(await reply(db, thread?.id ?? 0, "One", crypto.randomUUID())).status,
+		).toBe("sending");
 
 		const retry = resend([json(200, { id: "re_2" })]);
 		// Not while the first request may still be going.
@@ -202,7 +209,7 @@ describe("answering", () => {
 		expect(after?.messages.at(-1)?.status).toBe("sent");
 
 		resend([json(422, { message: "Invalid `to` field" })]);
-		const r = await reply(db, thread?.id ?? 0, "Two");
+		const r = await reply(db, thread?.id ?? 0, "Two", crypto.randomUUID());
 		expect(r.status).toBe("failed");
 		const [last] =
 			(await threadsPage(db, "open", null))[0]?.messages.slice(-1) ?? [];
@@ -214,7 +221,7 @@ describe("answering", () => {
 		await threadAmazonMail(db);
 		const [thread] = await threadsPage(db, "open", null);
 		resend([json(200, { id: "re_3" })]);
-		const r = await reply(db, thread?.id ?? 0, "Hi");
+		const r = await reply(db, thread?.id ?? 0, "Hi", crypto.randomUUID());
 		await settleReply(db, r.id, { kind: "delivered" });
 		const later = new Date(Date.now() + 60_000);
 		await email({
@@ -234,19 +241,109 @@ describe("answering", () => {
 		expect(await applyAmazonRefusals(db)).toBe(0);
 	});
 
+	test("a notice fails one reply, once; with two out it can't tell which", async () => {
+		await email();
+		await threadAmazonMail(db);
+		const [thread] = await threadsPage(db, "open", null);
+		const id = thread?.id ?? 0;
+		const later = new Date(Date.now() + 60_000);
+		const notice = () =>
+			email({
+				fromAddress: "seller-notification@amazon.com",
+				subject: "Your message could not be delivered",
+				body: `To ${RELAY}`,
+				receivedAt: later,
+			});
+		resend([json(200, { id: "re_a" }), json(200, { id: "re_b" })]);
+		const a = await reply(db, id, "A", crypto.randomUUID());
+		await notice();
+		expect(await applyAmazonRefusals(db)).toBe(1);
+		const b = await reply(db, id, "B", crypto.randomUUID());
+		await settleReply(db, b.id, { kind: "delivered" });
+		// The used notice doesn't go on to the next reply.
+		expect(await applyAmazonRefusals(db)).toBe(0);
+		resend([json(200, { id: "re_c" })]);
+		const c = await reply(db, id, "C", crypto.randomUUID());
+		await notice();
+		// B and C are both out: which one it's about is a guess, so neither.
+		expect(await applyAmazonRefusals(db)).toBe(0);
+		const statuses = (await threadsPage(db, "open", null))[0]?.messages
+			.filter((m) => !m.fromBuyer)
+			.map((m) => [m.id, m.status]);
+		expect(statuses).toEqual([
+			[a.id, "failed"],
+			[b.id, "delivered"],
+			[c.id, "sent"],
+		]);
+	});
+
+	test("Resend's events: suppressed never went; an unknown one is reported", async () => {
+		await email();
+		await threadAmazonMail(db);
+		const [thread] = await threadsPage(db, "open", null);
+		resend([json(200, { id: "re_s" }), json(200, { id: "re_u" })]);
+		await reply(db, thread?.id ?? 0, "One", crypto.randomUUID());
+		await reply(db, thread?.id ?? 0, "Two", crypto.randomUUID());
+		resend([
+			json(200, { last_event: "suppressed" }),
+			json(200, { last_event: "teleported" }),
+		]);
+		const r = await settleReplies(db);
+		expect(r.problems).toEqual(["Resend says teleported of reply re_u"]);
+		const statuses = (await threadsPage(db, "open", null))[0]?.messages
+			.filter((m) => !m.fromBuyer)
+			.map((m) => m.status);
+		expect(statuses).toEqual(["failed", "sent"]);
+	});
+
+	test("an answer that doesn't read leaves it sending, and every try is the same email", async () => {
+		await email();
+		await threadAmazonMail(db);
+		const [thread] = await threadsPage(db, "open", null);
+		const first = resend([
+			new Response("<html>gateway</html>", { status: 200 }),
+		]);
+		expect(
+			(await reply(db, thread?.id ?? 0, "Hi", crypto.randomUUID())).status,
+		).toBe("sending");
+		// The buyer writes again before the retry.
+		await email({ body: "Hello?" });
+		await threadAmazonMail(db);
+		const retry = resend([json(200, { id: "re_r" })]);
+		await settleReplies(db, Date.now() + 120_000);
+		expect(retry[0]?.init?.body).toBe(first[0]?.init?.body);
+	});
+
+	test("a day without an answer is unconfirmed, not failed", async () => {
+		await email();
+		await threadAmazonMail(db);
+		const [thread] = await threadsPage(db, "open", null);
+		resend([json(503, {})]);
+		await reply(db, thread?.id ?? 0, "Hi", crypto.randomUUID());
+		resend([]);
+		await settleReplies(db, Date.now() + 24 * 3_600_000);
+		const [after] = await threadsPage(db, "open", null);
+		expect(after?.messages.at(-1)).toMatchObject({
+			status: "unconfirmed",
+			error: expect.stringMatching(/Seller Central/),
+		});
+		// It may not have gone, so the buyer still waits on us.
+		expect(after?.waiting).not.toBeNull();
+	});
+
 	test("a status moves only from where its event follows", async () => {
 		await email();
 		await threadAmazonMail(db);
 		const [thread] = await threadsPage(db, "open", null);
 		resend([json(200, { id: "re_4" })]);
-		const r = await reply(db, thread?.id ?? 0, "Hi");
+		const r = await reply(db, thread?.id ?? 0, "Hi", crypto.randomUUID());
 		expect(await settleReply(db, r.id, { kind: "delivered" })).toBe(true);
 		// Late and repeated events change nothing.
 		expect(
 			await settleReply(db, r.id, { kind: "accepted", externalId: "x" }),
 		).toBe(false);
 		expect(
-			await settleReply(db, r.id, { kind: "lost", error: "not found" }),
+			await settleReply(db, r.id, { kind: "unconfirmed", error: "not found" }),
 		).toBe(false);
 		// The database refuses a reply marked gone with no ID.
 		await expect(

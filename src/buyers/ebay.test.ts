@@ -52,12 +52,13 @@ function ebay(url: string, init?: RequestInit) {
 	throw new Error(`Unexpected ${url}`);
 }
 
-const msg = (id: string, from: string, body: string, minute: number): Msg => ({
+// A message this many minutes from now (before, when negative).
+const msg = (id: string, from: string, body: string, minutes: number): Msg => ({
 	messageId: id,
 	messageBody: body,
 	senderUsername: from,
 	recipientUsername: from === "buyer1" ? "ECDrywall" : "buyer1",
-	createdDate: new Date(Date.UTC(2026, 9, 22, 12, minute)).toISOString(),
+	createdDate: new Date(Date.now() + minutes * 60_000).toISOString(),
 });
 
 beforeEach(async () => {
@@ -68,7 +69,7 @@ beforeEach(async () => {
 	conversations = {
 		c1: {
 			title: "About your scraper",
-			messages: [msg("m1", "buyer1", "Does it fit a 10in box?", 0)],
+			messages: [msg("m1", "buyer1", "Does it fit a 10in box?", -10)],
 		},
 	};
 	sent.length = 0;
@@ -82,7 +83,7 @@ afterEach(() => {
 
 describe("eBay messages", () => {
 	test("reads each conversation once, telling ours from the buyer's", async () => {
-		conversations.c1?.messages.push(msg("m0", "ECDrywall", "Thanks!", 1));
+		conversations.c1?.messages.push(msg("m0", "ECDrywall", "Thanks!", -9));
 		expect(await syncEbayMessages(db)).toEqual({ read: 1, problems: [] });
 		expect(await syncEbayMessages(db)).toEqual({ read: 0, problems: [] });
 		const [thread] = await threadsPage(db, "open", null);
@@ -103,13 +104,18 @@ describe("eBay messages", () => {
 		await syncEbayMessages(db);
 		const [thread] = await threadsPage(db, "open", null);
 		expect(thread?.waiting).not.toBeNull();
-		const r = await reply(db, thread?.id ?? 0, "Yes, it fits.");
+		const r = await reply(
+			db,
+			thread?.id ?? 0,
+			"Yes, it fits.",
+			crypto.randomUUID(),
+		);
 		expect(r.status).toBe("delivered");
 		expect(sent).toEqual([
 			{ conversationId: "c1", messageText: "Yes, it fits." },
 		]);
 		// Read back from eBay, it's the same message, not a second one.
-		conversations.c1?.messages.push(msg("m2", "ECDrywall", "Yes, it fits.", 5));
+		conversations.c1?.messages.push(msg("m2", "ECDrywall", "Yes, it fits.", 0));
 		await syncEbayMessages(db);
 		const [after] = await threadsPage(db, "open", null);
 		expect(after?.messages).toHaveLength(2);
@@ -120,11 +126,15 @@ describe("eBay messages", () => {
 		await syncEbayMessages(db);
 		const [thread] = await threadsPage(db, "open", null);
 		sendAnswer = () => json(503, { error: "busy" });
-		expect((await reply(db, thread?.id ?? 0, "First")).status).toBe("sending");
+		expect(
+			(await reply(db, thread?.id ?? 0, "First", crypto.randomUUID())).status,
+		).toBe("sending");
 		sendAnswer = () => json(503, { error: "busy" });
-		expect((await reply(db, thread?.id ?? 0, "Second")).status).toBe("sending");
+		expect(
+			(await reply(db, thread?.id ?? 0, "Second", crypto.randomUUID())).status,
+		).toBe("sending");
 		// eBay had the first after all.
-		conversations.c1?.messages.push(msg("m3", "ECDrywall", "First", 5));
+		conversations.c1?.messages.push(msg("m3", "ECDrywall", "First", 0));
 		await settleReplies(db, Date.now() + 120_000);
 		await settleReplies(db, Date.now() + 20 * 60_000);
 		expect(sent).toHaveLength(2);
@@ -135,8 +145,50 @@ describe("eBay messages", () => {
 				.map((m) => [m.body, m.status]),
 		).toEqual([
 			["First", "delivered"],
-			["Second", "failed"],
+			// Never found: it may have gone, so it isn't called failed.
+			["Second", "unconfirmed"],
 		]);
+	});
+
+	test("a buyer's message before one of ours is still read", async () => {
+		await syncEbayMessages(db);
+		const [thread] = await threadsPage(db, "open", null);
+		conversations.c1?.messages.push(msg("b2", "buyer1", "Also, red?", -1));
+		await reply(db, thread?.id ?? 0, "Yes, it fits.", crypto.randomUUID());
+		conversations.c1?.messages.push(msg("m2", "ECDrywall", "Yes, it fits.", 0));
+		await syncEbayMessages(db);
+		const [after] = await threadsPage(db, "open", null);
+		expect(after?.messages.map((m) => m.body)).toEqual([
+			"Does it fit a 10in box?",
+			"Also, red?",
+			"Yes, it fits.",
+		]);
+	});
+
+	test("the same words sent before don't settle a new reply", async () => {
+		conversations.c1?.messages.push(msg("m0", "ECDrywall", "Thanks!", -9));
+		await syncEbayMessages(db);
+		const [thread] = await threadsPage(db, "open", null);
+		sendAnswer = () => json(503, {});
+		await reply(db, thread?.id ?? 0, "Thanks!", crypto.randomUUID());
+		// An old "Thanks!" no one claimed, from before this was written.
+		conversations.c1?.messages.push(msg("m9", "ECDrywall", "Thanks!", -8));
+		const r = await settleReplies(db, Date.now() + 20 * 60_000);
+		expect(r.problems).toEqual([]);
+		const [after] = await threadsPage(db, "open", null);
+		expect(
+			after?.messages.filter((m) => m.status === "unconfirmed"),
+		).toHaveLength(1);
+	});
+
+	test("the same key twice is one reply, sent once", async () => {
+		await syncEbayMessages(db);
+		const [thread] = await threadsPage(db, "open", null);
+		const key = crypto.randomUUID();
+		const first = await reply(db, thread?.id ?? 0, "Yes", key);
+		const again = await reply(db, thread?.id ?? 0, "Yes", key);
+		expect(again).toEqual(first);
+		expect(sent).toHaveLength(1);
 	});
 
 	test("without the message scope, says to sign in again", async () => {

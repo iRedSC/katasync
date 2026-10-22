@@ -12,6 +12,7 @@ import {
 	readMarketMail,
 	setDone,
 	setImportant,
+	sweepSince,
 } from "./market-mail";
 import { createRule, listRules, resort } from "./rule-store";
 
@@ -259,5 +260,25 @@ describe("by hand", () => {
 			(await db.select().from(marketEmails)).find((e) => e.id === second.id),
 		).toMatchObject({ folder: "orders", important: false, relabelledAt: null });
 		expect(await resort(db)).toEqual({ moved: 0, marked: 0 });
+	});
+});
+
+describe("how far a sweep reads back", () => {
+	const now = Date.UTC(2026, 9, 22);
+	const day = 86_400_000;
+	test("three days, or from a day before the last clean sweep, at most a month", () => {
+		const kept = new Date(now);
+		expect(sweepSince(now, null, null)).toEqual(new Date(now - 30 * day));
+		expect(sweepSince(now, kept, null)).toEqual(new Date(now - 3 * day));
+		expect(sweepSince(now, kept, new Date(now - day / 4))).toEqual(
+			new Date(now - 3 * day),
+		);
+		// Down four days: reads back past the outage.
+		expect(sweepSince(now, kept, new Date(now - 4 * day))).toEqual(
+			new Date(now - 5 * day),
+		);
+		expect(sweepSince(now, kept, new Date(now - 90 * day))).toEqual(
+			new Date(now - 30 * day),
+		);
 	});
 });

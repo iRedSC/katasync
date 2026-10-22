@@ -1,7 +1,7 @@
-import { and, desc, eq, gte, ilike, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gte, ilike, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { buyerMessages, buyerThreads, marketEmails } from "#/db/schema";
-import { settleReply, Unsure, unsureStatus } from "./states";
+import { Refused, settleReply, Unsure, unsureStatus } from "./states";
 import { ensureThread, recordFromBuyer } from "./threads";
 
 // Amazon buyer messages, which reach us only as email: Amazon relays each
@@ -95,22 +95,29 @@ const REFUSAL =
 	/(not|n't|unable to)\b.{0,40}\bdeliver|undeliverable|delivery (failure|failed)|message (was )?blocked/i;
 
 const LOOK_BACK_MS = 7 * 86_400_000;
+// A refusal comes within hours of the reply it's about.
+const REFUSED_WITHIN_MS = 3 * 86_400_000;
 
-// Fails the reply each refusal is about: the latest of ours on its thread
-// sent before it. Safe to run again; a reply fails once.
+// Fails the reply each refusal is about. Amazon's notice doesn't say which
+// reply, so it counts only when its thread had exactly one reply out in the
+// days before it; with more, failing one would be a guess, and it's left.
+// Each notice fails one reply at most, recorded with it.
 export async function applyAmazonRefusals(db: Db) {
 	const since = new Date(Date.now() - LOOK_BACK_MS);
 	const notices = await db
 		.select({
+			id: marketEmails.id,
 			subject: marketEmails.subject,
 			body: marketEmails.body,
 			receivedAt: marketEmails.receivedAt,
 		})
 		.from(marketEmails)
+		.leftJoin(buyerMessages, eq(buyerMessages.refusedBy, marketEmails.id))
 		.where(
 			and(
 				eq(marketEmails.market, "amazon"),
 				gte(marketEmails.receivedAt, since),
+				isNull(buyerMessages.id),
 			),
 		);
 	const threads = await db
@@ -132,29 +139,33 @@ export async function applyAmazonRefusals(db: Db) {
 				text.includes(t.externalId) ||
 				(t.orderRef !== null && text.includes(t.orderRef)),
 		);
-		if (about.length !== 1) continue;
-		const [thread] = about;
-		const [reply] = await db
+		const [thread, ...more] = about;
+		if (!thread || more.length > 0) continue;
+		const candidates = await db
 			.select({ id: buyerMessages.id })
 			.from(buyerMessages)
 			.where(
 				and(
-					eq(buyerMessages.threadId, thread?.id ?? 0),
+					eq(buyerMessages.threadId, thread.id),
 					eq(buyerMessages.fromBuyer, false),
 					lte(buyerMessages.at, n.receivedAt),
+					gte(
+						buyerMessages.at,
+						new Date(n.receivedAt.getTime() - REFUSED_WITHIN_MS),
+					),
 					or(
 						eq(buyerMessages.status, "sent"),
 						eq(buyerMessages.status, "delivered"),
 					),
 				),
-			)
-			.orderBy(desc(buyerMessages.at))
-			.limit(1);
-		if (!reply) continue;
+			);
+		const [reply, ...others] = candidates;
+		if (!reply || others.length > 0) continue;
 		if (
 			await settleReply(db, reply.id, {
-				kind: "failed",
+				kind: "refused",
 				error: `Amazon didn't pass it on: ${n.subject}`,
+				noticeId: n.id,
 			})
 		)
 			failed++;
@@ -184,10 +195,11 @@ export async function sendAmazonReply(r: {
 	const key = process.env.RESEND_API_KEY;
 	const from = replyFrom();
 	if (!key || !from)
-		throw new Error(
+		throw new Refused(
 			"Replies aren't set up: add RESEND_API_KEY and MARKETPLACE_INBOX",
 		);
 	let res: Response;
+	let body: { id?: string; message?: string; name?: string } | null;
 	try {
 		res = await fetch("https://api.resend.com/emails", {
 			method: "POST",
@@ -206,20 +218,24 @@ export async function sendAmazonReply(r: {
 					: {}),
 			}),
 		});
+		body = await res.json().catch(() => null);
 	} catch (error) {
 		throw new Unsure(error instanceof Error ? error.message : String(error));
 	}
-	const body = (await res.json().catch(() => null)) as {
-		id?: string;
-		message?: string;
-	} | null;
 	if (res.ok && body?.id) return body.id;
 	const why = `Resend answered ${res.status}: ${body?.message ?? res.statusText}`;
-	throw unsureStatus(res.status) || res.ok ? new Unsure(why) : new Error(why);
+	// Taken without an ID to show, or not answered plainly: it may have gone.
+	throw res.ok || unsureStatus(res.status) ? new Unsure(why) : new Refused(why);
 }
 
-// What Resend last heard of a reply: delivered (Amazon's server took it),
-// failed (bounced), or still going.
+// Resend's events (resend.com/docs/dashboard/emails/introduction): which
+// mean Amazon's server has it, which mean it never got there, and which are
+// still on the way. One not listed is reported rather than guessed at.
+const ARRIVED = ["delivered", "opened", "clicked", "complained"];
+const NEVER = ["bounced", "failed", "suppressed", "canceled"];
+const GOING = ["queued", "scheduled", "sent", "delivery_delayed"];
+
+// What Resend last heard of a reply.
 export async function amazonReplyStatus(resendId: string) {
 	const res = await fetch(
 		`https://api.resend.com/emails/${encodeURIComponent(resendId)}`,
@@ -227,9 +243,12 @@ export async function amazonReplyStatus(resendId: string) {
 	);
 	if (!res.ok)
 		throw new Error(`Resend answered ${res.status}: ${await res.text()}`);
-	const { last_event: last } = (await res.json()) as { last_event?: string };
-	if (last === "delivered") return { state: "delivered" as const };
-	if (last === "bounced" || last === "failed" || last === "complained")
-		return { state: "failed" as const, error: `Amazon's server ${last} it` };
-	return { state: "going" as const };
+	const { last_event: last = "" } = (await res.json()) as {
+		last_event?: string;
+	};
+	if (ARRIVED.includes(last)) return { state: "delivered" as const };
+	if (NEVER.includes(last))
+		return { state: "failed" as const, error: `Resend says it ${last}` };
+	if (GOING.includes(last)) return { state: "going" as const };
+	throw new Error(`Resend says ${last || "nothing"} of reply ${resendId}`);
 }

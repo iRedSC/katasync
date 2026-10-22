@@ -10,7 +10,7 @@ import {
 	stores,
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
-import type { ReplyStatus } from "./states";
+import { answers, type ReplyStatus } from "./states";
 
 // Conversations with buyers, as katasync keeps them: read in from each
 // marketplace (./amazon-mail.ts, ./ebay-messages.ts), answered from the
@@ -158,7 +158,7 @@ export function waitingOn(
 	let since: Date | null = null;
 	for (const m of sorted) {
 		if (m.fromBuyer) since ??= m.at;
-		else if (m.status !== "failed") since = null;
+		else if (answers(m.status)) since = null;
 	}
 	return since
 		? { since, due: new Date(since.getTime() + REPLY_WITHIN_MS[market]) }
@@ -166,14 +166,15 @@ export function waitingOn(
 }
 
 // The threads of a view, those waiting first, soonest due first; then the
-// rest, latest first. Each with its messages, oldest first.
+// rest, latest first. Each with its messages, oldest first. Every open one,
+// so none waiting is ever cut off; done ones, the latest done.
 export async function threadsPage(
 	db: Db,
 	view: "open" | "done",
 	market: Market | null,
 	limit = 200,
 ) {
-	const threads = await db
+	const query = db
 		.select({
 			id: buyerThreads.id,
 			market: buyerThreads.market,
@@ -208,8 +209,9 @@ export async function threadsPage(
 				market ? eq(buyerThreads.market, market) : undefined,
 			),
 		)
-		.orderBy(desc(buyerThreads.id))
-		.limit(limit);
+		.orderBy(desc(buyerThreads.doneAt), desc(buyerThreads.id))
+		.$dynamic();
+	const threads = await (view === "done" ? query.limit(limit) : query);
 	// A thread whose order is in two stores of a channel would show twice.
 	const unique = [...new Map(threads.map((t) => [t.id, t])).values()];
 	const messages =
@@ -224,6 +226,7 @@ export async function threadsPage(
 						at: buyerMessages.at,
 						status: buyerMessages.status,
 						error: buyerMessages.error,
+						requestKey: buyerMessages.requestKey,
 					})
 					.from(buyerMessages)
 					.where(

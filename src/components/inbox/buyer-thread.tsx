@@ -4,6 +4,7 @@ import {
 	Check,
 	CheckCheck,
 	CircleAlert,
+	CircleHelp,
 	ExternalLink,
 	LoaderCircle,
 	RotateCw,
@@ -27,18 +28,21 @@ import { DueChip } from "./due-chip";
 
 const EBAY_MAX = 2000;
 
+// unheard: the browser never got the server's answer, so it may or may not
+// have gone; trying again with the same key can only send it once.
+type Status = ReplyStatus | "unheard";
+
 type Shown = {
 	key: string;
 	fromBuyer: boolean;
 	body: string;
 	at: Date;
-	status: ReplyStatus | null;
+	status: Status | null;
 	error: string | null;
 };
 
-// Replies written here and not yet back from the server, or that the
-// server refused outright (never kept, so only here).
-type Local = Shown & { serverId: number | null };
+// Replies written here, until the server's list has them by their key.
+type Local = Shown & { requestKey: string };
 
 export function BuyerConversation({
 	thread: t,
@@ -54,10 +58,10 @@ export function BuyerConversation({
 	const box = useRef<HTMLTextAreaElement>(null);
 	const end = useRef<HTMLDivElement>(null);
 
-	const kept = new Set(t.messages.map((m) => m.id));
+	const kept = new Set(t.messages.map((m) => m.requestKey));
 	const shown: Shown[] = [
 		...t.messages.map((m) => ({ ...m, key: `m${m.id}` })),
-		...local.filter((l) => l.serverId === null || !kept.has(l.serverId)),
+		...local.filter((l) => !kept.has(l.requestKey)),
 	];
 	const count = shown.length;
 	useEffect(() => {
@@ -67,7 +71,32 @@ export function BuyerConversation({
 	const limit = t.market === "ebay" ? EBAY_MAX : null;
 	const over = limit !== null && text.trim().length > limit;
 
-	async function send(body: string) {
+	// Sends a reply under its key: a new one from the box, or one whose
+	// answer never came, again under the same key.
+	async function deliver(mine: Local) {
+		const set = (patch: Partial<Local>) =>
+			setLocal((l) =>
+				l.map((m) =>
+					m.requestKey === mine.requestKey ? { ...m, ...patch } : m,
+				),
+			);
+		set({ status: "sending", error: null });
+		try {
+			const r = await replyToBuyer({
+				data: { threadId: t.id, text: mine.body, requestKey: mine.requestKey },
+			});
+			set({ status: r.status });
+		} catch (error) {
+			set({
+				status: "unheard",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+		// The list catching up is apart from whether it sent.
+		await router.invalidate().catch(() => {});
+	}
+
+	function send(body: string) {
 		const words = body.trim();
 		if (!words || over) {
 			shake(box.current);
@@ -75,34 +104,28 @@ export function BuyerConversation({
 			box.current?.focus();
 			return;
 		}
-		const key = `l${Date.now()}`;
-		const at = new Date();
+		const requestKey = crypto.randomUUID();
 		const mine: Local = {
-			key,
+			key: requestKey,
+			requestKey,
 			fromBuyer: false,
 			body: words,
-			at,
+			at: new Date(),
 			status: "sending",
 			error: null,
-			serverId: null,
 		};
 		setLocal((l) => [...l, mine]);
 		setText("");
 		setWhy(null);
-		const set = (patch: Partial<Local>) =>
-			setLocal((l) => l.map((m) => (m.key === key ? { ...m, ...patch } : m)));
-		try {
-			const r = await replyToBuyer({ data: { threadId: t.id, text: words } });
-			set({ serverId: r.id, status: r.status });
-			await router.invalidate();
-		} catch (error) {
-			// Never kept: nothing went, and the words come back to fix.
-			setLocal((l) => l.filter((m) => m.key !== key));
-			setText(words);
-			setWhy(error instanceof Error ? error.message : String(error));
-			shake(box.current);
-		}
+		void deliver(mine);
 	}
+
+	const again = (m: Shown) => {
+		const mine = local.find((l) => l.key === m.key);
+		// Unheard: the same reply again. Failed or unconfirmed: a new one.
+		if (mine && m.status === "unheard") void deliver(mine);
+		else send(m.body);
+	};
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col animate-in fade-in-0 slide-in-from-right-2">
@@ -152,7 +175,7 @@ export function BuyerConversation({
 			</header>
 			<div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
 				{shown.map((m) => (
-					<Bubble key={m.key} message={m} onAgain={() => send(m.body)} />
+					<Bubble key={m.key} message={m} onAgain={() => again(m)} />
 				))}
 				<div ref={end} />
 			</div>
@@ -206,7 +229,7 @@ export function BuyerConversation({
 }
 
 const STATUS: Record<
-	ReplyStatus,
+	Status,
 	{ icon: typeof Check; label: string; className?: string }
 > = {
 	sending: {
@@ -221,6 +244,23 @@ const STATUS: Record<
 		label: "Didn't send",
 		className: "text-critical-text",
 	},
+	unconfirmed: {
+		icon: CircleHelp,
+		label: "May not have sent",
+		className: "text-warning-text",
+	},
+	unheard: {
+		icon: CircleHelp,
+		label: "No answer from katasync",
+		className: "text-warning-text",
+	},
+};
+
+// What a reply that isn't through offers: the same send again, or a new one.
+const AGAIN: Partial<Record<Status, string>> = {
+	failed: "Send again",
+	unconfirmed: "Send anyway",
+	unheard: "Try again",
 };
 
 function Bubble({
@@ -246,6 +286,8 @@ function Bubble({
 						: "rounded-br-md bg-primary text-primary-foreground",
 					m.status === "failed" &&
 						"bg-critical-surface text-critical-text ring-1 ring-critical-text",
+					(m.status === "unconfirmed" || m.status === "unheard") &&
+						"bg-warning-surface text-warning-text ring-1 ring-warning-text",
 				)}
 			>
 				{m.body}
@@ -262,12 +304,17 @@ function Bubble({
 					</Tip>
 				)}
 			</span>
-			{m.status === "failed" && (
-				<span className="flex items-center gap-2 text-xs text-critical-text">
+			{m.status && AGAIN[m.status] && (
+				<span
+					className={cn(
+						"flex max-w-[85%] items-center gap-2 text-right text-xs",
+						m.status === "failed" ? "text-critical-text" : "text-warning-text",
+					)}
+				>
 					{m.error}
 					<Button size="sm" variant="ghost" onClick={onAgain}>
 						<RotateCw />
-						Send again
+						{AGAIN[m.status]}
 					</Button>
 				</span>
 			)}

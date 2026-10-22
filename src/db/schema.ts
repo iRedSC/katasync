@@ -2372,6 +2372,10 @@ export const mailboxChecks = pgTable(
 	{
 		mailbox: text().primaryKey(),
 		checkedAt: timestamp({ withTimezone: true }),
+		// The last sweep that read every email; the next sweep looks back
+		// from a day before it, so mail missed in an outage or an email that
+		// kept failing is read whenever the sweep can.
+		sweptAt: timestamp({ withTimezone: true }),
 		error: text(),
 		erroredAt: timestamp({ withTimezone: true }),
 	},
@@ -2387,11 +2391,14 @@ export const mailboxChecks = pgTable(
 // handed to the marketplace (or Resend) or about to be, outcome not known
 // yet. sent: Resend took it (Amazon replies only), not yet Amazon's server.
 // delivered: the marketplace has it. failed: it didn't go, and why.
+// unconfirmed: no answer came and katasync can't tell whether it went, so
+// someone has to look before sending it again.
 export const buyerReplyStatus = pgEnum("buyer_reply_status", [
 	"sending",
 	"sent",
 	"delivered",
 	"failed",
+	"unconfirmed",
 ]);
 
 // A conversation with one buyer on a marketplace, read in by
@@ -2412,6 +2419,10 @@ export const buyerThreads = pgTable(
 		orderRef: text(),
 		// The listing it's about (eBay's item ID).
 		itemRef: text(),
+		// The latest message the marketplace listed when the whole
+		// conversation was last read (eBay), so one that hasn't changed isn't
+		// read again. Our own sends never set it.
+		readLatestId: text(),
 		// When someone was done with it without a reply. A new message from
 		// the buyer opens it again.
 		doneAt: timestamp({ withTimezone: true }),
@@ -2440,6 +2451,12 @@ export const buyerMessages = pgTable(
 		at: timestamp({ withTimezone: true }).notNull(),
 		// The email it came in as (Amazon).
 		marketEmailId: integer().references(() => marketEmails.id),
+		// The Message-ID an Amazon reply answers, fixed when it's written so
+		// every try sends the same email under its request key.
+		inReplyTo: text(),
+		// Amazon's notice that it didn't pass this reply on; each notice
+		// fails one reply at most.
+		refusedBy: integer().references(() => marketEmails.id),
 		// Ours only, from here down.
 		status: buyerReplyStatus(),
 		// Sent with every try, so a retry never sends it twice (Resend's
@@ -2458,10 +2475,13 @@ export const buyerMessages = pgTable(
 		uniqueIndex("buyer_messages_market_email")
 			.on(t.marketEmailId)
 			.where(sql`${t.marketEmailId} is not null`),
+		uniqueIndex("buyer_messages_refused_by")
+			.on(t.refusedBy)
+			.where(sql`${t.refusedBy} is not null`),
 		index("buyer_messages_thread_at_idx").on(t.threadId, t.at),
 		index("buyer_messages_unsettled_idx")
 			.on(t.status)
-			.where(sql`${t.status} in ('sending', 'sent')`),
+			.where(sql`${t.status} in ('sending', 'sent', 'unconfirmed')`),
 		check(
 			"buyer_messages_status_is_ours",
 			sql`${t.fromBuyer} = (${t.status} is null)`,
@@ -2480,7 +2500,7 @@ export const buyerMessages = pgTable(
 		),
 		check(
 			"buyer_messages_failed_says_why",
-			sql`(${t.status} = 'failed') = (${t.error} is not null)`,
+			sql`(${t.status} in ('failed', 'unconfirmed')) = (${t.error} is not null)`,
 		),
 	],
 );

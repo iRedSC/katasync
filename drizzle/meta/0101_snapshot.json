@@ -1,5 +1,5 @@
 {
-  "id": "24305bb9-98c2-4ac8-b484-e48415b30650",
+  "id": "238e4360-b952-4698-acc9-87418a9501be",
   "prevId": "a5e5ba48-5cc8-46ba-a7c1-7d4dcc1d6c85",
   "version": "7",
   "dialect": "postgresql",
@@ -130,6 +130,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "in_reply_to": {
+          "name": "in_reply_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refused_by": {
+          "name": "refused_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "status": {
           "name": "status",
           "type": "buyer_reply_status",
@@ -211,6 +223,22 @@
           "method": "btree",
           "with": {}
         },
+        "buyer_messages_refused_by": {
+          "name": "buyer_messages_refused_by",
+          "columns": [
+            {
+              "expression": "refused_by",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"buyer_messages\".\"refused_by\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "buyer_messages_thread_at_idx": {
           "name": "buyer_messages_thread_at_idx",
           "columns": [
@@ -243,7 +271,7 @@
             }
           ],
           "isUnique": false,
-          "where": "\"buyer_messages\".\"status\" in ('sending', 'sent')",
+          "where": "\"buyer_messages\".\"status\" in ('sending', 'sent', 'unconfirmed')",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -275,6 +303,19 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "buyer_messages_refused_by_market_emails_id_fk": {
+          "name": "buyer_messages_refused_by_market_emails_id_fk",
+          "tableFrom": "buyer_messages",
+          "tableTo": "market_emails",
+          "columnsFrom": [
+            "refused_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -299,7 +340,7 @@
         },
         "buyer_messages_failed_says_why": {
           "name": "buyer_messages_failed_says_why",
-          "value": "(\"buyer_messages\".\"status\" = 'failed') = (\"buyer_messages\".\"error\" is not null)"
+          "value": "(\"buyer_messages\".\"status\" in ('failed', 'unconfirmed')) = (\"buyer_messages\".\"error\" is not null)"
         }
       },
       "isRLSEnabled": false
@@ -358,6 +399,12 @@
         },
         "item_ref": {
           "name": "item_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_latest_id": {
+          "name": "read_latest_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -1236,6 +1283,12 @@
         },
         "checked_at": {
           "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "swept_at": {
+          "name": "swept_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -7681,7 +7734,8 @@
         "sending",
         "sent",
         "delivered",
-        "failed"
+        "failed",
+        "unconfirmed"
       ]
     },
     "public.channel": {

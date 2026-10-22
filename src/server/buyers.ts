@@ -25,10 +25,20 @@ export const listBuyerThreads = createServerFn({ method: "GET" })
 
 export type BuyerThreadsPage = Awaited<ReturnType<typeof listBuyerThreads>>;
 
-// Kept before it's sent; what comes back is how far it got.
+// Kept before it's sent; what comes back is how far it got. The browser's
+// key names the reply, so sending it again after a lost answer is the same
+// reply, never a second.
 export const replyToBuyer = createServerFn({ method: "POST" })
-	.validator(type({ threadId: "number.integer > 0", text: "string > 0" }))
-	.handler(async ({ data }) => reply(getDb(), data.threadId, data.text));
+	.validator(
+		type({
+			threadId: "number.integer > 0",
+			text: "string > 0",
+			requestKey: "string.uuid",
+		}),
+	)
+	.handler(async ({ data }) =>
+		reply(getDb(), data.threadId, data.text, data.requestKey),
+	);
 
 export const setBuyerThreadDone = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0", done: "boolean" }))

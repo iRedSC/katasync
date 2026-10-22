@@ -1,10 +1,10 @@
 import { type } from "arktype";
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { API, accessToken } from "#/channels/ebay";
 import { scopedToken } from "#/channels/ebay-scoped-token";
 import type { Db } from "#/db/client";
 import { buyerMessageChecks, buyerMessages, buyerThreads } from "#/db/schema";
-import { settleReply, Unsure, unsureStatus } from "./states";
+import { Refused, settleReply, Unsure, unsureStatus } from "./states";
 import { ensureThread, recordFromBuyer, recordOurs } from "./threads";
 
 // eBay buyer messages through its Message API (commerce/message/v1): every
@@ -108,16 +108,26 @@ async function readConversation(
 		all.push(...(page.messages ?? []));
 		url = page.next;
 	}
-	const waiting = await db
-		.select({ id: buyerMessages.id, body: buyerMessages.body })
+	const kept = await db
+		.select({
+			id: buyerMessages.id,
+			body: buyerMessages.body,
+			at: buyerMessages.at,
+			status: buyerMessages.status,
+			externalId: buyerMessages.externalId,
+		})
 		.from(buyerMessages)
-		.where(
-			and(
-				eq(buyerMessages.threadId, threadId),
-				eq(buyerMessages.status, "sending"),
-				isNull(buyerMessages.externalId),
-			),
-		);
+		.where(eq(buyerMessages.threadId, threadId))
+		.orderBy(buyerMessages.at);
+	// eBay's IDs already on a message here: never given to another.
+	const claimed = new Set(kept.map((k) => k.externalId).filter(Boolean));
+	// Ours whose send didn't say how it went, oldest first.
+	const waiting = kept.filter(
+		(k) =>
+			k.externalId === null &&
+			(k.status === "sending" || k.status === "unconfirmed"),
+	);
+	all.sort((a, b) => a.createdDate.getTime() - b.createdDate.getTime());
 	for (const m of all) {
 		const body = m.messageBody ?? "";
 		if (!ours(m, seller)) {
@@ -128,14 +138,22 @@ async function readConversation(
 			});
 			continue;
 		}
-		const match = waiting.findIndex((w) => same(w.body, body));
+		if (claimed.has(m.messageId)) continue;
+		// The same words, sent no earlier than we wrote them (allowing for
+		// clocks).
+		const match = waiting.findIndex(
+			(w) =>
+				same(w.body, body) &&
+				m.createdDate.getTime() >= w.at.getTime() - CLOCK_SLACK_MS,
+		);
 		const pending = match >= 0 ? waiting.splice(match, 1)[0] : undefined;
+		claimed.add(m.messageId);
 		if (
 			pending &&
 			(await settleReply(db, pending.id, {
 				kind: "delivered",
 				externalId: m.messageId,
-			}))
+			}).catch(() => false))
 		)
 			continue;
 		await recordOurs(db, threadId, {
@@ -145,6 +163,8 @@ async function readConversation(
 		});
 	}
 }
+
+const CLOCK_SLACK_MS = 2 * 60_000;
 
 // Reads conversations with anything since a little before the last full
 // read; on a sweep, two weeks. Records how it went, so a source that stops
@@ -171,7 +191,7 @@ export async function syncEbayMessages(db: Db, { sweep = false } = {}) {
 			const page = conversationsPage.assert(await get(t, url));
 			for (const c of page.conversations ?? []) {
 				try {
-					if (await syncConversation(db, t, seller, c)) read++;
+					if (await syncConversation(db, t, seller, c, sweep)) read++;
 				} catch (error) {
 					problems.push(
 						`${c.conversationTitle ?? c.conversationId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -205,6 +225,7 @@ async function syncConversation(
 	t: string,
 	seller: string,
 	c: typeof conversation.infer,
+	sweep: boolean,
 ) {
 	const latest = c.latestMessage;
 	const buyer = latest
@@ -219,19 +240,16 @@ async function syncConversation(
 		buyerName: buyer ?? null,
 		itemRef: c.referenceType === "LISTING" ? (c.referenceId ?? null) : null,
 	});
-	if (latest) {
-		const [kept] = await db
-			.select({ id: buyerMessages.id })
-			.from(buyerMessages)
-			.where(
-				and(
-					eq(buyerMessages.threadId, thread.id),
-					eq(buyerMessages.externalId, latest.messageId),
-				),
-			);
-		if (kept) return false;
-	}
+	// Unchanged since it was last read in full. Our own sends don't count:
+	// a buyer's message before one of ours would hide behind it.
+	if (!sweep && latest && thread.readLatestId === latest.messageId)
+		return false;
 	await readConversation(db, t, seller, thread.id, c.conversationId);
+	if (latest)
+		await db
+			.update(buyerThreads)
+			.set({ readLatestId: latest.messageId })
+			.where(eq(buyerThreads.id, thread.id));
 	return true;
 }
 
@@ -256,8 +274,15 @@ export async function rereadEbayThread(db: Db, threadId: number) {
 // when it may have gone anyway: eBay has no request key, so that's never
 // sent again blind, only looked for (rereadEbayThread).
 export async function sendEbayMessage(conversationId: string, text: string) {
-	const t = await token();
+	let t: string;
+	try {
+		t = await token();
+	} catch (error) {
+		// Nothing was sent yet.
+		throw new Refused(error instanceof Error ? error.message : String(error));
+	}
 	let res: Response;
+	let body: string;
 	try {
 		res = await fetch(`${BASE}/send_message`, {
 			method: "POST",
@@ -267,17 +292,22 @@ export async function sendEbayMessage(conversationId: string, text: string) {
 			},
 			body: JSON.stringify({ conversationId, messageText: text }),
 		});
+		body = await res.text();
 	} catch (error) {
 		throw new Unsure(error instanceof Error ? error.message : String(error));
 	}
-	const body = await res.text();
 	if (res.ok) {
-		const id = (JSON.parse(body) as { messageId?: string }).messageId;
+		let id: string | undefined;
+		try {
+			id = (JSON.parse(body) as { messageId?: string }).messageId;
+		} catch {
+			// Taken, but the answer didn't read: looked for later.
+		}
 		if (id) return id;
 		throw new Unsure(`eBay took it without an ID: ${body}`);
 	}
 	const why = `eBay answered ${res.status}: ${body}`;
-	throw unsureStatus(res.status) ? new Unsure(why) : new Error(why);
+	throw unsureStatus(res.status) ? new Unsure(why) : new Refused(why);
 }
 
 // eBay's own limit on a message.

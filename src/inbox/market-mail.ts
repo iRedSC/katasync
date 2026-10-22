@@ -140,7 +140,7 @@ export async function recordCheck(
 		outcome.state !== "complete"
 			? { error: outcome.error, erroredAt: now }
 			: sweep
-				? { checkedAt: now, error: null, erroredAt: null }
+				? { checkedAt: now, sweptAt: now, error: null, erroredAt: null }
 				: { checkedAt: now };
 	await db
 		.insert(mailboxChecks)
@@ -489,9 +489,25 @@ export async function marketEmailHtml(db: Db, id: number) {
 	return row?.html || null;
 }
 
-// Back this far on a sweep; the first, with nothing kept yet, reads a month.
+// Back this far on a sweep at least, and from a day before the last sweep
+// that read everything, so an outage or an email that kept failing is read
+// once the sweep can; never more than a month, which the first reads too.
 const SWEEP_LOOK_BACK_MS = 3 * 86_400_000;
 const FIRST_LOOK_BACK_MS = 30 * 86_400_000;
+const OVERLAP_MS = 86_400_000;
+
+// Where a sweep starts reading.
+export function sweepSince(
+	now: number,
+	newest: Date | null,
+	sweptAt: Date | null,
+) {
+	if (!newest) return new Date(now - FIRST_LOOK_BACK_MS);
+	const from = sweptAt
+		? Math.min(now - SWEEP_LOOK_BACK_MS, sweptAt.getTime() - OVERLAP_MS)
+		: now - SWEEP_LOOK_BACK_MS;
+	return new Date(Math.max(from, now - FIRST_LOOK_BACK_MS));
+}
 
 // Reads the marketplaces mailbox since `since` and keeps what's new. With
 // no database handed in (the 5-minute run), asks Microsoft first and wakes
@@ -515,10 +531,15 @@ export async function readMarketMail(options: {
 	if (missing.length > 0) return { skipped: `set ${missing.join(", ")}` };
 	let since = options.since;
 	if (options.sweep) {
-		const newest = await newestMarketEmail(options.db());
-		since = new Date(
-			Date.now() - (newest ? SWEEP_LOOK_BACK_MS : FIRST_LOOK_BACK_MS),
-		);
+		const db = options.db();
+		const [newest, [check]] = await Promise.all([
+			newestMarketEmail(db),
+			db
+				.select({ sweptAt: mailboxChecks.sweptAt })
+				.from(mailboxChecks)
+				.where(eq(mailboxChecks.mailbox, "marketplaces")),
+		]);
+		since = sweepSince(Date.now(), newest, check?.sweptAt ?? null);
 	}
 	let messages: InboxMessage[];
 	try {
