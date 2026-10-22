@@ -694,6 +694,13 @@
       "when": 1792687357628,
       "tag": "0098_inbox_folders_rules_read",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1792687620753,
+      "tag": "0099_drop_market_email_label",
+      "breakpoints": true
     }
   ]
 }

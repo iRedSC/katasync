@@ -2241,15 +2241,6 @@ export const marketStanding = pgTable("market_standing", {
 	erroredAt: timestamp({ withTimezone: true }),
 });
 
-// Retired by market_email_folder. Kept, nullable, so the app before folders
-// keeps working while a deploy migrates; dropped once that's gone.
-export const marketEmailLabel = pgEnum("market_email_label", [
-	"attention",
-	"orders",
-	"returns",
-	"updates",
-]);
-
 // Which folder a marketplace email sits in: orders (sold, ship, cancel),
 // returns (return requests, refunds), violations (policy, listings removed,
 // account health), updates (payouts, news, the rest). Sorted by mail_rules
@@ -2271,11 +2262,7 @@ export const marketEmails = pgTable(
 		messageId: text().notNull(),
 		// Which marketplace sent it, by its sender; null for anyone else.
 		market: channel(),
-		// Retired; see marketEmailLabel.
-		label: marketEmailLabel(),
-		// Updates (where no rule moves it) for one read in by the app before
-		// folders, until the rules sort it.
-		folder: marketEmailFolder().notNull().default("updates"),
+		folder: marketEmailFolder().notNull(),
 		// When someone moved it to its folder. Until then the rules may move it
 		// as they change; after, they never do.
 		relabelledAt: timestamp({ withTimezone: true }),
