@@ -16,6 +16,7 @@ export {
 	listLocations,
 	listProductIndex,
 	listStores,
+	savePosLocation,
 } from "#/server/catalog/lookups";
 export {
 	listMovementBatches,

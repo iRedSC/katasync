@@ -110,6 +110,7 @@ beforeEach(async () => {
 	await ingestOrder(db, shopify, relayed, {
 		shipping: warehouse,
 		store: null,
+		pos: null,
 		storeKeeps: 0,
 	});
 	await db
@@ -129,6 +130,7 @@ describe("takeOver", () => {
 		await ingestOrder(db, tiktok, order, {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 
@@ -150,13 +152,14 @@ describe("takeOver", () => {
 		await ingestOrder(db, tiktok, direct(), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 		await ingestOrder(
 			db,
 			tiktok,
 			direct({ cancelledAt: new Date("2026-10-06T00:00:00Z") }),
-			{ shipping: warehouse, store: null, storeKeeps: 0 },
+			{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 		);
 		expect(await onHand()).toBe(10);
 	});
@@ -206,6 +209,7 @@ describe("takeOver", () => {
 		await ingestOrder(db, tiktok, order, {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 
@@ -241,6 +245,7 @@ describe("TikTok cancellations through ingestion", () => {
 		ingestOrder(db, tiktok, tiktokToChannelOrder(detail(status, units)), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 

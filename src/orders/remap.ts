@@ -168,7 +168,7 @@ export async function applySkusToOrders(
 }
 
 // Takes stock now for in-store sales that couldn't take it when they came
-// in, because the retail store didn't exist yet (see scripts/add-retail-store.ts).
+// in, because no location was set for POS sales yet.
 // Safe to repeat: a line never takes stock twice.
 export async function applyStoreSales(
 	db: Db,

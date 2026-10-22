@@ -38,24 +38,39 @@ const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
 // Amazon's: we only mirror what Amazon reports and never route orders to it.
 export const locationKind = pgEnum("location_kind", ["owned", "fba", "retail"]);
 
-export const locations = pgTable("locations", {
-	id: integer().primaryKey().generatedAlwaysAsIdentity(),
-	name: text().notNull().unique(),
-	kind: locationKind().notNull(),
-	// Ship-from address for labels, filled from the store's own location
-	// record rather than typed in.
-	shipFromName: text(),
-	address1: text(),
-	address2: text(),
-	city: text(),
-	region: text(),
-	postalCode: text(),
-	country: text(),
-	phone: text(),
-	// Carriers want an email on the sender; the store's contact email.
-	email: text(),
-	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+export const locations = pgTable(
+	"locations",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		name: text().notNull().unique(),
+		kind: locationKind().notNull(),
+		// The shelf Shopify POS sales take stock from (recordSale via
+		// saleLocation). At most one, and only one of ours: never Amazon's FBA.
+		posPrimary: boolean().notNull().default(false),
+		// Ship-from address for labels, filled from the store's own location
+		// record rather than typed in.
+		shipFromName: text(),
+		address1: text(),
+		address2: text(),
+		city: text(),
+		region: text(),
+		postalCode: text(),
+		country: text(),
+		phone: text(),
+		// Carriers want an email on the sender; the store's contact email.
+		email: text(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex("locations_one_pos_primary")
+			.on(t.posPrimary)
+			.where(sql`${t.posPrimary}`),
+		check(
+			"locations_pos_primary_ours",
+			sql`not ${t.posPrimary} or ${t.kind} in ('owned', 'retail')`,
+		),
+	],
+);
 
 // simple: a stocked item.
 // kit: pre-assembled from simple components; has its own stock.

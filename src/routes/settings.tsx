@@ -29,6 +29,7 @@ import {
 	listLocations,
 	listStores,
 	saveDefaultMinStock,
+	savePosLocation,
 	saveRetailReserve,
 	setPrimaryStore,
 } from "#/server/catalog";
@@ -97,6 +98,7 @@ const channels = Object.entries(channelNames).map(([id, name]) => ({
 
 // What changes on this page shows at once from these lists.
 const storesData = optimistic<Store[]>("stores");
+const locationsData = optimistic<Location[]>("locations");
 const boxesData = optimistic<Box[]>("boxes");
 const unitsData = optimistic<Unit[]>("units");
 
@@ -105,7 +107,8 @@ const plural = (n: number, one: string, many = `${one}s`) =>
 
 function Settings() {
 	const loaded = Route.useLoaderData();
-	const { locations, minStock, reserve } = loaded;
+	const { minStock, reserve } = loaded;
+	const locations = locationsData.useData("all", loaded.locations);
 	const retail = locations.find((l) => l.kind === "retail");
 	const stores = storesData.useData("all", loaded.stores);
 	const boxes = boxesData.useData("all", loaded.boxes);
@@ -192,7 +195,10 @@ function Locations({ locations }: { locations: Location[] }) {
 		<Card title="Locations" flush>
 			<ul>
 				{locations.map((l) => (
-					<Row key={l.id}>
+					<Row
+						key={l.id}
+						actions={l.kind !== "fba" && <PosToggle location={l} />}
+					>
 						<span className="flex-1 font-medium">{l.name}</span>
 						<span className="text-muted-foreground">
 							{l.kind === "fba"
@@ -205,6 +211,36 @@ function Locations({ locations }: { locations: Location[] }) {
 				))}
 			</ul>
 		</Card>
+	);
+}
+
+// The location Shopify POS sales take stock from. Exactly one is, so the
+// current one isn't a button: picking another moves it.
+function PosToggle({ location }: { location: Location }) {
+	if (location.posPrimary)
+		// The Button's box, so the badge sits where the button was.
+		return (
+			<span className="inline-flex h-8 items-center px-3">
+				<Badge tone="info">POS primary</Badge>
+			</span>
+		);
+	return (
+		<Button
+			size="sm"
+			variant="ghost"
+			className="text-muted-foreground"
+			onClick={() =>
+				optimism.change({
+					label: `Making ${location.name} POS primary`,
+					patch: locationsData.patch("all", (list) =>
+						list.map((l) => ({ ...l, posPrimary: l.id === location.id })),
+					),
+					send: () => savePosLocation({ data: { id: location.id } }),
+				})
+			}
+		>
+			POS primary
+		</Button>
 	);
 }
 

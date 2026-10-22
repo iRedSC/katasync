@@ -10,20 +10,24 @@ import { receiveReturn } from "#/orders/returns";
 import { createProduct, createTestDb } from "#/test/db";
 import { getAvailability } from "./availability";
 import { postMovements } from "./ledger";
+import { PosLocationError, setPosLocation } from "./locations";
 import { onlineStock, setRetailReserve } from "./online-stock";
 import { setRecipe } from "./recipes";
 
 let db: Db;
 let warehouse: number;
+let fba: number;
 let storeId: number;
 const stockFrom = new Date("2026-10-01T00:00:00Z");
 const store = () => ({ id: storeId, stockFrom });
 
-async function addRetail() {
+// The retail store; with pos, also where POS sales take from.
+async function addRetail(options: { pos?: boolean } = {}) {
 	const [{ id }] = await db
 		.insert(schema.locations)
 		.values({ name: "Store", kind: "retail" })
 		.returning();
+	if (options.pos) await setPosLocation(db, id);
 	return id;
 }
 
@@ -86,7 +90,7 @@ function posOrder(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 
 beforeEach(async () => {
 	db = await createTestDb();
-	[{ id: warehouse }] = await db
+	[{ id: warehouse }, { id: fba }] = await db
 		.insert(schema.locations)
 		.values([
 			{ name: "Warehouse", kind: "owned" },
@@ -101,7 +105,7 @@ beforeEach(async () => {
 
 describe("in-store sales", () => {
 	test("take stock off the retail store's shelf, not the warehouse's", async () => {
-		const retail = await addRetail();
+		const retail = await addRetail({ pos: true });
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, warehouse, 10);
 		await stock(wrench, retail, 5);
@@ -113,7 +117,7 @@ describe("in-store sales", () => {
 	});
 
 	test("shipped orders still take from the warehouse", async () => {
-		const retail = await addRetail();
+		const retail = await addRetail({ pos: true });
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, warehouse, 10);
 
@@ -128,7 +132,7 @@ describe("in-store sales", () => {
 		expect(await onHand(wrench, retail)).toBe(0);
 	});
 
-	test("without a retail store, report it and take nothing", async () => {
+	test("without a POS location, report it and take nothing", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, warehouse, 10);
 
@@ -140,15 +144,15 @@ describe("in-store sales", () => {
 		);
 
 		expect(problems).toEqual([
-			"#1001: no retail store to take in-store stock from",
+			"#1001: no POS location to take in-store stock from",
 		]);
 		expect(await onHand(wrench, warehouse)).toBe(10);
 	});
 
-	test("take their stock once the retail store is added", async () => {
+	test("take their stock once a POS location is set", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await ingestOrder(db, store(), posOrder(), await stockLocations(db));
-		const retail = await addRetail();
+		const retail = await addRetail({ pos: true });
 
 		expect(await applyStoreSales(db)).toEqual({ lines: 1, problems: [] });
 		expect(await applyStoreSales(db)).toEqual({ lines: 0, problems: [] });
@@ -157,7 +161,7 @@ describe("in-store sales", () => {
 	});
 
 	test("restock where they sold from", async () => {
-		const retail = await addRetail();
+		const retail = await addRetail({ pos: true });
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, retail, 5);
 		const { orderId } = await ingestOrder(
@@ -179,6 +183,71 @@ describe("in-store sales", () => {
 
 		expect(await onHand(wrench, retail)).toBe(4);
 		expect(await onHand(wrench, warehouse)).toBe(0);
+	});
+});
+
+describe("POS location", () => {
+	test("a POS sale takes from the warehouse when it's POS primary", async () => {
+		const retail = await addRetail();
+		await setPosLocation(db, warehouse);
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 10);
+		await stock(wrench, retail, 5);
+
+		await ingestOrder(db, store(), posOrder(), await stockLocations(db));
+
+		expect(await onHand(wrench, warehouse)).toBe(8);
+		expect(await onHand(wrench, retail)).toBe(5);
+	});
+
+	test("switching takes effect for the next sale, and leaves past ones", async () => {
+		const retail = await addRetail();
+		await setPosLocation(db, warehouse);
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 10);
+		await stock(wrench, retail, 5);
+		await ingestOrder(db, store(), posOrder(), await stockLocations(db));
+
+		await setPosLocation(db, retail);
+		await ingestOrder(
+			db,
+			store(),
+			posOrder({ externalId: "gid://shopify/Order/2", name: "#1002" }),
+			await stockLocations(db),
+		);
+
+		expect(await onHand(wrench, warehouse)).toBe(8);
+		expect(await onHand(wrench, retail)).toBe(3);
+		const primary = await db
+			.select({ id: schema.locations.id })
+			.from(schema.locations)
+			.where(eq(schema.locations.posPrimary, true));
+		expect(primary).toEqual([{ id: retail }]);
+	});
+
+	test("Amazon's FBA can't be chosen", async () => {
+		await setPosLocation(db, warehouse);
+
+		await expect(setPosLocation(db, fba)).rejects.toThrow(PosLocationError);
+		await expect(
+			db
+				.update(schema.locations)
+				.set({ posPrimary: true })
+				.where(eq(schema.locations.id, fba)),
+		).rejects.toThrow();
+		expect((await stockLocations(db)).pos).toBe(warehouse);
+	});
+
+	test("only one location is POS primary", async () => {
+		await setPosLocation(db, warehouse);
+
+		await expect(addRetail()).resolves.toBeGreaterThan(0);
+		await expect(
+			db
+				.update(schema.locations)
+				.set({ posPrimary: true })
+				.where(eq(schema.locations.kind, "retail")),
+		).rejects.toThrow();
 	});
 });
 
@@ -334,7 +403,7 @@ describe("overflow", () => {
 	});
 
 	test("an in-store sale never takes the warehouse's stock", async () => {
-		const retail = await addRetail();
+		const retail = await addRetail({ pos: true });
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await stock(wrench, warehouse, 10);
 
