@@ -4,7 +4,7 @@ import { buyerMessageChecks } from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { syncEbayMessages } from "./ebay-messages";
 import { reply, settleReplies } from "./send";
-import { threadsPage } from "./threads";
+import { logOurs, threadsPage, unlogOurs } from "./threads";
 
 // eBay's Message API, answered from a list of conversations and their
 // messages that a test can change between runs.
@@ -189,6 +189,30 @@ describe("eBay messages", () => {
 		const again = await reply(db, thread?.id ?? 0, "Yes", key);
 		expect(again).toEqual(first);
 		expect(sent).toHaveLength(1);
+	});
+
+	test("one added without sending is matched when eBay reads it back", async () => {
+		await syncEbayMessages(db);
+		const [thread] = await threadsPage(db, "open", null);
+		const key = crypto.randomUUID();
+		await logOurs(db, thread?.id ?? 0, "Sent it on eBay", key);
+		const [logged] = await threadsPage(db, "open", null);
+		expect(logged?.waiting).toBeNull();
+		expect(logged?.messages.at(-1)).toMatchObject({ logged: true });
+		expect(sent).toEqual([]);
+		// Sent on eBay before it was added here.
+		conversations.c1?.messages.push(
+			msg("m7", "ECDrywall", "Sent it on eBay", -5),
+		);
+		await syncEbayMessages(db, { sweep: true });
+		const [after] = await threadsPage(db, "open", null);
+		expect(after?.messages.map((m) => [m.body, m.logged])).toEqual([
+			["Does it fit a 10in box?", false],
+			["Sent it on eBay", false],
+		]);
+		// Matched to eBay's, it's no longer one undo can take out.
+		await unlogOurs(db, key);
+		expect((await threadsPage(db, "open", null))[0]?.messages).toHaveLength(2);
 	});
 
 	test("without the message scope, says to sign in again", async () => {

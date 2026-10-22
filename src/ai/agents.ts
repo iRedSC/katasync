@@ -29,25 +29,38 @@ export type Draft = {
 	note: string | null;
 };
 
-// A suggested reply to a buyer, following what staff decided in cases like
-// it.
-export const replier: Agent<Draft> = {
-	name: "replier",
-	instructions: `You draft replies to buyers for East Coast Drywall Tools, a drywall tool store selling on Amazon, eBay, and TikTok Shop. Staff read your draft and send it as is or change it.
+// What the reply agent is told before anything else, until staff edit it on
+// the Precedents page (reply_base_prompt): who we are, the tone, the
+// marketplace rules, how a reply opens and closes.
+export const DEFAULT_BASE_PROMPT = `You draft replies to buyers for East Coast Drywall Tools, a drywall tool store selling on Amazon, eBay, and TikTok Shop. Staff read your draft and send it as is or change it.
 
-Follow the precedents: each says, when a case is like this ("when"), do that ("do"). Use the ones that fit and only those; never offer what no precedent or the order supports (refunds, replacements, discounts, dates). When nothing fits, write a short, kind reply that answers what you can from the order and says we're looking into the rest.
+Marketplace rules: no links or contact details off the marketplace, no asking for positive reviews or feedback, nothing about other channels.
 
-Marketplace rules: no links or contact details off the marketplace, no asking for positive reviews or feedback, nothing about other channels. Keep it short: a greeting with the buyer's first name when known, the answer, and "East Coast Drywall Tools" to close.
+Keep it short: a greeting with the buyer's first name when known, the answer, and "East Coast Drywall Tools" to close.`;
+
+// What follows the base prompt, always: how precedents work, the language,
+// and the answer's shape. Kept in code so an edit to the base can't break
+// drafting.
+const REPLIER_RULES = `Follow the precedents: each says, when a case is like this ("when"), do that ("do"). Use the ones that fit and only those; never offer what no precedent or the order supports (refunds, replacements, discounts, dates). When nothing fits, write a short, kind reply that answers what you can from the order and says we're looking into the rest.
 
 Write the reply in the buyer's language. When that isn't English, also give it in English for staff.
-JSON: {"reply": "...", "english": "..." or null, "precedents": [ids followed], "note": what staff should check before sending, or null}`,
-	output: type({
-		reply: "string > 0",
-		english: "string | null",
-		precedents: "number.integer[]",
-		note: "string | null",
-	}),
-};
+JSON: {"reply": "...", "english": "..." or null, "precedents": [ids followed], "note": what staff should check before sending, or null}`;
+
+// The reply agent, on a base prompt (staff's, or the default).
+export function replierWith(base: string): Agent<Draft> {
+	return {
+		name: "replier",
+		instructions: `${base.trim()}\n\n${REPLIER_RULES}`,
+		output: type({
+			reply: "string > 0",
+			english: "string | null",
+			precedents: "number.integer[]",
+			note: "string | null",
+		}),
+	};
+}
+
+export const replier = replierWith(DEFAULT_BASE_PROMPT);
 
 export const AGENTS = { reader, translator, replier } as const;
 

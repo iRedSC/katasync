@@ -1,214 +1,470 @@
 import { useRouter } from "@tanstack/react-router";
-import { Plus, Scale, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
-import { toast } from "sonner";
+import { Bot, Plus, RotateCcw, Scale, ScrollText, Trash2 } from "lucide-react";
+import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
 import type { Precedent } from "#/buyers/precedents";
-import { EmptyState } from "#/components/page";
+import { Badge, EmptyState } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
-import { Tip } from "#/components/ui/tooltip";
+import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
 	deletePrecedentFn,
+	type PrecedentsPage,
 	restorePrecedentFn,
+	saveBasePrompt,
 	savePrecedentFn,
 } from "#/server/buyer-drafts";
 
-// What staff decided for each kind of case, which the reply agent follows:
-// when this, then that. Each saves as it's left; a new one starts at the
-// top.
+// What the reply agent follows, laid out like the Rules page: the base
+// prompt it starts from, pinned first, then each precedent (when this, then
+// that). One opens at a time to edit; another won't open over unsaved
+// edits, which shake and say so.
 
-export function PrecedentsEditor({ precedents }: { precedents: Precedent[] }) {
+const store = optimistic<Precedent[]>("reply-precedents");
+
+type Open = "base" | "new" | number | null;
+type SaveState = "idle" | "saving" | "failed";
+
+export function PrecedentsEditor({ page }: { page: PrecedentsPage }) {
 	const router = useRouter();
-	const [adding, setAdding] = useState(false);
-	const [gone, setGone] = useState<Set<number>>(new Set());
-	const shown = precedents.filter((p) => !gone.has(p.id));
+	const precedents = store.useData("all", page.precedents);
+	const [editing, setEditing] = useState<Open>(null);
+	const [dirty, setDirty] = useState(false);
+	const [blocked, setBlocked] = useState(false);
+	const [saveState, setSaveState] = useState<SaveState>("idle");
+	const form = useRef<HTMLFormElement>(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scrolls when another opens
+	useEffect(() => {
+		form.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+	}, [editing]);
 
-	async function remove(p: Precedent) {
-		setGone((g) => new Set(g).add(p.id));
-		try {
-			await deletePrecedentFn({ data: { id: p.id } });
-		} catch (error) {
-			setGone((g) => {
-				const next = new Set(g);
-				next.delete(p.id);
-				return next;
-			});
-			toast.error("Couldn't delete it", {
-				description: error instanceof Error ? error.message : String(error),
-			});
+	const close = () => {
+		setEditing(null);
+		setDirty(false);
+		setBlocked(false);
+		setSaveState("idle");
+	};
+	const open = (next: Open) => {
+		if (saveState === "saving") return;
+		if (dirty && next !== editing) {
+			setBlocked(true);
+			shake(form.current);
 			return;
 		}
-		offerUndo("Deleted", {
-			undo: async () => {
-				await restorePrecedentFn({ data: p });
-				await router.invalidate();
-				setGone((g) => {
-					const next = new Set(g);
-					next.delete(p.id);
-					return next;
-				});
-				return "Put back";
-			},
-		});
+		close();
+		setEditing(next);
+	};
+
+	// Stays open, locked, until the server has it; a rejection leaves the
+	// edit to retry.
+	async function save(send: () => Promise<unknown>, label: string) {
+		setSaveState("saving");
+		const r = await optimism.change({ label, patch: [], send });
+		if (!r) {
+			setSaveState("failed");
+			return;
+		}
+		close();
 		await router.invalidate();
 	}
 
+	async function remove(p: Precedent) {
+		close();
+		const r = await optimism.change({
+			label: "Deleting the precedent",
+			patch: store.patch("all", (list) => list.filter((x) => x.id !== p.id)),
+			send: () => deletePrecedentFn({ data: { id: p.id } }),
+		});
+		if (!r) return;
+		offerUndo("Deleted", {
+			undo: async () => {
+				const back = await optimism.change({
+					label: "Putting it back",
+					patch: [],
+					send: () => restorePrecedentFn({ data: p }),
+				});
+				await router.invalidate();
+				return back ? "Put back" : null;
+			},
+		});
+	}
+
+	async function resetBase() {
+		const before = page.base.prompt;
+		close();
+		const r = await optimism.change({
+			label: "Putting the default back",
+			patch: [],
+			send: () => saveBasePrompt({ data: { prompt: null } }),
+		});
+		if (!r) return;
+		await router.invalidate();
+		offerUndo("Default prompt back", {
+			undo: async () => {
+				await saveBasePrompt({ data: { prompt: before } });
+				await router.invalidate();
+				return "Your prompt is back";
+			},
+		});
+	}
+
+	const shared = {
+		formRef: form,
+		save: saveState,
+		unsaved: blocked,
+		onChange: () => {
+			setDirty(true);
+			setSaveState("idle");
+		},
+		onCancel: close,
+	};
+
 	return (
-		<div className="flex flex-col gap-3 p-4 md:min-h-0 md:flex-1 md:overflow-y-auto">
-			<div className="flex items-center">
-				<Button size="sm" onClick={() => setAdding(true)} disabled={adding}>
+		<div className="space-y-2 p-4 md:min-h-0 md:flex-1 md:overflow-y-auto">
+			<header className="flex items-center gap-2 pb-2">
+				<p className="flex-1 text-sm text-muted-foreground">
+					Drafts start from the base prompt, then follow each precedent that
+					fits the buyer's case.
+				</p>
+				<Button size="sm" variant="secondary" onClick={() => open("new")}>
 					<Plus />
 					New precedent
 				</Button>
-			</div>
-			{adding && (
+			</header>
+
+			{editing === "base" ? (
+				<BaseForm
+					key="base"
+					{...shared}
+					initial={page.base.prompt}
+					isDefault={page.base.isDefault}
+					onSave={(prompt) =>
+						save(
+							() => saveBasePrompt({ data: { prompt } }),
+							"Saving the base prompt",
+						)
+					}
+					onReset={resetBase}
+				/>
+			) : (
 				<Row
-					key="new"
-					precedent={null}
-					onSaved={async () => {
-						setAdding(false);
-						await router.invalidate();
-					}}
-					onCancel={() => setAdding(false)}
+					onOpen={() => open("base")}
+					icon={<ScrollText className="size-4 text-muted-foreground" />}
+					title="Base prompt"
+					detail={page.base.prompt}
+					chips={
+						page.base.isDefault ? (
+							<Badge>Default</Badge>
+						) : (
+							page.base.by === "claude" && <ClaudeBadge />
+						)
+					}
 				/>
 			)}
-			{shown.length === 0 && !adding ? (
-				<EmptyState icon={Scale} title="No precedents yet" />
-			) : (
-				[...shown]
-					.reverse()
-					.map((p) => (
-						<Row
-							key={p.id}
-							precedent={p}
-							onSaved={() => router.invalidate()}
-							onDelete={() => remove(p)}
-						/>
-					))
+
+			{editing === "new" && (
+				<PrecedentForm
+					key="new"
+					{...shared}
+					initial={{ name: "", when: "", action: "" }}
+					onSave={(p) =>
+						save(
+							() => savePrecedentFn({ data: { id: null, precedent: p } }),
+							"Saving the precedent",
+						)
+					}
+				/>
 			)}
+
+			{precedents.length === 0 && editing !== "new" && (
+				<EmptyState icon={Scale} title="No precedents yet" />
+			)}
+			<ol className="space-y-2">
+				{precedents.map((p) =>
+					editing === p.id ? (
+						<li key={p.id}>
+							<PrecedentForm
+								{...shared}
+								initial={p}
+								onSave={(next) =>
+									save(
+										() =>
+											savePrecedentFn({ data: { id: p.id, precedent: next } }),
+										"Saving the precedent",
+									)
+								}
+								onDelete={() => remove(p)}
+							/>
+						</li>
+					) : (
+						<li key={p.id}>
+							<Row
+								onOpen={() => open(p.id)}
+								icon={<Scale className="size-4 text-muted-foreground" />}
+								title={p.name}
+								detail={`When ${p.when} · ${p.action}`}
+								chips={p.by === "claude" && <ClaudeBadge />}
+							/>
+						</li>
+					),
+				)}
+			</ol>
 		</div>
 	);
 }
 
-function Row({
-	precedent: p,
-	onSaved,
-	onDelete,
-	onCancel,
-}: {
-	precedent: Precedent | null;
-	onSaved: () => void | Promise<void>;
-	onDelete?: () => void;
-	onCancel?: () => void;
-}) {
-	const [when, setWhen] = useState(p?.when ?? "");
-	const [action, setAction] = useState(p?.action ?? "");
-	const [state, setState] = useState<"idle" | "saving" | "saved" | "error">(
-		"idle",
-	);
-	const card = useRef<HTMLFieldSetElement>(null);
-	const started = useRef(false);
-	const changed =
-		when.trim() !== (p?.when ?? "") || action.trim() !== (p?.action ?? "");
-
-	async function save() {
-		if (!changed) return;
-		if (when.trim().length < 3 || action.trim().length < 3) {
-			// A new one half written waits; a saved one shakes back.
-			if (p) {
-				shake(card.current);
-				setWhen(p.when);
-				setAction(p.action);
-			}
-			return;
-		}
-		setState("saving");
-		try {
-			await savePrecedentFn({
-				data: { id: p?.id ?? null, precedent: { when, action } },
-			});
-			setState("saved");
-			await onSaved();
-		} catch (error) {
-			setState("error");
-			shake(card.current);
-			toast.error("Couldn't save it", {
-				description: error instanceof Error ? error.message : String(error),
-			});
-		}
-	}
-
-	const field =
-		"w-full resize-none rounded-lg border bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring";
+function ClaudeBadge() {
 	return (
-		<fieldset
-			ref={card}
-			onBlur={(e) => {
-				// Saved once focus leaves the whole card, not between its fields.
-				if (!e.currentTarget.contains(e.relatedTarget as Node)) void save();
+		<Badge tone="info">
+			<Bot className="mr-1 size-3" />
+			Claude
+		</Badge>
+	);
+}
+
+// One closed entry: what it is in a line, the rest truncated beneath.
+function Row({
+	onOpen,
+	icon,
+	title,
+	detail,
+	chips,
+}: {
+	onOpen: () => void;
+	icon: ReactNode;
+	title: string;
+	detail: string;
+	chips?: ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onOpen}
+			className="flex w-full min-w-0 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left hover:border-ring"
+		>
+			<span className="shrink-0">{icon}</span>
+			<span className="min-w-0 flex-1">
+				<span className="flex items-center gap-2 font-semibold">
+					<span className="truncate">{title}</span>
+					{chips}
+				</span>
+				<span className="block truncate text-sm text-muted-foreground">
+					{detail}
+				</span>
+			</span>
+		</button>
+	);
+}
+
+type FormProps = {
+	formRef: Ref<HTMLFormElement>;
+	save: SaveState;
+	unsaved: boolean;
+	onChange: () => void;
+	onCancel: () => void;
+};
+
+const field =
+	"w-full resize-y rounded-lg border border-input bg-white px-2.5 py-2 outline-none focus:border-ring";
+
+// The card an entry opens into, as a rule's does.
+function Frame({
+	formRef,
+	save,
+	unsaved,
+	onCancel,
+	canSave,
+	problem,
+	onSubmit,
+	left,
+	children,
+}: Omit<FormProps, "onChange"> & {
+	canSave: boolean;
+	problem: string | null;
+	onSubmit: () => void;
+	left?: ReactNode;
+	children: ReactNode;
+}) {
+	return (
+		<form
+			ref={formRef}
+			onSubmit={(e) => {
+				e.preventDefault();
+				if (canSave && save !== "saving") onSubmit();
 			}}
-			onKeyDown={(e) => {
-				if (e.key === "Escape" && !p) onCancel?.();
-			}}
+			inert={save === "saving"}
 			className={cn(
-				"grid min-w-0 gap-2 rounded-xl border p-3 transition-colors md:grid-cols-[1fr_1.5fr_auto]",
-				state === "saved" && "border-success-text/50",
-				state === "error" && "border-critical-text",
-				state === "saving" && "opacity-70",
+				"space-y-4 rounded-xl border bg-card p-4 shadow-card transition-opacity",
+				(unsaved || save === "failed") && "border-critical-border",
+				save === "saving" && "opacity-60",
 			)}
 		>
-			<label className="flex flex-col gap-1">
-				<span className="text-xs font-semibold text-muted-foreground">
-					When
+			{children}
+			<footer className="flex items-center gap-2">
+				{left}
+				<span
+					className={cn(
+						"ml-auto text-sm",
+						unsaved
+							? "font-medium text-critical-text"
+							: "text-muted-foreground",
+					)}
+				>
+					{unsaved
+						? "Unsaved changes"
+						: save === "failed"
+							? "Not saved"
+							: problem}
 				</span>
+				<Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+					Cancel
+				</Button>
+				<Button
+					type="submit"
+					size="sm"
+					disabled={!canSave || save === "saving"}
+				>
+					Save
+				</Button>
+			</footer>
+		</form>
+	);
+}
+
+function Section({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		// biome-ignore lint/a11y/noLabelWithoutControl: the field is its child
+		<label className="block space-y-2">
+			<span className="block text-xs font-semibold text-muted-foreground">
+				{label}
+			</span>
+			{children}
+		</label>
+	);
+}
+
+function PrecedentForm({
+	initial,
+	onSave,
+	onDelete,
+	onChange,
+	...frame
+}: FormProps & {
+	initial: { name: string; when: string; action: string };
+	onSave: (p: { name: string; when: string; action: string }) => void;
+	onDelete?: () => void;
+}) {
+	const [name, setName] = useState(initial.name);
+	const [when, setWhen] = useState(initial.when);
+	const [action, setAction] = useState(initial.action);
+	const short = !name.trim()
+		? "Name it"
+		: when.trim().length < 3
+			? "Say when it applies"
+			: action.trim().length < 3
+				? "Say what to do"
+				: null;
+	return (
+		<Frame
+			{...frame}
+			canSave={short === null}
+			problem={short}
+			onSubmit={() => onSave({ name, when, action })}
+			left={
+				onDelete && (
+					<Button type="button" size="sm" variant="ghost" onClick={onDelete}>
+						<Trash2 />
+						Delete
+					</Button>
+				)
+			}
+		>
+			<input
+				aria-label="Name"
+				ref={(el) => {
+					// A new one starts here.
+					if (el && !initial.name && document.activeElement === document.body)
+						el.focus();
+				}}
+				value={name}
+				maxLength={60}
+				placeholder="Name, e.g. Empty box"
+				onChange={(e) => {
+					setName(e.target.value);
+					onChange();
+				}}
+				className={cn(field, "h-9 py-0 font-semibold")}
+			/>
+			<Section label="When">
 				<textarea
-					ref={(el) => {
-						// A new one starts here.
-						if (!p && el && !started.current) {
-							started.current = true;
-							el.focus();
-						}
-					}}
 					value={when}
 					rows={2}
-					onChange={(e) => setWhen(e.target.value)}
+					onChange={(e) => {
+						setWhen(e.target.value);
+						onChange();
+					}}
 					placeholder="The buyer says the box arrived empty"
 					className={field}
 				/>
-			</label>
-			<label className="flex flex-col gap-1">
-				<span className="text-xs font-semibold text-muted-foreground">
-					Then
-				</span>
+			</Section>
+			<Section label="Then">
 				<textarea
 					value={action}
-					rows={Math.max(2, action.split("\n").length)}
-					onChange={(e) => setAction(e.target.value)}
+					rows={Math.max(3, action.split("\n").length)}
+					onChange={(e) => {
+						setAction(e.target.value);
+						onChange();
+					}}
 					placeholder="Apologise, ship another today, no return needed"
 					className={field}
 				/>
-			</label>
-			<div className="flex items-start gap-1 md:flex-col md:items-end md:pt-5">
-				{p?.by === "claude" && (
-					<span className="rounded-md bg-surface-strong px-1.5 py-0.5 text-xs text-muted-foreground">
-						Claude
-					</span>
-				)}
-				{onDelete && (
-					<Tip content="Delete">
-						<Button
-							size="sm"
-							variant="ghost"
-							aria-label="Delete"
-							onClick={onDelete}
-						>
-							<Trash2 />
-						</Button>
-					</Tip>
-				)}
-			</div>
-		</fieldset>
+			</Section>
+		</Frame>
+	);
+}
+
+function BaseForm({
+	initial,
+	isDefault,
+	onSave,
+	onReset,
+	onChange,
+	...frame
+}: FormProps & {
+	initial: string;
+	isDefault: boolean;
+	onSave: (prompt: string) => void;
+	onReset: () => void;
+}) {
+	const [prompt, setPrompt] = useState(initial);
+	const short = prompt.trim().length < 20 ? "Too short to guide it" : null;
+	return (
+		<Frame
+			{...frame}
+			canSave={short === null}
+			problem={short}
+			onSubmit={() => onSave(prompt)}
+			left={
+				!isDefault && (
+					<Button type="button" size="sm" variant="ghost" onClick={onReset}>
+						<RotateCcw />
+						Use the default
+					</Button>
+				)
+			}
+		>
+			<Section label="Base prompt">
+				<textarea
+					value={prompt}
+					rows={Math.max(8, prompt.split("\n").length + 1)}
+					onChange={(e) => {
+						setPrompt(e.target.value);
+						onChange();
+					}}
+					className={cn(field, "text-sm leading-relaxed")}
+				/>
+			</Section>
+		</Frame>
 	);
 }

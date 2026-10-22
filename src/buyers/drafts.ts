@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
-import { type Draft, reader, replier, translator } from "#/ai/agents";
+import { type Draft, reader, replierWith, translator } from "#/ai/agents";
 import { OutOfTimeError, runAgent } from "#/ai/harness";
 import type { Db } from "#/db/client";
 import {
@@ -13,7 +13,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { buyerOrder } from "./order";
-import { listPrecedents } from "./precedents";
+import { basePrompt, listPrecedents } from "./precedents";
 import { threadsPage } from "./threads";
 
 // The suggested reply on each thread waiting on us, and buyers' words in
@@ -228,6 +228,7 @@ async function brief(db: Db, threadId: number) {
 				})),
 			precedents: precedents.map((p) => ({
 				id: p.id,
+				name: p.name,
 				when: p.when,
 				do: p.action,
 			})),
@@ -265,7 +266,8 @@ export async function draftThread(
 	);
 	let draft: Draft;
 	try {
-		draft = await run(replier, await brief(db, threadId));
+		const base = await basePrompt(db);
+		draft = await run(replierWith(base.prompt), await brief(db, threadId));
 	} catch (error) {
 		// Out of time is no failure: the claim is left as if long gone, so
 		// the next run takes it over.

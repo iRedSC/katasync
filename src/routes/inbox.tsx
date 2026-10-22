@@ -80,7 +80,7 @@ export const Route = createFileRoute("/inbox")({
 		if (folder === "precedents")
 			return {
 				kind: "precedents" as const,
-				precedents: await getPrecedents(),
+				page: await getPrecedents(),
 				counts: await counts,
 			};
 		if (folder === "buyers")
@@ -145,7 +145,7 @@ function InboxPage() {
 					market={market ?? null}
 					counts={d.counts}
 				>
-					<PrecedentsEditor precedents={d.precedents} />
+					<PrecedentsEditor page={d.page} />
 				</InboxFrame>
 			) : d.kind === "marketplaces" ? (
 				<MarketplaceBox

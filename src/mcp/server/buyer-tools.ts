@@ -3,9 +3,11 @@ import { z } from "zod";
 import { aiConfigured } from "#/ai/harness";
 import { draftThread, setDraft } from "#/buyers/drafts";
 import {
+	basePromptSchema,
 	deletePrecedent,
 	precedentSchema,
 	savePrecedent,
+	setBasePrompt,
 } from "#/buyers/precedents";
 import type { Db } from "#/db/client";
 import { json, WRITE } from "./tool-shapes";
@@ -61,19 +63,45 @@ export function registerBuyerWriteTools(server: McpServer, db: Db) {
 		"save_precedent",
 		{
 			description:
-				'Adds a precedent the reply agent follows (reply_precedents), or with id rewrites one: when a buyer\'s case is like `when`, then do `then`. Write when as the case ("buyer says the box arrived empty"), then as what we do and say ("apologise, ship a replacement today, no return needed"). Staff see it on the Inbox\'s Precedents page as by Claude.',
+				'Adds a precedent the reply agent follows (reply_precedents), or with id rewrites one: when a buyer\'s case is like `when`, then do `then`. Give it a short name staff know it by ("Empty box"); write when as the case ("buyer says the box arrived empty"), then as what we do and say ("apologise, ship a replacement today, no return needed"). Staff see it on the Inbox\'s Precedents page as by Claude.',
 			inputSchema: {
 				id: z.number().int().positive().optional(),
+				name: precedentSchema.shape.name,
 				when: precedentSchema.shape.when,
 				// biome-ignore lint/suspicious/noThenProperty: the precedent's own word
 				then: precedentSchema.shape.action,
 			},
 			annotations: WRITE,
 		},
-		async ({ id, when, then }) =>
+		async ({ id, name, when, then }) =>
 			json(
-				await savePrecedent(db, id ?? null, { when, action: then }, "claude"),
+				await savePrecedent(
+					db,
+					id ?? null,
+					{ name, when, action: then },
+					"claude",
+				),
 			),
+	);
+
+	server.registerTool(
+		"set_reply_base_prompt",
+		{
+			description:
+				"Rewrites the reply agent's base prompt (reply_base_prompt; none means the default): who we are, the tone, the marketplace rules, how replies open and close. The precedents and the answer's shape are added after it by katasync, so don't restate them. With reset, puts the default back. Staff see it at the top of the Inbox's Precedents page.",
+			inputSchema: {
+				prompt: basePromptSchema.optional(),
+				reset: z.boolean().optional(),
+			},
+			annotations: WRITE,
+		},
+		async ({ prompt, reset }) => {
+			if (!reset && prompt === undefined)
+				throw new Error("Give a prompt, or reset to put the default back");
+			return json(
+				await setBasePrompt(db, reset ? null : (prompt ?? null), "claude"),
+			);
+		},
 	);
 
 	server.registerTool(

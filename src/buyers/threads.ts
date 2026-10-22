@@ -129,6 +129,53 @@ export async function recordOurs(
 	return row !== undefined;
 }
 
+// What a reply staff added without sending carries for its ID until the
+// marketplace's own turns up (eBay reads it back; Amazon never does).
+export const LOGGED = "logged:";
+export const isLogged = (externalId: string | null) =>
+	externalId?.startsWith(LOGGED) ?? false;
+
+// A reply staff sent on the marketplace itself, added so the thread shows
+// it answered. Nothing is sent. The same key twice is one message.
+export async function logOurs(
+	db: Db,
+	threadId: number,
+	body: string,
+	requestKey: string,
+) {
+	const words = body.trim();
+	if (!words) throw new Error("Write something first");
+	const now = new Date();
+	const [row] = await db
+		.insert(buyerMessages)
+		.values({
+			threadId,
+			fromBuyer: false,
+			externalId: `${LOGGED}${requestKey}`,
+			body: words,
+			at: now,
+			status: "delivered",
+			requestKey,
+			statusAt: now,
+		})
+		.onConflictDoNothing()
+		.returning({ id: buyerMessages.id });
+	await db.delete(replyDrafts).where(eq(replyDrafts.threadId, threadId));
+	return row ?? null;
+}
+
+// Takes back one added without sending; one sent through katasync can't be.
+export async function unlogOurs(db: Db, requestKey: string) {
+	await db
+		.delete(buyerMessages)
+		.where(
+			and(
+				eq(buyerMessages.requestKey, requestKey),
+				eq(buyerMessages.externalId, `${LOGGED}${requestKey}`),
+			),
+		);
+}
+
 // Someone was done with it, or wasn't after all.
 export async function setThreadDone(db: Db, id: number, done: boolean) {
 	const [row] = await db
@@ -229,6 +276,7 @@ export async function threadsPage(
 						status: buyerMessages.status,
 						error: buyerMessages.error,
 						requestKey: buyerMessages.requestKey,
+						externalId: buyerMessages.externalId,
 						language: buyerMessages.language,
 						english: buyerMessages.english,
 					})
@@ -254,13 +302,17 @@ export async function threadsPage(
 							),
 						),
 					db
-						.select({ id: replyPrecedents.id, when: replyPrecedents.when })
+						.select({ id: replyPrecedents.id, name: replyPrecedents.name })
 						.from(replyPrecedents),
 				]);
 	const shaped = unique.map((t) => {
 		const own = messages
 			.filter((m) => m.threadId === t.id)
-			.map(({ threadId: _, ...m }) => m);
+			.map(({ threadId: _, externalId, ...m }) => ({
+				...m,
+				// Added by staff without katasync sending it.
+				logged: isLogged(externalId),
+			}));
 		const last = own.at(-1);
 		const latestTheirs = own.filter((m) => m.fromBuyer).at(-1);
 		const d = drafts.find((x) => x.threadId === t.id);
