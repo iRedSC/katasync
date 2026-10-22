@@ -311,7 +311,7 @@ function SupplierForm({
 					/>
 				</Field>
 				<Field label="Essential threshold">
-					<Tip content="Essentials needing order that make a PO ready, whatever its total">
+					<Tip content="Essentials needing order that suggest a PO whatever its total. Twice as many: Order soon">
 						<input
 							name="criticalThreshold"
 							required

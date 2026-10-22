@@ -129,8 +129,8 @@ export async function suggestPurchases(
 		s.total = Math.round(s.total * 100) / 100;
 		s.readiness = readiness(s);
 	}
-	// Ready first (critical before minimum), then the biggest orders.
-	const rank = { critical: 0, minimum: 1, waiting: 2 } as const;
+	// Order soon first, then ready, then the biggest orders.
+	const rank = { soon: 0, ready: 1, waiting: 2 } as const;
 	return result.sort(
 		(a, b) => rank[a.readiness] - rank[b.readiness] || b.total - a.total,
 	);

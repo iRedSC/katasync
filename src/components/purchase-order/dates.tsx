@@ -1,7 +1,25 @@
 import type { ReactNode } from "react";
 import { formatDay } from "#/lib/format";
+import { cn } from "#/lib/utils";
+import { isBackOrdered, isLate } from "#/purchasing/status";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { isUnsent } from "./po-data";
+
+// Past its date with something due that isn't back-ordered.
+function late(d: PurchaseOrderDetail) {
+	const units = (l: PurchaseOrderDetail["lines"][number]) =>
+		(l.quantity - Math.min(l.received, l.quantity)) * l.packSize;
+	const short = d.lines.reduce((n, l) => n + units(l), 0);
+	const backOrdered = d.lines
+		.filter(isBackOrdered)
+		.reduce((n, l) => n + units(l), 0);
+	return isLate({
+		...d.order,
+		ordered: short,
+		received: 0,
+		backOrdered,
+	});
+}
 
 export function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const po = d.order;
@@ -17,7 +35,15 @@ export function Dates({ detail: d }: { detail: PurchaseOrderDetail }) {
 			</span>,
 		]);
 	if (po.expectedAt && po.status === "sent")
-		rows.push(["Expected", formatDay(po.expectedAt)]);
+		rows.push([
+			"Expected",
+			<span
+				key="expected"
+				className={cn(late(d) && "font-medium text-critical-text")}
+			>
+				{formatDay(po.expectedAt)}
+			</span>,
+		]);
 	if (po.closedAt)
 		rows.push([
 			po.status === "cancelled" ? "Cancelled" : "Closed",

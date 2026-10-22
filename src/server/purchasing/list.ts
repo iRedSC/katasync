@@ -5,6 +5,7 @@ import {
 	purchaseOrderDiscounts,
 	purchaseOrderLines,
 	purchaseOrders,
+	purchaseOrderTracking,
 	suppliers,
 } from "#/db/schema";
 import { discountOf, lineCents } from "#/purchasing/discount";
@@ -55,17 +56,22 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 				.orderBy(suppliers.name),
 			countUnfiled(db),
 		]);
+		const ids = orders.map((o) => o.id);
 		// Totals above are before discounts; take those off line by line.
-		const off = await discountsOff(
-			db,
-			orders.map((o) => o.id),
-		);
+		const [off, packages] = await Promise.all([
+			discountsOff(db, ids),
+			packagesOf(db, ids),
+		]);
 		for (const o of orders) o.total -= off.get(o.id) ?? 0;
+		const withPackages = orders.map((o) => ({
+			...o,
+			packages: packages.get(o.id) ?? NO_PACKAGES,
+		}));
 		// Open: drafts still being put together. Incoming: sent, waiting on
 		// deliveries.
-		const open = orders.filter((o) => o.status === "draft");
-		const incoming = orders.filter((o) => o.status === "sent");
-		const done = orders
+		const open = withPackages.filter((o) => o.status === "draft");
+		const incoming = withPackages.filter((o) => o.status === "sent");
+		const done = withPackages
 			.filter((o) => o.status === "closed" || o.status === "cancelled")
 			.slice(0, 30);
 		return {
@@ -81,6 +87,30 @@ export const listPurchasing = createServerFn({ method: "GET" }).handler(
 );
 
 export type PurchasingList = Awaited<ReturnType<typeof listPurchasing>>;
+
+type Packages = { arrived: number; total: number; trouble: boolean };
+const NO_PACKAGES: Packages = { arrived: 0, total: 0, trouble: false };
+
+// The tracked packages on each of these POs: how many the carrier says were
+// delivered, and whether any came back or went wrong. Counted apart from the
+// lines so the join can't multiply their sums.
+async function packagesOf(db: Db, purchaseOrderIds: number[]) {
+	const of = new Map<number, Packages>();
+	if (purchaseOrderIds.length === 0) return of;
+	const rows = await db
+		.select({
+			purchaseOrderId: purchaseOrderTracking.purchaseOrderId,
+			arrived: sql<number>`count(*) filter (where ${purchaseOrderTracking.status} = 'DELIVERED')::int`,
+			total: sql<number>`count(*)::int`,
+			trouble: sql<boolean>`bool_or(${purchaseOrderTracking.status} in ('RETURNED', 'FAILURE'))`,
+		})
+		.from(purchaseOrderTracking)
+		.where(inArray(purchaseOrderTracking.purchaseOrderId, purchaseOrderIds))
+		.groupBy(purchaseOrderTracking.purchaseOrderId);
+	for (const { purchaseOrderId, ...p } of rows)
+		of.set(purchaseOrderId, { ...p, trouble: p.trouble === true });
+	return of;
+}
 
 // Dollars of discounts on each of these POs.
 async function discountsOff(db: Db, purchaseOrderIds: number[]) {

@@ -38,6 +38,7 @@ import {
 	DialogDescription,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism } from "#/lib/optimism";
@@ -49,7 +50,11 @@ import {
 	withOrder,
 	withoutOrder,
 } from "#/purchasing/list-patches";
-import { purchaseOrderStatus } from "#/purchasing/status";
+import {
+	isLate,
+	purchaseOrderStatus,
+	suggestionStatus,
+} from "#/purchasing/status";
 import {
 	createDraft,
 	createDraftFromSuggestions,
@@ -241,6 +246,9 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
 						Products
 					</th>
+					<th className="hidden px-4 py-2 font-medium md:table-cell">
+						Arrived
+					</th>
 					<th className="px-4 py-2 text-right font-medium">Total</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
 						Expected
@@ -275,6 +283,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 										<ProductCount s={s} />
 									</div>
 								</td>
+								<td className="hidden md:table-cell" />
 								<td className="px-4 py-2.5 text-right tabular-nums">
 									{formatMoney(s.total)}
 								</td>
@@ -309,11 +318,8 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 }
 
 function ReadinessBadge({ s }: { s: Suggestion }) {
-	return s.readiness === "critical" ? (
-		<Badge tone="critical">Stockout risk</Badge>
-	) : (
-		<Badge tone="success">Ready</Badge>
-	);
+	const status = suggestionStatus(s.readiness);
+	return <Badge tone={status.tone}>{status.label}</Badge>;
 }
 
 function ProductCount({ s }: { s: Suggestion }) {
@@ -356,6 +362,7 @@ function Columns() {
 			<col />
 			<col className="w-40" />
 			<col className="hidden w-52 md:table-column" />
+			<col className="hidden w-28 md:table-column" />
 			<col className="w-28" />
 			<col className="hidden w-32 md:table-column" />
 		</colgroup>
@@ -375,6 +382,9 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 					<th className="px-4 py-2 font-medium">Status</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
 						Received
+					</th>
+					<th className="hidden px-4 py-2 font-medium md:table-cell">
+						Arrived
 					</th>
 					<th className="px-4 py-2 text-right font-medium">Total</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
@@ -424,10 +434,20 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 											</span>
 										)}
 									</td>
+									<td className="hidden px-4 py-2.5 whitespace-nowrap tabular-nums md:table-cell">
+										<Arrived order={o} />
+									</td>
 									<td className="px-4 py-2.5 text-right tabular-nums">
 										{formatMoney(o.total)}
 									</td>
-									<td className="hidden px-4 py-2.5 whitespace-nowrap text-muted-foreground md:table-cell">
+									<td
+										className={cn(
+											"hidden px-4 py-2.5 whitespace-nowrap md:table-cell",
+											isLate(o)
+												? "font-medium text-critical-text"
+												: "text-muted-foreground",
+										)}
+									>
 										{o.status === "sent" && o.expectedAt
 											? formatDay(o.expectedAt)
 											: o.closedAt
@@ -443,6 +463,38 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 			</ContextMenu>
 		</table>
 	);
+}
+
+// Tracked packages the carrier has delivered. Only evidence: what was
+// actually counted in is Received.
+function Arrived({ order: o }: { order: OrderRow }) {
+	const { arrived, total, trouble } = o.packages;
+	if (total === 0)
+		return o.status === "sent" ? (
+			<span className="text-muted-foreground">None</span>
+		) : null;
+	const all = arrived === total;
+	const count = (
+		<span
+			className={cn(
+				"inline-flex items-center gap-2",
+				!all && "text-muted-foreground",
+			)}
+		>
+			<span
+				className={cn(
+					"size-2 shrink-0 rounded-full",
+					trouble
+						? "bg-critical-icon"
+						: all
+							? "bg-success-icon"
+							: "bg-info-icon",
+				)}
+			/>
+			{formatCount(arrived)} of {formatCount(total)}
+		</span>
+	);
+	return trouble ? <Tip content="Carrier problem">{count}</Tip> : count;
 }
 
 // What each kind of PO can do from here. Sending and closing short aren't
