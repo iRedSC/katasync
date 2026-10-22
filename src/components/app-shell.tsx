@@ -82,7 +82,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 							items={[settings]}
 							pathname={pathname}
 							counts={navCounts}
-							flagHidden
 						/>
 					)}
 				</nav>
@@ -96,12 +95,10 @@ function NavSection({
 	items,
 	pathname,
 	counts,
-	flagHidden = false,
 }: {
 	items: NavPage[];
 	pathname: string;
 	counts: Promise<NavCounts | null> | null;
-	flagHidden?: boolean;
 }) {
 	return (
 		<ul className="flex flex-col gap-0.5">
@@ -115,9 +112,10 @@ function NavSection({
 							page={p}
 							pathname={pathname}
 							counts={counts}
-							// Closed Settings still says when one of its tools has a
-							// problem. Routine work (counts due) doesn't get a dot.
-							hidden={open || !flagHidden ? [] : kids}
+							// A closed section still says when one of its pages has a
+							// problem (a market at risk under Analytics). Routine work
+							// (counts due) doesn't get a dot.
+							hidden={open ? [] : kids}
 						/>
 						{open && kids.length > 0 && (
 							<ul className="mt-0.5 flex flex-col gap-0.5">

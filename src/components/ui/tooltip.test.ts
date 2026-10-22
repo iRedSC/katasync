@@ -21,10 +21,12 @@ function nativeTitles(): string[] {
 			true,
 			ts.ScriptKind.TSX,
 		);
-		const visit = (node: ts.Node) => {
+		const visit = (node: ts.Node): void => {
 			if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
 				const tag = node.tagName.getText(source);
-				if (/^[a-z]/.test(tag) || passesToDom.has(tag))
+				// An iframe's title names the frame for screen readers (and lint
+				// requires it); browsers don't show it on hover.
+				if (tag !== "iframe" && (/^[a-z]/.test(tag) || passesToDom.has(tag)))
 					for (const attr of node.attributes.properties)
 						if (ts.isJsxAttribute(attr) && attr.name.getText(source) === "title") {
 							const { line } = source.getLineAndCharacterOfPosition(

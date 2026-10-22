@@ -280,7 +280,7 @@ function FileView({ file: a, url }: { file: Attachment; url: string }) {
 			{shownAs(a) === "pdf" ? (
 				<iframe
 					src={url}
-					aria-label={a.filename}
+					title={a.filename}
 					className="min-h-[60vh] w-full flex-1"
 				/>
 			) : (
