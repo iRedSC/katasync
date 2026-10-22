@@ -5,6 +5,7 @@ import {
 	FolderCheck,
 	Inbox,
 	type LucideIcon,
+	MessagesSquare,
 	ShieldAlert,
 	ShoppingCart,
 	Star,
@@ -13,13 +14,13 @@ import {
 } from "lucide-react";
 import { FOLDER_NAMES, FOLDERS, type Folder } from "#/inbox/rules";
 
-// Every folder of the Inbox page, in the order the side list shows them: the
-// marketplaces mailbox's (Important first: a state, shown as a folder), the
+// Every folder of the Inbox page, in the order the side list shows them:
+// buyers' messages, the marketplaces mailbox's (Important first: a state, shown as a folder), the
 // purchasing mailbox's, and the rules that sort the first.
 
 export type MarketView = "important" | Folder | "done";
 export type PurchasingView = "to-file" | "set-aside" | "on-po";
-export type InboxFolder = MarketView | PurchasingView | "rules";
+export type InboxFolder = "buyers" | MarketView | PurchasingView | "rules";
 
 type Entry = { folder: InboxFolder; name: string; icon: LucideIcon };
 
@@ -46,6 +47,13 @@ export const PURCHASING_FOLDERS: Entry[] = [
 	{ folder: "on-po", name: "On a PO", icon: FolderCheck },
 ];
 
+// Conversations with buyers, answered in place.
+export const BUYERS: Entry = {
+	folder: "buyers",
+	name: "Buyers",
+	icon: MessagesSquare,
+};
+
 export const RULES: Entry = { folder: "rules", name: "Rules", icon: Wand2 };
 
 export const folderIcon = (f: Folder) => folderIcons[f];
@@ -56,7 +64,7 @@ export const isMarketView = (f: InboxFolder): f is MarketView =>
 export const isPurchasingView = (f: InboxFolder): f is PurchasingView =>
 	PURCHASING_FOLDERS.some((e) => e.folder === f);
 
-const ALL = [...MARKET_FOLDERS, ...PURCHASING_FOLDERS, RULES];
+const ALL = [BUYERS, ...MARKET_FOLDERS, ...PURCHASING_FOLDERS, RULES];
 export const isInboxFolder = (v: unknown): v is InboxFolder =>
 	ALL.some((e) => e.folder === v);
 

@@ -2382,3 +2382,117 @@ export const mailboxChecks = pgTable(
 		),
 	],
 );
+
+// Where a reply we wrote stands (src/buyers/states.ts). sending: written,
+// handed to the marketplace (or Resend) or about to be, outcome not known
+// yet. sent: Resend took it (Amazon replies only), not yet Amazon's server.
+// delivered: the marketplace has it. failed: it didn't go, and why.
+export const buyerReplyStatus = pgEnum("buyer_reply_status", [
+	"sending",
+	"sent",
+	"delivered",
+	"failed",
+]);
+
+// A conversation with one buyer on a marketplace, read in by
+// src/buyers. Amazon's come from its relay emails in the marketplaces
+// mailbox; eBay's from its Message API.
+export const buyerThreads = pgTable(
+	"buyer_threads",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		market: channel().notNull(),
+		// The marketplace's own key for it: Amazon's relay address for the
+		// buyer (lowercased), eBay's conversation ID.
+		externalId: text().notNull(),
+		buyerName: text(),
+		subject: text().notNull(),
+		// The order it's about as the marketplace named it (its order ID), so
+		// it finds the order once that syncs, whichever arrives first.
+		orderRef: text(),
+		// The listing it's about (eBay's item ID).
+		itemRef: text(),
+		// When someone was done with it without a reply. A new message from
+		// the buyer opens it again.
+		doneAt: timestamp({ withTimezone: true }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("buyer_threads_market_external_id").on(t.market, t.externalId),
+	],
+);
+
+// One message in a thread: the buyer's, or one of ours. Ours carry how
+// sending went; the database refuses a status without what it needs.
+export const buyerMessages = pgTable(
+	"buyer_messages",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		threadId: integer()
+			.notNull()
+			.references(() => buyerThreads.id),
+		fromBuyer: boolean().notNull(),
+		// The marketplace's ID: the email's Message-ID or eBay's message ID
+		// for theirs; Resend's email ID or eBay's message ID for ours once
+		// sent. Reading one twice keeps one row.
+		externalId: text(),
+		body: text().notNull(),
+		at: timestamp({ withTimezone: true }).notNull(),
+		// The email it came in as (Amazon).
+		marketEmailId: integer().references(() => marketEmails.id),
+		// Ours only, from here down.
+		status: buyerReplyStatus(),
+		// Sent with every try, so a retry never sends it twice (Resend's
+		// Idempotency-Key).
+		requestKey: uuid(),
+		error: text(),
+		statusAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex("buyer_messages_thread_external_id")
+			.on(t.threadId, t.externalId)
+			.where(sql`${t.externalId} is not null`),
+		uniqueIndex("buyer_messages_request_key")
+			.on(t.requestKey)
+			.where(sql`${t.requestKey} is not null`),
+		uniqueIndex("buyer_messages_market_email")
+			.on(t.marketEmailId)
+			.where(sql`${t.marketEmailId} is not null`),
+		index("buyer_messages_thread_at_idx").on(t.threadId, t.at),
+		index("buyer_messages_unsettled_idx")
+			.on(t.status)
+			.where(sql`${t.status} in ('sending', 'sent')`),
+		check(
+			"buyer_messages_status_is_ours",
+			sql`${t.fromBuyer} = (${t.status} is null)`,
+		),
+		check(
+			"buyer_messages_ours_have_key",
+			sql`${t.fromBuyer} or (${t.requestKey} is not null and ${t.statusAt} is not null)`,
+		),
+		check(
+			"buyer_messages_theirs_have_id",
+			sql`not ${t.fromBuyer} or ${t.externalId} is not null`,
+		),
+		check(
+			"buyer_messages_gone_has_id",
+			sql`${t.status} is null or ${t.status} not in ('sent', 'delivered') or ${t.externalId} is not null`,
+		),
+		check(
+			"buyer_messages_failed_says_why",
+			sql`(${t.status} = 'failed') = (${t.error} is not null)`,
+		),
+	],
+);
+
+// The last time each marketplace's buyer messages were read in full, and why
+// the latest try failed if it did, so a source katasync can't reach shows as
+// broken rather than quiet. Amazon's is the marketplaces mailbox's check.
+export const buyerMessageChecks = pgTable("buyer_message_checks", {
+	market: channel().primaryKey(),
+	checkedAt: timestamp({ withTimezone: true }),
+	// Read back to here; the next read starts a little before it.
+	readThrough: timestamp({ withTimezone: true }),
+	error: text(),
+	erroredAt: timestamp({ withTimezone: true }),
+});

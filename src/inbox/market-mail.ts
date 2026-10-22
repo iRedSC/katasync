@@ -539,6 +539,11 @@ export async function readMarketMail(options: {
 	const result = await ingestMarketMail(db, messages, (id) =>
 		graph.messageContent(id, "marketplaces"),
 	);
+	// Buyers' messages among them go to their threads now; the messages cron
+	// does it too, and says when it can't.
+	const threaded = await import("#/buyers/amazon-mail")
+		.then((m) => m.threadAmazonMail(db))
+		.catch(() => null);
 	const resorted = options.sweep ? await resort(db) : null;
 	const formatted = options.sweep
 		? await backfillMarketHtml(db, (messageId) =>
@@ -552,6 +557,7 @@ export async function readMarketMail(options: {
 	await recordCheck(db, "marketplaces", outcome, options.sweep);
 	return {
 		...result,
+		threaded,
 		resorted,
 		formatted,
 		...(outcome.state === "complete" ? {} : { error: outcome.error }),
