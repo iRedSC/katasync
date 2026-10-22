@@ -46,6 +46,8 @@ export function DamageDialog({
 	const picked = usePickedPhotos();
 	const [uploading, setUploading] = useState<number | null>(null);
 	const [saving, setSaving] = useState(false);
+	// Why adding photos stopped. The ones before it went up and left the list.
+	const [failure, setFailure] = useState<string | null>(null);
 
 	const isNew = target.kind === "new";
 	const max = isNew ? target.available : 0;
@@ -70,23 +72,29 @@ export function DamageDialog({
 		e.preventDefault();
 		if (why) return;
 		setSaving(true);
-		const photos = picked.photos.map((p) => p.blob);
-		const ok =
-			target.kind === "new"
-				? await saveDamage({
-						lineId: target.lineId,
-						quantity,
-						description: description.trim(),
-						photos,
-						name: target.name,
-						onPhoto: setUploading,
-					})
-				: await addPhotos({
-						damageId: target.damageId,
-						photos,
-						name: target.name,
-						onPhoto: setUploading,
-					});
+		setFailure(null);
+		let ok = false;
+		if (target.kind === "new") {
+			ok = await saveDamage({
+				lineId: target.lineId,
+				quantity,
+				description: description.trim(),
+				photos: picked.photos.map((p) => p.blob),
+				name: target.name,
+				onPhoto: setUploading,
+			});
+		} else {
+			const up = await addPhotos({
+				damageId: target.damageId,
+				photos: picked.photos,
+				name: target.name,
+				onPhoto: setUploading,
+			});
+			// A retry sends only the photos still on the list.
+			if (up) picked.take(up.saved);
+			setFailure(up?.problem ?? null);
+			ok = up !== null && up.problem === null;
+		}
 		setSaving(false);
 		setUploading(null);
 		if (ok) onClose();
@@ -172,6 +180,8 @@ export function DamageDialog({
 					)}
 
 					<PhotoPicker picked={picked} disabled={saving} />
+
+					{failure && <p className="text-sm text-critical-text">{failure}</p>}
 
 					<DialogFooter className="gap-2">
 						<Button

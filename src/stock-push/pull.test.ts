@@ -5,7 +5,13 @@ import * as schema from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { createProduct, createTestDb } from "#/test/db";
 import type { Found } from "./channel";
-import { applyStockPull, planStockPull, type StoreRead } from "./pull";
+import {
+	applyStockPull,
+	markLedgers,
+	planStockPull,
+	type StoreRead,
+	storesInTrustOrder,
+} from "./pull";
 
 let db: Db;
 let warehouse: number;
@@ -83,7 +89,10 @@ test("takes the primary store's number for a product with no stock record", asyn
 	expect(plan.pulls).toEqual([
 		{ productId: a, sku: "A", quantity: 4, store: "Shop", disagreed: false },
 	]);
-	expect(await applyStockPull(db, plan)).toBe(1);
+	expect(await applyStockPull(db, plan)).toEqual({
+		state: "posted",
+		posted: 1,
+	});
 	expect(await onHand(a)).toBe(4);
 });
 
@@ -126,8 +135,26 @@ test("a product that only sold since lands on the channel's number, which alread
 		lines: [{ productId: a, locationId: warehouse, delta: -3, reason: "sale" }],
 	});
 	const plan = await planStockPull(db, reads({ s1: ready(5) }));
-	expect(await applyStockPull(db, plan)).toBe(1);
+	expect(await applyStockPull(db, plan)).toEqual({
+		state: "posted",
+		posted: 1,
+	});
 	expect(await onHand(a)).toBe(5);
+});
+
+test("a sale after the stores were read refuses the whole plan", async () => {
+	const a = await createProduct(db, "A", "simple");
+	await list(shop, "s1", a);
+	const mark = await markLedgers(db);
+	await postMovements(db, {
+		lines: [{ productId: a, locationId: warehouse, delta: -3, reason: "sale" }],
+	});
+	const plan = await planStockPull(db, reads({ s1: ready(5) }), mark);
+	expect(await applyStockPull(db, plan)).toEqual({
+		state: "moved",
+		skus: ["A"],
+	});
+	expect(await onHand(a)).toBe(-3);
 });
 
 test("never touches a product katasync already has stock history for", async () => {
@@ -147,7 +174,7 @@ test("never touches a product katasync already has stock history for", async () 
 		lines: [{ productId: a, locationId: warehouse, delta: -2, reason: "sale" }],
 	});
 	const plan = await planStockPull(db, reads({ s1: ready(7) }));
-	expect(plan).toEqual({ pulls: [], unpulled: [] });
+	expect(plan).toMatchObject({ pulls: [], unpulled: [] });
 });
 
 test("leaves placeholder quantities, bundles, and deleted listings out", async () => {
@@ -173,8 +200,35 @@ test("takes the lowest when a store's listings disagree, and runs only once", as
 	await list(shop, "s2", a);
 	const plan = await planStockPull(db, reads({ s1: ready(5), s2: ready(2) }));
 	expect(plan.pulls[0]).toMatchObject({ quantity: 2, disagreed: true });
-	expect(await applyStockPull(db, plan)).toBe(1);
-	// Applying the same plan again finds the stock record and posts nothing.
-	expect(await applyStockPull(db, plan)).toBe(0);
+	expect(await applyStockPull(db, plan)).toEqual({
+		state: "posted",
+		posted: 1,
+	});
+	// Applying the same plan again finds the ledger moved on and posts nothing.
+	expect(await applyStockPull(db, plan)).toEqual({
+		state: "moved",
+		skus: ["A"],
+	});
 	expect(await onHand(a)).toBe(2);
+});
+
+test("the primary store is trusted first, so its zero beats another store's number", async () => {
+	await db
+		.update(schema.stores)
+		.set({ primary: true })
+		.where(eq(schema.stores.id, tiktok));
+	const a = await createProduct(db, "A", "simple");
+	await list(shop, "s1", a);
+	await list(tiktok, "t1", a);
+	const byId = new Map(
+		reads({ s1: ready(9) }, { t1: ready(0) }).map((r) => [r.storeId, r]),
+	);
+	const trusted = (await storesInTrustOrder(db)).flatMap(
+		(s) => byId.get(s.id) ?? [],
+	);
+	expect(trusted.map((r) => r.store)).toEqual(["TikTok", "Shop"]);
+	const plan = await planStockPull(db, trusted);
+	expect(plan.pulls).toMatchObject([
+		{ sku: "A", quantity: 0, store: "TikTok" },
+	]);
 });

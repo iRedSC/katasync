@@ -120,7 +120,7 @@ export const restoreDraftPurchaseOrder = createServerFn({ method: "POST" })
 				supplierCount: positive,
 				minimumQuantity: positive,
 				quantity: "number.integer >= 0",
-				unitCost: "number | null",
+				unitCost: "number >= 0 | null",
 				discounts: discount.array(),
 			}).array(),
 			skippedParts: type({

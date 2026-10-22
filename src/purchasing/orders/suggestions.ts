@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { purchaseOrderLines, purchaseOrders } from "#/db/schema";
 import { wantsMore } from "#/purchasing/changes";
@@ -103,14 +103,23 @@ export async function updateFromSuggestions(
 					unitCost: l.unitCost,
 				})),
 			);
-		for (const l of raised)
+		// One statement raises them all, each line to its own quantity.
+		if (raised.length > 0)
 			await tx
 				.update(purchaseOrderLines)
-				.set({ quantity: l.raiseTo })
+				.set({
+					quantity: sql`case ${purchaseOrderLines.productId} ${sql.join(
+						raised.map((l) => sql`when ${l.productId} then ${l.raiseTo}`),
+						sql` `,
+					)} end::int`,
+				})
 				.where(
 					and(
 						eq(purchaseOrderLines.purchaseOrderId, po.id),
-						eq(purchaseOrderLines.productId, l.productId),
+						inArray(
+							purchaseOrderLines.productId,
+							raised.map((l) => l.productId),
+						),
 					),
 				);
 		return { added: added.length, raised: raised.length };
@@ -171,9 +180,9 @@ export async function refreshSuggested(db: Db, id: number, now = new Date()) {
 			.select()
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, id));
-		const gone = current.filter(
-			(c) => !want.some((l) => l.productId === c.productId),
-		);
+		const onPo = new Map(current.map((c) => [c.productId, c]));
+		const wanted = new Set(want.map((l) => l.productId));
+		const gone = current.filter((c) => !wanted.has(c.productId));
 		if (gone.length > 0)
 			await tx.delete(purchaseOrderLines).where(
 				inArray(
@@ -181,7 +190,9 @@ export async function refreshSuggested(db: Db, id: number, now = new Date()) {
 					gone.map((c) => c.id),
 				),
 			);
-		for (const l of want) {
+		// Only the lines that are new or differ are written, in one statement.
+		// Each conflicts on its product, so a changed line keeps its id.
+		const changed = want.flatMap((l) => {
 			const terms = {
 				unit: l.unit,
 				packSize: l.packSize,
@@ -190,23 +201,36 @@ export async function refreshSuggested(db: Db, id: number, now = new Date()) {
 				quantity: l.quantity,
 				unitCost: l.unitCost,
 			};
-			const line = current.find((c) => c.productId === l.productId);
-			if (!line)
-				await tx
-					.insert(purchaseOrderLines)
-					.values({ purchaseOrderId: id, productId: l.productId, ...terms });
-			else if (
-				line.unit !== terms.unit ||
-				line.packSize !== terms.packSize ||
-				line.supplierCount !== terms.supplierCount ||
-				line.minimumQuantity !== terms.minimumQuantity ||
-				line.quantity !== terms.quantity ||
-				line.unitCost !== terms.unitCost
+			const line = onPo.get(l.productId);
+			if (
+				line &&
+				line.unit === terms.unit &&
+				line.packSize === terms.packSize &&
+				line.supplierCount === terms.supplierCount &&
+				line.minimumQuantity === terms.minimumQuantity &&
+				line.quantity === terms.quantity &&
+				line.unitCost === terms.unitCost
 			)
-				await tx
-					.update(purchaseOrderLines)
-					.set(terms)
-					.where(eq(purchaseOrderLines.id, line.id));
-		}
+				return [];
+			return [{ purchaseOrderId: id, productId: l.productId, ...terms }];
+		});
+		if (changed.length > 0)
+			await tx
+				.insert(purchaseOrderLines)
+				.values(changed)
+				.onConflictDoUpdate({
+					target: [
+						purchaseOrderLines.purchaseOrderId,
+						purchaseOrderLines.productId,
+					],
+					set: {
+						unit: sql`excluded.unit`,
+						packSize: sql`excluded.pack_size`,
+						supplierCount: sql`excluded.supplier_count`,
+						minimumQuantity: sql`excluded.minimum_quantity`,
+						quantity: sql`excluded.quantity`,
+						unitCost: sql`excluded.unit_cost`,
+					},
+				});
 	});
 }

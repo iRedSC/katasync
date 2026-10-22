@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText } from "#/diagnostics/runs";
 import type { ChannelReturn } from "#/orders/return-requests";
 import { shopCipher, tiktokApi } from "./tiktok";
 
@@ -62,7 +63,7 @@ export function tiktokReturnStatus(r: {
 // so units of the same SKU add up.
 export function tiktokToReturn(
 	r: TiktokReturn,
-	note: string | null,
+	note?: string | null,
 ): ChannelReturn {
 	const bySku = new Map<string, { sku: string | null; quantity: number }>();
 	for (const l of r.return_line_items ?? []) {
@@ -104,6 +105,26 @@ async function buyerNote(cipher: string, returnId: string) {
 	return note?.trim() || null;
 }
 
+// One history request per return, a few at a time. A note that fails to load
+// is left out of the map: its return still saves, without touching its note.
+const NOTE_REQUESTS_AT_ONCE = 4;
+
+async function buyerNotes(cipher: string, returnIds: string[]) {
+	const notes = new Map<string, string | null>();
+	const queue = [...returnIds];
+	const worker = async () => {
+		for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+			try {
+				notes.set(id, await buyerNote(cipher, id));
+			} catch (error) {
+				console.warn(`TikTok return ${id} note: ${errorText(error)}`);
+			}
+		}
+	};
+	await Promise.all(Array.from({ length: NOTE_REQUESTS_AT_ONCE }, worker));
+	return notes;
+}
+
 // Returns that changed between from and until (by: "update"), or were
 // opened then (by: "create", for history).
 export async function fetchTiktokReturns(
@@ -113,7 +134,7 @@ export async function fetchTiktokReturns(
 ) {
 	const cipher = await shopCipher();
 	const seconds = (d: Date) => Math.floor(d.getTime() / 1000);
-	const returns: ChannelReturn[] = [];
+	const found: TiktokReturn[] = [];
 	let pageToken: string | undefined;
 	do {
 		const page = searchPage.assert(
@@ -131,9 +152,12 @@ export async function fetchTiktokReturns(
 			),
 		);
 		for (const r of page.return_orders ?? [])
-			if (!isSampleRefund(r))
-				returns.push(tiktokToReturn(r, await buyerNote(cipher, r.return_id)));
+			if (!isSampleRefund(r)) found.push(r);
 		pageToken = page.next_page_token || undefined;
 	} while (pageToken);
-	return returns;
+	const notes = await buyerNotes(
+		cipher,
+		found.map((r) => r.return_id),
+	);
+	return found.map((r) => tiktokToReturn(r, notes.get(r.return_id)));
 }

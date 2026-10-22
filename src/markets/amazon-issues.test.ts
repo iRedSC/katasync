@@ -83,4 +83,41 @@ describe("Amazon listing issues", () => {
 		// Every listing says the same, so it's said once, on the problem.
 		expect(problems[0].items.map((i) => i.detail)).toEqual([null, null]);
 	});
+
+	test("each enforcement is its own problem, whatever order Amazon lists them in", () => {
+		const titled = (actions: string[]) =>
+			amazonIssueProblems([
+				listing("A1", [
+					{
+						code: "1",
+						message: "Hidden.",
+						severity: "ERROR",
+						categories: ["LISTING"],
+						enforcements: { actions: actions.map((action) => ({ action })) },
+					},
+				]),
+			]).map(({ level, text }) => ({ level, text }));
+		const hidden = {
+			level: "watch",
+			text: "Hidden from search: Listing error",
+		};
+		const suppressed = {
+			level: "at_risk",
+			text: "Listing suppressed: Listing error",
+		};
+		expect(titled(["SEARCH_SUPPRESSED", "LISTING_SUPPRESSED"])).toEqual(
+			expect.arrayContaining([hidden, suppressed]),
+		);
+		expect(titled(["LISTING_SUPPRESSED", "SEARCH_SUPPRESSED"])).toEqual(
+			expect.arrayContaining([hidden, suppressed]),
+		);
+		expect(titled(["LISTING_SUPPRESSED", "SEARCH_SUPPRESSED"])).toHaveLength(2);
+		// A repeated action is one problem; one we don't know is at risk.
+		expect(titled(["SEARCH_SUPPRESSED", "SEARCH_SUPPRESSED"])).toEqual([
+			hidden,
+		]);
+		expect(titled(["SOMETHING_NEW"])).toEqual([
+			{ level: "at_risk", text: "Something new: Listing error" },
+		]);
+	});
 });

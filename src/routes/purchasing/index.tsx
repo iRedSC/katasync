@@ -471,7 +471,7 @@ function Arrived({ order: o }: { order: OrderRow }) {
 	const { arrived, total, trouble } = o.packages;
 	if (total === 0)
 		return o.status === "sent" ? (
-			<span className="text-muted-foreground">None</span>
+			<span className="text-muted-foreground">—</span>
 		) : null;
 	// Tip needs an element that takes a ref, so the badge sits in a span.
 	const count = (

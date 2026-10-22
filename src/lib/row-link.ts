@@ -13,6 +13,17 @@ import {
 
 type To<TTo extends string> = NavigateOptions<RegisteredRouter, string, TTo>;
 
+const CONTROL =
+	"a, button, input, select, textarea, label, [role=button], [role=link], [role=menuitem]";
+
+// A control inside the row (a button, a link) acts for itself, so the row
+// ignores what starts in one. Its own link or button is the keyboard path.
+function fromControl(e: MouseEvent | KeyboardEvent) {
+	const control =
+		e.target instanceof Element ? e.target.closest(CONTROL) : null;
+	return control !== null && control !== e.currentTarget;
+}
+
 // Table rows and tiles that open a page, behaving like links: the page's
 // data starts loading on hover, so it's usually there by the click, and
 // ⌘-click or a middle click opens it in a new tab. One destination drives
@@ -51,6 +62,7 @@ export function useRowLink() {
 			const newTab = () =>
 				window.open(router.buildLocation(to as To<string>).href, "_blank");
 			const open = (e: MouseEvent | KeyboardEvent) => {
+				if (fromControl(e)) return;
 				if (e.metaKey || e.ctrlKey || e.shiftKey) newTab();
 				else void router.navigate(to as To<string>);
 			};
@@ -58,7 +70,7 @@ export function useRowLink() {
 				onClick: open,
 				onKeyDown: (e: KeyboardEvent) => e.key === "Enter" && open(e),
 				onAuxClick: (e: MouseEvent) => {
-					if (e.button !== 1) return;
+					if (e.button !== 1 || fromControl(e)) return;
 					e.preventDefault();
 					newTab();
 				},

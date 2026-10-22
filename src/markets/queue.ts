@@ -33,47 +33,44 @@ export async function attentionQueue(
 	db: Db,
 	rows: Row[],
 ): Promise<QueueEntry[]> {
-	const wanted = rows.flatMap((r) =>
-		(r.standing?.problems ?? []).flatMap((p) =>
-			p.items.flatMap((i) =>
-				i.listingId ? [{ market: r.market, id: i.listingId }] : [],
+	// Each listing ID once, however many problems name it.
+	const wanted = new Set(
+		rows.flatMap((r) =>
+			(r.standing?.problems ?? []).flatMap((p) =>
+				p.items.flatMap((i) => (i.listingId ? [i.listingId] : [])),
 			),
 		),
 	);
-	const found =
-		wanted.length === 0
-			? []
-			: await db
-					.select({
-						channel: stores.channel,
-						externalId: listings.externalId,
-						sku: products.sku,
-						name: products.name,
-						variantName: products.variantName,
-						imageUrl: products.imageUrl,
-					})
-					.from(listings)
-					.innerJoin(stores, eq(stores.id, listings.storeId))
-					.innerJoin(products, eq(products.id, listings.productId))
-					.where(
-						inArray(
-							listings.externalId,
-							wanted.map((w) => w.id),
-						),
-					);
-	const productOf = (market: Market, id: string | null) => {
-		const f = id
-			? found.find((r) => r.channel === market && r.externalId === id)
-			: undefined;
-		return f
-			? {
-					sku: f.sku,
-					name: f.name,
-					variantName: f.variantName,
-					imageUrl: f.imageUrl,
-				}
-			: null;
-	};
+	// Keyed by marketplace and listing ID: the same ID can be on two marketplaces.
+	const found = new Map<string, QueueProduct>();
+	if (wanted.size > 0) {
+		const listed = await db
+			.select({
+				channel: stores.channel,
+				externalId: listings.externalId,
+				sku: products.sku,
+				name: products.name,
+				variantName: products.variantName,
+				imageUrl: products.imageUrl,
+			})
+			.from(listings)
+			.innerJoin(stores, eq(stores.id, listings.storeId))
+			.innerJoin(products, eq(products.id, listings.productId))
+			.where(inArray(listings.externalId, [...wanted]));
+		for (const f of listed) {
+			// Two stores can share an external ID; the first one listed wins.
+			const key = `${f.channel}|${f.externalId}`;
+			if (found.has(key)) continue;
+			found.set(key, {
+				sku: f.sku,
+				name: f.name,
+				variantName: f.variantName,
+				imageUrl: f.imageUrl,
+			});
+		}
+	}
+	const productOf = (market: Market, id: string | null) =>
+		id ? (found.get(`${market}|${id}`) ?? null) : null;
 
 	const entries: QueueEntry[] = rows.flatMap((r) => [
 		...(r.error

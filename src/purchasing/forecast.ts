@@ -1,9 +1,22 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+	and,
+	eq,
+	gte,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	lte,
+	sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
 	locations,
 	movements,
+	orderLines,
+	orders,
+	products,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
@@ -94,6 +107,66 @@ export function safetyStock(
 const DAY = 86_400_000;
 const dayOf = (t: Date) => t.toISOString().slice(0, 10);
 
+// The window demand is read over: whole UTC days, from the first instant of
+// the oldest to the first instant of tomorrow. Start is inclusive, end is
+// exclusive. Direct sales, set sales and the days a forecast rebuilds all
+// read this one window, so a number on screen and the explanation for it
+// always cover the same sales.
+export type DemandWindow = { start: Date; end: Date };
+
+export function demandWindow(now = new Date()): DemandWindow {
+	const today = Date.UTC(
+		now.getUTCFullYear(),
+		now.getUTCMonth(),
+		now.getUTCDate(),
+	);
+	return {
+		start: new Date(today - (DEMAND_DAYS - 1) * DAY),
+		end: new Date(today + DAY),
+	};
+}
+
+// Units sold per product inside the window, counted as soldSince counts them
+// for reorder (no FBA, tool sets as their parts). Built from soldByDay, so a
+// day adds up the same way it does in the forecast.
+export async function soldInWindow(db: Db, window: DemandWindow) {
+	const endDay = dayOf(window.end);
+	const units = new Map<number, number>();
+	for (const s of await soldByDay(db, window.start)) {
+		if (s.day >= endDay) continue;
+		units.set(s.productId, (units.get(s.productId) ?? 0) + s.units);
+	}
+	return units;
+}
+
+// Tool sets sold inside the window, as sets rather than their parts.
+// Cancelled and FBA orders are left out, as reorder counts.
+export async function setsSoldIn(db: Db, window: DemandWindow) {
+	const rows = await db
+		.select({
+			productId: orderLines.productId,
+			units: sql<number>`sum(${orderLines.quantity})::int`,
+		})
+		.from(orderLines)
+		.innerJoin(orders, eq(orders.id, orderLines.orderId))
+		.innerJoin(products, eq(products.id, orderLines.productId))
+		.where(
+			and(
+				eq(products.kind, "bundle"),
+				gte(orders.placedAt, window.start),
+				lt(orders.placedAt, window.end),
+				isNull(orders.cancelledAt),
+				eq(orders.fulfilledByChannel, false),
+			),
+		)
+		.groupBy(orderLines.productId);
+	return new Map(
+		rows.flatMap((r) =>
+			r.productId === null ? [] : [[r.productId, r.units] as const],
+		),
+	);
+}
+
 // Every stocked product's forecast. Stock on each day of the window is
 // rebuilt from the ledger alone, in one query so it reads one moment: what
 // had moved on our own shelves before the window, then each day's movements
@@ -105,19 +178,15 @@ export async function forecasts(
 	db: Db,
 	now = new Date(),
 ): Promise<Map<number, Forecast>> {
-	const today = Date.UTC(
-		now.getUTCFullYear(),
-		now.getUTCMonth(),
-		now.getUTCDate(),
-	);
-	const start = new Date(today - (DEMAND_DAYS - 1) * DAY);
+	const { start } = demandWindow(now);
 	const days = Array.from({ length: DEMAND_DAYS }, (_, i) =>
 		dayOf(new Date(start.getTime() + i * DAY)),
 	);
 	const [sales, ledgerRows] = await Promise.all([
 		soldByDay(db, start),
-		// day is null for everything before the window. firstAt is the
-		// ledger's first movement anywhere, read in the same statement.
+		// day is null for everything before the window. firstAt is each group's
+		// earliest movement; the ledger's first is the least of them. Every row
+		// is on our shelves, so FBA history can't move the boundary.
 		db
 			.select({
 				productId: movements.productId,
@@ -125,9 +194,7 @@ export async function forecasts(
 					string | null
 				>`case when ${movements.createdAt} < ${start} then null else to_char(${movements.createdAt} at time zone 'UTC', 'YYYY-MM-DD') end`,
 				delta: sql<number>`sum(${movements.delta})::int`,
-				firstAt: sql<
-					string | null
-				>`(select min(${movements.createdAt}) from ${movements})`,
+				firstAt: sql<string | null>`min(${movements.createdAt})`,
 			})
 			.from(movements)
 			// Both our shelves, so a transfer between them nets to nothing.
@@ -135,8 +202,12 @@ export async function forecasts(
 			.where(isOurs)
 			.groupBy(sql`1`, sql`2`),
 	]);
-	const firstAt = ledgerRows[0]?.firstAt;
-	const ledgerDay = firstAt ? dayOf(new Date(firstAt)) : null;
+	const firstAt = ledgerRows.reduce<number | null>((first, r) => {
+		if (r.firstAt === null) return first;
+		const t = new Date(r.firstAt).getTime();
+		return first === null || t < first ? t : first;
+	}, null);
+	const ledgerDay = firstAt === null ? null : dayOf(new Date(firstAt));
 
 	const sold = new Map<number, Map<string, number>>();
 	for (const s of sales) {
@@ -209,51 +280,58 @@ export function measuredLeadTime(daysEach: number[]) {
 }
 
 // Each supplier's lead time. A delivery is the first receipt on any of a
-// PO's lines that wasn't undone.
+// PO's lines that wasn't undone. Only each supplier's latest MEASURED_POS
+// deliveries are read, ranked in SQL.
 export async function leadTimes(
 	db: Db,
 	supplierIds?: number[],
 ): Promise<Map<number, LeadTime>> {
 	const undo = alias(purchaseOrderReceipts, "undo");
+	const ranked = db
+		.select({
+			supplierId: purchaseOrders.supplierId,
+			sentAt: purchaseOrders.sentAt,
+			firstAt: sql<string>`min(${purchaseOrderReceipts.createdAt})`.as(
+				"first_at",
+			),
+			latest:
+				sql<number>`row_number() over (partition by ${purchaseOrders.supplierId} order by ${purchaseOrders.sentAt} desc, ${purchaseOrders.id} desc)`.as(
+					"latest",
+				),
+		})
+		.from(purchaseOrders)
+		.innerJoin(
+			purchaseOrderLines,
+			eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
+		)
+		.innerJoin(
+			purchaseOrderReceipts,
+			eq(purchaseOrderReceipts.lineId, purchaseOrderLines.id),
+		)
+		.leftJoin(undo, eq(undo.undoesId, purchaseOrderReceipts.id))
+		.where(
+			and(
+				isNotNull(purchaseOrders.sentAt),
+				isNull(purchaseOrderReceipts.undoesId),
+				isNull(undo.id),
+				supplierIds
+					? inArray(purchaseOrders.supplierId, supplierIds)
+					: undefined,
+			),
+		)
+		.groupBy(purchaseOrders.id)
+		.as("ranked");
 	const [configured, delivered] = await Promise.all([
 		db
 			.select({ id: suppliers.id, leadTimeDays: suppliers.leadTimeDays })
 			.from(suppliers)
 			.where(supplierIds ? inArray(suppliers.id, supplierIds) : undefined),
-		db
-			.select({
-				supplierId: purchaseOrders.supplierId,
-				sentAt: purchaseOrders.sentAt,
-				firstAt: sql<string>`min(${purchaseOrderReceipts.createdAt})`,
-			})
-			.from(purchaseOrders)
-			.innerJoin(
-				purchaseOrderLines,
-				eq(purchaseOrderLines.purchaseOrderId, purchaseOrders.id),
-			)
-			.innerJoin(
-				purchaseOrderReceipts,
-				eq(purchaseOrderReceipts.lineId, purchaseOrderLines.id),
-			)
-			.leftJoin(undo, eq(undo.undoesId, purchaseOrderReceipts.id))
-			.where(
-				and(
-					isNotNull(purchaseOrders.sentAt),
-					isNull(purchaseOrderReceipts.undoesId),
-					isNull(undo.id),
-					supplierIds
-						? inArray(purchaseOrders.supplierId, supplierIds)
-						: undefined,
-				),
-			)
-			.groupBy(purchaseOrders.id)
-			.orderBy(desc(purchaseOrders.sentAt)),
+		db.select().from(ranked).where(lte(ranked.latest, MEASURED_POS)),
 	]);
 	const bySupplier = new Map<number, number[]>();
 	for (const d of delivered) {
 		if (!d.sentAt) continue;
 		const list = bySupplier.get(d.supplierId) ?? [];
-		if (list.length >= MEASURED_POS) continue;
 		list.push((new Date(d.firstAt).getTime() - d.sentAt.getTime()) / DAY);
 		bySupplier.set(d.supplierId, list);
 	}

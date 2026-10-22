@@ -20,15 +20,28 @@ import { isOurs } from "#/inventory/locations";
 import { onlineStock } from "#/inventory/online-stock";
 import { membershipOf } from "#/purchasing/reorder";
 
-export const getProductDetail = createServerFn({ method: "GET" })
+// The product's ID, from its SKU. The product page loads everything else by ID,
+// so supplier and range can load alongside the detail rather than after it.
+export const getProductId = createServerFn({ method: "GET" })
 	.validator(type({ sku: "string > 0" }))
+	.handler(async ({ data }) => {
+		const [product] = await getDb()
+			.select({ id: products.id })
+			.from(products)
+			.where(eq(products.sku, data.sku));
+		if (!product) throw new Error(`No product ${data.sku}`);
+		return product.id;
+	});
+
+export const getProductDetail = createServerFn({ method: "GET" })
+	.validator(type({ productId: "number.integer > 0" }))
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const [product] = await db
 			.select()
 			.from(products)
-			.where(eq(products.sku, data.sku));
-		if (!product) throw new Error(`No product ${data.sku}`);
+			.where(eq(products.id, data.productId));
+		if (!product) throw new Error(`No product ${data.productId}`);
 
 		// Everything below depends only on the product, so it runs at once:
 		// one round trip of waiting instead of a dozen in a row.

@@ -9,9 +9,8 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
-import { setsSoldSince, soldSince } from "#/inventory/sales";
 import { carried } from "#/products/archive";
-import { DEMAND_DAYS } from "#/purchasing/forecast";
+import { demandWindow, setsSoldIn, soldInWindow } from "#/purchasing/forecast";
 import { setFloorOf, setMembership, setsBlocked } from "#/purchasing/sets";
 import { DEFAULT_COVER_DAYS, loadPlan, type Plan, planFor } from "./plan";
 import {
@@ -21,7 +20,7 @@ import {
 	reorderQuantity,
 	velocityRanks,
 } from "./quantity";
-import { ownedOnHand, setRecipes, unitsOnOrder } from "./stock";
+import { setRecipes, stockAndOrders } from "./stock";
 import { isCritical, ordersItself, type SuggestedLine } from "./suggested";
 
 type Supplier = {
@@ -48,74 +47,71 @@ export async function reorderBreakdown(
 ) {
 	const { now = new Date(), productIds } = options;
 	if (productIds?.length === 0) return [];
-	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
-	const [
-		sold,
-		onHand,
-		onOrder,
-		defaultMin,
-		rows,
-		planned,
-		counted,
-		setsSold,
-		recipes,
-	] = await Promise.all([
-		soldSince(db, since, { includeFba: false }),
-		ownedOnHand(db),
-		unitsOnOrder(db, productIds),
-		// Read here rather than from inventory/stock-range, which imports this
-		// file.
-		db
-			.select({ min: settings.defaultMinStock })
-			.from(settings)
-			.then(([row]) => {
-				if (!row) throw new Error("The settings row is missing");
-				return row.min;
-			}),
-		db
-			.select({
-				productId: products.id,
-				sku: products.sku,
-				kind: products.kind,
-				barcode: products.barcode,
-				name: products.name,
-				variantName: products.variantName,
-				imageUrl: products.imageUrl,
-				productCost: products.unitCost,
-				markedCritical: products.critical,
-				notCounted: sql<boolean>`${products.notCountedSince} is not null`,
-				minStock: products.minStock,
-				maxStock: products.maxStock,
-				supplierSku: productSuppliers.supplierSku,
-				cost: productSuppliers.cost,
-				minimumQuantity: productSuppliers.minimumQuantity,
-				unit: productSuppliers.unit,
-				packSize: productSuppliers.packSize,
-				supplierCount: productSuppliers.supplierCount,
-				supplierId: suppliers.id,
-				supplierName: suppliers.name,
-				coverDays: suppliers.coverDays,
-				minimumOrder: suppliers.minimumOrder,
-				criticalThreshold: suppliers.criticalThreshold,
-			})
-			.from(products)
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
-			.where(
-				and(carried, productIds ? inArray(products.id, productIds) : undefined),
-			)
-			.orderBy(products.name, products.variantName),
-		options.plan ?? loadPlan(db, now),
-		// Products counted on any of our own shelves, ever.
-		db
-			.selectDistinct({ productId: stockLevels.productId })
-			.from(stockLevels)
-			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(and(isOurs, isNotNull(stockLevels.lastCountedAt)))
-			.then((rows) => new Set(rows.map((r) => r.productId))),
-		setsSoldSince(db, since),
-		setRecipes(db),
-	]);
+	// The same window the forecast's days are read over, so the sales shown
+	// and the explanation for them cover the same orders.
+	const demand = demandWindow(now);
+	const [sold, supply, defaultMin, rows, planned, counted, setsSold, recipes] =
+		await Promise.all([
+			soldInWindow(db, demand),
+			// On hand and on order are read together, so they're from one moment.
+			stockAndOrders(db, productIds),
+			// Read here rather than from inventory/stock-range, which imports this
+			// file.
+			db
+				.select({ min: settings.defaultMinStock })
+				.from(settings)
+				.then(([row]) => {
+					if (!row) throw new Error("The settings row is missing");
+					return row.min;
+				}),
+			db
+				.select({
+					productId: products.id,
+					sku: products.sku,
+					kind: products.kind,
+					barcode: products.barcode,
+					name: products.name,
+					variantName: products.variantName,
+					imageUrl: products.imageUrl,
+					productCost: products.unitCost,
+					markedCritical: products.critical,
+					notCounted: sql<boolean>`${products.notCountedSince} is not null`,
+					minStock: products.minStock,
+					maxStock: products.maxStock,
+					supplierSku: productSuppliers.supplierSku,
+					cost: productSuppliers.cost,
+					minimumQuantity: productSuppliers.minimumQuantity,
+					unit: productSuppliers.unit,
+					packSize: productSuppliers.packSize,
+					supplierCount: productSuppliers.supplierCount,
+					supplierId: suppliers.id,
+					supplierName: suppliers.name,
+					coverDays: suppliers.coverDays,
+					minimumOrder: suppliers.minimumOrder,
+					criticalThreshold: suppliers.criticalThreshold,
+				})
+				.from(products)
+				.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+				.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+				.where(
+					and(
+						carried,
+						productIds ? inArray(products.id, productIds) : undefined,
+					),
+				)
+				.orderBy(products.name, products.variantName),
+			options.plan ?? loadPlan(db, now),
+			// Products counted on any of our own shelves, ever.
+			db
+				.selectDistinct({ productId: stockLevels.productId })
+				.from(stockLevels)
+				.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+				.where(and(isOurs, isNotNull(stockLevels.lastCountedAt)))
+				.then((rows) => new Set(rows.map((r) => r.productId))),
+			setsSoldIn(db, demand),
+			setRecipes(db),
+		]);
+	const { onHand, onOrder } = supply;
 	const ranks = velocityRanks(planned.forecasts);
 	const sets = setMembership(recipes, onHand, setsSold);
 

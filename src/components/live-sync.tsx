@@ -11,20 +11,23 @@ import { type SyncedNow, syncChannels } from "#/server/sync";
 // two minutes while someone is using it. The crons only run every four hours,
 // so the database can sleep while nobody is looking. A hidden tab or ten
 // minutes without input pauses it; coming back syncs at once if it's due.
+// A channel another pass is syncing is asked again shortly, a few times, so
+// the page picks up that pass's completion rather than waiting for the next ask.
 
 const EVERY_MS = 2 * 60_000;
 const IDLE_AFTER_MS = 10 * 60_000;
+const BUSY_AGAIN_MS = 5_000;
+const BUSY_TRIES = 30;
 
 type Failed = { channel: string; error: string };
 type Status =
 	| { kind: "syncing"; lastAt: Date | null }
-	| { kind: "synced"; at: Date; failed: Failed[] }
+	// `lastAt` is the newest completion the server reported, never the time
+	// this request returned. `busy` channels are held by another pass.
+	| { kind: "synced"; lastAt: Date | null; failed: Failed[]; busy: string[] }
 	// The request itself failed: offline, signed out, the server down.
-	| { kind: "unreachable"; at: Date; error: string }
+	| { kind: "unreachable"; lastAt: Date | null; error: string }
 	| { kind: "paused"; lastAt: Date | null };
-
-const lastAtOf = (s: Status) =>
-	s.kind === "synced" || s.kind === "unreachable" ? s.at : s.lastAt;
 
 export function LiveSync({ repeat }: { repeat: boolean }) {
 	const router = useRouter();
@@ -36,23 +39,41 @@ export function LiveSync({ repeat }: { repeat: boolean }) {
 	const lastRun = useRef(0);
 	const lastInput = useRef(Date.now());
 	const paused = useRef(false);
+	const busyTries = useRef(0);
+	const busyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+		undefined,
+	);
 
 	const sync = useCallback(
-		async (now: boolean) => {
+		async (now: boolean): Promise<void> => {
 			if (running.current) return;
 			running.current = true;
 			lastRun.current = Date.now();
-			setStatus((s) => ({ kind: "syncing", lastAt: lastAtOf(s) }));
+			clearTimeout(busyTimer.current);
+			if (now) busyTries.current = 0;
+			setStatus((s) => ({ kind: "syncing", lastAt: s.lastAt }));
 			try {
 				const passes = await syncChannels({ data: { now } });
-				setStatus({ kind: "synced", at: new Date(), failed: failedOf(passes) });
-				await router.invalidate();
+				const done = completedAt(passes);
+				const busy = busyOf(passes);
+				setStatus((s) => ({
+					kind: "synced",
+					lastAt: done ?? s.lastAt,
+					failed: failedOf(passes),
+					busy,
+				}));
+				if (done) await router.invalidate();
+				if (busy.length === 0) busyTries.current = 0;
+				else if (busyTries.current < BUSY_TRIES) {
+					busyTries.current++;
+					busyTimer.current = setTimeout(() => void sync(false), BUSY_AGAIN_MS);
+				}
 			} catch (error) {
-				setStatus({
+				setStatus((s) => ({
 					kind: "unreachable",
-					at: new Date(),
+					lastAt: s.lastAt,
 					error: error instanceof Error ? error.message : String(error),
-				});
+				}));
 			} finally {
 				running.current = false;
 			}
@@ -72,7 +93,7 @@ export function LiveSync({ repeat }: { repeat: boolean }) {
 				paused.current = true;
 				// A sync already under way shows until it ends.
 				if (!running.current)
-					setStatus((s) => ({ kind: "paused", lastAt: lastAtOf(s) }));
+					setStatus((s) => ({ kind: "paused", lastAt: s.lastAt }));
 				return;
 			}
 			// Back from a pause syncs at once, so "paused" never stays up while
@@ -99,10 +120,11 @@ export function LiveSync({ repeat }: { repeat: boolean }) {
 			for (const e of events) window.removeEventListener(e, input);
 			document.removeEventListener("visibilitychange", tick);
 			clearInterval(timer);
+			clearTimeout(busyTimer.current);
 		};
 	}, [sync, repeat]);
 
-	const lastAt = lastAtOf(status);
+	const lastAt = status.lastAt;
 	const since = lastAt ? `Last synced ${formatTime(lastAt)}` : "Not synced yet";
 	const [icon, label, tip] =
 		status.kind === "syncing"
@@ -125,13 +147,25 @@ export function LiveSync({ repeat }: { repeat: boolean }) {
 								`${status.failed.map((f) => channelName(f.channel)).join(", ")} didn't sync`,
 								`${status.failed.map((f) => `${channelName(f.channel)}: ${f.error}`).join("\n")}\nDiagnostics has details. Click to try again`,
 							]
-						: [
-								<RefreshCw key="i" />,
-								`Synced ${formatTime(status.at)}`,
-								repeat
-									? "Orders sync every two minutes while you're here. Click to sync now"
-									: "Synced when this page opened. Click to sync again",
-							];
+						: status.busy.length > 0
+							? [
+									<Loader2 key="i" className="animate-spin" />,
+									"Syncing",
+									`${status.busy.map(channelName).join(", ")} is being synced by another pass. Click to check again`,
+								]
+							: lastAt
+								? [
+										<RefreshCw key="i" />,
+										`Synced ${formatTime(lastAt)}`,
+										repeat
+											? "Orders sync every two minutes while you're here. Click to sync now"
+											: "Synced when this page opened. Click to sync again",
+									]
+								: [
+										<RefreshCw key="i" />,
+										"Nothing to sync",
+										"No marketplace is connected. Diagnostics says why",
+									];
 
 	return (
 		<Tip content={<span className="whitespace-pre-line">{tip}</span>}>
@@ -149,6 +183,18 @@ export function LiveSync({ repeat }: { repeat: boolean }) {
 			</Button>
 		</Tip>
 	);
+}
+
+// The newest completion in these results, if any pass completed.
+function completedAt(passes: SyncedNow[]): Date | null {
+	const times = passes.flatMap((p) =>
+		p.state === "ran" || p.state === "fresh" ? [p.at.getTime()] : [],
+	);
+	return times.length > 0 ? new Date(Math.max(...times)) : null;
+}
+
+function busyOf(passes: SyncedNow[]): string[] {
+	return passes.flatMap((p) => (p.state === "busy" ? [p.channel] : []));
 }
 
 function failedOf(passes: SyncedNow[]): Failed[] {

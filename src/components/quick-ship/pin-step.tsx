@@ -4,6 +4,15 @@ import { bigInput } from "./constants";
 import { Spinner } from "./spinner";
 import type { Found } from "./types";
 
+// What the pin under the cursor is. Only "missing" says there's no such order;
+// "failed" means the lookup itself didn't answer.
+type Preview =
+	| { state: "idle" }
+	| { state: "loading" }
+	| { state: "found"; found: Found }
+	| { state: "missing" }
+	| { state: "failed" };
+
 export function PinStep({
 	busy,
 	lookUp,
@@ -14,22 +23,28 @@ export function PinStep({
 	onSubmit: (pin: number) => void;
 }) {
 	const [value, setValue] = useState("");
-	const [preview, setPreview] = useState<Found | null | "loading">(null);
+	const [attempt, setAttempt] = useState(0);
+	const [preview, setPreview] = useState<Preview>({ state: "idle" });
 
 	// Every keystroke looks the pin up, so Enter usually has nothing to wait
-	// for. lookUp caches by pin, so only the typed value matters here.
+	// for. lookUp caches by pin, so only the typed value matters here; a retry
+	// bumps attempt to look the same pin up again.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: see above
 	useEffect(() => {
-		if (!value) return setPreview(null);
+		if (!value) return setPreview({ state: "idle" });
 		let current = true;
-		setPreview("loading");
+		setPreview({ state: "loading" });
 		lookUp(Number(value))
-			.then((f) => current && setPreview(f))
-			.catch(() => current && setPreview(null));
+			.then(
+				(f) =>
+					current &&
+					setPreview(f ? { state: "found", found: f } : { state: "missing" }),
+			)
+			.catch(() => current && setPreview({ state: "failed" }));
 		return () => {
 			current = false;
 		};
-	}, [value]);
+	}, [value, attempt]);
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -48,20 +63,31 @@ export function PinStep({
 				className={cn(bigInput, "tracking-[0.4em] placeholder:text-line")}
 			/>
 			<div className="flex h-8 items-center justify-center text-lg">
-				{preview === "loading" && <Spinner />}
-				{preview && preview !== "loading" && (
+				{preview.state === "loading" && <Spinner />}
+				{preview.state === "found" && (
 					<span>
-						<span className="font-semibold">{preview.order.name}</span>
+						<span className="font-semibold">{preview.found.order.name}</span>
 						<span className="text-muted-foreground">
 							{" "}
-							· {preview.order.customerName ?? "No name"} ·{" "}
-							{preview.plan.lines.reduce((n, l) => n + l.quantity, 0)} items
-							{preview.external && ` · ships on ${preview.external.name}`}
+							· {preview.found.order.customerName ?? "No name"} ·{" "}
+							{preview.found.plan.lines.reduce((n, l) => n + l.quantity, 0)}{" "}
+							items
+							{preview.found.external &&
+								` · ships on ${preview.found.external.name}`}
 						</span>
 					</span>
 				)}
-				{preview === null && value && (
+				{preview.state === "missing" && (
 					<span className="text-critical-text">No order has that pin</span>
+				)}
+				{preview.state === "failed" && (
+					<button
+						type="button"
+						onClick={() => setAttempt((n) => n + 1)}
+						className="text-critical-text underline underline-offset-2"
+					>
+						Couldn't check this pin. Retry
+					</button>
 				)}
 			</div>
 		</div>

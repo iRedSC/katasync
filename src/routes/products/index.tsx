@@ -31,10 +31,10 @@ import { offerUndo } from "#/lib/undo";
 import { productLanguage } from "#/products/language";
 import { facetsOf, sortValuesOf, stateOf } from "#/products/rows";
 import {
+	compile,
 	type Filter,
 	facetCounts,
 	type ListField,
-	matches,
 	parseQuery,
 } from "#/products/search";
 import { isColumn, sortRows, withTerm } from "#/products/sort";
@@ -185,7 +185,7 @@ function ProductList() {
 			new Map(
 				views.map((v) => [
 					v.id,
-					facets.filter((f) => matches(f, v.filters, [])).length,
+					facets.filter(compile(v.filters, []).matches).length,
 				]),
 			),
 		[views, facets],
@@ -193,7 +193,7 @@ function ProductList() {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: stateFor reads state
 	const filtered = useMemo(() => {
 		const q = parseQuery(query);
-		const all = [...filters, ...q.filters];
+		const search = compile([...filters, ...q.filters], q.words);
 		// A sort still being typed applies once it names a column exactly.
 		const by = q.sorts.reduce<ProductSort>(
 			(s, t) =>
@@ -203,28 +203,31 @@ function ProductList() {
 			sort,
 		);
 		return sortRows(
-			products.filter((_, i) => matches(facets[i], all, q.words)),
+			products.filter((_, i) => search.matches(facets[i])),
 			by,
 			(p) => sortValuesOf(p, stateFor(p)),
 		);
 	}, [products, facets, query, filters, sort, state]);
 	// For each rail group, how many products each value would show given
-	// everything else picked, so a count never promises an empty list.
+	// everything else picked, so a count never promises an empty list. One pass
+	// over the catalog serves every group: a product counts for a group when
+	// the only filters it fails are that group's own.
 	const railCounts = useMemo(() => {
 		const q = parseQuery(query);
-		const all = [...filters, ...q.filters];
+		const search = compile([...filters, ...q.filters], q.words);
 		const out = new Map<ListField, Map<string, number>>();
 		for (const g of RAIL) {
 			if ("range" in g) continue;
-			const { field } = g;
-			const others = all.filter((f) => f.field !== field);
-			const values = new Map<string, number>();
-			for (const f of facets) {
-				if (!matches(f, others, q.words)) continue;
+			out.set(g.field, new Map<string, number>());
+		}
+		for (const f of facets) {
+			const missed = search.missing(f);
+			if (missed === null) continue;
+			for (const [field, values] of out) {
+				if (missed.some((m) => m !== field)) continue;
 				for (const v of new Set(f[field]))
 					values.set(v, (values.get(v) ?? 0) + 1);
 			}
-			out.set(field, values);
 		}
 		return out;
 	}, [facets, query, filters]);

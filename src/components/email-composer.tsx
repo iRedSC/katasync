@@ -51,7 +51,9 @@ export function useCloseGuard() {
 }
 
 // The email as it will go, from its template, for a last read and edit.
-// Edits change this email only; the template is in Settings.
+// Edits change this email only; the template is in Settings. Settings would
+// unmount these edits, so the link to it is out of reach until they're sent
+// or discarded.
 export function EmailComposer({
 	preview,
 	sending,
@@ -73,10 +75,13 @@ export function EmailComposer({
 	const [text, setText] = useState(preview.text);
 	const emptySubject = !subject.trim();
 	const emptyText = !text.trim();
+	const edited = (e: EmailEdit) =>
+		e.subject !== preview.subject || e.text !== preview.text;
+	const dirty = edited({ subject, text });
 	const change = (next: EmailEdit) => {
 		setSubject(next.subject);
 		setText(next.text);
-		onDirty(next.subject !== preview.subject || next.text !== preview.text);
+		onDirty(edited(next));
 	};
 	return (
 		<>
@@ -122,8 +127,14 @@ export function EmailComposer({
 				)}
 			</div>
 			<DialogFooter className="items-center gap-2">
-				{blocked ? (
-					<span role="alert" className="text-sm text-warning-text sm:mr-auto">
+				{dirty ? (
+					<span
+						role="alert"
+						className={cn(
+							"text-sm text-warning-text sm:mr-auto",
+							blocked && "font-medium",
+						)}
+					>
 						Unsaved edits. Send, or {cancelLabel} to discard.
 					</span>
 				) : (

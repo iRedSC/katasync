@@ -31,7 +31,7 @@ export function registerDiscountTools(server: McpServer, db: Db) {
 					.positive()
 					.optional()
 					.describe(
-						"Only to put back one that came with a delivery (remove_po_line_discount returns it), so undoing that receipt still takes it off",
+						"Only to put back one that came with a delivery (remove_po_line_discount returns it), so undoing that receipt still takes it off. Together, the discounts on one delivery can't cover more units than came in it",
 					),
 			},
 			annotations: WRITE,

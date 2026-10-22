@@ -53,9 +53,13 @@ function Suppliers() {
 							>
 								<td className="w-full max-w-0 px-4 py-2.5">
 									<div className="flex items-center gap-2">
-										<span className="truncate font-medium">
+										{/* Enter on the name opens it too: its click bubbles to the row. */}
+										<button
+											type="button"
+											className="truncate rounded-sm font-medium text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+										>
 											{r.supplier.name}
-										</span>
+										</button>
 										{r.openOrders > 0 && <Badge>{r.openOrders} on order</Badge>}
 									</div>
 									<div className="text-xs text-muted-foreground">

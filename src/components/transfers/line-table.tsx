@@ -1,8 +1,10 @@
 import { Link } from "@tanstack/react-router";
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ProductImage, ProductName } from "#/components/product";
+import { shake } from "#/components/shake";
 import { formatCount } from "#/lib/format";
+import type { Result } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import type { getTransfer } from "#/server/transfers";
 
@@ -23,7 +25,10 @@ export function LineTable({
 	from: string;
 	to: string;
 	editable: boolean;
-	onQuantity: (line: TransferLine, quantity: number) => void;
+	onQuantity: (
+		line: TransferLine,
+		quantity: number,
+	) => Promise<Result<unknown>>;
 }) {
 	return (
 		<table className="w-full">
@@ -104,30 +109,39 @@ export function LineTable({
 }
 
 // Saves on Enter or leaving the field; anything that isn't a whole number
-// goes back to what it was.
+// goes back to what it was. A save that fails goes back too, and shakes: the
+// toast says why.
 function QuantityInput({
 	value,
 	onSave,
 }: {
 	value: number;
-	onSave: (quantity: number) => void;
+	onSave: (quantity: number) => Promise<Result<unknown>>;
 }) {
 	const [text, setText] = useState(String(value));
 	const [was, setWas] = useState(value);
+	const input = useRef<HTMLInputElement>(null);
 	if (was !== value) {
 		setWas(value);
 		setText(String(value));
 	}
-	function commit() {
+	async function commit() {
 		const n = Number(text);
 		if (text.trim() === "" || !Number.isInteger(n) || n < 0) {
 			setText(String(value));
 			return;
 		}
-		if (n !== value) onSave(n);
+		if (n === value) return;
+		const r = await onSave(n);
+		// Only the number that was sent goes back, so typing made since stays.
+		if (!r) {
+			setText((t) => (t === String(n) ? String(value) : t));
+			shake(input.current);
+		}
 	}
 	return (
 		<input
+			ref={input}
 			value={text}
 			inputMode="numeric"
 			aria-label="Quantity"

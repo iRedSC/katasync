@@ -73,10 +73,10 @@ export function StockCard({
 }) {
 	const badge = LEVEL_BADGE[state.level];
 	return (
-		// biome-ignore lint/a11y/useSemanticElements: holds its own button, so it can't be one
+		// The name is the keyboard link to the product; the rest of the card
+		// opens it on click too.
+		// biome-ignore lint/a11y/noStaticElementInteractions: the name's link is the keyboard path; the card click only widens the target
 		<div
-			role="button"
-			tabIndex={-1}
 			{...link}
 			onContextMenu={onMenu}
 			className={cn(
@@ -90,10 +90,16 @@ export function StockCard({
 			</div>
 			<div className="min-w-0">
 				<p className="line-clamp-2 min-h-10 leading-5 font-medium">
-					{p.name}
-					{p.variantName && (
-						<span className="text-muted-foreground"> {p.variantName}</span>
-					)}
+					<Link
+						to="/products/$sku"
+						params={{ sku: p.sku }}
+						className="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+					>
+						{p.name}
+						{p.variantName && (
+							<span className="text-muted-foreground"> {p.variantName}</span>
+						)}
+					</Link>
 				</p>
 				<p className="flex min-w-0 gap-1.5 text-xs text-muted-foreground">
 					<span className="shrink-0">{p.sku}</span>

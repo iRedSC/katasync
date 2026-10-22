@@ -7,7 +7,8 @@ import {
 	Tag,
 	Undo2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
+import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { DiscountOff } from "#/purchasing/discount";
@@ -24,6 +25,7 @@ const MAX = 9999;
 // marks some or all of what came as free, or a percent or dollars off; the
 // PO's total and the stock's cost follow, and undoing the receipt takes it
 // off too. A line still waiting can be marked back-ordered, or no longer.
+// It's a dialog, so focus stays in the sheet and the page behind it is inert.
 export type ReceiptDiscount = { units?: number; off: DiscountOff };
 
 export function QuantitySheet({
@@ -68,12 +70,7 @@ export function QuantitySheet({
 	const [quantity, setQuantity] = useState(Math.max(remaining, 1));
 	// The first digit replaces the suggested number; later ones append.
 	const [typed, setTyped] = useState(false);
-
-	useEffect(() => {
-		const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [onClose]);
+	const sheetRef = useRef<HTMLDivElement>(null);
 
 	const digit = (d: number) => {
 		setQuantity((q) => Math.min((typed ? q : 0) * 10 + d, MAX));
@@ -136,24 +133,28 @@ export function QuantitySheet({
 	const u = unit ? ` ${unit}` : "";
 
 	return (
-		<div className="fixed inset-0 z-50 flex flex-col justify-end">
-			{/* pointerdown, not click: the finger that opened the sheet lifts
-			    over this backdrop and would otherwise close it at once. */}
-			<button
-				type="button"
-				tabIndex={-1}
-				aria-label="Close"
-				onPointerDown={onClose}
-				className="absolute inset-0 bg-black/40"
-			/>
-			<div
-				role="dialog"
-				aria-modal="true"
-				aria-label={title}
-				className="relative max-h-svh overflow-y-auto overscroll-contain rounded-t-3xl bg-card px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
+		<Dialog
+			open
+			onOpenChange={(open) => {
+				if (!open) onClose();
+			}}
+		>
+			<DialogContent
+				ref={sheetRef}
+				showCloseButton={false}
+				aria-describedby={undefined}
+				onOpenAutoFocus={(e) => {
+					// The sheet takes focus itself, so Enter can't press one of its
+					// buttons before the user has moved into it.
+					e.preventDefault();
+					sheetRef.current?.focus();
+				}}
+				className="top-auto bottom-0 block max-h-svh max-w-xl translate-y-0 gap-0 overflow-y-auto overscroll-contain rounded-t-3xl rounded-b-none border-0 bg-card px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:max-w-xl"
 			>
 				<div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-surface-strong" />
-				<p className="truncate text-center text-base font-semibold">{title}</p>
+				<DialogTitle className="truncate text-center text-base font-semibold">
+					{title}
+				</DialogTitle>
 
 				{canReceive && (
 					<>
@@ -383,8 +384,8 @@ export function QuantitySheet({
 						Undo last receipt ({lastReceipt})
 					</button>
 				)}
-			</div>
-		</div>
+			</DialogContent>
+		</Dialog>
 	);
 }
 

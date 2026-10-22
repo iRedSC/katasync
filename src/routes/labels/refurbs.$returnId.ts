@@ -21,7 +21,7 @@ export const Route = createFileRoute("/labels/refurbs/$returnId")({
 				return new Response(new Uint8Array(await renderRefurbLabel(label)), {
 					headers: {
 						"Content-Type": "application/pdf",
-						"Content-Disposition": `inline; filename="${label.sku}.pdf"`,
+						"Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(`${label.sku}.pdf`)}`,
 						"Cache-Control": "no-store",
 					},
 				});

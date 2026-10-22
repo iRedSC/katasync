@@ -42,7 +42,7 @@ export function typedSize(query: string): BoxSize | null {
 	return { lengthMm, widthMm, heightMm };
 }
 
-const sameSize = (a: BoxSize, b: BoxSize) =>
+export const sameSize = (a: BoxSize, b: BoxSize) =>
 	sides(a).join() === sides(b).join();
 
 // The boxes that fit what's typed, a box of exactly the typed size first.
@@ -66,8 +66,3 @@ export function filterBoxes<B extends NamedBox>(boxes: B[], query: string) {
 		...found.filter((b) => !sameSize(b, size)),
 	];
 }
-
-// Whether a box of the typed size is already saved, so quick ship offers to
-// save it only when it's new.
-export const hasBoxOfSize = (boxes: BoxSize[], size: BoxSize) =>
-	boxes.some((b) => sameSize(b, size));

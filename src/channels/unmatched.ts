@@ -2,7 +2,6 @@ import {
 	type AnyColumn,
 	and,
 	eq,
-	inArray,
 	isNotNull,
 	isNull,
 	max,
@@ -18,7 +17,9 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
+import { LedgerError } from "#/inventory/ledger";
 import { carried } from "#/products/archive";
+import { lockListings } from "./listing-claims";
 import {
 	type Candidate,
 	itemKey,
@@ -270,33 +271,28 @@ export async function suggestProducts(
 	}));
 }
 
-// The listings an item is made of, all still unmatched. Refused when any has
-// been matched since, so a stale screen can't remap one.
-export async function unmatchedListings(db: Db, listingIds: number[]) {
-	if (listingIds.length === 0) throw new Error("No listings given");
-	const rows = await db
-		.select({
-			id: listings.id,
-			productId: listings.productId,
-			externalSku: listings.externalSku,
-			title: listings.title,
-		})
-		.from(listings)
-		.where(inArray(listings.id, listingIds));
-	const missing = listingIds.filter((id) => !rows.some((r) => r.id === id));
-	if (missing.length > 0) throw new Error(`No listing ${missing.join(", ")}`);
+// The listings an item is made of, all still unmatched, locked until the
+// transaction ends so the caller can match them. Refused when any has been
+// matched since, so a stale screen or a racing match can't remap one. Call it
+// inside a transaction.
+export async function unmatchedListings(tx: Db, listingIds: number[]) {
+	const rows = await lockListings(tx, listingIds);
 	const matched = rows.filter((r) => r.productId !== null);
 	if (matched.length > 0)
-		throw new Error(
+		throw new LedgerError(
 			`Already matched: ${matched.map((r) => r.title).join(", ")}`,
 		);
 	return rows;
 }
 
+// itemKey in SQL, so the database counts the items without sending every
+// listing back. Keep the two in step: unmatched-count.test.ts checks they agree.
+const itemKeySql = sql<string>`(case when ${listings.externalSku} ~ '[^[:space:]]' then 'sku:' || lower(regexp_replace(${listings.externalSku}, '^[[:space:]]+|[[:space:]]+$', '', 'g')) else 'title:' || btrim(regexp_replace(lower(regexp_replace(${listings.title}, ' - Default Title$', '')), '[^a-z0-9]+', ' ', 'g')) end)`;
+
 export async function countUnmatched(db: Db) {
-	const rows = await db
-		.select({ sku: listings.externalSku, title: listings.title })
+	const [{ items }] = await db
+		.select({ items: sql<number>`count(distinct ${itemKeySql})::int` })
 		.from(listings)
 		.where(awaitingProduct);
-	return new Set(rows.map((r) => itemKey(r.sku, r.title))).size;
+	return items;
 }

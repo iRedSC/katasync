@@ -169,30 +169,45 @@ const rateResponse = type({
 
 const carrierAccountResponse = type({ carrier: "string" });
 
+// Carrier accounts read so far in one purchase, by account ID. A failed read
+// is dropped, so the next rate on that account reads again.
+export type AccountReads = Map<string, Promise<string>>;
+
 // Reads a rate back from Shippo, so what gets recorded is what Shippo will
-// charge, not whatever the browser sent.
+// charge, not whatever the browser sent. `accounts` belongs to one purchase,
+// so boxes sharing an account read it once.
 export async function getRate(
 	rateId: string,
+	accounts: AccountReads = new Map(),
 ): Promise<Rate & { carrierToken: string }> {
 	const r = rateResponse.assert(
 		await shippoGet(`/rates/${encodeURIComponent(rateId)}`),
 	);
 	// The rate only names the carrier for display ("USPS"); the token
 	// Shippo's tracking API takes ("usps") is on the carrier account.
-	const account = carrierAccountResponse.assert(
-		await shippoGet(
-			`/carrier_accounts/${encodeURIComponent(r.carrier_account)}`,
-		),
-	);
+	const carrierToken = await carrierOf(accounts, r.carrier_account);
 	return {
 		id: r.object_id,
 		carrier: r.provider,
-		carrierToken: account.carrier,
+		carrierToken,
 		service: r.servicelevel.token,
 		serviceName: `${r.provider} ${r.servicelevel.name}`,
 		cost: r.amount,
 		days: r.estimated_days ?? null,
 	};
+}
+
+function carrierOf(accounts: AccountReads, accountId: string) {
+	const known = accounts.get(accountId);
+	if (known) return known;
+	const read = shippoGet(`/carrier_accounts/${encodeURIComponent(accountId)}`)
+		.then((json) => carrierAccountResponse.assert(json).carrier)
+		.catch((err: unknown) => {
+			accounts.delete(accountId);
+			throw err;
+		});
+	accounts.set(accountId, read);
+	return read;
 }
 
 const transactionResponse = type({

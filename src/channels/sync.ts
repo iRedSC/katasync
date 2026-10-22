@@ -1,4 +1,4 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { type Db, withOwnConnection } from "#/db/client";
 import { syncRuns } from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
@@ -106,13 +106,16 @@ export async function syncPassAlone(
 	);
 }
 
-// What a pass asked for by someone watching the orders page did.
+// What a pass asked for by someone watching the orders page did. `at` is when
+// the pass finished, so the page can show a time that's true.
 export type WatchedPass =
-	| { state: "ran"; orders: number; problems: number }
-	// Another pass or a webhook holds the channel; its result is what they'll see.
+	| { state: "ran"; at: Date; orders: number; problems: number }
+	// Another pass or a webhook holds the channel; nothing finished for this ask.
 	| { state: "busy" }
-	// A pass started within freshFor; another now would only repeat it.
-	| { state: "fresh" };
+	// A pass finished within freshFor; another now would only repeat it.
+	| { state: "fresh"; at: Date }
+	// The pass that finished within freshFor failed; it isn't retried until then.
+	| { state: "failed"; error: string };
 
 // A pass for the orders page, which asks every couple of minutes while it's
 // open. However many pages are open, a channel syncs at most once per
@@ -129,16 +132,25 @@ export async function watchedPass(
 		async (): Promise<WatchedPass> => {
 			const since = new Date(Date.now() - freshForMs);
 			const [recent] = await db
-				.select({ id: syncRuns.id })
+				.select({ finishedAt: syncRuns.finishedAt, error: syncRuns.error })
 				.from(syncRuns)
 				.where(
-					and(eq(syncRuns.channel, channel), gte(syncRuns.startedAt, since)),
+					and(
+						eq(syncRuns.channel, channel),
+						gte(syncRuns.startedAt, since),
+						isNotNull(syncRuns.finishedAt),
+					),
 				)
+				.orderBy(desc(syncRuns.startedAt))
 				.limit(1);
-			if (recent) return { state: "fresh" };
+			if (recent?.finishedAt) {
+				if (recent.error) return { state: "failed", error: recent.error };
+				return { state: "fresh", at: recent.finishedAt };
+			}
 			const result = await syncPass(db, channel, { listings: false });
 			return {
 				state: "ran",
+				at: new Date(),
 				orders: result.orders,
 				problems: result.problems.length,
 			};

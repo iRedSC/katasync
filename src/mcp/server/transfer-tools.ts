@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
 import { locations, products, transferLines, transfers } from "#/db/schema";
@@ -9,7 +9,7 @@ import {
 	setShelfTarget,
 } from "#/inventory/refill";
 import {
-	createTransfer,
+	createDraftWith,
 	deleteTransfer,
 	moveNow,
 	sendTransfer,
@@ -19,6 +19,7 @@ import {
 	unsendTransfer,
 	updateTransfer,
 } from "#/inventory/transfers";
+import { PurchaseOrderError } from "#/purchasing/orders";
 import { ourLocation, productBySku } from "./lookups";
 import { json, READ, WRITE } from "./tool-shapes";
 
@@ -49,14 +50,26 @@ async function warehouse(db: Db) {
 	return found[0].id;
 }
 
+// The product each line names, in one lookup. Names are trimmed as productBySku
+// trims them.
 async function linesBySku(db: Db, lines: { sku: string; quantity: number }[]) {
-	const out = [];
-	for (const l of lines)
-		out.push({
-			productId: (await productBySku(db, l.sku)).id,
-			quantity: l.quantity,
-		});
-	return out;
+	if (lines.length === 0) return [];
+	const found = await db
+		.select({ id: products.id, sku: products.sku })
+		.from(products)
+		.where(
+			inArray(
+				products.sku,
+				lines.map((l) => l.sku.trim()),
+			),
+		);
+	const idBySku = new Map(found.map((p) => [p.sku, p.id]));
+	return lines.map((l) => {
+		const productId = idBySku.get(l.sku.trim());
+		if (productId === undefined)
+			throw new PurchaseOrderError(`No product with SKU ${l.sku}`);
+		return { productId, quantity: l.quantity };
+	});
 }
 
 async function describeTransfer(db: Db, id: number) {
@@ -156,15 +169,19 @@ export function registerTransferTools(server: McpServer, db: Db) {
 			annotations: WRITE,
 		},
 		async ({ from, to, note, lines, refill }) => {
-			const id = await createTransfer(db, {
-				fromLocationId: from
-					? await ourLocation(db, from)
-					: await warehouse(db),
-				toLocationId: to ? await ourLocation(db, to) : await retailStore(db),
-				note,
-			});
-			if (lines) await setTransferLines(db, id, await linesBySku(db, lines));
-			const filled = refill ? await fillFromSuggestions(db, id) : null;
+			// Resolved before anything is written, so a bad SKU leaves no draft.
+			const { id, filled } = await createDraftWith(
+				db,
+				{
+					fromLocationId: from
+						? await ourLocation(db, from)
+						: await warehouse(db),
+					toLocationId: to ? await ourLocation(db, to) : await retailStore(db),
+					note,
+					lines: lines ? await linesBySku(db, lines) : undefined,
+				},
+				async (tx, draft) => (refill ? fillFromSuggestions(tx, draft) : null),
+			);
 			return json({
 				...(await describeTransfer(db, id)),
 				...(filled ? { source_has_none_of: filled.none } : {}),

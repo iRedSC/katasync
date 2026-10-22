@@ -340,8 +340,11 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 	const minSetsPoint =
 		why.aim.kind === "min" || why.orderBelow > restockPoint(why);
 	const have = afterArrival(why.onHand, why.onOrder);
-	const minLabel =
-		why.minFrom === "sets" ? "Enough to build each tool set" : "Min stock";
+	const minLabel = {
+		stock: "Min stock",
+		sets: "Enough to build each tool set",
+		oversold: "Buy back what's oversold",
+	}[why.minFrom];
 
 	if (v.kind === "idle" && why.minStock === 0) return null;
 

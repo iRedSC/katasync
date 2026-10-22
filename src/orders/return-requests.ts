@@ -27,8 +27,9 @@ export type ChannelReturn = {
 	rawStatus: string;
 	// Why, as the marketplace names it (a code or its words).
 	reason: string | null;
-	// What the buyer wrote, when they wrote anything.
-	note: string | null;
+	// What the buyer wrote, when they wrote anything. Left out when it wasn't
+	// asked for or couldn't be read: a note already saved stays as it is.
+	note?: string | null;
 	trackingNumber: string | null;
 	carrier: string | null;
 	requestedAt: Date;
@@ -57,10 +58,42 @@ export function matchLine(
 	return lines.length === 1 ? lines[0].id : null;
 }
 
+// What a return saves as, with its lines matched to ours. A fresh read that
+// makes the same snapshot as the saved one needs no write. Lines compare as a
+// set, since their order means nothing; a line that has since matched a
+// different order line changes its orderLineId, so the snapshot changes too.
+type Snapshot = {
+	orderId: number;
+	status: ReturnStatus;
+	rawStatus: string;
+	reason: string | null;
+	note: string | null;
+	trackingNumber: string | null;
+	carrier: string | null;
+	requestedAt: Date;
+	lines: { orderLineId: number | null; sku: string | null; quantity: number }[];
+};
+
+function canonical(s: Snapshot) {
+	return JSON.stringify([
+		s.orderId,
+		s.status,
+		s.rawStatus,
+		s.reason,
+		s.note,
+		s.trackingNumber,
+		s.carrier,
+		s.requestedAt.getTime(),
+		s.lines
+			.map((l) => JSON.stringify([l.orderLineId, l.sku, l.quantity]))
+			.sort(),
+	]);
+}
+
 // Saves each return against its order in this store, replacing what the
 // marketplace said before. A return for an order katasync doesn't have
 // (older than its history, or never synced) is skipped, and its order named
-// in missing.
+// in missing. A return that hasn't changed since it was saved is left alone.
 export async function saveReturns(
 	db: Db,
 	store: { id: number; channel: ChannelReturnChannel },
@@ -88,37 +121,132 @@ export async function saveReturns(
 					.where(inArray(orders.marketplaceOrderId, [...new Set(relayed)]))
 			: [];
 	const movedIds = new Map(moved.map((o) => [o.key, o.id]));
+	// Each return with its order here; no orderId when katasync doesn't have it.
+	const placed = returns.map((r) => ({
+		r,
+		orderId:
+			orderIds.get(r.orderExternalId) ??
+			(r.marketplaceOrderId ? movedIds.get(r.marketplaceOrderId) : undefined),
+	}));
+	// Read once for the whole batch rather than once per return: the order
+	// lines to match against, and what's saved already.
+	const placedIds = [...new Set(placed.flatMap((p) => p.orderId ?? []))];
+	const lineRows =
+		placedIds.length > 0
+			? await db
+					.select({
+						id: orderLines.id,
+						orderId: orderLines.orderId,
+						externalId: orderLines.externalId,
+						sku: orderLines.sku,
+					})
+					.from(orderLines)
+					.where(inArray(orderLines.orderId, placedIds))
+			: [];
+	const linesOf = new Map<number, Line[]>();
+	for (const l of lineRows) {
+		const bucket = linesOf.get(l.orderId);
+		if (bucket) bucket.push(l);
+		else linesOf.set(l.orderId, [l]);
+	}
+	const requests = await db
+		.select({
+			id: returnRequests.id,
+			externalId: returnRequests.externalId,
+			orderId: returnRequests.orderId,
+			status: returnRequests.status,
+			rawStatus: returnRequests.rawStatus,
+			reason: returnRequests.reason,
+			note: returnRequests.note,
+			trackingNumber: returnRequests.trackingNumber,
+			carrier: returnRequests.carrier,
+			requestedAt: returnRequests.requestedAt,
+		})
+		.from(returnRequests)
+		.where(
+			and(
+				eq(returnRequests.billedBy, store.channel),
+				inArray(returnRequests.externalId, [
+					...new Set(returns.map((r) => r.externalId)),
+				]),
+			),
+		);
+	const requestLines =
+		requests.length > 0
+			? await db
+					.select({
+						requestId: returnRequestLines.requestId,
+						orderLineId: returnRequestLines.orderLineId,
+						sku: returnRequestLines.sku,
+						quantity: returnRequestLines.quantity,
+					})
+					.from(returnRequestLines)
+					.where(
+						inArray(
+							returnRequestLines.requestId,
+							requests.map((q) => q.id),
+						),
+					)
+			: [];
+	const linesOfRequest = new Map<number, Snapshot["lines"]>();
+	for (const l of requestLines) {
+		const line = {
+			orderLineId: l.orderLineId,
+			sku: l.sku,
+			quantity: l.quantity,
+		};
+		const bucket = linesOfRequest.get(l.requestId);
+		if (bucket) bucket.push(line);
+		else linesOfRequest.set(l.requestId, [line]);
+	}
+	const savedBy = new Map(
+		requests.map((q) => [
+			q.externalId,
+			{ ...q, lines: linesOfRequest.get(q.id) ?? [] },
+		]),
+	);
 	let saved = 0;
 	const missing = new Set<string>();
-	for (const r of returns) {
-		const orderId =
-			orderIds.get(r.orderExternalId) ??
-			(r.marketplaceOrderId ? movedIds.get(r.marketplaceOrderId) : undefined);
+	for (const { r, orderId } of placed) {
 		if (orderId === undefined) {
 			// A Shopify gid reads as its number.
 			missing.add(r.orderExternalId.split("/").pop() ?? r.orderExternalId);
 			continue;
 		}
+		const current = savedBy.get(r.externalId);
+		const lines = linesOf.get(orderId) ?? [];
+		const next: Snapshot = {
+			orderId,
+			status: r.status,
+			rawStatus: r.rawStatus,
+			reason: r.reason,
+			// A note the marketplace didn't send keeps the one saved.
+			note: r.note === undefined ? (current?.note ?? null) : r.note,
+			trackingNumber: r.trackingNumber,
+			carrier: r.carrier,
+			requestedAt: r.requestedAt,
+			lines: r.lines.map((l) => ({
+				orderLineId: matchLine(lines, l),
+				sku: l.sku,
+				quantity: l.quantity,
+			})),
+		};
+		if (current && canonical(current) === canonical(next)) {
+			saved++;
+			continue;
+		}
 		await db.transaction(async (tx) => {
-			const lines = await tx
-				.select({
-					id: orderLines.id,
-					externalId: orderLines.externalId,
-					sku: orderLines.sku,
-				})
-				.from(orderLines)
-				.where(eq(orderLines.orderId, orderId));
 			const values = {
 				orderId,
 				billedBy: store.channel,
 				externalId: r.externalId,
-				status: r.status,
-				rawStatus: r.rawStatus,
-				reason: r.reason,
-				note: r.note,
-				trackingNumber: r.trackingNumber,
-				carrier: r.carrier,
-				requestedAt: r.requestedAt,
+				status: next.status,
+				rawStatus: next.rawStatus,
+				reason: next.reason,
+				note: next.note,
+				trackingNumber: next.trackingNumber,
+				carrier: next.carrier,
+				requestedAt: next.requestedAt,
 				sourceUpdatedAt: new Date(),
 			};
 			const [request] = await tx
@@ -132,15 +260,10 @@ export async function saveReturns(
 			await tx
 				.delete(returnRequestLines)
 				.where(eq(returnRequestLines.requestId, request.id));
-			if (r.lines.length > 0)
-				await tx.insert(returnRequestLines).values(
-					r.lines.map((l) => ({
-						requestId: request.id,
-						orderLineId: matchLine(lines, l),
-						sku: l.sku,
-						quantity: l.quantity,
-					})),
-				);
+			if (next.lines.length > 0)
+				await tx
+					.insert(returnRequestLines)
+					.values(next.lines.map((l) => ({ requestId: request.id, ...l })));
 		});
 		saved++;
 	}

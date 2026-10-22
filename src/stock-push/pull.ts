@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, locations, movements, products, stores } from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
@@ -40,7 +40,21 @@ export type Unpulled = {
 	detail: string;
 };
 
-export type PullPlan = { pulls: Pull[]; unpulled: Unpulled[] };
+// How many movements each product had when the stores were read. Movements are
+// append-only, so a count that has grown means something posted since.
+export type LedgerMark = Map<number, number>;
+
+export type PullPlan = {
+	pulls: Pull[];
+	unpulled: Unpulled[];
+	mark: LedgerMark;
+};
+
+export type PullResult =
+	| { state: "posted"; posted: number }
+	// Something posted to these products after the stores were read, so the
+	// numbers may be stale. Nothing was posted; read the stores again.
+	| { state: "moved"; skus: string[] };
 
 const untracked = sql`not exists (select 1 from ${movements} where ${movements.productId} = ${products.id} and ${movements.reason} not in ('sale', 'return'))`;
 
@@ -81,12 +95,41 @@ async function stockless(db: Db) {
 	return [...bySku.values()];
 }
 
+// Movement counts for these products; zero for one with none.
+async function movementCounts(
+	db: Db,
+	productIds: number[],
+): Promise<LedgerMark> {
+	const counts = new Map<number, number>(productIds.map((id) => [id, 0]));
+	if (productIds.length === 0) return counts;
+	const rows = await db
+		.select({ productId: movements.productId, n: count() })
+		.from(movements)
+		.where(inArray(movements.productId, productIds))
+		.groupBy(movements.productId);
+	for (const r of rows) counts.set(r.productId, r.n);
+	return counts;
+}
+
+// Marks the ledgers of the stockless products. Take it before reading the
+// stores: anything that posts after this is caught when the plan is applied.
+export async function markLedgers(db: Db): Promise<LedgerMark> {
+	return movementCounts(
+		db,
+		(await stockless(db)).map((p) => p.productId),
+	);
+}
+
 // What a pull would take, from reads in trust order. The first store with a
-// real number for a product decides it, even when that number is 0.
+// real number for a product decides it, even when that number is 0. `mark` is
+// the ledgers from before the stores were read (markLedgers). Left out, they're
+// marked now, which is only right when the reads came after nothing else.
 export async function planStockPull(
 	db: Db,
 	reads: StoreRead[],
+	mark?: LedgerMark,
 ): Promise<PullPlan> {
+	const marked = mark ?? (await markLedgers(db));
 	const pulls: Pull[] = [];
 	const unpulled: Unpulled[] = [];
 	for (const p of await stockless(db)) {
@@ -134,17 +177,21 @@ export async function planStockPull(
 				},
 			);
 	}
-	return { pulls, unpulled };
+	return { pulls, unpulled, mark: marked };
 }
 
 // Posts what takes each product from its ledger to the plan's quantity, as
-// opening stock on our own shelf. A product that gained a stock record since
-// the plan (a receipt, a count, or this having run already) is skipped, so a
-// pull can't count anything twice. Returns how many it put on record.
-export async function applyStockPull(db: Db, plan: PullPlan) {
+// opening stock on our own shelf. The stores' numbers are only good for the
+// ledger they were read against, so if any pulled product has moved since the
+// plan's mark, nothing posts and the stores must be read again: rebasing an
+// old number onto a newer ledger would absorb the sales in between.
+export async function applyStockPull(
+	db: Db,
+	plan: PullPlan,
+): Promise<PullResult> {
 	const wanted = plan.pulls;
-	if (wanted.length === 0) return 0;
-	return db.transaction(async (tx) => {
+	if (wanted.length === 0) return { state: "posted", posted: 0 };
+	return db.transaction(async (tx): Promise<PullResult> => {
 		const [shelf] = await tx
 			.select({ id: locations.id })
 			.from(locations)
@@ -157,10 +204,12 @@ export async function applyStockPull(db: Db, plan: PullPlan) {
 		// ledger and posting on top of it.
 		await tx.execute(sql`lock table ${movements} in share row exclusive mode`);
 		const ids = wanted.map((p) => p.productId);
-		const eligible = await tx
-			.select({ id: products.id })
-			.from(products)
-			.where(and(inArray(products.id, ids), untracked));
+		const now = await movementCounts(tx, ids);
+		const moved = wanted.filter(
+			(p) => now.get(p.productId) !== plan.mark.get(p.productId),
+		);
+		if (moved.length > 0)
+			return { state: "moved", skus: moved.map((p) => p.sku) };
 		const ledger = await tx
 			.select({
 				productId: movements.productId,
@@ -169,39 +218,33 @@ export async function applyStockPull(db: Db, plan: PullPlan) {
 			.from(movements)
 			.where(inArray(movements.productId, ids))
 			.groupBy(movements.productId);
-		const still = new Map<number, number>(
-			eligible.map((r) => [
-				r.id,
-				ledger.find((l) => l.productId === r.id)?.onHand ?? 0,
-			]),
-		);
-		const lines = wanted.flatMap((p) => {
-			const onHand = still.get(p.productId);
+		const onHand = new Map(ledger.map((l) => [l.productId, l.onHand]));
+		const lines = wanted.map((p) => ({
+			productId: p.productId,
+			locationId: shelf.id,
 			// Even when it already matches, so the product is on record (an
 			// opening balance of 0 is allowed) and no later pull takes it.
-			if (onHand === undefined) return [];
-			return [
-				{
-					productId: p.productId,
-					locationId: shelf.id,
-					delta: p.quantity - onHand,
-					reason: "opening_balance" as const,
-				},
-			];
-		});
-		if (lines.length === 0) return 0;
+			delta: p.quantity - (onHand.get(p.productId) ?? 0),
+			reason: "opening_balance" as const,
+		}));
 		await postMovements(tx, {
 			lines,
 			reference: "stock-pull",
 			note: "Opening stock taken from the channels before stock push",
 		});
-		return lines.length;
+		return { state: "posted", posted: lines.length };
 	});
 }
 
-// The stores in the order to trust their numbers: the primary store first.
+// The stores in the order to trust their numbers: the primary store first, so
+// its number decides whenever it has one, even zero. The rest follow in channel
+// order and only fill in where the primary has no number or couldn't be read.
 export async function storesInTrustOrder(db: Db) {
 	const all = await db.select().from(stores).orderBy(asc(stores.id));
 	const rank = { shopify: 0, tiktok: 1, amazon: 2, ebay: 3 } as const;
-	return all.sort((a, b) => rank[a.channel] - rank[b.channel]);
+	return all.sort(
+		(a, b) =>
+			Number(b.primary) - Number(a.primary) ||
+			rank[a.channel] - rank[b.channel],
+	);
 }

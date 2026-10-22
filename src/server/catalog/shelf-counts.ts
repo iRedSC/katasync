@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { type Db, getDb } from "#/db/client";
 import {
@@ -14,6 +14,7 @@ import {
 	cancelCountRequests,
 	recordCount as recordShelfCount,
 	requestCounts,
+	requestOutstanding,
 } from "#/inventory/ledger";
 import { isOurs } from "#/inventory/locations";
 
@@ -65,11 +66,7 @@ export const recordCount = createServerFn({ method: "POST" })
 
 // A shelf is due once someone asks for a count, until a count lands after
 // the request.
-export const countDue = and(
-	isNotNull(stockLevels.countRequestedAt),
-	sql`(${stockLevels.lastCountedAt} is null or ${stockLevels.lastCountedAt} < ${stockLevels.countRequestedAt})`,
-	isOurs,
-);
+export const countDue = and(requestOutstanding, isOurs);
 
 // Puts a product on the count list at every shelf of ours holding it, or our
 // first location when none does yet. Returns the shelves this put on the list,

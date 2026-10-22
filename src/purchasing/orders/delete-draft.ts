@@ -13,6 +13,7 @@ import { discountRow } from "#/purchasing/discount";
 import { checkDiscounts, lineDiscounts } from "./discount-checks";
 import { currentDraft } from "./drafts";
 import { lockOrder, PurchaseOrderError, poName } from "./lock";
+import { checkPrice } from "./price";
 import type { DeletedDraft } from "./types";
 
 // Throws a draft away, lines and all. Nothing was sent, so there's no record
@@ -98,6 +99,8 @@ async function dropFiles(tx: Db, id: number) {
 // Undoes deleteDraft: the same draft, under the same PO number. It can't come
 // back once its supplier has a new draft.
 export async function restoreDraft(db: Db, draft: DeletedDraft) {
+	// Refused before anything is touched, the same as a new line's price.
+	for (const l of draft.lines) checkPrice(l.unitCost);
 	return db.transaction(async (tx) => {
 		const [other] = await currentDraft(tx, draft.supplierId);
 		if (other?.status === "draft")

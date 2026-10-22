@@ -1,5 +1,4 @@
 import NumberFlow from "@number-flow/react";
-import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "#/components/page";
@@ -106,7 +105,6 @@ function TargetInput({
 	store: string;
 	value: number | null;
 }) {
-	const router = useRouter();
 	const shown = value === null ? "" : String(value);
 	const [text, setText] = useState(shown);
 	const [was, setWas] = useState(shown);
@@ -121,7 +119,6 @@ function TargetInput({
 			send: () => saveShelfTarget({ data: { productId, locationId, target } }),
 		});
 		if (!r) return setText(shown);
-		await router.invalidate();
 		toast.success(
 			target === null || target === 0
 				? `Refills leave this alone at ${store}`

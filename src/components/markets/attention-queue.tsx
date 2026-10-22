@@ -98,7 +98,8 @@ function Entry({
 					<ul className="overflow-hidden rounded-lg border bg-card">
 						{e.items.map((i) => (
 							<li
-								key={i.ref}
+								// Two TikTok products can share a seller SKU; their listing IDs differ.
+								key={`${i.listingId ?? ""}|${i.ref}`}
 								className="flex items-start gap-3 border-t px-3 py-2 first:border-t-0"
 							>
 								<ProductImage

@@ -121,6 +121,11 @@ async function convertKits(
 	});
 }
 
+// A request is outstanding while it's set and no count has landed after it.
+// Read in SQL, on the exact timestamps: a Date drops the microseconds, so two
+// times a millisecond apart would compare equal there.
+export const requestOutstanding = sql`(${stockLevels.countRequestedAt} is not null and (${stockLevels.lastCountedAt} is null or ${stockLevels.lastCountedAt} < ${stockLevels.countRequestedAt}))`;
+
 // Puts shelves on the cycle count list. A shelf already waiting keeps its
 // request time, and so its place in the queue. Returns the shelves this call
 // put on the list, each with its exact request time (as text, since a Date
@@ -167,7 +172,7 @@ export async function requestCounts(
 			set: { countRequestedAt: sql`now()` },
 			// Only shelves not already waiting. Two requests at once queue on
 			// the row, and the second sees the first's, so only one adds it.
-			setWhere: sql`${stockLevels.countRequestedAt} is null or ${stockLevels.lastCountedAt} >= ${stockLevels.countRequestedAt}`,
+			setWhere: sql`not ${requestOutstanding}`,
 		})
 		.returning({
 			productId: stockLevels.productId,
@@ -345,20 +350,19 @@ export async function recordCount(
 // back the shelf's previous count date, unless a later count has replaced it.
 export async function undoBatch(db: Db, batchId: string) {
 	return db.transaction(async (tx) => {
+		// Held to the end of this transaction, so an undo of the same batch waits
+		// here, then sees the reversal this one commits.
+		await tx.execute(
+			sql`select pg_advisory_xact_lock(hashtext('undo-batch'), hashtext(${batchId}))`,
+		);
 		const original = await tx
 			.select()
 			.from(movements)
 			.where(eq(movements.batchId, batchId));
 		if (original.length === 0) throw new LedgerError("Nothing to undo");
-		const reference = `undo:${batchId}`;
-		const [already] = await tx
-			.select({ id: movements.id })
-			.from(movements)
-			.where(eq(movements.reference, reference))
-			.limit(1);
-		if (already) throw new LedgerError("Already undone");
+		if (await isUndone(tx, batchId)) throw new LedgerError("Already undone");
 		const result = await postMovements(tx, {
-			reference,
+			reference: undoReference(batchId),
 			note: original[0].note ? `Undo: ${original[0].note}` : "Undo",
 			lines: original.map((m) => ({
 				productId: m.productId,
@@ -367,19 +371,69 @@ export async function undoBatch(db: Db, batchId: string) {
 				reason: m.reason,
 			})),
 		});
-		// Matching on countedAt leaves the shelf alone if anything counted it since.
-		await tx
-			.update(stockLevels)
-			.set({ lastCountedAt: stockCounts.previousCountedAt })
+		await restoreCountDate(tx, batchId);
+		return result;
+	});
+}
+
+const undoReference = (batchId: string) => `undo:${batchId}`;
+
+async function isUndone(db: Db, batchId: string) {
+	const [undo] = await db
+		.select({ id: movements.id })
+		.from(movements)
+		.where(eq(movements.reference, undoReference(batchId)))
+		.limit(1);
+	return undo !== undefined;
+}
+
+// Puts the shelf's count date back to the newest count before this one that
+// still stands. Counts that were undone are skipped, so an undone count can't
+// come back through a later one. A matching count has no stock_counts row and
+// can't be undone, so it always stands. Dates travel as text: a Date drops the
+// microseconds the stored value has, so it wouldn't match the shelf again.
+async function restoreCountDate(tx: Db, batchId: string) {
+	const [counted] = await tx
+		.select({
+			productId: stockCounts.productId,
+			locationId: stockCounts.locationId,
+			countedAt: sql<string>`${stockCounts.countedAt}::text`,
+			previousCountedAt: sql<
+				string | null
+			>`${stockCounts.previousCountedAt}::text`,
+		})
+		.from(stockCounts)
+		.where(eq(stockCounts.batchId, batchId));
+	if (!counted) return;
+	let restored = counted.previousCountedAt;
+	while (restored !== null) {
+		const [earlier] = await tx
+			.select({
+				batchId: stockCounts.batchId,
+				previousCountedAt: sql<
+					string | null
+				>`${stockCounts.previousCountedAt}::text`,
+			})
 			.from(stockCounts)
 			.where(
 				and(
-					eq(stockCounts.batchId, batchId),
-					eq(stockLevels.productId, stockCounts.productId),
-					eq(stockLevels.locationId, stockCounts.locationId),
-					eq(stockLevels.lastCountedAt, stockCounts.countedAt),
+					eq(stockCounts.productId, counted.productId),
+					eq(stockCounts.locationId, counted.locationId),
+					sql`${stockCounts.countedAt} = ${restored}::timestamptz`,
 				),
 			);
-		return result;
-	});
+		if (!earlier || !(await isUndone(tx, earlier.batchId))) break;
+		restored = earlier.previousCountedAt;
+	}
+	// Matching on countedAt leaves the shelf alone if anything counted it since.
+	await tx
+		.update(stockLevels)
+		.set({ lastCountedAt: sql`${restored}::timestamptz` })
+		.where(
+			and(
+				eq(stockLevels.productId, counted.productId),
+				eq(stockLevels.locationId, counted.locationId),
+				sql`${stockLevels.lastCountedAt} = ${counted.countedAt}::timestamptz`,
+			),
+		);
 }

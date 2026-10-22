@@ -32,14 +32,18 @@ import { countUnfiled, emailHtml } from "#/purchasing/inbox/ingest";
 const market = "'shopify' | 'amazon' | 'ebay' | 'tiktok'";
 const folder = "'orders' | 'returns' | 'violations' | 'updates'";
 
+// The page after `after`, where the last one stopped, so none is skipped or repeated.
 export const listMarketMail = createServerFn({ method: "GET" })
 	.validator(
 		type({
 			view: `${folder} | 'important' | 'done'`,
 			market: `${market} | null`,
+			"after?": { at: "number.integer", id: "number.integer > 0" },
 		}),
 	)
-	.handler(async ({ data }) => marketMailPage(getDb(), data.view, data.market));
+	.handler(async ({ data }) =>
+		marketMailPage(getDb(), data.view, data.market, { after: data.after }),
+	);
 
 export const setMarketEmailDone = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0", done: "boolean" }))

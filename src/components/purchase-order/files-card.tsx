@@ -17,6 +17,7 @@ import {
 	shownAs,
 } from "#/components/emails/reader";
 import { Card } from "#/components/page";
+import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -94,14 +95,6 @@ async function upload(purchaseOrderId: number, file: File) {
 			(res ? `${file.name} didn't upload (${res.status})` : "No connection"),
 	);
 }
-
-const shake = (el: HTMLElement | null) => {
-	if (!el || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-	el.animate(
-		[0, -6, 6, -4, 4, 0].map((x) => ({ transform: `translateX(${x}px)` })),
-		{ duration: 300 },
-	);
-};
 
 export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const po = d.order;

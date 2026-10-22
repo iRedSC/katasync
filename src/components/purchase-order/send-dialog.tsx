@@ -36,6 +36,8 @@ export function SendDialog({
 		previewPurchaseOrderEmail({ data: { id: purchaseOrderId } }).then(
 			(p) => live && setPreview(p),
 			(error: unknown) => {
+				// A failure from a composer that's gone must not close the one open now.
+				if (!live) return;
 				toast.error(error instanceof Error ? error.message : String(error));
 				onClose();
 			},

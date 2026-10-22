@@ -1,5 +1,5 @@
 import { Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "#/lib/utils";
 
@@ -96,6 +96,16 @@ export function useNumberLine({
 		drag.current = null;
 		setPreview(null);
 	};
+	// Unmounting mid-drag (a removed row, say) may never see the pointer end,
+	// so the scrub stops here, without a commit.
+	useEffect(
+		() => () => {
+			const d = drag.current;
+			if (d?.frame != null) cancelAnimationFrame(d.frame);
+			drag.current = null;
+		},
+		[],
+	);
 
 	const handlers = {
 		onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
@@ -150,6 +160,9 @@ export function useNumberLine({
 			if (next !== start) onCommit(next);
 		},
 		onPointerCancel: stop,
+		// Capture can go without a cancel (the element leaves the page), and the
+		// drag can't go on without it.
+		onLostPointerCapture: stop,
 	};
 
 	return {

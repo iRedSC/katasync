@@ -19,24 +19,28 @@ export function WeightStep({
 	onSubmit: (grams: number) => void;
 	onAnother: (grams: number) => void;
 }) {
+	// The mass is kept in grams. The text and unit only show it, so switching
+	// units reformats the same mass and never changes what's submitted.
 	const [unit, setUnit] = useState<"oz" | "lb">("oz");
+	const [mass, setMass] = useState<number | null>(initialGrams);
 	const [value, setValue] = useState(
 		initialGrams === null ? "" : ounces(initialGrams),
 	);
 	const input = useRef<HTMLInputElement>(null);
+	// Typed text as whole grams, or null when it isn't a weight above zero.
 	const grams = (text: string, u: "oz" | "lb") => {
 		const n = Number(text);
 		return n > 0
 			? Math.round((u === "oz" ? n : n * 16) * GRAMS_PER_OUNCE)
 			: null;
 	};
+	// A mass as the input shows it in a unit.
+	const show = (g: number, u: "oz" | "lb") =>
+		u === "oz" ? ounces(g) : (g / GRAMS_PER_OUNCE / 16).toFixed(2);
 
 	function toggle() {
-		const n = Number(value);
 		const next = unit === "oz" ? "lb" : "oz";
-		if (n > 0) {
-			setValue(next === "lb" ? (n / 16).toFixed(2) : (n * 16).toFixed(1));
-		}
+		if (mass !== null) setValue(show(mass, next));
 		setUnit(next);
 		input.current?.focus();
 	}
@@ -58,20 +62,21 @@ export function WeightStep({
 					onFocus={(e) => e.target.select()}
 					onChange={(e) => {
 						const text = e.target.value.replace(/[^\d.]/g, "");
+						const next = grams(text, unit);
 						setValue(text);
-						onDraft(grams(text, unit));
+						setMass(next);
+						onDraft(next);
 					}}
 					onKeyDown={(e) => {
 						if (e.key === "Tab") {
 							e.preventDefault();
 							toggle();
 						}
-						const g = grams(value, unit);
-						if (e.key === "Enter" && g) onSubmit(g);
+						if (e.key === "Enter" && mass) onSubmit(mass);
 						// + finishes this box and starts another.
 						if (e.key === "+" || e.key === "=") {
 							e.preventDefault();
-							if (g) onAnother(g);
+							if (mass) onAnother(mass);
 						}
 					}}
 					className={cn(bigInput, "pr-24 placeholder:text-line")}

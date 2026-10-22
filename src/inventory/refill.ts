@@ -1,7 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { products, shelfTargets, stockLevels, transfers } from "#/db/schema";
-import { setTransferLines, TransferError, transferName } from "./transfers";
+import { products, shelfTargets, stockLevels } from "#/db/schema";
+import { lockDraft, setTransferLines, TransferError } from "./transfers";
 
 // A location's target for a product: refills top it back up to this. null
 // stops refilling it there.
@@ -89,9 +89,14 @@ export async function refillSuggestions(
 				]),
 			),
 		);
+	// Shelf levels by product and location, so each lookup is a map read.
+	const levelKey = (productId: number, locationId: number) =>
+		`${productId}:${locationId}`;
+	const onHand = new Map(
+		levels.map((l) => [levelKey(l.productId, l.locationId), l.onHand] as const),
+	);
 	const at = (productId: number, locationId: number) =>
-		levels.find((l) => l.productId === productId && l.locationId === locationId)
-			?.onHand ?? 0;
+		onHand.get(levelKey(productId, locationId)) ?? 0;
 	return targets.flatMap((t) => {
 		const atDestination = at(t.productId, input.toLocationId);
 		const atSource = at(t.productId, input.fromLocationId);
@@ -112,18 +117,22 @@ export async function refillSuggestions(
 // gets what tops it up. Products already on the draft for other reasons
 // stay. Returns how many lines it set and the products the source can't
 // help with.
+//
+// The draft is locked before its direction is read, so the suggestions are
+// for the direction the lines land in, even when a swap is racing this.
 export async function fillFromSuggestions(db: Db, id: number) {
-	const [t] = await db.select().from(transfers).where(eq(transfers.id, id));
-	if (!t) throw new TransferError(`No transfer ${transferName(id)}`);
-	const rows = await refillSuggestions(db, t);
-	const sending = rows.filter((r) => r.suggested > 0);
-	await setTransferLines(
-		db,
-		id,
-		sending.map((r) => ({ productId: r.productId, quantity: r.suggested })),
-	);
-	return {
-		filled: sending.length,
-		none: rows.filter((r) => r.suggested === 0).map((r) => r.sku),
-	};
+	return db.transaction(async (tx) => {
+		const t = await lockDraft(tx, id);
+		const rows = await refillSuggestions(tx, t);
+		const sending = rows.filter((r) => r.suggested > 0);
+		await setTransferLines(
+			tx,
+			id,
+			sending.map((r) => ({ productId: r.productId, quantity: r.suggested })),
+		);
+		return {
+			filled: sending.length,
+			none: rows.filter((r) => r.suggested === 0).map((r) => r.sku),
+		};
+	});
 }

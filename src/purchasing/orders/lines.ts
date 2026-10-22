@@ -15,6 +15,7 @@ import { discountRow } from "#/purchasing/discount";
 import { reopen } from "./closing";
 import { checkDiscounts, checkOff } from "./discount-checks";
 import { lockForEdit, PurchaseOrderError, poName } from "./lock";
+import { checkPrice } from "./price";
 import type { AddedLine, Status } from "./types";
 
 // Sets how many of a product a draft orders, adding the line if needed. 0
@@ -43,8 +44,7 @@ export async function setDraftLine(
 		throw new PurchaseOrderError(
 			`Quantity must be a whole number, got ${input.quantity}`,
 		);
-	if (input.unitCost != null && !(input.unitCost >= 0))
-		throw new PurchaseOrderError(`Price can't be ${input.unitCost}`);
+	checkPrice(input.unitCost);
 	return db.transaction(async (tx) => {
 		const po = await lockForEdit(tx, input.purchaseOrderId);
 		const where = and(

@@ -1,4 +1,5 @@
 import { globSync, readFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { configDefaults, defineConfig } from "vitest/config";
 
 // Test files that replace a module with vi.mock. A mock only takes when the
@@ -10,6 +11,14 @@ const mocking = globSync(TESTS).filter((file) =>
 	readFileSync(file, "utf8").includes("vi.mock("),
 );
 
+// Every worker boots its own PGlite database (src/test/db.ts) and holds it in
+// memory, and several agents often test at once. So DB tests get half the
+// host's cores: at least one, at most four. A 4-core host gets two.
+const DB_WORKERS = Math.min(
+	4,
+	Math.max(1, Math.floor(availableParallelism() / 2)),
+);
+
 // Separate from vite.config.ts so tests don't load the Start and Nitro plugins.
 export default defineConfig({
 	resolve: { tsconfigPaths: true },
@@ -19,9 +28,7 @@ export default defineConfig({
 		unstubEnvs: true,
 		unstubGlobals: true,
 		restoreMocks: true,
-		// Several agents often test at once on a 4-core machine; more workers
-		// each only make the others time out.
-		maxWorkers: 2,
+		maxWorkers: DB_WORKERS,
 		projects: [
 			{
 				extends: true,

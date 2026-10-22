@@ -12,9 +12,11 @@ import type { FetchedPayout } from "./types";
 // Keeps each marketplace's payouts in step: asks for every payout since
 // `since` and saves them, a payout's status and amount replaced by the
 // marketplace's latest word. Payouts are never deleted: one the marketplace
-// stops listing (older than it keeps) stays as it was last seen. The check
-// is recorded either way, with the error if the ask failed, so the Reports
-// tab can say why a marketplace's deposits are missing.
+// stops listing (older than it keeps) stays as it was last seen. The save and
+// its check are one transaction, so a check never says a save worked when it
+// didn't. The check is recorded either way, with the error if the ask or the
+// save failed, so the Reports tab can say why a marketplace's deposits are
+// missing.
 
 const FETCHERS: Record<
 	SyncedChannel,
@@ -34,36 +36,39 @@ export async function refreshPayouts(
 	channel: SyncedChannel,
 	since = new Date(Date.now() - REFRESH_DAYS * 24 * 60 * 60 * 1000),
 ): Promise<{ saved: number; error: string | null }> {
-	let found: FetchedPayout[];
 	try {
-		found = await FETCHERS[channel](since);
+		const found = await FETCHERS[channel](since);
+		await db.transaction(async (tx) => {
+			if (found.length > 0)
+				await tx
+					.insert(payouts)
+					.values(found.map((p) => ({ ...p, channel })))
+					.onConflictDoUpdate({
+						target: [payouts.channel, payouts.externalId],
+						set: {
+							status: sql`excluded.status`,
+							depositedAt: sql`excluded.deposited_at`,
+							amount: sql`excluded.amount`,
+							currency: sql`excluded.currency`,
+							bankTail: sql`excluded.bank_tail`,
+							reference: sql`excluded.reference`,
+							fetchedAt: sql`now()`,
+						},
+					});
+			await recordCheck(tx, channel, null);
+		});
+		return { saved: found.length, error: null };
 	} catch (e) {
 		const error = errorText(e);
-		await recordCheck(db, channel, error);
+		// Best effort: if the database is what failed, this fails too, and the
+		// error is still returned to the caller.
+		await recordCheck(db, channel, error).catch(() => {});
 		return { saved: 0, error };
 	}
-	if (found.length > 0)
-		await db
-			.insert(payouts)
-			.values(found.map((p) => ({ ...p, channel })))
-			.onConflictDoUpdate({
-				target: [payouts.channel, payouts.externalId],
-				set: {
-					status: sql`excluded.status`,
-					depositedAt: sql`excluded.deposited_at`,
-					amount: sql`excluded.amount`,
-					currency: sql`excluded.currency`,
-					bankTail: sql`excluded.bank_tail`,
-					reference: sql`excluded.reference`,
-					fetchedAt: sql`now()`,
-				},
-			});
-	await recordCheck(db, channel, null);
-	return { saved: found.length, error: null };
 }
 
 async function recordCheck(
-	db: Db,
+	db: Pick<Db, "insert">,
 	channel: SyncedChannel,
 	error: string | null,
 ) {

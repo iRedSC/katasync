@@ -126,6 +126,11 @@ function matches(o: ReturnOrder, q: string) {
 	return words.every((w) => hay.includes(w));
 }
 
+// The search for orders not due back: the query it answers, and what came back.
+type OtherSearch =
+	| { q: string; state: "done"; rows: ReturnOrder[] }
+	| { q: string; state: "failed" };
+
 function Returns() {
 	const loaded = Route.useLoaderData();
 	const { due, received } = returnsData.useData("all", loaded);
@@ -133,10 +138,7 @@ function Returns() {
 	const input = useRef<HTMLInputElement>(null);
 	const list = useRef<HTMLDivElement>(null);
 	const [query, setQuery] = useState("");
-	const [others, setOthers] = useState<{ q: string; rows: ReturnOrder[] }>({
-		q: "",
-		rows: [],
-	});
+	const [others, setOthers] = useState<OtherSearch | null>(null);
 	const [selected, setSelected] = useState(0);
 	const [receiving, setReceiving] = useState<ReturnOrder | null>(null);
 
@@ -149,14 +151,28 @@ function Returns() {
 	useEffect(() => {
 		const q = query.trim();
 		if (q.length < 3) return;
-		const timer = setTimeout(async () => {
-			const rows = await searchReturnable({ data: { q } });
-			setOthers({ q, rows });
+		// A search that a later query has overtaken is dropped, so an older
+		// answer never replaces a newer one.
+		let current = true;
+		const timer = setTimeout(() => {
+			searchReturnable({ data: { q } }).then(
+				(rows) => {
+					if (current) setOthers({ q, state: "done", rows });
+				},
+				() => {
+					if (current) setOthers({ q, state: "failed" });
+				},
+			);
 		}, 250);
-		return () => clearTimeout(timer);
+		return () => {
+			current = false;
+			clearTimeout(timer);
+		};
 	}, [query]);
-	const extra =
-		query.trim().length >= 3 && others.q === query.trim() ? others.rows : [];
+	const found =
+		query.trim().length >= 3 && others?.q === query.trim() ? others : null;
+	const extra = found?.state === "done" ? found.rows : [];
+	const extraFailed = found?.state === "failed";
 	const rows = [...shown, ...extra];
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: back to the top when the search changes
@@ -308,7 +324,11 @@ function Returns() {
 				</div>
 
 				<div ref={list}>
-					{rows.length === 0 ? (
+					{extraFailed && rows.length === 0 ? (
+						<EmptyState icon={Search} title="Search didn't finish">
+							Type to search again.
+						</EmptyState>
+					) : rows.length === 0 ? (
 						query.trim() ? (
 							<EmptyState icon={Search} title="No order matches">
 								{query.trim().length < 3
@@ -334,6 +354,11 @@ function Returns() {
 									{g.orders.map(row)}
 								</section>
 							))}
+							{extraFailed && (
+								<p className="px-4 py-2 text-xs text-warning-text">
+									Couldn't search every order. Type to search again.
+								</p>
+							)}
 							{extra.length > 0 && (
 								<section>
 									<GroupHeading>Other orders that match</GroupHeading>
@@ -437,7 +462,7 @@ function Returns() {
 						// The box is done: the search clears for the next one.
 						receive: (got) => {
 							setQuery("");
-							setOthers({ q: "", rows: [] });
+							setOthers(null);
 							return receivedPatch(receiving.id, got);
 						},
 						undo: () => reloadOnly,

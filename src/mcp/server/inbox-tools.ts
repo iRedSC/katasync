@@ -9,6 +9,7 @@ import {
 	searchMailbox,
 } from "#/purchasing/inbox/graph";
 import {
+	attachmentOf,
 	emailsOf,
 	emailWithFiles,
 	fileEmail,
@@ -98,13 +99,13 @@ export function registerInboxReadTools(server: McpServer, db: Db) {
 				attachments: files.map((f) =>
 					describeFile(f, {
 						id: f.id,
-						kept: f.data !== null,
+						kept: f.kept,
 						...(f.text ? { text: f.text } : {}),
 					}),
 				),
 			};
 			if (attachment === undefined) return json(summary);
-			const file = files.find((f) => f.id === attachment);
+			const file = await attachmentOf(db, id, attachment);
 			if (!file)
 				throw new PurchaseOrderError(
 					`Email ${id} has no attachment ${attachment}`,

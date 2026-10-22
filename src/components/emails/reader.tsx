@@ -52,16 +52,19 @@ export function shownAs(a: Attachment) {
 	return "download";
 }
 
-// Outlook's plain text keeps every image as [url] and every link as
-// "words <url>": noise to a person reading.
-const IMAGE = /\[https?:\/\/[^\]\s]+\]/g;
+// Outlook's plain text keeps images as [url] and every link as "words <url>":
+// noise to a person reading. A [url] is an image only when its file is one;
+// a bracketed document link stays a link.
+const IMAGE =
+	/\[https?:\/\/[^\]\s]+\.(?:png|jpe?g|gif|webp)(?:[?#][^\]\s]*)?\]/gi;
+const LINKED = /\[(https?:\/\/[^\]\s]+)\]/g;
 const ANGLED = /<(https?:\/\/[^>\s]+)>/g;
 const BARE = /https?:\/\/[^\s<>\]]+/g;
 
 // The first words of the body, for a list row, without the links.
 export function snippet(body: string) {
 	return body
-		.replace(IMAGE, "")
+		.replace(LINKED, "")
 		.replace(ANGLED, "")
 		.replace(BARE, "")
 		.replace(/\s+/g, " ")
@@ -77,9 +80,9 @@ export function MailText({ text }: { text: string }) {
 	const cleaned = text.replace(IMAGE, "");
 	let last = 0;
 	for (const m of cleaned.matchAll(
-		new RegExp(`${ANGLED.source}|${BARE.source}`, "g"),
+		new RegExp(`${ANGLED.source}|${LINKED.source}|${BARE.source}`, "g"),
 	)) {
-		const url = m[1] ?? m[0];
+		const url = m[1] ?? m[2] ?? m[0];
 		parts.push(cleaned.slice(last, m.index));
 		let host = url;
 		try {

@@ -108,8 +108,7 @@ export async function splitSets(db: Db, purchaseOrderId: number) {
 			sets.map((s) => s.id),
 		),
 	);
-	for (const [productId, items] of parts)
-		await addItems(db, purchaseOrderId, productId, items);
+	await addItemsBatch(db, purchaseOrderId, parts);
 }
 
 // The parts of a draft's tool set lines, for showing under each set: how many
@@ -301,17 +300,21 @@ export async function setLineParts(db: Db, lineId: number) {
 	return { ...line, sets: setsOf(line), parts };
 }
 
-// Adds single items of a product to a draft: onto its line in that line's
-// unit, rounded up to whole units, or as a new line in the supplier's unit.
-export async function addItems(
+// Adds single items of several products to a draft: each product's items go
+// onto its line in that line's unit, rounded up to whole units, or onto a new
+// line in the supplier's unit. Existing lines are read once and updated in one
+// statement, and new lines inserted in one, so a set with many parts costs a
+// few statements, not a few per part. Runs under the draft's lock.
+export async function addItemsBatch(
 	db: Db,
 	purchaseOrderId: number,
-	productId: number,
-	items: number,
+	items: Map<number, number>,
 ) {
-	const [line] = await db
+	if (items.size === 0) return;
+	const lines = await db
 		.select({
 			id: purchaseOrderLines.id,
+			productId: purchaseOrderLines.productId,
 			quantity: purchaseOrderLines.quantity,
 			packSize: purchaseOrderLines.packSize,
 		})
@@ -319,22 +322,36 @@ export async function addItems(
 		.where(
 			and(
 				eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
-				eq(purchaseOrderLines.productId, productId),
+				inArray(purchaseOrderLines.productId, [...items.keys()]),
 			),
 		);
-	if (line) {
-		await db
-			.update(purchaseOrderLines)
-			.set({ quantity: line.quantity + Math.ceil(items / line.packSize) })
-			.where(eq(purchaseOrderLines.id, line.id));
-		return;
+	const onDraft = new Map(lines.map((l) => [l.productId, l]));
+	const updates: { id: number; quantity: number }[] = [];
+	const added: (typeof purchaseOrderLines.$inferInsert)[] = [];
+	for (const [productId, count] of items) {
+		const line = onDraft.get(productId);
+		if (line) {
+			updates.push({
+				id: line.id,
+				quantity: line.quantity + Math.ceil(count / line.packSize),
+			});
+			continue;
+		}
+		// A new line takes its terms and price from the supplier, one at a time.
+		const { terms, unitCost } = await newLine(db, productId);
+		added.push({
+			purchaseOrderId,
+			productId,
+			...terms,
+			quantity: Math.ceil(count / terms.packSize),
+			unitCost,
+		});
 	}
-	const { terms, unitCost } = await newLine(db, productId);
-	await db.insert(purchaseOrderLines).values({
-		purchaseOrderId,
-		productId,
-		...terms,
-		quantity: Math.ceil(items / terms.packSize),
-		unitCost,
-	});
+	if (updates.length > 0)
+		await db.execute(sql`
+			update ${purchaseOrderLines} set quantity = v.quantity
+			from jsonb_to_recordset(${JSON.stringify(updates)}::jsonb)
+				as v(id integer, quantity integer)
+			where ${purchaseOrderLines.id} = v.id`);
+	if (added.length > 0) await db.insert(purchaseOrderLines).values(added);
 }

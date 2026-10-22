@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, getTableColumns, gt, isNotNull, isNull } from "drizzle-orm";
 import { ebayFulfill } from "#/channels/ebay";
 import {
 	shopifyCancelFulfillment,
@@ -53,7 +53,10 @@ const trackingChannels: Record<string, string> = {
 	tiktok: "TikTok",
 };
 
-type Box = typeof shipments.$inferSelect;
+// A box's columns but its label PDF: nothing here needs the PDF, and reading
+// it for every box of a dispatch was the slow part.
+const { labelPdf: _labelPdf, ...boxColumns } = getTableColumns(shipments);
+type Box = Omit<typeof shipments.$inferSelect, "labelPdf">;
 
 async function load(db: Db, dispatchId: number) {
 	const [dispatch] = await db
@@ -61,7 +64,7 @@ async function load(db: Db, dispatchId: number) {
 		.from(dispatches)
 		.where(eq(dispatches.id, dispatchId));
 	const boxes = await db
-		.select()
+		.select(boxColumns)
 		.from(shipments)
 		.where(eq(shipments.dispatchId, dispatchId))
 		.orderBy(shipments.id);
@@ -137,14 +140,9 @@ export async function sendTracking(
 	);
 	// Frees the shipped orders' pins (or none, if nothing changed).
 	if (outcome.some((r) => r.newly)) await assignOrderPins(db);
-	const notes: string[] = [];
-	if (outcome.some((result) => result.sent)) {
-		const { boxes } = await load(db, dispatchId);
-		for (const box of boxes) {
-			const note = await updateStorefrontTracking(db, box.id, outside);
-			if (note) notes.push(note);
-		}
-	}
+	const notes = outcome.some((result) => result.sent)
+		? await storefrontNotes(db, dispatchId, outside)
+		: [];
 	return {
 		sent: outcome.every((r) => r.sent),
 		message: [...outcome.map((r) => r.message), ...notes].join(". "),
@@ -431,63 +429,84 @@ export async function voidDispatch(
 		},
 	);
 	await assignOrderPins(db);
-	const { boxes } = await load(db, dispatchId);
-	for (const box of boxes) {
-		const note = await updateStorefrontTracking(db, box.id, outside);
-		if (note) result.notes.push(note);
-	}
+	result.notes.push(...(await storefrontNotes(db, dispatchId, outside)));
 	return result;
 }
 
+// Brings one box's storefront tracking up to date.
 async function updateStorefrontTracking(
 	db: Db,
 	shipmentId: number,
 	outside: Outside,
 ): Promise<string | null> {
 	const [shipment] = await db
-		.select()
+		.select(boxColumns)
 		.from(shipments)
 		.where(eq(shipments.id, shipmentId));
 	if (!shipment) throw new Error(`No shipment ${shipmentId}`);
 	return outside.lock(await ordersOf(db, shipment.dispatchId), async () => {
 		const { boxes, members } = await load(db, shipment.dispatchId);
 		const box = boxes.find((candidate) => candidate.id === shipmentId);
-		if (!box || !box.carrierToken || !box.trackingNumber || box.test)
-			return null;
-		const entry = {
-			number: box.trackingNumber,
-			carrier: box.carrierToken,
-			url: box.trackingUrl,
-		};
-		const notes: string[] = [];
-		for (const { order, channel, handoff } of members) {
-			if (channel !== "shopify" || (!box.voidedAt && !handoff.channelSentAt))
-				continue;
-			try {
-				if (box.voidedAt)
-					await outside.shopifyRemoveTracking(order.externalId, entry.number);
-				else await outside.shopifySaveTracking(order.externalId, entry);
-			} catch (error) {
-				const why = error instanceof Error ? error.message : String(error);
-				const fix = box.voidedAt
-					? `Remove tracking ${entry.number} from`
-					: `Add ${JSON.stringify(entry)} to`;
-				console.error(
-					`STOREFRONT TRACKING NOT UPDATED for ${order.externalId}: ${fix} katasync.shippo_tracking.`,
-					error,
-				);
-				notes.push(
-					`${order.name}: The storefront's tracking page isn't up to date (${why}). ${fix} the order's katasync.shippo_tracking metafield in Shopify.`,
-				);
-			}
-		}
-		const note = notes.length > 0 ? notes.join(". ") : null;
-		await db
-			.update(shipments)
-			.set({ storefrontTrackingError: note })
-			.where(eq(shipments.id, shipmentId));
-		return note;
+		return box ? storefrontNote(db, box, members, outside) : null;
 	});
+}
+
+// Brings every box's storefront tracking up to date, from one read of the
+// dispatch under one lock. Each box keeps its own outcome.
+async function storefrontNotes(db: Db, dispatchId: number, outside: Outside) {
+	return outside.lock(await ordersOf(db, dispatchId), async () => {
+		const { boxes, members } = await load(db, dispatchId);
+		const notes: string[] = [];
+		for (const box of boxes) {
+			const note = await storefrontNote(db, box, members, outside);
+			if (note) notes.push(note);
+		}
+		return notes;
+	});
+}
+
+// One box's storefront tracking, on each of its orders' Shopify. Its outcome
+// is saved on the box.
+async function storefrontNote(
+	db: Db,
+	box: Box,
+	members: Member[],
+	outside: Outside,
+): Promise<string | null> {
+	if (!box.carrierToken || !box.trackingNumber || box.test) return null;
+	const entry = {
+		number: box.trackingNumber,
+		carrier: box.carrierToken,
+		url: box.trackingUrl,
+	};
+	const notes: string[] = [];
+	for (const { order, channel, handoff } of members) {
+		if (channel !== "shopify" || (!box.voidedAt && !handoff.channelSentAt))
+			continue;
+		try {
+			if (box.voidedAt)
+				await outside.shopifyRemoveTracking(order.externalId, entry.number);
+			else await outside.shopifySaveTracking(order.externalId, entry);
+		} catch (error) {
+			const why = error instanceof Error ? error.message : String(error);
+			const fix = box.voidedAt
+				? `Remove tracking ${entry.number} from`
+				: `Add ${JSON.stringify(entry)} to`;
+			console.error(
+				`STOREFRONT TRACKING NOT UPDATED for ${order.externalId}: ${fix} katasync.shippo_tracking.`,
+				error,
+			);
+			notes.push(
+				`${order.name}: The storefront's tracking page isn't up to date (${why}). ${fix} the order's katasync.shippo_tracking metafield in Shopify.`,
+			);
+		}
+	}
+	const note = notes.length > 0 ? notes.join(". ") : null;
+	await db
+		.update(shipments)
+		.set({ storefrontTrackingError: note })
+		.where(eq(shipments.id, box.id));
+	return note;
 }
 
 export async function retryStorefrontTracking(
@@ -496,7 +515,7 @@ export async function retryStorefrontTracking(
 	outside: Outside = live,
 ): Promise<Handoff> {
 	const [shipment] = await db
-		.select()
+		.select(boxColumns)
 		.from(shipments)
 		.where(eq(shipments.id, shipmentId));
 	if (!shipment || !shipment.carrierToken || !shipment.trackingNumber)

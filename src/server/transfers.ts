@@ -18,6 +18,7 @@ import {
 	setShelfTarget,
 } from "#/inventory/refill";
 import {
+	createDraftWith,
 	createTransfer,
 	deleteTransfer,
 	moveNow,
@@ -208,8 +209,7 @@ export const newRefill = createServerFn({ method: "POST" }).handler(
 		const pair = await refillPair(db);
 		if (!pair)
 			throw new Error("A refill needs one warehouse and one retail store");
-		const id = await createTransfer(db, pair);
-		const filled = await fillFromSuggestions(db, id);
+		const { id, filled } = await createDraftWith(db, pair, fillFromSuggestions);
 		return { id, ...filled };
 	},
 );
