@@ -13,6 +13,7 @@ export function EmailRow({
 	onMenu,
 	tag,
 	unread,
+	critical,
 }: {
 	email: ReadableEmail;
 	selected: boolean;
@@ -22,6 +23,8 @@ export function EmailRow({
 	tag?: ReactNode;
 	// Bold, with a dot, until it's read.
 	unread?: boolean;
+	// Needs someone now: the row is red.
+	critical?: boolean;
 }) {
 	const ref = useRef<HTMLLIElement>(null);
 	useEffect(() => {
@@ -34,15 +37,27 @@ export function EmailRow({
 				onClick={onOpen}
 				onContextMenu={onMenu}
 				className={cn(
-					"block w-full border-l-2 px-4 py-2.5 text-left",
-					selected
-						? "border-l-primary bg-surface-strong"
-						: "border-l-transparent hover:bg-subtle",
+					"block w-full border-l-2 px-4 py-2.5 text-left transition-colors",
+					critical
+						? cn(
+								"border-l-critical-icon text-critical-text",
+								selected
+									? "bg-critical-fill"
+									: "bg-critical-surface hover:bg-critical-fill",
+							)
+						: selected
+							? "border-l-primary bg-surface-strong"
+							: "border-l-transparent hover:bg-subtle",
 				)}
 			>
 				<span className="flex items-baseline gap-2">
 					{unread && (
-						<span className="size-2 shrink-0 self-center rounded-full bg-primary">
+						<span
+							className={cn(
+								"size-2 shrink-0 self-center rounded-full",
+								critical ? "bg-critical-icon" : "bg-primary",
+							)}
+						>
 							<span className="sr-only">Unread</span>
 						</span>
 					)}
@@ -65,7 +80,12 @@ export function EmailRow({
 					{e.subject || "(no subject)"}
 				</span>
 				<span className="flex items-center gap-2">
-					<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+					<span
+						className={cn(
+							"min-w-0 flex-1 truncate text-xs",
+							critical ? "text-critical-text/80" : "text-muted-foreground",
+						)}
+					>
 						{snippet(e.body)}
 					</span>
 					{typeof tag === "string" || typeof tag === "number" ? (

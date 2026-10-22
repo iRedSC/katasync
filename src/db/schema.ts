@@ -2307,8 +2307,10 @@ export const marketEmails = pgTable(
 		relabelledAt: timestamp({ withTimezone: true }),
 		// Needs someone, whatever its folder.
 		important: boolean().notNull().default(false),
-		// When someone marked it important or not, as relabelledAt is for its
-		// folder: the rules leave it after.
+		// Needs someone now: shown red in Important. Always important too.
+		critical: boolean().notNull().default(false),
+		// When someone marked it important, critical, or neither, as
+		// relabelledAt is for its folder: the rules leave it after.
 		importanceSetAt: timestamp({ withTimezone: true }),
 		// When someone was done with it. Undone by clearing it.
 		doneAt: timestamp({ withTimezone: true }),
@@ -2332,11 +2334,15 @@ export const marketEmails = pgTable(
 		index("market_emails_open_idx")
 			.on(t.folder, t.receivedAt)
 			.where(sql`${t.doneAt} is null`),
+		check(
+			"market_emails_critical_is_important",
+			sql`not ${t.critical} or ${t.important}`,
+		),
 	],
 );
 
 // The rules that sort marketplace emails, in order (src/inbox/rules.ts).
-// Each moves to a folder, marks important, or both.
+// Each moves to a folder, marks important or critical, or both.
 export const mailRules = pgTable(
 	"mail_rules",
 	{
@@ -2344,10 +2350,14 @@ export const mailRules = pgTable(
 		// Smaller runs first; the first rule that moves an email decides.
 		position: integer().notNull(),
 		name: text().notNull(),
-		// Every one must hold; checked by ruleSchema where they're written.
+		// all: every condition must hold; any: one is enough.
+		match: text().$type<"all" | "any">().notNull().default("all"),
+		// Checked by ruleSchema where they're written.
 		conditions: jsonb().$type<Condition[]>().notNull(),
 		folder: marketEmailFolder(),
 		important: boolean().notNull().default(false),
+		// Marks critical; always marks important too.
+		critical: boolean().notNull().default(false),
 		// Matching emails arrive read. Only on arrival: read is staff's, so
 		// changing rules never marks mail read or unread.
 		markRead: boolean().notNull().default(false),
@@ -2361,6 +2371,11 @@ export const mailRules = pgTable(
 			sql`${t.folder} is not null or ${t.important} or ${t.markRead}`,
 		),
 		check("mail_rules_by_known", sql`${t.by} in ('staff', 'claude')`),
+		check("mail_rules_match_known", sql`${t.match} in ('all', 'any')`),
+		check(
+			"mail_rules_critical_is_important",
+			sql`not ${t.critical} or ${t.important}`,
+		),
 		check(
 			"mail_rules_has_conditions",
 			sql`jsonb_array_length(${t.conditions}) > 0`,

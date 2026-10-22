@@ -74,11 +74,18 @@ export function WhyChip({ email: e }: { email: Email }) {
 								: ruleLink(folder)}
 					</p>
 					{important === "by-hand" ? (
-						<p>{e.important ? "Marked important" : "Unmarked"} by hand</p>
+						<p>
+							{e.critical
+								? "Marked critical"
+								: e.important
+									? "Marked important"
+									: "Unmarked"}{" "}
+							by hand
+						</p>
 					) : (
 						important.length > 0 && (
 							<p>
-								Important:{" "}
+								{e.critical ? "Critical" : "Important"}:{" "}
 								{important.map((r, i) => (
 									<span key={r.rule}>
 										{i > 0 && ", "}
@@ -118,7 +125,7 @@ export function WhyChip({ email: e }: { email: Email }) {
 											});
 										if (important === "by-hand")
 											await markMarketEmailImportant({
-												data: { id: e.id, important: null },
+												data: { id: e.id, level: null },
 											});
 									},
 								});

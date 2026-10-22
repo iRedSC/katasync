@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { MARKETS, type Market } from "#/markets/market";
 
-// The rules that sort the marketplaces mailbox. Each rule is a few conditions
-// that must all hold and what to do when they do: move the email to a folder,
-// mark it important, have it arrive read, or any of those. Rules run in order; the first that moves an
-// email decides its folder, and any that marks it makes it important. An
+// The rules that sort the marketplaces mailbox. Each rule is a few conditions,
+// all or any of which must hold, and what to do when they do: move the email
+// to a folder, mark it important or critical, have it arrive read, or any of
+// those. Rules run in order; the first that moves an email decides its
+// folder, and any that marks it makes it important (critical, when one says
+// so). An
 // email no rule moves goes to Updates. The defaults are rules like any other
 // (seeded by drizzle/0098), so staff and Claude change them the same way.
 // Pure, so the editor can show what a rule says as it's written.
@@ -55,20 +57,41 @@ export const conditionSchema = z.discriminatedUnion("field", [
 ]);
 export type Condition = z.infer<typeof conditionSchema>;
 
+// How much an email needs someone. Critical is important too: it shows in
+// Important, in red. Kept as two flags (important, critical) in the
+// database, which refuses critical without important; written only through
+// flagsOf, so the two can't disagree.
+export const LEVELS = ["normal", "important", "critical"] as const;
+export type Level = (typeof LEVELS)[number];
+export const levelOf = (e: { important: boolean; critical: boolean }): Level =>
+	e.critical ? "critical" : e.important ? "important" : "normal";
+export const flagsOf = (l: Level) => ({
+	important: l !== "normal",
+	critical: l === "critical",
+});
+
+// Whether every condition must hold, or any one.
+export const MATCHES = ["all", "any"] as const;
+export type Match = (typeof MATCHES)[number];
+
 // A rule as written; one that does nothing, or matches everything, can't be.
+// Critical marks important too, so one saying critical alone is both.
 export const ruleSchema = z
 	.object({
 		name: z.string().trim().min(1).max(80),
+		match: z.enum(MATCHES).default("all"),
 		conditions: z.array(conditionSchema).min(1).max(10),
 		folder: z.enum(FOLDERS).nullable(),
 		important: z.boolean(),
+		critical: z.boolean().default(false),
 		// Matching emails arrive read; never applied to mail already in.
 		markRead: z.boolean().default(false),
 	})
-	.refine((r) => r.folder !== null || r.important || r.markRead, {
+	.refine((r) => r.folder !== null || r.important || r.critical || r.markRead, {
 		message: "A rule has to move the email, mark it important, or mark it read",
-	});
-export type RuleInput = z.infer<typeof ruleSchema>;
+	})
+	.transform((r) => ({ ...r, important: r.important || r.critical }));
+export type RuleInput = z.output<typeof ruleSchema>;
 export type Rule = RuleInput & {
 	id: number;
 	position: number;
@@ -123,15 +146,21 @@ export function holds(c: Condition, email: Sortable) {
 	return hit !== c.not;
 }
 
-export const matches = (rule: Pick<Rule, "conditions">, email: Sortable) =>
-	rule.conditions.every((c) => holds(c, email));
+export const matches = (
+	rule: Pick<Rule, "conditions" | "match">,
+	email: Sortable,
+) =>
+	rule.match === "any"
+		? rule.conditions.some((c) => holds(c, email))
+		: rule.conditions.every((c) => holds(c, email));
 
 // Where the rules put an email, and which rules decided: the folder's rule
-// (null when none moved it) and each that marked it important. read is for
-// an email arriving, never when important; the rules never change it after.
+// (null when none moved it) and each that marked it important or critical.
+// read is for an email arriving, never when important; the rules never
+// change it after.
 export type Sorting = {
 	folder: Folder;
-	important: boolean;
+	level: Level;
 	read: boolean;
 	folderRule: number | null;
 	importantRules: number[];
@@ -141,6 +170,7 @@ export function sortEmail(rules: readonly Rule[], email: Sortable): Sorting {
 	let folder: Folder | null = null;
 	let folderRule: number | null = null;
 	const importantRules: number[] = [];
+	let critical = false;
 	let read = false;
 	for (const r of [...rules].sort((a, b) => a.position - b.position)) {
 		if (!matches(r, email)) continue;
@@ -148,12 +178,17 @@ export function sortEmail(rules: readonly Rule[], email: Sortable): Sorting {
 			folder = r.folder;
 			folderRule = r.id;
 		}
-		if (r.important) importantRules.push(r.id);
+		if (r.important || r.critical) importantRules.push(r.id);
+		if (r.critical) critical = true;
 		if (r.markRead) read = true;
 	}
 	return {
 		folder: folder ?? FALLBACK_FOLDER,
-		important: importantRules.length > 0,
+		level: critical
+			? "critical"
+			: importantRules.length > 0
+				? "important"
+				: "normal",
 		// Important mail needs someone, so it never arrives read.
 		read: read && importantRules.length === 0,
 		folderRule,
@@ -186,3 +221,9 @@ export function describe(c: Condition, shown = 3) {
 		c.field === "market" ? (c.not ? "isn't" : "is") : c.not ? "lacks" : "has";
 	return `${fieldName(c.field)} ${verb} ${list.slice(0, shown).join(", ")}${more}`;
 }
+
+// All of a rule's conditions in a few words, joined as it matches them.
+export const describeAll = (r: Pick<Rule, "conditions" | "match">) =>
+	r.conditions
+		.map((c) => describe(c))
+		.join(r.match === "any" ? " or " : " and ");

@@ -21,7 +21,14 @@ import type { InboxMessage, InlinePicture } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
 import { pointPictures } from "./html";
 import { listRules, locked, lockRules, resort } from "./rule-store";
-import { FOLDERS, type Folder, type Rule, sortEmail } from "./rules";
+import {
+	FOLDERS,
+	type Folder,
+	flagsOf,
+	type Level,
+	type Rule,
+	sortEmail,
+} from "./rules";
 
 // The marketplaces mailbox in katasync: each notice read in from Microsoft
 // 365, sorted by marketplace and by the rules into a folder, some marked
@@ -81,7 +88,7 @@ export async function ingestMarketMail(
 						messageId: m.messageId,
 						market,
 						folder: sorted.folder,
-						important: sorted.important,
+						...flagsOf(sorted.level),
 						readAt: sorted.read ? new Date() : null,
 						fromAddress: m.fromAddress,
 						fromName: m.fromName,
@@ -178,6 +185,7 @@ const summary = {
 	market: marketEmails.market,
 	folder: marketEmails.folder,
 	important: marketEmails.important,
+	critical: marketEmails.critical,
 	relabelledAt: marketEmails.relabelledAt,
 	importanceSetAt: marketEmails.importanceSetAt,
 	doneAt: marketEmails.doneAt,
@@ -262,6 +270,7 @@ export async function marketMailPage(
 				market: marketEmails.market,
 				n: sql<number>`count(*)::int`,
 				important: sql<number>`(count(*) filter (where ${marketEmails.important}))::int`,
+				critical: sql<number>`(count(*) filter (where ${marketEmails.critical}))::int`,
 			})
 			.from(marketEmails)
 			.where(and(isNull(marketEmails.doneAt), isNull(marketEmails.readAt)))
@@ -309,10 +318,11 @@ export async function marketMailPage(
 		check: check ?? null,
 		// Where the page after this one starts; null when this is all of them.
 		next,
-		// Unread open emails per folder, and important, within the market
-		// shown.
+		// Unread open emails per folder, and important (critical among them),
+		// within the market shown.
 		counts: {
 			important: shown.reduce((s, c) => s + c.important, 0),
+			critical: shown.reduce((s, c) => s + c.critical, 0),
 			...(Object.fromEntries(
 				FOLDERS.map((f) => [
 					f,
@@ -369,33 +379,33 @@ export async function moveTo(db: Db, id: number, folder: Folder | null) {
 	});
 }
 
-// Marks it important or not, which the rules won't change back; null hands
-// that back to the rules.
-export async function setImportant(
-	db: Db,
-	id: number,
-	important: boolean | null,
-) {
+// Marks it important, critical, or neither, which the rules won't change
+// back; null hands that back to the rules.
+export async function setImportant(db: Db, id: number, level: Level | null) {
 	return locked(db, async (tx) => {
 		const [row] = await tx
 			.update(marketEmails)
 			.set(
-				important === null
+				level === null
 					? { importanceSetAt: null }
-					: { important, importanceSetAt: new Date() },
+					: { ...flagsOf(level), importanceSetAt: new Date() },
 			)
 			.where(eq(marketEmails.id, id))
 			.returning({ id: marketEmails.id });
 		if (!row) throw new Error(`There's no marketplace email ${id}`);
-		if (important === null) await resort(tx, [id]);
+		if (level === null) await resort(tx, [id]);
 		return row;
 	});
 }
 
-// Unread open important emails, for the sidebar.
+// Unread open important emails, and how many of them are critical, for the
+// sidebar.
 export async function countImportant(db: Db) {
 	const [row] = await db
-		.select({ n: sql<number>`count(*)::int` })
+		.select({
+			important: sql<number>`count(*)::int`,
+			critical: sql<number>`(count(*) filter (where ${marketEmails.critical}))::int`,
+		})
 		.from(marketEmails)
 		.where(
 			and(
@@ -404,7 +414,7 @@ export async function countImportant(db: Db) {
 				eq(marketEmails.important, true),
 			),
 		);
-	return row?.n ?? 0;
+	return { important: row?.important ?? 0, critical: row?.critical ?? 0 };
 }
 
 export async function marketAttachment(db: Db, id: number) {

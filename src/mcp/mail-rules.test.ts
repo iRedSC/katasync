@@ -66,6 +66,30 @@ describe("mail rules over MCP", () => {
 		expect(rules.at(-1)).toMatchObject({ by: "claude", important: true });
 	});
 
+	test("a rule matching any condition can mark mail critical", async () => {
+		const saved = await callTool(db, true, "save_mail_rule", {
+			...rule,
+			match: "any",
+			conditions: [
+				{ field: "subject", has: ["nothing-like-it"] },
+				{ field: "sender", has: ["payments@amazon.com"] },
+			],
+			important: false,
+			critical: true,
+		});
+		expect(saved.data).toMatchObject({ marked: 1 });
+		const one = await callTool(db, true, "sort_marketplace_email", {
+			id: emailId,
+			read: false,
+		});
+		expect(one.data).toMatchObject({ important: true, critical: true });
+		const down = await callTool(db, true, "sort_marketplace_email", {
+			id: emailId,
+			important: true,
+		});
+		expect(down.data).toMatchObject({ important: true, critical: false });
+	});
+
 	test("one email by hand, and back to the rules", async () => {
 		const moved = await callTool(db, true, "sort_marketplace_email", {
 			id: emailId,

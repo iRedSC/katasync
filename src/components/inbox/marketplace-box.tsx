@@ -4,6 +4,7 @@ import {
 	Inbox,
 	Mail,
 	MailOpen,
+	OctagonAlert,
 	Star,
 	Undo2,
 } from "lucide-react";
@@ -18,7 +19,14 @@ import {
 } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
 import type { MarketCursor, MarketMailPage } from "#/inbox/market-mail";
-import { FOLDER_NAMES, FOLDERS, type Folder } from "#/inbox/rules";
+import {
+	FOLDER_NAMES,
+	FOLDERS,
+	type Folder,
+	flagsOf,
+	type Level,
+	levelOf,
+} from "#/inbox/rules";
 import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
@@ -46,18 +54,18 @@ type Email = MarketMailPage["emails"][number];
 const mail = optimistic<MarketMailPage>("market-emails");
 
 // What happens to an email: done, back from done, to another folder, marked
-// important or not, or read or unread.
+// important, critical, or neither, or read or unread.
 type Change =
 	| { done: boolean }
 	| { to: Folder }
-	| { important: boolean }
+	| { level: Level }
 	| { read: boolean };
 // What undoes one: null hands the folder or importance back to the rules,
 // when they had decided it.
 type Undo =
 	| { done: boolean }
 	| { to: Folder | null }
-	| { important: boolean | null }
+	| { level: Level | null }
 	| { read: boolean };
 
 const after = (e: Email, change: Change): Email =>
@@ -65,10 +73,10 @@ const after = (e: Email, change: Change): Email =>
 		? { ...e, doneAt: change.done ? new Date() : null }
 		: "to" in change
 			? { ...e, folder: change.to, why: { ...e.why, folder: "by-hand" } }
-			: "important" in change
+			: "level" in change
 				? {
 						...e,
-						important: change.important,
+						...flagsOf(change.level),
 						why: { ...e.why, important: "by-hand" },
 					}
 				: { ...e, readAt: change.read ? new Date() : null };
@@ -90,6 +98,7 @@ function changed(key: string, view: MarketView, email: Email, change: Change) {
 			if (e.doneAt !== null || e.readAt !== null) return;
 			c[e.folder] += by;
 			if (e.important) c.important += by;
+			if (e.critical) c.critical += by;
 		};
 		tally(email, -1);
 		tally(next, 1);
@@ -171,7 +180,7 @@ function Listing({ view, market, page, counts }: BoxProps) {
 					: "read" in c
 						? setMarketEmailRead({ data: { id: email.id, read: c.read } })
 						: markMarketEmailImportant({
-								data: { id: email.id, important: c.important },
+								data: { id: email.id, level: c.level },
 							});
 		const r = await optimism.change({
 			label: said,
@@ -206,18 +215,27 @@ function Listing({ view, market, page, counts }: BoxProps) {
 			change: { to: e.why.folder === "by-hand" ? e.folder : null },
 			said: `Back in ${FOLDER_NAMES[e.folder]}`,
 		});
-	const star = (e: Email) =>
-		make(
+	// Marks it this level, or back to normal when it already is.
+	const mark = (e: Email, to: Exclude<Level, "normal">) => {
+		const level = levelOf(e) === to ? "normal" : to;
+		return make(
 			e,
-			{ important: !e.important },
-			e.important ? "Not important" : "Important",
+			{ level },
+			level === "normal"
+				? `Not ${to}`
+				: to === "critical"
+					? "Critical"
+					: "Important",
 			{
 				change: {
-					important: e.why.important === "by-hand" ? e.important : null,
+					level: e.why.important === "by-hand" ? levelOf(e) : null,
 				},
 				said: "Put back",
 			},
 		);
+	};
+	const star = (e: Email) => mark(e, "important");
+	const alarm = (e: Email) => mark(e, "critical");
 
 	const read = (e: Email, isRead: boolean) =>
 		make(e, { read: isRead }, isRead ? "Read" : "Unread");
@@ -239,6 +257,7 @@ function Listing({ view, market, page, counts }: BoxProps) {
 				fileUrl={(a) => `/api/market-email-attachments/${a.id}`}
 				tagOf={(e) => <Tags email={e} view={view} market={market} />}
 				unreadOf={(e) => e.readAt === null}
+				criticalOf={(e) => e.critical}
 				onShown={(e) => e.readAt === null && read(e, true)}
 				actionsOf={(e) => (
 					<Actions
@@ -247,12 +266,14 @@ function Listing({ view, market, page, counts }: BoxProps) {
 						onDone={(isDone) => done(e, isDone)}
 						onMove={(to) => move(e, to)}
 						onStar={() => star(e)}
+						onAlarm={() => alarm(e)}
 						onRead={() => read(e, e.readAt === null)}
 					/>
 				)}
 				keysOf={(e) => ({
 					e: () => done(e, e.doneAt === null),
 					i: () => star(e),
+					c: () => alarm(e),
 					u: () => read(e, e.readAt === null),
 				})}
 				menuOf={(e) => (
@@ -272,8 +293,18 @@ function Listing({ view, market, page, counts }: BoxProps) {
 							{e.readAt === null ? "Mark read" : "Mark unread"}
 						</ContextMenuItem>
 						<ContextMenuItem shortcut="I" onSelect={() => star(e)}>
-							<Star className={cn(e.important && "fill-current")} />
-							{e.important ? "Not important" : "Important"}
+							<Star
+								className={cn(e.important && !e.critical && "fill-current")}
+							/>
+							{e.important && !e.critical ? "Not important" : "Important"}
+						</ContextMenuItem>
+						<ContextMenuItem shortcut="C" onSelect={() => alarm(e)}>
+							<OctagonAlert
+								className={cn(
+									e.critical && "fill-critical-fill text-critical-icon",
+								)}
+							/>
+							{e.critical ? "Not critical" : "Critical"}
 						</ContextMenuItem>
 						<ContextMenuSeparator />
 						{FOLDERS.filter((f) => f !== e.folder).map((f) => {
@@ -306,8 +337,9 @@ function Listing({ view, market, page, counts }: BoxProps) {
 	);
 }
 
-// In a row: a star when important, the folder where the list mixes them,
-// and the marketplace where it isn't filtered to one.
+// In a row: a star when important (a red octagon when critical), the folder
+// where the list mixes them, and the marketplace where it isn't filtered to
+// one.
 function Tags({
 	email: e,
 	view,
@@ -319,8 +351,16 @@ function Tags({
 }) {
 	return (
 		<span className="flex items-center gap-1">
-			{e.important && view !== "important" && (
-				<Star className="size-3.5 fill-warning-fill text-warning-text" />
+			{e.critical ? (
+				<OctagonAlert
+					aria-label="Critical"
+					className="size-3.5 fill-critical-fill text-critical-icon"
+				/>
+			) : (
+				e.important &&
+				view !== "important" && (
+					<Star className="size-3.5 fill-warning-fill text-warning-text" />
+				)
 			)}
 			{(view === "important" || view === "done") && (
 				<Badge>{FOLDER_NAMES[e.folder]}</Badge>
@@ -338,6 +378,7 @@ function Actions({
 	onDone,
 	onMove,
 	onStar,
+	onAlarm,
 	onRead,
 }: {
 	email: Email;
@@ -345,6 +386,7 @@ function Actions({
 	onDone: (done: boolean) => void;
 	onMove: (to: Folder) => void;
 	onStar: () => void;
+	onAlarm: () => void;
 	onRead: () => void;
 }) {
 	return (
@@ -366,11 +408,15 @@ function Actions({
 					{e.readAt === null ? <MailOpen /> : <Mail />}
 				</Button>
 			</Tip>
-			<Tip content={e.important ? "Not important (I)" : "Important (I)"}>
+			<Tip
+				content={
+					e.important && !e.critical ? "Not important (I)" : "Important (I)"
+				}
+			>
 				<Button
 					size="sm"
 					variant="ghost"
-					aria-pressed={e.important}
+					aria-pressed={e.important && !e.critical}
 					aria-label="Important"
 					onClick={onStar}
 				>
@@ -379,6 +425,23 @@ function Actions({
 						className={cn(
 							"animate-in zoom-in-75",
 							e.important && "fill-warning-fill text-warning-text",
+						)}
+					/>
+				</Button>
+			</Tip>
+			<Tip content={e.critical ? "Not critical (C)" : "Critical (C)"}>
+				<Button
+					size="sm"
+					variant="ghost"
+					aria-pressed={e.critical}
+					aria-label="Critical"
+					onClick={onAlarm}
+				>
+					<OctagonAlert
+						key={String(e.critical)}
+						className={cn(
+							"animate-in zoom-in-75",
+							e.critical && "fill-critical-fill text-critical-icon",
 						)}
 					/>
 				</Button>

@@ -31,6 +31,7 @@ export function MailPane<E extends ReadableEmail>({
 	keysOf,
 	menuOf,
 	unreadOf,
+	criticalOf,
 	onShown,
 	box,
 	fileUrl,
@@ -46,6 +47,8 @@ export function MailPane<E extends ReadableEmail>({
 	menuOf?: (e: E) => ReactNode;
 	// Unread ones show bold; one open a moment counts as read.
 	unreadOf?: (e: E) => boolean;
+	// Critical ones show red.
+	criticalOf?: (e: E) => boolean;
 	onShown?: (e: E) => void;
 	fileUrl?: FileUrl;
 	empty: ReactNode;
@@ -112,6 +115,7 @@ export function MailPane<E extends ReadableEmail>({
 								onMenu={() => setMenuFor(e)}
 								tag={tagOf?.(e)}
 								unread={unreadOf?.(e)}
+								critical={criticalOf?.(e)}
 							/>
 						))}
 					</ul>
