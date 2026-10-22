@@ -1,0 +1,1 @@
+ALTER TABLE "purchase_order_lines" ADD COLUMN "back_ordered_at" timestamp with time zone;

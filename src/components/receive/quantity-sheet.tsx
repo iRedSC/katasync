@@ -1,4 +1,12 @@
-import { Delete, Minus, Plus, ShieldAlert, Tag, Undo2 } from "lucide-react";
+import {
+	Delete,
+	Hourglass,
+	Minus,
+	Plus,
+	ShieldAlert,
+	Tag,
+	Undo2,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
@@ -15,7 +23,7 @@ const MAX = 9999;
 // arrived, it can also record some as damaged. "Free or discounted"
 // marks some or all of what came as free, or a percent or dollars off; the
 // PO's total and the stock's cost follow, and undoing the receipt takes it
-// off too.
+// off too. A line still waiting can be marked back-ordered, or no longer.
 export type ReceiptDiscount = { units?: number; off: DiscountOff };
 
 export function QuantitySheet({
@@ -29,6 +37,8 @@ export function QuantitySheet({
 	onNoneCame,
 	onUndo,
 	onDamaged,
+	backOrdered,
+	onBackOrdered,
 	onClose,
 }: {
 	title: string;
@@ -50,6 +60,9 @@ export function QuantitySheet({
 	onUndo: () => void;
 	// Some of what arrived is damaged; absent when nothing arrived yet.
 	onDamaged?: () => void;
+	// Whether what's left is back-ordered; absent when that can't change.
+	backOrdered?: boolean;
+	onBackOrdered?: (backOrdered: boolean) => void;
 	onClose: () => void;
 }) {
 	const [quantity, setQuantity] = useState(Math.max(remaining, 1));
@@ -333,6 +346,18 @@ export function QuantitySheet({
 					</>
 				)}
 
+				{onBackOrdered && canReceive && remaining > 0 && (
+					<button
+						type="button"
+						onClick={() => onBackOrdered(!backOrdered)}
+						className="mt-2 flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-warning-text active:bg-warning-surface"
+					>
+						<Hourglass className="size-5" />
+						{backOrdered
+							? "No longer back-ordered"
+							: `Rest is back-ordered (${remaining}${u})`}
+					</button>
+				)}
 				{onDamaged && (
 					<button
 						type="button"

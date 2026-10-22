@@ -14,6 +14,7 @@ import {
 	receive,
 	restoreDraft,
 	restoreOrder,
+	setBackOrdered,
 	undoReceipt,
 } from "./orders";
 import {
@@ -114,6 +115,42 @@ describe("a PO from draft to received", () => {
 		await expect(
 			receive(db, { lineId: knifeLine.id, quantity: 1 }),
 		).rejects.toThrow(/is closed/);
+	});
+
+	test("back-ordered lines stay on order, only while short, and keep their day", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		const [bladeLine, knifeLine] = await linesOf(id);
+		await receive(db, { lineId: knifeLine.id, quantity: 6 });
+		await expect(
+			setBackOrdered(db, { lineId: knifeLine.id, backOrdered: true }),
+		).rejects.toThrow(/All of it has come/);
+
+		expect(
+			await setBackOrdered(db, { lineId: bladeLine.id, backOrdered: true }),
+		).toEqual({ was: false });
+		const [marked] = await linesOf(id);
+		expect(marked.backOrderedAt).toBeInstanceOf(Date);
+		// Still coming, so nothing more is suggested.
+		expect((await unitsOnOrder(db)).get(blade)).toBe(44);
+		expect(await suggestPurchases(db, now)).toEqual([]);
+
+		expect(
+			await setBackOrdered(db, { lineId: bladeLine.id, backOrdered: true }),
+		).toEqual({ was: true });
+		expect((await linesOf(id))[0].backOrderedAt).toEqual(marked.backOrderedAt);
+
+		// The back order arriving closes the PO without unmarking it.
+		const rest = await receive(db, { lineId: bladeLine.id, quantity: 44 });
+		expect(rest.closed).toBe(true);
+		await expect(
+			setBackOrdered(db, { lineId: bladeLine.id, backOrdered: false }),
+		).rejects.toThrow(/is closed/);
+		await undoReceipt(db, rest.receiptId);
+		expect(
+			await setBackOrdered(db, { lineId: bladeLine.id, backOrdered: false }),
+		).toEqual({ was: true });
+		expect((await linesOf(id))[0].backOrderedAt).toBeNull();
 	});
 
 	test("receiving onto oversold stock restarts it from 0, and undo puts it back", async () => {

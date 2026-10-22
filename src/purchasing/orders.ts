@@ -33,6 +33,7 @@ export {
 	receive,
 	receivedOf,
 	receiveExtra,
+	setBackOrdered,
 	setReceivingNote,
 	undoReceipt,
 } from "#/purchasing/orders/receiving";

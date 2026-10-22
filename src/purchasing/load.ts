@@ -32,6 +32,12 @@ export function receivedByLine(db: Db) {
 		.as("received");
 }
 
+// Units still short on back-ordered lines, summed over the lines joined to
+// `received`. Counted in the product itself, as `ordered` is.
+export function backOrderedUnits(received: ReturnType<typeof receivedByLine>) {
+	return sql<number>`coalesce(sum(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize}) filter (where ${purchaseOrderLines.backOrderedAt} is not null), 0)::int`;
+}
+
 export async function loadOrder(db: Db, poId: number) {
 	const [po] = await db
 		.select({
@@ -77,6 +83,7 @@ export async function loadOrder(db: Db, poId: number) {
 			sentUnitCost: purchaseOrderLines.sentUnitCost,
 			locked: purchaseOrderLines.locked,
 			receivingNote: purchaseOrderLines.receivingNote,
+			backOrderedAt: purchaseOrderLines.backOrderedAt,
 			addedAt: purchaseOrderLines.addedAt,
 			received: sql<number>`coalesce(${received.units}, 0)::int`,
 		})

@@ -49,7 +49,7 @@ import { formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { ids } from "#/lib/optimism";
 import { lineCents } from "#/purchasing/discount";
-import { purchaseOrderStatus } from "#/purchasing/status";
+import { isBackOrdered, purchaseOrderStatus } from "#/purchasing/status";
 import {
 	addProductToPurchaseOrder,
 	getPurchaseOrder,
@@ -92,7 +92,15 @@ function PurchaseOrderPage() {
 		(n, l) => n + Math.min(l.received, l.quantity) * l.packSize,
 		0,
 	);
-	const status = purchaseOrderStatus({ ...po, ordered, received });
+	const backOrdered = d.lines
+		.filter(isBackOrdered)
+		.reduce((n, l) => n + (l.quantity - l.received) * l.packSize, 0);
+	const status = purchaseOrderStatus({
+		...po,
+		ordered,
+		received,
+		backOrdered,
+	});
 	const shown = draft
 		? draftTotals(d)
 		: {

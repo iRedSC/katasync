@@ -71,6 +71,7 @@ export {
 	listReceivable,
 	receiveExtraLine,
 	receiveLine,
+	setLineBackOrdered,
 	setLineReceivingNote,
 	undoPurchaseReceipt,
 } from "#/server/purchasing/receiving";

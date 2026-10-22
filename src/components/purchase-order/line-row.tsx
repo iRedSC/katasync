@@ -11,6 +11,7 @@ import { formatCount, formatMoney } from "#/lib/format";
 import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { setsOf } from "#/purchasing/sets";
+import { isBackOrdered } from "#/purchasing/status";
 import {
 	type PurchaseOrderDetail,
 	setPurchaseLineTerms,
@@ -127,6 +128,12 @@ export function LineRow({
 								)}
 								{since === "adjusted" && (
 									<span className="text-warning-text"> · Adjusted</span>
+								)}
+								{isBackOrdered(l) && (
+									<span className="font-semibold text-warning-text">
+										{" "}
+										· Back-ordered
+									</span>
 								)}
 							</span>
 							<SetsChip sets={l.why?.sets ?? null} />

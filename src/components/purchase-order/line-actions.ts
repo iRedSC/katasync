@@ -8,6 +8,7 @@ import {
 	amendPurchaseLine,
 	receiveLine,
 	setLine,
+	setLineBackOrdered,
 	undoPurchaseReceipt,
 } from "#/server/purchasing";
 import { patchLines, putLineBack, receivedPatch } from "./po-data";
@@ -167,4 +168,42 @@ export function refusedByDiscounts(
 	const problem = discountProblem({ ...line, ...change }, line.discounts);
 	if (problem) toast.error(problem);
 	return problem !== null;
+}
+
+// Marks a sent line back-ordered or not at once, with Undo once the server
+// has it. A line already marked keeps its day.
+export async function backOrderWithUndo(
+	line: Line,
+	backOrdered: boolean,
+	purchaseOrderId: number,
+) {
+	const change = (value: boolean) =>
+		optimism.change({
+			label: `Back order on ${line.sku}`,
+			patch: patchLines(
+				purchaseOrderId,
+				(l) => ids.same(l.id, line.id),
+				(l) => ({
+					...l,
+					backOrderedAt: value ? (l.backOrderedAt ?? new Date()) : null,
+				}),
+			),
+			send: () =>
+				setLineBackOrdered({
+					data: { lineId: ids.server(line.id), backOrdered: value },
+				}),
+		});
+	const r = await change(backOrdered);
+	if (!r) return;
+	offerUndo(
+		backOrdered
+			? `${line.sku} back-ordered`
+			: `${line.sku} no longer back-ordered`,
+		{
+			undo: async () => {
+				const u = await change(!backOrdered);
+				return u && `${line.sku} back as it was`;
+			},
+		},
+	);
 }

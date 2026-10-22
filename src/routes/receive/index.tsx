@@ -54,7 +54,11 @@ function Receive() {
 							po.ordered > 0 ? (po.received / po.ordered) * 100 : 0;
 						const expected = po.expectedAt ? new Date(po.expectedAt) : null;
 						const startOfToday = new Date().setHours(0, 0, 0, 0);
-						const late = expected !== null && expected.getTime() < startOfToday;
+						// Back-ordered items come on no known day, so only the rest
+						// can be late; a PO waiting on nothing else says so instead.
+						const due = po.ordered - po.received - po.backOrdered;
+						const late =
+							due > 0 && expected !== null && expected.getTime() < startOfToday;
 						return (
 							<li key={po.id}>
 								<Link
@@ -86,18 +90,25 @@ function Receive() {
 											{po.received} of {po.ordered}{" "}
 											{po.ordered === 1 ? "item" : "items"}
 										</p>
-										{expected && (
-											<p
-												className={cn(
-													"shrink-0 text-base",
-													late
-														? "font-semibold text-critical-text"
-														: "text-muted-foreground",
-												)}
-											>
-												{late ? "Late, " : ""}
-												{late ? "expected" : "Expected"} {day.format(expected)}
+										{due <= 0 && po.backOrdered > 0 ? (
+											<p className="shrink-0 text-base font-semibold text-warning-text">
+												Back-ordered
 											</p>
+										) : (
+											expected && (
+												<p
+													className={cn(
+														"shrink-0 text-base",
+														late
+															? "font-semibold text-critical-text"
+															: "text-muted-foreground",
+													)}
+												>
+													{late ? "Late, " : ""}
+													{late ? "expected" : "Expected"}{" "}
+													{day.format(expected)}
+												</p>
+											)
 										)}
 									</div>
 								</Link>

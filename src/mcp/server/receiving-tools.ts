@@ -13,6 +13,7 @@ import { MAX_PHOTO_BYTES, MAX_PHOTOS } from "#/purchasing/damage-limits";
 import {
 	PurchaseOrderError,
 	receive,
+	setBackOrdered,
 	setReceivingNote,
 	undoReceipt,
 } from "#/purchasing/orders";
@@ -86,7 +87,7 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 		"set_po_line_note",
 		{
 			description:
-				'Puts a note on one product\'s line of a sent or closed PO for whoever is receiving it, e.g. "2 crushed, kept" or "back-ordered, due Friday". Shown above the line on the receive page; never printed or sent to the supplier. Replaces any note already there; null or blank takes it off. get_purchase_order shows it as receivingNote. Returns the note it replaced.',
+				'Puts a note on one product\'s line of a sent or closed PO for whoever is receiving it, e.g. "2 crushed, kept" or "rest due Friday". For back-ordered items, use set_po_line_back_ordered instead. Shown above the line on the receive page; never printed or sent to the supplier. Replaces any note already there; null or blank takes it off. get_purchase_order shows it as receivingNote. Returns the note it replaced.',
 			inputSchema: {
 				po: z.number().int().positive(),
 				sku: z.string(),
@@ -95,19 +96,31 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 			annotations: WRITE,
 		},
 		async ({ po, sku, note }) => {
-			const product = await productBySku(db, sku);
-			const [line] = await db
-				.select({ id: purchaseOrderLines.id })
-				.from(purchaseOrderLines)
-				.where(
-					and(
-						eq(purchaseOrderLines.purchaseOrderId, po),
-						eq(purchaseOrderLines.productId, product.id),
-					),
-				);
-			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
+			const line = await lineOf(db, po, sku);
 			const result = await setReceivingNote(db, { lineId: line.id, note });
 			return json({ po, sku, ...result });
+		},
+	);
+
+	server.registerTool(
+		"set_po_line_back_ordered",
+		{
+			description:
+				"Marks one product's line of a sent PO back-ordered (true) or not (false): the supplier said what hasn't arrived is still coming, on no known day. The PO stays open; the receive page and PO show it as Back-ordered instead of Late, and reorder forecasts stop expecting it on the PO's date. Only while some of the line hasn't come; receiving the rest needs no unmarking. get_purchase_order shows it as backOrderedSince. Returns whether it was marked before.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				sku: z.string(),
+				back_ordered: z.boolean(),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, sku, back_ordered }) => {
+			const line = await lineOf(db, po, sku);
+			const result = await setBackOrdered(db, {
+				lineId: line.id,
+				backOrdered: back_ordered,
+			});
+			return json({ po, sku, back_ordered, ...result });
 		},
 	);
 
@@ -197,4 +210,20 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 			return json({ undone: receipt_id });
 		},
 	);
+}
+
+// One product's line on a PO, by SKU.
+async function lineOf(db: Db, po: number, sku: string) {
+	const product = await productBySku(db, sku);
+	const [line] = await db
+		.select({ id: purchaseOrderLines.id })
+		.from(purchaseOrderLines)
+		.where(
+			and(
+				eq(purchaseOrderLines.purchaseOrderId, po),
+				eq(purchaseOrderLines.productId, product.id),
+			),
+		);
+	if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
+	return line;
 }
