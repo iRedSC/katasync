@@ -220,6 +220,7 @@ export const detailPage = type({ "orders?": tiktokOrder.array() });
 
 const DAY = 24 * 60 * 60 * 1000;
 const FIRST_SYNC_DAYS = 60;
+const MISSING_HOLD_DAYS = 3;
 
 export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	const cipher = await shopCipher();
@@ -271,22 +272,41 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 
 	let count = 0;
 	const all = [...ids];
+	// Asked for, but not in TikTok's answer.
+	const missing: string[] = [];
 	// TikTok returns at most 50 orders per detail call.
 	for (let i = 0; i < all.length; i += 50) {
+		const asked = all.slice(i, i + 50);
 		const details = detailPage.assert(
 			await tiktokApi("/order/202309/orders", {
 				shop_cipher: cipher,
-				ids: all.slice(i, i + 50).join(","),
+				ids: asked.join(","),
 			}),
 		);
+		const answered = new Set<string>();
 		for (const raw of details.orders ?? []) {
+			answered.add(raw.id);
 			const result = await ingestDetail(db, store, raw, stock);
 			problems.push(...result.problems);
 			if (result.ingested) count++;
 		}
+		missing.push(...asked.filter((id) => !answered.has(id)));
 	}
-	// Orders changed during this pass are picked up next time.
-	await advanceOrderCursor(db, store.id, startedAt);
+	// Orders changed during this pass are picked up next time. With an order
+	// asked for but missing from the answer, the cursor stops MISSING_HOLD_DAYS
+	// short, so the next passes ask again; one TikTok never returns is given
+	// up on after that, rather than pinning the cursor and growing every pass.
+	if (missing.length > 0)
+		problems.push(
+			`TikTok didn't return ${missing.join(", ")}; syncs over the next ${MISSING_HOLD_DAYS} days ask again`,
+		);
+	await advanceOrderCursor(
+		db,
+		store.id,
+		missing.length > 0
+			? new Date(startedAt.getTime() - MISSING_HOLD_DAYS * DAY)
+			: startedAt,
+	);
 	if (refreshWarning) problems.push(refreshWarning);
 	// Returns after orders, so a return on a new order finds it. Every
 	// listings pass rereads the last week's changes.

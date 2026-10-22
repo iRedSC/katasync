@@ -1,4 +1,4 @@
-import { and, eq, isNull, max } from "drizzle-orm";
+import { and, eq, isNull, max, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, movements, stores } from "#/db/schema";
 import type { Overflow } from "#/inventory/ledger";
@@ -115,13 +115,14 @@ export function saleLocation(
 	};
 }
 
-// Moves the sync cursor forward. Only ever forward, so a slow or partial pass
-// can't make the next one skip orders.
+// Moves the sync cursor forward. Only ever forward, and decided by the database
+// in the one update, so a slow or partial pass (or one overlapping another)
+// can't make the next one skip orders. greatest ignores a null cursor.
 export async function advanceOrderCursor(db: Db, storeId: number, to: Date) {
-	const [store] = await db.select().from(stores).where(eq(stores.id, storeId));
-	if (store.ordersSyncedThrough && store.ordersSyncedThrough >= to) return;
 	await db
 		.update(stores)
-		.set({ ordersSyncedThrough: to })
+		.set({
+			ordersSyncedThrough: sql`greatest(${stores.ordersSyncedThrough}, ${to}::timestamptz)`,
+		})
 		.where(eq(stores.id, storeId));
 }

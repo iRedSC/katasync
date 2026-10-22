@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { purchaseOrders } from "#/db/schema";
+import { productSuppliers, purchaseOrders } from "#/db/schema";
 import { needsOf, reorderBreakdown } from "./breakdown";
 import { daysUntilReorder, fillToMax } from "./quantity";
 import {
@@ -36,7 +36,15 @@ export async function recommendedAdditions(
 	except: Set<number>,
 	now = new Date(),
 ): Promise<RecommendedLine[]> {
-	const plans = await reorderBreakdown(db, { now });
+	// Only this supplier's products are planned, so the rest aren't loaded.
+	const mine = await db
+		.select({ productId: productSuppliers.productId })
+		.from(productSuppliers)
+		.where(eq(productSuppliers.supplierId, supplierId));
+	const plans = await reorderBreakdown(db, {
+		now,
+		productIds: mine.map((r) => r.productId),
+	});
 	return plans
 		.flatMap((plan): RecommendedLine[] => {
 			const { line, supplier, input } = plan;
@@ -80,8 +88,8 @@ function recommendedDue({
 const dueOrder = (due: RecommendedLine["due"]) => (due === "now" ? -1 : due);
 
 // What each supplier should be sent today: what needs ordering among the
-// products that go on POs by themselves (see ordersItself). Computed fresh from sales, stock,
-// and open POs rather than stored, so it never goes stale.
+// products that go on POs by themselves (see ordersItself). Computed fresh from
+// sales, stock, and open POs rather than stored, so it never goes stale.
 export async function suggestPurchases(
 	db: Db,
 	now = new Date(),

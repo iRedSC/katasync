@@ -277,21 +277,20 @@ export async function refreshFromSumtracker(
 			throw new Error(
 				`No product for: ${unknown.join(", ")}. Nothing changed.`,
 			);
-		await markNotCounted(
-			tx,
-			options.unlimited.map((s) => idOf(s)),
-		);
+		const unlimited = options.unlimited.map((s) => idOf(s));
+		await markNotCounted(tx, unlimited);
+		const unlimitedSet = new Set(unlimited);
 		const toCount = options.countFirst
 			.map((s) => idOf(s))
-			.filter((id) => !options.unlimited.some((s) => idOf(s) === id));
+			.filter((id) => !unlimitedSet.has(id));
 		await requestCounts(tx, { productIds: toCount, locationId: location });
+
+		const planned = new Set(plan.products.map((p) => p.sku));
 
 		return {
 			updated,
 			added,
-			untouched: existing
-				.filter((p) => !plan.products.some((q) => q.sku === p.sku))
-				.map((p) => p.sku),
+			untouched: existing.filter((p) => !planned.has(p.sku)).map((p) => p.sku),
 			openingStock: plan.openingStock.length,
 			salesRetaken,
 			problems,

@@ -26,9 +26,14 @@ export function getDb(): Db {
 export async function withOwnConnection<T>(
 	use: (db: Db) => Promise<T>,
 	connectionString = process.env.DATABASE_URL,
+	{ connectTimeoutMs }: { connectTimeoutMs?: number } = {},
 ): Promise<T> {
 	if (!connectionString) throw new Error("DATABASE_URL is not set");
-	const client = new Client({ connectionString });
+	// Past connectTimeoutMs, connecting fails rather than waiting on the server.
+	const client = new Client({
+		connectionString,
+		connectionTimeoutMillis: connectTimeoutMs,
+	});
 	// A dropped connection fails its next query instead of crashing the
 	// process with an unhandled error event.
 	client.on("error", () => {});

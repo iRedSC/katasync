@@ -319,6 +319,12 @@ export async function mailboxMessage(
 
 // Files larger than this keep their name and size only.
 export const MAX_ATTACHMENT_BYTES = 15_000_000;
+// What all of an email's files may bring in together, and how many. Past
+// either, a file keeps its name and size only, as one too big does.
+const MAX_MESSAGE_BYTES = 30_000_000;
+const MAX_MESSAGE_FILES = 25;
+// A picture the HTML doesn't show, this small or less, is a signature logo.
+const LOGO_BYTES = 100_000;
 
 export type InboxAttachment = {
 	filename: string;
@@ -339,7 +345,53 @@ const attachmentList = type({
 		size: "number",
 		"isInline?": "boolean",
 	}).array(),
+	"@odata.nextLink?": "string",
 });
+type AttachmentEntry = (typeof attachmentList.infer)["value"][number];
+
+// Every attachment of an email, across Graph's pages: a file past the first
+// page is kept like any other, since a later sweep won't read the email again.
+async function attachmentsOf(base: string) {
+	const found: AttachmentEntry[] = [];
+	let next: string | null =
+		`${base}/attachments?$select=id,name,contentType,size,isInline`;
+	while (next) {
+		const page = attachmentList.assert(await (await graph(next)).json());
+		found.push(...page.value);
+		next = page["@odata.nextLink"] ?? null;
+	}
+	return found;
+}
+
+// The files whose bytes an email brings in, by id. Whole files go first, then
+// pictures, and the rest of the email's files keep their name and size only.
+// Graph's sizes decide, before any bytes are read.
+function fetchedIds(list: AttachmentEntry[]) {
+	const files = list.filter(
+		(a) =>
+			a["@odata.type"] === "#microsoft.graph.fileAttachment" ||
+			a["@odata.type"] === "#microsoft.graph.itemAttachment",
+	);
+	const ordered = [
+		...files.filter((a) => !a.isInline),
+		...files.filter((a) => a.isInline),
+	];
+	const ids = new Set<string>();
+	let bytes = 0;
+	for (const a of ordered) {
+		if (
+			a.size > MAX_ATTACHMENT_BYTES ||
+			ids.size >= MAX_MESSAGE_FILES ||
+			bytes + a.size > MAX_MESSAGE_BYTES
+		)
+			continue;
+		ids.add(a.id);
+		bytes += a.size;
+	}
+	return ids;
+}
+
+const isPicture = (a: AttachmentEntry) => /^image\//i.test(a.contentType ?? "");
 
 // One file attached, with its bytes and, for a picture, the cid: its HTML
 // names it by. Only one by one: the list is typed as any attachment, and
@@ -381,25 +433,22 @@ export async function messageHtml(graphId: string, box: Mailbox) {
 	const base = `${mailbox(box)}/messages/${encodeURIComponent(graphId)}`;
 	const [html, list] = await Promise.all([
 		bodyOf(base, "html"),
-		graph(`${base}/attachments?$select=id,name,contentType,size,isInline`).then(
-			async (r) => attachmentList.assert(await r.json()),
-		),
+		attachmentsOf(base),
 	]);
+	const fetched = fetchedIds(list);
 	const attachments: InboxAttachment[] = [];
 	const inline: InlinePicture[] = [];
-	for (const a of list.value) {
+	for (const a of list) {
 		if (a["@odata.type"] === "#microsoft.graph.itemAttachment") {
-			const email = await attachedEmail(base, a);
+			const email = await attachedEmail(base, a, fetched.has(a.id));
 			if (email) attachments.push(email);
 			continue;
 		}
 		// Links to OneDrive files have no bytes of their own here.
 		if (a["@odata.type"] !== "#microsoft.graph.fileAttachment") continue;
-		// Too big a picture can't be shown, so it's left out like any other.
-		if (a.size > MAX_ATTACHMENT_BYTES && a.isInline) continue;
 		let data: Buffer | null = null;
 		let contentId: string | null = null;
-		if (a.size <= MAX_ATTACHMENT_BYTES) {
+		if (fetched.has(a.id)) {
 			const one = fileAttachment.assert(
 				await (
 					await graph(`${base}/attachments/${encodeURIComponent(a.id)}`)
@@ -408,10 +457,10 @@ export async function messageHtml(graphId: string, box: Mailbox) {
 			data = Buffer.from(one.contentBytes, "base64");
 			contentId = one.contentId?.replace(/^<|>$/g, "").trim() || null;
 		}
-		// A picture the HTML doesn't show (a signature logo it only attaches)
-		// is neither a file nor worth keeping.
+		// A small picture the HTML doesn't show is a signature logo, left out.
+		// Anything else inline (a scan, a PDF) is a document, so it's kept.
 		const shown = contentId !== null && html.includes(`cid:${contentId}`);
-		if (a.isInline && !shown) continue;
+		if (a.isInline && !shown && isPicture(a) && a.size <= LOGO_BYTES) continue;
 		const file = {
 			filename: a.name?.trim() || "attachment",
 			contentType: a.contentType?.toLowerCase() || "application/octet-stream",
@@ -430,12 +479,12 @@ export async function messageHtml(graphId: string, box: Mailbox) {
 // an attached calendar invite or contact is left out.
 async function attachedEmail(
 	base: string,
-	a: (typeof attachmentList.infer)["value"][number],
+	a: AttachmentEntry,
+	bytes: boolean,
 ): Promise<InboxAttachment | null> {
 	const name = `${(a.name?.trim() || "Attached email").replace(/[/\\]/g, "_")}.eml`;
 	const file = { filename: name, contentType: "message/rfc822" };
-	if (a.size > MAX_ATTACHMENT_BYTES)
-		return { ...file, size: a.size, data: null };
+	if (!bytes) return { ...file, size: a.size, data: null };
 	const res = await graph(
 		`${base}/attachments/${encodeURIComponent(a.id)}/$value`,
 	).catch((error: Error) => {

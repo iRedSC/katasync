@@ -1,5 +1,9 @@
 import type { movementReason } from "#/db/schema";
 
+// The shop's zone, which every date is shown in. The server and the browser
+// must print the same text for the same instant, so neither uses its own.
+export const SHOP_TIME_ZONE = "America/New_York";
+
 const usd = new Intl.NumberFormat("en-US", {
 	style: "currency",
 	currency: "USD",
@@ -8,8 +12,12 @@ const count = new Intl.NumberFormat("en-US");
 const dateTime = new Intl.DateTimeFormat("en-US", {
 	dateStyle: "medium",
 	timeStyle: "short",
+	timeZone: SHOP_TIME_ZONE,
 });
-const dateOnly = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const dateOnly = new Intl.DateTimeFormat("en-US", {
+	dateStyle: "medium",
+	timeZone: SHOP_TIME_ZONE,
+});
 
 export function formatMoney(value: number | null) {
 	return value === null ? "—" : usd.format(value);
@@ -54,24 +62,37 @@ export function formatReason(reason: string) {
 const time = new Intl.DateTimeFormat("en-US", {
 	hour: "numeric",
 	minute: "2-digit",
+	timeZone: SHOP_TIME_ZONE,
 });
 const monthDay = new Intl.DateTimeFormat("en-US", {
 	month: "short",
 	day: "numeric",
+	timeZone: SHOP_TIME_ZONE,
 });
+// The shop's calendar day as "2026-10-21", so days can be counted apart.
+const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: SHOP_TIME_ZONE });
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Which shop day an instant falls on, as a count of days from the epoch. Whole
+// calendar days, so a 23- or 25-hour day doesn't throw the count off.
+const dayNumber = (d: Date) =>
+	Date.parse(`${dayKey.format(d)}T00:00:00Z`) / DAY_MS;
 
 // Like Shopify's order list: "Today at 2:08 PM", "Yesterday at…", "Oct 4 at…".
-export function formatOrderDate(value: Date | string) {
+// `today` is the clock the words count from. Null gives the date alone, for a
+// render with no clock to agree on (the server, and the browser until it has
+// hydrated).
+export function formatOrderDate(
+	value: Date | string,
+	today: Date | null = new Date(),
+) {
 	const date = new Date(value);
-	const today = new Date();
-	const yesterday = new Date(today);
-	yesterday.setDate(today.getDate() - 1);
-	const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
-	const day = same(date, today)
-		? "Today"
-		: same(date, yesterday)
-			? "Yesterday"
-			: monthDay.format(date);
+	const daysAgo = today === null ? null : dayNumber(today) - dayNumber(date);
+	const day =
+		daysAgo === 0
+			? "Today"
+			: daysAgo === 1
+				? "Yesterday"
+				: monthDay.format(date);
 	return `${day} at ${time.format(date)}`;
 }
 

@@ -1,4 +1,4 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { Pencil, Trash2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import {
 } from "#/components/email-templates-card";
 import { LabelPrintingCard } from "#/components/label-printing-card";
 import { Badge, Card, Page } from "#/components/page";
+import { PullNow } from "#/components/pull-now";
 import { ActionSlot, IconAction, Row } from "#/components/rows";
 import { ListSkeleton } from "#/components/skeleton";
 import { StockPushCard } from "#/components/stock-push-card";
@@ -27,7 +28,6 @@ import {
 	getRetailReserve,
 	listLocations,
 	listStores,
-	pullPrimaryNow,
 	saveDefaultMinStock,
 	saveRetailReserve,
 	setPrimaryStore,
@@ -221,25 +221,26 @@ const BOX_ROWS = 10;
 function Boxes({ boxes }: { boxes: Box[] }) {
 	const [adding, setAdding] = useState(false);
 	const [editing, setEditing] = useState<number | null>(null);
-	const [saving, setSaving] = useState(false);
+	const [saving, setSaving] = useState<number | "new" | null>(null);
 	const [all, setAll] = useState(false);
 	const shown = all ? boxes : boxes.slice(0, BOX_ROWS);
 
 	// A new box's id comes from the server, so the form waits for its answer.
 	async function add(values: BoxValues) {
-		setSaving(true);
+		setSaving("new");
 		const r = await optimism.change({
 			send: () => savePackage({ data: values }),
 		});
-		setSaving(false);
+		setSaving(null);
 		if (!r) return;
 		toast.success(`Saved ${boxLabel(r.value)}`);
 		setAdding(false);
 	}
 
-	// An edit shows at once; if the server refuses it, the box goes back.
+	// The editor stays open until the server takes the edit, so a refusal leaves
+	// the draft there to fix. Then the box shows its new values.
 	async function edit(box: Box, values: BoxValues) {
-		setEditing(null);
+		setSaving(box.id);
 		const r = await optimism.change({
 			label: `Editing ${boxLabel(box)}`,
 			patch: boxesData.patch("all", (list) =>
@@ -249,7 +250,10 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 			),
 			send: () => updatePackage({ data: { ...values, id: box.id } }),
 		});
-		if (r) toast.success(`Saved ${boxLabel(r.value)}`);
+		setSaving(null);
+		if (!r) return;
+		setEditing((open) => (open === box.id ? null : open));
+		toast.success(`Saved ${boxLabel(r.value)}`);
 	}
 
 	async function remove(box: Box) {
@@ -278,7 +282,7 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 			{adding && (
 				<div className="px-4 pb-3">
 					<BoxForm
-						saving={saving}
+						saving={saving === "new"}
 						onSave={(values) => add(values)}
 						onCancel={() => setAdding(false)}
 					/>
@@ -293,6 +297,7 @@ function Boxes({ boxes }: { boxes: Box[] }) {
 							<Row key={b.id}>
 								<BoxForm
 									box={b}
+									saving={saving === b.id}
 									onSave={(values) => edit(b, values)}
 									onCancel={() => setEditing(null)}
 								/>
@@ -503,56 +508,6 @@ function PrimaryToggle({ store }: { store: Store }) {
 		<Tip content="Its new SKUs become products">
 			<Button size="sm" variant="ghost" onClick={() => set(store.id)}>
 				Make primary
-			</Button>
-		</Tip>
-	);
-}
-
-// A full pass of the primary store now, so SKUs just added there become
-// products without waiting for the four-hourly sync. A pass takes a while,
-// so a toast stays up until it's done and then says what came of it.
-function PullNow({ store }: { store: Store }) {
-	const router = useRouter();
-	const [pulling, setPulling] = useState(false);
-
-	async function pull() {
-		setPulling(true);
-		const id = toast.loading(`Pulling listings and orders from ${store.name}…`);
-		try {
-			const r = await pullPrimaryNow();
-			if (r.state === "busy") {
-				toast.info(`${r.store} is already syncing. Try again in a minute.`, {
-					id,
-				});
-			} else if (r.state === "failed") {
-				toast.error(`Couldn't pull from ${r.store}`, {
-					id,
-					description: r.error,
-				});
-			} else {
-				toast.success(
-					`Pulled ${r.store}. ${r.created === 1 ? "1 product" : `${r.created} products`} created.`,
-					{
-						id,
-						description:
-							r.problems.length > 0
-								? `${r.problems.length} problems, see Diagnostics: ${r.problems.slice(0, 3).join("; ")}`
-								: undefined,
-					},
-				);
-			}
-			await router.invalidate();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : String(err), { id });
-		} finally {
-			setPulling(false);
-		}
-	}
-
-	return (
-		<Tip content="Pull listings and orders now. New SKUs become products">
-			<Button size="sm" variant="ghost" disabled={pulling} onClick={pull}>
-				{pulling ? "Pulling…" : "Pull now"}
 			</Button>
 		</Tip>
 	);

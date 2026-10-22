@@ -21,14 +21,19 @@ export function usePickedPhotos() {
 	const [photos, setPhotos] = useState<PickedPhoto[]>([]);
 	const [shrinking, setShrinking] = useState(0);
 	const [problem, setProblem] = useState<string | null>(null);
-	const live = useRef(photos);
-	live.current = photos;
-	useEffect(
-		() => () => {
-			for (const p of live.current) URL.revokeObjectURL(p.url);
-		},
-		[],
-	);
+	// Every object URL made and not yet revoked, by photo key. Made as a photo
+	// is picked, so one still converting when the picker unmounts is owned too.
+	const urls = useRef(new Map<number, string>());
+	// Set when the picker unmounts: a photo finished after that is not kept.
+	const disposed = useRef(false);
+	useEffect(() => {
+		disposed.current = false;
+		return () => {
+			disposed.current = true;
+			for (const url of urls.current.values()) URL.revokeObjectURL(url);
+			urls.current.clear();
+		};
+	}, []);
 
 	async function add(files: FileList | null) {
 		if (!files || files.length === 0) return;
@@ -39,8 +44,11 @@ export function usePickedPhotos() {
 		for (const file of list) {
 			try {
 				const blob = await shrinkPhoto(file);
-				const photo = { key: nextKey++, url: URL.createObjectURL(blob), blob };
-				setPhotos((ps) => [...ps, photo]);
+				if (disposed.current) return;
+				const key = nextKey++;
+				const url = URL.createObjectURL(blob);
+				urls.current.set(key, url);
+				setPhotos((ps) => [...ps, { key, url, blob }]);
 			} catch {
 				bad.push(file.name);
 			} finally {
@@ -53,15 +61,24 @@ export function usePickedPhotos() {
 			);
 	}
 
-	function remove(key: number) {
-		setPhotos((ps) => {
-			const gone = ps.find((p) => p.key === key);
-			if (gone) URL.revokeObjectURL(gone.url);
-			return ps.filter((p) => p.key !== key);
-		});
+	// Takes photos off the list by key, and revokes their URLs.
+	function take(keys: number[]) {
+		for (const key of keys) {
+			const url = urls.current.get(key);
+			if (url) URL.revokeObjectURL(url);
+			urls.current.delete(key);
+		}
+		setPhotos((ps) => ps.filter((p) => !keys.includes(p.key)));
 	}
 
-	return { photos, shrinking, problem, add, remove };
+	return {
+		photos,
+		shrinking,
+		problem,
+		add,
+		remove: (key: number) => take([key]),
+		take,
+	};
 }
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
@@ -119,10 +136,13 @@ export async function saveDamage(input: {
 	return true;
 }
 
-// Adds photos to a damage already recorded.
+// Adds photos to a damage already recorded, in order, stopping at the first
+// that fails. Resolves to the keys of the photos that went up, which the
+// caller takes off its list, and to what stopped the rest, if anything.
+// Resolves to null when the change itself failed; that has been said.
 export async function addPhotos(input: {
 	damageId: number;
-	photos: Blob[];
+	photos: PickedPhoto[];
 	name: string;
 	// Which photo is going up.
 	onPhoto?: (index: number) => void;
@@ -131,18 +151,22 @@ export async function addPhotos(input: {
 		send: async () => {
 			const up = await uploadDamagePhotos(
 				input.damageId,
-				input.photos,
+				input.photos.map((p) => p.blob),
 				input.onPhoto,
 			);
-			if (up.error)
-				throw new Error(
-					up.uploaded > 0
-						? `${plural(up.uploaded, "photo")} went up, then: ${up.error}`
+			const saved = input.photos.slice(0, up.uploaded).map((p) => p.key);
+			if (up.error === null) return { saved, problem: null };
+			return {
+				saved,
+				problem:
+					saved.length > 0
+						? `${plural(saved.length, "photo")} went up, then: ${up.error}`
 						: up.error,
-				);
-			return up;
+			};
 		},
 	});
-	if (r) toast.success(`Added ${plural(input.photos.length, "photo")}`);
-	return Boolean(r);
+	if (!r) return null;
+	if (r.value.problem === null)
+		toast.success(`Added ${plural(r.value.saved.length, "photo")}`);
+	return r.value;
 }

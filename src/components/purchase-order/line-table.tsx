@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { DamageRow } from "#/components/damage/damage-details";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
+import { groupBy } from "#/lib/group-by";
 import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import {
@@ -38,6 +39,16 @@ export function LineTable({
 	onQuantityDone: (enter: boolean) => void;
 }) {
 	const draft = isUnsent(d.order.status);
+	// Set parts and damages by line, grouped once per data version rather than
+	// filtered again for every row.
+	const partsByLine = useMemo(
+		() => groupBy(d.setParts, (r) => r.lineId),
+		[d.setParts],
+	);
+	const damagesByLine = useMemo(
+		() => groupBy(d.damages, (r) => r.lineId),
+		[d.damages],
+	);
 	// The focused line scrolls into view.
 	const focusedRow = useRef<HTMLTableRowElement>(null);
 	useEffect(() => {
@@ -74,12 +85,10 @@ export function LineTable({
 	const setFor = (l: Line) => {
 		if (l.kind !== "bundle") return null;
 		const sets = setsOf({ ...l, quantity: quantities.get(l.id) ?? l.quantity });
-		const parts = d.setParts
-			.filter((p) => p.lineId === l.id)
-			.map((part) => ({
-				part,
-				state: partState(part, sets, d.supplier.id),
-			}));
+		const parts = (partsByLine.get(l.id) ?? []).map((part) => ({
+			part,
+			state: partState(part, sets, d.supplier.id),
+		}));
 		const coverage = setCoverage(parts.map((p) => p.state));
 		const here = parts.filter((p) => p.state.kind === "here");
 		return {
@@ -198,18 +207,16 @@ export function LineTable({
 												onContextMenu={() => setMenuFor(l)}
 											/>
 										)}
-										{d.damages
-											.filter((x) => x.lineId === l.id)
-											.map((x) => (
-												<DamageRow
-													key={`damage${x.id}`}
-													damage={x}
-													// Damage only exists once sent, when the table has 8.
-													columns={8}
-													onOpen={() => onOpenDamage(x.id)}
-													onContextMenu={() => setMenuFor(l)}
-												/>
-											))}
+										{(damagesByLine.get(l.id) ?? []).map((x) => (
+											<DamageRow
+												key={`damage${x.id}`}
+												damage={x}
+												// Damage only exists once sent, when the table has 8.
+												columns={8}
+												onOpen={() => onOpenDamage(x.id)}
+												onContextMenu={() => setMenuFor(l)}
+											/>
+										))}
 										{set?.open &&
 											set.parts.map(({ part, state }) => (
 												<SetPartRow

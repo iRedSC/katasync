@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, products, purchaseOrderLines } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
@@ -27,6 +27,27 @@ export async function productBySku(db: Db, sku: string) {
 		.where(eq(products.sku, sku.trim()));
 	if (!product) throw new PurchaseOrderError(`No product with SKU ${sku}`);
 	return product;
+}
+
+// productBySku for many SKUs at once, in the order given. Any one missing
+// fails the lot, naming the first one that isn't there.
+export async function productsBySku(db: Db, skus: string[]) {
+	if (skus.length === 0) return [];
+	const found = await db
+		.select({ id: products.id, sku: products.sku, kind: products.kind })
+		.from(products)
+		.where(
+			inArray(
+				products.sku,
+				skus.map((s) => s.trim()),
+			),
+		);
+	const bySku = new Map(found.map((p) => [p.sku, p]));
+	return skus.map((sku) => {
+		const product = bySku.get(sku.trim());
+		if (!product) throw new PurchaseOrderError(`No product with SKU ${sku}`);
+		return product;
+	});
 }
 
 // One of our locations (warehouse or retail store) by name. Without a name,

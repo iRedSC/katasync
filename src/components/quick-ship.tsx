@@ -8,6 +8,7 @@ import { Key } from "#/components/quick-ship/key";
 import { Notice } from "#/components/quick-ship/notice";
 import { OrderSummary } from "#/components/quick-ship/order-summary";
 import { PackageStep } from "#/components/quick-ship/package-step";
+import { lastFor, startingGrams } from "#/components/quick-ship/packaging";
 import { PinStep } from "#/components/quick-ship/pin-step";
 import { RatesStep } from "#/components/quick-ship/rates-step";
 import { StepStrip, stepsFor } from "#/components/quick-ship/step-strip";
@@ -31,6 +32,10 @@ import type { ShipmentPlan } from "#/shipping/quick-ship";
 import type { Rate } from "#/shipping/shippo";
 
 const noExtras: Extras = { insure: null, signature: false };
+
+// A box's aerosol flag set by hand on the box step, and the contents it was
+// set for. Other contents don't inherit it.
+type HazmatChoice = { contents: string; hazmat: boolean };
 
 // Each plan starts uninsured (insurance is only recommended), with a
 // signature only when one is required. Going back to fix a box or weight
@@ -69,7 +74,13 @@ export function QuickShip() {
 	const [packed, setPacked] = useState<Packed[]>([]);
 	const [box, setBox] = useState<Box | null>(null);
 	const [dims, setDims] = useState<Dims | null>(null);
-	const [hazmat, setHazmat] = useState(false);
+	const [hazmatChoice, setHazmatChoice] = useState<HazmatChoice | null>(null);
+	// Until the box step's choice is made, the contents decide (see startsHazmat).
+	const hazmat = plan
+		? hazmatChoice?.contents === plan.contentsKey
+			? hazmatChoice.hazmat
+			: startsHazmat(plan, packed.length)
+		: false;
 	const [weightGrams, setWeightGrams] = useState<number | null>(null);
 	const [draftGrams, setDraftGrams] = useState<number | null>(null);
 	const [extras, setExtras] = useState<Extras>(noExtras);
@@ -82,8 +93,15 @@ export function QuickShip() {
 	const { clear, clearPrices, lookUp, planFor, priceFor } =
 		useQuickShipCache(plan);
 	const latest = useRef(0);
+	// Which opening of the dialog is on screen. A lookup, price, or purchase
+	// that answers after it has moved on is dropped. A purchase underway holds
+	// the session: it can't be taken back, so nothing may replace it.
+	const session = useRef(0);
+	const buying = useRef(false);
 
 	function reset() {
+		session.current++;
+		setBusy(false);
 		setStep("pin");
 		setError(null);
 		setFound(null);
@@ -91,7 +109,7 @@ export function QuickShip() {
 		setPacked([]);
 		setBox(null);
 		setDims(null);
-		setHazmat(false);
+		setHazmatChoice(null);
 		setWeightGrams(null);
 		setDraftGrams(null);
 		setExtras(noExtras);
@@ -105,6 +123,7 @@ export function QuickShip() {
 		function onKeyDown(e: globalThis.KeyboardEvent) {
 			if (e.ctrlKey && e.code === "Space") {
 				e.preventDefault();
+				if (buying.current) return;
 				setOpen((o) => {
 					if (!o) reset();
 					return !o;
@@ -112,6 +131,7 @@ export function QuickShip() {
 			}
 		}
 		function onOpen(e: Event) {
+			if (buying.current) return;
 			reset();
 			setOpen(true);
 			choosePinRef.current((e as CustomEvent<number>).detail);
@@ -145,20 +165,28 @@ export function QuickShip() {
 		return () => clearTimeout(timer);
 	}, [step, draftGrams, plan]);
 
+	// Resolves to undefined when it failed (and said so) or when its session
+	// has ended, in which case it says nothing and touches nothing.
 	async function run<T>(work: () => Promise<T>) {
-		setBusy(true);
-		setError(null);
+		const mine = session.current;
+		const current = () => mine === session.current;
+		if (current()) {
+			setBusy(true);
+			setError(null);
+		}
 		try {
-			return await work();
+			const value = await work();
+			return current() ? value : undefined;
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			if (current()) setError(err instanceof Error ? err.message : String(err));
 			return undefined;
 		} finally {
-			setBusy(false);
+			if (current()) setBusy(false);
 		}
 	}
 
 	const back = () => {
+		if (buying.current) return;
 		setError(null);
 		if (step === "pin" || step === "done") return setOpen(false);
 		latest.current++;
@@ -168,7 +196,9 @@ export function QuickShip() {
 			setPacked(packed.slice(0, -1));
 			setBox(last.box);
 			setDims(last.dims);
-			setHazmat(last.hazmat);
+			setHazmatChoice(
+				plan && { contents: plan.contentsKey, hazmat: last.hazmat },
+			);
 			setWeightGrams(last.weightGrams);
 			setDraftGrams(last.weightGrams);
 			return setStep("weight");
@@ -184,16 +214,17 @@ export function QuickShip() {
 		const lastBox = known.find((b) => b.id === last?.packageId) ?? null;
 		setBox(lastBox);
 		setDims(last ?? lastBox);
-		setHazmat(startsHazmat(next, index));
+		setHazmatChoice(null);
 	}
 
 	// Ctrl+H on the box step. Prices for the other setting don't apply.
 	function toggleHazmat() {
-		if (step !== "package" || busy) return;
-		setHazmat((h) => !h);
+		if (!plan || step !== "package" || busy) return;
+		setHazmatChoice({ contents: plan.contentsKey, hazmat: !hazmat });
 	}
 
 	async function choosePin(pin: number) {
+		const mine = session.current;
 		const result = await run(() => lookUp(pin));
 		if (result === undefined) return;
 		if (result === null) return setError(`No order to ship has pin ${pin}`);
@@ -208,6 +239,7 @@ export function QuickShip() {
 		}
 		// Opened straight onto an order, the boxes may still be loading.
 		const known = boxes.length > 0 ? boxes : await listPackages();
+		if (mine !== session.current) return;
 		if (boxes.length === 0) setBoxes(known);
 		suggestBox(result.plan, 0, known);
 		setStep("package");
@@ -236,6 +268,8 @@ export function QuickShip() {
 		const next = await run(() => planFor(orderIds));
 		if (!next) return;
 		setPlan(next);
+		// New contents, new default: a choice made for the old ones is dropped.
+		setHazmatChoice(null);
 		setExtras(startingExtras(next));
 		setRates(null);
 		latest.current++;
@@ -248,15 +282,10 @@ export function QuickShip() {
 		if (!plan || busy || step !== "package") return;
 		setBox(next.box);
 		setDims(next.dims);
-		// Weight starts from this box's weight last time these contents
-		// shipped; else, for a single box, the items' known weights plus the
-		// empty box.
-		const last = plan.last?.[packed.length];
-		const grams =
-			last?.weightGrams ??
-			(packed.length === 0 && plan.itemsWeightGrams !== null
-				? plan.itemsWeightGrams + (next.box?.weightGrams ?? 0)
-				: null);
+		// Weight starts from this box's weight last time these contents shipped
+		// in this same packaging; else the items' known weights plus the empty
+		// box.
+		const grams = startingGrams(plan, packed.length, next.box, next.dims);
 		setWeightGrams(grams);
 		setDraftGrams(grams);
 		setStep("weight");
@@ -306,7 +335,9 @@ export function QuickShip() {
 		if (!plan || list.length === 0 || busy || !rates) return;
 		if (!sameExtras(rates.for, extras)) return;
 		const parts = splitInsurance(extras.insure, list.length);
-		// Buys a real label, so it stays busy until the reload shows it.
+		// Buys a real label, so it stays busy until the reload shows it, and
+		// holds the session until then.
+		buying.current = true;
 		const r = await run(() =>
 			optimism.change({
 				send: () =>
@@ -331,6 +362,7 @@ export function QuickShip() {
 					}),
 			}),
 		);
+		buying.current = false;
 		if (!r) return;
 		const result = r.value;
 		if (result.failed) {
@@ -352,6 +384,8 @@ export function QuickShip() {
 
 	const external = found?.external ?? null;
 	const count = packed.length + (dims ? 1 : 0);
+	const lastHere =
+		plan && dims ? lastFor(plan, packed.length, box, dims) : null;
 	const steps = stepsFor({
 		found,
 		plan,
@@ -366,7 +400,14 @@ export function QuickShip() {
 	});
 
 	return (
-		<Dialog open={open} onOpenChange={setOpen}>
+		<Dialog
+			open={open}
+			onOpenChange={(next) => {
+				// A purchase underway can't be walked away from.
+				if (!next && buying.current) return;
+				setOpen(next);
+			}}
+		>
 			<DialogContent
 				// Never taller than the screen: a long order scrolls instead of
 				// pushing the steps off the top.
@@ -462,8 +503,8 @@ export function QuickShip() {
 							key={packed.length}
 							initialGrams={weightGrams}
 							hint={
-								plan?.last?.[packed.length]
-									? plan.last.length > 1
+								lastHere
+									? plan?.last && plan.last.length > 1
 										? `Box ${packed.length + 1} of ${plan.last.length} last time`
 										: "Same as last time"
 									: weightGrams !== null

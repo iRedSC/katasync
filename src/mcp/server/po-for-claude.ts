@@ -8,7 +8,7 @@ import {
 	lineCents,
 } from "#/purchasing/discount";
 import { poFilesOf } from "#/purchasing/files";
-import { emailsOf } from "#/purchasing/inbox/ingest";
+import { emailSummariesOf } from "#/purchasing/inbox/ingest";
 import { invoicesOf } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
 import { isBackOrdered } from "#/purchasing/status";
@@ -18,12 +18,17 @@ import { trackingOf } from "#/purchasing/tracking";
 // lines apart. Images, ids, and defaults equal to the line's terms are left
 // out; a line's default terms show only when they differ.
 export async function orderForClaude(db: Db, id: number) {
-	const po = await loadOrder(db, id);
-	const invoices = await invoicesOf(db, id);
-	const damages = await damagesOf(db, id);
-	const emails = await emailsOf(db, id);
-	const tracking = await trackingOf(db, id);
-	const files = await poFilesOf(db, id);
+	// Three reads at a time, so one summary doesn't take the whole pool.
+	const [po, invoices, damages] = await Promise.all([
+		loadOrder(db, id),
+		invoicesOf(db, id),
+		damagesOf(db, id),
+	]);
+	const [emails, tracking, files] = await Promise.all([
+		emailSummariesOf(db, id),
+		trackingOf(db, id),
+		poFilesOf(db, id),
+	]);
 	const priced = po.lines.filter((l) => l.unitCost !== null);
 	const before = priced.reduce(
 		(n, l) => n + Math.round(l.quantity * (l.unitCost ?? 0) * 100),

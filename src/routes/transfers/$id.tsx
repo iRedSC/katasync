@@ -1,8 +1,4 @@
-import {
-	createFileRoute,
-	useNavigate,
-	useRouter,
-} from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftRight } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -47,7 +43,6 @@ export const Route = createFileRoute("/transfers/$id")({
 
 function TransferPage() {
 	const { transfer: t, lines, suggestions, index } = Route.useLoaderData();
-	const router = useRouter();
 	const navigate = useNavigate();
 	const draft = t.status === "draft";
 	const name = `T${t.id}`;
@@ -55,10 +50,9 @@ function TransferPage() {
 	const [note, setNote] = useState(t.note ?? "");
 
 	// Every change goes to the server, then the page reloads what it says.
-	async function change<T>(send: () => Promise<T>) {
-		const r = await optimism.change({ send });
-		if (r) await router.invalidate();
-		return r;
+	// The engine does that reload, so a change resolves once it's in.
+	function change<T>(send: () => Promise<T>) {
+		return optimism.change({ send });
 	}
 
 	async function send() {

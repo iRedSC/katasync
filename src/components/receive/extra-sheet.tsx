@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
 	matchWarning,
 	type PurchaseOrderMatch,
+	pickable,
 	usePurchaseOrderSearch,
 } from "#/components/po-product-picker";
 
@@ -24,6 +25,9 @@ export function ExtraSheet({
 		search.state === "searching" || search.state === "done"
 			? search.results
 			: [];
+	// Only a finished search for the text now can be picked; the rest is shown dimmed.
+	const picks = pickable(search, query);
+	const settled = picks !== null;
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -46,7 +50,7 @@ export function ExtraSheet({
 					onChange={(e) => setQuery(e.target.value)}
 					onKeyDown={(e) => {
 						// A scan ends with Enter: take the best match.
-						const first = results[0];
+						const first = picks?.[0];
 						if (
 							e.key === "Enter" &&
 							first &&
@@ -89,7 +93,7 @@ export function ExtraSheet({
 						<li key={m.productId}>
 							<button
 								type="button"
-								disabled={warning?.blocks}
+								disabled={!settled || warning?.blocks}
 								onClick={() => onPick(m)}
 								className="flex w-full items-center gap-3 rounded-2xl bg-card p-3 text-left shadow-card active:bg-surface disabled:opacity-50"
 							>

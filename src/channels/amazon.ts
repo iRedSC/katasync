@@ -1,5 +1,7 @@
 import { type } from "arktype";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
+import { orders } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
@@ -194,6 +196,38 @@ export function planAmazonWindows(
 	return windows;
 }
 
+// The listed orders already saved at their current revision, by id. Those
+// need no item calls or ingest again.
+export async function unchangedOrderIds(
+	db: Db,
+	storeId: number,
+	listed: (typeof amazonOrder.infer)[],
+) {
+	const unchanged = new Set<string>();
+	if (listed.length === 0) return unchanged;
+	const saved = await db
+		.select({
+			externalId: orders.externalId,
+			sourceUpdatedAt: orders.sourceUpdatedAt,
+		})
+		.from(orders)
+		.where(
+			and(
+				eq(orders.storeId, storeId),
+				inArray(
+					orders.externalId,
+					listed.map((o) => o.AmazonOrderId),
+				),
+			),
+		);
+	const savedAt = new Map(saved.map((s) => [s.externalId, s.sourceUpdatedAt]));
+	for (const order of listed) {
+		const at = savedAt.get(order.AmazonOrderId);
+		if (at && at >= order.LastUpdateDate) unchanged.add(order.AmazonOrderId);
+	}
+	return unchanged;
+}
+
 export async function syncAmazon(db: Db, options: { listings: boolean }) {
 	const store = await ensureStore(db, "amazon", {
 		id: "amazon-us",
@@ -248,7 +282,14 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 					`/orders/v0/orders?MarketplaceIds=${MARKETPLACE_US}&${query}`,
 				),
 			);
+			// An order saved since its last change needs no item calls.
+			const unchanged = await unchangedOrderIds(
+				db,
+				store.id,
+				page.payload.Orders,
+			);
 			for (const order of page.payload.Orders) {
+				if (unchanged.has(order.AmazonOrderId)) continue;
 				const items = await orderItems(order.AmazonOrderId);
 				const result = await ingestOrder(
 					db,

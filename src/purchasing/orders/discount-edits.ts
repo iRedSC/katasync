@@ -6,7 +6,7 @@ import {
 	purchaseOrderReceipts,
 } from "#/db/schema";
 import type { Discount } from "#/purchasing/discount";
-import { discountOf, discountRow } from "#/purchasing/discount";
+import { discountOf, discountRow, receiptLeft } from "#/purchasing/discount";
 import { checkDiscounts, checkOff, lineDiscounts } from "./discount-checks";
 import { lockForEdit, PurchaseOrderError, poName } from "./lock";
 import { receivedOf } from "./receiving";
@@ -95,7 +95,8 @@ export async function saveDiscount(
 }
 
 // A discount that came with a receipt covers some of what that receipt
-// brought, which is still in (not undone), on the same line.
+// brought, which is still in (not undone), on the same line. Together with the
+// others on that receipt, it can't cover more than came.
 async function checkReceiptDiscount(
 	tx: Db,
 	receiptId: number,
@@ -115,9 +116,18 @@ async function checkReceiptDiscount(
 		.where(eq(purchaseOrderReceipts.undoesId, receiptId));
 	if (!receipt || receipt.lineId !== lineId || receipt.quantity <= 0 || undone)
 		throw new PurchaseOrderError("That delivery isn't on this line any more");
-	if (discount.units === "rest" || discount.units > receipt.quantity)
+	// Replacements are already off by now, so they don't count against it.
+	const onReceipt = (await lineDiscounts(tx, [lineId])).filter(
+		(d) => d.receiptId === receiptId,
+	);
+	const left = receiptLeft(receipt.quantity, onReceipt);
+	if (left <= 0)
 		throw new PurchaseOrderError(
-			`The discount can cover 1 to ${receipt.quantity}, the number that came`,
+			`The ${receipt.quantity} that came are all discounted already`,
+		);
+	if (discount.units === "rest" || discount.units > left)
+		throw new PurchaseOrderError(
+			`The discount can cover 1 to ${left}, of the ${receipt.quantity} that came and aren't discounted yet`,
 		);
 }
 

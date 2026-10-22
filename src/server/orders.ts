@@ -36,8 +36,10 @@ import {
 	stores,
 } from "#/db/schema";
 import { cityLine } from "#/lib/format";
+import { groupBy } from "#/lib/group-by";
 import { adminUrls } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
+import { sharingOrders } from "#/orders/invoice-index";
 import { refurbishOptions, refurbishReturn } from "#/orders/refurbish";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import {
@@ -49,11 +51,7 @@ import {
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
-import {
-	addressKey,
-	liveDispatches,
-	whyNotTogether,
-} from "#/shipping/dispatch";
+import { liveDispatches } from "#/shipping/dispatch";
 import { lastPackedFor } from "#/shipping/quick-ship";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
@@ -69,6 +67,8 @@ export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
 export const listOrders = createServerFn({ method: "GET" })
 	.validator(type({ view: "'ship' | 'all'" }))
 	.handler(async ({ data }) => {
+		const scope =
+			data.view === "ship" ? or(needsShipping, labelToVoid) : undefined;
 		const lineStats = getDb()
 			.select({
 				orderId: orderLines.orderId,
@@ -112,7 +112,7 @@ export const listOrders = createServerFn({ method: "GET" })
 			.innerJoin(stores, eq(stores.id, orders.storeId))
 			.leftJoin(lineStats, eq(lineStats.orderId, orders.id))
 			// A cancelled order with a live label stays in view until it's voided.
-			.where(data.view === "ship" ? or(needsShipping, labelToVoid) : undefined)
+			.where(scope)
 			.orderBy(desc(orders.placedAt))
 			.limit(data.view === "ship" ? 500 : 200);
 		// Each order's lines, for its products column and the search. The title
@@ -145,7 +145,15 @@ export const listOrders = createServerFn({ method: "GET" })
 		for (const { orderId, ...line } of lines) {
 			linesOf.set(orderId, [...(linesOf.get(orderId) ?? []), line]);
 		}
-		return listed.map((o) => ({ ...o, lines: linesOf.get(o.id) ?? [] }));
+		// How many the view holds, so the list can say when it's cut short.
+		const [{ total }] = await getDb()
+			.select({ total: sql<number>`count(*)::int` })
+			.from(orders)
+			.where(scope);
+		return {
+			orders: listed.map((o) => ({ ...o, lines: linesOf.get(o.id) ?? [] })),
+			total,
+		};
 	});
 
 export const getOrder = createServerFn({ method: "GET" })
@@ -521,14 +529,13 @@ export const listInvoices = createServerFn({ method: "GET" })
 					.where(inArray(productComponents.parentProductId, setIds))
 					.orderBy(asc(products.sku))
 			: [];
+		const partsBy = groupBy(parts, (p) => p.setId);
 		const partsOf = (productId: number | null) =>
-			parts.filter((p) => p.setId === productId);
-		const linesOf = (id: number) => lines.filter((l) => l.orderId === id);
+			productId === null ? [] : (partsBy.get(productId) ?? []);
+		const linesBy = groupBy(lines, (l) => l.orderId);
+		const linesOf = (id: number) => linesBy.get(id) ?? [];
 		const keys = new Map(toShip.map((o) => [o.id, contentsKey(linesOf(o.id))]));
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
-		// Other orders to the same address that can share the box, so the
-		// packer gathers them before typing the pin.
-		const shipsWith = new Map<number, { name: string; pin: number | null }[]>();
 		// Any order still to ship can share the box, printed or not, so a
 		// packer printing a few still hears about the rest.
 		const pool = data.ids ? await select(needsShipping) : toShip;
@@ -536,19 +543,9 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const live = await liveDispatches(db, [
 			...new Set([...toShip, ...pool].map((o) => o.id)),
 		]);
-		for (const o of toShip) {
-			const others = pool.filter(
-				(c) =>
-					c.id !== o.id &&
-					addressKey(c) !== null &&
-					addressKey(c) === addressKey(o) &&
-					whyNotTogether([o, c], live) === null,
-			);
-			shipsWith.set(
-				o.id,
-				others.map((c) => ({ name: c.name, pin: c.pin })),
-			);
-		}
+		// Other orders to the same address that can share the box, so the
+		// packer gathers them before typing the pin.
+		const sharing = sharingOrders(toShip, pool, live);
 		return {
 			from: from
 				? {
@@ -568,7 +565,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 				return {
 					...o,
 					lines: own.map((l) => ({ ...l, parts: partsOf(l.productId) })),
-					shipsWith: shipsWith.get(o.id) ?? [],
+					shipsWith: sharing.get(o.id) ?? [],
 					// What quick ship will suggest: the box and weight these exact
 					// contents went out in last time, else the items' own weight.
 					// Name and size apart, so the invoice can set them differently.
@@ -586,6 +583,6 @@ export const listInvoices = createServerFn({ method: "GET" })
 		};
 	});
 
-export type OrderRow = Awaited<ReturnType<typeof listOrders>>[number];
+export type OrderRow = Awaited<ReturnType<typeof listOrders>>["orders"][number];
 export type OrderDetail = Awaited<ReturnType<typeof getOrder>>;
 export type ReturnsData = Awaited<ReturnType<typeof getReturns>>;

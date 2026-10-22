@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import { listings, productAliases, products, stores } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
 import { listingEnded } from "#/products/archive";
+import { lockListings, mapListings } from "./listing-claims";
 import { awaitingProduct } from "./unmatched";
 
 export type ChannelListing = {
@@ -188,33 +189,7 @@ export async function mapListing(
 	productId: number | null,
 ) {
 	return db.transaction(async (tx) => {
-		const [listing] = await tx
-			.select()
-			.from(listings)
-			.where(eq(listings.id, listingId));
-		if (!listing) throw new LedgerError(`Unknown listing ${listingId}`);
-		if (productId !== null) {
-			// Share-locked so the product can't be archived mid-match.
-			const [sku] = await tx
-				.select()
-				.from(products)
-				.where(eq(products.id, productId))
-				.for("share");
-			if (!sku) throw new LedgerError(`Unknown product ${productId}`);
-			if (sku.archivedAt)
-				throw new LedgerError(
-					`${sku.sku} is archived; restore it before matching listings to it`,
-				);
-			if (listing.fulfillment === "fba" && sku.kind === "bundle") {
-				throw new LedgerError(
-					`FBA listing ${listing.externalId} can't sell bundle ${sku.sku}; Amazon needs physical units`,
-				);
-			}
-		}
-		await tx
-			.update(listings)
-			.set({ productId })
-			.where(eq(listings.id, listingId));
+		await mapListings(tx, await lockListings(tx, [listingId]), productId);
 	});
 }
 
@@ -283,7 +258,11 @@ export async function matchListings(
 ): Promise<{ mapped: number[]; created: number; skipped: string[] }> {
 	const first = await autoMapListings(db);
 	const pending = await db
-		.select({ id: listings.id, sku: listings.externalSku })
+		.select({
+			id: listings.id,
+			sku: listings.externalSku,
+			title: listings.title,
+		})
 		.from(listings)
 		.innerJoin(stores, eq(stores.id, listings.storeId))
 		.where(
@@ -296,15 +275,13 @@ export async function matchListings(
 		.orderBy(listings.id);
 	const created: number[] = [];
 	const skipped: string[] = [];
-	for (const listing of pending) {
-		try {
-			await createProductFromListing(db, listing.id);
-			created.push(listing.id);
-		} catch (err) {
-			// Usually the same SKU in other capitals; a person decides.
-			if (!(err instanceof LedgerError)) throw err;
-			skipped.push(`${listing.sku}: ${err.message}`);
-		}
+	for (let i = 0; i < pending.length; i += PRODUCT_BATCH) {
+		const batch = await createProductsFromListings(
+			db,
+			pending.slice(i, i + PRODUCT_BATCH),
+		);
+		created.push(...batch.created);
+		skipped.push(...batch.skipped);
 	}
 	const second = created.length > 0 ? await autoMapListings(db) : [];
 	return {
@@ -312,6 +289,90 @@ export async function matchListings(
 		created: created.length,
 		skipped,
 	};
+}
+
+// Products created and listings attached per transaction, so a sync that
+// adds thousands of SKUs runs a handful of statements per batch, not several
+// per listing.
+const PRODUCT_BATCH = 500;
+
+// Gives each listing in the batch a product of its own, as
+// createProductFromListing does, and maps it to that product. A SKU already
+// taken (in any capitals, archived or not, or by an earlier listing in this
+// batch) isn't created: that listing is skipped with the reason, and the
+// rest go on.
+async function createProductsFromListings(
+	db: Db,
+	batch: { id: number; sku: string | null; title: string }[],
+) {
+	return db.transaction(async (tx) => {
+		// Keyed by lowercase SKU: one product per SKU, whatever its capitals.
+		const taken = new Map<string, { sku: string; archived: boolean }>();
+		const keys = batch.flatMap((l) =>
+			l.sku?.trim() ? [l.sku.trim().toLowerCase()] : [],
+		);
+		if (keys.length > 0) {
+			const existing = await tx
+				.select({ sku: products.sku, archivedAt: products.archivedAt })
+				.from(products)
+				.where(inArray(sql`lower(${products.sku})`, keys));
+			for (const p of existing)
+				taken.set(p.sku.toLowerCase(), {
+					sku: p.sku,
+					archived: p.archivedAt !== null,
+				});
+		}
+
+		const skipped: string[] = [];
+		const planned: { listingId: number; sku: string; name: string }[] = [];
+		for (const l of batch) {
+			const sku = l.sku?.trim();
+			if (!sku) {
+				skipped.push(
+					`${l.sku}: This listing has no SKU, so it's a custom item`,
+				);
+				continue;
+			}
+			const prior = taken.get(sku.toLowerCase());
+			if (prior?.archived) {
+				skipped.push(
+					`${l.sku}: ${prior.sku} is archived; restore it to sell it again, or change the listing's SKU on the channel`,
+				);
+				continue;
+			}
+			if (prior) {
+				skipped.push(
+					`${l.sku}: ${prior.sku} already exists; match the listing to it instead`,
+				);
+				continue;
+			}
+			taken.set(sku.toLowerCase(), { sku, archived: false });
+			planned.push({ listingId: l.id, sku, name: cleanTitle(l.title) });
+		}
+		if (planned.length === 0) return { created: [], skipped };
+
+		const inserted = await tx
+			.insert(products)
+			.values(
+				planned.map((p) => ({
+					sku: p.sku,
+					name: p.name,
+					kind: "simple" as const,
+				})),
+			)
+			.returning({ id: products.id, sku: products.sku });
+		const idBySku = new Map(inserted.map((p) => [p.sku, p.id]));
+		const shown = planned.map((p) => {
+			const productId = idBySku.get(p.sku);
+			if (productId === undefined) throw new Error(`${p.sku} was not created`);
+			return sql`(${p.listingId}::int, ${productId}::int)`;
+		});
+		await tx.execute(sql`
+			update ${listings} set product_id = shown.product_id
+			from (values ${sql.join(shown, sql`, `)}) as shown(listing_id, product_id)
+			where ${listings.id} = shown.listing_id`);
+		return { created: planned.map((p) => p.listingId), skipped };
+	});
 }
 
 // Turns a listing for something not yet in the catalog into a product,

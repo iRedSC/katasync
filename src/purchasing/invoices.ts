@@ -12,7 +12,7 @@ import { lockOrder, PurchaseOrderError, poName } from "#/purchasing/orders";
 // Supplier invoices: checking one against its PO line by line, and keeping
 // its number, date, and total on the PO so it can't be recorded twice.
 
-export type InvoiceLine = {
+type InvoiceRef = {
 	// Their line number, echoed back so differences are easy to find on paper.
 	line?: number;
 	// Our SKU, when the invoice shows it.
@@ -20,10 +20,26 @@ export type InvoiceLine = {
 	// Their item number.
 	supplierSku?: string;
 	description?: string;
-	// In the PO line's unit, as the invoice counts: 12 packs, not 300 discs.
-	quantity: number;
-	unitCost: number;
 };
+
+// Merchandise is billed at a price, so both its numbers are nonnegative. A
+// deduction, such as a discount, is a credit: money taken off the total, never
+// a negative price.
+export type InvoiceLine =
+	| (InvoiceRef & {
+			kind: "merchandise";
+			// In the PO line's unit, as the invoice counts: 12 packs, not 300 discs.
+			quantity: number;
+			unitCost: number;
+	  })
+	| (InvoiceRef & {
+			kind: "credit";
+			// Dollars off the invoice.
+			amount: number;
+	  });
+
+type Merchandise = Extract<InvoiceLine, { kind: "merchandise" }>;
+type Credit = Extract<InvoiceLine, { kind: "credit" }>;
 
 type OrderLine = Awaited<ReturnType<typeof loadOrder>>["lines"][number];
 
@@ -51,20 +67,54 @@ type Match =
 	| { line: OrderLine; by: "sku" | "supplier_sku" | "description" }
 	| { line: null; reason: string };
 
+// The PO lines an identifier names: the same spelling when any line has it,
+// else the same letters and digits. Only one line may answer, so the caller
+// checks the count.
+function named(
+	lines: OrderLine[],
+	pick: (l: OrderLine) => string | null,
+	wanted: string,
+): OrderLine[] {
+	const exact = lines.filter((l) => pick(l) === wanted);
+	if (exact.length > 0) return exact;
+	if (key(wanted) === "") return [];
+	return lines.filter((l) => {
+		const v = pick(l);
+		return v !== null && key(v) === key(wanted);
+	});
+}
+
 // Finds the PO line an invoice line bills for. Our SKU first, then theirs,
-// then the description, which must name exactly one line: a description that
-// fits two lines matches neither, rather than a guess.
-function findLine(lines: OrderLine[], inv: InvoiceLine): Match {
-	if (inv.sku) {
-		const found = lines.find((l) => key(l.sku) === key(inv.sku ?? ""));
-		if (found) return { line: found, by: "sku" };
-	}
-	if (inv.supplierSku) {
-		const found = lines.find(
-			(l) => l.supplierSku && key(l.supplierSku) === key(inv.supplierSku ?? ""),
-		);
-		if (found) return { line: found, by: "supplier_sku" };
-	}
+// then the description. Each must name exactly one line: one that fits two
+// matches neither, and SKU and supplier SKU naming different lines is refused,
+// rather than a guess.
+function findLine(lines: OrderLine[], inv: InvoiceRef): Match {
+	const bySku = inv.sku ? named(lines, (l) => l.sku, inv.sku) : [];
+	const bySupplier = inv.supplierSku
+		? named(lines, (l) => l.supplierSku, inv.supplierSku)
+		: [];
+	if (bySku.length > 1)
+		return {
+			line: null,
+			reason: `SKU ${inv.sku} fits ${bySku.map((l) => l.sku).join(", ")}`,
+		};
+	if (bySupplier.length > 1)
+		return {
+			line: null,
+			reason: `supplier SKU ${inv.supplierSku} fits ${bySupplier.map((l) => l.sku).join(", ")}`,
+		};
+	if (
+		bySku.length === 1 &&
+		bySupplier.length === 1 &&
+		bySku[0] !== bySupplier[0]
+	)
+		return {
+			line: null,
+			reason: `SKU ${inv.sku} and supplier SKU ${inv.supplierSku} name different lines`,
+		};
+	if (bySku.length === 1) return { line: bySku[0], by: "sku" };
+	if (bySupplier.length === 1)
+		return { line: bySupplier[0], by: "supplier_sku" };
 	if (inv.description) {
 		const wanted = key(inv.description);
 		const fits = lines.filter(
@@ -118,9 +168,9 @@ export async function matchInvoice(
 		invoice: { quantity: number; unitCost: number };
 		amountOver: number | null;
 	}[] = [];
-	const notOnPo: (InvoiceLine & { line: number; reason: string })[] = [];
+	const notOnPo: (Merchandise & { line: number; reason: string })[] = [];
 	// Lines taking money off rather than billing a product, e.g. "Discount".
-	const credits: (InvoiceLine & { line: number })[] = [];
+	const credits: (Credit & { line: number })[] = [];
 	const supplierSkusToSave: { sku: string; supplierSku: string }[] = [];
 	const supplierSkuConflicts: {
 		sku: string;
@@ -132,11 +182,15 @@ export async function matchInvoice(
 
 	input.lines.forEach((inv, i) => {
 		const line = inv.line ?? i + 1;
+		if (inv.kind === "credit") {
+			invoicedCents -= Math.round(inv.amount * 100);
+			credits.push({ ...inv, line });
+			return;
+		}
 		invoicedCents += cents(inv.quantity, inv.unitCost);
 		const match = findLine(po.lines, inv);
 		if (!match.line) {
-			if (inv.quantity * inv.unitCost < 0) credits.push({ ...inv, line });
-			else notOnPo.push({ ...inv, line, reason: match.reason });
+			notOnPo.push({ ...inv, line, reason: match.reason });
 			return;
 		}
 		const l = match.line;
@@ -223,6 +277,10 @@ export async function matchInvoice(
 	);
 	const statedCents =
 		input.total === undefined ? null : Math.round(input.total * 100);
+	// The invoice's own arithmetic: its lines plus freight and tax should be
+	// its total. Zero when it states none to check.
+	const arithmeticCents =
+		statedCents === null ? 0 : statedCents - invoicedCents - extrasCents;
 
 	const already = input.number
 		? await recordedInvoice(db, po.supplier.id, input.number)
@@ -243,19 +301,24 @@ export async function matchInvoice(
 				}
 			: {}),
 		// Lines can match at the price before discounts, so the invoice's lines
-		// and credits must also come to what the PO does after them.
+		// and credits must also come to what the PO does after them. And an
+		// invoice whose stated total doesn't add up isn't a match either.
 		matches:
 			differences.length === 0 &&
 			notOnPo.length === 0 &&
 			notOnInvoice.length === 0 &&
 			invoicedCents === poCents &&
-			po.lines.every((l) => l.unitCost !== null),
+			po.lines.every((l) => l.unitCost !== null) &&
+			arithmeticCents === 0,
 		totals: {
 			poLines: po.lines.length,
 			invoiceLines: input.lines.length,
 			matchingLines: matching,
 			poQuantity: po.lines.reduce((n, l) => n + l.quantity, 0),
-			invoiceQuantity: input.lines.reduce((n, l) => n + l.quantity, 0),
+			invoiceQuantity: input.lines.reduce(
+				(n, l) => n + (l.kind === "merchandise" ? l.quantity : 0),
+				0,
+			),
 			// After the PO's discounts, which poDiscounts adds up.
 			poTotal: dollars(poCents),
 			poDiscounts: dollars(discountCents),
@@ -267,9 +330,7 @@ export async function matchInvoice(
 						invoiceTotal: dollars(statedCents),
 						// The invoice's own arithmetic: its lines plus freight and
 						// tax should be its total.
-						invoiceArithmeticOff: dollars(
-							statedCents - invoicedCents - extrasCents,
-						),
+						invoiceArithmeticOff: dollars(arithmeticCents),
 					}),
 		},
 		differences,

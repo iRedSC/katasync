@@ -3,7 +3,7 @@ import type { Db } from "#/db/client";
 import { productSuppliers, products, purchaseOrderLines } from "#/db/schema";
 import { openDraft } from "./drafts";
 import { lockOrder, PurchaseOrderError, poName } from "./lock";
-import { addItems } from "./set-parts";
+import { addItemsBatch } from "./set-parts";
 
 // Puts a finished PO's products on its supplier's draft again, in what was
 // sent (or, for lines never sent, what the PO ended up expecting). Each comes
@@ -58,16 +58,18 @@ export async function orderAgain(db: Db, sourceId: number) {
 		let alreadyOn = 0;
 		let moved = 0;
 		let archived = 0;
+		const toAdd = new Map<number, number>();
 		for (const l of lines) {
 			if (l.archived) archived++;
 			else if (l.supplierId !== from.supplierId) moved++;
 			else if (onDraft.has(l.productId)) alreadyOn++;
 			else {
-				await addItems(tx, draftId, l.productId, l.items);
+				toAdd.set(l.productId, l.items);
 				onDraft.add(l.productId);
 				added++;
 			}
 		}
+		await addItemsBatch(tx, draftId, toAdd);
 		return { id: draftId, added, alreadyOn, moved, archived };
 	});
 }

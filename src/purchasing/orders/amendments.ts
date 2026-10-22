@@ -8,6 +8,7 @@ import {
 import { settle } from "./closing";
 import { checkDiscounts } from "./discount-checks";
 import { lockOrder, PurchaseOrderError } from "./lock";
+import { checkPrice } from "./price";
 import { receivedOf } from "./receiving";
 
 // Changes a sent line without telling the supplier: we're keeping what they
@@ -27,8 +28,7 @@ export async function amendLine(
 		throw new PurchaseOrderError(
 			`Quantity must be a whole number, got ${input.quantity}`,
 		);
-	if (input.unitCost != null && !(input.unitCost >= 0))
-		throw new PurchaseOrderError(`Price can't be ${input.unitCost}`);
+	checkPrice(input.unitCost);
 	return db.transaction(async (tx) => {
 		const [found] = await tx
 			.select({ purchaseOrderId: purchaseOrderLines.purchaseOrderId })

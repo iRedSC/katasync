@@ -1,4 +1,13 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	ne,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	poEmailAttachments,
@@ -8,6 +17,7 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { pointPictures } from "#/inbox/html";
+import { groupBy } from "#/lib/group-by";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { addTracking } from "#/purchasing/tracking";
 import {
@@ -39,36 +49,63 @@ export type ReadContent = (graphId: string) => Promise<Content>;
 // POs that have been sent: a draft has no supplier conversation yet.
 const ON_ORDER = ["sent", "closed", "cancelled"] as const;
 type Match = { purchaseOrderId: number; matchedBy: "address" | "subject" };
+// The sent POs a batch names, each with its supplier's email.
+export type SentPos = Map<number, string | null>;
+// Ids per query, so a big batch doesn't make one huge IN list.
+const IDS_PER_QUERY = 500;
 
 const domainOf = (address: string | null | undefined) =>
 	address?.trim().toLowerCase().split("@")[1] ?? null;
 
-export async function matchEmail(
-	db: Db,
-	email: Pick<InboxMessage, "recipients" | "subject" | "fromAddress">,
-): Promise<Match | null> {
+// The POs an email names: by its reply address, and by its subject.
+function namedIn(email: Pick<InboxMessage, "recipients" | "subject">) {
 	const byAddress = email.recipients
 		.map(poOfAddress)
 		.filter((id): id is number => id !== null);
 	const bySubject = [
 		...email.subject.matchAll(/purchase\s+order\s*#?\s*(\d{1,9})\b/gi),
 	].map((m) => Number(m[1]));
-	const ids = [...new Set([...byAddress, ...bySubject])];
-	if (ids.length === 0) return null;
-	const pos = await db
-		.select({
-			id: purchaseOrders.id,
-			status: purchaseOrders.status,
-			supplierEmail: suppliers.email,
-		})
-		.from(purchaseOrders)
-		.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
-		.where(inArray(purchaseOrders.id, ids));
-	const sent = new Map(
-		pos
-			.filter((p) => (ON_ORDER as readonly string[]).includes(p.status))
-			.map((p) => [p.id, p]),
-	);
+	return { byAddress, bySubject };
+}
+
+// Reads the sent POs that a batch of emails names, once for the whole batch.
+export async function sentPosOf(
+	db: Db,
+	emails: Pick<InboxMessage, "recipients" | "subject">[],
+): Promise<SentPos> {
+	const ids = [
+		...new Set(
+			emails.flatMap((e) => {
+				const { byAddress, bySubject } = namedIn(e);
+				return [...byAddress, ...bySubject];
+			}),
+		),
+	];
+	const sent: SentPos = new Map();
+	for (let i = 0; i < ids.length; i += IDS_PER_QUERY) {
+		const rows = await db
+			.select({
+				id: purchaseOrders.id,
+				status: purchaseOrders.status,
+				supplierEmail: suppliers.email,
+			})
+			.from(purchaseOrders)
+			.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
+			.where(inArray(purchaseOrders.id, ids.slice(i, i + IDS_PER_QUERY)));
+		for (const p of rows) {
+			if ((ON_ORDER as readonly string[]).includes(p.status))
+				sent.set(p.id, p.supplierEmail);
+		}
+	}
+	return sent;
+}
+
+// Which PO an email is filed on, from the batch's sent POs.
+export function matchEmail(
+	sent: SentPos,
+	email: Pick<InboxMessage, "recipients" | "subject" | "fromAddress">,
+): Match | null {
+	const { byAddress, bySubject } = namedIn(email);
 	// An email naming two POs is about neither for sure: it waits for a person.
 	const addressed = [...new Set(byAddress.filter((id) => sent.has(id)))];
 	if (addressed.length > 1) return null;
@@ -78,14 +115,36 @@ export async function matchEmail(
 	const subjects = [
 		...new Set(
 			bySubject.filter(
-				(id) =>
-					fromDomain && domainOf(sent.get(id)?.supplierEmail) === fromDomain,
+				(id) => fromDomain && domainOf(sent.get(id)) === fromDomain,
 			),
 		),
 	];
 	return subjects.length === 1
 		? { purchaseOrderId: subjects[0], matchedBy: "subject" }
 		: null;
+}
+
+// Takes an email's packages off any PO it has left. A move can land while the
+// lookups above are running, so this runs after them, with the email locked.
+async function dropStaleTracking(db: Db, emailId: number) {
+	await db.transaction(async (tx) => {
+		const [email] = await tx
+			.select({ purchaseOrderId: poEmails.purchaseOrderId })
+			.from(poEmails)
+			.where(eq(poEmails.id, emailId))
+			.for("update");
+		const owner = email?.purchaseOrderId ?? null;
+		await tx
+			.delete(purchaseOrderTracking)
+			.where(
+				and(
+					eq(purchaseOrderTracking.emailId, emailId),
+					owner === null
+						? undefined
+						: ne(purchaseOrderTracking.purchaseOrderId, owner),
+				),
+			);
+	});
 }
 
 // Follows the tracking numbers in an email on its PO. Never throws: a PO
@@ -96,7 +155,8 @@ async function trackFrom(
 	purchaseOrderId: number,
 ) {
 	const problems: string[] = [];
-	for (const t of findTracking(`${email.subject}\n${email.body}`)) {
+	const found = findTracking(`${email.subject}\n${email.body}`);
+	for (const t of found) {
 		try {
 			const added = await addTracking(db, {
 				purchaseOrderId,
@@ -108,6 +168,7 @@ async function trackFrom(
 			if (!(error instanceof PurchaseOrderError)) throw error;
 		}
 	}
+	if (found.length > 0) await dropStaleTracking(db, email.id);
 	return problems;
 }
 
@@ -189,6 +250,10 @@ export async function ingest(
 			),
 		);
 	const known = new Set(kept.map((r) => r.messageId));
+	const sent = await sentPosOf(
+		db,
+		messages.filter((m) => !known.has(m.messageId)),
+	);
 	let read_ = 0;
 	let filed = 0;
 	const problems: string[] = [];
@@ -201,7 +266,7 @@ export async function ingest(
 		known.add(message.messageId);
 		try {
 			const content = await read(message.graphId);
-			const match = await matchEmail(db, message);
+			const match = matchEmail(sent, message);
 			const row = await save(db, message, content, match);
 			if (!row) continue;
 			read_++;
@@ -224,6 +289,18 @@ async function emailRow(db: Db, id: number) {
 	return row;
 }
 
+// The email's row, locked until the transaction ends, so its PO can't change
+// under it.
+async function lockedEmail(tx: Db, id: number) {
+	const [row] = await tx
+		.select()
+		.from(poEmails)
+		.where(eq(poEmails.id, id))
+		.for("update");
+	if (!row) throw new PurchaseOrderError(`There's no email ${id}`);
+	return row;
+}
+
 // Files an email on a PO, or moves it to another, and follows its tracking
 // there. Null takes it off its PO, back to unfiled.
 export async function fileEmail(
@@ -234,7 +311,6 @@ export async function fileEmail(
 		by: "staff" | "claude";
 	},
 ) {
-	const email = await emailRow(db, input.emailId);
 	if (input.purchaseOrderId !== null) {
 		const [po] = await db
 			.select({ status: purchaseOrders.status })
@@ -247,7 +323,8 @@ export async function fileEmail(
 				`PO ${input.purchaseOrderId} hasn't been sent, so no email is about it yet`,
 			);
 	}
-	await db.transaction(async (tx) => {
+	const email = await db.transaction(async (tx) => {
+		const before = await lockedEmail(tx, input.emailId);
 		await tx
 			.update(poEmails)
 			.set({
@@ -258,17 +335,18 @@ export async function fileEmail(
 			.where(eq(poEmails.id, input.emailId));
 		// Its packages go with it: the old PO stops following them.
 		if (
-			email.purchaseOrderId !== null &&
-			email.purchaseOrderId !== input.purchaseOrderId
+			before.purchaseOrderId !== null &&
+			before.purchaseOrderId !== input.purchaseOrderId
 		)
 			await tx
 				.delete(purchaseOrderTracking)
 				.where(
 					and(
-						eq(purchaseOrderTracking.emailId, email.id),
-						eq(purchaseOrderTracking.purchaseOrderId, email.purchaseOrderId),
+						eq(purchaseOrderTracking.emailId, before.id),
+						eq(purchaseOrderTracking.purchaseOrderId, before.purchaseOrderId),
 					),
 				);
+		return before;
 	});
 	const problems =
 		input.purchaseOrderId === null
@@ -372,11 +450,10 @@ async function withAttachments<T extends { id: number }>(db: Db, emails: T[]) {
 			),
 		)
 		.orderBy(poEmailAttachments.id);
+	const byEmail = groupBy(files, (f) => f.emailId);
 	return emails.map((e) => ({
 		...e,
-		attachments: files
-			.filter((f) => f.emailId === e.id)
-			.map(({ emailId: _, ...f }) => f),
+		attachments: (byEmail.get(e.id) ?? []).map(({ emailId: _, ...f }) => f),
 	}));
 }
 
@@ -384,6 +461,16 @@ async function withAttachments<T extends { id: number }>(db: Db, emails: T[]) {
 export async function emailsOf(db: Db, purchaseOrderId: number) {
 	const rows = await db
 		.select({ ...summary, body: poEmails.body })
+		.from(poEmails)
+		.where(eq(poEmails.purchaseOrderId, purchaseOrderId))
+		.orderBy(desc(poEmails.receivedAt));
+	return withAttachments(db, rows);
+}
+
+// A PO's emails, newest first, without their bodies, for summaries.
+export async function emailSummariesOf(db: Db, purchaseOrderId: number) {
+	const rows = await db
+		.select(summary)
 		.from(poEmails)
 		.where(eq(poEmails.purchaseOrderId, purchaseOrderId))
 		.orderBy(desc(poEmails.receivedAt));
@@ -452,10 +539,19 @@ export async function countUnfiled(db: Db) {
 	return row;
 }
 
+// An email with its files' names, sizes, and text, but not their bytes: read
+// one of those with attachmentOf.
 export async function emailWithFiles(db: Db, id: number) {
 	const email = await emailRow(db, id);
 	const files = await db
-		.select()
+		.select({
+			id: poEmailAttachments.id,
+			filename: poEmailAttachments.filename,
+			contentType: poEmailAttachments.contentType,
+			size: poEmailAttachments.size,
+			text: poEmailAttachments.text,
+			kept: sql<boolean>`${poEmailAttachments.data} is not null`,
+		})
 		.from(poEmailAttachments)
 		.where(
 			and(
@@ -465,6 +561,26 @@ export async function emailWithFiles(db: Db, id: number) {
 		)
 		.orderBy(poEmailAttachments.id);
 	return { email, files };
+}
+
+// One file of an email, with its bytes. Null unless the email has that file,
+// so the bytes come only for a file asked for.
+export async function attachmentOf(
+	db: Db,
+	emailId: number,
+	attachmentId: number,
+) {
+	const [file] = await db
+		.select()
+		.from(poEmailAttachments)
+		.where(
+			and(
+				eq(poEmailAttachments.id, attachmentId),
+				eq(poEmailAttachments.emailId, emailId),
+				isNull(poEmailAttachments.contentId),
+			),
+		);
+	return file ?? null;
 }
 
 export async function attachmentFile(db: Db, id: number) {

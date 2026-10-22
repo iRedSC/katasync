@@ -119,7 +119,10 @@ describe("shopifyToPayout", () => {
 		});
 	});
 
-	it("leaves out a cancelled one: it never went", () => {
-		expect(shopifyToPayout(payout("canceled"))).toBeNull();
+	it("reads a cancelled one as failed: it never went, so it leaves the pending set", () => {
+		expect(shopifyToPayout(payout("canceled"))).toMatchObject({
+			externalId: "123",
+			status: "failed",
+		});
 	});
 });

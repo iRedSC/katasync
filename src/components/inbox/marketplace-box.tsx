@@ -1,4 +1,14 @@
-import { Archive, Inbox, Mail, MailOpen, Star, Undo2 } from "lucide-react";
+import {
+	Archive,
+	ChevronDown,
+	Inbox,
+	Mail,
+	MailOpen,
+	Star,
+	Undo2,
+} from "lucide-react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge, EmptyState } from "#/components/page";
 import { Button } from "#/components/ui/button";
@@ -7,7 +17,7 @@ import {
 	ContextMenuSeparator,
 } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
-import type { MarketMailPage } from "#/inbox/market-mail";
+import type { MarketCursor, MarketMailPage } from "#/inbox/market-mail";
 import { FOLDER_NAMES, FOLDERS, type Folder } from "#/inbox/rules";
 import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
@@ -15,6 +25,7 @@ import { cn } from "#/lib/utils";
 import type { Market } from "#/markets/market";
 import {
 	type InboxCounts,
+	listMarketMail,
 	markMarketEmailImportant,
 	moveMarketEmail,
 	setMarketEmailDone,
@@ -92,19 +103,57 @@ function changed(key: string, view: MarketView, email: Email, change: Change) {
 	});
 }
 
-export function MarketplaceBox({
-	view,
-	market,
-	page,
-	counts,
-}: {
+type BoxProps = {
 	view: MarketView;
 	market: Market | null;
 	page: MarketMailPage;
 	counts: InboxCounts;
-}) {
+};
+
+// Each folder and market has its own extra pages, so they start over when the
+// list changes.
+export function MarketplaceBox(props: BoxProps) {
+	return <Listing key={`${props.view}|${props.market ?? "all"}`} {...props} />;
+}
+
+type Extra = { emails: Email[]; next: MarketCursor | null };
+
+function Listing({ view, market, page, counts }: BoxProps) {
 	const key = `${view}|${market ?? "all"}`;
-	const d = mail.useData(key, page);
+	// Pages past the first, from "Show more". A change reloads only the first
+	// page, so these stay until the list changes.
+	const [extra, setExtra] = useState<Extra | null>(null);
+	const [loading, setLoading] = useState(false);
+	const shown = useMemo(() => {
+		if (!extra) return page;
+		const first = new Set(page.emails.map((e) => e.id));
+		return {
+			...page,
+			emails: [...page.emails, ...extra.emails.filter((e) => !first.has(e.id))],
+			next: extra.next,
+		};
+	}, [page, extra]);
+	const d = mail.useData(key, shown);
+
+	// Fetches the page after the last one shown, so none is skipped or repeated.
+	async function showMore() {
+		const after = shown.next;
+		if (!after) return;
+		setLoading(true);
+		try {
+			const later = await listMarketMail({ data: { view, market, after } });
+			setExtra((prev) => ({
+				emails: [...(prev?.emails ?? []), ...later.emails],
+				next: later.next,
+			}));
+		} catch (error) {
+			toast.error("Couldn't load more", {
+				description: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			setLoading(false);
+		}
+	}
 
 	// Makes a change, and offers to undo it with the opposite one; without
 	// an undo, the row changing is all it says.
@@ -240,6 +289,19 @@ export function MarketplaceBox({
 				)}
 				empty={<Empty view={view} connected={d.connected} />}
 			/>
+			{shown.next && (
+				<div className="flex justify-center border-t p-2">
+					<Button
+						size="sm"
+						variant="ghost"
+						disabled={loading}
+						onClick={showMore}
+					>
+						<ChevronDown className={cn(loading && "animate-pulse")} />
+						Show more
+					</Button>
+				</div>
+			)}
 		</InboxFrame>
 	);
 }

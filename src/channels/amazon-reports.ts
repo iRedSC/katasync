@@ -6,7 +6,7 @@ import { MARKETPLACE_US, spApi } from "./amazon-api";
 // it once it's ready, that pass or a later one.
 const REPORTS = "/reports/2021-06-30";
 // How long a pass waits for a report it asked for. Amazon usually takes
-// under a minute; one that takes longer is imported next pass.
+// under a minute; one that takes longer is imported by a later pass.
 const WAIT_MS = 90 * 1000;
 
 const reportsPage = type({
@@ -38,17 +38,21 @@ export async function listReports(
 }
 
 // The newest report of this type, asking for a new one if that's older than
-// freshMs. Its text, or null while it's still being built.
+// freshMs. Its text, or null while it's still being built. If the new one
+// isn't ready in time, the newest completed one is returned instead, so it's
+// imported rather than replaced unread.
 export async function latestReport(
 	reportType: string,
 	options: { freshMs: number; now?: number },
 ): Promise<string | null> {
-	let [latest] = await listReports(reportType);
+	const [latest] = await listReports(reportType);
 	const now = options.now ?? Date.now();
-	if (!latest || now - latest.createdTime.getTime() >= options.freshMs) {
-		latest = await requestReport(reportType);
-	}
-	return reportText(latest);
+	if (latest && now - latest.createdTime.getTime() < options.freshMs)
+		return reportText(latest);
+	const asked = await requestReport(reportType);
+	if (asked.processingStatus !== "DONE" && latest?.processingStatus === "DONE")
+		return reportText(latest);
+	return reportText(asked);
 }
 
 // Asks for a new report and waits for it, up to waitMs.

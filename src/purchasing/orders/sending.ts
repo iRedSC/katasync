@@ -4,8 +4,8 @@ import {
 	purchaseOrderDiscounts,
 	purchaseOrderLines,
 	purchaseOrders,
-	suppliers,
 } from "#/db/schema";
+import { leadTimes } from "#/purchasing/forecast";
 import { lockOrder, PurchaseOrderError, poName } from "./lock";
 import { splitSets } from "./set-parts";
 
@@ -56,10 +56,13 @@ export async function markSent(
 						.where(eq(purchaseOrderLines.purchaseOrderId, po.id)),
 				),
 			);
-		const [supplier] = await tx
-			.select({ leadTimeDays: suppliers.leadTimeDays })
-			.from(suppliers)
-			.where(eq(suppliers.id, po.supplierId));
+		// The lead time reorder plans with, measured once there's enough history,
+		// so the expected date here and the stock forecast always agree.
+		const lead = (await leadTimes(tx, [po.supplierId])).get(po.supplierId);
+		if (!lead)
+			throw new PurchaseOrderError(
+				`${poName(po.id)} has no supplier to take a lead time from`,
+			);
 		const sentTo = input.deliver
 			? await input.deliver(tx)
 			: (input.sentTo ?? null);
@@ -69,9 +72,7 @@ export async function markSent(
 				status: "sent",
 				sentAt: now,
 				sentTo,
-				expectedAt: new Date(
-					now.getTime() + supplier.leadTimeDays * 86_400_000,
-				),
+				expectedAt: new Date(now.getTime() + lead.days * 86_400_000),
 			})
 			.where(eq(purchaseOrders.id, po.id));
 		return sentTo;

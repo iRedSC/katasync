@@ -84,20 +84,22 @@ export function comparison(value: string) {
 		? { op: m[1] as "<" | "<=" | "=" | ">=" | ">", n: Number(m[2]) }
 		: null;
 }
-function compare(n: number, value: string) {
+// The test a comparison such as "<=3" makes of a number. Still being typed,
+// e.g. "<", it tests nothing.
+function comparer(value: string): (n: number) => boolean {
 	const c = comparison(value);
-	if (!c) return true; // still being typed, e.g. "<"
+	if (!c) return () => true;
 	switch (c.op) {
 		case "<":
-			return n < c.n;
+			return (n) => n < c.n;
 		case "<=":
-			return n <= c.n;
+			return (n) => n <= c.n;
 		case "=":
-			return n === c.n;
+			return (n) => n === c.n;
 		case ">=":
-			return n >= c.n;
+			return (n) => n >= c.n;
 		case ">":
-			return n > c.n;
+			return (n) => n > c.n;
 	}
 }
 
@@ -173,47 +175,83 @@ export function parseQuery(text: string) {
 	return { filters, words, sorts };
 }
 
-function hits(values: string[], f: Filter) {
-	const v = f.value.toLowerCase();
-	return values.some((x) =>
-		f.exact ? x.toLowerCase() === v : x.toLowerCase().includes(v),
-	);
+const lower = (s: string) => s.toLowerCase();
+
+// Each product's text lowercased once, not once per search or facet count.
+// Facets are built once per load, so the cache lives as long as they do.
+type Folded = Record<Exclude<Field, NumberField> | "text", string[]>;
+const folds = new WeakMap<Facets, Folded>();
+function foldOf(facets: Facets): Folded {
+	const known = folds.get(facets);
+	if (known) return known;
+	const out = { text: facets.text.map(lower) } as Folded;
+	for (const field of FIELDS) {
+		if (!isNumber(field)) out[field] = facets[field].map(lower);
+	}
+	folds.set(facets, out);
+	return out;
+}
+
+type Term = { value: string; exact: boolean };
+const termOf = (f: Filter): Term => ({
+	value: f.value.toLowerCase(),
+	exact: f.exact,
+});
+function hits(values: string[], t: Term) {
+	return values.some((x) => (t.exact ? x === t.value : x.includes(t.value)));
+}
+
+// Whether a product passes the filters on one field.
+type Check = (facets: Facets, folded: Folded) => boolean;
+function checkOf(field: Field, fs: Filter[]): Check {
+	if (isNumber(field)) {
+		const tests = fs.map((f) => comparer(f.value));
+		return (facets) => tests.every((test) => test(facets[field]));
+	}
+	// Per field, a list of alternatives; each alternative is filters that
+	// must all match. + adds to the last alternative instead of starting one.
+	const excluded = fs.filter((f) => f.exclude).map(termOf);
+	const alternatives: Term[][] = [];
+	for (const f of fs) {
+		if (f.exclude) continue;
+		const last = alternatives.at(-1);
+		if (f.and && last) last.push(termOf(f));
+		else alternatives.push([termOf(f)]);
+	}
+	return (_facets, folded) =>
+		!excluded.some((t) => hits(folded[field], t)) &&
+		(alternatives.length === 0 ||
+			alternatives.some((all) => all.every((t) => hits(folded[field], t))));
+}
+
+// A search compiled once per edit: parsing and grouping happen here, so each
+// product only runs the checks. missing names the fields whose filters a
+// product fails, or is null when its free text fails, which no facet can
+// make up for.
+export function compile(filters: Filter[], words: string[]) {
+	const text = words.map(lower);
+	const checks = new Map<Field, Check>();
+	for (const field of FIELDS) {
+		const fs = filters.filter((f) => f.field === field && f.value !== "");
+		if (fs.length > 0) checks.set(field, checkOf(field, fs));
+	}
+	const missing = (facets: Facets): Field[] | null => {
+		const folded = foldOf(facets);
+		if (!text.every((w) => folded.text.some((t) => t.includes(w)))) return null;
+		const out: Field[] = [];
+		for (const [field, check] of checks) {
+			if (!check(facets, folded)) out.push(field);
+		}
+		return out;
+	};
+	return {
+		missing,
+		matches: (facets: Facets) => missing(facets)?.length === 0,
+	};
 }
 
 export function matches(facets: Facets, filters: Filter[], words: string[]) {
-	const text = facets.text.map((t) => t.toLowerCase());
-	if (!words.every((w) => text.some((t) => t.includes(w)))) return false;
-
-	const active = filters.filter((f) => f.value !== "");
-	if (
-		!active.every(
-			(f) => !isNumber(f.field) || compare(facets[f.field], f.value),
-		)
-	)
-		return false;
-	const lists = active.filter(
-		(f): f is Filter & { field: Exclude<Field, NumberField> } =>
-			!isNumber(f.field),
-	);
-	if (lists.some((f) => f.exclude && hits(facets[f.field], f))) return false;
-	// Per field, a list of alternatives; each alternative is filters that
-	// must all match. + adds to the last alternative instead of starting one.
-	const wanted = new Map<Exclude<Field, NumberField>, Filter[][]>();
-	for (const f of lists) {
-		if (f.exclude) continue;
-		const alternatives = wanted.get(f.field) ?? [];
-		const last = alternatives.at(-1);
-		if (f.and && last) last.push(f);
-		else alternatives.push([f]);
-		wanted.set(f.field, alternatives);
-	}
-	for (const [field, alternatives] of wanted) {
-		const ok = alternatives.some((all) =>
-			all.every((f) => hits(facets[field], f)),
-		);
-		if (!ok) return false;
-	}
-	return true;
+	return compile(filters, words).matches(facets);
 }
 
 // Every value of each field across these products, with how many have it.

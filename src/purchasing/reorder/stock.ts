@@ -12,15 +12,14 @@ import {
 	suppliers,
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
-import { setsSoldSince } from "#/inventory/sales";
 import { carried } from "#/products/archive";
-import { DEMAND_DAYS, type LeadTime } from "#/purchasing/forecast";
+import { demandWindow, type LeadTime, setsSoldIn } from "#/purchasing/forecast";
 import {
 	type SetMembership,
 	type SetRecipeRow,
 	setMembership,
 } from "#/purchasing/sets";
-import { loadPlan, planFor } from "./plan";
+import { DEFAULT_LEAD_TIME_DAYS, loadPlan, planFor } from "./plan";
 
 // Every tool set's recipe, with what each set shows as a product. A kit's
 // parts are in the kit, not a set.
@@ -53,11 +52,10 @@ export async function membershipOf(
 	productId: number,
 	now = new Date(),
 ): Promise<SetMembership | null> {
-	const since = new Date(now.getTime() - DEMAND_DAYS * 86_400_000);
 	const [recipes, onHand, sold] = await Promise.all([
 		setRecipes(db),
 		ownedOnHand(db),
-		setsSoldSince(db, since),
+		setsSoldIn(db, demandWindow(now)),
 	]);
 	return setMembership(recipes, onHand, sold).get(productId) ?? null;
 }
@@ -65,17 +63,21 @@ export async function membershipOf(
 // On hand across our own locations, the retail store's included: the
 // warehouse restocks it. Negative (oversold) stays negative, so it
 // gets bought back.
-export async function ownedOnHand(db: Db) {
-	const rows = await db
+const onHandBy = (db: Db) =>
+	db
 		.select({
 			productId: stockLevels.productId,
-			onHand: sql<number>`sum(${stockLevels.onHand})::int`,
+			units: sql<number>`sum(${stockLevels.onHand})::int`.as("units"),
 		})
 		.from(stockLevels)
 		.innerJoin(locations, eq(locations.id, stockLevels.locationId))
 		.where(isOurs)
-		.groupBy(stockLevels.productId);
-	return new Map(rows.map((r) => [r.productId, r.onHand]));
+		.groupBy(stockLevels.productId)
+		.as("on_hand");
+
+export async function ownedOnHand(db: Db) {
+	const rows = await db.select().from(onHandBy(db));
+	return new Map(rows.map((r) => [r.productId, r.units]));
 }
 
 const receivedByLine = (db: Db) =>
@@ -90,12 +92,15 @@ const receivedByLine = (db: Db) =>
 
 // How many of each product are on sent POs and haven't arrived yet, counting
 // the product itself (2 cases of 30 is 60). Drafts aren't on order.
-export async function unitsOnOrder(db: Db, productIds?: number[]) {
+const onOrderBy = (db: Db, productIds?: number[]) => {
 	const received = receivedByLine(db);
-	const rows = await db
+	return db
 		.select({
 			productId: purchaseOrderLines.productId,
-			units: sql<number>`sum(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`,
+			units:
+				sql<number>`sum(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`.as(
+					"units",
+				),
 		})
 		.from(purchaseOrderLines)
 		.innerJoin(
@@ -111,8 +116,37 @@ export async function unitsOnOrder(db: Db, productIds?: number[]) {
 					: undefined,
 			),
 		)
-		.groupBy(purchaseOrderLines.productId);
+		.groupBy(purchaseOrderLines.productId)
+		.as("on_order");
+};
+
+export async function unitsOnOrder(db: Db, productIds?: number[]) {
+	const rows = await db.select().from(onOrderBy(db, productIds));
 	return new Map(rows.map((r) => [r.productId, r.units]));
+}
+
+// On hand and on order from one statement, so a receipt landing between two
+// reads can't count in one and not the other: it's all before or all after.
+export async function stockAndOrders(db: Db, productIds?: number[]) {
+	const hand = onHandBy(db);
+	const order = onOrderBy(db, productIds);
+	const rows = await db
+		.select({
+			productId: sql<number>`coalesce(${hand.productId}, ${order.productId})`,
+			// Both subqueries call their column units; a bare reference to
+			// either would be ambiguous across the join.
+			onHand: sql<number | null>`"on_hand"."units"`,
+			onOrder: sql<number | null>`"on_order"."units"`,
+		})
+		.from(hand)
+		.fullJoin(order, eq(order.productId, hand.productId));
+	const onHand = new Map<number, number>();
+	const onOrder = new Map<number, number>();
+	for (const r of rows) {
+		if (r.onHand !== null) onHand.set(r.productId, r.onHand);
+		if (r.onOrder !== null) onOrder.set(r.productId, r.onOrder);
+	}
+	return { onHand, onOrder };
 }
 
 // Each product's line on an open draft. A product has one supplier, so one
@@ -138,27 +172,25 @@ export async function draftLines(db: Db) {
 }
 
 // Unreceived products on sent POs, counted like unitsOnOrder, with the day
-// each is due, soonest first. A PO without an expected date is due its
-// supplier's lead time after it was sent. Ones already past due aren't coming
-// on any day we can plan around, so they are left out, as are back-ordered
-// ones.
+// each is due, soonest first. A PO is due its supplier's lead time after it
+// was sent: the same figure reorder plans with, and the expected date a PO
+// carries is only a copy of it, so it isn't read here. Ones already past due
+// aren't coming on any day we can plan around, so they are left out, as are
+// back-ordered ones.
 async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
 	const received = receivedByLine(db);
 	const rows = await db
 		.select({
 			productId: purchaseOrderLines.productId,
 			units: sql<number>`(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`,
-			expectedAt: purchaseOrders.expectedAt,
 			sentAt: purchaseOrders.sentAt,
 			supplierId: purchaseOrders.supplierId,
-			leadTimeDays: suppliers.leadTimeDays,
 		})
 		.from(purchaseOrderLines)
 		.innerJoin(
 			purchaseOrders,
 			eq(purchaseOrders.id, purchaseOrderLines.purchaseOrderId),
 		)
-		.innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
 		.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
 		.where(
 			and(
@@ -170,9 +202,8 @@ async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
 	const byProduct = new Map<number, { units: number; arrivesAt: number }[]>();
 	for (const r of rows) {
 		const arrivesAt =
-			r.expectedAt?.getTime() ??
 			(r.sentAt ?? now).getTime() +
-				(lead.get(r.supplierId)?.days ?? r.leadTimeDays) * 86_400_000;
+			(lead.get(r.supplierId)?.days ?? DEFAULT_LEAD_TIME_DAYS) * 86_400_000;
 		if (r.units === 0 || arrivesAt < now.getTime()) continue;
 		const list = byProduct.get(r.productId) ?? [];
 		list.push({ units: r.units, arrivesAt });

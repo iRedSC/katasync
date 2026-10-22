@@ -59,6 +59,16 @@ type Reply = {
 const list = <T>(v: unknown): T[] =>
 	Array.isArray(v) ? v : v && typeof v === "object" ? [v as T] : [];
 
+// A tool call that may change something: any tool that isn't read only.
+const isChange = (m: Message) =>
+	m.method === "tools/call" &&
+	typeof m.params?.name === "string" &&
+	!READ_TOOLS.has(m.params.name);
+
+// Whether a request holds a call that gets logged. Only then is its reply read.
+export const hasChanges = (request: unknown) =>
+	list<Message>(request).some(isChange);
+
 export async function logCalls(
 	db: Db,
 	tokenName: string,
@@ -67,12 +77,7 @@ export async function logCalls(
 ) {
 	const replies = list<Reply>(response);
 	const rows = list<Message>(request)
-		.filter(
-			(m) =>
-				m.method === "tools/call" &&
-				typeof m.params?.name === "string" &&
-				!READ_TOOLS.has(m.params.name),
-		)
+		.filter(isChange)
 		.map((m) => {
 			const reply = replies.find((r) => r.id === m.id);
 			const ok = Boolean(reply?.result && !reply.result.isError);

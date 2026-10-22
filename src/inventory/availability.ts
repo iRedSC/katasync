@@ -84,12 +84,19 @@ export async function getAvailability(
 		}
 	}
 
+	// Each bundle's parts, found once rather than scanned for every bundle.
+	const partsOf = new Map<number, (typeof productComponents.$inferSelect)[]>();
+	for (const r of recipes) {
+		const parts = partsOf.get(r.parentProductId) ?? [];
+		parts.push(r);
+		partsOf.set(r.parentProductId, parts);
+	}
 	for (const sku of requested) {
 		if (sku.kind !== "bundle") {
 			result.set(sku.id, onHand.get(sku.id) ?? 0);
 			continue;
 		}
-		const parts = recipes.filter((r) => r.parentProductId === sku.id);
+		const parts = partsOf.get(sku.id) ?? [];
 		result.set(
 			sku.id,
 			parts.length === 0

@@ -83,10 +83,13 @@ const FIELD_MENU = [
 ] as const;
 
 function Orders() {
-	const rows = Route.useLoaderData();
+	const { orders: rows, total } = Route.useLoaderData();
+	// The server sends only the newest rows; search covers just those.
+	const truncated = rows.length < total;
 	const search = Route.useSearch();
 	const view = search.view ?? "ship";
 	const navigate = useNavigate({ from: Route.fullPath });
+	const router = useRouter();
 	const { link, preload, load } = useRowLink();
 	const list = useRef<HTMLTableSectionElement>(null);
 	const input = useRef<HTMLInputElement>(null);
@@ -103,8 +106,23 @@ function Orders() {
 	const chips = useMemo(() => search.f ?? [], [chipsKey]);
 	const sortText = search.sort ?? "";
 	const sort = useMemo(() => parseSort(sortText, ORDER_SORTS), [sortText]);
-	// The box answers keystrokes from here; the URL keeps a copy.
+	// The box answers keystrokes from here; the URL keeps a copy. A tab click,
+	// back, or forward moves the URL under the box, so the box follows. Its own
+	// typing is a replace, which doesn't, since the URL there is its copy.
 	const [query, setText] = useState(search.q ?? "");
+	const urlMoved = useRef(false);
+	useEffect(
+		() =>
+			router.history.subscribe(({ action }) => {
+				urlMoved.current = action.type !== "REPLACE";
+			}),
+		[router],
+	);
+	useEffect(() => {
+		if (!urlMoved.current) return;
+		urlMoved.current = false;
+		setText(search.q ?? "");
+	}, [search.q]);
 
 	function setSearch(next: {
 		f?: OrderFilter[];
@@ -154,7 +172,6 @@ function Orders() {
 	// Printing happens in another tab and marks the orders printed there, so
 	// once one is opened, each return to this tab reloads the list to show
 	// it. Every return, since the print dialog may still be open the first.
-	const router = useRouter();
 	const [printOpened, setPrintOpened] = useState(false);
 	useEffect(() => {
 		if (!printOpened) return;
@@ -165,11 +182,10 @@ function Orders() {
 		return () => document.removeEventListener("visibilitychange", back);
 	}, [printOpened, router]);
 
-	// A new tab starts over: the tabs drop the chips, so the typed search
-	// goes too, and ticks from the other list don't carry across.
+	// A new tab starts over: ticks from the other list don't carry across. The
+	// typed search goes too, since the tabs drop it from the URL the box follows.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: resets when the view changes
 	useEffect(() => {
-		setText(search.q ?? "");
 		setTicks(new Set());
 		setAnchor(null);
 	}, [view]);
@@ -240,7 +256,7 @@ function Orders() {
 			}
 		>
 			<Card flush className="overflow-visible">
-				<OrderTabs active={view} count={rows.length} />
+				<OrderTabs active={view} count={total} />
 				<div className="flex items-start gap-1 border-b p-2">
 					<div className="min-w-0 flex-1">
 						<FilterSearch
@@ -277,6 +293,12 @@ function Orders() {
 						columns={ORDER_SORTS}
 					/>
 				</div>
+				{truncated && (
+					<p className="border-b px-4 py-1.5 text-xs text-muted-foreground tabular-nums">
+						Showing the newest {formatCount(rows.length)} of{" "}
+						{formatCount(total)}, so search can't reach the rest
+					</p>
+				)}
 				{filtering && rows.length > 0 && (
 					<p className="border-b px-4 py-1.5 text-xs text-muted-foreground tabular-nums">
 						{formatCount(shown.length)} of {formatCount(rows.length)} orders
@@ -289,7 +311,10 @@ function Orders() {
 						title={view === "ship" ? "Nothing to ship" : "No orders"}
 					/>
 				) : shown.length === 0 ? (
-					<EmptyState icon={SearchX} title="No orders match">
+					<EmptyState
+						icon={SearchX}
+						title={truncated ? "No loaded orders match" : "No orders match"}
+					>
 						<button
 							type="button"
 							onClick={() => {

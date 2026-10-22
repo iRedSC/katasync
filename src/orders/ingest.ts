@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { type StockLocations, saleLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import {
@@ -57,6 +57,9 @@ export type ChannelOrder = {
 
 export type IngestStore = { id: number; stockFrom: Date | null };
 
+type OrderLine = typeof orderLines.$inferSelect;
+type ChannelLine = ChannelOrder["lines"][number];
+
 // Saves an order and keeps stock in step with it, safely re-runnable:
 // - Lines on orders placed at or after the store's stockFrom take stock once,
 //   recorded on the line so a re-sync never takes it again.
@@ -102,41 +105,77 @@ export async function ingestOrder(
 			order,
 		);
 
+		// The lines this order already has, read once for the pass.
+		const savedLines = await tx
+			.select()
+			.from(orderLines)
+			.where(eq(orderLines.orderId, saved.id));
+		const existingLines = new Map(
+			savedLines.map((row) => [row.externalId, row] as const),
+		);
+		// Only lines that need a product are looked up: new ones, and saved
+		// ones not mapped yet. A mapped line keeps its product.
+		const productOf = await resolveProducts(
+			tx,
+			store.id,
+			lines.filter((line) => {
+				const existing = existingLines.get(line.externalId);
+				return existing ? existing.productId === null : line.quantity !== 0;
+			}),
+		);
+		// Lines written or read back earlier in this pass. Their saved copy may
+		// predate a stock take, so a repeat of one is read again, not trusted.
+		const handled = new Set<string>();
+		const costs = new Map<number, number | null>();
+		const costOfOnce = async (productId: number) => {
+			if (!costs.has(productId))
+				costs.set(productId, await costOf(tx, productId));
+			return costs.get(productId) ?? null;
+		};
+
 		for (const line of lines) {
-			const [existing] = await tx
-				.select()
-				.from(orderLines)
-				.where(
-					and(
-						eq(orderLines.orderId, saved.id),
-						eq(orderLines.externalId, line.externalId),
-					),
-				);
+			const existing = existingLines.get(line.externalId);
 			// A line cancelled before we ever saw it has nothing to remember.
 			if (!existing && line.quantity === 0) continue;
-			const productId = await resolveProduct(tx, store.id, line);
-			const [row] = existing
-				? await tx
-						.update(orderLines)
-						.set({
-							title: line.title,
-							sku: line.sku,
-							quantity: line.quantity,
-							unitPrice: line.unitPrice,
-							// A line mapped after it came in picks up its product now.
-							productId: existing.productId ?? productId,
-						})
-						.where(eq(orderLines.id, existing.id))
-						.returning()
-				: await tx
-						.insert(orderLines)
-						.values({
-							...line,
-							orderId: saved.id,
-							productId,
-							unitCost: productId === null ? null : await costOf(tx, productId),
-						})
-						.returning();
+			// A line mapped after it came in picks up its product now.
+			const productId = existing?.productId ?? productOf.get(line) ?? null;
+			const unchanged =
+				existing !== undefined &&
+				!handled.has(line.externalId) &&
+				existing.title === line.title &&
+				existing.sku === line.sku &&
+				existing.quantity === line.quantity &&
+				existing.unitPrice === line.unitPrice &&
+				existing.productId === productId;
+			let row: OrderLine;
+			if (unchanged) {
+				row = existing;
+			} else if (existing) {
+				[row] = await tx
+					.update(orderLines)
+					.set({
+						title: line.title,
+						sku: line.sku,
+						quantity: line.quantity,
+						unitPrice: line.unitPrice,
+						productId,
+					})
+					.where(eq(orderLines.id, existing.id))
+					.returning();
+				existingLines.set(line.externalId, row);
+			} else {
+				[row] = await tx
+					.insert(orderLines)
+					.values({
+						...line,
+						orderId: saved.id,
+						productId,
+						unitCost: productId === null ? null : await costOfOnce(productId),
+					})
+					.returning();
+				existingLines.set(line.externalId, row);
+			}
+			handled.add(line.externalId);
 
 			if (order.cancelledAt !== null && row.saleBatchId) {
 				if (!(await isUndone(tx, row.saleBatchId))) {
@@ -230,33 +269,82 @@ export async function resolveProduct(
 	storeId: number,
 	line: ChannelOrder["lines"][number],
 ): Promise<number | null> {
-	if (line.listingExternalId) {
-		const [listing] = await db
-			.select({ productId: listings.productId })
+	const found = await resolveProducts(db, storeId, [line]);
+	return found.get(line) ?? null;
+}
+
+// resolveProduct for many lines at once: one query each for the listing
+// mappings, SKUs, and aliases, instead of up to four per line. A line its
+// listing matches never needs its SKU looked up.
+async function resolveProducts(db: Db, storeId: number, lines: ChannelLine[]) {
+	const listingIds = [
+		...new Set(
+			lines.flatMap((l) => (l.listingExternalId ? [l.listingExternalId] : [])),
+		),
+	];
+	const byListing = new Map<string, number>();
+	if (listingIds.length > 0) {
+		const rows = await db
+			.select({
+				externalId: listings.externalId,
+				productId: listings.productId,
+			})
 			.from(listings)
 			.where(
 				and(
 					eq(listings.storeId, storeId),
-					eq(listings.externalId, line.listingExternalId),
+					inArray(listings.externalId, listingIds),
 				),
 			);
-		if (listing?.productId) return listing.productId;
+		for (const row of rows) {
+			if (row.productId !== null) byListing.set(row.externalId, row.productId);
+		}
 	}
-	if (!line.sku) return null;
-	const [bySku] = await db
-		.select({ id: products.id })
-		.from(products)
-		.where(eq(products.sku, line.sku));
-	if (bySku) return bySku.id;
-	const [byAlias] = await db
-		.select({ id: productAliases.productId })
-		.from(productAliases)
-		.where(eq(productAliases.alias, line.sku));
-	if (byAlias) return byAlias.id;
+	const skus = [
+		...new Set(
+			lines
+				.filter(
+					(l) => !(l.listingExternalId && byListing.has(l.listingExternalId)),
+				)
+				.flatMap((l) => (l.sku ? [l.sku] : [])),
+		),
+	];
+	const bySku = new Map<string, number>();
+	const byAlias = new Map<string, number>();
+	if (skus.length > 0) {
+		const skuRows = await db
+			.select({ sku: products.sku, id: products.id })
+			.from(products)
+			.where(inArray(products.sku, skus));
+		for (const row of skuRows) bySku.set(row.sku, row.id);
+		const aliasRows = await db
+			.select({ alias: productAliases.alias, id: productAliases.productId })
+			.from(productAliases)
+			.where(inArray(productAliases.alias, skus));
+		for (const row of aliasRows) byAlias.set(row.alias, row.id);
+	}
+	const found = new Map<ChannelLine, number | null>();
+	for (const line of lines) {
+		const listed = line.listingExternalId
+			? byListing.get(line.listingExternalId)
+			: undefined;
+		const exact = line.sku
+			? (bySku.get(line.sku) ?? byAlias.get(line.sku))
+			: undefined;
+		found.set(
+			line,
+			listed ?? exact ?? (line.sku ? await bySkuCase(db, line.sku) : null),
+		);
+	}
+	return found;
+}
+
+// The same SKU in other capitals, when exactly one product has it.
+async function bySkuCase(db: Db, sku: string) {
 	const byCase = await db
 		.select({ id: products.id })
 		.from(products)
-		.where(sql`lower(${products.sku}) = lower(trim(${line.sku}))`)
+		.where(sql`lower(${products.sku}) = lower(trim(${sku}))`)
 		.limit(2);
 	return byCase.length === 1 ? byCase[0].id : null;
 }

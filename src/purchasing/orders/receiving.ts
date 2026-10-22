@@ -73,7 +73,6 @@ export async function receive(
 			.where(eq(products.id, line.productId))
 			.for("update");
 
-		const before = await ownedOnHand(tx, line.productId);
 		const { batchId } = await postReceipt(tx, {
 			productId: line.productId,
 			locationId: po.locationId,
@@ -114,7 +113,12 @@ export async function receive(
 			const quantity = expect ?? line.quantity;
 			await averageInCost(tx, {
 				productId: line.productId,
-				onHandBefore: before,
+				supplierId: po.supplierId,
+				onHandBefore: await heldBefore(
+					tx,
+					line.productId,
+					input.quantity * line.packSize,
+				),
 				quantity: input.quantity * line.packSize,
 				unitCost:
 					receiptUnitCost({
@@ -318,11 +322,16 @@ export async function damagedOf(tx: Db, lineId: number) {
 	return row.items;
 }
 
-async function ownedOnHand(db: Db, productId: number) {
+// What the owned shelves held before a receipt of `units`, read after it was
+// posted. Each shelf counts only what it holds, so an oversold shelf has no
+// cost to average in and can't cancel stock on another shelf. Posting resets
+// an oversold shelf to 0 and adds `units`, so taking those back off leaves
+// what it held.
+async function heldBefore(db: Db, productId: number, units: number) {
 	const owned = db.select({ id: locations.id }).from(locations).where(isOurs);
 	const [row] = await db
 		.select({
-			onHand: sql<number>`coalesce(sum(${stockLevels.onHand}), 0)::int`,
+			held: sql<number>`coalesce(sum(greatest(${stockLevels.onHand}, 0)), 0)::int`,
 		})
 		.from(stockLevels)
 		.where(
@@ -331,7 +340,7 @@ async function ownedOnHand(db: Db, productId: number) {
 				inArray(stockLevels.locationId, owned),
 			),
 		);
-	return row.onHand;
+	return row.held - units;
 }
 
 // Weighted average of what's on the shelf and what just arrived, per one of
@@ -350,11 +359,14 @@ export function averageCost(p: {
 }
 
 // unitCost is what each one cost after discounts; price is before them, and
-// becomes the supplier's price, so a one-off discount doesn't carry over.
+// becomes the supplier's price, so a one-off discount doesn't carry over. The
+// supplier's price only changes while the product is still bought from the PO's
+// supplier: a product moved to another supplier keeps that one's price.
 async function averageInCost(
 	db: Db,
 	p: {
 		productId: number;
+		supplierId: number;
 		onHandBefore: number;
 		quantity: number;
 		unitCost: number;
@@ -382,7 +394,12 @@ async function averageInCost(
 		.set({
 			cost: sql`round(${p.price}::numeric * ${productSuppliers.packSize}, 4)`,
 		})
-		.where(eq(productSuppliers.productId, p.productId));
+		.where(
+			and(
+				eq(productSuppliers.productId, p.productId),
+				eq(productSuppliers.supplierId, p.supplierId),
+			),
+		);
 }
 
 // The PO a ledger batch belongs to, when it's a receipt or a receipt's undo.

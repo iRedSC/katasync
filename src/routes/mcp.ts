@@ -8,14 +8,19 @@ import { createFileRoute } from "@tanstack/react-router";
 // src/mcp/server.ts.
 
 async function handle(request: Request) {
-	const [{ getDb }, oauth, { buildServer }, { logCalls }, transport] =
-		await Promise.all([
-			import("#/db/client"),
-			import("#/auth/oauth"),
-			import("#/mcp/server"),
-			import("#/mcp/log"),
-			import("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"),
-		]);
+	const [
+		{ getDb },
+		oauth,
+		{ buildServer },
+		{ hasChanges, logCalls },
+		transport,
+	] = await Promise.all([
+		import("#/db/client"),
+		import("#/auth/oauth"),
+		import("#/mcp/server"),
+		import("#/mcp/log"),
+		import("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"),
+	]);
 	const db = getDb();
 	const bearer = /^Bearer (.+)$/.exec(
 		request.headers.get("authorization") ?? "",
@@ -49,7 +54,8 @@ async function handle(request: Request) {
 	});
 	await server.connect(http);
 	const response = await http.handleRequest(request, { parsedBody: body });
-	if (body !== undefined && response.ok) {
+	// Only a request with a change is logged, so only then is its reply read.
+	if (body !== undefined && response.ok && hasChanges(body)) {
 		const reply = await response
 			.clone()
 			.json()

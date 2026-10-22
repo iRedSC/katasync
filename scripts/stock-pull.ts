@@ -10,6 +10,7 @@ import { getDb } from "#/db/client";
 import { stockChannels } from "#/stock-push/channels";
 import {
 	applyStockPull,
+	markLedgers,
 	planStockPull,
 	type StoreRead,
 	storesInTrustOrder,
@@ -23,6 +24,9 @@ try {
 
 const write = process.argv.includes("--write");
 const db = getDb();
+// Before any store is read: a sale that lands during the reads makes the plan
+// stale, and applying it is refused.
+const mark = await markLedgers(db);
 const reads: StoreRead[] = [];
 for (const store of await storesInTrustOrder(db)) {
 	if (!isSyncedChannel(store.channel)) continue;
@@ -45,7 +49,7 @@ if (reads.length === 0) {
 	console.error("Couldn't read any store, so nothing to pull from.");
 	process.exit(1);
 }
-const plan = await planStockPull(db, reads);
+const plan = await planStockPull(db, reads, mark);
 for (const p of plan.pulls)
 	console.log(
 		`${p.sku.padEnd(24)} ${String(p.quantity).padStart(5)}  from ${p.store}${p.disagreed ? " (its listings disagreed; took the lowest)" : ""}`,
@@ -60,7 +64,13 @@ if (plan.unpulled.length > 0) {
 		console.log(`  ${u.sku.padEnd(24)} ${u.why}: ${u.detail}`);
 }
 if (write) {
-	const posted = await applyStockPull(db, plan);
-	console.log(`\nPosted opening stock for ${posted} products.`);
+	const result = await applyStockPull(db, plan);
+	if (result.state === "moved") {
+		console.error(
+			`\nStock moved while the stores were read, for ${result.skus.join(", ")}. Nothing was posted; run it again.`,
+		);
+		process.exit(1);
+	}
+	console.log(`\nPosted opening stock for ${result.posted} products.`);
 } else console.log("\nPreview only; run with --write to post it.");
 process.exit(0);

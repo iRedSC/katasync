@@ -78,10 +78,16 @@ export function amazonIssueProblems(items: Item[]): Problem[] {
 	for (const item of items) {
 		const summary = item.summaries?.[0];
 		for (const i of item.issues ?? []) {
-			const action = i.enforcements?.actions?.[0]?.action;
-			const enforced = action ? ENFORCED[action] : undefined;
-			if (i.severity !== "ERROR" && !action) continue;
-			const key = `${action ?? ""}|${i.code}`;
+			// Each action Amazon took is its own group, whatever order it lists
+			// them in; a repeated one counts once.
+			const actions = [
+				...new Set(
+					i.enforcements?.actions
+						?.map((a) => a.action)
+						.filter((a) => a !== "") ?? [],
+				),
+			];
+			if (i.severity !== "ERROR" && actions.length === 0) continue;
 			const what =
 				SHORT[i.code] ??
 				words(
@@ -89,27 +95,31 @@ export function amazonIssueProblems(items: Item[]): Problem[] {
 						(c) => c !== "PRODUCT" && c !== "LISTING",
 					) ?? "listing error",
 				);
-			const done = action ? (enforced?.text ?? words(action)) : null;
-			const group = groups.get(key) ?? {
-				level: enforced?.level ?? (action ? "at_risk" : "watch"),
-				text: done ? `${done}: ${what}` : what,
-				href: "https://sellercentral.amazon.com/fixyourproducts",
-				detail: null,
-				items: [],
-			};
-			// A listing with two errors of one kind (two fields too long) is
-			// one row with both messages.
-			const listed = group.items.find((x) => x.ref === item.sku);
-			if (listed) listed.detail = `${listed.detail} ${i.message}`;
-			else
-				group.items.push({
-					listingId: item.sku,
-					ref: item.sku,
-					label: summary?.itemName ?? summary?.asin ?? item.sku,
-					detail: i.message,
-					href: amazonListingHref(item.sku),
-				});
-			groups.set(key, group);
+			for (const action of actions.length > 0 ? actions : [null]) {
+				const enforced = action ? ENFORCED[action] : undefined;
+				const key = `${action ?? ""}|${i.code}`;
+				const done = action ? (enforced?.text ?? words(action)) : null;
+				const group = groups.get(key) ?? {
+					level: enforced?.level ?? (action ? "at_risk" : "watch"),
+					text: done ? `${done}: ${what}` : what,
+					href: "https://sellercentral.amazon.com/fixyourproducts",
+					detail: null,
+					items: [],
+				};
+				// A listing with two errors of one kind (two fields too long) is
+				// one row with both messages.
+				const listed = group.items.find((x) => x.ref === item.sku);
+				if (listed) listed.detail = `${listed.detail} ${i.message}`;
+				else
+					group.items.push({
+						listingId: item.sku,
+						ref: item.sku,
+						label: summary?.itemName ?? summary?.asin ?? item.sku,
+						detail: i.message,
+						href: amazonListingHref(item.sku),
+					});
+				groups.set(key, group);
+			}
 		}
 	}
 	return [...groups.values()].map((problem) => {

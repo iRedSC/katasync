@@ -25,9 +25,9 @@ import { cn } from "#/lib/utils";
 import { productLanguage } from "#/products/language";
 import { facetsOf, sortValuesOf, stateOf, stock } from "#/products/rows";
 import {
+	compile,
 	type Filter,
 	facetCounts,
-	matches,
 	parseQuery,
 } from "#/products/search";
 import {
@@ -248,8 +248,9 @@ function Table({
 					: s,
 			sort,
 		);
+		const matcher = compile(all, q.words);
 		return sortRows(
-			prepared.filter((p) => matches(p.facets, all, q.words)),
+			prepared.filter((p) => matcher.matches(p.facets)),
 			by,
 			(p) => p.values,
 		);

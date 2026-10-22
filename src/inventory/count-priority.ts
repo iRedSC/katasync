@@ -1,7 +1,8 @@
-import { and, eq, gte, ne, sql } from "drizzle-orm";
+import { and, eq, gte, ilike, ne, or, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { countLog, locations, products, stockLevels } from "#/db/schema";
 import { type AbcClass, abcClasses } from "#/inventory/abc";
+import { requestOutstanding } from "#/inventory/ledger";
 import { isOurs } from "#/inventory/locations";
 import { TRUST_DAYS } from "#/inventory/stock-state";
 import { carriedOrStocked } from "#/products/archive";
@@ -36,6 +37,8 @@ export type Shelf = {
 	abc: AbcClass | null;
 	onHand: number;
 	lastCountedAt: Date | null;
+	// Set only while the request is outstanding; countableShelves decides that
+	// in SQL, so a request a count has since covered reads as null here.
 	countRequestedAt: Date | null;
 	// Counts in MISS_DAYS that didn't match, leaving out undone ones.
 	misses: number;
@@ -43,12 +46,23 @@ export type Shelf = {
 
 export type DueShelf = Shelf & { reason: CountReason };
 
-// Why a shelf is due, or null when its number can be trusted.
+// Narrows which shelves are read and ranked, in SQL where it can. ABC isn't
+// here: it stays global, since a class counted over a filtered list would
+// change what priority means.
+export type CountScope = {
+	category?: string;
+	search?: string;
+	locationId?: number;
+};
+
+// Why a shelf is due, or null when its number can be trusted. A request that's
+// set here is outstanding; the <= only matters where the two times fall in
+// the same millisecond, which the SQL already settled in the request's favor.
 export function reasonOf(s: Shelf, now: Date): CountReason | null {
 	if (s.onHand < 0) return "oversold";
 	if (
 		s.countRequestedAt &&
-		(!s.lastCountedAt || s.lastCountedAt < s.countRequestedAt)
+		(!s.lastCountedAt || s.lastCountedAt <= s.countRequestedAt)
 	)
 		return "requested";
 	if (
@@ -84,12 +98,19 @@ export function rankCounts(shelves: Shelf[], now: Date): DueShelf[] {
 		);
 }
 
+// A product whose SKU or name contains the text, in any capitals.
+function containing(text: string) {
+	const pattern = `%${text.replace(/[\\%_]/g, "\\$&")}%`;
+	return or(ilike(products.sku, pattern), ilike(products.name, pattern));
+}
+
 // Every shelf of ours that could be counted: each one holding a product, and
 // for a product none holds yet, our first location (where a count would put
 // it). Tool sets have no shelf; their parts do.
 export async function countableShelves(
 	db: Db,
 	now = new Date(),
+	scope: CountScope = {},
 ): Promise<Shelf[]> {
 	const since = new Date(now.getTime() - MISS_DAYS * 86_400_000);
 	const [owned, items, levels, misses, abc] = await Promise.all([
@@ -105,14 +126,26 @@ export async function countableShelves(
 				category: products.category,
 			})
 			.from(products)
-			.where(and(ne(products.kind, "bundle"), carriedOrStocked)),
+			.where(
+				and(
+					ne(products.kind, "bundle"),
+					carriedOrStocked,
+					scope.category === undefined
+						? undefined
+						: sql`lower(${products.category}) = lower(${scope.category})`,
+					scope.search === undefined ? undefined : containing(scope.search),
+				),
+			),
 		db
 			.select({
 				productId: stockLevels.productId,
 				locationId: stockLevels.locationId,
 				onHand: stockLevels.onHand,
 				lastCountedAt: stockLevels.lastCountedAt,
-				countRequestedAt: stockLevels.countRequestedAt,
+				countRequestedAt:
+					sql<Date | null>`case when ${requestOutstanding} then ${stockLevels.countRequestedAt} end`.mapWith(
+						stockLevels.countRequestedAt,
+					),
 			})
 			.from(stockLevels)
 			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
@@ -128,6 +161,9 @@ export async function countableShelves(
 				and(
 					ne(countLog.expected, countLog.counted),
 					gte(countLog.countedAt, since),
+					scope.locationId === undefined
+						? undefined
+						: eq(countLog.locationId, scope.locationId),
 					sql`not exists (select 1 from movements where movements.reference = 'undo:' || ${countLog.batchId}::text)`,
 				),
 			)
@@ -161,19 +197,31 @@ export async function countableShelves(
 				countRequestedAt: null,
 			},
 		];
-		return shelves.map((s) => ({
-			...s,
-			sku: p.sku,
-			name: p.name,
-			category: p.category,
-			location: locationName.get(s.locationId) ?? "",
-			abc: abc.classes.get(p.id)?.abc ?? null,
-			misses: missed.get(key(p.id, s.locationId)) ?? 0,
-		}));
+		// The location is checked here, not in SQL: a product held only
+		// elsewhere must not fall back to the first location's shelf.
+		return shelves.flatMap((s) =>
+			scope.locationId === undefined || s.locationId === scope.locationId
+				? [
+						{
+							...s,
+							sku: p.sku,
+							name: p.name,
+							category: p.category,
+							location: locationName.get(s.locationId) ?? "",
+							abc: abc.classes.get(p.id)?.abc ?? null,
+							misses: missed.get(key(p.id, s.locationId)) ?? 0,
+						},
+					]
+				: [],
+		);
 	});
 }
 
-// The due shelves, most urgent first.
-export async function countsDue(db: Db, now = new Date()) {
-	return { due: rankCounts(await countableShelves(db, now), now) };
+// The due shelves, most urgent first, within scope.
+export async function countsDue(
+	db: Db,
+	now = new Date(),
+	scope: CountScope = {},
+) {
+	return { due: rankCounts(await countableShelves(db, now, scope), now) };
 }

@@ -117,7 +117,8 @@ export function rankCandidates<C extends Candidate>(
 }
 
 // Listings that are the same item: the same SKU, or with no SKU the same
-// title (one item listed on Shopify and TikTok).
+// title (one item listed on Shopify and TikTok). countUnmatched counts these
+// keys in SQL (unmatched.ts), so change both together.
 export function itemKey(sku: string | null, title: string) {
 	const s = sku?.trim();
 	return s ? `sku:${s.toLowerCase()}` : `title:${normalizeTitle(title)}`;

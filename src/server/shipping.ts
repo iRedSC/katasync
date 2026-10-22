@@ -7,6 +7,7 @@ import { orders, packages, shipments, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
 import { shipAddresses } from "#/shipping/addresses";
 import { boxLabel } from "#/shipping/box-filter";
+import { boxQuoter } from "#/shipping/box-quotes";
 import { createBoxes, updateBox } from "#/shipping/boxes";
 import { buyDispatch, MAX_BOXES } from "#/shipping/buy";
 import {
@@ -25,17 +26,18 @@ import {
 	signatureRequired,
 } from "#/shipping/quick-ship";
 import { followUpTracking, resendTrackingNow } from "#/shipping/retry";
-import { getRates, type Rate, shippoIsTest } from "#/shipping/shippo";
+import { type Rate, shippoIsTest } from "#/shipping/shippo";
 import { tiktokOrderId, tiktokRates } from "#/shipping/tiktok";
 
 export const listPackages = createServerFn({ method: "GET" }).handler(
-	// Smallest first, so a filter that finds several lists them by size.
+	// Smallest first, so a filter that finds several lists them by size. The
+	// product is numeric: three sides of a big box overflow an integer.
 	async () =>
 		getDb()
 			.select()
 			.from(packages)
 			.orderBy(
-				sql`${packages.lengthMm} * ${packages.widthMm} * ${packages.heightMm}`,
+				sql`${packages.lengthMm}::numeric * ${packages.widthMm} * ${packages.heightMm}`,
 				asc(packages.id),
 			),
 );
@@ -160,23 +162,20 @@ export const quickShipRates = createServerFn({ method: "POST" })
 				.innerJoin(stores, eq(stores.id, orders.storeId))
 				.where(inArray(orders.id, data.orderIds));
 			const signature = data.signature || signatureRequired(members) !== null;
-			const quote = (insure: boolean, sign: boolean) =>
-				Promise.all(
-					data.boxes.map((b) =>
-						getRates({
-							...where,
-							parcel: b,
-							insureAmount: insure ? b.insureAmount : null,
-							signature: sign,
-							hazmat: b.hazmat,
-						}),
-					),
+			const quote = boxQuoter(where);
+			const quoteAll = (insure: boolean, sign: boolean) =>
+				Promise.all(data.boxes.map((b) => quote(b, insure, sign)));
+			// A comparison that fails leaves only its amounts off; the services
+			// themselves still price.
+			const combined = (insure: boolean, sign: boolean) =>
+				quoteAll(insure, sign).then(
+					(quotes) => combineRates(quotes.map((p) => p.rates)),
+					() => null,
 				);
 			const insured = data.boxes.some((b) => b.insureAmount !== null);
-			const combined = async (insure: boolean, sign: boolean) =>
-				combineRates((await quote(insure, sign)).map((p) => p.rates));
+			// The selected quotes come first in line, ahead of the comparisons.
 			const [priced, bare, unsigned] = await Promise.all([
-				quote(true, signature),
+				quoteAll(true, signature),
 				insured ? combined(false, signature) : null,
 				signature ? combined(true, false) : null,
 			]);

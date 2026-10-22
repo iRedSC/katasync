@@ -7,8 +7,8 @@ import { savePackage } from "#/server/shipping";
 import {
 	boxSize,
 	filterBoxes,
-	hasBoxOfSize,
 	inches,
+	sameSize,
 	typedSize,
 } from "#/shipping/box-filter";
 import {
@@ -64,15 +64,23 @@ export function PackageStep({
 	const query = entryQuery(entry);
 	const [saving, setSaving] = useState(false);
 
+	// A complete size picks the box of exactly that size first, or the size
+	// typed (once or saved) when none is saved. Prefix matches come after, as
+	// alternatives, so 12 12 1 never picks a 12 12 12 box by default.
 	const size = typedSize(query);
+	const fits = filterBoxes(boxes, query);
+	const exact = size ? fits.filter((b) => sameSize(b, size)) : [];
 	const options: Option[] = [
-		...filterBoxes(boxes, query).map((box) => ({ kind: "box" as const, box })),
-		...(size && !hasBoxOfSize(boxes, size)
+		...exact.map((box) => ({ kind: "box" as const, box })),
+		...(size && exact.length === 0
 			? [
 					{ kind: "custom" as const, dims: size },
 					{ kind: "save" as const, dims: size },
 				]
 			: []),
+		...fits
+			.filter((b) => !exact.includes(b))
+			.map((box) => ({ kind: "box" as const, box })),
 	];
 	// The box from last time stays highlighted until something else is typed
 	// or picked.

@@ -4,7 +4,7 @@ import type { Db } from "#/db/client";
 import { recordCount, requestCounts, undoBatch } from "#/inventory/ledger";
 import { transferName, transferOfBatch } from "#/inventory/transfers";
 import { PurchaseOrderError, purchaseOrderOfBatch } from "#/purchasing/orders";
-import { ourLocation, productBySku } from "./lookups";
+import { ourLocation, productBySku, productsBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
 
 export function registerStockTools(server: McpServer, db: Db) {
@@ -62,8 +62,7 @@ export function registerStockTools(server: McpServer, db: Db) {
 			annotations: { ...WRITE, idempotentHint: true },
 		},
 		async ({ skus, location }) => {
-			const productIds = [];
-			for (const sku of skus) productIds.push((await productBySku(db, sku)).id);
+			const productIds = (await productsBySku(db, skus)).map((p) => p.id);
 			await requestCounts(db, {
 				productIds,
 				locationId: await ourLocation(db, location),
