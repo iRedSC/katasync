@@ -1,7 +1,21 @@
 import { type } from "arktype";
-import { and, asc, eq, gte, isNull, notInArray, or } from "drizzle-orm";
+import {
+	and,
+	asc,
+	eq,
+	gte,
+	inArray,
+	isNull,
+	notInArray,
+	or,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { purchaseOrders, purchaseOrderTracking } from "#/db/schema";
+import {
+	purchaseOrders,
+	purchaseOrderTracking,
+	type TrackingEvent,
+} from "#/db/schema";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import {
 	type Carrier,
@@ -16,14 +30,40 @@ const status = type(
 	"'PRE_TRANSIT' | 'TRANSIT' | 'DELIVERED' | 'RETURNED' | 'FAILURE' | 'UNKNOWN'",
 );
 
+const place = type({
+	"city?": "string | null",
+	"state?": "string | null",
+}).or("null");
+
+const event = type({
+	status: "string",
+	"status_details?": "string | null",
+	"status_date?": "string | null",
+	"location?": place,
+});
+
 const trackResponse = type({
 	"eta?": "string | null",
-	"tracking_status?": type({
-		status: "string",
-		"status_details?": "string | null",
-		"status_date?": "string | null",
-	}).or("null"),
+	"original_eta?": "string | null",
+	"servicelevel?": type({ "name?": "string | null" }).or("null"),
+	"address_from?": place,
+	"address_to?": place,
+	"tracking_status?": event.or("null"),
+	"tracking_history?": event.array().or("null"),
 });
+
+// "City, ST", or whichever half the carrier gave.
+function placeName(p: typeof place.infer | undefined) {
+	const parts = [p?.city?.trim(), p?.state?.trim()].filter(Boolean);
+	return parts.length > 0 ? parts.join(", ") : null;
+}
+
+function statusOf(s: string | undefined) {
+	const parsed = status(s);
+	return parsed instanceof type.errors ? ("UNKNOWN" as const) : parsed;
+}
+
+const date = (s: string | null | undefined) => (s ? new Date(s) : null);
 
 // Shippo is asked about this many numbers at once, so a backlog can't turn
 // into a burst of requests.
@@ -72,12 +112,22 @@ async function askShippo(carrier: Carrier, number: string) {
 		throw new Error(`Shippo answered ${res.status}: ${await res.text()}`);
 	const t = trackResponse.assert(await res.json());
 	const s = t.tracking_status;
-	const parsed = status(s?.status);
+	const history: TrackingEvent[] = (t.tracking_history ?? []).map((e) => ({
+		status: statusOf(e.status),
+		detail: e.status_details?.trim() || null,
+		at: e.status_date ?? null,
+		place: placeName(e.location),
+	}));
 	return {
-		status: parsed instanceof type.errors ? ("UNKNOWN" as const) : parsed,
+		status: statusOf(s?.status),
 		statusDetail: s?.status_details?.trim() || null,
-		statusAt: s?.status_date ? new Date(s.status_date) : null,
-		eta: t.eta ? new Date(t.eta) : null,
+		statusAt: date(s?.status_date),
+		eta: date(t.eta),
+		originalEta: date(t.original_eta),
+		service: t.servicelevel?.name?.trim() || null,
+		origin: placeName(t.address_from),
+		destination: placeName(t.address_to),
+		history,
 	};
 }
 
@@ -185,8 +235,9 @@ const DONE = ["DELIVERED", "RETURNED"] as const;
 // Numbers still not delivered after this long are left alone.
 const GIVE_UP_MS = 60 * 86_400_000;
 
-// Asks Shippo again about every package still on its way. Run by the cron's
-// four-hourly sweep, when the database is awake anyway.
+// Asks Shippo again about every package still on its way, and any finished
+// one without its history yet (followed before history was kept). Run by the
+// cron's four-hourly sweep, when the database is awake anyway.
 export async function refreshTracking(db: Db) {
 	const rows = await db
 		.select({
@@ -200,6 +251,11 @@ export async function refreshTracking(db: Db) {
 				or(
 					isNull(purchaseOrderTracking.status),
 					notInArray(purchaseOrderTracking.status, [...DONE]),
+					and(
+						inArray(purchaseOrderTracking.status, [...DONE]),
+						isNull(purchaseOrderTracking.service),
+						sql`${purchaseOrderTracking.history} = '[]'::jsonb`,
+					),
 				),
 				gte(purchaseOrderTracking.createdAt, new Date(Date.now() - GIVE_UP_MS)),
 			),

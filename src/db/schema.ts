@@ -1558,6 +1558,15 @@ export const trackingStatus = pgEnum("tracking_status", [
 	"UNKNOWN",
 ]);
 
+// One scan on a package's way, oldest first in its history. `place` is
+// "City, ST" when the carrier gave one.
+export type TrackingEvent = {
+	status: (typeof trackingStatus.enumValues)[number];
+	detail: string | null;
+	at: string | null;
+	place: string | null;
+};
+
 // Packages a supplier sent for a PO, followed on Shippo. Only ever evidence:
 // a delivery never receives or closes the PO.
 export const purchaseOrderTracking = pgTable(
@@ -1578,6 +1587,13 @@ export const purchaseOrderTracking = pgTable(
 		statusDetail: text(),
 		statusAt: timestamp({ withTimezone: true }),
 		eta: timestamp({ withTimezone: true }),
+		// The carrier's first promise, to show when eta has slipped.
+		originalEta: timestamp({ withTimezone: true }),
+		// The carrier's service, e.g. "Ground"; "City, ST" it left and is going.
+		service: text(),
+		origin: text(),
+		destination: text(),
+		history: jsonb().$type<TrackingEvent[]>().notNull().default([]),
 		checkedAt: timestamp({ withTimezone: true }),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
