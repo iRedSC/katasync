@@ -246,9 +246,9 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
 						Products
 					</th>
-					<th className="hidden px-4 py-2 font-medium md:table-cell">
-						Arrived
-					</th>
+					{/* Suggestions have no packages: the column only keeps the
+					    tables lined up. */}
+					<th className="hidden md:table-cell" />
 					<th className="px-4 py-2 text-right font-medium">Total</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
 						Expected
@@ -288,7 +288,7 @@ function SuggestionList({ rows }: { rows: Suggestion[] }) {
 									{formatMoney(s.total)}
 								</td>
 								<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
-									No date
+									—
 								</td>
 							</tr>
 						))}
@@ -371,6 +371,9 @@ function Columns() {
 
 function OrderTable({ rows }: { rows: OrderRow[] }) {
 	const { link } = useRowLink();
+	// Drafts and finished POs without tracking leave Arrived blank, so a
+	// table of only those gets no heading over it either.
+	const tracked = rows.some((o) => o.status === "sent" || o.packages.total > 0);
 	const [menuFor, setMenuFor] = useState<OrderRow | null>(null);
 	return (
 		<table className="w-full table-fixed">
@@ -384,7 +387,7 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 						Received
 					</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
-						Arrived
+						{tracked && "Arrived"}
 					</th>
 					<th className="px-4 py-2 text-right font-medium">Total</th>
 					<th className="hidden px-4 py-2 font-medium md:table-cell">
@@ -452,7 +455,7 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 											? formatDay(o.expectedAt)
 											: o.closedAt
 												? `Done ${formatDay(o.closedAt)}`
-												: "No date"}
+												: "—"}
 									</td>
 								</tr>
 							);
