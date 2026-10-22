@@ -5,6 +5,7 @@ import {
 	isNotNull,
 	isNull,
 	max,
+	type SQL,
 	sql,
 } from "drizzle-orm";
 import type { Db } from "#/db/client";
@@ -22,7 +23,6 @@ import { carried } from "#/products/archive";
 import { lockListings } from "./listing-claims";
 import {
 	type Candidate,
-	itemKey,
 	type MatchReason,
 	normalizeTitle,
 	rankCandidates,
@@ -31,8 +31,7 @@ import {
 type Channel = (typeof stores.$inferSelect)["channel"];
 
 // One thing channels sell that no product backs: every unmatched listing
-// with the same SKU, or with no SKU and the same title (the same item on
-// Shopify and TikTok). Resolving it resolves all its listings.
+// itemKey says is the same item. Resolving it resolves all its listings.
 export type UnmatchedItem = {
 	listingIds: number[];
 	title: string;
@@ -113,6 +112,7 @@ export async function listUnmatched(
 			externalSku: listings.externalSku,
 			title: listings.title,
 			fulfillment: listings.fulfillment,
+			key: itemKey,
 			units: sql<number>`coalesce(${sold.units}, 0)`,
 			orders: sql<number>`coalesce(${sold.orders}, 0)`,
 			lastSoldAt: sold.lastSoldAt,
@@ -139,8 +139,7 @@ export async function listUnmatched(
 
 	const groups = new Map<string, typeof rows>();
 	for (const r of rows) {
-		const key = itemKey(r.externalSku, r.title);
-		groups.set(key, [...(groups.get(key) ?? []), r]);
+		groups.set(r.key, [...(groups.get(r.key) ?? []), r]);
 	}
 	if (groups.size === 0) return [];
 
@@ -285,13 +284,24 @@ export async function unmatchedListings(tx: Db, listingIds: number[]) {
 	return rows;
 }
 
-// itemKey in SQL, so the database counts the items without sending every
-// listing back. Keep the two in step: unmatched-count.test.ts checks they agree.
-const itemKeySql = sql<string>`(case when ${listings.externalSku} ~ '[^[:space:]]' then 'sku:' || lower(regexp_replace(${listings.externalSku}, '^[[:space:]]+|[[:space:]]+$', '', 'g')) else 'title:' || btrim(regexp_replace(lower(regexp_replace(${listings.title}, ' - Default Title$', '')), '[^a-z0-9]+', ' ', 'g')) end)`;
+// A title as listings are compared by: lowercase words and digits, with
+// fractions spelled out first, so "1½" (1 1 2) and "1¼" (1 1 4) stay apart.
+const titleKey = (title: AnyColumn | SQL) =>
+	sql`btrim(regexp_replace(lower(normalize(regexp_replace(${title}, ' - Default Title$', ''), NFKD)), '[^a-z0-9]+', ' ', 'g'))`;
+
+// Which listings are one item: the same SKU; or with no SKU, the same title
+// on different stores (one item on Shopify and on TikTok). A title two
+// SKU-less listings share within one store, like a product's variants, says
+// nothing about which item is which, so each of those stands alone. One
+// expression for both listing and counting, so the two can't disagree.
+const itemKey = sql<string>`(case
+	when ${listings.externalSku} ~ '[^[:space:]]' then 'sku:' || lower(regexp_replace(${listings.externalSku}, '^[[:space:]]+|[[:space:]]+$', '', 'g'))
+	when exists (select 1 from ${listings} other where other.store_id = ${listings.storeId} and other.id <> ${listings.id} and coalesce(other.external_sku, '') !~ '[^[:space:]]' and ${titleKey(sql`other.title`)} = ${titleKey(listings.title)}) then 'listing:' || ${listings.id}
+	else 'title:' || ${titleKey(listings.title)} end)`;
 
 export async function countUnmatched(db: Db) {
 	const [{ items }] = await db
-		.select({ items: sql<number>`count(distinct ${itemKeySql})::int` })
+		.select({ items: sql<number>`count(distinct ${itemKey})::int` })
 		.from(listings)
 		.where(awaitingProduct);
 	return items;
