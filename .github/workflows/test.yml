@@ -1,4 +1,4 @@
-# Lint, types and tests on every PR, so a change that breaks either can't merge
+# Lint, types and tests on every PR, so a change that breaks one can't merge
 # looking green. Tests run against PGlite in memory (src/test/db.ts), so they
 # need no database or secrets.
 name: Test
