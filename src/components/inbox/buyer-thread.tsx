@@ -68,8 +68,15 @@ export function BuyerConversation({
 	const [local, setLocal] = useState<Local[]>([]);
 	const [text, setText] = useState("");
 	const [why, setWhy] = useState<string | null>(null);
-	// The English the box's words were translated from.
-	const [gloss, setGloss] = useState<string | null>(null);
+	// The English the box's words say, kept with the exact words it's for:
+	// any change to them hides it, since it no longer says what they do.
+	const [gloss, setGloss] = useState<{ english: string; for: string } | null>(
+		null,
+	);
+	const glossShown = gloss && gloss.for === text.trim() ? gloss.english : null;
+	// The box's words as they are now, for a translation that comes back late.
+	const current = useRef(text);
+	current.current = text;
 	const [translating, setTranslating] = useState(false);
 	const foreign = ai && t.language !== null && t.language !== "en";
 
@@ -79,7 +86,9 @@ export function BuyerConversation({
 		setTranslating(true);
 		try {
 			const r = await translateReply({ data: { threadId: t.id, text: words } });
-			setGloss(words);
+			// Changed or sent meanwhile: the translation is of something else.
+			if (current.current.trim() !== words) return;
+			setGloss({ english: words, for: r.text.trim() });
 			setText(r.text);
 		} catch (error) {
 			setWhy(error instanceof Error ? error.message : String(error));
@@ -129,15 +138,19 @@ export function BuyerConversation({
 		await router.invalidate().catch(() => {});
 	}
 
-	function send(body: string) {
+	// Sends words as a reply. A key given (a suggestion's) sends them once
+	// however many times it's clicked.
+	function send(body: string, key?: string) {
 		const words = body.trim();
-		if (!words || over) {
+		const tooLong = limit !== null && words.length > limit;
+		if (key && local.some((l) => l.requestKey === key)) return;
+		if (!words || tooLong) {
 			shake(box.current);
-			setWhy(over ? `eBay takes ${limit} characters` : null);
+			setWhy(tooLong ? `eBay takes ${limit} characters` : null);
 			box.current?.focus();
 			return;
 		}
-		const requestKey = crypto.randomUUID();
+		const requestKey = key ?? crypto.randomUUID();
 		const mine: Local = {
 			key: requestKey,
 			requestKey,
@@ -219,7 +232,7 @@ export function BuyerConversation({
 				onSend={send}
 				onEdit={(body, english) => {
 					setText(body);
-					setGloss(english);
+					setGloss(english ? { english, for: body.trim() } : null);
 					box.current?.focus();
 				}}
 			/>
@@ -271,8 +284,10 @@ export function BuyerConversation({
 						</Button>
 					</Tip>
 				</div>
-				{gloss && !why && (
-					<p className="mt-1 truncate text-xs text-muted-foreground">{gloss}</p>
+				{glossShown && !why && (
+					<p className="mt-1 truncate text-xs text-muted-foreground">
+						{glossShown}
+					</p>
 				)}
 				{(why || (limit !== null && text.length > limit - 200)) && (
 					<p

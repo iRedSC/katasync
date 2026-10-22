@@ -1,6 +1,6 @@
 import { useRouter } from "@tanstack/react-router";
 import { PenLine, RefreshCw, SendHorizontal, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { BuyerThread } from "#/buyers/threads";
 import { Button } from "#/components/ui/button";
@@ -30,13 +30,18 @@ export function Suggestion({
 	// Without the AI, a suggestion Claude or staff saved still shows, with
 	// nothing to draft it again.
 	ai: boolean;
-	onSend: (body: string) => void;
+	onSend: (body: string, key: string) => void;
 	onEdit: (body: string, english: string | null) => void;
 }) {
 	const router = useRouter();
 	const [redrafting, setRedrafting] = useState(false);
 	const d = t.draft;
-	if (!t.waiting || !d) return null;
+	// One key per version of the suggestion, so it goes once however it's
+	// clicked; sent, it leaves at once rather than when the list catches up.
+	const version = d?.updatedAt.toString() ?? "";
+	const key = useMemo(() => (version ? crypto.randomUUID() : ""), [version]);
+	const [sent, setSent] = useState<string | null>(null);
+	if (!t.waiting || !d || sent === version) return null;
 	// Drafting and failing are the agent's; without it, only a saved one shows.
 	if (!ai && d.state !== "ready") return null;
 
@@ -113,7 +118,13 @@ export function Suggestion({
 							<PenLine />
 						</Button>
 					</Tip>
-					<Button size="sm" onClick={() => onSend(body)}>
+					<Button
+						size="sm"
+						onClick={() => {
+							setSent(version);
+							onSend(body, key);
+						}}
+					>
 						<SendHorizontal />
 						Send
 					</Button>

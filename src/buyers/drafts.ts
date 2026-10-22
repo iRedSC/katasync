@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { type Draft, reader, replier, translator } from "#/ai/agents";
-import { runAgent } from "#/ai/harness";
+import { OutOfTimeError, runAgent } from "#/ai/harness";
 import type { Db } from "#/db/client";
 import {
 	buyerMessages,
@@ -256,6 +256,15 @@ export async function draftThread(
 	try {
 		draft = await run(replier, await brief(db, threadId));
 	} catch (error) {
+		// Out of time is no failure: the claim is left as if long gone, so
+		// the next run takes it over.
+		if (error instanceof OutOfTimeError) {
+			await db
+				.update(replyDrafts)
+				.set({ updatedAt: new Date(0) })
+				.where(mine);
+			return null;
+		}
 		await db
 			.update(replyDrafts)
 			.set({
@@ -301,7 +310,18 @@ export async function draftWaiting(db: Db, limit = 4, run: Run = runAgent) {
 		if (due.length >= limit) break;
 		const d = t.draft;
 		const latest = t.messages.filter((m) => m.fromBuyer).at(-1);
-		if (d && d.state !== "failed" && !d.stale && latest) continue;
+		// Current, or being drafted by a run still alive: nothing to do. A
+		// failed one is left to the claim, which waits before trying again.
+		const age = Date.now() - new Date(d?.updatedAt ?? 0).getTime();
+		if (
+			d &&
+			latest &&
+			!d.stale &&
+			(d.state === "ready" ||
+				(d.state === "drafting" && age < CLAIM_STALE_MS) ||
+				(d.state === "failed" && age < RETRY_FAILED_MS))
+		)
+			continue;
 		due.push(t);
 	}
 	const results = await Promise.all(

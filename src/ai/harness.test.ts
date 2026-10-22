@@ -105,4 +105,12 @@ describe("the harness", () => {
 	test("finds JSON with words around it", () => {
 		expect(jsonIn('Here: {"a": 1}')).toEqual({ a: 1 });
 	});
+
+	test("doesn't start a request it can't finish by the deadline", async () => {
+		const { sent, fetchImpl } = proxy([{ content: '{"answer": 1}' }]);
+		await expect(
+			runAgent(agent, "?", { fetchImpl, deadline: Date.now() + 5_000 }),
+		).rejects.toThrow(/Out of time/);
+		expect(sent).toEqual([]);
+	});
 });

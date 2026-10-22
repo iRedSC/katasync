@@ -22,6 +22,14 @@ export class AiNotConfiguredError extends Error {
 	name = "AiNotConfiguredError";
 }
 
+export class OutOfTimeError extends Error {
+	name = "OutOfTimeError";
+}
+
+// One request's longest wait, and the least worth starting.
+const REQUEST_MS = 120_000;
+const MIN_REQUEST_MS = 20_000;
+
 export type Tool = {
 	name: string;
 	description: string;
@@ -58,7 +66,11 @@ async function complete(
 	messages: Message[],
 	tools: Tool[],
 	fetchImpl: typeof fetch,
+	deadline: number,
 ): Promise<Choice["message"]> {
+	// Each request ends by the deadline, or doesn't start too close to it.
+	const left = Math.min(REQUEST_MS, deadline - Date.now());
+	if (left < MIN_REQUEST_MS) throw new OutOfTimeError("Out of time for the AI");
 	const { AI_PROXY_URL, AI_PROXY_KEY, AI_MODEL } = process.env;
 	if (!AI_PROXY_URL || !AI_PROXY_KEY)
 		throw new AiNotConfiguredError("Set AI_PROXY_URL and AI_PROXY_KEY");
@@ -86,7 +98,7 @@ async function complete(
 						}
 					: {}),
 			}),
-			signal: AbortSignal.timeout(120_000),
+			signal: AbortSignal.timeout(left),
 		},
 	);
 	const text = await res.text();
@@ -112,7 +124,15 @@ export function jsonIn(text: string): unknown {
 export async function runAgent<Out>(
 	agent: Agent<Out>,
 	input: string,
-	{ fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {},
+	{
+		fetchImpl = fetch,
+		deadline = Number.POSITIVE_INFINITY,
+	}: {
+		fetchImpl?: typeof fetch;
+		// When it must be done by (ms since 1970), so a run with a time limit
+		// stops asking rather than being cut off mid-write.
+		deadline?: number;
+	} = {},
 ): Promise<Out> {
 	const tools = agent.tools ?? [];
 	const messages: Message[] = [
@@ -129,6 +149,7 @@ export async function runAgent<Out>(
 			messages,
 			step < maxSteps ? tools : [],
 			fetchImpl,
+			deadline,
 		);
 		messages.push({
 			role: "assistant",

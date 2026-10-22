@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { Agent } from "#/ai/harness";
+import { type Agent, OutOfTimeError } from "#/ai/harness";
 import type { Db } from "#/db/client";
 import { buyerMessages, replyDrafts } from "#/db/schema";
 import { createTestDb } from "#/test/db";
@@ -182,5 +182,32 @@ describe("suggested replies", () => {
 		const [t] = await threadsPage(db, "open", null);
 		expect(t?.draft).toBeNull();
 		expect(t?.messages[0]?.english).toBeNull();
+	});
+
+	test("a claim left by a run that died is taken over by the next", async () => {
+		const run = fake(spanish);
+		await db.insert(replyDrafts).values({
+			threadId,
+			state: "drafting",
+			by: "ai",
+			forMessageId: (await db.select().from(buyerMessages))[0]?.id,
+			updatedAt: new Date(Date.now() - 10 * 60_000),
+		});
+		expect(await draftWaiting(db, 4, run)).toBe(1);
+		expect((await threadsPage(db, "open", null))[0]?.draft?.state).toBe(
+			"ready",
+		);
+	});
+
+	test("out of time leaves it for the next run, not failed", async () => {
+		const late = fake({
+			replier: () => {
+				throw new OutOfTimeError("Out of time for the AI");
+			},
+		});
+		expect(await draftWaiting(db, 4, late)).toBe(0);
+		const [d] = await db.select().from(replyDrafts);
+		expect(d?.state).toBe("drafting");
+		expect(await draftWaiting(db, 4, fake(spanish))).toBe(1);
 	});
 });
