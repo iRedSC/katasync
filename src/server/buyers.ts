@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { aiConfigured } from "#/ai/harness";
+import { buyerOrder } from "#/buyers/order";
 import { runBuyerMessages } from "#/buyers/run";
 import { reply } from "#/buyers/send";
 import { messageSources, setThreadDone, threadsPage } from "#/buyers/threads";
@@ -41,6 +42,11 @@ export const replyToBuyer = createServerFn({ method: "POST" })
 	.handler(async ({ data }) =>
 		reply(getDb(), data.threadId, data.text, data.requestKey),
 	);
+
+// The thread's order and its packages, asked of the carriers as it opens.
+export const getBuyerOrder = createServerFn({ method: "GET" })
+	.validator(type({ threadId: "number.integer > 0" }))
+	.handler(async ({ data }) => buyerOrder(getDb(), data.threadId));
 
 export const setBuyerThreadDone = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0", done: "boolean" }))

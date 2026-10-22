@@ -102,7 +102,8 @@ export function InboxFrame({
 	};
 	return (
 		<Card flush>
-			<div className="grid md:grid-cols-[12rem_minmax(0,1fr)]">
+			{/* As tall as the screen leaves, however little is in the folder. */}
+			<div className="grid md:h-[calc(100svh-9.5rem)] md:min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
 				<nav className="flex gap-0.5 overflow-x-auto border-b p-2 md:flex-col md:overflow-visible md:border-r md:border-b-0">
 					{item(BUYERS)}
 					<Group>Marketplaces</Group>
@@ -115,7 +116,7 @@ export function InboxFrame({
 						{item(RULES)}
 					</div>
 				</nav>
-				<div className="min-w-0">{children}</div>
+				<div className="flex min-w-0 flex-col md:min-h-0">{children}</div>
 			</div>
 		</Card>
 	);

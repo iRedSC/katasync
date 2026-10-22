@@ -75,7 +75,8 @@ async function complete(
 	if (!AI_PROXY_URL || !AI_PROXY_KEY)
 		throw new AiNotConfiguredError("Set AI_PROXY_URL and AI_PROXY_KEY");
 	const res = await fetchImpl(
-		`${AI_PROXY_URL.replace(/\/+$/, "")}/v1/chat/completions`,
+		// The address with or without /v1 at its end.
+		`${AI_PROXY_URL.replace(/\/+$/, "").replace(/\/v1$/, "")}/v1/chat/completions`,
 		{
 			method: "POST",
 			headers: {
@@ -102,6 +103,11 @@ async function complete(
 		},
 	);
 	const text = await res.text();
+	if (res.status === 404)
+		// No such page: the address is wrong, not the request.
+		throw new Error(
+			`Nothing at ${new URL(res.url || AI_PROXY_URL).pathname} on the AI proxy. Check AI_PROXY_URL is the proxy's base address`,
+		);
 	if (!res.ok)
 		throw new Error(
 			`The AI proxy answered ${res.status}: ${text.slice(0, 500)}`,

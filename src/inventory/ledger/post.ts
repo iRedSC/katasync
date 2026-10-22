@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
@@ -72,7 +71,7 @@ export async function postMovements(
 			);
 		}
 
-		const batchId = randomUUID();
+		const batchId = crypto.randomUUID();
 		await tx.insert(movements).values(
 			lines.map((line) => ({
 				...line,
