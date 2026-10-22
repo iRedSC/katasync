@@ -15,7 +15,7 @@ function document(html: string) {
 	return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${POLICY}"><base target="_blank"><style>body{margin:0;padding:16px 20px;font:14px/1.5 system-ui,sans-serif;color:#1a1a1a;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style></head><body>${html}</body></html>`;
 }
 
-function HtmlFrame({ html }: { html: string }) {
+export function HtmlFrame({ html }: { html: string }) {
 	const ref = useRef<HTMLIFrameElement>(null);
 	const [height, setHeight] = useState(200);
 	useEffect(() => {

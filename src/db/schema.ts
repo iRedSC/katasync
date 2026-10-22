@@ -1496,6 +1496,49 @@ export const poEmailAttachments = pgTable(
 	],
 );
 
+// Who put a file on a PO.
+export const poFileSource = pgEnum("po_file_source", ["staff", "claude"]);
+
+// Files put on a PO itself (a quote, a packing slip, a signed BOL), beside
+// the ones its emails carry. Removing one only marks it, so it can be put
+// back; nothing deletes them.
+export const purchaseOrderFiles = pgTable(
+	"purchase_order_files",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id),
+		filename: text().notNull(),
+		contentType: text().notNull(),
+		size: integer().notNull(),
+		data: bytea().notNull(),
+		// A PDF's text, read once when it was added, for Claude and SQL.
+		text: text(),
+		addedBy: poFileSource().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		removedAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		index("purchase_order_files_po_idx").on(t.purchaseOrderId),
+		check("purchase_order_files_named", sql`btrim(${t.filename}) <> ''`),
+		check(
+			"purchase_order_files_size",
+			sql`${t.size} between 1 and 4500000 and octet_length(${t.data}) = ${t.size}`,
+		),
+	],
+);
+
+// Links that let something without a session, like Claude's shell, put files
+// on one PO. Only the hash is kept; the link works until it expires.
+export const poFileUploads = pgTable("po_file_uploads", {
+	tokenHash: text().primaryKey(),
+	purchaseOrderId: integer()
+		.notNull()
+		.references(() => purchaseOrders.id),
+	expiresAt: timestamp({ withTimezone: true }).notNull(),
+});
+
 // Shippo's word for where a package is.
 export const trackingStatus = pgEnum("tracking_status", [
 	"PRE_TRANSIT",

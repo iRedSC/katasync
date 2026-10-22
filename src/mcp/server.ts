@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Db } from "#/db/client";
 import { registerActionTools } from "./server/action-tools";
 import { registerCatalogTools } from "./server/catalog-tools";
+import { registerFileReadTools, registerFileTools } from "./server/file-tools";
 import {
 	registerInboxReadTools,
 	registerInboxWriteTools,
@@ -44,6 +45,7 @@ export const READ_TOOLS = new Set([
 	"get_transfer",
 	"po_emails",
 	"read_po_email",
+	"read_po_file",
 	"search_inbox",
 	"read_inbox_email",
 	"markets",
@@ -60,6 +62,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 	registerReadTools(server, db);
 	registerTransferReadTools(server, db);
 	registerInboxReadTools(server, db);
+	registerFileReadTools(server, db);
 	registerMarketTools(server, db);
 	if (access.canWrite) registerWriteTools(server, db);
 	return server;
@@ -78,5 +81,6 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerActionTools(server, db);
 	registerProductTools(server, db);
 	registerReceivingTools(server, db);
+	registerFileTools(server, db);
 	registerInboxWriteTools(server, db);
 }

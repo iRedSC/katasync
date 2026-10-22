@@ -158,4 +158,44 @@ describe("reading an email from Microsoft 365", () => {
 		expect(got.inline[0]?.data?.toString()).toBe("abc");
 		expect(got.attachments.map((a) => a.filename)).toEqual(["invoice.png"]);
 	});
+
+	test("an email attached to one is kept as its .eml; an invite isn't", async () => {
+		vi.stubEnv("MS_GRAPH_TENANT_ID", "t");
+		vi.stubEnv("MS_GRAPH_CLIENT_ID", "c");
+		vi.stubEnv("MS_GRAPH_CLIENT_SECRET", "s");
+		vi.stubEnv("MARKETPLACE_INBOX", "marketplaces@eastcoastdrywall.com");
+		const mime = "Subject: Delivery delayed\r\n\r\nTruck is late.";
+		vi.stubGlobal("fetch", async (url: string) => {
+			if (url.includes("login.microsoftonline.com"))
+				return Response.json({ access_token: "token", expires_in: 3600 });
+			if (url.includes("$select=body"))
+				return Response.json({ body: { content: "see attached" } });
+			if (url.endsWith("/attachments/fwd/$value")) return new Response(mime);
+			if (url.endsWith("/attachments/invite/$value"))
+				return Response.json(
+					{ error: { message: "Not a message" } },
+					{ status: 400 },
+				);
+			const item = (id: string, name: string) => ({
+				"@odata.type": "#microsoft.graph.itemAttachment",
+				id,
+				name,
+				contentType: null,
+				size: 900,
+				isInline: false,
+			});
+			return Response.json({
+				value: [item("fwd", "Delivery delayed"), item("invite", "Call")],
+			});
+		});
+		const got = await messageHtml("g1", "marketplaces");
+		expect(got.attachments).toEqual([
+			{
+				filename: "Delivery delayed.eml",
+				contentType: "message/rfc822",
+				size: mime.length,
+				data: Buffer.from(mime),
+			},
+		]);
+	});
 });

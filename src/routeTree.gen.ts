@@ -55,6 +55,8 @@ import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage
 import { Route as ApiMarketEmailAttachmentsAttachmentIdRouteImport } from './routes/api/market-email-attachments/$attachmentId'
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
 import { Route as ApiPoEmailAttachmentsAttachmentIdRouteImport } from './routes/api/po-email-attachments/$attachmentId'
+import { Route as ApiPoFileUploadsPurchaseOrderIdRouteImport } from './routes/api/po-file-uploads/$purchaseOrderId'
+import { Route as ApiPoFilesFileIdRouteImport } from './routes/api/po-files/$fileId'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as LabelsRefurbsReturnIdRouteImport } from './routes/labels/refurbs.$returnId'
 import { Route as OrdersReturnsInsightsRouteImport } from './routes/orders/returns_.insights'
@@ -66,6 +68,7 @@ import { Route as ApiCronOrdersChannelRouteImport } from './routes/api/cron/orde
 import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
 import { Route as ApiShopifyOrdersOrderIdRouteImport } from './routes/api/shopify/orders.$orderId'
 import { Route as ApiUploadsDamageTokenRouteImport } from './routes/api/uploads/damage.$token'
+import { Route as ApiUploadsPoFileTokenRouteImport } from './routes/api/uploads/po-file.$token'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -299,6 +302,17 @@ const ApiPoEmailAttachmentsAttachmentIdRoute =
     path: '/api/po-email-attachments/$attachmentId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPoFileUploadsPurchaseOrderIdRoute =
+  ApiPoFileUploadsPurchaseOrderIdRouteImport.update({
+    id: '/api/po-file-uploads/$purchaseOrderId',
+    path: '/api/po-file-uploads/$purchaseOrderId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPoFilesFileIdRoute = ApiPoFilesFileIdRouteImport.update({
+  id: '/api/po-files/$fileId',
+  path: '/api/po-files/$fileId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
   id: '/api/webhooks/$channel',
   path: '/api/webhooks/$channel',
@@ -355,6 +369,11 @@ const ApiUploadsDamageTokenRoute = ApiUploadsDamageTokenRouteImport.update({
   path: '/api/uploads/damage/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiUploadsPoFileTokenRoute = ApiUploadsPoFileTokenRouteImport.update({
+  id: '/api/uploads/po-file/$token',
+  path: '/api/uploads/po-file/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -403,6 +422,8 @@ export interface FileRoutesByFullPath {
   '/api/market-email-attachments/$attachmentId': typeof ApiMarketEmailAttachmentsAttachmentIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
+  '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
+  '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
@@ -414,6 +435,7 @@ export interface FileRoutesByFullPath {
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
   '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
+  '/api/uploads/po-file/$token': typeof ApiUploadsPoFileTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -462,6 +484,8 @@ export interface FileRoutesByTo {
   '/api/market-email-attachments/$attachmentId': typeof ApiMarketEmailAttachmentsAttachmentIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
+  '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
+  '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
@@ -473,6 +497,7 @@ export interface FileRoutesByTo {
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
   '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
+  '/api/uploads/po-file/$token': typeof ApiUploadsPoFileTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -522,6 +547,8 @@ export interface FileRoutesById {
   '/api/market-email-attachments/$attachmentId': typeof ApiMarketEmailAttachmentsAttachmentIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
+  '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
+  '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns_/insights': typeof OrdersReturnsInsightsRoute
@@ -533,6 +560,7 @@ export interface FileRoutesById {
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
   '/api/shopify/orders/$orderId': typeof ApiShopifyOrdersOrderIdRoute
   '/api/uploads/damage/$token': typeof ApiUploadsDamageTokenRoute
+  '/api/uploads/po-file/$token': typeof ApiUploadsPoFileTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -583,6 +611,8 @@ export interface FileRouteTypes {
     | '/api/market-email-attachments/$attachmentId'
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
+    | '/api/po-file-uploads/$purchaseOrderId'
+    | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
     | '/orders/returns/insights'
@@ -594,6 +624,7 @@ export interface FileRouteTypes {
     | '/api/cron/sync/$channel'
     | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
+    | '/api/uploads/po-file/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -642,6 +673,8 @@ export interface FileRouteTypes {
     | '/api/market-email-attachments/$attachmentId'
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
+    | '/api/po-file-uploads/$purchaseOrderId'
+    | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
     | '/orders/returns/insights'
@@ -653,6 +686,7 @@ export interface FileRouteTypes {
     | '/api/cron/sync/$channel'
     | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
+    | '/api/uploads/po-file/$token'
   id:
     | '__root__'
     | '/'
@@ -701,6 +735,8 @@ export interface FileRouteTypes {
     | '/api/market-email-attachments/$attachmentId'
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
+    | '/api/po-file-uploads/$purchaseOrderId'
+    | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
     | '/orders/returns_/insights'
@@ -712,6 +748,7 @@ export interface FileRouteTypes {
     | '/api/cron/sync/$channel'
     | '/api/shopify/orders/$orderId'
     | '/api/uploads/damage/$token'
+    | '/api/uploads/po-file/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -761,6 +798,8 @@ export interface RootRouteChildren {
   ApiMarketEmailAttachmentsAttachmentIdRoute: typeof ApiMarketEmailAttachmentsAttachmentIdRoute
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
   ApiPoEmailAttachmentsAttachmentIdRoute: typeof ApiPoEmailAttachmentsAttachmentIdRoute
+  ApiPoFileUploadsPurchaseOrderIdRoute: typeof ApiPoFileUploadsPurchaseOrderIdRoute
+  ApiPoFilesFileIdRoute: typeof ApiPoFilesFileIdRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   LabelsRefurbsReturnIdRoute: typeof LabelsRefurbsReturnIdRoute
   OrdersReturnsInsightsRoute: typeof OrdersReturnsInsightsRoute
@@ -772,6 +811,7 @@ export interface RootRouteChildren {
   ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
   ApiShopifyOrdersOrderIdRoute: typeof ApiShopifyOrdersOrderIdRoute
   ApiUploadsDamageTokenRoute: typeof ApiUploadsDamageTokenRoute
+  ApiUploadsPoFileTokenRoute: typeof ApiUploadsPoFileTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -1098,6 +1138,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPoEmailAttachmentsAttachmentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/po-file-uploads/$purchaseOrderId': {
+      id: '/api/po-file-uploads/$purchaseOrderId'
+      path: '/api/po-file-uploads/$purchaseOrderId'
+      fullPath: '/api/po-file-uploads/$purchaseOrderId'
+      preLoaderRoute: typeof ApiPoFileUploadsPurchaseOrderIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/po-files/$fileId': {
+      id: '/api/po-files/$fileId'
+      path: '/api/po-files/$fileId'
+      fullPath: '/api/po-files/$fileId'
+      preLoaderRoute: typeof ApiPoFilesFileIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/webhooks/$channel': {
       id: '/api/webhooks/$channel'
       path: '/api/webhooks/$channel'
@@ -1175,6 +1229,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiUploadsDamageTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/uploads/po-file/$token': {
+      id: '/api/uploads/po-file/$token'
+      path: '/api/uploads/po-file/$token'
+      fullPath: '/api/uploads/po-file/$token'
+      preLoaderRoute: typeof ApiUploadsPoFileTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -1227,6 +1288,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiOauthSplatRoute: ApiOauthSplatRoute,
   ApiPoEmailAttachmentsAttachmentIdRoute:
     ApiPoEmailAttachmentsAttachmentIdRoute,
+  ApiPoFileUploadsPurchaseOrderIdRoute: ApiPoFileUploadsPurchaseOrderIdRoute,
+  ApiPoFilesFileIdRoute: ApiPoFilesFileIdRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   LabelsRefurbsReturnIdRoute: LabelsRefurbsReturnIdRoute,
   OrdersReturnsInsightsRoute: OrdersReturnsInsightsRoute,
@@ -1238,17 +1301,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,
   ApiShopifyOrdersOrderIdRoute: ApiShopifyOrdersOrderIdRoute,
   ApiUploadsDamageTokenRoute: ApiUploadsDamageTokenRoute,
+  ApiUploadsPoFileTokenRoute: ApiUploadsPoFileTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
