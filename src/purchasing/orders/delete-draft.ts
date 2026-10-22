@@ -1,8 +1,10 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	poFileUploads,
 	purchaseOrderAmendments,
 	purchaseOrderDiscounts,
+	purchaseOrderFiles,
 	purchaseOrderLines,
 	purchaseOrderSkippedParts,
 	purchaseOrders,
@@ -50,6 +52,7 @@ export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 			})
 			.from(purchaseOrderSkippedParts)
 			.where(eq(purchaseOrderSkippedParts.purchaseOrderId, id));
+		await dropFiles(tx, id);
 		await tx
 			.delete(purchaseOrderAmendments)
 			.where(eq(purchaseOrderAmendments.purchaseOrderId, id));
@@ -67,6 +70,29 @@ export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 			skippedParts,
 		};
 	});
+}
+
+// A draft is only thrown away once its files are off it (Undo couldn't
+// bring them back); ones already removed, and its upload links, go with it.
+async function dropFiles(tx: Db, id: number) {
+	const [live] = await tx
+		.select({ id: purchaseOrderFiles.id })
+		.from(purchaseOrderFiles)
+		.where(
+			and(
+				eq(purchaseOrderFiles.purchaseOrderId, id),
+				isNull(purchaseOrderFiles.removedAt),
+			),
+		)
+		.limit(1);
+	if (live)
+		throw new PurchaseOrderError(
+			`${poName(id)} has files on it; remove them first`,
+		);
+	await tx
+		.delete(purchaseOrderFiles)
+		.where(eq(purchaseOrderFiles.purchaseOrderId, id));
+	await tx.delete(poFileUploads).where(eq(poFileUploads.purchaseOrderId, id));
 }
 
 // Undoes deleteDraft: the same draft, under the same PO number. It can't come

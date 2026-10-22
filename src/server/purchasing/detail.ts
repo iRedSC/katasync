@@ -12,6 +12,7 @@ import { isOurs } from "#/inventory/locations";
 import { stockRanges } from "#/inventory/stock-range";
 import { damagesOf } from "#/purchasing/damage";
 import { emailConfigured } from "#/purchasing/email";
+import { poFilesOf } from "#/purchasing/files";
 import { leadTimes } from "#/purchasing/forecast";
 import { emailsOf } from "#/purchasing/inbox/ingest";
 import { invoicesOf } from "#/purchasing/invoices";
@@ -65,6 +66,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			damages,
 			emails,
 			tracking,
+			files,
 		] = await Promise.all([
 			onHandOf(db, productIds),
 			stockRanges(db, productIds),
@@ -154,6 +156,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			damagesOf(db, data.id),
 			emailsOf(db, data.id),
 			trackingOf(db, data.id),
+			poFilesOf(db, data.id),
 		]);
 		return {
 			leadTime: leadTimeOf(lead, po.supplier.id),
@@ -183,6 +186,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			damages,
 			emails,
 			tracking,
+			files,
 			locations: ownedLocations,
 			units,
 			emailConfigured: emailConfigured(),

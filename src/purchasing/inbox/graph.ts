@@ -388,8 +388,12 @@ export async function messageHtml(graphId: string, box: Mailbox) {
 	const attachments: InboxAttachment[] = [];
 	const inline: InlinePicture[] = [];
 	for (const a of list.value) {
-		// Item attachments (a forwarded email) and links to OneDrive files have
-		// no bytes of their own here.
+		if (a["@odata.type"] === "#microsoft.graph.itemAttachment") {
+			const email = await attachedEmail(base, a);
+			if (email) attachments.push(email);
+			continue;
+		}
+		// Links to OneDrive files have no bytes of their own here.
 		if (a["@odata.type"] !== "#microsoft.graph.fileAttachment") continue;
 		// Too big a picture can't be shown, so it's left out like any other.
 		if (a.size > MAX_ATTACHMENT_BYTES && a.isInline) continue;
@@ -418,6 +422,32 @@ export async function messageHtml(graphId: string, box: Mailbox) {
 		else attachments.push(file);
 	}
 	return { html, attachments, inline };
+}
+
+// An email attached to an email (Outlook's "attach as item", as suppliers
+// forward a carrier's or their own office's), as the .eml it would save as,
+// so it reads like any other. Graph gives an item's MIME only for an email;
+// an attached calendar invite or contact is left out.
+async function attachedEmail(
+	base: string,
+	a: (typeof attachmentList.infer)["value"][number],
+): Promise<InboxAttachment | null> {
+	const name = `${(a.name?.trim() || "Attached email").replace(/[/\\]/g, "_")}.eml`;
+	const file = { filename: name, contentType: "message/rfc822" };
+	if (a.size > MAX_ATTACHMENT_BYTES)
+		return { ...file, size: a.size, data: null };
+	const res = await graph(
+		`${base}/attachments/${encodeURIComponent(a.id)}/$value`,
+	).catch((error: Error) => {
+		// Refused for what it is (not an email); anything else, like a busy
+		// Graph, fails the read so the email is read again next run.
+		if (/answered 4(?!29)\d\d/.test(error.message)) return null;
+		throw error;
+	});
+	if (!res) return null;
+	const data = Buffer.from(await res.arrayBuffer());
+	if (data.length === 0) return null;
+	return { ...file, size: data.length, data };
 }
 
 // An email's Graph id from the Message-ID katasync kept, or null if it's

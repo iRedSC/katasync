@@ -9,6 +9,7 @@ import { type ReactNode, useState } from "react";
 import { Tip } from "#/components/ui/tooltip";
 import { formatDateTime } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { AttachedEmail } from "./attached-email";
 import { EmailBody } from "./html-body";
 
 // An email as any of katasync's mailboxes keeps it.
@@ -42,8 +43,10 @@ export const attachmentUrl: FileUrl = (a) =>
 	`/api/po-email-attachments/${a.id}`;
 
 // What the browser can show in the page; the rest download.
-function shownAs(a: Attachment) {
+export function shownAs(a: Attachment) {
 	if (!a.kept) return "missing";
+	if (a.contentType === "message/rfc822" || /\.eml$/i.test(a.filename))
+		return "email";
 	if (a.contentType === "application/pdf") return "pdf";
 	if (/^image\/(png|jpeg|gif|webp)$/.test(a.contentType)) return "image";
 	return "download";
@@ -267,27 +270,43 @@ function FileTab({
 		);
 	return (
 		<Tab active={active} onClick={onShow}>
-			<FileText className="size-3.5 shrink-0" />
+			{how === "email" ? (
+				<Mail className="size-3.5 shrink-0" />
+			) : (
+				<FileText className="size-3.5 shrink-0" />
+			)}
 			{label}
 		</Tab>
 	);
 }
 
-function FileView({ file: a, url }: { file: Attachment; url: string }) {
+export function FileView({ file: a, url }: { file: Attachment; url: string }) {
 	return (
 		<div className="flex h-full min-h-[60vh] flex-col">
 			<div className="flex justify-end px-3 pt-2">
+				{/* An email downloads, to open in Outlook; a tab can't show it. */}
 				<a
 					href={url}
 					target="_blank"
 					rel="noreferrer"
 					className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-surface hover:text-foreground"
 				>
-					<ExternalLink className="size-3" />
-					New tab
+					{shownAs(a) === "email" ? (
+						<>
+							<Download className="size-3" />
+							Download
+						</>
+					) : (
+						<>
+							<ExternalLink className="size-3" />
+							New tab
+						</>
+					)}
 				</a>
 			</div>
-			{shownAs(a) === "pdf" ? (
+			{shownAs(a) === "email" ? (
+				<AttachedEmail url={url} />
+			) : shownAs(a) === "pdf" ? (
 				<iframe
 					src={url}
 					title={a.filename}

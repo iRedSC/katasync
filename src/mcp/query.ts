@@ -24,7 +24,7 @@ type Rows = { rows: Record<string, unknown>[] };
 
 // Sign-in bookkeeping (hashes, public keys, live session ids), the key QZ
 // Tray print jobs are signed with, the query tool's own password, and links
-// that upload damage photos.
+// that upload damage photos or PO files.
 // katasync_mcp has a grant on every other table and view and none on these
 // (see drizzle/0027_mcp_role.sql); they're also hidden from describe_schema
 // and refused by name in queries.
@@ -40,6 +40,7 @@ export const SECRET_TABLES = [
 	"mcp_login",
 	"qz_certificate",
 	"damage_photo_uploads",
+	"po_file_uploads",
 ];
 
 // Functions that change the session, reach outside the database, or signal

@@ -19,6 +19,7 @@ import {
 } from "#/components/po-product-picker";
 import { AddEmail } from "#/components/purchase-order/add-email";
 import { DeliveryCard } from "#/components/purchase-order/delivery-card";
+import { FilesCard } from "#/components/purchase-order/files-card";
 import { damageable, lineName } from "#/components/purchase-order/line-damage";
 import { LineTable } from "#/components/purchase-order/line-table";
 import { browseLine } from "#/components/purchase-order/new-lines";
@@ -413,6 +414,7 @@ function PurchaseOrderPage() {
 				<div className="flex flex-col gap-4">
 					<SupplierPanel detail={d} />
 					<TrackingCard detail={d} />
+					<FilesCard detail={d} />
 					<BrowseProducts
 						purchaseOrderId={po.id}
 						supplierName={d.supplier.name}

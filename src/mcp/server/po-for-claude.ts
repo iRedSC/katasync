@@ -7,6 +7,7 @@ import {
 	discountValues,
 	lineCents,
 } from "#/purchasing/discount";
+import { poFilesOf } from "#/purchasing/files";
 import { emailsOf } from "#/purchasing/inbox/ingest";
 import { invoicesOf } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
@@ -21,6 +22,7 @@ export async function orderForClaude(db: Db, id: number) {
 	const damages = await damagesOf(db, id);
 	const emails = await emailsOf(db, id);
 	const tracking = await trackingOf(db, id);
+	const files = await poFilesOf(db, id);
 	const priced = po.lines.filter((l) => l.unitCost !== null);
 	const before = priced.reduce(
 		(n, l) => n + Math.round(l.quantity * (l.unitCost ?? 0) * 100),
@@ -72,6 +74,15 @@ export async function orderForClaude(db: Db, id: number) {
 			receivedAt: e.receivedAt,
 			matchedBy: e.matchedBy,
 			attachments: e.attachments.map((a) => a.filename),
+		})),
+		// Put on the PO itself; read one with read_po_file.
+		files: files.map((f) => ({
+			id: f.id,
+			filename: f.filename,
+			type: f.contentType,
+			bytes: f.size,
+			addedBy: f.addedBy,
+			addedAt: f.createdAt,
 		})),
 		tracking: tracking.map((t) => ({
 			id: t.id,
