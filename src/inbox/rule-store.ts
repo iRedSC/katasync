@@ -46,8 +46,9 @@ export async function lockRules(tx: Db) {
 // Any constant key; this one spells "mail".
 const RULES_LOCK = 0x6d61696c;
 
-// Runs fn in a transaction holding the rules lock.
-const locked = <T>(db: Db, fn: (tx: Db) => Promise<T>) =>
+// Runs fn in a transaction holding the rules lock. It's taken before any email
+// row is locked, as every sort takes it; the reverse order can deadlock.
+export const locked = <T>(db: Db, fn: (tx: Db) => Promise<T>) =>
 	db.transaction(async (tx) => {
 		await lockRules(tx);
 		return fn(tx);

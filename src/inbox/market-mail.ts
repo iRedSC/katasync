@@ -20,7 +20,7 @@ import type { Market } from "#/markets/market";
 import type { InboxMessage, InlinePicture } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
 import { pointPictures } from "./html";
-import { listRules, lockRules, resort } from "./rule-store";
+import { listRules, locked, lockRules, resort } from "./rule-store";
 import { FOLDERS, type Folder, type Rule, sortEmail } from "./rules";
 
 // The marketplaces mailbox in katasync: each notice read in from Microsoft
@@ -355,7 +355,7 @@ export async function setRead(db: Db, id: number, read: boolean) {
 // Moves it to another folder, where the rules won't move it from; null hands
 // its folder back to the rules.
 export async function moveTo(db: Db, id: number, folder: Folder | null) {
-	return db.transaction(async (tx) => {
+	return locked(db, async (tx) => {
 		const [row] = await tx
 			.update(marketEmails)
 			.set(
@@ -376,7 +376,7 @@ export async function setImportant(
 	id: number,
 	important: boolean | null,
 ) {
-	return db.transaction(async (tx) => {
+	return locked(db, async (tx) => {
 		const [row] = await tx
 			.update(marketEmails)
 			.set(
@@ -455,8 +455,11 @@ async function keepHtml(
 		.where(eq(marketEmails.id, emailId));
 }
 
-// Fetches the HTML of emails kept before katasync kept it, newest first, a
-// few a run. One gone from the mailbox keeps its text only (empty HTML).
+// Fetches the HTML of emails kept before katasync kept it, a few a run. One
+// gone from the mailbox keeps its text only (empty HTML). The few are picked
+// at random, so one that keeps failing can't hold back the rest; they're
+// written newest first. Returns how many had their HTML saved; a failure isn't
+// counted.
 export async function backfillMarketHtml(
 	db: Db,
 	read: (
@@ -464,21 +467,31 @@ export async function backfillMarketHtml(
 	) => Promise<{ html: string; inline: InlinePicture[] } | null>,
 	limit = 25,
 ) {
-	const rows = await db
-		.select({ id: marketEmails.id, messageId: marketEmails.messageId })
-		.from(marketEmails)
-		.where(isNull(marketEmails.bodyHtml))
-		.orderBy(desc(marketEmails.receivedAt))
-		.limit(limit);
+	const rows = (
+		await db
+			.select({
+				id: marketEmails.id,
+				messageId: marketEmails.messageId,
+				receivedAt: marketEmails.receivedAt,
+			})
+			.from(marketEmails)
+			.where(isNull(marketEmails.bodyHtml))
+			.orderBy(sql`random()`)
+			.limit(limit)
+	).sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+	let saved = 0;
 	for (const r of rows) {
-		// A failure leaves it for the next run.
-		const found = await read(r.messageId).catch(() => undefined);
-		if (found === undefined) continue;
-		await db.transaction((tx) =>
-			keepHtml(tx, r.id, found?.html ?? "", found?.inline ?? []),
-		);
+		try {
+			const found = await read(r.messageId);
+			await db.transaction((tx) =>
+				keepHtml(tx, r.id, found?.html ?? "", found?.inline ?? []),
+			);
+			saved++;
+		} catch {
+			// A failure leaves it for the next run.
+		}
 	}
-	return rows.length;
+	return saved;
 }
 
 export async function marketEmailHtml(db: Db, id: number) {

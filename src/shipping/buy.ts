@@ -8,6 +8,7 @@ import {
 	lockOnOwnConnection,
 	type OrderLocker,
 } from "./dispatch";
+import { overShown } from "./price-check";
 import { signatureRequired } from "./quick-ship";
 import {
 	type AccountReads,
@@ -56,7 +57,14 @@ export type BoxPlan = {
 // The service picked in quick ship. Only which service: the price and the
 // rate bought are the seller's, quoted again here for these exact orders and
 // boxes. `id` is TikTok's service id (TikTok quotes by order itself).
-export type ServiceChoice = { carrier: string; service: string; id: string };
+// `total` is the price on screen for every box together: the most the buy
+// may spend.
+export type ServiceChoice = {
+	carrier: string;
+	service: string;
+	id: string;
+	total: number;
+};
 
 // Most boxes one send could need; more is almost surely a mistake.
 export const MAX_BOXES = 10;
@@ -120,6 +128,13 @@ export async function buyDispatch(
 		const rates = tiktok
 			? []
 			: await quoteEach(db, lead.id, boxes, choice, signature, outside);
+		// Every box confirmed before the first is bought, so a price that rose
+		// since the screen showed it stops the buy with nothing spent.
+		const rose = overShown(
+			rates.map((r) => r.cost),
+			choice.total,
+		);
+		if (rose) throw new Error(rose);
 
 		const dispatchId = await db.transaction(async (tx) => {
 			const [dispatch] = await tx

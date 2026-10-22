@@ -28,6 +28,7 @@ import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { optimism } from "#/lib/optimism";
 import { printLabels } from "#/printing/qz-client";
 import { listPackages, quickShipBuy } from "#/server/shipping";
+import { PRICE_ROSE } from "#/shipping/price-check";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import type { Rate } from "#/shipping/shippo";
 
@@ -314,14 +315,23 @@ export function QuickShip() {
 	}
 
 	// keep: leave the old prices up, dimmed, while new extras are priced.
-	async function showRates(list: Packed[], next: Extras, keep = false) {
+	// why: shown once the new prices are, to say why they changed.
+	async function showRates(
+		list: Packed[],
+		next: Extras,
+		keep = false,
+		why: string | null = null,
+	) {
 		const pending = priceFor(list, next);
 		if (!pending) return;
 		const mine = ++latest.current;
 		setStep("rates");
 		if (!keep) setRates(null);
 		const result = await run(() => pending);
-		if (result && mine === latest.current) setRates({ ...result, for: next });
+		if (result && mine === latest.current) {
+			setRates({ ...result, for: next });
+			if (why) setError(why);
+		}
 	}
 
 	function changeExtras(next: Extras) {
@@ -338,6 +348,7 @@ export function QuickShip() {
 		// Buys a real label, so it stays busy until the reload shows it, and
 		// holds the session until then.
 		buying.current = true;
+		let repriced: string | null = null;
 		const r = await run(() =>
 			optimism.change({
 				send: () =>
@@ -357,13 +368,23 @@ export function QuickShip() {
 								carrier: quote.carrier,
 								service: quote.service,
 								id: quote.id,
+								total: quote.cost,
 							},
 						},
+					}).catch((err: unknown) => {
+						const message = err instanceof Error ? err.message : "";
+						if (message.startsWith(PRICE_ROSE)) repriced = message;
+						throw err;
 					}),
 			}),
 		);
 		buying.current = false;
-		if (!r) return;
+		if (!r) {
+			// Nothing was bought. Its price rose since it was shown: show the new
+			// one in place, so the next click is at a price that was on screen.
+			if (repriced) await showRates(list, extras, true, repriced);
+			return;
+		}
 		const result = r.value;
 		if (result.failed) {
 			// A label still live blocks buying again; it has to be voided.

@@ -1,5 +1,11 @@
 import { ArrowLeft } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
 import {
 	EmailReader,
 	type FileUrl,
@@ -47,6 +53,7 @@ export function MailPane<E extends ReadableEmail>({
 	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const [reading, setReading] = useState(false);
 	const [menuFor, setMenuFor] = useState<E | null>(null);
+	const sideBySide = useSideBySide();
 	// Where the open email sat, so the one after it opens once it leaves.
 	const lastIndex = useRef(0);
 	const found = emails.findIndex((e) => e.id === selectedId);
@@ -65,13 +72,16 @@ export function MailPane<E extends ReadableEmail>({
 	const latest = useRef(selected);
 	latest.current = selected;
 	const openId = selected?.id;
+	// On a phone the reader is hidden until a row opens it. Only an email the
+	// reader shows counts as seen, so the timer runs while it's exposed.
+	const exposed = reading || sideBySide;
 	useEffect(() => {
-		if (openId === undefined) return;
+		if (openId === undefined || !exposed) return;
 		const timer = setTimeout(() => {
 			if (latest.current?.id === openId) shown.current?.(latest.current);
 		}, 1000);
 		return () => clearTimeout(timer);
-	}, [openId]);
+	}, [openId, exposed]);
 
 	useHotkeys({
 		j: () => step(1),
@@ -142,3 +152,17 @@ export const tabClass = (active: boolean) =>
 			? "bg-surface-strong text-foreground"
 			: "text-muted-foreground hover:bg-surface hover:text-foreground",
 	);
+
+// Whether the list and the email sit side by side, from Tailwind's md up.
+const SIDE_BY_SIDE = "(min-width: 48rem)";
+function useSideBySide() {
+	return useSyncExternalStore(
+		(onChange) => {
+			const query = matchMedia(SIDE_BY_SIDE);
+			query.addEventListener("change", onChange);
+			return () => query.removeEventListener("change", onChange);
+		},
+		() => matchMedia(SIDE_BY_SIDE).matches,
+		() => false,
+	);
+}

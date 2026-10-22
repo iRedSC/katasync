@@ -93,7 +93,8 @@ describe("keeping an email as sent", () => {
 				? { html: "<p>Found</p>", inline: [] }
 				: null;
 		});
-		expect(done).toBe(3);
+		// Found and Gone are settled; the failure isn't counted as done.
+		expect(done).toBe(2);
 		expect(await marketEmailHtml(db, byName("Found"))).toBe("<p>Found</p>");
 		// Gone from the mailbox: nothing to show formatted, and not asked again.
 		expect(await marketEmailHtml(db, byName("Gone"))).toBeNull();

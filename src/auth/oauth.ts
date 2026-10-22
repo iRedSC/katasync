@@ -61,19 +61,24 @@ export const originOf = (request: Request) =>
 // Approval sends the browser back here with the code, so only an https
 // address, or one on this computer (how Claude Code listens, RFC 8252).
 // Custom schemes like a desktop app's are refused.
-function allowedRedirect(uri: string) {
+// An address it's safe to send the browser to. The browser only ever goes
+// to one of these: back() takes nothing else, so a client stored before a
+// check was tightened still can't send it anywhere else.
+type SafeRedirect = string & { readonly safe: unique symbol };
+
+function safeRedirect(uri: string): SafeRedirect | null {
 	let url: URL;
 	try {
 		url = new URL(uri);
 	} catch {
-		return false;
+		return null;
 	}
-	if (url.hash) return false;
-	if (url.protocol === "https:") return true;
-	return (
-		url.protocol === "http:" &&
-		["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-	);
+	if (url.hash) return null;
+	const ok =
+		url.protocol === "https:" ||
+		(url.protocol === "http:" &&
+			["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
+	return ok ? (uri as SafeRedirect) : null;
 }
 
 // Dynamic client registration (RFC 7591).
@@ -93,11 +98,13 @@ export async function registerClient(
 			"invalid_redirect_uri",
 			"Give redirect_uris, a list of up to 10 addresses",
 		);
-	const refused = uris.find((u) => !allowedRedirect(u));
-	if (refused)
+	// Every one is checked: an index, not the address itself, so an empty
+	// address can't read as "none refused".
+	const refused = uris.findIndex((u) => safeRedirect(u) === null);
+	if (refused !== -1)
 		throw new OAuthError(
 			"invalid_redirect_uri",
-			`${refused} isn't an https address or one on this computer`,
+			`${JSON.stringify(uris[refused])} isn't an https address or one on this computer`,
 		);
 	const name =
 		typeof metadata.client_name === "string" &&
@@ -168,13 +175,13 @@ export type AuthorizeCheck =
 
 type Valid = {
 	client: typeof oauthClients.$inferSelect;
-	redirectUri: string;
+	redirectUri: SafeRedirect;
 	codeChallenge: string;
 	state: string | undefined;
 };
 
 function back(
-	redirectUri: string,
+	redirectUri: SafeRedirect,
 	issuer: string,
 	params: Record<string, string | undefined>,
 ) {
@@ -207,10 +214,14 @@ async function validate(
 			message:
 				"This app isn't registered with katasync. Try connecting from the app again.",
 		};
-	const redirectUri =
+	const asked =
 		p.redirect_uri ??
 		(client.redirectUris.length === 1 ? client.redirectUris[0] : undefined);
-	if (!redirectUri || !client.redirectUris.includes(redirectUri))
+	const redirectUri =
+		asked !== undefined && client.redirectUris.includes(asked)
+			? safeRedirect(asked)
+			: null;
+	if (!redirectUri)
 		return {
 			kind: "invalid",
 			message: `${client.name} asked to be sent back to an address it didn't register.`,

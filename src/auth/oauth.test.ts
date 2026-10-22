@@ -88,6 +88,10 @@ describe("registering", () => {
 		await expect(registerClient(db, { redirect_uris: [] })).rejects.toThrow(
 			OAuthError,
 		);
+		// An empty address first can't hide a bad one after it.
+		await expect(
+			registerClient(db, { redirect_uris: ["", "javascript:alert(1)"] }),
+		).rejects.toThrow(OAuthError);
 		const local = await registerClient(db, {
 			redirect_uris: ["http://localhost:33418/callback"],
 		});
@@ -110,6 +114,39 @@ describe("registering", () => {
 });
 
 describe("approving", () => {
+	test("never sends the browser to a stored address that isn't safe", async () => {
+		// Registered before the check was tightened.
+		const [bad] = await db
+			.insert(schema.oauthClients)
+			.values({
+				id: "legacy",
+				name: "Old app",
+				redirectUris: ["javascript:alert(1)"],
+				createdAt: now,
+			})
+			.returning();
+		const over = { client_id: bad.id, redirect_uri: "javascript:alert(1)" };
+		// A request that would otherwise be refused back to the app.
+		expect(
+			(
+				await checkAuthorize(
+					db,
+					request({ ...over, response_type: "token" }),
+					ORIGIN,
+				)
+			).kind,
+		).toBe("invalid");
+		for (const approve of [true, false])
+			expect(
+				(
+					await answerAuthorize(db, request(over), ORIGIN, {
+						approve,
+						canWrite: true,
+					})
+				).kind,
+			).toBe("invalid");
+	});
+
 	test("asks with the app's name and where it goes back to", async () => {
 		expect(await checkAuthorize(db, request(), ORIGIN)).toEqual({
 			kind: "ask",

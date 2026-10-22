@@ -100,7 +100,13 @@ const box = (extra: Partial<BoxPlan> = {}): BoxPlan => ({
 	hazmat: false,
 	...extra,
 });
-const ground = { carrier: "USPS", service: "ground", id: "browser-rate" };
+// $7 a box (fakes' getRate); the screen showed more than any test spends.
+const ground = {
+	carrier: "USPS",
+	service: "ground",
+	id: "browser-rate",
+	total: 100,
+};
 const buy = (
 	orderIds: number[],
 	boxes: BoxPlan[],
@@ -254,7 +260,7 @@ describe("buyDispatch", () => {
 					orderIds: [a],
 					contentsKey: "X",
 					boxes: [box()],
-					choice: { carrier: "UPS", service: "ground", id: "x" },
+					choice: { carrier: "UPS", service: "ground", id: "x", total: 100 },
 					signature: false,
 				},
 				outside,
@@ -280,6 +286,27 @@ describe("buyDispatch", () => {
 			"quoted service changed",
 		);
 		expect(outside.buyLabel).not.toHaveBeenCalled();
+	});
+
+	test("a price above the one on screen stops before any box is bought", async () => {
+		const a = await addOrder("#1");
+		const outside = fakes();
+		// Two boxes at $7 confirm at $14; the screen said $13.
+		await expect(
+			buyDispatch(
+				db,
+				{
+					orderIds: [a],
+					contentsKey: "X",
+					boxes: [box(), box()],
+					choice: { ...ground, total: 13 },
+					signature: false,
+				},
+				outside,
+			),
+		).rejects.toThrow("The price went up to $14.00");
+		expect(outside.buyLabel).not.toHaveBeenCalled();
+		expect(await db.select().from(schema.dispatches)).toHaveLength(0);
 	});
 
 	test("a box deleted from Settings stops before anything is bought", async () => {
