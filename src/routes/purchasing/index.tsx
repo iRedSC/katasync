@@ -473,21 +473,14 @@ function Arrived({ order: o }: { order: OrderRow }) {
 		return o.status === "sent" ? (
 			<span className="text-muted-foreground">None</span>
 		) : null;
-	const all = arrived === total;
+	// Tip needs an element that takes a ref, so the badge sits in a span.
 	const count = (
-		<span
-			className={cn(
-				"inline-flex items-center gap-2",
-				!all && "text-muted-foreground",
-			)}
-		>
-			<span
-				className={cn(
-					"size-2 shrink-0 rounded-full",
-					trouble ? "bg-critical-icon" : all ? "bg-arrived" : "bg-info-icon",
-				)}
-			/>
-			{formatCount(arrived)} of {formatCount(total)}
+		<span className="inline-flex">
+			<Badge
+				tone={trouble ? "critical" : arrived === total ? "success" : "info"}
+			>
+				{formatCount(arrived)} of {formatCount(total)}
+			</Badge>
 		</span>
 	);
 	return trouble ? <Tip content="Carrier problem">{count}</Tip> : count;

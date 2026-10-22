@@ -66,25 +66,29 @@ const STATUS: Record<
 	UNKNOWN: { label: "Not found yet", reached: -1 },
 };
 
-// Blue on the way, green delivered, red when it went wrong.
+// The badge colors: blue on the way, green delivered, red when it went
+// wrong. Lines are the tone's border, a little stronger than its fill.
 const TONES = {
 	moving: {
-		soft: "bg-info-surface",
-		icon: "text-info-icon",
-		line: "bg-info-icon",
+		soft: "bg-info-fill",
+		icon: "text-info-text",
+		line: "bg-info-border",
 		ring: "ring-info-border",
+		dot: "bg-info-text",
 	},
 	arrived: {
-		soft: "bg-arrived-soft",
-		icon: "text-arrived",
-		line: "bg-arrived",
-		ring: "ring-arrived-soft",
+		soft: "bg-success-fill",
+		icon: "text-success-text",
+		line: "bg-success-border",
+		ring: "ring-success-border",
+		dot: "bg-success-text",
 	},
 	trouble: {
-		soft: "bg-critical-surface",
-		icon: "text-critical-icon",
-		line: "bg-critical-icon",
+		soft: "bg-critical-fill",
+		icon: "text-critical-text",
+		line: "bg-critical-border",
 		ring: "ring-critical-border",
+		dot: "bg-critical-text",
 	},
 } as const;
 
@@ -119,7 +123,7 @@ function Timeline({ status }: { status: Tracking["status"] }) {
 								<span
 									className={cn(
 										"absolute top-0 size-1.5 -translate-y-[0.0625rem] rounded-full motion-safe:animate-travel",
-										tone.line,
+										tone.dot,
 									)}
 								/>
 							)}
