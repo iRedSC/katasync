@@ -2183,3 +2183,81 @@ export const marketStanding = pgTable("market_standing", {
 	error: text(),
 	erroredAt: timestamp({ withTimezone: true }),
 });
+
+// What a marketplace email is about, so order notices never bury the ones
+// that need someone: attention (policy, violations, disputes, account
+// changes), orders (sold, ship, cancel, return), updates (payouts, news, the
+// rest). Sorted when read in (src/inbox/market-mail.ts); staff can move one.
+export const marketEmailLabel = pgEnum("market_email_label", [
+	"attention",
+	"orders",
+	"updates",
+]);
+
+// Emails from the marketplaces mailbox (MARKETPLACE_INBOX). Kept apart from
+// po_emails so a marketplace notice can never land in purchasing's To file.
+export const marketEmails = pgTable(
+	"market_emails",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		// The email's Message-ID header, so reading it twice keeps one row.
+		messageId: text().notNull(),
+		// Which marketplace sent it, by its sender; null for anyone else.
+		market: channel(),
+		label: marketEmailLabel().notNull(),
+		// When someone moved it to its label; the sorter only labels new mail.
+		relabelledAt: timestamp({ withTimezone: true }),
+		// When someone was done with it. Undone by clearing it.
+		doneAt: timestamp({ withTimezone: true }),
+		fromAddress: text().notNull(),
+		fromName: text(),
+		// Every To and Cc address, lowercased.
+		recipients: text().array().notNull(),
+		subject: text().notNull(),
+		// Plain text, as Outlook renders it.
+		body: text().notNull(),
+		receivedAt: timestamp({ withTimezone: true }).notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex("market_emails_message_id").on(t.messageId),
+		index("market_emails_open_idx")
+			.on(t.label, t.receivedAt)
+			.where(sql`${t.doneAt} is null`),
+	],
+);
+
+// Files attached to a marketplace email. Over the size kept, name and size
+// only.
+export const marketEmailAttachments = pgTable(
+	"market_email_attachments",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		emailId: integer()
+			.notNull()
+			.references(() => marketEmails.id),
+		filename: text().notNull(),
+		contentType: text().notNull(),
+		size: integer().notNull(),
+		data: bytea(),
+	},
+	(t) => [index("market_email_attachments_email_idx").on(t.emailId)],
+);
+
+// The last time each mailbox was read, and why the latest try failed if it
+// did, so a mailbox katasync can't reach shows as broken rather than empty.
+export const mailboxChecks = pgTable(
+	"mailbox_checks",
+	{
+		mailbox: text().primaryKey(),
+		checkedAt: timestamp({ withTimezone: true }),
+		error: text(),
+		erroredAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		check(
+			"mailbox_checks_known",
+			sql`${t.mailbox} in ('purchasing', 'marketplaces')`,
+		),
+	],
+);

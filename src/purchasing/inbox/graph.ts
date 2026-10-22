@@ -246,11 +246,17 @@ async function pages(
 	return found.slice(0, limit);
 }
 
-// Emails that reached the inbox since `since`, newest first, leaving out
+// Emails that reached a mailbox since `since`, newest first, leaving out
 // drafts and anything we sent. Asks Graph only.
-export async function messagesSince(since: Date): Promise<InboxMessage[]> {
+export async function messagesSince(
+	since: Date,
+	box: Mailbox = "purchasing",
+): Promise<InboxMessage[]> {
 	const all = await pages(
-		`${mailbox()}/messages?$filter=receivedDateTime ge ${since.toISOString()}&$orderby=receivedDateTime desc&$select=${SELECT}&$top=50`,
+		`${mailbox(box)}/messages?$filter=receivedDateTime ge ${since.toISOString()}&$orderby=receivedDateTime desc&$select=${SELECT}&$top=50`,
+		undefined,
+		undefined,
+		box,
 	);
 	return all.filter((m) => !m.ours).map(({ ours: _, ...m }) => m);
 }

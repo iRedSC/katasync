@@ -52,6 +52,14 @@ export const pages = [
 		count: null,
 	},
 	{
+		to: "/inbox",
+		label: "Inbox",
+		icon: Inbox,
+		keys: "g f",
+		parent: "/",
+		count: "inbox",
+	},
+	{
 		to: "/orders",
 		label: "Orders",
 		icon: Truck,
@@ -138,14 +146,6 @@ export const pages = [
 		keys: "g v",
 		parent: "/purchasing",
 		count: null,
-	},
-	{
-		to: "/purchasing/emails",
-		label: "Supplier emails",
-		icon: Inbox,
-		keys: "g f",
-		parent: "/purchasing",
-		count: "emailsToFile",
 	},
 	{
 		to: "/settings",

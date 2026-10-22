@@ -100,7 +100,7 @@ function Purchasing() {
 						<Link to="/purchasing/suppliers">Suppliers</Link>
 					</Button>
 					<Button asChild variant="outline" size="sm">
-						<Link to="/purchasing/emails">
+						<Link to="/inbox" search={{ box: "purchasing" }}>
 							<Mail />
 							Emails
 							{emailsToFile > 0 && (

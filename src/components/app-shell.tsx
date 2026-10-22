@@ -193,7 +193,7 @@ const problem: Record<keyof NavCounts, boolean> = {
 	toShip: false,
 	returnsDue: false,
 	posReady: false,
-	emailsToFile: false,
+	inbox: false,
 	countsDue: false,
 	unmatched: true,
 	attention: true,

@@ -9,17 +9,35 @@ import { type ReactNode, useState } from "react";
 import { Tip } from "#/components/ui/tooltip";
 import { formatDateTime } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import type { PurchaseOrderDetail } from "#/server/purchasing";
 
-export type ReadableEmail = PurchaseOrderDetail["emails"][number];
-type Attachment = ReadableEmail["attachments"][number];
+// An email as any of katasync's mailboxes keeps it.
+export type ReadableEmail = {
+	id: number;
+	fromAddress: string;
+	fromName: string | null;
+	subject: string;
+	body: string;
+	receivedAt: Date;
+	attachments: Attachment[];
+};
+type Attachment = {
+	id: number;
+	filename: string;
+	contentType: string;
+	size: number;
+	// False when it was too large to keep.
+	kept: boolean;
+};
+
+// Where a mailbox serves its files.
+export type FileUrl = (a: { id: number }) => string;
 
 export const kb = (bytes: number) =>
 	bytes < 1_000_000
 		? `${Math.max(1, Math.round(bytes / 1000))} KB`
 		: `${(bytes / 1_000_000).toFixed(1)} MB`;
 
-export const attachmentUrl = (a: Attachment) =>
+export const attachmentUrl: FileUrl = (a) =>
 	`/api/po-email-attachments/${a.id}`;
 
 // What the browser can show in the page; the rest download.
@@ -30,9 +48,55 @@ function shownAs(a: Attachment) {
 	return "download";
 }
 
-// The first words of the body, for a list row.
+// Outlook's plain text keeps every image as [url] and every link as
+// "words <url>": noise to a person reading.
+const IMAGE = /\[https?:\/\/[^\]\s]+\]/g;
+const ANGLED = /<(https?:\/\/[^>\s]+)>/g;
+const BARE = /https?:\/\/[^\s<>\]]+/g;
+
+// The first words of the body, for a list row, without the links.
 export function snippet(body: string) {
-	return body.replace(/\s+/g, " ").trim().slice(0, 140);
+	return body
+		.replace(IMAGE, "")
+		.replace(ANGLED, "")
+		.replace(BARE, "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 140);
+}
+
+// The body as a person reads it: images gone, and each link a small arrow
+// after the words it belongs to (or its site, when it stands alone), so a
+// notice reads as its sentences.
+export function MailText({ text }: { text: string }) {
+	const parts: ReactNode[] = [];
+	const cleaned = text.replace(IMAGE, "");
+	let last = 0;
+	for (const m of cleaned.matchAll(
+		new RegExp(`${ANGLED.source}|${BARE.source}`, "g"),
+	)) {
+		const url = m[1] ?? m[0];
+		parts.push(cleaned.slice(last, m.index));
+		let host = url;
+		try {
+			host = new URL(url).hostname.replace(/^www\./, "");
+		} catch {}
+		parts.push(
+			<a
+				key={m.index}
+				href={url}
+				target="_blank"
+				rel="noreferrer"
+				className="mx-0.5 inline-flex items-center gap-0.5 rounded px-1 text-xs text-link hover:bg-surface"
+			>
+				{m[1] ? null : host}
+				<ExternalLink className="size-3" />
+			</a>,
+		);
+		last = (m.index ?? 0) + m[0].length;
+	}
+	parts.push(cleaned.slice(last));
+	return <>{parts}</>;
 }
 
 // An email as a mail app shows it: who, when, and what, then a tab per file
@@ -42,9 +106,12 @@ export function EmailReader({
 	email: e,
 	actions,
 	heading = true,
+	fileUrl = attachmentUrl,
 	className,
 }: {
 	email: ReadableEmail;
+	// Purchasing's unless given.
+	fileUrl?: FileUrl;
 	// Off where the sender and subject already show, as on a PO's timeline.
 	heading?: boolean;
 	// The bar under the header: filing it, setting it aside.
@@ -90,6 +157,7 @@ export function EmailReader({
 						<FileTab
 							key={a.id}
 							file={a}
+							url={fileUrl(a)}
 							active={showing === a.id}
 							onShow={() => setShowing(a.id)}
 						/>
@@ -101,10 +169,14 @@ export function EmailReader({
 				className="min-h-0 flex-1 overflow-y-auto animate-in fade-in-0"
 			>
 				{file ? (
-					<FileView file={file} />
+					<FileView file={file} url={fileUrl(file)} />
 				) : (
 					<p className="px-5 py-4 text-sm whitespace-pre-wrap break-words">
-						{e.body || <span className="text-muted-foreground">(empty)</span>}
+						{e.body ? (
+							<MailText text={e.body.replace(/\n{3,}/g, "\n\n")} />
+						) : (
+							<span className="text-muted-foreground">(empty)</span>
+						)}
 					</p>
 				)}
 			</div>
@@ -146,10 +218,12 @@ function Tab({
 // to keep is named, dashed, with no link.
 function FileTab({
 	file: a,
+	url,
 	active,
 	onShow,
 }: {
 	file: Attachment;
+	url: string;
 	active: boolean;
 	onShow: () => void;
 }) {
@@ -174,7 +248,7 @@ function FileTab({
 	if (how === "download")
 		return (
 			<a
-				href={attachmentUrl(a)}
+				href={url}
 				className="inline-flex h-7 max-w-64 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-surface hover:text-foreground"
 			>
 				<Download className="size-3.5 shrink-0" />
@@ -189,8 +263,7 @@ function FileTab({
 	);
 }
 
-function FileView({ file: a }: { file: Attachment }) {
-	const url = attachmentUrl(a);
+function FileView({ file: a, url }: { file: Attachment; url: string }) {
 	return (
 		<div className="flex h-full min-h-[60vh] flex-col">
 			<div className="flex justify-end px-3 pt-2">
@@ -207,7 +280,7 @@ function FileView({ file: a }: { file: Attachment }) {
 			{shownAs(a) === "pdf" ? (
 				<iframe
 					src={url}
-					title={a.filename}
+					aria-label={a.filename}
 					className="min-h-[60vh] w-full flex-1"
 				/>
 			) : (

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CountsRouteImport } from './routes/counts'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
+import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as MarketsRouteImport } from './routes/markets'
@@ -50,6 +51,7 @@ import { Route as ApiCronShippoRebillsRouteImport } from './routes/api/cron/ship
 import { Route as ApiCronStandingRouteImport } from './routes/api/cron/standing'
 import { Route as ApiCronTrackingRouteImport } from './routes/api/cron/tracking'
 import { Route as ApiDamagePhotosDamageIdRouteImport } from './routes/api/damage-photos/$damageId'
+import { Route as ApiMarketEmailAttachmentsAttachmentIdRouteImport } from './routes/api/market-email-attachments/$attachmentId'
 import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
 import { Route as ApiPoEmailAttachmentsAttachmentIdRouteImport } from './routes/api/po-email-attachments/$attachmentId'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
@@ -77,6 +79,11 @@ const CountsRoute = CountsRouteImport.update({
 const DiagnosticsRoute = DiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InboxRoute = InboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ListingsRoute = ListingsRouteImport.update({
@@ -269,6 +276,12 @@ const ApiDamagePhotosDamageIdRoute = ApiDamagePhotosDamageIdRouteImport.update({
   path: '/api/damage-photos/$damageId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiMarketEmailAttachmentsAttachmentIdRoute =
+  ApiMarketEmailAttachmentsAttachmentIdRouteImport.update({
+    id: '/api/market-email-attachments/$attachmentId',
+    path: '/api/market-email-attachments/$attachmentId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiOauthSplatRoute = ApiOauthSplatRouteImport.update({
   id: '/api/oauth/$',
   path: '/api/oauth/$',
@@ -341,6 +354,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
+  '/inbox': typeof InboxRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/markets': typeof MarketsRoute
@@ -379,6 +393,7 @@ export interface FileRoutesByFullPath {
   '/api/cron/standing': typeof ApiCronStandingRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
+  '/api/market-email-attachments/$attachmentId': typeof ApiMarketEmailAttachmentsAttachmentIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
@@ -397,6 +412,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
+  '/inbox': typeof InboxRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/markets': typeof MarketsRoute
@@ -435,6 +451,7 @@ export interface FileRoutesByTo {
   '/api/cron/standing': typeof ApiCronStandingRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
+  '/api/market-email-attachments/$attachmentId': typeof ApiMarketEmailAttachmentsAttachmentIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
@@ -454,6 +471,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/counts': typeof CountsRoute
   '/diagnostics': typeof DiagnosticsRoute
+  '/inbox': typeof InboxRoute
   '/listings': typeof ListingsRoute
   '/login': typeof LoginRoute
   '/markets': typeof MarketsRoute
@@ -492,6 +510,7 @@ export interface FileRoutesById {
   '/api/cron/standing': typeof ApiCronStandingRoute
   '/api/cron/tracking': typeof ApiCronTrackingRoute
   '/api/damage-photos/$damageId': typeof ApiDamagePhotosDamageIdRoute
+  '/api/market-email-attachments/$attachmentId': typeof ApiMarketEmailAttachmentsAttachmentIdRoute
   '/api/oauth/$': typeof ApiOauthSplatRoute
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
@@ -512,6 +531,7 @@ export interface FileRouteTypes {
     | '/'
     | '/counts'
     | '/diagnostics'
+    | '/inbox'
     | '/listings'
     | '/login'
     | '/markets'
@@ -550,6 +570,7 @@ export interface FileRouteTypes {
     | '/api/cron/standing'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
+    | '/api/market-email-attachments/$attachmentId'
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
@@ -568,6 +589,7 @@ export interface FileRouteTypes {
     | '/'
     | '/counts'
     | '/diagnostics'
+    | '/inbox'
     | '/listings'
     | '/login'
     | '/markets'
@@ -606,6 +628,7 @@ export interface FileRouteTypes {
     | '/api/cron/standing'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
+    | '/api/market-email-attachments/$attachmentId'
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
@@ -624,6 +647,7 @@ export interface FileRouteTypes {
     | '/'
     | '/counts'
     | '/diagnostics'
+    | '/inbox'
     | '/listings'
     | '/login'
     | '/markets'
@@ -662,6 +686,7 @@ export interface FileRouteTypes {
     | '/api/cron/standing'
     | '/api/cron/tracking'
     | '/api/damage-photos/$damageId'
+    | '/api/market-email-attachments/$attachmentId'
     | '/api/oauth/$'
     | '/api/po-email-attachments/$attachmentId'
     | '/api/webhooks/$channel'
@@ -681,6 +706,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CountsRoute: typeof CountsRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
+  InboxRoute: typeof InboxRoute
   ListingsRoute: typeof ListingsRoute
   LoginRoute: typeof LoginRoute
   MarketsRoute: typeof MarketsRoute
@@ -719,6 +745,7 @@ export interface RootRouteChildren {
   ApiCronStandingRoute: typeof ApiCronStandingRoute
   ApiCronTrackingRoute: typeof ApiCronTrackingRoute
   ApiDamagePhotosDamageIdRoute: typeof ApiDamagePhotosDamageIdRoute
+  ApiMarketEmailAttachmentsAttachmentIdRoute: typeof ApiMarketEmailAttachmentsAttachmentIdRoute
   ApiOauthSplatRoute: typeof ApiOauthSplatRoute
   ApiPoEmailAttachmentsAttachmentIdRoute: typeof ApiPoEmailAttachmentsAttachmentIdRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
@@ -755,6 +782,13 @@ declare module '@tanstack/react-router' {
       path: '/diagnostics'
       fullPath: '/diagnostics'
       preLoaderRoute: typeof DiagnosticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inbox': {
+      id: '/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof InboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/listings': {
@@ -1023,6 +1057,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDamagePhotosDamageIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/market-email-attachments/$attachmentId': {
+      id: '/api/market-email-attachments/$attachmentId'
+      path: '/api/market-email-attachments/$attachmentId'
+      fullPath: '/api/market-email-attachments/$attachmentId'
+      preLoaderRoute: typeof ApiMarketEmailAttachmentsAttachmentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/oauth/$': {
       id: '/api/oauth/$'
       path: '/api/oauth/$'
@@ -1121,6 +1162,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CountsRoute: CountsRoute,
   DiagnosticsRoute: DiagnosticsRoute,
+  InboxRoute: InboxRoute,
   ListingsRoute: ListingsRoute,
   LoginRoute: LoginRoute,
   MarketsRoute: MarketsRoute,
@@ -1159,6 +1201,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCronStandingRoute: ApiCronStandingRoute,
   ApiCronTrackingRoute: ApiCronTrackingRoute,
   ApiDamagePhotosDamageIdRoute: ApiDamagePhotosDamageIdRoute,
+  ApiMarketEmailAttachmentsAttachmentIdRoute:
+    ApiMarketEmailAttachmentsAttachmentIdRoute,
   ApiOauthSplatRoute: ApiOauthSplatRoute,
   ApiPoEmailAttachmentsAttachmentIdRoute:
     ApiPoEmailAttachmentsAttachmentIdRoute,
@@ -1177,3 +1221,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
