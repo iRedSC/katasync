@@ -42,6 +42,7 @@ describe("over MCP", () => {
 			"create_transfer",
 			"send_transfer",
 			"set_retail_reserve",
+			"set_pos_location",
 		])
 			expect(byName.has(name), name).toBe(true);
 		expect(byName.get("delete_transfer")).toMatchObject({

@@ -9,6 +9,7 @@ import {
 	products,
 } from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
+import { posLocation } from "#/inventory/locations";
 import { setRecipe } from "#/inventory/recipes";
 
 // One-time import of a Sumtracker export (products.csv, bundles.csv,
@@ -250,7 +251,12 @@ export async function applySumtrackerImport(
 		location ??= (
 			await tx
 				.insert(locations)
-				.values({ name: locationName, kind: "owned" })
+				// POS sales take from the warehouse until Settings says otherwise.
+				.values({
+					name: locationName,
+					kind: "owned",
+					posPrimary: (await posLocation(tx)) === null,
+				})
 				.returning()
 		)[0];
 

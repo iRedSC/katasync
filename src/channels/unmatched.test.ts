@@ -97,7 +97,7 @@ const sell = (listingExternalId: string | null, sku: string | null) =>
 				},
 			],
 		},
-		{ shipping: warehouse, store: null, storeKeeps: 0 },
+		{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 	);
 
 test("the same item on two channels is one item; different SKUs stay apart", async () => {
