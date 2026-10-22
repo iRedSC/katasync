@@ -74,6 +74,11 @@
   --abc-a-line: #8cbf26;
   --abc-b-line: #5aa9ec;
 
+  /* A delivered package: brighter than success-icon, which reads near black
+     at dot size. */
+  --arrived: #1fae73;
+  --arrived-soft: #bdeed6;
+
   color-scheme: light;
 }
 
@@ -134,6 +139,16 @@
   --color-abc-b-text: var(--abc-b-text);
   --color-abc-c-fill: var(--abc-c-fill);
   --color-abc-c-text: var(--abc-c-text);
+  --color-arrived: var(--arrived);
+  --color-arrived-soft: var(--arrived-soft);
+  /* A package on its way: a dot running along the line to the next stop. */
+  --animate-travel: travel 1.8s ease-in-out infinite;
+  @keyframes travel {
+    0% { left: 0; opacity: 0; }
+    20% { opacity: 1; }
+    80% { opacity: 1; }
+    100% { left: calc(100% - 0.375rem); opacity: 0; }
+  }
   /* Rounded rects, never pills; `full` is for circles only. */
   --radius-sm: 4px; /* checkboxes, small chips */
   --radius-md: 5px; /* a control nested in another */

@@ -484,11 +484,7 @@ function Arrived({ order: o }: { order: OrderRow }) {
 			<span
 				className={cn(
 					"size-2 shrink-0 rounded-full",
-					trouble
-						? "bg-critical-icon"
-						: all
-							? "bg-success-icon"
-							: "bg-info-icon",
+					trouble ? "bg-critical-icon" : all ? "bg-arrived" : "bg-info-icon",
 				)}
 			/>
 			{formatCount(arrived)} of {formatCount(total)}

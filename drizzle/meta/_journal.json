@@ -701,6 +701,13 @@
       "when": 1792687620753,
       "tag": "0099_drop_market_email_label",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1792691903908,
+      "tag": "0100_tracking_history",
+      "breakpoints": true
     }
   ]
 }

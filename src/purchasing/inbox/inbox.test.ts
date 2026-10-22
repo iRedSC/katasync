@@ -172,7 +172,24 @@ describe("reading the inbox", () => {
 		const fetch = vi.fn(async () =>
 			Response.json({
 				eta: null,
+				servicelevel: { name: "Ground" },
+				address_from: { city: "Dallas", state: "TX" },
+				address_to: null,
 				tracking_status: { status: "TRANSIT", status_details: "In transit" },
+				tracking_history: [
+					{
+						status: "PRE_TRANSIT",
+						status_details: "Label created ",
+						status_date: "2026-10-20T10:00:00Z",
+						location: null,
+					},
+					{
+						status: "IN_A_HOLE",
+						status_details: "Departed",
+						status_date: "2026-10-21T10:00:00Z",
+						location: { city: "Memphis", state: "TN" },
+					},
+				],
 			}),
 		);
 		vi.stubGlobal("fetch", fetch);
@@ -187,6 +204,24 @@ describe("reading the inbox", () => {
 			carrier: "ups",
 			number: "1Z999AA10123456784",
 			status: "TRANSIT",
+			service: "Ground",
+			origin: "Dallas, TX",
+			destination: null,
+			history: [
+				{
+					status: "PRE_TRANSIT",
+					detail: "Label created",
+					at: "2026-10-20T10:00:00Z",
+					place: null,
+				},
+				// A status Shippo adds later reads as unknown, not a failure.
+				{
+					status: "UNKNOWN",
+					detail: "Departed",
+					at: "2026-10-21T10:00:00Z",
+					place: "Memphis, TN",
+				},
+			],
 		});
 		expect(String(fetch.mock.calls[0])).toContain(
 			"/tracks/ups/1Z999AA10123456784",
