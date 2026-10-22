@@ -3,6 +3,7 @@ import { Inbox, Undo2, X } from "lucide-react";
 import { PoPicker } from "#/components/emails/po-picker";
 import { EmptyState } from "#/components/page";
 import { Button } from "#/components/ui/button";
+import { ContextMenuItem } from "#/components/ui/context-menu";
 import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import type { InboxView } from "#/purchasing/inbox/ingest";
@@ -140,11 +141,26 @@ export function PurchasingBox({
 				))}
 			</div>
 			<MailPane
+				box="purchasing"
 				emails={d.emails}
 				tagOf={(e) => e.purchaseOrderId !== null && `PO ${e.purchaseOrderId}`}
 				actionsOf={(e) => (
 					<Actions email={e} pos={d.pos} onMove={(to) => move(e, to)} />
 				)}
+				menuOf={(e) => {
+					const place = placeOf(e);
+					return place === "to-file" ? (
+						<ContextMenuItem onSelect={() => move(e, "set-aside")}>
+							<X />
+							Not a PO
+						</ContextMenuItem>
+					) : (
+						<ContextMenuItem onSelect={() => move(e, "to-file")}>
+							<Undo2 />
+							{place === "set-aside" ? "Back to To file" : "Take off PO"}
+						</ContextMenuItem>
+					);
+				}}
 				empty={<Empty view={view} connected={d.connected} />}
 			/>
 		</>

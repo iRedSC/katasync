@@ -3,18 +3,19 @@ import { type } from "arktype";
 import { getDb } from "#/db/client";
 import {
 	countAttention,
+	marketEmailHtml,
 	marketMailPage,
 	readMarketMail,
 	relabel,
 	setDone,
 } from "#/inbox/market-mail";
-import { countUnfiled } from "#/purchasing/inbox/ingest";
+import { countUnfiled, emailHtml } from "#/purchasing/inbox/ingest";
 
 // The marketplaces side of the Inbox page. Only server functions here: a
 // plain export would keep these imports in the browser bundle.
 
 const market = "'shopify' | 'amazon' | 'ebay' | 'tiktok'";
-const label = "'attention' | 'orders' | 'updates'";
+const label = "'attention' | 'orders' | 'returns' | 'updates'";
 
 export const listMarketMail = createServerFn({ method: "GET" })
 	.validator(type({ view: `${label} | 'done'`, market: `${market} | null` }))
@@ -45,3 +46,15 @@ export const inboxCounts = createServerFn({ method: "GET" }).handler(
 		return { attention, toFile: unfiled.toFile };
 	},
 );
+
+// An email as sent, fetched when it's opened rather than with the list.
+// Null when katasync has only its text.
+export const getEmailHtml = createServerFn({ method: "GET" })
+	.validator(
+		type({ box: "'purchasing' | 'marketplaces'", id: "number.integer > 0" }),
+	)
+	.handler(async ({ data }) =>
+		data.box === "purchasing"
+			? emailHtml(getDb(), data.id)
+			: marketEmailHtml(getDb(), data.id),
+	);

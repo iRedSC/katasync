@@ -666,6 +666,13 @@
       "when": 1792629689035,
       "tag": "0094_old_returns_back",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1792631326642,
+      "tag": "0095_inbox_returns_and_html",
+      "breakpoints": true
     }
   ]
 }

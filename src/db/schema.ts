@@ -1446,6 +1446,9 @@ export const poEmails = pgTable(
 		subject: text().notNull(),
 		// Plain text, as Outlook renders it.
 		body: text().notNull(),
+		// The email as sent, for reading it formatted; its pictures point at
+		// their kept attachments. Null until read, empty when it has none.
+		bodyHtml: text(),
 		receivedAt: timestamp({ withTimezone: true }).notNull(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
@@ -1479,6 +1482,9 @@ export const poEmailAttachments = pgTable(
 		// A PDF's text, read once when it arrived, for Claude and SQL. Null for
 		// other files and for scans with no text in them.
 		text: text(),
+		// Set for a picture shown inside the email (its cid:), which the
+		// formatted email shows and the list of files leaves out.
+		contentId: text(),
 	},
 	(t) => [
 		index("po_email_attachments_email_idx").on(t.emailId),
@@ -2186,11 +2192,12 @@ export const marketStanding = pgTable("market_standing", {
 
 // What a marketplace email is about, so order notices never bury the ones
 // that need someone: attention (policy, violations, disputes, account
-// changes), orders (sold, ship, cancel, return), updates (payouts, news, the
-// rest). Sorted when read in (src/inbox/market-mail.ts); staff can move one.
+// changes), orders (sold, ship, cancel), returns (return requests, refunds),
+// updates (payouts, news, the rest). Sorted when read in (src/inbox/market-mail.ts); staff can move one.
 export const marketEmailLabel = pgEnum("market_email_label", [
 	"attention",
 	"orders",
+	"returns",
 	"updates",
 ]);
 
@@ -2205,7 +2212,8 @@ export const marketEmails = pgTable(
 		// Which marketplace sent it, by its sender; null for anyone else.
 		market: channel(),
 		label: marketEmailLabel().notNull(),
-		// When someone moved it to its label; the sorter only labels new mail.
+		// When someone moved it to its label. Until then the sorter may move it
+		// as its rules change; after, it never does.
 		relabelledAt: timestamp({ withTimezone: true }),
 		// When someone was done with it. Undone by clearing it.
 		doneAt: timestamp({ withTimezone: true }),
@@ -2216,6 +2224,8 @@ export const marketEmails = pgTable(
 		subject: text().notNull(),
 		// Plain text, as Outlook renders it.
 		body: text().notNull(),
+		// The email as sent, as on po_emails.
+		bodyHtml: text(),
 		receivedAt: timestamp({ withTimezone: true }).notNull(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
@@ -2240,6 +2250,8 @@ export const marketEmailAttachments = pgTable(
 		contentType: text().notNull(),
 		size: integer().notNull(),
 		data: bytea(),
+		// As on po_email_attachments.
+		contentId: text(),
 	},
 	(t) => [index("market_email_attachments_email_idx").on(t.emailId)],
 );
