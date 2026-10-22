@@ -37,11 +37,15 @@ const SCORE: Record<MatchReason, number> = {
 };
 
 export function normalizeTitle(title: string) {
-	return title
-		.replace(/ - Default Title$/, "")
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, " ")
-		.trim();
+	return (
+		title
+			.replace(/ - Default Title$/, "")
+			// Fractions spelled out, as unmatched.ts's titleKey does in SQL.
+			.normalize("NFKD")
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, " ")
+			.trim()
+	);
 }
 
 const STOP = new Set(["the", "and", "for", "with", "of", "a", "to", "in"]);
@@ -114,12 +118,4 @@ export function rankCandidates<C extends Candidate>(
 		)
 		.slice(0, limit)
 		.map(({ candidate, reason }) => ({ candidate, reason }));
-}
-
-// Listings that are the same item: the same SKU, or with no SKU the same
-// title (one item listed on Shopify and TikTok). countUnmatched counts these
-// keys in SQL (unmatched.ts), so change both together.
-export function itemKey(sku: string | null, title: string) {
-	const s = sku?.trim();
-	return s ? `sku:${s.toLowerCase()}` : `title:${normalizeTitle(title)}`;
 }

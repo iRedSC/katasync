@@ -49,8 +49,9 @@ test("blank, spaced, and differently cased SKUs group as the item they name", as
 	await syncListings(db, tiktok, [
 		listing("e", null, "rock splicer - Default Title"),
 	]);
-	// No SKU: one item by title across all three. The SKU pair is one item.
-	await expectItems(2);
+	// No SKU: two on Shopify share the title, so each stands alone, and
+	// TikTok's is a third. The SKU pair is one item.
+	await expectItems(4);
 });
 
 test("a SKU and a title never share a key, even when their text matches", async () => {
@@ -62,11 +63,23 @@ test("a SKU and a title never share a key, even when their text matches", async 
 	await expectItems(3);
 });
 
-test("punctuation and spacing in a title don't split it when it has no SKU", async () => {
-	await syncListings(db, shopify, [
-		listing("i", null, "Rock-Splicer!"),
-		listing("j", null, "rock splicer"),
-		listing("k", null, "Rock Splicer "),
-	]);
+test("punctuation and spacing in a title don't split it across stores", async () => {
+	await syncListings(db, shopify, [listing("i", null, "Rock-Splicer!")]);
+	await syncListings(db, tiktok, [listing("j", null, "rock splicer ")]);
 	await expectItems(1);
+});
+
+test("variants sharing a title in one store stay apart from each other and the other store", async () => {
+	await syncListings(db, tiktok, [
+		listing("v1", null, "Blade"),
+		listing("v2", null, "Blade"),
+	]);
+	await syncListings(db, shopify, [listing("s1", null, "Blade")]);
+	await expectItems(3);
+});
+
+test("fractional sizes are different titles", async () => {
+	await syncListings(db, shopify, [listing("f1", null, "Blade 1½ inch")]);
+	await syncListings(db, tiktok, [listing("f2", null, "Blade 1¼ inch")]);
+	await expectItems(2);
 });
