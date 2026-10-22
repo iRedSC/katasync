@@ -652,6 +652,13 @@
       "when": 1792623665650,
       "tag": "0092_returns_from_shelf",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1792628868752,
+      "tag": "0093_market_emails",
+      "breakpoints": true
     }
   ]
 }
