@@ -1,35 +1,124 @@
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
-import { afterAll, afterEach } from "vitest";
+import { expect } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 
-// Migrating takes about a second, so do it once per test file and hand each
-// test a fresh clone.
-let migrated: Promise<PGlite> | undefined;
-const clones = new Set<PGlite>();
+// Booting PGlite and migrating take seconds; wiping its tables takes about
+// 0.1s. So each worker process boots and migrates once, kept on globalThis
+// because test files reuse workers (vitest.config.ts turns off isolate), and
+// every test gets the same database wiped back to just-migrated. Something
+// a wipe can't undo, like a test's own trigger or a session left as another
+// role, changes the fingerprint; the database is then reloaded from the
+// copy saved after migrating.
 
-afterEach(async () => {
-	await Promise.all([...clones].map((clone) => clone.close()));
-	clones.clear();
-});
+type Shared = {
+	pg: PGlite;
+	// The just-migrated database, to reload from.
+	dump: File | Blob;
+	fingerprint: string;
+	// Puts every table back as migrating left it.
+	wipe: string;
+	// The test the database was last handed to.
+	handedTo?: string;
+};
 
-afterAll(async () => {
-	if (migrated) await (await migrated).close();
-});
+const key = Symbol.for("katasync.testDb");
+const store = globalThis as { [key]?: Promise<Shared> };
+
+// What a wipe leaves alone: the schema, and the session's role and settings.
+const FINGERPRINT = `select concat_ws(':',
+	(select count(*) from pg_trigger where not tgisinternal),
+	(select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'),
+	(select count(*) || '/' || coalesce(sum(relnatts), 0) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public'),
+	current_user, session_user, current_setting('TimeZone'), current_setting('search_path'),
+	current_setting('session_replication_role')
+) as f`;
+
+async function fingerprintOf(pg: PGlite) {
+	const { rows } = await pg.query<{ f: string }>(FINGERPRINT);
+	return rows[0].f;
+}
+
+// Truncating every table, with triggers off so append-only tables allow it,
+// then copying back the rows migrations seed and setting each sequence back.
+async function wipeFor(pg: PGlite) {
+	const { rows: tables } = await pg.query<{ name: string }>(
+		`select format('public.%I', tablename) as name from pg_tables where schemaname = 'public' order by 1`,
+	);
+	await pg.exec("create schema test_seed");
+	const seeded: string[] = [];
+	for (const { name } of tables) {
+		const copy = name.replace(/^public\./, "test_seed.");
+		await pg.exec(`create table ${copy} as select * from ${name}`);
+		const { rows } = await pg.query<{ n: number }>(
+			`select count(*)::int as n from ${copy}`,
+		);
+		if (rows[0].n > 0)
+			seeded.push(
+				`insert into ${name} overriding system value select * from ${copy};`,
+			);
+		else await pg.exec(`drop table ${copy}`);
+	}
+	const { rows: sequences } = await pg.query<{
+		name: string;
+		last: string | null;
+	}>(
+		`select format('%I.%I', schemaname, sequencename) as name, last_value::text as last from pg_sequences where schemaname = 'public'`,
+	);
+	const reset = sequences.map(({ name, last }) =>
+		last === null
+			? `alter sequence ${name} restart;`
+			: `select setval('${name}', ${last});`,
+	);
+	return [
+		"set session_replication_role = replica;",
+		`truncate ${tables.map((t) => t.name).join(", ")} restart identity cascade;`,
+		...seeded,
+		...reset,
+		"set session_replication_role = default;",
+	].join("\n");
+}
+
+async function boot(): Promise<Shared> {
+	const pg = new PGlite();
+	await migrate(drizzle(pg, { casing: "snake_case" }), {
+		migrationsFolder: "drizzle",
+	});
+	const wipe = await wipeFor(pg);
+	return {
+		pg,
+		dump: await pg.dumpDataDir("none"),
+		fingerprint: await fingerprintOf(pg),
+		wipe,
+	};
+}
+
+// One database per test: a second would wipe the first under it.
+function claim(shared: Shared) {
+	const { currentTestName, testPath } = expect.getState();
+	const test = `${testPath} > ${currentTestName}`;
+	if (currentTestName && shared.handedTo === test)
+		throw new Error(
+			"createTestDb was called twice in one test; the test database is shared, so the second would wipe the first. Use the first one.",
+		);
+	shared.handedTo = test;
+}
 
 export async function createTestDb(): Promise<Db> {
-	migrated ??= (async () => {
-		const pg = new PGlite();
-		await migrate(drizzle(pg, { casing: "snake_case" }), {
-			migrationsFolder: "drizzle",
-		});
-		return pg;
-	})();
-	const clone = (await (await migrated).clone()) as PGlite;
-	clones.add(clone);
-	return drizzle(clone, { schema, casing: "snake_case" });
+	store[key] ??= boot();
+	const shared = await store[key];
+	claim(shared);
+	// A test that died inside a transaction leaves the session unusable, which
+	// counts as changed too.
+	const now = await fingerprintOf(shared.pg).catch(() => null);
+	if (now !== shared.fingerprint) {
+		await shared.pg.close();
+		shared.pg = await PGlite.create({ loadDataDir: shared.dump });
+	}
+	await shared.pg.exec(shared.wipe);
+	return drizzle(shared.pg, { schema, casing: "snake_case" });
 }
 
 export async function createProduct(
