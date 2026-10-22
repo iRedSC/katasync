@@ -36,6 +36,7 @@ export {
 	countEmailsToFile,
 	emailsToLinkTo,
 	filePoEmail,
+	fillPoTrackingHistory,
 	listPoEmails,
 	removePoTracking,
 	setAsidePoEmail,

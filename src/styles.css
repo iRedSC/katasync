@@ -134,13 +134,11 @@
   --color-abc-b-text: var(--abc-b-text);
   --color-abc-c-fill: var(--abc-c-fill);
   --color-abc-c-text: var(--abc-c-text);
-  /* A package on its way: a dot running along the line to the next stop. */
-  --animate-travel: travel 1.8s ease-in-out infinite;
-  @keyframes travel {
-    0% { left: 0; opacity: 0; }
-    20% { opacity: 1; }
-    80% { opacity: 1; }
-    100% { left: calc(100% - 0.375rem); opacity: 0; }
+  /* A package on its way: the line to its next stop fills to half, once. */
+  --animate-half-fill: half-fill 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  @keyframes half-fill {
+    from { width: 0; }
+    to { width: 50%; }
   }
   /* Rounded rects, never pills; `full` is for circles only. */
   --radius-sm: 4px; /* checkboxes, small chips */
