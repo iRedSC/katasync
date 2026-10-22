@@ -12,16 +12,20 @@ import {
 import { cn } from "#/lib/utils";
 import {
 	addPhotos,
+	type DamageKind,
+	kindWord,
+	needsDescription,
 	type PickedPhoto,
 	saveDamage,
 	usePickedPhotos,
 } from "./damage";
 
-// What a damage dialog is for: recording new damage on a line, or adding
-// photos to damage already recorded.
+// What a damage dialog is for: recording new damage, or missing items, on a
+// line, or adding photos to damage already recorded.
 export type DamageTarget =
 	| {
 			kind: "new";
+			damage: DamageKind;
 			lineId: number;
 			name: string;
 			// Single items that arrived and aren't damaged yet.
@@ -51,12 +55,13 @@ export function DamageDialog({
 
 	const isNew = target.kind === "new";
 	const max = isNew ? target.available : 0;
+	const word = isNew ? kindWord(target.damage) : "damaged";
 	const entered = description.trim() !== "" || picked.photos.length > 0;
 	const why = saving
 		? null
 		: picked.shrinking > 0
 			? "Getting photos ready…"
-			: isNew && !description.trim()
+			: isNew && needsDescription(target.damage) && !description.trim()
 				? "Say what's wrong"
 				: !isNew && picked.photos.length === 0
 					? "Pick a photo"
@@ -64,7 +69,7 @@ export function DamageDialog({
 
 	function close() {
 		if (saving) return;
-		if (entered && !confirm("Throw away this damage?")) return;
+		if (entered && !confirm(`Throw away these ${word} items?`)) return;
 		onClose();
 	}
 
@@ -78,6 +83,7 @@ export function DamageDialog({
 			ok = await saveDamage({
 				lineId: target.lineId,
 				quantity,
+				kind: target.damage,
 				description: description.trim(),
 				photos: picked.photos.map((p) => p.blob),
 				name: target.name,
@@ -102,7 +108,7 @@ export function DamageDialog({
 
 	const label = !saving
 		? isNew
-			? `Record ${quantity} damaged`
+			? `Record ${quantity} ${word}`
 			: "Add photos"
 		: uploading !== null
 			? `Uploading photo ${uploading + 1} of ${picked.photos.length}…`
@@ -114,7 +120,11 @@ export function DamageDialog({
 				<form onSubmit={submit} className="flex flex-col gap-5">
 					<DialogHeader>
 						<DialogTitle>
-							{isNew ? "Arrived damaged" : "Add photos"}
+							{!isNew
+								? "Add photos"
+								: target.damage === "missing"
+									? "Missing from the delivery"
+									: "Arrived damaged"}
 						</DialogTitle>
 						<DialogDescription>
 							{target.name}
@@ -150,7 +160,7 @@ export function DamageDialog({
 										)
 									}
 									className="h-10 w-20 rounded-lg bg-white text-center shadow-card text-2xl font-semibold tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
-									aria-label="How many are damaged"
+									aria-label={`How many are ${word}`}
 								/>
 								<Button
 									type="button"
@@ -173,7 +183,11 @@ export function DamageDialog({
 								value={description}
 								onChange={(e) => setDescription(e.target.value)}
 								rows={3}
-								placeholder="What's wrong, for the supplier, e.g. crushed box, two handles snapped"
+								placeholder={
+									target.damage === "missing"
+										? "Note for the supplier, if any, e.g. case had 10"
+										: "What's wrong, for the supplier, e.g. crushed box, two handles snapped"
+								}
 								className="w-full resize-none rounded-lg bg-white p-3 shadow-card outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							/>
 						</>

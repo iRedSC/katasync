@@ -3,11 +3,14 @@ import type { ReceiveLine } from "#/components/receive/line-row";
 import type { ReceiptDiscount } from "#/components/receive/quantity-sheet";
 import { formatMoney } from "#/lib/format";
 import { ids, optimism, optimistic, type Patch } from "#/lib/optimism";
+import { takenByReceiveAll } from "#/purchasing/status";
 import {
 	type PurchaseOrderDetail,
+	receiveAllLines,
 	setLineBackOrdered,
 	setLineReceivingNote,
 	undoPurchaseReceipt,
+	undoPurchaseReceipts,
 } from "#/server/purchasing";
 
 // The receive page's data and the changes it lays over it before the server
@@ -28,7 +31,7 @@ export type ReceiveOrder = {
 	receipts: Receipt[];
 	damages: Pick<
 		PurchaseOrderDetail["damages"][number],
-		"lineId" | "quantity"
+		"lineId" | "quantity" | "kind"
 	>[];
 };
 export const receiveData = optimistic<ReceiveOrder>("receive-order");
@@ -143,6 +146,67 @@ export function receivePatch(
 			order: afterReceive(d.order, lines),
 		};
 	});
+}
+
+// Receives the rest of every line Receive all takes, as receiveAll does, and
+// offers to undo them together. Resolves to how many lines it received, or
+// null when it failed and said why.
+export async function receiveAll(orderId: number, lines: ReceiveLine[]) {
+	const made = lines
+		.filter(takenByReceiveAll)
+		.map((l) => receiptFor(l, l.quantity - l.received, false));
+	const r = await optimism.change({
+		label: "Receiving everything",
+		patch: receiveData.patch(orderId, (d) => {
+			const next = d.lines.map((l) => {
+				const receipt = made.find((m) => ids.same(m.lineId, l.id));
+				return receipt ? receiveOn(l, receipt.quantity, false) : l;
+			});
+			return {
+				...d,
+				lines: next,
+				receipts: [...made, ...d.receipts],
+				order: afterReceive(d.order, next),
+			};
+		}),
+		send: async () => {
+			const result = await receiveAllLines({ data: { id: orderId } });
+			for (const s of result.receipts) {
+				const mine = made.find((m) => ids.current(m.lineId) === s.lineId);
+				if (mine) ids.confirm(mine.id, s.receiptId);
+			}
+			return result;
+		},
+	});
+	if (!r) return null;
+	// Undone as the server received them, which may differ from what this
+	// page guessed if someone else was receiving too.
+	const { receipts } = r.value;
+	return {
+		lines: receipts.length,
+		undo: () =>
+			optimism.change({
+				label: "Taking everything back",
+				patch: receiveData.patch(orderId, (d) => {
+					const next = d.lines.map((l) => {
+						const s = receipts.find((x) => ids.same(x.lineId, l.id));
+						return s ? { ...l, received: l.received - s.quantity } : l;
+					});
+					return {
+						...d,
+						lines: next,
+						receipts: d.receipts.filter(
+							(x) => !receipts.some((s) => ids.same(x.id, s.receiptId)),
+						),
+						order: afterUndo(d.order, next),
+					};
+				}),
+				send: () =>
+					undoPurchaseReceipts({
+						data: { ids: receipts.map((s) => s.receiptId) },
+					}),
+			}),
+	};
 }
 
 // Receives something that isn't on the PO, or more of something that is. Its

@@ -2,12 +2,14 @@ import {
 	Delete,
 	Hourglass,
 	Minus,
+	PackageX,
 	Plus,
 	ShieldAlert,
 	Tag,
 	Undo2,
 } from "lucide-react";
 import { useRef, useState } from "react";
+import type { DamageKind } from "#/components/damage/damage";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
@@ -21,7 +23,7 @@ const MAX = 9999;
 // then expects it. Less asks whether the rest is still coming; 0 says none
 // came. None of it reaches the supplier. On a closed PO it only offers the
 // undo. `extra` is a product that isn't on the PO yet. Once some has
-// arrived, it can also record some as damaged. "Free or discounted"
+// arrived, it can also record some as damaged or missing. "Free or discounted"
 // marks some or all of what came as free, or a percent or dollars off; the
 // PO's total and the stock's cost follow, and undoing the receipt takes it
 // off too. A line still waiting can be marked back-ordered, or no longer.
@@ -60,8 +62,9 @@ export function QuantitySheet({
 	// Stop waiting for what's left without receiving any.
 	onNoneCame?: () => void;
 	onUndo: () => void;
-	// Some of what arrived is damaged; absent when nothing arrived yet.
-	onDamaged?: () => void;
+	// Some of what arrived is damaged or missing; absent when nothing arrived
+	// yet.
+	onDamaged?: (kind: DamageKind) => void;
 	// Whether what's left is back-ordered; absent when that can't change.
 	backOrdered?: boolean;
 	onBackOrdered?: (backOrdered: boolean) => void;
@@ -360,14 +363,24 @@ export function QuantitySheet({
 					</button>
 				)}
 				{onDamaged && (
-					<button
-						type="button"
-						onClick={onDamaged}
-						className="mt-2 flex h-14 w-full items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-critical-text active:bg-critical-surface"
-					>
-						<ShieldAlert className="size-5" />
-						Some arrived damaged
-					</button>
+					<div className="mt-2 flex gap-2">
+						<button
+							type="button"
+							onClick={() => onDamaged("damaged")}
+							className="flex h-14 flex-1 items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-critical-text active:bg-critical-surface"
+						>
+							<ShieldAlert className="size-5" />
+							Damaged
+						</button>
+						<button
+							type="button"
+							onClick={() => onDamaged("missing")}
+							className="flex h-14 flex-1 items-center justify-center gap-2 rounded-2xl text-lg font-semibold text-critical-text active:bg-critical-surface"
+						>
+							<PackageX className="size-5" />
+							Missing
+						</button>
+					</div>
 				)}
 				{lastReceipt === null && !canReceive && !onDamaged && (
 					<p className="py-6 text-center text-lg text-muted-foreground">

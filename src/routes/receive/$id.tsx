@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Check, PackagePlus } from "lucide-react";
+import { ArrowLeft, Check, PackageCheck, PackagePlus } from "lucide-react";
 import { useMemo, useState } from "react";
+import type { DamageKind } from "#/components/damage/damage";
 import type { PurchaseOrderMatch } from "#/components/po-product-picker";
 import { DamageSheet } from "#/components/receive/damage-sheet";
 import { ExtraSheet } from "#/components/receive/extra-sheet";
@@ -22,6 +23,7 @@ import {
 	extraPatch,
 	productName,
 	receiptFor,
+	receiveAll,
 	receiveData,
 	receivePatch,
 	said,
@@ -32,7 +34,7 @@ import { ReceiveSkeleton } from "#/components/skeleton";
 import { groupBy } from "#/lib/group-by";
 import { ids, optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
-import { isBackOrdered } from "#/purchasing/status";
+import { isBackOrdered, takenByReceiveAll } from "#/purchasing/status";
 import {
 	amendPurchaseLine,
 	closePurchaseOrder,
@@ -61,13 +63,16 @@ function ReceivePurchaseOrder() {
 	);
 	const [sheetLineId, setSheetLineId] = useState<number | null>(null);
 	const [noteLineId, setNoteLineId] = useState<number | null>(null);
-	const [damageLineId, setDamageLineId] = useState<number | null>(null);
-	// Single items of a line recorded as damaged, and what could still be.
-	const damagedOn = (l: ReceiveLine) =>
-		(damagesByLine.get(ids.current(l.id)) ?? []).reduce(
-			(n, x) => n + x.quantity,
-			0,
-		);
+	const [damaging, setDamaging] = useState<{
+		lineId: number;
+		kind: DamageKind;
+	} | null>(null);
+	// Single items of a line recorded as damaged or missing, and what could
+	// still be.
+	const damagedOn = (l: ReceiveLine, kind?: DamageKind) =>
+		(damagesByLine.get(ids.current(l.id)) ?? [])
+			.filter((x) => kind === undefined || x.kind === kind)
+			.reduce((n, x) => n + x.quantity, 0);
 	const damageable = (l: ReceiveLine) =>
 		Math.max(0, l.received * l.packSize - damagedOn(l));
 	// Something that isn't on the PO: finding it, then counting it.
@@ -80,6 +85,7 @@ function ReceivePurchaseOrder() {
 	// something else that was in the box.
 	const undoable = open || order.status === "closed";
 	const allDone = lines.length > 0 && lines.every(done);
+	const receivingAll = open ? lines.filter(takenByReceiveAll).length : 0;
 	// Unfinished lines first, then back-ordered ones, which this box likely
 	// doesn't have; the rest sink to the bottom.
 	const sorted = [
@@ -92,9 +98,9 @@ function ReceivePurchaseOrder() {
 			? undefined
 			: lines.find((l) => ids.same(l.id, sheetLineId));
 	const damageLine =
-		damageLineId === null
+		damaging === null
 			? undefined
-			: lines.find((l) => ids.same(l.id, damageLineId));
+			: lines.find((l) => ids.same(l.id, damaging.lineId));
 	const noteLine =
 		noteLineId === null
 			? undefined
@@ -142,6 +148,20 @@ function ReceivePurchaseOrder() {
 				},
 			},
 		);
+	}
+
+	// Everything left came, but what's back-ordered. One undo takes it all back.
+	async function receiveEverything() {
+		navigator.vibrate?.(10);
+		const r = await receiveAll(order.id, lines);
+		if (!r) return;
+		offerUndo(`Received ${r.lines} ${r.lines === 1 ? "line" : "lines"}`, {
+			tone: "success",
+			undo: async () => {
+				const u = await r.undo();
+				return u && "Took them back";
+			},
+		});
 	}
 
 	// Stops waiting for what's left of a line, receiving none of it.
@@ -309,9 +329,21 @@ function ReceivePurchaseOrder() {
 					<p className="text-base">Tap a line to undo</p>
 				</div>
 			) : open ? (
-				<p className="mb-3 text-center text-base text-muted-foreground">
-					Hold a button for a different amount
-				</p>
+				<>
+					{receivingAll > 1 && (
+						<button
+							type="button"
+							onClick={receiveEverything}
+							className="mb-3 flex h-16 w-full items-center justify-center gap-2 rounded-2xl bg-card text-xl font-bold shadow-card active:bg-surface-strong"
+						>
+							<PackageCheck className="size-7" />
+							Receive all
+						</button>
+					)}
+					<p className="mb-3 text-center text-base text-muted-foreground">
+						Hold a button for a different amount
+					</p>
+				</>
 			) : (
 				<p className="mb-3 rounded-2xl bg-warning-surface p-4 text-center text-lg font-semibold text-warning-text">
 					{order.status === "closed"
@@ -330,7 +362,8 @@ function ReceivePurchaseOrder() {
 						onReceive={(quantity) => receive(line, quantity)}
 						onHold={() => setSheetLineId(line.id)}
 						onNote={() => setNoteLineId(line.id)}
-						damaged={damagedOn(line)}
+						damaged={damagedOn(line, "damaged")}
+						missing={damagedOn(line, "missing")}
 					/>
 				))}
 			</ul>
@@ -372,9 +405,9 @@ function ReceivePurchaseOrder() {
 					}
 					onDamaged={
 						damageable(sheetLine) > 0
-							? () => {
+							? (kind) => {
 									setSheetLineId(null);
-									setDamageLineId(sheetLine.id);
+									setDamaging({ lineId: sheetLine.id, kind });
 								}
 							: undefined
 					}
@@ -391,14 +424,15 @@ function ReceivePurchaseOrder() {
 				/>
 			)}
 
-			{undoable && damageLine && (
+			{undoable && damageLine && damaging && (
 				<DamageSheet
 					key={damageLine.id}
 					title={productName(damageLine)}
+					kind={damaging.kind}
 					lineId={damageLine.id}
 					available={damageable(damageLine)}
 					unit={damageLine.packSize === 1 ? undefined : damageLine.unit}
-					onClose={() => setDamageLineId(null)}
+					onClose={() => setDamaging(null)}
 				/>
 			)}
 			{undoable && noteLine && (

@@ -82,6 +82,7 @@ describe("over MCP", () => {
 				damageId: got.data.damageId,
 				sku: "BLADE",
 				quantity: 1,
+				kind: "damaged",
 				description: "handle snapped",
 				photos: 0,
 			},

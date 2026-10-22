@@ -708,6 +708,13 @@
       "when": 1792691903908,
       "tag": "0100_tracking_history",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1792697276472,
+      "tag": "0101_damage_kind",
+      "breakpoints": true
     }
   ]
 }

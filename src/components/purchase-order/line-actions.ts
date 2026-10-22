@@ -3,13 +3,16 @@ import { formatCount } from "#/lib/format";
 import { ids, optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { discountProblem } from "#/purchasing/discount";
+import { takenByReceiveAll } from "#/purchasing/status";
 import {
 	addProductToPurchaseOrder,
 	amendPurchaseLine,
+	receiveAllLines,
 	receiveLine,
 	setLine,
 	setLineBackOrdered,
 	undoPurchaseReceipt,
+	undoPurchaseReceipts,
 } from "#/server/purchasing";
 import { patchLines, putLineBack, receivedPatch } from "./po-data";
 import type { Line } from "./types";
@@ -101,6 +104,52 @@ export async function receiveWithUndo(
 		},
 	});
 	return r;
+}
+
+// Receives the rest of every line that isn't back-ordered, as receiveAll
+// does, with one Undo for all of it once the server has it.
+export async function receiveAllWithUndo(
+	lines: Line[],
+	purchaseOrderId: number,
+) {
+	const taking = lines.filter(takenByReceiveAll);
+	const r = await optimism.change({
+		label: "Receiving everything",
+		patch: patchLines(
+			purchaseOrderId,
+			(l) => taking.some((t) => ids.same(t.id, l.id)),
+			(l) => ({ ...l, received: Math.max(l.received, l.quantity) }),
+		),
+		send: () => receiveAllLines({ data: { id: purchaseOrderId } }),
+	});
+	if (!r) return;
+	// Undone as the server received them, which may differ from what this
+	// page guessed if someone else was receiving too.
+	const { receipts } = r.value;
+	const n = receipts.length;
+	offerUndo(`Received ${n} ${n === 1 ? "line" : "lines"}`, {
+		tone: "success",
+		undo: async () => {
+			const u = await optimism.change({
+				label: "Taking everything back",
+				patch: patchLines(
+					purchaseOrderId,
+					(l) => receipts.some((s) => ids.same(s.lineId, l.id)),
+					(l) => ({
+						...l,
+						received:
+							l.received -
+							(receipts.find((s) => ids.same(s.lineId, l.id))?.quantity ?? 0),
+					}),
+				),
+				send: () =>
+					undoPurchaseReceipts({
+						data: { ids: receipts.map((s) => s.receiptId) },
+					}),
+			});
+			return u && "Took them back";
+		},
+	});
 }
 
 // Says what a change to a sent line did, that the supplier isn't told, and

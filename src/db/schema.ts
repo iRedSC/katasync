@@ -1723,6 +1723,10 @@ export const purchaseOrderDiscounts = pgTable(
 // number again. Chosen per item when the report is sent.
 export const damageRemedy = pgEnum("damage_remedy", ["credit", "replacement"]);
 
+// What went wrong with items that arrived: broken, or not in the box at all
+// (a case of 12 holding 10). Either way they're off the shelf and reported.
+export const damageKind = pgEnum("damage_kind", ["damaged", "missing"]);
+
 // A report sent to the supplier about damaged items on one PO. Its items are
 // the purchaseOrderDamages pointing at it. Made only by sending it.
 export const purchaseOrderDamageReports = pgTable(
@@ -1738,9 +1742,11 @@ export const purchaseOrderDamageReports = pgTable(
 	(t) => [index("purchase_order_damage_reports_po_idx").on(t.purchaseOrderId)],
 );
 
-// Items of a line that arrived damaged. Counted in single items, not the
-// line's unit: one blade in a case of 12 can break. They come off the shelf
-// when recorded (batchId) and can't exceed what was received. Until a report
+// Items of a line that arrived damaged, or were missing from what arrived.
+// Counted in single items, not the line's unit: one blade in a case of 12 can
+// break or be missing. They come off the shelf when recorded (batchId) and
+// can't exceed what was received. Missing needs no description: it says what's
+// wrong. Damaged does. Until a report
 // takes them they can be taken back, which puts them back on the shelf;
 // once reported they stay, with what was asked for. Rules live in
 // src/purchasing/damage.ts.
@@ -1752,7 +1758,8 @@ export const purchaseOrderDamages = pgTable(
 			.notNull()
 			.references(() => purchaseOrderLines.id),
 		quantity: integer().notNull(),
-		description: text().notNull(),
+		kind: damageKind().notNull().default("damaged"),
+		description: text(),
 		// The ledger batch that took them off the shelf.
 		batchId: uuid().notNull().unique(),
 		reportId: integer().references(() => purchaseOrderDamageReports.id),
@@ -1764,7 +1771,7 @@ export const purchaseOrderDamages = pgTable(
 		check("purchase_order_damages_quantity_positive", sql`${t.quantity} > 0`),
 		check(
 			"purchase_order_damages_description_given",
-			sql`btrim(${t.description}) <> ''`,
+			sql`${t.kind} = 'missing' or (${t.description} is not null and btrim(${t.description}) <> '')`,
 		),
 		check(
 			"purchase_order_damages_reported_with_remedy",

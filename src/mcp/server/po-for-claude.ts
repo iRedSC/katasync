@@ -110,6 +110,7 @@ export async function orderForClaude(db: Db, id: number) {
 			damageId: d.id,
 			sku: d.sku,
 			quantity: d.quantity,
+			kind: d.kind,
 			description: d.description,
 			photos: d.photoIds.length,
 			...(d.reportedAt
