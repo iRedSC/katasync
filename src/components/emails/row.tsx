@@ -10,11 +10,14 @@ export function EmailRow({
 	email: e,
 	selected,
 	onOpen,
+	onMenu,
 	tag,
 }: {
 	email: ReadableEmail;
 	selected: boolean;
 	onOpen: () => void;
+	// Right-clicked, for the list's menu.
+	onMenu?: () => void;
 	tag?: ReactNode;
 }) {
 	const ref = useRef<HTMLLIElement>(null);
@@ -26,6 +29,7 @@ export function EmailRow({
 			<button
 				type="button"
 				onClick={onOpen}
+				onContextMenu={onMenu}
 				className={cn(
 					"block w-full border-l-2 px-4 py-2.5 text-left",
 					selected
@@ -49,10 +53,13 @@ export function EmailRow({
 					<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
 						{snippet(e.body)}
 					</span>
-					{tag && (
+					{typeof tag === "string" || typeof tag === "number" ? (
 						<span className="shrink-0 rounded-md bg-surface-strong px-1.5 text-xs font-medium tabular-nums">
 							{tag}
 						</span>
+					) : (
+						// A chip of its own (a marketplace's badge) needs no pill.
+						tag && <span className="shrink-0">{tag}</span>
 					)}
 				</span>
 			</button>

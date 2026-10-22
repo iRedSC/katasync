@@ -7,11 +7,13 @@ import {
 	purchaseOrderTracking,
 	suppliers,
 } from "#/db/schema";
+import { pointPictures } from "#/inbox/html";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { addTracking } from "#/purchasing/tracking";
 import {
 	type InboxAttachment,
 	type InboxMessage,
+	type InlinePicture,
 	messageContent,
 	poOfAddress,
 } from "./graph";
@@ -24,7 +26,14 @@ import { findTracking } from "./tracking-numbers";
 // domain. Anything else waits, unfiled, for someone (or Claude) to file or set
 // aside. Filing never changes the PO itself.
 
-type Content = { body: string; attachments: InboxAttachment[] };
+// An email's text and files, and, when the reader gives them, its HTML and
+// the pictures inside it.
+type Content = {
+	body: string;
+	attachments: InboxAttachment[];
+	html?: string;
+	inline?: InlinePicture[];
+};
 export type ReadContent = (graphId: string) => Promise<Content>;
 
 // POs that have been sent: a draft has no supplier conversation yet.
@@ -146,6 +155,8 @@ async function save(
 					text: f.text,
 				})),
 			);
+		if (content.html !== undefined)
+			await keepHtml(tx, row.id, content.html, content.inline ?? []);
 		return row;
 	});
 }
@@ -341,9 +352,12 @@ async function withAttachments<T extends { id: number }>(db: Db, emails: T[]) {
 		.select(attachmentSummary)
 		.from(poEmailAttachments)
 		.where(
-			inArray(
-				poEmailAttachments.emailId,
-				emails.map((e) => e.id),
+			and(
+				inArray(
+					poEmailAttachments.emailId,
+					emails.map((e) => e.id),
+				),
+				isNull(poEmailAttachments.contentId),
 			),
 		)
 		.orderBy(poEmailAttachments.id);
@@ -427,7 +441,12 @@ export async function emailWithFiles(db: Db, id: number) {
 	const files = await db
 		.select()
 		.from(poEmailAttachments)
-		.where(eq(poEmailAttachments.emailId, id))
+		.where(
+			and(
+				eq(poEmailAttachments.emailId, id),
+				isNull(poEmailAttachments.contentId),
+			),
+		)
 		.orderBy(poEmailAttachments.id);
 	return { email, files };
 }
@@ -438,4 +457,79 @@ export async function attachmentFile(db: Db, id: number) {
 		.from(poEmailAttachments)
 		.where(eq(poEmailAttachments.id, id));
 	return file ?? null;
+}
+
+// Keeps an email's HTML, with its pictures kept and pointed at.
+async function keepHtml(
+	db: Db,
+	emailId: number,
+	html: string,
+	inline: InlinePicture[],
+) {
+	const kept =
+		inline.length === 0
+			? []
+			: await db
+					.insert(poEmailAttachments)
+					.values(
+						inline.map((p) => ({
+							emailId,
+							filename: p.filename,
+							contentType: p.contentType,
+							size: p.size,
+							data: p.data,
+							contentId: p.contentId,
+						})),
+					)
+					.returning({
+						id: poEmailAttachments.id,
+						contentId: poEmailAttachments.contentId,
+					});
+	await db
+		.update(poEmails)
+		.set({
+			bodyHtml: pointPictures(
+				html,
+				kept.map((k) => ({
+					contentId: k.contentId ?? "",
+					url: `/api/po-email-attachments/${k.id}`,
+				})),
+			),
+		})
+		.where(eq(poEmails.id, emailId));
+}
+
+// Fetches the HTML of emails kept before katasync kept it, newest first, a
+// few a run. One gone from the mailbox keeps its text only (empty HTML).
+export async function backfillHtml(
+	db: Db,
+	read: (
+		messageId: string,
+	) => Promise<{ html: string; inline: InlinePicture[] } | null>,
+	limit = 25,
+) {
+	const rows = await db
+		.select({ id: poEmails.id, messageId: poEmails.messageId })
+		.from(poEmails)
+		.where(isNull(poEmails.bodyHtml))
+		.orderBy(desc(poEmails.receivedAt))
+		.limit(limit);
+	for (const r of rows) {
+		// A failure leaves it for the next run.
+		const found = await read(r.messageId).catch(() => undefined);
+		if (found === undefined) continue;
+		await db.transaction((tx) =>
+			keepHtml(tx, r.id, found?.html ?? "", found?.inline ?? []),
+		);
+	}
+	return rows.length;
+}
+
+// The HTML of one email, for reading it formatted.
+export async function emailHtml(db: Db, id: number) {
+	const [row] = await db
+		.select({ html: poEmails.bodyHtml })
+		.from(poEmails)
+		.where(eq(poEmails.id, id));
+	return row?.html || null;
 }

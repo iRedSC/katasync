@@ -327,6 +327,9 @@ export type InboxAttachment = {
 	data: Buffer | null;
 };
 
+// A picture shown inside the email, which its HTML names as cid:<contentId>.
+export type InlinePicture = InboxAttachment & { contentId: string };
+
 const attachmentList = type({
 	value: type({
 		"@odata.type": "string",
@@ -335,35 +338,56 @@ const attachmentList = type({
 		"contentType?": "string | null",
 		size: "number",
 		"isInline?": "boolean",
+		"contentId?": "string | null",
 	}).array(),
 });
 
-// The body as plain text, and the files attached (not pictures inside it).
+// The body as plain text (for search, lists, and Claude) and as sent (to
+// read formatted), the files attached, and the pictures inside it.
 export async function messageContent(
 	graphId: string,
 	box: Mailbox = "purchasing",
 ) {
 	const base = `${mailbox(box)}/messages/${encodeURIComponent(graphId)}`;
+	const [text, formatted] = await Promise.all([
+		bodyOf(base, "text"),
+		messageHtml(graphId, box),
+	]);
+	return { body: text.trim(), ...formatted };
+}
+
+async function bodyOf(base: string, as: "text" | "html") {
 	const { body } = type({ body: { content: "string" } }).assert(
 		await (
 			await graph(`${base}?$select=body`, {
-				headers: { Prefer: 'outlook.body-content-type="text"' },
+				headers: { Prefer: `outlook.body-content-type="${as}"` },
 			})
 		).json(),
 	);
-	const list = attachmentList.assert(
-		await (
-			await graph(
-				`${base}/attachments?$select=id,name,contentType,size,isInline`,
-			)
-		).json(),
-	);
+	return body.content;
+}
+
+// The email as sent, and its files and pictures; for an email kept before
+// katasync kept HTML, without the rest.
+export async function messageHtml(graphId: string, box: Mailbox) {
+	const base = `${mailbox(box)}/messages/${encodeURIComponent(graphId)}`;
+	const [html, list] = await Promise.all([
+		bodyOf(base, "html"),
+		graph(
+			`${base}/attachments?$select=id,name,contentType,size,isInline,contentId`,
+		).then(async (r) => attachmentList.assert(await r.json())),
+	]);
 	const attachments: InboxAttachment[] = [];
+	const inline: InlinePicture[] = [];
 	for (const a of list.value) {
 		// Item attachments (a forwarded email) and links to OneDrive files have
 		// no bytes of their own here.
-		if (a["@odata.type"] !== "#microsoft.graph.fileAttachment" || a.isInline)
-			continue;
+		if (a["@odata.type"] !== "#microsoft.graph.fileAttachment") continue;
+		const contentId = a.contentId?.replace(/^<|>$/g, "").trim() || null;
+		// A picture the HTML doesn't show (a signature logo it only attaches)
+		// is neither a file nor worth keeping.
+		const shown = contentId !== null && html.includes(`cid:${contentId}`);
+		if (a.isInline && !shown) continue;
 		let data: Buffer | null = null;
 		if (a.size <= MAX_ATTACHMENT_BYTES) {
 			const res = await graph(
@@ -371,14 +395,30 @@ export async function messageContent(
 			);
 			data = Buffer.from(await res.arrayBuffer());
 		}
-		attachments.push({
+		const file = {
 			filename: a.name?.trim() || "attachment",
 			contentType: a.contentType?.toLowerCase() || "application/octet-stream",
 			size: data ? data.length : a.size,
 			data,
-		});
+		};
+		if (shown && contentId) inline.push({ ...file, contentId });
+		else attachments.push(file);
 	}
-	return { body: body.content.trim(), attachments };
+	return { html, attachments, inline };
+}
+
+// An email's Graph id from the Message-ID katasync kept, or null if it's
+// gone from the mailbox. Kept ids without angle brackets are Graph's own.
+export async function findMessage(messageId: string, box: Mailbox) {
+	if (!messageId.startsWith("<")) return messageId;
+	const page = type({ value: type({ id: "string" }).array() }).assert(
+		await (
+			await graph(
+				`${mailbox(box)}/messages?$filter=internetMessageId eq '${encodeURIComponent(messageId.replace(/'/g, "''"))}'&$select=id&$top=1`,
+			)
+		).json(),
+	);
+	return page.value[0]?.id ?? null;
 }
 
 // For Diagnostics: the newest email's time, which proves the mailbox reads.

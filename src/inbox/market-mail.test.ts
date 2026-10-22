@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
+import { marketEmails } from "#/db/schema";
 import type { InboxMessage } from "#/purchasing/inbox/graph";
 import { createTestDb } from "#/test/db";
 import {
@@ -10,6 +11,7 @@ import {
 	marketOf,
 	readMarketMail,
 	relabel,
+	resort,
 	setDone,
 } from "./market-mail";
 
@@ -36,6 +38,10 @@ describe("sorting", () => {
 		expect(labelOf("Sold, ship now: Drywall Banjo")).toBe("orders");
 		expect(labelOf("You made a sale!")).toBe("orders");
 		expect(labelOf("Order 112-3 has been cancelled")).toBe("orders");
+		expect(labelOf("Refund Initiated for Order 111-2762240")).toBe("returns");
+		expect(labelOf("Return request for Drywall Banjo")).toBe("returns");
+		// A return that turned into a claim needs someone.
+		expect(labelOf("A-to-z claim on your return")).toBe("attention");
 		expect(labelOf("Your payout is on its way")).toBe("updates");
 		expect(labelOf("New features for sellers")).toBe("updates");
 	});
@@ -87,7 +93,12 @@ describe("the mailbox", () => {
 		expect((await ingestMarketMail(db, [warning], read)).read).toBe(0);
 
 		const page = await marketMailPage(db, "attention", null);
-		expect(page.counts).toEqual({ attention: 1, orders: 1, updates: 0 });
+		expect(page.counts).toEqual({
+			attention: 1,
+			orders: 1,
+			returns: 0,
+			updates: 0,
+		});
 		expect(page.emails).toEqual([
 			expect.objectContaining({
 				market: "amazon",
@@ -169,5 +180,29 @@ describe("the mailbox", () => {
 			await readMarketMail({ since: new Date(), sweep: false, db: () => db }),
 		).toEqual({ skipped: expect.stringContaining("MARKETPLACE_INBOX") });
 		expect(fetch).not.toHaveBeenCalled();
+	});
+});
+
+describe("re-sorting", () => {
+	test("mail sorted by older rules moves; mail staff moved stays", async () => {
+		await ingestMarketMail(
+			db,
+			[
+				message("Refund Initiated for Order 1"),
+				message("Refund Initiated for Order 2"),
+			],
+			read,
+		);
+		const [first, second] = (await db.select().from(marketEmails)).sort(
+			(a, b) => a.id - b.id,
+		);
+		// As if both came in before Returns existed, and staff then moved one.
+		await db.update(marketEmails).set({ label: "orders" });
+		await relabel(db, second.id, "updates");
+
+		expect(await resort(db)).toBe(1);
+		const after = await db.select().from(marketEmails);
+		expect(after.find((e) => e.id === first.id)?.label).toBe("returns");
+		expect(after.find((e) => e.id === second.id)?.label).toBe("updates");
 	});
 });

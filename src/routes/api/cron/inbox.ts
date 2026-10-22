@@ -67,12 +67,25 @@ async function readPurchasing(sweep: boolean) {
 		new Date(Date.now() - (sweep ? SWEEP_LOOK_BACK_MS : LOOK_BACK_MS)),
 	);
 	if (messages.length === 0 && !sweep) return { quiet: true };
-	const [{ ingest }, { refreshTracking }, { getDb }] = await Promise.all([
-		import("#/purchasing/inbox/ingest"),
-		import("#/purchasing/tracking"),
-		import("#/db/client"),
-	]);
+	const [{ ingest, backfillHtml }, { refreshTracking }, { getDb }] =
+		await Promise.all([
+			import("#/purchasing/inbox/ingest"),
+			import("#/purchasing/tracking"),
+			import("#/db/client"),
+		]);
 	const db = getDb();
 	const result = await ingest(db, messages, undefined, { retrack: sweep });
-	return sweep ? { ...result, tracking: await refreshTracking(db) } : result;
+	if (!sweep) return result;
+	const [graph, { readHtml }] = await Promise.all([
+		import("#/purchasing/inbox/graph"),
+		import("#/inbox/market-mail"),
+	]);
+	return {
+		...result,
+		tracking: await refreshTracking(db),
+		// Emails kept before katasync kept their HTML, a few a sweep.
+		formatted: await backfillHtml(db, (messageId) =>
+			readHtml(graph, messageId, "purchasing"),
+		),
+	};
 }

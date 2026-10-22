@@ -1,10 +1,26 @@
 import { Link, useRouter } from "@tanstack/react-router";
-import { Archive, Inbox, RefreshCw, Undo2 } from "lucide-react";
+import {
+	Archive,
+	ChevronDown,
+	FolderInput,
+	Inbox,
+	RefreshCw,
+	Undo2,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
-import { EmptyState } from "#/components/page";
+import { Badge, EmptyState } from "#/components/page";
 import { Button } from "#/components/ui/button";
+import {
+	ContextMenuItem,
+	ContextMenuSeparator,
+} from "#/components/ui/context-menu";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "#/components/ui/popover";
 import { Tip } from "#/components/ui/tooltip";
 import type {
 	MarketLabel,
@@ -32,6 +48,7 @@ type Email = MarketMailPage["emails"][number];
 export const LABELS: { view: MarketLabel; label: string }[] = [
 	{ view: "attention", label: "Needs attention" },
 	{ view: "orders", label: "Orders" },
+	{ view: "returns", label: "Returns" },
 	{ view: "updates", label: "Updates" },
 ];
 const labelName = (l: MarketLabel) =>
@@ -159,11 +176,12 @@ export function MarketplaceBox({
 				</p>
 			)}
 			<MailPane
+				box="marketplaces"
 				emails={d.emails}
 				fileUrl={(a) => `/api/market-email-attachments/${a.id}`}
 				tagOf={(e) => (
 					<span className="flex items-center gap-1">
-						{view === "done" && labelName(e.label)}
+						{view === "done" && <Badge>{labelName(e.label)}</Badge>}
 						{market === null && e.market && (
 							<ChannelBadge channel={e.market} salesChannel={null} compact />
 						)}
@@ -177,6 +195,31 @@ export function MarketplaceBox({
 					/>
 				)}
 				keysOf={(e) => ({ e: () => done(e, e.doneAt === null) })}
+				menuOf={(e) => (
+					<>
+						<ContextMenuItem
+							shortcut="E"
+							onSelect={() => done(e, e.doneAt === null)}
+						>
+							{e.doneAt === null ? <Archive /> : <Undo2 />}
+							{e.doneAt === null ? "Done" : `Back to ${labelName(e.label)}`}
+						</ContextMenuItem>
+						{e.doneAt === null && (
+							<>
+								<ContextMenuSeparator />
+								{LABELS.filter((l) => l.view !== e.label).map((l) => (
+									<ContextMenuItem
+										key={l.view}
+										onSelect={() => move(e, l.view)}
+									>
+										<FolderInput />
+										Move to {l.label}
+									</ContextMenuItem>
+								))}
+							</>
+						)}
+					</>
+				)}
 				empty={<Empty view={view} connected={d.connected} />}
 			/>
 		</>
@@ -194,7 +237,12 @@ function Actions({
 }) {
 	return (
 		<>
-			{e.market && <ChannelBadge channel={e.market} salesChannel={null} />}
+			{/* The chip sits left; the buttons after it keep to the right. */}
+			{e.market && (
+				<span className="mr-auto">
+					<ChannelBadge channel={e.market} salesChannel={null} />
+				</span>
+			)}
 			{e.doneAt === null ? (
 				<Tip content="E">
 					<Button size="sm" variant="secondary" onClick={() => onDone(true)}>
@@ -208,18 +256,45 @@ function Actions({
 					Back to {labelName(e.label)}
 				</Button>
 			)}
-			{e.doneAt === null &&
-				LABELS.filter((l) => l.view !== e.label).map((l) => (
-					<Button
-						key={l.view}
-						size="sm"
-						variant="ghost"
-						onClick={() => onMove(l.view)}
-					>
-						To {l.label}
-					</Button>
-				))}
+			{e.doneAt === null && <MoveMenu from={e.label} onMove={onMove} />}
 		</>
+	);
+}
+
+// One Move button; the other folders in its menu.
+function MoveMenu({
+	from,
+	onMove,
+}: {
+	from: MarketLabel;
+	onMove: (to: MarketLabel) => void;
+}) {
+	const [open, setOpen] = useState(false);
+	return (
+		<Popover open={open} onOpenChange={setOpen}>
+			<PopoverTrigger asChild>
+				<Button size="sm" variant="ghost">
+					<FolderInput />
+					Move
+					<ChevronDown className="opacity-60" />
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent align="end" className="w-48 p-1">
+				{LABELS.filter((l) => l.view !== from).map((l) => (
+					<button
+						key={l.view}
+						type="button"
+						onClick={() => {
+							setOpen(false);
+							onMove(l.view);
+						}}
+						className="flex h-8 w-full items-center rounded-md px-2 text-left text-sm hover:bg-surface-strong"
+					>
+						{l.label}
+					</button>
+				))}
+			</PopoverContent>
+		</Popover>
 	);
 }
 

@@ -7,8 +7,9 @@ import {
 	marketEmails,
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
-import type { InboxMessage } from "#/purchasing/inbox/graph";
+import type { InboxMessage, InlinePicture } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
+import { pointPictures } from "./html";
 
 // The marketplaces mailbox in katasync: each notice read in from Microsoft
 // 365, sorted by marketplace and into a label, and worked through like a
@@ -34,15 +35,19 @@ export function marketOf(fromAddress: string): Market | null {
 // so "dispute on order 123" is attention, not an order.
 const ATTENTION =
 	/\b(violat\w*|polic(y|ies)|suspend\w*|deactivat\w*|suppress\w*|remov(ed|al)|warning|action required|act now|account health|at risk|dispute\w*|chargeback\w*|claim\w*|a-to-z|appeal\w*|infring\w*|counterfeit|inauthentic|restrict\w*|blocked|frozen|freez\w*|reinstat\w*|penalt\w*|defect\w*|verif(y|ication)|activat\w*|document request|intellectual property|unpaid item|negative feedback|case)\b/i;
+// Things coming back and money going back.
+const RETURNS =
+	/\b(returns?|returned|return request\w*|refund\w*|rma|replacement)\b/i;
 // The day-to-day of selling.
 const ORDERS =
-	/\b(orders?|sold|you made a sale|ship(ped|ment|ping)?|deliver\w*|cancel\w*|return request|returns?|refund\w*|buyer message|purchase)\b/i;
+	/\b(orders?|sold|you made a sale|ship(ped|ment|ping)?|deliver\w*|cancel\w*|buyer message|purchase)\b/i;
 
 // Which label a new email gets. Only the subject decides: bodies carry
 // footers ("see our return policy") that would sort everything as
 // attention.
 export function labelOf(subject: string): MarketLabel {
 	if (ATTENTION.test(subject)) return "attention";
+	if (RETURNS.test(subject)) return "returns";
 	if (ORDERS.test(subject)) return "orders";
 	return "updates";
 }
@@ -101,6 +106,8 @@ export async function ingestMarketMail(
 							data: a.data,
 						})),
 					);
+				if (content.html !== undefined)
+					await keepHtml(tx, row.id, content.html, content.inline ?? []);
 			});
 		} catch (error) {
 			problems.push(
@@ -109,6 +116,30 @@ export async function ingestMarketMail(
 		}
 	}
 	return { read: count, problems };
+}
+
+// Sorts again what the rules now label differently (a new label, a better
+// rule), leaving alone anything staff moved. Returns how many moved.
+export async function resort(db: Db) {
+	const rows = await db
+		.select({
+			id: marketEmails.id,
+			subject: marketEmails.subject,
+			label: marketEmails.label,
+		})
+		.from(marketEmails)
+		.where(isNull(marketEmails.relabelledAt));
+	let moved = 0;
+	for (const r of rows) {
+		const label = labelOf(r.subject);
+		if (label === r.label) continue;
+		await db
+			.update(marketEmails)
+			.set({ label })
+			.where(and(eq(marketEmails.id, r.id), isNull(marketEmails.relabelledAt)));
+		moved++;
+	}
+	return moved;
 }
 
 // Records how reading a mailbox went: a time when it worked, the error
@@ -200,9 +231,12 @@ export async function marketMailPage(
 					})
 					.from(marketEmailAttachments)
 					.where(
-						inArray(
-							marketEmailAttachments.emailId,
-							rows.map((r) => r.id),
+						and(
+							inArray(
+								marketEmailAttachments.emailId,
+								rows.map((r) => r.id),
+							),
+							isNull(marketEmailAttachments.contentId),
 						),
 					)
 					.orderBy(marketEmailAttachments.id);
@@ -270,6 +304,80 @@ export async function marketAttachment(db: Db, id: number) {
 	return file ?? null;
 }
 
+// Keeps an email's HTML, with its pictures kept and pointed at.
+async function keepHtml(
+	db: Db,
+	emailId: number,
+	html: string,
+	inline: InlinePicture[],
+) {
+	const kept =
+		inline.length === 0
+			? []
+			: await db
+					.insert(marketEmailAttachments)
+					.values(
+						inline.map((p) => ({
+							emailId,
+							filename: p.filename,
+							contentType: p.contentType,
+							size: p.size,
+							data: p.data,
+							contentId: p.contentId,
+						})),
+					)
+					.returning({
+						id: marketEmailAttachments.id,
+						contentId: marketEmailAttachments.contentId,
+					});
+	await db
+		.update(marketEmails)
+		.set({
+			bodyHtml: pointPictures(
+				html,
+				kept.map((k) => ({
+					contentId: k.contentId ?? "",
+					url: `/api/market-email-attachments/${k.id}`,
+				})),
+			),
+		})
+		.where(eq(marketEmails.id, emailId));
+}
+
+// Fetches the HTML of emails kept before katasync kept it, newest first, a
+// few a run. One gone from the mailbox keeps its text only (empty HTML).
+export async function backfillMarketHtml(
+	db: Db,
+	read: (
+		messageId: string,
+	) => Promise<{ html: string; inline: InlinePicture[] } | null>,
+	limit = 25,
+) {
+	const rows = await db
+		.select({ id: marketEmails.id, messageId: marketEmails.messageId })
+		.from(marketEmails)
+		.where(isNull(marketEmails.bodyHtml))
+		.orderBy(desc(marketEmails.receivedAt))
+		.limit(limit);
+	for (const r of rows) {
+		// A failure leaves it for the next run.
+		const found = await read(r.messageId).catch(() => undefined);
+		if (found === undefined) continue;
+		await db.transaction((tx) =>
+			keepHtml(tx, r.id, found?.html ?? "", found?.inline ?? []),
+		);
+	}
+	return rows.length;
+}
+
+export async function marketEmailHtml(db: Db, id: number) {
+	const [row] = await db
+		.select({ html: marketEmails.bodyHtml })
+		.from(marketEmails)
+		.where(eq(marketEmails.id, id));
+	return row?.html || null;
+}
+
 // Back this far on a sweep; the first, with nothing kept yet, reads a month.
 const SWEEP_LOOK_BACK_MS = 3 * 86_400_000;
 const FIRST_LOOK_BACK_MS = 30 * 86_400_000;
@@ -314,6 +422,24 @@ export async function readMarketMail(options: {
 	const result = await ingestMarketMail(db, messages, (id) =>
 		graph.messageContent(id, "marketplaces"),
 	);
+	const resorted = options.sweep ? await resort(db) : 0;
+	const formatted = options.sweep
+		? await backfillMarketHtml(db, (messageId) =>
+				readHtml(graph, messageId, "marketplaces"),
+			)
+		: 0;
 	await recordCheck(db, "marketplaces", null);
-	return result;
+	return { ...result, resorted, formatted };
+}
+
+// One kept email's HTML from the mailbox, or null when it's gone.
+export async function readHtml(
+	graph: typeof import("#/purchasing/inbox/graph"),
+	messageId: string,
+	box: "purchasing" | "marketplaces",
+) {
+	const id = await graph.findMessage(messageId, box);
+	if (!id) return null;
+	const { html, inline } = await graph.messageHtml(id, box);
+	return { html, inline };
 }

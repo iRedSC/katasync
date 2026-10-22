@@ -6,6 +6,11 @@ import {
 	type ReadableEmail,
 } from "#/components/emails/reader";
 import { EmailRow } from "#/components/emails/row";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuTrigger,
+} from "#/components/ui/context-menu";
 import { useHotkeys } from "#/lib/hotkeys";
 import { cn } from "#/lib/utils";
 
@@ -18,19 +23,25 @@ export function MailPane<E extends ReadableEmail>({
 	tagOf,
 	actionsOf,
 	keysOf,
+	menuOf,
+	box,
 	fileUrl,
 	empty,
 }: {
+	box: "purchasing" | "marketplaces";
 	emails: E[];
 	tagOf?: (e: E) => ReactNode;
 	actionsOf: (e: E) => ReactNode;
 	// Shortcuts for the open email, e.g. e for done.
 	keysOf?: (e: E) => Record<string, () => void>;
+	// The right-click menu's items for an email in the list.
+	menuOf?: (e: E) => ReactNode;
 	fileUrl?: FileUrl;
 	empty: ReactNode;
 }) {
 	const [selectedId, setSelectedId] = useState<number | null>(null);
 	const [reading, setReading] = useState(false);
+	const [menuFor, setMenuFor] = useState<E | null>(null);
 	// Where the open email sat, so the one after it opens once it leaves.
 	const lastIndex = useRef(0);
 	const found = emails.findIndex((e) => e.id === selectedId);
@@ -52,25 +63,33 @@ export function MailPane<E extends ReadableEmail>({
 	if (selected === null) return empty;
 	return (
 		<div className="grid md:h-[calc(100svh-14rem)] md:min-h-[30rem] md:grid-cols-[24rem_minmax(0,1fr)]">
-			<ul
-				className={cn(
-					"min-h-0 divide-y overflow-y-auto md:border-r",
-					reading && "hidden md:block",
+			<ContextMenu>
+				<ContextMenuTrigger asChild disabled={!menuOf}>
+					<ul
+						className={cn(
+							"min-h-0 divide-y overflow-y-auto md:border-r",
+							reading && "hidden md:block",
+						)}
+					>
+						{emails.map((e) => (
+							<EmailRow
+								key={e.id}
+								email={e}
+								selected={e.id === selected.id}
+								onOpen={() => {
+									setSelectedId(e.id);
+									setReading(true);
+								}}
+								onMenu={() => setMenuFor(e)}
+								tag={tagOf?.(e)}
+							/>
+						))}
+					</ul>
+				</ContextMenuTrigger>
+				{menuOf && menuFor && (
+					<ContextMenuContent>{menuOf(menuFor)}</ContextMenuContent>
 				)}
-			>
-				{emails.map((e) => (
-					<EmailRow
-						key={e.id}
-						email={e}
-						selected={e.id === selected.id}
-						onOpen={() => {
-							setSelectedId(e.id);
-							setReading(true);
-						}}
-						tag={tagOf?.(e)}
-					/>
-				))}
-			</ul>
+			</ContextMenu>
 			<div
 				className={cn("flex min-h-0 flex-col", !reading && "hidden md:flex")}
 			>
@@ -85,6 +104,7 @@ export function MailPane<E extends ReadableEmail>({
 				<EmailReader
 					key={selected.id}
 					email={selected}
+					box={box}
 					fileUrl={fileUrl}
 					className="min-h-0 flex-1 animate-in fade-in-0 slide-in-from-right-2"
 					actions={actionsOf(selected)}

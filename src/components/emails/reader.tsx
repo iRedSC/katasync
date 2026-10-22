@@ -9,6 +9,7 @@ import { type ReactNode, useState } from "react";
 import { Tip } from "#/components/ui/tooltip";
 import { formatDateTime } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { EmailBody } from "./html-body";
 
 // An email as any of katasync's mailboxes keeps it.
 export type ReadableEmail = {
@@ -106,10 +107,13 @@ export function EmailReader({
 	email: e,
 	actions,
 	heading = true,
+	box = "purchasing",
 	fileUrl = attachmentUrl,
 	className,
 }: {
 	email: ReadableEmail;
+	// Which mailbox it's from, for its formatted version.
+	box?: "purchasing" | "marketplaces";
 	// Purchasing's unless given.
 	fileUrl?: FileUrl;
 	// Off where the sender and subject already show, as on a PO's timeline.
@@ -138,7 +142,7 @@ export function EmailReader({
 						</span>
 					</div>
 					{actions && (
-						<div className="mt-3 flex flex-wrap items-center gap-1.5">
+						<div className="mt-3 flex flex-wrap items-center justify-end gap-1.5">
 							{actions}
 						</div>
 					)}
@@ -171,13 +175,19 @@ export function EmailReader({
 				{file ? (
 					<FileView file={file} url={fileUrl(file)} />
 				) : (
-					<p className="px-5 py-4 text-sm whitespace-pre-wrap break-words">
-						{e.body ? (
-							<MailText text={e.body.replace(/\n{3,}/g, "\n\n")} />
-						) : (
-							<span className="text-muted-foreground">(empty)</span>
-						)}
-					</p>
+					<EmailBody
+						box={box}
+						id={e.id}
+						text={
+							<p className="px-5 py-4 text-sm whitespace-pre-wrap break-words">
+								{e.body ? (
+									<MailText text={e.body.replace(/\n{3,}/g, "\n\n")} />
+								) : (
+									<span className="text-muted-foreground">(empty)</span>
+								)}
+							</p>
+						}
+					/>
 				)}
 			</div>
 			{!heading && actions && (

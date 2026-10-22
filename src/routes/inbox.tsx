@@ -29,7 +29,10 @@ export const Route = createFileRoute("/inbox")({
 				? { box: "purchasing", view: s.view }
 				: { box: "purchasing" };
 		return {
-			...(s.view === "orders" || s.view === "updates" || s.view === "done"
+			...(s.view === "orders" ||
+			s.view === "returns" ||
+			s.view === "updates" ||
+			s.view === "done"
 				? { view: s.view }
 				: {}),
 			...(MARKETS.includes(s.market as Market)
