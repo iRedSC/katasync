@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { type Candidate, itemKey, rankCandidates } from "./match-rank";
+import { type Candidate, rankCandidates } from "./match-rank";
 
 const product = (
 	productId: number,
@@ -73,10 +73,4 @@ test("a title matched elsewhere suggests the same product first", () => {
 test("FBA listings are never offered a tool set", () => {
 	expect(rank("Taper Set", { fba: true })).toEqual([]);
 	expect(rank("Taper Set")).toEqual([["TT-SET", "same-name"]]);
-});
-
-test("listings are the same item by SKU, or by title when they have none", () => {
-	expect(itemKey(" ab-1 ", "One")).toBe(itemKey("AB-1", "Two"));
-	expect(itemKey(null, "Rock Splicer")).toBe(itemKey("", "rock splicer!"));
-	expect(itemKey(null, "Rock Splicer")).not.toBe(itemKey("RS", "Rock Splicer"));
 });

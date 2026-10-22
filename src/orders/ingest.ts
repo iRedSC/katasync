@@ -30,7 +30,7 @@ export type ChannelOrder = {
 	// stock here: FBA quantities mirror what Amazon reports.
 	fulfilledByChannel: boolean;
 	// Rung up at our retail store (Shopify POS), so its stock comes off the
-	// store's shelf.
+	// POS location's shelf (locations.posPrimary).
 	soldInStore: boolean;
 	financialStatus: string | null;
 	customerName: string | null;

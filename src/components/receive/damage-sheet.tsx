@@ -1,22 +1,30 @@
 import { Minus, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { saveDamage, usePickedPhotos } from "#/components/damage/damage";
+import {
+	type DamageKind,
+	kindWord,
+	needsDescription,
+	saveDamage,
+	usePickedPhotos,
+} from "#/components/damage/damage";
 import { PhotoPicker } from "#/components/damage/damage-dialog";
 import { cn } from "#/lib/utils";
 import { holdable } from "./use-long-press";
 
-// The phone's way to record damage: how many, what's wrong, and photos from
-// the camera. Big targets, like the rest of receiving. Saving waits for the
+// The phone's way to record damage, or items missing from what came: how
+// many, what's wrong, and photos from the camera. Big targets, like the rest of receiving. Saving waits for the
 // photos to go up and says how far it's got; closing with something entered
 // asks first.
 export function DamageSheet({
 	title,
+	kind,
 	lineId,
 	available,
 	unit,
 	onClose,
 }: {
 	title: string;
+	kind: DamageKind;
 	lineId: number;
 	// Single items that arrived and aren't damaged yet.
 	available: number;
@@ -33,7 +41,8 @@ export function DamageSheet({
 
 	const close = () => {
 		if (saving) return;
-		if (entered && !confirm("Throw away this damage?")) return;
+		if (entered && !confirm(`Throw away these ${kindWord(kind)} items?`))
+			return;
 		onClose();
 	};
 	const closeRef = useRef(close);
@@ -48,7 +57,7 @@ export function DamageSheet({
 	const why =
 		picked.shrinking > 0
 			? "Getting photos ready…"
-			: !description.trim()
+			: needsDescription(kind) && !description.trim()
 				? "Say what's wrong"
 				: null;
 
@@ -58,6 +67,7 @@ export function DamageSheet({
 		const ok = await saveDamage({
 			lineId,
 			quantity,
+			kind,
 			description: description.trim(),
 			photos: picked.photos.map((p) => p.blob),
 			name: title,
@@ -80,13 +90,14 @@ export function DamageSheet({
 			<div
 				role="dialog"
 				aria-modal="true"
-				aria-label={`Damaged ${title}`}
+				aria-label={`${kind === "missing" ? "Missing" : "Damaged"} ${title}`}
 				className="relative max-h-svh overflow-y-auto overscroll-contain rounded-t-3xl bg-card px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
 			>
 				<div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-surface-strong" />
 				<p className="truncate text-center text-base font-semibold">{title}</p>
 				<p className="text-center text-sm text-muted-foreground">
-					Arrived damaged. They come off the shelf.
+					{kind === "missing" ? "Not in the box." : "Arrived damaged."} They
+					come off the shelf.
 				</p>
 
 				<div className="mt-3 flex items-center gap-3">
@@ -118,7 +129,11 @@ export function DamageSheet({
 					onChange={(e) => setDescription(e.target.value)}
 					disabled={saving}
 					rows={3}
-					placeholder="What's wrong, e.g. crushed box, two handles snapped"
+					placeholder={
+						kind === "missing"
+							? "Note for the supplier, if any, e.g. case had 10"
+							: "What's wrong, e.g. crushed box, two handles snapped"
+					}
 					className="mt-4 w-full resize-none rounded-2xl bg-subtle p-3 text-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				/>
 
@@ -136,7 +151,7 @@ export function DamageSheet({
 						? uploading !== null
 							? `Uploading photo ${uploading + 1} of ${picked.photos.length}…`
 							: "Saving…"
-						: (why ?? `${quantity} damaged`)}
+						: (why ?? `${quantity} ${kindWord(kind)}`)}
 				</button>
 			</div>
 		</div>

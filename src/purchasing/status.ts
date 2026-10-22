@@ -10,6 +10,16 @@ export function isBackOrdered(line: {
 	return line.backOrderedAt !== null && line.received < line.quantity;
 }
 
+// The lines Receive all takes: still short and not back-ordered, as
+// receiveAll picks them (src/purchasing/orders/receiving.ts).
+export function takenByReceiveAll(line: {
+	backOrderedAt: Date | string | null;
+	quantity: number;
+	received: number;
+}) {
+	return line.backOrderedAt === null && line.received < line.quantity;
+}
+
 // A sent PO past its expected date with something still due that isn't
 // back-ordered. Back-ordered items come on no known day, so they can't be
 // late. `backOrdered` is how many of what's short are, counted like

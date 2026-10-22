@@ -27,6 +27,10 @@ import { TermsInput } from "./terms-input";
 
 export type Draft = RuleInput;
 
+// Where the draft is on its way to the server. Saving locks it; failing keeps
+// it, so it can be sent again as it is.
+export type SaveState = "idle" | "saving" | "failed";
+
 const field =
 	"h-9 rounded-lg border border-input bg-white px-2 outline-none focus:border-ring";
 
@@ -44,6 +48,7 @@ const blank = (f: Condition["field"]): Condition =>
 export function RuleForm({
 	initial,
 	formRef,
+	save,
 	unsaved,
 	onChange,
 	onSave,
@@ -52,6 +57,7 @@ export function RuleForm({
 }: {
 	initial: Draft;
 	formRef: Ref<HTMLFormElement>;
+	save: SaveState;
 	// Says so when leaving was blocked over unsaved edits.
 	unsaved: boolean;
 	onChange: (d: Draft) => void;
@@ -74,11 +80,14 @@ export function RuleForm({
 			ref={formRef}
 			onSubmit={(e) => {
 				e.preventDefault();
-				if (parsed.success) onSave(parsed.data);
+				if (parsed.success && save !== "saving") onSave(parsed.data);
 			}}
+			// Locked while saving, so an edit can't land after the draft was sent.
+			inert={save === "saving"}
 			className={cn(
-				"space-y-4 rounded-xl border bg-card p-4 shadow-card",
-				unsaved && "border-critical-border",
+				"space-y-4 rounded-xl border bg-card p-4 shadow-card transition-opacity",
+				(unsaved || save === "failed") && "border-critical-border",
+				save === "saving" && "opacity-60",
 			)}
 		>
 			<input
@@ -188,12 +197,20 @@ export function RuleForm({
 							: "text-muted-foreground",
 					)}
 				>
-					{unsaved ? "Unsaved changes" : problem}
+					{unsaved
+						? "Unsaved changes"
+						: save === "failed"
+							? "Not saved"
+							: problem}
 				</span>
 				<Button type="button" size="sm" variant="ghost" onClick={onCancel}>
 					Cancel
 				</Button>
-				<Button type="submit" size="sm" disabled={!parsed.success}>
+				<Button
+					type="submit"
+					size="sm"
+					disabled={!parsed.success || save === "saving"}
+				>
 					Save
 				</Button>
 			</footer>

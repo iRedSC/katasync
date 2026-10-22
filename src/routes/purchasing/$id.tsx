@@ -1,5 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { FileText, Mail, ShieldAlert, Smartphone } from "lucide-react";
+import {
+	FileText,
+	Mail,
+	PackageCheck,
+	ShieldAlert,
+	Smartphone,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -20,6 +26,7 @@ import {
 import { AddEmail } from "#/components/purchase-order/add-email";
 import { DeliveryCard } from "#/components/purchase-order/delivery-card";
 import { FilesCard } from "#/components/purchase-order/files-card";
+import { receiveAllWithUndo } from "#/components/purchase-order/line-actions";
 import { damageable, lineName } from "#/components/purchase-order/line-damage";
 import { LineTable } from "#/components/purchase-order/line-table";
 import { browseLine } from "#/components/purchase-order/new-lines";
@@ -49,7 +56,7 @@ import { formatCount, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { ids } from "#/lib/optimism";
 import { lineCents } from "#/purchasing/discount";
-import { purchaseOrderStatus } from "#/purchasing/status";
+import { purchaseOrderStatus, takenByReceiveAll } from "#/purchasing/status";
 import {
 	addProductToPurchaseOrder,
 	getPurchaseOrder,
@@ -152,9 +159,10 @@ function PurchaseOrderPage() {
 			focus={focus}
 			onEditQuantity={(lineId) => setFocus({ lineId, nonce: Date.now() })}
 			onOpenDamage={setOpenDamageId}
-			onReportDamage={(l) =>
+			onReportDamage={(l, damage) =>
 				setDamageTarget({
 					kind: "new",
+					damage,
 					lineId: l.id,
 					name: lineName(l),
 					available: damageable(d, l),
@@ -317,6 +325,16 @@ function PurchaseOrderPage() {
 						>
 							<ShieldAlert />
 							Damage report ({unreported.length})
+						</Button>
+					)}
+					{po.status === "sent" && d.lines.some(takenByReceiveAll) && (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => receiveAllWithUndo(d.lines, po.id)}
+						>
+							<PackageCheck />
+							Receive all
 						</Button>
 					)}
 					{po.status === "sent" && (

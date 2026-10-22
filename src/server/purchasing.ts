@@ -71,11 +71,13 @@ export {
 } from "#/server/purchasing/purchase-units";
 export {
 	listReceivable,
+	receiveAllLines,
 	receiveExtraLine,
 	receiveLine,
 	setLineBackOrdered,
 	setLineReceivingNote,
 	undoPurchaseReceipt,
+	undoPurchaseReceipts,
 } from "#/server/purchasing/receiving";
 export { amendPurchaseLine } from "#/server/purchasing/sent-po-changes";
 export {

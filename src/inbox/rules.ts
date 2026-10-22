@@ -27,11 +27,16 @@ export type TextField = (typeof TEXT_FIELDS)[number];
 export const MARKET_CHOICES = [...MARKETS, "other"] as const;
 export type MarketChoice = Market | "other";
 
+// A word or phrase, with at most one * and only at its end. A * anywhere
+// else could make the pattern backtrack for seconds on one email.
 const term = z
 	.string()
 	.trim()
 	.min(1)
 	.max(80)
+	.refine((s) => !s.slice(0, -1).includes("*"), {
+		message: "A * can only end a word, like violat*",
+	})
 	.transform((s) => s.toLowerCase());
 
 export const conditionSchema = z.discriminatedUnion("field", [
@@ -79,15 +84,15 @@ export type Sortable = {
 	market: Market | null;
 };
 
-const escapeRegex = (s: string) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // A term as a pattern: whole words, so "case" isn't "showcase", except where
-// the term itself starts or ends on a symbol ("@amazon.com").
+// the term itself starts or ends on a symbol ("@amazon.com"). Only a final *
+// is a wildcard; any other, as a rule saved before the schema refused them
+// might have, is a plain character, so no pattern can backtrack.
 function pattern(t: string) {
 	const stem = t.endsWith("*");
-	const body = escapeRegex(stem ? t.slice(0, -1) : t)
-		.replace(/\*/g, "\\w*")
-		.replace(/\s+/g, "\\s+");
+	const body = escapeRegex(stem ? t.slice(0, -1) : t).replace(/\s+/g, "\\s+");
 	const start = /^\w/.test(t) ? "(?<![\\w])" : "";
 	const end = stem ? "\\w*" : /\w$/.test(t) ? "(?![\\w])" : "";
 	return `${start}${body}${end}`;

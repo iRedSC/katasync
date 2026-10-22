@@ -251,6 +251,7 @@ export const getReceivePurchaseOrder = createServerFn({ method: "GET" })
 				.select({
 					lineId: purchaseOrderDamages.lineId,
 					quantity: purchaseOrderDamages.quantity,
+					kind: purchaseOrderDamages.kind,
 				})
 				.from(purchaseOrderDamages)
 				.innerJoin(

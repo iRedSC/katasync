@@ -154,6 +154,37 @@ export function signRequest(
 		.digest("hex");
 }
 
+// TikTok's "Internal error. Retry later" and its kin: overload that passes
+// if asked again shortly. It clusters at the top of the hour, when every
+// app's cron calls at once.
+const RETRY_LATER = new Set([36009003]);
+// Waits before the second and third tries, each jittered by half either way:
+// at most 6 seconds, well inside a function's time limit.
+const TRANSIENT_WAITS_MS = [1000, 3000];
+
+// Whether a call can go out again after TikTok failed on its side, when the
+// first try may still have gone through: reads, and inventory updates, which
+// set a quantity rather than add one. Buying a label or shipping a package is
+// never sent twice.
+export function safeToRepeat(method: string, path: string) {
+	return (
+		method === "GET" ||
+		/\/(search|query)$/.test(path) ||
+		path.endsWith("/inventory/update")
+	);
+}
+
+function transient(status: number, text: string) {
+	if (status >= 500) return true;
+	try {
+		return RETRY_LATER.has(envelope.assert(JSON.parse(text)).code);
+	} catch {
+		return false;
+	}
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function tiktokApi(
 	path: string,
 	query: Record<string, string>,
@@ -162,7 +193,10 @@ export async function tiktokApi(
 ): Promise<unknown> {
 	const { appKey, secret } = credentials();
 	const bodyText = body ? JSON.stringify(body) : "";
-	for (let attempt = 1; ; attempt++) {
+	const repeatable = safeToRepeat(method, path);
+	let throttled = 0;
+	let failed = 0;
+	for (;;) {
 		const signed: Record<string, string> = {
 			...query,
 			app_key: appKey,
@@ -180,16 +214,24 @@ export async function tiktokApi(
 				body: body ? bodyText : undefined,
 			},
 		);
-		if (response.status === 429 && attempt < 6) {
-			await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+		// A 429 was refused before doing anything, so any call can wait it out.
+		if (response.status === 429 && ++throttled < 6) {
+			await wait(2000 * throttled);
+			continue;
+		}
+		const text = await response.text();
+		if (
+			repeatable &&
+			failed < TRANSIENT_WAITS_MS.length &&
+			transient(response.status, text)
+		) {
+			await wait(TRANSIENT_WAITS_MS[failed++] * (0.5 + Math.random()));
 			continue;
 		}
 		if (!response.ok) {
-			throw new Error(
-				`TikTok answered ${response.status} on ${path}: ${await response.text()}`,
-			);
+			throw new Error(`TikTok answered ${response.status} on ${path}: ${text}`);
 		}
-		return unwrap(await response.json(), path);
+		return unwrap(JSON.parse(text), path);
 	}
 }
 

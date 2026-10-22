@@ -78,11 +78,13 @@ export function DamageRow({
 							</div>
 						)}
 						<span className="shrink-0 text-sm font-semibold text-critical-text">
-							{x.quantity} damaged
+							{x.quantity} {x.kind}
 						</span>
-						<span className="min-w-0 truncate text-sm text-muted-foreground">
-							{x.description}
-						</span>
+						{x.description && (
+							<span className="min-w-0 truncate text-sm text-muted-foreground">
+								{x.description}
+							</span>
+						)}
 					</div>
 					<DamageStatus damage={x} />
 					<ChevronRight className="size-4 shrink-0 text-muted-foreground" />
@@ -113,7 +115,7 @@ export function DamageDetailsDialog({
 				<DialogHeader>
 					<DialogTitle>
 						{x.quantity}
-						{single} damaged
+						{single} {x.kind}
 					</DialogTitle>
 					<DialogDescription>
 						{damageName(x)} · <span className="font-mono">{x.sku}</span>
@@ -121,9 +123,11 @@ export function DamageDetailsDialog({
 				</DialogHeader>
 
 				<div className="flex flex-col gap-4">
-					<p className="whitespace-pre-wrap rounded-lg bg-subtle p-3">
-						{x.description}
-					</p>
+					{x.description && (
+						<p className="whitespace-pre-wrap rounded-lg bg-subtle p-3">
+							{x.description}
+						</p>
+					)}
 
 					{x.photoIds.length > 0 ? (
 						<div className="flex flex-wrap gap-2">

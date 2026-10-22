@@ -9,6 +9,7 @@ import {
 	Undo2,
 	X,
 } from "lucide-react";
+import { HoverCard } from "radix-ui";
 import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "#/components/page";
@@ -20,7 +21,6 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
-import { Tip } from "#/components/ui/tooltip";
 import { formatDate, formatDateTime } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
@@ -154,61 +154,108 @@ function Timeline({ status }: { status: Tracking["status"] }) {
 	);
 }
 
-// Everything Shippo told us about one package, for its hover card: the
-// service and route, the date it's due (and the one first promised, if
-// that slipped), every scan newest first, and when Shippo was last asked.
+// Everything Shippo told us about one package, for its hover card: where
+// it stands, the service and route, when it's due (and the day first
+// promised, if that slipped), and every scan, newest first.
 function Details({ t }: { t: Tracking }) {
+	const s = t.status ? STATUS[t.status] : null;
+	const tone = toneOf(t.status);
 	const route = [t.origin, t.destination].filter(Boolean).join(" → ");
-	const scans = [...t.history].reverse();
 	const carrier = CARRIER[t.carrier as keyof typeof CARRIER] ?? t.carrier;
+	const scans = [...t.history].reverse();
+	const Icon = s?.trouble
+		? t.status === "RETURNED"
+			? Undo2
+			: TriangleAlert
+		: (STOPS[Math.max(s?.reached ?? 0, 0)]?.icon ?? Tag);
+	const when =
+		t.status === "DELIVERED" && t.statusAt
+			? formatDateTime(t.statusAt)
+			: t.eta
+				? `Due ${formatDate(t.eta)}`
+				: null;
 	return (
-		<div className="flex flex-col gap-2 py-0.5">
-			<div>
-				<div className="font-medium">
-					{[carrier, t.service].filter(Boolean).join(" ")}
+		<div className="flex flex-col gap-3">
+			<div className="flex items-start gap-3">
+				<div className="min-w-0 flex-1">
+					<p className="text-base leading-snug font-semibold">
+						{s ? s.label : "Asking Shippo"}
+					</p>
+					<p className="text-xs text-muted-foreground">
+						{[[carrier, t.service].filter(Boolean).join(" "), route]
+							.filter(Boolean)
+							.join(" · ")}
+					</p>
 				</div>
-				{route && <div className="text-white/70">{route}</div>}
+				<span
+					className={cn(
+						"grid size-9 shrink-0 place-items-center rounded-full",
+						tone.soft,
+						tone.icon,
+					)}
+				>
+					<Icon className="size-4.5" />
+				</span>
 			</div>
-			{t.eta && t.status !== "DELIVERED" && (
-				<div>
-					Due {formatDate(t.eta)}
-					{slipped(t) && t.originalEta && (
-						<span className="text-white/60 line-through">
-							{" "}
-							{formatDate(t.originalEta)}
-						</span>
+			{(when || (s?.trouble && t.statusDetail)) && (
+				<div className={cn("rounded-lg px-3 py-2", tone.soft, tone.icon)}>
+					<p className="font-semibold">
+						{s?.trouble ? (t.statusDetail ?? when) : when}
+					</p>
+					{slipped(t) && t.originalEta && t.status !== "DELIVERED" && (
+						<p className="text-xs opacity-80">
+							First promised {formatDate(t.originalEta)}
+						</p>
 					)}
 				</div>
 			)}
 			{scans.length > 0 ? (
-				<ol className="flex flex-col gap-1.5 border-l border-white/20 pl-3">
+				<ol className="-mr-2 max-h-64 overflow-y-auto pr-2">
 					{scans.map((e, i) => (
-						<li key={`${e.at}-${e.status}-${e.detail}`} className="relative">
+						<li
+							key={`${e.at}-${e.status}-${e.detail}`}
+							className="relative flex gap-3 pb-3 last:pb-0"
+						>
+							{/* The line down to the scan before this one. */}
+							{i < scans.length - 1 && (
+								<span className="absolute top-3 bottom-0 left-[0.3125rem] w-px bg-border" />
+							)}
 							<span
 								className={cn(
-									"absolute top-1.5 -left-[0.9rem] size-1.5 rounded-full",
-									i === 0 ? toneOf(e.status).line : "bg-white/40",
+									"relative mt-1 size-2.5 shrink-0 rounded-full",
+									i === 0
+										? cn(toneOf(e.status).line, "ring-4", toneOf(e.status).ring)
+										: "border-2 border-muted-foreground/30 bg-popover",
 								)}
 							/>
-							<div className={cn(i > 0 && "text-white/80")}>
-								{e.detail ?? STATUS[e.status].label}
-							</div>
-							<div className="text-white/55">
-								{[e.place, e.at && formatDateTime(e.at)]
-									.filter(Boolean)
-									.join(", ")}
+							<div className="min-w-0 flex-1">
+								<p
+									className={cn(
+										"leading-snug",
+										i === 0 ? "font-medium" : "text-foreground/80",
+									)}
+								>
+									{e.detail ?? STATUS[e.status].label}
+								</p>
+								<p className="text-xs text-muted-foreground">
+									{[e.place, e.at && formatDateTime(e.at)]
+										.filter(Boolean)
+										.join(" · ")}
+								</p>
 							</div>
 						</li>
 					))}
 				</ol>
 			) : (
-				t.statusDetail && <div>{t.statusDetail}</div>
+				!s?.trouble &&
+				t.statusDetail && (
+					<p className="text-muted-foreground">{t.statusDetail}</p>
+				)
 			)}
-			{t.checkedAt && (
-				<div className="text-white/55">
-					Checked {formatDateTime(t.checkedAt)}
-				</div>
-			)}
+			<p className="flex justify-between gap-3 border-t pt-2 text-xs text-muted-foreground">
+				<span className="font-mono">{t.number}</span>
+				{t.checkedAt && <span>Checked {formatDateTime(t.checkedAt)}</span>}
+			</p>
 		</div>
 	);
 }
@@ -320,39 +367,48 @@ export function TrackingCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 										{CARRIER[t.carrier as keyof typeof CARRIER] ?? t.carrier}{" "}
 										{t.number}
 									</a>
-									<Tip
-										content={<Details t={t} />}
-										side="left"
-										contentClassName="max-w-80 px-3 py-2"
-									>
-										<div>
-											<Timeline status={t.status} />
-											<span
-												className={cn(
-													"block text-xs text-muted-foreground",
-													s?.trouble && "text-critical-text",
-												)}
-											>
-												{s ? s.label : "Asking Shippo"}
-												{t.status === "DELIVERED" && t.statusAt ? (
-													` ${formatDateTime(t.statusAt)}`
-												) : t.eta ? (
-													<>
-														, due{" "}
-														{/* Later than first promised: the hover card has
+									<HoverCard.Root openDelay={150} closeDelay={100}>
+										<HoverCard.Trigger asChild>
+											<div>
+												<Timeline status={t.status} />
+												<span
+													className={cn(
+														"block text-xs text-muted-foreground",
+														s?.trouble && "text-critical-text",
+													)}
+												>
+													{s ? s.label : "Asking Shippo"}
+													{t.status === "DELIVERED" && t.statusAt ? (
+														` ${formatDateTime(t.statusAt)}`
+													) : t.eta ? (
+														<>
+															, due{" "}
+															{/* Later than first promised: the hover card has
 														    the date it was. */}
-														<span
-															className={cn(
-																slipped(t) && "font-medium text-warning-text",
-															)}
-														>
-															{formatDate(t.eta)}
-														</span>
-													</>
-												) : null}
-											</span>
-										</div>
-									</Tip>
+															<span
+																className={cn(
+																	slipped(t) && "font-medium text-warning-text",
+																)}
+															>
+																{formatDate(t.eta)}
+															</span>
+														</>
+													) : null}
+												</span>
+											</div>
+										</HoverCard.Trigger>
+										<HoverCard.Portal>
+											<HoverCard.Content
+												side="left"
+												align="start"
+												sideOffset={12}
+												collisionPadding={12}
+												className="z-50 w-80 rounded-xl bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-black/10"
+											>
+												<Details t={t} />
+											</HoverCard.Content>
+										</HoverCard.Portal>
+									</HoverCard.Root>
 								</li>
 							</ContextMenuTrigger>
 							<ContextMenuContent>

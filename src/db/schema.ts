@@ -38,24 +38,39 @@ const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
 // Amazon's: we only mirror what Amazon reports and never route orders to it.
 export const locationKind = pgEnum("location_kind", ["owned", "fba", "retail"]);
 
-export const locations = pgTable("locations", {
-	id: integer().primaryKey().generatedAlwaysAsIdentity(),
-	name: text().notNull().unique(),
-	kind: locationKind().notNull(),
-	// Ship-from address for labels, filled from the store's own location
-	// record rather than typed in.
-	shipFromName: text(),
-	address1: text(),
-	address2: text(),
-	city: text(),
-	region: text(),
-	postalCode: text(),
-	country: text(),
-	phone: text(),
-	// Carriers want an email on the sender; the store's contact email.
-	email: text(),
-	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+export const locations = pgTable(
+	"locations",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		name: text().notNull().unique(),
+		kind: locationKind().notNull(),
+		// The shelf Shopify POS sales take stock from (recordSale via
+		// saleLocation). At most one, and only one of ours: never Amazon's FBA.
+		posPrimary: boolean().notNull().default(false),
+		// Ship-from address for labels, filled from the store's own location
+		// record rather than typed in.
+		shipFromName: text(),
+		address1: text(),
+		address2: text(),
+		city: text(),
+		region: text(),
+		postalCode: text(),
+		country: text(),
+		phone: text(),
+		// Carriers want an email on the sender; the store's contact email.
+		email: text(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex("locations_one_pos_primary")
+			.on(t.posPrimary)
+			.where(sql`${t.posPrimary}`),
+		check(
+			"locations_pos_primary_ours",
+			sql`not ${t.posPrimary} or ${t.kind} in ('owned', 'retail')`,
+		),
+	],
+);
 
 // simple: a stocked item.
 // kit: pre-assembled from simple components; has its own stock.
@@ -1723,6 +1738,10 @@ export const purchaseOrderDiscounts = pgTable(
 // number again. Chosen per item when the report is sent.
 export const damageRemedy = pgEnum("damage_remedy", ["credit", "replacement"]);
 
+// What went wrong with items that arrived: broken, or not in the box at all
+// (a case of 12 holding 10). Either way they're off the shelf and reported.
+export const damageKind = pgEnum("damage_kind", ["damaged", "missing"]);
+
 // A report sent to the supplier about damaged items on one PO. Its items are
 // the purchaseOrderDamages pointing at it. Made only by sending it.
 export const purchaseOrderDamageReports = pgTable(
@@ -1738,9 +1757,11 @@ export const purchaseOrderDamageReports = pgTable(
 	(t) => [index("purchase_order_damage_reports_po_idx").on(t.purchaseOrderId)],
 );
 
-// Items of a line that arrived damaged. Counted in single items, not the
-// line's unit: one blade in a case of 12 can break. They come off the shelf
-// when recorded (batchId) and can't exceed what was received. Until a report
+// Items of a line that arrived damaged, or were missing from what arrived.
+// Counted in single items, not the line's unit: one blade in a case of 12 can
+// break or be missing. They come off the shelf when recorded (batchId) and
+// can't exceed what was received. Missing needs no description: it says what's
+// wrong. Damaged does. Until a report
 // takes them they can be taken back, which puts them back on the shelf;
 // once reported they stay, with what was asked for. Rules live in
 // src/purchasing/damage.ts.
@@ -1752,7 +1773,8 @@ export const purchaseOrderDamages = pgTable(
 			.notNull()
 			.references(() => purchaseOrderLines.id),
 		quantity: integer().notNull(),
-		description: text().notNull(),
+		kind: damageKind().notNull().default("damaged"),
+		description: text(),
 		// The ledger batch that took them off the shelf.
 		batchId: uuid().notNull().unique(),
 		reportId: integer().references(() => purchaseOrderDamageReports.id),
@@ -1764,7 +1786,7 @@ export const purchaseOrderDamages = pgTable(
 		check("purchase_order_damages_quantity_positive", sql`${t.quantity} > 0`),
 		check(
 			"purchase_order_damages_description_given",
-			sql`btrim(${t.description}) <> ''`,
+			sql`${t.kind} = 'missing' or (${t.description} is not null and btrim(${t.description}) <> '')`,
 		),
 		check(
 			"purchase_order_damages_reported_with_remedy",

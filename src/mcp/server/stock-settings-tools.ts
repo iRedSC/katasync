@@ -3,12 +3,13 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
 import { products } from "#/db/schema";
+import { setPosLocation } from "#/inventory/locations";
 import {
 	setDefaultMinStock,
 	setProductStockRange,
 } from "#/inventory/stock-range";
 import { changeRetailReserve } from "#/stock-push/reserve";
-import { productBySku } from "./lookups";
+import { ourLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
 
 // The settings behind stock ranges, overflow, and what counts as essential,
@@ -25,6 +26,23 @@ export function registerStockSettingsTools(server: McpServer, db: Db) {
 		async ({ units }) => {
 			await changeRetailReserve(db, units);
 			return json({ retail_reserve: units });
+		},
+	);
+
+	server.registerTool(
+		"set_pos_location",
+		{
+			description:
+				"Which of our locations Shopify POS sales take stock from (the warehouse or the retail store; never Amazon's FBA). From the next POS sale on; sales already recorded keep where they took stock. Exactly one location is it at a time.",
+			inputSchema: { location: z.string() },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ location }) => {
+			const { name } = await setPosLocation(
+				db,
+				await ourLocation(db, location),
+			);
+			return json({ pos_location: name });
 		},
 	);
 

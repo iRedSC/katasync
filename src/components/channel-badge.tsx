@@ -111,7 +111,8 @@ export function ChannelBadge({
 	const logoOnly = compact && Boolean(b);
 	const badge = (
 		<span
-			aria-label={logoOnly ? name : undefined}
+			// Just the logo: the badge is an image named for its channel.
+			{...(logoOnly ? { role: "img", "aria-label": name } : {})}
 			className={cn(
 				"inline-flex h-5 shrink-0 items-center gap-1 rounded-lg px-1.5 text-xs font-medium whitespace-nowrap",
 				b ? b.chip : "bg-surface-strong text-foreground",

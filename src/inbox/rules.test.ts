@@ -53,6 +53,27 @@ describe("a condition", () => {
 		);
 	});
 
+	test("a * only ends a word; one saved anywhere else is a plain character", () => {
+		const rule = (term: string) =>
+			ruleSchema.safeParse({
+				name: "x",
+				conditions: [has("subject", term)],
+				folder: "orders",
+				important: false,
+			}).success;
+		expect(rule("violat*")).toBe(true);
+		expect(rule("vi*lat")).toBe(false);
+		expect(rule("a*a*b")).toBe(false);
+		expect(rule("violat**")).toBe(false);
+
+		// Saved before the schema refused it: matched literally, and at once.
+		const old = when(has("subject", `${"a*".repeat(10)}b`));
+		const started = performance.now();
+		expect(matches(old, email(`${"a".repeat(45)}!`))).toBe(false);
+		expect(performance.now() - started).toBeLessThan(50);
+		expect(matches(old, email(`${"a*".repeat(10)}b`))).toBe(true);
+	});
+
 	test("reads the sender's name and address, symbols and all", () => {
 		const c = when(has("sender", "@amazon.com"));
 		expect(matches(c, email("x"))).toBe(true);

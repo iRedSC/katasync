@@ -86,19 +86,35 @@ beforeEach(async () => {
 test("takes damaged items off the shelf, never more than arrived", async () => {
 	await receive(db, { lineId: caseLine, quantity: 1 });
 	await recordDamage(db, {
+		kind: "damaged",
 		lineId: caseLine,
 		quantity: 2,
 		description: " snapped ",
 	});
 	expect(await onHand(blade)).toBe(10);
 	await expect(
-		recordDamage(db, { lineId: caseLine, quantity: 11, description: "x" }),
+		recordDamage(db, {
+			kind: "damaged",
+			lineId: caseLine,
+			quantity: 11,
+			description: "x",
+		}),
 	).rejects.toThrow("Only 12 arrived and 2 are already damaged");
 	await expect(
-		recordDamage(db, { lineId: eachLine, quantity: 1, description: "x" }),
+		recordDamage(db, {
+			kind: "damaged",
+			lineId: eachLine,
+			quantity: 1,
+			description: "x",
+		}),
 	).rejects.toThrow("Only 0 arrived");
 	await expect(
-		recordDamage(db, { lineId: caseLine, quantity: 1, description: "  " }),
+		recordDamage(db, {
+			kind: "damaged",
+			lineId: caseLine,
+			quantity: 1,
+			description: "  ",
+		}),
 	).rejects.toThrow();
 	const [d] = await damagesOf(db, poId);
 	expect(d).toMatchObject({
@@ -111,6 +127,7 @@ test("takes damaged items off the shelf, never more than arrived", async () => {
 test("a receipt can't be undone from under its damage, until the damage is taken back", async () => {
 	const { receiptId } = await receive(db, { lineId: caseLine, quantity: 1 });
 	const { damageId } = await recordDamage(db, {
+		kind: "damaged",
 		lineId: caseLine,
 		quantity: 2,
 		description: "snapped",
@@ -129,6 +146,7 @@ test("knows photos by their bytes, not what they claim", async () => {
 	expect(imageType(new TextEncoder().encode("<svg></svg>"))).toBeNull();
 	await receive(db, { lineId: eachLine, quantity: 1 });
 	const { damageId } = await recordDamage(db, {
+		kind: "damaged",
 		lineId: eachLine,
 		quantity: 1,
 		description: "bent",
@@ -141,6 +159,7 @@ test("knows photos by their bytes, not what they claim", async () => {
 test("upload links work until they expire", async () => {
 	await receive(db, { lineId: eachLine, quantity: 1 });
 	const { damageId } = await recordDamage(db, {
+		kind: "damaged",
 		lineId: eachLine,
 		quantity: 1,
 		description: "bent",
@@ -159,11 +178,13 @@ test("sends every unreported damage once; a replacement makes the line wait agai
 	await receive(db, { lineId: eachLine, quantity: 3 });
 	expect(await status()).toBe("closed");
 	const whole = await recordDamage(db, {
+		kind: "damaged",
 		lineId: caseLine,
 		quantity: 12,
 		description: "crushed case",
 	});
 	const one = await recordDamage(db, {
+		kind: "damaged",
 		lineId: eachLine,
 		quantity: 1,
 		description: "bent tip",
@@ -235,4 +256,30 @@ test("sends every unreported damage once; a replacement makes the line wait agai
 			deliver: async () => "x",
 		}),
 	).rejects.toThrow("no damage to report");
+});
+
+test("missing items come off the shelf without saying what's wrong, and the report says they're missing", async () => {
+	await receive(db, { lineId: caseLine, quantity: 1 });
+	await recordDamage(db, { lineId: caseLine, quantity: 2, kind: "missing" });
+	expect(await onHand(blade)).toBe(10);
+	await expect(
+		recordDamage(db, {
+			lineId: caseLine,
+			quantity: 1,
+			kind: "damaged",
+			description: " ",
+		}),
+	).rejects.toThrow("Say what's wrong");
+	const [d] = await damagesOf(db, poId);
+	expect(d).toMatchObject({ kind: "missing", description: null });
+	let sent: { kind: string; description: string | null }[] = [];
+	await sendDamageReport(db, {
+		purchaseOrderId: poId,
+		remedies: [{ damageId: d.id, remedy: "credit" }],
+		deliver: async (_tx, items) => {
+			sent = items;
+			return "orders@canam.test";
+		},
+	});
+	expect(sent).toMatchObject([{ kind: "missing", description: null }]);
 });

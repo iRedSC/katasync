@@ -93,11 +93,13 @@ describe("ingestOrder", () => {
 		await ingestOrder(db, store(), order(), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 		await ingestOrder(db, store(), order({ fulfillmentStatus: "FULFILLED" }), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 
@@ -118,6 +120,7 @@ describe("ingestOrder", () => {
 		await ingestOrder(db, store(), order(), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 		expect(await onHand(wrench)).toBe(10);
@@ -130,7 +133,7 @@ describe("ingestOrder", () => {
 			db,
 			store(),
 			order({ placedAt: new Date("2026-09-20T00:00:00Z") }),
-			{ shipping: warehouse, store: null, storeKeeps: 0 },
+			{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 		);
 		expect(await onHand(wrench)).toBe(10);
 		expect(await db.select().from(schema.orders)).toHaveLength(1);
@@ -142,17 +145,20 @@ describe("ingestOrder", () => {
 		await ingestOrder(db, store(), order(), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 		const cancelled = order({ cancelledAt: new Date("2026-10-06T00:00:00Z") });
 		await ingestOrder(db, store(), cancelled, {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 		await ingestOrder(db, store(), cancelled, {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 		expect(await onHand(wrench)).toBe(10);
@@ -164,6 +170,7 @@ describe("ingestOrder", () => {
 		await ingestOrder(db, store(), order(), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 		const [line] = order().lines;
@@ -172,7 +179,7 @@ describe("ingestOrder", () => {
 				db,
 				store(),
 				order({ lines: [{ ...line, quantity }] }),
-				{ shipping: warehouse, store: null, storeKeeps: 0 },
+				{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 			);
 			expect(await onHand(wrench)).toBe(10 - quantity);
 		}
@@ -186,7 +193,7 @@ describe("ingestOrder", () => {
 			db,
 			store(),
 			order({ lines: [{ ...line, quantity: 0 }] }),
-			{ shipping: warehouse, store: null, storeKeeps: 0 },
+			{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 		);
 		const saved = await db
 			.select()
@@ -219,6 +226,7 @@ describe("ingestOrder", () => {
 		await ingestOrder(db, store(), order({ lines: [line] }), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 
@@ -243,6 +251,7 @@ describe("ingestOrder", () => {
 		const { problems } = await ingestOrder(db, store(), order({ lines }), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 
@@ -261,6 +270,7 @@ describe("ingestOrder", () => {
 		await ingestOrder(db, store(), order({ lines: [line] }), {
 			shipping: warehouse,
 			store: null,
+			pos: null,
 			storeKeeps: 0,
 		});
 		expect(await onHand(kit)).toBe(2);
@@ -272,7 +282,7 @@ describe("ingestOrder", () => {
 			db,
 			store(),
 			order({ lines: [line] }),
-			{ shipping: warehouse, store: null, storeKeeps: 0 },
+			{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 		);
 		expect(problems).toEqual([]);
 		expect(await db.select().from(schema.orderLines)).toHaveLength(1);
@@ -283,7 +293,7 @@ describe("ingestOrder", () => {
 			db,
 			store(),
 			order({ marketplaceOrderId: "tiktok:577609" }),
-			{ shipping: warehouse, store: null, storeKeeps: 0 },
+			{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 		);
 		const otherSource = order({
 			externalId: "tiktok-direct-577609",
@@ -293,6 +303,7 @@ describe("ingestOrder", () => {
 			ingestOrder(db, store(), otherSource, {
 				shipping: warehouse,
 				store: null,
+				pos: null,
 				storeKeeps: 0,
 			}),
 		).rejects.toThrow();
@@ -309,7 +320,7 @@ describe("ingestOrder", () => {
 				fulfilledByChannel: true,
 				fulfillmentStatus: "FULFILLMENT_NOT_REQUIRED",
 			}),
-			{ shipping: warehouse, store: null, storeKeeps: 0 },
+			{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 		);
 		expect(problems).toEqual([]);
 		expect(await onHand(wrench)).toBe(10);

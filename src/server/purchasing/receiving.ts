@@ -6,10 +6,12 @@ import { purchaseOrderLines, purchaseOrders, suppliers } from "#/db/schema";
 import { backOrderedUnits, receivedByLine } from "#/purchasing/load";
 import {
 	receive,
+	receiveAll,
 	receiveExtra,
 	setBackOrdered,
 	setReceivingNote,
 	undoReceipt,
+	undoReceipts,
 } from "#/purchasing/orders";
 import { receiptDiscount } from "./discount-input";
 import { id } from "./id-input";
@@ -51,6 +53,16 @@ export const receiveExtraLine = createServerFn({ method: "POST" })
 export const undoPurchaseReceipt = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) => undoReceipt(getDb(), data.id));
+
+// Everything still expected came, except back-ordered lines.
+export const receiveAllLines = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => receiveAll(getDb(), data.id));
+
+// Undoes what Receive all received, all together.
+export const undoPurchaseReceipts = createServerFn({ method: "POST" })
+	.validator(type({ ids: type("number.integer > 0").array().atLeastLength(1) }))
+	.handler(async ({ data }) => undoReceipts(getDb(), data.ids));
 
 // POs waiting on deliveries, for the receiving app.
 export const listReceivable = createServerFn({ method: "GET" }).handler(

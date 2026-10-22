@@ -2,6 +2,7 @@ import { and, eq, isNull, max, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, movements, stores } from "#/db/schema";
 import type { Overflow } from "#/inventory/ledger";
+import { posLocation } from "#/inventory/locations";
 import { retailReserve } from "#/inventory/online-stock";
 
 // The store row for a channel account, created on first sync and found by
@@ -69,14 +70,15 @@ export async function shippingLocation(db: Db): Promise<number | null> {
 
 // Where each kind of sale takes stock from: shipped orders from the
 // warehouse, then the retail store for what the warehouse is out of (the
-// order page says to fetch those); in-store sales from the retail store
-// only. Null where katasync can't tell (none, or several), so the order
-// reports it instead.
+// order page says to fetch those); in-store sales from the POS location
+// (locations.posPrimary, set in Settings) only. Null where katasync can't
+// tell (none, or several), so the order reports it instead.
 // `storeKeeps` is how many the store holds back for walk-ins
 // (settings.retailReserve); overflow takes only what's above it.
 export type StockLocations = {
 	shipping: number | null;
 	store: number | null;
+	pos: number | null;
 	storeKeeps: number;
 };
 
@@ -88,6 +90,7 @@ export async function stockLocations(db: Db): Promise<StockLocations> {
 	return {
 		shipping: await shippingLocation(db),
 		store: retail.length === 1 ? retail[0].id : null,
+		pos: await posLocation(db),
 		storeKeeps: await retailReserve(db),
 	};
 }
@@ -98,8 +101,8 @@ export function saleLocation(
 	from: StockLocations,
 	order: { soldInStore: boolean },
 ): { locationId: number; overflow: Overflow | null } | { problem: string } {
-	if (order.soldInStore && from.store !== null)
-		return { locationId: from.store, overflow: null };
+	if (order.soldInStore && from.pos !== null)
+		return { locationId: from.pos, overflow: null };
 	if (!order.soldInStore && from.shipping !== null)
 		return {
 			locationId: from.shipping,
@@ -110,7 +113,7 @@ export function saleLocation(
 		};
 	return {
 		problem: order.soldInStore
-			? "no retail store to take in-store stock from"
+			? "no POS location to take in-store stock from"
 			: "no location to take stock from",
 	};
 }

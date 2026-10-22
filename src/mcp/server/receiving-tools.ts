@@ -128,7 +128,7 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 		"report_damage",
 		{
 			description:
-				"Records that some of what arrived for one product on a sent or closed PO is damaged, in single items (2 blades of a case of 12 is 2), with what's wrong. Takes them off the shelf at once, and can't exceed what arrived. Returns damage_id and a photo upload link for curl. The user sends the report to the supplier from the app; remove_damage takes it back until then.",
+				"Records that some of what arrived for one product on a sent or closed PO is damaged, or missing from what arrived (a case of 12 holding 10 has 2 missing), in single items (2 blades of a case of 12 is 2). Damaged needs what's wrong; missing can leave it out. Takes them off the shelf at once, and can't exceed what arrived. Returns damage_id and a photo upload link for curl. The user sends the report to the supplier from the app; remove_damage takes it back until then.",
 			inputSchema: {
 				po: z.number().int().positive(),
 				sku: z.string(),
@@ -137,16 +137,17 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 					.int()
 					.positive()
 					.describe("Single items, not the line's unit"),
+				kind: z.enum(["damaged", "missing"]).default("damaged"),
 				description: z
 					.string()
-					.min(1)
+					.optional()
 					.describe(
-						'What\'s wrong, for the supplier, e.g. "crushed box, handles snapped"',
+						'What\'s wrong, for the supplier, e.g. "crushed box, handles snapped". Required when damaged.',
 					),
 			},
 			annotations: WRITE,
 		},
-		async ({ po, sku, quantity, description }) => {
+		async ({ po, sku, quantity, kind, description }) => {
 			const product = await productBySku(db, sku);
 			const [line] = await db
 				.select({ id: purchaseOrderLines.id })
@@ -158,11 +159,12 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 					),
 				);
 			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
-			const { damageId } = await recordDamage(db, {
-				lineId: line.id,
-				quantity,
-				description,
-			});
+			const { damageId } = await recordDamage(
+				db,
+				kind === "missing"
+					? { lineId: line.id, quantity, kind, description }
+					: { lineId: line.id, quantity, kind, description: description ?? "" },
+			);
 			return json({
 				po,
 				sku,

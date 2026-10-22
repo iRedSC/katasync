@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { DamageKind } from "#/components/damage/damage";
 import { DamageRow } from "#/components/damage/damage-details";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
@@ -32,7 +33,7 @@ export function LineTable({
 	lines: Line[];
 	focus: LineFocus | null;
 	onOpenDamage: (damageId: number) => void;
-	onReportDamage: (line: Line) => void;
+	onReportDamage: (line: Line, kind: DamageKind) => void;
 	// Opens a line's quantity, as adding it from the picker does.
 	onEditQuantity: (lineId: number) => void;
 	// A quantity opened by focus is done; enter says it was left with Enter.
@@ -238,7 +239,7 @@ export function LineTable({
 							line={menuFor}
 							detail={d}
 							onEditQuantity={() => onEditQuantity(menuFor.id)}
-							onReportDamage={() => onReportDamage(menuFor)}
+							onReportDamage={(kind) => onReportDamage(menuFor, kind)}
 							onNote={canNote ? () => setNoteFor(menuFor.id) : null}
 						/>
 					)}

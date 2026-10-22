@@ -39,10 +39,12 @@ export function LineRow({
 	onHold,
 	onNote,
 	damaged,
+	missing,
 }: {
 	line: ReceiveLine;
-	// Single items recorded as damaged.
+	// Single items recorded as damaged, and as missing from what came.
 	damaged: number;
+	missing: number;
 	// No button at all: nothing can be received or undone.
 	locked: boolean;
 	// The PO is waiting on a delivery.
@@ -105,9 +107,14 @@ export function LineRow({
 							Back-ordered
 						</p>
 					)}
-					{damaged > 0 && (
+					{(damaged > 0 || missing > 0) && (
 						<p className="text-sm font-semibold text-critical-text">
-							{damaged} damaged
+							{[
+								damaged > 0 && `${damaged} damaged`,
+								missing > 0 && `${missing} missing`,
+							]
+								.filter(Boolean)
+								.join(" · ")}
 						</p>
 					)}
 					{line.sentQuantity === null ? (

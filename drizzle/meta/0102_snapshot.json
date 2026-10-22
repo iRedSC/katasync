@@ -1,6 +1,6 @@
 {
-  "id": "63d10579-cf29-4790-bd6a-f8397607c6da",
-  "prevId": "238e4360-b952-4698-acc9-87418a9501be",
+  "id": "b76ae61a-2ffa-4c88-a2aa-dcec28d497e6",
+  "prevId": "1767cfb7-f1ae-465e-964b-fc5d6d80cd19",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -25,429 +25,6 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.buyer_message_checks": {
-      "name": "buyer_message_checks",
-      "schema": "",
-      "columns": {
-        "market": {
-          "name": "market",
-          "type": "channel",
-          "typeSchema": "public",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "checked_at": {
-          "name": "checked_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "read_through": {
-          "name": "read_through",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "errored_at": {
-          "name": "errored_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.buyer_messages": {
-      "name": "buyer_messages",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "buyer_messages_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "thread_id": {
-          "name": "thread_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "from_buyer": {
-          "name": "from_buyer",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "external_id": {
-          "name": "external_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "body": {
-          "name": "body",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "at": {
-          "name": "at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "market_email_id": {
-          "name": "market_email_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "in_reply_to": {
-          "name": "in_reply_to",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "refused_by": {
-          "name": "refused_by",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "language": {
-          "name": "language",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "english": {
-          "name": "english",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "buyer_reply_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "request_key": {
-          "name": "request_key",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status_at": {
-          "name": "status_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "buyer_messages_thread_external_id": {
-          "name": "buyer_messages_thread_external_id",
-          "columns": [
-            {
-              "expression": "thread_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "external_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"buyer_messages\".\"external_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "buyer_messages_request_key": {
-          "name": "buyer_messages_request_key",
-          "columns": [
-            {
-              "expression": "request_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"buyer_messages\".\"request_key\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "buyer_messages_market_email": {
-          "name": "buyer_messages_market_email",
-          "columns": [
-            {
-              "expression": "market_email_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"buyer_messages\".\"market_email_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "buyer_messages_refused_by": {
-          "name": "buyer_messages_refused_by",
-          "columns": [
-            {
-              "expression": "refused_by",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"buyer_messages\".\"refused_by\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "buyer_messages_thread_at_idx": {
-          "name": "buyer_messages_thread_at_idx",
-          "columns": [
-            {
-              "expression": "thread_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "buyer_messages_unsettled_idx": {
-          "name": "buyer_messages_unsettled_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"buyer_messages\".\"status\" in ('sending', 'sent', 'unconfirmed')",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "buyer_messages_thread_id_buyer_threads_id_fk": {
-          "name": "buyer_messages_thread_id_buyer_threads_id_fk",
-          "tableFrom": "buyer_messages",
-          "tableTo": "buyer_threads",
-          "columnsFrom": [
-            "thread_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "buyer_messages_market_email_id_market_emails_id_fk": {
-          "name": "buyer_messages_market_email_id_market_emails_id_fk",
-          "tableFrom": "buyer_messages",
-          "tableTo": "market_emails",
-          "columnsFrom": [
-            "market_email_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "buyer_messages_refused_by_market_emails_id_fk": {
-          "name": "buyer_messages_refused_by_market_emails_id_fk",
-          "tableFrom": "buyer_messages",
-          "tableTo": "market_emails",
-          "columnsFrom": [
-            "refused_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "buyer_messages_status_is_ours": {
-          "name": "buyer_messages_status_is_ours",
-          "value": "\"buyer_messages\".\"from_buyer\" = (\"buyer_messages\".\"status\" is null)"
-        },
-        "buyer_messages_ours_have_key": {
-          "name": "buyer_messages_ours_have_key",
-          "value": "\"buyer_messages\".\"from_buyer\" or (\"buyer_messages\".\"request_key\" is not null and \"buyer_messages\".\"status_at\" is not null)"
-        },
-        "buyer_messages_theirs_have_id": {
-          "name": "buyer_messages_theirs_have_id",
-          "value": "not \"buyer_messages\".\"from_buyer\" or \"buyer_messages\".\"external_id\" is not null"
-        },
-        "buyer_messages_gone_has_id": {
-          "name": "buyer_messages_gone_has_id",
-          "value": "\"buyer_messages\".\"status\" is null or \"buyer_messages\".\"status\" not in ('sent', 'delivered') or \"buyer_messages\".\"external_id\" is not null"
-        },
-        "buyer_messages_failed_says_why": {
-          "name": "buyer_messages_failed_says_why",
-          "value": "(\"buyer_messages\".\"status\" in ('failed', 'unconfirmed')) = (\"buyer_messages\".\"error\" is not null)"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.buyer_threads": {
-      "name": "buyer_threads",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "buyer_threads_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "market": {
-          "name": "market",
-          "type": "channel",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "external_id": {
-          "name": "external_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "buyer_name": {
-          "name": "buyer_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "subject": {
-          "name": "subject",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "order_ref": {
-          "name": "order_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "item_ref": {
-          "name": "item_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "read_latest_id": {
-          "name": "read_latest_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "done_at": {
-          "name": "done_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "buyer_threads_market_external_id": {
-          "name": "buyer_threads_market_external_id",
-          "nullsNotDistinct": false,
-          "columns": [
-            "market",
-            "external_id"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1109,6 +686,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "pos_primary": {
+          "name": "pos_primary",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "ship_from_name": {
           "name": "ship_from_name",
           "type": "text",
@@ -1171,7 +755,24 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "locations_one_pos_primary": {
+          "name": "locations_one_pos_primary",
+          "columns": [
+            {
+              "expression": "pos_primary",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"locations\".\"pos_primary\"",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -1184,7 +785,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "locations_pos_primary_ours": {
+          "name": "locations_pos_primary_ours",
+          "value": "not \"locations\".\"pos_primary\" or \"locations\".\"kind\" in ('owned', 'retail')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.mail_rules": {
@@ -1295,12 +901,6 @@
         },
         "checked_at": {
           "name": "checked_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "swept_at": {
-          "name": "swept_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -4642,11 +4242,19 @@
           "primaryKey": false,
           "notNull": true
         },
+        "kind": {
+          "name": "kind",
+          "type": "damage_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'damaged'"
+        },
         "description": {
           "name": "description",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "batch_id": {
           "name": "batch_id",
@@ -4738,7 +4346,7 @@
         },
         "purchase_order_damages_description_given": {
           "name": "purchase_order_damages_description_given",
-          "value": "btrim(\"purchase_order_damages\".\"description\") <> ''"
+          "value": "\"purchase_order_damages\".\"kind\" = 'missing' or (\"purchase_order_damages\".\"description\" is not null and btrim(\"purchase_order_damages\".\"description\") <> '')"
         },
         "purchase_order_damages_reported_with_remedy": {
           "name": "purchase_order_damages_reported_with_remedy",
@@ -5925,178 +5533,6 @@
           "value": "\"qz_certificate\".\"id\" = 1"
         }
       },
-      "isRLSEnabled": false
-    },
-    "public.reply_drafts": {
-      "name": "reply_drafts",
-      "schema": "",
-      "columns": {
-        "thread_id": {
-          "name": "thread_id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "reply_draft_state",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "body": {
-          "name": "body",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "english": {
-          "name": "english",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "for_message_id": {
-          "name": "for_message_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "by": {
-          "name": "by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "precedent_ids": {
-          "name": "precedent_ids",
-          "type": "integer[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::integer[]"
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "reply_drafts_thread_id_buyer_threads_id_fk": {
-          "name": "reply_drafts_thread_id_buyer_threads_id_fk",
-          "tableFrom": "reply_drafts",
-          "tableTo": "buyer_threads",
-          "columnsFrom": [
-            "thread_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "reply_drafts_for_message_id_buyer_messages_id_fk": {
-          "name": "reply_drafts_for_message_id_buyer_messages_id_fk",
-          "tableFrom": "reply_drafts",
-          "tableTo": "buyer_messages",
-          "columnsFrom": [
-            "for_message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "reply_drafts_ready_has_body": {
-          "name": "reply_drafts_ready_has_body",
-          "value": "\"reply_drafts\".\"state\" <> 'ready' or \"reply_drafts\".\"body\" is not null"
-        },
-        "reply_drafts_failed_says_why": {
-          "name": "reply_drafts_failed_says_why",
-          "value": "(\"reply_drafts\".\"state\" = 'failed') = (\"reply_drafts\".\"error\" is not null)"
-        },
-        "reply_drafts_by_known": {
-          "name": "reply_drafts_by_known",
-          "value": "\"reply_drafts\".\"by\" in ('ai', 'staff', 'claude')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.reply_precedents": {
-      "name": "reply_precedents",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "reply_precedents_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "when": {
-          "name": "when",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "then": {
-          "name": "then",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "by": {
-          "name": "by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'staff'"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.return_request_lines": {
@@ -7911,17 +7347,6 @@
     }
   },
   "enums": {
-    "public.buyer_reply_status": {
-      "name": "buyer_reply_status",
-      "schema": "public",
-      "values": [
-        "sending",
-        "sent",
-        "delivered",
-        "failed",
-        "unconfirmed"
-      ]
-    },
     "public.channel": {
       "name": "channel",
       "schema": "public",
@@ -7941,6 +7366,14 @@
         "postage_adjustment",
         "refund",
         "adjustment"
+      ]
+    },
+    "public.damage_kind": {
+      "name": "damage_kind",
+      "schema": "public",
+      "values": [
+        "damaged",
+        "missing"
       ]
     },
     "public.damage_remedy": {
@@ -8065,15 +7498,6 @@
         "sent",
         "closed",
         "cancelled"
-      ]
-    },
-    "public.reply_draft_state": {
-      "name": "reply_draft_state",
-      "schema": "public",
-      "values": [
-        "drafting",
-        "ready",
-        "failed"
       ]
     },
     "public.return_request_status": {

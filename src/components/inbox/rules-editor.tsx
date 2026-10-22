@@ -29,7 +29,7 @@ import {
 	saveMailRule,
 } from "#/server/inbox";
 import { folderIcon } from "./folders";
-import { type Draft, RuleForm } from "./rule-form";
+import { type Draft, RuleForm, type SaveState } from "./rule-form";
 
 // The rules that sort the marketplaces mailbox, in the order they run. The
 // first rule that moves an email decides its folder; every rule that marks
@@ -63,6 +63,7 @@ export function RulesEditor({
 	);
 	const [dirty, setDirty] = useState(false);
 	const [blocked, setBlocked] = useState(false);
+	const [saveState, setSaveState] = useState<SaveState>("idle");
 	const form = useRef<HTMLFormElement>(null);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scrolls when another rule opens
 	useEffect(() => {
@@ -72,6 +73,8 @@ export function RulesEditor({
 	// Opens another rule unless the one open has unsaved edits: then it
 	// shakes and says so.
 	const openRule = (next: number | "new" | null) => {
+		// A rule on its way to the server stays open until it lands.
+		if (saveState === "saving") return;
 		if (dirty && next !== editing) {
 			setBlocked(true);
 			if (!matchMedia("(prefers-reduced-motion: reduce)").matches)
@@ -90,6 +93,7 @@ export function RulesEditor({
 		setEditing(null);
 		setDirty(false);
 		setBlocked(false);
+		setSaveState("idle");
 		// The link that opened it has done its job.
 		if (open !== null || draft)
 			void navigate({
@@ -99,26 +103,24 @@ export function RulesEditor({
 			});
 	};
 
+	// The form stays open, locked, until the server has the rule. A rejection
+	// leaves the draft in place to retry, and counts as unsaved.
 	async function save(id: number | null, rule: Draft) {
-		close();
+		setDirty(true);
+		setSaveState("saving");
 		const r = await optimism.change({
 			label: "Saving the rule",
-			patch: store.patch("all", (list) =>
-				id === null
-					? [
-							...list,
-							{
-								...rule,
-								id: -1,
-								position: Number.MAX_SAFE_INTEGER,
-								by: "staff",
-							},
-						]
-					: list.map((x) => (x.id === id ? { ...x, ...rule, by: "staff" } : x)),
-			),
+			// Unpatched: the rule shows once the list reloads, so the form isn't
+			// doubled by a row for it while the save is out.
+			patch: [],
 			send: () => saveMailRule({ data: { id, rule } }),
 		});
-		if (r) toast.success(`Saved: ${resorted(r.value)}`);
+		if (!r) {
+			setSaveState("failed");
+			return;
+		}
+		close();
+		toast.success(`Saved: ${resorted(r.value)}`);
 	}
 
 	async function remove(rule: Rule) {
@@ -163,8 +165,12 @@ export function RulesEditor({
 			key={rule?.id ?? "new"}
 			formRef={form}
 			initial={initial}
+			save={saveState}
 			unsaved={blocked}
-			onChange={() => setDirty(true)}
+			onChange={() => {
+				setDirty(true);
+				setSaveState("idle");
+			}}
 			onSave={(d) => save(rule?.id ?? null, d)}
 			onCancel={close}
 			onDelete={rule ? () => remove(rule) : undefined}
