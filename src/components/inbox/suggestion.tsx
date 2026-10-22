@@ -22,10 +22,14 @@ const BY: Record<Draft["by"], string> = {
 
 export function Suggestion({
 	thread: t,
+	ai,
 	onSend,
 	onEdit,
 }: {
 	thread: BuyerThread;
+	// Without the AI, a suggestion Claude or staff saved still shows, with
+	// nothing to draft it again.
+	ai: boolean;
 	onSend: (body: string) => void;
 	onEdit: (body: string, english: string | null) => void;
 }) {
@@ -33,11 +37,14 @@ export function Suggestion({
 	const [redrafting, setRedrafting] = useState(false);
 	const d = t.draft;
 	if (!t.waiting || !d) return null;
+	// Drafting and failing are the agent's; without it, only a saved one shows.
+	if (!ai && d.state !== "ready") return null;
 
 	async function redraft() {
 		setRedrafting(true);
 		try {
-			await draftReplyNow({ data: { threadId: t.id } });
+			const d = await draftReplyNow({ data: { threadId: t.id } });
+			if (!d) toast("It's being drafted already");
 			await router.invalidate();
 		} catch (error) {
 			toast.error("Couldn't draft it", {
@@ -84,16 +91,18 @@ export function Suggestion({
 					<span className="text-warning-text">· before their last message</span>
 				)}
 				<span className="ml-auto flex gap-0.5">
-					<Tip content="Draft again">
-						<Button
-							size="sm"
-							variant="ghost"
-							aria-label="Draft again"
-							onClick={redraft}
-						>
-							<RefreshCw />
-						</Button>
-					</Tip>
+					{ai && (
+						<Tip content="Draft again">
+							<Button
+								size="sm"
+								variant="ghost"
+								aria-label="Draft again"
+								onClick={redraft}
+							>
+								<RefreshCw />
+							</Button>
+						</Tip>
+					)}
 					<Tip content="Change it">
 						<Button
 							size="sm"

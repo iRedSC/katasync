@@ -170,6 +170,7 @@ export function BuyerBox({
 						<BuyerConversation
 							key={selected.id}
 							thread={selected}
+							ai={page.ai}
 							onDone={(isDone) => done(selected, isDone)}
 						/>
 					</div>

@@ -56,9 +56,12 @@ type Local = Shown & { requestKey: string };
 
 export function BuyerConversation({
 	thread: t,
+	ai,
 	onDone,
 }: {
 	thread: BuyerThread;
+	// Whether the AI is set up: translating and drafting need it.
+	ai: boolean;
 	onDone: (done: boolean) => void;
 }) {
 	const router = useRouter();
@@ -68,7 +71,7 @@ export function BuyerConversation({
 	// The English the box's words were translated from.
 	const [gloss, setGloss] = useState<string | null>(null);
 	const [translating, setTranslating] = useState(false);
-	const foreign = t.language !== null && t.language !== "en";
+	const foreign = ai && t.language !== null && t.language !== "en";
 
 	async function translate() {
 		const words = text.trim();
@@ -212,6 +215,7 @@ export function BuyerConversation({
 			</div>
 			<Suggestion
 				thread={t}
+				ai={ai}
 				onSend={send}
 				onEdit={(body, english) => {
 					setText(body);

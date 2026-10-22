@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { z } from "zod";
+import { aiConfigured } from "#/ai/harness";
 import { draftThread, setDraft, translateForBuyer } from "#/buyers/drafts";
 import {
 	deletePrecedent,
@@ -21,9 +22,8 @@ const thread = "number.integer > 0";
 export const draftReplyNow = createServerFn({ method: "POST" })
 	.validator(type({ threadId: thread }))
 	.handler(async ({ data }) => {
-		const d = await draftThread(getDb(), data.threadId, { force: true });
-		if (!d) throw new Error("It's being drafted already");
-		return d;
+		if (!aiConfigured()) return null;
+		return draftThread(getDb(), data.threadId, { force: true });
 	});
 
 // Staff's own version of the suggestion.
@@ -37,7 +37,10 @@ export const saveReplyDraft = createServerFn({ method: "POST" })
 export const translateReply = createServerFn({ method: "POST" })
 	.validator(type({ threadId: thread, text: "string > 0" }))
 	.handler(async ({ data }) =>
-		translateForBuyer(getDb(), data.threadId, data.text),
+		// Without the AI, the words go as written.
+		aiConfigured()
+			? translateForBuyer(getDb(), data.threadId, data.text)
+			: { language: null, text: data.text },
 	);
 
 export const getPrecedents = createServerFn({ method: "GET" }).handler(

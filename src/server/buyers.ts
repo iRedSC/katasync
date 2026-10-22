@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
+import { aiConfigured } from "#/ai/harness";
 import { runBuyerMessages } from "#/buyers/run";
 import { reply } from "#/buyers/send";
 import { messageSources, setThreadDone, threadsPage } from "#/buyers/threads";
@@ -20,7 +21,8 @@ export const listBuyerThreads = createServerFn({ method: "GET" })
 			threadsPage(db, data.view, data.market),
 			messageSources(db),
 		]);
-		return { threads, sources };
+		// The AI is a bonus: without it, no suggestions or Translate show.
+		return { threads, sources, ai: aiConfigured() };
 	});
 
 export type BuyerThreadsPage = Awaited<ReturnType<typeof listBuyerThreads>>;

@@ -11,6 +11,7 @@ import {
 	translateForBuyer,
 } from "./drafts";
 import { savePrecedent } from "./precedents";
+import { runBuyerMessages } from "./run";
 import { reply } from "./send";
 import { ensureThread, recordFromBuyer, threadsPage } from "./threads";
 
@@ -38,7 +39,10 @@ beforeEach(async () => {
 	threadId = t.id;
 	await buyerSays("¿Llega antes del viernes?");
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
+});
 
 async function buyerSays(body: string) {
 	n++;
@@ -165,5 +169,18 @@ describe("suggested replies", () => {
 			language: "es",
 			text: "Sí, el viernes.",
 		});
+	});
+
+	test("without the AI set up, a run drafts nothing and nothing fails", async () => {
+		vi.stubEnv("AI_PROXY_URL", "");
+		vi.stubEnv("AI_PROXY_KEY", "");
+		vi.stubEnv("EBAY_REFRESH_TOKEN", "");
+		const r = await runBuyerMessages(db);
+		expect(r.ai).toEqual({ skipped: "set AI_PROXY_URL and AI_PROXY_KEY" });
+		expect(r.amazon.problems).toEqual([]);
+		expect(await db.select().from(replyDrafts)).toEqual([]);
+		const [t] = await threadsPage(db, "open", null);
+		expect(t?.draft).toBeNull();
+		expect(t?.messages[0]?.english).toBeNull();
 	});
 });

@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { aiConfigured } from "#/ai/harness";
 import { draftThread, setDraft } from "#/buyers/drafts";
 import {
 	deletePrecedent,
@@ -46,6 +47,11 @@ export function registerBuyerWriteTools(server: McpServer, db: Db) {
 			annotations: WRITE,
 		},
 		async ({ thread_id }) => {
+			if (!aiConfigured())
+				return json({
+					skipped:
+						"katasync's reply agent isn't set up (AI_PROXY_URL, AI_PROXY_KEY). Write the suggestion with set_reply_draft instead",
+				});
 			const d = await draftThread(db, thread_id, { force: true });
 			return json(d ?? { drafting: "Another run is drafting it now" });
 		},
