@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { ids, optimism } from "#/lib/optimism";
 import { shrinkPhoto, uploadDamagePhotos } from "#/lib/photo";
 import { offerUndo } from "#/lib/undo";
+import type { DamageKind } from "#/purchasing/damage";
 import {
 	recordPurchaseDamage,
 	removePurchaseDamage,
@@ -10,6 +11,16 @@ import {
 
 // What the phone sheet and the desktop dialog share: picking photos, and
 // saving a damage with them.
+
+export type { DamageKind };
+
+// How a damage reads after its count: "2 damaged", "2 missing".
+export const kindWord = (kind: DamageKind) =>
+	kind === "missing" ? "missing" : "damaged";
+
+// Damaged items need to say what's wrong; missing ones say it by being
+// missing.
+export const needsDescription = (kind: DamageKind) => kind === "damaged";
 
 export type PickedPhoto = { key: number; url: string; blob: Blob };
 
@@ -89,6 +100,7 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 export async function saveDamage(input: {
 	lineId: number;
 	quantity: number;
+	kind: DamageKind;
 	description: string;
 	photos: Blob[];
 	name: string;
@@ -97,14 +109,24 @@ export async function saveDamage(input: {
 }) {
 	const r = await optimism.change({
 		send: async () => {
+			// A line made on the receive page may only have its id from there
+			// until the server's comes back.
+			const lineId = ids.server(input.lineId);
 			const { damageId } = await recordPurchaseDamage({
-				data: {
-					// A line made on the receive page may only have its id from
-					// there until the server's comes back.
-					lineId: ids.server(input.lineId),
-					quantity: input.quantity,
-					description: input.description,
-				},
+				data:
+					input.kind === "missing"
+						? {
+								lineId,
+								quantity: input.quantity,
+								kind: "missing",
+								description: input.description || null,
+							}
+						: {
+								lineId,
+								quantity: input.quantity,
+								kind: "damaged",
+								description: input.description,
+							},
 			});
 			const upload = await uploadDamagePhotos(
 				damageId,
@@ -122,7 +144,7 @@ export async function saveDamage(input: {
 			{ description: "Add them from the damage on the PO." },
 		);
 	offerUndo(
-		`${plural(input.quantity, "damaged item")} of ${input.name} off the shelf`,
+		`${plural(input.quantity, `${kindWord(input.kind)} item`)} of ${input.name} off the shelf`,
 		{
 			tone: "success",
 			undo: async () => {

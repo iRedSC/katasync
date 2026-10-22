@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
@@ -131,6 +131,57 @@ export async function receive(
 		}
 		const closed = await closeIfComplete(tx, po.id);
 		return { receiptId: receipt.id, closed };
+	});
+}
+
+// Everything still expected on a sent PO came: each line short of what it
+// expects receives the rest, in one go. Back-ordered lines are left, since
+// the supplier said those aren't in this delivery; receive them on their own
+// if they came. What's left is worked out under the lock, so a line someone
+// else just received isn't received twice. Undo with undoReceipts.
+export async function receiveAll(db: Db, purchaseOrderId: number) {
+	return db.transaction(async (tx) => {
+		await lockOrder(tx, purchaseOrderId, ["sent"]);
+		const lines = await tx
+			.select({
+				id: purchaseOrderLines.id,
+				quantity: purchaseOrderLines.quantity,
+			})
+			.from(purchaseOrderLines)
+			.where(
+				and(
+					eq(purchaseOrderLines.purchaseOrderId, purchaseOrderId),
+					isNull(purchaseOrderLines.backOrderedAt),
+				),
+			)
+			.orderBy(asc(purchaseOrderLines.id));
+		const receipts: { lineId: number; receiptId: number; quantity: number }[] =
+			[];
+		let closed = false;
+		for (const line of lines) {
+			const remaining = line.quantity - (await receivedOf(tx, line.id));
+			if (remaining <= 0) continue;
+			const r = await receive(tx, { lineId: line.id, quantity: remaining });
+			receipts.push({
+				lineId: line.id,
+				receiptId: r.receiptId,
+				quantity: remaining,
+			});
+			closed = r.closed;
+		}
+		if (receipts.length === 0)
+			throw new PurchaseOrderError(
+				`Nothing left to receive on ${poName(purchaseOrderId)}`,
+			);
+		return { receipts, closed };
+	});
+}
+
+// Undoes several receipts together, as Receive all made them: all of them or,
+// if one can't be, none.
+export async function undoReceipts(db: Db, receiptIds: number[]) {
+	return db.transaction(async (tx) => {
+		for (const id of [...receiptIds].reverse()) await undoReceipt(tx, id);
 	});
 }
 

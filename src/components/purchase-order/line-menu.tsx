@@ -6,10 +6,12 @@ import {
 	Hourglass,
 	NotebookPen,
 	PackageCheck,
+	PackageX,
 	Pencil,
 	ShieldAlert,
 	Trash2,
 } from "lucide-react";
+import type { DamageKind } from "#/components/damage/damage";
 import {
 	ContextMenuContent,
 	ContextMenuItem,
@@ -35,7 +37,7 @@ export function LineMenu({
 	line: Line;
 	detail: PurchaseOrderDetail;
 	onEditQuantity: () => void;
-	onReportDamage: () => void;
+	onReportDamage: (kind: DamageKind) => void;
 	// null when the line's note can't change.
 	onNote: (() => void) | null;
 }) {
@@ -87,10 +89,22 @@ export function LineMenu({
 			)}
 			{(po.status === "sent" || po.status === "closed") &&
 				damageable(d, l) > 0 && (
-					<ContextMenuItem shortcut="D" onSelect={onReportDamage}>
-						<ShieldAlert />
-						Arrived damaged…
-					</ContextMenuItem>
+					<>
+						<ContextMenuItem
+							shortcut="D"
+							onSelect={() => onReportDamage("damaged")}
+						>
+							<ShieldAlert />
+							Arrived damaged…
+						</ContextMenuItem>
+						<ContextMenuItem
+							shortcut="M"
+							onSelect={() => onReportDamage("missing")}
+						>
+							<PackageX />
+							Missing from the delivery…
+						</ContextMenuItem>
+					</>
 				)}
 			{onNote && (
 				<ContextMenuItem shortcut="N" onSelect={onNote}>

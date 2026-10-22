@@ -157,8 +157,15 @@ export function DamageReportDialog({
 										{x.quantity} × {productName(x)}
 									</p>
 									<p className="text-sm text-muted-foreground">
-										{x.description}
-										{x.photoIds.length > 2 && ` · ${x.photoIds.length} photos`}
+										{[
+											x.kind === "missing" ? "Missing" : null,
+											x.description,
+											x.photoIds.length > 2
+												? `${x.photoIds.length} photos`
+												: null,
+										]
+											.filter(Boolean)
+											.join(" · ")}
 									</p>
 								</div>
 								<fieldset

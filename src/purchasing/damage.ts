@@ -25,13 +25,25 @@ import {
 	reopen,
 } from "#/purchasing/orders";
 
-// Damage found in a delivery. Recording it takes the items off the shelf at
-// once, since they can't be sold; a report later tells the supplier and asks,
+// Damage found in a delivery, or items missing from it (a case of 12 holding
+// 10). Recording it takes the items off the shelf at once, since they can't
+// be sold; a report later tells the supplier and asks,
 // per item, for credit or a replacement. A replacement makes the line expect
 // that many again, so the PO waits for them.
 
 export type Remedy = (typeof purchaseOrderDamages.$inferSelect)["remedy"] &
 	string;
+export type DamageKind = (typeof purchaseOrderDamages.$inferSelect)["kind"];
+
+// What a damage records: damaged items need to say what's wrong; missing ones
+// say it by being missing, so a note is optional.
+export type DamageInput = {
+	lineId: number;
+	quantity: number;
+} & (
+	| { kind: "damaged"; description: string }
+	| { kind: "missing"; description?: string | null }
+);
 
 const UPLOAD_LINK_MINUTES = 30;
 
@@ -84,18 +96,16 @@ async function unreported(tx: Db, damageId: number) {
 	return damage;
 }
 
-// Records items of a line that arrived damaged, in single items, and takes
-// them off the shelf. They can't add up to more than arrived.
-export async function recordDamage(
-	db: Db,
-	input: { lineId: number; quantity: number; description: string },
-) {
+// Records items of a line that arrived damaged or were missing, in single
+// items, and takes them off the shelf. They can't add up to more than arrived.
+export async function recordDamage(db: Db, input: DamageInput) {
 	if (!Number.isInteger(input.quantity) || input.quantity <= 0)
 		throw new PurchaseOrderError(
 			`Quantity must be a positive whole number, got ${input.quantity}`,
 		);
-	const description = input.description.trim();
-	if (!description) throw new PurchaseOrderError("Say what's wrong with them");
+	const description = input.description?.trim() || null;
+	if (input.kind === "damaged" && !description)
+		throw new PurchaseOrderError("Say what's wrong with them");
 	return db.transaction(async (tx) => {
 		const { line, po } = await lineOf(tx, input.lineId);
 		const arrived = (await receivedOf(tx, line.id)) * line.packSize;
@@ -103,12 +113,15 @@ export async function recordDamage(
 		if (already + input.quantity > arrived)
 			throw new PurchaseOrderError(
 				already > 0
-					? `Only ${arrived} arrived and ${already} are already damaged`
+					? `Only ${arrived} arrived and ${already} are already damaged or missing`
 					: `Only ${arrived} arrived`,
 			);
 		const { batchId } = await postMovements(tx, {
 			reference: poName(po.id),
-			note: `Damaged: ${description}`,
+			note:
+				input.kind === "missing"
+					? `Missing${description ? `: ${description}` : ""}`
+					: `Damaged: ${description}`,
 			lines: [
 				{
 					productId: line.productId,
@@ -123,6 +136,7 @@ export async function recordDamage(
 			.values({
 				lineId: line.id,
 				quantity: input.quantity,
+				kind: input.kind,
 				description,
 				batchId,
 			})
@@ -277,6 +291,7 @@ export async function damagesOf(db: Db, purchaseOrderId: number) {
 			unit: purchaseOrderLines.unit,
 			packSize: purchaseOrderLines.packSize,
 			quantity: purchaseOrderDamages.quantity,
+			kind: purchaseOrderDamages.kind,
 			description: purchaseOrderDamages.description,
 			remedy: purchaseOrderDamages.remedy,
 			reportedAt: purchaseOrderDamageReports.sentAt,
@@ -328,7 +343,8 @@ export type DamageReportItem = {
 	sku: string;
 	name: string;
 	quantity: number;
-	description: string;
+	kind: DamageKind;
+	description: string | null;
 	remedy: Remedy;
 	photos: { contentType: string; data: Buffer }[];
 };
@@ -390,6 +406,7 @@ export async function sendDamageReport(
 				sku: d.sku,
 				name: d.variantName ? `${d.name} (${d.variantName})` : d.name,
 				quantity: d.quantity,
+				kind: d.kind,
 				description: d.description,
 				remedy: chosen.get(d.id) as Remedy,
 				photos: photos

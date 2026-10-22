@@ -29,7 +29,8 @@ export const PLACEHOLDERS = {
 	},
 	damage_report: {
 		...COMMON,
-		damage_list: "Each damaged item, what's wrong, and what we ask for",
+		damage_list:
+			"Each damaged or missing item, what's wrong, and what we ask for",
 		photos: "“2 photos are attached.”, or nothing without photos",
 	},
 } as const satisfies Record<TemplateKind, Record<string, string>>;
@@ -63,11 +64,11 @@ export const DEFAULT_TEMPLATES: Record<TemplateKind, Template> = {
 		].join("\n"),
 	},
 	damage_report: {
-		subject: "Damage on purchase order {po} from {from}",
+		subject: "Damaged or missing items on purchase order {po} from {from}",
 		body: [
 			"{greeting}",
 			"",
-			"Some of what arrived on purchase order {po} was damaged:",
+			"Some of purchase order {po} arrived damaged or missing:",
 			"",
 			"{damage_list}",
 			"",

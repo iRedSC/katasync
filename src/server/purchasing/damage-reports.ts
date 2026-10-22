@@ -21,14 +21,21 @@ import { loadOrder } from "#/purchasing/load";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { id } from "./id-input";
 
-// Records items of a line that arrived damaged, in single items, and takes
-// them off the shelf. Photos go to /api/damage-photos/$id after.
+// Records items of a line that arrived damaged or were missing, in single
+// items, and takes them off the shelf. Photos go to /api/damage-photos/$id
+// after.
 export const recordPurchaseDamage = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			lineId: "number.integer > 0",
 			quantity: "number.integer > 0",
+			kind: "'damaged'",
 			description: "string",
+		}).or({
+			lineId: "number.integer > 0",
+			quantity: "number.integer > 0",
+			kind: "'missing'",
+			"description?": "string | null",
 		}),
 	)
 	.handler(async ({ data }) => recordDamage(getDb(), data));
@@ -49,8 +56,14 @@ const REMEDY_WORDS = {
 
 type ReportLine = Pick<
 	DamageReportItem,
-	"sku" | "name" | "quantity" | "description" | "remedy"
+	"sku" | "name" | "quantity" | "kind" | "description" | "remedy"
 > & { photos: number };
+
+// What's wrong with an item, as the supplier reads it.
+const problem = (i: Pick<ReportLine, "kind" | "description">) =>
+	i.kind === "missing"
+		? `missing from the delivery${i.description ? `, ${i.description}` : ""}`
+		: i.description;
 
 // The report's wording, from the template; the damage list is laid out here.
 function damageEmailValues(
@@ -66,7 +79,7 @@ function damageEmailValues(
 		damage_list: items
 			.map(
 				(i) =>
-					`- ${i.quantity} × ${i.name} (${i.sku}): ${i.description}. ${REMEDY_WORDS[i.remedy]}.`,
+					`- ${i.quantity} × ${i.name} (${i.sku}): ${problem(i)}. ${REMEDY_WORDS[i.remedy]}.`,
 			)
 			.join("\n"),
 		photos:
@@ -111,6 +124,7 @@ export const previewDamageReport = createServerFn({ method: "POST" })
 			sku: d.sku,
 			name: d.variantName ? `${d.name} (${d.variantName})` : d.name,
 			quantity: d.quantity,
+			kind: d.kind,
 			description: d.description,
 			remedy: chosen.get(d.id) as Remedy,
 			photos: d.photoIds.length,
