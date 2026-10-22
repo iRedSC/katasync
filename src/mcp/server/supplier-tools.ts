@@ -136,7 +136,7 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 		"update_supplier",
 		{
 			description:
-				"Changes a supplier's details. Only given fields change. lead_time_days: days from sending a PO to delivery. cover_days: days of sales each PO should cover. minimum_order: spend (USD) at which a suggested PO counts as ready. critical_threshold: how many essential products (marked essential, A items, or parts some tool set can't be built without) needing ordering make it ready whatever the spend.",
+				"Changes a supplier's details. Only given fields change. lead_time_days: days from sending a PO to delivery. cover_days: days of sales each PO should cover. minimum_order: spend (USD) at which a suggested PO counts as ready. critical_threshold: how many essential products (marked essential, A items, or parts some tool set can't be built without) needing ordering make it ready whatever the spend; twice as many make it Order soon.",
 			inputSchema: {
 				supplier: z.string().describe("Code or name"),
 				name: z.string().optional(),

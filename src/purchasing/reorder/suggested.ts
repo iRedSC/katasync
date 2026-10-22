@@ -24,11 +24,14 @@ export type SuggestedLine = {
 	critical: boolean;
 };
 
-// Why a supplier's suggested PO is ready to send, if it is. "critical": at
-// least criticalThreshold of its products are critical, so it goes now
-// whatever the total. "minimum": the total reached the supplier's minimum
-// order. "waiting": neither yet.
-export type Readiness = "critical" | "minimum" | "waiting";
+// Whether a supplier's suggested PO is worth sending. "ready": the total
+// reached the supplier's minimum order, or criticalThreshold of its products
+// are critical, which brings it up sooner. "soon": SOON_TIMES as many
+// critical products need it, so it shouldn't wait. "waiting": neither yet.
+export type Readiness = "soon" | "ready" | "waiting";
+
+// How many times a supplier's criticalThreshold makes its PO "soon".
+export const SOON_TIMES = 2;
 
 export type SupplierSuggestion = {
 	supplierId: number;
@@ -47,12 +50,10 @@ export type SupplierSuggestion = {
 
 // Suggestions to start a PO from: ready, and not already on a draft. Once a
 // supplier has a draft, its suggestion lives there (see draftChanges).
-export function readyToOrder(
-	suggestions: SupplierSuggestion[],
-): Omit<SupplierSuggestion, "draftId">[] {
-	return suggestions
-		.filter((s) => s.readiness !== "waiting" && s.draftId === null)
-		.map(({ draftId: _, ...s }) => s);
+export function readyToOrder(suggestions: SupplierSuggestion[]) {
+	return suggestions.flatMap(({ draftId, readiness, ...s }) =>
+		readiness === "waiting" || draftId !== null ? [] : [{ ...s, readiness }],
+	);
 }
 
 export function readiness(s: {
@@ -61,8 +62,9 @@ export function readiness(s: {
 	critical: number;
 	criticalThreshold: number;
 }): Readiness {
-	if (s.critical >= s.criticalThreshold) return "critical";
-	if (s.total >= s.minimumOrder) return "minimum";
+	if (s.critical >= s.criticalThreshold * SOON_TIMES) return "soon";
+	if (s.critical >= s.criticalThreshold || s.total >= s.minimumOrder)
+		return "ready";
 	return "waiting";
 }
 

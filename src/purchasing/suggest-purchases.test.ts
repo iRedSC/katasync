@@ -46,7 +46,7 @@ describe("suggestPurchases", () => {
 		expect(s.lines).toMatchObject([{ sku: "BLADE", sold: 60, quantity: 27 }]);
 		expect(s).toMatchObject({
 			total: 135,
-			readiness: "minimum",
+			readiness: "ready",
 			draftId: null,
 		});
 	});
@@ -75,7 +75,7 @@ describe("suggestPurchases", () => {
 		expect(s).toMatchObject({ total: 40, unpriced: 1, readiness: "waiting" });
 	});
 
-	test("is ready below the minimum once enough critical products need it", async () => {
+	test("is ready below the minimum once enough critical products need it, and soon at twice that", async () => {
 		const blade = await createProduct(db, "BLADE", "simple");
 		const knife = await createProduct(db, "KNIFE", "simple");
 		await supply(blade, 1);
@@ -91,7 +91,15 @@ describe("suggestPurchases", () => {
 			.set({ critical: true })
 			.where(eq(schema.products.id, knife));
 		[s] = await suggestPurchases(db, now);
-		expect(s).toMatchObject({ critical: 2, readiness: "critical" });
+		// The supplier's threshold is 2 by default.
+		expect(s).toMatchObject({ critical: 2, readiness: "ready" });
+
+		await db
+			.update(schema.suppliers)
+			.set({ criticalThreshold: 1 })
+			.where(eq(schema.suppliers.id, canam));
+		[s] = await suggestPurchases(db, now);
+		expect(s.readiness).toBe("soon");
 
 		await db
 			.update(schema.suppliers)

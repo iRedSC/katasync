@@ -25,17 +25,66 @@ const carrierPage = (t: Tracking) =>
 			? `https://tools.usps.com/go/TrackConfirmAction?tLabels=${t.number}`
 			: `https://www.fedex.com/fedextrack/?trknbr=${t.number}`;
 
+// The stops on a package's timeline.
+const STOPS = ["Label made", "On its way", "Delivered"] as const;
+
+// What Shippo says, and how far along the timeline that is: the last stop
+// reached, or -1 for none. Returned and failed packages stop on the way, in
+// red.
 const STATUS: Record<
 	NonNullable<Tracking["status"]>,
-	{ label: string; dot: string }
+	{ label: string; reached: number; trouble?: true }
 > = {
-	PRE_TRANSIT: { label: "Label made", dot: "bg-muted-foreground" },
-	TRANSIT: { label: "On its way", dot: "bg-info-icon" },
-	DELIVERED: { label: "Delivered", dot: "bg-success-icon" },
-	RETURNED: { label: "Returned", dot: "bg-critical-icon" },
-	FAILURE: { label: "Problem", dot: "bg-critical-icon" },
-	UNKNOWN: { label: "Not found yet", dot: "bg-warning-icon" },
+	PRE_TRANSIT: { label: "Label made", reached: 0 },
+	TRANSIT: { label: "On its way", reached: 1 },
+	DELIVERED: { label: "Delivered", reached: 2 },
+	RETURNED: { label: "Returned", reached: 1, trouble: true },
+	FAILURE: { label: "Problem", reached: 1, trouble: true },
+	UNKNOWN: { label: "Not found yet", reached: -1 },
 };
+
+// Nodes joined by lines, filled as far as the package has got. The stop it's
+// at pulses until it's delivered.
+function Timeline({ status }: { status: Tracking["status"] }) {
+	const s = status ? STATUS[status] : null;
+	const reached = s?.reached ?? -1;
+	const fill = s?.trouble
+		? "bg-critical-icon"
+		: reached === STOPS.length - 1
+			? "bg-success-icon"
+			: "bg-info-icon";
+	return (
+		<div className="my-1.5 flex items-center" aria-hidden>
+			{STOPS.map((stop, i) => (
+				<div key={stop} className={cn("flex items-center", i > 0 && "flex-1")}>
+					{i > 0 && (
+						<span
+							className={cn(
+								"h-0.5 flex-1 rounded-full",
+								i <= reached ? fill : "bg-muted-foreground/20",
+							)}
+						/>
+					)}
+					<Tip content={stop}>
+						<span
+							className={cn(
+								"size-2.5 shrink-0 rounded-full",
+								i <= reached
+									? fill
+									: "border-2 border-muted-foreground/30 bg-background",
+								i === reached &&
+									reached < STOPS.length - 1 &&
+									!s?.trouble &&
+									"animate-pulse",
+								status === null && "animate-pulse",
+							)}
+						/>
+					</Tip>
+				</div>
+			))}
+		</div>
+	);
+}
 
 // Packages coming for a sent PO: found in the supplier's emails or added
 // here, followed on Shippo every four hours. A delivery here receives nothing.
@@ -110,17 +159,11 @@ export function TrackingCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 				)
 			}
 		>
-			<ul className="flex flex-col gap-2">
+			<ul className="flex flex-col gap-3">
 				{d.tracking.map((t) => {
 					const s = t.status ? STATUS[t.status] : null;
 					return (
 						<li key={t.id} className="group flex items-start gap-2">
-							<span
-								className={cn(
-									"mt-1.5 size-2 shrink-0 rounded-full",
-									s?.dot ?? "animate-pulse bg-muted-foreground/40",
-								)}
-							/>
 							<span className="min-w-0 flex-1">
 								<a
 									href={carrierPage(t)}
@@ -131,8 +174,14 @@ export function TrackingCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 									{CARRIER[t.carrier as keyof typeof CARRIER] ?? t.carrier}{" "}
 									{t.number}
 								</a>
+								<Timeline status={t.status} />
 								<Tip content={t.statusDetail}>
-									<span className="block text-xs text-muted-foreground">
+									<span
+										className={cn(
+											"block text-xs text-muted-foreground",
+											s?.trouble && "text-critical-text",
+										)}
+									>
 										{s ? s.label : "Asking Shippo"}
 										{t.status === "DELIVERED" && t.statusAt
 											? ` ${formatDateTime(t.statusAt)}`
