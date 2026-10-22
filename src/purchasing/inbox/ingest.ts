@@ -631,8 +631,11 @@ async function keepHtml(
 		.where(eq(poEmails.id, emailId));
 }
 
-// Fetches the HTML of emails kept before katasync kept it, newest first, a
-// few a run. One gone from the mailbox keeps its text only (empty HTML).
+// Fetches the HTML of emails kept before katasync kept it, a few a run. One
+// gone from the mailbox keeps its text only (empty HTML). The few are picked
+// at random, so one that keeps failing can't hold back the rest; they're
+// written newest first. Returns how many had their HTML saved; a failure isn't
+// counted.
 export async function backfillHtml(
 	db: Db,
 	read: (
@@ -640,21 +643,31 @@ export async function backfillHtml(
 	) => Promise<{ html: string; inline: InlinePicture[] } | null>,
 	limit = 25,
 ) {
-	const rows = await db
-		.select({ id: poEmails.id, messageId: poEmails.messageId })
-		.from(poEmails)
-		.where(isNull(poEmails.bodyHtml))
-		.orderBy(desc(poEmails.receivedAt))
-		.limit(limit);
+	const rows = (
+		await db
+			.select({
+				id: poEmails.id,
+				messageId: poEmails.messageId,
+				receivedAt: poEmails.receivedAt,
+			})
+			.from(poEmails)
+			.where(isNull(poEmails.bodyHtml))
+			.orderBy(sql`random()`)
+			.limit(limit)
+	).sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+	let saved = 0;
 	for (const r of rows) {
-		// A failure leaves it for the next run.
-		const found = await read(r.messageId).catch(() => undefined);
-		if (found === undefined) continue;
-		await db.transaction((tx) =>
-			keepHtml(tx, r.id, found?.html ?? "", found?.inline ?? []),
-		);
+		try {
+			const found = await read(r.messageId);
+			await db.transaction((tx) =>
+				keepHtml(tx, r.id, found?.html ?? "", found?.inline ?? []),
+			);
+			saved++;
+		} catch {
+			// A failure leaves it for the next run.
+		}
 	}
-	return rows.length;
+	return saved;
 }
 
 // The HTML of one email, for reading it formatted.

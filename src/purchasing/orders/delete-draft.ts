@@ -73,8 +73,9 @@ export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 	});
 }
 
-// A draft is only thrown away once its files are off it (Undo couldn't
-// bring them back); ones already removed, and its upload links, go with it.
+// A draft or suggested PO is only thrown away once its files are off it (Undo
+// couldn't bring them back); ones already removed, and its upload links, go
+// with it, expired or not.
 async function dropFiles(tx: Db, id: number) {
 	const [live] = await tx
 		.select({ id: purchaseOrderFiles.id })
@@ -108,8 +109,10 @@ export async function restoreDraft(db: Db, draft: DeletedDraft) {
 				`Can't bring back ${poName(draft.id)}: its supplier has a new draft, ${poName(other.id)}`,
 			);
 		// A suggested PO is only a look at the suggestion; the draft takes its
-		// place.
+		// place. Its files and upload links go in this transaction too, so a
+		// refused restore leaves them where they were.
 		if (other) {
+			await dropFiles(tx, other.id);
 			await tx
 				.delete(purchaseOrderLines)
 				.where(eq(purchaseOrderLines.purchaseOrderId, other.id));
