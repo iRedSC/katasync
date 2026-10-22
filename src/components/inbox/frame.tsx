@@ -93,12 +93,15 @@ export function InboxFrame({
 			<div className="grid md:grid-cols-[12rem_minmax(0,1fr)]">
 				<nav className="flex gap-0.5 overflow-x-auto border-b p-2 md:flex-col md:overflow-visible md:border-r md:border-b-0">
 					{item(BUYERS)}
-					{item(PRECEDENTS)}
 					<Group>Marketplaces</Group>
 					{MARKET_FOLDERS.map(item)}
 					<Group>Purchasing</Group>
 					{PURCHASING_FOLDERS.map(item)}
-					<div className="md:mt-auto md:border-t md:pt-2">{item(RULES)}</div>
+					{/* What sorts the mail and what the reply agent follows. */}
+					<div className="flex gap-0.5 md:mt-auto md:flex-col md:border-t md:pt-2">
+						{item(PRECEDENTS)}
+						{item(RULES)}
+					</div>
 				</nav>
 				<div className="min-w-0">{children}</div>
 			</div>
