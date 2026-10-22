@@ -687,6 +687,13 @@
       "when": 1792685718191,
       "tag": "0097_back_ordered_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1792687357628,
+      "tag": "0098_inbox_folders_rules_read",
+      "breakpoints": true
     }
   ]
 }

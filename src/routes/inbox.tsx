@@ -1,75 +1,91 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { TabCount, tabClass } from "#/components/inbox/mail-pane";
+import { createFileRoute } from "@tanstack/react-router";
+import {
+	type InboxFolder,
+	isFolder,
+	isInboxFolder,
+	isMarketView,
+	isPurchasingView,
+	purchasingView,
+} from "#/components/inbox/folders";
+import { InboxFrame, MarketFilter } from "#/components/inbox/frame";
 import { MarketplaceBox } from "#/components/inbox/marketplace-box";
 import { PurchasingBox } from "#/components/inbox/purchasing-box";
-import { Card, Page } from "#/components/page";
+import { RulesEditor } from "#/components/inbox/rules-editor";
+import { Page } from "#/components/page";
 import { ListSkeleton } from "#/components/skeleton";
-import type { MarketView } from "#/inbox/market-mail";
+import type { Folder } from "#/inbox/rules";
 import { MARKETS, type Market } from "#/markets/market";
-import type { InboxView } from "#/purchasing/inbox/ingest";
-import { inboxCounts, listMarketMail } from "#/server/inbox";
+import { getMailRules, inboxCounts, listMarketMail } from "#/server/inbox";
 import { listPoEmails } from "#/server/purchasing";
 
 // Every mailbox katasync reads, as one mail app: the marketplaces' notices,
-// sorted so orders don't bury what needs someone, and suppliers' emails,
-// filed on POs. Each keeps its own views.
+// sorted by rules into folders so orders don't bury what needs someone, and
+// suppliers' emails, filed on POs. The folders sit beside the list; the
+// marketplace filter stays on top.
 
-type Search =
-	| {
-			box?: undefined;
-			view?: Exclude<MarketView, "attention">;
-			market?: Market;
-	  }
-	| { box: "purchasing"; view?: Exclude<InboxView, "to-file"> };
+type Search = {
+	folder?: Exclude<InboxFolder, "important">;
+	market?: Market;
+	// Rules: the one open, or a new one started from an email's sender.
+	rule?: number;
+	sender?: string;
+	to?: Folder;
+};
+
+// Links from before folders: ?box=purchasing&view=set-aside, ?view=orders.
+function legacy(s: Record<string, unknown>): unknown {
+	if (s.box === "purchasing")
+		return s.view === "filed"
+			? "on-po"
+			: s.view === "set-aside"
+				? "set-aside"
+				: "to-file";
+	return s.view === "attention" ? "important" : s.view;
+}
 
 export const Route = createFileRoute("/inbox")({
 	validateSearch: (s: Record<string, unknown>): Search => {
-		if (s.box === "purchasing")
-			return s.view === "set-aside" || s.view === "filed"
-				? { box: "purchasing", view: s.view }
-				: { box: "purchasing" };
+		const folder = s.folder ?? legacy(s);
 		return {
-			...(s.view === "orders" ||
-			s.view === "returns" ||
-			s.view === "updates" ||
-			s.view === "done"
-				? { view: s.view }
-				: {}),
+			...(isInboxFolder(folder) && folder !== "important" ? { folder } : {}),
 			...(MARKETS.includes(s.market as Market)
 				? { market: s.market as Market }
 				: {}),
+			...(folder === "rules" && typeof s.rule === "number"
+				? { rule: s.rule }
+				: {}),
+			...(folder === "rules" && typeof s.sender === "string"
+				? { sender: s.sender }
+				: {}),
+			...(folder === "rules" && isFolder(s.to) ? { to: s.to } : {}),
 		};
 	},
-	loaderDeps: ({ search }) =>
-		search.box === "purchasing"
-			? {
-					box: "purchasing" as const,
-					view: search.view ?? ("to-file" as const),
-					market: null,
-				}
-			: {
-					box: "marketplaces" as const,
-					view: search.view ?? ("attention" as const),
-					market: search.market ?? null,
-				},
-	loader: async ({ deps }) => {
-		const counts = inboxCounts();
-		return deps.box === "purchasing"
-			? {
-					box: deps.box,
-					view: deps.view,
-					page: await listPoEmails({ data: { view: deps.view } }),
-					counts: await counts,
-				}
-			: {
-					box: deps.box,
-					view: deps.view,
-					market: deps.market,
-					page: await listMarketMail({
-						data: { view: deps.view, market: deps.market },
-					}),
-					counts: await counts,
-				};
+	loaderDeps: ({ search }) => ({
+		folder: search.folder ?? ("important" as const),
+		market: search.market ?? null,
+	}),
+	loader: async ({ deps: { folder, market } }) => {
+		const counts = inboxCounts({ data: { market } });
+		if (folder === "rules")
+			return {
+				kind: "rules" as const,
+				rules: await getMailRules(),
+				counts: await counts,
+			};
+		if (isPurchasingView(folder))
+			return {
+				kind: "purchasing" as const,
+				folder,
+				page: await listPoEmails({ data: { view: purchasingView(folder) } }),
+				counts: await counts,
+			};
+		if (!isMarketView(folder)) throw new Error(`No folder ${folder}`);
+		return {
+			kind: "marketplaces" as const,
+			folder,
+			page: await listMarketMail({ data: { view: folder, market } }),
+			counts: await counts,
+		};
 	},
 	component: InboxPage,
 	pendingComponent: () => <ListSkeleton title="Inbox" width="wide" />,
@@ -77,38 +93,39 @@ export const Route = createFileRoute("/inbox")({
 
 function InboxPage() {
 	const d = Route.useLoaderData();
+	const { market, rule, sender, to } = Route.useSearch();
 	return (
 		<Page
 			title="Inbox"
 			width="wide"
 			actions={
-				<div className="flex gap-1 rounded-lg border p-0.5">
-					<Link
-						to="/inbox"
-						search={{}}
-						className={tabClass(d.box === "marketplaces")}
-					>
-						Marketplaces
-						<TabCount n={d.counts.attention} />
-					</Link>
-					<Link
-						to="/inbox"
-						search={{ box: "purchasing" }}
-						className={tabClass(d.box === "purchasing")}
-					>
-						Purchasing
-						<TabCount n={d.counts.toFile} />
-					</Link>
-				</div>
+				d.kind === "marketplaces" && (
+					<MarketFilter
+						folder={d.folder}
+						market={market ?? null}
+						check={d.page.check}
+					/>
+				)
 			}
 		>
-			<Card flush>
-				{d.box === "purchasing" ? (
-					<PurchasingBox view={d.view} page={d.page} />
-				) : (
-					<MarketplaceBox view={d.view} market={d.market} page={d.page} />
-				)}
-			</Card>
+			{d.kind === "marketplaces" ? (
+				<MarketplaceBox
+					view={d.folder}
+					market={market ?? null}
+					page={d.page}
+					counts={d.counts}
+				/>
+			) : d.kind === "purchasing" ? (
+				<PurchasingBox view={d.folder} page={d.page} counts={d.counts} />
+			) : (
+				<InboxFrame folder="rules" market={market ?? null} counts={d.counts}>
+					<RulesEditor
+						rules={d.rules}
+						open={rule ?? null}
+						draft={sender ? { sender, folder: to ?? null } : null}
+					/>
+				</InboxFrame>
+			)}
 		</Page>
 	);
 }

@@ -283,6 +283,16 @@ export async function fileEmail(
 }
 
 // About no PO (a newsletter, a quote request). Undone by setAside(…, false).
+// Read on the Inbox page, or back to unread.
+export async function setRead(db: Db, emailId: number, read: boolean) {
+	await emailRow(db, emailId);
+	await db
+		.update(poEmails)
+		.set({ readAt: read ? new Date() : null })
+		.where(eq(poEmails.id, emailId));
+	return { id: emailId, read };
+}
+
 export async function setAside(db: Db, emailId: number, aside = true) {
 	const email = await emailRow(db, emailId);
 	if (email.purchaseOrderId !== null)
@@ -330,6 +340,7 @@ const summary = {
 	purchaseOrderId: poEmails.purchaseOrderId,
 	matchedBy: poEmails.matchedBy,
 	setAsideAt: poEmails.setAsideAt,
+	readAt: poEmails.readAt,
 	fromAddress: poEmails.fromAddress,
 	fromName: poEmails.fromName,
 	subject: poEmails.subject,
@@ -425,11 +436,16 @@ export async function inboxEmails(db: Db, view: InboxView, limit = 100) {
 	return withAttachments(db, rows);
 }
 
+// Emails not on a PO, waiting and set aside, and of those how many are
+// unread (what the Inbox page counts).
 export async function countUnfiled(db: Db) {
+	const unread = sql`${poEmails.readAt} is null`;
 	const [row] = await db
 		.select({
 			toFile: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is null)::int`,
 			setAside: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is not null)::int`,
+			toFileUnread: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is null and ${unread})::int`,
+			setAsideUnread: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is not null and ${unread})::int`,
 		})
 		.from(poEmails)
 		.where(isNull(poEmails.purchaseOrderId));

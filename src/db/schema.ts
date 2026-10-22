@@ -22,6 +22,7 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
+import type { Condition } from "#/inbox/rules";
 import type { Standing } from "#/markets/standing";
 
 // Raw bytes, for files kept in the database (label PDFs).
@@ -1444,6 +1445,8 @@ export const poEmails = pgTable(
 		matchedBy: poEmailMatch(),
 		// When someone decided it's about no PO.
 		setAsideAt: timestamp({ withTimezone: true }),
+		// When it was read on the Inbox page; null is unread.
+		readAt: timestamp({ withTimezone: true }),
 		fromAddress: text().notNull(),
 		fromName: text(),
 		// Every To and Cc address, lowercased.
@@ -2238,14 +2241,23 @@ export const marketStanding = pgTable("market_standing", {
 	erroredAt: timestamp({ withTimezone: true }),
 });
 
-// What a marketplace email is about, so order notices never bury the ones
-// that need someone: attention (policy, violations, disputes, account
-// changes), orders (sold, ship, cancel), returns (return requests, refunds),
-// updates (payouts, news, the rest). Sorted when read in (src/inbox/market-mail.ts); staff can move one.
+// Retired by market_email_folder. Kept, nullable, so the app before folders
+// keeps working while a deploy migrates; dropped once that's gone.
 export const marketEmailLabel = pgEnum("market_email_label", [
 	"attention",
 	"orders",
 	"returns",
+	"updates",
+]);
+
+// Which folder a marketplace email sits in: orders (sold, ship, cancel),
+// returns (return requests, refunds), violations (policy, listings removed,
+// account health), updates (payouts, news, the rest). Sorted by mail_rules
+// (src/inbox/rules.ts); staff can move one. Important is apart from this.
+export const marketEmailFolder = pgEnum("market_email_folder", [
+	"orders",
+	"returns",
+	"violations",
 	"updates",
 ]);
 
@@ -2259,12 +2271,24 @@ export const marketEmails = pgTable(
 		messageId: text().notNull(),
 		// Which marketplace sent it, by its sender; null for anyone else.
 		market: channel(),
-		label: marketEmailLabel().notNull(),
-		// When someone moved it to its label. Until then the sorter may move it
-		// as its rules change; after, it never does.
+		// Retired; see marketEmailLabel.
+		label: marketEmailLabel(),
+		// Updates (where no rule moves it) for one read in by the app before
+		// folders, until the rules sort it.
+		folder: marketEmailFolder().notNull().default("updates"),
+		// When someone moved it to its folder. Until then the rules may move it
+		// as they change; after, they never do.
 		relabelledAt: timestamp({ withTimezone: true }),
+		// Needs someone, whatever its folder.
+		important: boolean().notNull().default(false),
+		// When someone marked it important or not, as relabelledAt is for its
+		// folder: the rules leave it after.
+		importanceSetAt: timestamp({ withTimezone: true }),
 		// When someone was done with it. Undone by clearing it.
 		doneAt: timestamp({ withTimezone: true }),
+		// When it was read: opened, marked, or arriving read by a rule. Null
+		// is unread.
+		readAt: timestamp({ withTimezone: true }),
 		fromAddress: text().notNull(),
 		fromName: text(),
 		// Every To and Cc address, lowercased.
@@ -2280,8 +2304,41 @@ export const marketEmails = pgTable(
 	(t) => [
 		uniqueIndex("market_emails_message_id").on(t.messageId),
 		index("market_emails_open_idx")
-			.on(t.label, t.receivedAt)
+			.on(t.folder, t.receivedAt)
 			.where(sql`${t.doneAt} is null`),
+	],
+);
+
+// The rules that sort marketplace emails, in order (src/inbox/rules.ts).
+// Each moves to a folder, marks important, or both.
+export const mailRules = pgTable(
+	"mail_rules",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		// Smaller runs first; the first rule that moves an email decides.
+		position: integer().notNull(),
+		name: text().notNull(),
+		// Every one must hold; checked by ruleSchema where they're written.
+		conditions: jsonb().$type<Condition[]>().notNull(),
+		folder: marketEmailFolder(),
+		important: boolean().notNull().default(false),
+		// Matching emails arrive read. Only on arrival: read is staff's, so
+		// changing rules never marks mail read or unread.
+		markRead: boolean().notNull().default(false),
+		// Who wrote it last: staff on the page, or Claude over MCP.
+		by: text().$type<"staff" | "claude">().notNull().default("staff"),
+		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			"mail_rules_does_something",
+			sql`${t.folder} is not null or ${t.important} or ${t.markRead}`,
+		),
+		check("mail_rules_by_known", sql`${t.by} in ('staff', 'claude')`),
+		check(
+			"mail_rules_has_conditions",
+			sql`jsonb_array_length(${t.conditions}) > 0`,
+		),
 	],
 );
 

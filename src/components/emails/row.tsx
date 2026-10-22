@@ -12,6 +12,7 @@ export function EmailRow({
 	onOpen,
 	onMenu,
 	tag,
+	unread,
 }: {
 	email: ReadableEmail;
 	selected: boolean;
@@ -19,6 +20,8 @@ export function EmailRow({
 	// Right-clicked, for the list's menu.
 	onMenu?: () => void;
 	tag?: ReactNode;
+	// Bold, with a dot, until it's read.
+	unread?: boolean;
 }) {
 	const ref = useRef<HTMLLIElement>(null);
 	useEffect(() => {
@@ -38,7 +41,17 @@ export function EmailRow({
 				)}
 			>
 				<span className="flex items-baseline gap-2">
-					<span className="min-w-0 flex-1 truncate font-semibold">
+					{unread && (
+						<span className="size-2 shrink-0 self-center rounded-full bg-primary">
+							<span className="sr-only">Unread</span>
+						</span>
+					)}
+					<span
+						className={cn(
+							"min-w-0 flex-1 truncate",
+							unread === false ? "font-medium" : "font-semibold",
+						)}
+					>
 						{e.fromName ?? e.fromAddress}
 					</span>
 					{e.attachments.length > 0 && (
@@ -48,7 +61,9 @@ export function EmailRow({
 						{formatDay(e.receivedAt)}
 					</span>
 				</span>
-				<span className="block truncate">{e.subject || "(no subject)"}</span>
+				<span className={cn("block truncate", unread && "font-semibold")}>
+					{e.subject || "(no subject)"}
+				</span>
 				<span className="flex items-center gap-2">
 					<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
 						{snippet(e.body)}

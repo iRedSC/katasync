@@ -1,5 +1,5 @@
 import { ArrowLeft } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
 	EmailReader,
 	type FileUrl,
@@ -24,6 +24,8 @@ export function MailPane<E extends ReadableEmail>({
 	actionsOf,
 	keysOf,
 	menuOf,
+	unreadOf,
+	onShown,
 	box,
 	fileUrl,
 	empty,
@@ -36,6 +38,9 @@ export function MailPane<E extends ReadableEmail>({
 	keysOf?: (e: E) => Record<string, () => void>;
 	// The right-click menu's items for an email in the list.
 	menuOf?: (e: E) => ReactNode;
+	// Unread ones show bold; one open a moment counts as read.
+	unreadOf?: (e: E) => boolean;
+	onShown?: (e: E) => void;
 	fileUrl?: FileUrl;
 	empty: ReactNode;
 }) {
@@ -54,6 +59,20 @@ export function MailPane<E extends ReadableEmail>({
 		const next = emails[index + by];
 		if (next) setSelectedId(next.id);
 	};
+	// Once per email opened: marking it unread again while it's open sticks.
+	const shown = useRef(onShown);
+	shown.current = onShown;
+	const latest = useRef(selected);
+	latest.current = selected;
+	const openId = selected?.id;
+	useEffect(() => {
+		if (openId === undefined) return;
+		const timer = setTimeout(() => {
+			if (latest.current?.id === openId) shown.current?.(latest.current);
+		}, 1000);
+		return () => clearTimeout(timer);
+	}, [openId]);
+
 	useHotkeys({
 		j: () => step(1),
 		k: () => step(-1),
@@ -62,7 +81,7 @@ export function MailPane<E extends ReadableEmail>({
 
 	if (selected === null) return empty;
 	return (
-		<div className="grid md:h-[calc(100svh-14rem)] md:min-h-[30rem] md:grid-cols-[24rem_minmax(0,1fr)]">
+		<div className="grid md:h-[calc(100svh-14rem)] md:min-h-[30rem] md:grid-cols-[22rem_minmax(0,1fr)]">
 			<ContextMenu>
 				<ContextMenuTrigger asChild disabled={!menuOf}>
 					<ul
@@ -82,6 +101,7 @@ export function MailPane<E extends ReadableEmail>({
 								}}
 								onMenu={() => setMenuFor(e)}
 								tag={tagOf?.(e)}
+								unread={unreadOf?.(e)}
 							/>
 						))}
 					</ul>
@@ -122,8 +142,3 @@ export const tabClass = (active: boolean) =>
 			? "bg-surface-strong text-foreground"
 			: "text-muted-foreground hover:bg-surface hover:text-foreground",
 	);
-
-// How many wait in a tab, beside its name.
-export function TabCount({ n }: { n: number }) {
-	return <span className="text-muted-foreground tabular-nums">{n}</span>;
-}

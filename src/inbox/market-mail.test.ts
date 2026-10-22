@@ -4,19 +4,19 @@ import { marketEmails } from "#/db/schema";
 import type { InboxMessage } from "#/purchasing/inbox/graph";
 import { createTestDb } from "#/test/db";
 import {
-	countAttention,
+	countImportant,
 	ingestMarketMail,
-	labelOf,
 	marketMailPage,
 	marketOf,
+	moveTo,
 	readMarketMail,
-	relabel,
-	resort,
 	setDone,
+	setImportant,
 } from "./market-mail";
+import { createRule, listRules, resort } from "./rule-store";
 
-describe("sorting", () => {
-	test("by sender", () => {
+describe("by sender", () => {
+	test("which marketplace", () => {
 		expect(marketOf("seller-notification@amazon.com")).toBe("amazon");
 		expect(marketOf("donotreply@marketplace.amazon.com")).toBe("amazon");
 		expect(marketOf("ebay@ebay.com")).toBe("ebay");
@@ -25,25 +25,6 @@ describe("sorting", () => {
 		// Lookalikes aren't the marketplace.
 		expect(marketOf("deals@notamazon.com")).toBeNull();
 		expect(marketOf("someone@gmail.com")).toBeNull();
-	});
-
-	test("by subject: what needs someone before the day-to-day", () => {
-		expect(labelOf("Policy Warning: Listing removed")).toBe("attention");
-		expect(labelOf("Your Amazon.com listing has been suppressed")).toBe(
-			"attention",
-		);
-		expect(labelOf("A buyer opened a dispute on order 123")).toBe("attention");
-		expect(labelOf("Action required: verify your identity")).toBe("attention");
-		expect(labelOf("Activate Your Account as Shop User")).toBe("attention");
-		expect(labelOf("Sold, ship now: Drywall Banjo")).toBe("orders");
-		expect(labelOf("You made a sale!")).toBe("orders");
-		expect(labelOf("Order 112-3 has been cancelled")).toBe("orders");
-		expect(labelOf("Refund Initiated for Order 111-2762240")).toBe("returns");
-		expect(labelOf("Return request for Drywall Banjo")).toBe("returns");
-		// A return that turned into a claim needs someone.
-		expect(labelOf("A-to-z claim on your return")).toBe("attention");
-		expect(labelOf("Your payout is on its way")).toBe("updates");
-		expect(labelOf("New features for sellers")).toBe("updates");
 	});
 });
 
@@ -92,16 +73,29 @@ describe("the mailbox", () => {
 		// The next run sees them again and keeps nothing twice.
 		expect((await ingestMarketMail(db, [warning], read)).read).toBe(0);
 
-		const page = await marketMailPage(db, "attention", null);
+		const page = await marketMailPage(db, "important", null);
+		// The sale arrives read (the default orders rule), so isn't counted.
 		expect(page.counts).toEqual({
-			attention: 1,
-			orders: 1,
+			important: 1,
+			violations: 1,
+			orders: 0,
 			returns: 0,
 			updates: 0,
 		});
 		expect(page.emails).toEqual([
 			expect.objectContaining({
 				market: "amazon",
+				folder: "violations",
+				important: true,
+				why: {
+					folder: {
+						rule: expect.any(Number),
+						name: "Violations and account health",
+					},
+					important: [
+						{ rule: expect.any(Number), name: "Violations and account health" },
+					],
+				},
 				subject: "Policy warning on your listing",
 				body: "Details",
 				attachments: [
@@ -109,7 +103,7 @@ describe("the mailbox", () => {
 				],
 			}),
 		]);
-		expect(await countAttention(db)).toBe(1);
+		expect(await countImportant(db)).toBe(1);
 	});
 
 	test("done leaves its list; moved stays moved; the market filter narrows", async () => {
@@ -122,12 +116,13 @@ describe("the mailbox", () => {
 			read,
 		);
 		const [amazon, tiktok] = (
-			await marketMailPage(db, "attention", null)
+			await marketMailPage(db, "important", null)
 		).emails.sort((a, b) => a.id - b.id);
 		await setDone(db, amazon.id, true);
-		await relabel(db, tiktok.id, "orders");
+		await moveTo(db, tiktok.id, "orders");
+		await setImportant(db, tiktok.id, false);
 
-		expect((await marketMailPage(db, "attention", null)).emails).toEqual([]);
+		expect((await marketMailPage(db, "important", null)).emails).toEqual([]);
 		expect(
 			(await marketMailPage(db, "done", null)).emails.map((e) => e.id),
 		).toEqual([amazon.id]);
@@ -137,7 +132,7 @@ describe("the mailbox", () => {
 
 		await setDone(db, amazon.id, false);
 		expect(
-			(await marketMailPage(db, "attention", "amazon")).counts.attention,
+			(await marketMailPage(db, "important", "amazon")).counts.important,
 		).toBe(1);
 	});
 
@@ -167,7 +162,7 @@ describe("the mailbox", () => {
 		expect(result).toEqual({
 			error: expect.stringContaining("Access is denied"),
 		});
-		const page = await marketMailPage(db, "attention", null);
+		const page = await marketMailPage(db, "important", null);
 		expect(page.connected).toBe(true);
 		expect(page.check?.error).toContain("Access is denied");
 	});
@@ -203,7 +198,7 @@ describe("the mailbox", () => {
 			db: () => db,
 		});
 		expect(result).toMatchObject({ read: 0 });
-		const page = await marketMailPage(db, "attention", null);
+		const page = await marketMailPage(db, "important", null);
 		expect(page.check?.error).toContain("You made a sale");
 	});
 
@@ -218,8 +213,8 @@ describe("the mailbox", () => {
 	});
 });
 
-describe("re-sorting", () => {
-	test("mail sorted by older rules moves; mail staff moved stays", async () => {
+describe("by hand", () => {
+	test("moved or marked stays so as rules change; handing back re-sorts", async () => {
 		await ingestMarketMail(
 			db,
 			[
@@ -231,13 +226,38 @@ describe("re-sorting", () => {
 		const [first, second] = (await db.select().from(marketEmails)).sort(
 			(a, b) => a.id - b.id,
 		);
-		// As if both came in before Returns existed, and staff then moved one.
-		await db.update(marketEmails).set({ label: "orders" });
-		await relabel(db, second.id, "updates");
+		expect(first.folder).toBe("returns");
+		await moveTo(db, second.id, "updates");
+		await setImportant(db, second.id, true);
 
-		expect(await resort(db)).toBe(1);
+		// A rule that sends refunds elsewhere moves the one left to the rules.
+		await createRule(
+			db,
+			{
+				name: "Refunds are orders",
+				conditions: [{ field: "subject", has: ["refund*"], not: false }],
+				folder: "orders",
+				important: false,
+			},
+			"staff",
+			(await listRules(db))[0].id,
+		);
 		const after = await db.select().from(marketEmails);
-		expect(after.find((e) => e.id === first.id)?.label).toBe("returns");
-		expect(after.find((e) => e.id === second.id)?.label).toBe("updates");
+		const find = (id: number) => after.find((e) => e.id === id);
+		expect(find(first.id)).toMatchObject({
+			folder: "orders",
+			important: false,
+		});
+		expect(find(second.id)).toMatchObject({
+			folder: "updates",
+			important: true,
+		});
+
+		await moveTo(db, second.id, null);
+		await setImportant(db, second.id, null);
+		expect(
+			(await db.select().from(marketEmails)).find((e) => e.id === second.id),
+		).toMatchObject({ folder: "orders", important: false, relabelledAt: null });
+		expect(await resort(db)).toEqual({ moved: 0, marked: 0 });
 	});
 });

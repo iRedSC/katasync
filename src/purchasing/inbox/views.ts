@@ -63,14 +63,15 @@ function recentPos(db: Db) {
 // One list of the inbox page, each email with the POs it's likely about
 // (named in it first, then its supplier's), and how many wait in each list.
 export async function inboxPage(db: Db, view: InboxView) {
-	const [emails, pos, counts] = await Promise.all([
+	const [emails, pos, unfiled] = await Promise.all([
 		inboxEmails(db, view),
 		recentPos(db),
 		countUnfiled(db),
 	]);
 	return {
 		connected: inboxAddress() !== null,
-		counts,
+		// Unread, as the Inbox page counts.
+		counts: { toFile: unfiled.toFileUnread, setAside: unfiled.setAsideUnread },
 		emails: emails.map((e) => {
 			const mentions = mentionedPos(`${e.subject}\n${e.body}`);
 			const rank = (p: (typeof pos)[number]) => {

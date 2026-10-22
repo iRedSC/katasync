@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Inbox, Undo2, X } from "lucide-react";
+import { Inbox, Mail, MailOpen, Undo2, X } from "lucide-react";
 import { PoPicker } from "#/components/emails/po-picker";
 import { EmptyState } from "#/components/page";
 import { Button } from "#/components/ui/button";
@@ -8,10 +8,17 @@ import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import type { InboxView } from "#/purchasing/inbox/ingest";
 import type { InboxPage } from "#/purchasing/inbox/views";
-import { filePoEmail, setAsidePoEmail } from "#/server/purchasing";
-import { MailPane, TabCount, tabClass } from "./mail-pane";
+import type { InboxCounts } from "#/server/inbox";
+import {
+	filePoEmail,
+	setAsidePoEmail,
+	setPoEmailRead,
+} from "#/server/purchasing";
+import { type PurchasingView, purchasingView } from "./folders";
+import { InboxFrame } from "./frame";
+import { MailPane } from "./mail-pane";
 
-// The purchasing mailbox on the Inbox page: suppliers' emails, filed on
+// The purchasing folders on the Inbox page: suppliers' emails, filed on
 // their POs. Linking one opens the next.
 
 type Email = InboxPage["emails"][number];
@@ -58,8 +65,11 @@ function moved(
 	pos: InboxPage["pos"],
 ) {
 	const from = viewOf(placeOf(email));
+	// Only unread emails are counted.
 	const count = (v: InboxView) =>
-		(v === viewOf(to) ? 1 : 0) - (v === from ? 1 : 0);
+		email.readAt !== null
+			? 0
+			: (v === viewOf(to) ? 1 : 0) - (v === from ? 1 : 0);
 	return inbox.patch(view, (d) => ({
 		...d,
 		counts: {
@@ -82,19 +92,34 @@ function moved(
 	}));
 }
 
-const tabs = [
-	{ view: "to-file", label: "To file" },
-	{ view: "set-aside", label: "Set aside" },
-	{ view: "filed", label: "On a PO" },
-] as const;
+// Read or unread: the row changes, and the count of its list with it.
+function marked(view: InboxView, email: Email, read: boolean) {
+	const place = viewOf(placeOf(email));
+	return inbox.patch(view, (d) => {
+		const by = (email.readAt === null) === read ? (read ? -1 : 1) : 0;
+		return {
+			...d,
+			counts: {
+				toFile: d.counts.toFile + (place === "to-file" ? by : 0),
+				setAside: d.counts.setAside + (place === "set-aside" ? by : 0),
+			},
+			emails: d.emails.map((e) =>
+				e.id === email.id ? { ...e, readAt: read ? new Date() : null } : e,
+			),
+		};
+	});
+}
 
 export function PurchasingBox({
-	view,
+	view: folder,
 	page,
+	counts,
 }: {
-	view: InboxView;
+	view: PurchasingView;
 	page: InboxPage;
+	counts: InboxCounts;
 }) {
+	const view = purchasingView(folder);
 	const d = inbox.useData(view, page);
 
 	async function move(email: Email, to: Place) {
@@ -118,52 +143,57 @@ export function PurchasingBox({
 		});
 	}
 
+	const read = (email: Email, isRead: boolean) =>
+		optimism.change({
+			label: isRead ? "Read" : "Unread",
+			patch: marked(view, email, isRead),
+			send: () => setPoEmailRead({ data: { id: email.id, read: isRead } }),
+		});
+
 	return (
-		<>
-			<div className="flex flex-wrap gap-1 border-b p-2">
-				{tabs.map((t) => (
-					<Link
-						key={t.view}
-						to="/inbox"
-						search={{
-							box: "purchasing",
-							...(t.view === "to-file" ? {} : { view: t.view }),
-						}}
-						className={tabClass(view === t.view)}
-					>
-						{t.label}
-						{t.view !== "filed" && (
-							<TabCount
-								n={t.view === "to-file" ? d.counts.toFile : d.counts.setAside}
-							/>
-						)}
-					</Link>
-				))}
-			</div>
+		<InboxFrame
+			folder={folder}
+			market={null}
+			counts={{ ...counts, ...d.counts }}
+		>
 			<MailPane
 				box="purchasing"
 				emails={d.emails}
 				tagOf={(e) => e.purchaseOrderId !== null && `PO ${e.purchaseOrderId}`}
+				unreadOf={(e) => e.readAt === null}
+				onShown={(e) => e.readAt === null && read(e, true)}
+				keysOf={(e) => ({ u: () => read(e, e.readAt === null) })}
 				actionsOf={(e) => (
 					<Actions email={e} pos={d.pos} onMove={(to) => move(e, to)} />
 				)}
 				menuOf={(e) => {
 					const place = placeOf(e);
-					return place === "to-file" ? (
-						<ContextMenuItem onSelect={() => move(e, "set-aside")}>
-							<X />
-							Not a PO
-						</ContextMenuItem>
-					) : (
-						<ContextMenuItem onSelect={() => move(e, "to-file")}>
-							<Undo2 />
-							{place === "set-aside" ? "Back to To file" : "Take off PO"}
-						</ContextMenuItem>
+					return (
+						<>
+							{place === "to-file" ? (
+								<ContextMenuItem onSelect={() => move(e, "set-aside")}>
+									<X />
+									Not a PO
+								</ContextMenuItem>
+							) : (
+								<ContextMenuItem onSelect={() => move(e, "to-file")}>
+									<Undo2 />
+									{place === "set-aside" ? "Back to To file" : "Take off PO"}
+								</ContextMenuItem>
+							)}
+							<ContextMenuItem
+								shortcut="U"
+								onSelect={() => read(e, e.readAt === null)}
+							>
+								{e.readAt === null ? <MailOpen /> : <Mail />}
+								{e.readAt === null ? "Mark read" : "Mark unread"}
+							</ContextMenuItem>
+						</>
 					);
 				}}
 				empty={<Empty view={view} connected={d.connected} />}
 			/>
-		</>
+		</InboxFrame>
 	);
 }
 

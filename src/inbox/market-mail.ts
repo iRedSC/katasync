@@ -3,20 +3,19 @@ import type { Db } from "#/db/client";
 import {
 	mailboxChecks,
 	marketEmailAttachments,
-	marketEmailLabel,
 	marketEmails,
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
 import type { InboxMessage, InlinePicture } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
 import { pointPictures } from "./html";
+import { listRules, lockRules, resort } from "./rule-store";
+import { FOLDERS, type Folder, type Rule, sortEmail } from "./rules";
 
 // The marketplaces mailbox in katasync: each notice read in from Microsoft
-// 365, sorted by marketplace and into a label, and worked through like a
-// mail app (done, or moved to another label). Server only.
-
-export type MarketLabel = (typeof marketEmailLabel.enumValues)[number];
-export const MARKET_LABELS = marketEmailLabel.enumValues;
+// 365, sorted by marketplace and by the rules into a folder, some marked
+// important, and worked through like a mail app (done, moved, marked).
+// Server only.
 
 // Which marketplace an address belongs to, by its domain.
 const SENDERS: [RegExp, Market][] = [
@@ -29,27 +28,6 @@ const SENDERS: [RegExp, Market][] = [
 export function marketOf(fromAddress: string): Market | null {
 	const address = fromAddress.trim().toLowerCase();
 	return SENDERS.find(([pattern]) => pattern.test(address))?.[1] ?? null;
-}
-
-// What needs someone, in the words marketplaces use for it. Checked first,
-// so "dispute on order 123" is attention, not an order.
-const ATTENTION =
-	/\b(violat\w*|polic(y|ies)|suspend\w*|deactivat\w*|suppress\w*|remov(ed|al)|warning|action required|act now|account health|at risk|dispute\w*|chargeback\w*|claim\w*|a-to-z|appeal\w*|infring\w*|counterfeit|inauthentic|restrict\w*|blocked|frozen|freez\w*|reinstat\w*|penalt\w*|defect\w*|verif(y|ication)|activat\w*|document request|intellectual property|unpaid item|negative feedback|case)\b/i;
-// Things coming back and money going back.
-const RETURNS =
-	/\b(returns?|returned|return request\w*|refund\w*|rma|replacement)\b/i;
-// The day-to-day of selling.
-const ORDERS =
-	/\b(orders?|sold|you made a sale|ship(ped|ment|ping)?|deliver\w*|cancel\w*|buyer message|purchase)\b/i;
-
-// Which label a new email gets. Only the subject decides: bodies carry
-// footers ("see our return policy") that would sort everything as
-// attention.
-export function labelOf(subject: string): MarketLabel {
-	if (ATTENTION.test(subject)) return "attention";
-	if (RETURNS.test(subject)) return "returns";
-	if (ORDERS.test(subject)) return "orders";
-	return "updates";
 }
 
 // Reads new emails in: skips ones already kept, keeps each with its files,
@@ -77,13 +55,23 @@ export async function ingestMarketMail(
 		known.add(m.messageId);
 		try {
 			const content = await read(m.graphId);
+			const market = marketOf(m.fromAddress);
 			await db.transaction(async (tx) => {
+				// Sorted under the lock, so a rule saved meanwhile isn't missed.
+				await lockRules(tx);
+				const sorted = sortEmail(await listRules(tx), {
+					...m,
+					body: content.body,
+					market,
+				});
 				const [row] = await tx
 					.insert(marketEmails)
 					.values({
 						messageId: m.messageId,
-						market: marketOf(m.fromAddress),
-						label: labelOf(m.subject),
+						market,
+						folder: sorted.folder,
+						important: sorted.important,
+						readAt: sorted.read ? new Date() : null,
 						fromAddress: m.fromAddress,
 						fromName: m.fromName,
 						recipients: m.recipients,
@@ -118,30 +106,6 @@ export async function ingestMarketMail(
 	return { read: count, problems };
 }
 
-// Sorts again what the rules now label differently (a new label, a better
-// rule), leaving alone anything staff moved. Returns how many moved.
-export async function resort(db: Db) {
-	const rows = await db
-		.select({
-			id: marketEmails.id,
-			subject: marketEmails.subject,
-			label: marketEmails.label,
-		})
-		.from(marketEmails)
-		.where(isNull(marketEmails.relabelledAt));
-	let moved = 0;
-	for (const r of rows) {
-		const label = labelOf(r.subject);
-		if (label === r.label) continue;
-		await db
-			.update(marketEmails)
-			.set({ label })
-			.where(and(eq(marketEmails.id, r.id), isNull(marketEmails.relabelledAt)));
-		moved++;
-	}
-	return moved;
-}
-
 // Records how reading a mailbox went: a time when it worked, the error
 // when it didn't (the last success stays).
 export async function recordCheck(
@@ -167,20 +131,57 @@ export async function newestMarketEmail(db: Db) {
 	return row?.at ? new Date(row.at) : null;
 }
 
-// A view of the page: the open emails with one label, or those done.
-export type MarketView = MarketLabel | "done";
+// A view of the page: the open emails that are important, or in one folder,
+// or those done.
+export type MarketView = "important" | Folder | "done";
+export const MARKET_VIEWS = ["important", ...FOLDERS, "done"] as const;
 
 const summary = {
 	id: marketEmails.id,
 	market: marketEmails.market,
-	label: marketEmails.label,
+	folder: marketEmails.folder,
+	important: marketEmails.important,
+	relabelledAt: marketEmails.relabelledAt,
+	importanceSetAt: marketEmails.importanceSetAt,
 	doneAt: marketEmails.doneAt,
+	readAt: marketEmails.readAt,
 	fromAddress: marketEmails.fromAddress,
 	fromName: marketEmails.fromName,
 	subject: marketEmails.subject,
 	body: marketEmails.body,
 	receivedAt: marketEmails.receivedAt,
 };
+
+// Why an email sits where it does: moved or marked by hand, or the rule that
+// put it there (null: no rule moved it, so Updates).
+export type Why = {
+	folder: "by-hand" | { rule: number; name: string } | null;
+	important: "by-hand" | { rule: number; name: string }[];
+};
+
+function why(
+	rules: Rule[],
+	e: Parameters<typeof sortEmail>[1] & {
+		relabelledAt: Date | null;
+		importanceSetAt: Date | null;
+	},
+): Why {
+	const s = sortEmail(rules, e);
+	const named = (id: number) => ({
+		rule: id,
+		name: rules.find((r) => r.id === id)?.name ?? "",
+	});
+	return {
+		folder:
+			e.relabelledAt !== null
+				? "by-hand"
+				: s.folderRule === null
+					? null
+					: named(s.folderRule),
+		important:
+			e.importanceSetAt !== null ? "by-hand" : s.importantRules.map(named),
+	};
+}
 
 export async function marketMailPage(
 	db: Db,
@@ -191,10 +192,15 @@ export async function marketMailPage(
 	const where = and(
 		view === "done"
 			? isNotNull(marketEmails.doneAt)
-			: and(isNull(marketEmails.doneAt), eq(marketEmails.label, view)),
+			: and(
+					isNull(marketEmails.doneAt),
+					view === "important"
+						? eq(marketEmails.important, true)
+						: eq(marketEmails.folder, view),
+				),
 		market ? eq(marketEmails.market, market) : undefined,
 	);
-	const [rows, counts, [check]] = await Promise.all([
+	const [rows, counts, [check], rules] = await Promise.all([
 		db
 			.select(summary)
 			.from(marketEmails)
@@ -205,18 +211,21 @@ export async function marketMailPage(
 			.limit(limit),
 		db
 			.select({
-				label: marketEmails.label,
+				folder: marketEmails.folder,
 				market: marketEmails.market,
 				n: sql<number>`count(*)::int`,
+				important: sql<number>`(count(*) filter (where ${marketEmails.important}))::int`,
 			})
 			.from(marketEmails)
-			.where(isNull(marketEmails.doneAt))
-			.groupBy(marketEmails.label, marketEmails.market),
+			.where(and(isNull(marketEmails.doneAt), isNull(marketEmails.readAt)))
+			.groupBy(marketEmails.folder, marketEmails.market),
 		db
 			.select()
 			.from(mailboxChecks)
 			.where(eq(mailboxChecks.mailbox, "marketplaces")),
+		listRules(db),
 	]);
+	const shown = counts.filter((c) => !market || c.market === market);
 	const files =
 		rows.length === 0
 			? []
@@ -243,17 +252,20 @@ export async function marketMailPage(
 	return {
 		connected: Boolean(process.env.MARKETPLACE_INBOX?.trim()),
 		check: check ?? null,
-		// Open emails per label, for the tabs, within the market shown.
-		counts: Object.fromEntries(
-			MARKET_LABELS.map((l) => [
-				l,
-				counts
-					.filter((c) => c.label === l && (!market || c.market === market))
-					.reduce((s, c) => s + c.n, 0),
-			]),
-		) as Record<MarketLabel, number>,
-		emails: rows.map((r) => ({
+		// Unread open emails per folder, and important, within the market
+		// shown.
+		counts: {
+			important: shown.reduce((s, c) => s + c.important, 0),
+			...(Object.fromEntries(
+				FOLDERS.map((f) => [
+					f,
+					shown.filter((c) => c.folder === f).reduce((s, c) => s + c.n, 0),
+				]),
+			) as Record<Folder, number>),
+		},
+		emails: rows.map(({ relabelledAt, importanceSetAt, ...r }) => ({
 			...r,
+			why: why(rules, { ...r, relabelledAt, importanceSetAt }),
 			attachments: files
 				.filter((f) => f.emailId === r.id)
 				.map(({ emailId: _, ...f }) => f),
@@ -263,7 +275,7 @@ export async function marketMailPage(
 
 export type MarketMailPage = Awaited<ReturnType<typeof marketMailPage>>;
 
-// Done with it, or back to its label.
+// Done with it, or back to its folder.
 export async function setDone(db: Db, id: number, done: boolean) {
 	const [row] = await db
 		.update(marketEmails)
@@ -274,24 +286,68 @@ export async function setDone(db: Db, id: number, done: boolean) {
 	return row;
 }
 
-// Moves it to another label; the sorter won't move it back.
-export async function relabel(db: Db, id: number, label: MarketLabel) {
+// Read it, or back to unread.
+export async function setRead(db: Db, id: number, read: boolean) {
 	const [row] = await db
 		.update(marketEmails)
-		.set({ label, relabelledAt: new Date() })
+		.set({ readAt: read ? new Date() : null })
 		.where(eq(marketEmails.id, id))
 		.returning({ id: marketEmails.id });
 	if (!row) throw new Error(`There's no marketplace email ${id}`);
 	return row;
 }
 
-// Open emails needing someone, for the sidebar.
-export async function countAttention(db: Db) {
+// Moves it to another folder, where the rules won't move it from; null hands
+// its folder back to the rules.
+export async function moveTo(db: Db, id: number, folder: Folder | null) {
+	return db.transaction(async (tx) => {
+		const [row] = await tx
+			.update(marketEmails)
+			.set(
+				folder ? { folder, relabelledAt: new Date() } : { relabelledAt: null },
+			)
+			.where(eq(marketEmails.id, id))
+			.returning({ id: marketEmails.id });
+		if (!row) throw new Error(`There's no marketplace email ${id}`);
+		if (!folder) await resort(tx, [id]);
+		return row;
+	});
+}
+
+// Marks it important or not, which the rules won't change back; null hands
+// that back to the rules.
+export async function setImportant(
+	db: Db,
+	id: number,
+	important: boolean | null,
+) {
+	return db.transaction(async (tx) => {
+		const [row] = await tx
+			.update(marketEmails)
+			.set(
+				important === null
+					? { importanceSetAt: null }
+					: { important, importanceSetAt: new Date() },
+			)
+			.where(eq(marketEmails.id, id))
+			.returning({ id: marketEmails.id });
+		if (!row) throw new Error(`There's no marketplace email ${id}`);
+		if (important === null) await resort(tx, [id]);
+		return row;
+	});
+}
+
+// Unread open important emails, for the sidebar.
+export async function countImportant(db: Db) {
 	const [row] = await db
 		.select({ n: sql<number>`count(*)::int` })
 		.from(marketEmails)
 		.where(
-			and(isNull(marketEmails.doneAt), eq(marketEmails.label, "attention")),
+			and(
+				isNull(marketEmails.doneAt),
+				isNull(marketEmails.readAt),
+				eq(marketEmails.important, true),
+			),
 		);
 	return row?.n ?? 0;
 }
@@ -422,7 +478,7 @@ export async function readMarketMail(options: {
 	const result = await ingestMarketMail(db, messages, (id) =>
 		graph.messageContent(id, "marketplaces"),
 	);
-	const resorted = options.sweep ? await resort(db) : 0;
+	const resorted = options.sweep ? await resort(db) : null;
 	const formatted = options.sweep
 		? await backfillMarketHtml(db, (messageId) =>
 				readHtml(graph, messageId, "marketplaces"),

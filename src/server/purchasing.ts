@@ -39,6 +39,7 @@ export {
 	listPoEmails,
 	removePoTracking,
 	setAsidePoEmail,
+	setPoEmailRead,
 } from "#/server/purchasing/inbox";
 export {
 	cancelPurchaseOrder,
