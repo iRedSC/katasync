@@ -63,7 +63,7 @@ export function PriceTable({
 						{carriers.map((s) => (
 							<th
 								key={s.id}
-								className="px-3 py-2 text-right font-medium whitespace-nowrap"
+								className="px-4 py-2 text-right font-medium whitespace-nowrap"
 							>
 								<Link
 									to="/purchasing/suppliers/$id"
@@ -158,8 +158,8 @@ function ProductLine({
 	);
 }
 
-// One supplier's price for one product, per their unit, with what one item
-// works out to when they sell in packs.
+// One supplier's price and part number for one product, per their unit, with
+// what one item works out to when they sell in packs. Both change in place.
 function PriceCell({
 	catalogId,
 	product: p,
@@ -176,19 +176,27 @@ function PriceCell({
 	// Tool sets have no offers: they're bought as their parts.
 	if (!o)
 		return (
-			<td className="px-3 py-2 text-right text-faint">
+			<td className="px-4 py-2.5 text-right text-faint">
 				{p.kind === "bundle" ? "" : "n/a"}
 			</td>
 		);
 	const best = o.cheapest && compared && o.cost !== null;
+	const pack = [
+		o.packSize > 1 && `${o.unit} of ${o.packSize}`,
+		o.packSize > 1 && o.itemCost !== null && `${formatMoney(o.itemCost)} each`,
+	]
+		.filter(Boolean)
+		.join(" · ");
+	const save = (label: string, terms: OfferTerms) =>
+		saveTerms(catalogId, p.id, s.id, label, terms);
 	return (
 		<td
 			className={cn(
-				"px-3 py-1 text-right whitespace-nowrap",
+				"px-4 py-2 text-right whitespace-nowrap",
 				best && "bg-success-surface",
 			)}
 		>
-			<div className="flex justify-end">
+			<div className="flex flex-col items-end gap-0.5">
 				<InlineField
 					shown={formatMoney(o.cost)}
 					initial={o.cost === null ? "" : String(o.cost)}
@@ -196,57 +204,74 @@ function PriceCell({
 					label={`${s.name}'s price for ${p.sku}`}
 					inputMode="decimal"
 					align="right"
-					className="w-24"
+					className="w-32"
 					onSave={async (text) => {
-						const cost = text === "" ? null : Number(text);
+						const cost = text === "" ? null : Number(text.replace(/^\$/, ""));
 						if (cost !== null && !(Number.isFinite(cost) && cost >= 0)) {
 							toast.error(`"${text}" isn't a price`);
 							return false;
 						}
-						const r = await optimism.change({
-							label: `${s.name}'s price for ${p.sku}`,
-							patch: patchCatalog(catalogId, (d) => ({
-								...d,
-								products: d.products.map((x) =>
-									x.id !== p.id
-										? x
-										: {
-												...x,
-												offers: x.offers.map((y) =>
-													y.supplierId !== s.id
-														? y
-														: {
-																...y,
-																cost,
-																itemCost:
-																	cost === null ? null : cost / y.packSize,
-															},
-												),
-											},
-								),
-							})),
-							send: () =>
-								setSupplierTerms({
-									data: { productId: p.id, supplierId: s.id, cost },
-								}),
-						});
-						return r !== null;
+						return save(`${s.name}'s price for ${p.sku}`, { cost });
 					}}
 				/>
-			</div>
-			<div className="pr-1.5 text-xs text-muted-foreground">
-				{[
-					o.supplierSku,
-					o.packSize > 1 && `${o.unit} of ${o.packSize}`,
-					o.packSize > 1 &&
-						o.itemCost !== null &&
-						`${formatMoney(o.itemCost)} each`,
-				]
-					.filter(Boolean)
-					.join(" · ")}
+				<InlineField
+					shown={o.supplierSku ?? ""}
+					initial={o.supplierSku ?? ""}
+					placeholder="Add SKU"
+					label={`${s.name}'s SKU for ${p.sku}`}
+					align="right"
+					className="h-7 w-32 text-xs text-muted-foreground"
+					onSave={(text) =>
+						save(`${s.name}'s SKU for ${p.sku}`, {
+							supplierSku: text === "" ? null : text,
+						})
+					}
+				/>
+				{pack && (
+					<div className="px-1.5 text-xs text-muted-foreground">{pack}</div>
+				)}
 			</div>
 		</td>
 	);
+}
+
+type OfferTerms = { cost: number | null } | { supplierSku: string | null };
+
+// Changes one supplier's terms for a product, in place on the table.
+async function saveTerms(
+	catalogId: number,
+	productId: number,
+	supplierId: number,
+	label: string,
+	terms: OfferTerms,
+) {
+	const r = await optimism.change({
+		label,
+		patch: patchCatalog(catalogId, (d) => ({
+			...d,
+			products: d.products.map((x) =>
+				x.id !== productId
+					? x
+					: {
+							...x,
+							offers: x.offers.map((y) =>
+								y.supplierId !== supplierId
+									? y
+									: "cost" in terms
+										? {
+												...y,
+												cost: terms.cost,
+												itemCost:
+													terms.cost === null ? null : terms.cost / y.packSize,
+											}
+										: { ...y, supplierSku: terms.supplierSku },
+							),
+						},
+			),
+		})),
+		send: () => setSupplierTerms({ data: { productId, supplierId, ...terms } }),
+	});
+	return r !== null;
 }
 
 // Takes a product out of the catalog, so nobody sells it until it's in
