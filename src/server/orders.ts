@@ -8,7 +8,6 @@ import {
 	gt,
 	inArray,
 	isNull,
-	ne,
 	or,
 	type SQL,
 	sql,
@@ -17,8 +16,6 @@ import { shippingLocation } from "#/channels/stores";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
-	dispatches,
-	dispatchOrders,
 	locations,
 	orderCharges,
 	orderCostChecks,
@@ -32,7 +29,6 @@ import {
 	products,
 	type ReturnState,
 	returnRequests,
-	shipments,
 	stores,
 } from "#/db/schema";
 import { cityLine } from "#/lib/format";
@@ -53,6 +49,7 @@ import { boxSize } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
 import { liveDispatches } from "#/shipping/dispatch";
 import { lastPackedFor } from "#/shipping/quick-ship";
+import { sendsOf } from "#/shipping/sends";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
 	async () => {
@@ -220,79 +217,7 @@ export const getOrder = createServerFn({ method: "GET" })
 			.leftJoin(products, eq(products.id, orderLines.productId))
 			.where(eq(orderLines.orderId, data.id))
 			.orderBy(orderLines.id);
-		// Every dispatch this order went out in (or will): its boxes, this
-		// order's tracking handoff, and any other orders in the same box.
-		const handoffs = await db
-			.select({
-				dispatchId: dispatchOrders.dispatchId,
-				channelSentAt: dispatchOrders.channelSentAt,
-				channelError: dispatchOrders.channelError,
-				channelRetryAt: dispatchOrders.channelRetryAt,
-				reversedAt: dispatchOrders.reversedAt,
-				boughtAt: dispatches.boughtAt,
-			})
-			.from(dispatchOrders)
-			.innerJoin(dispatches, eq(dispatches.id, dispatchOrders.dispatchId))
-			.where(eq(dispatchOrders.orderId, data.id))
-			.orderBy(dispatchOrders.dispatchId);
-		const ids = handoffs.map((h) => h.dispatchId);
-		const boxes = ids.length
-			? await db
-					.select({
-						id: shipments.id,
-						dispatchId: shipments.dispatchId,
-						serviceName: shipments.serviceName,
-						cost: shipments.cost,
-						trackingNumber: shipments.trackingNumber,
-						trackingUrl: shipments.trackingUrl,
-						provider: shipments.provider,
-						test: shipments.test,
-						voidedAt: shipments.voidedAt,
-						refundStatus: shipments.refundStatus,
-						storefrontTrackingError: shipments.storefrontTrackingError,
-						createdAt: shipments.createdAt,
-					})
-					.from(shipments)
-					.where(inArray(shipments.dispatchId, ids))
-					.orderBy(shipments.id)
-			: [];
-		const others = ids.length
-			? await db
-					.select({
-						dispatchId: dispatchOrders.dispatchId,
-						id: orders.id,
-						name: orders.name,
-					})
-					.from(dispatchOrders)
-					.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
-					.where(
-						and(
-							inArray(dispatchOrders.dispatchId, ids),
-							ne(dispatchOrders.orderId, data.id),
-						),
-					)
-					.orderBy(orders.id)
-			: [];
-		// A purchase whose first box failed leaves a dispatch with no boxes;
-		// there's nothing to show for it.
-		const sends = handoffs.flatMap((h) => {
-			const own = boxes.filter((b) => b.dispatchId === h.dispatchId);
-			if (own.length === 0) return [];
-			return {
-				id: h.dispatchId,
-				channelSentAt: h.channelSentAt,
-				channelError: h.channelError,
-				// Still being sent again on its own (src/shipping/retry.ts).
-				retrying: h.channelRetryAt !== null,
-				// False when a box failed part way: void only, never send.
-				complete: h.boughtAt !== null,
-				// Voided, but taking it back for this order didn't finish.
-				unfinishedVoid: h.reversedAt === null,
-				boxes: own,
-				live: own.some((b) => b.voidedAt === null),
-				shippedWith: others.filter((o) => o.dispatchId === h.dispatchId),
-			};
-		});
+		const sends = await sendsOf(db, data.id);
 		// What it made, and what each marketplace said it charged.
 		const [[profit], charges, reports, checks, [due], requests] =
 			await Promise.all([

@@ -1037,19 +1037,55 @@ export const packages = pgTable(
 // with a box not voided). contentsKey is everything in it, merged across
 // orders; quick ship reuses the last dispatch with the same contents.
 // Rules live in src/shipping/dispatch.ts.
+//
+// contents says whether katasync knows what went in the box: packed ones
+// have every order line's quantity in dispatch_lines and the number of boxes
+// planned; unknown ones were bought before katasync kept that, so nothing
+// may assume what they held. Neither changes once made (drizzle/0115).
 export const dispatches = pgTable(
 	"dispatches",
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity(),
 		contentsKey: text().notNull(),
+		contents: text({ enum: ["packed", "unknown"] })
+			.notNull()
+			.default("unknown"),
+		boxCount: integer(),
 		// When every planned box's label was bought. Null while buying, or
 		// when a box failed part way: such a dispatch never sends tracking,
 		// it can only be voided.
 		boughtAt: timestamp({ withTimezone: true }),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [index("dispatches_contents_idx").on(t.contentsKey, t.createdAt)],
+	(t) => [
+		index("dispatches_contents_idx").on(t.contentsKey, t.createdAt),
+		check(
+			"dispatches_contents_known",
+			sql`${t.contents} in ('packed', 'unknown')`,
+		),
+		check(
+			"dispatches_packed_box_count",
+			sql`(${t.contents} = 'packed') = (${t.boxCount} is not null and ${t.boxCount} > 0)`,
+		),
+	],
 );
+
+// A line whose packed quantity no longer matches what the channel has open:
+// open is what's there now (0 when the line is gone or shipped elsewhere).
+export type ContentsDrift = {
+	line: string;
+	title: string;
+	packed: number;
+	open: number;
+}[];
+
+// Why a handoff is held rather than sent: the order changed after packing,
+// the dispatch was bought before contents were kept (so nothing can be
+// checked), or the marketplace's contents can't be matched to the box.
+export type HandoffHold =
+	| { kind: "drift"; drift: ContentsDrift }
+	| { kind: "unknownContents" }
+	| { kind: "unmappable"; why: string };
 
 // The orders in a dispatch, and handing its tracking to each one's
 // marketplace. Sent: when it got there, and the marketplace's id for that
@@ -1075,6 +1111,10 @@ export const dispatchOrders = pgTable(
 		channelFirstFailedAt: timestamp({ withTimezone: true }),
 		channelAttempts: integer().notNull().default(0),
 		channelRetryAt: timestamp({ withTimezone: true }),
+		// Held instead of sent, and why. Never retried on its own; checking
+		// again sends it once the marketplace matches the box, or the
+		// dispatch is voided.
+		handoffHold: jsonb().$type<HandoffHold>(),
 		// When voiding finished for this order: tracking taken back off its
 		// marketplace where possible, and the order back on To ship. Null on a
 		// voided dispatch means voiding again resumes this order.
@@ -1084,6 +1124,40 @@ export const dispatchOrders = pgTable(
 		primaryKey({ columns: [t.dispatchId, t.orderId] }),
 		index("dispatch_orders_order_idx").on(t.orderId),
 		index("dispatch_orders_retry_idx").on(t.channelRetryAt),
+		check(
+			"dispatch_orders_hold_unsent",
+			sql`${t.handoffHold} is null or (${t.channelSentAt} is null and ${t.channelRetryAt} is null)`,
+		),
+	],
+);
+
+// What a packed dispatch holds: each order line's quantity when its labels
+// were bought, its SKU as the channel named it, and the product it was
+// mapped to then. Written with the dispatch and never changed (drizzle/0115),
+// so it stays the evidence of what went out whatever happens to the order
+// afterwards. Only the dispatch membership is a foreign key: the line id and
+// product id are values as they were, so later changes to the order's lines
+// or products can neither rewrite nor block this history.
+export const dispatchLines = pgTable(
+	"dispatch_lines",
+	{
+		dispatchId: integer().notNull(),
+		orderId: integer().notNull(),
+		lineExternalId: text().notNull(),
+		productId: integer(),
+		sku: text(),
+		title: text().notNull(),
+		quantity: integer().notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.dispatchId, t.orderId, t.lineExternalId] }),
+		foreignKey({
+			name: "dispatch_lines_member_fk",
+			columns: [t.dispatchId, t.orderId],
+			foreignColumns: [dispatchOrders.dispatchId, dispatchOrders.orderId],
+		}),
+		index("dispatch_lines_order_line_idx").on(t.orderId, t.lineExternalId),
+		check("dispatch_lines_quantity_positive", sql`${t.quantity} > 0`),
 	],
 );
 
@@ -1134,6 +1208,95 @@ export const shipments = pgTable(
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [index("shipments_dispatch_idx").on(t.dispatchId)],
+);
+
+// A box's shipment row as known before its label is paid for: everything
+// but what the provider answers with.
+export type PreparedBox = Omit<
+	typeof shipments.$inferInsert,
+	| "id"
+	| "trackingNumber"
+	| "trackingUrl"
+	| "labelUrl"
+	| "labelPdf"
+	| "externalId"
+	| "storefrontTrackingError"
+	| "voidedAt"
+	| "refundStatus"
+	| "createdAt"
+>;
+
+// One paid label purchase, saved before the provider is asked, so a lost
+// answer can never let the same box be bought twice. pending: being asked
+// now. succeeded: bought, its label in shipmentId. failed: the provider said
+// no to this very attempt; nothing was charged. unknown: no clear answer,
+// so it may have been charged; the orders can't get a new label until the
+// provider shows this attempt bought or refused (lastLookup is what the
+// latest check found; finding nothing proves nothing). succeeded and failed are final; the
+// transitions are enforced in drizzle/0115. Rules in
+// src/shipping/label-attempts.ts.
+export const labelAttempts = pgTable(
+	"label_attempts",
+	{
+		id: uuid().primaryKey(),
+		dispatchId: integer()
+			.notNull()
+			.references(() => dispatches.id),
+		boxIndex: integer().notNull(),
+		provider: text({ enum: ["shippo", "tiktok"] }).notNull(),
+		// Shippo's rate, or TikTok's service, the purchase was for.
+		rateId: text().notNull(),
+		// TikTok's unit line items the package is for, checked against the
+		// box before buying; a package found later must cover exactly these.
+		unitIds: text().array(),
+		box: jsonb().$type<PreparedBox>().notNull(),
+		state: text({ enum: ["pending", "succeeded", "failed", "unknown"] })
+			.notNull()
+			.default("pending"),
+		shipmentId: integer()
+			.unique()
+			.references(() => shipments.id),
+		error: text(),
+		lastLookup: text({ enum: ["none", "pending"] }),
+		checkedAt: timestamp({ withTimezone: true }),
+		settledAt: timestamp({ withTimezone: true }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("label_attempts_box").on(t.dispatchId, t.boxIndex),
+		index("label_attempts_open_idx")
+			.on(t.dispatchId)
+			.where(sql`${t.state} in ('pending', 'unknown')`),
+		check(
+			"label_attempts_state_known",
+			sql`${t.state} in ('pending', 'succeeded', 'failed', 'unknown')`,
+		),
+		check(
+			"label_attempts_provider_known",
+			sql`${t.provider} in ('shippo', 'tiktok')`,
+		),
+		check(
+			"label_attempts_shipment_iff_succeeded",
+			sql`(${t.state} = 'succeeded') = (${t.shipmentId} is not null)`,
+		),
+		check(
+			"label_attempts_settled_iff_final",
+			sql`(${t.state} in ('succeeded', 'failed')) = (${t.settledAt} is not null)`,
+		),
+		check(
+			"label_attempts_failed_says_why",
+			sql`${t.state} <> 'failed' or ${t.error} is not null`,
+		),
+		check(
+			"label_attempts_lookup_when_unknown",
+			sql`${t.lastLookup} is null or (${t.state} in ('unknown', 'failed') and ${t.checkedAt} is not null)`,
+		),
+		check("label_attempts_box_index", sql`${t.boxIndex} >= 0`),
+		check(
+			"label_attempts_tiktok_units",
+			sql`(${t.provider} = 'tiktok') = (${t.unitIds} is not null and cardinality(${t.unitIds}) > 0)`,
+		),
+	],
 );
 
 // What a label's provider billed on it after purchase: the carrier re-billing

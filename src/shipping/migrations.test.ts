@@ -54,8 +54,18 @@ test("dispatch migrations preserve existing labels and handoffs", async () => {
 		const { rows: dispatches } = await client.query<{
 			contents_key: string;
 			bought_at: Date;
-		}>("select contents_key, bought_at from dispatches where id = 17");
+			contents: string;
+			box_count: number | null;
+		}>(
+			"select contents_key, bought_at, contents, box_count from dispatches where id = 17",
+		);
 		expect(dispatches[0].contents_key).toBe("WRENCH×2");
+		expect(dispatches[0].contents).toBe("unknown");
+		expect(dispatches[0].box_count).toBeNull();
+		const { rows: lines } = await client.query(
+			"select * from dispatch_lines where dispatch_id = 17",
+		);
+		expect(lines).toEqual([]);
 		expect(dispatches[0].bought_at.toISOString()).toBe(
 			"2026-10-12T11:00:00.000Z",
 		);

@@ -14,6 +14,7 @@ import {
 	sendTracking,
 	voidDispatch,
 } from "#/shipping/handoff";
+import { checkLabelAttempt } from "#/shipping/label-attempts";
 import { labelPdf } from "#/shipping/label-file";
 import {
 	combineRates,
@@ -220,6 +221,7 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 		return {
 			dispatchId: bought.dispatchId,
 			failed: bought.failed,
+			unsure: bought.unsure,
 			handoff,
 			boxes: live.map((b) => ({
 				id: b.id,
@@ -253,6 +255,26 @@ function keepRetrying(dispatchId: number) {
 		),
 	);
 }
+
+// Asks the provider what became of a label purchase that got no answer, and
+// records what it finds (see checkLabelAttempt). A dispatch that's bought in
+// full by it sends its tracking, as a purchase would have.
+export const checkLabel = createServerFn({ method: "POST" })
+	.validator(type({ attemptId: "string.uuid" }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const { attempt, completed } = await checkLabelAttempt(db, data.attemptId);
+		const handoff = completed
+			? await sendTracking(db, attempt.dispatchId)
+			: null;
+		if (handoff && !handoff.sent) keepRetrying(attempt.dispatchId);
+		return {
+			state: attempt.state,
+			lastLookup: attempt.lastLookup,
+			error: attempt.error,
+			handoff,
+		};
+	});
 
 export const retryStorefront = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))

@@ -8,6 +8,7 @@ import { optimism } from "#/lib/optimism";
 import { printLabels } from "#/printing/qz-client";
 import type { OrderDetail } from "#/server/orders";
 import { resendTracking, voidLabel } from "#/server/shipping";
+import { HoldNote, holdBadge, UnsureLabel } from "./unsure-label";
 
 export function SendRow({
 	send: d,
@@ -34,29 +35,35 @@ export function SendRow({
 
 	// Sending tracking needs every box bought and none voided.
 	const sendable = d.complete && live.length === d.boxes.length;
-	const state = !d.live
-		? {
-				tone: undefined,
-				text: `Voided · refund ${(first?.refundStatus ?? "requested").toLowerCase()}`,
-			}
-		: !sendable
-			? { tone: "critical" as const, text: "Incomplete, void it" }
-			: test
-				? { tone: "info" as const, text: "Test label" }
-				: d.channelSentAt
-					? { tone: "success" as const, text: `Tracking sent to ${channel}` }
-					: d.channelError
-						? d.retrying
-							? { tone: "warning" as const, text: "Tracking retrying" }
-							: { tone: "critical" as const, text: "Tracking not sent" }
-						: { tone: "warning" as const, text: "Tracking pending" };
+	const unsure = d.attempts.length > 0;
+	const hold = d.hold;
+	const state = unsure
+		? { tone: "warning" as const, text: "Purchase unconfirmed" }
+		: !d.live
+			? {
+					tone: undefined,
+					text: `Voided · refund ${(first?.refundStatus ?? "requested").toLowerCase()}`,
+				}
+			: !sendable
+				? { tone: "critical" as const, text: "Incomplete, void it" }
+				: test
+					? { tone: "info" as const, text: "Test label" }
+					: d.channelSentAt
+						? { tone: "success" as const, text: `Tracking sent to ${channel}` }
+						: hold
+							? { tone: "critical" as const, text: holdBadge(hold) }
+							: d.channelError
+								? d.retrying
+									? { tone: "warning" as const, text: "Tracking retrying" }
+									: { tone: "critical" as const, text: "Tracking not sent" }
+								: { tone: "warning" as const, text: "Tracking pending" };
 
 	return (
 		<li className="flex flex-col gap-2 border-t px-4 py-3 first:border-t-0">
 			<div className="flex items-start justify-between gap-2">
 				<div className={d.live ? "" : "text-muted-foreground line-through"}>
 					<p className="font-medium">
-						{first?.serviceName}
+						{first?.serviceName ?? "Label purchase"}
 						{d.boxes.length > 1 && ` · ${d.boxes.length} boxes`}
 					</p>
 					<p className="tabular-nums">
@@ -114,10 +121,22 @@ export function SendRow({
 					</li>
 				))}
 			</ul>
-			{d.channelError && !d.channelSentAt && d.live && (
+			{unsure && (
+				<ul className="flex flex-col gap-1">
+					{d.attempts.map((a) => (
+						<UnsureLabel
+							key={a.id}
+							attempt={a}
+							many={d.attempts.length > 1 || d.boxes.length > 0}
+						/>
+					))}
+				</ul>
+			)}
+			{hold && d.live && <HoldNote hold={hold} />}
+			{d.channelError && !d.channelSentAt && d.live && !hold && (
 				<p className="text-critical-text">{d.channelError}</p>
 			)}
-			{!d.live && d.unfinishedVoid && (
+			{!d.live && !unsure && d.unfinishedVoid && (
 				<div className="flex flex-wrap items-center gap-2">
 					<span className="text-critical-text">Voiding didn't finish.</span>
 					<Button
@@ -152,7 +171,7 @@ export function SendRow({
 								})
 							}
 						>
-							Send tracking
+							{hold ? "Check again" : "Send tracking"}
 						</Button>
 					)}
 					{/* TikTok has no API to cancel its labels. */}

@@ -1,6 +1,12 @@
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { type Db, withOwnConnection } from "#/db/client";
-import { dispatchOrders, orders, shipments, stores } from "#/db/schema";
+import {
+	dispatchOrders,
+	labelAttempts,
+	orders,
+	shipments,
+	stores,
+} from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { needsShipping } from "#/orders/to-ship";
 
@@ -78,22 +84,53 @@ export async function ordersOf(db: Db, dispatchId: number) {
 	return rows.map((r) => r.orderId);
 }
 
-// The live dispatch each of these orders is already in, if any.
+// The live dispatch each of these orders is already in, if any: one with a
+// label not voided, or a purchase not yet settled (unsure), which may have
+// been charged and so blocks buying again just the same.
 export async function liveDispatches(db: Db, orderIds: number[]) {
 	if (orderIds.length === 0) return [];
-	return db
-		.selectDistinct({
-			orderId: dispatchOrders.orderId,
-			dispatchId: dispatchOrders.dispatchId,
-		})
-		.from(dispatchOrders)
-		.innerJoin(shipments, eq(shipments.dispatchId, dispatchOrders.dispatchId))
-		.where(
-			and(
-				inArray(dispatchOrders.orderId, orderIds),
-				isNull(shipments.voidedAt),
+	const [labelled, unsettled] = await Promise.all([
+		db
+			.selectDistinct({
+				orderId: dispatchOrders.orderId,
+				dispatchId: dispatchOrders.dispatchId,
+			})
+			.from(dispatchOrders)
+			.innerJoin(shipments, eq(shipments.dispatchId, dispatchOrders.dispatchId))
+			.where(
+				and(
+					inArray(dispatchOrders.orderId, orderIds),
+					isNull(shipments.voidedAt),
+				),
 			),
-		);
+		db
+			.selectDistinct({
+				orderId: dispatchOrders.orderId,
+				dispatchId: dispatchOrders.dispatchId,
+			})
+			.from(dispatchOrders)
+			.innerJoin(
+				labelAttempts,
+				eq(labelAttempts.dispatchId, dispatchOrders.dispatchId),
+			)
+			.where(
+				and(
+					inArray(dispatchOrders.orderId, orderIds),
+					inArray(labelAttempts.state, ["pending", "unknown"]),
+				),
+			),
+	]);
+	return [
+		...unsettled.map((l) => ({ ...l, unsure: true })),
+		...labelled
+			.filter(
+				(l) =>
+					!unsettled.some(
+						(u) => u.orderId === l.orderId && u.dispatchId === l.dispatchId,
+					),
+			)
+			.map((l) => ({ ...l, unsure: false })),
+	];
 }
 
 type AddressFields = {
@@ -150,12 +187,15 @@ type Candidate = {
 // one) go to the same address.
 export function whyNotTogether(
 	list: Candidate[],
-	live: { orderId: number }[],
+	live: { orderId: number; unsure?: boolean }[],
 ): string | null {
 	if (list.length === 0) return "No orders to ship";
 	for (const o of list) {
 		if (!o.needsShipping) {
 			return `${o.name} no longer needs shipping (cancelled, refunded, or shipped elsewhere). Don't ship it.`;
+		}
+		if (live.some((l) => l.orderId === o.id && l.unsure)) {
+			return `${o.name} has a label purchase that may have been charged. Check it on the order page before buying another.`;
 		}
 		if (live.some((l) => l.orderId === o.id)) {
 			return `${o.name} already has a label. Void it on the order page to buy a new one.`;
