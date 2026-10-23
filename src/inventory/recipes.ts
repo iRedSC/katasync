@@ -1,6 +1,6 @@
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { productComponents, products, stockLevels } from "#/db/schema";
+import { movements, productComponents, products } from "#/db/schema";
 import { LedgerError } from "./ledger";
 import { getRecipe } from "./ledger/post";
 
@@ -74,18 +74,15 @@ export async function setRecipe(
 			!sameParts(await getRecipe(tx, parentProductId), components)
 		) {
 			const [stocked] = await tx
-				.select({ productId: stockLevels.productId })
-				.from(stockLevels)
+				.select({ productId: movements.productId })
+				.from(movements)
 				.where(
-					and(
-						eq(stockLevels.productId, parentProductId),
-						ne(stockLevels.onHand, 0),
-					),
+					and(eq(movements.productId, parentProductId), ne(movements.delta, 0)),
 				)
 				.limit(1);
 			if (stocked)
 				throw new LedgerError(
-					`${parent.sku} has stock, so its parts can't change until it's counted to zero`,
+					`${parent.sku} has inventory history; create a new SKU for different parts`,
 				);
 		}
 

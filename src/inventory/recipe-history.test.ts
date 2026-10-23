@@ -164,7 +164,7 @@ describe("setRecipe on a kit with stock", () => {
 
 		await expect(
 			setRecipe(db, kit, [{ productId: bolt, quantity: 1 }]),
-		).rejects.toThrow(/has stock/);
+		).rejects.toThrow(/inventory history/);
 		expect(await partsOf(kit)).toEqual([{ productId: bit, quantity: 1 }]);
 	});
 
@@ -178,10 +178,10 @@ describe("setRecipe on a kit with stock", () => {
 
 		await expect(
 			setRecipe(db, kit, [{ productId: bolt, quantity: 1 }]),
-		).rejects.toThrow(/has stock/);
+		).rejects.toThrow(/inventory history/);
 	});
 
-	test("a kit counted back to zero can change its parts", async () => {
+	test("selling out a kit does not allow its historical composition to change", async () => {
 		await receive(kit, 2);
 		await recordSale(db, {
 			productId: kit,
@@ -190,6 +190,13 @@ describe("setRecipe on a kit with stock", () => {
 			reference: "order:sold-out",
 		});
 
+		await expect(
+			setRecipe(db, kit, [{ productId: bolt, quantity: 1 }]),
+		).rejects.toThrow(/inventory history/);
+		expect(await partsOf(kit)).toEqual([{ productId: bit, quantity: 1 }]);
+	});
+
+	test("an unused kit can change its parts", async () => {
 		await setRecipe(db, kit, [{ productId: bolt, quantity: 1 }]);
 		expect(await partsOf(kit)).toEqual([{ productId: bolt, quantity: 1 }]);
 	});

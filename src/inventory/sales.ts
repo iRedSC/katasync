@@ -55,9 +55,6 @@ export async function soldByDay(db: Db, since: Date) {
 		.groupBy(sold.productId, sql`2`);
 }
 
-// One row per product sold in each counted line: the recorded movements for
-// lines the ledger took stock for, and the recipe for the rest. The two sets
-// are disjoint, so no line counts twice.
 function soldUnits(
 	db: Db,
 	since: Date,
@@ -118,8 +115,6 @@ function soldUnits(
 	return unionAll(recorded, byRecipe).as("sold");
 }
 
-// Undoing a batch posts its reversal under this reference, so a batch with
-// one was undone.
 function wasUndone(db: Db, batchId: SQLWrapper) {
 	const undo = alias(movements, "undo");
 	return exists(
