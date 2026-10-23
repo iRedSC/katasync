@@ -358,6 +358,48 @@ describe("read", () => {
 	});
 });
 
+describe("done", () => {
+	test("a rule has mail arrive done and read, even when another marks it important", async () => {
+		const add = (subject: string) =>
+			ingestMarketMail(db, [message(subject)], async () => ({
+				body: "",
+				attachments: [],
+			}));
+		await createRule(
+			db,
+			{
+				name: "Copies are done",
+				conditions: [has("subject", "your e-mail to")],
+				folder: null,
+				important: false,
+				markDone: true,
+			},
+			"staff",
+		);
+		await createRule(
+			db,
+			{
+				name: "Mail is important",
+				conditions: [has("subject", "e-mail")],
+				folder: null,
+				important: true,
+			},
+			"staff",
+		);
+		await add("Your e-mail to Rick");
+		await add("An e-mail about your account");
+		const rows = (await db.select().from(marketEmails)).sort(
+			(a, b) => a.id - b.id,
+		);
+		expect(
+			rows.map((r) => [r.doneAt !== null, r.readAt !== null, r.important]),
+		).toEqual([
+			[true, true, true],
+			[false, false, true],
+		]);
+	});
+});
+
 let n = 0;
 const message = (subject: string): InboxMessage => {
 	n++;

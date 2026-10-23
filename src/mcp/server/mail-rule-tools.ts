@@ -20,7 +20,7 @@ import { json, READ, WRITE } from "./tool-shapes";
 // moving it, all like it by a rule.
 
 const SEMANTICS =
-	"Rules run in order (position, smaller first). Each has conditions; match all (the default) needs every one to hold, match any needs one. A text condition (subject, sender = name and address, body) holds when the text has any of its terms: whole words or phrases, case-insensitive, a trailing * matching any ending (violat* = violation, violated); a market condition when the email's marketplace is any listed (other = none). not inverts one. The first matching rule with a folder decides the email's folder (none: updates); every matching rule with important marks it important, and one with critical marks it critical (critical needs someone now: important too, shown red on the Inbox page; save critical alone and it marks both); one with markRead (mark_read when saving) has it arrive read, only as it arrives and never when a rule marks it important. Emails staff moved or marked by hand keep that. Body text carries footers (\"see our return policy\"), so prefer subject and sender.";
+	"Rules run in order (position, smaller first). Each has conditions; match all (the default) needs every one to hold, match any needs one. A text condition (subject, sender = name and address, body) holds when the text has any of its terms: whole words or phrases, case-insensitive, a trailing * matching any ending (violat* = violation, violated); a market condition when the email's marketplace is any listed (other = none). not inverts one. The first matching rule with a folder decides the email's folder (none: updates); every matching rule with important marks it important, and one with critical marks it critical (critical needs someone now: important too, shown red on the Inbox page; save critical alone and it marks both); one with markRead (mark_read when saving) has it arrive read, only as it arrives and never when a rule marks it important; one with markDone (mark_done) has it arrive done and read, even when important, for mail nobody needs to act on (it's handled elsewhere, like buyer messages, which the Buyers tab reads from the marketplace). Emails staff moved or marked by hand keep that. Body text carries footers (\"see our return policy\"), so prefer subject and sender.";
 
 export function registerMailRuleReadTools(server: McpServer, db: Db) {
 	server.registerTool(
@@ -56,6 +56,12 @@ const ruleInput = {
 		.describe(
 			"Matching emails arrive already read. Only as they arrive: saving never marks mail already in",
 		),
+	mark_done: z
+		.boolean()
+		.optional()
+		.describe(
+			"Matching emails arrive done (and read), out of everyone's way, even when a rule marks them important. Only as they arrive",
+		),
 };
 
 export function registerMailRuleWriteTools(server: McpServer, db: Db) {
@@ -76,8 +82,12 @@ export function registerMailRuleWriteTools(server: McpServer, db: Db) {
 			},
 			annotations: WRITE,
 		},
-		async ({ id, before, dry_run, mark_read, ...input }) => {
-			const rule = { ...input, markRead: mark_read ?? false };
+		async ({ id, before, dry_run, mark_read, mark_done, ...input }) => {
+			const rule = {
+				...input,
+				markRead: mark_read ?? false,
+				markDone: mark_done ?? false,
+			};
 			if (dry_run) return json(await previewRule(db, rule, 15));
 			return json(
 				id === undefined

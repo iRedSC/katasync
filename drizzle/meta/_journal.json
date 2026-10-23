@@ -750,6 +750,13 @@
       "when": 1792707662203,
       "tag": "0106_buyer_message_media",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1792717765995,
+      "tag": "0107_mail_rules_mark_done",
+      "breakpoints": true
     }
   ]
 }

@@ -2361,6 +2361,9 @@ export const mailRules = pgTable(
 		// Matching emails arrive read. Only on arrival: read is staff's, so
 		// changing rules never marks mail read or unread.
 		markRead: boolean().notNull().default(false),
+		// Matching emails arrive done (and read): nothing for anyone to do.
+		// Only on arrival, as markRead.
+		markDone: boolean().notNull().default(false),
 		// Who wrote it last: staff on the page, or Claude over MCP.
 		by: text().$type<"staff" | "claude">().notNull().default("staff"),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -2368,7 +2371,7 @@ export const mailRules = pgTable(
 	(t) => [
 		check(
 			"mail_rules_does_something",
-			sql`${t.folder} is not null or ${t.important} or ${t.markRead}`,
+			sql`${t.folder} is not null or ${t.important} or ${t.markRead} or ${t.markDone}`,
 		),
 		check("mail_rules_by_known", sql`${t.by} in ('staff', 'claude')`),
 		check("mail_rules_match_known", sql`${t.match} in ('all', 'any')`),

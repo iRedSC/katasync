@@ -3,6 +3,7 @@ import {
 	ArrowDown,
 	ArrowUp,
 	Bot,
+	CircleCheck,
 	MailOpen,
 	OctagonAlert,
 	Plus,
@@ -206,6 +207,7 @@ export function RulesEditor({
 					important: false,
 					critical: false,
 					markRead: false,
+					markDone: false,
 					match: "all",
 				})}
 			{rules.length === 0 && editing !== "new" && (
@@ -296,11 +298,18 @@ function Effects({ rule: r }: { rule: Rule }) {
 					/>
 				)
 			)}
-			{r.markRead && (
-				<MailOpen
-					aria-label="Arrives read"
+			{r.markDone ? (
+				<CircleCheck
+					aria-label="Arrives done"
 					className="size-4 text-muted-foreground"
 				/>
+			) : (
+				r.markRead && (
+					<MailOpen
+						aria-label="Arrives read"
+						className="size-4 text-muted-foreground"
+					/>
+				)
 			)}
 		</span>
 	);
