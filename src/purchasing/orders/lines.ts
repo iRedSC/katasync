@@ -2,13 +2,13 @@ import { and, eq, isNull, notExists } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	productComponents,
-	productSuppliers,
 	products,
 	purchaseOrderAmendments,
 	purchaseOrderDiscounts,
 	purchaseOrderLines,
 	purchaseOrderSkippedParts,
 	type purchaseOrders,
+	supplierOffers,
 } from "#/db/schema";
 import type { Discount } from "#/purchasing/discount";
 import { discountRow } from "#/purchasing/discount";
@@ -51,7 +51,7 @@ export async function setDraftLine(
 			eq(purchaseOrderLines.purchaseOrderId, po.id),
 			eq(purchaseOrderLines.productId, input.productId),
 		);
-		const product = await newLine(tx, input.productId);
+		const product = await newLine(tx, input.productId, po.supplierId);
 		// A line already on the draft keeps its own terms; a new one starts
 		// with the supplier's.
 		const [existing] = await tx
@@ -140,47 +140,56 @@ export async function lockDraftLine(
 	});
 }
 
-// What a new line for the product starts with: the supplier's terms (EACH
-// when it has no supplier) and price.
-export async function newLine(tx: Db, productId: number) {
+// What a new line for the product on a supplier's PO starts with: that
+// supplier's terms (EACH when it has none) and price.
+export async function newLine(tx: Db, productId: number, supplierId: number) {
 	const [product] = await tx
 		.select({
 			kind: products.kind,
 			sku: products.sku,
 			productCost: products.unitCost,
-			supplierCost: productSuppliers.cost,
-			unit: productSuppliers.unit,
-			packSize: productSuppliers.packSize,
-			supplierCount: productSuppliers.supplierCount,
-			minimumQuantity: productSuppliers.minimumQuantity,
 			archivedAt: products.archivedAt,
 		})
 		.from(products)
-		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
 		.where(eq(products.id, productId))
 		// Held until the line is in, so archiving waits (src/products/archive.ts).
-		.for("share", { of: products });
+		.for("share");
 	if (!product) throw new PurchaseOrderError("That product doesn't exist");
 	if (product.archivedAt)
 		throw new PurchaseOrderError(
 			`${product.sku} is archived; restore it to order it`,
 		);
-	const packSize = product.packSize ?? 1;
+	const [offer] = await tx
+		.select({
+			cost: supplierOffers.cost,
+			unit: supplierOffers.unit,
+			packSize: supplierOffers.packSize,
+			supplierCount: supplierOffers.supplierCount,
+			minimumQuantity: supplierOffers.minimumQuantity,
+		})
+		.from(supplierOffers)
+		.where(
+			and(
+				eq(supplierOffers.productId, productId),
+				eq(supplierOffers.supplierId, supplierId),
+			),
+		);
+	const packSize = offer?.packSize ?? 1;
 	return {
 		kind: product.kind,
 		sku: product.sku,
 		terms: {
-			unit: product.unit ?? "EACH",
+			unit: offer?.unit ?? "EACH",
 			packSize,
-			supplierCount: product.supplierCount ?? 1,
-			minimumQuantity: product.minimumQuantity ?? 1,
+			supplierCount: offer?.supplierCount ?? 1,
+			minimumQuantity: offer?.minimumQuantity ?? 1,
 		},
 		// A tool set has no price of its own: sending replaces it with its
 		// parts, each at its own price.
 		unitCost:
 			product.kind === "bundle"
 				? null
-				: (product.supplierCost ??
+				: (offer?.cost ??
 					(product.productCost === null
 						? null
 						: product.productCost * packSize)),
@@ -277,7 +286,7 @@ export async function insertLine(
 			),
 		);
 	if (existing) return { added: false, line: existing };
-	const product = await newLine(tx, input.productId);
+	const product = await newLine(tx, input.productId, po.supplierId);
 	if (product.kind === "bundle" && po.status !== "draft")
 		throw new PurchaseOrderError(
 			`${product.sku} is a tool set; add the parts that came instead`,

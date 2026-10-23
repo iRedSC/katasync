@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { locations, products, purchaseOrderLines } from "#/db/schema";
+import { catalogs, locations, products, purchaseOrderLines } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
@@ -73,4 +73,26 @@ export async function ourLocation(db: Db, name?: string) {
 				: `Name a location: ${ours.map((l) => l.name).join(", ")}`,
 		);
 	return ours[0].id;
+}
+
+// Catalogs by name, ignoring case. An unknown name fails, listing them all.
+export async function catalogIds(db: Db, names: string[]) {
+	const all = await db
+		.select({ id: catalogs.id, name: catalogs.name })
+		.from(catalogs);
+	return names.map((name) => {
+		const found = all.find(
+			(c) => c.name.toLowerCase() === name.trim().toLowerCase(),
+		);
+		if (!found)
+			throw new PurchaseOrderError(
+				`No catalog "${name}". Catalogs: ${all.map((c) => c.name).join(", ")}`,
+			);
+		return found.id;
+	});
+}
+
+export async function catalogByName(db: Db, name: string) {
+	const [id] = await catalogIds(db, [name]);
+	return id;
 }

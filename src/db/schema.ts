@@ -95,6 +95,11 @@ export const products = pgTable(
 		name: text().notNull(),
 		kind: productKind().notNull(),
 		groupId: integer().references(() => productGroups.id),
+		// The line it's sold in, e.g. "Columbia". Every supplier carrying the
+		// catalog sells it; none does while it has no catalog.
+		catalogId: integer().references(() => catalogs.id, {
+			onDelete: "set null",
+		}),
 		// What sets this apart within its group, e.g. "12 x 9 x 2".
 		variantName: text(),
 		imageUrl: text(),
@@ -152,6 +157,7 @@ export const products = pgTable(
 	},
 	(t) => [
 		index("products_group_idx").on(t.groupId),
+		index("products_catalog_idx").on(t.catalogId),
 		check(
 			"products_refurb_has_condition",
 			sql`(${t.refurbishedFromId} is null) = (${t.condition} is null)`,
@@ -1143,13 +1149,42 @@ export const purchaseUnits = pgTable("purchase_units", {
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-// Who we buy a product from. One supplier per product, so the product is the
-// key. Bundles have no stock to buy; src/purchasing/suppliers.ts refuses them.
+// A line of products sold together, e.g. "Columbia". A product is in one
+// catalog at most; suppliers carry whole catalogs (supplierCatalogs).
+export const catalogs = pgTable("catalogs", {
+	id: integer().primaryKey().generatedAlwaysAsIdentity(),
+	name: text().notNull().unique(),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+// Which catalogs a supplier sells. A supplier sells every product in a
+// catalog it carries, at the terms in productSuppliers.
+export const supplierCatalogs = pgTable(
+	"supplier_catalogs",
+	{
+		supplierId: integer()
+			.notNull()
+			.references(() => suppliers.id, { onDelete: "cascade" }),
+		catalogId: integer()
+			.notNull()
+			.references(() => catalogs.id, { onDelete: "cascade" }),
+	},
+	(t) => [
+		primaryKey({ columns: [t.supplierId, t.catalogId] }),
+		index("supplier_catalogs_catalog_idx").on(t.catalogId),
+	],
+);
+
+// A supplier's terms for one product: their part number, unit, and price.
+// Only counts while the supplier carries the product's catalog; a row for one
+// it doesn't is kept for if it does again. Read offers through supplierOffers,
+// which applies that rule. Bundles have no stock to buy;
+// src/purchasing/suppliers.ts refuses them.
 export const productSuppliers = pgTable(
 	"product_suppliers",
 	{
 		productId: integer()
-			.primaryKey()
+			.notNull()
 			.references(() => products.id),
 		supplierId: integer()
 			.notNull()
@@ -1175,6 +1210,7 @@ export const productSuppliers = pgTable(
 		minimumQuantity: integer().notNull().default(1),
 	},
 	(t) => [
+		primaryKey({ columns: [t.productId, t.supplierId] }),
 		index("product_suppliers_supplier_idx").on(t.supplierId),
 		check("product_suppliers_minimum_positive", sql`${t.minimumQuantity} > 0`),
 		check("product_suppliers_pack_size_positive", sql`${t.packSize} > 0`),
@@ -1218,6 +1254,12 @@ export const purchaseOrders = pgTable(
 			.references(() => locations.id),
 		// Printed on this PO, under the supplier's standing PO notes.
 		notes: text(),
+		// What this PO's suggestions are worked out with, set in its
+		// Suggestions dialog (src/purchasing/orders/suggestions.ts). Days of
+		// sales to cover; null follows the supplier's coverDays.
+		coverDays: integer(),
+		// Also suggest what this supplier sells but another sells for less.
+		includePricier: boolean().notNull().default(false),
 		sentAt: timestamp({ withTimezone: true }),
 		// The address it was emailed to, in case the supplier's email changes.
 		sentTo: text(),
@@ -1237,7 +1279,26 @@ export const purchaseOrders = pgTable(
 		// Lets a supplier invoice point at a PO and its supplier together, so
 		// an invoice can't name one supplier and a PO from another.
 		unique("purchase_orders_id_supplier").on(t.id, t.supplierId),
+		check(
+			"purchase_orders_cover_days_range",
+			sql`${t.coverDays} between 1 and 365`,
+		),
 	],
+);
+
+// Catalogs a PO's suggestions leave out. Kept as what's left out, so a
+// catalog the supplier takes on later is in by default.
+export const purchaseOrderExcludedCatalogs = pgTable(
+	"purchase_order_excluded_catalogs",
+	{
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id, { onDelete: "cascade" }),
+		catalogId: integer()
+			.notNull()
+			.references(() => catalogs.id, { onDelete: "cascade" }),
+	},
+	(t) => [primaryKey({ columns: [t.purchaseOrderId, t.catalogId] })],
 );
 
 export const purchaseOrderLines = pgTable(
@@ -1987,6 +2048,27 @@ export const qzCertificate = pgTable(
 
 // Views defined in drizzle/0020_reporting_views.sql, so every report counts
 // stock and sales the same way.
+
+// Every product each supplier sells: one row per stocked product and
+// supplier carrying its catalog, with that supplier's terms from
+// productSuppliers, or the defaults (EACH of 1, no price) where it has none.
+// `cheapest` marks the one supplier per product reorder buys from: the
+// lowest price per single item, priced before unpriced, then the shorter
+// lead time, then by name (drizzle/0109).
+export const supplierOffers = pgView("supplier_offers", {
+	productId: integer().notNull(),
+	supplierId: integer().notNull(),
+	catalogId: integer().notNull(),
+	supplierSku: text(),
+	unit: text().notNull(),
+	packSize: integer().notNull(),
+	supplierCount: integer().notNull(),
+	cost: numeric({ precision: 12, scale: 4, mode: "number" }),
+	minimumQuantity: integer().notNull(),
+	// cost over packSize: what one of the product costs from them.
+	itemCost: numeric({ mode: "number" }),
+	cheapest: boolean().notNull(),
+}).existing();
 
 // Stock on our own shelves per stocked product, warehouse and retail store
 // (Amazon's FBA stock left out).

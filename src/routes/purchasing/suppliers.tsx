@@ -1,16 +1,31 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Badge, Card, Page } from "#/components/page";
+import { InlineField } from "#/components/purchase-order/inline-fields";
 import { ListSkeleton } from "#/components/skeleton";
 import { SupplierDialog } from "#/components/supplier-dialog";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney } from "#/lib/format";
-import { optimistic } from "#/lib/optimism";
+import { optimism, optimistic } from "#/lib/optimism";
 import { MIN_MEASURED_POS } from "#/purchasing/forecast";
-import { listSuppliers, type SupplierRow } from "#/server/purchasing";
+import {
+	type CatalogRow,
+	deleteCatalog,
+	listCatalogs,
+	listSuppliers,
+	renameCatalog,
+	type SupplierRow,
+} from "#/server/purchasing";
 
 export const Route = createFileRoute("/purchasing/suppliers")({
-	loader: () => listSuppliers(),
+	loader: async () => {
+		const [suppliers, catalogs] = await Promise.all([
+			listSuppliers(),
+			listCatalogs(),
+		]);
+		return { suppliers, catalogs };
+	},
 	component: Suppliers,
 	pendingComponent: () => (
 		<ListSkeleton
@@ -25,7 +40,8 @@ export const Route = createFileRoute("/purchasing/suppliers")({
 const supplierRows = optimistic<SupplierRow[]>("suppliers");
 
 function Suppliers() {
-	const rows = supplierRows.useData("all", Route.useLoaderData());
+	const loaded = Route.useLoaderData();
+	const rows = supplierRows.useData("all", loaded.suppliers);
 	const [editing, setEditing] = useState<number | null>(null);
 	const supplier = rows.find((r) => r.supplier.id === editing);
 
@@ -104,6 +120,7 @@ function Suppliers() {
 					</tbody>
 				</table>
 			</Card>
+			<CatalogsCard catalogs={loaded.catalogs} />
 			{supplier && (
 				<SupplierDialog
 					supplier={supplier.supplier}
@@ -131,5 +148,76 @@ function Suppliers() {
 				/>
 			)}
 		</Page>
+	);
+}
+
+const catalogRows = optimistic<CatalogRow[]>("catalogs");
+
+// Every catalog, who carries it, and how many products it holds. Names
+// change in place. An empty one can go; one with products says to move them,
+// since deleting it would leave them bought from no one. Suppliers take
+// catalogs on in their own dialog, products on their page.
+function CatalogsCard({ catalogs: loaded }: { catalogs: CatalogRow[] }) {
+	const catalogs = catalogRows.useData("all", loaded);
+	if (catalogs.length === 0) return null;
+	const patch = (fn: (all: CatalogRow[]) => CatalogRow[]) =>
+		catalogRows.patch("all", fn);
+	return (
+		<Card flush title="Catalogs">
+			<table className="w-full">
+				<tbody>
+					{catalogs.map((c) => (
+						<tr key={c.id} className="group border-t first:border-t-0">
+							<td className="w-full max-w-0 px-4 py-1.5">
+								<InlineField
+									shown={c.name}
+									initial={c.name}
+									placeholder="Name"
+									label={`Rename ${c.name}`}
+									className="w-full font-medium"
+									onSave={async (name) => {
+										const r = await optimism.change({
+											label: `Renaming ${c.name}`,
+											patch: patch((all) =>
+												all.map((x) => (x.id === c.id ? { ...x, name } : x)),
+											),
+											send: () => renameCatalog({ data: { id: c.id, name } }),
+										});
+										return r !== null;
+									}}
+								/>
+								<div className="truncate px-1.5 text-xs text-muted-foreground">
+									{c.suppliers.length === 0
+										? "Nobody carries it"
+										: c.suppliers.map((s) => s.name).join(", ")}
+								</div>
+							</td>
+							<td className="px-4 py-1.5 text-right whitespace-nowrap text-muted-foreground tabular-nums">
+								{formatCount(c.products)}{" "}
+								{c.products === 1 ? "product" : "products"}
+							</td>
+							<td className="py-1.5 pr-3">
+								{c.products === 0 && (
+									<button
+										type="button"
+										aria-label={`Delete ${c.name}`}
+										onClick={() =>
+											optimism.change({
+												label: `Deleting ${c.name}`,
+												patch: patch((all) => all.filter((x) => x.id !== c.id)),
+												send: () => deleteCatalog({ data: { id: c.id } }),
+											})
+										}
+										className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-subtle hover:text-critical-text focus-visible:opacity-100"
+									>
+										<Trash2 className="size-4" />
+									</button>
+								)}
+							</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</Card>
 	);
 }

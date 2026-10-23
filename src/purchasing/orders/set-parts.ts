@@ -3,12 +3,12 @@ import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
 	productComponents,
-	productSuppliers,
 	products,
 	purchaseOrderLines,
 	purchaseOrderSentSets,
 	purchaseOrderSkippedParts,
 	purchaseOrders,
+	supplierOffers,
 	suppliers,
 } from "#/db/schema";
 import { setsOf } from "#/purchasing/sets";
@@ -16,7 +16,7 @@ import { newLine } from "./lines";
 import { PurchaseOrderError } from "./lock";
 
 // How many single items of each part a draft's tool set lines come to: the
-// parts bought from the draft's supplier that it doesn't skip. Kits on a PO
+// parts bought from the draft's supplier (their cheapest) that it doesn't skip. Kits on a PO
 // are bought whole, so only sets count. Matches partState's "here".
 export async function partsOfSets(
 	db: Db,
@@ -38,10 +38,11 @@ export async function partsOfSets(
 			eq(productComponents.parentProductId, purchaseOrderLines.productId),
 		)
 		.innerJoin(
-			productSuppliers,
+			supplierOffers,
 			and(
-				eq(productSuppliers.productId, productComponents.componentProductId),
-				eq(productSuppliers.supplierId, purchaseOrders.supplierId),
+				eq(supplierOffers.productId, productComponents.componentProductId),
+				eq(supplierOffers.supplierId, purchaseOrders.supplierId),
+				eq(supplierOffers.cheapest, true),
 			),
 		)
 		.leftJoin(
@@ -112,7 +113,7 @@ export async function splitSets(db: Db, purchaseOrderId: number) {
 }
 
 // The parts of a draft's tool set lines, for showing under each set: how many
-// single items one set needs, who the part is bought from, whether this PO
+// single items one set needs, who the part is bought from (its cheapest), whether this PO
 // skips it, the unit and price it will land in when sent (its line on this
 // PO, else the supplier's), and which of its supplier's other open POs have
 // the set for it. partState in src/purchasing/sets.ts sorts them out.
@@ -128,18 +129,18 @@ export async function setPartsOf(db: Db, poId: number) {
 			name: part.name,
 			variantName: part.variantName,
 			imageUrl: part.imageUrl,
-			supplierSku: productSuppliers.supplierSku,
+			supplierSku: supplierOffers.supplierSku,
 			perSet: productComponents.quantity,
-			supplierId: productSuppliers.supplierId,
+			supplierId: supplierOffers.supplierId,
 			supplierName: suppliers.name,
 			skipped: sql<boolean>`${purchaseOrderSkippedParts.purchaseOrderId} is not null`,
-			unit: sql<string>`coalesce(${partLine.unit}, ${productSuppliers.unit}, 'EACH')`,
-			packSize: sql<number>`coalesce(${partLine.packSize}, ${productSuppliers.packSize}, 1)::int`,
-			supplierCount: sql<number>`coalesce(${partLine.supplierCount}, ${productSuppliers.supplierCount}, 1)::int`,
-			minimumQuantity: sql<number>`coalesce(${partLine.minimumQuantity}, ${productSuppliers.minimumQuantity}, 1)::int`,
+			unit: sql<string>`coalesce(${partLine.unit}, ${supplierOffers.unit}, 'EACH')`,
+			packSize: sql<number>`coalesce(${partLine.packSize}, ${supplierOffers.packSize}, 1)::int`,
+			supplierCount: sql<number>`coalesce(${partLine.supplierCount}, ${supplierOffers.supplierCount}, 1)::int`,
+			minimumQuantity: sql<number>`coalesce(${partLine.minimumQuantity}, ${supplierOffers.minimumQuantity}, 1)::int`,
 			partLineId: partLine.id,
 			lineCost: partLine.unitCost,
-			supplierCost: productSuppliers.cost,
+			supplierCost: supplierOffers.cost,
 			productCost: part.unitCost,
 		})
 		.from(purchaseOrderLines)
@@ -149,8 +150,14 @@ export async function setPartsOf(db: Db, poId: number) {
 			eq(productComponents.parentProductId, purchaseOrderLines.productId),
 		)
 		.innerJoin(part, eq(part.id, productComponents.componentProductId))
-		.leftJoin(productSuppliers, eq(productSuppliers.productId, part.id))
-		.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+		.leftJoin(
+			supplierOffers,
+			and(
+				eq(supplierOffers.productId, part.id),
+				eq(supplierOffers.cheapest, true),
+			),
+		)
+		.leftJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
 		.leftJoin(
 			purchaseOrderSkippedParts,
 			and(
@@ -311,6 +318,11 @@ export async function addItemsBatch(
 	items: Map<number, number>,
 ) {
 	if (items.size === 0) return;
+	const [po] = await db
+		.select({ supplierId: purchaseOrders.supplierId })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, purchaseOrderId));
+	if (!po) throw new Error(`PO ${purchaseOrderId} doesn't exist`);
 	const lines = await db
 		.select({
 			id: purchaseOrderLines.id,
@@ -338,7 +350,7 @@ export async function addItemsBatch(
 			continue;
 		}
 		// A new line takes its terms and price from the supplier, one at a time.
-		const { terms, unitCost } = await newLine(db, productId);
+		const { terms, unitCost } = await newLine(db, productId, po.supplierId);
 		added.push({
 			purchaseOrderId,
 			productId,

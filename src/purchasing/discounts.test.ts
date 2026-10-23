@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { carry } from "#/purchasing/purchasing.fixtures";
 import { createProduct, createTestDb } from "#/test/db";
 import {
 	type Discount,
@@ -117,6 +118,7 @@ describe("discounts on a PO", () => {
 			.values({ code: "S", name: "S", leadTimeDays: 10, coverDays: 20 })
 			.returning();
 		blade = await createProduct(db, "BLADE", "simple");
+		await carry(db, blade, supplier);
 		await db.insert(schema.productSuppliers).values({
 			productId: blade,
 			supplierId: supplier,

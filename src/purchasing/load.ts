@@ -1,13 +1,13 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
-	productSuppliers,
 	products,
 	purchaseOrderDiscounts,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
+	supplierOffers,
 	suppliers,
 } from "#/db/schema";
 import { discountOf } from "#/purchasing/discount";
@@ -63,18 +63,19 @@ export async function loadOrder(db: Db, poId: number) {
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,
 			barcode: products.barcode,
-			supplierSku: productSuppliers.supplierSku,
+			supplierSku: supplierOffers.supplierSku,
 			unit: purchaseOrderLines.unit,
 			packSize: purchaseOrderLines.packSize,
 			supplierCount: purchaseOrderLines.supplierCount,
 			minimumQuantity: purchaseOrderLines.minimumQuantity,
-			// Who the product is bought from now. A line's terms can become the
-			// product's default only on that supplier's PO.
-			linkSupplierId: productSuppliers.supplierId,
-			defaultUnit: productSuppliers.unit,
-			defaultPackSize: productSuppliers.packSize,
-			defaultSupplierCount: productSuppliers.supplierCount,
-			defaultMinimum: productSuppliers.minimumQuantity,
+			// The PO's supplier while it still sells the product (carries its
+			// catalog), else null. A line's terms can become that supplier's
+			// default only then.
+			linkSupplierId: supplierOffers.supplierId,
+			defaultUnit: supplierOffers.unit,
+			defaultPackSize: supplierOffers.packSize,
+			defaultSupplierCount: supplierOffers.supplierCount,
+			defaultMinimum: supplierOffers.minimumQuantity,
 			quantity: purchaseOrderLines.quantity,
 			unitCost: purchaseOrderLines.unitCost,
 			// What the supplier was sent; null on drafts and on lines added
@@ -89,7 +90,13 @@ export async function loadOrder(db: Db, poId: number) {
 		})
 		.from(purchaseOrderLines)
 		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
-		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+		.leftJoin(
+			supplierOffers,
+			and(
+				eq(supplierOffers.productId, products.id),
+				eq(supplierOffers.supplierId, po.order.supplierId),
+			),
+		)
 		.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
 		.where(eq(purchaseOrderLines.purchaseOrderId, poId))
 		// In the order they were added, so a new line lands last.
@@ -210,7 +217,8 @@ export async function documentFor(db: Db, poId: number) {
 	};
 }
 
-// Every supplier with how many products it supplies and its POs on order.
+// Every supplier with how many products it sells (in the catalogs it
+// carries) and its POs on order.
 export function supplierRows(db: Db) {
 	return db
 		.select({
@@ -218,7 +226,7 @@ export function supplierRows(db: Db) {
 			// Written out in full: in a one-table select Drizzle leaves column
 			// names unqualified, so a subquery's supplier_id would compare
 			// against its own table's id instead of the supplier's.
-			products: sql<number>`(select count(*) from product_suppliers ps where ps.supplier_id = "suppliers"."id")::int`,
+			products: sql<number>`(select count(*) from supplier_offers so where so.supplier_id = "suppliers"."id")::int`,
 			openOrders: sql<number>`(select count(*) from purchase_orders po where po.supplier_id = "suppliers"."id" and po.status = 'sent')::int`,
 		})
 		.from(suppliers)

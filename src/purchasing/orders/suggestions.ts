@@ -1,11 +1,18 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { purchaseOrderLines, purchaseOrders } from "#/db/schema";
+import {
+	purchaseOrderExcludedCatalogs,
+	purchaseOrderLines,
+	purchaseOrders,
+} from "#/db/schema";
 import { wantsMore } from "#/purchasing/changes";
-import type { SuggestedLine } from "#/purchasing/reorder";
-import { suggestPurchases } from "#/purchasing/reorder";
+import {
+	type SuggestedLine,
+	type SuggestionSettings,
+	suggestionFor,
+} from "#/purchasing/reorder";
 import { currentDraft, firstLocation, openDraft } from "./drafts";
-import { lockOrder } from "./lock";
+import { lockOrder, PurchaseOrderError } from "./lock";
 import { partsOfSets } from "./set-parts";
 
 // Opens the supplier's draft with today's suggestions in it, creating it if
@@ -64,18 +71,94 @@ export function draftChanges(
 	return { added, raised, skipped, wants };
 }
 
+// What a PO's suggestions are worked out with (see SuggestionSettings).
+export async function settingsOf(
+	db: Db,
+	purchaseOrderId: number,
+): Promise<SuggestionSettings> {
+	const [[po], excluded] = await Promise.all([
+		db
+			.select({
+				coverDays: purchaseOrders.coverDays,
+				includePricier: purchaseOrders.includePricier,
+			})
+			.from(purchaseOrders)
+			.where(eq(purchaseOrders.id, purchaseOrderId)),
+		db
+			.select({ catalogId: purchaseOrderExcludedCatalogs.catalogId })
+			.from(purchaseOrderExcludedCatalogs)
+			.where(eq(purchaseOrderExcludedCatalogs.purchaseOrderId, purchaseOrderId))
+			.orderBy(purchaseOrderExcludedCatalogs.catalogId),
+	]);
+	if (!po) throw new PurchaseOrderError(`PO ${purchaseOrderId} doesn't exist`);
+	return { ...po, excludedCatalogs: excluded.map((e) => e.catalogId) };
+}
+
+// Taken by every change that puts suggested products on a draft, so two at
+// once can't both see a product as on no other draft and add it (see
+// onOtherDrafts). Held to the end of the transaction.
+export async function lockSuggestions(tx: Db) {
+	await tx.execute(
+		sql`select pg_advisory_xact_lock(hashtext('katasync:suggestions'))`,
+	);
+}
+
+// Which of these products are on another supplier's open draft. Suggestions
+// leave those out (plannedFrom); checked again under lockSuggestions, since
+// the suggestion was worked out before it.
+export async function onOtherDrafts(
+	tx: Db,
+	supplierId: number,
+	productIds: number[],
+) {
+	if (productIds.length === 0) return new Set<number>();
+	const rows = await tx
+		.select({ productId: purchaseOrderLines.productId })
+		.from(purchaseOrderLines)
+		.innerJoin(
+			purchaseOrders,
+			eq(purchaseOrders.id, purchaseOrderLines.purchaseOrderId),
+		)
+		.where(
+			and(
+				inArray(purchaseOrderLines.productId, productIds),
+				eq(purchaseOrders.status, "draft"),
+				ne(purchaseOrders.supplierId, supplierId),
+			),
+		);
+	return new Set(rows.map((r) => r.productId));
+}
+
+// What a PO is suggested now, under its own settings.
+export async function suggestionOf(
+	db: Db,
+	po: { id: number; supplierId: number },
+	now = new Date(),
+) {
+	return suggestionFor(db, po.supplierId, await settingsOf(db, po.id), now);
+}
+
 // Applies draftChanges to a draft. Returns how many lines it added and raised.
 export async function updateFromSuggestions(
 	db: Db,
 	purchaseOrderId: number,
 	now = new Date(),
 ): Promise<{ added: number; raised: number }> {
-	const suggestions = await suggestPurchases(db, now);
+	const [found] = await db
+		.select({ supplierId: purchaseOrders.supplierId })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, purchaseOrderId));
+	if (!found)
+		throw new PurchaseOrderError(`PO ${purchaseOrderId} doesn't exist`);
+	const suggested = await suggestionOf(
+		db,
+		{ id: purchaseOrderId, supplierId: found.supplierId },
+		now,
+	);
 	return db.transaction(async (tx) => {
 		// Locked, so it can't be sent or cancelled while lines change.
 		const po = await lockOrder(tx, purchaseOrderId, ["draft"]);
-		const suggested =
-			suggestions.find((s) => s.supplierId === po.supplierId)?.lines ?? [];
+		await lockSuggestions(tx);
 		const current = await tx
 			.select({
 				productId: purchaseOrderLines.productId,
@@ -85,11 +168,18 @@ export async function updateFromSuggestions(
 			})
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, po.id));
-		const { added, raised } = draftChanges(
+		const changes = draftChanges(
 			current,
 			suggested,
 			await partsOfSets(tx, po.id),
 		);
+		const taken = await onOtherDrafts(
+			tx,
+			po.supplierId,
+			changes.added.map((l) => l.productId),
+		);
+		const added = changes.added.filter((l) => !taken.has(l.productId));
+		const { raised } = changes;
 		if (added.length > 0)
 			await tx.insert(purchaseOrderLines).values(
 				added.map((l) => ({
@@ -159,11 +249,14 @@ export async function openSuggested(
 // line. Leaves any other PO alone.
 export async function refreshSuggested(db: Db, id: number, now = new Date()) {
 	const [po] = await db
-		.select({ status: purchaseOrders.status })
+		.select({
+			status: purchaseOrders.status,
+			supplierId: purchaseOrders.supplierId,
+		})
 		.from(purchaseOrders)
 		.where(eq(purchaseOrders.id, id));
 	if (po?.status !== "suggested") return;
-	const suggestions = await suggestPurchases(db, now);
+	const want = await suggestionOf(db, { id, supplierId: po.supplierId }, now);
 	await db.transaction(async (tx) => {
 		// Checked again under the lock: an edit may have made it a draft.
 		const locked = await lockOrder(tx, id, [
@@ -174,8 +267,6 @@ export async function refreshSuggested(db: Db, id: number, now = new Date()) {
 			"cancelled",
 		]);
 		if (locked.status !== "suggested") return;
-		const want =
-			suggestions.find((s) => s.supplierId === locked.supplierId)?.lines ?? [];
 		const current = await tx
 			.select()
 			.from(purchaseOrderLines)

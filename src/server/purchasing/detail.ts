@@ -13,6 +13,7 @@ import {
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
 import { stockRanges } from "#/inventory/stock-range";
+import { catalogsOf } from "#/purchasing/catalogs";
 import { damagesOf } from "#/purchasing/damage";
 import { emailConfigured } from "#/purchasing/email";
 import { poFilesOf } from "#/purchasing/files";
@@ -27,11 +28,13 @@ import {
 	poName,
 	refreshSuggested,
 	setPartsOf,
+	settingsOf,
 } from "#/purchasing/orders";
 import {
+	DEFAULT_SETTINGS,
 	recommendedAdditions,
 	reorderBreakdown,
-	suggestPurchases,
+	suggestionFor,
 } from "#/purchasing/reorder";
 import { trackingOf } from "#/purchasing/tracking";
 import { listUnits } from "#/purchasing/units";
@@ -77,7 +80,13 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 		const po = await loadOrder(db, data.id);
 		const unsent =
 			po.order.status === "draft" || po.order.status === "suggested";
-		const setParts = unsent ? await setPartsOf(db, data.id) : [];
+		const [setParts, settings, carried] = unsent
+			? await Promise.all([
+					setPartsOf(db, data.id),
+					settingsOf(db, data.id),
+					catalogsOf(db, po.supplier.id),
+				])
+			: [[], DEFAULT_SETTINGS, []];
 		// A set's parts show their stock too.
 		const productIds = [
 			...new Set([
@@ -110,21 +119,18 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				.from(locations)
 				.where(isOurs)
 				.orderBy(locations.kind, locations.name),
-			// On a draft: how today's suggestions differ from it (see draftChanges).
-			// The page works out raised and skipped from each line's wants, so
-			// they follow quantities and locks as they change. A suggested PO is
-			// the suggestion.
+			// On a draft: how its suggestion, under its own settings, differs
+			// from it (see draftChanges). The page works out raised and skipped
+			// from each line's wants, so they follow quantities and locks as they
+			// change. A suggested PO is the suggestion.
 			po.order.status === "draft"
-				? Promise.all([suggestPurchases(db), partsOfSets(db, data.id)]).then(
-						([all, fromSets]) => {
-							const c = draftChanges(
-								po.lines,
-								all.find((s) => s.supplierId === po.supplier.id)?.lines ?? [],
-								fromSets,
-							);
-							return { added: c.added.length, wants: c.wants };
-						},
-					)
+				? Promise.all([
+						suggestionFor(db, po.supplier.id, settings),
+						partsOfSets(db, data.id),
+					]).then(([suggested, fromSets]) => {
+						const c = draftChanges(po.lines, suggested, fromSets);
+						return { added: c.added.length, wants: c.wants };
+					})
 				: { added: 0, wants: new Map<number, number>() },
 			listUnits(db).then((all) => all.map((u) => u.name)),
 			leadTimes(db, [po.supplier.id]),
@@ -155,6 +161,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 							db,
 							po.supplier.id,
 							new Set([...productIds, ...fromSets.keys()]),
+							settings,
 						),
 					)
 				: [],
@@ -171,6 +178,9 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 		return {
 			leadTime: leadTimeOf(lead, po.supplier.id),
 			changes: { added: changes.added },
+			// What its suggestions are worked out with, and the catalogs its
+			// supplier carries to choose from. Only on unsent POs.
+			suggestion: { settings, catalogs: carried },
 			...po,
 			lines: po.lines.map((l) => ({
 				...l,

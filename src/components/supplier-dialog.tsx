@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import {
 	type FormEvent,
 	type ReactNode,
@@ -7,6 +8,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { AddressInput } from "#/components/address-input";
+import { CatalogSelect } from "#/components/catalog-picker";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -16,11 +18,19 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { Tip } from "#/components/ui/tooltip";
+import { formatCount } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import { type LeadTime, MIN_MEASURED_POS } from "#/purchasing/forecast";
 import type { PlaceAddress } from "#/server/places";
-import { type SupplierRow, updateSupplier } from "#/server/purchasing";
+import {
+	type CatalogRow,
+	listCatalogs,
+	makeCatalog,
+	type SupplierRow,
+	setSupplierCarries,
+	updateSupplier,
+} from "#/server/purchasing";
 
 type Supplier = SupplierRow["supplier"];
 
@@ -96,6 +106,7 @@ export function SupplierDialog({
 				<DialogHeader>
 					<DialogTitle>{supplier.name}</DialogTitle>
 				</DialogHeader>
+				{open && <SupplierCatalogs supplier={supplier} />}
 				<SupplierForm
 					// Fresh fields each time it opens.
 					key={String(open)}
@@ -423,5 +434,109 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 			<span className="text-muted-foreground">{label}</span>
 			{children}
 		</label>
+	);
+}
+
+// The catalogs a supplier carries, as chips: it sells everything in them.
+// Changes save at once, each with Undo; the supplier's terms for a catalog's
+// products are kept when it stops carrying it, so carrying it again brings
+// them back.
+function SupplierCatalogs({ supplier }: { supplier: Supplier }) {
+	const [all, setAll] = useState<CatalogRow[] | null>(null);
+	useEffect(() => {
+		listCatalogs().then(setAll);
+	}, []);
+	const carries = (c: CatalogRow) =>
+		c.suppliers.some((s) => s.id === supplier.id);
+	const carried = all?.filter(carries) ?? [];
+
+	// Shown at once; put back if the server refuses.
+	function mark(catalog: { id: number; name: string }, on: boolean) {
+		setAll((list) => {
+			const rest = (list ?? []).filter((c) => c.id !== catalog.id);
+			const had = list?.find((c) => c.id === catalog.id);
+			const base = had ?? { ...catalog, products: 0, suppliers: [] };
+			const suppliers = on
+				? [...base.suppliers, { id: supplier.id, name: supplier.name }]
+				: base.suppliers.filter((s) => s.id !== supplier.id);
+			return [...rest, { ...base, suppliers }].sort((a, b) =>
+				a.name.localeCompare(b.name),
+			);
+		});
+	}
+
+	async function set(catalog: { id: number; name: string }, on: boolean) {
+		mark(catalog, on);
+		const send = () =>
+			setSupplierCarries({
+				data: { supplierId: supplier.id, catalogId: catalog.id, carried: on },
+			});
+		const r = await optimism.change({ send });
+		if (!r) return mark(catalog, !on);
+		toast.success(
+			on
+				? `${supplier.name} carries ${catalog.name}`
+				: `${supplier.name} no longer carries ${catalog.name}`,
+			{
+				action: {
+					label: "Undo",
+					onClick: () => {
+						mark(catalog, !on);
+						optimism.change({
+							send: () =>
+								setSupplierCarries({
+									data: {
+										supplierId: supplier.id,
+										catalogId: catalog.id,
+										carried: !on,
+									},
+								}),
+						});
+					},
+				},
+			},
+		);
+	}
+
+	async function make(name: string) {
+		const r = await optimism.change({
+			send: () => makeCatalog({ data: { name } }),
+		});
+		if (r) await set({ id: r.value, name }, true);
+	}
+
+	return (
+		<div className="flex flex-wrap items-center gap-1.5">
+			<span className="mr-1 text-muted-foreground">Carries</span>
+			{all === null && <span className="text-muted-foreground">…</span>}
+			{carried.map((c) => (
+				<span
+					key={c.id}
+					className="inline-flex items-center gap-0.5 rounded-md bg-subtle py-0.5 pr-0.5 pl-2 text-sm"
+				>
+					{c.name}
+					<span className="ml-1 text-xs text-muted-foreground tabular-nums">
+						{formatCount(c.products)}
+					</span>
+					<button
+						type="button"
+						aria-label={`Stop carrying ${c.name}`}
+						onClick={() => set(c, false)}
+						className="rounded p-0.5 text-muted-foreground hover:bg-surface-strong hover:text-foreground"
+					>
+						<X className="size-3" />
+					</button>
+				</span>
+			))}
+			{all !== null && (
+				<CatalogSelect
+					value={null}
+					catalogs={all.filter((c) => !carries(c))}
+					onPick={(c) => c && set(c, true)}
+					onMake={make}
+					placeholder="Add catalog"
+				/>
+			)}
+		</div>
 	);
 }

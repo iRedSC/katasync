@@ -6,6 +6,7 @@ import { type CheckTarget, runCheck } from "#/diagnostics/checks";
 import { diagnosticsOverview } from "#/diagnostics/overview";
 import { COUNT_REASONS, countsDue } from "#/inventory/count-priority";
 import { describeSchema, MAX_ROWS, readOnlyQuery } from "#/mcp/query";
+import { listCatalogs } from "#/purchasing/catalogs";
 import { type InvoiceLine, matchInvoice } from "#/purchasing/invoices";
 import { suggestPurchases } from "#/purchasing/reorder";
 import { supplierByRef } from "#/purchasing/suppliers";
@@ -117,6 +118,17 @@ export function registerReadTools(server: McpServer, db: Db) {
 				...(await diagnosticsOverview(db)),
 				...(check ? { check: await runCheck(check as CheckTarget) } : {}),
 			}),
+	);
+
+	server.registerTool(
+		"catalogs",
+		{
+			description:
+				"Every catalog (a line of products, e.g. Columbia) with how many products it holds and which suppliers carry it. A supplier sells every product in a catalog it carries; reorder buys each product from the supplier with the lowest price per single item.",
+			inputSchema: {},
+			annotations: READ,
+		},
+		async () => json(await listCatalogs(db)),
 	);
 
 	server.registerTool(

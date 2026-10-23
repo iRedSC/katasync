@@ -129,7 +129,7 @@ export async function addSetToOtherDrafts(
 					.where(eq(purchaseOrderLines.id, existing.id));
 				sets = quantity * existing.packSize;
 			} else if (!existing) {
-				const { terms } = await newLine(tx, line.setProductId);
+				const { terms } = await newLine(tx, line.setProductId, supplierId);
 				const quantity = Math.ceil(want / terms.packSize);
 				await tx.insert(purchaseOrderLines).values({
 					purchaseOrderId: draftId,

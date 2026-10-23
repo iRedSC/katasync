@@ -6,7 +6,9 @@ import {
 	purchaseOrderLines,
 	purchaseOrders,
 	purchaseUnits,
+	supplierOffers,
 } from "#/db/schema";
+import { setOfferTerms } from "#/purchasing/catalogs";
 import {
 	convertDiscounts,
 	lockForEdit,
@@ -14,7 +16,7 @@ import {
 } from "#/purchasing/orders";
 import { perPack } from "#/purchasing/pack";
 
-// The units suppliers sell in, and which one each product is bought in.
+// The units suppliers sell in, and which one each sells each product in.
 // Stock always counts the product itself; a unit only changes how POs are
 // ordered, priced, and received.
 
@@ -30,12 +32,12 @@ export function unitName(raw: string) {
 	return name;
 }
 
-// Every unit with how many products are bought in it. EACH first.
+// Every unit with how many products some supplier sells in it. EACH first.
 export async function listUnits(db: Db) {
 	const rows = await db
 		.select({
 			name: purchaseUnits.name,
-			products: sql<number>`(select count(*) from product_suppliers ps where ps.unit = "purchase_units"."name")::int`,
+			products: sql<number>`(select count(distinct ps.product_id) from product_suppliers ps where ps.unit = "purchase_units"."name")::int`,
 		})
 		.from(purchaseUnits)
 		.orderBy(asc(purchaseUnits.name));
@@ -92,7 +94,7 @@ export async function deleteUnit(db: Db, name: string) {
 	if (name === EACH) throw new PurchaseOrderError("EACH can't be removed");
 	return db.transaction(async (tx) => {
 		const users = await tx
-			.select({ sku: products.sku })
+			.selectDistinct({ sku: products.sku })
 			.from(productSuppliers)
 			.innerJoin(products, eq(products.id, productSuppliers.productId))
 			.where(eq(productSuppliers.unit, name))
@@ -176,31 +178,44 @@ async function convertLine(
 	await convertDiscounts(db, line, t.packSize);
 }
 
-// Sets the supplier's default terms for a product, converting its price to
+// Sets a supplier's default terms for a product, converting its price to
 // the new pack size.
-async function setDefaultTerms(db: Db, productId: number, t: UnitTerms) {
+async function setDefaultTerms(
+	db: Db,
+	productId: number,
+	supplierId: number,
+	t: UnitTerms,
+) {
+	// The row is made first if it's missing (EACH, no price), so the lock
+	// holds it: a price saved or received meanwhile can't be overwritten by
+	// one read before it existed. Only a supplier that sells it gets one.
+	await db.execute(sql`
+		insert into ${productSuppliers} (product_id, supplier_id, supplier_count)
+		select ${supplierOffers.productId}, ${supplierOffers.supplierId}, 1
+		from ${supplierOffers}
+		where ${supplierOffers.productId} = ${productId}
+			and ${supplierOffers.supplierId} = ${supplierId}
+		on conflict do nothing`);
 	const [link] = await db
 		.select()
 		.from(productSuppliers)
-		.where(eq(productSuppliers.productId, productId))
+		.where(
+			and(
+				eq(productSuppliers.productId, productId),
+				eq(productSuppliers.supplierId, supplierId),
+			),
+		)
 		.for("update");
-	if (!link) throw new PurchaseOrderError("Set who it's bought from first");
-	await db
-		.update(productSuppliers)
-		.set({
-			...t,
-			cost:
-				link.cost === null
-					? null
-					: perPack(link.cost, link.packSize, t.packSize),
-		})
-		.where(eq(productSuppliers.productId, productId));
-	return link;
+	return setOfferTerms(db, productId, supplierId, {
+		...t,
+		cost:
+			link?.cost == null ? null : perPack(link.cost, link.packSize, t.packSize),
+	});
 }
 
 // Changes what one draft PO orders a product in, and the minimum shown on
-// it. With makeDefault, the product's supplier gets the same terms, so later
-// POs start from them; only the product's own supplier's PO can do that.
+// it. With makeDefault, the PO's supplier keeps the same terms for it, so
+// its later POs start from them; that needs the supplier to still sell it.
 export async function setLineTerms(
 	db: Db,
 	input: UnitTerms & {
@@ -225,20 +240,18 @@ export async function setLineTerms(
 		if (!line) throw new PurchaseOrderError("That product isn't on this PO");
 		await convertLine(tx, line, terms);
 		if (!makeDefault) return;
-		const link = await setDefaultTerms(tx, productId, terms);
-		if (link.supplierId !== po.supplierId)
-			throw new PurchaseOrderError("Bought from another supplier");
+		await setDefaultTerms(tx, productId, po.supplierId, terms);
 	});
 }
 
-// Sets the supplier's default terms for a product, e.g. from its product
-// page. Draft lines still on the old default follow it; a draft line given
+// Sets a supplier's default terms for a product, e.g. from its product
+// page. Only that supplier's drafts are touched. Draft lines still on the old default follow it; a draft line given
 // its own terms keeps them.
 export async function setPurchaseUnit(
 	db: Db,
-	input: UnitTerms & { productId: number },
+	input: UnitTerms & { productId: number; supplierId: number },
 ) {
-	const { productId, ...terms } = input;
+	const { productId, supplierId, ...terms } = input;
 	return db.transaction(async (tx) => {
 		await checkTerms(tx, terms);
 		// Draft POs first, lowest id first, then the supplier row: the order
@@ -250,6 +263,7 @@ export async function setPurchaseUnit(
 			.where(
 				and(
 					eq(purchaseOrders.status, "draft"),
+					eq(purchaseOrders.supplierId, supplierId),
 					inArray(
 						purchaseOrders.id,
 						tx
@@ -261,7 +275,7 @@ export async function setPurchaseUnit(
 			)
 			.orderBy(asc(purchaseOrders.id))
 			.for("update");
-		const old = await setDefaultTerms(tx, productId, terms);
+		const old = await setDefaultTerms(tx, productId, supplierId, terms);
 		const lines = await tx
 			.select({
 				id: purchaseOrderLines.id,
@@ -278,6 +292,7 @@ export async function setPurchaseUnit(
 				and(
 					eq(purchaseOrderLines.productId, productId),
 					eq(purchaseOrders.status, "draft"),
+					eq(purchaseOrders.supplierId, supplierId),
 					eq(purchaseOrderLines.unit, old.unit),
 					eq(purchaseOrderLines.packSize, old.packSize),
 					eq(purchaseOrderLines.supplierCount, old.supplierCount),

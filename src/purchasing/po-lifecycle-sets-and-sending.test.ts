@@ -21,6 +21,7 @@ import {
 	updateFromSuggestions,
 } from "./orders";
 import {
+	carry,
 	createPurchasingDb,
 	now,
 	purchasingBuilders,
@@ -68,6 +69,7 @@ describe("a PO from draft to received", () => {
 			.set({ unitCost: 3 })
 			.where(eq(schema.products.id, handle));
 		// No price from Canam, so it's the product's own cost.
+		await carry(db, handle, canam);
 		await db
 			.insert(schema.productSuppliers)
 			.values({ productId: handle, supplierId: canam, supplierCount: 1 });
@@ -118,6 +120,7 @@ describe("a PO from draft to received", () => {
 			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
 			.returning();
 		const handle = await createProduct(db, "HANDLE", "simple");
+		await carry(db, handle, other);
 		await db.insert(schema.productSuppliers).values({
 			productId: handle,
 			supplierId: other,
@@ -156,6 +159,7 @@ describe("a PO from draft to received", () => {
 			.values({ code: "OTHER", name: "Other", leadTimeDays: 5 })
 			.returning();
 		const handle = await createProduct(db, "HANDLE", "simple");
+		await carry(db, handle, other);
 		await db.insert(schema.productSuppliers).values({
 			productId: handle,
 			supplierId: other,

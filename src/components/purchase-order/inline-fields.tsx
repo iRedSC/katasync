@@ -8,7 +8,7 @@ import { cn } from "#/lib/utils";
 import {
 	amendPurchaseLine,
 	setLine,
-	setProductSupplier,
+	setSupplierTerms,
 } from "#/server/purchasing";
 import { amended, refusedByDiscounts } from "./line-actions";
 import { patchLines } from "./po-data";
@@ -49,7 +49,7 @@ export const field =
 // doesn't push the columns around. Saves on Enter or leaving the field;
 // Escape puts the old text back. Shows what was typed until the saved value
 // comes back.
-function InlineField({
+export function InlineField({
 	shown,
 	initial,
 	placeholder,
@@ -224,8 +224,8 @@ export function PriceField({
 	);
 }
 
-// The supplier's part number for the product, kept on the product, so it
-// changes every PO with it. Only this PO's supplier's number can change here.
+// This PO's supplier's part number for the product, kept with its terms, so
+// it changes every PO to them. Only while the supplier sells the product.
 export function SupplierSkuField({
 	line,
 	purchaseOrderId,
@@ -242,9 +242,7 @@ export function SupplierSkuField({
 				content={
 					line.kind === "bundle"
 						? "Sets are bought as their parts"
-						: line.linkSupplierId === null
-							? "No supplier; set one on its page"
-							: "Bought from another supplier"
+						: "Not in a catalog this supplier carries"
 				}
 			>
 				<span className="px-1.5 text-muted-foreground">
@@ -269,7 +267,7 @@ export function SupplierSkuField({
 						(l) => ({ ...l, supplierSku }),
 					),
 					send: () =>
-						setProductSupplier({
+						setSupplierTerms({
 							data: { productId: line.productId, supplierId, supplierSku },
 						}),
 				});

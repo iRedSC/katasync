@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { carry } from "#/purchasing/purchasing.fixtures";
 import { createProduct } from "#/test/db";
 import { callTool, freshDb } from "./mcp.fixtures";
 
@@ -24,6 +25,7 @@ describe("over MCP", () => {
 			.insert(schema.suppliers)
 			.values({ code: "CANAM", name: "CanAm" })
 			.returning();
+		await carry(db, blade, canam);
 		await db.insert(schema.productSuppliers).values({
 			productId: blade,
 			supplierId: canam,
@@ -53,7 +55,7 @@ describe("over MCP", () => {
 			},
 		]);
 		expect(data.skipped).toEqual([
-			{ sku: "LOOSE", reason: "no supplier set" },
+			{ sku: "LOOSE", reason: "no supplier sells it" },
 			{ sku: "NOPE", reason: "No product with SKU NOPE" },
 		]);
 		const [line] = await db.select().from(schema.purchaseOrderLines);
@@ -95,6 +97,7 @@ describe("over MCP", () => {
 			.insert(schema.suppliers)
 			.values({ code: "CANAM", name: "CanAm" })
 			.returning();
+		await carry(db, blade, canam);
 		await db.insert(schema.productSuppliers).values({
 			productId: blade,
 			supplierId: canam,
@@ -137,6 +140,7 @@ describe("over MCP", () => {
 			.values({ code: "CANAM", name: "CanAm" })
 			.returning();
 		const knife = await createProduct(db, "KNIFE", "simple");
+		await carry(db, knife, canam);
 		await db.insert(schema.productSuppliers).values({
 			productId: knife,
 			supplierId: canam,

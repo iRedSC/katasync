@@ -2,9 +2,11 @@ import { type } from "arktype";
 import { count, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	catalogs,
 	productSuppliers,
 	products,
 	purchaseUnits,
+	supplierCatalogs,
 	suppliers,
 } from "#/db/schema";
 import { chunks, readCsv } from "#/import/sumtracker";
@@ -340,6 +342,45 @@ export async function applySupplierImport(db: Db, plan: SupplierImportPlan) {
 					};
 				}),
 			);
+		}
+		// Each supplier gets a catalog of what it sells, named after it, as
+		// drizzle/0109 did for suppliers already here.
+		const selling = rows.filter((r) =>
+			plan.links.some((l) => l.supplierCode === r.code),
+		);
+		if (selling.length > 0) {
+			// Names aren't unique; a shared one gets the (unique) code added.
+			const nameOf = (r: (typeof rows)[number]) =>
+				selling.filter((o) => o.name === r.name).length > 1
+					? `${r.name} (${r.code})`
+					: r.name;
+			const made = await tx
+				.insert(catalogs)
+				.values(selling.map((r) => ({ name: nameOf(r) })))
+				.returning({ id: catalogs.id, name: catalogs.name });
+			const catalogOf = new Map(
+				selling.map((r) => {
+					const c = made.find((m) => m.name === nameOf(r));
+					if (!c) throw new Error(`No catalog made for ${r.code}`);
+					return [r.code, c.id];
+				}),
+			);
+			await tx.insert(supplierCatalogs).values(
+				selling.map((r) => ({
+					supplierId: r.id,
+					catalogId: catalogOf.get(r.code) as number,
+				})),
+			);
+			for (const [code, catalogId] of catalogOf) {
+				const ids = plan.links
+					.filter((l) => l.supplierCode === code)
+					.flatMap((l) => productIds.get(l.sku) ?? []);
+				for (const chunk of chunks(ids, 500))
+					await tx
+						.update(products)
+						.set({ catalogId })
+						.where(inArray(products.id, chunk));
+			}
 		}
 		return {
 			suppliers: rows.length,

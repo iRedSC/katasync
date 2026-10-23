@@ -14,6 +14,38 @@ export type Seeded = {
 	store: number;
 };
 
+// Has a supplier sell a product: the product goes in the supplier's own
+// catalog (made if needed), which the supplier carries. Its terms are set
+// apart, in productSuppliers.
+export async function carry(db: Db, productId: number, supplierId: number) {
+	const [s] = await db
+		.select({ name: schema.suppliers.name })
+		.from(schema.suppliers)
+		.where(eq(schema.suppliers.id, supplierId));
+	const [made] = await db
+		.insert(schema.catalogs)
+		.values({ name: s.name })
+		.onConflictDoNothing()
+		.returning({ id: schema.catalogs.id });
+	const catalogId =
+		made?.id ??
+		(
+			await db
+				.select({ id: schema.catalogs.id })
+				.from(schema.catalogs)
+				.where(eq(schema.catalogs.name, s.name))
+		)[0].id;
+	await db
+		.insert(schema.supplierCatalogs)
+		.values({ supplierId, catalogId })
+		.onConflictDoNothing();
+	await db
+		.update(schema.products)
+		.set({ catalogId })
+		.where(eq(schema.products.id, productId));
+	return catalogId;
+}
+
 // Each test file calls this from its own beforeEach, so every test gets a fresh DB.
 export async function createPurchasingDb(): Promise<Seeded> {
 	const db = await createTestDb();
@@ -89,6 +121,7 @@ export function purchasingBuilders(get: () => Seeded) {
 
 	async function supply(productId: number, cost: number | null, minimum = 1) {
 		const { db, canam } = get();
+		await carry(db, productId, canam);
 		await db.insert(schema.productSuppliers).values({
 			productId,
 			supplierId: canam,

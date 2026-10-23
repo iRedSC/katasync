@@ -338,12 +338,13 @@ function ProductPage() {
 					{canCount && (
 						<SupplierCard
 							productId={p.id}
+							sku={p.sku}
 							data={d.supplier}
-							patch={(link) => ({
-								label: `Supplier of ${p.sku}`,
+							patch={(offers) => ({
+								label: `Suppliers of ${p.sku}`,
 								patch: productData.patch(p.id, (data) => ({
 									...data,
-									supplier: { ...data.supplier, link },
+									supplier: { ...data.supplier, offers },
 								})),
 							})}
 						/>

@@ -1,15 +1,17 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
 	locations,
-	productSuppliers,
 	products,
 	settings,
 	stockLevels,
+	supplierOffers,
 	suppliers,
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
 import { carried } from "#/products/archive";
+import { cheapestOffers } from "#/purchasing/catalogs";
 import { demandWindow, setsSoldIn, soldInWindow } from "#/purchasing/forecast";
 import { setFloorOf, setMembership, setsBlocked } from "#/purchasing/sets";
 import { DEFAULT_COVER_DAYS, loadPlan, type Plan, planFor } from "./plan";
@@ -33,19 +35,35 @@ type Supplier = {
 // One product that needs ordering, with the supplier it comes from.
 export type ReorderNeed = SuggestedLine & Supplier;
 
-// Every product as reorder sees it today, in name order, with why. Products
-// without a supplier plan on the defaults and have no supplier fields.
-// `productIds` limits it to those products. Pass `plan` when the caller
-// already has one, to skip loading it twice.
+// Who sells a product for less than the supplier it's being planned from.
+export type CheaperAt = {
+	supplierId: number;
+	supplierName: string;
+	// Per single item, at each supplier.
+	itemCost: number;
+	ours: number | null;
+};
+
+const cheapestSupplier = alias(suppliers, "cheapest_supplier");
+
+// Every product as reorder sees it today, in name order, with why. Each is
+// bought from its cheapest supplier (supplierOffers), or with `from`, from
+// that supplier and over its cover days unless `coverDays` says otherwise;
+// `cheaperAt` then says who sells it for less. Products nobody sells plan on
+// the defaults and have no supplier fields. `productIds` limits it to those
+// products. Pass `plan` when the caller already has one, to skip loading it
+// twice.
 export async function reorderBreakdown(
 	db: Db,
 	options: {
 		now?: Date;
 		plan?: Plan | Promise<Plan>;
 		productIds?: number[];
+		from?: { supplierId: number; coverDays?: number | null };
 	} = {},
 ) {
-	const { now = new Date(), productIds } = options;
+	const { now = new Date(), productIds, from } = options;
+	const cheapestOffer = cheapestOffers(db);
 	if (productIds?.length === 0) return [];
 	// The same window the forecast's days are read over, so the sales shown
 	// and the explanation for them cover the same orders.
@@ -78,21 +96,39 @@ export async function reorderBreakdown(
 					notCounted: sql<boolean>`${products.notCountedSince} is not null`,
 					minStock: products.minStock,
 					maxStock: products.maxStock,
-					supplierSku: productSuppliers.supplierSku,
-					cost: productSuppliers.cost,
-					minimumQuantity: productSuppliers.minimumQuantity,
-					unit: productSuppliers.unit,
-					packSize: productSuppliers.packSize,
-					supplierCount: productSuppliers.supplierCount,
+					catalogId: products.catalogId,
+					supplierSku: supplierOffers.supplierSku,
+					cost: supplierOffers.cost,
+					itemCost: supplierOffers.itemCost,
+					minimumQuantity: supplierOffers.minimumQuantity,
+					unit: supplierOffers.unit,
+					packSize: supplierOffers.packSize,
+					supplierCount: supplierOffers.supplierCount,
 					supplierId: suppliers.id,
 					supplierName: suppliers.name,
 					coverDays: suppliers.coverDays,
 					minimumOrder: suppliers.minimumOrder,
 					criticalThreshold: suppliers.criticalThreshold,
+					cheapestId: cheapestSupplier.id,
+					cheapestName: cheapestSupplier.name,
+					cheapestItemCost: cheapestOffer.itemCost,
 				})
 				.from(products)
-				.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-				.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+				.leftJoin(
+					supplierOffers,
+					and(
+						eq(supplierOffers.productId, products.id),
+						from
+							? eq(supplierOffers.supplierId, from.supplierId)
+							: eq(supplierOffers.cheapest, true),
+					),
+				)
+				.leftJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
+				.leftJoin(cheapestOffer, eq(cheapestOffer.productId, products.id))
+				.leftJoin(
+					cheapestSupplier,
+					eq(cheapestSupplier.id, cheapestOffer.supplierId),
+				)
 				.where(
 					and(
 						carried,
@@ -162,7 +198,7 @@ export async function reorderBreakdown(
 		const input: ReorderInput = {
 			...stock,
 			...planFor(planned, p.productId, p.supplierId),
-			coverDays: p.coverDays ?? DEFAULT_COVER_DAYS,
+			coverDays: from?.coverDays ?? p.coverDays ?? DEFAULT_COVER_DAYS,
 			minStock: p.minStock ?? defaultMin,
 			setFloor: setFloorOf(membership),
 			minimumQuantity: terms.minimumQuantity,
@@ -200,6 +236,22 @@ export async function reorderBreakdown(
 			purchase,
 			sets: membership,
 		});
+		// Only with `from`: the cheapest is someone else, at a known lower
+		// price. An unpriced offer loses to any priced one.
+		const cheaperAt: CheaperAt | null =
+			supplier &&
+			p.cheapestId !== null &&
+			p.cheapestName !== null &&
+			p.cheapestId !== supplier.supplierId &&
+			p.cheapestItemCost !== null &&
+			(p.itemCost === null || p.cheapestItemCost < p.itemCost)
+				? {
+						supplierId: p.cheapestId,
+						supplierName: p.cheapestName,
+						itemCost: p.cheapestItemCost,
+						ours: p.itemCost,
+					}
+				: null;
 		// Its own range, else the one its forecast gives, as stockRanges does.
 		const range =
 			p.minStock !== null && p.maxStock !== null
@@ -208,6 +260,10 @@ export async function reorderBreakdown(
 		return {
 			line,
 			supplier,
+			catalogId: p.catalogId,
+			// The supplier planned from is the one reorder buys it from.
+			cheapest: supplier !== null && p.cheapestId === supplier.supplierId,
+			cheaperAt,
 			input,
 			why,
 			kind: p.kind,

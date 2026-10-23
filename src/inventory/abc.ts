@@ -4,8 +4,8 @@ import {
 	orderLines,
 	orders,
 	productComponents,
-	productSuppliers,
 	products,
+	supplierOffers,
 } from "#/db/schema";
 import { soldSince } from "#/inventory/sales";
 import { carried } from "#/products/archive";
@@ -90,13 +90,19 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 	// know it, else what we last valued it at.
 	const unitCost = sql<
 		number | null
-	>`coalesce(${productSuppliers.cost} / ${productSuppliers.packSize}, ${products.unitCost})::float8`;
+	>`coalesce(${supplierOffers.itemCost}, ${products.unitCost})::float8`;
 	const [sold, stocked, [first], revenue, parts] = await Promise.all([
 		soldSince(db, since, { includeFba: true }),
 		db
 			.select({ id: products.id, cost: unitCost })
 			.from(products)
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+			.leftJoin(
+				supplierOffers,
+				and(
+					eq(supplierOffers.productId, products.id),
+					eq(supplierOffers.cheapest, true),
+				),
+			)
 			.where(and(ne(products.kind, "bundle"), carried)),
 		db.select({ at: sql<string | null>`min(${orders.placedAt})` }).from(orders),
 		// What each product sold for and how many, sets as sets, counted the
@@ -126,7 +132,13 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 				products,
 				eq(products.id, productComponents.componentProductId),
 			)
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id)),
+			.leftJoin(
+				supplierOffers,
+				and(
+					eq(supplierOffers.productId, products.id),
+					eq(supplierOffers.cheapest, true),
+				),
+			),
 	]);
 
 	// A set's cost, null when any part has none.

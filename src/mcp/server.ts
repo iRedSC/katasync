@@ -45,6 +45,7 @@ export const READ_TOOLS = new Set([
 	"sync_status",
 	"counts_due",
 	"reorder_suggestions",
+	"catalogs",
 	"get_purchase_order",
 	"list_purchase_units",
 	"match_invoice",

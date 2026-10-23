@@ -6,10 +6,10 @@ import {
 	locations,
 	productComponents,
 	productGroups,
-	productSuppliers,
 	products,
 	stockLevels,
 	stores,
+	supplierOffers,
 	suppliers,
 } from "#/db/schema";
 import { abcClasses } from "#/inventory/abc";
@@ -55,8 +55,15 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			})
 			.from(products)
 			.leftJoin(productGroups, eq(productGroups.id, products.groupId))
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+			// Who reorder buys it from: its cheapest supplier.
+			.leftJoin(
+				supplierOffers,
+				and(
+					eq(supplierOffers.productId, products.id),
+					eq(supplierOffers.cheapest, true),
+				),
+			)
+			.leftJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
 			.where(carriedOrStocked)
 			.orderBy(products.name, products.variantName);
 		const ranked = abcClasses(db);

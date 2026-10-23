@@ -9,7 +9,11 @@ import {
 	now,
 	purchasingBuilders,
 } from "./purchasing.fixtures";
-import { recommendedAdditions, suggestPurchases } from "./reorder";
+import {
+	DEFAULT_SETTINGS,
+	recommendedAdditions,
+	suggestPurchases,
+} from "./reorder";
 
 let db: Db;
 let warehouse: number;
@@ -42,7 +46,13 @@ describe("recommendedAdditions", () => {
 		await stock(now_, 5);
 		await stock(onDraft, 12);
 
-		const r = await recommendedAdditions(db, canam, new Set([onDraft]), now);
+		const r = await recommendedAdditions(
+			db,
+			canam,
+			new Set([onDraft]),
+			DEFAULT_SETTINGS,
+			now,
+		);
 		// All are A items whose sales came in one order, so safety stock is
 		// capped at the lead time's 10: the reorder point is 20 and a top-up goes
 		// to 40. NOW needs ordering today, so it's a suggestion instead; FAR
@@ -76,7 +86,13 @@ describe("recommendedAdditions", () => {
 
 		expect(await suggestPurchases(db, now)).toEqual([]);
 
-		const r = await recommendedAdditions(db, canam, new Set(), now);
+		const r = await recommendedAdditions(
+			db,
+			canam,
+			new Set(),
+			DEFAULT_SETTINGS,
+			now,
+		);
 		// DORMANT never sold and was never counted, so it's left out. The rest
 		// fill to their max of 12, less what's on the shelf.
 		expect(r.map((l) => [l.sku, l.due, l.quantity])).toEqual([

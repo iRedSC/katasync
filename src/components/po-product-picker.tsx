@@ -70,9 +70,17 @@ export function matchWarning(
 ): { text: string; blocks: boolean } | null {
 	if (m.kind === "bundle" && sent)
 		return { text: "Tool set: add the parts that came", blocks: true };
-	if (m.supplierId === null) return { text: "No supplier", blocks: false };
+	if (m.kind === "bundle") return null;
 	if (!m.fromThisSupplier)
-		return { text: `Bought from ${m.supplierName}`, blocks: false };
+		return {
+			text:
+				m.supplierName === null
+					? "Nobody sells it"
+					: `Sold by ${m.supplierName}, not here`,
+			blocks: false,
+		};
+	if (m.supplierName !== null && m.supplierId !== null && !m.cheapest)
+		return { text: `Cheaper at ${m.supplierName}`, blocks: false };
 	return null;
 }
 

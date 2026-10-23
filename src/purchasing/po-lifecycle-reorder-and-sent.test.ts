@@ -24,6 +24,7 @@ import {
 	undoReceipt,
 } from "./orders";
 import {
+	carry,
 	createPurchasingDb,
 	now,
 	purchasingBuilders,
@@ -87,20 +88,14 @@ describe("a PO from draft to received", () => {
 			.insert(schema.suppliers)
 			.values({ code: "OTHER", name: "Other", leadTimeDays: 5, coverDays: 10 })
 			.returning();
-		await db
-			.update(schema.productSuppliers)
-			.set({ supplierId: other })
-			.where(eq(schema.productSuppliers.productId, knife));
+		await carry(db, knife, other);
 		const r = await orderAgain(db, id);
 		expect(r).toMatchObject({ added: 1, alreadyOn: 0, moved: 1 });
 		expect((await linesOf(r.id)).map((l) => l.productId)).toEqual([blade]);
 
-		await db
-			.update(schema.productSuppliers)
-			.set({ supplierId: other })
-			.where(eq(schema.productSuppliers.productId, blade));
+		await carry(db, blade, other);
 		await deleteDraft(db, r.id);
-		await expect(orderAgain(db, id)).rejects.toThrow(/still bought/);
+		await expect(orderAgain(db, id)).rejects.toThrow(/still sold/);
 		expect(
 			await db
 				.select()
