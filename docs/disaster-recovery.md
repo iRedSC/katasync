@@ -57,9 +57,10 @@ sslmode=require
 <host>:5432:<database>:<role>:<password>
 ```
 
-Then, in each shell, before any command below:
+Use Bash with `jq` and the PostgreSQL client tools installed. In each shell, before any command below:
 
 ```sh
+set -euo pipefail
 export PGSERVICEFILE="$HOME/katasync-dr/pg_service.conf" PGPASSFILE="$HOME/katasync-dr/pgpass"
 umask 077
 ```
@@ -72,7 +73,7 @@ Commands select a target with `PGSERVICE=katasync_src` or `PGSERVICE=katasync_re
 
 ## Dump options
 
-`--no-owner` omits ownership statements, so the dump restores under any role. `--no-privileges` is not used. It would drop the `GRANT` and `REVOKE` statements that keep `katasync_mcp` read-only (`drizzle/0027_mcp_role.sql` and the per-table grants in later migrations). A restore cannot rebuild them without replaying migrations, and replaying migrations against live-shaped data is not safe.
+`pg_restore --no-owner` omits ownership statements, so restored objects belong to the connecting role. `--no-privileges` is not used. It would drop the `GRANT` and `REVOKE` statements that keep `katasync_mcp` read-only (`drizzle/0027_mcp_role.sql` and the per-table grants in later migrations). A restore cannot rebuild them without replaying migrations, and replaying migrations against live-shaped data is not safe.
 
 `pg_dump` never includes cluster roles, with or without these flags. Roles, role passwords, and role settings (`ALTER ROLE ... SET`) are set up separately on the target (see Restore rehearsal).
 
@@ -89,6 +90,7 @@ Run the source checks before the dump starts and again after it ends, with the s
 
 ```sh
 export DUMP="$HOME/katasync-dr/dumps/katasync-$(date -u +%Y%m%dT%H%M%SZ).dir"
+mkdir -p "$(dirname "$DUMP")"
 PGSERVICE=katasync_src pg_dump -Fd -j 4 --no-owner -f "$DUMP"
 (cd "$DUMP" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$DUMP.manifest.sha256"
 ```
@@ -118,7 +120,9 @@ PGSERVICE=katasync_src psql -X -At -v ON_ERROR_STOP=1 -c "select json_agg(json_b
 Match:
 
 ```sh
-cmp -s <(jq -c . "$DUMP.expected-migrations.json") <(jq -c . "$DUMP.actual-migrations.json")
+jq -ce 'if type == "array" then . else error("Expected a migration list") end' "$DUMP.expected-migrations.json" > "$DUMP.expected-migrations.normalized.json"
+jq -ce 'if type == "array" then . else error("Expected a migration list") end' "$DUMP.actual-migrations.json" > "$DUMP.actual-migrations.normalized.json"
+cmp -s "$DUMP.expected-migrations.normalized.json" "$DUMP.actual-migrations.normalized.json"
 ```
 
 Exit status 0 means a match. Anything else means the backup is not for that commit: stop, and deploy the commit that matches it, or treat it as a separate migration decision.
