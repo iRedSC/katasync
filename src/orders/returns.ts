@@ -11,6 +11,7 @@ import {
 	stockLevels,
 } from "#/db/schema";
 import { recordReturn, undoBatch } from "#/inventory/ledger";
+import { lockBatchProducts } from "#/inventory/ledger/post";
 import { isOurs } from "#/inventory/locations";
 import { retireRefurbs } from "./refurb-retire";
 import { isLabeled, returnBlocker } from "./status";
@@ -102,6 +103,19 @@ export async function receiveReturn(
 				),
 			);
 
+		if (restockAt !== null)
+			await lockBatchProducts(
+				tx,
+				lines.flatMap((line) =>
+					line.saleBatchId === null ? [] : [line.saleBatchId],
+				),
+				[
+					...lines.flatMap((line) =>
+						line.productId === null ? [] : [line.productId],
+					),
+					...(refurb === null ? [] : [refurb]),
+				],
+			);
 		const ids: number[] = [];
 		for (const want of wanted) {
 			const line = lines.find((l) => l.id === want.lineId);
@@ -191,6 +205,13 @@ export async function undoReturns(
 			.returning();
 		if (rows.length !== new Set(ids).size)
 			throw new ReturnError("That return was already undone");
+		await lockBatchProducts(
+			tx,
+			rows.flatMap((row) => (row.batchId === null ? [] : [row.batchId])),
+			rows.flatMap((row) =>
+				row.refurbProductId === null ? [] : [row.refurbProductId],
+			),
+		);
 		for (const row of rows) {
 			if (row.refurbProductId !== null) {
 				const [refurb] = await tx

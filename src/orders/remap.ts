@@ -16,6 +16,7 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
+import { lockRecipes } from "#/inventory/ledger/post";
 import { costOf, resolveProduct } from "./ingest";
 import { reconcileStock, type StockScope } from "./reconcile-stock";
 
@@ -43,11 +44,17 @@ const pendingColumns = {
 // Gives each line its product and cost. Stock is taken by reconcileStock, so a
 // line whose stock fails is still picked up by the next catch-up or sync.
 async function catchUp(tx: Db, found: (Pending & { productId: number })[]) {
-	for (const { line, productId } of found)
+	await lockRecipes(
+		tx,
+		found.map((match) => match.productId),
+	);
+	for (const { line, productId } of found.sort(
+		(left, right) => left.line.id - right.line.id,
+	))
 		await tx
 			.update(orderLines)
 			.set({ productId, unitCost: await costOf(tx, productId) })
-			.where(eq(orderLines.id, line.id));
+			.where(and(eq(orderLines.id, line.id), isNull(orderLines.productId)));
 }
 
 // After listings get a product, catch up the orders that already sold them,
@@ -73,8 +80,7 @@ export async function applyListingsToOrders(
 			)
 			.where(
 				and(inArray(listings.id, listingIds), isNull(orderLines.productId)),
-			)
-			.for("update", { of: orderLines });
+			);
 		const found = pending.flatMap((p) =>
 			p.productId === null ? [] : [{ ...p, productId: p.productId }],
 		);
@@ -137,8 +143,7 @@ export async function applySkusToOrders(
 					),
 				)
 				.orderBy(asc(orderLines.id))
-				.limit(CATCH_UP_BATCH)
-				.for("update", { of: orderLines });
+				.limit(CATCH_UP_BATCH);
 			const found: (Pending & { productId: number })[] = [];
 			for (const p of pending) {
 				const productId = await resolveOnce(tx, resolved, p.store.id, p.line);

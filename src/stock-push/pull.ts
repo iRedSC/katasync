@@ -2,6 +2,7 @@ import { and, asc, count, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, locations, movements, products, stores } from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
+import { lockStockProducts } from "#/inventory/ledger/post";
 import type { Found } from "./channel";
 
 // Stock pull: once, before stock push goes on, sets every product katasync
@@ -200,10 +201,11 @@ export async function applyStockPull(
 			.limit(1);
 		if (!shelf)
 			throw new Error("There's no location of our own to put stock on.");
+		const ids = wanted.map((pull) => pull.productId);
+		await lockStockProducts(tx, ids);
 		// Serializes with sales posting, so none lands between reading the
 		// ledger and posting on top of it.
 		await tx.execute(sql`lock table ${movements} in share row exclusive mode`);
-		const ids = wanted.map((p) => p.productId);
 		const now = await movementCounts(tx, ids);
 		const moved = wanted.filter(
 			(p) => now.get(p.productId) !== plan.mark.get(p.productId),

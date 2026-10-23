@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, products, transferLines, transfers } from "#/db/schema";
 import { transferStock, undoBatch } from "#/inventory/ledger";
+import { lockStockProducts } from "#/inventory/ledger/post";
 import { ourKinds } from "#/inventory/locations";
 
 // A transfer is a draft until it's sent; sending moves every line at once.
@@ -236,6 +237,7 @@ export async function moveNow(
 	},
 ) {
 	return db.transaction(async (tx) => {
+		await lockStockProducts(tx, [input.productId]);
 		const id = await createTransfer(tx, input);
 		await setTransferLines(tx, id, [
 			{ productId: input.productId, quantity: input.quantity },

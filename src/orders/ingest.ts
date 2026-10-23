@@ -12,6 +12,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { LedgerError, recordSale, undoBatch } from "#/inventory/ledger";
+import { batchProductIds, lockRecipes } from "#/inventory/ledger/post";
 import { type OrderTax, saveTax } from "./tax";
 
 // An order as any channel adapter hands it over. Money is in store currency.
@@ -123,6 +124,17 @@ export async function ingestOrder(
 				return existing ? existing.productId === null : line.quantity !== 0;
 			}),
 		);
+		const roots = new Set(
+			[...productOf.values()].flatMap((productId) =>
+				productId === null ? [] : [productId],
+			),
+		);
+		const saleBatches: string[] = [];
+		for (const line of savedLines) {
+			if (line.productId !== null) roots.add(line.productId);
+			if (line.saleBatchId !== null) saleBatches.push(line.saleBatchId);
+		}
+		await lockRecipes(tx, [...roots], await batchProductIds(tx, saleBatches));
 		// Lines written or read back earlier in this pass. Their saved copy may
 		// predate a stock take, so a repeat of one is read again, not trusted.
 		const handled = new Set<string>();

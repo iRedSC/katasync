@@ -128,7 +128,12 @@ function Profit() {
 	);
 }
 
-const PLACES = { owned: "Warehouse", retail: "Store", fba: "Amazon FBA" };
+const PLACES = {
+	owned: "Warehouse",
+	retail: "Store",
+	fba: "Amazon FBA",
+	transit: "In transit",
+};
 
 // What's on the shelves is worth now, at each product's average cost.
 function StockValue({ rows }: { rows: Data["stock"] }) {

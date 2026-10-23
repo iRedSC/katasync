@@ -1,6 +1,7 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	costEntries,
 	movements,
 	productComponents,
 	products,
@@ -66,7 +67,12 @@ export async function postMovements(
 	}
 
 	return db.transaction(async (tx) => {
-		const productIds = [...new Set(lines.map((l) => l.productId))];
+		const productIds = [
+			...new Set([
+				...lines.map((line) => line.productId),
+				...(input.costs ?? []).map((cost) => cost.productId),
+			]),
+		];
 		const locked = await lockStockProducts(tx, productIds);
 		const bundles = locked.filter((product) => product.kind === "bundle");
 		if (bundles.length > 0) {
@@ -125,34 +131,101 @@ export async function lockStockProducts(db: Db, productIds: number[]) {
 	return rows;
 }
 
+export async function batchProductIds(db: Db, batchIds: string[]) {
+	if (batchIds.length === 0) return [];
+	const entries = await db
+		.select({ productId: movements.productId })
+		.from(movements)
+		.where(inArray(movements.batchId, batchIds))
+		.union(
+			db
+				.select({ productId: costEntries.productId })
+				.from(costEntries)
+				.where(inArray(costEntries.batchId, batchIds)),
+		);
+	return entries.map((entry) => entry.productId);
+}
+
+export async function lockBatchProducts(
+	db: Db,
+	batchIds: string[],
+	additionalProductIds: number[] = [],
+) {
+	return lockStockProducts(db, [
+		...(await batchProductIds(db, batchIds)),
+		...additionalProductIds,
+	]);
+}
+
 export async function lockRecipe(
 	db: Db,
 	parentProductId: number,
 	additionalProductIds: number[] = [],
 ) {
-	const before = await getRecipe(db, parentProductId);
+	const { recipes, products: locked } = await lockRecipes(
+		db,
+		[parentProductId],
+		additionalProductIds,
+	);
+	const parent = locked.find((product) => product.id === parentProductId);
+	if (!parent) throw new LedgerError(`Unknown product ${parentProductId}`);
+	return {
+		parent,
+		recipe: recipes.get(parentProductId) ?? [],
+		products: locked,
+	};
+}
+
+export async function lockRecipes(
+	db: Db,
+	parentProductIds: number[],
+	additionalProductIds: number[] = [],
+) {
+	const ids = [...new Set(parentProductIds)].sort(
+		(left, right) => left - right,
+	);
+	const before = await recipesOf(db, ids);
 	const locked = await lockStockProducts(db, [
-		parentProductId,
+		...ids,
 		...before.map((part) => part.productId),
 		...additionalProductIds,
 	]);
-	const recipe = await getRecipe(db, parentProductId);
+	const current = await recipesOf(db, ids);
 	if (
-		before.length !== recipe.length ||
-		before.some(
-			(part) =>
-				!recipe.some(
-					(current) =>
-						current.productId === part.productId &&
-						current.quantity === part.quantity,
-				),
-		)
-	) {
+		before.length !== current.length ||
+		before.some((part, index) => {
+			const next = current[index];
+			return (
+				part.parentProductId !== next.parentProductId ||
+				part.productId !== next.productId ||
+				part.quantity !== next.quantity
+			);
+		})
+	)
 		throw new LedgerError("The recipe changed; try again");
+	const recipes = new Map<number, { productId: number; quantity: number }[]>();
+	for (const part of current) {
+		const parts = recipes.get(part.parentProductId) ?? [];
+		parts.push({ productId: part.productId, quantity: part.quantity });
+		recipes.set(part.parentProductId, parts);
 	}
-	const parent = locked.find((product) => product.id === parentProductId);
-	if (!parent) throw new LedgerError(`Unknown product ${parentProductId}`);
-	return { parent, recipe, products: locked };
+	return { products: locked, recipes };
+}
+
+async function recipesOf(db: Db, parentProductIds: number[]) {
+	if (parentProductIds.length === 0) return [];
+	return db
+		.select({
+			parentProductId: productComponents.parentProductId,
+			productId: productComponents.componentProductId,
+			quantity: productComponents.quantity,
+		})
+		.from(productComponents)
+		.where(inArray(productComponents.parentProductId, parentProductIds))
+		.orderBy(
+			productComponents.parentProductId,
+			productComponents.componentProductId,
+		);
 }
 
 export async function getRecipe(db: Db, parentProductId: number) {

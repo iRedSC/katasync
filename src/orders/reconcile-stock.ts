@@ -3,6 +3,7 @@ import type { StockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { orderLines, orders, stores } from "#/db/schema";
 import { type Channel, errorText } from "#/diagnostics/runs";
+import { lockRecipes } from "#/inventory/ledger/post";
 import { takeStock } from "./ingest";
 
 // Lines that should have taken stock and haven't: mapped to a product, no sale
@@ -28,7 +29,7 @@ const SETTLE_BATCH = 200;
 // Takes stock now for unsettled lines (within `only`, when given) and returns
 // the problems that kept some from taking it. Safe to repeat: a line takes stock
 // once, under its own lock, and one that fails stays unsettled for the next
-// call. Each batch commits before the next. A failure outside the ledger's own
+// call. Each line commits before the next. A failure outside the ledger's own
 // rules (the database itself) is reported as a problem and ends this call, but
 // doesn't throw, so the sync around it carries on.
 export async function reconcileStock(
@@ -39,28 +40,44 @@ export async function reconcileStock(
 	const result = { lines: 0, problems: [] as string[] };
 	let after = 0;
 	for (;;) {
-		const batch = await settleBatch(db, from, only, after).catch(
-			(error: unknown) => {
-				result.problems.push(`Stock not taken: ${errorText(error)}`);
-				return null;
-			},
-		);
-		if (!batch) return result;
-		result.lines += batch.taken;
-		result.problems.push(...batch.problems);
-		if (batch.scanned < SETTLE_BATCH) return result;
-		after = batch.lastId;
+		try {
+			const pending = await db
+				.select({ id: orderLines.id, orderId: orderLines.orderId })
+				.from(orderLines)
+				.innerJoin(orders, eq(orders.id, orderLines.orderId))
+				.innerJoin(stores, eq(stores.id, orders.storeId))
+				.where(and(gt(orderLines.id, after), unsettledStock, scopeOf(only)))
+				.orderBy(asc(orderLines.id))
+				.limit(SETTLE_BATCH);
+			for (const line of pending) {
+				const settled = await settleLine(db, from, only, line);
+				if (settled === null) continue;
+				if (settled.problem) result.problems.push(settled.problem);
+				else result.lines++;
+			}
+			if (pending.length < SETTLE_BATCH) return result;
+			after = pending.at(-1)?.id ?? after;
+		} catch (error) {
+			result.problems.push(`Stock not taken: ${errorText(error)}`);
+			return result;
+		}
 	}
 }
 
-async function settleBatch(
+async function settleLine(
 	db: Db,
 	from: StockLocations,
 	only: StockScope | undefined,
-	after: number,
+	pending: { id: number; orderId: number },
 ) {
 	return db.transaction(async (tx) => {
-		const pending = await tx
+		const [owner] = await tx
+			.select({ id: orders.id })
+			.from(orders)
+			.where(eq(orders.id, pending.orderId))
+			.for("update");
+		if (!owner) return null;
+		const [matched] = await tx
 			.select({
 				line: orderLines,
 				order: { name: orders.name, soldInStore: orders.soldInStore },
@@ -68,28 +85,22 @@ async function settleBatch(
 			.from(orderLines)
 			.innerJoin(orders, eq(orders.id, orderLines.orderId))
 			.innerJoin(stores, eq(stores.id, orders.storeId))
-			.where(and(gt(orderLines.id, after), unsettledStock, scopeOf(only)))
-			.orderBy(asc(orderLines.id))
-			.limit(SETTLE_BATCH)
-			.for("update", { of: orderLines });
-		const problems: string[] = [];
-		let taken = 0;
-		for (const { line, order } of pending) {
-			if (line.productId === null) continue;
-			const problem = await takeStock(
-				tx,
-				{ ...line, productId: line.productId },
-				order,
-				from,
-			);
-			if (problem) problems.push(problem);
-			else taken++;
-		}
+			.where(and(eq(orderLines.id, pending.id), unsettledStock, scopeOf(only)));
+		if (!matched || matched.line.productId === null) return null;
+		await lockRecipes(tx, [matched.line.productId]);
+		const [line] = await tx
+			.select()
+			.from(orderLines)
+			.where(and(eq(orderLines.id, pending.id), isNull(orderLines.saleBatchId)))
+			.for("update");
+		if (!line || line.productId !== matched.line.productId) return null;
 		return {
-			scanned: pending.length,
-			lastId: pending.at(-1)?.line.id ?? after,
-			taken,
-			problems,
+			problem: await takeStock(
+				tx,
+				{ ...line, productId: matched.line.productId },
+				matched.order,
+				from,
+			),
 		};
 	});
 }
