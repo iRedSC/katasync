@@ -66,7 +66,7 @@ export async function refreshFromSumtracker(
 		await tx.execute(
 			// orders too: an order syncing in waits here, then sees the new
 			// stockFrom (ingestOrder reads it after saving the order).
-			sql`lock table movements, orders, order_lines in share row exclusive mode`,
+			sql`lock table products, movements, orders, order_lines in access exclusive mode nowait`,
 		);
 		// A restock put units back through a movement this would wipe, and
 		// nothing here takes it again.
