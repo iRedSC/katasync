@@ -162,6 +162,12 @@ CREATE TRIGGER dispatches_audit AFTER INSERT OR UPDATE OR DELETE ON dispatches
 CREATE TRIGGER shipments_audit AFTER INSERT OR UPDATE OR DELETE ON shipments
   FOR EACH ROW EXECUTE FUNCTION audit_row('id');
 --> statement-breakpoint
+CREATE TRIGGER report_snapshots_audit AFTER INSERT ON report_snapshots
+  FOR EACH ROW EXECUTE FUNCTION audit_row('id');
+--> statement-breakpoint
+CREATE TRIGGER report_handoffs_audit AFTER INSERT ON report_handoffs
+  FOR EACH ROW EXECUTE FUNCTION audit_row('id');
+--> statement-breakpoint
 CREATE TRIGGER staff_audit AFTER INSERT OR UPDATE OR DELETE ON staff
   FOR EACH ROW EXECUTE FUNCTION audit_row('id');
 --> statement-breakpoint
