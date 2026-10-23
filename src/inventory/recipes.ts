@@ -1,7 +1,8 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { productComponents, products } from "#/db/schema";
+import { productComponents, products, stockLevels } from "#/db/schema";
 import { LedgerError } from "./ledger";
+import { getRecipe } from "./ledger/post";
 
 // What each kind may contain. Kits hold only simple SKUs; bundles may also hold
 // kits. Nothing holds a bundle, so recipes are at most two levels deep and
@@ -68,6 +69,26 @@ export async function setRecipe(
 			}
 		}
 
+		if (
+			parent.kind === "kit" &&
+			!sameParts(await getRecipe(tx, parentProductId), components)
+		) {
+			const [stocked] = await tx
+				.select({ productId: stockLevels.productId })
+				.from(stockLevels)
+				.where(
+					and(
+						eq(stockLevels.productId, parentProductId),
+						ne(stockLevels.onHand, 0),
+					),
+				)
+				.limit(1);
+			if (stocked)
+				throw new LedgerError(
+					`${parent.sku} has stock, so its parts can't change until it's counted to zero`,
+				);
+		}
+
 		await tx
 			.delete(productComponents)
 			.where(eq(productComponents.parentProductId, parentProductId));
@@ -79,4 +100,15 @@ export async function setRecipe(
 			})),
 		);
 	});
+}
+
+function sameParts(
+	current: { productId: number; quantity: number }[],
+	next: { productId: number; quantity: number }[],
+) {
+	const before = new Map(current.map((c) => [c.productId, c.quantity]));
+	return (
+		before.size === next.length &&
+		next.every((c) => before.get(c.productId) === c.quantity)
+	);
 }
