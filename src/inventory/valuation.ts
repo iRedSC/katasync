@@ -39,7 +39,8 @@ export type Applied = {
 // shelf and the rest on what's sold. Units out with a value take exactly that
 // value off. What the shelf can't absorb (it's empty, or would go below $0)
 // goes on what's sold, so value = shelf change + soldValue always holds.
-// With no average yet, `perItem` is what the items in question cost.
+// With no average yet, `perItem` becomes it: what the items in question cost,
+// on the shelf and, through the first-cost trigger, on those already sold.
 export function applyCost(
 	held: number,
 	avg: number | null,
@@ -65,13 +66,12 @@ export function applyCost(
 		return { value, avgAfter: r4(Math.max(0, blended)), soldValue: 0 };
 	}
 	if (avg === null)
-		// Nothing known to take it from or add it to: the best guess for every
-		// item here is what these cost.
-		return {
-			value,
-			avgAfter: h > 0 && entry.perItem != null ? r4(entry.perItem) : null,
-			soldValue: 0,
-		};
+		// Nothing known to take it from or add it to. With what these items
+		// cost, that's the cost: sales that went out with none take it too
+		// (drizzle/0114), so none of it is sold value, or it would count twice.
+		return entry.perItem != null
+			? { value, avgAfter: r4(entry.perItem), soldValue: 0 }
+			: { value, avgAfter: null, soldValue: value };
 	const shelf = h * avg;
 	const heldAfter = h + units;
 	const wanted = units < 0 ? value : value * clamp01(entry.share ?? 1);
@@ -93,15 +93,23 @@ export function applyCost(
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 // Items of a product on every shelf, Amazon's included. An oversold shelf
-// holds none, and can't cancel stock on another.
+// holds none, and can't cancel stock on another. Its shelves stay locked to
+// the end of the transaction, so a sale can't change what a posting split
+// by. Take the product's lock (lockCost) first: everything that locks both
+// locks the product, then its shelves.
 export async function heldOf(db: Db, productId: number) {
-	const [row] = await db
-		.select({
-			held: sql<number>`coalesce(sum(greatest(${stockLevels.onHand}, 0)), 0)::int`,
-		})
+	const shelves = await db
+		.select({ onHand: stockLevels.onHand })
 		.from(stockLevels)
-		.where(eq(stockLevels.productId, productId));
-	return row.held;
+		.where(eq(stockLevels.productId, productId))
+		.orderBy(stockLevels.locationId)
+		.for("update");
+	return shelves.reduce((n, s) => n + Math.max(0, s.onHand), 0);
+}
+
+// Holds a product's cost for a change worked out before posting it.
+export async function lockCost(db: Db, productId: number) {
+	await lockProducts(db, [productId]);
 }
 
 // Locks products in id order, so two postings can't deadlock, and returns

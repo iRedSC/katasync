@@ -2,7 +2,13 @@ import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { assembleKits, disassembleKits, recordSale } from "#/inventory/ledger";
+import {
+	assembleKits,
+	disassembleKits,
+	postReceipt,
+	recordSale,
+	undoBatch,
+} from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { applyCost } from "#/inventory/valuation";
 import { profitTotals } from "#/orders/profit";
@@ -116,7 +122,7 @@ let db: Db;
 let warehouse: number;
 let canam: number;
 let store: number;
-const { stock, supply, linesOf } = purchasingBuilders(() => ({
+const { stock, sell, supply, linesOf } = purchasingBuilders(() => ({
 	db,
 	warehouse,
 	canam,
@@ -255,12 +261,67 @@ describe("received stock's cost", () => {
 		expect(await costOf(blade)).toBe(5);
 	});
 
+	test("undoing a receipt after its price was fixed leaves nothing behind", async () => {
+		const r = await receive(db, { lineId: bladeLine, quantity: 10 });
+		await amendLine(db, { lineId: bladeLine, unitCost: 6 });
+		await undoReceipt(db, r.receiptId);
+		expect(await costOf(blade)).toBe(4);
+		const entries = await entriesOf(blade);
+		expect(entries.every((e) => e.soldValue === 0)).toBe(true);
+	});
+
+	test("a charge on a delivery from before costs were kept still lands", async () => {
+		// As the old receiving did: stock in, a receipt, the average by hand.
+		const { batchId } = await postReceipt(db, {
+			productId: blade,
+			locationId: warehouse,
+			quantity: 10,
+			reference: `PO ${po}`,
+		});
+		await db
+			.insert(schema.purchaseOrderReceipts)
+			.values({ lineId: bladeLine, quantity: 10, batchId });
+		await db
+			.update(schema.products)
+			.set({ unitCost: 4.5 })
+			.where(eq(schema.products.id, blade));
+		// $22 of it on the blades, 50¢ each, all 10 still here.
+		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 23.2 });
+		expect(await costOf(blade)).toBe(4.75);
+	});
+
 	test("an unpriced line comes in at the average until it's priced", async () => {
 		await amendLine(db, { lineId: bladeLine, unitCost: null });
 		await receive(db, { lineId: bladeLine, quantity: 10 });
 		expect(await costOf(blade)).toBe(4);
 		await amendLine(db, { lineId: bladeLine, unitCost: 6 });
 		expect(await costOf(blade)).toBe(5);
+	});
+});
+
+describe("a product with no cost yet", () => {
+	test("pricing it after it sold gives the sales that cost", async () => {
+		const pan = await createProduct(db, "PAN", "simple");
+		await supply(pan, null);
+		const po = await openDraft(db, canam);
+		const { line } = await addLine(db, {
+			purchaseOrderId: po,
+			productId: pan,
+			quantity: 10,
+		});
+		await markSent(db, { purchaseOrderId: po, sentTo: null, now });
+		await receive(db, { lineId: line.id, quantity: 10 });
+		await sell(pan, 10);
+		await sellNow(pan, 10);
+		await amendLine(db, { lineId: line.id, unitCost: 6 });
+		expect(await costOf(pan)).toBe(6);
+		const [sale] = await db
+			.select({ unitCost: schema.orderLines.unitCost })
+			.from(schema.orderLines)
+			.where(eq(schema.orderLines.productId, pan));
+		expect(sale.unitCost).toBe(6);
+		// Its cost is on the sale, so none of it is a correction too.
+		expect((await entriesOf(pan)).every((e) => e.soldValue === 0)).toBe(true);
 	});
 });
 
@@ -319,6 +380,29 @@ describe("stock that moves without a PO", () => {
 		});
 		// The pan's $10 of $16 is $13.75 of $22, onto 2 left at $10.
 		expect(await costOf(pan)).toBeCloseTo((2 * 10 + 13.75) / 3);
+	});
+
+	test("undoing a build puts back the parts at what they left at", async () => {
+		const kit = await createProduct(db, "KIT", "kit");
+		const pan = await createProduct(db, "PAN", "simple");
+		await setRecipe(db, kit, [{ productId: pan, quantity: 1 }]);
+		await db
+			.update(schema.products)
+			.set({ unitCost: 10 })
+			.where(eq(schema.products.id, pan));
+		await stock(pan, 2);
+		const { batchId } = await assembleKits(db, {
+			kitProductId: kit,
+			quantity: 1,
+			locationId: warehouse,
+		});
+		await db
+			.update(schema.products)
+			.set({ unitCost: 20 })
+			.where(eq(schema.products.id, pan));
+		await undoBatch(db, batchId);
+		// One at $20 and the one back at $10: $30, as before.
+		expect(await costOf(pan)).toBe(15);
 	});
 
 	test("a return comes back at what its sale took", async () => {

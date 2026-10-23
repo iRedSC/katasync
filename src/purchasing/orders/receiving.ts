@@ -17,7 +17,7 @@ import { closeIfComplete, reopen, shortLines } from "./closing";
 import { checkDiscounts, checkOff } from "./discount-checks";
 import { insertLine } from "./lines";
 import { lockOrder, PurchaseOrderError, poName } from "./lock";
-import { landedTerms, revaluePurchaseOrder } from "./revalue";
+import { landedTerms, receiptWorth, revaluePurchaseOrder } from "./revalue";
 
 // What arrived for one line, in the line's unit: 2 cases of 30 puts 60 on the
 // shelf at the PO's location, and its landed cost into the product's average.
@@ -210,6 +210,7 @@ export async function undoReceipt(db: Db, receiptId: number) {
 				quantityBefore: purchaseOrderReceipts.quantityBefore,
 				quantityAfter: purchaseOrderReceipts.quantityAfter,
 				purchaseOrderId: purchaseOrderLines.purchaseOrderId,
+				productId: purchaseOrderLines.productId,
 			})
 			.from(purchaseOrderReceipts)
 			.innerJoin(
@@ -241,7 +242,24 @@ export async function undoReceipt(db: Db, receiptId: number) {
 				`${damaged} of these are recorded as damaged; take the damage back first`,
 			);
 
-		const { batchId } = await undoBatch(tx, receipt.batchId);
+		// Out at what it's worth now, price fixes and charges since included,
+		// so nothing it brought in stays behind.
+		const worth = await receiptWorth(tx, po.id, receipt.id);
+		const { batchId } = await undoBatch(tx, receipt.batchId, {
+			costs:
+				worth === null
+					? undefined
+					: [
+							{
+								productId: receipt.productId,
+								kind: "undo",
+								units: -receipt.quantity * line.packSize,
+								value: -worth,
+								purchaseOrderLineId: receipt.lineId,
+								note: "Undo: receipt",
+							},
+						],
+		});
 		await tx.insert(purchaseOrderReceipts).values({
 			lineId: receipt.lineId,
 			quantity: -receipt.quantity,

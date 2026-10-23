@@ -8,7 +8,7 @@ import {
 	purchaseOrderReceipts,
 	purchaseOrders,
 } from "#/db/schema";
-import { heldOf, postValue } from "#/inventory/valuation";
+import { heldOf, lockCost, postValue } from "#/inventory/valuation";
 import { lineCents, receiptUnitCost } from "#/purchasing/discount";
 import { type Split, splitCharges, splitItems } from "#/purchasing/landed";
 import { lineDiscounts } from "./discount-checks";
@@ -68,8 +68,8 @@ export async function landedTerms(db: Db, purchaseOrderId: number) {
 					.where(inArray(purchaseOrderReceipts.lineId, ids));
 	const undone = new Set(receipts.map((r) => r.undoesId));
 	const standing = receipts.filter((r) => r.quantity > 0 && !undone.has(r.id));
-	// Receipts from before costs were kept here (drizzle/0114) were averaged
-	// in some other way, so only later ones are worked out again.
+	// Receipts with a value posted here; ones from before costs were kept
+	// (drizzle/0114) have none.
 	const valued = new Set(
 		standing.length === 0
 			? []
@@ -173,32 +173,58 @@ export async function revaluePurchaseOrder(db: Db, purchaseOrderId: number) {
 		.from(costEntries)
 		.where(inArray(costEntries.purchaseOrderLineId, ids))
 		.groupBy(costEntries.purchaseOrderLineId);
+	const tracked = new Set(terms.tracked.map((r) => r.id));
 	for (const line of terms.lines) {
 		const was = posted.find((p) => p.lineId === line.id);
-		if (!was) continue;
-		const target = lineWorth(
-			line,
-			terms.tracked,
-			terms.discountsOf(line.id),
-			terms.split,
-		);
+		const standing = terms.standing.filter((r) => r.lineId === line.id);
+		if (!was && standing.length === 0) continue;
+		const discounts = terms.discountsOf(line.id);
+		const target = lineWorth(line, standing, discounts, terms.split);
 		if (target === null) continue;
-		const diff = r4(target - was.value);
+		// Receipts from before costs were kept (drizzle/0114) went into the
+		// average at their price after discounts, which is taken as posted:
+		// what changes since, their share of charges above all, still lands.
+		const legacy = standing.filter((r) => !tracked.has(r.id));
+		const before =
+			lineWorth(line, legacy, discounts, {
+				...terms.split,
+				perItem: new Map(),
+			}) ?? 0;
+		const diff = r4(target - before - (was?.value ?? 0));
 		if (Math.abs(diff) < 0.005) continue;
-		const items =
-			terms.tracked
-				.filter((r) => r.lineId === line.id)
-				.reduce((n, r) => n + r.quantity, 0) * line.packSize;
+		const items = standing.reduce((n, r) => n + r.quantity, 0) * line.packSize;
+		// Locked before reading what's on the shelf, so the split holds.
+		await lockCost(db, line.productId);
 		await postValue(db, {
 			productId: line.productId,
 			kind: "po_correction",
 			value: diff,
-			share: await shareOnShelf(db, line.productId, items, was.lastReceipt),
+			share: await shareOnShelf(
+				db,
+				line.productId,
+				items,
+				was?.lastReceipt ?? null,
+			),
 			perItem: items > 0 ? target / items : null,
 			purchaseOrderLineId: line.id,
 			note: poName(purchaseOrderId),
 		});
 	}
+}
+
+// What one receipt is worth under the PO as it is now, for undoing it: its
+// original value plus what's been corrected since. Null with no price, or
+// for a receipt from before costs were kept.
+export async function receiptWorth(
+	db: Db,
+	purchaseOrderId: number,
+	receiptId: number,
+) {
+	const terms = await landedTerms(db, purchaseOrderId);
+	const receipt = terms.tracked.find((r) => r.id === receiptId);
+	const line = receipt && terms.lines.find((l) => l.id === receipt.lineId);
+	if (!receipt || !line) return null;
+	return lineWorth(line, [receipt], terms.discountsOf(line.id), terms.split);
 }
 
 // How much of a line's items are likely still on the shelf: what's there,
