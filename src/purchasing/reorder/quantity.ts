@@ -48,7 +48,7 @@ const floorOf = (p: ReorderInput) =>
 // How many of the supplier's unit it takes to top stock up to its target
 // (stockTarget, or its floor if more), rounded up to whole units and to at
 // least the supplier's minimum. 0 when it's already there.
-function topUp(p: ReorderInput) {
+export function coverQuantity(p: ReorderInput) {
 	const need = Math.max(stockTarget(p), floorOf(p)) - position(p);
 	if (need <= 0) return 0;
 	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
@@ -57,7 +57,7 @@ function topUp(p: ReorderInput) {
 // How many of the supplier's unit to order, or 0 to leave it off the PO: a
 // top-up once shelf plus on order drops below the reorder point.
 export function reorderQuantity(p: ReorderInput): number {
-	return position(p) < reorderPoint(p) ? topUp(p) : 0;
+	return position(p) < reorderPoint(p) ? coverQuantity(p) : 0;
 }
 
 // Days until a product that doesn't need ordering yet will, at its current

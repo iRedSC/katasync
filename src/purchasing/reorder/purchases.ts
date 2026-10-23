@@ -6,7 +6,7 @@ import {
 	supplierOffers,
 } from "#/db/schema";
 import { type CheaperAt, needsOf, reorderBreakdown } from "./breakdown";
-import { daysUntilReorder, fillToMax } from "./quantity";
+import { coverQuantity, daysUntilReorder, fillToMax } from "./quantity";
 import {
 	readiness,
 	type SuggestedLine,
@@ -88,15 +88,16 @@ async function plannedFrom(
 }
 
 // Whether a planned product goes on its PO's suggestion by itself: it needs
-// ordering, it's the kind that orders itself (ordersItself), and this
+// stock within cover days, it's the kind that orders itself, and this
 // supplier is the cheapest, or the PO takes pricier ones too.
 const suggests = (plan: Breakdown, settings: SuggestionSettings) =>
-	plan.line.quantity > 0 &&
+	!plan.notCounted &&
+	coverQuantity(plan.input) > 0 &&
 	plan.ordersItself &&
 	(plan.cheapest || settings.includePricier);
 
-// What a supplier's PO is suggested under its settings. With the defaults
-// it's that supplier's part of suggestPurchases.
+// What a supplier's PO is suggested under its settings, including eligible
+// products needing stock within its cover days, not just those due today.
 export async function suggestionFor(
 	db: Db,
 	supplierId: number,
@@ -104,7 +105,9 @@ export async function suggestionFor(
 	now = new Date(),
 ): Promise<SuggestedLine[]> {
 	const plans = await plannedFrom(db, supplierId, settings, now);
-	return plans.filter((p) => suggests(p, settings)).map((p) => p.line);
+	return plans
+		.filter((p) => suggests(p, settings))
+		.map((p) => ({ ...p.line, quantity: coverQuantity(p.input) }));
 }
 
 type Breakdown = Awaited<ReturnType<typeof reorderBreakdown>>[number];
@@ -112,9 +115,9 @@ type Breakdown = Awaited<ReturnType<typeof reorderBreakdown>>[number];
 // A supplier's products worth adding to its PO, each at the quantity that
 // fills it to its max. First the ones that need ordering today but its
 // suggestion doesn't take: they don't go on POs by themselves, or another
-// supplier sells them for less (cheaperAt says who). Then the ones that don't
-// need ordering yet but will before its next PO would (within its cover
-// days), soonest first, since ordering them now saves a second shipment.
+// supplier sells them for less (cheaperAt says who). Then those same kinds
+// that don't need ordering yet but will within its cover days, soonest first,
+// since ordering them now saves a second shipment.
 // Products in `except` (already on the draft) and dormant C items (see
 // reorderBreakdown) are left out, as are products not counted yet.
 export async function recommendedAdditions(
@@ -156,7 +159,8 @@ function recommendedDue(
 	settings: SuggestionSettings,
 ): RecommendedLine["due"] | null {
 	const { line, input } = plan;
-	if (line.quantity > 0) return suggests(plan, settings) ? null : "now";
+	if (suggests(plan, settings)) return null;
+	if (line.quantity > 0) return "now";
 	const days = daysUntilReorder(input);
 	return days === null || days > input.coverDays ? null : days;
 }
