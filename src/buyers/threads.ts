@@ -142,7 +142,13 @@ export async function recordFromBuyer(
 export async function recordOurs(
 	db: Db,
 	threadId: number,
-	m: { externalId: string; body: string; at: Date; media?: BuyerMedia[] },
+	m: {
+		externalId: string;
+		body: string;
+		at: Date;
+		media?: BuyerMedia[];
+		marketEmailId?: number;
+	},
 ) {
 	const [row] = await db
 		.insert(buyerMessages)
@@ -153,6 +159,7 @@ export async function recordOurs(
 			body: m.body,
 			at: m.at,
 			media: m.media ?? [],
+			marketEmailId: m.marketEmailId,
 			status: "delivered",
 			requestKey: randomUUID(),
 			statusAt: m.at,

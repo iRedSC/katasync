@@ -1,13 +1,14 @@
 import { and, eq, gte, ilike, inArray, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	type BuyerMedia,
 	buyerMessages,
 	buyerThreads,
 	marketEmailAttachments,
 	marketEmails,
 } from "#/db/schema";
 import { Refused, settleReply, Unsure, unsureStatus } from "./states";
-import { ensureThread, recordFromBuyer } from "./threads";
+import { ensureThread, isLogged, recordFromBuyer, recordOurs } from "./threads";
 
 // Amazon buyer messages, which reach us only as email: Amazon relays each
 // from an address standing for the buyer (…@marketplace.amazon.com) to the
@@ -69,29 +70,10 @@ export async function threadAmazonMail(db: Db) {
 			),
 		)
 		.orderBy(marketEmails.receivedAt);
-	// Files the buyer attached, as kept with each email (not its inline
-	// pictures, which are Amazon's logos).
-	const files =
-		pending.length === 0
-			? []
-			: await db
-					.select({
-						id: marketEmailAttachments.id,
-						emailId: marketEmailAttachments.emailId,
-						filename: marketEmailAttachments.filename,
-						contentType: marketEmailAttachments.contentType,
-					})
-					.from(marketEmailAttachments)
-					.where(
-						and(
-							inArray(
-								marketEmailAttachments.emailId,
-								pending.map((e) => e.id),
-							),
-							isNull(marketEmailAttachments.contentId),
-						),
-					)
-					.orderBy(marketEmailAttachments.id);
+	const media = await mediaOf(
+		db,
+		pending.map((e) => e.id),
+	);
 	let filed = 0;
 	for (const e of pending) {
 		if (!isRelayed(e.fromAddress)) continue;
@@ -109,13 +91,158 @@ export async function threadAmazonMail(db: Db) {
 				body: p.text,
 				at: e.receivedAt,
 				marketEmailId: e.id,
-				media: files
-					.filter((f) => f.emailId === e.id)
-					.map((f) => ({
-						kind: f.contentType.startsWith("image/") ? "IMAGE" : "FILE",
-						name: f.filename,
-						url: `/api/market-email-attachments/${f.id}`,
-					})),
+				media: media(e.id),
+			});
+		});
+		if (added) filed++;
+	}
+	return filed + (await threadAmazonCopies(db));
+}
+
+// Files the emails came with, as kept with each (not their inline
+// pictures, which are Amazon's logos), by email.
+async function mediaOf(db: Db, emailIds: number[]) {
+	const files =
+		emailIds.length === 0
+			? []
+			: await db
+					.select({
+						id: marketEmailAttachments.id,
+						emailId: marketEmailAttachments.emailId,
+						filename: marketEmailAttachments.filename,
+						contentType: marketEmailAttachments.contentType,
+					})
+					.from(marketEmailAttachments)
+					.where(
+						and(
+							inArray(marketEmailAttachments.emailId, emailIds),
+							isNull(marketEmailAttachments.contentId),
+						),
+					)
+					.orderBy(marketEmailAttachments.id);
+	return (emailId: number): BuyerMedia[] =>
+		files
+			.filter((f) => f.emailId === emailId)
+			.map((f) => ({
+				kind: f.contentType.startsWith("image/") ? "IMAGE" : "FILE",
+				name: f.filename,
+				url: `/api/market-email-attachments/${f.id}`,
+			}));
+}
+
+// Amazon's copy of a message sent in Seller Central ("Your e-mail to
+// Rick"): the order it was about and our words. Null when it isn't one.
+export function parseCopy(email: { subject: string; body: string }) {
+	if (!/^your e-?mail to\b/i.test(email.subject.trim())) return null;
+	const orderRef = /Order ID:\s*(\d{3}-\d{7}-\d{7})/i.exec(email.body)?.[1];
+	const between =
+		/-{3,}\s*Begin message\s*-{3,}([\s\S]*?)-{3,}\s*End message\s*-{3,}/i.exec(
+			email.body,
+		)?.[1];
+	if (!orderRef || between === undefined) return null;
+	return { orderRef, text: between.replace(/\r\n/g, "\n").trim() };
+}
+
+const COPIES_SINCE_MS = 30 * 86_400_000;
+// Ours with the same words this near the copy are the one it's of.
+const LOGGED_SLACK_MS = 24 * 3_600_000;
+const same = (a: string, b: string) =>
+	a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+
+// Puts what staff sent in Seller Central on its thread, from Amazon's copy:
+// it takes the place of the same words added without sending, and is kept
+// once, by the copy. A copy for an order with no thread here (or two) is
+// left; there's no buyer address to answer on.
+export async function threadAmazonCopies(db: Db) {
+	const pending = await db
+		.select({
+			id: marketEmails.id,
+			messageId: marketEmails.messageId,
+			subject: marketEmails.subject,
+			body: marketEmails.body,
+			receivedAt: marketEmails.receivedAt,
+		})
+		.from(marketEmails)
+		.leftJoin(buyerMessages, eq(buyerMessages.marketEmailId, marketEmails.id))
+		.where(
+			and(
+				eq(marketEmails.market, "amazon"),
+				ilike(marketEmails.subject, "your e%mail to%"),
+				gte(marketEmails.receivedAt, new Date(Date.now() - COPIES_SINCE_MS)),
+				isNull(buyerMessages.id),
+			),
+		)
+		.orderBy(marketEmails.receivedAt);
+	const media = await mediaOf(
+		db,
+		pending.map((e) => e.id),
+	);
+	let filed = 0;
+	for (const e of pending) {
+		const copy = parseCopy(e);
+		if (!copy) continue;
+		const threads = await db
+			.select({ id: buyerThreads.id })
+			.from(buyerThreads)
+			.where(
+				and(
+					eq(buyerThreads.market, "amazon"),
+					eq(buyerThreads.orderRef, copy.orderRef),
+				),
+			);
+		const [thread, ...more] = threads;
+		if (!thread || more.length > 0) continue;
+		const added = await db.transaction(async (tx) => {
+			const ours = await tx
+				.select({
+					id: buyerMessages.id,
+					body: buyerMessages.body,
+					at: buyerMessages.at,
+					externalId: buyerMessages.externalId,
+					marketEmailId: buyerMessages.marketEmailId,
+				})
+				.from(buyerMessages)
+				.where(
+					and(
+						eq(buyerMessages.threadId, thread.id),
+						eq(buyerMessages.fromBuyer, false),
+					),
+				)
+				.orderBy(buyerMessages.at);
+			const sameWords = ours.filter(
+				(m) =>
+					m.marketEmailId === null &&
+					same(m.body, copy.text) &&
+					Math.abs(e.receivedAt.getTime() - m.at.getTime()) <= LOGGED_SLACK_MS,
+			);
+			const match = sameWords.find((m) => isLogged(m.externalId));
+			if (match) {
+				await tx
+					.update(buyerMessages)
+					.set({
+						externalId: e.messageId,
+						marketEmailId: e.id,
+						at: e.receivedAt,
+						media: media(e.id),
+					})
+					.where(eq(buyerMessages.id, match.id));
+				return true;
+			}
+			// Should Amazon ever copy one sent from here, it's that one.
+			const sent = sameWords[0];
+			if (sent) {
+				await tx
+					.update(buyerMessages)
+					.set({ marketEmailId: e.id })
+					.where(eq(buyerMessages.id, sent.id));
+				return false;
+			}
+			return recordOurs(tx, thread.id, {
+				externalId: e.messageId,
+				body: copy.text,
+				at: e.receivedAt,
+				media: media(e.id),
+				marketEmailId: e.id,
 			});
 		});
 		if (added) filed++;
