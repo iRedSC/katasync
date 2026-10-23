@@ -1,6 +1,6 @@
 # Disaster recovery
 
-katasync keeps its state in one Postgres database on Neon. Everything else (source, Vercel environment variables, channel and carrier credentials) lives outside it and must be recovered separately.
+katasync keeps its state in one Postgres database on Neon. Source, Vercel environment variables, and channel and carrier credentials live outside it and must be recovered separately.
 
 This runbook does not confirm that production backups exist. Verify each item under "Operator must verify" before relying on it.
 
@@ -15,127 +15,231 @@ A complete recovery needs every table, including these `bytea` columns, which st
 - `catalog_photos.data`: catalog photos
 - `shipments.label_pdf`: saved shipping labels
 
-A dump that omits data (schema only, or CSV of selected tables) loses these files.
+A dump that omits data (schema only, or selected tables) loses these files.
 
-The database also holds secrets and session material. Treat every dump as a secret:
+The database also holds secrets. Treat every dump as a secret:
 
 - `qz_certificate.private_key`: the QZ Tray signing key (see README, Label printing)
-- `sessions.token_hash`, `passkeys`, `oauth_tokens.token_hash`, and the `katasync_mcp` password
+- `mcp_login.password`: the password the MCP query tool uses
+- `sessions.token_hash`, `passkeys`, `oauth_tokens.token_hash`
 
-Vercel environment variables (`DATABASE_URL`, `CRON_SECRET`, `AUTH_ORIGIN`, channel and carrier keys, `RESEND_API_KEY`, and the rest in `src/`) are not in the database. Recovery needs them restored or re-entered in the same environment.
+Vercel environment variables (`DATABASE_URL`, `CRON_SECRET`, `AUTH_ORIGIN`, channel, carrier, and email keys) are not in the database. Recovery needs them restored or re-issued in the same environment.
 
 ## Two recovery paths
 
-**Provider point-in-time recovery (Neon).** Neon can reset a branch to a past moment inside the project's history window. The window depends on the plan. Restoring overwrites the branch's current data, and Neon keeps the pre-restore state as a separate branch named `{branch_name}_old_{head_timestamp}`. See [Neon branch restore](https://neon.com/docs/introduction/branch-restore.md) and the [history window](https://neon.com/docs/postgres/backup-restore/history-window) page for the amounts. This path lives inside Neon. It is not a copy you hold.
+**Provider point-in-time recovery (Neon).** Neon can reset a branch to a past moment inside the project's history window, which depends on the plan. Restoring overwrites the branch's current data, and Neon keeps the pre-restore state as a branch named `{branch_name}_old_{head_timestamp}`. See [Neon branch restore](https://neon.com/docs/introduction/branch-restore.md) and the [history window](https://neon.com/docs/postgres/backup-restore/history-window) page for the amounts. This path lives inside Neon. It is not a copy you hold.
 
-**Portable dump (`pg_dump`).** A dump is a copy you store outside Neon and can restore to any Postgres. Nothing in this repo creates one yet, and this runbook adds no tooling for it. The commands below use the stock PostgreSQL client tools against the direct connection. Neon's [connection pooling](https://neon.com/docs/connect/connection-pooling.md) page explains why dumps must not use the pooled URL.
+**Portable dump (`pg_dump`).** A dump is a copy you store outside Neon and can restore to any Postgres. Nothing in this repo creates one, and this runbook adds no tooling for it. The steps use the stock PostgreSQL client tools against the direct connection. Neon's [connection pooling](https://neon.com/docs/connect/connection-pooling.md) page explains why dumps must not use the pooled URL.
 
-## Compatibility: app commit and migrations
+## Credentials
 
-A database and an app commit must match. The database records applied migrations in `drizzle.__drizzle_migrations`. The app commit records the expected ones in `drizzle/meta/_journal.json`.
+Never put a connection string or password on a command line. Process arguments are visible to other users on the machine. Keep the connection details in files outside the repo, created by the operator:
 
-1. Note the app commit that matches the data (the commit deployed when the data was taken).
-2. At the app commit, count the journal entries and the last tag.
-3. Against the restored database:
+`~/katasync-dr/pg_service.conf` (no secrets; mode 0600 is fine):
 
-   ```sql
-   select count(*), max(created_at) from drizzle.__drizzle_migrations;
-   ```
+```ini
+[katasync_src]
+host=<direct host, no -pooler>
+dbname=<database>
+user=<role>
+sslmode=require
 
-   The count must equal the journal entry count. If the database is behind, run `pnpm db:migrate` against it. That script refuses to apply when migrations would be skipped (`scripts/migrate.ts`, `scripts/check-migrations.ts`).
+[katasync_rehearsal]
+host=<rehearsal branch direct host>
+dbname=<database>
+user=<role>
+sslmode=require
+```
 
-4. If the database is ahead of the app commit, deploy the app that knows its schema. Do not roll back code alone. The README's dispatch cutover (migrations `0031` to `0035`) requires restoring both the database and the app.
+`~/katasync-dr/pgpass` (secret; must be mode 0600 or libpq ignores it):
 
-Never run migrations against production from a restored copy. Migrate only the rehearsal database below.
+```text
+<host>:5432:<database>:<role>:<password>
+```
 
-## Keep credentials out of logs
+Then, in each shell, before any command below:
 
-- Read `DATABASE_URL_UNPOOLED` from `.env.local` (gitignored, written by `neon link`) or a secret manager. Do not paste the connection string into commands, tickets, chat, or shell history.
-- Do not run with `set -x` or `pg_dump -v` around a URL.
-- Write dumps with `umask 077` to a directory outside the repo. `.gitignore` does not exclude dumps.
-- A rehearsal env file holds only the rehearsal `DATABASE_URL`. Do not copy channel credentials into it.
+```sh
+export PGSERVICEFILE="$HOME/katasync-dr/pg_service.conf" PGPASSFILE="$HOME/katasync-dr/pgpass"
+umask 077
+```
+
+Commands select a target with `PGSERVICE=katasync_src` or `PGSERVICE=katasync_rehearsal`. See [libpq connection service file](https://www.postgresql.org/docs/current/libpq-pgservice.html) and [password file](https://www.postgresql.org/docs/current/libpq-pgpass.html).
+
+- Do not use `PGPASSWORD`, `set -x`, `pg_dump -v`, or `psql -E`.
+- Do not source the repo's `.env.local` in a DR shell. It holds the live URLs, and `drizzle.config.ts` and `scripts/migrate.ts` read `DATABASE_URL_UNPOOLED` from it.
+- Keep dumps and logs in `~/katasync-dr/`, outside the repo. `.gitignore` does not exclude them.
+
+## Dump options
+
+`--no-owner` omits ownership statements, so the dump restores under any role. `--no-privileges` is not used. It would drop the `GRANT` and `REVOKE` statements that keep `katasync_mcp` read-only (`drizzle/0027_mcp_role.sql` and the per-table grants in later migrations). A restore cannot rebuild them without replaying migrations, and replaying migrations against live-shaped data is not safe.
+
+`pg_dump` never includes cluster roles, with or without these flags. Roles, role passwords, and role settings (`ALTER ROLE ... SET`) are set up separately on the target (see Restore rehearsal).
+
+## Source and snapshot
+
+Every count, digest, and migration list is taken from the same source state as the dump:
+
+- **(a)** a Neon branch created at a fixed point in history, which nothing writes to; or
+- **(b)** production, with every writer stopped first: Vercel crons and app traffic, the packing and sync processes, and MCP clients.
+
+Run the source checks before the dump starts and again after it ends, with the same results. If any writer ran in between, discard the dump and start over. Counts from a live database that is still writing will not match the dump.
 
 ## Take a dump
 
 ```sh
-umask 077
-pg_dump -Fd -j 4 --no-owner --no-privileges \
-  -f "$DUMP_DIR/katasync-$(date -u +%Y%m%dT%H%MZ).dir" \
-  "$DATABASE_URL_UNPOOLED"
+export DUMP="$HOME/katasync-dr/dumps/katasync-$(date -u +%Y%m%dT%H%M%SZ).dir"
+PGSERVICE=katasync_src pg_dump -Fd -j 4 --no-owner -f "$DUMP"
+(cd "$DUMP" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$DUMP.manifest.sha256"
 ```
 
-`-Fd` with `-j` runs in parallel. `pg_dump` takes a consistent snapshot while the app keeps writing. [pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html) requires that the target directory not exist. Record the source (branch and point in time), the app commit, and the migration count (see Recovery evidence).
+`-Fd` with `-j` dumps in parallel. The target directory must not exist. [pg_dump](https://www.postgresql.org/docs/current/app-pgdump.html) takes a consistent snapshot.
 
-## Isolated restore rehearsal
+The manifest lists the SHA-256 of every file in the directory, with paths relative to it. It sits beside the directory, not inside it, so it does not list itself.
 
-Rehearse on a new Neon branch or a fresh database that no app or cron uses. Never use `production`, and never point Vercel at it.
+Record the source (branch and timestamp, or production with writers stopped), the app commit, and the migration list (see Compatibility).
 
-1. Confirm the archive is readable:
+## Compatibility: migrations and app commit
+
+A backup matches an app commit only if the database's applied migrations are identical, in order, to the migrations that commit ships. Migration count and latest timestamp do not prove this. Compare the whole list of hashes and timestamps.
+
+Expected list, from a clean checkout of the app commit (`pnpm install --frozen-lockfile`; no `.env.local` needed):
+
+```sh
+node --input-type=module -e "import { readMigrationFiles } from 'drizzle-orm/migrator'; console.log(JSON.stringify(readMigrationFiles({ migrationsFolder: 'drizzle' }).map((m) => [m.hash, m.folderMillis])))" > "$DUMP.expected-migrations.json"
+```
+
+Actual list, from a database (source or rehearsal):
+
+```sh
+PGSERVICE=katasync_src psql -X -At -v ON_ERROR_STOP=1 -c "select json_agg(json_build_array(hash, created_at) order by created_at) from drizzle.__drizzle_migrations" > "$DUMP.actual-migrations.json"
+```
+
+Match:
+
+```sh
+cmp -s <(jq -c . "$DUMP.expected-migrations.json") <(jq -c . "$DUMP.actual-migrations.json")
+```
+
+Exit status 0 means a match. Anything else means the backup is not for that commit: stop, and deploy the commit that matches it, or treat it as a separate migration decision.
+
+Do not use `pnpm db:migrate` to check a backup. It applies pending migrations and only refuses skipped ones. It does not prove the lists are identical.
+
+## Restore rehearsal
+
+Use a new Neon branch or an empty database created only for this rehearsal. It must never be `production`, the branch Vercel uses, or the source. Its entry in `pg_service.conf` is `katasync_rehearsal`.
+
+1. Verify the dump is unchanged since it was taken:
 
    ```sh
-   pg_restore -l "$DUMP_DIR/katasync-....dir" > /dev/null
+   (cd "$DUMP" && sha256sum -c "$DUMP.manifest.sha256" --quiet) && echo manifest-ok
    ```
 
-   [`pg_restore -l`](https://www.postgresql.org/docs/current/app-pgrestore.html) reads the table of contents. It does not verify table data.
+   Any `FAILED` line means stop.
 
-2. Restore into the empty rehearsal database:
+2. Create the role the dump's grants name. Roles are cluster-level and are not in the dump:
 
    ```sh
-   pg_restore -j 4 --no-owner --no-privileges \
-     -d "$REHEARSAL_URL" "$DUMP_DIR/katasync-....dir" 2> "$DUMP_DIR/restore.log"
+   PGSERVICE=katasync_rehearsal psql -X -v ON_ERROR_STOP=1 -c "do \$\$ begin if not exists (select from pg_roles where rolname = 'katasync_mcp') then create role katasync_mcp login; end if; end \$\$"
    ```
 
-   `-j` needs a custom or directory archive. Review `restore.log`. Role and ACL errors can be expected on Neon. Any other error fails the rehearsal.
+   This matches `drizzle/0027_mcp_role.sql`, without a password.
 
-3. Check the migration count (step 3 above) and run `DATABASE_URL_UNPOOLED="$REHEARSAL_URL" pnpm db:migrate` at the app commit. It should apply nothing.
+3. Restore, stopping at the first error:
 
-4. Run the integrity checks below.
+   ```sh
+   pg_restore --exit-on-error -j 4 --no-owner -d "service=katasync_rehearsal" "$DUMP" > "$DUMP.restore.log" 2>&1
+   echo "exit=$?"
+   ```
 
-5. Optional: run the app locally at the app commit with the rehearsal `DATABASE_URL` in an env file that has no channel credentials. Do not run `pnpm sync`, `pnpm webhooks`, or any `stock:*` script. They call Shopify, Amazon, eBay, and TikTok with live credentials, and stock push writes listing quantities.
+   Exit status must be 0, and the log must contain no `ERROR:` line. Any error, including a missing role or a grant on a missing object, fails the rehearsal. Do not add flags to suppress errors. Fix the cause, drop the rehearsal database, and start again from step 2.
 
-## Integrity checks
+   [pg_restore](https://www.postgresql.org/docs/current/app-pgrestore.html) `--exit-on-error` stops at the first error, so the state after a failure is partial, not usable.
 
-Run against the restored database and compare with the source. Exact counts and byte totals are the evidence; the table constraints already reject bad sizes, so only missing or truncated rows show up here.
+4. Re-apply the settings and password that a dump does not carry:
 
-```sql
--- Ledger: running balances equal the sum of movements
-select coalesce(s.product_id, m.product_id) as product_id,
-       coalesce(s.location_id, m.location_id) as location_id
-from stock_levels s
-full join (
-  select product_id, location_id, sum(delta) as total
-  from movements group by product_id, location_id
-) m on m.product_id = s.product_id and m.location_id = s.location_id
-where coalesce(s.on_hand, 0) <> coalesce(m.total, 0);
-```
+   ```sh
+   PGSERVICE=katasync_rehearsal psql -X -v ON_ERROR_STOP=1 -c "alter role katasync_mcp set statement_timeout = '15s'"
+   PGSERVICE=katasync_src psql -X -At -v ON_ERROR_STOP=1 -c "select format('alter role katasync_mcp password %L', password) from mcp_login" | PGSERVICE=katasync_rehearsal psql -X -q -v ON_ERROR_STOP=1 -f -
+   ```
 
-```sql
--- Attachments and photos: row counts and total bytes
-select 'purchase_order_files' as tbl, count(*) as n, sum(octet_length(data)) as bytes from purchase_order_files
-union all select 'po_email_attachments', count(*), sum(octet_length(data)) from po_email_attachments
-union all select 'market_email_attachments', count(*), sum(octet_length(data)) from market_email_attachments
-union all select 'purchase_order_damage_photos', count(*), sum(octet_length(data)) from purchase_order_damage_photos
-union all select 'catalog_photos', count(*), sum(octet_length(data)) from catalog_photos
-union all select 'shipments_label_pdf', count(*), sum(octet_length(label_pdf)) from shipments where label_pdf is not null;
-```
+   The timeout comes from `drizzle/0027_mcp_role.sql`. The password is piped between `psql` processes and never written to a file or argv. If `mcp_login` has no row, the app had never used the MCP role; skip the password line and record that.
 
-The ledger query must return no rows. The attachment query must match the source exactly. Also compare counts for `movements`, `orders`, `purchase_orders`, and `stock_levels`.
+5. Migration list: run the actual-migrations command against `katasync_rehearsal` and compare with `cmp -s` as above. It must match the expected list exactly.
+
+6. Grant check: the MCP role must read the same relations as on the source, and no secret table. Save the output from each side and diff them. Run on `katasync_src` and on `katasync_rehearsal`:
+
+   ```sql
+   select c.relname, has_table_privilege('katasync_mcp', c.oid, 'SELECT') as mcp_can_read
+   from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public' and c.relkind in ('r', 'p', 'v', 'm')
+   order by 1;
+   ```
+
+   The two outputs must be identical, and `sessions`, `passkeys`, `oauth_tokens`, `qz_certificate`, and `mcp_login` must show `f`. The full list of secret tables is `SECRET_TABLES` in `src/mcp/query.ts`; every one of them must show `f`.
+
+7. Optional: connect as `katasync_mcp` on the rehearsal with a `pgpass` line for the rehearsal entry, and run `select 1`. This proves the login works without the app.
+
+8. Integrity checks, read-only, against the source and the rehearsal. Save this as a file outside the repo and run `PGSERVICE=<target> psql -X -At -v ON_ERROR_STOP=1 -f integrity.sql > "$DUMP.integrity.<target>.txt"`. Diff the two outputs. They must be identical, and the ledger check must return no rows on both.
+
+   ```sql
+   begin isolation level repeatable read read only;
+
+   select 'movements' as tbl, count(*) as n, null::bigint as bytes from movements
+   union all select 'stock_levels', count(*), null from stock_levels
+   union all select 'orders', count(*), null from orders
+   union all select 'purchase_orders', count(*), null from purchase_orders
+   union all select 'purchase_order_files', count(*), sum(octet_length(data)) from purchase_order_files
+   union all select 'po_email_attachments', count(*), sum(octet_length(data)) from po_email_attachments
+   union all select 'market_email_attachments', count(*), sum(octet_length(data)) from market_email_attachments
+   union all select 'purchase_order_damage_photos', count(*), sum(octet_length(data)) from purchase_order_damage_photos
+   union all select 'catalog_photos', count(*), sum(octet_length(data)) from catalog_photos
+   union all select 'shipments_label_pdf', count(*), sum(octet_length(label_pdf)) from shipments where label_pdf is not null;
+
+   select 'purchase_order_files' as tbl, md5(string_agg(id::text || ':' || md5(data), ',' order by id)) as digest from purchase_order_files
+   union all select 'po_email_attachments', md5(string_agg(id::text || ':' || md5(data), ',' order by id)) from po_email_attachments
+   union all select 'market_email_attachments', md5(string_agg(id::text || ':' || md5(data), ',' order by id)) from market_email_attachments
+   union all select 'purchase_order_damage_photos', md5(string_agg(id::text || ':' || md5(data), ',' order by id)) from purchase_order_damage_photos
+   union all select 'catalog_photos', md5(string_agg(id::text || ':' || md5(data), ',' order by id)) from catalog_photos
+   union all select 'shipments_label_pdf', md5(string_agg(id::text || ':' || md5(label_pdf), ',' order by id)) from shipments where label_pdf is not null;
+
+   select product_id, location_id, on_hand, total
+   from stock_levels full join (
+     select product_id, location_id, sum(delta) as total from movements group by product_id, location_id
+   ) m using (product_id, location_id)
+   where coalesce(on_hand, 0) <> coalesce(total, 0);
+
+   commit;
+   ```
+
+   Counts show missing or extra rows. Digests show the attachment bytes are identical to the source row by row. The ledger query checks that stored balances equal the sum of movements. Each query runs in one repeatable-read transaction, so they see one snapshot.
+
+## Optional: migrate the rehearsal
+
+Only if the backup is behind the app commit and you want to see the forward path work. This is not validation, and it must never target anything else:
+
+1. Use a clean checkout of the app commit with no `.env.local`.
+2. Create `~/katasync-dr/rehearsal.env` (mode 0600, outside the repo) with only `DATABASE_URL` and `DATABASE_URL_UNPOOLED`, both set to the rehearsal branch.
+3. `set -a; . ~/katasync-dr/rehearsal.env; set +a; pnpm db:migrate`
+4. Repeat the migration-list comparison. It must match the expected list.
 
 ## Recovery evidence
 
-Record one entry per restore or rehearsal, in the incident note or a dated log. Do not record connection strings or secrets.
+Record one entry per restore or rehearsal, in the incident note or a dated log. Never record connection strings, passwords, or the QZ key.
 
-- Source: Neon branch and timestamp, or dump directory name and its SHA-256
-- App commit SHA deployed or tested
-- Last migration tag and migration count, before and after
-- Row counts and byte totals for the tables above, source versus restored
-- Ledger check result (zero rows)
-- Rehearsal result, who ran it, and when
+- Source: Neon branch and timestamp, or production with writers stopped (start and end times)
+- Dump directory name, manifest file, and the output of `sha256sum -c`
+- App commit SHA, and the expected and actual migration lists (`cmp` exit status)
+- `pg_restore` exit status and log line count of `ERROR:` (must be 0)
+- The grant comparison diff (must be empty)
+- The integrity outputs, source and rehearsal, and their diff (must be empty)
+- Who ran it and when
 
 ## Operator must verify
 
-- The Neon plan and its history window, and whether the `production` branch holds live data (the README says it stays empty until cutover).
-- Whether any Neon backup or snapshot feature is enabled for the project. This runbook does not rely on one.
-- Where a portable dump would be stored, who can read it, and how long it is kept.
+- The Neon plan and history window, and whether `production` holds live data. The README says it stays empty until cutover.
+- Whether a Neon snapshot or backup feature is enabled for the project. This runbook does not rely on one.
+- Where dumps are stored, who can read them, and for how long. They contain the QZ key and MCP password.
+- That the Neon role you connect as may create `katasync_mcp` and run `alter role` on the rehearsal branch.
 - That the Vercel environment and every channel, carrier, and email credential can be restored or re-issued.
-- That a rehearsal has run at least once with the commands above.
+- That the rehearsal has run at least once with these steps.
