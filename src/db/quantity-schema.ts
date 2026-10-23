@@ -132,6 +132,37 @@ export const stockCommitmentEntries = pgTable(
 	],
 );
 
+export const shipmentEvidenceKind = pgEnum("shipment_evidence_kind", [
+	"shipped",
+	"voided",
+]);
+
+export const unreservedShipments = pgTable(
+	"unreserved_shipments",
+	{
+		id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+		orderLineId: integer()
+			.notNull()
+			.references(() => orderLines.id),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		kind: shipmentEvidenceKind().notNull(),
+		fulfillmentKey: text().notNull(),
+		quantity: integer().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("unreserved_shipments_once").on(
+			t.orderLineId,
+			t.fulfillmentKey,
+			t.kind,
+		),
+		check("unreserved_shipments_quantity", sql`${t.quantity} > 0`),
+		index("unreserved_shipments_order_idx").on(t.orderId),
+	],
+);
+
 export const committedStock = pgTable(
 	"committed_stock",
 	{

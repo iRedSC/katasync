@@ -14,7 +14,12 @@ import {
 import { readQuantityMode } from "#/inventory/commitments";
 import { undoBatch } from "#/inventory/ledger";
 import { batchProductIds, lockRecipes } from "#/inventory/ledger/post";
-import { commitmentProductIds, syncLineStock, takeLineStock } from "./stock-effects";
+import {
+	commitmentProductIds,
+	keepsShippedSale,
+	syncLineStock,
+	takeLineStock,
+} from "./stock-effects";
 import { type OrderTax, saveTax } from "./tax";
 
 // An order as any channel adapter hands it over. Money is in store currency.
@@ -83,6 +88,17 @@ export async function ingestOrder(
 ): Promise<{ orderId: number; problems: string[] }> {
 	return db.transaction(async (tx) => {
 		const { lines, tax, ...fields } = order;
+		const [before] = await tx
+			.select({ cancelledAt: orders.cancelledAt })
+			.from(orders)
+			.where(
+				and(
+					eq(orders.storeId, store.id),
+					eq(orders.externalId, order.externalId),
+				),
+			);
+		const newlyCancelled =
+			order.cancelledAt !== null && before?.cancelledAt == null;
 		const [saved] = await tx
 			.insert(orders)
 			.values({ ...fields, storeId: store.id })
@@ -198,6 +214,23 @@ export async function ingestOrder(
 			}
 			handled.add(line.externalId);
 
+			const resized =
+				existing !== undefined && existing.quantity !== line.quantity;
+			if (
+				row.saleBatchId &&
+				(order.cancelledAt !== null || resized) &&
+				(await keepsShippedSale(tx, order))
+			) {
+				if (resized)
+					problems.push(
+						`${order.name}: ${line.title} shipped before committed stock; it now says ${line.quantity}, so record a return or count instead`,
+					);
+				else if (newlyCancelled)
+					problems.push(
+						`${order.name}: ${line.title} was cancelled after it shipped; record a return if it comes back`,
+					);
+				continue;
+			}
 			if (order.cancelledAt !== null && row.saleBatchId) {
 				if (!(await isUndone(tx, row.saleBatchId))) {
 					await undoBatch(tx, row.saleBatchId);

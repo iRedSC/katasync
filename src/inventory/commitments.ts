@@ -1,5 +1,6 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
+import { orderLines, orders, stores } from "#/db/schema";
 import {
 	committedStock,
 	quantityMode,
@@ -44,6 +45,7 @@ export type LineHistory = {
 	orderLineId: number;
 	revisions: Revision[];
 	latest: Revision | null;
+	open: Revision[];
 	consumed: number;
 	remaining: number;
 };
@@ -59,6 +61,7 @@ export async function lineHistories(
 			orderLineId: id,
 			revisions: [],
 			latest: null,
+			open: [],
 			consumed: 0,
 			remaining: 0,
 		});
@@ -107,7 +110,8 @@ export async function lineHistories(
 		history.revisions.push(revision);
 		history.latest = revision;
 		history.consumed += revision.consumed;
-		history.remaining = revision.remaining;
+		history.remaining += revision.remaining;
+		if (revision.remaining > 0) history.open.push(revision);
 	}
 	return result;
 }
@@ -154,13 +158,15 @@ export async function settleLine(
 			return { kind: "unchanged", remaining: history.remaining } as const;
 		if (!latest && input.target === 0)
 			return { kind: "unchanged", remaining: 0 } as const;
-		const released = latest?.remaining ?? 0;
-		if (latest && released > 0)
-			await tx.insert(stockCommitmentEntries).values({
-				commitmentId: latest.id,
-				kind: "release",
-				quantity: released,
-			});
+		const released = history.remaining;
+		if (history.open.length > 0)
+			await tx.insert(stockCommitmentEntries).values(
+				history.open.map((r) => ({
+					commitmentId: r.id,
+					kind: "release" as const,
+					quantity: r.remaining,
+				})),
+			);
 		const quantity = input.target - history.consumed;
 		if (quantity < 0)
 			return {
@@ -246,4 +252,34 @@ export function partsFor(
 	return parts.length === 0
 		? null
 		: parts.map((p) => ({ productId: p.productId, perUnit: p.quantity }));
+}
+
+export type LineTarget = {
+	orderLineId: number;
+	orderId: number;
+	productId: number | null;
+	target: number;
+};
+
+export async function lineTargets(
+	db: Db,
+	orderLineIds: number[],
+): Promise<LineTarget[]> {
+	if (orderLineIds.length === 0) return [];
+	return db
+		.select({
+			orderLineId: orderLines.id,
+			orderId: orderLines.orderId,
+			productId: orderLines.productId,
+			target: sql<number>`(case when ${orderLines.productId} is not null
+				and not ${orders.fulfilledByChannel} and not ${orders.soldInStore}
+				and ${orders.cancelledAt} is null and ${stores.stockFrom} is not null
+				and ${orders.placedAt} >= ${stores.stockFrom}
+				then greatest(${orderLines.quantity}, 0) else 0 end)::int`,
+		})
+		.from(orderLines)
+		.innerJoin(orders, eq(orders.id, orderLines.orderId))
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.where(inArray(orderLines.id, orderLineIds))
+		.orderBy(orderLines.id);
 }

@@ -20,6 +20,25 @@ CREATE TRIGGER "stock_commitment_parts_append_only" BEFORE UPDATE OR DELETE ON "
 CREATE TRIGGER "stock_commitment_entries_append_only" BEFORE UPDATE OR DELETE ON "stock_commitment_entries"
   FOR EACH STATEMENT EXECUTE FUNCTION reject_quantity_history_change();
 --> statement-breakpoint
+CREATE TRIGGER "unreserved_shipments_append_only" BEFORE UPDATE OR DELETE ON "unreserved_shipments"
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_quantity_history_change();
+--> statement-breakpoint
+CREATE FUNCTION guard_unreserved_void() RETURNS trigger AS $$
+BEGIN
+  IF NEW."kind" = 'voided' AND NOT EXISTS (
+    SELECT 1 FROM "unreserved_shipments" s
+    WHERE s."order_line_id" = NEW."order_line_id" AND s."fulfillment_key" = NEW."fulfillment_key"
+      AND s."kind" = 'shipped' AND s."quantity" = NEW."quantity"
+  ) THEN
+    RAISE EXCEPTION 'void must match a shipment of order line % under %', NEW."order_line_id", NEW."fulfillment_key";
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+--> statement-breakpoint
+CREATE TRIGGER "unreserved_shipments_guard" BEFORE INSERT ON "unreserved_shipments"
+  FOR EACH ROW EXECUTE FUNCTION guard_unreserved_void();
+--> statement-breakpoint
 CREATE TRIGGER "transfer_dispatches_append_only" BEFORE UPDATE OR DELETE ON "transfer_dispatches"
   FOR EACH STATEMENT EXECUTE FUNCTION reject_quantity_history_change();
 --> statement-breakpoint
@@ -47,7 +66,10 @@ BEGIN
   IF NEW."revision" <> coalesce(latest."revision", 0) + 1 THEN
     RAISE EXCEPTION 'commitment revision % for order line % is out of sequence', NEW."revision", NEW."order_line_id";
   END IF;
-  IF latest."id" IS NOT NULL AND commitment_settled(latest."id") < latest."quantity" THEN
+  IF EXISTS (
+    SELECT 1 FROM "stock_commitments" k
+    WHERE k."order_line_id" = NEW."order_line_id" AND commitment_settled(k."id") < k."quantity"
+  ) THEN
     RAISE EXCEPTION 'order line % still has an open commitment', NEW."order_line_id";
   END IF;
   RETURN NEW;
@@ -78,9 +100,6 @@ DECLARE
   restored "stock_commitment_entries"%ROWTYPE;
 BEGIN
   SELECT * INTO c FROM "stock_commitments" WHERE "id" = NEW."commitment_id" FOR UPDATE;
-  IF EXISTS (SELECT 1 FROM "stock_commitments" WHERE "order_line_id" = c."order_line_id" AND "revision" > c."revision") THEN
-    RAISE EXCEPTION 'commitment % was replaced by a later revision', c."id";
-  END IF;
   IF NOT EXISTS (SELECT 1 FROM "stock_commitment_parts" WHERE "commitment_id" = c."id") THEN
     RAISE EXCEPTION 'commitment % has no parts', c."id";
   END IF;
@@ -203,4 +222,4 @@ WHERE o."cancelled_at" IS NULL AND NOT o."fulfilled_by_channel"
 GROUP BY p."product_id", o."id", o."store_id", o."placed_at"
 HAVING sum(p."per_unit" * (k."quantity" - commitment_released(k."id"))) > 0;
 --> statement-breakpoint
-GRANT SELECT ON "quantity_mode", "stock_commitments", "stock_commitment_parts", "stock_commitment_entries", "committed_stock", "transfer_dispatches", "transfer_dispatch_lines", "transfer_receipts", "transfer_receipt_lines" TO katasync_mcp;
+GRANT SELECT ON "quantity_mode", "unreserved_shipments", "stock_commitments", "stock_commitment_parts", "stock_commitment_entries", "committed_stock", "transfer_dispatches", "transfer_dispatch_lines", "transfer_receipts", "transfer_receipt_lines" TO katasync_mcp;

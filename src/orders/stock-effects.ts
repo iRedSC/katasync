@@ -16,10 +16,17 @@ import {
 	readQuantityMode,
 	settleLine,
 } from "#/inventory/commitments";
+import {
+	ConsumeError,
+	consumeCommitments,
+	entriesUnder,
+	evidenceUnder,
+} from "#/inventory/commitments-consume";
 
 export type StockEffect =
 	| { kind: "none" }
 	| { kind: "sold"; batchId: string }
+	| { kind: "shipped_unreserved"; shipped: number }
 	| { kind: "reserved"; remaining: number; consumed: number }
 	| { kind: "released"; consumed: number };
 
@@ -39,7 +46,12 @@ export async function lineStockEffect(
 ): Promise<StockEffect> {
 	if (line.saleBatchId) return { kind: "sold", batchId: line.saleBatchId };
 	const history = await lineHistory(db, line.id);
-	if (!history.latest) return { kind: "none" };
+	if (!history.latest) {
+		const shipped = (await evidenceUnder(db, [line.id]))
+			.filter((e) => !e.voided)
+			.reduce((n, e) => n + e.quantity, 0);
+		return shipped > 0 ? { kind: "shipped_unreserved", shipped } : { kind: "none" };
+	}
 	return history.remaining > 0
 		? {
 				kind: "reserved",
@@ -82,14 +94,44 @@ async function reserve(
 				return product ? partsFor(product, recipes) : null;
 			},
 		});
-		return settled.kind === "overshipped"
-			? `${order.name}: ${settled.consumed} already shipped, more than the ${settled.target} ordered now`
-			: null;
+		if (settled.kind === "overshipped")
+			return `${order.name}: ${settled.consumed} already shipped, more than the ${settled.target} ordered now`;
+		return target > 0 ? applyShipped(db, line, order) : null;
 	} catch (error) {
 		if (!(error instanceof CommitmentError || error instanceof LedgerError))
 			throw error;
 		return `${order.name}: ${error.message}`;
 	}
+}
+
+async function applyShipped(
+	db: Db,
+	line: Line,
+	order: { name: string },
+): Promise<string | null> {
+	for (const proof of await evidenceUnder(db, [line.id])) {
+		if (proof.voided) continue;
+		if ((await entriesUnder(db, [line.id], proof.fulfillmentKey)).length > 0)
+			continue;
+		try {
+			await consumeCommitments(db, {
+				orderId: line.orderId,
+				lines: [{ orderLineId: line.id, quantity: proof.quantity }],
+				fulfillmentKey: proof.fulfillmentKey,
+			});
+		} catch (error) {
+			if (!(error instanceof ConsumeError)) throw error;
+			return `${order.name}: shipped ${proof.quantity} before it had a product, but ${error.message}`;
+		}
+	}
+	return null;
+}
+
+export async function keepsShippedSale(
+	db: Db,
+	order: { soldInStore: boolean },
+): Promise<boolean> {
+	return !order.soldInStore && (await readQuantityMode(db)) === "committed";
 }
 
 export async function takeLineStock(

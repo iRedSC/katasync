@@ -9,7 +9,8 @@ import {
 	activateCommittedMode,
 	planActivation,
 } from "./commitments-activation";
-import { consumeCommitments, restoreCommitments } from "./commitments-consume";
+import { consumeCommitments } from "./commitments-consume";
+import { restoreCommitments } from "./commitments-restore";
 import { activate, channelOrder, quantityWorld } from "./commitments.fixtures";
 
 let db: Db;
@@ -110,6 +111,7 @@ describe("consuming reservations at dispatch", () => {
 		expect(await restoreCommitments(db, { orderId, fulfillmentKey: "d1" })).toEqual({
 			kind: "restored",
 			lines: [],
+			voidedUnreserved: [],
 		});
 		expect(await world.onHand(wrench, world.warehouse)).toBe(5);
 		expect(await committed(wrench)).toBe(3);

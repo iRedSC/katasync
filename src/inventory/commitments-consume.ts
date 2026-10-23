@@ -1,18 +1,22 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { saleLocation, stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import {
 	stockCommitmentEntries,
 	stockCommitments,
+	unreservedShipments,
 } from "#/db/quantity-schema";
-import { orderLines, stockLevels } from "#/db/schema";
-import { type MovementLine, postMovements, undoBatch } from "#/inventory/ledger";
-import { lockBatchProducts, lockStockProducts } from "#/inventory/ledger/post";
-import { lineHistories, readQuantityMode } from "./commitments";
+import { orderLines } from "#/db/schema";
+import { postMovements } from "#/inventory/ledger";
+import { lockStockProducts } from "#/inventory/ledger/post";
+import { type LineHistory, lineHistories, readQuantityMode } from "./commitments";
+import {
+	allocate,
+	ConsumeError,
+	lockedHolds,
+	shippingShelves,
+} from "./commitments-shelves";
 
-export class ConsumeError extends Error {
-	name = "ConsumeError";
-}
+export { ConsumeError } from "./commitments-shelves";
 
 export type ConsumeInput = {
 	orderId: number;
@@ -30,93 +34,88 @@ export type ConsumedLine = {
 export type UntrackedLine = {
 	orderLineId: number;
 	quantity: number;
-	why: "sold_at_ingest" | "never_reserved";
+	why: "sold_at_ingest" | "shipped_unreserved";
+	repeated: boolean;
 };
 
 export type ConsumeResult =
 	| { kind: "legacy" }
 	| { kind: "consumed"; lines: ConsumedLine[]; untracked: UntrackedLine[] };
 
-type Shelves = { main: number; overflow: { locationId: number; keep: number } | null };
+const restored = sql<boolean>`exists (select 1 from ${stockCommitmentEntries} r where r.restores_entry_id = ${stockCommitmentEntries.id})`;
 
-export function allocate(
-	shelves: Shelves,
-	units: { productId: number; quantity: number }[],
-	holds: Map<string, number>,
-): MovementLine[] {
-	const key = (productId: number, locationId: number) =>
-		`${productId}:${locationId}`;
-	const at = (productId: number, locationId: number) =>
-		Math.max(0, holds.get(key(productId, locationId)) ?? 0);
-	return units.flatMap((u) => {
-		const first = Math.min(u.quantity, at(u.productId, shelves.main));
-		const spare = shelves.overflow
-			? Math.max(
-					0,
-					at(u.productId, shelves.overflow.locationId) - shelves.overflow.keep,
-				)
-			: 0;
-		const spill = Math.min(u.quantity - first, spare);
-		const main = u.quantity - spill;
-		const lines: MovementLine[] = [];
-		if (main > 0) {
-			lines.push({
-				productId: u.productId,
-				locationId: shelves.main,
-				delta: -main,
-				reason: "sale",
-			});
-			holds.set(
-				key(u.productId, shelves.main),
-				(holds.get(key(u.productId, shelves.main)) ?? 0) - main,
-			);
-		}
-		if (spill > 0 && shelves.overflow) {
-			const id = shelves.overflow.locationId;
-			lines.push({
-				productId: u.productId,
-				locationId: id,
-				delta: -spill,
-				reason: "sale",
-			});
-			holds.set(key(u.productId, id), at(u.productId, id) - spill);
-		}
-		return lines;
-	});
+export async function entriesUnder(
+	db: Db,
+	orderLineIds: number[],
+	fulfillmentKey: string,
+) {
+	if (orderLineIds.length === 0) return [];
+	return db
+		.select({
+			id: stockCommitmentEntries.id,
+			commitmentId: stockCommitmentEntries.commitmentId,
+			orderLineId: stockCommitments.orderLineId,
+			quantity: stockCommitmentEntries.quantity,
+			batchId: sql<string>`${stockCommitmentEntries.batchId}`,
+			restored,
+		})
+		.from(stockCommitmentEntries)
+		.innerJoin(
+			stockCommitments,
+			eq(stockCommitments.id, stockCommitmentEntries.commitmentId),
+		)
+		.where(
+			and(
+				inArray(stockCommitments.orderLineId, orderLineIds),
+				eq(stockCommitmentEntries.kind, "consume"),
+				eq(stockCommitmentEntries.fulfillmentKey, fulfillmentKey),
+			),
+		)
+		.orderBy(stockCommitmentEntries.id);
 }
 
-async function shippingShelves(db: Db): Promise<Shelves> {
-	const shelf = saleLocation(await stockLocations(db), { soldInStore: false });
-	if ("problem" in shelf) throw new ConsumeError(shelf.problem);
-	return {
-		main: shelf.locationId,
-		overflow:
-			shelf.overflow && shelf.overflow.locationId !== shelf.locationId
-				? shelf.overflow
-				: null,
-	};
+export async function evidenceUnder(
+	db: Db,
+	orderLineIds: number[],
+	fulfillmentKey?: string,
+) {
+	if (orderLineIds.length === 0) return [];
+	const rows = await db
+		.select()
+		.from(unreservedShipments)
+		.where(
+			and(
+				inArray(unreservedShipments.orderLineId, orderLineIds),
+				fulfillmentKey === undefined
+					? undefined
+					: eq(unreservedShipments.fulfillmentKey, fulfillmentKey),
+			),
+		)
+		.orderBy(unreservedShipments.id);
+	const shipped = rows.filter((r) => r.kind === "shipped");
+	return shipped.map((r) => ({
+		orderLineId: r.orderLineId,
+		fulfillmentKey: r.fulfillmentKey,
+		quantity: r.quantity,
+		voided: rows.some(
+			(v) =>
+				v.kind === "voided" &&
+				v.orderLineId === r.orderLineId &&
+				v.fulfillmentKey === r.fulfillmentKey,
+		),
+	}));
 }
 
-async function lockedHolds(db: Db, productIds: number[], shelves: Shelves) {
-	const locationIds = [
-		shelves.main,
-		...(shelves.overflow ? [shelves.overflow.locationId] : []),
-	];
-	const rows =
-		productIds.length === 0
-			? []
-			: await db
-					.select()
-					.from(stockLevels)
-					.where(
-						and(
-							inArray(stockLevels.productId, productIds),
-							inArray(stockLevels.locationId, locationIds),
-						),
-					)
-					.orderBy(stockLevels.productId, stockLevels.locationId)
-					.for("update");
-	return new Map(rows.map((r) => [`${r.productId}:${r.locationId}`, r.onHand]));
+export function splitOverOpen(history: LineHistory, quantity: number) {
+	const takes: { commitmentId: number; quantity: number; parts: LineHistory["open"][number]["parts"] }[] = [];
+	let left = quantity;
+	for (const revision of history.open) {
+		if (left === 0) break;
+		const take = Math.min(left, revision.remaining);
+		takes.push({ commitmentId: revision.id, quantity: take, parts: revision.parts });
+		left -= take;
+	}
+	return left === 0 ? takes : null;
 }
 
 export async function consumeCommitments(
@@ -151,101 +150,104 @@ export async function consumeCommitments(
 			throw new ConsumeError(
 				`Some of those lines aren't on order ${input.orderId}`,
 			);
-		const seenParts = [...(await lineHistories(tx, ids)).values()].flatMap(
-			(h) => h.revisions.flatMap((r) => r.parts.map((p) => p.productId)),
+		const locked = new Set(
+			[...(await lineHistories(tx, ids)).values()].flatMap((h) =>
+				h.revisions.flatMap((r) => r.parts.map((p) => p.productId)),
+			),
 		);
-		const locked = new Set(seenParts);
 		await lockStockProducts(tx, [...locked]);
 		const histories = await lineHistories(tx, ids);
-		const earlier =
-			ids.length === 0
-				? []
-				: await tx
-						.select({
-							orderLineId: stockCommitments.orderLineId,
-							quantity: stockCommitmentEntries.quantity,
-							batchId: stockCommitmentEntries.batchId,
-							restored: sql<boolean>`exists (select 1 from ${stockCommitmentEntries} r where r.restores_entry_id = ${stockCommitmentEntries.id})`,
-						})
-						.from(stockCommitmentEntries)
-						.innerJoin(
-							stockCommitments,
-							eq(stockCommitments.id, stockCommitmentEntries.commitmentId),
-						)
-						.where(
-							and(
-								inArray(stockCommitments.orderLineId, ids),
-								eq(stockCommitmentEntries.kind, "consume"),
-								eq(stockCommitmentEntries.fulfillmentKey, key),
-							),
-						);
+		const earlier = await entriesUnder(tx, ids, key);
+		const evidence = await evidenceUnder(tx, ids, key);
 		const consumed: ConsumedLine[] = [];
 		const untracked: UntrackedLine[] = [];
 		const pending: {
 			orderLineId: number;
 			quantity: number;
-			commitmentId: number;
-			units: { productId: number; quantity: number }[];
+			takes: NonNullable<ReturnType<typeof splitOverOpen>>;
 		}[] = [];
 		for (const line of input.lines) {
-			const seen = earlier.find((e) => e.orderLineId === line.orderLineId);
-			if (seen) {
-				if (seen.restored)
+			const seen = earlier.filter((e) => e.orderLineId === line.orderLineId);
+			const proof = evidence.find((e) => e.orderLineId === line.orderLineId);
+			if (seen.some((e) => e.restored) || proof?.voided)
+				throw new ConsumeError(
+					`Fulfillment ${key} was voided; ship it under a new key`,
+				);
+			const history = histories.get(line.orderLineId);
+			if (seen.length > 0) {
+				const total = seen.reduce((n, e) => n + e.quantity, 0);
+				if (total !== line.quantity)
 					throw new ConsumeError(
-						`Fulfillment ${key} was voided; ship it under a new key`,
+						`Fulfillment ${key} already shipped ${total} of line ${line.orderLineId}, not ${line.quantity}`,
 					);
-				if (seen.quantity !== line.quantity || !seen.batchId)
-					throw new ConsumeError(
-						`Fulfillment ${key} already shipped ${seen.quantity} of line ${line.orderLineId}, not ${line.quantity}`,
-					);
-				consumed.push({ ...line, batchId: seen.batchId, repeated: true });
+				consumed.push({ ...line, batchId: seen[0].batchId, repeated: true });
 				continue;
 			}
-			const latest = histories.get(line.orderLineId)?.latest ?? null;
-			if (!latest) {
+			if (!history || history.revisions.length === 0) {
+				if (proof) {
+					if (proof.quantity !== line.quantity)
+						throw new ConsumeError(
+							`Fulfillment ${key} already shipped ${proof.quantity} of line ${line.orderLineId}, not ${line.quantity}`,
+						);
+					untracked.push({ ...line, why: "shipped_unreserved", repeated: true });
+					continue;
+				}
 				const row = rows.find((r) => r.id === line.orderLineId);
-				untracked.push({
-					...line,
-					why: row?.saleBatchId ? "sold_at_ingest" : "never_reserved",
+				if (row?.saleBatchId) {
+					untracked.push({ ...line, why: "sold_at_ingest", repeated: false });
+					continue;
+				}
+				await tx.insert(unreservedShipments).values({
+					orderLineId: line.orderLineId,
+					orderId: input.orderId,
+					kind: "shipped",
+					fulfillmentKey: key,
+					quantity: line.quantity,
 				});
+				untracked.push({ ...line, why: "shipped_unreserved", repeated: false });
 				continue;
 			}
-			if (latest.parts.some((p) => !locked.has(p.productId)))
+			const takes = splitOverOpen(history, line.quantity);
+			if (!takes)
+				throw new ConsumeError(
+					`Line ${line.orderLineId} has ${history.remaining} reserved, not ${line.quantity}`,
+				);
+			if (takes.some((t) => t.parts.some((p) => !locked.has(p.productId))))
 				throw new ConsumeError(
 					`Line ${line.orderLineId} changed while shipping; try again`,
 				);
-			if (latest.remaining < line.quantity)
-				throw new ConsumeError(
-					`Line ${line.orderLineId} has ${latest.remaining} reserved, not ${line.quantity}`,
-				);
-			pending.push({
-				...line,
-				commitmentId: latest.id,
-				units: latest.parts.map((p) => ({
-					productId: p.productId,
-					quantity: p.perUnit * line.quantity,
-				})),
-			});
+			pending.push({ ...line, takes });
 		}
 		if (pending.length === 0)
 			return { kind: "consumed", lines: consumed, untracked };
-		const productIds = [
-			...new Set(pending.flatMap((p) => p.units.map((u) => u.productId))),
-		];
 		const shelves = await shippingShelves(tx);
-		const holds = await lockedHolds(tx, productIds, shelves);
+		const holds = await lockedHolds(
+			tx,
+			[...new Set(pending.flatMap((p) => p.takes.flatMap((t) => t.parts.map((x) => x.productId))))],
+			shelves,
+		);
 		for (const line of pending) {
+			const units = new Map<number, number>();
+			for (const t of line.takes)
+				for (const p of t.parts)
+					units.set(p.productId, (units.get(p.productId) ?? 0) + p.perUnit * t.quantity);
 			const { batchId } = await postMovements(tx, {
 				reference: `order:${input.orderId}:${line.orderLineId}`,
-				lines: allocate(shelves, line.units, holds),
+				lines: allocate(
+					shelves,
+					[...units].map(([productId, quantity]) => ({ productId, quantity })),
+					holds,
+				),
 			});
-			await tx.insert(stockCommitmentEntries).values({
-				commitmentId: line.commitmentId,
-				kind: "consume",
-				quantity: line.quantity,
-				fulfillmentKey: key,
-				batchId,
-			});
+			await tx.insert(stockCommitmentEntries).values(
+				line.takes.map((t) => ({
+					commitmentId: t.commitmentId,
+					kind: "consume" as const,
+					quantity: t.quantity,
+					fulfillmentKey: key,
+					batchId,
+				})),
+			);
 			consumed.push({
 				orderLineId: line.orderLineId,
 				quantity: line.quantity,
@@ -257,93 +259,14 @@ export async function consumeCommitments(
 	});
 }
 
-export type RestoreResult =
-	| { kind: "legacy" }
-	| { kind: "restored"; lines: { orderLineId: number; quantity: number }[] };
-
-export async function restoreCommitments(
-	db: Db,
-	input: { orderId: number; fulfillmentKey: string },
-): Promise<RestoreResult> {
-	return db.transaction(async (tx) => {
-		if ((await readQuantityMode(tx)) === "legacy") return { kind: "legacy" };
-		const entries = await tx
-			.select({
-				id: stockCommitmentEntries.id,
-				commitmentId: stockCommitmentEntries.commitmentId,
-				orderLineId: stockCommitments.orderLineId,
-				quantity: stockCommitmentEntries.quantity,
-				batchId: stockCommitmentEntries.batchId,
-			})
-			.from(stockCommitmentEntries)
-			.innerJoin(
-				stockCommitments,
-				eq(stockCommitments.id, stockCommitmentEntries.commitmentId),
-			)
-			.where(
-				and(
-					eq(stockCommitments.orderId, input.orderId),
-					eq(stockCommitmentEntries.fulfillmentKey, input.fulfillmentKey),
-					eq(stockCommitmentEntries.kind, "consume"),
-				),
-			)
-			.orderBy(stockCommitmentEntries.id);
-		const done =
-			entries.length === 0
-				? []
-				: await tx
-						.select({ restoresEntryId: stockCommitmentEntries.restoresEntryId })
-						.from(stockCommitmentEntries)
-						.where(
-							inArray(
-								stockCommitmentEntries.restoresEntryId,
-								entries.map((e) => e.id),
-							),
-						);
-		const open = entries.filter(
-			(e) => !done.some((d) => d.restoresEntryId === e.id),
-		);
-		if (open.length === 0) return { kind: "restored", lines: [] };
-		const histories = await lineHistories(
-			tx,
-			open.map((e) => e.orderLineId),
-		);
-		await lockBatchProducts(
-			tx,
-			open.flatMap((e) => (e.batchId ? [e.batchId] : [])),
-			[...histories.values()].flatMap((h) =>
-				h.revisions.flatMap((r) => r.parts.map((p) => p.productId)),
-			),
-		);
-		for (const entry of open) {
-			if (!entry.batchId) continue;
-			await undoBatch(tx, entry.batchId);
-			await tx.insert(stockCommitmentEntries).values({
-				commitmentId: entry.commitmentId,
-				kind: "restore",
-				quantity: entry.quantity,
-				batchId: entry.batchId,
-				restoresEntryId: entry.id,
-			});
-		}
-		return {
-			kind: "restored",
-			lines: open.map((e) => ({
-				orderLineId: e.orderLineId,
-				quantity: e.quantity,
-			})),
-		};
-	});
-}
-
 export async function returnSaleOf(
 	db: Db,
 	orderLineId: number,
 ): Promise<{ batchId: string; quantity: number } | null> {
 	const [entry] = await db
 		.select({
-			batchId: stockCommitmentEntries.batchId,
-			quantity: stockCommitmentEntries.quantity,
+			batchId: sql<string>`${stockCommitmentEntries.batchId}`,
+			quantity: sql<number>`sum(${stockCommitmentEntries.quantity})::int`,
 		})
 		.from(stockCommitmentEntries)
 		.innerJoin(
@@ -354,10 +277,11 @@ export async function returnSaleOf(
 			and(
 				eq(stockCommitments.orderLineId, orderLineId),
 				eq(stockCommitmentEntries.kind, "consume"),
-				sql`not exists (select 1 from ${stockCommitmentEntries} r where r.restores_entry_id = ${stockCommitmentEntries.id})`,
+				sql`not ${restored}`,
 			),
 		)
-		.orderBy(stockCommitmentEntries.id)
+		.groupBy(stockCommitmentEntries.batchId)
+		.orderBy(sql`min(${stockCommitmentEntries.id})`)
 		.limit(1);
-	return entry?.batchId ? { batchId: entry.batchId, quantity: entry.quantity } : null;
+	return entry ? { batchId: entry.batchId, quantity: Number(entry.quantity) } : null;
 }
