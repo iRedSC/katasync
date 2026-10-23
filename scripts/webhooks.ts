@@ -47,7 +47,9 @@ async function shopify() {
 		),
 	);
 	for (const s of webhookSubscriptions.nodes)
-		console.log(`shopify ${s.topic} -> ${s.endpoint.callbackUrl ?? "(not https)"}`);
+		console.log(
+			`shopify ${s.topic} -> ${s.endpoint.callbackUrl ?? "(not https)"}`,
+		);
 	if (!base) return;
 	const url = `${base}/api/webhooks/shopify`;
 	for (const topic of SHOPIFY_TOPICS) {
@@ -81,9 +83,7 @@ async function tiktok() {
 	const cipher = await shopCipher();
 	const { webhooks } = type({
 		"webhooks?": type({ event_type: "string", address: "string" }).array(),
-	}).assert(
-		await tiktokApi("/event/202309/webhooks", { shop_cipher: cipher }),
-	);
+	}).assert(await tiktokApi("/event/202309/webhooks", { shop_cipher: cipher }));
 	for (const w of webhooks ?? [])
 		console.log(`tiktok ${w.event_type} -> ${w.address}`);
 	if (!base) return;

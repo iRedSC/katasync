@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { journalProblems, skippedMigrations } from "./check-migrations";
+import {
+	historyProblems,
+	journalProblems,
+	skippedMigrations,
+} from "./check-migrations";
 
 describe("journalProblems", () => {
 	it("passes entries in place and in time order", () => {
@@ -38,23 +42,61 @@ describe("skippedMigrations", () => {
 	});
 
 	it("lets a newer migration through", () => {
-		expect(skippedMigrations([a, b], [{ hash: "a", createdAt: 10 }])).toEqual([]);
+		expect(skippedMigrations([a, b], [{ hash: "a", createdAt: 10 }])).toEqual(
+			[],
+		);
 	});
 
 	it("catches one older than a migration another branch applied", () => {
 		// Another branch's migration, dated 30, reached the database first.
 		expect(
-			skippedMigrations([a, b], [
-				{ hash: "a", createdAt: 10 },
-				{ hash: "other", createdAt: 30 },
-			]),
+			skippedMigrations(
+				[a, b],
+				[
+					{ hash: "a", createdAt: 10 },
+					{ hash: "other", createdAt: 30 },
+				],
+			),
 		).toEqual([b]);
 	});
 
 	it("catches an applied migration edited since", () => {
 		const edited = { ...a, hash: "a2" };
-		expect(skippedMigrations([edited], [{ hash: "a", createdAt: 10 }])).toEqual([
-			edited,
+		expect(skippedMigrations([edited], [{ hash: "a", createdAt: 10 }])).toEqual(
+			[edited],
+		);
+	});
+});
+
+describe("historyProblems", () => {
+	const a = { tag: "0000_a", when: 10, sql: "create table a ();" };
+	const b = { tag: "0001_b", when: 20, sql: "create table b ();" };
+
+	it("lets new migrations follow main's", () => {
+		expect(historyProblems([a], [a, b])).toEqual([]);
+	});
+
+	it("catches an applied migration edited", () => {
+		expect(
+			historyProblems([a], [{ ...a, sql: "create table a (id int);" }]),
+		).toEqual(["0000_a was edited after it was applied"]);
+	});
+
+	it("catches an applied migration redated", () => {
+		expect(historyProblems([a], [{ ...a, when: 11 }])).toEqual([
+			"0000_a had its `when` changed",
+		]);
+	});
+
+	it("catches an applied migration removed or renamed", () => {
+		expect(historyProblems([a, b], [a, { ...b, tag: "0001_c" }])).toEqual([
+			"0001_b was removed or renamed, but the database already has it",
+		]);
+	});
+
+	it("catches a new migration slotted in ahead of an applied one", () => {
+		expect(historyProblems([a, b], [a, { ...b, tag: "0001_new" }, b])).toEqual([
+			"0001_b moved from position 1",
 		]);
 	});
 });

@@ -60,7 +60,9 @@ export function report(
 	scope: "staged" | "tracked" = "staged",
 ): string {
 	const width = Math.max(...problems.map((p) => p.path.length));
-	const lines = problems.map((p) => `  ${p.path.padEnd(width)}  ${fmt(p.tokens)} tokens`);
+	const lines = problems.map(
+		(p) => `  ${p.path.padEnd(width)}  ${fmt(p.tokens)} tokens`,
+	);
 	const count =
 		problems.length === 1
 			? `1 ${scope} file is`
@@ -100,9 +102,11 @@ IGNORED in scripts/check-file-size.ts instead of splitting it.
 }
 
 function git(args: string[]): string {
-	return execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+	return execFileSync("git", args, {
+		encoding: "utf8",
+		maxBuffer: 64 * 1024 * 1024,
+	});
 }
-
 
 // Git's own test: a NUL byte in the first 8,000 bytes means binary.
 function isBinary(spec: string): boolean {
@@ -113,19 +117,52 @@ function isBinary(spec: string): boolean {
 }
 
 // What the index holds for each path: what's staged, or for unchanged files,
-// what's committed.
-function indexedFiles(all: boolean): StagedFile[] {
-	const paths = git(
-		all
-			? ["ls-files", "-z"]
-			: ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
-	)
+// what's committed. One git call lists the blobs and one sizes them all,
+// rather than a call per file.
+function indexedFiles(all: boolean, vendored: readonly string[]): StagedFile[] {
+	const staged = all
+		? null
+		: new Set(
+				git(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"])
+					.split("\0")
+					.filter(Boolean),
+			);
+	// "<mode> <blob> <stage>\t<path>" per entry.
+	const entries = git(["ls-files", "-s", "-z"])
 		.split("\0")
-		.filter(Boolean);
-	return paths.map((path) => {
-		const bytes = Number(git(["cat-file", "-s", `:${path}`]).trim());
+		.filter(Boolean)
+		.map((line) => {
+			const tab = line.indexOf("\t");
+			return {
+				blob: line.slice(0, tab).split(" ")[1],
+				path: line.slice(tab + 1),
+			};
+		})
+		.filter(
+			(e) =>
+				(staged ? staged.has(e.path) : true) && !isIgnored(e.path, vendored),
+		);
+	if (entries.length === 0) return [];
+	const sizes = execFileSync(
+		"git",
+		["cat-file", "--batch-check=%(objectsize)"],
+		{
+			input: entries.map((e) => e.blob).join("\n"),
+			encoding: "utf8",
+			maxBuffer: 64 * 1024 * 1024,
+		},
+	)
+		.trim()
+		.split("\n")
+		.map(Number);
+	return entries.map(({ blob, path }, i) => {
+		const bytes = sizes[i];
 		// Only worth reading the blob when it's big enough to matter.
-		return { path, bytes, binary: tokensOf(bytes) > MAX_TOKENS && isBinary(`:${path}`) };
+		return {
+			path,
+			bytes,
+			binary: tokensOf(bytes) > MAX_TOKENS && isBinary(blob),
+		};
 	});
 }
 
@@ -133,7 +170,9 @@ function indexedFiles(all: boolean): StagedFile[] {
 function vendoredSkills(): string[] {
 	try {
 		const lock = JSON.parse(readFileSync("skills-lock.json", "utf8"));
-		return Object.keys(lock.skills ?? {}).map((name) => `.claude/skills/${name}`);
+		return Object.keys(lock.skills ?? {}).map(
+			(name) => `.claude/skills/${name}`,
+		);
 	} catch {
 		return [];
 	}
@@ -142,7 +181,8 @@ function vendoredSkills(): string[] {
 // Run directly (not imported by the tests).
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const all = process.argv.includes("--all");
-	const problems = findProblems(indexedFiles(all), vendoredSkills());
+	const vendored = vendoredSkills();
+	const problems = findProblems(indexedFiles(all, vendored), vendored);
 	if (problems.length > 0) {
 		process.stderr.write(report(problems, all ? "tracked" : "staged"));
 		process.exit(1);

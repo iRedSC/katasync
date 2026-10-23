@@ -1,6 +1,8 @@
+import type { PGlite } from "@electric-sql/pglite";
 import { sql } from "drizzle-orm";
-import { beforeEach, describe, expect, test } from "vitest";
-import type { Db } from "#/db/client";
+import { Client } from "pg";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { type Db, withOwnConnection } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct } from "#/test/db";
 import { freshDb } from "./mcp.fixtures";
@@ -19,23 +21,41 @@ beforeEach(async () => {
 });
 
 describe("read-only queries", () => {
-	// Stands in for a connection of its own: the test database, counting opens
-	// and closes the way withOwnConnection would.
-	let opened = 0;
-	let closed = 0;
+	// Each query opens its connection with withOwnConnection, the production code
+	// that makes a pg Client and ends it. No network here: the Client's queries
+	// run on the test database, and each Client's calls are logged in order, so
+	// the test sees what happened to the Client that did the work.
+	let calls: Map<Client, string[]>;
 	beforeEach(() => {
-		opened = 0;
-		closed = 0;
+		calls = new Map();
+		const log = (client: Client, call: string) =>
+			calls.set(client, [...(calls.get(client) ?? []), call]);
+		vi.spyOn(Client.prototype, "connect").mockImplementation(async function (
+			this: Client,
+		) {
+			log(this, "connect");
+		});
+		vi.spyOn(Client.prototype, "query").mockImplementation(async function (
+			this: Client,
+			config: { text: string; values?: unknown[]; rowMode?: "array" },
+			values?: unknown[],
+		) {
+			log(this, "query");
+			const pglite = (db as unknown as { $client: PGlite }).$client;
+			return pglite.query(config.text, values ?? config.values ?? [], {
+				rowMode: config.rowMode,
+			});
+		} as never);
+		vi.spyOn(Client.prototype, "end").mockImplementation(async function (
+			this: Client,
+		) {
+			log(this, "end");
+		});
 	});
 	const readOnlyQuery = (text: string, limit?: number) =>
-		run(text, limit, async (use) => {
-			opened++;
-			try {
-				return await use(db);
-			} finally {
-				closed++;
-			}
-		});
+		run(text, limit, (use) =>
+			withOwnConnection(use, "postgresql://katasync_mcp@test.invalid/katasync"),
+		);
 
 	test("return rows and say when they were cut off", async () => {
 		await createProduct(db, "KNIFE", "simple");
@@ -76,10 +96,16 @@ describe("read-only queries", () => {
 		);
 	});
 
-	test("each query gets a connection of its own, closed afterwards", async () => {
+	test("each query gets a connection of its own, closed after its last query", async () => {
 		await readOnlyQuery("select 1");
 		await expect(readOnlyQuery("select * from nope")).rejects.toThrow();
-		expect({ opened, closed }).toEqual({ opened: 2, closed: 2 });
+		const sessions = [...calls.values()];
+		expect(sessions).toHaveLength(2);
+		for (const session of sessions) {
+			expect(session[0]).toBe("connect");
+			expect(session).toContain("query");
+			expect(session.at(-1)).toBe("end");
+		}
 	});
 
 	test("can't change the session for whoever uses the connection next", async () => {
@@ -116,7 +142,7 @@ describe("read-only queries", () => {
 			"select pg_terminate_backend(pid) from pg_stat_activity",
 		])
 			await expect(readOnlyQuery(text)).rejects.toThrow(/isn't available/);
-		expect(opened).toBe(0);
+		expect(calls.size).toBe(0);
 	});
 
 	test("as katasync_mcp, can't read a secret table however the query is spelled", async () => {
