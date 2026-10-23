@@ -83,7 +83,7 @@ function Profit() {
 					<Card flush>
 						<dl className="grid grid-cols-2 md:grid-cols-4 md:divide-x">
 							<Stat
-								label="Profit"
+								label="Contribution"
 								value={formatMoney(t.profit)}
 								change={change(t.profit, d.previous.profit)}
 								tone={t.profit < 0 ? "critical" : undefined}
@@ -231,9 +231,9 @@ function Unsure({ totals: t }: { totals: Data["totals"] }) {
 		t.awaitingReturn > 0 &&
 			`${formatCount(t.awaitingReturn)} refunded orders' items aren't back yet, so their cost isn't counted until they're written off or 60 days pass.`,
 		t.labelsMissing > 0 &&
-			`${formatCount(t.labelsMissing)} shipped orders have no label cost from anyone, so their profit is too high.`,
+			`${formatCount(t.labelsMissing)} shipped orders have no label cost from anyone, so their contribution is too high.`,
 		t.costUnknown > 0 &&
-			`${formatCount(t.costUnknown)} orders have a line with no product cost, so their profit is too high.`,
+			`${formatCount(t.costUnknown)} orders have a line with no product cost, so their contribution is too high.`,
 	].filter((n): n is string => typeof n === "string");
 	if (notes.length === 0) return null;
 	const overstated = t.labelsMissing + t.costUnknown;
@@ -359,7 +359,7 @@ function Breakdown({
 						</dd>
 					</div>
 				))}
-				<dt className="border-t pt-1.5 font-semibold">Profit</dt>
+				<dt className="border-t pt-1.5 font-semibold">Contribution</dt>
 				<dd className="border-t pt-1.5 text-right font-semibold">
 					{formatMoney(t.profit)}
 				</dd>
@@ -377,7 +377,7 @@ function Days({ days }: { days: Data["days"] }) {
 	const height = 160;
 	const zero = (top / span) * height;
 	return (
-		<Card title="Profit by day">
+		<Card title="Contribution by day">
 			<div className="flex h-[160px] items-stretch gap-px">
 				{days.map((d) => {
 					const h = (Math.abs(d.profit) / span) * height;
@@ -430,7 +430,7 @@ function Marketplaces({ rows }: { rows: Data["marketplaces"] }) {
 						<th className="px-4 py-2 text-right font-medium">Sales</th>
 						<th className="px-4 py-2 text-right font-medium">Fees</th>
 						<th className="px-4 py-2 text-right font-medium">Labels</th>
-						<th className="px-4 py-2 text-right font-medium">Profit</th>
+						<th className="px-4 py-2 text-right font-medium">Contribution</th>
 						<th className="px-4 py-2 text-right font-medium">Margin</th>
 					</tr>
 				</thead>

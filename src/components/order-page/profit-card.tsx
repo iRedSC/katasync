@@ -30,7 +30,7 @@ export function ProfitCard({
 	const failed = checks.filter((c) => c.error);
 	return (
 		<Card
-			title="Profit"
+			title="Contribution"
 			aside={
 				p.complete ? undefined : (
 					<Badge tone="warning">
@@ -76,7 +76,7 @@ export function ProfitCard({
 					<Line label="Adjustments" value={formatMoney(-p.adjustments)} />
 				)}
 				<div className="mt-1 border-t pt-1">
-					<Line label="Profit" value={formatMoney(p.profit)} strong />
+					<Line label="Contribution" value={formatMoney(p.profit)} strong />
 				</div>
 			</dl>
 			{charges.length > 0 && (

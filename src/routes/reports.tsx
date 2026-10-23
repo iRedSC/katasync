@@ -9,6 +9,8 @@ import {
 import type { ReactNode } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Card, EmptyState, Page } from "#/components/page";
+import { downloadText } from "#/components/report-page/download";
+import { Revisions } from "#/components/report-page/revisions";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
@@ -27,11 +29,12 @@ import {
 	periodName,
 	periodText,
 	shiftPeriod,
-	shopDay,
 	shopDayLabel,
 	shopTime,
 } from "#/orders/sales-report";
-import { getSalesReport } from "#/server/reports";
+import { type CsvFile, csvFile } from "#/reports/files";
+import type { ReportData } from "#/reports/snapshot";
+import { getReportPage } from "#/server/reports";
 
 // Sales and sales tax for the accountant, a month at a time, by order date. Each table downloads as CSV. Tax a marketplace paid
 // to the state is kept apart from tax we owe, so neither is filed twice.
@@ -46,7 +49,7 @@ export const Route = createFileRoute("/reports")({
 	loaderDeps: ({ search }) => ({
 		period: search.period ?? periodText(lastMonth()),
 	}),
-	loader: ({ deps }) => getSalesReport({ data: { period: deps.period } }),
+	loader: ({ deps }) => getReportPage({ data: { period: deps.period } }),
 	component: Reports,
 	pendingComponent: () => (
 		<ListSkeleton title="Reports">
@@ -56,7 +59,7 @@ export const Route = createFileRoute("/reports")({
 	),
 });
 
-type Data = Awaited<ReturnType<typeof getSalesReport>>;
+type Data = Awaited<ReturnType<typeof getReportPage>>;
 
 const SOURCES: Record<ChannelRow["source"], ReactNode> = {
 	shopify: <ChannelBadge channel="shopify" salesChannel="Online Store" />,
@@ -66,19 +69,6 @@ const SOURCES: Record<ChannelRow["source"], ReactNode> = {
 	ebay: <ChannelBadge channel="ebay" salesChannel={null} />,
 	tiktok: <ChannelBadge channel="tiktok" salesChannel={null} />,
 };
-const sourceName = (s: ChannelRow["source"]) =>
-	s === "retail"
-		? "Point of Sale"
-		: s === "shop"
-			? "Shop app"
-			: s === "shopify"
-				? "Online Store"
-				: channelName(s);
-
-// The marketplace whose history a channel's sales are part of: Shopify's
-// store, POS and Shop app all come through Shopify.
-const soldOn = (s: ChannelRow["source"]) =>
-	s === "retail" || s === "shop" ? "shopify" : s;
 
 function Reports() {
 	const d = Route.useLoaderData();
@@ -105,6 +95,12 @@ function Reports() {
 				</>
 			}
 		>
+			<Revisions
+				period={periodText(period)}
+				revisions={d.revisions}
+				live={d.live.data}
+				liveState={d.liveState}
+			/>
 			{d.partial.map((p) => (
 				<p
 					key={p.channel}
@@ -149,20 +145,22 @@ function Reports() {
 							{s.taxedOrders === 1 ? "order" : "orders"}: {formatMoney(s.tax)}
 						</p>
 					))}
-					<Channels rows={d.channels} partial={d.partial} period={period} />
+					<Channels rows={d.channels} live={d.live.data} period={period} />
 					<Jurisdictions
 						rows={d.jurisdictions}
+						live={d.live.data}
 						period={period}
 						unread={d.channels
 							.filter((c) => c.source === "shopify" || c.source === "retail")
 							.reduce((n, c) => n + c.taxUnknown, 0)}
 					/>
-					<States rows={d.states} period={period} />
+					<States rows={d.states} live={d.live.data} period={period} />
 				</>
 			)}
 			{/* Cash is its own section: deposits in a month with no sales still count. */}
 			<Deposits
 				rows={d.deposits}
+				live={d.live.data}
 				period={period}
 				failing={d.payoutErrors.length > 0}
 			/>
@@ -206,61 +204,31 @@ function PeriodPicker({ period }: { period: Period }) {
 	);
 }
 
-// A table and the CSV that matches it, from the same columns. A csvOnly
-// column goes to the CSV alone, for the counts the screen marks in place.
 type Column<T> = {
 	label: string;
 	cell: (row: T) => ReactNode;
-	csv: (row: T) => string | number | null;
 	money?: boolean;
-	csvOnly?: boolean;
 };
-
-const cents = (n: number) => n.toFixed(2);
-const csvCell = (v: string | number | null) => {
-	const s = v === null ? "" : String(v);
-	return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-};
-
-function download<T>(
-	name: string,
-	columns: Column<T>[],
-	rows: T[],
-	totals: T[],
-) {
-	const lines = [
-		columns.map((c) => c.label),
-		...[...rows, ...totals].map((r) => columns.map((c) => c.csv(r))),
-	];
-	const blob = new Blob(
-		[lines.map((l) => l.map(csvCell).join(",")).join("\n")],
-		{
-			type: "text/csv",
-		},
-	);
-	const a = document.createElement("a");
-	a.href = URL.createObjectURL(blob);
-	a.download = `${name}.csv`;
-	a.click();
-	URL.revokeObjectURL(a.href);
-}
 
 function Table<T>({
 	title,
 	file,
+	live,
+	period,
 	columns,
 	rows,
 	totals = [],
 	keyOf,
 }: {
 	title: string;
-	file: string;
+	file: CsvFile;
+	live: ReportData;
+	period: Period;
 	columns: Column<T>[];
 	rows: T[];
 	totals?: T[];
 	keyOf: (row: T) => string;
 }) {
-	const shown = columns.filter((c) => !c.csvOnly);
 	return (
 		<Card
 			title={title}
@@ -269,7 +237,13 @@ function Table<T>({
 				<Button
 					variant="ghost"
 					size="xs"
-					onClick={() => download(file, columns, rows, totals)}
+					onClick={() =>
+						downloadText(
+							`${file}-${periodText(period)}.csv`,
+							csvFile(live, file),
+							"text/csv;charset=utf-8",
+						)
+					}
 				>
 					<Download />
 					CSV
@@ -280,7 +254,7 @@ function Table<T>({
 				<table className="w-full tabular-nums">
 					<thead className="text-left text-muted-foreground">
 						<tr className="border-t">
-							{shown.map((c) => (
+							{columns.map((c) => (
 								<th
 									key={c.label}
 									className={cn(
@@ -296,7 +270,7 @@ function Table<T>({
 					<tbody>
 						{rows.map((r) => (
 							<tr key={keyOf(r)} className="border-t">
-								{shown.map((c) => (
+								{columns.map((c) => (
 									<td
 										key={c.label}
 										className={cn(
@@ -312,7 +286,7 @@ function Table<T>({
 						{totals.map((t, i) => (
 							// biome-ignore lint/suspicious/noArrayIndexKey: totals are rebuilt in a fixed order and have no id
 							<tr key={i} className="border-t font-semibold">
-								{shown.map((c) => (
+								{columns.map((c) => (
 									<td
 										key={c.label}
 										className={cn(
@@ -333,15 +307,10 @@ function Table<T>({
 }
 
 function money<T>(label: string, get: (r: T) => number): Column<T> {
-	return {
-		label,
-		money: true,
-		cell: (r) => formatMoney(get(r)),
-		csv: (r) => cents(get(r)),
-	};
+	return { label, money: true, cell: (r) => formatMoney(get(r)) };
 }
 function count<T>(label: string, get: (r: T) => number): Column<T> {
-	return { label, money: true, cell: (r) => formatCount(get(r)), csv: get };
+	return { label, money: true, cell: (r) => formatCount(get(r)) };
 }
 
 type ChannelLine =
@@ -350,11 +319,11 @@ type ChannelLine =
 
 function Channels({
 	rows,
-	partial,
+	live,
 	period,
 }: {
 	rows: ChannelRow[];
-	partial: Data["partial"];
+	live: ReportData;
 	period: Period;
 }) {
 	const numbers = Object.keys(rows[0]).filter((k) => k !== "source") as Exclude<
@@ -371,7 +340,6 @@ function Channels({
 		{
 			label: "Sold on",
 			cell: (r) => (r.source === "total" ? "Total" : SOURCES[r.source]),
-			csv: (r) => (r.source === "total" ? "Total" : sourceName(r.source)),
 		},
 		count("Orders", (r) => r.orders),
 		money("Item sales", (r) => r.itemSales),
@@ -382,7 +350,7 @@ function Channels({
 			cell: (r) => <Unread row={r}>{formatMoney(r.marketplaceTax)}</Unread>,
 		},
 		{
-			...money("Tax you owe", (r: ChannelLine) => r.ourTax),
+			...money("Tax you collected", (r: ChannelLine) => r.ourTax),
 			cell: (r) => <Unread row={r}>{formatMoney(r.ourTax)}</Unread>,
 		},
 		money("Refunds", (r) => r.refunds),
@@ -404,31 +372,14 @@ function Channels({
 		money("Labels", (r) => r.labels),
 		money("Postage adjustments", (r) => r.postageAdjustments),
 		money("Adjustments", (r) => r.adjustments),
-		money("Net", (r) => r.net),
-		{
-			...count("Tax not read (orders)", (r: ChannelLine) => r.taxUnknown),
-			csvOnly: true,
-		},
-		{
-			...count("Fees estimated (orders)", (r: ChannelLine) => r.feesEstimated),
-			csvOnly: true,
-		},
-		{
-			label: "No orders before",
-			csvOnly: true,
-			cell: () => null,
-			csv: (r) => {
-				if (r.source === "total") return null;
-				const channel = soldOn(r.source);
-				const p = partial.find((x) => x.channel === channel);
-				return p ? shopDay(p.firstOrder) : null;
-			},
-		},
+		money("Proceeds before cost", (r) => r.net),
 	];
 	return (
 		<Table
 			title="Sales by marketplace"
-			file={`sales-${periodText(period)}`}
+			file="sales"
+			live={live}
+			period={period}
 			columns={columns}
 			rows={rows}
 			totals={rows.length > 1 ? [total] : []}
@@ -449,17 +400,19 @@ function Unread({ row, children }: { row: ChannelLine; children: ReactNode }) {
 
 function Jurisdictions({
 	rows,
+	live,
 	period,
 	unread,
 }: {
 	rows: Data["jurisdictions"];
+	live: ReportData;
 	period: Period;
 	// Our own orders whose tax isn't read yet, which could owe some.
 	unread: number;
 }) {
 	if (rows.length === 0)
 		return (
-			<Card title="Sales tax you owe">
+			<Card title="Sales tax you collected">
 				<p
 					className={unread > 0 ? "text-warning-text" : "text-muted-foreground"}
 				>
@@ -471,20 +424,20 @@ function Jurisdictions({
 		);
 	return (
 		<Table<Data["jurisdictions"][number]>
-			title="Sales tax you owe"
-			file={`sales-tax-${periodText(period)}`}
+			title="Sales tax you collected"
+			file="sales-tax"
+			live={live}
+			period={period}
 			columns={[
 				{
 					label: "Jurisdiction",
 					cell: (r) => taxName(r),
-					csv: (r) => taxName(r),
 				},
 				{
 					label: "Rate",
 					money: true,
 					cell: (r) =>
 						r.rate === null ? "" : `${+(r.rate * 100).toFixed(4)}%`,
-					csv: (r) => r.rate,
 				},
 				count("Orders", (r) => r.orders),
 				money("Sales on taxed orders", (r) => r.taxedSales),
@@ -502,15 +455,25 @@ const HOW: Record<Data["states"][number]["how"], string> = {
 	no_address: " (pickup)",
 };
 
-function States({ rows, period }: { rows: Data["states"]; period: Period }) {
+function States({
+	rows,
+	live,
+	period,
+}: {
+	rows: Data["states"];
+	live: ReportData;
+	period: Period;
+}) {
 	if (rows.length === 0) return null;
 	const where = (r: Data["states"][number]) => `${placeName(r)}${HOW[r.how]}`;
 	return (
 		<Table<Data["states"][number]>
 			title="Your Shopify sales by state"
-			file={`sales-by-state-${periodText(period)}`}
+			file="sales-by-state"
+			live={live}
+			period={period}
 			columns={[
-				{ label: "State", cell: where, csv: where },
+				{ label: "State", cell: where },
 				count("Orders", (r) => r.orders),
 				money("Sales", (r) => r.sales),
 				{
@@ -551,10 +514,12 @@ const currencies = (rows: Deposit[]) => [
 // paid in.
 function Deposits({
 	rows,
+	live,
 	period,
 	failing,
 }: {
 	rows: Deposit[];
+	live: ReportData;
 	period: Period;
 	// A marketplace's payouts couldn't be read, so an empty list means unknown.
 	failing: boolean;
@@ -580,18 +545,18 @@ function Deposits({
 	return (
 		<Table<DepositLine>
 			title="Deposits"
-			file={`deposits-${periodText(period)}`}
+			file="deposits"
+			live={live}
+			period={period}
 			columns={[
 				{
 					label: "Date",
 					cell: (l) =>
 						isDeposit(l) ? shopDayLabel(l.depositedAt) : l.subtotal,
-					csv: (l) => (isDeposit(l) ? shopDay(l.depositedAt) : l.subtotal),
 				},
 				{
 					label: "Time",
 					cell: (l) => (isDeposit(l) ? shopTime(l.depositedAt) : null),
-					csv: (l) => (isDeposit(l) ? l.depositedAt.toISOString() : null),
 				},
 				{
 					label: "From",
@@ -599,7 +564,6 @@ function Deposits({
 						isDeposit(l) ? (
 							<ChannelBadge channel={l.channel} salesChannel={null} />
 						) : null,
-					csv: (l) => (isDeposit(l) ? channelName(l.channel) : null),
 				},
 				{
 					label: "Status",
@@ -614,29 +578,19 @@ function Deposits({
 								{STATUS[l.status]}
 							</span>
 						) : null,
-					csv: (l) => (isDeposit(l) ? STATUS[l.status] : null),
 				},
 				{
 					label: "Account",
 					cell: (l) => (isDeposit(l) && l.bankTail ? `••${l.bankTail}` : ""),
-					csv: (l) => (isDeposit(l) ? l.bankTail : null),
 				},
 				{
 					label: "Reference",
 					cell: (l) => (isDeposit(l) ? (l.reference ?? "") : ""),
-					csv: (l) => (isDeposit(l) ? l.reference : null),
 				},
 				{
 					label: "Amount",
 					money: true,
 					cell: (l) => formatAmount(l.amount, l.currency),
-					csv: (l) => cents(l.amount),
-				},
-				{
-					label: "Currency",
-					csvOnly: true,
-					cell: () => null,
-					csv: (l) => l.currency,
 				},
 			]}
 			rows={rows}

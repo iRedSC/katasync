@@ -252,13 +252,21 @@ export function payoutProblem(e: { channel: string; error: string }) {
 // Every section reads one snapshot, so a sync landing mid-report can't leave
 // the channel totals on one revision of an order and the tax on another.
 export function salesReport(db: Db, period: Period) {
-	return db.transaction((tx) => reportOf(tx, period), {
+	return db.transaction((tx) => readSalesReport(tx, period), {
 		isolationLevel: "repeatable read",
 		accessMode: "read only",
 	});
 }
 
-async function reportOf(db: Db, period: Period) {
+export async function periodWindow(db: Db, period: Period) {
+	const { start, end } = bounds(period);
+	const { rows } = await rowsOf<{ start: string | Date; end: string | Date }>(
+		db.execute(sql`select ${start} as "start", ${end} as "end"`),
+	);
+	return { start: new Date(rows[0].start), end: new Date(rows[0].end) };
+}
+
+export async function readSalesReport(db: Db, period: Period) {
 	const { start, end } = bounds(period);
 	// Orders placed in the period, with where they were sold and their tax.
 	const placed = sql`
@@ -439,4 +447,4 @@ async function reportOf(db: Db, period: Period) {
 	};
 }
 
-export type SalesReport = Awaited<ReturnType<typeof salesReport>>;
+export type SalesReport = Awaited<ReturnType<typeof readSalesReport>>;

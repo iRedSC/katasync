@@ -58,7 +58,7 @@ function Home() {
 						}}
 					/>
 					<Stat
-						label="Profit this month"
+						label="Contribution this month"
 						value={Math.round(d.monthProfit.profit)}
 						money
 						tone={d.monthProfit.profit < 0 ? "critical" : undefined}
