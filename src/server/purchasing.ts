@@ -1,4 +1,5 @@
 export {
+	addManyToPurchaseOrders,
 	addProductToPurchaseOrder,
 	addToPurchaseOrder,
 	type BrowseRow,
@@ -6,6 +7,7 @@ export {
 	type PurchaseOrderMatch,
 	searchForPurchaseOrder,
 	undoAddToPurchaseOrder,
+	undoManyAddsToPurchaseOrders,
 } from "#/server/purchasing/add-products";
 export {
 	previewDamageReport,
@@ -91,7 +93,9 @@ export {
 	getProductSupplier,
 	listSuppliers,
 	type SupplierRow,
+	setManyProductSuppliers,
 	setProductSupplier,
 	setSupplierEmail,
+	undoManyProductSuppliers,
 	updateSupplier,
 } from "#/server/purchasing/suppliers";

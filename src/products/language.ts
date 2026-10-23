@@ -1,3 +1,4 @@
+import type { FieldEntry } from "#/components/filter-fields";
 import type { SearchLanguage } from "#/components/filter-search";
 import {
 	type Field,
@@ -34,7 +35,7 @@ export function productLanguage(
 ): SearchLanguage<Filter> {
 	return {
 		parse: parseWord,
-		suggest: (typing, chips) => suggest(counts, typing, chips),
+		suggest: (typing, chips) => suggest(counts, typing, chips, 50),
 		// Title exclusions stay "contains": nobody types a whole title.
 		lock: (typing, value) => ({
 			...typing,
@@ -50,5 +51,31 @@ export function productLanguage(
 					: typing.field === "velocity"
 						? `Tab: ${typing.value} sold a month`
 						: `No ${LABEL[typing.field]} “${typing.value}”. Tab to use anyway.`,
+		fields: FIELDS,
 	};
 }
+
+// The filter types, most used first, as the box offers them.
+const FIELDS: readonly FieldEntry[] = [
+	{ label: "Status", insert: "%", words: ["status"], negatable: true },
+	{ label: "Supplier", insert: "&", words: ["supplier"], negatable: true },
+	{ label: "Tag", insert: "#", words: ["tag", "tags"], negatable: true },
+	{ label: "Vendor", insert: "$", words: ["vendor", "brand"], negatable: true },
+	{ label: "Type", insert: "@", words: ["type"], negatable: true },
+	{ label: "Class", insert: "*", words: ["class"], negatable: true },
+	{ label: "Trust", insert: "~", words: ["trust"], negatable: true },
+	{ label: "Stock at most", insert: "<=", words: [], negatable: false },
+	{ label: "Stock at least", insert: ">=", words: [], negatable: false },
+	{
+		label: "Sold a month, at least",
+		insert: "v>=",
+		words: [],
+		negatable: false,
+	},
+	{
+		label: "Title doesn't have",
+		insert: "!!",
+		words: ["lacks"],
+		negatable: false,
+	},
+];

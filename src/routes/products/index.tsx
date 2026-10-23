@@ -7,34 +7,42 @@ import {
 import { type } from "arktype";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { FacetRail } from "#/components/facet-rail";
-import { AddFilter, SortMenu } from "#/components/filter-menu";
+import { SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
 import { Card, Page } from "#/components/page";
-import { LayoutToggle } from "#/components/products-list/layout-toggle";
+import {
+	isLens,
+	LENSES,
+	type LensKey,
+} from "#/components/products-list/columns";
 import {
 	loadPage,
 	patchProduct,
 	patchViews,
 	productsData,
 } from "#/components/products-list/optimistic";
-import { ProductResults } from "#/components/products-list/product-results";
-import { RAIL } from "#/components/products-list/rail";
+import { ProductTable } from "#/components/products-list/product-table";
+import { usePinned, useSelection } from "#/components/products-list/selection";
+import {
+	clearWithUndo,
+	SelectionBar,
+} from "#/components/products-list/selection-bar";
 import { ViewDialog } from "#/components/products-list/view-dialog";
 import { Tab } from "#/components/products-list/view-tab";
 import { Bone, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatOrderQuantity } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
+import { cn } from "#/lib/utils";
 import { productLanguage } from "#/products/language";
 import { facetsOf, sortValuesOf, stateOf } from "#/products/rows";
 import {
 	compile,
 	type Filter,
 	facetCounts,
-	type ListField,
 	parseQuery,
 } from "#/products/search";
 import { isColumn, sortRows, withTerm } from "#/products/sort";
@@ -63,14 +71,14 @@ import { saveView } from "#/server/views";
 // The URL holds the chips and sort, so links (like Home's "Oversold") and the
 // back button work. `view` is the saved view they came from, so it can be
 // updated. Anything malformed is dropped rather than failing the page.
-// layout is "table" for the old rows; cards are the default. `q` is the
-// typed search, so opening a product and coming back keeps it.
+// `lens` picks the table's columns; stock is the default. `q` is the typed
+// search, so opening a product and coming back keeps it.
 type Search = {
 	view?: number;
 	filters?: Filter[];
 	sort?: SortText;
 	q?: string;
-	layout?: "table";
+	lens?: Exclude<LensKey, "stock">;
 };
 
 export const Route = createFileRoute("/products/")({
@@ -93,17 +101,20 @@ export const Route = createFileRoute("/products/")({
 				String(search.q) !== ""
 					? String(search.q)
 					: undefined,
-			layout: search.layout === "table" ? "table" : undefined,
+			lens:
+				isLens(search.lens) && search.lens !== "stock"
+					? search.lens
+					: undefined,
 		};
 	},
 	loader: loadPage,
 	component: Products,
 	pendingComponent: () => (
 		<ListSkeleton title="Products" width="wide">
-			<div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">
+			<div className="flex flex-col gap-px overflow-hidden rounded-xl">
 				{Array.from({ length: 12 }, (_, i) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity
-					<Bone key={i} className="h-44 rounded-xl" />
+					<Bone key={i} className="h-14 rounded-none" />
 				))}
 			</div>
 		</ListSkeleton>
@@ -151,6 +162,9 @@ function ProductList() {
 	// Products whose add to a PO is on its way. Not patched, since the PO it
 	// lands on comes from the server, so the Add waits for it.
 	const [adding, setAdding] = useState<ReadonlySet<number>>(() => new Set());
+	const lens = search.lens ?? "stock";
+	const [selected, setSelected] = useSelection();
+	const pinned = usePinned(`${filtersKey}|${query}|${sortText}`, selected);
 
 	// The tab to highlight: the view these came from, else any view that
 	// matches exactly, else All when nothing is filtered.
@@ -208,29 +222,17 @@ function ProductList() {
 			(p) => sortValuesOf(p, stateFor(p)),
 		);
 	}, [products, facets, query, filters, sort, state]);
-	// For each rail group, how many products each value would show given
-	// everything else picked, so a count never promises an empty list. One pass
-	// over the catalog serves every group: a product counts for a group when
-	// the only filters it fails are that group's own.
-	const railCounts = useMemo(() => {
-		const q = parseQuery(query);
-		const search = compile([...filters, ...q.filters], q.words);
-		const out = new Map<ListField, Map<string, number>>();
-		for (const g of RAIL) {
-			if ("range" in g) continue;
-			out.set(g.field, new Map<string, number>());
-		}
-		for (const f of facets) {
-			const missed = search.missing(f);
-			if (missed === null) continue;
-			for (const [field, values] of out) {
-				if (missed.some((m) => m !== field)) continue;
-				for (const v of new Set(f[field]))
-					values.set(v, (values.get(v) ?? 0) + 1);
-			}
-		}
-		return out;
-	}, [facets, query, filters]);
+	// The pinned group shows while any of it is still ticked, and its rows
+	// leave the list below so none shows twice.
+	const grouped = products.some((p) => pinned.has(p.id) && selected.has(p.id));
+	const pinnedRows = grouped
+		? [
+				...filtered.filter((p) => pinned.has(p.id)),
+				...products.filter((p) => pinned.has(p.id) && !filtered.includes(p)),
+			]
+		: [];
+	const listed = grouped ? filtered.filter((p) => !pinned.has(p.id)) : filtered;
+	const picked = products.filter((p) => selected.has(p.id));
 
 	// Chip and sort changes replace the history entry instead of piling up.
 	function setSearch(next: Partial<{ filters: Filter[]; sort: ProductSort }>) {
@@ -254,7 +256,7 @@ function ProductList() {
 				...(v
 					? { view: v.id, filters: v.filters, sort: v.sort || undefined }
 					: {}),
-				layout: search.layout,
+				lens: search.lens,
 			},
 		});
 	}
@@ -283,137 +285,130 @@ function ProductList() {
 							</Link>
 						</Button>
 					)}
-					<LayoutToggle
-						layout={search.layout ?? "cards"}
-						onLayout={(l) =>
+					<LensSwitch
+						lens={lens}
+						onLens={(l) =>
 							navigate({
 								to: "/products",
 								search: (prev) => ({
 									...prev,
-									layout: l === "table" ? "table" : undefined,
+									lens: l === "stock" ? undefined : l,
 								}),
 								replace: true,
+								resetScroll: false,
 							})
 						}
 					/>
 				</>
 			}
 		>
-			<div className="flex items-start gap-6">
-				{/* Scrolls on its own, held under the app bar while the list scrolls. */}
-				<aside className="sticky top-[4.5rem] hidden max-h-[calc(100svh-5.5rem)] w-56 shrink-0 overflow-y-auto overscroll-contain pb-4 lg:block">
-					<FacetRail
-						groups={RAIL}
-						counts={railCounts}
-						filters={filters}
-						onFilters={(next) => setSearch({ filters: next })}
-					/>
-				</aside>
-				<div className="flex min-w-0 flex-1 flex-col gap-3">
-					<Card flush className="overflow-visible">
-						<div className="flex flex-wrap items-center gap-1 border-b p-2">
+			<div className="flex flex-col gap-3 pb-16">
+				<Card flush className="overflow-visible">
+					<div className="flex flex-wrap items-center gap-1 border-b p-2">
+						<Tab
+							label="All"
+							count={products.length}
+							active={!active && plain}
+							onClick={() => showView(null)}
+						/>
+						{views.map((v) => (
 							<Tab
-								label="All"
-								count={products.length}
-								active={!active && plain}
-								onClick={() => showView(null)}
+								key={v.id}
+								label={v.name}
+								count={counts.get(v.id) ?? 0}
+								active={active?.id === v.id}
+								changed={active?.id === v.id && changed}
+								onClick={() => showView(v)}
+								onEdit={
+									active?.id === v.id && !changed
+										? () => setEditing(v)
+										: undefined
+								}
 							/>
-							{views.map((v) => (
-								<Tab
-									key={v.id}
-									label={v.name}
-									count={counts.get(v.id) ?? 0}
-									active={active?.id === v.id}
-									changed={active?.id === v.id && changed}
-									onClick={() => showView(v)}
-									onEdit={
-										active?.id === v.id && !changed
-											? () => setEditing(v)
-											: undefined
-									}
-								/>
-							))}
-							{changed && (
-								<div className="ml-auto flex gap-1">
-									{active && (
-										<Button
-											size="sm"
-											variant="ghost"
-											onClick={() => showView(active)}
-										>
-											Undo changes
-										</Button>
-									)}
-									{active && (
-										<Button
-											size="sm"
-											variant="outline"
-											onClick={() => updateView(active)}
-										>
-											Save
-										</Button>
-									)}
-									<Button size="sm" onClick={() => setEditing("new")}>
-										{active ? "Save as new view" : "Save view"}
+						))}
+						{changed && (
+							<div className="ml-auto flex gap-1">
+								{active && (
+									<Button
+										size="sm"
+										variant="ghost"
+										onClick={() => showView(active)}
+									>
+										Undo changes
 									</Button>
-								</div>
-							)}
-						</div>
-						<div className="flex items-start gap-1 border-b p-2">
-							<div className="min-w-0 flex-1">
-								<FilterSearch
-									inputRef={input}
-									text={query}
-									onText={(text) => {
-										setQuery(text);
-										setShown(PAGE);
-									}}
-									chips={filters}
-									onChips={(next) => setSearch({ filters: next })}
-									language={language}
-									sort={sort}
-									onSort={(s) => setSearch({ sort: s })}
-									columns={PRODUCT_SORTS}
-									placeholder="Search, or #tag @type %status *class >=3 ^sort"
-								/>
+								)}
+								{active && (
+									<Button
+										size="sm"
+										variant="outline"
+										onClick={() => updateView(active)}
+									>
+										Save
+									</Button>
+								)}
+								<Button size="sm" onClick={() => setEditing("new")}>
+									{active ? "Save as new view" : "Save view"}
+								</Button>
 							</div>
-							<AddFilter
-								counts={facetValues}
-								onAdd={(f) => setSearch({ filters: [...filters, f] })}
-							/>
-							<SortMenu
+						)}
+					</div>
+					<div className="flex items-start gap-1 border-b p-2">
+						<div className="min-w-0 flex-1">
+							<FilterSearch
+								inputRef={input}
+								text={query}
+								onText={(text) => {
+									setQuery(text);
+									setShown(PAGE);
+								}}
+								chips={filters}
+								onChips={(next) => setSearch({ filters: next })}
+								language={language}
 								sort={sort}
 								onSort={(s) => setSearch({ sort: s })}
 								columns={PRODUCT_SORTS}
+								placeholder="Search, or filter by tag, vendor, status…"
 							/>
 						</div>
-					</Card>
-					<ProductResults
-						layout={search.layout}
-						products={filtered.slice(0, shown)}
-						stateFor={stateFor}
-						now={now}
-						adding={adding}
-						onAddToPo={addToPo}
-						onCount={countStock}
-					/>
-					{filtered.length === 0 && (
-						<p className="rounded-xl bg-card py-16 text-center text-muted-foreground shadow-card">
-							No matches.
-						</p>
-					)}
-					{shown < filtered.length && (
-						<div className="flex justify-center">
-							<Button
-								variant="outline"
-								onClick={() => setShown((n) => n + PAGE)}
-							>
-								Show {formatCount(Math.min(PAGE, filtered.length - shown))} more
-							</Button>
-						</div>
-					)}
-				</div>
+						<SortMenu
+							sort={sort}
+							onSort={(s) => setSearch({ sort: s })}
+							columns={PRODUCT_SORTS}
+						/>
+					</div>
+				</Card>
+				<ProductTable
+					lens={lens}
+					rows={listed.slice(0, shown)}
+					matched={filtered}
+					pinned={pinnedRows}
+					selected={selected}
+					onSelected={setSelected}
+					sort={sort}
+					onSort={(s) => setSearch({ sort: s })}
+					stateFor={stateFor}
+					now={now}
+					adding={adding}
+					onAddToPo={addToPo}
+					onCount={countStock}
+				/>
+				{filtered.length === 0 && (
+					<p className="rounded-xl bg-card py-16 text-center text-muted-foreground shadow-card">
+						No matches.
+					</p>
+				)}
+				{shown < listed.length && (
+					<div className="flex justify-center">
+						<Button variant="outline" onClick={() => setShown((n) => n + PAGE)}>
+							Show {formatCount(Math.min(PAGE, listed.length - shown))} more
+						</Button>
+					</div>
+				)}
 			</div>
+			<SelectionBar
+				picked={picked}
+				onClear={() => clearWithUndo(selected, setSelected)}
+			/>
 
 			{editing && (
 				<ViewDialog
@@ -530,4 +525,39 @@ function ProductList() {
 			},
 		});
 	}
+}
+
+// Which columns the table shows: one set per job.
+function LensSwitch({
+	lens,
+	onLens,
+}: {
+	lens: LensKey;
+	onLens: (lens: LensKey) => void;
+}) {
+	return (
+		<div className="flex rounded-lg bg-surface-strong p-0.5">
+			{(Object.keys(LENSES) as LensKey[]).map((key) => {
+				const { label, icon: Icon } = LENSES[key];
+				return (
+					<Tip key={key} content={label}>
+						<button
+							type="button"
+							aria-pressed={lens === key}
+							onClick={() => onLens(key)}
+							className={cn(
+								"inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors",
+								lens === key
+									? "bg-white text-foreground shadow-card"
+									: "text-muted-foreground hover:text-foreground",
+							)}
+						>
+							<Icon className="size-4" />
+							<span className="hidden xl:inline">{label}</span>
+						</button>
+					</Tip>
+				);
+			})}
+		</div>
+	);
 }
