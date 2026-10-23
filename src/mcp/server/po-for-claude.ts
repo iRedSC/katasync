@@ -11,6 +11,7 @@ import { poFilesOf } from "#/purchasing/files";
 import { emailSummariesOf } from "#/purchasing/inbox/ingest";
 import { invoicesOf } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
+import { setPartsOf } from "#/purchasing/orders";
 import { isBackOrdered } from "#/purchasing/status";
 import { trackingOf } from "#/purchasing/tracking";
 
@@ -29,6 +30,10 @@ export async function orderForClaude(db: Db, id: number) {
 		trackingOf(db, id),
 		poFilesOf(db, id),
 	]);
+	// Only drafts hold tool sets; sending splits them into parts.
+	const parts = po.lines.some((l) => l.kind === "bundle")
+		? await setPartsOf(db, id)
+		: [];
 	const priced = po.lines.filter((l) => l.unitCost !== null);
 	const before = priced.reduce(
 		(n, l) => n + Math.round(l.quantity * (l.unitCost ?? 0) * 100),
@@ -148,6 +153,18 @@ export async function orderForClaude(db: Db, id: number) {
 				? { sent: { quantity: l.sentQuantity, unitCost: l.sentUnitCost } }
 				: {}),
 			...(l.locked ? { locked: true } : {}),
+			...(l.kind === "bundle"
+				? {
+						parts: parts
+							.filter((p) => p.setProductId === l.productId)
+							.map((p) => ({
+								sku: p.sku,
+								perSet: p.perSet,
+								supplier: p.supplierName,
+								...(p.skipped ? { skipped: true } : {}),
+							})),
+					}
+				: {}),
 			...(isBackOrdered(l) ? { backOrderedSince: l.backOrderedAt } : {}),
 			...(l.receivingNote ? { receivingNote: l.receivingNote } : {}),
 			...(l.linkSupplierId !== po.supplier.id

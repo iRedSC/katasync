@@ -19,6 +19,10 @@ import { registerProductTools } from "./server/product-tools";
 import { registerPurchasingTools } from "./server/purchasing-tools";
 import { registerReadTools } from "./server/read-tools";
 import { registerReceivingTools } from "./server/receiving-tools";
+import {
+	registerSettingsReadTools,
+	registerSettingsWriteTools,
+} from "./server/settings-tools";
 import { registerStockSettingsTools } from "./server/stock-settings-tools";
 import { registerStockTools } from "./server/stock-tools";
 import { registerSupplierTools } from "./server/supplier-tools";
@@ -57,6 +61,7 @@ export const READ_TOOLS = new Set([
 	"search_marketplace_mail",
 	"read_marketplace_email",
 	"mail_rules",
+	"email_templates",
 ]);
 
 export function buildServer(db: Db, access: { canWrite: boolean }) {
@@ -71,6 +76,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 	registerFileReadTools(server, db);
 	registerMarketTools(server, db);
 	registerMailRuleReadTools(server, db);
+	registerSettingsReadTools(server, db);
 	if (access.canWrite) registerWriteTools(server, db);
 	return server;
 }
@@ -92,4 +98,5 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerInboxWriteTools(server, db);
 	registerMailRuleWriteTools(server, db);
 	registerBuyerWriteTools(server, db);
+	registerSettingsWriteTools(server, db);
 }

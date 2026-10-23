@@ -1,11 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import {
 	deleteListings,
 	relinkListings,
 	unlinkListings,
 } from "#/channels/listing-edits";
+import { setPrimaryStore } from "#/channels/primary-store";
 import type { Db } from "#/db/client";
+import { stores } from "#/db/schema";
 import { json, WRITE } from "./tool-shapes";
 
 // Changing listings already matched. match_listing (catalog-tools) handles
@@ -48,5 +51,27 @@ export function registerListingTools(server: McpServer, db: Db) {
 			annotations: { ...WRITE, destructiveHint: true },
 		},
 		async ({ listing_ids }) => json(await deleteListings(db, listing_ids)),
+	);
+
+	server.registerTool(
+		"set_primary_store",
+		{
+			description:
+				"Which store's listings become products: its new listings are made products on each sync, and its unmatched ones right away. By store name (see the stores table); null for none, so new listings wait to be matched. Returns how many products it made and listings it skipped.",
+			inputSchema: { store: z.string().nullable() },
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ store }) => {
+			let id: number | null = null;
+			if (store !== null) {
+				const [found] = await db
+					.select({ id: stores.id })
+					.from(stores)
+					.where(eq(stores.name, store));
+				if (!found) throw new Error(`No store called ${store}`);
+				id = found.id;
+			}
+			return json({ primary: store, ...(await setPrimaryStore(db, id)) });
+		},
 	);
 }

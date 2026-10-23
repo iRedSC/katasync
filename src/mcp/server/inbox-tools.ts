@@ -15,6 +15,7 @@ import {
 	fileEmail,
 	importEmail,
 	setAside,
+	setRead,
 	unfiledEmails,
 } from "#/purchasing/inbox/ingest";
 import { PurchaseOrderError } from "#/purchasing/orders";
@@ -287,6 +288,23 @@ export function registerInboxWriteTools(server: McpServer, db: Db) {
 			annotations: WRITE,
 		},
 		async ({ id, undo }) => json(await setAside(db, id, !undo)),
+	);
+
+	server.registerTool(
+		"set_po_email_read",
+		{
+			description:
+				"Marks a kept email (po_emails.id) read or unread for staff, as the app's inbox shows it. Unread unfiled emails count on the sidebar.",
+			inputSchema: {
+				id: z.number().int().positive(),
+				read: z.boolean(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ id, read }) => {
+			await setRead(db, id, read);
+			return json({ id, read });
+		},
 	);
 
 	server.registerTool(

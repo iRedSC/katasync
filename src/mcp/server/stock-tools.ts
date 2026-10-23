@@ -1,7 +1,15 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
-import { recordCount, requestCounts, undoBatch } from "#/inventory/ledger";
+import { locations, products } from "#/db/schema";
+import { requestProductCount } from "#/inventory/count-requests";
+import {
+	cancelCountRequests,
+	recordCount,
+	requestCounts,
+	undoBatch,
+} from "#/inventory/ledger";
 import { transferName, transferOfBatch } from "#/inventory/transfers";
 import { PurchaseOrderError, purchaseOrderOfBatch } from "#/purchasing/orders";
 import { ourLocation, productBySku, productsBySku } from "./lookups";
@@ -51,23 +59,61 @@ export function registerStockTools(server: McpServer, db: Db) {
 		"request_counts",
 		{
 			description:
-				"Puts shelves on the staff's cycle count list. Each stays there until someone counts it. Asking for one already on the list keeps it there. Tool sets can't be counted; ask for their parts. Returns how many shelves are now requested.",
+				"Puts shelves on the staff's cycle count list. Each stays there until someone counts it. Without a location, every shelf of ours holding the product is asked for (the warehouse when none does yet); a tool set means its parts. Shelves already on the list stay as they are. Returns the requests this added, for cancel_count_requests.",
 			inputSchema: {
 				skus: z.array(z.string()).min(1),
 				location: z
 					.string()
 					.optional()
-					.describe("Needed only when there are several of our locations"),
+					.describe("Only this one of our locations, by name"),
 			},
 			annotations: { ...WRITE, idempotentHint: true },
 		},
 		async ({ skus, location }) => {
-			const productIds = (await productsBySku(db, skus)).map((p) => p.id);
-			await requestCounts(db, {
-				productIds,
-				locationId: await ourLocation(db, location),
-			});
-			return json({ requested: new Set(productIds).size });
+			const found = await productsBySku(db, skus);
+			const added = [];
+			if (location) {
+				added.push(
+					...(await requestCounts(db, {
+						productIds: found.map((p) => p.id),
+						locationId: await ourLocation(db, location),
+					})),
+				);
+			} else {
+				for (const product of found)
+					added.push(...(await requestProductCount(db, product.id)));
+			}
+			return json({ added: await namedRequests(db, added) });
+		},
+	);
+
+	server.registerTool(
+		"cancel_count_requests",
+		{
+			description:
+				"Takes count requests off the list, as request_counts returned them. One counted and asked for again since stays.",
+			inputSchema: {
+				requests: z
+					.array(
+						z.object({
+							sku: z.string(),
+							location: z.string(),
+							requested_at: z.string(),
+						}),
+					)
+					.min(1),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ requests }) => {
+			const resolved = [];
+			for (const r of requests)
+				resolved.push({
+					productId: (await productBySku(db, r.sku)).id,
+					locationId: await ourLocation(db, r.location),
+					requestedAt: r.requested_at,
+				});
+			return json({ cancelled: await cancelCountRequests(db, resolved) });
 		},
 	);
 
@@ -93,4 +139,31 @@ export function registerStockTools(server: McpServer, db: Db) {
 			return json(await undoBatch(db, batch_id));
 		},
 	);
+}
+
+// Count requests by SKU and location name, as cancel_count_requests takes them.
+async function namedRequests(
+	db: Db,
+	requests: { productId: number; locationId: number; requestedAt: string }[],
+) {
+	if (requests.length === 0) return [];
+	const [skus, places] = await Promise.all([
+		db
+			.select({ id: products.id, sku: products.sku })
+			.from(products)
+			.where(
+				inArray(
+					products.id,
+					requests.map((r) => r.productId),
+				),
+			),
+		db.select({ id: locations.id, name: locations.name }).from(locations),
+	]);
+	const sku = new Map(skus.map((p) => [p.id, p.sku]));
+	const place = new Map(places.map((l) => [l.id, l.name]));
+	return requests.map((r) => ({
+		sku: sku.get(r.productId),
+		location: place.get(r.locationId),
+		requested_at: r.requestedAt,
+	}));
 }

@@ -43,7 +43,16 @@ describe("over MCP", () => {
 			).filter((l) => l.requested && (!l.counted || l.counted < l.requested))
 				.length;
 		const asked = await tool("request_counts", { skus: ["BLADE", "BLADE"] });
-		expect(asked.data).toEqual({ requested: 1 });
+		expect(asked.data.added).toMatchObject([
+			{ sku: "BLADE", location: "Warehouse" },
+		]);
+		expect(await due()).toBe(1);
+		const cancelled = await tool("cancel_count_requests", {
+			requests: asked.data.added,
+		});
+		expect(cancelled.data).toEqual({ cancelled: 1 });
+		expect(await due()).toBe(0);
+		await tool("request_counts", { skus: ["BLADE"] });
 		expect(await due()).toBe(1);
 		const counted = await tool("record_count", { sku: "BLADE", counted: 3 });
 		expect(await due()).toBe(0);

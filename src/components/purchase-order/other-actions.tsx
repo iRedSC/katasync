@@ -1,12 +1,15 @@
 import { useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 import { Card } from "#/components/page";
 import { cancelWithUndo } from "#/components/po-cancel";
 import { Button } from "#/components/ui/button";
+import { cn } from "#/lib/utils";
 import { cancelledOnList } from "#/purchasing/list-patches";
 import {
 	closePurchaseOrder,
 	type PurchaseOrderDetail,
 } from "#/server/purchasing";
+import { today, utcDay } from "./days";
 import { isUnsent } from "./po-data";
 import type { useAction } from "./use-action";
 
@@ -20,26 +23,51 @@ export function OtherActions({
 }: {
 	detail: PurchaseOrderDetail;
 	received: number;
-	onSent: () => void;
+	// With the day it went out, when that was before today.
+	onSent: (sentOn?: string) => void;
 	busy: boolean;
 	run: ReturnType<typeof useAction>["run"];
 }) {
 	const navigate = useNavigate();
+	const [sentOn, setSentOn] = useState(today);
 	const po = d.order;
 	if (po.status === "closed" || po.status === "cancelled") return null;
 	const live = po.status;
+	// Not ahead of today, and not before the PO was made, as the server
+	// requires. Made late in the evening it can be tomorrow in UTC.
+	const latest = today();
+	const earliest = [utcDay(po.createdAt), latest].sort()[0];
+	const sentOnValid = sentOn >= earliest && sentOn <= latest;
 	return (
 		<Card title="More">
 			<div className="flex flex-col items-start gap-1">
 				{isUnsent(po.status) && (
-					<Button
-						variant="ghost"
-						size="sm"
-						disabled={busy || d.lines.length === 0}
-						onClick={onSent}
-					>
-						Mark as sent
-					</Button>
+					<div className="flex items-center gap-1">
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={busy || d.lines.length === 0 || !sentOnValid}
+							onClick={() => onSent(sentOn === latest ? undefined : sentOn)}
+						>
+							Mark as sent
+						</Button>
+						<input
+							type="date"
+							aria-label="Sent on"
+							value={sentOn}
+							min={earliest}
+							max={latest}
+							disabled={busy}
+							// Cleared, it goes back to today.
+							onChange={(e) => setSentOn(e.target.value || today())}
+							className={cn(
+								"h-8 rounded-lg border border-input bg-background px-2 text-xs tabular-nums",
+								sentOn === latest && "text-muted-foreground",
+								!sentOnValid &&
+									"border-critical-border ring-2 ring-critical-border/40",
+							)}
+						/>
+					</div>
 				)}
 				{po.status === "sent" && received > 0 && (
 					<Button

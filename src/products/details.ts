@@ -27,11 +27,17 @@ export type ProductDetails = {
 	heightIn: number | null;
 };
 
+// When a cost was set. Only with a cost: undo puts a cost back as of when
+// it was first set, rather than as set now.
+type CostChange =
+	| { unitCost?: number | null; unitCostSetAt?: never }
+	| { unitCost: number; unitCostSetAt: Date };
+
 // Changes only the given details. null clears one.
 export async function updateProductDetails(
 	db: Db,
 	productId: number,
-	details: Partial<ProductDetails>,
+	details: Partial<Omit<ProductDetails, "unitCost">> & CostChange,
 ) {
 	const text = (v: string | null | undefined) =>
 		v === undefined ? undefined : v?.trim() || null;
@@ -77,9 +83,11 @@ export async function updateProductDetails(
 			barcode,
 			unitCost: details.unitCost,
 			// Entering the same cost again confirms it. A trigger clears the
-			// date along with the cost.
+			// date along with the cost, and takes a date ahead of now as now.
 			unitCostUpdatedAt:
-				details.unitCost === undefined ? undefined : sql`now()`,
+				details.unitCost === undefined
+					? undefined
+					: (details.unitCostSetAt ?? sql`now()`),
 			weightGrams: measure(details.weightOz, "weight", GRAMS_PER_OUNCE),
 			lengthMm: measure(details.lengthIn, "length", MM_PER_INCH),
 			widthMm: measure(details.widthIn, "width", MM_PER_INCH),

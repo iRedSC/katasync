@@ -1,8 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { eq } from "drizzle-orm";
-import { matchListings } from "#/channels/listings";
-import { stockLocations } from "#/channels/stores";
+import { setPrimaryStore as makePrimaryStore } from "#/channels/primary-store";
 import { isSyncedChannel, syncPassAlone } from "#/channels/sync";
 import { listUnmatched } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
@@ -10,34 +9,14 @@ import { stores } from "#/db/schema";
 import { channelEnv, missingEnv } from "#/diagnostics/checks";
 import { errorText } from "#/diagnostics/runs";
 import {
-	applyListingsToOrders,
 	matchListing as matchListingToSku,
 	productFromListing,
 } from "#/orders/remap";
 
-// Makes one store the primary (or none, with id null), then lets its
-// unmatched listings become products right away instead of on the next sync.
+// Makes one store the primary, or none with id null; see setPrimaryStore.
 export const setPrimaryStore = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0 | null" }))
-	.handler(async ({ data }) => {
-		const db = getDb();
-		await db.transaction(async (tx) => {
-			await tx
-				.update(stores)
-				.set({ primary: false })
-				.where(eq(stores.primary, true));
-			if (data.id) {
-				await tx
-					.update(stores)
-					.set({ primary: true })
-					.where(eq(stores.id, data.id));
-			}
-		});
-		if (!data.id) return { created: 0, skipped: [] as string[] };
-		const matched = await matchListings(db);
-		await applyListingsToOrders(db, matched.mapped, await stockLocations(db));
-		return { created: matched.created, skipped: matched.skipped };
-	});
+	.handler(async ({ data }) => makePrimaryStore(getDb(), data.id));
 
 export type PulledPrimary =
 	| { state: "ran"; store: string; created: number; problems: string[] }

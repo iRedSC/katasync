@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { packages } from "#/db/schema";
+import { packages, shipments } from "#/db/schema";
+import { boxLabel } from "#/shipping/box-filter";
 
 // The boxes quick ship offers, found by size or name. Entered in inches and ounces, the units
 // on the tape measure and scale, and stored in millimeters and grams like
@@ -63,4 +64,28 @@ export async function updateBox(db: Db, id: number, box: BoxInput) {
 		.returning();
 	if (!saved) throw new BoxError("No such box");
 	return saved;
+}
+
+// Past shipments keep their box, so a box that shipped stays.
+export async function deleteBox(db: Db, id: number) {
+	const [used] = await db
+		.select({
+			name: packages.name,
+			lengthMm: packages.lengthMm,
+			widthMm: packages.widthMm,
+			heightMm: packages.heightMm,
+		})
+		.from(shipments)
+		.innerJoin(packages, eq(packages.id, shipments.packageId))
+		.where(eq(shipments.packageId, id))
+		.limit(1);
+	if (used)
+		throw new BoxError(
+			`${boxLabel(used)} is on past labels, so it can't be removed`,
+		);
+	const removed = await db
+		.delete(packages)
+		.where(eq(packages.id, id))
+		.returning({ id: packages.id });
+	if (removed.length === 0) throw new BoxError("No such box");
 }

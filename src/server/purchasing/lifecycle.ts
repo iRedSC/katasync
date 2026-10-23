@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
+
 import { sendEmail } from "#/purchasing/email";
 import {
 	greetingFor,
@@ -18,6 +19,7 @@ import {
 	poName,
 	restoreDraft,
 	restoreOrder,
+	sentDay,
 } from "#/purchasing/orders";
 import { discount } from "./discount-input";
 import { id } from "./id-input";
@@ -45,21 +47,31 @@ export const previewPurchaseOrderEmail = createServerFn({ method: "GET" })
 
 // Emails the PO to the supplier, worded as previewed and edited, and puts it
 // on order. With `email: false` it's only marked sent, for orders placed by
-// phone or on the supplier's website.
+// phone or on the supplier's website, on `sentOn` when it went out before
+// today.
 export const sendPurchaseOrder = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			id: "number.integer > 0",
-			email: type("false").or({ subject: "/\\S/", text: "/\\S/" }),
+			email: "false",
+			// YYYY-MM-DD, which sentDay checks.
+			"sentOn?": "string",
+		}).or({
+			id: "number.integer > 0",
+			email: { subject: "/\\S/", text: "/\\S/" },
 		}),
 	)
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const { email } = data;
-		if (email === false) {
-			await markSent(db, { purchaseOrderId: data.id, sentTo: null });
+		if (data.email === false) {
+			// The same day as mark_po_sent takes: not ahead, not before the PO.
+			const now = data.sentOn
+				? await sentDay(db, data.id, data.sentOn)
+				: undefined;
+			await markSent(db, { purchaseOrderId: data.id, sentTo: null, now });
 			return { sentTo: null };
 		}
+		const { email } = data;
 		const sentTo = await markSent(db, {
 			purchaseOrderId: data.id,
 			// Built inside the send, with the PO locked, so the PDF matches

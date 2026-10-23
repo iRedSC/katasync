@@ -24,8 +24,10 @@ import {
 	type PurchaseOrderMatch,
 } from "#/components/po-product-picker";
 import { AddEmail } from "#/components/purchase-order/add-email";
+import { middayOf } from "#/components/purchase-order/days";
 import { DeliveryCard } from "#/components/purchase-order/delivery-card";
 import { FilesCard } from "#/components/purchase-order/files-card";
+import { InvoicesCard } from "#/components/purchase-order/invoices-card";
 import { receiveAllWithUndo } from "#/components/purchase-order/line-actions";
 import { damageable, lineName } from "#/components/purchase-order/line-damage";
 import { LineTable } from "#/components/purchase-order/line-table";
@@ -52,7 +54,7 @@ import { useAction } from "#/components/purchase-order/use-action";
 import { PurchaseOrderSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
-import { formatCount, formatMoney } from "#/lib/format";
+import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { ids } from "#/lib/optimism";
 import { lineCents } from "#/purchasing/discount";
@@ -278,11 +280,14 @@ function PurchaseOrderPage() {
 		});
 	}
 
-	// Ordered some other way: on order, no email.
-	const markSent = () =>
+	// Ordered some other way: on order, no email. sentOn backdates it.
+	const markSent = (sentOn?: string) =>
 		run(
-			() => sendPurchaseOrder({ data: { id: po.id, email: false } }),
-			() => `PO ${po.id} is on order`,
+			() => sendPurchaseOrder({ data: { id: po.id, email: false, sentOn } }),
+			() =>
+				sentOn
+					? `PO ${po.id} on order since ${formatDay(middayOf(sentOn))}`
+					: `PO ${po.id} is on order`,
 		);
 
 	return (
@@ -432,6 +437,7 @@ function PurchaseOrderPage() {
 									{totals}
 								</Card>
 							)}
+							<InvoicesCard detail={d} />
 							<Timeline detail={d} />
 						</>
 					)}

@@ -39,7 +39,7 @@ export {
 	undoReceipt,
 	undoReceipts,
 } from "#/purchasing/orders/receiving";
-export { markSent } from "#/purchasing/orders/sending";
+export { markSent, sentDay } from "#/purchasing/orders/sending";
 export {
 	addSetToOtherDrafts,
 	skipSetPart,

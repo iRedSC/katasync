@@ -2,7 +2,6 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, products, purchaseOrderLines } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
-import { loadOrder } from "#/purchasing/load";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
 export async function lineOf(db: Db, po: number, sku: string) {
@@ -74,19 +73,4 @@ export async function ourLocation(db: Db, name?: string) {
 				: `Name a location: ${ours.map((l) => l.name).join(", ")}`,
 		);
 	return ours[0].id;
-}
-
-// When a PO marked sent outside katasync went out: midday that day, so it's
-// the same day in any US timezone. Not in the future, and not before the PO
-// existed.
-export async function sentDay(db: Db, po: number, day: string) {
-	const at = new Date(`${day}T12:00:00Z`);
-	if (Number.isNaN(at.getTime()) || day > new Date().toISOString().slice(0, 10))
-		throw new PurchaseOrderError(`${day} isn't a day that has passed`);
-	const { order } = await loadOrder(db, po);
-	const made = order.createdAt.toISOString().slice(0, 10);
-	if (day < made)
-		throw new PurchaseOrderError(`PO ${po} was made on ${made}, after ${day}`);
-	// Today's midday may not have come yet.
-	return at > new Date() ? new Date() : at;
 }

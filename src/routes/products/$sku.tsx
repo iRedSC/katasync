@@ -10,22 +10,20 @@ import {
 	type Tone,
 	useBack,
 } from "#/components/page";
-import {
-	MovementTable,
-	ProductImage,
-	ProductName,
-	SetsChip,
-} from "#/components/product";
+import { MovementTable, ProductImage, SetsChip } from "#/components/product";
 import {
 	ArchiveButton,
 	ArchivedBadge,
+	DeleteButton,
 	RestoreButton,
 } from "#/components/product-page/archived";
 import {
-	AerosolToggle,
-	CriticalToggle,
-	InsureToggle,
-} from "#/components/product-page/flag-toggles";
+	DetailsCard,
+	NameField,
+	VariantField,
+} from "#/components/product-page/details-card";
+import { ListingsCard } from "#/components/product-page/listings-card";
+import { limits, PartsCard } from "#/components/product-page/parts-card";
 import { StockTable } from "#/components/product-page/stock-table";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { StockRangeForm } from "#/components/stock-range-form";
@@ -34,12 +32,7 @@ import { TransferDialog } from "#/components/transfer-dialog";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { StockRange } from "#/inventory/stock-range";
-import {
-	channelName,
-	formatCount,
-	formatDate,
-	formatMoney,
-} from "#/lib/format";
+import { formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimistic } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
@@ -150,6 +143,37 @@ const rangePatch = (productId: number, range: StockRange | null) =>
 		},
 	}));
 
+// Building kits (positive) or taking them apart (negative) at a location:
+// the kit's shelf there changes by that many, and each part's by what goes
+// into them, as convertKits posts it.
+const kitPatch = (
+	productId: number,
+	location: { id: number; name: string },
+	kits: number,
+) =>
+	productData.patch(productId, (d) => {
+		const had = d.stock.find((s) => s.location === location.name)?.onHand ?? 0;
+		const next = withShelf(d, location.name, had + kits);
+		return {
+			...next,
+			components: next.components.map((c) => {
+				const used = c.quantity * kits;
+				const shelves = c.shelves.some((s) => s.locationId === location.id)
+					? c.shelves.map((s) =>
+							s.locationId === location.id
+								? { ...s, onHand: s.onHand - used }
+								: s,
+						)
+					: [...c.shelves, { locationId: location.id, onHand: -used }];
+				return {
+					...c,
+					shelves,
+					available: Math.max(0, c.available - used),
+				};
+			}),
+		};
+	});
+
 function ProductPage() {
 	const loaded = Route.useLoaderData();
 	const d = productData.useData(loaded.product.id, loaded);
@@ -181,6 +205,7 @@ function ProductPage() {
 			}
 			actions={
 				<>
+					{p.archivedAt && d.deletable && <DeleteButton sku={p.sku} />}
 					{p.archivedAt ? (
 						<RestoreButton productId={p.id} sku={p.sku} />
 					) : (
@@ -202,7 +227,9 @@ function ProductPage() {
 							<ProductImage src={p.imageUrl} className="size-24" />
 							<div className="min-w-0">
 								<p className="flex items-center gap-2 text-base font-semibold">
-									<span className="min-w-0">{p.name}</span>
+									<span className="min-w-0">
+										<NameField p={p} />
+									</span>
 									{verdict && (
 										<Tip content={verdict.detail}>
 											<span className="inline-flex cursor-help">
@@ -211,9 +238,7 @@ function ProductPage() {
 										</Tip>
 									)}
 								</p>
-								{p.variantName && (
-									<p className="text-muted-foreground">{p.variantName}</p>
-								)}
+								<VariantField p={p} />
 								<p className="flex items-center gap-2 text-muted-foreground">
 									{p.sku}
 									<SetsChip sets={d.sets} />
@@ -233,67 +258,11 @@ function ProductPage() {
 						</div>
 					</Card>
 
-					{d.components.length > 0 && (
-						<Card
-							title={p.kind === "bundle" ? "Parts in this set" : "Built from"}
-							flush
-						>
-							<table className="w-full">
-								<thead>
-									<tr className="border-y bg-subtle text-left text-xs text-muted-foreground">
-										<th className="px-4 py-2 font-medium">Part</th>
-										<th className="px-4 py-2 text-right font-medium">Needed</th>
-										<th className="px-4 py-2 text-right font-medium">
-											In stock
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{d.components.map((c) => {
-										const short = c.available < c.quantity;
-										return (
-											<tr key={c.sku} className="border-t first:border-t-0">
-												<td className="px-4 py-2.5">
-													<Link
-														to="/products/$sku"
-														params={{ sku: c.sku }}
-														className="block hover:underline"
-													>
-														<ProductName
-															name={c.name}
-															variantName={c.variantName}
-														/>
-													</Link>
-													<div className="text-xs text-muted-foreground">
-														{c.sku}
-													</div>
-												</td>
-												<td className="px-4 py-2.5 text-right tabular-nums">
-													{c.quantity}
-												</td>
-												<td className="px-4 py-2.5 text-right">
-													{short ? (
-														<Badge tone="warning">
-															Only {formatCount(c.available)}
-														</Badge>
-													) : limits(d, c) ? (
-														<Tip content="Runs out first">
-															<span className="font-semibold text-warning-text tabular-nums">
-																{formatCount(c.available)}
-															</span>
-														</Tip>
-													) : (
-														<span className="tabular-nums">
-															{formatCount(c.available)}
-														</span>
-													)}
-												</td>
-											</tr>
-										);
-									})}
-								</tbody>
-							</table>
-						</Card>
+					{p.kind !== "simple" && (
+						<PartsCard
+							d={d}
+							kitPatch={(location, kits) => kitPatch(p.id, location, kits)}
+						/>
 					)}
 
 					{canCount && (
@@ -364,7 +333,7 @@ function ProductPage() {
 						</p>
 					</Card>
 
-					<Details d={d} />
+					<DetailsCard d={d} />
 
 					{canCount && (
 						<SupplierCard
@@ -428,30 +397,7 @@ function ProductPage() {
 						</Card>
 					)}
 
-					<Card title="Sales channels">
-						{d.listings.length === 0 && d.aliases.length === 0 ? (
-							<p className="text-muted-foreground">No listings.</p>
-						) : (
-							<ul className="flex flex-col gap-1.5">
-								{d.listings.map((l) => (
-									<li
-										key={`${l.store}-${l.externalId}`}
-										className="flex justify-between gap-2"
-									>
-										<span>{channelName(l.channel)}</span>
-										{l.fulfillment === "fba" && (
-											<Badge>Fulfilled by Amazon</Badge>
-										)}
-									</li>
-								))}
-								{d.aliases.length > 0 && (
-									<li className="text-muted-foreground">
-										Also sold as {d.aliases.join(", ")}
-									</li>
-								)}
-							</ul>
-						)}
-					</Card>
+					<ListingsCard d={d} />
 				</div>
 			</div>
 
@@ -548,80 +494,6 @@ function getVerdict(
 		};
 	}
 	return null;
-}
-
-// Whether a part is what caps how many of the set can be sold, once few are
-// left.
-function limits(d: ProductDetail, c: ProductDetail["components"][number]) {
-	return (
-		d.product.kind === "bundle" &&
-		d.available <= 3 &&
-		c.available >= c.quantity &&
-		Math.floor(c.available / c.quantity) === d.available
-	);
-}
-
-// Only what's filled in. Empty fields aren't worth a glance.
-function Details({ d }: { d: ProductDetail }) {
-	const p = d.product;
-	const rows: [string, ReactNode][] = [];
-	// Type, vendor, and tags come from Shopify when we don't have our own.
-	const type = p.category ?? d.listings.find((l) => l.productType)?.productType;
-	const vendor = d.listings.find((l) => l.vendor)?.vendor;
-	const tags = [...new Set(d.listings.flatMap((l) => l.tags))].sort();
-	if (type) rows.push(["Type", type]);
-	if (vendor) rows.push(["Vendor", vendor]);
-	if (tags.length > 0) rows.push(["Tags", tags.join(", ")]);
-	if (p.unitCost !== null)
-		rows.push([
-			"Cost",
-			<>
-				{formatMoney(p.unitCost)}
-				<span className="ml-2 text-muted-foreground">
-					{p.unitCostUpdatedAt
-						? `set ${formatDate(p.unitCostUpdatedAt)}`
-						: "date unknown"}
-				</span>
-			</>,
-		]);
-	if (p.barcode) rows.push(["Barcode", p.barcode]);
-	if (p.closeAt !== null)
-		rows.push([
-			"Close at",
-			`Shows 0 on every channel at ${formatCount(p.closeAt)} or fewer`,
-		]);
-	if (p.weightGrams) rows.push(["Weight", `${formatCount(p.weightGrams)} g`]);
-	if (p.lengthMm && p.widthMm && p.heightMm) {
-		rows.push(["Box", `${p.lengthMm} × ${p.widthMm} × ${p.heightMm} mm`]);
-	}
-	return (
-		<Card title="Product organization">
-			{rows.length > 0 && (
-				<dl className="mb-3 flex flex-col gap-2">
-					{rows.map(([label, value]) => (
-						<div key={label}>
-							<dt className="text-muted-foreground">{label}</dt>
-							<dd className="tabular-nums">{value}</dd>
-						</div>
-					))}
-				</dl>
-			)}
-			<div className="flex flex-col gap-2">
-				<InsureToggle
-					productId={p.id}
-					sku={p.sku}
-					insure={p.insureWhenShipped}
-				/>
-				<AerosolToggle productId={p.id} sku={p.sku} aerosol={p.aerosol} />
-				<CriticalToggle
-					productId={p.id}
-					sku={p.sku}
-					critical={p.critical}
-					isA={d.abc?.abc === "A"}
-				/>
-			</div>
-		</Card>
-	);
 }
 
 // Small shares keep a decimal so they don't all read as 0%.

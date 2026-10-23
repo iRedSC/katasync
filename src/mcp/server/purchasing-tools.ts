@@ -7,19 +7,23 @@ import { recordInvoice, removeInvoice } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
 import {
 	addLine,
+	addSetToOtherDrafts,
 	amendLine,
 	deleteDraft,
 	draftFromSuggestions,
+	lockDraftLine,
 	markSent,
 	openDraft,
 	PurchaseOrderError,
+	sentDay,
 	setDraftLine,
+	skipSetPart,
 	updateDraft,
 } from "#/purchasing/orders";
 import { supplierByRef } from "#/purchasing/suppliers";
 import { setLineTerms } from "#/purchasing/units";
 import { registerDiscountTools } from "./discount-tools";
-import { ourLocation, productBySku, sentDay } from "./lookups";
+import { lineOf, ourLocation, productBySku, productsBySku } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
 import { json, unitTerms, WRITE } from "./tool-shapes";
 
@@ -118,7 +122,7 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 		"draft_po_from_suggestions",
 		{
 			description:
-				"Brings a supplier's draft PO up to date with reorder_suggestions, creating it if needed: adds suggested products and raises short lines. Never lowers or removes a line.",
+				"Brings a supplier's draft PO up to date with reorder_suggestions, creating it if needed: adds suggested products and raises short lines. Never lowers or removes a line, and never raises a locked one (lock_po_lines).",
 			inputSchema: { supplier: z.string().describe("Code or name") },
 			annotations: { ...WRITE, idempotentHint: true },
 		},
@@ -127,6 +131,74 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 			const po = await draftFromSuggestions(db, id);
 			return json(await orderForClaude(db, po));
 		},
+	);
+
+	server.registerTool(
+		"lock_po_lines",
+		{
+			description:
+				"Locks lines' quantities on a draft PO so draft_po_from_suggestions and the app's Update never raise them, or unlocks them. Lock a quantity the user chose on purpose (e.g. ordering fewer than suggested) so it stays.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				skus: z.array(z.string()).min(1),
+				locked: z.boolean(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ po, skus, locked }) => {
+			// Every SKU is checked first, so a missing one changes nothing.
+			for (const sku of skus) await lineOf(db, po, sku);
+			for (const product of await productsBySku(db, skus))
+				await lockDraftLine(db, {
+					purchaseOrderId: po,
+					productId: product.id,
+					locked,
+				});
+			return json(await orderForClaude(db, po));
+		},
+	);
+
+	server.registerTool(
+		"skip_set_part",
+		{
+			description:
+				"On a draft PO, skips one part of a tool set line so sending the PO doesn't order it (e.g. it's already on the shelf), or orders it again. Only parts bought from this PO's supplier; a part bought elsewhere is skipped on that supplier's PO. get_purchase_order lists each set's parts.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				set_sku: z.string(),
+				part_sku: z.string(),
+				skipped: z.boolean(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ po, set_sku, part_sku, skipped }) => {
+			const part = await productBySku(db, part_sku);
+			await skipSetPart(db, {
+				lineId: await lineOf(db, po, set_sku),
+				productId: part.id,
+				skipped,
+			});
+			return json(await orderForClaude(db, po));
+		},
+	);
+
+	server.registerTool(
+		"add_set_to_other_pos",
+		{
+			description:
+				"Puts a tool set on a draft PO onto the drafts of the other suppliers its parts are bought from, enough that each of their parts is ordered for every set here (counting what their open POs already have), opening drafts as needed. Returns each draft it changed with how many sets it now has.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				set_sku: z.string(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ po, set_sku }) =>
+			json(
+				await addSetToOtherDrafts(db, {
+					lineId: await lineOf(db, po, set_sku),
+				}),
+			),
 	);
 
 	server.registerTool(

@@ -9,6 +9,7 @@ import {
 	savePrecedent,
 	setBasePrompt,
 } from "#/buyers/precedents";
+import { setThreadDone } from "#/buyers/threads";
 import type { Db } from "#/db/client";
 import { json, WRITE } from "./tool-shapes";
 
@@ -38,6 +39,23 @@ export function registerBuyerWriteTools(server: McpServer, db: Db) {
 					"claude",
 				),
 			),
+	);
+
+	server.registerTool(
+		"set_buyer_thread_done",
+		{
+			description:
+				"Moves a buyer thread (buyer_threads.id) to Done on the Inbox's Buyers page, e.g. once nothing more is owed, or back to open with done false. Sends nothing.",
+			inputSchema: {
+				thread_id: z.number().int().positive(),
+				done: z.boolean(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ thread_id, done }) => {
+			await setThreadDone(db, thread_id, done);
+			return json({ thread_id, done });
+		},
 	);
 
 	server.registerTool(

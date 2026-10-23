@@ -1,20 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, eq } from "drizzle-orm";
-import { shippingLocation } from "#/channels/stores";
-import { type Db, getDb } from "#/db/client";
-import {
-	locations,
-	productComponents,
-	products,
-	stockLevels,
-} from "#/db/schema";
+import { eq } from "drizzle-orm";
+import { getDb } from "#/db/client";
+import { locations, products, stockLevels } from "#/db/schema";
 import { abcClasses } from "#/inventory/abc";
+import { requestProductCount } from "#/inventory/count-requests";
 import { countDue } from "#/inventory/counts-due";
 import {
 	cancelCountRequests,
 	recordCount as recordShelfCount,
-	requestCounts,
 } from "#/inventory/ledger";
 import { isOurs } from "#/inventory/locations";
 
@@ -64,53 +58,11 @@ export const recordCount = createServerFn({ method: "POST" })
 		});
 	});
 
-// Puts a product on the count list at every shelf of ours holding it, or our
-// first location when none does yet. Returns the shelves this put on the list,
-// leaving out any already waiting, so undo takes off only those.
+// Puts a product on the count list at every shelf of ours holding it; see
+// requestProductCount.
 export const requestCount = createServerFn({ method: "POST" })
 	.validator(type({ productId: "number.integer > 0" }))
-	.handler(async ({ data }) => {
-		const db = getDb();
-		// A tool set has no shelf of its own, so counting it means its parts.
-		const parts = await db
-			.select({ id: productComponents.componentProductId })
-			.from(productComponents)
-			.where(eq(productComponents.parentProductId, data.productId));
-		const added = [];
-		for (const productId of parts.length > 0
-			? parts.map((p) => p.id)
-			: [data.productId])
-			added.push(...(await requestShelfCounts(db, productId)));
-		return added;
-	});
-
-// Puts each of our shelves holding the product on the count list, or the
-// warehouse when none holds it yet.
-async function requestShelfCounts(db: Db, productId: number) {
-	const [held, warehouse] = await Promise.all([
-		db
-			.select({ locationId: stockLevels.locationId })
-			.from(stockLevels)
-			.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-			.where(and(eq(stockLevels.productId, productId), isOurs)),
-		shippingLocation(db),
-	]);
-	if (held.length === 0 && warehouse === null)
-		throw new Error("Add a location first");
-	const at =
-		held.length > 0 || warehouse === null
-			? held.map((h) => h.locationId)
-			: [warehouse];
-	const added = [];
-	for (const locationId of at)
-		added.push(
-			...(await requestCounts(db, {
-				productIds: [productId],
-				locationId,
-			})),
-		);
-	return added;
-}
+	.handler(async ({ data }) => requestProductCount(getDb(), data.productId));
 
 // Undoes requestCount. Returns how many requests came off; any that were
 // counted and asked for again since stay.

@@ -123,6 +123,10 @@ export async function relinkListings(
 	});
 }
 
+// Whether a listing ever sold: its past orders are matched through it, so it
+// stays. The product page asks too, so it offers Delete only when it can.
+export const listingSold = sql<boolean>`exists (select 1 from ${orderLines} join ${orders} on ${orders.id} = ${orderLines.orderId} where ${orders.storeId} = ${listings.storeId} and ${orderLines.listingExternalId} = ${listings.externalId})`;
+
 // Deletes listings gone from their channel (a full sync stopped reporting
 // them) that never sold, all or none. Anything else is refused, saying why:
 // a listing still on the channel comes back on the next sync, and one that
@@ -136,7 +140,7 @@ export async function deleteListings(db: Db, listingIds: number[]) {
 				title: listings.title,
 				store: stores.name,
 				goneAt: listings.goneAt,
-				sold: sql<boolean>`exists (select 1 from ${orderLines} join ${orders} on ${orders.id} = ${orderLines.orderId} where ${orders.storeId} = ${listings.storeId} and ${orderLines.listingExternalId} = ${listings.externalId})`,
+				sold: listingSold,
 			})
 			.from(listings)
 			.innerJoin(stores, eq(stores.id, listings.storeId))
