@@ -1,63 +1,47 @@
-import { useRouter } from "@tanstack/react-router";
 import { Pencil, Trash2 } from "lucide-react";
-import QRCode from "qrcode";
 import { useState } from "react";
 import { toast } from "sonner";
 import { signOut } from "#/auth/client";
+import {
+	type Access,
+	accessData,
+	type Device,
+	patchAccess,
+} from "#/components/access-data";
 import { Badge, Card } from "#/components/page";
 import { IconAction, Row } from "#/components/rows";
+import { StaffCard } from "#/components/staff-card";
 import { Button } from "#/components/ui/button";
 import { formatDay } from "#/lib/format";
-import { optimism, optimistic } from "#/lib/optimism";
-import {
-	createDeviceLink,
-	type listDevices,
-	removeDevice,
-	renameDevice,
-} from "#/server/auth";
+import { optimism } from "#/lib/optimism";
+import { assignDevice, removeDevice, renameDevice } from "#/server/auth";
 
-type Device = Awaited<ReturnType<typeof listDevices>>[number];
+export const devicesData = accessData;
 
-// Renames and removals show at once, from this list.
-export const devicesData = optimistic<Device[]>("devices");
-
-const message = (err: unknown) =>
-	err instanceof Error ? err.message : String(err);
-
-// The name as the server keeps it (see passkeyName).
 const tidy = (name: string) => name.trim().replace(/\s+/g, " ");
 
-// Everyone shares one company account; each phone or computer signs in with
-// its own passkey. Adding one makes a link to open on the new device.
-export function DevicesCard({ devices }: { devices: Device[] }) {
-	const router = useRouter();
-	const [link, setLink] = useState<{
-		url: string;
-		qr: string;
-		expiresAt: Date;
-	} | null>(null);
-	const [renaming, setRenaming] = useState<string | null>(null);
+const withDevice = (id: string, change: (d: Device) => Device | null) =>
+	patchAccess((a) => ({
+		...a,
+		devices: a.devices.flatMap((d) => {
+			if (d.id !== id) return [d];
+			const next = change(d);
+			return next ? [next] : [];
+		}),
+	}));
 
-	async function addDevice() {
-		try {
-			const made = await createDeviceLink();
-			setLink({
-				...made,
-				expiresAt: new Date(made.expiresAt),
-				qr: await QRCode.toDataURL(made.url, { margin: 1, width: 192 }),
-			});
-		} catch (err) {
-			toast.error(message(err));
-		}
-	}
+// Each person signs in with a passkey per phone or computer. Owners manage
+// every device and give unassigned ones, from before staff, to whoever
+// uses them; anyone else sees their own.
+export function DevicesCard({ devices: access }: { devices: Access }) {
+	const [renaming, setRenaming] = useState<string | null>(null);
+	const people = access.staff.filter((p) => p.status === "active");
 
 	async function rename(d: Device, name: string) {
 		setRenaming(null);
 		await optimism.change({
 			label: `${d.name}'s name`,
-			patch: devicesData.patch("all", (list) =>
-				list.map((x) => (x.id === d.id ? { ...x, name: tidy(name) } : x)),
-			),
+			patch: withDevice(d.id, (x) => ({ ...x, name: tidy(name) })),
 			send: () => renameDevice({ data: { id: d.id, name } }),
 		});
 	}
@@ -65,15 +49,11 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 	async function remove(d: Device) {
 		const warning = d.current
 			? `Remove ${d.name}? This device will be signed out.`
-			: devices.length === 1
-				? `Remove ${d.name}? It's the last device; getting back in will need pnpm auth:setup-link on the server.`
-				: `Remove ${d.name}? It won't be able to sign in.`;
+			: `Remove ${d.name}? It won't be able to sign in.`;
 		if (!confirm(warning)) return;
 		const r = await optimism.change({
 			label: `Removing ${d.name}`,
-			patch: devicesData.patch("all", (list) =>
-				list.filter((x) => x.id !== d.id),
-			),
+			patch: withDevice(d.id, () => null),
 			send: () => removeDevice({ data: { id: d.id } }),
 		});
 		if (!r) return;
@@ -81,123 +61,129 @@ export function DevicesCard({ devices }: { devices: Device[] }) {
 		if (d.current) window.location.assign("/login");
 	}
 
+	const assign = (d: Device, staffId: string) => {
+		const person = people.find((p) => p.id === staffId);
+		if (!person) return;
+		return optimism.change({
+			label: `Giving ${d.name} to ${person.name}`,
+			patch: withDevice(d.id, (x) => ({
+				...x,
+				staffId,
+				staffName: person.name,
+			})),
+			send: () => assignDevice({ data: { id: d.id, staffId } }),
+		});
+	};
+
 	return (
-		<Card
-			title="Devices"
-			flush
-			aside={
-				!link && (
-					<Button size="sm" variant="outline" onClick={addDevice}>
-						Add a device
+		<>
+			<StaffCard access={access} />
+			<Card title="Devices" flush aside={<Me access={access} />}>
+				{access.devices.length === 0 ? (
+					<p className="px-4 pb-3 text-muted-foreground">None.</p>
+				) : (
+					<ul>
+						{access.devices.map((d) =>
+							renaming === d.id ? (
+								<Row key={d.id}>
+									<NameForm
+										initial={d.name}
+										onSave={(name) => rename(d, name)}
+										onCancel={() => setRenaming(null)}
+									/>
+								</Row>
+							) : (
+								<Row
+									key={d.id}
+									actions={
+										access.owner && (
+											<>
+												<IconAction
+													icon={Pencil}
+													label="Rename"
+													onClick={() => setRenaming(d.id)}
+												/>
+												<IconAction
+													icon={Trash2}
+													label="Remove"
+													onClick={() => remove(d)}
+												/>
+											</>
+										)
+									}
+								>
+									<div className="min-w-0 flex-1">
+										<p className="flex items-center gap-2 font-medium">
+											<span className="truncate">{d.name}</span>
+											{d.current && <Badge tone="info">This device</Badge>}
+										</p>
+										<p className="text-xs text-muted-foreground">
+											{d.lastUsedAt
+												? `Signed in ${formatDay(d.lastUsedAt)}`
+												: `Added ${formatDay(d.createdAt)}`}
+										</p>
+									</div>
+									{d.staffName ? (
+										<span className="shrink-0 text-muted-foreground animate-in fade-in">
+											{d.staffName}
+										</span>
+									) : access.owner && people.length > 0 ? (
+										<select
+											value=""
+											onChange={(e) => assign(d, e.target.value)}
+											aria-label={`Whose is ${d.name}`}
+											className="h-8 shrink-0 rounded-lg border border-warning-text/40 bg-warning-fill px-2 text-warning-text"
+										>
+											<option value="" disabled>
+												Unassigned
+											</option>
+											{people.map((p) => (
+												<option key={p.id} value={p.id}>
+													{p.name}
+												</option>
+											))}
+										</select>
+									) : (
+										<Badge tone="warning">Unassigned</Badge>
+									)}
+								</Row>
+							),
+						)}
+					</ul>
+				)}
+				<div className="border-t px-4 py-3">
+					<Button
+						size="sm"
+						variant="outline"
+						onClick={async () => {
+							await signOut();
+							window.location.assign("/login");
+						}}
+					>
+						Sign out of this device
 					</Button>
-				)
-			}
-		>
-			{link && (
-				<div className="flex gap-4 px-4 pb-3">
-					<img src={link.qr} alt="Setup link" className="size-36 shrink-0" />
-					<div className="flex min-w-0 flex-col gap-2">
-						<p>
-							Open on the new device. Works once, until{" "}
-							{link.expiresAt.toLocaleTimeString([], {
-								hour: "numeric",
-								minute: "2-digit",
-							})}
-							.
-						</p>
-						<code className="truncate rounded bg-surface px-2 py-1 text-xs">
-							{link.url}
-						</code>
-						<div className="flex gap-2">
-							<Button
-								size="sm"
-								variant="outline"
-								onClick={() =>
-									navigator.clipboard
-										.writeText(link.url)
-										.then(() => toast.success("Copied"))
-								}
-							>
-								Copy link
-							</Button>
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() => {
-									setLink(null);
-									router.invalidate();
-								}}
-							>
-								Done
-							</Button>
-						</div>
-					</div>
 				</div>
-			)}
-			{devices.length === 0 ? (
-				<p className="px-4 pb-3 text-muted-foreground">None.</p>
-			) : (
-				<ul>
-					{devices.map((d) =>
-						renaming === d.id ? (
-							<Row key={d.id}>
-								<NameForm
-									initial={d.name}
-									onSave={(name) => rename(d, name)}
-									onCancel={() => setRenaming(null)}
-								/>
-							</Row>
-						) : (
-							<Row
-								key={d.id}
-								actions={
-									<>
-										<IconAction
-											icon={Pencil}
-											label="Rename"
-											onClick={() => setRenaming(d.id)}
-										/>
-										<IconAction
-											icon={Trash2}
-											label="Remove"
-											onClick={() => remove(d)}
-										/>
-									</>
-								}
-							>
-								<div className="min-w-0 flex-1">
-									<p className="flex items-center gap-2 font-medium">
-										<span className="truncate">{d.name}</span>
-										{d.current && <Badge tone="info">This device</Badge>}
-									</p>
-									<p className="text-xs text-muted-foreground">
-										{d.lastUsedAt
-											? `Signed in ${formatDay(d.lastUsedAt)}`
-											: `Added ${formatDay(d.createdAt)}`}
-									</p>
-								</div>
-							</Row>
-						),
-					)}
-				</ul>
-			)}
-			<div className="border-t px-4 py-3">
-				<Button
-					size="sm"
-					variant="outline"
-					onClick={async () => {
-						await signOut();
-						window.location.assign("/login");
-					}}
-				>
-					Sign out of this device
-				</Button>
-			</div>
-		</Card>
+			</Card>
+		</>
 	);
 }
 
-// Opened with the device's current name. Save needs a name in it.
+function Me({ access }: { access: Access }) {
+	const { me } = access;
+	switch (me.kind) {
+		case "staff":
+			return (
+				<span>
+					{me.name} · {me.role === "owner" ? "Owner" : "Operator"}
+				</span>
+			);
+		case "unassigned":
+			return <span>Unassigned device</span>;
+		case "system":
+			return <span>Dev server</span>;
+	}
+}
+
 function NameForm({
 	initial,
 	onSave,

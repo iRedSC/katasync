@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, gt, isNull, lt } from "drizzle-orm";
+import { and, eq, exists, gt, isNull, lt } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { authChallenges, sessions, setupLinks } from "#/db/schema";
+import { authChallengeBindings } from "#/db/identity-schema";
+import { authChallenges, sessions } from "#/db/schema";
 
-// Sessions, setup links, and challenges: the parts of sign-in that are just
-// rows with expiry dates. The passkey ceremonies are in webauthn.ts.
+// Sessions and challenges: the parts of sign-in that are just rows with
+// expiry dates. Setup links are in enrollment.ts, the passkey ceremonies in
+// webauthn.ts.
 
 export class AuthError extends Error {
 	name = "AuthError";
@@ -67,79 +69,65 @@ export async function endSession(db: Db, token: string) {
 	await db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token)));
 }
 
-// A link a new device opens to create its passkey.
-export const SETUP_LINK_MINUTES = 15;
-
-export async function createSetupLink(
-	db: Db,
-	minutes = SETUP_LINK_MINUTES,
-	now = new Date(),
-) {
-	const token = newToken();
-	await db.insert(setupLinks).values({
-		tokenHash: hashToken(token),
-		createdAt: now,
-		expiresAt: new Date(now.getTime() + minutes * 60_000),
-	});
-	return token;
-}
-
-// Throws unless the link is real, unused, and in date.
-export async function checkSetupLink(db: Db, token: string, now = new Date()) {
-	const [link] = await db
-		.select()
-		.from(setupLinks)
-		.where(eq(setupLinks.tokenHash, hashToken(token)));
-	if (!link) throw new AuthError("This setup link isn't valid");
-	if (link.usedAt) throw new AuthError("This setup link was already used");
-	if (link.expiresAt <= now)
-		throw new AuthError("This setup link expired; make a new one");
-}
-
-// Marks the link used. Only one device can win a race for it.
-export async function useSetupLink(db: Db, token: string, now = new Date()) {
-	const used = await db
-		.update(setupLinks)
-		.set({ usedAt: now })
-		.where(
-			and(
-				eq(setupLinks.tokenHash, hashToken(token)),
-				isNull(setupLinks.usedAt),
-				gt(setupLinks.expiresAt, now),
-			),
-		)
-		.returning();
-	if (used.length === 0)
-		throw new AuthError("This setup link was already used or expired");
-}
-
 // A passkey prompt has this long to be answered.
 const CHALLENGE_MINUTES = 5;
+
+export type ChallengeBinding =
+	| { purpose: "login" }
+	| { purpose: "register"; setupTokenHash: string };
+
+const setupHashOf = (binding: ChallengeBinding) =>
+	binding.purpose === "register" ? binding.setupTokenHash : null;
 
 export async function saveChallenge(
 	db: Db,
 	challenge: string,
+	binding: ChallengeBinding,
 	now = new Date(),
 ) {
-	await db.delete(authChallenges).where(lt(authChallenges.expiresAt, now));
-	await db.insert(authChallenges).values({
-		challenge,
-		expiresAt: new Date(now.getTime() + CHALLENGE_MINUTES * 60_000),
+	await db.transaction(async (tx) => {
+		await tx.delete(authChallenges).where(lt(authChallenges.expiresAt, now));
+		await tx.insert(authChallenges).values({
+			challenge,
+			expiresAt: new Date(now.getTime() + CHALLENGE_MINUTES * 60_000),
+		});
+		await tx.insert(authChallengeBindings).values({
+			challenge,
+			purpose: binding.purpose,
+			setupTokenHash: setupHashOf(binding),
+		});
 	});
 }
 
-// True once for a challenge we issued and that's still in date.
+// True once for a challenge we issued for this same ceremony and that's
+// still in date.
 export async function consumeChallenge(
 	db: Db,
 	challenge: string,
+	binding: ChallengeBinding,
 	now = new Date(),
 ) {
+	const setupTokenHash = setupHashOf(binding);
 	const used = await db
 		.delete(authChallenges)
 		.where(
 			and(
 				eq(authChallenges.challenge, challenge),
 				gt(authChallenges.expiresAt, now),
+				exists(
+					db
+						.select({ challenge: authChallengeBindings.challenge })
+						.from(authChallengeBindings)
+						.where(
+							and(
+								eq(authChallengeBindings.challenge, authChallenges.challenge),
+								eq(authChallengeBindings.purpose, binding.purpose),
+								setupTokenHash === null
+									? isNull(authChallengeBindings.setupTokenHash)
+									: eq(authChallengeBindings.setupTokenHash, setupTokenHash),
+							),
+						),
+				),
 			),
 		)
 		.returning();
