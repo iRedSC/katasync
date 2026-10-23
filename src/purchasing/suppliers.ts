@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { productComponents, supplierOffers, suppliers } from "#/db/schema";
 import { setOfferTerms } from "#/purchasing/catalogs";
@@ -47,6 +47,8 @@ export async function setSupplierTerms(
 
 export type SupplierFields = {
 	name: string;
+	// Short enough for a badge, e.g. "FCI".
+	code: string;
 	contactName: string | null;
 	email: string | null;
 	phone: string | null;
@@ -95,10 +97,13 @@ export async function updateSupplier(
 		);
 	if (fields.name !== undefined && fields.name.trim() === "")
 		throw new PurchaseOrderError("A supplier needs a name");
+	const code = fields.code?.trim();
+	if (code !== undefined) await checkCode(db, id, code);
 	const set = Object.fromEntries(
 		Object.entries({
 			...fields,
 			name: fields.name?.trim(),
+			code,
 			contactName: blank(fields.contactName),
 			email: blank(fields.email),
 			phone: blank(fields.phone),
@@ -120,6 +125,25 @@ export async function updateSupplier(
 		.where(eq(suppliers.id, id))
 		.returning({ id: suppliers.id });
 	if (updated.length === 0) throw new PurchaseOrderError("No such supplier");
+}
+
+// supplierByRef finds a supplier by code or name, ignoring case, so a code
+// may match no other supplier's either.
+async function checkCode(db: Db, id: number, code: string) {
+	if (code === "")
+		throw new PurchaseOrderError("A supplier needs a short name");
+	const wanted = code.toLowerCase();
+	const [taken] = await db
+		.select({ name: suppliers.name })
+		.from(suppliers)
+		.where(
+			and(
+				ne(suppliers.id, id),
+				sql`(lower(${suppliers.code}) = ${wanted} or lower(${suppliers.name}) = ${wanted})`,
+			),
+		);
+	if (taken)
+		throw new PurchaseOrderError(`${taken.name} already goes by ${code}`);
 }
 
 // Who a tool set is ordered from: the supplier most of its parts are bought

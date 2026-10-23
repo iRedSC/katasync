@@ -192,7 +192,7 @@ describe("a PO's own suggestion settings", () => {
 		expect(r).toMatchObject({
 			sku: "BLADE",
 			due: "now",
-			cheaperAt: { supplierId: tsw, itemCost: 4, ours: 5 },
+			cheaperAt: { supplierId: tsw, supplierCode: "TSW", itemCost: 4, ours: 5 },
 		});
 
 		const pricier = { ...DEFAULT_SETTINGS, includePricier: true };

@@ -366,6 +366,10 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 			inputSchema: {
 				supplier: z.string().describe("Code or name"),
 				name: z.string().optional(),
+				code: z
+					.string()
+					.optional()
+					.describe("Short name shown where the full one won't fit, e.g. FCI"),
 				contact_name: z.string().nullable().optional(),
 				email: z.string().email().nullable().optional(),
 				phone: z.string().nullable().optional(),
@@ -397,6 +401,7 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 			const { id } = await supplierByRef(db, input.supplier);
 			await updateSupplier(db, id, {
 				name: input.name,
+				code: input.code,
 				contactName: input.contact_name,
 				email: input.email,
 				phone: input.phone,

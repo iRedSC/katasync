@@ -39,6 +39,8 @@ export type ReorderNeed = SuggestedLine & Supplier;
 export type CheaperAt = {
 	supplierId: number;
 	supplierName: string;
+	// Short enough for a badge, e.g. "FCI".
+	supplierCode: string;
 	// Per single item, at each supplier.
 	itemCost: number;
 	ours: number | null;
@@ -111,6 +113,7 @@ export async function reorderBreakdown(
 					criticalThreshold: suppliers.criticalThreshold,
 					cheapestId: cheapestSupplier.id,
 					cheapestName: cheapestSupplier.name,
+					cheapestCode: cheapestSupplier.code,
 					cheapestItemCost: cheapestOffer.itemCost,
 				})
 				.from(products)
@@ -242,12 +245,14 @@ export async function reorderBreakdown(
 			supplier &&
 			p.cheapestId !== null &&
 			p.cheapestName !== null &&
+			p.cheapestCode !== null &&
 			p.cheapestId !== supplier.supplierId &&
 			p.cheapestItemCost !== null &&
 			(p.itemCost === null || p.cheapestItemCost < p.itemCost)
 				? {
 						supplierId: p.cheapestId,
 						supplierName: p.cheapestName,
+						supplierCode: p.cheapestCode,
 						itemCost: p.cheapestItemCost,
 						ours: p.itemCost,
 					}

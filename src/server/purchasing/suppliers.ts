@@ -45,6 +45,7 @@ export const updateSupplier = createServerFn({ method: "POST" })
 		type({
 			id: "number.integer > 0",
 			name: "string > 0",
+			code: "string > 0",
 			contactName: text,
 			email: type("string.email | null").or("''"),
 			phone: text,
