@@ -105,6 +105,9 @@ describe("sales history", () => {
 		expect(await soldByDay(db, since)).toEqual([
 			{ productId: wrench, day: "2026-10-05", units: 6 },
 		]);
+		expect(await db.select().from(schema.salesUnits)).toEqual([
+			expect.objectContaining({ productId: wrench, units: 6 }),
+		]);
 	});
 
 	test("a sale the ledger never recorded counts the recipe as it stands, beside recorded ones", async () => {
@@ -119,6 +122,12 @@ describe("sales history", () => {
 		const sold = await soldSince(db, since, { includeFba: true });
 		expect(sold.get(wrench)).toBe(2);
 		expect(sold.get(bit)).toBe(5);
+		expect(await db.select().from(schema.salesUnits)).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ productId: wrench, units: 2 }),
+				expect.objectContaining({ productId: bit, units: 5 }),
+			]),
+		);
 	});
 
 	test("an undone sale is no longer recorded, so it counts once by the recipe", async () => {

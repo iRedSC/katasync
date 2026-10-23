@@ -1,8 +1,8 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { movements, productComponents, products } from "#/db/schema";
+import { movements, productComponents } from "#/db/schema";
 import { LedgerError } from "./ledger";
-import { getRecipe } from "./ledger/post";
+import { lockRecipe } from "./ledger/post";
 
 // What each kind may contain. Kits hold only simple SKUs; bundles may also hold
 // kits. Nothing holds a bundle, so recipes are at most two levels deep and
@@ -19,14 +19,15 @@ export async function setRecipe(
 	components: { productId: number; quantity: number }[],
 ) {
 	return db.transaction(async (tx) => {
-		// Locked first, so two replacements of one parent run one after the other
-		// and the last one's whole list is what's left.
-		const [parent] = await tx
-			.select()
-			.from(products)
-			.where(eq(products.id, parentProductId))
-			.for("update");
-		if (!parent) throw new LedgerError(`Unknown product ${parentProductId}`);
+		const {
+			parent,
+			recipe,
+			products: rows,
+		} = await lockRecipe(
+			tx,
+			parentProductId,
+			components.map((component) => component.productId),
+		);
 		if (parent.kind === "simple") {
 			throw new LedgerError(
 				`${parent.sku} is a simple SKU and can't have components`,
@@ -36,17 +37,6 @@ export async function setRecipe(
 			throw new LedgerError(`${parent.sku} needs at least one component`);
 		}
 
-		// Share-locked so a part can't be archived mid-change.
-		const rows = await tx
-			.select()
-			.from(products)
-			.where(
-				inArray(
-					products.id,
-					components.map((c) => c.productId),
-				),
-			)
-			.for("share");
 		const byId = new Map(rows.map((r) => [r.id, r]));
 		const allowed: readonly string[] = allowedComponents[parent.kind];
 		for (const c of components) {
@@ -69,10 +59,7 @@ export async function setRecipe(
 			}
 		}
 
-		if (
-			parent.kind === "kit" &&
-			!sameParts(await getRecipe(tx, parentProductId), components)
-		) {
+		if (parent.kind === "kit" && !sameParts(recipe, components)) {
 			const [stocked] = await tx
 				.select({ productId: movements.productId })
 				.from(movements)

@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	movements,
@@ -67,12 +67,8 @@ export async function postMovements(
 
 	return db.transaction(async (tx) => {
 		const productIds = [...new Set(lines.map((l) => l.productId))];
-		const bundles = await tx
-			.select({ sku: products.sku })
-			.from(products)
-			.where(
-				and(inArray(products.id, productIds), eq(products.kind, "bundle")),
-			);
+		const locked = await lockStockProducts(tx, productIds);
+		const bundles = locked.filter((product) => product.kind === "bundle");
 		if (bundles.length > 0) {
 			throw new LedgerError(
 				`Bundles have no stock of their own: ${bundles.map((b) => b.sku).join(", ")}`,
@@ -113,6 +109,50 @@ export async function postMovements(
 		}
 		return { batchId, levels };
 	});
+}
+
+export async function lockStockProducts(db: Db, productIds: number[]) {
+	const ids = [...new Set(productIds)].sort((left, right) => left - right);
+	if (ids.length === 0) return [];
+	const rows = await db
+		.select()
+		.from(products)
+		.where(inArray(products.id, ids))
+		.orderBy(products.id)
+		.for("update");
+	if (rows.length !== ids.length)
+		throw new LedgerError("Unknown stock product");
+	return rows;
+}
+
+export async function lockRecipe(
+	db: Db,
+	parentProductId: number,
+	additionalProductIds: number[] = [],
+) {
+	const before = await getRecipe(db, parentProductId);
+	const locked = await lockStockProducts(db, [
+		parentProductId,
+		...before.map((part) => part.productId),
+		...additionalProductIds,
+	]);
+	const recipe = await getRecipe(db, parentProductId);
+	if (
+		before.length !== recipe.length ||
+		before.some(
+			(part) =>
+				!recipe.some(
+					(current) =>
+						current.productId === part.productId &&
+						current.quantity === part.quantity,
+				),
+		)
+	) {
+		throw new LedgerError("The recipe changed; try again");
+	}
+	const parent = locked.find((product) => product.id === parentProductId);
+	if (!parent) throw new LedgerError(`Unknown product ${parentProductId}`);
+	return { parent, recipe, products: locked };
 }
 
 export async function getRecipe(db: Db, parentProductId: number) {

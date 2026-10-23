@@ -12,8 +12,8 @@ import { carriedOrStocked } from "#/products/archive";
 import {
 	assertPositiveInteger,
 	getProduct,
-	getRecipe,
 	LedgerError,
+	lockRecipe,
 	postMovements,
 	type StockLevel,
 } from "./ledger/post";
@@ -67,9 +67,8 @@ async function convertKits(
 ) {
 	assertPositiveInteger(input.quantity);
 	return db.transaction(async (tx) => {
-		const kit = await getProduct(tx, input.kitProductId);
+		const { parent: kit, recipe } = await lockRecipe(tx, input.kitProductId);
 		if (kit.kind !== "kit") throw new LedgerError(`${kit.sku} is not a kit`);
-		const recipe = await getRecipe(tx, kit.id);
 		if (recipe.length === 0)
 			throw new LedgerError(`Kit ${kit.sku} has no components`);
 

@@ -277,6 +277,8 @@ export const movements = pgTable(
 		),
 		index("movements_product_location_idx").on(t.productId, t.locationId),
 		index("movements_created_at_idx").on(t.createdAt),
+		index("movements_batch_idx").on(t.batchId),
+		index("movements_reference_idx").on(t.reference),
 	],
 );
 
@@ -700,6 +702,10 @@ export const orderLines = pgTable(
 	(t) => [
 		unique("order_lines_order_external_id").on(t.orderId, t.externalId),
 		index("order_lines_product_idx").on(t.productId),
+		index("order_lines_sale_batch_idx").on(t.saleBatchId),
+		index("order_lines_unsettled_idx")
+			.on(t.id)
+			.where(sql`${t.saleBatchId} is null and ${t.productId} is not null`),
 	],
 );
 

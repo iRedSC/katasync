@@ -5,8 +5,8 @@ import type { CostLine } from "#/inventory/valuation";
 import {
 	assertPositiveInteger,
 	getProduct,
-	getRecipe,
 	LedgerError,
+	lockRecipe,
 	postMovements,
 } from "./post";
 
@@ -100,9 +100,9 @@ export async function recordSale(
 // The stocked units behind `quantity` of a product: a bundle's components,
 // or the product itself.
 async function unitsOf(db: Db, productId: number, quantity: number) {
-	const sku = await getProduct(db, productId);
+	const { parent: sku, recipe } = await lockRecipe(db, productId);
 	if (sku.kind !== "bundle") return [{ productId: sku.id, quantity }];
-	const units = (await getRecipe(db, sku.id)).map((c) => ({
+	const units = recipe.map((c) => ({
 		productId: c.productId,
 		quantity: c.quantity * quantity,
 	}));
