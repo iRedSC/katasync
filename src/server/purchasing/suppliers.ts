@@ -84,7 +84,11 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 		const db = getDb();
 		const [[product], offers, open, units] = await Promise.all([
 			db
-				.select({ catalogId: products.catalogId, catalogName: catalogs.name })
+				.select({
+					catalogId: products.catalogId,
+					catalogName: catalogs.name,
+					catalogPhotoId: catalogs.photoId,
+				})
 				.from(products)
 				.leftJoin(catalogs, eq(catalogs.id, products.catalogId))
 				.where(eq(products.id, data.productId)),
@@ -136,7 +140,11 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 		const catalog =
 			product.catalogId === null || product.catalogName === null
 				? null
-				: { id: product.catalogId, name: product.catalogName };
+				: {
+						id: product.catalogId,
+						name: product.catalogName,
+						photoId: product.catalogPhotoId,
+					};
 		return { catalog, offers, open, units };
 	});
 

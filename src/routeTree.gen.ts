@@ -41,12 +41,12 @@ import { Route as ProfitPostageRouteImport } from './routes/profit/postage'
 import { Route as PurchasingIndexRouteImport } from './routes/purchasing/index'
 import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingEmailsRouteImport } from './routes/purchasing/emails'
-import { Route as PurchasingSuppliersRouteImport } from './routes/purchasing/suppliers'
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
 import { Route as TransfersIndexRouteImport } from './routes/transfers/index'
 import { Route as TransfersIdRouteImport } from './routes/transfers/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiCatalogPhotosIndexRouteImport } from './routes/api/catalog-photos/index'
 import { Route as ApiCronInboxRouteImport } from './routes/api/cron/inbox'
 import { Route as ApiCronMessagesRouteImport } from './routes/api/cron/messages'
 import { Route as ApiCronShippoRebillsRouteImport } from './routes/api/cron/shippo-rebills'
@@ -61,9 +61,14 @@ import { Route as ApiPoFilesFileIdRouteImport } from './routes/api/po-files/$fil
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as LabelsRefurbsReturnIdRouteImport } from './routes/labels/refurbs.$returnId'
 import { Route as OrdersReturnsInsightsRouteImport } from './routes/orders/returns_.insights'
+import { Route as PurchasingCatalogPhotoIdRouteImport } from './routes/purchasing/catalog-photo.$id'
+import { Route as PurchasingCatalogsIndexRouteImport } from './routes/purchasing/catalogs/index'
+import { Route as PurchasingCatalogsIdRouteImport } from './routes/purchasing/catalogs/$id'
 import { Route as PurchasingDamagePhotoIdRouteImport } from './routes/purchasing/damage-photo.$id'
 import { Route as PurchasingPdfIdRouteImport } from './routes/purchasing/pdf.$id'
 import { Route as PurchasingSuggestedSupplierIdRouteImport } from './routes/purchasing/suggested.$supplierId'
+import { Route as PurchasingSuppliersIndexRouteImport } from './routes/purchasing/suppliers/index'
+import { Route as PurchasingSuppliersIdRouteImport } from './routes/purchasing/suppliers/$id'
 import { Route as ApiCronCostsChannelRouteImport } from './routes/api/cron/costs.$channel'
 import { Route as ApiCronOrdersChannelRouteImport } from './routes/api/cron/orders.$channel'
 import { Route as ApiCronSyncChannelRouteImport } from './routes/api/cron/sync.$channel'
@@ -231,11 +236,6 @@ const PurchasingEmailsRoute = PurchasingEmailsRouteImport.update({
   path: '/purchasing/emails',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PurchasingSuppliersRoute = PurchasingSuppliersRouteImport.update({
-  id: '/purchasing/suppliers',
-  path: '/purchasing/suppliers',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ReceiveIndexRoute = ReceiveIndexRouteImport.update({
   id: '/receive/',
   path: '/receive/',
@@ -259,6 +259,11 @@ const TransfersIdRoute = TransfersIdRouteImport.update({
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCatalogPhotosIndexRoute = ApiCatalogPhotosIndexRouteImport.update({
+  id: '/api/catalog-photos/',
+  path: '/api/catalog-photos/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCronInboxRoute = ApiCronInboxRouteImport.update({
@@ -334,6 +339,22 @@ const OrdersReturnsInsightsRoute = OrdersReturnsInsightsRouteImport.update({
   path: '/orders/returns/insights',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PurchasingCatalogPhotoIdRoute =
+  PurchasingCatalogPhotoIdRouteImport.update({
+    id: '/purchasing/catalog-photo/$id',
+    path: '/purchasing/catalog-photo/$id',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const PurchasingCatalogsIndexRoute = PurchasingCatalogsIndexRouteImport.update({
+  id: '/purchasing/catalogs/',
+  path: '/purchasing/catalogs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PurchasingCatalogsIdRoute = PurchasingCatalogsIdRouteImport.update({
+  id: '/purchasing/catalogs/$id',
+  path: '/purchasing/catalogs/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PurchasingDamagePhotoIdRoute = PurchasingDamagePhotoIdRouteImport.update({
   id: '/purchasing/damage-photo/$id',
   path: '/purchasing/damage-photo/$id',
@@ -350,6 +371,17 @@ const PurchasingSuggestedSupplierIdRoute =
     path: '/purchasing/suggested/$supplierId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const PurchasingSuppliersIndexRoute =
+  PurchasingSuppliersIndexRouteImport.update({
+    id: '/purchasing/suppliers/',
+    path: '/purchasing/suppliers/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const PurchasingSuppliersIdRoute = PurchasingSuppliersIdRouteImport.update({
+  id: '/purchasing/suppliers/$id',
+  path: '/purchasing/suppliers/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCronCostsChannelRoute = ApiCronCostsChannelRouteImport.update({
   id: '/api/cron/costs/$channel',
   path: '/api/cron/costs/$channel',
@@ -410,7 +442,6 @@ export interface FileRoutesByFullPath {
   '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/emails': typeof PurchasingEmailsRoute
-  '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/orders/': typeof OrdersIndexRoute
@@ -434,9 +465,15 @@ export interface FileRoutesByFullPath {
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
+  '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
+  '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
+  '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
+  '/api/catalog-photos/': typeof ApiCatalogPhotosIndexRoute
+  '/purchasing/catalogs/': typeof PurchasingCatalogsIndexRoute
+  '/purchasing/suppliers/': typeof PurchasingSuppliersIndexRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/orders/$channel': typeof ApiCronOrdersChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
@@ -473,7 +510,6 @@ export interface FileRoutesByTo {
   '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/emails': typeof PurchasingEmailsRoute
-  '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/orders': typeof OrdersIndexRoute
@@ -497,9 +533,15 @@ export interface FileRoutesByTo {
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
+  '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
+  '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
+  '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
+  '/api/catalog-photos': typeof ApiCatalogPhotosIndexRoute
+  '/purchasing/catalogs': typeof PurchasingCatalogsIndexRoute
+  '/purchasing/suppliers': typeof PurchasingSuppliersIndexRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/orders/$channel': typeof ApiCronOrdersChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
@@ -537,7 +579,6 @@ export interface FileRoutesById {
   '/profit/postage': typeof ProfitPostageRoute
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/emails': typeof PurchasingEmailsRoute
-  '/purchasing/suppliers': typeof PurchasingSuppliersRoute
   '/receive/$id': typeof ReceiveIdRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/orders/': typeof OrdersIndexRoute
@@ -561,9 +602,15 @@ export interface FileRoutesById {
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/orders/returns_/insights': typeof OrdersReturnsInsightsRoute
+  '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
+  '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
   '/purchasing/pdf/$id': typeof PurchasingPdfIdRoute
   '/purchasing/suggested/$supplierId': typeof PurchasingSuggestedSupplierIdRoute
+  '/purchasing/suppliers/$id': typeof PurchasingSuppliersIdRoute
+  '/api/catalog-photos/': typeof ApiCatalogPhotosIndexRoute
+  '/purchasing/catalogs/': typeof PurchasingCatalogsIndexRoute
+  '/purchasing/suppliers/': typeof PurchasingSuppliersIndexRoute
   '/api/cron/costs/$channel': typeof ApiCronCostsChannelRoute
   '/api/cron/orders/$channel': typeof ApiCronOrdersChannelRoute
   '/api/cron/sync/$channel': typeof ApiCronSyncChannelRoute
@@ -602,7 +649,6 @@ export interface FileRouteTypes {
     | '/profit/postage'
     | '/purchasing/$id'
     | '/purchasing/emails'
-    | '/purchasing/suppliers'
     | '/receive/$id'
     | '/transfers/$id'
     | '/orders/'
@@ -626,9 +672,15 @@ export interface FileRouteTypes {
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
     | '/orders/returns/insights'
+    | '/purchasing/catalog-photo/$id'
+    | '/purchasing/catalogs/$id'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
+    | '/purchasing/suppliers/$id'
+    | '/api/catalog-photos/'
+    | '/purchasing/catalogs/'
+    | '/purchasing/suppliers/'
     | '/api/cron/costs/$channel'
     | '/api/cron/orders/$channel'
     | '/api/cron/sync/$channel'
@@ -665,7 +717,6 @@ export interface FileRouteTypes {
     | '/profit/postage'
     | '/purchasing/$id'
     | '/purchasing/emails'
-    | '/purchasing/suppliers'
     | '/receive/$id'
     | '/transfers/$id'
     | '/orders'
@@ -689,9 +740,15 @@ export interface FileRouteTypes {
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
     | '/orders/returns/insights'
+    | '/purchasing/catalog-photo/$id'
+    | '/purchasing/catalogs/$id'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
+    | '/purchasing/suppliers/$id'
+    | '/api/catalog-photos'
+    | '/purchasing/catalogs'
+    | '/purchasing/suppliers'
     | '/api/cron/costs/$channel'
     | '/api/cron/orders/$channel'
     | '/api/cron/sync/$channel'
@@ -728,7 +785,6 @@ export interface FileRouteTypes {
     | '/profit/postage'
     | '/purchasing/$id'
     | '/purchasing/emails'
-    | '/purchasing/suppliers'
     | '/receive/$id'
     | '/transfers/$id'
     | '/orders/'
@@ -752,9 +808,15 @@ export interface FileRouteTypes {
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
     | '/orders/returns_/insights'
+    | '/purchasing/catalog-photo/$id'
+    | '/purchasing/catalogs/$id'
     | '/purchasing/damage-photo/$id'
     | '/purchasing/pdf/$id'
     | '/purchasing/suggested/$supplierId'
+    | '/purchasing/suppliers/$id'
+    | '/api/catalog-photos/'
+    | '/purchasing/catalogs/'
+    | '/purchasing/suppliers/'
     | '/api/cron/costs/$channel'
     | '/api/cron/orders/$channel'
     | '/api/cron/sync/$channel'
@@ -792,7 +854,6 @@ export interface RootRouteChildren {
   ProfitPostageRoute: typeof ProfitPostageRoute
   PurchasingIdRoute: typeof PurchasingIdRoute
   PurchasingEmailsRoute: typeof PurchasingEmailsRoute
-  PurchasingSuppliersRoute: typeof PurchasingSuppliersRoute
   ReceiveIdRoute: typeof ReceiveIdRoute
   TransfersIdRoute: typeof TransfersIdRoute
   OrdersIndexRoute: typeof OrdersIndexRoute
@@ -816,9 +877,15 @@ export interface RootRouteChildren {
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   LabelsRefurbsReturnIdRoute: typeof LabelsRefurbsReturnIdRoute
   OrdersReturnsInsightsRoute: typeof OrdersReturnsInsightsRoute
+  PurchasingCatalogPhotoIdRoute: typeof PurchasingCatalogPhotoIdRoute
+  PurchasingCatalogsIdRoute: typeof PurchasingCatalogsIdRoute
   PurchasingDamagePhotoIdRoute: typeof PurchasingDamagePhotoIdRoute
   PurchasingPdfIdRoute: typeof PurchasingPdfIdRoute
   PurchasingSuggestedSupplierIdRoute: typeof PurchasingSuggestedSupplierIdRoute
+  PurchasingSuppliersIdRoute: typeof PurchasingSuppliersIdRoute
+  ApiCatalogPhotosIndexRoute: typeof ApiCatalogPhotosIndexRoute
+  PurchasingCatalogsIndexRoute: typeof PurchasingCatalogsIndexRoute
+  PurchasingSuppliersIndexRoute: typeof PurchasingSuppliersIndexRoute
   ApiCronCostsChannelRoute: typeof ApiCronCostsChannelRoute
   ApiCronOrdersChannelRoute: typeof ApiCronOrdersChannelRoute
   ApiCronSyncChannelRoute: typeof ApiCronSyncChannelRoute
@@ -1053,13 +1120,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchasingEmailsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/purchasing/suppliers': {
-      id: '/purchasing/suppliers'
-      path: '/purchasing/suppliers'
-      fullPath: '/purchasing/suppliers'
-      preLoaderRoute: typeof PurchasingSuppliersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/receive/': {
       id: '/receive/'
       path: '/receive'
@@ -1093,6 +1153,13 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/$'
       fullPath: '/api/auth/$'
       preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/catalog-photos/': {
+      id: '/api/catalog-photos/'
+      path: '/api/catalog-photos'
+      fullPath: '/api/catalog-photos/'
+      preLoaderRoute: typeof ApiCatalogPhotosIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/cron/inbox': {
@@ -1193,6 +1260,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrdersReturnsInsightsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/purchasing/catalog-photo/$id': {
+      id: '/purchasing/catalog-photo/$id'
+      path: '/purchasing/catalog-photo/$id'
+      fullPath: '/purchasing/catalog-photo/$id'
+      preLoaderRoute: typeof PurchasingCatalogPhotoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchasing/catalogs/': {
+      id: '/purchasing/catalogs/'
+      path: '/purchasing/catalogs'
+      fullPath: '/purchasing/catalogs/'
+      preLoaderRoute: typeof PurchasingCatalogsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchasing/catalogs/$id': {
+      id: '/purchasing/catalogs/$id'
+      path: '/purchasing/catalogs/$id'
+      fullPath: '/purchasing/catalogs/$id'
+      preLoaderRoute: typeof PurchasingCatalogsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/purchasing/damage-photo/$id': {
       id: '/purchasing/damage-photo/$id'
       path: '/purchasing/damage-photo/$id'
@@ -1212,6 +1300,20 @@ declare module '@tanstack/react-router' {
       path: '/purchasing/suggested/$supplierId'
       fullPath: '/purchasing/suggested/$supplierId'
       preLoaderRoute: typeof PurchasingSuggestedSupplierIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchasing/suppliers/': {
+      id: '/purchasing/suppliers/'
+      path: '/purchasing/suppliers'
+      fullPath: '/purchasing/suppliers/'
+      preLoaderRoute: typeof PurchasingSuppliersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchasing/suppliers/$id': {
+      id: '/purchasing/suppliers/$id'
+      path: '/purchasing/suppliers/$id'
+      fullPath: '/purchasing/suppliers/$id'
+      preLoaderRoute: typeof PurchasingSuppliersIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/cron/costs/$channel': {
@@ -1288,7 +1390,6 @@ const rootRouteChildren: RootRouteChildren = {
   ProfitPostageRoute: ProfitPostageRoute,
   PurchasingIdRoute: PurchasingIdRoute,
   PurchasingEmailsRoute: PurchasingEmailsRoute,
-  PurchasingSuppliersRoute: PurchasingSuppliersRoute,
   ReceiveIdRoute: ReceiveIdRoute,
   TransfersIdRoute: TransfersIdRoute,
   OrdersIndexRoute: OrdersIndexRoute,
@@ -1314,9 +1415,15 @@ const rootRouteChildren: RootRouteChildren = {
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   LabelsRefurbsReturnIdRoute: LabelsRefurbsReturnIdRoute,
   OrdersReturnsInsightsRoute: OrdersReturnsInsightsRoute,
+  PurchasingCatalogPhotoIdRoute: PurchasingCatalogPhotoIdRoute,
+  PurchasingCatalogsIdRoute: PurchasingCatalogsIdRoute,
   PurchasingDamagePhotoIdRoute: PurchasingDamagePhotoIdRoute,
   PurchasingPdfIdRoute: PurchasingPdfIdRoute,
   PurchasingSuggestedSupplierIdRoute: PurchasingSuggestedSupplierIdRoute,
+  PurchasingSuppliersIdRoute: PurchasingSuppliersIdRoute,
+  ApiCatalogPhotosIndexRoute: ApiCatalogPhotosIndexRoute,
+  PurchasingCatalogsIndexRoute: PurchasingCatalogsIndexRoute,
+  PurchasingSuppliersIndexRoute: PurchasingSuppliersIndexRoute,
   ApiCronCostsChannelRoute: ApiCronCostsChannelRoute,
   ApiCronOrdersChannelRoute: ApiCronOrdersChannelRoute,
   ApiCronSyncChannelRoute: ApiCronSyncChannelRoute,

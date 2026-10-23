@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import {
+	catalogs,
 	listings,
 	locations,
 	productComponents,
@@ -50,11 +51,15 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				// any part does (src/inventory/not-counted.ts).
 				notCounted: sql<boolean>`${products.notCountedSince} is not null`,
 				group: productGroups.name,
+				catalogId: catalogs.id,
+				catalogName: catalogs.name,
+				catalogPhotoId: catalogs.photoId,
 				supplierId: suppliers.id,
 				supplierName: suppliers.name,
 			})
 			.from(products)
 			.leftJoin(productGroups, eq(productGroups.id, products.groupId))
+			.leftJoin(catalogs, eq(catalogs.id, products.catalogId))
 			// Who reorder buys it from: its cheapest supplier.
 			.leftJoin(
 				supplierOffers,
@@ -141,55 +146,69 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 		const need = new Map(needsOf(breakdown).map((n) => [n.productId, n]));
 		const why = new Map(breakdown.map((b) => [b.line.productId, b.why]));
 		const shopify = shopifyFiling(filing);
-		const listed = rows.map(({ supplierId, supplierName, ...r }) => {
-			const s = shopify.get(r.id);
-			const c = abc.classes.get(r.id);
-			const n = need.get(r.id);
-			const range = ranges.get(r.id);
-			// stockRanges answers for every product it's asked about.
-			if (!range) throw new Error(`No stock range for ${r.sku}`);
-			return {
-				...r,
-				// Our own type wins; Shopify's fills in where we have none.
-				category: r.category ?? s?.productType ?? null,
-				tags: s ? [...s.tags].sort() : [],
-				vendor: s?.vendor ?? null,
-				status: s?.status ?? null,
-				onHand: r.kind === "bundle" ? null : (onHand.get(r.id) ?? 0),
-				available: available.get(r.id) ?? 0,
-				abc: c?.abc ?? null,
-				// 1 is the most value. Null for tool sets and unpriced products.
-				abcRank: c?.rank ?? null,
-				supplier:
-					supplierId === null || supplierName === null
-						? null
-						: { id: supplierId, name: supplierName },
-				// Units on sent POs that haven't arrived.
-				onOrder: onOrder.get(r.id) ?? 0,
-				// Its line on the supplier's open draft, in the line's unit.
-				draft: drafts.get(r.id) ?? null,
-				// What to order today, in the supplier's unit. Null when stock
-				// and what's on order last until a PO sent now would arrive.
-				reorder: n
-					? {
-							quantity: n.quantity,
-							unit: n.unit,
-							packSize: n.packSize,
-							supplierCount: n.supplierCount,
-						}
-					: null,
-				// How much we like to keep, its own or the defaults.
-				range,
-				// The oldest count across our shelves; null if any never was.
-				lastCountedAt: counted.get(r.id)?.oldest ?? null,
-				countRequested: counted.get(r.id)?.requested ?? false,
-				// Units a day over the reorder window, as reorder sizes them.
-				dailyDemand: planned.forecasts.get(r.id)?.dailyDemand ?? 0,
-				// Why reorder wants what it does, for the velocity gauge. Null for
-				// tool sets, which are ordered as their parts.
-				why: r.kind === "bundle" ? null : (why.get(r.id) ?? null),
-			};
-		});
+		const listed = rows.map(
+			({
+				supplierId,
+				supplierName,
+				catalogId,
+				catalogName,
+				catalogPhotoId,
+				...r
+			}) => {
+				const s = shopify.get(r.id);
+				const c = abc.classes.get(r.id);
+				const n = need.get(r.id);
+				const range = ranges.get(r.id);
+				// stockRanges answers for every product it's asked about.
+				if (!range) throw new Error(`No stock range for ${r.sku}`);
+				return {
+					...r,
+					// Our own type wins; Shopify's fills in where we have none.
+					category: r.category ?? s?.productType ?? null,
+					tags: s ? [...s.tags].sort() : [],
+					vendor: s?.vendor ?? null,
+					status: s?.status ?? null,
+					onHand: r.kind === "bundle" ? null : (onHand.get(r.id) ?? 0),
+					available: available.get(r.id) ?? 0,
+					abc: c?.abc ?? null,
+					// 1 is the most value. Null for tool sets and unpriced products.
+					abcRank: c?.rank ?? null,
+					// The line it's sold in, which says who sells it.
+					catalog:
+						catalogId === null || catalogName === null
+							? null
+							: { id: catalogId, name: catalogName, photoId: catalogPhotoId },
+					supplier:
+						supplierId === null || supplierName === null
+							? null
+							: { id: supplierId, name: supplierName },
+					// Units on sent POs that haven't arrived.
+					onOrder: onOrder.get(r.id) ?? 0,
+					// Its line on the supplier's open draft, in the line's unit.
+					draft: drafts.get(r.id) ?? null,
+					// What to order today, in the supplier's unit. Null when stock
+					// and what's on order last until a PO sent now would arrive.
+					reorder: n
+						? {
+								quantity: n.quantity,
+								unit: n.unit,
+								packSize: n.packSize,
+								supplierCount: n.supplierCount,
+							}
+						: null,
+					// How much we like to keep, its own or the defaults.
+					range,
+					// The oldest count across our shelves; null if any never was.
+					lastCountedAt: counted.get(r.id)?.oldest ?? null,
+					countRequested: counted.get(r.id)?.requested ?? false,
+					// Units a day over the reorder window, as reorder sizes them.
+					dailyDemand: planned.forecasts.get(r.id)?.dailyDemand ?? 0,
+					// Why reorder wants what it does, for the velocity gauge. Null for
+					// tool sets, which are ordered as their parts.
+					why: r.kind === "bundle" ? null : (why.get(r.id) ?? null),
+				};
+			},
+		);
 		// A tool set reads like any product: its class from its own sales
 		// (abc.sets), counted once all its parts are, ordered from the supplier
 		// of most of its parts, one at a time once none can be built.

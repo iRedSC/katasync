@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Plus, X } from "lucide-react";
 import { useState } from "react";
+import { CatalogMark } from "#/components/catalog-mark";
 import {
 	Command,
 	CommandEmpty,
@@ -15,7 +16,33 @@ import {
 } from "#/components/ui/popover";
 import { cn } from "#/lib/utils";
 
-type Option = { id: number; name: string };
+type Option = {
+	id: number;
+	name: string;
+	// Unknown where the caller has only the name; shows as initials then.
+	photoId?: number | null;
+	description?: string | null;
+};
+
+const mark = (c: Option) => ({ name: c.name, photoId: c.photoId ?? null });
+
+// A catalog as a search row: its mark, name, and what it's about, which
+// the search matches too.
+export function CatalogOption({ c }: { c: Option }) {
+	return (
+		<>
+			<CatalogMark catalog={mark(c)} />
+			<span className="flex min-w-0 flex-1 flex-col">
+				<span className="truncate">{c.name}</span>
+				{c.description && (
+					<span className="truncate text-xs text-muted-foreground">
+						{c.description}
+					</span>
+				)}
+			</span>
+		</>
+	);
+}
 
 // One catalog, picked from a search, or typed to make a new one. Picking
 // "No catalog" takes the product out of any.
@@ -65,11 +92,12 @@ export function CatalogSelect({
 						value === null && "text-muted-foreground",
 					)}
 				>
+					{value && <CatalogMark catalog={mark(value)} size="xs" />}
 					<span className="truncate">{value?.name ?? placeholder}</span>
 					<ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
 				</button>
 			</PopoverTrigger>
-			<PopoverContent className="w-64 p-0" align="start">
+			<PopoverContent className="w-72 p-0" align="start">
 				<Command>
 					<CommandInput
 						placeholder="Find or name a catalog"
@@ -99,13 +127,14 @@ export function CatalogSelect({
 								<CommandItem
 									key={c.id}
 									value={c.name}
+									keywords={c.description ? [c.description] : undefined}
 									onSelect={() => {
 										done();
 										if (c.id !== value?.id) onPick(c);
 									}}
 								>
+									<CatalogOption c={c} />
 									<Check className={cn(c.id !== value?.id && "invisible")} />
-									{c.name}
 								</CommandItem>
 							))}
 							{value !== null && (
@@ -148,8 +177,9 @@ export function CatalogChips({
 			{chosen.map((c) => (
 				<span
 					key={c.id}
-					className="inline-flex items-center gap-0.5 rounded-md bg-subtle py-0.5 pr-0.5 pl-2 text-sm"
+					className="inline-flex items-center gap-1 rounded-md bg-subtle py-0.5 pr-0.5 pl-1 text-sm"
 				>
+					<CatalogMark catalog={mark(c)} size="xs" />
 					{c.name}
 					{chosen.length > 1 && (
 						<button
@@ -184,12 +214,13 @@ export function CatalogChips({
 										<CommandItem
 											key={c.id}
 											value={c.name}
+											keywords={c.description ? [c.description] : undefined}
 											onSelect={() => {
 												onChange([...value, c.id]);
 												if (rest.length === 1) setOpen(false);
 											}}
 										>
-											{c.name}
+											<CatalogOption c={c} />
 										</CommandItem>
 									))}
 								</CommandGroup>

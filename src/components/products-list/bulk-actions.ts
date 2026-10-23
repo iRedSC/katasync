@@ -96,27 +96,37 @@ export async function countAll(picked: ProductRow[]) {
 }
 
 // Puts the ticked products in a catalog, so they're sold by whoever
-// carries it. Who reorder buys each from follows on the reload.
+// carries it. Shown at once; who reorder buys each from follows on the
+// reload.
 export async function setCatalogOnAll(
 	picked: ProductRow[],
-	catalog: { id: number; name: string },
+	catalog: NonNullable<ProductRow["catalog"]>,
 ) {
 	const ids = picked.map((p) => p.id);
+	const moving = picked.filter((p) => p.catalog?.id !== catalog.id);
+	if (moving.length === 0) {
+		toast(`Already in ${catalog.name}`);
+		return;
+	}
 	const r = await optimism.change({
+		label: `${products(moving.length)} into ${catalog.name}`,
+		patch: patchProducts(new Set(ids), (p) => ({ ...p, catalog })),
 		send: () =>
 			setProductCatalog({ data: { productIds: ids, catalogId: catalog.id } }),
 	});
 	if (!r) return;
 	const before = r.value;
 	const moved = before.filter((b) => b.catalogId !== catalog.id).length;
-	if (moved === 0) {
-		toast(`Already in ${catalog.name}`);
-		return;
-	}
 	offerUndo(`${products(moved)} now in ${catalog.name}`, {
 		tone: "success",
 		undo: async () => {
+			const was = new Map(picked.map((p) => [p.id, p.catalog]));
 			const back = await optimism.change({
+				label: `${products(moved)} back`,
+				patch: patchProducts(new Set(ids), (p) => ({
+					...p,
+					catalog: was.get(p.id) ?? null,
+				})),
 				send: () => restoreProductCatalogs({ data: { before } }),
 			});
 			return back && `Put ${products(moved)} back`;

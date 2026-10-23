@@ -1154,8 +1154,37 @@ export const purchaseUnits = pgTable("purchase_units", {
 export const catalogs = pgTable("catalogs", {
 	id: integer().primaryKey().generatedAlwaysAsIdentity(),
 	name: text().notNull().unique(),
+	// What's in it, in words a search would use, e.g. "Taping tools, banjos".
+	description: text(),
+	// Shown beside its name wherever it's picked or listed. Old photos stay,
+	// so swapping or removing one can be undone.
+	photoId: integer().references(() => catalogPhotos.id, {
+		onDelete: "set null",
+	}),
 	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
+
+// Catalog photos, as uploaded and shrunk: JPEG, PNG, or WebP, checked by
+// their bytes. Never change, so browsers keep them.
+export const catalogPhotos = pgTable(
+	"catalog_photos",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		contentType: text().notNull(),
+		data: bytea().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			"catalog_photos_type",
+			sql`${t.contentType} in ('image/jpeg', 'image/png', 'image/webp')`,
+		),
+		check(
+			"catalog_photos_size",
+			sql`octet_length(${t.data}) between 1 and 2000000`,
+		),
+	],
+);
 
 // Which catalogs a supplier sells. A supplier sells every product in a
 // catalog it carries, at the terms in productSuppliers.

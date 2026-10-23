@@ -19,6 +19,7 @@ function facets(extra: Partial<Facets> = {}): Facets {
 		status: ["active"],
 		class: ["A"],
 		supplier: ["Tapetech"],
+		catalog: ["Tapetech"],
 		trust: ["counted"],
 		title: ["Flat Box 12x9"],
 		inventory: 5,
@@ -179,6 +180,19 @@ describe("class and inventory", () => {
 		const both = parseQuery("&tapetech ~counted").filters;
 		expect(matches(facets(), both, [])).toBe(true);
 		expect(matches(facets({ trust: ["needs count"] }), both, [])).toBe(false);
+	});
+
+	test("/ filters on catalog, and /! leaves one out", () => {
+		expect(parseWord("/!col")).toMatchObject({
+			field: "catalog",
+			exclude: true,
+		});
+		const columbia = facets({ catalog: ["Columbia"] });
+		expect(matches(columbia, parseQuery("/colum").filters, [])).toBe(true);
+		expect(matches(columbia, parseQuery("/!colum").filters, [])).toBe(false);
+		expect(
+			matches(facets({ catalog: [] }), parseQuery("/col").filters, []),
+		).toBe(false);
 	});
 
 	test("comparisons filter on inventory and stack into a range", () => {
