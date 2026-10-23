@@ -335,3 +335,29 @@ export async function restoreCommitments(
 		};
 	});
 }
+
+export async function returnSaleOf(
+	db: Db,
+	orderLineId: number,
+): Promise<{ batchId: string; quantity: number } | null> {
+	const [entry] = await db
+		.select({
+			batchId: stockCommitmentEntries.batchId,
+			quantity: stockCommitmentEntries.quantity,
+		})
+		.from(stockCommitmentEntries)
+		.innerJoin(
+			stockCommitments,
+			eq(stockCommitments.id, stockCommitmentEntries.commitmentId),
+		)
+		.where(
+			and(
+				eq(stockCommitments.orderLineId, orderLineId),
+				eq(stockCommitmentEntries.kind, "consume"),
+				sql`not exists (select 1 from ${stockCommitmentEntries} r where r.restores_entry_id = ${stockCommitmentEntries.id})`,
+			),
+		)
+		.orderBy(stockCommitmentEntries.id)
+		.limit(1);
+	return entry?.batchId ? { batchId: entry.batchId, quantity: entry.quantity } : null;
+}
