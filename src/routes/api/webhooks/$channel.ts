@@ -2,10 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { waitUntil } from "@vercel/functions";
 
 // Order webhooks (src/channels/webhooks.ts) at /api/webhooks/shopify and
-// /api/webhooks/tiktok. Answers as soon as the signature checks out, since
-// Shopify gives up after 5 seconds and TikTok after 3, then reads the order
-// in the background. If a sync pass or another webhook holds the channel, it
-// drops the order instead of waiting; the next cron pass reads it anyway.
+// /api/webhooks/tiktok. Stores the verified order in the inbox
+// (src/channels/webhook-inbox.ts) before answering, so an answer means it
+// survives; a failed store answers 503 and the sender retries. Then reads the
+// order in the background. Whatever that misses, the minute cron drains.
 
 export const Route = createFileRoute("/api/webhooks/$channel")({
 	server: {
@@ -27,31 +27,26 @@ export const Route = createFileRoute("/api/webhooks/$channel")({
 				const missing = missingEnv(webhookEnv[channel]);
 				if (missing.length > 0)
 					return new Response(`Set ${missing.join(", ")}`, { status: 500 });
-				const result = readWebhook(
-					channel,
-					request.headers,
-					await request.text(),
-				);
+				const body = await request.text();
+				const result = readWebhook(channel, request.headers, body);
 				if ("refused" in result)
 					return new Response(result.refused, { status: result.status });
 				if ("ignored" in result) return Response.json(result);
+				const [{ acceptWebhook, drainDue, ingestWith }, { getDb }] =
+					await Promise.all([
+						import("#/channels/webhook-inbox"),
+						import("#/db/client"),
+					]);
+				const db = getDb();
+				try {
+					await acceptWebhook(db, channel, result.orderId, body);
+				} catch (error) {
+					console.error(`${channel} webhook for ${result.orderId}:`, error);
+					return new Response("Not saved, send again", { status: 503 });
+				}
 				waitUntil(
-					(async () => {
-						const [{ ingestWebhookOrder }, { getDb }] = await Promise.all([
-							import("#/channels/sync"),
-							import("#/db/client"),
-						]);
-						const done = await ingestWebhookOrder(
-							getDb(),
-							channel,
-							result.orderId,
-						);
-						if (!done)
-							console.log(
-								`${channel} webhook for ${result.orderId}: busy, cron will pick it up`,
-							);
-					})().catch((error) =>
-						console.error(`${channel} webhook for ${result.orderId}:`, error),
+					drainDue(db, ingestWith(db)).catch((error) =>
+						console.error(`${channel} webhook drain:`, error),
 					),
 				);
 				return Response.json({ accepted: result.orderId });
