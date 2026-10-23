@@ -20,6 +20,7 @@ import {
 	setMembership,
 } from "#/purchasing/sets";
 import { DEFAULT_LEAD_TIME_DAYS, loadPlan, planFor } from "./plan";
+import { type Arrival, incomingFor } from "./quantity";
 
 // Every tool set's recipe, with what each set shows as a product. A kit's
 // parts are in the kit, not a set.
@@ -171,13 +172,16 @@ export async function draftLines(db: Db) {
 	return new Map(rows.map(({ productId, ...line }) => [productId, line]));
 }
 
-// Unreceived products on sent POs, counted like unitsOnOrder, with the day
-// each is due, soonest first. A PO is due its supplier's lead time after it
-// was sent: the same figure reorder plans with, and the expected date a PO
-// carries is only a copy of it, so it isn't read here. Ones already past due
-// aren't coming on any day we can plan around, so they are left out, as are
-// back-ordered ones.
-async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
+// Unreceived units on sent POs, each with the time it's due, or null when
+// it's back-ordered and no day is known. A PO is due its supplier's lead time
+// after it was sent: the same figure reorder plans with, and the expected date
+// a PO carries is only a copy of it, so it isn't read here.
+export async function openArrivals(
+	db: Db,
+	now: Date,
+	lead: Map<number, LeadTime>,
+	productIds?: number[],
+) {
 	const received = receivedByLine(db);
 	const rows = await db
 		.select({
@@ -185,6 +189,7 @@ async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
 			units: sql<number>`(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`,
 			sentAt: purchaseOrders.sentAt,
 			supplierId: purchaseOrders.supplierId,
+			backOrderedAt: purchaseOrderLines.backOrderedAt,
 		})
 		.from(purchaseOrderLines)
 		.innerJoin(
@@ -195,22 +200,24 @@ async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
 		.where(
 			and(
 				eq(purchaseOrders.status, "sent"),
-				isNull(purchaseOrderLines.backOrderedAt),
+				productIds
+					? inArray(purchaseOrderLines.productId, productIds)
+					: undefined,
 			),
 		);
 
-	const byProduct = new Map<number, { units: number; arrivesAt: number }[]>();
+	const byProduct = new Map<number, Arrival[]>();
 	for (const r of rows) {
+		if (r.units === 0) continue;
 		const arrivesAt =
-			(r.sentAt ?? now).getTime() +
-			(lead.get(r.supplierId)?.days ?? DEFAULT_LEAD_TIME_DAYS) * 86_400_000;
-		if (r.units === 0 || arrivesAt < now.getTime()) continue;
+			r.backOrderedAt !== null
+				? null
+				: (r.sentAt ?? now).getTime() +
+					(lead.get(r.supplierId)?.days ?? DEFAULT_LEAD_TIME_DAYS) * 86_400_000;
 		const list = byProduct.get(r.productId) ?? [];
 		list.push({ units: r.units, arrivesAt });
 		byProduct.set(r.productId, list);
 	}
-	for (const list of byProduct.values())
-		list.sort((a, b) => a.arrivesAt - b.arrivesAt);
 	return byProduct;
 }
 
@@ -220,9 +227,9 @@ async function arrivingUnits(db: Db, now: Date, lead: Map<number, LeadTime>) {
 // somewhere.
 export async function aItemsAtRisk(db: Db, now = new Date()) {
 	const plan = await loadPlan(db, now);
-	const [onHand, arriving] = await Promise.all([
+	const [onHand, arrivals] = await Promise.all([
 		ownedOnHand(db),
-		arrivingUnits(db, now, plan.leadTimes),
+		openArrivals(db, now, plan.leadTimes),
 	]);
 	const aIds = [...plan.abc.classes]
 		.filter(([, c]) => c.abc === "A")
@@ -253,13 +260,14 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 		.flatMap((p) => {
 			const { dailyDemand, leadTimeDays } = planFor(plan, p.id, p.supplierId);
 			if (dailyDemand === 0) return [];
-			// Each PO extends the stock only if it arrives before it runs out.
-			let position = onHand.get(p.id) ?? 0;
-			for (const po of arriving.get(p.id) ?? []) {
-				const daysAway = (po.arrivesAt - now.getTime()) / 86_400_000;
-				if (daysAway * dailyDemand > position) break;
-				position += po.units;
-			}
+			const { timely } = incomingFor(
+				now.getTime(),
+				onHand.get(p.id) ?? 0,
+				dailyDemand,
+				leadTimeDays,
+				arrivals.get(p.id) ?? [],
+			);
+			const position = Math.max(onHand.get(p.id) ?? 0, 0) + timely;
 			if (position >= dailyDemand * leadTimeDays) return [];
 			return [
 				{

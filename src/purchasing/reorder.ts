@@ -22,9 +22,12 @@ export {
 	suggestPurchases,
 } from "#/purchasing/reorder/purchases";
 export {
+	type Arrival,
 	daysUntilReorder,
 	explainReorder,
 	forecastMax,
+	type Incoming,
+	incomingFor,
 	MIN_FORECAST_MAX,
 	type ReorderInput,
 	type ReorderWhy,
@@ -36,6 +39,7 @@ export {
 	aItemsAtRisk,
 	draftLines,
 	membershipOf,
+	openArrivals,
 	setRecipes,
 	unitsOnOrder,
 } from "#/purchasing/reorder/stock";
