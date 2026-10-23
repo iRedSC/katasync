@@ -289,7 +289,8 @@ function Header({
 					type="button"
 					onClick={click}
 					className={cn(
-						"group inline-flex h-9 w-full items-center gap-1 hover:text-foreground",
+						"group inline-flex h-9 items-center gap-1 hover:text-foreground",
+						c.width,
 						c.align === "right" && "justify-end",
 						c.align === "center" && "justify-center",
 						term && "text-foreground",

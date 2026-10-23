@@ -42,7 +42,7 @@ export type NextStep =
 	| { kind: "count" }
 	| { kind: "count requested" }
 	| { kind: "on draft"; purchaseOrderId: number }
-	| { kind: "set supplier" }
+	| { kind: "add catalog" }
 	| { kind: "none" };
 
 export type StockInput = {
@@ -96,12 +96,14 @@ export function nextStepOf(p: StockInput, trust: Trust): NextStep {
 		return trust.requested ? { kind: "count requested" } : { kind: "count" };
 	if (p.reorder) return { kind: "order", ...p.reorder };
 	// Without a supplier nothing can suggest an order, so short stock asks
-	// for one.
+	// for a catalog, whose suppliers then sell it. A tool set's supplier
+	// comes from its parts, so a catalog wouldn't give it one.
 	if (
 		!p.hasSupplier &&
+		p.kind !== "bundle" &&
 		["oversold", "sold out", "below min"].includes(levelOf(p))
 	)
-		return { kind: "set supplier" };
+		return { kind: "add catalog" };
 	return { kind: "none" };
 }
 

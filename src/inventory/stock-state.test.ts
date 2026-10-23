@@ -128,15 +128,26 @@ describe("next step", () => {
 		).toEqual({ kind: "on draft", purchaseOrderId: 1004 });
 	});
 
-	test("short stock with no supplier asks for one", () => {
+	test("short stock with no supplier asks for a catalog", () => {
 		for (const [onHand, available] of [
 			[2, 2],
 			[0, 0],
 			[-3, 0],
 		])
 			expect(step(product({ onHand, available, hasSupplier: false }))).toEqual({
-				kind: "set supplier",
+				kind: "add catalog",
 			});
+		// Its parts' catalogs give a tool set its supplier, not its own.
+		expect(
+			step(
+				product({
+					kind: "bundle",
+					onHand: -3,
+					available: 0,
+					hasSupplier: false,
+				}),
+			),
+		).toEqual({ kind: "none" });
 	});
 
 	test("healthy stock needs nothing; a set that can't be built orders", () => {

@@ -32,7 +32,7 @@ export type StockState = {
 
 // Next steps in the order sorting puts them: what needs doing first.
 const STEPS: NextStep["kind"][] = [
-	"set supplier",
+	"add catalog",
 	"order",
 	"count",
 	"count requested",
