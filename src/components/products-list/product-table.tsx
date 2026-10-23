@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type MouseEvent, useRef, useState } from "react";
 import { Card } from "#/components/page";
 import {
 	type CellContext,
@@ -12,6 +12,7 @@ import {
 } from "#/components/products-list/columns";
 import { RowMenu } from "#/components/products-list/row-menu";
 import { toggled } from "#/components/products-list/selection";
+import { TickCell } from "#/components/tick-cell";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
@@ -56,12 +57,12 @@ export function ProductTable(props: Props) {
 	const ticked = matched.filter((p) => selected.has(p.id)).length;
 	const pinnedTicked = pinned.filter((p) => selected.has(p.id)).length;
 
-	function tick(p: ProductRow, e: MouseEvent) {
+	function tick(p: ProductRow, range: boolean) {
 		const on = !selected.has(p.id);
 		const from = rows.findIndex((r) => r.id === anchor.current);
 		const to = rows.findIndex((r) => r.id === p.id);
 		const ids =
-			e.shiftKey && from >= 0 && to >= 0
+			range && from >= 0 && to >= 0
 				? rows
 						.slice(Math.min(from, to), Math.max(from, to) + 1)
 						.map((r) => r.id)
@@ -77,7 +78,7 @@ export function ProductTable(props: Props) {
 				product={p}
 				columns={columns}
 				ticked={selected.has(p.id)}
-				onTick={(e) => tick(p, e)}
+				onTick={(range) => tick(p, range)}
 				onMenu={() => setMenuFor(p)}
 				inGroup={inGroup}
 				{...props}
@@ -90,22 +91,21 @@ export function ProductTable(props: Props) {
 			<table className="w-full">
 				<thead className="sticky top-14 z-10">
 					<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
-						<th className="w-10 pl-4">
-							<Checkbox
-								label="Tick every match"
-								checked={ticked > 0 && ticked === matched.length}
-								mixed={ticked > 0 && ticked < matched.length}
-								onChange={() =>
-									onSelected(
-										toggled(
-											selected,
-											matched.map((p) => p.id),
-											ticked < matched.length,
-										),
-									)
-								}
-							/>
-						</th>
+						<TickCell
+							as="th"
+							label="Tick every match"
+							checked={ticked > 0 && ticked === matched.length}
+							mixed={ticked > 0 && ticked < matched.length}
+							onTick={() =>
+								onSelected(
+									toggled(
+										selected,
+										matched.map((p) => p.id),
+										ticked < matched.length,
+									),
+								)
+							}
+						/>
 						{columns.map((key) => (
 							<Header key={key} column={key} {...props} />
 						))}
@@ -117,22 +117,21 @@ export function ProductTable(props: Props) {
 							{pinned.length > 0 && pinnedTicked > 0 && (
 								<>
 									<tr className="border-b bg-info-fill/40">
-										<td className="w-10 pl-4">
-											<Checkbox
-												label="Untick the selected group"
-												checked={pinnedTicked === pinned.length}
-												mixed={pinnedTicked < pinned.length}
-												onChange={() =>
-													onSelected(
-														toggled(
-															selected,
-															pinned.map((p) => p.id),
-															pinnedTicked < pinned.length,
-														),
-													)
-												}
-											/>
-										</td>
+										<TickCell
+											as="td"
+											label="Untick the selected group"
+											checked={pinnedTicked === pinned.length}
+											mixed={pinnedTicked < pinned.length}
+											onTick={() =>
+												onSelected(
+													toggled(
+														selected,
+														pinned.map((p) => p.id),
+														pinnedTicked < pinned.length,
+													),
+												)
+											}
+										/>
 										<td colSpan={columns.length} className="p-0">
 											<button
 												type="button"
@@ -192,7 +191,7 @@ function Row({
 	product: ProductRow;
 	columns: ColumnKey[];
 	ticked: boolean;
-	onTick: (e: MouseEvent) => void;
+	onTick: (range: boolean) => void;
 	onMenu: () => void;
 	inGroup: boolean;
 }) {
@@ -215,9 +214,12 @@ function Row({
 				inGroup && "animate-in fade-in",
 			)}
 		>
-			<td className="w-10 pl-4">
-				<Checkbox label={`Tick ${p.sku}`} checked={ticked} onChange={onTick} />
-			</td>
+			<TickCell
+				as="td"
+				label={`Tick ${p.sku}`}
+				checked={ticked}
+				onTick={onTick}
+			/>
 			{columns.map((key) => {
 				const c = COLUMNS[key];
 				return (
@@ -307,34 +309,5 @@ function Header({
 				</button>
 			</Tip>
 		</th>
-	);
-}
-
-function Checkbox({
-	label,
-	checked,
-	mixed = false,
-	onChange,
-}: {
-	label: string;
-	checked: boolean;
-	mixed?: boolean;
-	onChange: (e: MouseEvent) => void;
-}) {
-	const ref = useRef<HTMLInputElement>(null);
-	useEffect(() => {
-		if (ref.current) ref.current.indeterminate = mixed;
-	}, [mixed]);
-	return (
-		<input
-			ref={ref}
-			type="checkbox"
-			aria-label={label}
-			checked={checked}
-			// onClick, not onChange: only the click carries the shift key.
-			onClick={onChange}
-			onChange={() => {}}
-			className="size-4 cursor-pointer accent-primary align-middle"
-		/>
 	);
 }
