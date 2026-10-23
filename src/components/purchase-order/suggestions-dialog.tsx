@@ -1,7 +1,6 @@
 import { Lock } from "lucide-react";
 import { Slider, Switch } from "radix-ui";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { CatalogChips } from "#/components/catalog-picker";
 import { Button } from "#/components/ui/button";
 import {
@@ -13,6 +12,7 @@ import {
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import {
 	applySuggestionSettings,
@@ -87,21 +87,19 @@ export function SuggestionsDialog({
 		if (!r) return;
 		onOpenChange(false);
 		const { undo, ...changed } = r.value;
-		toast.success(describe(changed) ?? "Settings saved; lines already match", {
-			action: {
-				label: "Undo",
-				onClick: async () => {
-					const u = await optimism.change({
-						send: () =>
-							undoSuggestionSettings({ data: { id: d.order.id, undo } }),
-					});
-					// Lines changed since keep the change; say so, since the
-					// undo looks partial otherwise.
-					if (u && u.value.kept > 0)
-						toast(
-							`Undone, but ${u.value.kept} ${u.value.kept === 1 ? "line" : "lines"} changed since kept their change`,
-						);
-				},
+		offerUndo(describe(changed) ?? "Settings saved; lines already match", {
+			tone: "success",
+			undo: async () => {
+				const u = await optimism.change({
+					send: () =>
+						undoSuggestionSettings({ data: { id: d.order.id, undo } }),
+				});
+				if (!u) return null;
+				// Lines changed since keep the change; say so, since the undo
+				// looks partial otherwise.
+				return u.value.kept > 0
+					? `Undone, but ${u.value.kept} ${u.value.kept === 1 ? "line" : "lines"} changed since kept their change`
+					: "Undone";
 			},
 		});
 	}

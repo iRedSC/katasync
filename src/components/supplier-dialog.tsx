@@ -20,6 +20,7 @@ import {
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { type LeadTime, MIN_MEASURED_POS } from "#/purchasing/forecast";
 import type { PlaceAddress } from "#/server/places";
@@ -473,26 +474,29 @@ function SupplierCatalogs({ supplier }: { supplier: Supplier }) {
 			});
 		const r = await optimism.change({ send });
 		if (!r) return mark(catalog, !on);
-		toast.success(
+		offerUndo(
 			on
 				? `${supplier.name} carries ${catalog.name}`
 				: `${supplier.name} no longer carries ${catalog.name}`,
 			{
-				action: {
-					label: "Undo",
-					onClick: () => {
-						mark(catalog, !on);
-						optimism.change({
-							send: () =>
-								setSupplierCarries({
-									data: {
-										supplierId: supplier.id,
-										catalogId: catalog.id,
-										carried: !on,
-									},
-								}),
-						});
-					},
+				tone: "success",
+				undo: async () => {
+					mark(catalog, !on);
+					const back = await optimism.change({
+						send: () =>
+							setSupplierCarries({
+								data: {
+									supplierId: supplier.id,
+									catalogId: catalog.id,
+									carried: !on,
+								},
+							}),
+					});
+					if (!back) {
+						mark(catalog, on);
+						return null;
+					}
+					return "Put back";
 				},
 			},
 		);

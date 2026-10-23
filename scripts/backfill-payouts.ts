@@ -4,7 +4,11 @@
 //
 //   pnpm payouts:backfill 2025-10-01
 import { getDb } from "#/db/client";
-import { channelEnv, missingEnv, type SyncedChannel } from "#/diagnostics/checks";
+import {
+	channelEnv,
+	missingEnv,
+	type SyncedChannel,
+} from "#/diagnostics/checks";
 import { refreshPayouts } from "#/payouts/refresh";
 
 try {

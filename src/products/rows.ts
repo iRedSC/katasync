@@ -2,11 +2,14 @@
 // to sort on. Shared by the product list and a PO's Browse, so both read a
 // product the same way.
 
-import type { StockState } from "#/components/stock-card";
 import {
 	daysLeft,
+	LEVELS,
+	type Level,
 	levelOf,
+	type NextStep,
 	nextStepOf,
+	type Trust,
 	trustOf,
 } from "#/inventory/stock-state";
 import type { Facets } from "#/products/search";
@@ -19,6 +22,26 @@ import type { ProductRow } from "#/server/catalog";
 export function stock(p: ProductRow) {
 	return (p.onHand ?? 0) < 0 ? (p.onHand ?? 0) : p.available;
 }
+
+export type StockState = {
+	trust: Trust;
+	level: Level;
+	step: NextStep;
+	daysLeft: number | null;
+};
+
+// Next steps in the order sorting puts them: what needs doing first.
+const STEPS: NextStep["kind"][] = [
+	"set supplier",
+	"order",
+	"count",
+	"count requested",
+	"on draft",
+	"none",
+];
+
+// Least trusted first: a number nobody counted, then a stale one.
+const TRUSTS: Trust["kind"][] = ["not counted", "needs count", "counted"];
 
 // Trust, level, and next step, worked out once per product per load.
 export function stateOf(p: ProductRow, now: Date): StockState {
@@ -105,5 +128,19 @@ export function sortValuesOf(
 		type: p.category,
 		vendor: p.vendor,
 		supplier: p.supplier?.name ?? null,
+		level: LEVELS.indexOf(state.level),
+		step: STEPS.indexOf(state.step.kind),
+		trust: TRUSTS.indexOf(state.trust.kind),
+		ordercost: orderCost(p),
+		tags: p.tags.length > 0 ? p.tags.join(" ") : null,
+		listing: p.status,
 	};
+}
+
+// What the suggested order would cost, from the product's cost each. Null
+// when nothing's suggested or there's no cost to go on.
+export function orderCost(p: ProductRow) {
+	return p.reorder && p.unitCost !== null
+		? p.reorder.quantity * p.reorder.packSize * p.unitCost
+		: null;
 }

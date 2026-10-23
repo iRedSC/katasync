@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, desc, eq, or, sql } from "drizzle-orm";
-import { getDb } from "#/db/client";
+import { type Db, getDb } from "#/db/client";
 import {
 	products,
 	purchaseOrderLines,
@@ -203,57 +203,108 @@ export const addToPurchaseOrder = createServerFn({ method: "POST" })
 			"quantity?": "number.integer > 0",
 		}),
 	)
+	.handler(async ({ data }) => addToDraft(getDb(), data));
+
+async function addToDraft(
+	db: Db,
+	data: { productId: number; quantity?: number },
+) {
+	const [link] = await db
+		.select({
+			supplierId: supplierOffers.supplierId,
+			supplierName: suppliers.name,
+			minimum: supplierOffers.minimumQuantity,
+		})
+		.from(supplierOffers)
+		.innerJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
+		.where(
+			and(
+				eq(supplierOffers.productId, data.productId),
+				eq(supplierOffers.cheapest, true),
+			),
+		);
+	// A tool set goes to the supplier of most of its parts, one at a time.
+	const order =
+		link ??
+		(await setSuppliers(db, [data.productId]).then((m) => {
+			const s = m.get(data.productId);
+			return s && { supplierId: s.id, supplierName: s.name, minimum: 1 };
+		}));
+	if (!order)
+		throw new PurchaseOrderError(
+			"No supplier sells it: put it in a catalog a supplier carries (for a tool set, its parts)",
+		);
+	const purchaseOrderId = await openDraft(db, order.supplierId);
+	const { added, line } = await addDraftLine(db, {
+		purchaseOrderId,
+		productId: data.productId,
+		quantity: data.quantity ?? order.minimum,
+	});
+	return { added, purchaseOrderId, supplierName: order.supplierName, line };
+}
+
+// addToPurchaseOrder for many products at once, each onto its cheapest
+// supplier's draft. One that can't go on (no supplier) doesn't stop the
+// rest: it comes back with why.
+export const addManyToPurchaseOrders = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			items: type({
+				productId: "number.integer > 0",
+				"quantity?": "number.integer > 0",
+			})
+				.array()
+				.atLeastLength(1),
+		}),
+	)
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const [link] = await db
-			.select({
-				supplierId: supplierOffers.supplierId,
-				supplierName: suppliers.name,
-				minimum: supplierOffers.minimumQuantity,
-			})
-			.from(supplierOffers)
-			.innerJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
-			.where(
-				and(
-					eq(supplierOffers.productId, data.productId),
-					eq(supplierOffers.cheapest, true),
-				),
-			);
-		// A tool set goes to the supplier of most of its parts, one at a time.
-		const order =
-			link ??
-			(await setSuppliers(db, [data.productId]).then((m) => {
-				const s = m.get(data.productId);
-				return s && { supplierId: s.id, supplierName: s.name, minimum: 1 };
-			}));
-		if (!order)
-			throw new PurchaseOrderError(
-				"No supplier sells it: put it in a catalog a supplier carries (for a tool set, its parts)",
-			);
-		const purchaseOrderId = await openDraft(db, order.supplierId);
-		const { added, line } = await addDraftLine(db, {
-			purchaseOrderId,
-			productId: data.productId,
-			quantity: data.quantity ?? order.minimum,
-		});
-		return { added, purchaseOrderId, supplierName: order.supplierName, line };
+		const out = [];
+		for (const item of data.items) {
+			try {
+				out.push({
+					productId: item.productId,
+					ok: true as const,
+					...(await addToDraft(db, item)),
+				});
+			} catch (err) {
+				if (!(err instanceof PurchaseOrderError)) throw err;
+				out.push({
+					productId: item.productId,
+					ok: false as const,
+					why: err.message,
+				});
+			}
+		}
+		return out;
 	});
 
 // Undoes addToPurchaseOrder. Returns false, changing nothing, when the line
 // has been changed or removed since.
+const addedLine = type({
+	purchaseOrderId: "number.integer > 0",
+	line: {
+		id: "number.integer > 0",
+		unit: "string",
+		packSize: "number.integer > 0",
+		supplierCount: "number.integer > 0",
+		minimumQuantity: "number.integer > 0",
+		quantity: "number.integer > 0",
+		unitCost: "number | null",
+	},
+});
+
 export const undoAddToPurchaseOrder = createServerFn({ method: "POST" })
-	.validator(
-		type({
-			purchaseOrderId: "number.integer > 0",
-			line: {
-				id: "number.integer > 0",
-				unit: "string",
-				packSize: "number.integer > 0",
-				supplierCount: "number.integer > 0",
-				minimumQuantity: "number.integer > 0",
-				quantity: "number.integer > 0",
-				unitCost: "number | null",
-			},
-		}),
-	)
+	.validator(addedLine)
 	.handler(async ({ data }) => removeAddedLine(getDb(), data));
+
+// Undoes addManyToPurchaseOrders. Returns how many lines came off; any
+// changed since stay as they are.
+export const undoManyAddsToPurchaseOrders = createServerFn({ method: "POST" })
+	.validator(type({ adds: addedLine.array() }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		let undone = 0;
+		for (const add of data.adds) if (await removeAddedLine(db, add)) undone++;
+		return undone;
+	});

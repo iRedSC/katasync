@@ -13,10 +13,10 @@
 import { type } from "arktype";
 import { and, eq, isNull } from "drizzle-orm";
 import { amazonTax, orderItems } from "#/channels/amazon";
-import { API as EBAY, accessToken, ebayOrder, ebayTax } from "#/channels/ebay";
+import { accessToken, API as EBAY, ebayOrder, ebayTax } from "#/channels/ebay";
+import { shopifyTax } from "#/channels/shopify/channel-order";
 import { shopifyQuery } from "#/channels/shopify/client";
 import { orderNode } from "#/channels/shopify/order-shapes";
-import { shopifyTax } from "#/channels/shopify/channel-order";
 import {
 	detailPage,
 	shopCipher,
@@ -47,7 +47,8 @@ const readers: Record<
 > = {
 	async shopify(ids) {
 		const { nodes } = type({
-			nodes: type(orderNode.pick(
+			nodes: type(
+				orderNode.pick(
 					"id",
 					"tags",
 					"currentTaxLines",
@@ -55,7 +56,10 @@ const readers: Record<
 					"app",
 					"sourceName",
 					"merchantOfRecordApp",
-				)).or("null").array(),
+				),
+			)
+				.or("null")
+				.array(),
 		}).assert(
 			await shopifyQuery(
 				`query($ids: [ID!]!) { nodes(ids: $ids) { ... on Order {
@@ -126,7 +130,9 @@ const byChannel = new Map<Channel, typeof missing>();
 for (const o of missing)
 	byChannel.set(o.channel, [...(byChannel.get(o.channel) ?? []), o]);
 for (const [channel, rows] of byChannel)
-	console.log(`${channel}: ${rows.length} orders ${reread ? "to read again" : "without tax"}`);
+	console.log(
+		`${channel}: ${rows.length} orders ${reread ? "to read again" : "without tax"}`,
+	);
 if (!write) {
 	if (missing.length > 0) console.log("Run with --write to read their tax.");
 	process.exit(0);

@@ -14,11 +14,17 @@ try {
 const url = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL is not set");
 
-const journal = (await import("../drizzle/meta/_journal.json", {
-	with: { type: "json" },
-})).default as { entries: { tag: string }[] };
+const journal = (
+	await import("../drizzle/meta/_journal.json", {
+		with: { type: "json" },
+	})
+).default as { entries: { tag: string }[] };
 const local = readMigrationFiles({ migrationsFolder: "drizzle" }).map(
-	(m, i) => ({ tag: journal.entries[i].tag, when: m.folderMillis, hash: m.hash }),
+	(m, i) => ({
+		tag: journal.entries[i].tag,
+		when: m.folderMillis,
+		hash: m.hash,
+	}),
 );
 
 const client = new Client({ connectionString: url });
@@ -28,7 +34,9 @@ const applied = await client
 		`select hash, created_at from drizzle.__drizzle_migrations`,
 	)
 	// No table yet: nothing applied, so nothing can be skipped.
-	.then((r) => r.rows.map((a) => ({ hash: a.hash, createdAt: Number(a.created_at) })))
+	.then((r) =>
+		r.rows.map((a) => ({ hash: a.hash, createdAt: Number(a.created_at) })),
+	)
 	.catch(() => []);
 await client.end();
 

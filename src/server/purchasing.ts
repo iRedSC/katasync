@@ -1,4 +1,5 @@
 export {
+	addManyToPurchaseOrders,
 	addProductToPurchaseOrder,
 	addToPurchaseOrder,
 	type BrowseRow,
@@ -6,6 +7,7 @@ export {
 	type PurchaseOrderMatch,
 	searchForPurchaseOrder,
 	undoAddToPurchaseOrder,
+	undoManyAddsToPurchaseOrders,
 } from "#/server/purchasing/add-products";
 export {
 	type CatalogRow,

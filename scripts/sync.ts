@@ -22,15 +22,15 @@
 // channel, then exits nonzero if any of them failed.
 import { parseArgs } from "node:util";
 import {
-	backfillReturns,
-	type ReturnChannel,
-	returnChannels,
-} from "#/channels/returns-history";
-import {
 	backfillOrders,
 	type OrderChannel,
 	orderChannels,
 } from "#/channels/orders-history";
+import {
+	backfillReturns,
+	type ReturnChannel,
+	returnChannels,
+} from "#/channels/returns-history";
 import { costPassAlone, syncPass } from "#/channels/sync";
 import { getDb } from "#/db/client";
 import { channelEnv } from "#/diagnostics/checks";
@@ -106,7 +106,10 @@ async function costPass(channel: (typeof channels)[number]): Promise<boolean> {
 		for (const problem of result.problems) console.log(`  ${problem}`);
 		return true;
 	} catch (error) {
-		console.error(`${new Date().toISOString()} ${channel.name} costs failed:`, error);
+		console.error(
+			`${new Date().toISOString()} ${channel.name} costs failed:`,
+			error,
+		);
 		return false;
 	}
 }
@@ -131,7 +134,9 @@ if (values["costs-history"]) {
 				checked += result.checked;
 				reported += result.reported;
 				for (const problem of result.problems) console.log(`  ${problem}`);
-				console.log(`${channel.name}: ${reported} of ${checked} older orders reported`);
+				console.log(
+					`${channel.name}: ${reported} of ${checked} older orders reported`,
+				);
 			}
 		}),
 	);
@@ -140,7 +145,8 @@ if (values["costs-history"]) {
 
 if (values["orders-history"]) {
 	const days = Number(values["orders-history"]);
-	if (!Number.isInteger(days) || days <= 0) throw new Error("Give a number of days");
+	if (!Number.isInteger(days) || days <= 0)
+		throw new Error("Give a number of days");
 	const wanted = orderChannels.filter(
 		(c): c is OrderChannel =>
 			(!values.only || c === values.only) &&
@@ -163,7 +169,8 @@ if (values["orders-history"]) {
 
 if (values["returns-history"]) {
 	const days = Number(values["returns-history"]);
-	if (!Number.isInteger(days) || days <= 0) throw new Error("Give a number of days");
+	if (!Number.isInteger(days) || days <= 0)
+		throw new Error("Give a number of days");
 	const wanted = returnChannels.filter(
 		(c): c is ReturnChannel =>
 			(!values.only || c === values.only) &&
@@ -185,7 +192,8 @@ if (values["returns-history"]) {
 
 const ready = selected.filter((c) => {
 	const missing = channelEnv[c.name].filter((name) => !process.env[name]);
-	if (missing.length > 0) console.log(`Skipping ${c.name}: set ${missing.join(", ")}`);
+	if (missing.length > 0)
+		console.log(`Skipping ${c.name}: set ${missing.join(", ")}`);
 	return missing.length === 0;
 });
 

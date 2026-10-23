@@ -6,7 +6,10 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { getDb } from "#/db/client";
-import { applySumtrackerImport, planSumtrackerImport } from "#/import/sumtracker";
+import {
+	applySumtrackerImport,
+	planSumtrackerImport,
+} from "#/import/sumtracker";
 
 const { values } = parseArgs({
 	options: {
@@ -31,7 +34,9 @@ console.log(`Products:       ${plan.products.length}`);
 console.log(`  bundles:      ${plan.recipes.size}`);
 console.log(`Variant groups: ${plan.groups.length}`);
 console.log(`Amazon aliases: ${plan.aliases.length}`);
-console.log(`Stock lines:    ${plan.openingStock.length} (into "${values.location}")`);
+console.log(
+	`Stock lines:    ${plan.openingStock.length} (into "${values.location}")`,
+);
 console.log(`\nWarnings (${plan.warnings.length}):`);
 for (const w of plan.warnings) console.log(`  ${w}`);
 

@@ -21,7 +21,12 @@ import {
 	sessionFor,
 	useSetupLink,
 } from "./sessions";
-import { finishAuthentication, passkeyName, relyingParty } from "./webauthn";
+import {
+	authenticationOptions,
+	finishAuthentication,
+	passkeyName,
+	relyingParty,
+} from "./webauthn";
 
 // Checking a real signature needs a real authenticator, so the library's
 // verdict is faked; what's tested is what katasync does with it.
@@ -282,5 +287,53 @@ describe("finishAuthentication", () => {
 		await finishAuthentication(db, response);
 		expect(await counter()).toBe(0);
 		expect(await sessionCount()).toBe(2);
+	});
+
+	// The library asks katasync whether the challenge the browser signed is one
+	// it issued. This plays that step with the given challenge.
+	const signedWith = (challenge: string) =>
+		vi
+			.mocked(verifyAuthenticationResponse)
+			.mockImplementation(async (options) => {
+				const check = options.expectedChallenge;
+				if (typeof check !== "function") throw new Error("no challenge check");
+				if (!(await check(challenge)))
+					throw new Error(`Unexpected challenge "${challenge}"`);
+				return verified(6);
+			});
+
+	test("checks the challenge it issued", async () => {
+		const { challenge } = await authenticationOptions(db);
+		signedWith(challenge);
+		const token = await finishAuthentication(db, response);
+		expect(await sessionFor(db, token)).not.toBeNull();
+	});
+
+	test("refuses a challenge it never issued", async () => {
+		await authenticationOptions(db);
+		signedWith("made-up");
+		await expect(finishAuthentication(db, response)).rejects.toThrow(
+			/Unexpected challenge/,
+		);
+		expect(await sessionCount()).toBe(0);
+	});
+
+	test("a challenge signs in once", async () => {
+		const { challenge } = await authenticationOptions(db);
+		signedWith(challenge);
+		await finishAuthentication(db, response);
+		await expect(finishAuthentication(db, response)).rejects.toThrow(
+			/Unexpected challenge/,
+		);
+		expect(await sessionCount()).toBe(1);
+	});
+
+	test("refuses an expired challenge", async () => {
+		await saveChallenge(db, "old", days(-1));
+		signedWith("old");
+		await expect(finishAuthentication(db, response)).rejects.toThrow(
+			/Unexpected challenge/,
+		);
+		expect(await sessionCount()).toBe(0);
 	});
 });

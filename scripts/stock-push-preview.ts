@@ -25,7 +25,10 @@ if (!isSyncedChannel(channel)) {
 	throw new Error(`Name a channel: ${Object.keys(stockChannels).join(", ")}`);
 }
 const db = getDb();
-const [store] = await db.select().from(stores).where(eq(stores.channel, channel));
+const [store] = await db
+	.select()
+	.from(stores)
+	.where(eq(stores.channel, channel));
 if (!store) throw new Error(`No ${channel} store yet; run pnpm sync first`);
 
 // A null read time makes the pass read the channel now.
@@ -36,8 +39,12 @@ const result = await pushStoreStock(
 	"preview",
 );
 for (const c of result.changes)
-	console.log(`${c.sku.padEnd(24)} ${String(c.from ?? "?").padStart(6)} -> ${c.to}`);
-console.log(`\n${result.changes.length} listings would change on ${store.name}.`);
+	console.log(
+		`${c.sku.padEnd(24)} ${String(c.from ?? "?").padStart(6)} -> ${c.to}`,
+	);
+console.log(
+	`\n${result.changes.length} listings would change on ${store.name}.`,
+);
 const problems = result.problems.filter((p) => !p.includes("preview only"));
 if (problems.length > 0) {
 	console.log(`\n${problems.length} problems:`);

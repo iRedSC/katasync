@@ -43,7 +43,10 @@ beforeEach(() => {
 	mocks.qz.printers.find.mockResolvedValue(["Zebra"]);
 	mocks.qz.configs.create.mockReturnValue({ printer: "Zebra" });
 	mocks.qz.print.mockResolvedValue(undefined);
-	mocks.fetch.mockImplementation(async () => new Response("%PDF-1.7 test"));
+	// Each label's bytes name its path, so the payload shows which label is where.
+	mocks.fetch.mockImplementation(
+		async (path: string) => new Response(`%PDF-1.7 ${path}`),
+	);
 	mocks.sign.mockResolvedValue("signature");
 	mocks.certificate.mockResolvedValue("-----BEGIN CERTIFICATE-----");
 	vi.stubGlobal("localStorage", { getItem: mocks.printer });
@@ -88,8 +91,18 @@ test("every box is sent in one 4x6 PDF print job", async () => {
 	);
 	expect(mocks.qz.print).toHaveBeenCalledTimes(1);
 	expect(mocks.qz.print.mock.calls[0][1]).toEqual([
-		expect.objectContaining({ type: "pixel", format: "pdf", flavor: "base64" }),
-		expect.objectContaining({ type: "pixel", format: "pdf", flavor: "base64" }),
+		{
+			type: "pixel",
+			format: "pdf",
+			flavor: "base64",
+			data: btoa("%PDF-1.7 /labels/7"),
+		},
+		{
+			type: "pixel",
+			format: "pdf",
+			flavor: "base64",
+			data: btoa("%PDF-1.7 /labels/8"),
+		},
 	]);
 });
 

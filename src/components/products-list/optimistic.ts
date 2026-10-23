@@ -31,6 +31,17 @@ export function patchProduct(
 	}));
 }
 
+// The same change to several products' rows.
+export function patchProducts(
+	productIds: ReadonlySet<number>,
+	change: (p: ProductRow) => ProductRow,
+): Patch {
+	return productsData.patch("all", (d) => ({
+		...d,
+		products: d.products.map((p) => (productIds.has(p.id) ? change(p) : p)),
+	}));
+}
+
 // A change to the saved views, which the tabs and the Save buttons show.
 export function patchViews(change: (views: View[]) => View[]): Patch {
 	return productsData.patch("all", (d) => ({ ...d, views: change(d.views) }));

@@ -47,4 +47,5 @@ export {
 	listCountsDue,
 	recordCount,
 	requestCount,
+	requestManyCounts,
 } from "#/server/catalog/shelf-counts";

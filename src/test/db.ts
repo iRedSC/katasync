@@ -28,10 +28,14 @@ const key = Symbol.for("katasync.testDb");
 const store = globalThis as { [key]?: Promise<Shared> };
 
 // What a wipe leaves alone: the schema, and the session's role and settings.
+// Definitions, not counts, so a trigger turned off or a function rewritten
+// in place shows up too.
 const FINGERPRINT = `select concat_ws(':',
-	(select count(*) from pg_trigger where not tgisinternal),
-	(select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'),
-	(select count(*) || '/' || coalesce(sum(relnatts), 0) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public'),
+	(select md5(coalesce(string_agg(t.tgrelid::regclass || t.tgname || t.tgenabled::text || t.tgfoid::regprocedure, ',' order by t.tgrelid::regclass::text, t.tgname), '')) from pg_trigger t where not t.tgisinternal),
+	(select md5(coalesce(string_agg(p.oid::regprocedure || md5(p.prosrc), ',' order by p.oid::regprocedure::text), '')) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'),
+	(select md5(coalesce(string_agg(a.attrelid::regclass || a.attname || a.atttypid::regtype || a.attnotnull::text || coalesce(pg_get_expr(d.adbin, d.adrelid), ''), ',' order by a.attrelid::regclass::text, a.attnum), '')) from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum where n.nspname = 'public' and a.attnum > 0 and not a.attisdropped),
+	(select md5(coalesce(string_agg(c.conrelid::regclass || c.conname || pg_get_constraintdef(c.oid), ',' order by c.conrelid::regclass::text, c.conname), '')) from pg_constraint c join pg_namespace n on n.oid = c.connamespace where n.nspname = 'public'),
+	(select md5(coalesce(string_agg(indexrelid::regclass::text, ',' order by indexrelid::regclass::text), '')) from pg_index i join pg_class c on c.oid = i.indrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public'),
 	current_user, session_user, current_setting('TimeZone'), current_setting('search_path'),
 	current_setting('session_replication_role')
 ) as f`;

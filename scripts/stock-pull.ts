@@ -59,7 +59,9 @@ console.log(
 	`\n${plan.pulls.length} products, ${units} units, from ${reads.map((r) => r.store).join(" then ")}.`,
 );
 if (plan.unpulled.length > 0) {
-	console.log(`\n${plan.unpulled.length} stockless products with no usable number:`);
+	console.log(
+		`\n${plan.unpulled.length} stockless products with no usable number:`,
+	);
 	for (const u of plan.unpulled)
 		console.log(`  ${u.sku.padEnd(24)} ${u.why}: ${u.detail}`);
 }

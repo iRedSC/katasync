@@ -11,6 +11,7 @@ import {
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
+import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { perPack } from "#/purchasing/pack";
 import {
@@ -65,13 +66,13 @@ export function SupplierCard({
 		});
 		setBusy(false);
 		if (!r) return;
-		toast.success(next ? `In ${next.name}` : "Out of any catalog", {
-			action: {
-				label: "Undo",
-				onClick: () =>
-					optimism.change({
-						send: () => restoreProductCatalogs({ data: { before: r.value } }),
-					}),
+		offerUndo(next ? `In ${next.name}` : "Out of any catalog", {
+			tone: "success",
+			undo: async () => {
+				const back = await optimism.change({
+					send: () => restoreProductCatalogs({ data: { before: r.value } }),
+				});
+				return back && "Put back";
 			},
 		});
 	}
@@ -308,11 +309,13 @@ function AddSupplier({
 		const r = await optimism.change({ send: () => carry(supplierId, true) });
 		setBusy(false);
 		if (!r) return;
-		toast.success(`${name} now carries ${catalog.name}`, {
-			action: {
-				label: "Undo",
-				onClick: () =>
-					optimism.change({ send: () => carry(supplierId, false) }),
+		offerUndo(`${name} now carries ${catalog.name}`, {
+			tone: "success",
+			undo: async () => {
+				const back = await optimism.change({
+					send: () => carry(supplierId, false),
+				});
+				return back && `${name} no longer carries ${catalog.name}`;
 			},
 		});
 	}

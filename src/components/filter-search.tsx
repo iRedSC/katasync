@@ -1,5 +1,10 @@
 import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
 import { type KeyboardEvent, type RefObject, useState } from "react";
+import {
+	expandAlias,
+	type FieldEntry,
+	matchFields,
+} from "#/components/filter-fields";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
@@ -32,6 +37,9 @@ export type SearchLanguage<F extends { value: string }> = {
 	label: (f: F) => string;
 	// What the box says when nothing is suggested for what's typed.
 	fallback: (typing: F) => string;
+	// Filter types to offer while nothing is typed, and the words that turn
+	// into their sigils (filter-fields.ts). Without them, neither happens.
+	fields?: readonly FieldEntry[];
 };
 
 // A search box that turns filters and sorts into chips. Typing "#cl"
@@ -64,6 +72,13 @@ export function FilterSearch<F extends { value: string }, K extends string>({
 	const [focused, setFocused] = useState(false);
 	const [dismissed, setDismissed] = useState(false);
 	const [highlight, setHighlight] = useState(0);
+	// The filter type picked by arrow keys; none until one is pressed when
+	// nothing's typed, so Tab still leaves an empty box.
+	const [fieldHighlight, setFieldHighlight] = useState(-1);
+	// The last word turned into a sigil, so Backspace can turn it back.
+	const [expanded, setExpanded] = useState<{ from: string; to: string } | null>(
+		null,
+	);
 
 	// Only the word at the end is being typed; earlier ones are already done.
 	const word = /\s$/.test(text) ? "" : (text.split(/\s+/).at(-1) ?? "");
@@ -75,6 +90,34 @@ export function FilterSearch<F extends { value: string }, K extends string>({
 		: [];
 	const shown = sorting ? sortSuggestions.length : suggestions.length;
 	const open = focused && !dismissed && (typing !== null || sorting !== null);
+	const fieldEntries =
+		language.fields && !typing && !sorting
+			? [
+					...matchFields(language.fields, word),
+					...matchFields(SORT_FIELD, word),
+				]
+			: [];
+	const fieldsOpen = focused && !dismissed && fieldEntries.length > 0;
+	const fieldPick = word === "" ? fieldHighlight : Math.max(fieldHighlight, 0);
+
+	function pickField(f: FieldEntry) {
+		onText(text.slice(0, text.length - word.length) + f.insert);
+		setFieldHighlight(-1);
+		setHighlight(0);
+	}
+
+	function change(next: string) {
+		const typedSpace = next.length === text.length + 1 && next.endsWith(" ");
+		const alias =
+			typedSpace && language.fields
+				? expandAlias([...language.fields, ...SORT_FIELD], next)
+				: null;
+		setExpanded(alias === null ? null : { from: next, to: alias });
+		onText(alias ?? next);
+		setDismissed(false);
+		setHighlight(0);
+		setFieldHighlight(-1);
+	}
 
 	function lockSort(key: K) {
 		if (!sorting) return;
@@ -93,6 +136,30 @@ export function FilterSearch<F extends { value: string }, K extends string>({
 	}
 
 	function keyDown(e: KeyboardEvent<HTMLInputElement>) {
+		if (e.key === "Backspace" && expanded?.to === text) {
+			// Wanted the word itself, not the filter.
+			e.preventDefault();
+			onText(expanded.from);
+			setExpanded(null);
+			return;
+		}
+		if (fieldsOpen) {
+			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				e.preventDefault();
+				const n = fieldEntries.length;
+				const step = e.key === "ArrowDown" ? 1 : -1;
+				setFieldHighlight(
+					(i) => (Math.max(i, step > 0 ? -1 : 0) + step + n) % n,
+				);
+				return;
+			}
+			const pick = fieldEntries[fieldPick];
+			if ((e.key === "Tab" || e.key === "Enter") && pick) {
+				e.preventDefault();
+				pickField(pick);
+				return;
+			}
+		}
 		if ((e.key === "Tab" || e.key === "Enter") && sorting) {
 			const pick = sortSuggestions[highlight];
 			if (pick) {
@@ -117,7 +184,7 @@ export function FilterSearch<F extends { value: string }, K extends string>({
 				return;
 			}
 		}
-		if (e.key === "Escape" && open) {
+		if (e.key === "Escape" && (open || fieldsOpen)) {
 			// Close the suggestions; a second Escape leaves the box.
 			e.stopPropagation();
 			setDismissed(true);
@@ -215,17 +282,35 @@ export function FilterSearch<F extends { value: string }, K extends string>({
 					value={text}
 					onFocus={() => setFocused(true)}
 					onBlur={() => setFocused(false)}
-					onChange={(e) => {
-						onText(e.target.value);
-						setDismissed(false);
-						setHighlight(0);
-					}}
+					onChange={(e) => change(e.target.value)}
 					onKeyDown={keyDown}
 				/>
 				<kbd className="absolute top-1.5 right-2 rounded border bg-subtle px-1.5 text-xs text-muted-foreground">
 					/
 				</kbd>
 			</div>
+			{fieldsOpen && (
+				<div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-lg border bg-white py-1 shadow-md">
+					{fieldEntries.map((f, i) => (
+						<button
+							key={f.insert}
+							type="button"
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={() => pickField(f)}
+							onMouseMove={() => setFieldHighlight(i)}
+							className={cn(
+								"flex w-full items-center gap-2 px-3 py-1.5 text-left",
+								i === fieldPick && "bg-surface",
+							)}
+						>
+							<span className="flex-1 truncate">{f.label}</span>
+							<kbd className="min-w-6 rounded border bg-subtle px-1 text-center text-xs text-muted-foreground">
+								{f.insert}
+							</kbd>
+						</button>
+					))}
+				</div>
+			)}
 			{open && sorting && (
 				<div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-lg border bg-white py-1 shadow-md">
 					{sortSuggestions.map((key, i) => (
@@ -265,7 +350,7 @@ export function FilterSearch<F extends { value: string }, K extends string>({
 				</div>
 			)}
 			{open && typing && (suggestions.length > 0 || typing.value !== "") && (
-				<div className="absolute inset-x-0 top-full z-20 mt-1 overflow-hidden rounded-lg border bg-white py-1 shadow-md">
+				<div className="absolute inset-x-0 top-full z-20 mt-1 max-h-80 overflow-y-auto rounded-lg border bg-white py-1 shadow-md">
 					{suggestions.map((s, i) => (
 						<button
 							key={s.value}
@@ -301,8 +386,18 @@ export function FilterSearch<F extends { value: string }, K extends string>({
 							{language.fallback(typing)}
 						</p>
 					)}
+					{expanded?.to === text && (
+						<p className="border-t px-3 pt-1.5 pb-1 text-xs text-muted-foreground">
+							<kbd>⌫</kbd> search “{expanded.from.trim()}” instead
+						</p>
+					)}
 				</div>
 			)}
 		</div>
 	);
 }
+
+// Sorting, offered beside the filter types.
+const SORT_FIELD: readonly FieldEntry[] = [
+	{ label: "Sort by", insert: "^", words: ["sort"], negatable: true },
+];

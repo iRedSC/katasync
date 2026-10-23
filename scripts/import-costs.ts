@@ -25,16 +25,24 @@ try {
 }
 const db = getDb();
 const { catalog, aliases } = await costCatalog(db);
-const plan = planCostImport(readFileSync(values.costs, "utf8"), catalog, aliases);
+const plan = planCostImport(
+	readFileSync(values.costs, "utf8"),
+	catalog,
+	aliases,
+);
 
 const changed = plan.set.filter((c) => c.from !== c.to);
 const money = (n: number | null) => (n === null ? "none" : `$${n}`);
 console.log(`Costed:    ${plan.set.length} (${changed.length} change)`);
-console.log(`Cleared:   ${plan.clear.length} (not in the list, or no cost there)`);
+console.log(
+	`Cleared:   ${plan.clear.length} (not in the list, or no cost there)`,
+);
 console.log(`Not here:  ${plan.unknown.length} costed SKUs match no product`);
 console.log("\nBiggest changes:");
 for (const c of [...changed]
-	.sort((a, b) => Math.abs(b.to - (b.from ?? 0)) - Math.abs(a.to - (a.from ?? 0)))
+	.sort(
+		(a, b) => Math.abs(b.to - (b.from ?? 0)) - Math.abs(a.to - (a.from ?? 0)),
+	)
 	.slice(0, 15))
 	console.log(`  ${c.sku}: ${money(c.from)} -> ${money(c.to)}`);
 console.log(`\nWarnings (${plan.warnings.length}):`);

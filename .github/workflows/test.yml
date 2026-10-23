@@ -1,6 +1,7 @@
 # Lint, types and tests on every PR, so a change that breaks one can't merge
 # looking green. Tests run against PGlite in memory (src/test/db.ts), so they
-# need no database or secrets.
+# need no secrets; the Postgres service is for the one thing PGlite can't
+# show, locks held across connections (src/shipping/order-lock.postgres.test.ts).
 name: Test
 
 on:
@@ -8,9 +9,16 @@ on:
   push:
     branches: [main]
 
+# A newer push to the same PR replaces the run; runs on main all finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
+  # Lint and types beside the tests rather than before them.
+  check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -23,4 +31,32 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - run: pnpm test

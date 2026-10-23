@@ -1,5 +1,5 @@
 # The pre-commit hook can be skipped with --no-verify; this can't. Same
-# checks, file sizes over every tracked file. They need no dependencies, so
+# checks, file sizes over every tracked file, and migrations against main. They need no dependencies, so
 # this skips pnpm install.
 name: File size
 
@@ -8,14 +8,27 @@ on:
   push:
     branches: [main]
 
+# A newer push to the same PR replaces the run; runs on main all finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The commit before this push, for checking migrations against.
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
       - run: node scripts/check-file-size.ts --all
-      # A branch merged after a newer one leaves its migration dated too early.
-      - run: node scripts/check-migrations.ts
+      - if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+      # A branch merged after a newer one leaves its migration dated too early,
+      # and a migration main already has can't change, since the database has
+      # applied it.
+      - run: node scripts/check-migrations.ts --against ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^' }}

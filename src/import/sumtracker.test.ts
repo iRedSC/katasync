@@ -69,7 +69,7 @@ const fixture = {
 		stockHeader,
 		stock("BOX-S", 3),
 		stock("BOX-L", 0),
-		stock("BLADE", -2),
+		stock("BLADE", 4),
 		stock("BOX-S-AMZ", 0),
 	].join("\n"),
 };
@@ -109,7 +109,7 @@ describe("planSumtrackerImport", () => {
 		]);
 		expect(plan.openingStock).toEqual([
 			{ sku: "BOX-S", quantity: 3 },
-			{ sku: "BLADE", quantity: -2 },
+			{ sku: "BLADE", quantity: 4 },
 		]);
 		expect(plan.warnings).toEqual([
 			"Barcode 999 is shared by BOX-L, BLADE; left blank on all",
@@ -144,32 +144,56 @@ describe("applySumtrackerImport", () => {
 		db = await createTestDb();
 	});
 
-	test("writes the catalog and opening stock", async () => {
-		const result = await applySumtrackerImport(
-			db,
-			planSumtrackerImport(fixture),
-			"Warehouse",
-		);
-		expect(result).toEqual({
-			products: 4,
-			groups: 1,
-			bundles: 1,
-			aliases: 2,
-			stockLines: 2,
-		});
+	test("writes the catalog, recipes, aliases, and opening stock", async () => {
+		await applySumtrackerImport(db, planSumtrackerImport(fixture), "Warehouse");
 
 		const ids = new Map(
 			(await db.select().from(schema.products)).map((p) => [p.sku, p.id]),
 		);
+		const skuOf = new Map([...ids].map(([sku, id]) => [id, sku]));
+		expect([...ids.keys()].sort()).toEqual(["BLADE", "BOX-L", "BOX-S", "SET"]);
+		expect(
+			(await db.select().from(schema.productGroups)).map((g) => g.name),
+		).toEqual(["Flat Box"]);
+
+		const recipe = (await db.select().from(schema.productComponents)).map(
+			(c) => ({
+				bundle: skuOf.get(c.parentProductId),
+				sku: skuOf.get(c.componentProductId),
+				quantity: c.quantity,
+			}),
+		);
+		expect(recipe).toHaveLength(2);
+		expect(recipe).toEqual(
+			expect.arrayContaining([
+				{ bundle: "SET", sku: "BOX-S", quantity: 1 },
+				{ bundle: "SET", sku: "BLADE", quantity: 2 },
+			]),
+		);
+
+		const aliases = (await db.select().from(schema.productAliases)).map(
+			(a) => ({ alias: a.alias, sku: skuOf.get(a.productId) }),
+		);
+		expect(aliases).toHaveLength(2);
+		expect(aliases).toEqual(
+			expect.arrayContaining([
+				{ alias: "BOX-S-AMZ", sku: "BOX-S" },
+				{ alias: "BLADE-AMZ", sku: "BLADE" },
+			]),
+		);
+
 		const [warehouse] = await db.select().from(schema.locations);
 		const available = await getAvailability(db, [...ids.values()], {
 			locationIds: [warehouse.id],
 			keep: null,
 		});
 		expect(available.get(ids.get("BOX-S") ?? 0)).toBe(3);
-		expect(available.get(ids.get("SET") ?? 0)).toBe(0); // BLADE is oversold
+		// Three BOX-S and four BLADE, two BLADE per set: two sets. Without the
+		// recipe rows a bundle shows 0.
+		expect(available.get(ids.get("SET") ?? 0)).toBe(2);
 
 		const movements = await db.select().from(schema.movements);
+		expect(movements).toHaveLength(2);
 		expect(movements.every((m) => m.reason === "opening_balance")).toBe(true);
 	});
 
