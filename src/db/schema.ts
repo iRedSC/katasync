@@ -1255,7 +1255,7 @@ export const purchaseOrders = pgTable(
 		// Printed on this PO, under the supplier's standing PO notes.
 		notes: text(),
 		// What this PO's suggestions are worked out with, set in its
-		// Suggestions dialog (src/purchasing/orders/suggestions.ts). Days of
+		// Reorder dialog (src/purchasing/orders/suggestions.ts). Days of
 		// sales to cover; null follows the supplier's coverDays.
 		coverDays: integer(),
 		// Also suggest what this supplier sells but another sells for less.

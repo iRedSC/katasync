@@ -108,7 +108,7 @@ export function SuggestionsDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Suggestions for PO {d.order.id}</DialogTitle>
+					<DialogTitle>Reorder for PO {d.order.id}</DialogTitle>
 				</DialogHeader>
 
 				<section className="flex flex-col gap-2">

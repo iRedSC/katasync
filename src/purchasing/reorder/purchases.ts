@@ -27,7 +27,7 @@ export type RecommendedLine = SuggestedLine & {
 	cheaperAt: CheaperAt | null;
 };
 
-// What a PO's suggestions are worked out with (its Suggestions dialog).
+// What a PO's suggestions are worked out with (its Reorder dialog).
 // coverDays null follows the supplier's.
 export type SuggestionSettings = {
 	coverDays: number | null;

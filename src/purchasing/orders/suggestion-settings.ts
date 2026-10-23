@@ -18,7 +18,7 @@ import { lockForEdit, PurchaseOrderError } from "./lock";
 import { partsOfSets } from "./set-parts";
 import { lockSuggestions, onOtherDrafts, settingsOf } from "./suggestions";
 
-// A PO's Suggestions dialog: new settings, previewed, then applied. Unlike
+// A PO's Reorder dialog: new settings, previewed, then applied. Unlike
 // Update, which only adds and raises, applying makes the draft match the
 // suggestion: unlocked lines follow it up or down, and unlocked ones it no
 // longer wants come off. Locked lines and tool sets stay as they are. It

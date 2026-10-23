@@ -13,7 +13,7 @@ import { describe, SuggestionsDialog } from "./suggestions-dialog";
 import { useAction } from "./use-action";
 
 // Above an unsent PO's lines: how its suggestion stands, the settings it's
-// worked out with, Suggestions to change them, and refresh to bring the
+// worked out with, Reorder to change them, and refresh to bring the
 // suggestion in again. A suggested PO is today's suggestion until its first
 // change. A draft doesn't change by itself; when its suggestion has moved
 // on, the bar says how and refresh brings it in: new products added, short
@@ -77,7 +77,7 @@ export function ReorderBar({ detail: d }: { detail: PurchaseOrderDetail }) {
 			<div className="flex shrink-0 items-center gap-1">
 				<Button size="sm" variant="outline" onClick={() => setOpen(true)}>
 					<SlidersHorizontal />
-					Suggestions
+					Reorder
 				</Button>
 				<Tip content={suggested ? "Refresh" : "Add new and raise short lines"}>
 					<Button
