@@ -173,17 +173,15 @@ export async function draftLines(db: Db) {
 }
 
 // Unreceived units on sent POs, with their promised date or a lead-time estimate.
-export async function openArrivals(
-	db: Db,
-	_now: Date,
-	lead: Map<number, LeadTime>,
-	productIds?: number[],
-) {
+function arrivalRows(db: Db, productIds?: number[]) {
 	const received = receivedByLine(db);
-	const rows = await db
+	return db
 		.select({
 			productId: purchaseOrderLines.productId,
-			units: sql<number>`(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`,
+			units:
+				sql<number>`(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`.as(
+					"units",
+				),
 			sentAt: purchaseOrders.sentAt,
 			expectedAt: purchaseOrders.expectedAt,
 			supplierId: purchaseOrders.supplierId,
@@ -203,7 +201,11 @@ export async function openArrivals(
 					: undefined,
 			),
 		);
+}
 
+type ArrivalRow = Awaited<ReturnType<typeof arrivalRows>>[number];
+
+function datedArrivals(rows: ArrivalRow[], lead: Map<number, LeadTime>) {
 	const byProduct = new Map<number, Arrival[]>();
 	for (const r of rows) {
 		if (r.units === 0) continue;
@@ -223,16 +225,60 @@ export async function openArrivals(
 	return byProduct;
 }
 
+export async function openArrivals(
+	db: Db,
+	_now: Date,
+	lead: Map<number, LeadTime>,
+	productIds?: number[],
+) {
+	return datedArrivals(await arrivalRows(db, productIds), lead);
+}
+
+export async function stockAndArrivals(
+	db: Db,
+	lead: Map<number, LeadTime>,
+	productIds?: number[],
+) {
+	const hand = onHandBy(db);
+	const incoming = arrivalRows(db, productIds).as("arrivals");
+	const rows = await db
+		.select({
+			productId: sql<number>`coalesce(${hand.productId}, ${incoming.productId})`,
+			onHand: sql<number | null>`"on_hand"."units"`,
+			arrival: {
+				productId: incoming.productId,
+				units: sql<number>`"arrivals"."units"`,
+				sentAt: incoming.sentAt,
+				expectedAt: incoming.expectedAt,
+				supplierId: incoming.supplierId,
+				backOrderedAt: incoming.backOrderedAt,
+			},
+		})
+		.from(hand)
+		.fullJoin(incoming, eq(incoming.productId, hand.productId));
+	const onHand = new Map<number, number>();
+	const onOrder = new Map<number, number>();
+	const arrivals: ArrivalRow[] = [];
+	for (const row of rows) {
+		if (row.onHand !== null) onHand.set(row.productId, row.onHand);
+		if (row.arrival !== null) {
+			onOrder.set(
+				row.productId,
+				(onOrder.get(row.productId) ?? 0) + row.arrival.units,
+			);
+			arrivals.push(row.arrival);
+		}
+	}
+	return { onHand, onOrder, arrivals: datedArrivals(arrivals, lead) };
+}
+
 // A products that will run out before a PO sent today could arrive. Units on
 // order only count if they land before the shelf empties. Products without a
 // supplier use the default lead time, since they still have to come from
 // somewhere.
 export async function aItemsAtRisk(db: Db, now = new Date()) {
 	const plan = await loadPlan(db, now);
-	const [onHand, arrivals] = await Promise.all([
-		ownedOnHand(db),
-		openArrivals(db, now, plan.leadTimes),
-	]);
+	const { onHand, arrivals } = await stockAndArrivals(db, plan.leadTimes);
 	const aIds = [...plan.abc.classes]
 		.filter(([, c]) => c.abc === "A")
 		.map(([id]) => id);

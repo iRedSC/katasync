@@ -1,7 +1,9 @@
+import type { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/pglite";
 import { beforeEach, describe, expect, test } from "vitest";
+import * as schema from "#/db/capability-schema";
 import type { Db } from "#/db/client";
-import * as schema from "#/db/schema";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct } from "#/test/db";
 import {
@@ -18,6 +20,7 @@ import {
 	reorderBreakdown,
 	suggestPurchases,
 } from "./reorder";
+import { stockAndArrivals } from "./reorder/stock";
 import { setsBlocked } from "./sets";
 
 let db: Db;
@@ -36,6 +39,59 @@ beforeEach(async () => {
 });
 
 describe("reorderBreakdown", () => {
+	test("reads shelf, outstanding quantities, and dated receipts in one statement", async () => {
+		const blade = await createProduct(db, "BLADE", "simple");
+		const shelfOnly = await createProduct(db, "SHELF", "simple");
+		await stock(blade, 5);
+		await stock(shelfOnly, 7);
+		const orders = await db
+			.insert(schema.purchaseOrders)
+			.values(
+				[100, 50].map(
+					() =>
+						({
+							supplierId: canam,
+							locationId: warehouse,
+							status: "sent",
+							sentAt: now,
+							expectedAt: new Date(now.getTime() + 20 * 86_400_000),
+						}) as const,
+				),
+			)
+			.returning();
+		await db.insert(schema.purchaseOrderLines).values(
+			[100, 50].map((quantity, index) => ({
+				purchaseOrderId: orders[index].id,
+				productId: blade,
+				quantity,
+				supplierCount: 1,
+				minimumQuantity: 1,
+			})),
+		);
+		const queries: string[] = [];
+		const client = (db as unknown as { $client: PGlite }).$client;
+		const logging = drizzle(client, {
+			schema,
+			casing: "snake_case",
+			logger: { logQuery: (query) => queries.push(query) },
+		});
+		const supply = await stockAndArrivals(logging, new Map());
+		expect(queries).toHaveLength(1);
+		expect(queries[0]).toContain('"stock_levels"');
+		expect(queries[0]).toContain('"purchase_order_receipts"');
+		expect(queries[0]).toContain("full join");
+		expect(supply.onHand.get(blade)).toBe(5);
+		expect(supply.onHand.get(shelfOnly)).toBe(7);
+		expect(supply.onOrder.get(blade)).toBe(150);
+		expect(supply.arrivals.get(shelfOnly)).toBeUndefined();
+		expect(
+			supply.arrivals
+				.get(blade)
+				?.map((arrival) => arrival.units)
+				.sort((left, right) => left - right),
+		).toEqual([50, 100]);
+	});
+
 	test("uses promised PO dates and exposes backordered and missing-date supply", async () => {
 		const blade = await createProduct(db, "BLADE", "simple");
 		await supply(blade, 1);
@@ -74,8 +130,9 @@ describe("reorderBreakdown", () => {
 			aim: 0,
 			unknown: 0,
 			lateDue: 60,
+			schedule: [{ units: 100, dueDays: 60 }],
 		});
-		expect(late.line.quantity).toBeGreaterThan(0);
+		expect(late.line.quantity).toBe(25);
 		await db
 			.update(schema.purchaseOrders)
 			.set({ expectedAt: new Date(now.getTime() + 3 * 86_400_000) })

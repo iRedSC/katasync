@@ -207,7 +207,9 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 				"rounded-lg px-3 py-2",
 				v.kind === "order"
 					? "bg-info-surface text-info-text"
-					: "bg-surface text-foreground",
+					: v.kind === "awaiting"
+						? "bg-warning-surface text-warning-text"
+						: "bg-surface text-foreground",
 			)}
 		>
 			<p className="font-semibold">
@@ -220,7 +222,9 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 						? v.days === 0
 							? "Reorder today"
 							: `Reorder in ${plural(v.days, "day")}`
-						: "Nothing to order"}
+						: v.kind === "awaiting"
+							? `Delivery in ${plural(v.days, "day")}, ${plural(v.gapDays, "day")} short`
+							: "Nothing to order"}
 			</p>
 			{poText !== null && suggested !== poText && (
 				<p className="text-xs opacity-80">
@@ -457,12 +461,7 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 							key="late"
 							color={COLORS.late}
 							striped
-							label="Until the late delivery"
-							note={
-								why.incoming.lateDue === null
-									? undefined
-									: `Due in ${plural(Math.ceil(why.incoming.lateDue), "day")}`
-							}
+							label="Bridge delivery gaps"
 							value={formatCount(why.untilLate)}
 						/>,
 					]
