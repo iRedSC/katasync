@@ -203,7 +203,14 @@ export function contributionStatus(d: ReportData): string {
 		case "complete":
 			return "All costs in";
 		case "estimated":
-			return `Rests on ${f.estimatedOrders} orders not final`;
+			return [
+				f.feesEstimated > 0 ? `${f.feesEstimated} estimated fees` : null,
+				f.labelsStandIn > 0 ? `${f.labelsStandIn} stand-in labels` : null,
+				f.labelsAwaiting > 0 ? `${f.labelsAwaiting} labels awaited` : null,
+				f.awaitingReturn > 0 ? `${f.awaitingReturn} returns awaited` : null,
+			]
+				.filter((part) => part !== null)
+				.join(", ");
 		case "unknown":
 			return `Unknown: ${f.costUnknown} orders missing product cost, ${f.labelsMissing} missing label cost`;
 	}
