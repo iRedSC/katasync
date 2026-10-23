@@ -7,9 +7,11 @@ import { addPerson } from "#/auth/staff.fixtures";
 import type { Db } from "#/db/client";
 import { auditEvents } from "#/db/identity-schema";
 import * as schema from "#/db/schema";
+import { addPoFile } from "#/purchasing/files";
 import { createTestDb } from "#/test/db";
 import { AUDIT_SETTING, audited } from "./audited-db";
 import { runAs } from "./context";
+import { requestOperation } from "./request-operation";
 
 let raw: Db;
 let db: Db;
@@ -32,6 +34,54 @@ const addProduct = (d: Db, sku: string) =>
 		.returning({ id: schema.products.id });
 
 describe("audited writes", () => {
+	test("never records a suggested-PO upload bearer credential", async () => {
+		const [supplier] = await raw
+			.insert(schema.suppliers)
+			.values({ code: "UPLOAD", name: "Upload supplier" })
+			.returning();
+		const [location] = await raw
+			.insert(schema.locations)
+			.values({ name: "Upload dock", kind: "owned" })
+			.returning();
+		const [po] = await raw
+			.insert(schema.purchaseOrders)
+			.values({
+				supplierId: supplier.id,
+				locationId: location.id,
+				status: "suggested",
+			})
+			.returning();
+		const owner = await addPerson(raw, "Uploader", "owner");
+		const token = "upload-bearer-must-never-be-audited";
+		const operation = requestOperation(
+			new Request(
+				`https://example.test/api/uploads/po-file/${token}?also=${token}`,
+				{ method: "POST" },
+			),
+		);
+		await runAs(owner, operation, () =>
+			addPoFile(db, {
+				purchaseOrderId: po.id,
+				filename: "invoice.txt",
+				contentType: "text/plain",
+				data: new TextEncoder().encode("invoice"),
+				addedBy: "staff",
+			}),
+		);
+		const rows = await events();
+		expect(rows).toContainEqual(
+			expect.objectContaining({
+				tableName: "purchase_orders",
+				op: "update",
+				operation: "POST /api/uploads/po-file/$token",
+			}),
+		);
+		expect(JSON.stringify(rows)).not.toContain(token);
+		expect(
+			requestOperation(new Request(`https://example.test/unknown/${token}`)),
+		).toBe("GET /request");
+	});
+
 	test("credit a named person in the same transaction", async () => {
 		const sam = await addPerson(raw, "Sam", "operator", ["sam-phone"]);
 		const [p] = await runAs(sam, "POST /products", () =>

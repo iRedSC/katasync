@@ -35,7 +35,7 @@ export async function assertOwner(tx: Db, by: Actor): Promise<Issuer> {
 
 export const lockOwners = (tx: Db) =>
 	tx.execute(
-		sql`select pg_advisory_xact_lock(hashtext('katasync.staff.owners'))`,
+		sql`update staff_owner_guard set generation = generation + 1 where singleton`,
 	);
 
 export type OwnerSnapshot = ReadonlyArray<{
