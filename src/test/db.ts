@@ -2,8 +2,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { expect } from "vitest";
+import * as schema from "#/db/capability-schema";
 import type { Db } from "#/db/client";
-import * as schema from "#/db/schema";
 
 // Booting PGlite and migrating take seconds; wiping its tables takes about
 // 0.1s. So each worker process boots and migrates once, kept on globalThis

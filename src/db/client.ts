@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { Client, Pool } from "pg";
-import * as schema from "./schema";
+import * as schema from "./capability-schema";
 
 // Works for both node-postgres in the app and PGlite in tests.
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
