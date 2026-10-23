@@ -3,17 +3,50 @@ import { type } from "arktype";
 import { inArray } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { products } from "#/db/schema";
+import { billingOf } from "#/purchasing/invoice-ledger";
+import type { InvoiceLine } from "#/purchasing/invoice-lines";
+import { centsOf, type StaffContext } from "#/purchasing/invoice-matching";
+import { draftMatchable, evidenceOf } from "#/purchasing/invoice-records";
 import {
 	matchInvoice,
 	recordInvoice,
-	removeInvoice,
+	restoreInvoice,
+	voidInvoice,
 } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
 import { fillSupplierSkus } from "#/purchasing/suppliers";
 import { id } from "./id-input";
 
-// Checks a supplier invoice against its PO, changing nothing. A POST only
-// because the lines don't fit in a URL.
+export const staff = (): StaffContext => ({});
+
+const invoiceLine = type({
+	line: "number.integer > 0",
+	"sku?": "string",
+	"supplierSku?": "string",
+	"description?": "string",
+	quantity: "number.integer >= 0",
+	unitCost: "number >= 0",
+	"unit?": "string > 0",
+	"packSize?": "number.integer > 0",
+	"amount?": "number >= 0",
+});
+
+const linesOf = (
+	lines: (typeof invoiceLine.infer)[],
+	credits: number | undefined,
+): InvoiceLine[] => [
+	...lines.map((l) => ({ kind: "merchandise" as const, ...l })),
+	...(credits
+		? [
+				{
+					kind: "credit" as const,
+					line: Math.max(0, ...lines.map((l) => l.line)) + 1,
+					amount: credits,
+				},
+			]
+		: []),
+];
+
 export const checkSupplierInvoice = createServerFn({ method: "POST" })
 	.validator(
 		type({
@@ -22,28 +55,39 @@ export const checkSupplierInvoice = createServerFn({ method: "POST" })
 			"total?": "number >= 0",
 			"freight?": "number >= 0",
 			"tax?": "number >= 0",
-			// Discounts and other money the invoice takes off, together.
 			"credits?": "number > 0",
-			lines: type({
-				line: "number.integer > 0",
-				"sku?": "string",
-				"supplierSku?": "string",
-				quantity: "number.integer >= 0",
-				unitCost: "number >= 0",
-			})
-				.array()
-				.atLeastLength(1),
+			lines: invoiceLine.array().atLeastLength(1),
 		}),
 	)
-	.handler(async ({ data: { credits, ...data } }) =>
-		matchInvoice(getDb(), {
-			...data,
-			lines: [
-				...data.lines.map((l) => ({ kind: "merchandise" as const, ...l })),
-				...(credits ? [{ kind: "credit" as const, amount: credits }] : []),
-			],
-		}),
-	);
+	.handler(async ({ data: { credits, ...data } }) => {
+		const db = getDb();
+		const lines = linesOf(data.lines, credits);
+		const [check, po] = await Promise.all([
+			matchInvoice(db, { ...data, lines }),
+			loadOrder(db, data.purchaseOrderId),
+		]);
+		const draft = draftMatchable(evidenceOf(lines, po.lines));
+		const linesCents = draft.reduce(
+			(n, l) => n + (l.kind === "credit" ? -l.amountCents : l.amountCents),
+			0,
+		);
+		const freightCents = centsOf(data.freight ?? 0, "Freight");
+		const taxCents = centsOf(data.tax ?? 0, "Tax");
+		const billing = await billingOf(db, data.purchaseOrderId, {
+			id: -1,
+			totalCents:
+				data.total === undefined
+					? linesCents + freightCents + taxCents
+					: centsOf(data.total, "Total"),
+			activeSince: new Date(8.64e15),
+			voided: false,
+			itemization: { kind: "itemized", freightCents, taxCents, lines: draft },
+		});
+		return {
+			...check,
+			cumulative: { match: billing.draft, lines: billing.lines },
+		};
+	});
 
 export type InvoiceCheck = Awaited<ReturnType<typeof checkSupplierInvoice>>;
 
@@ -52,18 +96,36 @@ export const recordSupplierInvoice = createServerFn({ method: "POST" })
 		type({
 			purchaseOrderId: "number.integer > 0",
 			number: "string > 0",
-			// YYYY-MM-DD, which recordInvoice checks.
 			invoicedOn: "string",
 			"dueOn?": "string | null",
 			total: "number >= 0",
+			"currency?": "'USD'",
+			"freight?": "number >= 0",
+			"tax?": "number >= 0",
+			"credits?": "number > 0",
+			"lines?": invoiceLine.array(),
 		}),
 	)
-	.handler(async ({ data }) => recordInvoice(getDb(), data));
+	.handler(async ({ data: { credits, lines, ...data } }) =>
+		recordInvoice(
+			getDb(),
+			{
+				...data,
+				lines: lines || credits ? linesOf(lines ?? [], credits) : undefined,
+			},
+			staff(),
+		),
+	);
 
-// Returns what was removed, so recordSupplierInvoice can put it back.
-export const removeSupplierInvoice = createServerFn({ method: "POST" })
+export const voidSupplierInvoice = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", "reason?": "string | null" }))
+	.handler(async ({ data }) => voidInvoice(getDb(), data, staff()));
+
+export const removeSupplierInvoice = voidSupplierInvoice;
+
+export const restoreSupplierInvoice = createServerFn({ method: "POST" })
 	.validator(id)
-	.handler(async ({ data }) => removeInvoice(getDb(), data.id));
+	.handler(async ({ data }) => restoreInvoice(getDb(), data, staff()));
 
 // Saves the item numbers an invoice showed onto the PO's products, for its
 // supplier. A product that already has a number keeps it.
