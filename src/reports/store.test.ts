@@ -170,6 +170,9 @@ describe("saved revisions", () => {
 			db.delete(reportSnapshots).where(eq(reportSnapshots.id, saved.id)),
 		).rejects.toMatchObject(causedBy(/append-only/));
 		await expect(
+			db.execute(sql`truncate report_snapshots cascade`),
+		).rejects.toMatchObject(causedBy(/append-only/));
+		await expect(
 			db.insert(reportArtifacts).values({
 				snapshotId: saved.id,
 				name: "late.csv",
