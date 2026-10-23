@@ -179,15 +179,11 @@ function Discounts({
 			.then(
 				(r) =>
 					r &&
-					offerUndo(
-						`${shown} on ${line.sku}${r.value.receivedAtOldCost ? ". Received units keep the cost they came in at." : ""}`,
-						{
-							tone: r.value.receivedAtOldCost ? "warning" : undefined,
-							undo: async () =>
-								(await takeOffDiscount(line, id, purchaseOrderId, draft)) &&
-								`Took ${shown} off ${line.sku}`,
-						},
-					),
+					offerUndo(`${shown} on ${line.sku}`, {
+						undo: async () =>
+							(await takeOffDiscount(line, id, purchaseOrderId, draft)) &&
+							`Took ${shown} off ${line.sku}`,
+					}),
 			);
 	}
 

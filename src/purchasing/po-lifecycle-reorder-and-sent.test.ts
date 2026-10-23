@@ -274,19 +274,6 @@ describe("a PO from draft to received", () => {
 		expect((await getPo(id)).status).toBe("sent");
 	});
 
-	test("a price change after stock arrived says that stock kept the old cost", async () => {
-		const { bladeLine, knifeLine } = await sent();
-		await receive(db, { lineId: bladeLine.id, quantity: 1 });
-		expect(
-			(await amendLine(db, { lineId: bladeLine.id, unitCost: 6 }))
-				.receivedAtOldCost,
-		).toBe(true);
-		expect(
-			(await amendLine(db, { lineId: knifeLine.id, unitCost: 3 }))
-				.receivedAtOldCost,
-		).toBe(false);
-	});
-
 	test("a line added after sending comes off at 0; a sent one stays at 0", async () => {
 		const { id, knifeLine } = await sent();
 		const gauge = await createProduct(db, "GAUGE", "simple");

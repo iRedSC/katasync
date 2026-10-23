@@ -19,7 +19,7 @@ export function registerProductTools(server: McpServer, db: Db) {
 		"update_product",
 		{
 			description:
-				"Changes a product's details. Only given fields change; null clears one. unit_cost is USD per single item (receiving POs averages it automatically). Weight in ounces and size in inches are what labels are bought with.",
+				"Changes a product's details. Only given fields change; null clears one. unit_cost is the average cost of one item of its stock, USD; receiving POs keeps it up to date. Setting it revalues what's on the shelf, and sales already made keep their cost. Weight in ounces and size in inches are what labels are bought with.",
 			inputSchema: {
 				sku: z.string(),
 				name: z.string().optional(),

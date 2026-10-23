@@ -4,6 +4,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { listingSold } from "#/channels/listing-edits";
 import { getDb } from "#/db/client";
 import {
+	costEntries,
 	listings,
 	locations,
 	movements,
@@ -53,6 +54,23 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			.from(locations)
 			.where(isOurs)
 			.orderBy(locations.kind, locations.name);
+		// What moved its average cost lately, newest first.
+		const costHistory = db
+			.select({
+				id: costEntries.id,
+				kind: costEntries.kind,
+				units: costEntries.units,
+				value: costEntries.value,
+				avgBefore: costEntries.avgBefore,
+				avgAfter: costEntries.avgAfter,
+				soldValue: costEntries.soldValue,
+				note: costEntries.note,
+				createdAt: costEntries.createdAt,
+			})
+			.from(costEntries)
+			.where(eq(costEntries.productId, product.id))
+			.orderBy(desc(costEntries.id))
+			.limit(12);
 		const [
 			group,
 			variants,
@@ -209,6 +227,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			aliases: aliases.map((a) => a.alias),
 			listings: productListings,
 			history,
+			costHistory: await costHistory,
 			available: availability.get(product.id) ?? 0,
 			abc: rank ? { ...rank, of: ranking.size, days: abc.days } : null,
 			// Where a count or transfer could be recorded. One location means

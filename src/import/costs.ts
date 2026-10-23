@@ -1,13 +1,14 @@
-// Replaces every product's cost from a cost list (sku, name, cost), as
-// profit-margarine exports it, and re-costs every sale from the new costs.
-// The list is the whole truth: a product it gives no cost loses the one it
-// had, so profit shows it as unknown instead of trusting it. Tool sets are
-// left without one of their own, since one always costs its parts.
+// Sets products' costs from a cost list (sku, name, cost), as
+// profit-margarine exports it. Sales already made keep the cost they took;
+// only those that went out with none take one. A product the list gives no
+// cost keeps its own. Tool sets are left without one of their own, since one
+// always costs its parts.
 import { type } from "arktype";
-import { inArray, sql } from "drizzle-orm";
+import { and, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { products } from "#/db/schema";
-import { chunks, readCsv } from "#/import/sumtracker";
+import { orderLines, products } from "#/db/schema";
+import { readCsv } from "#/import/sumtracker";
+import { setCost } from "#/inventory/valuation";
 
 const costRow = type({
 	sku: "string",
@@ -27,8 +28,9 @@ type Product = { productId: number; sku: string };
 export type CostPlan = {
 	// Every product the list costs, changed or not, so each gets dated.
 	set: (Product & { from: number | null; to: number })[];
-	// Products with a cost the list doesn't give them.
-	clear: (Product & { from: number })[];
+	// Products with a cost the list doesn't give them. They keep it, except
+	// tool sets.
+	clear: (Product & { from: number; bundle: boolean })[];
 	// SKUs the list costs that match no product or alias here.
 	unknown: string[];
 	warnings: string[];
@@ -88,7 +90,8 @@ export function planCostImport(
 		const product = { productId: p.id, sku: p.sku };
 		// A tool set's own cost is never used, so one left over only misleads.
 		if (p.kind === "bundle") {
-			if (p.unitCost !== null) clear.push({ ...product, from: p.unitCost });
+			if (p.unitCost !== null)
+				clear.push({ ...product, from: p.unitCost, bundle: true });
 			continue;
 		}
 		let cost = costOf(key(p.sku));
@@ -103,7 +106,8 @@ export function planCostImport(
 				);
 		}
 		if (cost !== null) set.push({ ...product, from: p.unitCost, to: cost });
-		else if (p.unitCost !== null) clear.push({ ...product, from: p.unitCost });
+		else if (p.unitCost !== null)
+			clear.push({ ...product, from: p.unitCost, bundle: false });
 	}
 
 	const unknown = [...listed]
@@ -112,58 +116,41 @@ export function planCostImport(
 	return { set, clear, unknown, warnings };
 }
 
-// One transaction: either every cost and every sale changes, or none does.
+// One transaction: every cost changes, or none does. Each is set as by hand
+// (src/inventory/valuation.ts): what's on the shelf is revalued, sales
+// already made keep their cost, and sales that went out with none take the
+// new one. A product the list doesn't cost keeps the one it has. Tool sets'
+// own costs are cleared, since one always costs its parts.
 export async function applyCostImport(db: Db, plan: CostPlan) {
 	return db.transaction(async (tx) => {
-		// Dated even when unchanged: the list confirms it.
-		const byCost = new Map<number, number[]>();
-		for (const c of plan.set) {
-			const ids = byCost.get(c.to);
-			if (ids) ids.push(c.productId);
-			else byCost.set(c.to, [c.productId]);
-		}
-		for (const [cost, ids] of byCost)
-			for (const batch of chunks(ids, 1000))
-				await tx
-					.update(products)
-					.set({ unitCost: cost, unitCostUpdatedAt: sql`now()` })
-					.where(inArray(products.id, batch));
-		for (const batch of chunks(plan.clear, 1000))
-			await tx
-				.update(products)
-				.set({ unitCost: null })
+		const unknownSales = () =>
+			tx
+				.select({ n: sql<number>`count(*)::int` })
+				.from(orderLines)
 				.where(
-					inArray(
-						products.id,
-						batch.map((c) => c.productId),
-					),
-				);
-		// Every sale takes its product's cost as it is now, as a new sale would
-		// (costOf in src/orders/ingest.ts): a tool set the sum of its parts,
-		// unknown if any part is.
-		// Counted in SQL: only the count comes back, not every sale's id.
-		const { rows } = (await tx.execute(sql`
-			WITH recosted AS (
-				UPDATE order_lines l SET unit_cost = c.cost
-				FROM (
-					SELECT p.id, CASE WHEN p.kind = 'bundle' THEN (
-						SELECT CASE WHEN count(*) > 0 AND bool_and(cp.unit_cost IS NOT NULL)
-							THEN sum(cp.unit_cost * pc.quantity) END
-						FROM product_components pc
-						JOIN products cp ON cp.id = pc.component_product_id
-						WHERE pc.parent_product_id = p.id
-					) ELSE p.unit_cost END AS cost
-					FROM products p
-				) c
-				WHERE l.product_id = c.id AND l.unit_cost IS DISTINCT FROM c.cost
-				RETURNING l.id
-			)
-			SELECT count(*)::int AS n FROM recosted
-		`)) as unknown as { rows: { n: number }[] };
+					and(isNotNull(orderLines.productId), isNull(orderLines.unitCost)),
+				)
+				.then(([r]) => r.n);
+		const before = await unknownSales();
+		// Dated even when unchanged: the list confirms it.
+		for (const c of plan.set)
+			await setCost(tx, {
+				productId: c.productId,
+				cost: c.to,
+				note: "Cost list",
+			});
+		const bundles = plan.clear.filter((c) => c.bundle);
+		for (const c of bundles)
+			await setCost(tx, {
+				productId: c.productId,
+				cost: null,
+				note: "Cost list",
+			});
 		return {
 			costed: plan.set.length,
-			cleared: plan.clear.length,
-			salesRecosted: rows[0].n,
+			cleared: bundles.length,
+			kept: plan.clear.length - bundles.length,
+			salesCosted: before - (await unknownSales()),
 		};
 	});
 }

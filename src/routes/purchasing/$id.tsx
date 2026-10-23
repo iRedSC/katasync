@@ -24,6 +24,7 @@ import {
 	type PurchaseOrderMatch,
 } from "#/components/po-product-picker";
 import { AddEmail } from "#/components/purchase-order/add-email";
+import { ChargesRow } from "#/components/purchase-order/charges-row";
 import { middayOf } from "#/components/purchase-order/days";
 import { DeliveryCard } from "#/components/purchase-order/delivery-card";
 import { FilesCard } from "#/components/purchase-order/files-card";
@@ -116,7 +117,8 @@ function PurchaseOrderPage() {
 					100,
 				unpriced: d.lines.filter((l) => l.unitCost === null).length,
 			};
-	const total = shown.total;
+	// Freight and the like are part of what the PO costs.
+	const total = shown.total + d.charges.reduce((n, c) => n + c.amount, 0);
 	const wasSent = po.sentAt !== null;
 	const amended = d.lines.filter(
 		(l) => sinceSent(l, wasSent) === "amended",
@@ -186,12 +188,13 @@ function PurchaseOrderPage() {
 					onBrowse={() => setBrowsing(true)}
 				/>
 			)}
+			<ChargesRow detail={d} />
 			<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
 				<span className="text-muted-foreground">
 					{formatCount(shown.units)} {shown.units === 1 ? "unit" : "units"}
 					{shown.unpriced > 0 && `, ${shown.unpriced} unpriced`}
 				</span>
-				{changed > 0 && sentTotal !== total && (
+				{changed > 0 && sentTotal !== shown.total && (
 					<span className="text-muted-foreground tabular-nums">
 						Sent as {formatMoney(sentTotal)}
 					</span>

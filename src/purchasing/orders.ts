@@ -27,7 +27,6 @@ export {
 } from "#/purchasing/orders/lock";
 export { orderAgain } from "#/purchasing/orders/order-again";
 export {
-	averageCost,
 	damagedOf,
 	purchaseOrderOfBatch,
 	receive,

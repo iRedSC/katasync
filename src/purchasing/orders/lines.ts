@@ -16,6 +16,7 @@ import { reopen } from "./closing";
 import { checkDiscounts, checkOff } from "./discount-checks";
 import { lockForEdit, PurchaseOrderError, poName } from "./lock";
 import { checkPrice } from "./price";
+import { revaluePurchaseOrder } from "./revalue";
 import type { AddedLine, Status } from "./types";
 
 // Sets how many of a product a draft orders, adding the line if needed. 0
@@ -147,7 +148,6 @@ export async function newLine(tx: Db, productId: number, supplierId: number) {
 		.select({
 			kind: products.kind,
 			sku: products.sku,
-			productCost: products.unitCost,
 			archivedAt: products.archivedAt,
 		})
 		.from(products)
@@ -184,15 +184,10 @@ export async function newLine(tx: Db, productId: number, supplierId: number) {
 			supplierCount: offer?.supplierCount ?? 1,
 			minimumQuantity: offer?.minimumQuantity ?? 1,
 		},
-		// A tool set has no price of its own: sending replaces it with its
-		// parts, each at its own price.
-		unitCost:
-			product.kind === "bundle"
-				? null
-				: (offer?.cost ??
-					(product.productCost === null
-						? null
-						: product.productCost * packSize)),
+		// The supplier's price, or none: what our stock averages isn't what
+		// they charge. A tool set has no price of its own: sending replaces it
+		// with its parts, each at its own price.
+		unitCost: product.kind === "bundle" ? null : (offer?.cost ?? null),
 	};
 }
 
@@ -304,6 +299,9 @@ export async function insertLine(
 		})
 		.returning(lineFields);
 	if (po.status === "closed" && input.quantity > 0) await reopen(tx, po.id);
+	// A new line takes its share of the PO's charges off what's in already.
+	if (po.status !== "draft" && po.status !== "suggested")
+		await revaluePurchaseOrder(tx, po.id);
 	return { added: true, line };
 }
 

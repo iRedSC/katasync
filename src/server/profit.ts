@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
+import { stockValueByKind } from "#/inventory/stock-value";
 import {
 	groupBoxes,
 	groupPostage,
@@ -30,16 +31,25 @@ export const getProfit = createServerFn({ method: "GET" })
 		const db = getDb();
 		const range = await resolveRange(db, data.range);
 		const { start, end } = range;
-		const [totals, previous, marketplaces, days, products, attention, waiting] =
-			await Promise.all([
-				profitTotals(db, start, end),
-				profitTotals(db, range.previousStart, range.previousEnd),
-				profitByMarketplace(db, start, end),
-				profitByDay(db, start, end),
-				profitByProduct(db, start, end),
-				ordersNeedingCosts(db, start, end),
-				ordersWaiting(db, start, end),
-			]);
+		const [
+			totals,
+			previous,
+			marketplaces,
+			days,
+			products,
+			attention,
+			waiting,
+			stock,
+		] = await Promise.all([
+			profitTotals(db, start, end),
+			profitTotals(db, range.previousStart, range.previousEnd),
+			profitByMarketplace(db, start, end),
+			profitByDay(db, start, end),
+			profitByProduct(db, start, end),
+			ordersNeedingCosts(db, start, end),
+			ordersWaiting(db, start, end),
+			stockValueByKind(db),
+		]);
 		const ranked = [...products].sort((a, b) => b.profit - a.profit);
 		return {
 			range,
@@ -55,6 +65,7 @@ export const getProfit = createServerFn({ method: "GET" })
 				.slice(0, 10),
 			attention,
 			waiting,
+			stock,
 		};
 	});
 
@@ -82,7 +93,7 @@ export const getPostageAdjustments = createServerFn({ method: "GET" })
 	});
 
 // Sets what one of a product costs. Sales already in with no cost of their
-// own take it at once (order_line_costs); those with one keep theirs.
+// own take it at once (src/inventory/valuation.ts); those with one keep theirs.
 export const setProductCost = createServerFn({ method: "POST" })
 	.validator(type({ productId: "number.integer > 0", unitCost: "number >= 0" }))
 	.handler(async ({ data }) => {

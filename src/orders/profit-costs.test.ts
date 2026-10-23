@@ -38,7 +38,7 @@ describe("order_profit", () => {
 		});
 	});
 
-	test("a line in before its product had a cost takes the cost it has now", async () => {
+	test("a line in before its product had a cost takes its first cost", async () => {
 		const { id } = await order("#10", [
 			{ unitPrice: 30, quantity: 2, unitCost: null },
 		]);

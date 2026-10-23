@@ -9,7 +9,7 @@ import type { Discount } from "#/purchasing/discount";
 import { discountOf, discountRow, receiptLeft } from "#/purchasing/discount";
 import { checkDiscounts, checkOff, lineDiscounts } from "./discount-checks";
 import { lockForEdit, PurchaseOrderError, poName } from "./lock";
-import { receivedOf } from "./receiving";
+import { revaluePurchaseOrder } from "./revalue";
 
 // When a draft line's pack size changes: discounts on a number of units
 // cover the same items in the new unit, so 6 EACH become 1 CASE of 6. One
@@ -50,7 +50,7 @@ async function lockLineOrder(tx: Db, lineId: number) {
 // and the PDF stays as sent. `replaces` takes one of the line's discounts off
 // in the same change, which is how one is edited. `receiptId` puts back one
 // that came with a delivery, so undoing that receipt still takes it off.
-// Stock that already arrived keeps the cost it came in at (receivedAtOldCost).
+// Stock that already arrived is revalued to match.
 export async function saveDiscount(
 	db: Db,
 	input: {
@@ -70,7 +70,7 @@ export async function saveDiscount(
 		);
 	checkOff(discount.off);
 	return db.transaction(async (tx) => {
-		await lockLineOrder(tx, input.lineId);
+		const po = await lockLineOrder(tx, input.lineId);
 		const replaced =
 			input.replaces === undefined
 				? null
@@ -86,11 +86,8 @@ export async function saveDiscount(
 				...discountRow(discount),
 			})
 			.returning({ id: purchaseOrderDiscounts.id });
-		return {
-			id: row.id,
-			replaced,
-			receivedAtOldCost: (await receivedOf(tx, input.lineId)) > 0,
-		};
+		await revaluePurchaseOrder(tx, po.id);
+		return { id: row.id, replaced };
 	});
 }
 
@@ -151,10 +148,8 @@ export async function removeDiscount(
 			);
 		const removed = await takeOffDiscount(tx, id, found.lineId);
 		await checkDiscounts(tx, found.lineId);
-		return {
-			...removed,
-			receivedAtOldCost: (await receivedOf(tx, found.lineId)) > 0,
-		};
+		await revaluePurchaseOrder(tx, po.id);
+		return removed;
 	});
 }
 

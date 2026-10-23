@@ -107,7 +107,9 @@ export const products = pgTable(
 		category: text(),
 		// UPC/EAN. Unique so a scan finds exactly one product.
 		barcode: text().unique(),
-		// USD per unit, for PO totals and stock value.
+		// USD: the moving average cost of one item of its stock, across every
+		// shelf. Only src/inventory/valuation.ts writes it, with a cost entry
+		// for each change; a trigger records any other write.
 		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 		// When the cost was last set, to tell when it may have gone stale. A
 		// trigger (drizzle/0077) sets it whenever the cost changes and clears it
@@ -312,6 +314,63 @@ export const stockCounts = pgTable("stock_counts", {
 	countedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	previousCountedAt: timestamp({ withTimezone: true }),
 });
+
+// Why a product's average cost or stock value changed. `set` is a cost
+// entered by hand, or written straight to products.unit_cost (a trigger
+// records those). `undo` reverses the entries of an undone ledger batch.
+export const costEntryKind = pgEnum("cost_entry_kind", [
+	"opening",
+	"set",
+	"receipt",
+	"po_correction",
+	"return",
+	"kit_build",
+	"kit_break",
+	"undo",
+]);
+
+// Append-only history of every product's average cost (src/inventory/
+// valuation.ts), so the cost behind any number can be traced. Every dollar of
+// `value` lands on the shelf or, as soldValue, on goods already sold: value =
+// change in shelf value + soldValue. products.unit_cost is avgAfter of the
+// newest entry; a trigger adds a `set` entry for any write that skips this.
+export const costEntries = pgTable(
+	"cost_entries",
+	{
+		id: bigint({ mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+		// Deleting a product that never did anything takes its costs with it
+		// (src/products/archive.ts); nothing else can delete an entry.
+		productId: integer()
+			.notNull()
+			.references(() => products.id, { onDelete: "cascade" }),
+		kind: costEntryKind().notNull(),
+		// Single items in (+) or out (-) at this value; 0 for value alone.
+		units: integer().notNull().default(0),
+		// USD in (+) or out (-). Null when nobody knows it: the units came in
+		// at the average, which was unknown too.
+		value: numeric({ precision: 14, scale: 4, mode: "number" }),
+		// Items on every shelf, Amazon's included, before this.
+		heldBefore: integer().notNull(),
+		avgBefore: numeric({ precision: 12, scale: 4, mode: "number" }),
+		avgAfter: numeric({ precision: 12, scale: 4, mode: "number" }),
+		// The part of value that belongs to units already sold, e.g. late
+		// freight on a delivery half gone. Profit counts it when it's posted.
+		soldValue: numeric({ precision: 14, scale: 4, mode: "number" })
+			.notNull()
+			.default(0),
+		// The ledger batch it moved with, so undoing the batch reverses it.
+		batchId: uuid(),
+		purchaseOrderLineId: integer().references(() => purchaseOrderLines.id),
+		note: text(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("cost_entries_product_idx").on(t.productId, t.id),
+		index("cost_entries_batch_idx").on(t.batchId),
+		index("cost_entries_po_line_idx").on(t.purchaseOrderLineId),
+		index("cost_entries_created_idx").on(t.createdAt),
+	],
+);
 
 // A list of stock to move from one of our locations to another, e.g. a
 // refill of the retail store. A draft can change freely; sending it moves
@@ -625,8 +684,9 @@ export const orderLines = pgTable(
 		// Price per unit after every discount.
 		unitPrice: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		// Cost per unit when the line first came in, so later cost changes don't
-		// rewrite past profit. Null when any part had no cost; profit then uses
-		// the product's cost as it is now (order_line_costs).
+		// rewrite past profit. Null while any part has no cost: it takes the
+		// first cost the product gets (src/inventory/valuation.ts), and is
+		// unknown until then.
 		unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
 		// The stock movement this line made, if any. Set once, so re-syncing never
 		// takes stock twice; a cancellation reverses exactly this batch.
@@ -1845,6 +1905,38 @@ export const purchaseOrderDiscounts = pgTable(
 	],
 );
 
+// What a PO cost on top of its lines: freight, duty, a fee. Negative for a
+// credit across the whole PO. Spread over the lines by weight when every one
+// has a weight, else by value (src/purchasing/landed.ts), and so part of
+// what each received item cost.
+export const purchaseOrderChargeKind = pgEnum("purchase_order_charge_kind", [
+	"freight",
+	"duty",
+	"fee",
+	"credit",
+]);
+
+export const purchaseOrderCharges = pgTable(
+	"purchase_order_charges",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id, { onDelete: "cascade" }),
+		kind: purchaseOrderChargeKind().notNull(),
+		// USD. A credit is negative, everything else positive.
+		amount: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("purchase_order_charges_po_idx").on(t.purchaseOrderId),
+		check(
+			"purchase_order_charges_sign",
+			sql`case when ${t.kind} = 'credit' then ${t.amount} < 0 else ${t.amount} > 0 end`,
+		),
+	],
+);
+
 // What a damage report asks the supplier for: money back, or the same
 // number again. Chosen per item when the report is sent.
 export const damageRemedy = pgEnum("damage_remedy", ["credit", "replacement"]);
@@ -2127,6 +2219,17 @@ export const ownedStock = pgView("owned_stock", {
 	productId: integer().notNull(),
 	sku: text().notNull(),
 	onHand: integer().notNull(),
+}).existing();
+
+// What stock is worth on each shelf holding some, at its product's average
+// cost; value is null where the product has no cost.
+export const stockValue = pgView("stock_value", {
+	productId: integer().notNull(),
+	locationId: integer().notNull(),
+	locationKind: locationKind().notNull(),
+	units: integer().notNull(),
+	unitCost: numeric({ precision: 12, scale: 4, mode: "number" }),
+	value: numeric({ mode: "number" }),
 }).existing();
 
 // Units that left our shelves, per order line: tool sets as their parts,

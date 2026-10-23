@@ -7,6 +7,7 @@ import {
 	stockCounts,
 	stockLevels,
 } from "#/db/schema";
+import { type CostLine, reversalOf } from "#/inventory/valuation";
 import { carriedOrStocked } from "#/products/archive";
 import {
 	assertPositiveInteger,
@@ -75,6 +76,7 @@ async function convertKits(
 		const sign = direction === "assemble" ? 1 : -1;
 		const result = await postMovements(tx, {
 			reference: input.reference,
+			costs: await kitCosts(tx, kit, recipe, input.quantity, direction),
 			lines: [
 				{
 					productId: kit.id,
@@ -119,6 +121,51 @@ async function convertKits(
 		}
 		return result;
 	});
+}
+
+// Building conserves value: a kit costs what its parts did, and breaking one
+// gives its cost back to its parts, split as they cost. Parts leave and the
+// kit leaves at their averages. Unknown anywhere, it all moves at averages.
+async function kitCosts(
+	tx: Db,
+	kit: { id: number; unitCost: number | null },
+	recipe: { productId: number; quantity: number }[],
+	quantity: number,
+	direction: "assemble" | "disassemble",
+): Promise<CostLine[]> {
+	const parts = await tx
+		.select({ id: products.id, unitCost: products.unitCost })
+		.from(products)
+		.where(
+			inArray(
+				products.id,
+				recipe.map((c) => c.productId),
+			),
+		);
+	const costOf = new Map(parts.map((p) => [p.id, p.unitCost]));
+	const each = recipe.map((c) => ({
+		...c,
+		cost: costOf.get(c.productId) ?? null,
+	}));
+	const known = each.every((c) => c.cost !== null);
+	const partsCost = each.reduce((n, c) => n + (c.cost ?? 0) * c.quantity, 0);
+	if (direction === "assemble")
+		return [
+			{
+				productId: kit.id,
+				kind: "kit_build",
+				units: quantity,
+				value: known ? partsCost * quantity : null,
+			},
+		];
+	if (kit.unitCost === null || !known || partsCost <= 0) return [];
+	const worth = kit.unitCost * quantity;
+	return each.map((c) => ({
+		productId: c.productId,
+		kind: "kit_break",
+		units: c.quantity * quantity,
+		value: (worth * (c.cost ?? 0) * c.quantity) / partsCost,
+	}));
 }
 
 // A request is outstanding while it's set and no count has landed after it.
@@ -346,7 +393,8 @@ export async function recordCount(
 }
 
 // Reverses an earlier operation by posting its exact opposite, since movements
-// are never edited. Each batch can be undone once. Undoing a count also puts
+// are never edited, and takes back out the value it brought in. Each batch can
+// be undone once. Undoing a count also puts
 // back the shelf's previous count date, unless a later count has replaced it.
 export async function undoBatch(db: Db, batchId: string) {
 	return db.transaction(async (tx) => {
@@ -370,6 +418,7 @@ export async function undoBatch(db: Db, batchId: string) {
 				delta: -m.delta,
 				reason: m.reason,
 			})),
+			costs: await reversalOf(tx, batchId),
 		});
 		await restoreCountDate(tx, batchId);
 		return result;

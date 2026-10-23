@@ -24,6 +24,7 @@ import {
 } from "#/purchasing/orders";
 import { supplierByRef } from "#/purchasing/suppliers";
 import { setLineTerms } from "#/purchasing/units";
+import { registerChargeTools } from "./charge-tools";
 import { registerDiscountTools } from "./discount-tools";
 import {
 	catalogIds,
@@ -375,7 +376,7 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 		"adjust_sent_po_line",
 		{
 			description:
-				"Changes the quantity or price of a line on a PO already sent, e.g. to agree with the supplier's invoice. Tells no one; the PO as sent stays as it was. Per the line's unit. A quantity can't go below what has arrived; 0 means no more are coming, and takes a line added after sending off if none arrived. Closes the PO when that leaves nothing to wait for, and reopens a closed one when it does. Returns what the line was, so it can be set back.",
+				"Changes the quantity or price of a line on a PO already sent, e.g. to agree with the supplier's invoice. Tells no one; the PO as sent stays as it was. Per the line's unit. A quantity can't go below what has arrived; 0 means no more are coming, and takes a line added after sending off if none arrived. Closes the PO when that leaves nothing to wait for, and reopens a closed one when it does. Stock already received is revalued to the new price. Returns what the line was, so it can be set back.",
 			inputSchema: {
 				po: z.number().int().positive(),
 				sku: z.string(),
@@ -414,12 +415,6 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 			return json({
 				was: result.was,
 				...(result.removed ? { removed: product.sku } : {}),
-				...(result.receivedAtOldCost
-					? {
-							warning:
-								"Some already arrived at the old price; that stock keeps its cost",
-						}
-					: {}),
 				po: await orderForClaude(db, po),
 			});
 		},
@@ -427,6 +422,7 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 
 	// Discounts are registered here so the list keeps its order.
 	registerDiscountTools(server, db);
+	registerChargeTools(server, db);
 
 	server.registerTool(
 		"record_supplier_invoice",

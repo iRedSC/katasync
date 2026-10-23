@@ -10,13 +10,14 @@ import { checkDiscounts } from "./discount-checks";
 import { lockOrder, PurchaseOrderError } from "./lock";
 import { checkPrice } from "./price";
 import { receivedOf } from "./receiving";
+import { revaluePurchaseOrder } from "./revalue";
 
 // Changes a sent line without telling the supplier: we're keeping what they
 // got wrong. The PDF still shows what was sent. A quantity can't go under
 // what's already arrived; 0 means none are coming. A line added after
 // sending that never received anything is taken off instead of kept at 0.
-// Returns what the line was, for undo, and whether stock had already come in
-// at the old cost, which keeps that cost.
+// Stock that already came in is revalued to the new price. Returns what the
+// line was, for undo.
 export async function amendLine(
 	db: Db,
 	input: { lineId: number; quantity?: number; unitCost?: number | null },
@@ -64,7 +65,7 @@ export async function amendLine(
 					quantityBefore: line.quantity,
 				});
 				await settle(tx, po, null);
-				return { was, removed: true, receivedAtOldCost: false };
+				return { was, removed: true };
 			}
 		}
 		await tx
@@ -93,13 +94,7 @@ export async function amendLine(
 				unitCostBefore: line.unitCost,
 				unitCostAfter: input.unitCost,
 			});
-		return {
-			was,
-			removed: false,
-			receivedAtOldCost:
-				input.unitCost !== undefined &&
-				input.unitCost !== line.unitCost &&
-				received > 0,
-		};
+		await revaluePurchaseOrder(tx, po.id);
+		return { was, removed: false };
 	});
 }
