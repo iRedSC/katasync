@@ -58,6 +58,7 @@ export function reportDataFixture(over: Partial<ReportData> = {}): ReportData {
 		],
 		deposits: [
 			{
+				externalId: "payout-1",
 				channel: "shopify",
 				status: "sent",
 				depositedAt: "2026-09-10T14:00:00.000Z",

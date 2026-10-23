@@ -29,6 +29,7 @@ type Rows = { rows: Record<string, unknown>[] };
 // (see drizzle/0027_mcp_role.sql); they're also hidden from describe_schema
 // and refused by name in queries.
 export const SECRET_TABLES = [
+	"staff_owner_guard",
 	"sessions",
 	"passkeys",
 	"oauth_clients",

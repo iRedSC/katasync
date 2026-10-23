@@ -189,6 +189,22 @@ CREATE FUNCTION usable_owner_count() RETURNS bigint LANGUAGE sql VOLATILE AS $$
     AND EXISTS (SELECT 1 FROM passkey_staff p WHERE p.staff_id = s.id)
 $$;
 --> statement-breakpoint
+CREATE TABLE staff_owner_guard (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  generation bigint NOT NULL DEFAULT 0
+);
+--> statement-breakpoint
+INSERT INTO staff_owner_guard (singleton) VALUES (true);
+--> statement-breakpoint
+CREATE FUNCTION keep_staff_owner_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'the owner guard cannot be removed';
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER staff_owner_guard_keep BEFORE DELETE OR TRUNCATE ON staff_owner_guard
+  FOR EACH STATEMENT EXECUTE FUNCTION keep_staff_owner_guard();
+--> statement-breakpoint
 CREATE FUNCTION guard_last_owner() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_TABLE_NAME = 'staff' THEN
@@ -211,7 +227,7 @@ BEGIN
       RETURN NULL;
     END IF;
   END IF;
-  PERFORM pg_advisory_xact_lock(hashtext('katasync.staff.owners'));
+  UPDATE staff_owner_guard SET generation = generation + 1 WHERE singleton;
   IF usable_owner_count() = 0 THEN
     RAISE EXCEPTION 'katasync needs an owner who can sign in' USING ERRCODE = 'KA001';
   END IF;

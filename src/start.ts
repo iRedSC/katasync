@@ -1,5 +1,6 @@
 import { createMiddleware, createStart } from "@tanstack/react-start";
 import { waitUntil } from "@vercel/functions";
+import { requestOperation } from "#/audit/request-operation";
 
 // Everything needs a signed-in device except the sign-in pages (see
 // src/auth/guard.ts). The dev server skips this: passkeys are tied to the
@@ -17,8 +18,7 @@ const signedIn = createMiddleware().server(async ({ request, next }) => {
 		import("#/audit/context"),
 		import("#/auth/actor"),
 	]);
-	const url = new URL(request.url);
-	const operation = `${request.method} ${url.pathname}`;
+	const operation = requestOperation(request);
 	if (import.meta.env.DEV)
 		return runAs(systemActor("dev-server"), operation, () => next());
 	const admission = await admit(request, getDb());

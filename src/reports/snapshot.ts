@@ -55,6 +55,7 @@ const stateRow = type({
 });
 
 const depositRow = type({
+	externalId: "string",
 	channel: marketplace,
 	status: "'sent' | 'pending' | 'failed'",
 	depositedAt: "string",
@@ -140,7 +141,7 @@ export function toReportData(input: {
 	evidence: EvidenceRow[];
 }): ReportData {
 	const { sales, totals: t } = input;
-	return {
+	return orderedReport({
 		schemaVersion: SCHEMA_VERSION,
 		kind: "sales_tax_month",
 		period: periodText(input.period),
@@ -189,12 +190,60 @@ export function toReportData(input: {
 			contribution: t.profit,
 		},
 		evidence: input.evidence,
+	});
+}
+
+function orderedRows<Row>(
+	rows: Row[],
+	compare: (before: Row, after: Row) => number = () => 0,
+): Row[] {
+	return [...rows].sort((before, after) => {
+		const primary = compare(before, after);
+		if (primary !== 0) return primary;
+		const left = canonicalJson(before);
+		const right = canonicalJson(after);
+		return left < right ? -1 : left > right ? 1 : 0;
+	});
+}
+
+export function orderedReport(data: ReportData): ReportData {
+	return {
+		...data,
+		channels: orderedRows(
+			data.channels,
+			(before, after) => after.grossSales - before.grossSales,
+		),
+		jurisdictions: orderedRows(
+			data.jurisdictions,
+			(before, after) => after.tax - before.tax,
+		),
+		states: orderedRows(
+			data.states,
+			(before, after) => after.sales - before.sales,
+		),
+		deposits: orderedRows(data.deposits, (before, after) =>
+			before.depositedAt < after.depositedAt
+				? -1
+				: before.depositedAt > after.depositedAt
+					? 1
+					: 0,
+		),
+		payoutErrors: orderedRows(data.payoutErrors),
+		partial: orderedRows(data.partial),
+		evidence: orderedRows(data.evidence),
 	};
 }
 
 export type ContributionFigure =
 	| { kind: "complete"; value: number }
-	| { kind: "estimated"; value: number; estimatedOrders: number }
+	| {
+			kind: "estimated";
+			value: number;
+			feesEstimated: number;
+			labelsStandIn: number;
+			labelsAwaiting: number;
+			awaitingReturn: number;
+	  }
 	| {
 			kind: "unknown";
 			ceiling: number;
@@ -210,12 +259,19 @@ export function contributionFigure(c: Contribution): ContributionFigure {
 			costUnknown: c.costUnknown,
 			labelsMissing: c.labelsMissing,
 		};
-	const estimatedOrders = c.feesEstimated + c.labelsStandIn + c.labelsAwaiting;
-	if (estimatedOrders > 0 || c.awaitingReturn > 0)
+	if (
+		c.feesEstimated > 0 ||
+		c.labelsStandIn > 0 ||
+		c.labelsAwaiting > 0 ||
+		c.awaitingReturn > 0
+	)
 		return {
 			kind: "estimated",
 			value: c.contribution,
-			estimatedOrders: estimatedOrders + c.awaitingReturn,
+			feesEstimated: c.feesEstimated,
+			labelsStandIn: c.labelsStandIn,
+			labelsAwaiting: c.labelsAwaiting,
+			awaitingReturn: c.awaitingReturn,
 		};
 	return { kind: "complete", value: c.contribution };
 }

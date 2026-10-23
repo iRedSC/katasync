@@ -3,7 +3,12 @@ import { reportChanges } from "./diff";
 import { aboutFile, csvFile } from "./files";
 import { printHtml } from "./print-html";
 import { reportDataFixture } from "./report-data.fixtures";
-import { canonicalJson, contributionFigure, parseReportData } from "./snapshot";
+import {
+	canonicalJson,
+	contributionFigure,
+	orderedReport,
+	parseReportData,
+} from "./snapshot";
 
 const meta = {
 	revision: 2,
@@ -12,6 +17,53 @@ const meta = {
 };
 
 describe("canonicalJson", () => {
+	it("orders every report collection deterministically, including tied rows", () => {
+		const base = reportDataFixture();
+		const data = {
+			...base,
+			channels: [
+				...base.channels,
+				{ ...base.channels[0], source: "amazon" as const },
+			],
+			jurisdictions: [
+				...base.jurisdictions,
+				{ ...base.jurisdictions[0], jurisdiction: "Another tax" },
+			],
+			states: [...base.states, { ...base.states[0], state: "NY" }],
+			deposits: [
+				...base.deposits,
+				{ ...base.deposits[0], externalId: "payout-2", amount: 200 },
+			],
+			payoutErrors: [
+				{ channel: "shopify" as const, error: "one" },
+				{ channel: "amazon" as const, error: "two" },
+			],
+			partial: [
+				{ channel: "shopify" as const, firstOrder: "2026-09-01" },
+				{ channel: "amazon" as const, firstOrder: "2026-09-01" },
+			],
+			evidence: [
+				...base.evidence,
+				{ ...base.evidence[0], soldOn: "amazon" as const },
+			],
+		};
+		const reversed = {
+			...data,
+			channels: [...data.channels].reverse(),
+			jurisdictions: [...data.jurisdictions].reverse(),
+			states: [...data.states].reverse(),
+			deposits: [...data.deposits].reverse(),
+			payoutErrors: [...data.payoutErrors].reverse(),
+			partial: [...data.partial].reverse(),
+			evidence: [...data.evidence].reverse(),
+		};
+		const before = orderedReport(data);
+		const after = orderedReport(reversed);
+		expect(canonicalJson(before)).toBe(canonicalJson(after));
+		expect(printHtml(before, meta)).toBe(printHtml(after, meta));
+		expect(reportChanges(before, after)).toEqual([]);
+	});
+
 	it("doesn't depend on key order, as jsonb doesn't keep it", () => {
 		expect(
 			canonicalJson({ b: 1, a: { d: [2, { y: 1, x: 0 }], c: null } }),
@@ -53,7 +105,10 @@ describe("contributionFigure", () => {
 		expect(contributionFigure({ ...base, feesEstimated: 3 })).toEqual({
 			kind: "estimated",
 			value: 57.25,
-			estimatedOrders: 3,
+			feesEstimated: 3,
+			labelsStandIn: 0,
+			labelsAwaiting: 0,
+			awaitingReturn: 0,
 		});
 	});
 
@@ -66,6 +121,21 @@ describe("contributionFigure", () => {
 });
 
 describe("files", () => {
+	it("keeps overlapping uncertainty categories separate", () => {
+		const base = reportDataFixture();
+		const data = {
+			...base,
+			contribution: {
+				...base.contribution,
+				orders: 1,
+				feesEstimated: 1,
+				labelsAwaiting: 1,
+			},
+		};
+		const csv = csvFile(data, "contribution");
+		expect(csv).toContain("1 estimated fees, 1 labels awaited");
+		expect(csv).not.toContain("2 orders");
+	});
 	it("defuse formulas from marketplace text in exported CSV", () => {
 		const deposits = csvFile(reportDataFixture(), "deposits");
 		expect(deposits).toContain(`,'=cmd|' /C calc'!A0,`);
@@ -139,6 +209,29 @@ describe("files", () => {
 });
 
 describe("reportChanges", () => {
+	it("keeps distinct payouts with the same date and reference", () => {
+		const base = reportDataFixture();
+		const payout = { ...base.deposits[0], reference: null };
+		const before = {
+			...base,
+			deposits: [
+				{ ...payout, externalId: "first", amount: 100 },
+				{ ...payout, externalId: "second", amount: 200 },
+			],
+		};
+		const after = {
+			...before,
+			deposits: [{ ...before.deposits[0], amount: 900 }, before.deposits[1]],
+		};
+		expect(reportChanges(before, after)).toEqual([
+			expect.objectContaining({
+				section: "Deposits",
+				field: "amount",
+				before: 100,
+				after: 900,
+			}),
+		]);
+	});
 	it("lists what a later refund changed, and nothing else", () => {
 		const before = reportDataFixture();
 		const after = reportDataFixture({
