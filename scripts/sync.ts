@@ -20,8 +20,9 @@
 // A channel without credentials in the environment is skipped. Every pass is
 // recorded for Diagnostics (/diagnostics). A one-shot run still tries every
 // channel, then exits nonzero if any of them failed.
-import { actAsScript } from "#/audit/script";
+
 import { parseArgs } from "node:util";
+import { actAsScript } from "#/audit/script";
 import {
 	backfillOrders,
 	type OrderChannel,

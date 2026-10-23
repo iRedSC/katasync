@@ -20,12 +20,12 @@ export function runAs<T>(
 	actor: Actor,
 	operation: string | null,
 	work: () => T,
-): T {
+): Promise<Awaited<T>> {
 	const context: AuditContext = Object.freeze({
 		actor,
 		operation: operation?.slice(0, OPERATION_LENGTH) ?? null,
 	});
-	return storage.run(context, work);
+	return storage.run(context, async () => await work());
 }
 
 export function enterContext(context: AuditContext) {

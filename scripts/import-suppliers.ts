@@ -4,9 +4,10 @@
 //   pnpm import:suppliers --suppliers suppliers.csv --links primary-suppliers.csv
 //
 // Prints the plan and its warnings. Add --apply to write it.
-import { actAsScript } from "#/audit/script";
+
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { actAsScript } from "#/audit/script";
 import { getDb } from "#/db/client";
 import { products } from "#/db/schema";
 import {

@@ -4,9 +4,10 @@
 //   pnpm import:costs --costs product-costs.csv
 //
 // Prints the plan. Add --apply to write it.
-import { actAsScript } from "#/audit/script";
+
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { actAsScript } from "#/audit/script";
 import { getDb } from "#/db/client";
 import { applyCostImport, costCatalog, planCostImport } from "#/import/costs";
 

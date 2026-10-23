@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { type } from "arktype";
-import { and, eq } from "drizzle-orm";
 import { requireActor } from "#/audit/context";
 import { type Actor, mayAdminister } from "#/auth/actor";
 import {
@@ -53,11 +52,7 @@ export const listDevices = createServerFn({ method: "GET" }).handler(
 		const [allDevices, people, [anyOwner]] = await Promise.all([
 			devices(db),
 			owner ? listStaff(db) : Promise.resolve([]),
-			db
-				.select({ id: staff.id })
-				.from(staff)
-				.where(and(eq(staff.role, "owner"), eq(staff.status, "active")))
-				.limit(1),
+			db.select({ id: staff.id }).from(staff).limit(1),
 		]);
 		const mine = (d: (typeof allDevices)[number]) =>
 			d.id === currentPasskey ||
@@ -93,6 +88,7 @@ export const assignDevice = createServerFn({ method: "POST" })
 export const listConnections = createServerFn({ method: "GET" }).handler(
 	async () => ({
 		endpoint: endpoints(originOf(getRequest())).resource,
+		canAdminister: mayAdminister(requireActor()),
 		apps: await oauthConnections(getDb()),
 	}),
 );

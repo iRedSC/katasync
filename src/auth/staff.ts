@@ -134,12 +134,11 @@ export async function claimOwnership(
 	return db
 		.transaction(async (tx) => {
 			await lockOwners(tx);
-			const [owner] = await tx
-				.select({ id: staff.id })
-				.from(staff)
-				.where(and(eq(staff.role, "owner"), eq(staff.status, "active")))
-				.limit(1);
-			if (owner) throw new Forbidden("There's already an owner; ask them");
+			const [owner] = await tx.select({ id: staff.id }).from(staff).limit(1);
+			if (owner)
+				throw new Forbidden(
+					"Staff is already set up; ask an owner or use recovery",
+				);
 			const [row] = await tx
 				.insert(staff)
 				.values({ name, role: "owner", createdAt: now })
@@ -158,7 +157,7 @@ export async function claimOwnership(
 
 export async function recoverOwner(
 	db: Db,
-	by: Extract<Actor, { kind: "system"; name: "recovery-script" }>,
+	by: Extract<Actor, { kind: "system" }> & { name: "recovery-script" },
 	rawName: string,
 	{ minutes = 30, now = new Date() } = {},
 ) {

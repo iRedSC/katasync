@@ -6,8 +6,9 @@
 //   pnpm location:add-retail            # preview, named "Retail"
 //   pnpm location:add-retail --write
 //   pnpm location:add-retail "Other name" --write
-import { actAsScript } from "#/audit/script";
+
 import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
+import { actAsScript } from "#/audit/script";
 import { getDb } from "#/db/client";
 import { locations, orderLines, orders } from "#/db/schema";
 import { applyStoreSales } from "#/orders/remap";

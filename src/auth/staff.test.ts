@@ -190,7 +190,18 @@ describe("the first owner", () => {
 			.values({ id: "other", publicKey: "key", name: "Other" });
 		await expect(
 			claimOwnership(db, legacyDevice("other"), "Mallory"),
-		).rejects.toThrow(/already an owner/);
+		).rejects.toThrow(/already set up/);
+	});
+
+	test("does not reopen bootstrap when previously created staff are removed", async () => {
+		const former = await addPerson(db, "Former", "operator");
+		await db
+			.update(staff)
+			.set({ status: "removed" })
+			.where(eq(staff.id, former.staffId));
+		await expect(
+			claimOwnership(db, legacyDevice("old-ipad"), "Mallory"),
+		).rejects.toThrow(/already set up/);
 	});
 
 	test("can't be claimed by a named person or a system job", async () => {

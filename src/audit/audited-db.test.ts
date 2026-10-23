@@ -170,9 +170,17 @@ describe("audited writes", () => {
 
 	test("can't be edited or deleted", async () => {
 		await addProduct(db, "A");
-		await expect(raw.delete(auditEvents)).rejects.toThrow(/append-only/);
+		const immutable = {
+			cause: expect.objectContaining({
+				message: expect.stringMatching(/append-only/),
+			}),
+		};
+		await expect(raw.delete(auditEvents)).rejects.toMatchObject(immutable);
 		await expect(
 			raw.update(auditEvents).set({ staffName: "Someone else" }),
-		).rejects.toThrow(/append-only/);
+		).rejects.toMatchObject(immutable);
+		await expect(raw.execute(sql`truncate audit_events`)).rejects.toMatchObject(
+			immutable,
+		);
 	});
 });

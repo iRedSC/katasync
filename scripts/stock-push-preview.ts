@@ -7,8 +7,9 @@
 // Reads the channel's quantities now (and saves what it read, as a push pass
 // would), then lists every listing whose quantity would change and every
 // listing katasync can't set.
-import { actAsScript } from "#/audit/script";
+
 import { eq } from "drizzle-orm";
+import { actAsScript } from "#/audit/script";
 import { isSyncedChannel } from "#/channels/sync";
 import { getDb } from "#/db/client";
 import { stores } from "#/db/schema";

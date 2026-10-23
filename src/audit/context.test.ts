@@ -54,8 +54,19 @@ describe("runAs", () => {
 		expect(currentContext()).toBeNull();
 	});
 
-	test("is frozen and cuts long operations short", () => {
-		runAs(sam, "x".repeat(500), () => {
+	test("restores the outer actor after nested work completes", async () => {
+		await runAs(sam, "outer", async () => {
+			await runAs(pat, "inner", async () => {
+				await tick();
+				expect(requireActor()).toBe(pat);
+			});
+			expect(requireActor()).toBe(sam);
+		});
+		expect(currentContext()).toBeNull();
+	});
+
+	test("is frozen and cuts long operations short", async () => {
+		await runAs(sam, "x".repeat(500), () => {
 			const context = currentContext();
 			expect(context?.operation).toHaveLength(200);
 			expect(Object.isFrozen(context)).toBe(true);
