@@ -16,8 +16,8 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
-import type { Channel } from "#/diagnostics/runs";
-import { costOf, orderTakesStock, resolveProduct, takeStock } from "./ingest";
+import { costOf, resolveProduct } from "./ingest";
+import { reconcileStock, type StockScope } from "./reconcile-stock";
 
 type Pending = {
 	line: typeof orderLines.$inferSelect;
@@ -40,35 +40,25 @@ const pendingColumns = {
 	store: { id: stores.id, stockFrom: stores.stockFrom },
 };
 
-// Gives each line its product and cost, and takes stock now for lines on
-// orders that take it. A line never takes stock twice.
-async function catchUp(
-	tx: Db,
-	pending: (Pending & { productId: number })[],
-	from: StockLocations,
-): Promise<string[]> {
-	const problems: string[] = [];
-	for (const { line, productId, order, store } of pending) {
+// Gives each line its product and cost. Stock is taken by reconcileStock, so a
+// line whose stock fails is still picked up by the next catch-up or sync.
+async function catchUp(tx: Db, found: (Pending & { productId: number })[]) {
+	for (const { line, productId } of found)
 		await tx
 			.update(orderLines)
 			.set({ productId, unitCost: await costOf(tx, productId) })
 			.where(eq(orderLines.id, line.id));
-		if (line.saleBatchId || !orderTakesStock(store, order)) continue;
-		const problem = await takeStock(tx, { ...line, productId }, order, from);
-		if (problem) problems.push(problem);
-	}
-	return problems;
 }
 
-// After listings get a product, catch up the orders that already sold them.
-// Safe to repeat.
+// After listings get a product, catch up the orders that already sold them,
+// then take their stock. Safe to repeat.
 export async function applyListingsToOrders(
 	db: Db,
 	listingIds: number[],
 	from: StockLocations,
 ): Promise<{ lines: number; problems: string[] }> {
 	if (listingIds.length === 0) return { lines: 0, problems: [] };
-	return db.transaction(async (tx) => {
+	const lines = await db.transaction(async (tx) => {
 		const pending = await tx
 			.select({ ...pendingColumns, productId: listings.productId })
 			.from(orderLines)
@@ -88,11 +78,11 @@ export async function applyListingsToOrders(
 		const found = pending.flatMap((p) =>
 			p.productId === null ? [] : [{ ...p, productId: p.productId }],
 		);
-		return {
-			lines: pending.length,
-			problems: await catchUp(tx, found, from),
-		};
+		await catchUp(tx, found);
+		return pending.length;
 	});
+	const settled = await reconcileStock(db, from);
+	return { lines, problems: settled.problems };
 }
 
 // Lines per transaction when catching up. Each batch locks only its own lines
@@ -117,16 +107,17 @@ async function resolveOnce(
 // Catches up lines still without a product that now resolve to one the way a
 // new order's lines do (listing, SKU, alias, SKU in other capitals): after an
 // alias is added, or a line synced before its product existed. Only one
-// channel's lines, or only lines with the given SKUs. Safe to repeat.
+// channel's lines, or only lines with the given SKUs, then takes the stock of
+// their unsettled lines. Safe to repeat.
 export async function applySkusToOrders(
 	db: Db,
-	only: { channel: Channel } | { skus: string[] },
+	only: StockScope,
 	from: StockLocations,
 ): Promise<{ lines: number; problems: string[] }> {
 	if ("skus" in only && only.skus.length === 0)
 		return { lines: 0, problems: [] };
 	const resolved = new Map<string, number | null>();
-	const result = { lines: 0, problems: [] as string[] };
+	let lines = 0;
 	let after = 0;
 	for (;;) {
 		const batch = await db.transaction(async (tx) => {
@@ -153,57 +144,27 @@ export async function applySkusToOrders(
 				const productId = await resolveOnce(tx, resolved, p.store.id, p.line);
 				if (productId !== null) found.push({ ...p, productId });
 			}
+			await catchUp(tx, found);
 			return {
 				scanned: pending.length,
 				lastId: pending.at(-1)?.line.id ?? after,
 				lines: found.length,
-				problems: await catchUp(tx, found, from),
 			};
 		});
-		result.lines += batch.lines;
-		result.problems.push(...batch.problems);
-		if (batch.scanned < CATCH_UP_BATCH) return result;
+		lines += batch.lines;
+		if (batch.scanned < CATCH_UP_BATCH) break;
 		after = batch.lastId;
 	}
+	const settled = await reconcileStock(db, from, only);
+	return { lines, problems: settled.problems };
 }
 
-// Takes stock now for in-store sales that couldn't take it when they came
-// in, because no location was set for POS sales yet.
-// Safe to repeat: a line never takes stock twice.
+// Takes stock now for every line still owed it, after a retail store or POS
+// location is set up. Safe to repeat: a line never takes stock twice.
 export async function applyStoreSales(
 	db: Db,
 ): Promise<{ lines: number; problems: string[] }> {
-	const from = await stockLocations(db);
-	return db.transaction(async (tx) => {
-		const pending = await tx
-			.select(pendingColumns)
-			.from(orderLines)
-			.innerJoin(orders, eq(orders.id, orderLines.orderId))
-			.innerJoin(stores, eq(stores.id, orders.storeId))
-			.where(
-				and(
-					eq(orders.soldInStore, true),
-					isNotNull(orderLines.productId),
-					isNull(orderLines.saleBatchId),
-					gt(orderLines.quantity, 0),
-				),
-			)
-			.for("update", { of: orderLines });
-		const problems: string[] = [];
-		let lines = 0;
-		for (const { line, order, store } of pending) {
-			if (line.productId === null || !orderTakesStock(store, order)) continue;
-			lines++;
-			const problem = await takeStock(
-				tx,
-				{ ...line, productId: line.productId },
-				order,
-				from,
-			);
-			if (problem) problems.push(problem);
-		}
-		return { lines, problems };
-	});
+	return reconcileStock(db, await stockLocations(db));
 }
 
 // Links a SKU a channel sold under to a product for good, as an alias: this

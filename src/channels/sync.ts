@@ -79,11 +79,13 @@ export async function syncPass(
 		return {
 			...pass,
 			problems: [
-				...pass.problems,
-				...caughtUp.problems,
-				...pushed.flatMap((p) => p.problems),
-				...elsewhere.flatMap((p) => p.problems),
-				...retired.problems,
+				...new Set([
+					...pass.problems,
+					...caughtUp.problems,
+					...pushed.flatMap((p) => p.problems),
+					...elsewhere.flatMap((p) => p.problems),
+					...retired.problems,
+				]),
 			],
 		};
 	});
