@@ -22,7 +22,7 @@ export const Route = createFileRoute("/transfers/")({
 });
 
 type Loaded = Awaited<ReturnType<typeof listTransfers>>;
-type Row = Loaded["drafts"][number];
+type Row = Loaded["drafts"][number] & { inTransit?: number };
 
 // Stock moving between our locations: drafts being put together, and what
 // was sent. A refill fills a draft with what tops Retail up to its targets.
@@ -174,6 +174,11 @@ function TransferTable({ title, rows }: { title: string; rows: Row[] }) {
 								{t.lines === 0 ? <Badge>Empty</Badge> : formatCount(t.lines)}
 							</td>
 							<td className="px-4 py-2.5 text-right tabular-nums">
+								{(t.inTransit ?? 0) > 0 && (
+									<Badge tone="warning">
+										{formatCount(t.inTransit ?? 0)} in transit
+									</Badge>
+								)}{" "}
 								{formatCount(t.units)}
 							</td>
 							<td className="max-w-64 truncate px-4 py-2.5 text-muted-foreground">

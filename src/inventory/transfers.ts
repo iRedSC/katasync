@@ -4,6 +4,11 @@ import { locations, products, transferLines, transfers } from "#/db/schema";
 import { transferStock, undoBatch } from "#/inventory/ledger";
 import { lockStockProducts } from "#/inventory/ledger/post";
 import { ourKinds } from "#/inventory/locations";
+import {
+	deliveryOf,
+	dispatchTransfer,
+	liveReceipts,
+} from "./transfer-deliveries";
 
 // A transfer is a draft until it's sent; sending moves every line at once.
 // Undoing a send moves it all back and makes it a draft again, so it can be
@@ -167,24 +172,33 @@ export async function deleteTransfer(db: Db, id: number) {
 	});
 }
 
-// Moves every line at once. Refused, changing nothing, when the shelf it
-// leaves is short of any line (see transferStock).
+async function draftLines(tx: Db, id: number) {
+	const lines = await tx
+		.select({
+			productId: transferLines.productId,
+			quantity: transferLines.quantity,
+		})
+		.from(transferLines)
+		.where(eq(transferLines.transferId, id));
+	if (lines.length === 0)
+		throw new TransferError("Add what's moving before sending it");
+	return lines;
+}
+
 export async function sendTransfer(db: Db, id: number) {
 	return db.transaction(async (tx) => {
 		const t = await lockDraft(tx, id);
-		const lines = await tx
-			.select({
-				productId: transferLines.productId,
-				quantity: transferLines.quantity,
-			})
-			.from(transferLines)
-			.where(eq(transferLines.transferId, id));
-		if (lines.length === 0)
-			throw new TransferError("Add what's moving before sending it");
+		return dispatchTransfer(tx, t, await draftLines(tx, id));
+	});
+}
+
+async function sendDirect(db: Db, id: number) {
+	return db.transaction(async (tx) => {
+		const t = await lockDraft(tx, id);
 		const { batchId } = await transferStock(tx, {
 			fromLocationId: t.fromLocationId,
 			toLocationId: t.toLocationId,
-			lines,
+			lines: await draftLines(tx, id),
 			reference: `transfer:${id}`,
 			note: t.note ?? undefined,
 		});
@@ -212,6 +226,16 @@ export async function unsendTransfer(
 		if (!t) throw new TransferError(`No transfer ${transferName(id)}`);
 		if (t.status !== "sent" || !t.batchId)
 			throw new TransferError(`${transferName(id)} hasn't been sent`);
+		const delivery = await deliveryOf(tx, id);
+		if (liveReceipts(delivery).length > 0)
+			throw new TransferError(
+				`Some of ${transferName(id)} was received; undo those receipts first`,
+			);
+		const viaTransit = delivery.kind !== "completed";
+		if (viaTransit && options.discard)
+			throw new TransferError(
+				`${transferName(id)} went through transit; undoing it makes it a draft`,
+			);
 		await undoBatch(tx, t.batchId);
 		if (options.discard) {
 			await tx.delete(transfers).where(eq(transfers.id, id));
@@ -242,7 +266,7 @@ export async function moveNow(
 		await setTransferLines(tx, id, [
 			{ productId: input.productId, quantity: input.quantity },
 		]);
-		const { batchId } = await sendTransfer(tx, id);
+		const { batchId } = await sendDirect(tx, id);
 		return { transferId: id, batchId };
 	});
 }

@@ -40,6 +40,10 @@ export async function setPosLocation(db: Db, locationId: number) {
 			throw new PosLocationError(
 				`${target.name} is Amazon's; POS sales take from one of ours`,
 			);
+		if (!(ourKinds as readonly string[]).includes(target.kind))
+			throw new PosLocationError(
+				`${target.name} holds stock in transit; POS sales take from a shelf`,
+			);
 		// Cleared first: the one-primary index checks each row as it changes.
 		await tx
 			.update(locations)
@@ -51,4 +55,22 @@ export async function setPosLocation(db: Db, locationId: number) {
 			.where(and(eq(locations.id, locationId), isOurs));
 		return { locationId, name: target.name };
 	});
+}
+
+export const TRANSIT_LOCATION = "In transit";
+
+export async function transitLocation(db: Db): Promise<number> {
+	await db
+		.insert(locations)
+		.values({ name: TRANSIT_LOCATION, kind: "transit" })
+		.onConflictDoNothing({ target: locations.name });
+	const [row] = await db
+		.select({ id: locations.id, kind: locations.kind })
+		.from(locations)
+		.where(eq(locations.name, TRANSIT_LOCATION));
+	if (!row || row.kind !== "transit")
+		throw new Error(
+			`The location named "${TRANSIT_LOCATION}" isn't a transit location`,
+		);
+	return row.id;
 }

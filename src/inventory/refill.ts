@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { products, shelfTargets, stockLevels } from "#/db/schema";
+import { inTransitTo } from "./transfer-deliveries";
 import { lockDraft, setTransferLines, TransferError } from "./transfers";
 
 // A location's target for a product: refills top it back up to this. null
@@ -48,6 +49,7 @@ export type RefillRow = {
 	imageUrl: string | null;
 	target: number;
 	atDestination: number;
+	inTransit: number;
 	atSource: number;
 	// What to send: what tops it up, as far as the source has it.
 	suggested: number;
@@ -97,15 +99,22 @@ export async function refillSuggestions(
 	);
 	const at = (productId: number, locationId: number) =>
 		onHand.get(levelKey(productId, locationId)) ?? 0;
+	const coming = await inTransitTo(
+		db,
+		input.toLocationId,
+		targets.map((t) => t.productId),
+	);
 	return targets.flatMap((t) => {
 		const atDestination = at(t.productId, input.toLocationId);
 		const atSource = at(t.productId, input.fromLocationId);
-		const need = t.target - Math.max(0, atDestination);
+		const inTransit = coming.get(t.productId) ?? 0;
+		const need = t.target - Math.max(0, atDestination) - inTransit;
 		if (need <= 0) return [];
 		return [
 			{
 				...t,
 				atDestination,
+				inTransit,
 				atSource,
 				suggested: Math.min(need, Math.max(0, atSource)),
 			},

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Badge, Card, Page } from "#/components/page";
 import { DetailSkeleton, ListCard } from "#/components/skeleton";
 import { AddProduct } from "#/components/transfers/add-product";
+import { Arrivals } from "#/components/transfers/arrivals";
 import { LineTable } from "#/components/transfers/line-table";
 import { Suggestions } from "#/components/transfers/suggestions";
 import { Button } from "#/components/ui/button";
@@ -16,9 +17,11 @@ import {
 	editTransfer,
 	fillTransfer,
 	getTransfer,
+	receiveTransferNow,
 	removeTransfer,
 	sendTransferNow,
 	setTransferLine,
+	undoTransferArrival,
 	undoTransferSend,
 } from "#/server/transfers";
 
@@ -42,7 +45,8 @@ export const Route = createFileRoute("/transfers/$id")({
 });
 
 function TransferPage() {
-	const { transfer: t, lines, suggestions, index } = Route.useLoaderData();
+	const { transfer: t, lines, suggestions, index, delivery } =
+		Route.useLoaderData();
 	const navigate = useNavigate();
 	const draft = t.status === "draft";
 	const name = `T${t.id}`;
@@ -58,7 +62,7 @@ function TransferPage() {
 	async function send() {
 		const r = await change(() => sendTransferNow({ data: { id: t.id } }));
 		if (!r) return;
-		offerUndo(`${name} sent: ${formatCount(units)} to ${t.to}`, {
+		offerUndo(`${name} sent: ${formatCount(units)} on the way to ${t.to}`, {
 			tone: "success",
 			undo: async () => {
 				const undone = await change(() =>
@@ -68,6 +72,34 @@ function TransferPage() {
 			},
 		});
 	}
+
+	async function receive(counts: { productId: number; quantity: number }[]) {
+		const receiptKey = crypto.randomUUID();
+		const r = await change(() =>
+			receiveTransferNow({ data: { id: t.id, receiptKey, lines: counts } }),
+		);
+		if (!r) return r;
+		const arrived = counts.reduce((n, c) => n + c.quantity, 0);
+		offerUndo(`${formatCount(arrived)} arrived at ${t.to}`, {
+			tone: "success",
+			undo: async () => {
+				const undone = await change(() =>
+					undoTransferArrival({
+						data: { id: t.id, receiptId: r.value.receiptId },
+					}),
+				);
+				return undone && "Back in transit";
+			},
+		});
+		return r;
+	}
+
+	const status =
+		delivery.kind === "draft"
+			? { tone: "info" as const, label: "Draft" }
+			: delivery.kind === "in_transit"
+				? { tone: "warning" as const, label: "In transit" }
+				: { tone: "success" as const, label: "Arrived" };
 
 	async function fill() {
 		const r = await change(() => fillTransfer({ data: { id: t.id } }));
@@ -82,9 +114,7 @@ function TransferPage() {
 			title={
 				<span className="flex items-center gap-2">
 					{name}
-					<Badge tone={draft ? "info" : "success"}>
-						{draft ? "Draft" : "Sent"}
-					</Badge>
+					<Badge tone={status.tone}>{status.label}</Badge>
 				</span>
 			}
 			actions={
@@ -196,6 +226,20 @@ function TransferPage() {
 					</div>
 				)}
 			</Card>
+
+			{(delivery.kind === "in_transit" || delivery.kind === "received") && (
+				<Arrivals
+					delivery={delivery}
+					lines={lines}
+					to={t.to}
+					onReceive={receive}
+					onUndo={(receiptId) =>
+						change(() =>
+							undoTransferArrival({ data: { id: t.id, receiptId } }),
+						)
+					}
+				/>
+			)}
 
 			{draft && suggestions.length > 0 && (
 				<Suggestions
