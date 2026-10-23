@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { Client, Pool } from "pg";
+import { audited } from "#/audit/audited-db";
 import * as schema from "./capability-schema";
 
 // Works for both node-postgres in the app and PGlite in tests.
@@ -12,10 +13,12 @@ export function getDb(): Db {
 	if (!db) {
 		const connectionString = process.env.DATABASE_URL;
 		if (!connectionString) throw new Error("DATABASE_URL is not set");
-		db = drizzle(new Pool({ connectionString, max: 10 }), {
-			schema,
-			casing: "snake_case",
-		});
+		db = audited(
+			drizzle(new Pool({ connectionString, max: 10 }), {
+				schema,
+				casing: "snake_case",
+			}),
+		);
 	}
 	return db;
 }

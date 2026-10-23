@@ -3,6 +3,7 @@
 // cron keeps the last 45 days current after this.
 //
 //   pnpm payouts:backfill 2025-10-01
+import { actAsScript } from "#/audit/script";
 import { getDb } from "#/db/client";
 import {
 	channelEnv,
@@ -10,6 +11,8 @@ import {
 	type SyncedChannel,
 } from "#/diagnostics/checks";
 import { refreshPayouts } from "#/payouts/refresh";
+
+actAsScript("backfill-payouts");
 
 try {
 	process.loadEnvFile(".env.local");

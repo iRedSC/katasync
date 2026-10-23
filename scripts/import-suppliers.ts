@@ -4,6 +4,7 @@
 //   pnpm import:suppliers --suppliers suppliers.csv --links primary-suppliers.csv
 //
 // Prints the plan and its warnings. Add --apply to write it.
+import { actAsScript } from "#/audit/script";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { getDb } from "#/db/client";
@@ -12,6 +13,8 @@ import {
 	applySupplierImport,
 	planSupplierImport,
 } from "#/import/sumtracker-suppliers";
+
+actAsScript("import-suppliers");
 
 const { values } = parseArgs({
 	options: {

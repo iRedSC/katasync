@@ -28,6 +28,17 @@ export function runAs<T>(
 	return storage.run(context, work);
 }
 
+export function enterContext(context: AuditContext) {
+	if (storage.getStore())
+		throw new Error("An actor is already set; use runAs inside it instead");
+	storage.enterWith(
+		Object.freeze({
+			actor: context.actor,
+			operation: context.operation?.slice(0, OPERATION_LENGTH) ?? null,
+		}),
+	);
+}
+
 export const currentContext = (): AuditContext | null =>
 	storage.getStore() ?? null;
 

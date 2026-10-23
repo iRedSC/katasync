@@ -18,6 +18,9 @@ export const SYSTEM_NAMES = [
 	"upload-link",
 	"stock-push",
 	"recovery-script",
+	"sign-in",
+	"oauth",
+	"script",
 ] as const;
 export type SystemName = (typeof SYSTEM_NAMES)[number];
 

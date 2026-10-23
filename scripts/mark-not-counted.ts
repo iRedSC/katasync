@@ -4,10 +4,13 @@
 //
 //   pnpm stock:not-counted DM-T-100 TT-10BK           # preview
 //   pnpm stock:not-counted DM-T-100 TT-10BK --write
+import { actAsScript } from "#/audit/script";
 import { inArray } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { products } from "#/db/schema";
 import { markNotCounted } from "#/inventory/not-counted";
+
+actAsScript("mark-not-counted");
 
 try {
 	process.loadEnvFile(".env.local");

@@ -45,13 +45,16 @@ export function cookieValue(request: Request, name: string) {
 }
 
 // The system actor a public path runs as, when its own check (CRON_SECRET,
-// a channel's signature, an upload link) lets it through; null for paths
-// that change nothing worth crediting, like sign-in.
+// a channel's signature, an upload link, a setup link or OAuth code) lets it
+// through; null for paths that write nothing. /mcp runs as its token's actor
+// (src/routes/mcp.ts).
 export function publicActor(pathname: string): Actor | null {
 	const systems: [string, SystemName][] = [
 		["/api/cron/", "cron"],
 		["/api/webhooks/", "webhook"],
 		["/api/uploads/", "upload-link"],
+		["/api/auth/", "sign-in"],
+		["/api/oauth/", "oauth"],
 	];
 	const match = systems.find(([prefix]) => pathname.startsWith(prefix));
 	return match ? systemActor(match[1]) : null;

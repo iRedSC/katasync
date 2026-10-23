@@ -10,6 +10,7 @@
 //   pnpm tax:backfill --write --channel ebay   # one marketplace only
 //   pnpm tax:backfill --write --channel shopify --reread
 //                        # read orders again too, after a rule changes
+import { actAsScript } from "#/audit/script";
 import { type } from "arktype";
 import { and, eq, isNull } from "drizzle-orm";
 import { amazonTax, orderItems } from "#/channels/amazon";
@@ -26,6 +27,8 @@ import {
 import { getDb } from "#/db/client";
 import { orders, stores } from "#/db/schema";
 import { type OrderTax, saveTax } from "#/orders/tax";
+
+actAsScript("backfill-tax");
 
 try {
 	process.loadEnvFile(".env.local");

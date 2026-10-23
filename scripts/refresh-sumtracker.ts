@@ -7,11 +7,14 @@
 //     --unlimited DM-T-100,TT-10BK --count DURA-51,DURA-56
 //
 // Prints the plan. Add --apply to write it.
+import { actAsScript } from "#/audit/script";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { getDb } from "#/db/client";
 import { refreshFromSumtracker } from "#/import/refresh";
 import { planSumtrackerImport } from "#/import/sumtracker";
+
+actAsScript("refresh-sumtracker");
 
 try {
 	process.loadEnvFile(".env.local");

@@ -5,6 +5,7 @@
 //
 //   pnpm stock:pull           # preview
 //   pnpm stock:pull --write
+import { actAsScript } from "#/audit/script";
 import { isSyncedChannel } from "#/channels/sync";
 import { getDb } from "#/db/client";
 import { stockChannels } from "#/stock-push/channels";
@@ -15,6 +16,8 @@ import {
 	type StoreRead,
 	storesInTrustOrder,
 } from "#/stock-push/pull";
+
+actAsScript("stock-pull");
 
 try {
 	process.loadEnvFile(".env.local");
