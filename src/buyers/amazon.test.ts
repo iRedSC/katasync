@@ -4,12 +4,13 @@ import { buyerMessages, marketEmails, orders, stores } from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import {
 	applyAmazonRefusals,
+	parseCopy,
 	parseRelayed,
 	threadAmazonMail,
 } from "./amazon-mail";
 import { reply, settleReplies } from "./send";
 import { settleReply } from "./states";
-import { threadsPage, waitingOn } from "./threads";
+import { logOurs, threadsPage, waitingOn } from "./threads";
 
 const RELAY =
 	"p39fytvw2631s9q+f12f0666-7d6a-49b0-b2d2-a35f46ae7784@marketplace.amazon.com";
@@ -357,5 +358,101 @@ describe("answering", () => {
 				statusAt: new Date(),
 			}),
 		).rejects.toThrow();
+	});
+});
+
+// Amazon's copy of one sent in Seller Central, as it arrived on 2026-10-22.
+const COPY = `Dear East Coast Drywall Tools,\r
+\r
+Here is a copy of the e-mail that you sent to Rick.\r
+\r
+Order ID: 113-1228890-8225003:\r
+\r
+#       ASIN    Product Name\r
+1       B099PYB4MX      CanAm Tool GoldCor Finishing Coat Inside Corner Applicator\r
+\r
+------------- Begin message -------------\r
+\r
+I believe the proper way to do this is to have Amazon refund the order.\r
+\r
+------------- End message -------------\r
+\r
+Warmest Regards,`;
+const COPIED =
+	"I believe the proper way to do this is to have Amazon refund the order.";
+const copy = () =>
+	email({
+		fromAddress: "donotreply@amazon.com",
+		subject: "Your e-mail to Rick",
+		body: COPY,
+	});
+const bodies = async () =>
+	(await threadsPage(db, "open", null))[0]?.messages.map((m) => [
+		m.body.slice(0, 12),
+		m.fromBuyer,
+	]);
+
+describe("sent in Seller Central", () => {
+	test("reads the order and only our words", () => {
+		expect(parseCopy({ subject: "Your e-mail to Rick", body: COPY })).toEqual({
+			orderRef: "113-1228890-8225003",
+			text: COPIED,
+		});
+		expect(parseCopy({ subject: SUBJECT, body: BODY })).toBeNull();
+	});
+
+	test("Amazon's copy goes on the order's thread as ours, once, answering it", async () => {
+		await email();
+		await threadAmazonMail(db);
+		await copy();
+		expect(await threadAmazonMail(db)).toBe(1);
+		expect(await threadAmazonMail(db)).toBe(0);
+		expect(await bodies()).toEqual([
+			["The shipping", true],
+			["I believe th", false],
+		]);
+		expect((await threadsPage(db, "open", null))[0]?.waiting).toBeNull();
+	});
+
+	test("it takes the place of the same words added without sending", async () => {
+		await email();
+		await threadAmazonMail(db);
+		const [t] = await threadsPage(db, "open", null);
+		await logOurs(db, t?.id ?? 0, COPIED, crypto.randomUUID());
+		await copy();
+		await threadAmazonMail(db);
+		expect(await bodies()).toEqual([
+			["The shipping", true],
+			["I believe th", false],
+		]);
+		const [ours] =
+			(await threadsPage(db, "open", null))[0]?.messages.slice(1) ?? [];
+		expect(ours?.logged).toBe(false);
+	});
+
+	test("one sent from here isn't doubled by a copy of it", async () => {
+		await email();
+		await threadAmazonMail(db);
+		const [t] = await threadsPage(db, "open", null);
+		await db.insert(buyerMessages).values({
+			threadId: t?.id ?? 0,
+			fromBuyer: false,
+			body: COPIED,
+			externalId: "resend-1",
+			at: new Date(Date.UTC(2026, 9, 22, 17)),
+			status: "delivered",
+			requestKey: crypto.randomUUID(),
+			statusAt: new Date(),
+		});
+		await copy();
+		expect(await threadAmazonMail(db)).toBe(0);
+		expect(await bodies()).toHaveLength(2);
+	});
+
+	test("a copy for an order with no thread waits for one", async () => {
+		await copy();
+		expect(await threadAmazonMail(db)).toBe(0);
+		await email();
+		expect(await threadAmazonMail(db)).toBe(2);
 	});
 });

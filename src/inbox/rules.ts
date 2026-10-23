@@ -86,10 +86,20 @@ export const ruleSchema = z
 		critical: z.boolean().default(false),
 		// Matching emails arrive read; never applied to mail already in.
 		markRead: z.boolean().default(false),
+		// Matching emails arrive done, and read; as markRead, only arriving.
+		markDone: z.boolean().default(false),
 	})
-	.refine((r) => r.folder !== null || r.important || r.critical || r.markRead, {
-		message: "A rule has to move the email, mark it important, or mark it read",
-	})
+	.refine(
+		(r) =>
+			r.folder !== null ||
+			r.important ||
+			r.critical ||
+			r.markRead ||
+			r.markDone,
+		{
+			message: "A rule has to move the email, mark it important, read, or done",
+		},
+	)
 	.transform((r) => ({ ...r, important: r.important || r.critical }));
 export type RuleInput = z.output<typeof ruleSchema>;
 export type Rule = RuleInput & {
@@ -156,12 +166,14 @@ export const matches = (
 
 // Where the rules put an email, and which rules decided: the folder's rule
 // (null when none moved it) and each that marked it important or critical.
-// read is for an email arriving, never when important; the rules never
-// change it after.
+// read and done are for an email arriving; the rules never change them
+// after. Read never when important; done always wins, read too, since a
+// rule saying done says there's nothing to do.
 export type Sorting = {
 	folder: Folder;
 	level: Level;
 	read: boolean;
+	done: boolean;
 	folderRule: number | null;
 	importantRules: number[];
 };
@@ -172,6 +184,7 @@ export function sortEmail(rules: readonly Rule[], email: Sortable): Sorting {
 	const importantRules: number[] = [];
 	let critical = false;
 	let read = false;
+	let done = false;
 	for (const r of [...rules].sort((a, b) => a.position - b.position)) {
 		if (!matches(r, email)) continue;
 		if (r.folder && folder === null) {
@@ -181,6 +194,7 @@ export function sortEmail(rules: readonly Rule[], email: Sortable): Sorting {
 		if (r.important || r.critical) importantRules.push(r.id);
 		if (r.critical) critical = true;
 		if (r.markRead) read = true;
+		if (r.markDone) done = true;
 	}
 	return {
 		folder: folder ?? FALLBACK_FOLDER,
@@ -190,7 +204,8 @@ export function sortEmail(rules: readonly Rule[], email: Sortable): Sorting {
 				? "important"
 				: "normal",
 		// Important mail needs someone, so it never arrives read.
-		read: read && importantRules.length === 0,
+		read: done || (read && importantRules.length === 0),
+		done,
 		folderRule,
 		importantRules,
 	};

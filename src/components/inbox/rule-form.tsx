@@ -1,4 +1,5 @@
 import {
+	CircleCheck,
 	Hand,
 	MailOpen,
 	OctagonAlert,
@@ -210,6 +211,13 @@ export function RuleForm({
 							</Choice>
 						</span>
 					</Tip>
+					<Choice
+						active={d.markDone}
+						onClick={() => set({ ...d, markDone: !d.markDone })}
+					>
+						<CircleCheck className="size-4" />
+						Arrives done
+					</Choice>
 				</div>
 			</section>
 

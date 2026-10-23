@@ -10,6 +10,7 @@ import {
 	Languages,
 	LoaderCircle,
 	NotebookPen,
+	Paperclip,
 	RotateCw,
 	SendHorizontal,
 	Undo2,
@@ -25,6 +26,7 @@ import {
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
+import type { BuyerMedia } from "#/db/schema";
 import { formatDateTime } from "#/lib/format";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
@@ -59,6 +61,8 @@ const EBAY_MAX = 2000;
 type Status = OutStatus;
 
 type Shown = {
+	// Pictures and files sent with it.
+	media?: BuyerMedia[];
 	// Added by staff after sending it on the marketplace; katasync sent
 	// nothing.
 	logged?: boolean;
@@ -381,6 +385,46 @@ function Countdown({ at }: { at: number }) {
 	return <>{Math.max(0, Math.ceil((at - Date.now()) / 1000))}s</>;
 }
 
+// What came with a message: pictures as thumbnails, files as links, each
+// opening full size in a new tab.
+function Media({ items }: { items: BuyerMedia[] }) {
+	if (items.length === 0) return null;
+	const pictures = items.filter((i) => i.kind === "IMAGE");
+	const files = items.filter((i) => i.kind !== "IMAGE");
+	return (
+		<span className="mt-1 flex flex-wrap gap-1.5 first:mt-0">
+			{pictures.map((p) => (
+				<a
+					key={p.url}
+					href={p.url}
+					target="_blank"
+					rel="noreferrer"
+					className="block overflow-hidden rounded-lg ring-1 ring-black/10 transition-opacity hover:opacity-90"
+				>
+					<img
+						src={p.url}
+						alt={p.name || "Photo"}
+						loading="lazy"
+						className="h-36 w-auto max-w-56 object-cover"
+					/>
+				</a>
+			))}
+			{files.map((f) => (
+				<a
+					key={f.url}
+					href={f.url}
+					target="_blank"
+					rel="noreferrer"
+					className="inline-flex items-center gap-1 rounded-md bg-background/60 px-2 py-1 text-sm underline-offset-2 hover:underline"
+				>
+					<Paperclip className="size-3.5" />
+					{f.name || f.kind}
+				</a>
+			))}
+		</span>
+	);
+}
+
 const STATUS: Record<
 	Status,
 	{ icon: typeof Check; label: string; className?: string }
@@ -455,7 +499,8 @@ function Bubble({
 						"bg-primary/60 outline-2 outline-primary outline-dashed outline-offset-2",
 				)}
 			>
-				{translated ? m.english : m.body}
+				{(translated ? m.english : m.body) || null}
+				<Media items={m.media ?? []} />
 			</div>
 			<span className="flex items-center gap-1 text-xs text-muted-foreground">
 				{formatDateTime(m.at)}

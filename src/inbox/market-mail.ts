@@ -90,6 +90,7 @@ export async function ingestMarketMail(
 						folder: sorted.folder,
 						...flagsOf(sorted.level),
 						readAt: sorted.read ? new Date() : null,
+						doneAt: sorted.done ? new Date() : null,
 						fromAddress: m.fromAddress,
 						fromName: m.fromName,
 						recipients: m.recipients,

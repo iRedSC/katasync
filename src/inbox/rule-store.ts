@@ -35,6 +35,7 @@ export async function listRules(db: Db): Promise<Rule[]> {
 		important: r.important,
 		critical: r.critical,
 		markRead: r.markRead,
+		markDone: r.markDone,
 		by: r.by,
 	}));
 }

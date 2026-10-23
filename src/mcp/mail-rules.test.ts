@@ -58,7 +58,7 @@ describe("mail rules over MCP", () => {
 			dry_run: true,
 		});
 		expect(tried.data).toMatchObject({ count: 1 });
-		expect((await callTool(db, true, "mail_rules", {})).data).toHaveLength(5);
+		expect((await callTool(db, true, "mail_rules", {})).data).toHaveLength(7);
 
 		const saved = await callTool(db, true, "save_mail_rule", rule);
 		expect(saved.data).toMatchObject({ moved: 0, marked: 1 });

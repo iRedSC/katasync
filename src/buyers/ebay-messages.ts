@@ -25,7 +25,20 @@ const message = type({
 	"senderUsername?": "string",
 	"recipientUsername?": "string",
 	createdDate: "string.date.iso.parse",
+	"messageMedia?": type({
+		"mediaType?": "string",
+		"mediaName?": "string",
+		mediaUrl: "string",
+	}).array(),
 });
+
+// What a message carries besides words: pictures and files eBay hosts.
+const mediaOf = (m: Message) =>
+	(m.messageMedia ?? []).map((x) => ({
+		kind: x.mediaType ?? "FILE",
+		name: x.mediaName ?? "",
+		url: x.mediaUrl,
+	}));
 
 const conversation = type({
 	conversationId: "string",
@@ -137,6 +150,7 @@ async function readConversation(
 				externalId: m.messageId,
 				body,
 				at: m.createdDate,
+				media: mediaOf(m),
 			});
 			continue;
 		}
@@ -172,6 +186,7 @@ async function readConversation(
 			externalId: m.messageId,
 			body,
 			at: m.createdDate,
+			media: mediaOf(m),
 		});
 	}
 }
