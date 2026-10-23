@@ -37,7 +37,12 @@ export async function readNewMessages(db: Db, limit = 20, run: Run = runAgent) {
 		.select({ id: buyerMessages.id, body: buyerMessages.body })
 		.from(buyerMessages)
 		.where(
-			and(eq(buyerMessages.fromBuyer, true), isNull(buyerMessages.language)),
+			// A message of only pictures has nothing to read.
+			and(
+				eq(buyerMessages.fromBuyer, true),
+				isNull(buyerMessages.language),
+				sql`${buyerMessages.body} <> ''`,
+			),
 		)
 		.orderBy(desc(buyerMessages.at))
 		.limit(limit);

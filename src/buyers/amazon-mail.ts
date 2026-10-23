@@ -1,6 +1,11 @@
-import { and, eq, gte, ilike, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gte, ilike, inArray, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { buyerMessages, buyerThreads, marketEmails } from "#/db/schema";
+import {
+	buyerMessages,
+	buyerThreads,
+	marketEmailAttachments,
+	marketEmails,
+} from "#/db/schema";
 import { Refused, settleReply, Unsure, unsureStatus } from "./states";
 import { ensureThread, recordFromBuyer } from "./threads";
 
@@ -64,6 +69,29 @@ export async function threadAmazonMail(db: Db) {
 			),
 		)
 		.orderBy(marketEmails.receivedAt);
+	// Files the buyer attached, as kept with each email (not its inline
+	// pictures, which are Amazon's logos).
+	const files =
+		pending.length === 0
+			? []
+			: await db
+					.select({
+						id: marketEmailAttachments.id,
+						emailId: marketEmailAttachments.emailId,
+						filename: marketEmailAttachments.filename,
+						contentType: marketEmailAttachments.contentType,
+					})
+					.from(marketEmailAttachments)
+					.where(
+						and(
+							inArray(
+								marketEmailAttachments.emailId,
+								pending.map((e) => e.id),
+							),
+							isNull(marketEmailAttachments.contentId),
+						),
+					)
+					.orderBy(marketEmailAttachments.id);
 	let filed = 0;
 	for (const e of pending) {
 		if (!isRelayed(e.fromAddress)) continue;
@@ -81,6 +109,13 @@ export async function threadAmazonMail(db: Db) {
 				body: p.text,
 				at: e.receivedAt,
 				marketEmailId: e.id,
+				media: files
+					.filter((f) => f.emailId === e.id)
+					.map((f) => ({
+						kind: f.contentType.startsWith("image/") ? "IMAGE" : "FILE",
+						name: f.filename,
+						url: `/api/market-email-attachments/${f.id}`,
+					})),
 			});
 		});
 		if (added) filed++;

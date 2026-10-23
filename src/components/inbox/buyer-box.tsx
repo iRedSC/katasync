@@ -177,6 +177,14 @@ export function BuyerBox({
 	);
 }
 
+// A message of only pictures or files, in a few words.
+const mediaLine = (media: { kind: string }[]) => {
+	const photos = media.filter((m) => m.kind === "IMAGE").length;
+	if (photos === media.length && photos > 0)
+		return photos === 1 ? "Photo" : `${photos} photos`;
+	return media.length === 1 ? "File" : `${media.length} files`;
+};
+
 function ThreadRow({
 	thread: t,
 	market,
@@ -223,7 +231,7 @@ function ThreadRow({
 				</span>
 				<span className="truncate text-sm text-muted-foreground">
 					{last && !last.fromBuyer && "You: "}
-					{last?.body ?? t.subject}
+					{last ? last.body || mediaLine(last.media) : t.subject}
 				</span>
 			</button>
 		</li>

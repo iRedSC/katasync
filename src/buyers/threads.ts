@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import {
+	and,
+	asc,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	type BuyerMedia,
 	buyerMessageChecks,
 	buyerMessages,
 	buyerThreads,
@@ -83,8 +93,15 @@ export async function ensureThread(db: Db, t: ThreadKey) {
 export async function recordFromBuyer(
 	db: Db,
 	threadId: number,
-	m: { externalId: string; body: string; at: Date; marketEmailId?: number },
+	m: {
+		externalId: string;
+		body: string;
+		at: Date;
+		marketEmailId?: number;
+		media?: BuyerMedia[];
+	},
 ) {
+	const media = m.media ?? [];
 	const [row] = await db
 		.insert(buyerMessages)
 		.values({
@@ -94,10 +111,25 @@ export async function recordFromBuyer(
 			body: m.body,
 			at: m.at,
 			marketEmailId: m.marketEmailId ?? null,
+			media,
 		})
 		.onConflictDoNothing()
 		.returning({ id: buyerMessages.id });
-	if (!row) return false;
+	if (!row) {
+		// Kept before its pictures were: they're added now.
+		if (media.length > 0)
+			await db
+				.update(buyerMessages)
+				.set({ media })
+				.where(
+					and(
+						eq(buyerMessages.threadId, threadId),
+						eq(buyerMessages.externalId, m.externalId),
+						sql`${buyerMessages.media} = '[]'::jsonb`,
+					),
+				);
+		return false;
+	}
 	await db
 		.update(buyerThreads)
 		.set({ doneAt: null })
@@ -110,7 +142,7 @@ export async function recordFromBuyer(
 export async function recordOurs(
 	db: Db,
 	threadId: number,
-	m: { externalId: string; body: string; at: Date },
+	m: { externalId: string; body: string; at: Date; media?: BuyerMedia[] },
 ) {
 	const [row] = await db
 		.insert(buyerMessages)
@@ -120,6 +152,7 @@ export async function recordOurs(
 			externalId: m.externalId,
 			body: m.body,
 			at: m.at,
+			media: m.media ?? [],
 			status: "delivered",
 			requestKey: randomUUID(),
 			statusAt: m.at,
@@ -277,6 +310,7 @@ export async function threadsPage(
 						error: buyerMessages.error,
 						requestKey: buyerMessages.requestKey,
 						externalId: buyerMessages.externalId,
+						media: buyerMessages.media,
 						language: buyerMessages.language,
 						english: buyerMessages.english,
 					})

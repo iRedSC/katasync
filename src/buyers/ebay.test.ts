@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
-import { buyerMessageChecks } from "#/db/schema";
+import { buyerMessageChecks, buyerThreads } from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { syncEbayMessages } from "./ebay-messages";
 import { reply, settleReplies } from "./send";
@@ -20,6 +20,7 @@ type Msg = {
 	senderUsername: string;
 	recipientUsername: string;
 	createdDate: string;
+	messageMedia?: { mediaType: string; mediaName: string; mediaUrl: string }[];
 };
 
 const json = (status: number, body: unknown) =>
@@ -213,6 +214,31 @@ describe("eBay messages", () => {
 		// Matched to eBay's, it's no longer one undo can take out.
 		await unlogOurs(db, key);
 		expect((await threadsPage(db, "open", null))[0]?.messages).toHaveLength(2);
+	});
+
+	test("a photo with no words keeps the photo, filled in on a read again", async () => {
+		conversations.c1?.messages.push(msg("m3", "buyer1", "", -5));
+		await syncEbayMessages(db);
+		expect(
+			(await threadsPage(db, "open", null))[0]?.messages[1]?.media,
+		).toEqual([]);
+		const photo = {
+			mediaType: "IMAGE",
+			mediaName: "box.jpg",
+			mediaUrl: "https://i.ebayimg.com/box",
+		};
+		const last = conversations.c1?.messages.at(-1);
+		if (last) last.messageMedia = [photo];
+		// What the migration does, so photos already read are read again.
+		await db.update(buyerThreads).set({ readLatestId: null });
+		await db.update(buyerMessageChecks).set({ readThrough: null });
+		await syncEbayMessages(db);
+		const [t] = await threadsPage(db, "open", null);
+		expect(t?.messages).toHaveLength(2);
+		expect(t?.messages[1]).toMatchObject({
+			body: "",
+			media: [{ kind: "IMAGE", name: "box.jpg", url: photo.mediaUrl }],
+		});
 	});
 
 	test("without the message scope, says to sign in again", async () => {
