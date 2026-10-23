@@ -2,6 +2,7 @@ import { ImagePlus, Loader2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CatalogMark } from "#/components/catalog-mark";
+import { Tip } from "#/components/ui/tooltip";
 import { optimism, type Patch } from "#/lib/optimism";
 import { shrinkPhoto } from "#/lib/photo";
 import { offerUndo } from "#/lib/undo";
@@ -96,41 +97,42 @@ export function CatalogPhoto({
 
 	return (
 		<div className="group relative w-fit">
-			<button
-				type="button"
-				aria-label={catalog.photoId ? "Change photo" : "Add a photo"}
-				title="Click, drop, or paste a photo"
-				disabled={busy}
-				onClick={() => input.current?.click()}
-				onDragOver={(e) => {
-					e.preventDefault();
-					setOver(true);
-				}}
-				onDragLeave={() => setOver(false)}
-				onDrop={(e) => {
-					e.preventDefault();
-					setOver(false);
-					take(e.dataTransfer.files[0]);
-				}}
-				className={cn(
-					"relative block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring",
-					over && "ring-2 ring-primary ring-offset-2",
-				)}
-			>
-				<CatalogMark catalog={catalog} size="lg" />
-				<span
+			<Tip content="Click, drop, or paste a photo">
+				<button
+					type="button"
+					aria-label={catalog.photoId ? "Change photo" : "Add a photo"}
+					disabled={busy}
+					onClick={() => input.current?.click()}
+					onDragOver={(e) => {
+						e.preventDefault();
+						setOver(true);
+					}}
+					onDragLeave={() => setOver(false)}
+					onDrop={(e) => {
+						e.preventDefault();
+						setOver(false);
+						take(e.dataTransfer.files[0]);
+					}}
 					className={cn(
-						"absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100",
-						(busy || over) && "opacity-100",
+						"relative block rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring",
+						over && "ring-2 ring-primary ring-offset-2",
 					)}
 				>
-					{busy ? (
-						<Loader2 className="size-5 animate-spin" />
-					) : (
-						<ImagePlus className="size-5" />
-					)}
-				</span>
-			</button>
+					<CatalogMark catalog={catalog} size="lg" />
+					<span
+						className={cn(
+							"absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 text-white opacity-0 transition-opacity group-hover:opacity-100",
+							(busy || over) && "opacity-100",
+						)}
+					>
+						{busy ? (
+							<Loader2 className="size-5 animate-spin" />
+						) : (
+							<ImagePlus className="size-5" />
+						)}
+					</span>
+				</button>
+			</Tip>
 			{catalog.photoId !== null && !busy && (
 				<button
 					type="button"
