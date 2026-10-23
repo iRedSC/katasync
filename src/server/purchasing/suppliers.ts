@@ -1,9 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import {
 	productSuppliers,
+	products,
 	purchaseOrderLines,
 	purchaseOrders,
 	suppliers,
@@ -133,3 +134,69 @@ export const setProductSupplier = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => setProductSupplierLink(getDb(), data));
+
+// Sets one supplier on many products. Tool sets are bought as their parts,
+// so they're left out and come back as skipped. Each changed product says
+// who it came from before (null for none), which is what undo needs.
+export const setManyProductSuppliers = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			productIds: type("number.integer > 0").array().atLeastLength(1),
+			supplierId: "number.integer > 0",
+		}),
+	)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const rows = await db
+			.select({
+				productId: products.id,
+				kind: products.kind,
+				was: productSuppliers.supplierId,
+			})
+			.from(products)
+			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
+			.where(inArray(products.id, data.productIds));
+		const changed: { productId: number; was: number | null }[] = [];
+		const skipped: number[] = [];
+		for (const r of rows) {
+			if (r.kind === "bundle") skipped.push(r.productId);
+			else if (r.was !== data.supplierId) {
+				await setProductSupplierLink(db, {
+					productId: r.productId,
+					supplierId: data.supplierId,
+				});
+				changed.push({ productId: r.productId, was: r.was });
+			}
+		}
+		return { changed, skipped };
+	});
+
+// Undoes setManyProductSuppliers. A product whose supplier changed again
+// since is left alone. Returns how many went back.
+export const undoManyProductSuppliers = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			supplierId: "number.integer > 0",
+			changed: type({
+				productId: "number.integer > 0",
+				was: "number.integer > 0 | null",
+			}).array(),
+		}),
+	)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		let undone = 0;
+		for (const c of data.changed) {
+			const [now] = await db
+				.select({ supplierId: productSuppliers.supplierId })
+				.from(productSuppliers)
+				.where(eq(productSuppliers.productId, c.productId));
+			if (now?.supplierId !== data.supplierId) continue;
+			await setProductSupplierLink(db, {
+				productId: c.productId,
+				supplierId: c.was,
+			});
+			undone++;
+		}
+		return undone;
+	});

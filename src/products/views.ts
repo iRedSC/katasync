@@ -31,6 +31,12 @@ export const PRODUCT_SORTS = {
 	type: { label: "Type", ...TEXT },
 	vendor: { label: "Vendor", ...TEXT },
 	supplier: { label: "Supplier", ...TEXT },
+	level: { label: "Stock level", asc: "worst first", desc: "fullest first" },
+	step: { label: "Next step", asc: "most to do first", desc: "least first" },
+	trust: { label: "Trust", asc: "least trusted first", desc: "counted first" },
+	ordercost: { label: "Order cost", ...NUMBER },
+	tags: { label: "Tags", ...TEXT },
+	listing: { label: "Shopify status", ...TEXT },
 } as const satisfies SortColumns<string>;
 export type ProductSortKey = keyof typeof PRODUCT_SORTS;
 export type ProductSort = Sort<ProductSortKey>;

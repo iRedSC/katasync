@@ -64,6 +64,17 @@ export const requestCount = createServerFn({ method: "POST" })
 	.validator(type({ productId: "number.integer > 0" }))
 	.handler(async ({ data }) => requestProductCount(getDb(), data.productId));
 
+// requestCount for many products at once. Undo takes the lot.
+export const requestManyCounts = createServerFn({ method: "POST" })
+	.validator(type({ productIds: type("number.integer > 0").array() }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const added = [];
+		for (const productId of data.productIds)
+			added.push(...(await requestProductCount(db, productId)));
+		return added;
+	});
+
 // Undoes requestCount. Returns how many requests came off; any that were
 // counted and asked for again since stay.
 export const cancelCountRequest = createServerFn({ method: "POST" })
