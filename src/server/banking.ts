@@ -37,6 +37,8 @@ export const peekBankFile = createServerFn({ method: "POST" })
 	.validator(type({ text: `string <= ${LIMITS.fileBytes}` }))
 	.handler(async ({ data }) => peekFile(data.text));
 
+export type BankFilePeek = Awaited<ReturnType<typeof peekBankFile>>;
+
 export const previewBankFile = createServerFn({ method: "POST" })
 	.validator(importInput)
 	.handler(async ({ data }) => previewImport(getDb(), data));
@@ -55,7 +57,9 @@ export const getMatchOptions = createServerFn()
 	.validator(type({ transactionId: id }))
 	.handler(async ({ data }) => matchOptions(getDb(), data.transactionId));
 
-export type BankMatchOptions = NonNullable<Awaited<ReturnType<typeof getMatchOptions>>>;
+export type BankMatchOptions = NonNullable<
+	Awaited<ReturnType<typeof getMatchOptions>>
+>;
 
 export const matchBankRow = createServerFn({ method: "POST" })
 	.validator(

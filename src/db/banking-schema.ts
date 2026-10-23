@@ -33,8 +33,7 @@ export type BankCsvMapping = {
 
 const cents = () => bigint({ mode: "number" });
 
-const isCurrency = (column: SQL | AnyPgColumn) =>
-	sql`${column} ~ '^[A-Z]{3}$'`;
+const isCurrency = (column: SQL | AnyPgColumn) => sql`${column} ~ '^[A-Z]{3}$'`;
 
 export const bankAccounts = pgTable(
 	"bank_accounts",
@@ -91,9 +90,7 @@ export const bankImportRows = pgTable(
 		cells: jsonb().$type<string[]>().notNull(),
 		outcome: bankRowOutcome().notNull(),
 		problem: text(),
-		duplicateOf: integer().references(
-			(): AnyPgColumn => bankTransactions.id,
-		),
+		duplicateOf: integer().references((): AnyPgColumn => bankTransactions.id),
 	},
 	(t) => [
 		unique("bank_import_rows_import_row").on(t.importId, t.rowNumber),

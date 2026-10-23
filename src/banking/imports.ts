@@ -18,7 +18,12 @@ export type PreviewRow =
 			twinOf: number | null;
 			repeatOf: number | null;
 	  }
-	| { kind: "duplicate"; rowNumber: number; transaction: ParsedTransaction; duplicateOf: number }
+	| {
+			kind: "duplicate";
+			rowNumber: number;
+			transaction: ParsedTransaction;
+			duplicateOf: number;
+	  }
 	| { kind: "invalid"; rowNumber: number; cells: string[]; problem: string };
 
 export type Preview = {
@@ -41,22 +46,41 @@ const CHUNK = 1000;
 
 function chunks<T>(items: readonly T[]): T[][] {
 	const out: T[][] = [];
-	for (let i = 0; i < items.length; i += CHUNK) out.push(items.slice(i, i + CHUNK));
+	for (let i = 0; i < items.length; i += CHUNK)
+		out.push(items.slice(i, i + CHUNK));
 	return out;
 }
 
-async function classify(db: Db, account: Account, input: ImportInput): Promise<Parsed<Classified>> {
+async function classify(
+	db: Db,
+	account: Account,
+	input: ImportInput,
+): Promise<Parsed<Classified>> {
 	const prepared = prepareFile(input.text, input.mapping, account.currency);
 	if (!prepared.ok) return prepared;
 	const { rows, sha256, headers } = prepared.value;
 	const [already] = await db
 		.select({ id: bankImports.id })
 		.from(bankImports)
-		.where(and(eq(bankImports.accountId, account.id), eq(bankImports.fileSha256, sha256)));
-	const accepted = rows.flatMap((r) => (r.kind === "accepted" ? [r.transaction] : []));
+		.where(
+			and(
+				eq(bankImports.accountId, account.id),
+				eq(bankImports.fileSha256, sha256),
+			),
+		);
+	const accepted = rows.flatMap((r) =>
+		r.kind === "accepted" ? [r.transaction] : [],
+	);
 	const refs = accepted.flatMap((t) => (t.bankRef === null ? [] : [t.bankRef]));
-	const prints = [...new Set(accepted.filter((t) => t.bankRef === null).map((t) => t.fingerprint))];
-	const known = new Map<string, { id: number; postedOn: string; amountCents: number }>();
+	const prints = [
+		...new Set(
+			accepted.filter((t) => t.bankRef === null).map((t) => t.fingerprint),
+		),
+	];
+	const known = new Map<
+		string,
+		{ id: number; postedOn: string; amountCents: number }
+	>();
 	for (const part of chunks(refs)) {
 		const found = await db
 			.select({
@@ -66,13 +90,21 @@ async function classify(db: Db, account: Account, input: ImportInput): Promise<P
 				amountCents: bankTransactions.amountCents,
 			})
 			.from(bankTransactions)
-			.where(and(eq(bankTransactions.accountId, account.id), inArray(bankTransactions.bankRef, part)));
+			.where(
+				and(
+					eq(bankTransactions.accountId, account.id),
+					inArray(bankTransactions.bankRef, part),
+				),
+			);
 		for (const f of found) if (f.bankRef !== null) known.set(f.bankRef, f);
 	}
 	const earlier = new Map<string, number[]>();
 	for (const part of chunks(prints)) {
 		const found = await db
-			.select({ id: bankTransactions.id, fingerprint: bankTransactions.fingerprint })
+			.select({
+				id: bankTransactions.id,
+				fingerprint: bankTransactions.fingerprint,
+			})
 			.from(bankTransactions)
 			.where(
 				and(
@@ -82,20 +114,37 @@ async function classify(db: Db, account: Account, input: ImportInput): Promise<P
 				),
 			)
 			.orderBy(asc(bankTransactions.id));
-		for (const f of found) earlier.set(f.fingerprint, [...(earlier.get(f.fingerprint) ?? []), f.id]);
+		for (const f of found)
+			earlier.set(f.fingerprint, [...(earlier.get(f.fingerprint) ?? []), f.id]);
 	}
 	const seen = new Map<string, number>();
 	const cells = new Map(rows.map((r) => [r.rowNumber, r.cells]));
 	const out = rows.map((r): PreviewRow => {
 		if (r.kind === "invalid")
-			return { kind: "invalid", rowNumber: r.rowNumber, cells: r.cells, problem: r.problem };
+			return {
+				kind: "invalid",
+				rowNumber: r.rowNumber,
+				cells: r.cells,
+				problem: r.problem,
+			};
 		const t = r.transaction;
 		if (t.bankRef !== null) {
 			const prior = known.get(t.bankRef);
 			if (!prior)
-				return { kind: "accepted", rowNumber: r.rowNumber, transaction: t, twinOf: null, repeatOf: null };
+				return {
+					kind: "accepted",
+					rowNumber: r.rowNumber,
+					transaction: t,
+					twinOf: null,
+					repeatOf: null,
+				};
 			if (prior.postedOn === t.postedOn && prior.amountCents === t.amountCents)
-				return { kind: "duplicate", rowNumber: r.rowNumber, transaction: t, duplicateOf: prior.id };
+				return {
+					kind: "duplicate",
+					rowNumber: r.rowNumber,
+					transaction: t,
+					duplicateOf: prior.id,
+				};
 			return {
 				kind: "invalid",
 				rowNumber: r.rowNumber,
@@ -115,22 +164,39 @@ async function classify(db: Db, account: Account, input: ImportInput): Promise<P
 	});
 	return {
 		ok: true,
-		value: { sha256, headers, alreadyImported: already?.id ?? null, rows: out, cells },
+		value: {
+			sha256,
+			headers,
+			alreadyImported: already?.id ?? null,
+			rows: out,
+			cells,
+		},
 	};
 }
 
-export async function previewImport(db: Db, input: ImportInput): Promise<Parsed<Preview>> {
+export async function previewImport(
+	db: Db,
+	input: ImportInput,
+): Promise<Parsed<Preview>> {
 	const account = await loadAccount(db, input.accountId);
-	if (!account) return { ok: false, problem: "That bank account doesn't exist" };
+	if (!account)
+		return { ok: false, problem: "That bank account doesn't exist" };
 	const classified = await classify(db, account, input);
 	if (!classified.ok) return classified;
-	const { cells: _, ...preview } = classified.value;
-	return { ok: true, value: preview };
+	const { sha256, headers, alreadyImported, rows } = classified.value;
+	return { ok: true, value: { sha256, headers, alreadyImported, rows } };
 }
 
 export type Committed =
 	| { kind: "already"; importId: number }
-	| { kind: "imported"; importId: number; added: number; skipped: number; duplicates: number; invalid: number };
+	| {
+			kind: "imported";
+			importId: number;
+			added: number;
+			skipped: number;
+			duplicates: number;
+			invalid: number;
+	  };
 
 export async function commitImport(
 	db: Db,
@@ -138,16 +204,26 @@ export async function commitImport(
 ): Promise<Parsed<Committed>> {
 	return db.transaction(async (tx) => {
 		const account = await loadAccount(tx, input.accountId, { lock: true });
-		if (!account) return { ok: false, problem: "That bank account doesn't exist" };
+		if (!account)
+			return { ok: false, problem: "That bank account doesn't exist" };
 		const preview = await classify(tx, account, input);
 		if (!preview.ok) return preview;
 		const p = preview.value;
 		if (p.alreadyImported !== null)
-			return { ok: true, value: { kind: "already", importId: p.alreadyImported } };
+			return {
+				ok: true,
+				value: { kind: "already", importId: p.alreadyImported },
+			};
 		const skip = new Set(input.skipRows);
-		const skippable = new Set(p.rows.flatMap((r) => (r.kind === "accepted" ? [r.rowNumber] : [])));
+		const skippable = new Set(
+			p.rows.flatMap((r) => (r.kind === "accepted" ? [r.rowNumber] : [])),
+		);
 		for (const n of skip)
-			if (!skippable.has(n)) return { ok: false, problem: `Row ${n} isn't one that can be left out` };
+			if (!skippable.has(n))
+				return {
+					ok: false,
+					problem: `Row ${n} isn't one that can be left out`,
+				};
 		const [made] = await tx
 			.insert(bankImports)
 			.values({
@@ -159,7 +235,11 @@ export async function commitImport(
 			})
 			.returning({ id: bankImports.id });
 		const outcomeOf = (r: PreviewRow) =>
-			r.kind === "accepted" ? (skip.has(r.rowNumber) ? "skipped" : "accepted") : r.kind;
+			r.kind === "accepted"
+				? skip.has(r.rowNumber)
+					? "skipped"
+					: "accepted"
+				: r.kind;
 		const rowIds = new Map<number, number>();
 		for (const part of chunks(p.rows)) {
 			const ids = await tx
@@ -174,7 +254,10 @@ export async function commitImport(
 						duplicateOf: r.kind === "duplicate" ? r.duplicateOf : null,
 					})),
 				)
-				.returning({ id: bankImportRows.id, rowNumber: bankImportRows.rowNumber });
+				.returning({
+					id: bankImportRows.id,
+					rowNumber: bankImportRows.rowNumber,
+				});
 			for (const row of ids) rowIds.set(row.rowNumber, row.id);
 		}
 		const adding = p.rows.flatMap((r) =>
@@ -184,11 +267,18 @@ export async function commitImport(
 			await tx.insert(bankTransactions).values(
 				part.map((r) => {
 					const importRowId = rowIds.get(r.rowNumber);
-					if (importRowId === undefined) throw new Error(`Row ${r.rowNumber} wasn't saved`);
-					return { accountId: account.id, importRowId, currency: account.currency, ...r.transaction };
+					if (importRowId === undefined)
+						throw new Error(`Row ${r.rowNumber} wasn't saved`);
+					return {
+						accountId: account.id,
+						importRowId,
+						currency: account.currency,
+						...r.transaction,
+					};
 				}),
 			);
-		const count = (kind: PreviewRow["kind"]) => p.rows.filter((r) => r.kind === kind).length;
+		const count = (kind: PreviewRow["kind"]) =>
+			p.rows.filter((r) => r.kind === kind).length;
 		return {
 			ok: true,
 			value: {

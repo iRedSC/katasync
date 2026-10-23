@@ -5,16 +5,28 @@ import { type Currency, type Parsed, parseCurrency } from "./money";
 
 export type Account = { id: number; name: string; currency: Currency };
 
+export type AccountView = { id: number; name: string; currency: string };
+
+export const viewOf = (a: Account): AccountView => ({
+	id: a.id,
+	name: a.name,
+	currency: a.currency,
+});
+
 type Reader = Pick<Db, "select">;
 
 const toAccount = (row: typeof bankAccounts.$inferSelect): Account => {
 	const currency = parseCurrency(row.currency);
-	if (!currency.ok) throw new Error(`Bank account ${row.name}: ${currency.problem}`);
+	if (!currency.ok)
+		throw new Error(`Bank account ${row.name}: ${currency.problem}`);
 	return { id: row.id, name: row.name, currency: currency.value };
 };
 
 export async function listAccounts(db: Reader): Promise<Account[]> {
-	const rows = await db.select().from(bankAccounts).orderBy(asc(bankAccounts.name));
+	const rows = await db
+		.select()
+		.from(bankAccounts)
+		.orderBy(asc(bankAccounts.name));
 	return rows.map(toAccount);
 }
 
@@ -31,7 +43,7 @@ export async function loadAccount(
 export async function createAccount(
 	db: Db,
 	input: { name: string; currency: string },
-): Promise<Parsed<Account>> {
+): Promise<Parsed<AccountView>> {
 	const name = input.name.trim().replace(/\s+/g, " ");
 	if (name.length === 0) return { ok: false, problem: "Name it" };
 	if (name.length > 80) return { ok: false, problem: "Name is too long" };
@@ -43,5 +55,5 @@ export async function createAccount(
 		.onConflictDoNothing({ target: bankAccounts.name })
 		.returning();
 	if (!row) return { ok: false, problem: `"${name}" already exists` };
-	return { ok: true, value: toAccount(row) };
+	return { ok: true, value: viewOf(toAccount(row)) };
 }

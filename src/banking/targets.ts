@@ -1,10 +1,10 @@
 import { and, asc, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import {
+	type BankTargetSnapshot,
 	bankMatchParts,
 	bankTargetChanges,
 	type bankTargetKind,
-	type BankTargetSnapshot,
 } from "#/db/banking-schema";
 import type { Db } from "#/db/client";
 import { payouts } from "#/db/schema";
@@ -120,10 +120,14 @@ export const TARGETS: Record<TargetKind, MatchTarget> = {
 	payout: payoutTarget,
 };
 
-export function partTarget(part: { targetKind: TargetKind; payoutId: number | null }): TargetRef {
+export function partTarget(part: {
+	targetKind: TargetKind;
+	payoutId: number | null;
+}): TargetRef {
 	switch (part.targetKind) {
 		case "payout":
-			if (part.payoutId === null) throw new Error("A payout part has no payout");
+			if (part.payoutId === null)
+				throw new Error("A payout part has no payout");
 			return { kind: "payout", id: part.payoutId };
 		default: {
 			const unreachable: never = part.targetKind;

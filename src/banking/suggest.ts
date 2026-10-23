@@ -32,10 +32,15 @@ export function usable(bank: BankRow, t: Standing) {
 
 function mentions(description: string, t: Standing) {
 	const ref = t.reference?.trim().toLowerCase();
-	return Boolean(ref && ref.length >= 4 && description.toLowerCase().includes(ref));
+	return Boolean(
+		ref && ref.length >= 4 && description.toLowerCase().includes(ref),
+	);
 }
 
-export function suggest(bank: BankRow, candidates: readonly Standing[]): Suggestions {
+export function suggest(
+	bank: BankRow,
+	candidates: readonly Standing[],
+): Suggestions {
 	const pool = candidates
 		.filter((t) => usable(bank, t))
 		.map((t) => ({ t, days: Math.abs(daysBetween(t.on, bank.postedOn)) }))
@@ -45,7 +50,10 @@ export function suggest(bank: BankRow, candidates: readonly Standing[]): Suggest
 	const walk = (start: number, picked: typeof pool, sum: number) => {
 		if (picked.length > 0 && sum === bank.amountCents) {
 			found.push({
-				parts: picked.map(({ t }) => ({ target: t.ref, amountCents: remainingOf(t) })),
+				parts: picked.map(({ t }) => ({
+					target: t.ref,
+					amountCents: remainingOf(t),
+				})),
 				days: Math.max(...picked.map((p) => p.days)),
 				referenced: picked.some(({ t }) => mentions(bank.description, t)),
 			});

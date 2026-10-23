@@ -3,7 +3,13 @@ import type { BankCsvMapping } from "#/db/banking-schema";
 import { LIMITS, readCsv } from "./csv";
 import { parseBankDate } from "./dates";
 import { type Columns, resolveMapping } from "./mapping";
-import { type Currency, clip, type Parsed, parseCents, parseCurrency } from "./money";
+import {
+	type Currency,
+	clip,
+	type Parsed,
+	parseCents,
+	parseCurrency,
+} from "./money";
 
 export type ParsedTransaction = {
 	postedOn: string;
@@ -30,7 +36,9 @@ export type PreparedFile = {
 export const sha256 = (text: string) =>
 	createHash("sha256").update(text, "utf8").digest("hex");
 
-export function fingerprintOf(t: Omit<ParsedTransaction, "fingerprint" | "bankRef">) {
+export function fingerprintOf(
+	t: Omit<ParsedTransaction, "fingerprint" | "bankRef">,
+) {
 	const description = t.description.replace(/\s+/g, " ").toLowerCase();
 	return sha256(`${t.postedOn}\u0000${t.amountCents}\u0000${description}`);
 }
@@ -132,8 +140,10 @@ export function prepareFile(
 				};
 			refs.set(t.bankRef, rowNumber);
 		}
-		const twinOf = t.bankRef === null ? (prints.get(t.fingerprint) ?? null) : null;
-		if (t.bankRef === null && twinOf === null) prints.set(t.fingerprint, rowNumber);
+		const twinOf =
+			t.bankRef === null ? (prints.get(t.fingerprint) ?? null) : null;
+		if (t.bankRef === null && twinOf === null)
+			prints.set(t.fingerprint, rowNumber);
 		return { rowNumber, cells, kind: "accepted", transaction: t, twinOf };
 	});
 	return {

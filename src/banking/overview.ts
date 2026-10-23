@@ -1,12 +1,26 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { bankImportRows, bankImports, bankTransactions } from "#/db/banking-schema";
+import {
+	bankImportRows,
+	bankImports,
+	bankTransactions,
+} from "#/db/banking-schema";
 import type { Db } from "#/db/client";
-import { type Account, listAccounts, loadAccount } from "./accounts";
+import {
+	type AccountView,
+	listAccounts,
+	loadAccount,
+	viewOf,
+} from "./accounts";
 import { remainingOf, type Standing } from "./allocate";
 import { daysBetween } from "./dates";
 import { standingOf } from "./matching";
-import { type BankState, bankStateOf, type MatchState, matchStates } from "./review";
-import { suggest, type Suggestions, usable, WINDOW_DAYS } from "./suggest";
+import {
+	type BankState,
+	bankStateOf,
+	type MatchState,
+	matchStates,
+} from "./review";
+import { type Suggestions, suggest, usable, WINDOW_DAYS } from "./suggest";
 import { payoutTarget, targetKey } from "./targets";
 
 export const ROW_LIMIT = 1000;
@@ -49,8 +63,8 @@ export type ImportView = {
 };
 
 export type Overview = {
-	accounts: Account[];
-	account: Account | null;
+	accounts: AccountView[];
+	account: AccountView | null;
 	rows: BankRowView[];
 	truncated: boolean;
 	payouts: PayoutView[];
@@ -62,7 +76,10 @@ async function repeatedPrints(db: Db, accountId: number, prints: string[]) {
 	const found = await db
 		.select({ fingerprint: bankTransactions.fingerprint })
 		.from(bankTransactions)
-		.innerJoin(bankImportRows, eq(bankImportRows.id, bankTransactions.importRowId))
+		.innerJoin(
+			bankImportRows,
+			eq(bankImportRows.id, bankTransactions.importRowId),
+		)
 		.where(
 			and(
 				eq(bankTransactions.accountId, accountId),
@@ -103,36 +120,63 @@ async function importsOf(db: Db, accountId: number): Promise<ImportView[]> {
 	return [...out.values()];
 }
 
-export async function loadOverview(db: Db, accountId: number | null): Promise<Overview> {
-	const accounts = await listAccounts(db);
-	const account = accounts.find((a) => a.id === accountId) ?? accounts[0] ?? null;
-	if (!account) return { accounts, account, rows: [], truncated: false, payouts: [], imports: [] };
+export async function loadOverview(
+	db: Db,
+	accountId: number | null,
+): Promise<Overview> {
+	const accounts: AccountView[] = (await listAccounts(db)).map(viewOf);
+	const account =
+		accounts.find((a) => a.id === accountId) ?? accounts[0] ?? null;
+	if (!account)
+		return {
+			accounts,
+			account,
+			rows: [],
+			truncated: false,
+			payouts: [],
+			imports: [],
+		};
 	const found = await db
 		.select(transactionFields)
 		.from(bankTransactions)
-		.innerJoin(bankImportRows, eq(bankImportRows.id, bankTransactions.importRowId))
+		.innerJoin(
+			bankImportRows,
+			eq(bankImportRows.id, bankTransactions.importRowId),
+		)
 		.where(eq(bankTransactions.accountId, account.id))
 		.orderBy(desc(bankTransactions.postedOn), desc(bankTransactions.id))
 		.limit(ROW_LIMIT + 1);
 	const truncated = found.length > ROW_LIMIT;
 	const txns = found.slice(0, ROW_LIMIT);
-	const repeated = await repeatedPrints(
+	const repeated = await repeatedPrints(db, account.id, [
+		...new Set(
+			txns.filter((t) => t.bankRef === null).map((t) => t.fingerprint),
+		),
+	]);
+	const evidence = await matchStates(
 		db,
-		account.id,
-		[...new Set(txns.filter((t) => t.bankRef === null).map((t) => t.fingerprint))],
+		txns.map((t) => t.id),
+		account.currency,
 	);
-	const evidence = await matchStates(db, txns.map((t) => t.id), account.currency);
 	const rows = txns.map(
-		({ fingerprint, currency: _, ...t }): BankRowView => ({
-			...t,
-			possibleRepeat: t.bankRef === null && repeated.has(fingerprint),
+		(t): BankRowView => ({
+			id: t.id,
+			postedOn: t.postedOn,
+			description: t.description,
+			amountCents: t.amountCents,
+			bankRef: t.bankRef,
+			importId: t.importId,
+			rowNumber: t.rowNumber,
+			possibleRepeat: t.bankRef === null && repeated.has(t.fingerprint),
 			pastMatches: evidence.pastMatches.get(t.id) ?? 0,
 			state: evidence.states.get(t.id) ?? { kind: "unmatched" },
 		}),
 	);
 	const reviewing = new Set(
 		rows.flatMap((r) =>
-			r.state.kind === "needs-review" ? r.state.match.parts.map((p) => targetKey(p.target)) : [],
+			r.state.kind === "needs-review"
+				? r.state.match.parts.map((p) => targetKey(p.target))
+				: [],
 		),
 	);
 	const days = txns.map((t) => t.postedOn).sort();
@@ -144,21 +188,41 @@ export async function loadOverview(db: Db, accountId: number | null): Promise<Ov
 					from: shift(days[0], -WINDOW_DAYS.before),
 					to: shift(days[days.length - 1], WINDOW_DAYS.after),
 				});
-	const standing = await standingOf(db, near.map((p) => p.ref), { lock: false, excludeMatch: null });
+	const standing = await standingOf(
+		db,
+		near.map((p) => p.ref),
+		{ lock: false, excludeMatch: null },
+	);
 	for (const [key, t] of evidence.targets)
 		if (t.currency === account.currency) standing.set(key, t);
 	const payouts = [...standing.values()]
 		.sort((a, b) => b.on.localeCompare(a.on))
 		.map((t) => ({ ...t, bank: bankStateOf(t, reviewing) }));
-	return { accounts, account, rows, truncated, payouts, imports: await importsOf(db, account.id) };
+	return {
+		accounts,
+		account,
+		rows,
+		truncated,
+		payouts,
+		imports: await importsOf(db, account.id),
+	};
 }
 
 export type MatchOptions = {
-	bank: { id: number; amountCents: number; currency: string; postedOn: string; description: string };
+	bank: {
+		id: number;
+		amountCents: number;
+		currency: string;
+		postedOn: string;
+		description: string;
+	};
 	candidates: (Standing & { days: number; remainingCents: number })[];
 } & Suggestions;
 
-export async function matchOptions(db: Db, transactionId: number): Promise<MatchOptions | null> {
+export async function matchOptions(
+	db: Db,
+	transactionId: number,
+): Promise<MatchOptions | null> {
 	const [bank] = await db
 		.select({
 			id: bankTransactions.id,
@@ -176,11 +240,29 @@ export async function matchOptions(db: Db, transactionId: number): Promise<Match
 		from: shift(bank.postedOn, -WINDOW_DAYS.before),
 		to: shift(bank.postedOn, WINDOW_DAYS.after),
 	});
-	const standing = [...(await standingOf(db, near.map((p) => p.ref), { lock: false, excludeMatch: null })).values()];
+	const standing = [
+		...(
+			await standingOf(
+				db,
+				near.map((p) => p.ref),
+				{ lock: false, excludeMatch: null },
+			)
+		).values(),
+	];
 	const candidates = standing
 		.filter((t) => usable(bank, t))
-		.map((t) => ({ ...t, days: daysBetween(t.on, bank.postedOn), remainingCents: remainingOf(t) }))
+		.map((t) => ({
+			...t,
+			days: daysBetween(t.on, bank.postedOn),
+			remainingCents: remainingOf(t),
+		}))
 		.sort((a, b) => Math.abs(a.days) - Math.abs(b.days));
-	const { accountId: _, ...shown } = bank;
+	const shown = {
+		id: bank.id,
+		amountCents: bank.amountCents,
+		currency: bank.currency,
+		postedOn: bank.postedOn,
+		description: bank.description,
+	};
 	return { bank: shown, candidates, ...suggest(bank, standing) };
 }
