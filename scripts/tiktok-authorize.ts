@@ -46,7 +46,10 @@ const reply = type({
 	},
 });
 
-const prompt = createInterface({ input: process.stdin, output: process.stdout });
+const prompt = createInterface({
+	input: process.stdin,
+	output: process.stdout,
+});
 const pasted = await prompt.question(
 	"Paste the address TikTok sent you to after authorizing (or its code):\n> ",
 );

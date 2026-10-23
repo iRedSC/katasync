@@ -12,6 +12,10 @@
 			"**/.vscode/**/*",
 			"**/index.html",
 			"**/vite.config.ts",
+			"**/vitest.config.ts",
+			"**/drizzle.config.ts",
+			"**/neon.ts",
+			"**/scripts/**/*",
 			"!**/src/routeTree.gen.ts",
 			"!**/src/styles.css",
 			"!**/src/components/ui"

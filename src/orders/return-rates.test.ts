@@ -61,6 +61,60 @@ async function sale(
 	return { orderId: o.id, lineId: line.id };
 }
 
+// Many sales at once: each order is a list of [productId, quantity] lines.
+// One insert per table; returns each order's line ids, in the order given.
+async function salesOf(
+	orders: [productId: number, quantity: number][][],
+	{ placedAt = daysAgo(90), storeId = shopify } = {},
+) {
+	const externalIds = orders.map(() => crypto.randomUUID());
+	const placed = await db
+		.insert(schema.orders)
+		.values(
+			orders.map((lines, i) => ({
+				storeId,
+				externalId: externalIds[i],
+				name: externalIds[i],
+				placedAt,
+				fulfillmentStatus: "FULFILLED",
+				total: lines.reduce((sum, [, quantity]) => sum + 10 * quantity, 0),
+				sourceUpdatedAt: new Date(),
+			})),
+		)
+		.returning({ id: schema.orders.id, externalId: schema.orders.externalId });
+	const ids = new Map(placed.map((o) => [o.externalId, o.id]));
+	const orderIdOf = (i: number) => {
+		const id = ids.get(externalIds[i]);
+		if (id === undefined) throw new Error(`order ${i} was not inserted`);
+		return id;
+	};
+	const lines = await db
+		.insert(schema.orderLines)
+		.values(
+			orders.flatMap((ls, i) =>
+				ls.map(([productId, quantity], n) => ({
+					orderId: orderIdOf(i),
+					externalId: `${externalIds[i]}-${n}`,
+					productId,
+					title: "Item",
+					quantity,
+					unitPrice: 10,
+				})),
+			),
+		)
+		.returning({
+			id: schema.orderLines.id,
+			orderId: schema.orderLines.orderId,
+		});
+	return orders.map((_, i) => {
+		const orderId = orderIdOf(i);
+		return {
+			orderId,
+			lineIds: lines.filter((l) => l.orderId === orderId).map((l) => l.id),
+		};
+	});
+}
+
 describe("order_line_returns", () => {
 	test("counts the most any evidence says came back", async () => {
 		const p = await createProduct(db, "WRENCH", "simple");
@@ -212,26 +266,46 @@ describe("returnInsights", () => {
 	test("counts the same window as the view, and splits flagged from expected", async () => {
 		const flaky = await createProduct(db, "FLAKY", "simple");
 		const steady = await createProduct(db, "STEADY", "simple");
-		for (let i = 0; i < 40; i++) {
-			const s = await sale(flaky, 1);
-			if (i < 9) await returned(s.lineId, 1);
-		}
-		for (let i = 0; i < 200; i++) {
-			const s = await sale(steady, 1);
-			if (i < 3) await returned(s.lineId, 1);
-		}
-		// Just outside each end of the window.
-		await sale(flaky, 7, daysAgo(44));
-		await sale(flaky, 7, daysAgo(411));
-		// Sold once, came back once: high, but not a pattern.
 		const once = await createProduct(db, "ONCE", "simple");
-		await returned((await sale(once, 1)).lineId, 1);
+		const flakyOrders = await salesOf(
+			Array.from({ length: 40 }, () => [[flaky, 1]]),
+		);
+		const steadyOrders = await salesOf(
+			Array.from({ length: 200 }, () => [[steady, 1]]),
+		);
+		// Just outside each end of the window.
+		await salesOf([[[flaky, 7]]], { placedAt: daysAgo(44) });
+		await salesOf([[[flaky, 7]]], { placedAt: daysAgo(411) });
+		// One order of two lines, both back: high, but not a pattern. Counted
+		// once as an order, twice as lines.
+		const onceOrders = await salesOf([
+			[
+				[once, 1],
+				[once, 1],
+			],
+		]);
+		const backLines = [
+			...flakyOrders.slice(0, 9),
+			...steadyOrders.slice(0, 3),
+			...onceOrders,
+		].flatMap((o) => o.lineIds);
+		await db.insert(schema.orderReturns).values(
+			backLines.map((orderLineId) => ({
+				orderLineId,
+				quantity: 1,
+				restocked: false,
+			})),
+		);
 
 		const insights = await returnInsights(db);
 		const view = await db.select().from(schema.productReturnRates);
 		const sum = (rows: { sold: number }[]) =>
 			rows.reduce((n, r) => n + r.sold, 0);
 		expect(sum(insights.channels)).toBe(sum(view));
+		// 241 orders, 242 lines; 13 orders came back, 14 lines did.
+		expect(insights.channels).toMatchObject([
+			{ channel: "shopify", orders: 241, ordersReturned: 13 },
+		]);
 		expect(insights.flagged.map((r) => r.sku)).toEqual(["FLAKY"]);
 		expect(insights.once.map((r) => r.sku)).toEqual(["ONCE"]);
 		expect(insights.expected.map((r) => r.sku)).toEqual(["STEADY"]);

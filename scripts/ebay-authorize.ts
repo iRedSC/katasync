@@ -35,7 +35,10 @@ consent.search = new URLSearchParams({
 }).toString();
 console.log(`Open this, sign in as the seller, and agree:\n\n${consent}\n`);
 
-const prompt = createInterface({ input: process.stdin, output: process.stdout });
+const prompt = createInterface({
+	input: process.stdin,
+	output: process.stdout,
+});
 const pasted = await prompt.question(
 	"Paste the address eBay sent you to afterwards:\n> ",
 );
