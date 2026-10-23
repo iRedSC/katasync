@@ -12,6 +12,8 @@ import {
 } from "./purchasing.fixtures";
 import {
 	DEFAULT_SETTINGS,
+	loadPlan,
+	openArrivals,
 	recommendedAdditions,
 	reorderBreakdown,
 	suggestPurchases,
@@ -34,6 +36,71 @@ beforeEach(async () => {
 });
 
 describe("reorderBreakdown", () => {
+	test("uses promised PO dates and exposes backordered and missing-date supply", async () => {
+		const blade = await createProduct(db, "BLADE", "simple");
+		await supply(blade, 1);
+		await stock(blade, 5);
+		const [po] = await db
+			.insert(schema.purchaseOrders)
+			.values({
+				supplierId: canam,
+				locationId: warehouse,
+				status: "sent",
+				sentAt: daysAgo(1),
+				expectedAt: new Date(now.getTime() + 60 * 86_400_000),
+			})
+			.returning();
+		const [line] = await db
+			.insert(schema.purchaseOrderLines)
+			.values({
+				purchaseOrderId: po.id,
+				productId: blade,
+				quantity: 100,
+				supplierCount: 1,
+				minimumQuantity: 1,
+			})
+			.returning();
+		const plan = await loadPlan(db, now);
+		plan.forecasts.set(blade, {
+			dailyDemand: 1,
+			dailySd: 0,
+			inStockDays: 90,
+		});
+		const read = async () =>
+			(await reorderBreakdown(db, { now, plan, productIds: [blade] }))[0];
+		const late = await read();
+		expect(late.why.incoming).toEqual({
+			timely: 0,
+			aim: 0,
+			unknown: 0,
+			lateDue: 60,
+		});
+		expect(late.line.quantity).toBeGreaterThan(0);
+		await db
+			.update(schema.purchaseOrders)
+			.set({ expectedAt: new Date(now.getTime() + 3 * 86_400_000) })
+			.where(eq(schema.purchaseOrders.id, po.id));
+		const timely = await read();
+		expect(timely.why.incoming.timely).toBe(100);
+		expect(timely.line.quantity).toBe(0);
+		await db
+			.update(schema.purchaseOrderLines)
+			.set({ backOrderedAt: now })
+			.where(eq(schema.purchaseOrderLines.id, line.id));
+		expect((await read()).why.incoming.unknown).toBe(100);
+		await db
+			.update(schema.purchaseOrderLines)
+			.set({ backOrderedAt: null })
+			.where(eq(schema.purchaseOrderLines.id, line.id));
+		await db
+			.update(schema.purchaseOrders)
+			.set({ expectedAt: null, sentAt: null })
+			.where(eq(schema.purchaseOrders.id, po.id));
+		expect((await openArrivals(db, now, plan.leadTimes)).get(blade)).toEqual([
+			{ units: 100, arrivesAt: null },
+		]);
+	});
+
 	test("explains products without a supplier, but never orders them", async () => {
 		const blade = await createProduct(db, "BLADE", "simple");
 		const loose = await createProduct(db, "LOOSE", "simple");

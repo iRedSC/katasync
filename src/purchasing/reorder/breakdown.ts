@@ -18,11 +18,12 @@ import { DEFAULT_COVER_DAYS, loadPlan, type Plan, planFor } from "./plan";
 import {
 	explainReorder,
 	forecastMax,
+	incomingFor,
 	type ReorderInput,
 	reorderQuantity,
 	velocityRanks,
 } from "./quantity";
-import { setRecipes, stockAndOrders } from "./stock";
+import { openArrivals, setRecipes, stockAndOrders } from "./stock";
 import { isCritical, ordersItself, type SuggestedLine } from "./suggested";
 
 type Supplier = {
@@ -150,6 +151,7 @@ export async function reorderBreakdown(
 			setRecipes(db),
 		]);
 	const { onHand, onOrder } = supply;
+	const arrivals = await openArrivals(db, now, planned.leadTimes, productIds);
 	const ranks = velocityRanks(planned.forecasts);
 	const sets = setMembership(recipes, onHand, setsSold);
 
@@ -206,6 +208,13 @@ export async function reorderBreakdown(
 			minimumQuantity: terms.minimumQuantity,
 			packSize: terms.packSize,
 		};
+		input.incoming = incomingFor(
+			now.getTime(),
+			input.onHand,
+			input.dailyDemand,
+			input.leadTimeDays + input.coverDays,
+			arrivals.get(p.productId) ?? [],
+		);
 		const line: SuggestedLine = {
 			productId: p.productId,
 			sku: p.sku,

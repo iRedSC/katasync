@@ -363,7 +363,7 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 	const notCounted = why.onOrder - why.incoming.aim;
 	const notCountedNote = [
 		why.incoming.unknown > 0 &&
-			`${formatCount(why.incoming.unknown)} back-ordered, no date`,
+			`${formatCount(why.incoming.unknown)} without a current delivery date`,
 		why.incoming.aim < why.onOrder - why.incoming.unknown &&
 			"due after the shelf runs out",
 	]

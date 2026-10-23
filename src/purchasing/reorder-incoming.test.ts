@@ -59,20 +59,20 @@ describe("incomingFor", () => {
 		).toEqual({ timely: 0, aim: 0, unknown: 40, lateDue: null });
 	});
 
-	test("an overdue PO is late, but still due within the horizon", () => {
+	test("an overdue PO has no trustworthy arrival date", () => {
 		expect(
 			incomingFor(TODAY, 10, 1, 44, [{ units: 10, arrivesAt: on(-3) }]),
-		).toEqual({ timely: 0, aim: 10, unknown: 0, lateDue: 0 });
+		).toEqual({ timely: 0, aim: 0, unknown: 10, lateDue: null });
 	});
 
-	test("with no sales nothing runs out, so every dated unit is in time, even overdue", () => {
+	test("without sales future supply is in time but overdue supply remains unknown", () => {
 		expect(
 			incomingFor(TODAY, 0, 0, 44, [
 				{ units: 10, arrivesAt: on(-3) },
 				{ units: 5, arrivesAt: on(300) },
 				{ units: 2, arrivesAt: null },
 			]),
-		).toEqual({ timely: 15, aim: 15, unknown: 2, lateDue: null });
+		).toEqual({ timely: 5, aim: 5, unknown: 12, lateDue: null });
 	});
 
 	test("a delivery in time counts toward the aim even when it lands past the horizon", () => {
@@ -83,6 +83,19 @@ describe("incomingFor", () => {
 });
 
 describe("reorderQuantity with time-aware incoming", () => {
+	test("does not order a supplier minimum when late supply already covers the aim and bridge", () => {
+		expect(
+			reorderQuantity({
+				...base,
+				onHand: 5,
+				onOrder: 100,
+				minimumQuantity: 12,
+				incoming: incomingFor(TODAY, 5, 1, 44, [
+					{ units: 100, arrivesAt: on(10) },
+				]),
+			}),
+		).toBe(0);
+	});
 	test("orders when stock runs out before a late PO lands (on hand 5, PO due Nov 12)", () => {
 		const input = {
 			...base,
@@ -121,7 +134,7 @@ describe("reorderQuantity with time-aware incoming", () => {
 		expect(reorderQuantity(input)).toBe(35);
 	});
 
-	test("orders the overdue PO's shortfall to the aim, as it isn't counted in time", () => {
+	test("overdue stock without a new date does not suppress the planned order", () => {
 		const input = {
 			...base,
 			onHand: 10,
@@ -130,7 +143,7 @@ describe("reorderQuantity with time-aware incoming", () => {
 				{ units: 10, arrivesAt: on(-3) },
 			]),
 		};
-		expect(reorderQuantity(input)).toBe(24);
+		expect(reorderQuantity(input)).toBe(34);
 	});
 
 	test("orders whole cases for the shortfall, with one of two cases already received (due Nov 22)", () => {

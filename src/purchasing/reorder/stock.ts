@@ -172,13 +172,10 @@ export async function draftLines(db: Db) {
 	return new Map(rows.map(({ productId, ...line }) => [productId, line]));
 }
 
-// Unreceived units on sent POs, each with the time it's due, or null when
-// it's back-ordered and no day is known. A PO is due its supplier's lead time
-// after it was sent: the same figure reorder plans with, and the expected date
-// a PO carries is only a copy of it, so it isn't read here.
+// Unreceived units on sent POs, with their promised date or a lead-time estimate.
 export async function openArrivals(
 	db: Db,
-	now: Date,
+	_now: Date,
 	lead: Map<number, LeadTime>,
 	productIds?: number[],
 ) {
@@ -188,6 +185,7 @@ export async function openArrivals(
 			productId: purchaseOrderLines.productId,
 			units: sql<number>`(greatest(${purchaseOrderLines.quantity} - coalesce(${received.units}, 0), 0) * ${purchaseOrderLines.packSize})::int`,
 			sentAt: purchaseOrders.sentAt,
+			expectedAt: purchaseOrders.expectedAt,
 			supplierId: purchaseOrders.supplierId,
 			backOrderedAt: purchaseOrderLines.backOrderedAt,
 		})
@@ -212,8 +210,12 @@ export async function openArrivals(
 		const arrivesAt =
 			r.backOrderedAt !== null
 				? null
-				: (r.sentAt ?? now).getTime() +
-					(lead.get(r.supplierId)?.days ?? DEFAULT_LEAD_TIME_DAYS) * 86_400_000;
+				: (r.expectedAt?.getTime() ??
+					(r.sentAt === null
+						? null
+						: r.sentAt.getTime() +
+							(lead.get(r.supplierId)?.days ?? DEFAULT_LEAD_TIME_DAYS) *
+								86_400_000));
 		const list = byProduct.get(r.productId) ?? [];
 		list.push({ units: r.units, arrivesAt });
 		byProduct.set(r.productId, list);

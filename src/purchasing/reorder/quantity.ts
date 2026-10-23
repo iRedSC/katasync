@@ -24,11 +24,13 @@ export function incomingFor(
 	const horizonEnd = now + horizonDays * DAY_MS;
 	const dated = arrivals
 		.flatMap((a) =>
-			a.arrivesAt === null ? [] : [{ units: a.units, at: a.arrivesAt }],
+			a.arrivesAt === null || a.arrivesAt < now
+				? []
+				: [{ units: a.units, at: a.arrivesAt }],
 		)
 		.sort((a, b) => a.at - b.at);
 	const unknown = arrivals.reduce(
-		(sum, a) => sum + (a.arrivesAt === null ? a.units : 0),
+		(sum, a) => sum + (a.arrivesAt === null || a.arrivesAt < now ? a.units : 0),
 		0,
 	);
 	let shelf = Math.max(onHand, 0);
