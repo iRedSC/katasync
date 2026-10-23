@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { productComponents, products, stockLevels } from "#/db/schema";
+import { committedUnits } from "./commitments";
 import type { OnlineStock } from "./online-stock";
 
 // Sellable units per SKU across the given locations. Simple SKUs and kits use
@@ -66,6 +67,9 @@ export async function getAvailability(
 		for (const id of new Set([...main.keys(), ...spare.keys()]))
 			onHand.set(id, Math.max(0, main.get(id) ?? 0) + (spare.get(id) ?? 0));
 	}
+	if (stockedIds.length > 0)
+		for (const [id, units] of await committedUnits(db, stockedIds))
+			onHand.set(id, Math.max(0, (onHand.get(id) ?? 0) - units));
 	const { uncounted } = options;
 	const unlimited = new Set<number>();
 	if (uncounted !== undefined && stockedIds.length > 0) {

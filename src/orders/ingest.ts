@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { type StockLocations, saleLocation } from "#/channels/stores";
+import type { StockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import {
 	listings,
@@ -11,8 +11,10 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
-import { LedgerError, recordSale, undoBatch } from "#/inventory/ledger";
+import { readQuantityMode } from "#/inventory/commitments";
+import { undoBatch } from "#/inventory/ledger";
 import { batchProductIds, lockRecipes } from "#/inventory/ledger/post";
+import { commitmentProductIds, syncLineStock, takeLineStock } from "./stock-effects";
 import { type OrderTax, saveTax } from "./tax";
 
 // An order as any channel adapter hands it over. Money is in store currency.
@@ -134,7 +136,14 @@ export async function ingestOrder(
 			if (line.productId !== null) roots.add(line.productId);
 			if (line.saleBatchId !== null) saleBatches.push(line.saleBatchId);
 		}
-		await lockRecipes(tx, [...roots], await batchProductIds(tx, saleBatches));
+		await readQuantityMode(tx);
+		await lockRecipes(tx, [...roots], [
+			...(await batchProductIds(tx, saleBatches)),
+			...(await commitmentProductIds(
+				tx,
+				savedLines.map((line) => line.id),
+			)),
+		]);
 		// Lines written or read back earlier in this pass. Their saved copy may
 		// predate a stock take, so a repeat of one is read again, not trusted.
 		const handled = new Set<string>();
@@ -208,21 +217,14 @@ export async function ingestOrder(
 					.where(eq(orderLines.id, row.id));
 				row.saleBatchId = null;
 			}
-			if (!takesStock || row.saleBatchId || row.quantity === 0) continue;
-			if (row.productId === null) {
-				// No SKU means a custom item (a one-off charge, a special order):
-				// nothing to take from stock, nothing to flag.
-				if (line.sku !== null) {
-					problems.push(`${order.name}: no product for ${line.sku}`);
-				}
-				continue;
-			}
-			const problem = await takeStock(
-				tx,
-				{ ...row, productId: row.productId },
+			if (row.saleBatchId) continue;
+			const problem = await syncLineStock(tx, {
+				row,
+				sku: line.sku,
 				order,
+				takesStock,
 				from,
-			);
+			});
 			if (problem) problems.push(problem);
 		}
 		return { orderId: saved.id, problems };
@@ -252,25 +254,7 @@ export async function takeStock(
 	order: { name: string; soldInStore: boolean },
 	from: StockLocations,
 ): Promise<string | null> {
-	const shelf = saleLocation(from, order);
-	if ("problem" in shelf) return `${order.name}: ${shelf.problem}`;
-	try {
-		const sale = await recordSale(db, {
-			productId: line.productId,
-			quantity: line.quantity,
-			locationId: shelf.locationId,
-			overflow: shelf.overflow,
-			reference: `order:${line.orderId}:${line.id}`,
-		});
-		await db
-			.update(orderLines)
-			.set({ saleBatchId: sale.batchId })
-			.where(eq(orderLines.id, line.id));
-		return null;
-	} catch (error) {
-		if (!(error instanceof LedgerError)) throw error;
-		return `${order.name}: ${error.message}`;
-	}
+	return takeLineStock(db, line, order, from);
 }
 
 // The listing mapping decides first. Without one, an exact SKU or alias match
