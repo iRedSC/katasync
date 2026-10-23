@@ -59,6 +59,8 @@ export async function acceptWebhook(
 }
 
 export async function claimDue(db: Db, limit: number): Promise<Claim[]> {
+	if (!Number.isInteger(limit) || limit < 1 || limit > CLAIM_LIMIT)
+		throw new Error(`Claim limit must be between 1 and ${CLAIM_LIMIT}`);
 	const leaseToken = randomUUID();
 	const { rows } = await db.execute<{
 		id: number;
@@ -105,7 +107,7 @@ export async function settle(
 		outcome.kind === "busy"
 			? BUSY_RETRY
 			: outcome.kind === "failed"
-				? sql`least(interval '1 minute' * power(2, ${webhookInbox.failures}), ${MAX_BACKOFF})`
+				? sql`least(interval '1 minute' * power(2, least(${webhookInbox.failures}, 6)), ${MAX_BACKOFF})`
 				: undefined;
 	const released = await db
 		.update(webhookInbox)
@@ -167,7 +169,9 @@ export async function backlogSummary(db: Db) {
 			pending: sql<number>`count(*)::int`,
 			leased: sql<number>`(count(*) filter (where ${webhookInbox.leaseExpiresAt} > now()))::int`,
 			failing: sql<number>`(count(*) filter (where ${webhookInbox.failures} > 0))::int`,
-			oldestAgeSeconds: sql<number | null>`extract(epoch from now() - min(${webhookInbox.eventAt}))::int`,
+			oldestAgeSeconds: sql<
+				number | null
+			>`extract(epoch from now() - min(${webhookInbox.eventAt}))::int`,
 		})
 		.from(webhookInbox);
 	const [latest] = await db

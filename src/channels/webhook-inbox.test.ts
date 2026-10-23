@@ -83,6 +83,22 @@ describe("acceptWebhook", () => {
 });
 
 describe("drainDue", () => {
+	it("caps retry delay even after a prolonged failure", async () => {
+		await acceptWebhook(db, "shopify", ORDER, body("1"));
+		await db.update(webhookInbox).set({ failures: 2000 });
+		expect(await drainDue(db, ingestFails)).toMatchObject({ failed: 1 });
+		const [stored] = await rows();
+		expect(stored.failures).toBe(2001);
+		expect(stored.nextAttemptAt.getTime() - Date.now()).toBeGreaterThan(
+			3500000,
+		);
+		expect(stored.nextAttemptAt.getTime() - Date.now()).toBeLessThan(3610000);
+	});
+
+	it("rejects unbounded or invalid claim batches", async () => {
+		for (const limit of [0, -1, 11, 1.5])
+			await expect(claimDue(db, limit)).rejects.toThrow("Claim limit");
+	});
 	it("keeps an order pending when ingest is busy, then repairs it on the next pass", async () => {
 		await acceptWebhook(db, "shopify", ORDER, body("1"));
 		const busy = await drainDue(db, ingestBusy);

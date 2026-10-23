@@ -20,6 +20,6 @@
     { "path": "/api/cron/messages", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/orders/amazon", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/orders/ebay", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/webhooks", "schedule": "* * * * *" }
+    { "path": "/api/cron/webhooks", "schedule": "*/5 * * * *" }
   ]
 }

@@ -1,4 +1,5 @@
 import { and, desc, eq, isNotNull, isNull, max, sql } from "drizzle-orm";
+import { backlogSummary } from "#/channels/webhook-inbox";
 import type { Db } from "#/db/client";
 import {
 	dispatches,
@@ -46,6 +47,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 		unmapped,
 		claude,
 		charges,
+		webhooks,
 	] = await Promise.all([
 		db.select({ lastStartedAt: max(syncRuns.startedAt) }).from(syncRuns),
 		failedHandoffs(db, isDismissed),
@@ -62,6 +64,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 				rows.map((r) => ({ ...r, arguments: JSON.stringify(r.arguments) })),
 			),
 		chargeFailures(db, isDismissed),
+		backlogSummary(db),
 	]);
 	const shippoKey = process.env.SHIPPO_API_KEY;
 	return {
@@ -75,6 +78,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 		unmapped,
 		claude,
 		charges,
+		webhooks,
 		services: {
 			shippo: {
 				configured: Boolean(shippoKey),
@@ -390,6 +394,7 @@ export async function diagnosticsAttention(db: Db, now = new Date()) {
 		stuck.length +
 		open(o.handoffs) +
 		open(o.storefrontTracking) +
-		open(o.charges)
+		open(o.charges) +
+		(o.webhooks.failing > 0 || (o.webhooks.oldestAgeSeconds ?? 0) > 300 ? 1 : 0)
 	);
 }

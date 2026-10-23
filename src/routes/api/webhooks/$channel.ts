@@ -5,7 +5,7 @@ import { waitUntil } from "@vercel/functions";
 // /api/webhooks/tiktok. Stores the verified order in the inbox
 // (src/channels/webhook-inbox.ts) before answering, so an answer means it
 // survives; a failed store answers 503 and the sender retries. Then reads the
-// order in the background. Whatever that misses, the minute cron drains.
+// order in the background. Whatever that misses, the retry cron drains.
 
 export const Route = createFileRoute("/api/webhooks/$channel")({
 	server: {
