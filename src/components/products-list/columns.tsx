@@ -23,7 +23,9 @@ import {
 	TagsCell,
 	TrustCell,
 } from "#/components/products-list/cells";
+import { Tip } from "#/components/ui/tooltip";
 import { VelocityGauge } from "#/components/velocity-gauge";
+import { cn } from "#/lib/utils";
 import { orderCost, type StockState, stock } from "#/products/rows";
 import type { ProductSortKey } from "#/products/views";
 import type { ProductRow } from "#/server/catalog";
@@ -49,8 +51,28 @@ export type Column = {
 	tip?: string;
 	// Hidden below this width, so the product's name keeps its room.
 	from?: "md" | "lg" | "xl" | "2xl";
+	// The header's width, wide enough for any row's cell, so sorting a
+	// different page of rows in doesn't shift the columns. Text that could run
+	// longer is cut to fit. On the header's button, since a table cell's own
+	// width gives way to the product column's.
+	width: string;
 	cell: (c: CellContext) => ReactNode;
 };
+
+// Text cut to its column's width, whole in the tooltip.
+function Cut({
+	children,
+	className,
+}: {
+	children: string | null;
+	className?: string;
+}) {
+	return (
+		<Tip content={children}>
+			<span className={cn("block truncate", className)}>{children}</span>
+		</Tip>
+	);
+}
 
 export const FROM_CLASS = {
 	md: "hidden md:table-cell",
@@ -63,11 +85,13 @@ const COLUMN_DEFS = {
 	product: {
 		label: "Product",
 		sort: "name",
+		width: "w-full",
 		cell: ({ product }) => <ProductCell product={product} />,
 	},
 	class: {
 		label: "Class",
 		sort: "class",
+		width: "w-16",
 		align: "center",
 		tip: "A sells the most by value, C the least",
 		cell: ({ product }) => <ClassCell product={product} />,
@@ -75,24 +99,28 @@ const COLUMN_DEFS = {
 	level: {
 		label: "Status",
 		sort: "level",
+		width: "w-26",
 		from: "md",
 		cell: ({ state }) => <LevelCell level={state.level} />,
 	},
 	stock: {
 		label: "Stock",
 		sort: "inventory",
+		width: "w-24",
 		tip: "What can be sold or built. The bar runs to max; the tick is min",
 		cell: ({ product }) => <StockCell product={product} />,
 	},
 	onhand: {
 		label: "On hand",
 		sort: "onhand",
+		width: "w-22",
 		align: "right",
 		cell: ({ product }) => <NumberCell n={product.onHand} />,
 	},
 	range: {
 		label: "Keep",
 		sort: "min",
+		width: "w-22",
 		align: "right",
 		from: "xl",
 		tip: "Min to max stock",
@@ -101,6 +129,7 @@ const COLUMN_DEFS = {
 	onorder: {
 		label: "On order",
 		sort: "onorder",
+		width: "w-22",
 		firstDesc: true,
 		align: "right",
 		from: "xl",
@@ -111,6 +140,7 @@ const COLUMN_DEFS = {
 	velocity: {
 		label: "Sold/mo",
 		sort: "velocity",
+		width: "w-20",
 		firstDesc: true,
 		align: "center",
 		from: "md",
@@ -122,6 +152,7 @@ const COLUMN_DEFS = {
 	runout: {
 		label: "Runs out",
 		sort: "runout",
+		width: "w-22",
 		align: "right",
 		from: "md",
 		tip: "Days on hand lasts at the recent rate",
@@ -130,8 +161,10 @@ const COLUMN_DEFS = {
 	next: {
 		label: "Next step",
 		sort: "step",
+		width: "w-36",
 		cell: ({ product, state, busy, onAddToPo, onCount }) => (
 			<StepCell
+				product={product}
 				step={state.step}
 				busy={busy}
 				onOrder={() => onAddToPo(product)}
@@ -142,12 +175,14 @@ const COLUMN_DEFS = {
 	reorder: {
 		label: "Reorder",
 		sort: "reorder",
+		width: "w-50",
 		firstDesc: true,
 		cell: ({ product }) => <ReorderCell product={product} />,
 	},
 	ordercost: {
 		label: "Order cost",
 		sort: "ordercost",
+		width: "w-22",
 		firstDesc: true,
 		align: "right",
 		from: "lg",
@@ -160,6 +195,7 @@ const COLUMN_DEFS = {
 	cost: {
 		label: "Cost",
 		sort: "cost",
+		width: "w-18",
 		firstDesc: true,
 		align: "right",
 		cell: ({ product }) => <NumberCell n={product.unitCost} money />,
@@ -167,6 +203,7 @@ const COLUMN_DEFS = {
 	worth: {
 		label: "Stock worth",
 		sort: "worth",
+		width: "w-26",
 		firstDesc: true,
 		align: "right",
 		tip: "On hand at cost",
@@ -184,24 +221,28 @@ const COLUMN_DEFS = {
 	trust: {
 		label: "Trust",
 		sort: "trust",
+		width: "w-38",
 		tip: "Whether a recent count backs the number",
 		cell: ({ state, now }) => <TrustCell trust={state.trust} now={now} />,
 	},
 	counted: {
 		label: "Last counted",
 		sort: "counted",
+		width: "w-26",
 		from: "md",
 		cell: ({ product, now }) => (
 			<CountedCell at={product.lastCountedAt} now={now} />
 		),
 	},
 	supplier: {
-		label: "Supplier",
+		label: "Primary Supplier",
 		sort: "supplier",
+		width: "w-40",
 		from: "2xl",
+		tip: "Who reorder buys it from: the cheapest supplier carrying its catalog",
 		cell: ({ product }) =>
 			product.supplier ? (
-				<span className="whitespace-nowrap">{product.supplier.name}</span>
+				<Cut className="max-w-40">{product.supplier.name}</Cut>
 			) : (
 				<span className="text-faint">None</span>
 			),
@@ -209,12 +250,13 @@ const COLUMN_DEFS = {
 	catalog: {
 		label: "Catalog",
 		sort: "catalog",
+		width: "w-46",
 		tip: "The line it's sold in; every supplier carrying it sells it",
 		cell: ({ product }) =>
 			product.catalog ? (
-				<span className="flex max-w-44 items-center gap-1.5">
+				<span className="flex max-w-46 items-center gap-1.5">
 					<CatalogMark catalog={product.catalog} size="xs" />
-					<span className="truncate">{product.catalog.name}</span>
+					<Cut>{product.catalog.name}</Cut>
 				</span>
 			) : (
 				<span className="text-faint">None</span>
@@ -223,23 +265,27 @@ const COLUMN_DEFS = {
 	type: {
 		label: "Type",
 		sort: "type",
-		cell: ({ product }) => product.category,
+		width: "w-38",
+		cell: ({ product }) => <Cut className="max-w-38">{product.category}</Cut>,
 	},
 	vendor: {
 		label: "Vendor",
 		sort: "vendor",
+		width: "w-38",
 		from: "md",
-		cell: ({ product }) => product.vendor,
+		cell: ({ product }) => <Cut className="max-w-38">{product.vendor}</Cut>,
 	},
 	tags: {
 		label: "Tags",
 		sort: "tags",
+		width: "w-64",
 		from: "2xl",
 		cell: ({ product }) => <TagsCell tags={product.tags} />,
 	},
 	listing: {
 		label: "Shopify",
 		sort: "listing",
+		width: "w-22",
 		cell: ({ product }) => <ListingCell status={product.status} />,
 	},
 } as const satisfies Record<string, Column>;

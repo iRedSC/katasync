@@ -1,7 +1,21 @@
 import { Link } from "@tanstack/react-router";
-import { ClipboardList, PackagePlus, Truck } from "lucide-react";
+import {
+	ClipboardList,
+	Library,
+	Loader2,
+	PackagePlus,
+	Truck,
+} from "lucide-react";
+import {
+	type ComponentProps,
+	type ReactNode,
+	type SyntheticEvent,
+	useState,
+} from "react";
 import { AbcBadge, Badge, type Tone } from "#/components/page";
 import { ProductImage, ProductName, SetsChip } from "#/components/product";
+import { AddToCatalog } from "#/components/products-list/add-to-catalog";
+import { setCatalogOnAll } from "#/components/products-list/bulk-actions";
 import { fillColor, rangeFill } from "#/components/stock-ring";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
@@ -68,8 +82,9 @@ export function LevelCell({ level }: { level: Level }) {
 // The number to act on, over a bar of where it sits between min and max.
 export function StockCell({ product: p }: { product: ProductRow }) {
 	const n = stock(p);
+	const set = p.kind === "bundle";
 	return (
-		<div className="flex w-24 flex-col gap-1">
+		<div className="flex w-full flex-col gap-1">
 			<span
 				className={cn(
 					"tabular-nums",
@@ -78,13 +93,16 @@ export function StockCell({ product: p }: { product: ProductRow }) {
 				)}
 			>
 				{formatCount(n)}
-				{p.kind === "bundle" && (
+				{set && (
 					<span className="text-xs text-muted-foreground"> can build</span>
 				)}
 			</span>
-			{p.kind !== "bundle" && (
-				<StockBar onHand={n} onOrder={p.onOrder} range={p.range} />
-			)}
+			<StockBar
+				onHand={n}
+				onOrder={p.onOrder}
+				range={p.range}
+				noun={set ? "can build" : "on hand"}
+			/>
 		</div>
 	);
 }
@@ -95,17 +113,20 @@ export function StockBar({
 	onHand,
 	onOrder,
 	range,
+	noun = "on hand",
 }: {
 	onHand: number;
 	onOrder: number;
 	range: { min: number; max: number };
+	// What the number counts, for the tooltip.
+	noun?: "on hand" | "can build";
 }) {
 	const share = (n: number) => Math.min(Math.max(n / range.max, 0), 1) * 100;
 	const filled = share(onHand);
 	const coming = share(afterArrival(onHand, onOrder)) - filled;
 	return (
 		<Tip
-			content={`${formatCount(onHand)} on hand${onOrder > 0 ? `, ${formatCount(onOrder)} coming` : ""}. Keep ${formatCount(range.min)} to ${formatCount(range.max)}`}
+			content={`${formatCount(onHand)} ${noun}${onOrder > 0 ? `, ${formatCount(onOrder)} coming` : ""}. Keep ${formatCount(range.min)} to ${formatCount(range.max)}`}
 		>
 			<div className="relative h-1.5 overflow-hidden rounded-sm bg-surface-strong">
 				<div
@@ -176,14 +197,16 @@ export function NumberCell({
 export function ReorderCell({ product: p }: { product: ProductRow }) {
 	if (p.draft) {
 		return (
-			<span className="text-muted-foreground">
+			<span className="block max-w-50 truncate text-muted-foreground">
 				{formatOrderQuantity(p.draft)} on PO {p.draft.purchaseOrderId}
 			</span>
 		);
 	}
 	if (p.reorder) {
 		return (
-			<span className="font-medium">{formatOrderQuantity(p.reorder)}</span>
+			<span className="block max-w-50 truncate font-medium">
+				{formatOrderQuantity(p.reorder)}
+			</span>
 		);
 	}
 	return null;
@@ -226,14 +249,18 @@ function ago(at: Date, now: Date) {
 			: `${formatCount(days)} days ago`;
 }
 
-// The row's one next step as a button. Steps that need nothing from you show
-// as text.
+// Every step's button is this wide, so the column stays one width.
+const STEP_BUTTON = "w-36 justify-start";
+
+// The row's one next step as a button, or a link to the PO it's already on.
 export function StepCell({
+	product,
 	step,
 	busy,
 	onOrder,
 	onCount,
 }: {
+	product: ProductRow;
 	step: NextStep;
 	busy: boolean;
 	onOrder: () => void;
@@ -242,42 +269,98 @@ export function StepCell({
 	switch (step.kind) {
 		case "order":
 			return (
-				<Button size="sm" variant="outline" disabled={busy} onClick={onOrder}>
-					<PackagePlus />
-					Add {formatOrderQuantity(step)}
-				</Button>
+				<Tip content={`Add ${formatOrderQuantity(step)} to PO`}>
+					<StepButton disabled={busy} onClick={onOrder} icon={<PackagePlus />}>
+						Add {formatOrderQuantity(step)} to PO
+					</StepButton>
+				</Tip>
 			);
 		case "count":
-			return (
-				<Button size="sm" variant="outline" onClick={onCount}>
-					<ClipboardList />
-					Count
-				</Button>
-			);
 		case "count requested":
 			return (
-				<span className="text-xs text-muted-foreground">Count asked for</span>
+				<StepButton
+					disabled={step.kind === "count requested"}
+					onClick={onCount}
+					icon={<ClipboardList />}
+				>
+					Count Stock
+				</StepButton>
 			);
 		case "on draft":
 			return (
 				<Link
 					to="/purchasing/$id"
 					params={{ id: String(step.purchaseOrderId) }}
-					className="inline-flex items-center gap-1 text-xs font-medium text-link hover:underline"
+					className="inline-flex items-center gap-1.5 px-2.5 text-[0.8125rem] font-medium text-link hover:underline"
 				>
-					<Truck className="size-3.5" />
-					On PO {step.purchaseOrderId}
+					<Truck className="size-4" />
+					In PO #{step.purchaseOrderId}
 				</Link>
 			);
-		case "set supplier":
-			return (
-				<span className="text-xs font-medium text-warning-text">
-					Needs a supplier
-				</span>
-			);
+		case "add catalog":
+			return <CatalogStep product={product} />;
 		case "none":
 			return null;
 	}
+}
+
+function StepButton({
+	icon,
+	children,
+	...props
+}: {
+	icon: ReactNode;
+	children: ReactNode;
+} & ComponentProps<"button">) {
+	return (
+		<Button size="sm" variant="outline" className={STEP_BUTTON} {...props}>
+			{icon}
+			<span className="truncate">{children}</span>
+		</Button>
+	);
+}
+
+// Picks a catalog for the product, whose suppliers then sell it. The picker
+// and its dialog live in portals, so their clicks are kept from the row,
+// which would open the product.
+function CatalogStep({ product }: { product: ProductRow }) {
+	const [busy, setBusy] = useState(false);
+	const stop = (e: SyntheticEvent) => e.stopPropagation();
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: only stops events from reaching the row
+		<span
+			className="contents"
+			onClick={stop}
+			onKeyDown={stop}
+			onContextMenu={stop}
+			onAuxClick={stop}
+		>
+			<AddToCatalog
+				picked={[product]}
+				disabled={false}
+				busy={busy}
+				onAdd={async (c) => {
+					setBusy(true);
+					try {
+						await setCatalogOnAll([product], c);
+					} finally {
+						setBusy(false);
+					}
+				}}
+				trigger={(t) => (
+					<Button
+						size="sm"
+						variant="outline"
+						className={STEP_BUTTON}
+						disabled={t.disabled || t.busy}
+					>
+						{t.busy ? <Loader2 className="animate-spin" /> : <Library />}
+						<span className="truncate">Add Catalog</span>
+					</Button>
+				)}
+			/>
+		</span>
+	);
 }
 
 export function TagsCell({ tags }: { tags: string[] }) {
