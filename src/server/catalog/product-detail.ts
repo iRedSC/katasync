@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { listingSold } from "#/channels/listing-edits";
 import { getDb } from "#/db/client";
 import {
 	listings,
@@ -18,6 +19,7 @@ import { abcClasses } from "#/inventory/abc";
 import { getAvailability } from "#/inventory/availability";
 import { isOurs } from "#/inventory/locations";
 import { onlineStock } from "#/inventory/online-stock";
+import { productHistory } from "#/products/archive";
 import { membershipOf } from "#/purchasing/reorder";
 
 // The product's ID, from its SKU. The product page loads everything else by ID,
@@ -120,6 +122,7 @@ export const getProductDetail = createServerFn({ method: "GET" })
 				.where(eq(productAliases.productId, product.id)),
 			db
 				.select({
+					id: listings.id,
 					store: stores.name,
 					channel: stores.channel,
 					externalId: listings.externalId,
@@ -129,6 +132,10 @@ export const getProductDetail = createServerFn({ method: "GET" })
 					tags: listings.tags,
 					productType: listings.productType,
 					vendor: listings.vendor,
+					// Delete is offered only for one gone from its channel that
+					// never sold, as deleteListings allows.
+					goneAt: listings.goneAt,
+					sold: listingSold,
 				})
 				.from(listings)
 				.innerJoin(stores, eq(stores.id, listings.storeId))
@@ -160,10 +167,26 @@ export const getProductDetail = createServerFn({ method: "GET" })
 
 		// The product and its parts in one availability lookup.
 		const online = await onlineStock(db);
-		const [availability, abc, sets] = await Promise.all([
-			getAvailability(db, [product.id, ...components.map((c) => c.id)], online),
+		const partIds = components.map((c) => c.id);
+		const [availability, abc, sets, partShelves, pastUse] = await Promise.all([
+			getAvailability(db, [product.id, ...partIds], online),
 			abcClasses(db),
 			membershipOf(db, product.id),
+			// Each part on each of our shelves, so assembling a kit offers only
+			// what the shelf can build.
+			partIds.length > 0 && product.kind === "kit"
+				? db
+						.select({
+							productId: stockLevels.productId,
+							locationId: stockLevels.locationId,
+							onHand: stockLevels.onHand,
+						})
+						.from(stockLevels)
+						.innerJoin(locations, eq(locations.id, stockLevels.locationId))
+						.where(and(inArray(stockLevels.productId, partIds), isOurs))
+				: [],
+			// Only an archived product offers Delete, so only it is asked.
+			product.archivedAt ? productHistory(db, product.id) : null,
 		]);
 		// Tool sets rank among themselves (see AbcResult.sets).
 		const ranking = product.kind === "bundle" ? abc.sets : abc.classes;
@@ -176,6 +199,9 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			components: components.map((c) => ({
 				...c,
 				available: availability.get(c.id) ?? 0,
+				shelves: partShelves
+					.filter((s) => s.productId === c.id)
+					.map(({ locationId, onHand }) => ({ locationId, onHand })),
 			})),
 			usedIn,
 			sets,
@@ -192,6 +218,9 @@ export const getProductDetail = createServerFn({ method: "GET" })
 			online,
 			// What refills top each location up to (src/inventory/refill.ts).
 			targets,
+			// No history at all, so it can be deleted outright
+			// (src/products/archive.ts).
+			deletable: pastUse !== null && pastUse.size === 0,
 		};
 	});
 

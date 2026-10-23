@@ -6,7 +6,7 @@ import { packages, products } from "#/db/schema";
 import { matchListing, productFromListing } from "#/orders/remap";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { boxLabel } from "#/shipping/box-filter";
-import { createBoxes, updateBox } from "#/shipping/boxes";
+import { createBoxes, deleteBox, updateBox } from "#/shipping/boxes";
 import { productBySku } from "./lookups";
 import { boxShape, json, WRITE } from "./tool-shapes";
 
@@ -61,6 +61,20 @@ export function registerCatalogTools(server: McpServer, db: Db) {
 				weightOz: input.weight_oz ?? box.weightGrams / 28.349523125,
 			});
 			return json({ id: saved.id, box: boxLabel(saved) });
+		},
+	);
+
+	server.registerTool(
+		"delete_box",
+		{
+			description:
+				"Removes a shipping box from quick ship, by its id (the packages table). A box on past labels stays.",
+			inputSchema: { id: z.number().int().positive() },
+			annotations: { ...WRITE, destructiveHint: true },
+		},
+		async ({ id }) => {
+			await deleteBox(db, id);
+			return json({ deleted: id });
 		},
 	);
 

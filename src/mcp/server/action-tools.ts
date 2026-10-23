@@ -8,6 +8,7 @@ import { receiveReturn, undoReturns } from "#/orders/returns";
 import { markNoReturn, restoreNoReturn } from "#/orders/returns-due";
 import { cancelOrder, closeOrder, restoreOrder } from "#/purchasing/orders";
 import { setStorePush } from "#/stock-push/switch";
+import { productBySku } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
 import { json, WRITE } from "./tool-shapes";
 
@@ -18,7 +19,7 @@ export function registerActionTools(server: McpServer, db: Db) {
 		"receive_return",
 		{
 			description:
-				"Receives units a customer sent back, by order_lines.id (find them with the query tool). restock: true puts them back on the shelf the order takes stock from (the warehouse for a shipped order, the retail store for an in-store sale); false records them as written off (damaged). Only once the order has shipped, and never more than a line sold. Returns the return ids for undo_return.",
+				"Receives units a customer sent back, by order_lines.id (find them with the query tool). outcome restock puts them back on the shelf the order takes stock from (the warehouse for a shipped order, the retail store for an in-store sale); write_off records them as damaged; { refurbish_into } puts one line's units on the shelf as an existing refurbished product made from what the line sold (products.refurbished_from_id). Making a new refurb drafts it in Shopify, so that stays in the app. Only once the order has shipped, and never more than a line sold. Returns the return ids for undo_return.",
 			inputSchema: {
 				order_id: z.number().int().positive(),
 				lines: z
@@ -29,11 +30,14 @@ export function registerActionTools(server: McpServer, db: Db) {
 						}),
 					)
 					.min(1),
-				restock: z.boolean(),
+				outcome: z.union([
+					z.enum(["restock", "write_off"]),
+					z.object({ refurbish_into: z.string().describe("The refurb's SKU") }),
+				]),
 			},
 			annotations: WRITE,
 		},
-		async ({ order_id, lines, restock }) =>
+		async ({ order_id, lines, outcome }) =>
 			json(
 				await receiveReturn(db, {
 					orderId: order_id,
@@ -41,7 +45,14 @@ export function registerActionTools(server: McpServer, db: Db) {
 						lineId: l.line_id,
 						quantity: l.quantity,
 					})),
-					outcome: restock ? "restock" : "write_off",
+					outcome:
+						typeof outcome === "string"
+							? outcome
+							: {
+									refurbishInto: (
+										await productBySku(db, outcome.refurbish_into)
+									).id,
+								},
 				}),
 			),
 	);

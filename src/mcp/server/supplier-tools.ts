@@ -9,7 +9,12 @@ import {
 	supplierByRef,
 	updateSupplier,
 } from "#/purchasing/suppliers";
-import { addUnit, renameUnit, setPurchaseUnit } from "#/purchasing/units";
+import {
+	addUnit,
+	deleteUnit,
+	renameUnit,
+	setPurchaseUnit,
+} from "#/purchasing/units";
 import { productBySku } from "./lookups";
 import { json, unitTerms, WRITE } from "./tool-shapes";
 
@@ -149,6 +154,20 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 		},
 		async ({ from, to }) =>
 			json({ renamed: await renameUnit(db, from.toUpperCase(), to) }),
+	);
+
+	server.registerTool(
+		"delete_purchase_unit",
+		{
+			description:
+				"Removes a purchase unit no product is bought in. EACH stays.",
+			inputSchema: { name: z.string() },
+			annotations: { ...WRITE, destructiveHint: true },
+		},
+		async ({ name }) => {
+			await deleteUnit(db, name.toUpperCase());
+			return json({ deleted: name.toUpperCase() });
+		},
 	);
 
 	server.registerTool(

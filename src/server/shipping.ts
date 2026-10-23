@@ -3,12 +3,11 @@ import { waitUntil } from "@vercel/functions";
 import { type } from "arktype";
 import { asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
-import { orders, packages, shipments, stores } from "#/db/schema";
+import { orders, packages, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
 import { shipAddresses } from "#/shipping/addresses";
-import { boxLabel } from "#/shipping/box-filter";
 import { boxQuoter } from "#/shipping/box-quotes";
-import { createBoxes, updateBox } from "#/shipping/boxes";
+import { createBoxes, deleteBox, updateBox } from "#/shipping/boxes";
 import { buyDispatch, MAX_BOXES } from "#/shipping/buy";
 import {
 	retryStorefrontTracking,
@@ -65,26 +64,7 @@ export const updatePackage = createServerFn({ method: "POST" })
 
 export const deletePackage = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))
-	.handler(async ({ data }) => {
-		const db = getDb();
-		// Past shipments keep their box, so a box that shipped stays.
-		const [used] = await db
-			.select({
-				name: packages.name,
-				lengthMm: packages.lengthMm,
-				widthMm: packages.widthMm,
-				heightMm: packages.heightMm,
-			})
-			.from(shipments)
-			.innerJoin(packages, eq(packages.id, shipments.packageId))
-			.where(eq(shipments.packageId, data.id))
-			.limit(1);
-		if (used)
-			throw new Error(
-				`${boxLabel(used)} is on past labels, so it can't be removed`,
-			);
-		await db.delete(packages).where(eq(packages.id, data.id));
-	});
+	.handler(async ({ data }) => deleteBox(getDb(), data.id));
 
 export const quickShipLookup = createServerFn({ method: "GET" })
 	.validator(type({ pin: "1 <= number.integer <= 999" }))

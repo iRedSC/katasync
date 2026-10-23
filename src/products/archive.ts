@@ -210,21 +210,28 @@ const history = [
 	["it's on transfers", transferLines, transferLines.productId],
 ] as const;
 
+// What history a product has, in words; empty when it can be deleted. The
+// product page asks too, so it offers Delete only when this is empty.
+export async function productHistory(db: Db, productId: number) {
+	const held = new Set<string>();
+	for (const [why, table, column] of history) {
+		const [row] = await db
+			.select({ one: sql`1` })
+			.from(table)
+			.where(eq(column, productId))
+			.limit(1);
+		if (row) held.add(why);
+	}
+	return held;
+}
+
 // Deletes a product that never did anything, with what's only its own: its
 // parts list, aliases, supplier terms, refill targets, and empty shelves. Refused, saying
 // why, when it has history; archive it instead.
 export async function deleteProduct(db: Db, sku: string) {
 	return db.transaction(async (tx) => {
 		const product = await productNamed(tx, sku);
-		const held = new Set<string>();
-		for (const [why, table, column] of history) {
-			const [row] = await tx
-				.select({ one: sql`1` })
-				.from(table)
-				.where(eq(column, product.id))
-				.limit(1);
-			if (row) held.add(why);
-		}
+		const held = await productHistory(tx, product.id);
 		if (held.size > 0)
 			throw new ProductError(
 				`Can't delete ${product.sku}: ${[...held].join(", ")}. Archive it instead${held.has("listings sell it") ? ", or relink or unlink its listings first" : ""}`,

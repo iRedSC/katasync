@@ -78,3 +78,22 @@ export async function markSent(
 		return sentTo;
 	});
 }
+
+// When a PO marked sent outside katasync went out: midday that day, so it's
+// the same day in any US timezone. Not in the future, and not before the PO
+// existed.
+export async function sentDay(db: Db, po: number, day: string) {
+	const at = new Date(`${day}T12:00:00Z`);
+	if (Number.isNaN(at.getTime()) || day > new Date().toISOString().slice(0, 10))
+		throw new PurchaseOrderError(`${day} isn't a day that has passed`);
+	const [order] = await db
+		.select({ createdAt: purchaseOrders.createdAt })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, po));
+	if (!order) throw new PurchaseOrderError(`No PO ${po}`);
+	const made = order.createdAt.toISOString().slice(0, 10);
+	if (day < made)
+		throw new PurchaseOrderError(`PO ${po} was made on ${made}, after ${day}`);
+	// Today's midday may not have come yet.
+	return at > new Date() ? new Date() : at;
+}

@@ -1,8 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { productViews } from "#/db/schema";
+import {
+	deleteView as removeView,
+	saveView as storeView,
+} from "#/products/saved-views";
 import type { Filter } from "#/products/search";
 import {
 	filtersType,
@@ -38,38 +42,8 @@ export const saveView = createServerFn({ method: "POST" })
 			sort: sortType,
 		}),
 	)
-	.handler(async ({ data }) => {
-		const db = getDb();
-		const name = data.name.trim();
-		if (name === "") throw new Error("Give the view a name");
-		const [taken] = await db
-			.select({ id: productViews.id })
-			.from(productViews)
-			.where(eq(productViews.name, name));
-		if (taken && taken.id !== data.id) {
-			throw new Error(`There's already a view called “${name}”`);
-		}
-		if (data.id) {
-			await db
-				.update(productViews)
-				.set({ name, filters: data.filters, sort: data.sort })
-				.where(eq(productViews.id, data.id));
-			return { id: data.id };
-		}
-		const [row] = await db
-			.insert(productViews)
-			.values({
-				name,
-				filters: data.filters,
-				sort: data.sort,
-				position: sql`(select coalesce(max(${productViews.position}), 0) + 1 from ${productViews})`,
-			})
-			.returning({ id: productViews.id });
-		return { id: row.id };
-	});
+	.handler(async ({ data }) => storeView(getDb(), data));
 
 export const deleteView = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))
-	.handler(async ({ data }) => {
-		await getDb().delete(productViews).where(eq(productViews.id, data.id));
-	});
+	.handler(async ({ data }) => removeView(getDb(), data.id));
