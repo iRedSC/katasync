@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useMatchRoute } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { shake } from "#/components/shake";
 import { SupplierCatalogs } from "#/components/supplier-catalogs";
@@ -16,7 +16,8 @@ import type { LeadTime } from "#/purchasing/forecast";
 // unsaved changes, clicking outside doesn't close it, so a stray click can't
 // lose them; it shakes and says why instead. Cancel or Esc still close it.
 // `patch` shows the saved details on the page at once; without it the page
-// shows them once reloaded.
+// shows them once reloaded. On the supplier's own page it leaves out the
+// link there and the catalogs, which the page already shows.
 export function SupplierDialog({
 	supplier,
 	leadTime,
@@ -34,6 +35,10 @@ export function SupplierDialog({
 	const [dirty, setDirty] = useState(false);
 	const [blocked, setBlocked] = useState(false);
 	const content = useRef<HTMLDivElement>(null);
+	const onPage = !!useMatchRoute()({
+		to: "/purchasing/suppliers/$id",
+		params: { id: String(supplier.id) },
+	});
 	const change = (open: boolean) => {
 		if (!open) {
 			setDirty(false);
@@ -64,15 +69,17 @@ export function SupplierDialog({
 			>
 				<DialogHeader className="flex-row items-baseline justify-between gap-4">
 					<DialogTitle>{supplier.name}</DialogTitle>
-					<Link
-						to="/purchasing/suppliers/$id"
-						params={{ id: String(supplier.id) }}
-						className="text-sm text-link hover:underline"
-					>
-						Supplier page
-					</Link>
+					{!onPage && (
+						<Link
+							to="/purchasing/suppliers/$id"
+							params={{ id: String(supplier.id) }}
+							className="text-sm text-link hover:underline"
+						>
+							Supplier page
+						</Link>
+					)}
 				</DialogHeader>
-				{open && <SupplierCatalogs supplier={supplier} />}
+				{open && !onPage && <SupplierCatalogs supplier={supplier} />}
 				<SupplierForm
 					// Fresh fields each time it opens.
 					key={String(open)}

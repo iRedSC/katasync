@@ -1,11 +1,11 @@
-import { createFileRoute, Link, useBlocker } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ClipboardList, Mail, MapPin, Phone, User } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Card, Page } from "#/components/page";
-import { shake } from "#/components/shake";
 import { ListSkeleton } from "#/components/skeleton";
 import { SupplierCatalogs } from "#/components/supplier-catalogs";
-import { type Supplier, SupplierForm } from "#/components/supplier-form";
+import { SupplierDialog } from "#/components/supplier-dialog";
+import type { Supplier } from "#/components/supplier-form";
 import {
 	MonthlySpend,
 	PoList,
@@ -31,12 +31,13 @@ const supplierData = optimistic<SupplierDetail>("supplier");
 
 // One supplier: what buying from it looks like (spend, POs, its products by
 // what we buy and what sells), how to reach it, the catalogs it carries,
-// and its details to edit.
+// and its details to edit from the contact card.
 function SupplierPage() {
 	const loaded = Route.useLoaderData();
 	const d = supplierData.useData(loaded.supplier.id, loaded);
 	const s = d.supplier;
 	const draft = d.open.find((po) => po.status === "draft");
+	const [editing, setEditing] = useState(false);
 
 	return (
 		<Page
@@ -81,7 +82,7 @@ function SupplierPage() {
 					/>
 				</div>
 				<div className="flex flex-col gap-4">
-					<ContactCard s={s} />
+					<ContactCard s={s} onEdit={() => setEditing(true)} />
 					<Card title="Catalogs">
 						<p className="mb-2 text-xs text-muted-foreground">
 							It sells everything in the catalogs it carries.
@@ -90,13 +91,21 @@ function SupplierPage() {
 					</Card>
 				</div>
 			</div>
-			<DetailsCard d={d} />
+			<SupplierDialog
+				supplier={s}
+				leadTime={d.leadTime}
+				open={editing}
+				onOpenChange={setEditing}
+				patch={(saved) =>
+					supplierData.patch(s.id, (x) => ({ ...x, supplier: saved }))
+				}
+			/>
 		</Page>
 	);
 }
 
 // How to reach them, each a link that does it: email, call, map.
-function ContactCard({ s }: { s: Supplier }) {
+function ContactCard({ s, onEdit }: { s: Supplier; onEdit: () => void }) {
 	const address = [
 		s.address1,
 		s.address2,
@@ -108,11 +117,26 @@ function ContactCard({ s }: { s: Supplier }) {
 		.join(", ");
 	const none = !s.contactName && !s.email && !s.phone && address === "";
 	return (
-		<Card title="Contact">
+		<Card
+			title="Contact"
+			aside={
+				<button
+					type="button"
+					onClick={onEdit}
+					className="text-link hover:underline"
+				>
+					Edit
+				</button>
+			}
+		>
 			{none ? (
-				<p className="text-muted-foreground">
-					No contact details yet; add them below.
-				</p>
+				<button
+					type="button"
+					onClick={onEdit}
+					className="text-muted-foreground hover:text-foreground"
+				>
+					No contact details yet
+				</button>
 			) : (
 				<ul className="flex flex-col gap-2">
 					{s.contactName && (
@@ -170,52 +194,5 @@ function ContactLine({
 			{icon}
 			<span className="min-w-0 break-words">{children}</span>
 		</li>
-	);
-}
-
-// The supplier's details, edited in place. Leaving the page over unsaved
-// edits is held back: the card shakes and says why.
-function DetailsCard({ d }: { d: SupplierDetail }) {
-	const [dirty, setDirty] = useState(false);
-	const [blocked, setBlocked] = useState(false);
-	// Bumped to start the fields over: after a save, or on Cancel.
-	const [round, setRound] = useState(0);
-	const card = useRef<HTMLDivElement>(null);
-	useBlocker({
-		shouldBlockFn: () => {
-			if (!dirty) return false;
-			setBlocked(true);
-			shake(card.current);
-			card.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-			return true;
-		},
-		enableBeforeUnload: () => dirty,
-	});
-	return (
-		<div ref={card}>
-			<Card title="Details">
-				<SupplierForm
-					key={round}
-					s={d.supplier}
-					leadTime={d.leadTime}
-					onDirty={(next) => {
-						setDirty(next);
-						if (!next) setBlocked(false);
-					}}
-					blocked={blocked}
-					onDone={() => {
-						setDirty(false);
-						setBlocked(false);
-						setRound((r) => r + 1);
-					}}
-					patch={(saved) =>
-						supplierData.patch(d.supplier.id, (x) => ({
-							...x,
-							supplier: saved,
-						}))
-					}
-				/>
-			</Card>
-		</div>
 	);
 }
