@@ -8,6 +8,7 @@ import {
 	setCarried,
 	setOfferTerms,
 	setProductsCatalog,
+	setUnavailable,
 } from "./catalogs";
 import {
 	applySettings,
@@ -126,6 +127,38 @@ describe("buying from the cheapest supplier", () => {
 		const [s] = await suggestPurchases(db, now);
 		expect(s).toMatchObject({ supplierId: canam });
 		expect(s.lines[0].unitCost).toBe(1);
+	});
+
+	test("a product marked unavailable is bought elsewhere, and its price comes back when it's available again", async () => {
+		const blade = await tool("BLADE");
+		await price(blade, canam, 1);
+		await price(blade, tsw, 9);
+		await sell(blade, 90);
+		const flip = (unavailable: boolean) =>
+			setUnavailable(db, {
+				supplierId: canam,
+				productIds: [blade],
+				unavailable,
+			});
+		expect(await flip(true)).toEqual([blade]);
+		expect(await flip(true)).toEqual([]);
+		expect((await suggestPurchases(db, now))[0].supplierId).toBe(tsw);
+		await expect(price(blade, canam, 2)).rejects.toThrow(/unavailable/);
+		expect(await flip(false)).toEqual([blade]);
+		const [s] = await suggestPurchases(db, now);
+		expect(s).toMatchObject({ supplierId: canam });
+		expect(s.lines[0].unitCost).toBe(1);
+	});
+
+	test("refuses marking unavailable what the supplier doesn't sell anyway", async () => {
+		const loose = await createProduct(db, "LOOSE", "simple");
+		await expect(
+			setUnavailable(db, {
+				supplierId: canam,
+				productIds: [loose],
+				unavailable: true,
+			}),
+		).rejects.toThrow(/doesn't carry LOOSE's catalog/);
 	});
 
 	test("refuses terms from a supplier that doesn't carry the catalog", async () => {

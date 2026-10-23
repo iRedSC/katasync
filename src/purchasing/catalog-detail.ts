@@ -8,6 +8,7 @@ import {
 	supplierCatalogs,
 	supplierOffers,
 	suppliers,
+	supplierUnavailable,
 } from "#/db/schema";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
@@ -16,7 +17,7 @@ const SOLD_DAYS = 90;
 
 // One catalog as its page shows it: what it is, who carries it, and each
 // product in it with every carrier's terms side by side, so prices compare
-// across a row.
+// across a row, and which carriers have it marked unavailable.
 export async function catalogDetail(db: Db, id: number) {
 	const [catalog] = await db
 		.select({
@@ -40,7 +41,7 @@ export async function catalogDetail(db: Db, id: number) {
 		.where(gte(salesUnits.placedAt, since))
 		.groupBy(salesUnits.productId)
 		.as("sold");
-	const [carriers, rows, offers] = await Promise.all([
+	const [carriers, rows, offers, unavailable] = await Promise.all([
 		db
 			.select({
 				id: suppliers.id,
@@ -82,6 +83,14 @@ export async function catalogDetail(db: Db, id: number) {
 			})
 			.from(supplierOffers)
 			.where(eq(supplierOffers.catalogId, id)),
+		db
+			.select({
+				productId: supplierUnavailable.productId,
+				supplierId: supplierUnavailable.supplierId,
+			})
+			.from(supplierUnavailable)
+			.innerJoin(products, eq(products.id, supplierUnavailable.productId))
+			.where(eq(products.catalogId, id)),
 	]);
 	const byProduct = new Map<number, typeof offers>();
 	for (const o of offers)
@@ -95,6 +104,10 @@ export async function catalogDetail(db: Db, id: number) {
 			// Tool sets have no shelf of their own.
 			onHand: p.kind === "bundle" ? null : (p.onHand ?? 0),
 			offers: byProduct.get(p.id) ?? [],
+			// Suppliers that have it marked unavailable, so they have no offer.
+			unavailable: unavailable
+				.filter((u) => u.productId === p.id)
+				.map((u) => u.supplierId),
 		})),
 	};
 }

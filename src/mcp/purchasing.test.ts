@@ -20,6 +20,38 @@ describe("over MCP", () => {
 	const tool = (name: string, args: Record<string, unknown>) =>
 		callTool(db, canWrite, name, args);
 
+	test("marks products unavailable from a supplier and back", async () => {
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		await carry(db, blade, canam);
+		const mark = (unavailable: boolean) =>
+			tool("set_supplier_unavailable", {
+				supplier: "canam",
+				skus: ["BLADE", "NOPE"],
+				unavailable,
+			});
+		expect((await mark(true)).data).toMatchObject({
+			changed: ["BLADE"],
+			alreadySo: [],
+			missing: ["NOPE"],
+		});
+		expect(
+			await db
+				.select()
+				.from(schema.supplierOffers)
+				.where(eq(schema.supplierOffers.productId, blade)),
+		).toEqual([]);
+		expect((await mark(false)).data).toMatchObject({ changed: ["BLADE"] });
+		expect(
+			await db
+				.select()
+				.from(schema.supplierOffers)
+				.where(eq(schema.supplierOffers.productId, blade)),
+		).toHaveLength(1);
+	});
+
 	test("puts lines on each supplier's draft and reports what it skipped", async () => {
 		const [{ id: canam }] = await db
 			.insert(schema.suppliers)

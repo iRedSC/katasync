@@ -8,13 +8,15 @@ import {
 	supplierCatalogs,
 	supplierOffers,
 	suppliers,
+	supplierUnavailable,
 } from "#/db/schema";
 import { imageType } from "#/purchasing/damage";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
 // Catalogs: the lines products are sold in. A product is in one catalog at
 // most, and every supplier carrying that catalog sells it, each on its own
-// terms (productSuppliers). Reorder buys each product from the cheapest
+// terms (productSuppliers), unless it has marked the product unavailable
+// (supplierUnavailable). Reorder buys each product from the cheapest
 // (supplierOffers).
 
 // Each product's cheapest offer, as a subquery to join a second time beside
@@ -338,6 +340,75 @@ export async function setCarried(
 	return gone.length > 0;
 }
 
+// Marks products unavailable from a supplier, or available again, so
+// reorder buys them elsewhere meanwhile. Marking one needs the supplier to
+// carry its catalog, since otherwise it doesn't sell it anyway; tool sets
+// are refused, being bought as their parts. Returns the products that
+// changed, for undo.
+export async function setUnavailable(
+	db: Db,
+	input: { supplierId: number; productIds: number[]; unavailable: boolean },
+) {
+	const { supplierId } = input;
+	const productIds = [...new Set(input.productIds)];
+	if (productIds.length === 0) return [];
+	return db.transaction(async (tx) => {
+		const [s] = await tx
+			.select({ name: suppliers.name })
+			.from(suppliers)
+			.where(eq(suppliers.id, supplierId));
+		if (!s) throw new PurchaseOrderError("No such supplier");
+		const found = await tx
+			.select({
+				id: products.id,
+				sku: products.sku,
+				kind: products.kind,
+				// Joined, not a subquery: a one-table select leaves column
+				// names unqualified, so the subquery would compare its own.
+				carried: sql<boolean>`${supplierCatalogs.supplierId} is not null`,
+			})
+			.from(products)
+			.leftJoin(
+				supplierCatalogs,
+				and(
+					eq(supplierCatalogs.catalogId, products.catalogId),
+					eq(supplierCatalogs.supplierId, supplierId),
+				),
+			)
+			.where(inArray(products.id, productIds));
+		if (found.length !== productIds.length)
+			throw new PurchaseOrderError("Some of those products don't exist");
+		if (!input.unavailable) {
+			const gone = await tx
+				.delete(supplierUnavailable)
+				.where(
+					and(
+						eq(supplierUnavailable.supplierId, supplierId),
+						inArray(supplierUnavailable.productId, productIds),
+					),
+				)
+				.returning({ productId: supplierUnavailable.productId });
+			return gone.map((g) => g.productId);
+		}
+		const set = found.find((p) => p.kind === "bundle");
+		if (set)
+			throw new PurchaseOrderError(
+				`${set.sku} is a tool set, bought as its parts; mark those instead`,
+			);
+		const elsewhere = found.find((p) => !p.carried);
+		if (elsewhere)
+			throw new PurchaseOrderError(
+				`${s.name} doesn't carry ${elsewhere.sku}'s catalog, so it doesn't sell it anyway`,
+			);
+		const made = await tx
+			.insert(supplierUnavailable)
+			.values(productIds.map((productId) => ({ supplierId, productId })))
+			.onConflictDoNothing()
+			.returning({ productId: supplierUnavailable.productId });
+		return made.map((m) => m.productId);
+	});
+}
+
 // The catalogs a supplier carries, by name.
 export async function catalogsOf(db: Db, supplierId: number) {
 	return db
@@ -359,8 +430,8 @@ type Terms = Partial<
 
 // Changes a supplier's terms for one product, making its row if it has none
 // (EACH, which counts one either way). Refuses a supplier that doesn't sell
-// the product: it has to carry the product's catalog, so terms can't pile up
-// where reorder never looks. Returns the terms as they were, with the
+// the product: it has to carry the product's catalog and not have marked the
+// product unavailable, so terms can't pile up where reorder never looks. Returns the terms as they were, with the
 // defaults when there was no row. Lock-free callers race only with each
 // other's writes to the same row, which the upsert settles.
 export async function setOfferTerms(
@@ -373,9 +444,26 @@ export async function setOfferTerms(
 		.select({
 			kind: products.kind,
 			catalogId: products.catalogId,
-			carried: sql<boolean>`exists (select 1 from ${supplierCatalogs} where ${supplierCatalogs.supplierId} = ${supplierId} and ${supplierCatalogs.catalogId} = ${products.catalogId})`,
+			// Joined, not subqueries: a one-table select leaves column names
+			// unqualified, so a subquery would compare its own.
+			carried: sql<boolean>`${supplierCatalogs.supplierId} is not null`,
+			unavailable: sql<boolean>`${supplierUnavailable.supplierId} is not null`,
 		})
 		.from(products)
+		.leftJoin(
+			supplierCatalogs,
+			and(
+				eq(supplierCatalogs.catalogId, products.catalogId),
+				eq(supplierCatalogs.supplierId, supplierId),
+			),
+		)
+		.leftJoin(
+			supplierUnavailable,
+			and(
+				eq(supplierUnavailable.productId, products.id),
+				eq(supplierUnavailable.supplierId, supplierId),
+			),
+		)
 		.where(eq(products.id, productId));
 	if (!product) throw new PurchaseOrderError("That product doesn't exist");
 	if (product.kind === "bundle")
@@ -396,6 +484,10 @@ export async function setOfferTerms(
 			`${s.name} doesn't carry its catalog; add the catalog to ${s.name} first`,
 		);
 	}
+	if (product.unavailable)
+		throw new PurchaseOrderError(
+			"That supplier has it marked unavailable; add it back to them first",
+		);
 	const [was] = await db
 		.select()
 		.from(productSuppliers)

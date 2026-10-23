@@ -1,5 +1,6 @@
 import { useRouter } from "@tanstack/react-router";
 import {
+	Ban,
 	Copy,
 	ExternalLink,
 	FileText,
@@ -21,7 +22,12 @@ import { copyText } from "#/lib/copy";
 import { formatCount } from "#/lib/format";
 import { isBackOrdered } from "#/purchasing/status";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
-import { backOrderWithUndo, receiveWithUndo, takeOff } from "./line-actions";
+import {
+	backOrderWithUndo,
+	notCarried,
+	receiveWithUndo,
+	takeOff,
+} from "./line-actions";
 import { damageable } from "./line-damage";
 import type { Line } from "./types";
 
@@ -119,6 +125,12 @@ export function LineMenu({
 				>
 					<Trash2 />
 					Take off this PO
+				</ContextMenuItem>
+			)}
+			{l.linkSupplierId !== null && l.kind !== "bundle" && (
+				<ContextMenuItem onSelect={() => notCarried(l, po, d.supplier.name)}>
+					<Ban />
+					Supplier doesn't carry this
 				</ContextMenuItem>
 			)}
 			<ContextMenuSeparator />

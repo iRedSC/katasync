@@ -25,6 +25,7 @@ export {
 	setCatalogPhoto,
 	setProductCatalog,
 	setSupplierCarries,
+	setSupplierUnavailable,
 } from "#/server/purchasing/catalogs";
 export {
 	previewDamageReport,

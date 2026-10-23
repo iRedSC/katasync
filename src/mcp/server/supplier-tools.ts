@@ -11,6 +11,7 @@ import {
 	renameCatalog,
 	setCarried,
 	setProductsCatalog,
+	setUnavailable,
 } from "#/purchasing/catalogs";
 import {
 	fillSupplierSkus,
@@ -142,6 +143,49 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 					carried: false,
 				});
 			return json({ supplier, carries: await catalogsOf(db, id) });
+		},
+	);
+
+	server.registerTool(
+		"set_supplier_unavailable",
+		{
+			description:
+				"Marks products unavailable from a supplier, though it carries their catalog, so reorder buys them from another supplier; unavailable false makes them available again. Its terms for them are kept. The supplier must carry each product's catalog. Read marks in supplier_unavailable. Up to 500 SKUs.",
+			inputSchema: {
+				supplier: z.string().describe("Code or name"),
+				skus: z.array(z.string()).min(1).max(500),
+				unavailable: z.boolean(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ supplier, skus, unavailable }) => {
+			const { id } = await supplierByRef(db, supplier);
+			const found = await db
+				.select({ id: products.id, sku: products.sku })
+				.from(products)
+				.where(
+					inArray(
+						products.sku,
+						skus.map((s) => s.trim()),
+					),
+				);
+			const missing = skus.filter(
+				(s) => !found.some((p) => p.sku === s.trim()),
+			);
+			const changed = await setUnavailable(db, {
+				supplierId: id,
+				productIds: found.map((p) => p.id),
+				unavailable,
+			});
+			return json({
+				supplier,
+				unavailable,
+				changed: found.filter((p) => changed.includes(p.id)).map((p) => p.sku),
+				alreadySo: found
+					.filter((p) => !changed.includes(p.id))
+					.map((p) => p.sku),
+				missing,
+			});
 		},
 	);
 

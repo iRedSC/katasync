@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	locations,
+	productSuppliers,
 	products,
 	purchaseOrderDiscounts,
 	purchaseOrderLines,
@@ -63,7 +64,9 @@ export async function loadOrder(db: Db, poId: number) {
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,
 			barcode: products.barcode,
-			supplierSku: supplierOffers.supplierSku,
+			// From their terms, not their offer, so a PO keeps printing it
+			// after they stop selling the product.
+			supplierSku: productSuppliers.supplierSku,
 			unit: purchaseOrderLines.unit,
 			packSize: purchaseOrderLines.packSize,
 			supplierCount: purchaseOrderLines.supplierCount,
@@ -95,6 +98,13 @@ export async function loadOrder(db: Db, poId: number) {
 			and(
 				eq(supplierOffers.productId, products.id),
 				eq(supplierOffers.supplierId, po.order.supplierId),
+			),
+		)
+		.leftJoin(
+			productSuppliers,
+			and(
+				eq(productSuppliers.productId, products.id),
+				eq(productSuppliers.supplierId, po.order.supplierId),
 			),
 		)
 		.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))

@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui";
 import type * as React from "react";
 import { cn } from "#/lib/utils";
@@ -83,10 +84,52 @@ function ContextMenuSeparator({
 	);
 }
 
+// A menu inside the menu, opened from its trigger row: hover, click, or →.
+const ContextMenuSub = ContextMenuPrimitive.Sub;
+
+function ContextMenuSubTrigger({
+	className,
+	children,
+	...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubTrigger>) {
+	return (
+		<ContextMenuPrimitive.SubTrigger
+			className={cn(
+				"flex h-8 cursor-default items-center gap-2 rounded-lg px-2 outline-none select-none data-[disabled]:text-muted-foreground data-[highlighted]:bg-surface data-[state=open]:bg-surface [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground",
+				className,
+			)}
+			{...props}
+		>
+			{children}
+			<ChevronRight className="ml-auto" />
+		</ContextMenuPrimitive.SubTrigger>
+	);
+}
+
+function ContextMenuSubContent({
+	className,
+	...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
+	return (
+		<ContextMenuPrimitive.Portal>
+			<ContextMenuPrimitive.SubContent
+				className={cn(
+					"z-50 min-w-44 rounded-xl bg-popover p-1 text-popover-foreground shadow-md outline-none ring-1 ring-black/5",
+					className,
+				)}
+				{...props}
+			/>
+		</ContextMenuPrimitive.Portal>
+	);
+}
+
 export {
 	ContextMenu,
 	ContextMenuContent,
 	ContextMenuItem,
 	ContextMenuSeparator,
+	ContextMenuSub,
+	ContextMenuSubContent,
+	ContextMenuSubTrigger,
 	ContextMenuTrigger,
 };
