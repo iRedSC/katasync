@@ -48,6 +48,7 @@ const TERMS = [
 // page shows them as saved.
 function refusal(v: Supplier): string | null {
 	if (v.name === "") return "A supplier needs a name";
+	if (v.code === "") return "A supplier needs a short name";
 	if (
 		!(
 			Number.isInteger(v.leadTimeDays) &&
@@ -159,6 +160,7 @@ export function SupplierForm({
 		const phone = blank("phone");
 		const values = {
 			name: str("name").trim(),
+			code: str("code").trim(),
 			contactName: blank("contactName"),
 			email: blank("email"),
 			phone: phone && formatPhoneInput(phone).trim(),
@@ -213,6 +215,15 @@ export function SupplierForm({
 			<Section title="Contact">
 				<Field label="Name">
 					<input name="name" required defaultValue={s.name} className={box} />
+				</Field>
+				<Field label="Short name">
+					<input
+						name="code"
+						required
+						defaultValue={s.code}
+						autoComplete="off"
+						className={box}
+					/>
 				</Field>
 				<Field label="Contact person">
 					<input

@@ -214,8 +214,8 @@ function CheaperAt({ at }: { at: NonNullable<Recommendation["cheaperAt"]> }) {
 			<span className="inline-flex">
 				<Badge tone="warning">
 					{saved === null
-						? `Priced at ${at.supplierName}`
-						: `${formatMoney(saved)} less at ${at.supplierName}`}
+						? `Priced at ${at.supplierCode}`
+						: `${formatMoney(saved)} less at ${at.supplierCode}`}
 				</Badge>
 			</span>
 		</Tip>
