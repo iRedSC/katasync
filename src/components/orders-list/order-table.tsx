@@ -1,13 +1,8 @@
 import { ExternalLink } from "lucide-react";
-import {
-	type ReactNode,
-	type RefObject,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
+import { type RefObject, useEffect, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
+import { TickCell } from "#/components/tick-cell";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
 import { formatMoney, formatOrderDate } from "#/lib/format";
 import type { useRowLink } from "#/lib/row-link";
@@ -62,13 +57,13 @@ export function OrderTable({
 		<table className="w-full whitespace-nowrap">
 			<thead>
 				<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
-					<TickCell as="th" onClick={onTickAll}>
-						<TickBox
-							label={header === "all" ? "Untick all shown" : "Tick all shown"}
-							checked={header === "all"}
-							indeterminate={header === "some"}
-						/>
-					</TickCell>
+					<TickCell
+						as="th"
+						label={header === "all" ? "Untick all shown" : "Tick all shown"}
+						checked={header === "all"}
+						mixed={header === "some"}
+						onTick={onTickAll}
+					/>
 					{view === "ship" && (
 						<th className="w-16 px-4 py-2 font-medium">Pin</th>
 					)}
@@ -110,12 +105,12 @@ export function OrderTable({
 												: "hover:bg-subtle",
 									)}
 								>
-									<TickCell as="td" onClick={(range) => onTick(i, range)}>
-										<TickBox
-											label={`${ticked ? "Untick" : "Tick"} ${o.name}`}
-											checked={ticked}
-										/>
-									</TickCell>
+									<TickCell
+										as="td"
+										label={`${ticked ? "Untick" : "Tick"} ${o.name}`}
+										checked={ticked}
+										onTick={(range) => onTick(i, range)}
+									/>
 									{view === "ship" && (
 										<td className="px-4 py-2.5 font-mono text-base font-bold tabular-nums">
 											{o.pin}
@@ -198,59 +193,5 @@ export function OrderTable({
 				)}
 			</ContextMenu>
 		</table>
-	);
-}
-
-// The box's whole cell ticks, so a near miss doesn't open the order instead.
-// `range` is a shift-click. A click on the box itself, or Space on it,
-// lands here too.
-function TickCell({
-	as: Cell,
-	onClick,
-	children,
-}: {
-	as: "td" | "th";
-	onClick: (range: boolean) => void;
-	children: ReactNode;
-}) {
-	return (
-		<Cell
-			onClick={(e) => {
-				e.stopPropagation();
-				onClick(e.shiftKey);
-			}}
-			onAuxClick={(e) => e.stopPropagation()}
-			// Enter on the box mustn't also open the row.
-			onKeyDown={(e) => e.stopPropagation()}
-			className="w-10 cursor-pointer py-2 pr-1 pl-4 select-none"
-		>
-			{children}
-		</Cell>
-	);
-}
-
-function TickBox({
-	label,
-	checked,
-	indeterminate = false,
-}: {
-	label: string;
-	checked: boolean;
-	indeterminate?: boolean;
-}) {
-	const ref = useRef<HTMLInputElement>(null);
-	useEffect(() => {
-		if (ref.current) ref.current.indeterminate = indeterminate;
-	}, [indeterminate]);
-	return (
-		<input
-			ref={ref}
-			type="checkbox"
-			aria-label={label}
-			checked={checked}
-			// The cell around it does the ticking.
-			onChange={() => {}}
-			className="size-4 cursor-pointer align-middle"
-		/>
 	);
 }
