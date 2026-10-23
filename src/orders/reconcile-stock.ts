@@ -3,8 +3,10 @@ import type { StockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { orderLines, orders, stores } from "#/db/schema";
 import { type Channel, errorText } from "#/diagnostics/runs";
+import { readQuantityMode } from "#/inventory/commitments";
 import { lockRecipes } from "#/inventory/ledger/post";
 import { takeStock } from "./ingest";
+import { commitmentProductIds, stockEffectMissing } from "./stock-effects";
 
 // Lines that should have taken stock and haven't: mapped to a product, no sale
 // batch yet, and on an order that takes stock. The rules are orderTakesStock's
@@ -13,7 +15,7 @@ import { takeStock } from "./ingest";
 // reconcileStock still owes.
 export const unsettledStock = and(
 	isNotNull(orderLines.productId),
-	isNull(orderLines.saleBatchId),
+	stockEffectMissing,
 	gt(orderLines.quantity, 0),
 	eq(orders.fulfilledByChannel, false),
 	isNull(orders.cancelledAt),
@@ -77,6 +79,7 @@ async function settleLine(
 			.where(eq(orders.id, pending.orderId))
 			.for("update");
 		if (!owner) return null;
+		await readQuantityMode(tx);
 		const [matched] = await tx
 			.select({
 				line: orderLines,
@@ -87,11 +90,15 @@ async function settleLine(
 			.innerJoin(stores, eq(stores.id, orders.storeId))
 			.where(and(eq(orderLines.id, pending.id), unsettledStock, scopeOf(only)));
 		if (!matched || matched.line.productId === null) return null;
-		await lockRecipes(tx, [matched.line.productId]);
+		await lockRecipes(
+			tx,
+			[matched.line.productId],
+			await commitmentProductIds(tx, [pending.id]),
+		);
 		const [line] = await tx
 			.select()
 			.from(orderLines)
-			.where(and(eq(orderLines.id, pending.id), isNull(orderLines.saleBatchId)))
+			.where(and(eq(orderLines.id, pending.id), stockEffectMissing))
 			.for("update");
 		if (!line || line.productId !== matched.line.productId) return null;
 		return {

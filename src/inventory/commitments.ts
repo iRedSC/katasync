@@ -73,8 +73,8 @@ export async function lineHistories(
 			revision: stockCommitments.revision,
 			productId: stockCommitments.productId,
 			quantity: stockCommitments.quantity,
-			consumed: sql<number>`coalesce((select sum(case ${stockCommitmentEntries.kind} when 'consume' then ${stockCommitmentEntries.quantity} when 'restore' then -${stockCommitmentEntries.quantity} else 0 end) from ${stockCommitmentEntries} where ${stockCommitmentEntries.commitmentId} = ${stockCommitments.id}), 0)::int`,
-			released: sql<number>`coalesce((select sum(${stockCommitmentEntries.quantity}) from ${stockCommitmentEntries} where ${stockCommitmentEntries.commitmentId} = ${stockCommitments.id} and ${stockCommitmentEntries.kind} = 'release'), 0)::int`,
+			consumed: sql<number>`coalesce((select sum(case e.kind when 'consume' then e.quantity when 'restore' then -e.quantity else 0 end) from "stock_commitment_entries" e where e.commitment_id = "stock_commitments"."id"), 0)::int`,
+			released: sql<number>`coalesce((select sum(e.quantity) from "stock_commitment_entries" e where e.commitment_id = "stock_commitments"."id" and e.kind = 'release'), 0)::int`,
 		})
 		.from(stockCommitments)
 		.where(inArray(stockCommitments.orderLineId, ids))
@@ -239,9 +239,7 @@ export async function committedDrift(db: Db) {
 	}));
 }
 
-export function hasCommitment(orderLineId: unknown) {
-	return sql<boolean>`exists (select 1 from ${stockCommitments} where ${stockCommitments.orderLineId} = ${orderLineId})`;
-}
+export const lineHasCommitment = sql<boolean>`exists (select 1 from "stock_commitments" k where k.order_line_id = "order_lines"."id")`;
 
 export function partsFor(
 	product: { id: number; kind: string },

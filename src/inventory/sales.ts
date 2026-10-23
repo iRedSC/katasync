@@ -12,12 +12,17 @@ import {
 import { alias, unionAll } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
+	stockCommitmentParts,
+	stockCommitments,
+} from "#/db/quantity-schema";
+import {
 	movements,
 	orderLines,
 	orders,
 	productComponents,
 	products,
 } from "#/db/schema";
+import { lineHasCommitment } from "./commitments";
 
 // Units sold per stocked product since a date. Tool sets count as their parts,
 // since that's what leaves the shelf. A sale the ledger recorded counts the
@@ -110,9 +115,26 @@ function soldUnits(
 					isNull(orderLines.saleBatchId),
 					wasUndone(db, orderLines.saleBatchId),
 				),
+				not(lineHasCommitment),
 			),
 		);
-	return unionAll(recorded, byRecipe).as("sold");
+	const committed = db
+		.select({
+			productId: stockCommitmentParts.productId,
+			placedAt: orders.placedAt,
+			units:
+				sql<number>`${stockCommitmentParts.perUnit} * (${stockCommitments.quantity} - coalesce((select sum(e.quantity) from "stock_commitment_entries" e where e.commitment_id = "stock_commitments"."id" and e.kind = 'release'), 0))`.as(
+					"units",
+				),
+		})
+		.from(stockCommitmentParts)
+		.innerJoin(
+			stockCommitments,
+			eq(stockCommitments.id, stockCommitmentParts.commitmentId),
+		)
+		.innerJoin(orders, eq(orders.id, stockCommitments.orderId))
+		.where(counted);
+	return unionAll(recorded, byRecipe, committed).as("sold");
 }
 
 function wasUndone(db: Db, batchId: SQLWrapper) {

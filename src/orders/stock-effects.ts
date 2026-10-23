@@ -10,7 +10,7 @@ import { LedgerError, recordSale } from "#/inventory/ledger";
 import { lockRecipes } from "#/inventory/ledger/post";
 import {
 	CommitmentError,
-	hasCommitment,
+	lineHasCommitment,
 	lineHistory,
 	partsFor,
 	readQuantityMode,
@@ -32,12 +32,12 @@ export type StockEffect =
 
 export const stockEffectApplied = or(
 	isNotNull(orderLines.saleBatchId),
-	hasCommitment(orderLines.id),
+	lineHasCommitment,
 );
 
 export const stockEffectMissing = and(
 	isNull(orderLines.saleBatchId),
-	not(hasCommitment(orderLines.id)),
+	not(lineHasCommitment),
 );
 
 export async function lineStockEffect(

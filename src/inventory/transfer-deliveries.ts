@@ -41,7 +41,7 @@ export type Delivery =
 			receipts: Receipt[];
 	  };
 
-const receiptUndone = sql<boolean>`exists (select 1 from ${movements} u where u.reference = 'undo:' || ${transferReceipts.batchId}::text)`;
+const receiptUndone = sql<boolean>`exists (select 1 from "movements" u where u.reference = 'undo:' || "transfer_receipts"."batch_id"::text)`;
 
 export async function deliveriesOf(
 	db: Db,
