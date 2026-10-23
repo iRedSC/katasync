@@ -198,6 +198,7 @@ export function taxedElsewhere(
 
 // Money a marketplace sent to the bank, as Reports lists it.
 export type Deposit = {
+	externalId: string;
 	channel: "shopify" | "amazon" | "ebay" | "tiktok";
 	status: "sent" | "pending" | "failed";
 	depositedAt: Date;
@@ -359,6 +360,7 @@ export async function readSalesReport(db: Db, period: Period) {
 			// sales.
 			db
 				.select({
+					externalId: payouts.externalId,
 					channel: payouts.channel,
 					status: payouts.status,
 					depositedAt: payouts.depositedAt,

@@ -59,7 +59,7 @@ const SECTIONS: {
 		name: "Deposits",
 		rows: (d) =>
 			d.deposits.map((r) => ({
-				key: `${r.channel}|${r.depositedAt}|${r.currency}|${r.reference}`,
+				key: JSON.stringify([r.channel, r.externalId]),
 				label: `${channelName(r.channel)} ${r.depositedAt.slice(0, 10)}`,
 				value: r,
 			})),
