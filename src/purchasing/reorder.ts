@@ -1,5 +1,6 @@
 export { DEMAND_DAYS } from "#/purchasing/forecast";
 export {
+	type CheaperAt,
 	needsOf,
 	type ReorderNeed,
 	reorderBreakdown,
@@ -13,8 +14,11 @@ export {
 	planFor,
 } from "#/purchasing/reorder/plan";
 export {
+	DEFAULT_SETTINGS,
 	type RecommendedLine,
 	recommendedAdditions,
+	type SuggestionSettings,
+	suggestionFor,
 	suggestPurchases,
 } from "#/purchasing/reorder/purchases";
 export {

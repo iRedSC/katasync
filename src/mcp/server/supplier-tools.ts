@@ -2,10 +2,18 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
-import { productSuppliers, products } from "#/db/schema";
+import { products, supplierOffers } from "#/db/schema";
+import {
+	catalogsOf,
+	deleteCatalog,
+	ensureCatalog,
+	renameCatalog,
+	setCarried,
+	setProductsCatalog,
+} from "#/purchasing/catalogs";
 import {
 	fillSupplierSkus,
-	setProductSupplier,
+	setSupplierTerms,
 	supplierByRef,
 	updateSupplier,
 } from "#/purchasing/suppliers";
@@ -15,20 +23,117 @@ import {
 	renameUnit,
 	setPurchaseUnit,
 } from "#/purchasing/units";
-import { productBySku } from "./lookups";
+import { catalogByName, productBySku } from "./lookups";
 import { json, unitTerms, WRITE } from "./tool-shapes";
 
 export function registerSupplierTools(server: McpServer, db: Db) {
 	// Catalog and setup
 
 	server.registerTool(
-		"set_product_supplier",
+		"set_product_catalog",
 		{
 			description:
-				"Sets who a product is bought from, their part number, and their price per purchase unit. supplier null removes it. Omitted fields keep their value.",
+				"Puts products in a catalog by name, making the catalog if there isn't one; null takes them out of any. A product is in one catalog at most. Suppliers' terms for a product are kept when it moves, so moving it back restores them. Up to 500 SKUs.",
+			inputSchema: {
+				skus: z.array(z.string()).min(1).max(500),
+				catalog: z.string().nullable(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ skus, catalog }) => {
+			const found = await db
+				.select({ id: products.id, sku: products.sku })
+				.from(products)
+				.where(
+					inArray(
+						products.sku,
+						skus.map((s) => s.trim()),
+					),
+				);
+			const missing = skus.filter(
+				(s) => !found.some((p) => p.sku === s.trim()),
+			);
+			const catalogId =
+				catalog === null ? null : await ensureCatalog(db, catalog);
+			const before = await setProductsCatalog(
+				db,
+				found.map((p) => p.id),
+				catalogId,
+			);
+			return json({
+				catalog,
+				moved: before.filter((b) => b.catalogId !== catalogId).length,
+				alreadyThere: before.filter((b) => b.catalogId === catalogId).length,
+				missing,
+			});
+		},
+	);
+
+	server.registerTool(
+		"rename_catalog",
+		{
+			description: "Renames a catalog.",
+			inputSchema: { catalog: z.string(), to: z.string() },
+			annotations: WRITE,
+		},
+		async ({ catalog, to }) => {
+			await renameCatalog(db, await catalogByName(db, catalog), to);
+			return json({ renamed: catalog, to });
+		},
+	);
+
+	server.registerTool(
+		"delete_catalog",
+		{
+			description:
+				"Removes an empty catalog. One with products refuses: move them first with set_product_catalog.",
+			inputSchema: { catalog: z.string() },
+			annotations: { ...WRITE, destructiveHint: true },
+		},
+		async ({ catalog }) => {
+			await deleteCatalog(db, await catalogByName(db, catalog));
+			return json({ deleted: catalog });
+		},
+	);
+
+	server.registerTool(
+		"set_supplier_catalogs",
+		{
+			description:
+				"Starts or stops a supplier carrying catalogs. Carrying one means it sells every product in it. Its terms for those products are kept when it stops, so carrying it again restores them. Catalogs to add are made if missing.",
+			inputSchema: {
+				supplier: z.string().describe("Code or name"),
+				add: z.array(z.string()).default([]),
+				remove: z.array(z.string()).default([]),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ supplier, add, remove }) => {
+			const { id } = await supplierByRef(db, supplier);
+			for (const name of add)
+				await setCarried(db, {
+					supplierId: id,
+					catalogId: await ensureCatalog(db, name),
+					carried: true,
+				});
+			for (const name of remove)
+				await setCarried(db, {
+					supplierId: id,
+					catalogId: await catalogByName(db, name),
+					carried: false,
+				});
+			return json({ supplier, carries: await catalogsOf(db, id) });
+		},
+	);
+
+	server.registerTool(
+		"set_supplier_terms",
+		{
+			description:
+				"Sets a supplier's part number and price per purchase unit for a product it sells (the supplier must carry the product's catalog). Omitted fields keep their value. Each supplier has its own terms; reorder buys from the one with the lowest price per single item.",
 			inputSchema: {
 				sku: z.string(),
-				supplier: z.string().nullable().describe("Code or name; null removes"),
+				supplier: z.string().describe("Code or name"),
 				supplier_sku: z.string().nullable().optional(),
 				cost: z.number().min(0).nullable().optional(),
 			},
@@ -36,18 +141,26 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 		},
 		async ({ sku, supplier, supplier_sku, cost }) => {
 			const product = await productBySku(db, sku);
-			await setProductSupplier(db, {
+			const { id } = await supplierByRef(db, supplier);
+			await setSupplierTerms(db, {
 				productId: product.id,
-				supplierId:
-					supplier === null ? null : (await supplierByRef(db, supplier)).id,
+				supplierId: id,
 				...(supplier_sku !== undefined ? { supplierSku: supplier_sku } : {}),
 				...(cost !== undefined ? { cost } : {}),
 			});
-			const [link] = await db
-				.select()
-				.from(productSuppliers)
-				.where(eq(productSuppliers.productId, product.id));
-			return json(link ?? { sku, supplier: null });
+			const offers = await db
+				.select({
+					supplierId: supplierOffers.supplierId,
+					supplierSku: supplierOffers.supplierSku,
+					unit: supplierOffers.unit,
+					packSize: supplierOffers.packSize,
+					cost: supplierOffers.cost,
+					minimumQuantity: supplierOffers.minimumQuantity,
+					cheapest: supplierOffers.cheapest,
+				})
+				.from(supplierOffers)
+				.where(eq(supplierOffers.productId, product.id));
+			return json({ sku, offers });
 		},
 	);
 
@@ -55,7 +168,7 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 		"set_supplier_skus",
 		{
 			description:
-				"Fills in a supplier's item numbers for many products at once, e.g. supplierSkusToSave from match_invoice. Only products bought from that supplier change. One that already has a different number keeps it unless replace is true. Reports filled, unchanged, kept, and skipped. Up to 200 per call.",
+				"Fills in a supplier's item numbers for many products at once, e.g. supplierSkusToSave from match_invoice. Only products that supplier sells (in catalogs it carries) change. One that already has a different number keeps it unless replace is true. Reports filled, unchanged, kept, and skipped. Up to 200 per call.",
 			inputSchema: {
 				supplier: z.string().describe("Code or name"),
 				items: z
@@ -111,14 +224,26 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 		"set_purchase_unit",
 		{
 			description:
-				"Sets the default unit, pack size, and minimum a product is bought in. Its supplier price converts to the new size, and draft lines still on the old default follow.",
-			inputSchema: { sku: z.string(), ...unitTerms },
+				"Sets the unit, pack size, and minimum a supplier sells a product in. That supplier's price converts to the new size, and its draft lines still on the old default follow.",
+			inputSchema: {
+				sku: z.string(),
+				supplier: z.string().describe("Code or name"),
+				...unitTerms,
+			},
 			annotations: { ...WRITE, idempotentHint: true },
 		},
-		async ({ sku, unit, pack_size, supplier_count = pack_size, minimum }) => {
+		async ({
+			sku,
+			supplier,
+			unit,
+			pack_size,
+			supplier_count = pack_size,
+			minimum,
+		}) => {
 			const product = await productBySku(db, sku);
 			await setPurchaseUnit(db, {
 				productId: product.id,
+				supplierId: (await supplierByRef(db, supplier)).id,
 				unit: unit.toUpperCase(),
 				packSize: pack_size,
 				supplierCount: supplier_count,

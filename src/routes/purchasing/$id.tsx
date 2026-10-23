@@ -41,10 +41,7 @@ import {
 	sinceSent,
 } from "#/components/purchase-order/po-data";
 import { Recommended } from "#/components/purchase-order/recommended";
-import {
-	FrozenBar,
-	SuggestedBar,
-} from "#/components/purchase-order/reorder-bar";
+import { ReorderBar } from "#/components/purchase-order/reorder-bar";
 import { SendDialog } from "#/components/purchase-order/send-dialog";
 import { SupplierPanel } from "#/components/purchase-order/supplier-panel";
 import { Timeline } from "#/components/purchase-order/timeline";
@@ -389,7 +386,7 @@ function PurchaseOrderPage() {
 					{draft ? (
 						<>
 							<Card flush>
-								{suggested ? <SuggestedBar /> : <FrozenBar detail={d} />}
+								<ReorderBar detail={d} />
 								{lineTable(d.lines)}
 								{totals}
 							</Card>

@@ -1,14 +1,10 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import {
-	productComponents,
-	productSuppliers,
-	products,
-	suppliers,
-} from "#/db/schema";
+import { productComponents, supplierOffers, suppliers } from "#/db/schema";
+import { setOfferTerms } from "#/purchasing/catalogs";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
-// Who each product is bought from, and the suppliers' own details.
+// The suppliers' own details, and their terms for what they sell.
 
 // A supplier by its short code ("CANAM") or full name, ignoring case.
 export async function supplierByRef(db: Db, ref: string) {
@@ -26,46 +22,27 @@ export async function supplierByRef(db: Db, ref: string) {
 	return found;
 }
 
-// Sets or changes who a product comes from. supplierId null removes it.
-// Leaving out supplierSku or cost keeps what's there.
-export async function setProductSupplier(
+// Sets a supplier's part number or price for a product it sells. Leaving
+// either out keeps what's there.
+export async function setSupplierTerms(
 	db: Db,
 	input: {
 		productId: number;
-		supplierId: number | null;
+		supplierId: number;
 		supplierSku?: string | null;
 		cost?: number | null;
 	},
 ) {
-	if (input.supplierId === null) {
-		await db
-			.delete(productSuppliers)
-			.where(eq(productSuppliers.productId, input.productId));
-		return;
-	}
 	if (input.cost != null && !(input.cost >= 0))
 		throw new PurchaseOrderError(`Price can't be ${input.cost}`);
-	const [product] = await db
-		.select({ kind: products.kind })
-		.from(products)
-		.where(eq(products.id, input.productId));
-	if (!product) throw new PurchaseOrderError("That product doesn't exist");
-	if (product.kind === "bundle")
-		throw new PurchaseOrderError(
-			"Tool sets are bought as their parts; set suppliers on those",
-		);
-	const values = {
-		supplierId: input.supplierId,
-		...(input.supplierSku !== undefined
-			? { supplierSku: input.supplierSku?.trim() || null }
-			: {}),
-		...(input.cost !== undefined ? { cost: input.cost } : {}),
-	};
-	await db
-		.insert(productSuppliers)
-		// A new link starts in EACH, which counts one either way.
-		.values({ productId: input.productId, supplierCount: 1, ...values })
-		.onConflictDoUpdate({ target: productSuppliers.productId, set: values });
+	await db.transaction((tx) =>
+		setOfferTerms(tx, input.productId, input.supplierId, {
+			...(input.supplierSku !== undefined
+				? { supplierSku: input.supplierSku?.trim() || null }
+				: {}),
+			...(input.cost !== undefined ? { cost: input.cost } : {}),
+		}),
+	);
 }
 
 export type SupplierFields = {
@@ -145,8 +122,8 @@ export async function updateSupplier(
 	if (updated.length === 0) throw new PurchaseOrderError("No such supplier");
 }
 
-// Who a tool set is ordered from: the supplier of most of its parts, ties
-// going alphabetically. A set has no supplier of its own; it goes on that
+// Who a tool set is ordered from: the supplier most of its parts are bought
+// from (each part's cheapest), ties going alphabetically. A set has no supplier of its own; it goes on that
 // supplier's draft as one line, and sending the PO turns it into its parts.
 // Sets whose parts have no suppliers are left out.
 export async function setSuppliers(db: Db, setIds?: number[]) {
@@ -159,10 +136,13 @@ export async function setSuppliers(db: Db, setIds?: number[]) {
 		})
 		.from(productComponents)
 		.innerJoin(
-			productSuppliers,
-			eq(productSuppliers.productId, productComponents.componentProductId),
+			supplierOffers,
+			and(
+				eq(supplierOffers.productId, productComponents.componentProductId),
+				eq(supplierOffers.cheapest, true),
+			),
 		)
-		.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+		.innerJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
 		.where(
 			setIds ? inArray(productComponents.parentProductId, setIds) : undefined,
 		)
@@ -182,10 +162,10 @@ export async function setSuppliers(db: Db, setIds?: number[]) {
 	);
 }
 
-// Fills in a supplier's part numbers for products bought from it, e.g. from
-// an invoice. Only products bought from this supplier change, so their part
-// number can't land on something bought elsewhere. A product that already
-// has a different number keeps it unless `replace`.
+// Fills in a supplier's part numbers for products it sells, e.g. from an
+// invoice. Only products this supplier sells change (it carries their
+// catalog), so its part number can't land on something it doesn't. A
+// product that already has a different number keeps it unless `replace`.
 export async function fillSupplierSkus(
 	db: Db,
 	input: {
@@ -203,35 +183,33 @@ export async function fillSupplierSkus(
 	await db.transaction(async (tx) => {
 		for (const e of input.entries) {
 			const given = e.supplierSku.trim();
-			const [link] = await tx
-				.select({
-					supplierId: productSuppliers.supplierId,
-					supplierSku: productSuppliers.supplierSku,
-				})
-				.from(productSuppliers)
-				.where(eq(productSuppliers.productId, e.productId))
-				.for("update");
+			const [offer] = await tx
+				.select({ supplierSku: supplierOffers.supplierSku })
+				.from(supplierOffers)
+				.where(
+					and(
+						eq(supplierOffers.productId, e.productId),
+						eq(supplierOffers.supplierId, input.supplierId),
+					),
+				);
 			if (!given)
 				result.skipped.push({ sku: e.sku, reason: "empty part number" });
-			else if (!link)
-				result.skipped.push({ sku: e.sku, reason: "no supplier set" });
-			else if (link.supplierId !== input.supplierId)
+			else if (!offer)
 				result.skipped.push({
 					sku: e.sku,
-					reason: "bought from another supplier",
+					reason: "not in a catalog this supplier carries",
 				});
-			else if (link.supplierSku === given) result.unchanged.push(e.sku);
-			else if (link.supplierSku && !input.replace)
-				result.kept.push({ sku: e.sku, ours: link.supplierSku, given });
+			else if (offer.supplierSku === given) result.unchanged.push(e.sku);
+			else if (offer.supplierSku && !input.replace)
+				result.kept.push({ sku: e.sku, ours: offer.supplierSku, given });
 			else {
-				await tx
-					.update(productSuppliers)
-					.set({ supplierSku: given })
-					.where(eq(productSuppliers.productId, e.productId));
+				await setOfferTerms(tx, e.productId, input.supplierId, {
+					supplierSku: given,
+				});
 				result.filled.push({
 					sku: e.sku,
 					supplierSku: given,
-					was: link.supplierSku,
+					was: offer.supplierSku,
 				});
 			}
 		}

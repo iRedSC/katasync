@@ -1,13 +1,20 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
+import { eq } from "drizzle-orm";
 import { getDb } from "#/db/client";
+import { purchaseOrders } from "#/db/schema";
 import {
 	addDraftLine,
 	addSetToOtherDrafts,
+	applySettings,
 	draftFromSuggestions,
 	lockDraftLine,
 	openDraft,
 	openSuggested,
+	previewSettings,
+	refreshSuggested,
+	restoreSettings,
+	type SettingsUndo,
 	setDraftLine,
 	skipSetPart,
 	updateDraft,
@@ -31,10 +38,49 @@ export const openSuggestedPurchaseOrder = createServerFn({ method: "POST" })
 	.validator(type({ supplierId: "number.integer > 0" }))
 	.handler(async ({ data }) => openSuggested(getDb(), data.supplierId));
 
-// Brings a frozen draft up to date with what needs reordering today.
+// Brings a frozen draft up to date with what needs reordering today, under
+// its own suggestion settings: adds and raises, never lowers. A suggested PO
+// just follows the suggestion again.
 export const updateDraftFromSuggestions = createServerFn({ method: "POST" })
 	.validator(id)
-	.handler(async ({ data }) => updateFromSuggestions(getDb(), data.id));
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [po] = await db
+			.select({ status: purchaseOrders.status })
+			.from(purchaseOrders)
+			.where(eq(purchaseOrders.id, data.id));
+		if (po?.status === "suggested") {
+			await refreshSuggested(db, data.id);
+			return { added: 0, raised: 0 };
+		}
+		return updateFromSuggestions(db, data.id);
+	});
+
+const settings = type({
+	coverDays: "1 <= number.integer <= 365 | null",
+	excludedCatalogs: "(number.integer > 0)[]",
+	includePricier: "boolean",
+});
+
+// What new suggestion settings would do to a PO, changing nothing.
+export const previewSuggestionSettings = createServerFn({ method: "GET" })
+	.validator(type({ id: "number.integer > 0", settings }))
+	.handler(async ({ data }) =>
+		previewSettings(getDb(), data.id, data.settings),
+	);
+
+// Saves a PO's suggestion settings and makes its lines match them. Returns
+// what it changed and what undo needs.
+export const applySuggestionSettings = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", settings }))
+	.handler(async ({ data }) => applySettings(getDb(), data.id, data.settings));
+
+export const undoSuggestionSettings = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", undo: "object" }))
+	.handler(async ({ data }) =>
+		// Only ever what applySuggestionSettings handed back.
+		restoreSettings(getDb(), data.id, data.undo as SettingsUndo),
+	);
 
 // Puts a recommended addition on the draft at the quantity recommended. A
 // product that got onto the draft meanwhile is left as it is.

@@ -3,13 +3,14 @@ import { type } from "arktype";
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import { type Db, getDb } from "#/db/client";
 import {
-	productSuppliers,
 	products,
 	purchaseOrderLines,
 	purchaseOrders,
+	supplierOffers,
 	suppliers,
 } from "#/db/schema";
 import { carried } from "#/products/archive";
+import { cheapestOffers } from "#/purchasing/catalogs";
 import {
 	addDraftLine,
 	addLine,
@@ -21,10 +22,11 @@ import { setSuppliers } from "#/purchasing/suppliers";
 import { listProducts } from "#/server/catalog/product-list";
 import { onHandOf } from "./on-hand";
 
-// Products to add to a PO, best match first: an exact SKU, barcode, or
-// supplier SKU (a scan) leads, then products bought from this PO's supplier.
-// Each says if it's already on the PO and who it's bought from, so the picker
-// can warn before adding the wrong thing.
+// Products to add to a PO, best match first: an exact SKU, barcode, or this
+// supplier's SKU (a scan) leads, then products this PO's supplier sells.
+// Each says if it's already on the PO, whether this supplier sells it, and
+// who reorder buys it from (its cheapest), so the picker can warn before
+// adding the wrong thing.
 export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 	.validator(type({ purchaseOrderId: "number.integer > 0", query: "string" }))
 	.handler(async ({ data }) => {
@@ -37,9 +39,10 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 			.where(eq(purchaseOrders.id, data.purchaseOrderId));
 		if (!po)
 			throw new PurchaseOrderError(`PO ${data.purchaseOrderId} doesn't exist`);
+		const cheapestOffer = cheapestOffers(db);
 		const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 		// Coalesced: descending order puts nulls first.
-		const exact = sql<boolean>`coalesce(lower(${products.sku}) = lower(${q}) or ${products.barcode} = ${q} or lower(${productSuppliers.supplierSku}) = lower(${q}), false)`;
+		const exact = sql<boolean>`coalesce(lower(${products.sku}) = lower(${q}) or ${products.barcode} = ${q} or lower(${supplierOffers.supplierSku}) = lower(${q}), false)`;
 		const rows = await db
 			.select({
 				productId: products.id,
@@ -48,18 +51,27 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 				kind: products.kind,
-				supplierSku: productSuppliers.supplierSku,
-				supplierId: productSuppliers.supplierId,
+				supplierSku: supplierOffers.supplierSku,
+				sold: sql<boolean>`${supplierOffers.productId} is not null`,
+				cheapest: sql<boolean>`coalesce(${supplierOffers.cheapest}, false)`,
+				supplierId: cheapestOffer.supplierId,
 				supplierName: suppliers.name,
-				unit: productSuppliers.unit,
-				packSize: productSuppliers.packSize,
-				supplierCount: productSuppliers.supplierCount,
-				cost: productSuppliers.cost,
+				unit: supplierOffers.unit,
+				packSize: supplierOffers.packSize,
+				supplierCount: supplierOffers.supplierCount,
+				cost: supplierOffers.cost,
 				lineId: purchaseOrderLines.id,
 			})
 			.from(products)
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-			.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+			.leftJoin(
+				supplierOffers,
+				and(
+					eq(supplierOffers.productId, products.id),
+					eq(supplierOffers.supplierId, po.supplierId),
+				),
+			)
+			.leftJoin(cheapestOffer, eq(cheapestOffer.productId, products.id))
+			.leftJoin(suppliers, eq(suppliers.id, cheapestOffer.supplierId))
 			.leftJoin(
 				purchaseOrderLines,
 				and(
@@ -75,15 +87,13 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 						sql`${products.name} ilike ${like}`,
 						sql`${products.variantName} ilike ${like}`,
 						sql`${products.barcode} ilike ${like}`,
-						sql`${productSuppliers.supplierSku} ilike ${like}`,
+						sql`${supplierOffers.supplierSku} ilike ${like}`,
 					),
 				),
 			)
 			.orderBy(
 				desc(exact),
-				desc(
-					sql`coalesce(${productSuppliers.supplierId} = ${po.supplierId}, false)`,
-				),
+				desc(sql`${supplierOffers.productId} is not null`),
 				products.name,
 				products.variantName,
 			)
@@ -92,10 +102,10 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 			db,
 			rows.map((r) => r.productId),
 		);
-		return rows.map((r) => ({
+		return rows.map(({ sold, ...r }) => ({
 			...r,
 			onHand: onHand.get(r.productId) ?? 0,
-			fromThisSupplier: r.supplierId === po.supplierId,
+			fromThisSupplier: sold,
 		}));
 	});
 
@@ -103,8 +113,9 @@ export type PurchaseOrderMatch = Awaited<
 	ReturnType<typeof searchForPurchaseOrder>
 >[number];
 
-// Everything bought from this PO's supplier, read as the product list reads
-// it, with what the supplier charges and how they sell it. Browse filters and
+// Everything this PO's supplier sells, read as the product list reads it,
+// with what the supplier charges and how they sell it, and tool sets ordered
+// from it. Browse filters and
 // sorts these in the page, so it takes the whole list at once.
 export const browseForPurchaseOrder = createServerFn({ method: "GET" })
 	.validator(type({ purchaseOrderId: "number.integer > 0" }))
@@ -120,22 +131,26 @@ export const browseForPurchaseOrder = createServerFn({ method: "GET" })
 			listProducts(),
 			db
 				.select({
-					productId: productSuppliers.productId,
-					supplierSku: productSuppliers.supplierSku,
-					unit: productSuppliers.unit,
-					packSize: productSuppliers.packSize,
-					supplierCount: productSuppliers.supplierCount,
-					cost: productSuppliers.cost,
-					minimumQuantity: productSuppliers.minimumQuantity,
+					productId: supplierOffers.productId,
+					supplierSku: supplierOffers.supplierSku,
+					unit: supplierOffers.unit,
+					packSize: supplierOffers.packSize,
+					supplierCount: supplierOffers.supplierCount,
+					cost: supplierOffers.cost,
+					minimumQuantity: supplierOffers.minimumQuantity,
 				})
-				.from(productSuppliers)
-				.where(eq(productSuppliers.supplierId, po.supplierId)),
+				.from(supplierOffers)
+				.where(eq(supplierOffers.supplierId, po.supplierId)),
 		]);
 		const termsOf = new Map(terms.map(({ productId, ...t }) => [productId, t]));
 		// A tool set's supplier is the one most of its parts come from, and it
 		// has no terms of its own.
 		return all
-			.filter((p) => p.supplier?.id === po.supplierId)
+			.filter(
+				(p) =>
+					termsOf.has(p.id) ||
+					(p.kind === "bundle" && p.supplier?.id === po.supplierId),
+			)
 			.map((p) => ({ ...p, terms: termsOf.get(p.id) ?? null }));
 	});
 
@@ -158,9 +173,18 @@ export const addProductToPurchaseOrder = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		const db = getDb();
 		const [link] = await db
-			.select({ minimum: productSuppliers.minimumQuantity })
-			.from(productSuppliers)
-			.where(eq(productSuppliers.productId, data.productId));
+			.select({ minimum: supplierOffers.minimumQuantity })
+			.from(purchaseOrders)
+			.innerJoin(
+				supplierOffers,
+				eq(supplierOffers.supplierId, purchaseOrders.supplierId),
+			)
+			.where(
+				and(
+					eq(purchaseOrders.id, data.purchaseOrderId),
+					eq(supplierOffers.productId, data.productId),
+				),
+			);
 		const { added, line } = await addLine(db, {
 			...data,
 			quantity: link?.minimum ?? 1,
@@ -168,7 +192,7 @@ export const addProductToPurchaseOrder = createServerFn({ method: "POST" })
 		return { added, lineId: line.id };
 	});
 
-// Puts a product on its supplier's draft, starting one if needed. Without a
+// Puts a product on its cheapest supplier's draft, starting one if needed. Without a
 // quantity it's the fewest the supplier sells. A product already on the draft
 // is left as it is and comes back with added false. Says where it went, and
 // the line as added, which is what undo needs.
@@ -187,13 +211,18 @@ async function addToDraft(
 ) {
 	const [link] = await db
 		.select({
-			supplierId: productSuppliers.supplierId,
+			supplierId: supplierOffers.supplierId,
 			supplierName: suppliers.name,
-			minimum: productSuppliers.minimumQuantity,
+			minimum: supplierOffers.minimumQuantity,
 		})
-		.from(productSuppliers)
-		.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
-		.where(eq(productSuppliers.productId, data.productId));
+		.from(supplierOffers)
+		.innerJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
+		.where(
+			and(
+				eq(supplierOffers.productId, data.productId),
+				eq(supplierOffers.cheapest, true),
+			),
+		);
 	// A tool set goes to the supplier of most of its parts, one at a time.
 	const order =
 		link ??
@@ -203,7 +232,7 @@ async function addToDraft(
 		}));
 	if (!order)
 		throw new PurchaseOrderError(
-			"Set this product's supplier first (for a tool set, its parts')",
+			"No supplier sells it: put it in a catalog a supplier carries (for a tool set, its parts)",
 		);
 	const purchaseOrderId = await openDraft(db, order.supplierId);
 	const { added, line } = await addDraftLine(db, {
@@ -214,7 +243,7 @@ async function addToDraft(
 	return { added, purchaseOrderId, supplierName: order.supplierName, line };
 }
 
-// addToPurchaseOrder for many products at once, each onto its own
+// addToPurchaseOrder for many products at once, each onto its cheapest
 // supplier's draft. One that can't go on (no supplier) doesn't stop the
 // rest: it comes back with why.
 export const addManyToPurchaseOrders = createServerFn({ method: "POST" })

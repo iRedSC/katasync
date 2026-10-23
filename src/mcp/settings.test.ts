@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { carry } from "#/purchasing/purchasing.fixtures";
 import { callTool, freshDb } from "./mcp.fixtures";
 
 let db: Db;
@@ -19,6 +20,7 @@ describe("over MCP", () => {
 			.insert(schema.suppliers)
 			.values({ code: "CANAM", name: "CanAm" })
 			.returning();
+		await carry(db, blade, canam);
 		await db.insert(schema.productSuppliers).values({
 			productId: blade,
 			supplierId: canam,

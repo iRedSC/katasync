@@ -74,6 +74,7 @@ describe("buying in packs", () => {
 		]);
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "CASE",
 			packSize: 12,
 			supplierCount: 12,
@@ -106,6 +107,7 @@ describe("buying in packs", () => {
 	test("receiving a case puts its contents on the shelf at the per-unit cost", async () => {
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "CASE",
 			packSize: 12,
 			supplierCount: 12,
@@ -141,6 +143,7 @@ describe("buying in packs", () => {
 		// A sent PO keeps its unit when the product's changes.
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "EACH",
 			packSize: 1,
 			supplierCount: 1,
@@ -181,6 +184,7 @@ describe("buying in packs", () => {
 		// A default change leaves a line with its own terms alone.
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "CASE",
 			packSize: 6,
 			supplierCount: 6,
@@ -332,7 +336,7 @@ describe("buying in packs", () => {
 		expect((await linesOf(id))[0].quantity).toBe(4);
 	});
 
-	test("only the product's own supplier's PO can set its default", async () => {
+	test("only a supplier that sells it can take a PO's terms as its default", async () => {
 		const [{ id: other }] = await db
 			.insert(schema.suppliers)
 			.values({ code: "OTHER", name: "Other" })
@@ -353,7 +357,7 @@ describe("buying in packs", () => {
 				minimumQuantity: 1,
 				makeDefault: true,
 			}),
-		).rejects.toThrow(/another supplier/);
+		).rejects.toThrow(/doesn't carry its catalog/);
 		// Nothing changed, the line included.
 		expect((await linesOf(po))[0]).toMatchObject({ unit: "EACH", quantity: 5 });
 	});
@@ -374,6 +378,7 @@ describe("buying in packs", () => {
 	test("receiving converts the cost in the one statement that reads the pack size", async () => {
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "CASE",
 			packSize: 12,
 			supplierCount: 12,
@@ -396,7 +401,7 @@ describe("buying in packs", () => {
 			queries.filter((q) => /^select .* from "product_suppliers"/.test(q)),
 		).toEqual([]);
 		const writes = queries.filter((q) =>
-			q.startsWith('update "product_suppliers"'),
+			/^\s*insert into "product_suppliers"/.test(q),
 		);
 		expect(writes).toHaveLength(1);
 		expect(writes[0]).toContain('"pack_size"');
@@ -407,6 +412,7 @@ describe("buying in packs", () => {
 		const { logging, queries } = logged();
 		await setPurchaseUnit(logging, {
 			productId: blade,
+			supplierId: canam,
 			unit: "CASE",
 			packSize: 12,
 			supplierCount: 12,
@@ -427,6 +433,7 @@ describe("buying in packs", () => {
 	test("a supplier's PACK of 5 can be one of ours: the PO says 5, stock gets 1", async () => {
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "PACK",
 			packSize: 1,
 			supplierCount: 5,
@@ -471,6 +478,7 @@ describe("buying in packs", () => {
 	test("changing only the supplier's count leaves quantity and price alone", async () => {
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "PACK",
 			packSize: 1,
 			supplierCount: 1,
@@ -479,6 +487,7 @@ describe("buying in packs", () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "PACK",
 			packSize: 1,
 			supplierCount: 5,
@@ -493,6 +502,7 @@ describe("buying in packs", () => {
 		await expect(
 			setPurchaseUnit(db, {
 				productId: blade,
+				supplierId: canam,
 				unit: "EACH",
 				packSize: 1,
 				supplierCount: 5,
@@ -505,6 +515,7 @@ describe("buying in packs", () => {
 		await expect(
 			setPurchaseUnit(db, {
 				productId: blade,
+				supplierId: canam,
 				unit: "EACH",
 				packSize: 6,
 				supplierCount: 6,
@@ -518,6 +529,7 @@ describe("buying in packs", () => {
 		await expect(addUnit(db, "bag of 50")).rejects.toThrow(/already/);
 		await setPurchaseUnit(db, {
 			productId: blade,
+			supplierId: canam,
 			unit: "BAG OF 50",
 			packSize: 50,
 			supplierCount: 50,

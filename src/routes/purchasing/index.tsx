@@ -545,7 +545,7 @@ function OrderMenu({ order: o }: { order: OrderRow }) {
 		const { id, added, alreadyOn, moved, archived } = r.value;
 		const left = [
 			alreadyOn > 0 && `${formatCount(alreadyOn)} already on it`,
-			moved > 0 && `${formatCount(moved)} now bought from another supplier`,
+			moved > 0 && `${formatCount(moved)} no longer sold by them`,
 			archived > 0 && `${formatCount(archived)} archived`,
 		].filter(Boolean);
 		toast.success(

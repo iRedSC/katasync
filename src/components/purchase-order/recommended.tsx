@@ -17,7 +17,8 @@ import { useAction } from "./use-action";
 
 // Under a draft's lines: this supplier's products worth adding, filled to
 // their max. First what needs ordering now but the PO doesn't take by itself
-// (C items), then what will need ordering before its next PO would. Says how far short of the supplier's minimum the
+// (C items, and what another supplier sells for less, flagged with who and
+// how much), then what will need ordering before its next PO would. Says how far short of the supplier's minimum the
 // draft is, since these are what fill it.
 export function Recommended({
 	detail: d,
@@ -127,6 +128,7 @@ export function Recommended({
 													{r.sku}
 													<SetsChip sets={r.why.sets} />
 													{r.critical && <Badge tone="info">Essential</Badge>}
+													{r.cheaperAt && <CheaperAt at={r.cheaperAt} />}
 												</div>
 											</div>
 										</div>
@@ -198,5 +200,24 @@ export function Recommended({
 				</div>
 			)}
 		</Card>
+	);
+}
+
+// Another supplier sells it for less, so suggestions put it on theirs. Says
+// who and by how much a piece, so adding it here is a choice made knowingly.
+function CheaperAt({ at }: { at: NonNullable<Recommendation["cheaperAt"]> }) {
+	const saved = at.ours === null ? null : at.ours - at.itemCost;
+	return (
+		<Tip
+			content={`${formatMoney(at.itemCost)} each at ${at.supplierName}${at.ours === null ? "" : `, ${formatMoney(at.ours)} here`}`}
+		>
+			<span className="inline-flex">
+				<Badge tone="warning">
+					{saved === null
+						? `Priced at ${at.supplierName}`
+						: `${formatMoney(saved)} less at ${at.supplierName}`}
+				</Badge>
+			</span>
+		</Tip>
 	);
 }

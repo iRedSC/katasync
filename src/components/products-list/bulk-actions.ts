@@ -10,9 +10,9 @@ import {
 } from "#/server/catalog";
 import {
 	addManyToPurchaseOrders,
-	setManyProductSuppliers,
+	restoreProductCatalogs,
+	setProductCatalog,
 	undoManyAddsToPurchaseOrders,
-	undoManyProductSuppliers,
 } from "#/server/purchasing";
 
 // What the action bar does to the ticked products. Each says what happened
@@ -21,7 +21,8 @@ import {
 const products = (n: number) =>
 	`${formatCount(n)} ${n === 1 ? "product" : "products"}`;
 
-// Who can go on a PO now: has a supplier and isn't on a draft already.
+// Who can go on a PO now: some supplier sells it and it isn't on a draft
+// already.
 export const orderable = (p: ProductRow) => p.supplier !== null && !p.draft;
 
 // Puts each on its supplier's draft at the suggested quantity, or the
@@ -94,50 +95,31 @@ export async function countAll(picked: ProductRow[]) {
 	});
 }
 
-export async function setSupplierOnAll(
+// Puts the ticked products in a catalog, so they're sold by whoever
+// carries it. Who reorder buys each from follows on the reload.
+export async function setCatalogOnAll(
 	picked: ProductRow[],
-	supplier: { id: number; name: string },
+	catalog: { id: number; name: string },
 ) {
-	// Tool sets are bought as their parts.
-	const ids = new Set(
-		picked.filter((p) => p.kind !== "bundle").map((p) => p.id),
-	);
-	const sets = picked.length - ids.size;
-	if (ids.size === 0) {
-		toast.error("Tool sets are bought as their parts; set suppliers on those");
-		return;
-	}
+	const ids = picked.map((p) => p.id);
 	const r = await optimism.change({
-		label: `Supplier of ${products(ids.size)}`,
-		patch: patchProducts(ids, (p) => ({ ...p, supplier })),
 		send: () =>
-			setManyProductSuppliers({
-				data: { productIds: [...ids], supplierId: supplier.id },
-			}),
+			setProductCatalog({ data: { productIds: ids, catalogId: catalog.id } }),
 	});
 	if (!r) return;
-	const { changed } = r.value;
-	const skipped =
-		sets > 0
-			? ` (${formatCount(sets)} tool ${sets === 1 ? "set" : "sets"} left out)`
-			: "";
-	if (changed.length === 0) {
-		toast(`Already from ${supplier.name}${skipped}`);
+	const before = r.value;
+	const moved = before.filter((b) => b.catalogId !== catalog.id).length;
+	if (moved === 0) {
+		toast(`Already in ${catalog.name}`);
 		return;
 	}
-	offerUndo(`${products(changed.length)} now from ${supplier.name}${skipped}`, {
+	offerUndo(`${products(moved)} now in ${catalog.name}`, {
 		tone: "success",
 		undo: async () => {
 			const back = await optimism.change({
-				send: () =>
-					undoManyProductSuppliers({
-						data: { supplierId: supplier.id, changed },
-					}),
+				send: () => restoreProductCatalogs({ data: { before } }),
 			});
-			if (!back) return null;
-			return back.value < changed.length
-				? `Put ${formatCount(back.value)} of ${formatCount(changed.length)} back; the rest changed since`
-				: `Put ${products(changed.length)} back`;
+			return back && `Put ${products(moved)} back`;
 		},
 	});
 }

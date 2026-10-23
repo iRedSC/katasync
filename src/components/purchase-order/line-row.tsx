@@ -173,7 +173,7 @@ export function LineRow({
 									makeDefault: false,
 								},
 							}),
-						// Only the product's own supplier's terms can change here.
+						// Only while this PO's supplier sells it can its terms change.
 						...(l.linkSupplierId === d.supplier.id
 							? {
 									current: {
@@ -193,10 +193,7 @@ export function LineRow({
 										}),
 								}
 							: {
-									noDefaultReason:
-										l.linkSupplierId === null
-											? "No supplier; set one on its page"
-											: "Bought from another supplier",
+									noDefaultReason: "Not in a catalog this supplier carries",
 								}),
 					}}
 				/>

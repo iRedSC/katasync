@@ -1,6 +1,6 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { productSuppliers, products, settings, suppliers } from "#/db/schema";
+import { products, settings, supplierOffers, suppliers } from "#/db/schema";
 import {
 	DEFAULT_COVER_DAYS,
 	forecastMax,
@@ -67,14 +67,20 @@ export async function defaultRanges(
 	const [min, linked, planned] = await Promise.all([
 		defaultMinStock(db),
 		db
+			// Each product's cheapest supplier, the one reorder buys from.
 			.select({
-				productId: productSuppliers.productId,
-				supplierId: productSuppliers.supplierId,
+				productId: supplierOffers.productId,
+				supplierId: supplierOffers.supplierId,
 				coverDays: suppliers.coverDays,
 			})
-			.from(productSuppliers)
-			.innerJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
-			.where(inArray(productSuppliers.productId, productIds)),
+			.from(supplierOffers)
+			.innerJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
+			.where(
+				and(
+					inArray(supplierOffers.productId, productIds),
+					eq(supplierOffers.cheapest, true),
+				),
+			),
 		plan ?? loadPlan(db),
 	]);
 	const supplier = new Map(linked.map((l) => [l.productId, l]));

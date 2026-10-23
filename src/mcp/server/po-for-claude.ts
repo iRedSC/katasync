@@ -168,7 +168,7 @@ export async function orderForClaude(db: Db, id: number) {
 			...(isBackOrdered(l) ? { backOrderedSince: l.backOrderedAt } : {}),
 			...(l.receivingNote ? { receivingNote: l.receivingNote } : {}),
 			...(l.linkSupplierId !== po.supplier.id
-				? { note: "now bought from another supplier" }
+				? { note: "this supplier no longer sells it" }
 				: l.defaultUnit !== l.unit ||
 						l.defaultPackSize !== l.packSize ||
 						l.defaultSupplierCount !== l.supplierCount ||

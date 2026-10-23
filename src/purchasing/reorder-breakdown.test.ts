@@ -11,6 +11,7 @@ import {
 	purchasingBuilders,
 } from "./purchasing.fixtures";
 import {
+	DEFAULT_SETTINGS,
 	recommendedAdditions,
 	reorderBreakdown,
 	suggestPurchases,
@@ -107,7 +108,13 @@ describe("tool set parts", () => {
 			["BLADE", 2, true],
 		]);
 		expect(s.critical).toBe(1);
-		const r = await recommendedAdditions(db, canam, new Set(), now);
+		const r = await recommendedAdditions(
+			db,
+			canam,
+			new Set(),
+			DEFAULT_SETTINGS,
+			now,
+		);
 		expect(r.map((l) => l.sku)).toEqual(["LONER"]);
 	});
 });

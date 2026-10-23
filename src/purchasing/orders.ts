@@ -46,10 +46,18 @@ export {
 } from "#/purchasing/orders/set-part-edits";
 export { partsOfSets, setPartsOf } from "#/purchasing/orders/set-parts";
 export {
+	applySettings,
+	previewSettings,
+	restoreSettings,
+	type SettingsUndo,
+} from "#/purchasing/orders/suggestion-settings";
+export {
 	draftChanges,
 	draftFromSuggestions,
 	openSuggested,
 	refreshSuggested,
+	settingsOf,
+	suggestionOf,
 	updateFromSuggestions,
 } from "#/purchasing/orders/suggestions";
 export type { AddedLine, DeletedDraft } from "#/purchasing/orders/types";

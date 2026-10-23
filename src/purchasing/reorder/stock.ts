@@ -3,12 +3,12 @@ import type { Db } from "#/db/client";
 import {
 	locations,
 	productComponents,
-	productSuppliers,
 	products,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	purchaseOrders,
 	stockLevels,
+	supplierOffers,
 	suppliers,
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
@@ -149,8 +149,8 @@ export async function stockAndOrders(db: Db, productIds?: number[]) {
 	return { onHand, onOrder };
 }
 
-// Each product's line on an open draft. A product has one supplier, so one
-// draft; if it moved suppliers with a draft still open, the newest PO wins.
+// Each product's line on an open draft. Suggestions keep a product to one
+// draft (plannedFrom), but one added by hand can be on two; the newest wins.
 export async function draftLines(db: Db) {
 	const rows = await db
 		.select({
@@ -238,8 +238,14 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 			supplierId: suppliers.id,
 		})
 		.from(products)
-		.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
-		.leftJoin(suppliers, eq(suppliers.id, productSuppliers.supplierId))
+		.leftJoin(
+			supplierOffers,
+			and(
+				eq(supplierOffers.productId, products.id),
+				eq(supplierOffers.cheapest, true),
+			),
+		)
+		.leftJoin(suppliers, eq(suppliers.id, supplierOffers.supplierId))
 		// Not counted sells without limit, so it can't run out.
 		.where(and(inArray(products.id, aIds), isNull(products.notCountedSince)));
 

@@ -14,9 +14,9 @@ import {
 	orderLines,
 	orders,
 	productAliases,
-	productSuppliers,
 	products,
 	stores,
+	supplierOffers,
 } from "#/db/schema";
 import { LedgerError } from "#/inventory/ledger";
 import { carried } from "#/products/archive";
@@ -191,7 +191,7 @@ export async function listUnmatched(
 }
 
 async function loadCatalog(db: Db) {
-	const [rows, aliases] = await Promise.all([
+	const [rows, aliases, skus] = await Promise.all([
 		db
 			.select({
 				id: products.id,
@@ -200,16 +200,28 @@ async function loadCatalog(db: Db) {
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 				kind: products.kind,
-				supplierSku: productSuppliers.supplierSku,
 			})
 			.from(products)
-			.leftJoin(productSuppliers, eq(productSuppliers.productId, products.id))
 			.where(carried),
 		db.select().from(productAliases),
+		// Every supplier's part number for it, since a listing may use any.
+		db
+			.select({
+				productId: supplierOffers.productId,
+				supplierSku: supplierOffers.supplierSku,
+			})
+			.from(supplierOffers)
+			.where(isNotNull(supplierOffers.supplierSku)),
 	]);
 	const codes = new Map<number, string[]>();
 	for (const a of aliases)
 		codes.set(a.productId, [...(codes.get(a.productId) ?? []), a.alias]);
+	for (const s of skus)
+		if (s.supplierSku)
+			codes.set(s.productId, [
+				...(codes.get(s.productId) ?? []),
+				s.supplierSku,
+			]);
 	return rows.map((p): Candidate & { imageUrl: string | null } => ({
 		productId: p.id,
 		sku: p.sku,
@@ -217,10 +229,7 @@ async function loadCatalog(db: Db) {
 		variantName: p.variantName,
 		imageUrl: p.imageUrl,
 		kind: p.kind,
-		codes: [
-			...(codes.get(p.id) ?? []),
-			...(p.supplierSku ? [p.supplierSku] : []),
-		],
+		codes: [...new Set(codes.get(p.id) ?? [])],
 	}));
 }
 

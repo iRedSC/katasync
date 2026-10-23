@@ -10,6 +10,16 @@ export {
 	undoManyAddsToPurchaseOrders,
 } from "#/server/purchasing/add-products";
 export {
+	type CatalogRow,
+	deleteCatalog,
+	listCatalogs,
+	makeCatalog,
+	renameCatalog,
+	restoreProductCatalogs,
+	setProductCatalog,
+	setSupplierCarries,
+} from "#/server/purchasing/catalogs";
+export {
 	previewDamageReport,
 	recordPurchaseDamage,
 	removePurchaseDamage,
@@ -23,13 +33,16 @@ export {
 export {
 	addRecommended,
 	addSetToOtherPos,
+	applySuggestionSettings,
 	createDraft,
 	createDraftFromSuggestions,
 	editDraft,
 	lockLine,
 	openSuggestedPurchaseOrder,
+	previewSuggestionSettings,
 	setLine,
 	skipPartOfSet,
+	undoSuggestionSettings,
 	updateDraftFromSuggestions,
 } from "#/server/purchasing/drafts";
 export { setPoFileOff } from "#/server/purchasing/files";
@@ -93,9 +106,7 @@ export {
 	getProductSupplier,
 	listSuppliers,
 	type SupplierRow,
-	setManyProductSuppliers,
-	setProductSupplier,
 	setSupplierEmail,
-	undoManyProductSuppliers,
+	setSupplierTerms,
 	updateSupplier,
 } from "#/server/purchasing/suppliers";

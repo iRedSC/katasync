@@ -9,6 +9,7 @@ import {
 	purchaseOrderLines,
 	purchaseOrderReceipts,
 	stockLevels,
+	supplierOffers,
 } from "#/db/schema";
 import { postReceipt, undoBatch } from "#/inventory/ledger";
 import { isOurs } from "#/inventory/locations";
@@ -411,8 +412,8 @@ export function averageCost(p: {
 
 // unitCost is what each one cost after discounts; price is before them, and
 // becomes the supplier's price, so a one-off discount doesn't carry over. The
-// supplier's price only changes while the product is still bought from the PO's
-// supplier: a product moved to another supplier keeps that one's price.
+// supplier's price only changes while it still sells the product (carries
+// its catalog), so terms don't pile up where reorder never looks.
 async function averageInCost(
 	db: Db,
 	p: {
@@ -439,18 +440,16 @@ async function averageInCost(
 		.where(eq(products.id, p.productId));
 	// One statement, so the pack size it multiplies by is the row's current one
 	// even if a new default is being saved at the same time. Same rounding as
-	// perPack.
-	await db
-		.update(productSuppliers)
-		.set({
-			cost: sql`round(${p.price}::numeric * ${productSuppliers.packSize}, 4)`,
-		})
-		.where(
-			and(
-				eq(productSuppliers.productId, p.productId),
-				eq(productSuppliers.supplierId, p.supplierId),
-			),
-		);
+	// perPack. A supplier with no terms of its own yet sells in EACH.
+	await db.execute(sql`
+		insert into ${productSuppliers} (product_id, supplier_id, supplier_count, cost)
+		select ${supplierOffers.productId}, ${supplierOffers.supplierId}, 1,
+			round(${p.price}::numeric, 4)
+		from ${supplierOffers}
+		where ${supplierOffers.productId} = ${p.productId}
+			and ${supplierOffers.supplierId} = ${p.supplierId}
+		on conflict (product_id, supplier_id) do update
+			set cost = round(${p.price}::numeric * ${productSuppliers.packSize}, 4)`);
 }
 
 // The PO a ledger batch belongs to, when it's a receipt or a receipt's undo.

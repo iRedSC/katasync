@@ -2,13 +2,14 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
-import { productSuppliers, purchaseOrderLines } from "#/db/schema";
+import { purchaseOrderLines, supplierOffers } from "#/db/schema";
 import { recordInvoice, removeInvoice } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
 import {
 	addLine,
 	addSetToOtherDrafts,
 	amendLine,
+	applySettings,
 	deleteDraft,
 	draftFromSuggestions,
 	lockDraftLine,
@@ -17,13 +18,20 @@ import {
 	PurchaseOrderError,
 	sentDay,
 	setDraftLine,
+	settingsOf,
 	skipSetPart,
 	updateDraft,
 } from "#/purchasing/orders";
 import { supplierByRef } from "#/purchasing/suppliers";
 import { setLineTerms } from "#/purchasing/units";
 import { registerDiscountTools } from "./discount-tools";
-import { lineOf, ourLocation, productBySku, productsBySku } from "./lookups";
+import {
+	catalogIds,
+	lineOf,
+	ourLocation,
+	productBySku,
+	productsBySku,
+} from "./lookups";
 import { orderForClaude } from "./po-for-claude";
 import { json, unitTerms, WRITE } from "./tool-shapes";
 
@@ -34,7 +42,7 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 		"set_draft_po_lines",
 		{
 			description:
-				"Sets how many of each product the draft POs order, putting each on its supplier's draft (made if needed). Say whether quantities count single items or the product's purchase unit (e.g. CASE of 12): items are rounded up to whole units, and the result says what that came to. 0 takes a line off. A line already on the draft is set to the new quantity, not added to. Products without a supplier, tool sets, and unknown SKUs are skipped and reported.",
+				"Sets how many of each product the draft POs order, putting each on its cheapest supplier's draft (made if needed). Say whether quantities count single items or the product's purchase unit (e.g. CASE of 12): items are rounded up to whole units, and the result says what that came to. 0 takes a line off. A line already on the draft is set to the new quantity, not added to. Products no supplier sells, tool sets, and unknown SKUs are skipped and reported.",
 			inputSchema: {
 				quantity_in: z
 					.enum(["items", "purchase_unit"])
@@ -69,11 +77,16 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 				try {
 					const product = await productBySku(db, line.sku);
 					const [link] = await db
-						.select({ supplierId: productSuppliers.supplierId })
-						.from(productSuppliers)
-						.where(eq(productSuppliers.productId, product.id));
+						.select({ supplierId: supplierOffers.supplierId })
+						.from(supplierOffers)
+						.where(
+							and(
+								eq(supplierOffers.productId, product.id),
+								eq(supplierOffers.cheapest, true),
+							),
+						);
 					if (!link) {
-						skipped.push({ sku: line.sku, reason: "no supplier set" });
+						skipped.push({ sku: line.sku, reason: "no supplier sells it" });
 						continue;
 					}
 					const po = await openDraft(db, link.supplierId);
@@ -130,6 +143,51 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 			const { id } = await supplierByRef(db, supplier);
 			const po = await draftFromSuggestions(db, id);
 			return json(await orderForClaude(db, po));
+		},
+	);
+
+	server.registerTool(
+		"set_po_suggestion_settings",
+		{
+			description:
+				"Changes what a draft or suggested PO's suggestions are worked out with, then makes its lines match: unlocked lines follow the new suggestion up or down, unlocked ones it no longer wants come off, new ones are added. Locked lines and tool sets stay. A suggested PO becomes a draft. Omitted settings keep their value. Returns the old settings, to set them back.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				cover_days: z
+					.number()
+					.int()
+					.min(1)
+					.max(365)
+					.nullable()
+					.optional()
+					.describe("Days of sales to cover; null follows the supplier's"),
+				exclude_catalogs: z
+					.array(z.string())
+					.optional()
+					.describe(
+						"Catalogs of the supplier's to leave out; [] leaves none out",
+					),
+				include_pricier: z
+					.boolean()
+					.optional()
+					.describe(
+						"Also suggest what this supplier sells but another sells for less",
+					),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, cover_days, exclude_catalogs, include_pricier }) => {
+			const before = await settingsOf(db, po);
+			const named =
+				exclude_catalogs === undefined
+					? before.excludedCatalogs
+					: await catalogIds(db, exclude_catalogs);
+			const { undo: _, ...changed } = await applySettings(db, po, {
+				coverDays: cover_days === undefined ? before.coverDays : cover_days,
+				excludedCatalogs: named,
+				includePricier: include_pricier ?? before.includePricier,
+			});
+			return json({ changed, before, order: await orderForClaude(db, po) });
 		},
 	);
 

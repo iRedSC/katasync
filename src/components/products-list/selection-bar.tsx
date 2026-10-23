@@ -12,7 +12,7 @@ import {
 	addAllToPos,
 	countAll,
 	orderable,
-	setSupplierOnAll,
+	setCatalogOnAll,
 } from "#/components/products-list/bulk-actions";
 import {
 	Command,
@@ -32,9 +32,9 @@ import { formatCount } from "#/lib/format";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import type { ProductRow } from "#/server/catalog";
-import { listSuppliers, type SupplierRow } from "#/server/purchasing";
+import { type CatalogRow, listCatalogs } from "#/server/purchasing";
 
-type Running = "po" | "count" | "supplier" | null;
+type Running = "po" | "count" | "catalog" | null;
 
 // Floats at the foot of the page while anything is ticked, with what can be
 // done to all of it at once.
@@ -99,10 +99,10 @@ export function SelectionBar({
 						to POs
 					</BarButton>
 				</Tip>
-				<SupplierPicker
+				<CatalogPicker
 					disabled={running !== null}
-					busy={running === "supplier"}
-					onPick={(s) => run("supplier", () => setSupplierOnAll(picked, s))}
+					busy={running === "catalog"}
+					onPick={(c) => run("catalog", () => setCatalogOnAll(picked, c))}
 				/>
 				<BarButton
 					disabled={running !== null}
@@ -160,50 +160,51 @@ function BarButton({
 	);
 }
 
-// Who the ticked products come from. Suppliers load the first time it opens.
-function SupplierPicker({
+// Which catalog the ticked products are in, which says who sells them.
+// Catalogs load the first time it opens.
+function CatalogPicker({
 	disabled,
 	busy,
 	onPick,
 }: {
 	disabled: boolean;
 	busy: boolean;
-	onPick: (s: { id: number; name: string }) => void;
+	onPick: (c: { id: number; name: string }) => void;
 }) {
 	const [open, setOpen] = useState(false);
-	const [suppliers, setSuppliers] = useState<SupplierRow[] | null>(null);
+	const [catalogs, setCatalogs] = useState<CatalogRow[] | null>(null);
 	return (
 		<Popover
 			open={open}
 			onOpenChange={(next) => {
 				setOpen(next);
-				if (next && suppliers === null) listSuppliers().then(setSuppliers);
+				if (next && catalogs === null) listCatalogs().then(setCatalogs);
 			}}
 		>
 			<PopoverTrigger asChild>
 				<BarButton disabled={disabled} busy={busy} icon={<Truck />}>
-					Set supplier
+					Set catalog
 				</BarButton>
 			</PopoverTrigger>
 			<PopoverContent side="top" className="w-72 p-0">
 				<Command>
-					<CommandInput placeholder="Supplier" />
+					<CommandInput placeholder="Catalog" />
 					<CommandList>
 						<CommandEmpty>
-							{suppliers === null ? "Loading…" : "No supplier by that name"}
+							{catalogs === null ? "Loading…" : "No catalog by that name"}
 						</CommandEmpty>
-						{suppliers?.map(({ supplier, products }) => (
+						{catalogs?.map((c) => (
 							<CommandItem
-								key={supplier.id}
-								value={supplier.name}
+								key={c.id}
+								value={c.name}
 								onSelect={() => {
 									setOpen(false);
-									onPick({ id: supplier.id, name: supplier.name });
+									onPick({ id: c.id, name: c.name });
 								}}
 							>
-								<span className="flex-1 truncate">{supplier.name}</span>
+								<span className="flex-1 truncate">{c.name}</span>
 								<span className="text-xs text-muted-foreground tabular-nums">
-									{formatCount(products)}
+									{formatCount(c.products)}
 								</span>
 							</CommandItem>
 						))}

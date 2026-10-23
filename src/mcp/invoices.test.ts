@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { carry } from "#/purchasing/purchasing.fixtures";
 import { createProduct } from "#/test/db";
 import { callTool, freshDb } from "./mcp.fixtures";
 
@@ -40,13 +41,15 @@ describe("over MCP", () => {
 				[box, "TTTEZ12TT"],
 				[flusher, null],
 				[knife, null],
-			] as const)
+			] as const) {
+				await carry(db, productId, tsw);
 				await db.insert(schema.productSuppliers).values({
 					productId,
 					supplierId: tsw,
 					supplierSku,
 					supplierCount: 1,
 				});
+			}
 			const [location] = await db.select().from(schema.locations);
 			const [order] = await db
 				.insert(schema.purchaseOrders)
@@ -221,6 +224,7 @@ describe("over MCP", () => {
 				.insert(schema.suppliers)
 				.values({ code: "CANAM", name: "CanAm" })
 				.returning();
+			await carry(db, other, canam);
 			await db
 				.insert(schema.productSuppliers)
 				.values({ productId: other, supplierId: canam, supplierCount: 1 });
@@ -239,7 +243,10 @@ describe("over MCP", () => {
 				kept: [{ sku: "TT-EZ12TT", ours: "TTTEZ12TT", given: "OTHER" }],
 				skipped: [
 					{ sku: "NOPE", reason: "no such SKU" },
-					{ sku: "ELSEWHERE", reason: "bought from another supplier" },
+					{
+						sku: "ELSEWHERE",
+						reason: "not in a catalog this supplier carries",
+					},
 				],
 			});
 		});
