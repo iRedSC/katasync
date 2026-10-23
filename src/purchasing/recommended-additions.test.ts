@@ -32,6 +32,9 @@ beforeEach(async () => {
 
 describe("recommendedAdditions", () => {
 	test("lists what will need ordering within cover days, soonest first", async () => {
+		const leader = await createProduct(db, "LEADER", "simple");
+		await supply(leader, 2);
+		await sell(leader, 9000);
 		const soon = await createProduct(db, "SOON", "simple");
 		const later = await createProduct(db, "LATER", "simple");
 		const far = await createProduct(db, "FAR", "simple");
@@ -45,6 +48,10 @@ describe("recommendedAdditions", () => {
 		await stock(far, 55);
 		await stock(now_, 5);
 		await stock(onDraft, 12);
+		await db
+			.update(schema.products)
+			.set({ critical: true })
+			.where(eq(schema.products.id, now_));
 
 		const r = await recommendedAdditions(
 			db,
@@ -53,13 +60,12 @@ describe("recommendedAdditions", () => {
 			DEFAULT_SETTINGS,
 			now,
 		);
-		// All are A items whose sales came in one order, so safety stock is
-		// capped at the lead time's 10: the reorder point is 20 and a top-up goes
-		// to 40. NOW needs ordering today, so it's a suggestion instead; FAR
-		// lasts past cover.
+		// The leader makes these C items; safety stock is capped at 10, so the
+		// reorder point is 20 and a top-up goes to 40. NOW is marked critical,
+		// so it's a suggestion instead; FAR lasts past cover.
 		expect(r.map((l) => [l.sku, l.due, l.quantity, l.critical])).toEqual([
-			["SOON", 3, 17, true],
-			["LATER", 10, 10, true],
+			["SOON", 3, 17, false],
+			["LATER", 10, 10, false],
 		]);
 	});
 
@@ -98,7 +104,6 @@ describe("recommendedAdditions", () => {
 		expect(r.map((l) => [l.sku, l.due, l.quantity])).toEqual([
 			["COUNTED", "now", 11],
 			["SLOW", "now", 12],
-			["TOP", 3, 17],
 		]);
 	});
 });

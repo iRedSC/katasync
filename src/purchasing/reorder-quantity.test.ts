@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { daysUntilReorder, reorderQuantity } from "./reorder";
+import { coverQuantity } from "./reorder/quantity";
 
 describe("reorderQuantity", () => {
 	const base = {
@@ -24,6 +25,18 @@ describe("reorderQuantity", () => {
 	test("counts what's already on order", () => {
 		expect(reorderQuantity({ ...base, onHand: 4, onOrder: 6 })).toBe(0);
 		expect(reorderQuantity({ ...base, onHand: 4, onOrder: 5 })).toBe(21);
+	});
+
+	test("cover quantities include future needs without changing when reorder is due", () => {
+		const future = { ...base, coverDays: 180, onHand: 100 };
+		expect(reorderQuantity(future)).toBe(0);
+		expect(coverQuantity(future)).toBe(90);
+		expect(coverQuantity({ ...future, coverDays: 30 })).toBe(0);
+		expect(coverQuantity({ ...future, onOrder: 90 })).toBe(0);
+		expect(coverQuantity({ ...future, onHand: 189 })).toBe(1);
+		expect(coverQuantity({ ...future, onHand: 190 })).toBe(0);
+		expect(coverQuantity({ ...future, onHand: 191 })).toBe(0);
+		expect(coverQuantity({ ...future, dailyDemand: 0 })).toBe(0);
 	});
 
 	test("rounds up to the supplier's minimum", () => {
