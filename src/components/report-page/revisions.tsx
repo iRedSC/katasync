@@ -11,6 +11,7 @@ import {
 import { useState } from "react";
 import { Badge, Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import { formatDateTime } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { type Change, reportChanges } from "#/reports/diff";
@@ -226,7 +227,9 @@ function RevisionRow({
 				>
 					{r.digest.slice(0, 12)}
 				</code>
-				{superseded && <Badge>Superseded by {r.state.by}</Badge>}
+				{r.state.kind === "superseded" && (
+					<Badge>Superseded by {r.state.by}</Badge>
+				)}
 				{handedOff && superseded && (
 					<Badge tone="critical">Revised after handoff</Badge>
 				)}
@@ -250,20 +253,20 @@ function RevisionRow({
 				{r.files
 					.filter((f) => f.name.endsWith(".csv"))
 					.map((f) => (
-						<Button
-							key={f.name}
-							size="xs"
-							variant="ghost"
-							title={`${f.bytes} bytes, sha256 ${f.sha256}`}
-							onClick={() => download(f.name)}
-						>
-							{fetching === f.name ? (
-								<Loader2 className="animate-spin" />
-							) : (
-								<Download />
-							)}
-							{f.name}
-						</Button>
+						<Tip key={f.name} content={`${f.bytes} bytes, sha256 ${f.sha256}`}>
+							<Button
+								size="xs"
+								variant="ghost"
+								onClick={() => download(f.name)}
+							>
+								{fetching === f.name ? (
+									<Loader2 className="animate-spin" />
+								) : (
+									<Download />
+								)}
+								{f.name}
+							</Button>
+						</Tip>
 					))}
 				{previous && (
 					<Button
