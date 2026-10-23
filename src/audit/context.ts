@@ -19,8 +19,8 @@ holder[key] = storage;
 export function runAs<T>(
 	actor: Actor,
 	operation: string | null,
-	work: () => T,
-): Promise<Awaited<T>> {
+	work: () => T | PromiseLike<T>,
+): Promise<T> {
 	const context: AuditContext = Object.freeze({
 		actor,
 		operation: operation?.slice(0, OPERATION_LENGTH) ?? null,
