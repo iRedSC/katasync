@@ -6,6 +6,7 @@ import { products, supplierOffers } from "#/db/schema";
 import {
 	catalogsOf,
 	deleteCatalog,
+	describeCatalog,
 	ensureCatalog,
 	renameCatalog,
 	setCarried,
@@ -79,6 +80,24 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 		async ({ catalog, to }) => {
 			await renameCatalog(db, await catalogByName(db, catalog), to);
 			return json({ renamed: catalog, to });
+		},
+	);
+
+	server.registerTool(
+		"describe_catalog",
+		{
+			description:
+				'Sets what a catalog is about, e.g. "Taping tools, banjos"; searches for catalogs match it. Null clears it. Returns the description before.',
+			inputSchema: { catalog: z.string(), description: z.string().nullable() },
+			annotations: WRITE,
+		},
+		async ({ catalog, description }) => {
+			const was = await describeCatalog(
+				db,
+				await catalogByName(db, catalog),
+				description,
+			);
+			return json({ catalog, description, was });
 		},
 	);
 

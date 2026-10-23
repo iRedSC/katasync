@@ -7,6 +7,7 @@ import {
 	Truck,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { CatalogMark } from "#/components/catalog-mark";
 import {
 	ClassCell,
 	CountedCell,
@@ -205,6 +206,20 @@ const COLUMN_DEFS = {
 				<span className="text-faint">None</span>
 			),
 	},
+	catalog: {
+		label: "Catalog",
+		sort: "catalog",
+		tip: "The line it's sold in; every supplier carrying it sells it",
+		cell: ({ product }) =>
+			product.catalog ? (
+				<span className="flex max-w-44 items-center gap-1.5">
+					<CatalogMark catalog={product.catalog} size="xs" />
+					<span className="truncate">{product.catalog.name}</span>
+				</span>
+			) : (
+				<span className="text-faint">None</span>
+			),
+	},
 	type: {
 		label: "Type",
 		sort: "type",
@@ -219,7 +234,7 @@ const COLUMN_DEFS = {
 	tags: {
 		label: "Tags",
 		sort: "tags",
-		from: "xl",
+		from: "2xl",
 		cell: ({ product }) => <TagsCell tags={product.tags} />,
 	},
 	listing: {
@@ -281,7 +296,7 @@ export const LENSES = {
 	catalog: {
 		label: "Catalog",
 		icon: Store,
-		columns: ["type", "vendor", "tags", "listing", "supplier"],
+		columns: ["catalog", "type", "vendor", "tags", "listing", "supplier"],
 	},
 } as const satisfies Record<string, Lens>;
 export type LensKey = keyof typeof LENSES;

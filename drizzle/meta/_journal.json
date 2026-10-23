@@ -771,6 +771,27 @@
       "when": 1792762735124,
       "tag": "0109_catalogs",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1792767082447,
+      "tag": "0110_catalog_descriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1792767131268,
+      "tag": "0111_catalog_photos",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1792768778687,
+      "tag": "0112_grant_catalog_photos",
+      "breakpoints": true
     }
   ]
 }

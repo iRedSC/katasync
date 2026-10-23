@@ -2,37 +2,25 @@ import NumberFlow from "@number-flow/react";
 import {
 	ClipboardList,
 	Copy,
+	Library,
 	Loader2,
 	PackagePlus,
-	Truck,
 	X,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { AddToCatalog } from "#/components/products-list/add-to-catalog";
 import {
 	addAllToPos,
 	countAll,
 	orderable,
 	setCatalogOnAll,
 } from "#/components/products-list/bulk-actions";
-import {
-	Command,
-	CommandEmpty,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "#/components/ui/command";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "#/components/ui/popover";
 import { Tip } from "#/components/ui/tooltip";
 import { copyText } from "#/lib/copy";
 import { formatCount } from "#/lib/format";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import type { ProductRow } from "#/server/catalog";
-import { type CatalogRow, listCatalogs } from "#/server/purchasing";
 
 type Running = "po" | "count" | "catalog" | null;
 
@@ -99,10 +87,16 @@ export function SelectionBar({
 						to POs
 					</BarButton>
 				</Tip>
-				<CatalogPicker
+				<AddToCatalog
+					picked={picked}
 					disabled={running !== null}
 					busy={running === "catalog"}
-					onPick={(c) => run("catalog", () => setCatalogOnAll(picked, c))}
+					onAdd={(c) => run("catalog", () => setCatalogOnAll(picked, c))}
+					trigger={(t) => (
+						<BarButton {...t} icon={<Library />}>
+							Add to catalog
+						</BarButton>
+					)}
 				/>
 				<BarButton
 					disabled={running !== null}
@@ -157,61 +151,6 @@ function BarButton({
 			{busy ? <Loader2 className="animate-spin" /> : icon}
 			{children}
 		</button>
-	);
-}
-
-// Which catalog the ticked products are in, which says who sells them.
-// Catalogs load the first time it opens.
-function CatalogPicker({
-	disabled,
-	busy,
-	onPick,
-}: {
-	disabled: boolean;
-	busy: boolean;
-	onPick: (c: { id: number; name: string }) => void;
-}) {
-	const [open, setOpen] = useState(false);
-	const [catalogs, setCatalogs] = useState<CatalogRow[] | null>(null);
-	return (
-		<Popover
-			open={open}
-			onOpenChange={(next) => {
-				setOpen(next);
-				if (next && catalogs === null) listCatalogs().then(setCatalogs);
-			}}
-		>
-			<PopoverTrigger asChild>
-				<BarButton disabled={disabled} busy={busy} icon={<Truck />}>
-					Set catalog
-				</BarButton>
-			</PopoverTrigger>
-			<PopoverContent side="top" className="w-72 p-0">
-				<Command>
-					<CommandInput placeholder="Catalog" />
-					<CommandList>
-						<CommandEmpty>
-							{catalogs === null ? "Loading…" : "No catalog by that name"}
-						</CommandEmpty>
-						{catalogs?.map((c) => (
-							<CommandItem
-								key={c.id}
-								value={c.name}
-								onSelect={() => {
-									setOpen(false);
-									onPick({ id: c.id, name: c.name });
-								}}
-							>
-								<span className="flex-1 truncate">{c.name}</span>
-								<span className="text-xs text-muted-foreground tabular-nums">
-									{formatCount(c.products)}
-								</span>
-							</CommandItem>
-						))}
-					</CommandList>
-				</Command>
-			</PopoverContent>
-		</Popover>
 	);
 }
 

@@ -1,6 +1,7 @@
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	catalogPhotos,
 	catalogs,
 	productSuppliers,
 	products,
@@ -8,6 +9,7 @@ import {
 	supplierOffers,
 	suppliers,
 } from "#/db/schema";
+import { imageType } from "#/purchasing/damage";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
 // Catalogs: the lines products are sold in. A product is in one catalog at
@@ -29,11 +31,17 @@ export function cheapestOffers(db: Db) {
 		.as("cheapest_offer");
 }
 
-// Every catalog, by name, with how many products it holds and who carries it.
+// Every catalog, by name, with what it's about, how many products it holds,
+// and who carries it.
 export async function listCatalogs(db: Db) {
 	const [rows, sizes, carriers] = await Promise.all([
 		db
-			.select({ id: catalogs.id, name: catalogs.name })
+			.select({
+				id: catalogs.id,
+				name: catalogs.name,
+				description: catalogs.description,
+				photoId: catalogs.photoId,
+			})
 			.from(catalogs)
 			.orderBy(asc(catalogs.name)),
 		db
@@ -90,6 +98,95 @@ export async function ensureCatalog(db: Db, raw: string) {
 	return again.id;
 }
 
+// A new catalog. Unlike ensureCatalog, a name already taken is refused:
+// someone making one on purpose means a new one.
+export async function createCatalog(
+	db: Db,
+	input: { name: string; description: string | null },
+) {
+	const name = catalogName(input.name);
+	const taken = new PurchaseOrderError(`There's already a catalog "${name}"`);
+	const [clash] = await db
+		.select({ id: catalogs.id })
+		.from(catalogs)
+		.where(sql`lower(${catalogs.name}) = lower(${name})`);
+	if (clash) throw taken;
+	const [made] = await db
+		.insert(catalogs)
+		.values({ name, description: description(input.description) })
+		.onConflictDoNothing()
+		.returning({ id: catalogs.id });
+	if (!made) throw taken;
+	return made.id;
+}
+
+const description = (raw: string | null) => raw?.trim() || null;
+
+// Says what's in a catalog, which its search matches too. Returns the
+// description before, for undo.
+export async function describeCatalog(db: Db, id: number, raw: string | null) {
+	return db.transaction(async (tx) => {
+		const [was] = await tx
+			.select({ description: catalogs.description })
+			.from(catalogs)
+			.where(eq(catalogs.id, id))
+			.for("update");
+		if (!was) throw new PurchaseOrderError("No such catalog");
+		await tx
+			.update(catalogs)
+			.set({ description: description(raw) })
+			.where(eq(catalogs.id, id));
+		return was.description;
+	});
+}
+
+// Most a catalog photo may be once shrunk in the browser.
+export const MAX_CATALOG_PHOTO_BYTES = 2_000_000;
+
+// Keeps an uploaded photo for a catalog to show. Returns its id.
+export async function addCatalogPhoto(db: Db, bytes: Uint8Array) {
+	const contentType = imageType(bytes);
+	if (!contentType)
+		throw new PurchaseOrderError("Photos must be JPEG, PNG, or WebP");
+	if (bytes.length > MAX_CATALOG_PHOTO_BYTES)
+		throw new PurchaseOrderError("That photo is too big; try a smaller one");
+	const [made] = await db
+		.insert(catalogPhotos)
+		.values({ contentType, data: Buffer.from(bytes) })
+		.returning({ id: catalogPhotos.id });
+	return made.id;
+}
+
+export async function catalogPhoto(db: Db, id: number) {
+	const [photo] = await db
+		.select({
+			contentType: catalogPhotos.contentType,
+			data: catalogPhotos.data,
+		})
+		.from(catalogPhotos)
+		.where(eq(catalogPhotos.id, id));
+	return photo ?? null;
+}
+
+// Shows a photo for a catalog, or none with null. Returns the one before,
+// which is kept, so undo puts it back.
+export async function setCatalogPhoto(
+	db: Db,
+	id: number,
+	photoId: number | null,
+) {
+	return db.transaction(async (tx) => {
+		const [was] = await tx
+			.select({ photoId: catalogs.photoId })
+			.from(catalogs)
+			.where(eq(catalogs.id, id))
+			.for("update");
+		if (!was) throw new PurchaseOrderError("No such catalog");
+		await tx.update(catalogs).set({ photoId }).where(eq(catalogs.id, id));
+		return was.photoId;
+	});
+}
+
 export async function renameCatalog(db: Db, id: number, raw: string) {
 	const name = catalogName(raw);
 	const [clash] = await db
@@ -112,9 +209,10 @@ export async function renameCatalog(db: Db, id: number, raw: string) {
 }
 
 // Removes a catalog nothing is in. One with products would leave them
-// bought from no one, so they're moved out first.
+// bought from no one, so they're moved out first. Returns what undo needs
+// to make it again: its details and who carried it.
 export async function deleteCatalog(db: Db, id: number) {
-	await db.transaction(async (tx) => {
+	return db.transaction(async (tx) => {
 		const [inside] = await tx
 			.select({ n: count() })
 			.from(products)
@@ -123,7 +221,59 @@ export async function deleteCatalog(db: Db, id: number) {
 			throw new PurchaseOrderError(
 				`It still has ${inside.n} ${inside.n === 1 ? "product" : "products"}; move them to another catalog first`,
 			);
-		await tx.delete(catalogs).where(eq(catalogs.id, id));
+		const carriers = await tx
+			.select({ id: supplierCatalogs.supplierId })
+			.from(supplierCatalogs)
+			.where(eq(supplierCatalogs.catalogId, id));
+		const [gone] = await tx
+			.delete(catalogs)
+			.where(eq(catalogs.id, id))
+			.returning({
+				name: catalogs.name,
+				description: catalogs.description,
+				photoId: catalogs.photoId,
+			});
+		if (!gone) throw new PurchaseOrderError("No such catalog");
+		return { ...gone, supplierIds: carriers.map((c) => c.id) };
+	});
+}
+
+// Makes a deleted catalog again (undo for deleteCatalog), carried by the
+// suppliers that carried it. Returns its new id.
+export async function restoreCatalog(
+	db: Db,
+	input: {
+		name: string;
+		description: string | null;
+		photoId: number | null;
+		supplierIds: number[];
+	},
+) {
+	return db.transaction(async (tx) => {
+		const [made] = await tx
+			.insert(catalogs)
+			.values({
+				name: input.name,
+				description: input.description,
+				photoId: input.photoId,
+			})
+			.onConflictDoNothing()
+			.returning({ id: catalogs.id });
+		if (!made)
+			throw new PurchaseOrderError(
+				`There's a catalog "${input.name}" again already`,
+			);
+		if (input.supplierIds.length > 0)
+			await tx
+				.insert(supplierCatalogs)
+				.values(
+					input.supplierIds.map((supplierId) => ({
+						supplierId,
+						catalogId: made.id,
+					})),
+				)
+				.onConflictDoNothing();
+		return made.id;
 	});
 }
 
@@ -191,7 +341,12 @@ export async function setCarried(
 // The catalogs a supplier carries, by name.
 export async function catalogsOf(db: Db, supplierId: number) {
 	return db
-		.select({ id: catalogs.id, name: catalogs.name })
+		.select({
+			id: catalogs.id,
+			name: catalogs.name,
+			description: catalogs.description,
+			photoId: catalogs.photoId,
+		})
 		.from(supplierCatalogs)
 		.innerJoin(catalogs, eq(catalogs.id, supplierCatalogs.catalogId))
 		.where(eq(supplierCatalogs.supplierId, supplierId))

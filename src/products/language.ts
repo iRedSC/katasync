@@ -15,6 +15,7 @@ const LABEL: Record<Field, string> = {
 	status: "status",
 	class: "class",
 	supplier: "supplier",
+	catalog: "catalog",
 	trust: "trust",
 	title: "title lacks",
 	inventory: "inventory",
@@ -59,6 +60,7 @@ export function productLanguage(
 const FIELDS: readonly FieldEntry[] = [
 	{ label: "Status", insert: "%", words: ["status"], negatable: true },
 	{ label: "Supplier", insert: "&", words: ["supplier"], negatable: true },
+	{ label: "Catalog", insert: "/", words: ["catalog"], negatable: true },
 	{ label: "Tag", insert: "#", words: ["tag", "tags"], negatable: true },
 	{ label: "Vendor", insert: "$", words: ["vendor", "brand"], negatable: true },
 	{ label: "Type", insert: "@", words: ["type"], negatable: true },

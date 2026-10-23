@@ -4,14 +4,17 @@
 // only. Throws when the browser can't read the file (HEIC on Chrome, say).
 const LONGEST = 2000;
 
-export async function shrinkPhoto(file: Blob): Promise<Blob> {
+export async function shrinkPhoto(
+	file: Blob,
+	longest = LONGEST,
+): Promise<Blob> {
 	let bitmap: ImageBitmap;
 	try {
 		bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
 	} catch {
 		throw new Error("This browser can't read that photo");
 	}
-	const scale = Math.min(1, LONGEST / Math.max(bitmap.width, bitmap.height));
+	const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height));
 	const width = Math.round(bitmap.width * scale);
 	const height = Math.round(bitmap.height * scale);
 	const canvas = document.createElement("canvas");

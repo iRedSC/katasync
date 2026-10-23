@@ -31,6 +31,7 @@ export const PRODUCT_SORTS = {
 	type: { label: "Type", ...TEXT },
 	vendor: { label: "Vendor", ...TEXT },
 	supplier: { label: "Supplier", ...TEXT },
+	catalog: { label: "Catalog", ...TEXT },
 	level: { label: "Stock level", asc: "worst first", desc: "fullest first" },
 	step: { label: "Next step", asc: "most to do first", desc: "least first" },
 	trust: { label: "Trust", asc: "least trusted first", desc: "counted first" },

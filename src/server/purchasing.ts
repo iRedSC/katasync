@@ -10,12 +10,19 @@ export {
 	undoManyAddsToPurchaseOrders,
 } from "#/server/purchasing/add-products";
 export {
+	type CatalogDetail,
 	type CatalogRow,
+	createCatalog,
 	deleteCatalog,
+	describeCatalog,
+	findProductsForCatalog,
+	getCatalog,
 	listCatalogs,
 	makeCatalog,
 	renameCatalog,
+	restoreCatalog,
 	restoreProductCatalogs,
+	setCatalogPhoto,
 	setProductCatalog,
 	setSupplierCarries,
 } from "#/server/purchasing/catalogs";
@@ -102,6 +109,12 @@ export {
 	undoPurchaseReceipts,
 } from "#/server/purchasing/receiving";
 export { amendPurchaseLine } from "#/server/purchasing/sent-po-changes";
+export {
+	getSupplierDetail,
+	listSupplierTable,
+	type SupplierDetail,
+	type SupplierTableRow,
+} from "#/server/purchasing/supplier-detail";
 export {
 	getProductSupplier,
 	listSuppliers,
