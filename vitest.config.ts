@@ -12,12 +12,12 @@ const mocking = globSync(TESTS).filter((file) =>
 );
 
 // Every worker boots its own PGlite database (src/test/db.ts) and holds it in
-// memory, and several agents often test at once. So locally DB tests get half
-// the host's cores: at least one, at most four. A 4-core host gets two. A CI
-// runner does nothing else, so there they get every core.
-const DB_WORKERS = process.env.CI
-	? availableParallelism()
-	: Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2)));
+// memory, and several agents often test at once. So DB tests get half the
+// host's cores: at least one, at most four. A 4-core host gets two.
+const DB_WORKERS = Math.min(
+	4,
+	Math.max(1, Math.floor(availableParallelism() / 2)),
+);
 
 // Separate from vite.config.ts so tests don't load the Start and Nitro plugins.
 export default defineConfig({
