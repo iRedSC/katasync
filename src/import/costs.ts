@@ -8,6 +8,7 @@ import { and, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orderLines, products } from "#/db/schema";
 import { readCsv } from "#/import/sumtracker";
+import { lockStockProducts } from "#/inventory/ledger/post";
 import { setCost } from "#/inventory/valuation";
 
 const costRow = type({
@@ -123,6 +124,10 @@ export function planCostImport(
 // own costs are cleared, since one always costs its parts.
 export async function applyCostImport(db: Db, plan: CostPlan) {
 	return db.transaction(async (tx) => {
+		await lockStockProducts(tx, [
+			...plan.set.map((cost) => cost.productId),
+			...plan.clear.filter((cost) => cost.bundle).map((cost) => cost.productId),
+		]);
 		const unknownSales = () =>
 			tx
 				.select({ n: sql<number>`count(*)::int` })
