@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { type } from "arktype";
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { webhookInbox } from "#/db/webhook-schema";
@@ -59,16 +60,21 @@ export async function acceptWebhook(
 		});
 }
 
+const claimedRows = type({
+	rows: type({
+		id: "number",
+		channel: "'shopify' | 'tiktok'",
+		orderId: "string",
+		generation: "number",
+	}).array(),
+});
+
 export async function claimDue(db: Db, limit: number): Promise<Claim[]> {
 	if (!Number.isInteger(limit) || limit < 1 || limit > CLAIM_LIMIT)
 		throw new Error(`Claim limit must be between 1 and ${CLAIM_LIMIT}`);
 	const leaseToken = randomUUID();
-	const { rows } = await db.execute<{
-		id: number;
-		channel: WebhookChannel;
-		orderId: string;
-		generation: number;
-	}>(sql`
+	const { rows } = claimedRows.assert(
+		await db.execute(sql`
 		update webhook_inbox
 		set lease_token = ${leaseToken},
 			lease_expires_at = now() + make_interval(secs => ${LEASE_SECONDS})
@@ -81,7 +87,8 @@ export async function claimDue(db: Db, limit: number): Promise<Claim[]> {
 			for update skip locked
 		)
 		returning id, channel, order_id as "orderId", generation
-	`);
+	`),
+	);
 	return rows.map((row) => ({ ...row, leaseToken }));
 }
 
