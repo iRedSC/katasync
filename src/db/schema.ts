@@ -1254,6 +1254,27 @@ export const productSuppliers = pgTable(
 	],
 );
 
+// Products a supplier doesn't have, though it carries their catalog: it
+// sells the rest of the catalog but not these. supplierOffers leaves them
+// out, so reorder never buys them there. Their terms in productSuppliers are
+// kept, so having one again brings them back.
+export const supplierUnavailable = pgTable(
+	"supplier_unavailable",
+	{
+		supplierId: integer()
+			.notNull()
+			.references(() => suppliers.id, { onDelete: "cascade" }),
+		productId: integer()
+			.notNull()
+			.references(() => products.id, { onDelete: "cascade" }),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.supplierId, t.productId] }),
+		index("supplier_unavailable_product_idx").on(t.productId),
+	],
+);
+
 // suggested: today's reorder suggestion, opened to look at. It follows the
 // suggestion until its first change makes it a draft.
 // draft: still being edited; not on order yet.
@@ -2079,11 +2100,12 @@ export const qzCertificate = pgTable(
 // stock and sales the same way.
 
 // Every product each supplier sells: one row per stocked product and
-// supplier carrying its catalog, with that supplier's terms from
+// supplier carrying its catalog, unless it's marked unavailable there
+// (supplierUnavailable), with that supplier's terms from
 // productSuppliers, or the defaults (EACH of 1, no price) where it has none.
 // `cheapest` marks the one supplier per product reorder buys from: the
 // lowest price per single item, priced before unpriced, then the shorter
-// lead time, then by name (drizzle/0109).
+// lead time, then by name (drizzle/0109, 0113).
 export const supplierOffers = pgView("supplier_offers", {
 	productId: integer().notNull(),
 	supplierId: integer().notNull(),

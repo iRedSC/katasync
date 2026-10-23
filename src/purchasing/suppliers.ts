@@ -197,7 +197,8 @@ export async function fillSupplierSkus(
 			else if (!offer)
 				result.skipped.push({
 					sku: e.sku,
-					reason: "not in a catalog this supplier carries",
+					reason:
+						"this supplier doesn't sell it (catalog not carried, or marked unavailable)",
 				});
 			else if (offer.supplierSku === given) result.unchanged.push(e.sku);
 			else if (offer.supplierSku && !input.replace)

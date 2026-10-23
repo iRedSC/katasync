@@ -13,6 +13,7 @@ import {
 	setCarried,
 	setCatalogPhoto as setCatalogPhotoRow,
 	setProductsCatalog,
+	setUnavailable,
 } from "#/purchasing/catalogs";
 
 export type { CatalogDetail } from "#/purchasing/catalog-detail";
@@ -126,3 +127,15 @@ export const setSupplierCarries = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => setCarried(getDb(), data));
+
+// Marks products unavailable from a supplier, or available again. Returns
+// the products that changed, which undo flips back.
+export const setSupplierUnavailable = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			supplierId: "number.integer > 0",
+			productIds: "(number.integer > 0)[] > 0",
+			unavailable: "boolean",
+		}),
+	)
+	.handler(async ({ data }) => setUnavailable(getDb(), data));

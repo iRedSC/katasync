@@ -245,7 +245,8 @@ describe("over MCP", () => {
 					{ sku: "NOPE", reason: "no such SKU" },
 					{
 						sku: "ELSEWHERE",
-						reason: "not in a catalog this supplier carries",
+						reason:
+							"this supplier doesn't sell it (catalog not carried, or marked unavailable)",
 					},
 				],
 			});
