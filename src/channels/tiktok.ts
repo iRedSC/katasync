@@ -12,6 +12,7 @@ import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
 import { needsShipping } from "#/orders/to-ship";
 import { markGoneListings, matchListings, syncListings } from "./listings";
+import { type OrderUpdate, orderUpdate } from "./order-update";
 import {
 	advanceOrderCursor,
 	ensureStore,
@@ -380,7 +381,10 @@ export async function ingestDetail(
 
 // One order by id, for a webhook. It doesn't move the sync cursor; the next
 // pass sees the order again and reports any problems with it on Diagnostics.
-export async function ingestTiktokOrder(db: Db, orderId: string) {
+export async function ingestTiktokOrder(
+	db: Db,
+	orderId: string,
+): Promise<OrderUpdate> {
 	const cipher = await shopCipher();
 	const store = await ensureStore(db, "tiktok", STORE);
 	const details = detailPage.assert(
@@ -389,9 +393,12 @@ export async function ingestTiktokOrder(db: Db, orderId: string) {
 			ids: orderId,
 		}),
 	);
-	const stock = await stockLocations(db);
-	for (const raw of details.orders ?? [])
-		await ingestDetail(db, store, raw, stock);
+	const raw = details.orders?.find((order) => order.id === orderId);
+	if (!raw) return { kind: "retry", error: `TikTok didn't return ${orderId}` };
+	const result = await ingestDetail(db, store, raw, await stockLocations(db));
+	if (!result.ingested && result.problems.length === 0)
+		return { kind: "retry", error: `TikTok order ${orderId} wasn't applied` };
+	return orderUpdate(result.problems);
 }
 
 // TikTok orders Shopify relayed that still need shipping.

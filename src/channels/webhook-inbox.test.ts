@@ -15,8 +15,8 @@ import {
 const ORDER = "gid://shopify/Order/5536";
 const body = (updatedAt: string) =>
 	JSON.stringify({ admin_graphql_api_id: ORDER, updated_at: updatedAt });
-const ingestOk: Ingest = async () => true;
-const ingestBusy: Ingest = async () => false;
+const ingestOk: Ingest = async () => ({ kind: "applied" });
+const ingestBusy: Ingest = async () => ({ kind: "busy" });
 const ingestFails: Ingest = async () => {
 	throw new Error("Shopify 503");
 };
@@ -83,6 +83,16 @@ describe("acceptWebhook", () => {
 });
 
 describe("drainDue", () => {
+	it("completes an explicitly ignored relayed order", async () => {
+		await acceptWebhook(db, "shopify", ORDER, body("1"));
+		expect(
+			await drainDue(db, async () => ({
+				kind: "ignored",
+				reason: "tiktok_source",
+			})),
+		).toMatchObject({ done: 1 });
+		expect(await rows()).toHaveLength(0);
+	});
 	it("caps retry delay even after a prolonged failure", async () => {
 		await acceptWebhook(db, "shopify", ORDER, body("1"));
 		await db.update(webhookInbox).set({ failures: 2000 });

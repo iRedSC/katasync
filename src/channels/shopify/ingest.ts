@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { eq } from "drizzle-orm";
+import { type OrderUpdate, orderUpdate } from "#/channels/order-update";
 import {
 	ensureStore,
 	type StockLocations,
@@ -93,7 +94,10 @@ async function ingestNode(
 // through search, which lags a few seconds behind new orders. It doesn't
 // move the sync cursor; the next pass sees the order again and reports any
 // problems with it on Diagnostics.
-export async function ingestShopifyOrder(db: Db, orderId: string) {
+export async function ingestShopifyOrder(
+	db: Db,
+	orderId: string,
+): Promise<OrderUpdate> {
 	const { shop, order } = type({
 		shop: { id: "string", name: "string" },
 		order: orderNode.or("null"),
@@ -103,15 +107,19 @@ export async function ingestShopifyOrder(db: Db, orderId: string) {
 			{ id: orderId },
 		),
 	);
-	if (!order) return;
+	if (!order)
+		return { kind: "retry", error: `Shopify didn't return ${orderId}` };
 	const store = await ensureStore(db, "shopify", shop);
-	await ingestNode(
+	const result = await ingestNode(
 		db,
 		store,
 		order,
 		await stockLocations(db),
 		await hasTiktokStore(db),
 	);
+	return result
+		? orderUpdate(result.problems)
+		: { kind: "ignored", reason: "tiktok_source" };
 }
 
 // The TikTok store exists once a direct TikTok sync has reached TikTok.

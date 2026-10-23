@@ -20,6 +20,7 @@ import { amazonPostedSince, fetchAmazonCharges } from "./finance/amazon";
 import { fetchEbayCharges } from "./finance/ebay";
 import { fetchShopifyCharges } from "./finance/shopify";
 import { fetchTiktokCharges } from "./finance/tiktok";
+import type { OrderUpdate, WebhookUpdate } from "./order-update";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
 import { stockLocations } from "./stores";
 import { ingestTiktokOrder, syncTiktok } from "./tiktok";
@@ -233,7 +234,7 @@ export async function costPassAlone(
 }
 
 const ingestOne: Partial<
-	Record<SyncedChannel, (db: Db, orderId: string) => Promise<void>>
+	Record<SyncedChannel, (db: Db, orderId: string) => Promise<OrderUpdate>>
 > = {
 	shopify: ingestShopifyOrder,
 	tiktok: ingestTiktokOrder,
@@ -242,13 +243,12 @@ const ingestOne: Partial<
 // One order a webhook named, then pins for it if it's new. Gives up at once if
 // a pass or another webhook holds the channel: waiting would hold a connection
 // per webhook, and a burst of them (a bulk edit in Shopify) would drain the
-// pool the lock holder needs. Nothing is lost; webhooks never move the cron's
-// cursor, so the next pass reads the change. False if it gave up.
+// pool the lock holder needs. Busy and incomplete work stays in the inbox.
 export async function ingestWebhookOrder(
 	db: Db,
 	channel: SyncedChannel,
 	orderId: string,
-) {
+): Promise<WebhookUpdate> {
 	const ingest = ingestOne[channel];
 	if (!ingest) throw new Error(`${channel} has no webhooks`);
 	const started = new Date();
@@ -256,16 +256,16 @@ export async function ingestWebhookOrder(
 		channel,
 		{ purpose: "sync-pass" },
 		async () => {
-			await ingest(db, orderId);
-			await assignOrderPins(db);
-			return true;
+			const result = await ingest(db, orderId);
+			if (result.kind === "applied") await assignOrderPins(db);
+			return result;
 		},
 	);
-	if (!done) return false;
+	if (!done) return { kind: "busy" };
 	// Every channel, this one too: its sets share parts with what sold.
 	for (const p of await pushMoved(db, started))
 		for (const problem of p.problems) console.warn(problem);
-	return true;
+	return done;
 }
 
 // Runs `work` while holding this channel's lock for `purpose`, so only one

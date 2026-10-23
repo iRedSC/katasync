@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { webhookInbox } from "#/db/webhook-schema";
+import type { WebhookUpdate } from "./order-update";
 import type { WebhookChannel } from "./webhooks";
 
 export const CLAIM_LIMIT = 10;
@@ -13,7 +14,7 @@ const ERROR_CHARS = 500;
 export type Ingest = (
 	channel: WebhookChannel,
 	orderId: string,
-) => Promise<boolean>;
+) => Promise<WebhookUpdate>;
 
 export type Claim = {
 	id: number;
@@ -142,9 +143,16 @@ export function ingestWith(db: Db): Ingest {
 
 async function attempt(claim: Claim, ingest: Ingest): Promise<Outcome> {
 	try {
-		return (await ingest(claim.channel, claim.orderId))
-			? { kind: "done" }
-			: { kind: "busy" };
+		const result = await ingest(claim.channel, claim.orderId);
+		switch (result.kind) {
+			case "applied":
+			case "ignored":
+				return { kind: "done" };
+			case "busy":
+				return { kind: "busy" };
+			case "retry":
+				return { kind: "failed", error: result.error.slice(0, ERROR_CHARS) };
+		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { kind: "failed", error: message.slice(0, ERROR_CHARS) };
