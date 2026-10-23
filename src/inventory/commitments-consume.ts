@@ -285,3 +285,27 @@ export async function returnSaleOf(
 		.limit(1);
 	return entry ? { batchId: entry.batchId, quantity: Number(entry.quantity) } : null;
 }
+
+export async function fulfillmentOfBatch(
+	db: Db,
+	batchId: string,
+): Promise<{ orderId: number; fulfillmentKey: string } | null> {
+	const [row] = await db
+		.select({
+			orderId: stockCommitments.orderId,
+			fulfillmentKey: sql<string>`${stockCommitmentEntries.fulfillmentKey}`,
+		})
+		.from(stockCommitmentEntries)
+		.innerJoin(
+			stockCommitments,
+			eq(stockCommitments.id, stockCommitmentEntries.commitmentId),
+		)
+		.where(
+			and(
+				eq(stockCommitmentEntries.batchId, batchId),
+				eq(stockCommitmentEntries.kind, "consume"),
+			),
+		)
+		.limit(1);
+	return row ?? null;
+}
