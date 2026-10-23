@@ -2,6 +2,7 @@ import { type AnyColumn, and, desc, eq, gte, lt, or, sql } from "drizzle-orm";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import type { Db } from "#/db/client";
 import {
+	costEntries,
 	orderLineProfit,
 	orderLines,
 	orderProfit,
@@ -138,6 +139,11 @@ const totalsFields = {
 
 export type ProfitTotals = {
 	[K in keyof typeof totalsFields]: number;
+} & {
+	// What corrections to stock's cost put on goods already sold (late
+	// freight, a price fixed after the sale), as they were posted in the range.
+	// Not any one order's, so profit takes it off the total.
+	costCorrections: number;
 };
 
 // The Profit tab counts only orders confirmed and shipped: an unconfirmed
@@ -148,9 +154,25 @@ const within = (start: Date, end: Date) =>
 const itemsWithin = (start: Date, end: Date) =>
 	and(gte(lp.placedAt, start), lt(lp.placedAt, end), eq(lp.shipped, true));
 
-export async function profitTotals(db: Db, start: Date, end: Date) {
-	const [row] = await db.select(totalsFields).from(p).where(within(start, end));
-	return row as ProfitTotals;
+export async function profitTotals(
+	db: Db,
+	start: Date,
+	end: Date,
+): Promise<ProfitTotals> {
+	const [[row], [corrections]] = await Promise.all([
+		db.select(totalsFields).from(p).where(within(start, end)),
+		db
+			.select({ value: sum(costEntries.soldValue) })
+			.from(costEntries)
+			.where(
+				and(gte(costEntries.createdAt, start), lt(costEntries.createdAt, end)),
+			),
+	]);
+	return {
+		...row,
+		costCorrections: corrections.value,
+		profit: row.profit - corrections.value,
+	};
 }
 
 export async function profitByMarketplace(db: Db, start: Date, end: Date) {

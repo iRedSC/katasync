@@ -85,10 +85,8 @@ export function browseLine(
 		defaultSupplierCount: supplierCount,
 		defaultMinimum: minimumQuantity,
 		quantity: minimumQuantity,
-		unitCost:
-			row.kind === "bundle"
-				? null
-				: (t?.cost ?? (row.unitCost === null ? null : row.unitCost * packSize)),
+		// The supplier's price, as newLine gives it: never our average cost.
+		unitCost: row.kind === "bundle" ? null : (t?.cost ?? null),
 		sentQuantity: null,
 		sentUnitCost: null,
 		receivingNote: null,

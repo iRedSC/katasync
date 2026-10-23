@@ -256,11 +256,6 @@ export function amended({
 		return r && `${line.sku} back as it was`;
 	};
 	if (result.removed) offerUndo(`Took ${line.sku} off`, { undo });
-	else if (result.receivedAtOldCost)
-		offerUndo(`${summary}. Received units keep the old cost.`, {
-			undo,
-			tone: "warning",
-		});
 	else offerUndo(summary, { undo });
 }
 

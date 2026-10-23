@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { movements, stockLevels } from "#/db/schema";
+import type { CostLine } from "#/inventory/valuation";
 import {
 	assertPositiveInteger,
 	getProduct,
@@ -111,7 +112,9 @@ async function unitsOf(db: Db, productId: number, quantity: number) {
 }
 
 // A returned unit goes back on the shelf the way it was sold: a bundle as
-// its components, anything else as itself.
+// its components, anything else as itself. `unitCost` is what one cost the
+// sale, which it brings back into the average (a refurb's too); a tool set's
+// parts come back at their averages.
 export async function recordReturn(
 	db: Db,
 	input: {
@@ -120,9 +123,22 @@ export async function recordReturn(
 		locationId: number;
 		reference: string;
 		sale: { batchId: string; quantity: number } | null;
+		unitCost?: number | null;
 	},
 ) {
 	assertPositiveInteger(input.quantity);
+	const product = await getProduct(db, input.productId);
+	const costs: CostLine[] =
+		product.kind === "bundle" || input.unitCost == null
+			? []
+			: [
+					{
+						productId: input.productId,
+						kind: "return",
+						units: input.quantity,
+						value: input.quantity * input.unitCost,
+					},
+				];
 	const sale = input.sale;
 	if (sale) {
 		assertPositiveInteger(sale.quantity);
@@ -145,6 +161,7 @@ export async function recordReturn(
 			);
 		return postMovements(db, {
 			reference: input.reference,
+			costs: costs.filter((c) => perProduct.has(c.productId)),
 			lines: [...perProduct].map(([productId, units]) => ({
 				productId,
 				locationId: input.locationId,
@@ -153,13 +170,12 @@ export async function recordReturn(
 			})),
 		});
 	}
-	const product = await getProduct(db, input.productId);
 	if (product.kind === "bundle") {
 		throw new LedgerError(
 			"This bundle has no recorded sale components; count the returned parts individually",
 		);
 	}
-	return postUnits(db, { ...input, sign: 1, reason: "return" });
+	return postUnits(db, { ...input, sign: 1, reason: "return", costs });
 }
 
 async function postUnits(
@@ -171,6 +187,7 @@ async function postUnits(
 		reference: string;
 		sign: 1 | -1;
 		reason: "sale" | "return";
+		costs?: CostLine[];
 	},
 ) {
 	assertPositiveInteger(input.quantity);
@@ -178,6 +195,7 @@ async function postUnits(
 		const units = await unitsOf(tx, input.productId, input.quantity);
 		return postMovements(tx, {
 			reference: input.reference,
+			costs: input.costs,
 			lines: units.map((u) => ({
 				productId: u.productId,
 				locationId: input.locationId,

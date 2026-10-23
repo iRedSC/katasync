@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-import { averageCost } from "./orders";
 import { explainReorder, reorderQuantity, velocityRanks } from "./reorder";
 
 describe("explainReorder", () => {
@@ -117,16 +116,4 @@ test("velocityRanks spreads selling products from 0 to 1, ties sharing", () => {
 		]),
 	);
 	expect(Object.fromEntries(ranks)).toEqual({ 2: 0, 3: 1 / 3, 4: 1 / 3, 5: 1 });
-});
-
-test("averageCost weighs what's on the shelf against what arrived", () => {
-	expect(
-		averageCost({ oldCost: 10, onHandBefore: 10, quantity: 10, unitCost: 20 }),
-	).toBe(15);
-	expect(
-		averageCost({ oldCost: 10, onHandBefore: -3, quantity: 5, unitCost: 20 }),
-	).toBe(20);
-	expect(
-		averageCost({ oldCost: null, onHandBefore: 4, quantity: 5, unitCost: 7 }),
-	).toBe(7);
 });

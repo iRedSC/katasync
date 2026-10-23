@@ -123,7 +123,45 @@ function Profit() {
 					<Attention rows={d.attention} />
 				</>
 			)}
+			<StockValue rows={d.stock} />
 		</Page>
+	);
+}
+
+const PLACES = { owned: "Warehouse", retail: "Store", fba: "Amazon FBA" };
+
+// What's on the shelves is worth now, at each product's average cost.
+function StockValue({ rows }: { rows: Data["stock"] }) {
+	if (rows.length === 0) return null;
+	const total = rows.reduce((n, r) => n + r.value, 0);
+	const uncosted = rows.reduce((n, r) => n + r.uncosted, 0);
+	return (
+		<Card
+			title="Stock value"
+			aside={
+				uncosted > 0 && (
+					<span className="text-warning-text">
+						{formatCount(uncosted)} without a cost
+					</span>
+				)
+			}
+		>
+			<dl className="grid grid-cols-[1fr_auto_auto] gap-x-6 gap-y-1.5 tabular-nums">
+				{rows.map((r) => (
+					<div key={r.kind} className="contents">
+						<dt className="text-muted-foreground">{PLACES[r.kind]}</dt>
+						<dd className="text-right text-muted-foreground">
+							{formatCount(r.units)} items
+						</dd>
+						<dd className="text-right">{formatMoney(r.value)}</dd>
+					</div>
+				))}
+				<dt className="col-span-2 border-t pt-1.5 font-semibold">Total</dt>
+				<dd className="border-t pt-1.5 text-right font-semibold">
+					{formatMoney(total)}
+				</dd>
+			</dl>
+		</Card>
 	);
 }
 
@@ -286,6 +324,15 @@ function Breakdown({
 		],
 		["Refunds", -t.refunds],
 		["Other adjustments", -t.adjustments],
+		// Late freight or a fixed price, on stock that had already sold.
+		...(t.costCorrections !== 0
+			? [
+					["Cost corrections on sold stock", -t.costCorrections] as [
+						ReactNode,
+						number,
+					],
+				]
+			: []),
 	];
 	return (
 		<Card title="Where it went">

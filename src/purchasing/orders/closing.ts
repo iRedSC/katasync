@@ -6,6 +6,7 @@ import {
 	purchaseOrders,
 } from "#/db/schema";
 import { lockOrder } from "./lock";
+import { revaluePurchaseOrder } from "./revalue";
 
 // After a line's quantity changes: a sent PO with everything in closes, and
 // a closed one reopens when the changed line is now waiting on more. `short`
@@ -26,7 +27,8 @@ export async function reopen(tx: Db, id: number) {
 		.where(eq(purchaseOrders.id, id));
 }
 
-// Stops waiting for what hasn't arrived, e.g. the supplier is out of it.
+// Stops waiting for what hasn't arrived, e.g. the supplier is out of it. Its
+// charges then fall on what did come.
 export async function closeOrder(db: Db, id: number, now = new Date()) {
 	return db.transaction(async (tx) => {
 		await lockOrder(tx, id, ["sent"]);
@@ -34,6 +36,7 @@ export async function closeOrder(db: Db, id: number, now = new Date()) {
 			.update(purchaseOrders)
 			.set({ status: "closed", closedAt: now })
 			.where(eq(purchaseOrders.id, id));
+		await revaluePurchaseOrder(tx, id);
 	});
 }
 

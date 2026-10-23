@@ -40,10 +40,10 @@ describe("planCostImport", () => {
 			{ productId: 2, sku: "Knife", from: null, to: 12 },
 			{ productId: 6, sku: "PAN", from: 3, to: 3 },
 		]);
-		// No cost in the list means no cost: the old one isn't trusted.
+		// Not costed by the list: a tool set's own cost goes, the rest stay.
 		expect(plan.clear).toEqual([
-			{ productId: 3, sku: "SET", from: 5 },
-			{ productId: 4, sku: "OLD", from: 9 },
+			{ productId: 3, sku: "SET", from: 5, bundle: true },
+			{ productId: 4, sku: "OLD", from: 9, bundle: false },
 		]);
 		expect(plan.unknown).toEqual(["GONE"]);
 		expect(plan.warnings).toEqual([
@@ -72,7 +72,7 @@ describe("planCostImport", () => {
 });
 
 describe("applyCostImport", () => {
-	test("replaces costs, dates them, and re-costs every sale", async () => {
+	test("sets and dates costs, keeps the rest, and leaves sales' costs alone", async () => {
 		const db = await createTestDb();
 		const blade = await createProduct(db, "BLADE", "simple");
 		const handle = await createProduct(db, "HANDLE", "simple");
@@ -116,14 +116,16 @@ describe("applyCostImport", () => {
 				line("b", blade, 1),
 				line("h", handle, 99),
 				line("k", kit, 101),
+				{ ...line("u", blade, 0), unitCost: null },
 			]);
 
 		const { catalog, aliases } = await costCatalog(db);
 		const plan = planCostImport(list("BLADE,,4.25"), catalog, aliases);
 		expect(await applyCostImport(db, plan)).toEqual({
 			costed: 1,
-			cleared: 1,
-			salesRecosted: 3,
+			cleared: 0,
+			kept: 1,
+			salesCosted: 1,
 		});
 
 		const costs = await db
@@ -136,7 +138,7 @@ describe("applyCostImport", () => {
 			.orderBy(schema.products.sku);
 		expect(costs).toEqual([
 			{ sku: "BLADE", unitCost: 4.25, dated: expect.any(Date) },
-			{ sku: "HANDLE", unitCost: null, dated: null },
+			{ sku: "HANDLE", unitCost: 99, dated: expect.any(Date) },
 			{ sku: "KIT", unitCost: null, dated: null },
 		]);
 		const lines = await db
@@ -146,11 +148,13 @@ describe("applyCostImport", () => {
 			})
 			.from(schema.orderLines)
 			.orderBy(schema.orderLines.externalId);
-		// The tool set has a part with no cost now, so it has none either.
+		// Each sale keeps what it took; the one that went out with no cost
+		// takes the first one.
 		expect(lines).toEqual([
-			{ id: "b", unitCost: 4.25 },
-			{ id: "h", unitCost: null },
-			{ id: "k", unitCost: null },
+			{ id: "b", unitCost: 1 },
+			{ id: "h", unitCost: 99 },
+			{ id: "k", unitCost: 101 },
+			{ id: "u", unitCost: 4.25 },
 		]);
 	});
 });

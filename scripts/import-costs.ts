@@ -1,6 +1,5 @@
-// Replaces every product's cost from a cost list and re-costs every sale
-// from it (src/import/costs.ts). Save profit-margarine's Export Costs sheet
-// as CSV first.
+// Sets products' costs from a cost list (src/import/costs.ts). Sales already
+// made keep theirs. Save profit-margarine's Export Costs sheet as CSV first.
 //
 //   pnpm import:costs --costs product-costs.csv
 //
@@ -35,7 +34,7 @@ const changed = plan.set.filter((c) => c.from !== c.to);
 const money = (n: number | null) => (n === null ? "none" : `$${n}`);
 console.log(`Costed:    ${plan.set.length} (${changed.length} change)`);
 console.log(
-	`Cleared:   ${plan.clear.length} (not in the list, or no cost there)`,
+	`Kept:      ${plan.clear.filter((c) => !c.bundle).length} (not in the list, or no cost there)`,
 );
 console.log(`Not here:  ${plan.unknown.length} costed SKUs match no product`);
 console.log("\nBiggest changes:");

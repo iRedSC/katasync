@@ -17,6 +17,7 @@ import {
 	DeleteButton,
 	RestoreButton,
 } from "#/components/product-page/archived";
+import { CostHistory } from "#/components/product-page/cost-history";
 import {
 	DetailsCard,
 	NameField,
@@ -334,6 +335,7 @@ function ProductPage() {
 					</Card>
 
 					<DetailsCard d={d} />
+					<CostHistory d={d} />
 
 					{canCount && (
 						<SupplierCard

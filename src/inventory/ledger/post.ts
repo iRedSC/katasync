@@ -6,6 +6,7 @@ import {
 	products,
 	stockLevels,
 } from "#/db/schema";
+import { type CostLine, postBatchCosts } from "#/inventory/valuation";
 
 export class LedgerError extends Error {
 	name = "LedgerError";
@@ -27,10 +28,17 @@ export type StockLevel = {
 };
 
 // The only way stock changes. Inserts the movements and updates stock_levels in
-// one transaction, so the two can't drift apart.
+// one transaction, so the two can't drift apart. `costs` is the value that
+// moves with them where it isn't the average (src/inventory/valuation.ts),
+// kept with the batch so undoing it takes that value back out.
 export async function postMovements(
 	db: Db,
-	input: { lines: MovementLine[]; reference?: string; note?: string },
+	input: {
+		lines: MovementLine[];
+		reference?: string;
+		note?: string;
+		costs?: CostLine[];
+	},
 ): Promise<{ batchId: string; levels: StockLevel[] }> {
 	const { lines } = input;
 	if (lines.length === 0) throw new LedgerError("No movement lines");
@@ -72,6 +80,7 @@ export async function postMovements(
 		}
 
 		const batchId = crypto.randomUUID();
+		await postBatchCosts(tx, input.costs ?? [], batchId);
 		await tx.insert(movements).values(
 			lines.map((line) => ({
 				...line,

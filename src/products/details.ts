@@ -1,6 +1,7 @@
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { products } from "#/db/schema";
+import { setCost } from "#/inventory/valuation";
 
 // A product's own details: what it's called, how it scans, what one costs,
 // and how it ships. Sizes come in inches and ounces, like the box tools, and
@@ -18,8 +19,9 @@ export type ProductDetails = {
 	variantName: string | null;
 	category: string | null;
 	barcode: string | null;
-	// USD per one of the product. Receiving POs keeps this up to date as an
-	// average; set it by hand for stock that never came in on a PO.
+	// USD per one of the product: the average cost of its stock, which
+	// receiving POs keeps up to date (src/inventory/valuation.ts). Setting it
+	// by hand revalues what's on the shelf; sales already made keep theirs.
 	unitCost: number | null;
 	weightOz: number | null;
 	lengthIn: number | null;
@@ -81,13 +83,6 @@ export async function updateProductDetails(
 			variantName,
 			category: text(details.category),
 			barcode,
-			unitCost: details.unitCost,
-			// Entering the same cost again confirms it. A trigger clears the
-			// date along with the cost, and takes a date ahead of now as now.
-			unitCostUpdatedAt:
-				details.unitCost === undefined
-					? undefined
-					: (details.unitCostSetAt ?? sql`now()`),
 			weightGrams: measure(details.weightOz, "weight", GRAMS_PER_OUNCE),
 			lengthMm: measure(details.lengthIn, "length", MM_PER_INCH),
 			widthMm: measure(details.widthIn, "width", MM_PER_INCH),
@@ -96,6 +91,17 @@ export async function updateProductDetails(
 	);
 	if (Object.keys(set).length > 0)
 		await db.update(products).set(set).where(eq(products.id, productId));
+	// Entering the same cost again confirms it, so it's dated now. A trigger
+	// clears the date along with the cost, and takes a date ahead of now as now.
+	if (details.unitCost !== undefined)
+		await db.transaction((tx) =>
+			setCost(tx, {
+				productId,
+				cost: details.unitCost ?? null,
+				setAt: details.unitCostSetAt,
+				note: details.unitCostSetAt ? "Undo" : undefined,
+			}),
+		);
 	const [saved] = await db
 		.select()
 		.from(products)

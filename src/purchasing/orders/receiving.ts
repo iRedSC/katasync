@@ -1,27 +1,26 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
-	locations,
 	productSuppliers,
 	products,
 	purchaseOrderDamages,
 	purchaseOrderDiscounts,
 	purchaseOrderLines,
 	purchaseOrderReceipts,
-	stockLevels,
 	supplierOffers,
 } from "#/db/schema";
 import { postReceipt, undoBatch } from "#/inventory/ledger";
-import { isOurs } from "#/inventory/locations";
+import { postArrival } from "#/inventory/valuation";
 import type { DiscountOff } from "#/purchasing/discount";
 import { discountRow, receiptUnitCost } from "#/purchasing/discount";
 import { closeIfComplete, reopen, shortLines } from "./closing";
 import { checkDiscounts, checkOff } from "./discount-checks";
 import { insertLine } from "./lines";
 import { lockOrder, PurchaseOrderError, poName } from "./lock";
+import { landedTerms, receiptWorth, revaluePurchaseOrder } from "./revalue";
 
 // What arrived for one line, in the line's unit: 2 cases of 30 puts 60 on the
-// shelf at the PO's location. Folds its price into the product's average cost.
+// shelf at the PO's location, and its landed cost into the product's average.
 // Closes the PO once every line has arrived in full.
 // More than expected means the supplier sent extra and we're keeping it, so
 // the line now expects what arrived. `last` says nothing more is coming, so
@@ -110,26 +109,36 @@ export async function receive(
 		}
 		const discounts = await checkDiscounts(tx, line.id);
 
-		if (line.unitCost !== null) {
-			const quantity = expect ?? line.quantity;
-			await averageInCost(tx, {
+		// What came is worth the line's price after discounts plus its share of
+		// the PO's charges. With no price yet it comes in at the average, and
+		// setting the price later puts the difference in (revalue.ts).
+		const quantity = expect ?? line.quantity;
+		const items = input.quantity * line.packSize;
+		const { split } = await landedTerms(tx, po.id);
+		await postArrival(tx, {
+			productId: line.productId,
+			units: items,
+			value:
+				line.unitCost === null
+					? null
+					: input.quantity *
+							receiptUnitCost({
+								line: { quantity, unitCost: line.unitCost },
+								discounts,
+								receipt: { id: receipt.id, quantity: input.quantity },
+							}) +
+						items * (split.perItem.get(line.id) ?? 0),
+			batchId,
+			purchaseOrderLineId: line.id,
+			note: poName(po.id),
+		});
+		if (line.unitCost !== null)
+			await keepSupplierPrice(tx, {
 				productId: line.productId,
 				supplierId: po.supplierId,
-				onHandBefore: await heldBefore(
-					tx,
-					line.productId,
-					input.quantity * line.packSize,
-				),
-				quantity: input.quantity * line.packSize,
-				unitCost:
-					receiptUnitCost({
-						line: { quantity, unitCost: line.unitCost },
-						discounts,
-						receipt: { id: receipt.id, quantity: input.quantity },
-					}) / line.packSize,
 				price: line.unitCost / line.packSize,
 			});
-		}
+		await revaluePurchaseOrder(tx, po.id);
 		const closed = await closeIfComplete(tx, po.id);
 		return { receiptId: receipt.id, closed };
 	});
@@ -186,9 +195,9 @@ export async function undoReceipts(db: Db, receiptIds: number[]) {
 	});
 }
 
-// Takes a receipt back off the shelf, e.g. a mis-tap. Reopens the PO if that
-// leaves something short. The average cost isn't unwound: later receipts
-// correct it, and reconstructing it exactly isn't worth the bookkeeping.
+// Takes a receipt back off the shelf, e.g. a mis-tap, and the value it
+// brought in back out of the average. Reopens the PO if that leaves
+// something short.
 export async function undoReceipt(db: Db, receiptId: number) {
 	return db.transaction(async (tx) => {
 		const [receipt] = await tx
@@ -201,6 +210,7 @@ export async function undoReceipt(db: Db, receiptId: number) {
 				quantityBefore: purchaseOrderReceipts.quantityBefore,
 				quantityAfter: purchaseOrderReceipts.quantityAfter,
 				purchaseOrderId: purchaseOrderLines.purchaseOrderId,
+				productId: purchaseOrderLines.productId,
 			})
 			.from(purchaseOrderReceipts)
 			.innerJoin(
@@ -232,7 +242,24 @@ export async function undoReceipt(db: Db, receiptId: number) {
 				`${damaged} of these are recorded as damaged; take the damage back first`,
 			);
 
-		const { batchId } = await undoBatch(tx, receipt.batchId);
+		// Out at what it's worth now, price fixes and charges since included,
+		// so nothing it brought in stays behind.
+		const worth = await receiptWorth(tx, po.id, receipt.id);
+		const { batchId } = await undoBatch(tx, receipt.batchId, {
+			costs:
+				worth === null
+					? undefined
+					: [
+							{
+								productId: receipt.productId,
+								kind: "undo",
+								units: -receipt.quantity * line.packSize,
+								value: -worth,
+								purchaseOrderLineId: receipt.lineId,
+								note: "Undo: receipt",
+							},
+						],
+		});
 		await tx.insert(purchaseOrderReceipts).values({
 			lineId: receipt.lineId,
 			quantity: -receipt.quantity,
@@ -255,6 +282,7 @@ export async function undoReceipt(db: Db, receiptId: number) {
 		await checkDiscounts(tx, receipt.lineId);
 		if (po.status === "closed" && (await shortLines(tx, po.id)) > 0)
 			await reopen(tx, po.id);
+		await revaluePurchaseOrder(tx, po.id);
 	});
 }
 
@@ -374,70 +402,14 @@ export async function damagedOf(tx: Db, lineId: number) {
 	return row.items;
 }
 
-// What the owned shelves held before a receipt of `units`, read after it was
-// posted. Each shelf counts only what it holds, so an oversold shelf has no
-// cost to average in and can't cancel stock on another shelf. Posting resets
-// an oversold shelf to 0 and adds `units`, so taking those back off leaves
-// what it held.
-async function heldBefore(db: Db, productId: number, units: number) {
-	const owned = db.select({ id: locations.id }).from(locations).where(isOurs);
-	const [row] = await db
-		.select({
-			held: sql<number>`coalesce(sum(greatest(${stockLevels.onHand}, 0)), 0)::int`,
-		})
-		.from(stockLevels)
-		.where(
-			and(
-				eq(stockLevels.productId, productId),
-				inArray(stockLevels.locationId, owned),
-			),
-		);
-	return row.held - units;
-}
-
-// Weighted average of what's on the shelf and what just arrived, per one of
-// the product. Oversold units (negative stock) have no cost to average in, so
-// they count as none. The supplier's price becomes the last price paid
-// before discounts, in whatever unit the product is bought in now.
-export function averageCost(p: {
-	oldCost: number | null;
-	onHandBefore: number;
-	quantity: number;
-	unitCost: number;
-}) {
-	const held = Math.max(0, p.onHandBefore);
-	if (p.oldCost === null || held === 0) return p.unitCost;
-	return (held * p.oldCost + p.quantity * p.unitCost) / (held + p.quantity);
-}
-
-// unitCost is what each one cost after discounts; price is before them, and
-// becomes the supplier's price, so a one-off discount doesn't carry over. The
-// supplier's price only changes while it still sells the product (carries
+// The supplier's price becomes the last price paid before discounts, so a
+// one-off discount doesn't carry over, in whatever unit the product is bought
+// in now. It only changes while the supplier still sells the product (carries
 // its catalog), so terms don't pile up where reorder never looks.
-async function averageInCost(
+async function keepSupplierPrice(
 	db: Db,
-	p: {
-		productId: number;
-		supplierId: number;
-		onHandBefore: number;
-		quantity: number;
-		unitCost: number;
-		price: number;
-	},
+	p: { productId: number; supplierId: number; price: number },
 ) {
-	const [product] = await db
-		.select({ unitCost: products.unitCost })
-		.from(products)
-		.where(eq(products.id, p.productId));
-	const cost = averageCost({ ...p, oldCost: product.unitCost });
-	// Dated even when the average comes out the same: a receipt confirms it.
-	await db
-		.update(products)
-		.set({
-			unitCost: Math.round(cost * 10_000) / 10_000,
-			unitCostUpdatedAt: sql`now()`,
-		})
-		.where(eq(products.id, p.productId));
 	// One statement, so the pack size it multiplies by is the row's current one
 	// even if a new default is being saved at the same time. Same rounding as
 	// perPack. A supplier with no terms of its own yet sells in EACH.

@@ -141,7 +141,6 @@ export async function setPartsOf(db: Db, poId: number) {
 			partLineId: partLine.id,
 			lineCost: partLine.unitCost,
 			supplierCost: supplierOffers.cost,
-			productCost: part.unitCost,
 		})
 		.from(purchaseOrderLines)
 		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
@@ -203,31 +202,25 @@ export async function setPartsOf(db: Db, poId: number) {
 			(s) => `${s.purchaseOrderId}:${s.setProductId}:${s.partProductId}`,
 		),
 	);
-	return rows.map(
-		({ partLineId, lineCost, supplierCost, productCost, ...r }) => ({
-			...r,
-			// What a new line would cost (see newLine), unless it has one already.
-			unitCost:
-				partLineId !== null
-					? lineCost
-					: (supplierCost ??
-						(productCost === null ? null : productCost * r.packSize)),
-			elsewhere: others
-				.filter(
-					(o) =>
-						o.supplierId === r.supplierId &&
-						o.setProductId === r.setProductId &&
-						!skippedThere.has(
-							`${o.purchaseOrderId}:${r.setProductId}:${r.productId}`,
-						),
-				)
-				.map(({ purchaseOrderId, status, sets }) => ({
-					purchaseOrderId,
-					status,
-					sets,
-				})),
-		}),
-	);
+	return rows.map(({ partLineId, lineCost, supplierCost, ...r }) => ({
+		...r,
+		// What a new line would cost (see newLine), unless it has one already.
+		unitCost: partLineId !== null ? lineCost : supplierCost,
+		elsewhere: others
+			.filter(
+				(o) =>
+					o.supplierId === r.supplierId &&
+					o.setProductId === r.setProductId &&
+					!skippedThere.has(
+						`${o.purchaseOrderId}:${r.setProductId}:${r.productId}`,
+					),
+			)
+			.map(({ purchaseOrderId, status, sets }) => ({
+				purchaseOrderId,
+				status,
+				sets,
+			})),
+	}));
 }
 
 // The sets on every other open PO: on drafts as lines, on sent POs as they

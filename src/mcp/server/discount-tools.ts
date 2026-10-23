@@ -11,7 +11,7 @@ export function registerDiscountTools(server: McpServer, db: Db) {
 		"set_po_line_discount",
 		{
 			description:
-				"Puts a discount on a line of a draft or sent PO: a percent or dollars off some of its units, e.g. 10% off all, $12 off 4, or 100% off 1 (free). The amount is for those units together. units 'all' covers every unit no other discount on the line covers and follows the quantity; there can be one of those per line. Discounts can't cover more units than the line has, or take more than they cost. On a sent PO it tells no one and the PO as sent stays as it was; on a draft it prints on the PO when sent. Stock already received keeps the cost it came in at. replaces takes one of the line's discounts off in the same change, to edit it. For something discounted in a delivery, use receive_po_line's discount instead.",
+				"Puts a discount on a line of a draft or sent PO: a percent or dollars off some of its units, e.g. 10% off all, $12 off 4, or 100% off 1 (free). The amount is for those units together. units 'all' covers every unit no other discount on the line covers and follows the quantity; there can be one of those per line. Discounts can't cover more units than the line has, or take more than they cost. On a sent PO it tells no one and the PO as sent stays as it was; on a draft it prints on the PO when sent. Stock already received is revalued to match. replaces takes one of the line's discounts off in the same change, to edit it. For something discounted in a delivery, use receive_po_line's discount instead.",
 			inputSchema: {
 				po: z.number().int().positive(),
 				sku: z.string(),
@@ -49,12 +49,6 @@ export function registerDiscountTools(server: McpServer, db: Db) {
 			});
 			return json({
 				discountId: result.id,
-				...(result.receivedAtOldCost
-					? {
-							warning:
-								"Some already arrived; that stock keeps the cost it came in at",
-						}
-					: {}),
 				po: await orderForClaude(db, po),
 			});
 		},

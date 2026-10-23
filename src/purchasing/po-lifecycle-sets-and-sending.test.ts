@@ -68,7 +68,7 @@ describe("a PO from draft to received", () => {
 			.update(schema.products)
 			.set({ unitCost: 3 })
 			.where(eq(schema.products.id, handle));
-		// No price from Canam, so it's the product's own cost.
+		// No price from Canam, so the line has none: our cost isn't theirs.
 		await carry(db, handle, canam);
 		await db
 			.insert(schema.productSuppliers)
@@ -109,8 +109,8 @@ describe("a PO from draft to received", () => {
 			// 44 suggested plus 2 in each of 3 sets.
 			{ productId: blade, quantity: 50 },
 			{ productId: knife, quantity: 6 },
-			// Not on the draft before: a new line, at the product's own cost.
-			{ productId: handle, quantity: 3, unit: "EACH", unitCost: 3 },
+			// Not on the draft before: a new line, with no price yet.
+			{ productId: handle, quantity: 3, unit: "EACH", unitCost: null },
 		]);
 	});
 

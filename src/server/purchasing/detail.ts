@@ -30,6 +30,8 @@ import {
 	setPartsOf,
 	settingsOf,
 } from "#/purchasing/orders";
+import { chargesOf } from "#/purchasing/orders/charges";
+import { landedTerms } from "#/purchasing/orders/revalue";
 import {
 	DEFAULT_SETTINGS,
 	recommendedAdditions,
@@ -110,6 +112,8 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			emails,
 			tracking,
 			files,
+			charges,
+			landed,
 		] = await Promise.all([
 			onHandOf(db, productIds),
 			stockRanges(db, productIds),
@@ -174,6 +178,8 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			emailsOf(db, data.id),
 			trackingOf(db, data.id),
 			poFilesOf(db, data.id),
+			chargesOf(db, data.id),
+			landedTerms(db, data.id),
 		]);
 		return {
 			leadTime: leadTimeOf(lead, po.supplier.id),
@@ -203,6 +209,14 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			receipts,
 			amendments,
 			invoices,
+			// Freight and the like, and how they spread: each line's added cost
+			// per single item.
+			charges,
+			split: {
+				method: landed.split.method,
+				unweighed: landed.split.unweighed.length,
+				perItem: Object.fromEntries(landed.split.perItem),
+			},
 			damages,
 			emails,
 			tracking,

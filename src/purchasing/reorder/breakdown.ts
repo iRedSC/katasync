@@ -93,7 +93,6 @@ export async function reorderBreakdown(
 					name: products.name,
 					variantName: products.variantName,
 					imageUrl: products.imageUrl,
-					productCost: products.unitCost,
 					markedCritical: products.critical,
 					notCounted: sql<boolean>`${products.notCountedSince} is not null`,
 					minStock: products.minStock,
@@ -219,10 +218,8 @@ export async function reorderBreakdown(
 			// Until it's counted its number means nothing, so nothing is ordered
 			// from it (src/inventory/not-counted.ts).
 			quantity: p.notCounted ? 0 : reorderQuantity(input),
-			// The supplier's price if we know it, else what we last valued it at.
-			unitCost:
-				p.cost ??
-				(p.productCost === null ? null : p.productCost * terms.packSize),
+			// The supplier's price, or none: our average cost isn't theirs.
+			unitCost: p.cost,
 			critical: isCritical(p.markedCritical, abcClass, blocked),
 		};
 		const lead =

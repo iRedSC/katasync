@@ -83,6 +83,7 @@ export async function receiveReturn(
 				title: orderLines.title,
 				quantity: orderLines.quantity,
 				saleBatchId: orderLines.saleBatchId,
+				unitCost: orderLines.unitCost,
 				// The outer table is named: in a one-table select Drizzle leaves
 				// it off, and the subquery would compare its own columns.
 				returned: sql<number>`coalesce((
@@ -141,6 +142,7 @@ export async function receiveReturn(
 					locationId: restockAt,
 					reference: `return:${order.id}:${line.id}`,
 					sale: null,
+					unitCost: line.unitCost,
 				}));
 			} else if (restockAt !== null && line.productId !== null) {
 				({ batchId } = await recordReturn(tx, {
@@ -151,6 +153,7 @@ export async function receiveReturn(
 					sale: line.saleBatchId
 						? { batchId: line.saleBatchId, quantity: line.quantity }
 						: null,
+					unitCost: line.unitCost,
 				}));
 			}
 			const [row] = await tx

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
@@ -238,7 +238,19 @@ describe("over MCP", () => {
 			unit_cost: 2.5,
 		});
 		expect(adjusted.data.was).toEqual({ quantity: 10, unitCost: 2 });
-		expect(adjusted.data.warning).toMatch(/old price/);
+		// The 4 that came are revalued to the new price.
+		const [{ worth }] = await db
+			.select({ worth: sql<number>`sum(${schema.costEntries.value})::float8` })
+			.from(schema.costEntries)
+			.innerJoin(
+				schema.purchaseOrderLines,
+				eq(
+					schema.purchaseOrderLines.id,
+					schema.costEntries.purchaseOrderLineId,
+				),
+			)
+			.where(eq(schema.purchaseOrderLines.purchaseOrderId, po.id));
+		expect(worth).toBe(10);
 		expect(adjusted.data.po.lines).toContainEqual(
 			expect.objectContaining({
 				sku: "BLADE",
