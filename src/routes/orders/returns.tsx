@@ -1,26 +1,31 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import {
 	Ban,
 	ExternalLink,
 	PackageOpen,
 	Printer,
 	Search,
+	SearchX,
 	Undo2,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
+import { conditionName } from "#/components/order-page/return-card";
+import { OrderTabs, ReturnsViews } from "#/components/order-tabs";
+import { OrderProducts } from "#/components/orders-list/order-products";
+import { PackageWhere } from "#/components/package-status";
 import { Badge, Card, EmptyState, Page, type Tone } from "#/components/page";
 import { type Received, ReturnDialog } from "#/components/return-dialog";
-import { ReturnsTabs } from "#/components/returns-tabs";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
+import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
 import { formatCount, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
+import { useRowLink } from "#/lib/row-link";
 import { offerUndo } from "#/lib/undo";
-import { cn } from "#/lib/utils";
 import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
 import { printPdf } from "#/printing/qz-client";
@@ -38,7 +43,7 @@ export const Route = createFileRoute("/orders/returns")({
 	loader: () => getReturns(),
 	component: Returns,
 	pendingComponent: () => (
-		<ListSkeleton title="Returns">
+		<ListSkeleton title="Orders" width="wide">
 			<ListCard tabs />
 		</ListSkeleton>
 	),
@@ -93,10 +98,6 @@ const dismissedPatch = (orderId: number): Patch =>
 
 type ReceivedRow = ReturnsData["received"][number];
 
-// A Shopify condition handle as words: "new-previous-gen" → "New previous gen".
-const conditionName = (handle: string) =>
-	handle.charAt(0).toUpperCase() + handle.slice(1).replace(/-/g, " ");
-
 const unreceivedPatch = (id: number): Patch =>
 	returnsData.patch("all", (d) => ({
 		...d,
@@ -134,12 +135,10 @@ type OtherSearch =
 function Returns() {
 	const loaded = Route.useLoaderData();
 	const { due, received } = returnsData.useData("all", loaded);
-	const navigate = useNavigate();
+	const { link } = useRowLink();
 	const input = useRef<HTMLInputElement>(null);
-	const list = useRef<HTMLDivElement>(null);
 	const [query, setQuery] = useState("");
 	const [others, setOthers] = useState<OtherSearch | null>(null);
-	const [selected, setSelected] = useState(0);
 	const [receiving, setReceiving] = useState<ReturnOrder | null>(null);
 
 	const shown = useMemo(
@@ -175,13 +174,10 @@ function Returns() {
 	const extraFailed = found?.state === "failed";
 	const rows = [...shown, ...extra];
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: back to the top when the search changes
-	useEffect(() => setSelected(0), [query]);
-	useEffect(() => {
-		list.current
-			?.querySelector(`[data-index="${selected}"]`)
-			?.scrollIntoView({ block: "nearest" });
-	}, [selected]);
+	// The one order a search has narrowed to, which Enter receives: a box
+	// scanned or typed in goes straight to its dialog, and a search that
+	// still matches several receives nothing until it's narrowed.
+	const only = rows.length === 1 ? rows[0] : undefined;
 
 	function receive(o: ReturnOrder | undefined) {
 		if (!o) return;
@@ -264,87 +260,87 @@ function Returns() {
 			if (document.activeElement === input.current) input.current?.blur();
 			else if (query) setQuery("");
 		},
-		j: () => setSelected((i) => Math.min(i + 1, rows.length - 1)),
-		k: () => setSelected((i) => Math.max(i - 1, 0)),
-		Enter: () => receive(rows[selected]),
-		o: () => {
-			const o = rows[selected];
-			if (o) navigate({ to: "/orders/$id", params: { id: String(o.id) } });
-		},
-		n: () => nothingComing(rows[selected]),
 	});
 
-	let index = 0;
-	const row = (o: ReturnOrder) => {
-		const i = index++;
-		return (
-			<ReturnRow
-				key={o.id}
-				order={o}
-				index={i}
-				selected={i === selected}
-				onHover={() => setSelected(i)}
-				onReceive={() => receive(o)}
-				onNothing={o.state ? () => nothingComing(o) : undefined}
-			/>
-		);
-	};
+	const row = (o: ReturnOrder) => (
+		<ReturnRow
+			key={o.id}
+			order={o}
+			onReceive={() => receive(o)}
+			onNothing={o.state ? () => nothingComing(o) : undefined}
+			link={link}
+		/>
+	);
 	const groups = (Object.keys(states) as ReturnState[])
 		.map((s) => ({ state: s, orders: shown.filter((o) => o.state === s) }))
 		.filter((g) => g.orders.length > 0);
 
 	return (
-		<Page title="Returns">
-			<Card flush>
-				<ReturnsTabs active="due" due={due.length} />
-				<div className="flex items-center gap-2 border-b px-4 py-2">
-					<Search className="size-4 text-muted-foreground" />
-					<input
-						ref={input}
-						value={query}
-						onChange={(e) => setQuery(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Enter") {
-								e.preventDefault();
-								receive(rows[selected]);
-							} else if (e.key === "ArrowDown") {
-								e.preventDefault();
-								setSelected((i) => Math.min(i + 1, rows.length - 1));
-							} else if (e.key === "ArrowUp") {
-								e.preventDefault();
-								setSelected((i) => Math.max(i - 1, 0));
-							}
-						}}
-						placeholder="What's on the box: order number, name, city, zip, SKU, tracking"
-						className="h-8 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-					/>
-					<span className="hidden text-xs text-muted-foreground sm:inline">
-						/ search · ↵ receive · o open · n nothing coming back
-					</span>
+		<Page title="Orders" width="wide">
+			<Card flush className="overflow-visible">
+				<OrderTabs
+					active="returns"
+					count={due.length}
+					aside={<ReturnsViews active="due" />}
+				/>
+				<div className="border-b p-2">
+					<div className="relative">
+						<Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
+						<input
+							ref={input}
+							value={query}
+							onChange={(e) => setQuery(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter") {
+									e.preventDefault();
+									receive(only);
+								}
+							}}
+							placeholder="What's on the box: order number, name, city, zip, SKU, tracking"
+							className="h-8 w-full rounded-lg border border-input bg-white pr-3 pl-8 outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
+						/>
+					</div>
 				</div>
 
-				<div ref={list}>
-					{extraFailed && rows.length === 0 ? (
-						<EmptyState icon={Search} title="Search didn't finish">
-							Type to search again.
+				{extraFailed && rows.length === 0 ? (
+					<EmptyState icon={Search} title="Search didn't finish">
+						Type to search again.
+					</EmptyState>
+				) : rows.length === 0 ? (
+					query.trim() ? (
+						<EmptyState icon={SearchX} title="No order matches">
+							{query.trim().length < 3
+								? "Type a few more letters to search every order."
+								: "Try the buyer's name, a SKU, or the zip on the label."}
 						</EmptyState>
-					) : rows.length === 0 ? (
-						query.trim() ? (
-							<EmptyState icon={Search} title="No order matches">
-								{query.trim().length < 3
-									? "Type a few more letters to search every order."
-									: "Nothing due back or shipped matches that. Try the buyer's name, a SKU, or the zip on the label."}
-							</EmptyState>
-						) : (
-							<EmptyState icon={PackageOpen} title="Nothing due back">
-								Refunds and return requests show here until their items are
-								received.
-							</EmptyState>
-						)
 					) : (
-						<>
+						<EmptyState icon={PackageOpen} title="Nothing due back" />
+					)
+				) : (
+					<table className="w-full whitespace-nowrap">
+						<thead>
+							<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
+								<th className="px-4 py-2 font-medium">Order</th>
+								<th className="hidden px-4 py-2 font-medium md:table-cell">
+									Date
+								</th>
+								<th className="px-4 py-2 font-medium">Customer</th>
+								<th className="hidden px-4 py-2 font-medium md:table-cell">
+									Coming back
+								</th>
+								<th className="hidden px-4 py-2 font-medium lg:table-cell">
+									Why
+								</th>
+								<th className="hidden px-4 py-2 font-medium lg:table-cell">
+									Channel
+								</th>
+								<th className="px-4 py-2 font-medium">Status</th>
+								<th className="w-0 px-2 py-2" />
+							</tr>
+						</thead>
+						<tbody>
 							{groups.map((g) => (
-								<section key={g.state}>
+								<Fragment key={g.state}>
 									<GroupHeading>
 										{states[g.state].heading}
 										<span className="ml-1.5 tabular-nums">
@@ -352,94 +348,108 @@ function Returns() {
 										</span>
 									</GroupHeading>
 									{g.orders.map(row)}
-								</section>
+								</Fragment>
 							))}
 							{extraFailed && (
-								<p className="px-4 py-2 text-xs text-warning-text">
-									Couldn't search every order. Type to search again.
-								</p>
+								<tr>
+									<td
+										colSpan={COLUMNS}
+										className="px-4 py-2 text-xs text-warning-text"
+									>
+										Couldn't search every order. Type to search again.
+									</td>
+								</tr>
 							)}
 							{extra.length > 0 && (
-								<section>
+								<>
 									<GroupHeading>Other orders that match</GroupHeading>
 									{extra.map(row)}
-								</section>
+								</>
 							)}
-						</>
-					)}
-				</div>
+						</tbody>
+					</table>
+				)}
 			</Card>
 
 			{received.length > 0 && !query.trim() && (
 				<Card title="Received in the last 30 days" flush>
-					<ul>
-						{received.map((r) => (
-							<li
-								key={r.id}
-								className="flex items-center border-t pr-2 first:border-t-0 hover:bg-subtle"
-							>
-								<Link
-									to="/orders/$id"
-									params={{ id: String(r.orderId) }}
-									className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5"
+					<table className="w-full whitespace-nowrap">
+						<tbody>
+							{received.map((r) => (
+								<tr
+									key={r.id}
+									{...link({
+										to: "/orders/$id",
+										params: { id: String(r.orderId) },
+									})}
+									className="cursor-pointer border-t hover:bg-subtle"
 								>
-									<span className="w-28 shrink-0 text-muted-foreground">
+									<td className="w-40 px-4 py-2.5 font-semibold">{r.name}</td>
+									<td className="hidden w-40 px-4 py-2.5 text-muted-foreground md:table-cell">
 										{formatOrderDate(r.createdAt)}
-									</span>
-									<span className="w-40 shrink-0 truncate font-semibold">
-										{r.name}
-									</span>
-									<span className="min-w-0 flex-1 truncate">
-										{formatCount(r.quantity)} × {r.sku ?? r.title}
-									</span>
-									{r.refurb ? (
-										<Badge tone="success">
-											{conditionName(r.refurb.condition)} · {r.refurb.sku}
-										</Badge>
-									) : (
-										<Badge tone={r.restocked ? "success" : undefined}>
-											{r.restocked ? "Back on shelf" : "Written off"}
-										</Badge>
-									)}
-								</Link>
-								{r.confirmOn && (
-									<a
-										href={r.confirmOn.url}
-										target="_blank"
-										rel="noreferrer"
-										className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-link hover:bg-surface-strong"
-									>
-										Confirm on {r.confirmOn.name}
-										<ExternalLink className="size-3.5" />
-									</a>
-								)}
-								{r.refurb && (
-									<Tip content="Print its box label">
-										<button
-											type="button"
-											aria-label="Print its box label"
-											onClick={() =>
-												printPdf(`/labels/refurbs/${r.id}`, "Box label")
-											}
-											className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
-										>
-											<Printer className="size-4" />
-										</button>
-									</Tip>
-								)}
-								<Tip content="Take this return back">
-									<button
-										type="button"
-										aria-label="Take this return back"
-										onClick={() => unreceive(r)}
-										className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
-									>
-										<Undo2 className="size-4" />
-									</button>
-								</Tip>
-							</li>
-						))}
-					</ul>
+									</td>
+									<td className="max-w-0 px-4 py-2.5">
+										<div className="flex min-w-0 items-center gap-2">
+											<span className="shrink-0 font-semibold tabular-nums">
+												{formatCount(r.quantity)} ×
+											</span>
+											<span className="truncate">{r.sku ?? r.title}</span>
+										</div>
+									</td>
+									<td className="w-0 px-4 py-2.5">
+										{r.refurb ? (
+											<Badge tone="success">
+												{conditionName(r.refurb.condition)} · {r.refurb.sku}
+											</Badge>
+										) : (
+											<Badge tone={r.restocked ? "success" : undefined}>
+												{r.restocked ? "Back on shelf" : "Written off"}
+											</Badge>
+										)}
+									</td>
+									<td className="w-0 py-1.5 pr-2">
+										<div className="flex items-center justify-end gap-1">
+											{r.confirmOn && (
+												<a
+													href={r.confirmOn.url}
+													target="_blank"
+													rel="noreferrer"
+													className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-link hover:bg-surface-strong"
+												>
+													Confirm on {r.confirmOn.name}
+													<ExternalLink className="size-3.5" />
+												</a>
+											)}
+											{r.refurb && (
+												<Tip content="Print its box label">
+													<button
+														type="button"
+														aria-label="Print its box label"
+														onClick={() =>
+															printPdf(`/labels/refurbs/${r.id}`, "Box label")
+														}
+														className={ICON_BUTTON}
+													>
+														<Printer className="size-4" />
+													</button>
+												</Tip>
+											)}
+											<Tip content="Take this return back">
+												<button
+													type="button"
+													aria-label="Take this return back"
+													onClick={() => unreceive(r)}
+													className={ICON_BUTTON}
+												>
+													<Undo2 className="size-4" />
+												</button>
+											</Tip>
+										</div>
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
 				</Card>
 			)}
 
@@ -473,122 +483,139 @@ function Returns() {
 	);
 }
 
+const COLUMNS = 8;
+const ICON_BUTTON =
+	"inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground";
+
 function GroupHeading({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="border-b bg-subtle px-4 py-1.5 text-xs font-medium text-muted-foreground">
-			{children}
-		</div>
+		<tr>
+			<td
+				colSpan={COLUMNS}
+				className="border-y bg-subtle px-4 py-1.5 text-xs font-medium text-muted-foreground"
+			>
+				{children}
+			</td>
+		</tr>
 	);
 }
 
+// One order with something coming back, laid out as the orders list lays
+// out an order. A click opens the order, where its whole return is; its
+// Receive opens the box.
 function ReturnRow({
 	order: o,
-	index,
-	selected,
-	onHover,
 	onReceive,
 	onNothing,
+	link,
 }: {
 	order: ReturnOrder;
-	index: number;
-	selected: boolean;
-	onHover: () => void;
 	onReceive: () => void;
 	onNothing?: () => void;
+	link: ReturnType<typeof useRowLink>["link"];
 }) {
 	const state = o.state ? states[o.state] : null;
 	const request = o.requests[0];
 	const expected = o.lines.filter((l) => l.expected > 0);
+	const coming = (expected.length > 0 ? expected : o.lines).map((l) => ({
+		id: l.id,
+		title: l.title,
+		sku: l.sku,
+		quantity: l.expected || l.left,
+		productSku: null,
+		productName: null,
+		imageUrl: l.imageUrl,
+		fromStore: [],
+	}));
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: Enter receives the selected row
-		// biome-ignore lint/a11y/noStaticElementInteractions: a row of a keyboard-driven list
-		<div
-			data-index={index}
-			onMouseMove={onHover}
-			onClick={onReceive}
-			className={cn(
-				"flex cursor-pointer items-start gap-4 border-b px-4 py-3 last:border-b-0",
-				selected ? "bg-surface" : "hover:bg-subtle",
-			)}
+		<tr
+			{...link({ to: "/orders/$id", params: { id: String(o.id) } })}
+			className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
 		>
-			<div className="w-44 shrink-0">
-				<Link
-					to="/orders/$id"
-					params={{ id: String(o.id) }}
-					onClick={(e) => e.stopPropagation()}
-					className="font-semibold text-link hover:underline"
-				>
-					{o.name}
-				</Link>
-				<div className="mt-1 flex items-center gap-1.5">
-					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
-				</div>
-				<div className="mt-1 text-xs text-muted-foreground">
-					{formatOrderDate(o.placedAt)}
-				</div>
-			</div>
-			<div className="w-44 shrink-0 min-w-0">
+			<td className="px-4 py-2.5 font-semibold">{o.name}</td>
+			<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
+				{formatOrderDate(o.placedAt)}
+			</td>
+			<td className="w-2/5 max-w-0 px-4 py-2.5">
 				<div className="truncate">{o.customerName ?? "No name"}</div>
 				<div className="truncate text-xs text-muted-foreground">
 					{[o.shipCity, o.shipRegion].filter(Boolean).join(", ")}
 					{o.shipPostalCode && ` ${o.shipPostalCode}`}
 				</div>
-			</div>
-			<ul className="min-w-0 flex-1">
-				{(expected.length > 0 ? expected : o.lines).map((l) => (
-					<li key={l.id} className="truncate">
-						<span className="tabular-nums">
-							{o.state === "maybe"
-								? `up to ${formatCount(l.expected)}`
-								: formatCount(l.expected || l.left)}
-						</span>{" "}
-						× {l.sku ?? l.title}
-						{l.sku && <span className="text-muted-foreground"> {l.title}</span>}
-					</li>
-				))}
-				{request && (request.reason || request.trackingNumber) && (
-					<li className="truncate text-xs text-muted-foreground">
-						{request.reason && returnReason(request.reason)}
-						{request.reason && request.trackingNumber && " · "}
-						{request.trackingNumber &&
-							`${request.carrier ? `${request.carrier} ` : ""}${request.trackingNumber}`}
-					</li>
+			</td>
+			<td className="hidden w-3/5 max-w-0 px-4 py-2 md:table-cell">
+				<OrderProducts lines={coming} />
+			</td>
+			<td className="hidden max-w-56 px-4 py-2.5 lg:table-cell">
+				{request?.reason && (
+					<div className="truncate text-muted-foreground">
+						{returnReason(request.reason)}
+					</div>
+				)}
+				{request?.tracking ? (
+					<div className="truncate text-xs">
+						<PackageWhere t={request.tracking} />
+					</div>
+				) : (
+					request?.trackingNumber && (
+						<div className="truncate font-mono text-xs text-muted-foreground">
+							{request.carrier && `${request.carrier} `}
+							{request.trackingNumber}
+						</div>
+					)
 				)}
 				{o.unmatched.map((u, i) => (
-					<li
+					<div
 						// biome-ignore lint/suspicious/noArrayIndexKey: two requests can name the same SKU
 						key={i}
 						className="truncate text-xs text-warning-text"
 					>
 						{formatCount(u.quantity)} × {u.sku ?? "an item"}, line unclear
-					</li>
+					</div>
 				))}
-				{o.blocker && (
-					<li className="text-xs text-warning-text">{o.blocker}</li>
-				)}
-			</ul>
-			<div className="flex shrink-0 items-center gap-2">
-				{state ? (
-					<Badge tone={state.tone}>{state.label}</Badge>
-				) : (
-					<Badge>Not expected</Badge>
-				)}
-				{onNothing && (
-					<Tip content="Nothing coming back (n)">
-						<button
-							type="button"
-							aria-label="Nothing coming back"
-							onClick={(e) => {
-								e.stopPropagation();
-								onNothing();
-							}}
-							className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground"
-						>
-							<Ban className="size-4" />
-						</button>
-					</Tip>
-				)}
-			</div>
-		</div>
+			</td>
+			<td className="hidden px-4 py-2.5 lg:table-cell">
+				<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
+			</td>
+			<td className="px-4 py-2.5">
+				<div className="flex gap-1.5">
+					{state ? (
+						<Badge tone={state.tone}>{state.label}</Badge>
+					) : (
+						<Badge>Not expected</Badge>
+					)}
+					{o.blocker && (
+						<Tip content={o.blocker}>
+							<span>
+								<Badge tone="warning">Can't receive here</Badge>
+							</span>
+						</Tip>
+					)}
+				</div>
+			</td>
+			<td className="py-1.5 pr-2">
+				<div className="flex items-center justify-end gap-1">
+					{!o.blocker && (
+						<Button size="sm" variant="outline" onClick={onReceive}>
+							Receive
+						</Button>
+					)}
+					{onNothing ? (
+						<Tip content="Nothing coming back">
+							<button
+								type="button"
+								aria-label="Nothing coming back"
+								onClick={onNothing}
+								className={ICON_BUTTON}
+							>
+								<Ban className="size-4" />
+							</button>
+						</Tip>
+					) : (
+						<span className="size-7" />
+					)}
+				</div>
+			</td>
+		</tr>
 	);
 }

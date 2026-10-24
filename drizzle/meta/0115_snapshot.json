@@ -1,5 +1,5 @@
 {
-  "id": "41b89568-c5f4-4e30-939e-314ec5ef9781",
+  "id": "96bb4d80-d61e-4200-b454-f9b7f11a6cf4",
   "prevId": "0e15cf22-3889-4025-a495-b65c64a09ea2",
   "version": "7",
   "dialect": "postgresql",
@@ -2280,36 +2280,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "movements_batch_idx": {
-          "name": "movements_batch_idx",
-          "columns": [
-            {
-              "expression": "batch_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "movements_reference_idx": {
-          "name": "movements_reference_idx",
-          "columns": [
-            {
-              "expression": "reference",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -2944,37 +2914,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "order_lines_sale_batch_idx": {
-          "name": "order_lines_sale_batch_idx",
-          "columns": [
-            {
-              "expression": "sale_batch_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "order_lines_unsettled_idx": {
-          "name": "order_lines_unsettled_idx",
-          "columns": [
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"order_lines\".\"sale_batch_id\" is null and \"order_lines\".\"product_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -7092,6 +7031,122 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.return_tracking": {
+      "name": "return_tracking",
+      "schema": "",
+      "columns": {
+        "return_request_id": {
+          "name": "return_request_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "carrier": {
+          "name": "carrier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "number": {
+          "name": "number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "tracking_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status_detail": {
+          "name": "status_detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status_at": {
+          "name": "status_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "eta": {
+          "name": "eta",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "original_eta": {
+          "name": "original_eta",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "service": {
+          "name": "service",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination": {
+          "name": "destination",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "history": {
+          "name": "history",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "return_tracking_return_request_id_return_requests_id_fk": {
+          "name": "return_tracking_return_request_id_return_requests_id_fk",
+          "tableFrom": "return_tracking",
+          "tableTo": "return_requests",
+          "columnsFrom": [
+            "return_request_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "return_tracking_number_shape": {
+          "name": "return_tracking_number_shape",
+          "value": "\"return_tracking\".\"number\" ~ '^[0-9A-Z]{8,40}$'"
+        },
+        "return_tracking_carrier": {
+          "name": "return_tracking_carrier",
+          "value": "\"return_tracking\".\"carrier\" in ('ups', 'usps', 'fedex')"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.sessions": {
       "name": "sessions",
       "schema": "",
@@ -8901,8 +8956,7 @@
       "values": [
         "owned",
         "fba",
-        "retail",
-        "transit"
+        "retail"
       ]
     },
     "public.market_email_folder": {

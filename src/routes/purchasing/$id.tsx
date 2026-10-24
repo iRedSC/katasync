@@ -28,6 +28,7 @@ import { ChargesRow } from "#/components/purchase-order/charges-row";
 import { middayOf } from "#/components/purchase-order/days";
 import { DeliveryCard } from "#/components/purchase-order/delivery-card";
 import { FilesCard } from "#/components/purchase-order/files-card";
+import { FlagsCard } from "#/components/purchase-order/flags";
 import { InvoicesCard } from "#/components/purchase-order/invoices-card";
 import { receiveAllWithUndo } from "#/components/purchase-order/line-actions";
 import { damageable, lineName } from "#/components/purchase-order/line-damage";
@@ -397,6 +398,7 @@ function PurchaseOrderPage() {
 						</>
 					) : (
 						<>
+							<FlagsCard flags={d.flags} />
 							{/* Like Shopify's unfulfilled and fulfilled cards: a line moves
 							    down once all of it is in. */}
 							{incoming.length > 0 && (

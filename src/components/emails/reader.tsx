@@ -112,6 +112,7 @@ export function MailText({ text }: { text: string }) {
 export function EmailReader({
 	email: e,
 	actions,
+	about,
 	heading = true,
 	box = "purchasing",
 	fileUrl = attachmentUrl,
@@ -126,6 +127,9 @@ export function EmailReader({
 	heading?: boolean;
 	// The bar under the header: filing it, setting it aside.
 	actions?: ReactNode;
+	// What the email is about, between the header and the message: the
+	// orders it names.
+	about?: ReactNode;
 	className?: string;
 }) {
 	const [showing, setShowing] = useState<number | "message">("message");
@@ -154,6 +158,7 @@ export function EmailReader({
 					)}
 				</header>
 			)}
+			{about}
 			{e.attachments.length > 0 && (
 				<nav className="flex flex-wrap gap-1.5 border-b px-5 py-2">
 					<Tab

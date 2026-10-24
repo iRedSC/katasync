@@ -24,6 +24,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { Condition } from "#/inbox/rules";
 import type { Standing } from "#/markets/standing";
+import type { Applied, Proposal } from "#/purchasing/inbox/ai-filing-shapes";
 
 // Raw bytes, for files kept in the database (label PDFs).
 const bytea = customType<{ data: Buffer; driverData: Uint8Array }>({
@@ -1622,12 +1623,14 @@ export const supplierInvoices = pgTable(
 
 // How an email from the purchasing inbox came to be on its PO: sent to the
 // PO's own address (purchasing+po1234@), a reply whose subject names the PO
-// from its supplier's domain, or filed by someone in the app or by Claude.
+// from its supplier's domain, filed by someone in the app or by Claude, or
+// by the AI reading it (po_email_ai).
 export const poEmailMatch = pgEnum("po_email_match", [
 	"address",
 	"subject",
 	"staff",
 	"claude",
+	"ai",
 ]);
 
 // Emails that reached the purchasing inbox, as read from Microsoft 365
@@ -1702,6 +1705,122 @@ export const poEmailAttachments = pgTable(
 	],
 );
 
+// Where the AI is with an email nothing filed by itself: reading it, filed
+// it on a PO (following its tracking and flagging what it says), suggests a
+// PO it isn't sure of, found none, failed (tried again later), or staff undid
+// its filing.
+export const poEmailAiState = pgEnum("po_email_ai_state", [
+	"working",
+	"filed",
+	"suggested",
+	"unmatched",
+	"failed",
+	"undone",
+]);
+
+// The AI's go at one unfiled email (src/purchasing/inbox/ai-filing.ts). One
+// per email: a run claims it by writing working, so two runs never both act.
+export const poEmailAi = pgTable(
+	"po_email_ai",
+	{
+		emailId: integer()
+			.primaryKey()
+			.references(() => poEmails.id, { onDelete: "cascade" }),
+		state: poEmailAiState().notNull(),
+		// The PO it filed the email on, or suggests.
+		purchaseOrderId: integer().references(() => purchaseOrders.id),
+		// A few words for staff: why that PO, or why none.
+		reason: text(),
+		// What the email says: its tracking, and what to flag on the PO.
+		proposal: jsonb().$type<Proposal>(),
+		// What filing did, kept after an undo too.
+		applied: jsonb().$type<Applied>(),
+		error: text(),
+		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			"po_email_ai_po",
+			sql`(${t.state} in ('filed', 'suggested', 'undone')) = (${t.purchaseOrderId} is not null)`,
+		),
+		check(
+			"po_email_ai_applied",
+			sql`(${t.state} in ('filed', 'undone')) = (${t.applied} is not null)`,
+		),
+		check(
+			"po_email_ai_proposal",
+			sql`${t.state} <> 'suggested' or ${t.proposal} is not null`,
+		),
+	],
+);
+
+// What a flag says a PO should change (src/purchasing/flags.ts).
+export const poFlagKind = pgEnum("po_flag_kind", [
+	"price",
+	"quantity",
+	"back_order",
+	"note",
+]);
+export const poFlagResolution = pgEnum("po_flag_resolution", [
+	"applied",
+	"dismissed",
+]);
+
+// Something a sent PO should change to, read from a supplier's email by the
+// AI or raised by Claude or staff, for staff to apply (one click makes the
+// change) or dismiss. Nothing changes the PO until then. A product has one
+// open flag of each kind per PO; a newer one replaces it. Notes are any
+// number, in words.
+export const poFlags = pgTable(
+	"po_flags",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		purchaseOrderId: integer()
+			.notNull()
+			.references(() => purchaseOrders.id),
+		// The email it was read from. Its open flags leave with it when it
+		// leaves the PO, as its tracking does.
+		emailId: integer().references(() => poEmails.id, { onDelete: "cascade" }),
+		productId: integer().references(() => products.id),
+		kind: poFlagKind().notNull(),
+		// A price per the line's unit, or a quantity in it.
+		value: numeric({ precision: 12, scale: 4, mode: "number" }),
+		// Why, in the supplier's words where it can.
+		note: text().notNull(),
+		by: text().$type<"ai" | "claude" | "staff">().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		resolvedAt: timestamp({ withTimezone: true }),
+		resolution: poFlagResolution(),
+		// What applying it replaced (a price, a quantity, 1 when the line was
+		// back-ordered already), so it can be set back.
+		before: numeric({ precision: 12, scale: 4, mode: "number" }),
+	},
+	(t) => [
+		index("po_flags_po_idx").on(t.purchaseOrderId),
+		index("po_flags_email_idx").on(t.emailId),
+		uniqueIndex("po_flags_one_open")
+			.on(t.purchaseOrderId, t.productId, t.kind)
+			.where(sql`${t.resolvedAt} is null and ${t.kind} <> 'note'`),
+		check(
+			"po_flags_shape",
+			sql`case ${t.kind}
+				when 'price' then ${t.productId} is not null and ${t.value} >= 0
+				when 'quantity' then ${t.productId} is not null and ${t.value} >= 0 and ${t.value} = trunc(${t.value})
+				when 'back_order' then ${t.productId} is not null and ${t.value} is null
+				else ${t.value} is null
+			end`,
+		),
+		check(
+			"po_flags_resolved",
+			sql`(${t.resolvedAt} is null) = (${t.resolution} is null)`,
+		),
+		check(
+			"po_flags_before_applied",
+			sql`${t.before} is null or ${t.resolution} = 'applied'`,
+		),
+	],
+);
+
 // Who put a file on a PO.
 export const poFileSource = pgEnum("po_file_source", ["staff", "claude"]);
 
@@ -1763,6 +1882,43 @@ export type TrackingEvent = {
 	at: string | null;
 	place: string | null;
 };
+
+// Where the package a return request names is, as Shippo last said: one
+// row per request, for the number it had when asked. When the marketplace
+// changes the number, the row no longer matches it and isn't shown; the
+// next look asks about the new one and replaces it.
+export const returnTracking = pgTable(
+	"return_tracking",
+	{
+		returnRequestId: integer()
+			.primaryKey()
+			.references(() => returnRequests.id, { onDelete: "cascade" }),
+		// Shippo's carrier token: ups, usps, fedex.
+		carrier: text().notNull(),
+		// Uppercase, no spaces.
+		number: text().notNull(),
+		status: trackingStatus().notNull(),
+		statusDetail: text(),
+		statusAt: timestamp({ withTimezone: true }),
+		eta: timestamp({ withTimezone: true }),
+		originalEta: timestamp({ withTimezone: true }),
+		service: text(),
+		origin: text(),
+		destination: text(),
+		history: jsonb().$type<TrackingEvent[]>().notNull().default([]),
+		checkedAt: timestamp({ withTimezone: true }).notNull(),
+	},
+	(t) => [
+		check(
+			"return_tracking_number_shape",
+			sql`${t.number} ~ '^[0-9A-Z]{8,40}$'`,
+		),
+		check(
+			"return_tracking_carrier",
+			sql`${t.carrier} in ('ups', 'usps', 'fedex')`,
+		),
+	],
+);
 
 // Packages a supplier sent for a PO, followed on Shippo. Only ever evidence:
 // a delivery never receives or closes the PO.
