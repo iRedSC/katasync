@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { fileType } from "#/lib/file-type";
 
 // Reads the purchasing mailbox through Microsoft Graph, as an app with no
 // user signed in (client credentials). Exchange limits the app to this one
@@ -466,9 +467,10 @@ export async function messageHtml(graphId: string, box: Mailbox) {
 		// Anything else inline (a scan, a PDF) is a document, so it's kept.
 		const shown = contentId !== null && html.includes(`cid:${contentId}`);
 		if (a.isInline && !shown && isPicture(a) && a.size <= LOGO_BYTES) continue;
+		const name = a.name?.trim() || "attachment";
 		const file = {
-			filename: a.name?.trim() || "attachment",
-			contentType: a.contentType?.toLowerCase() || "application/octet-stream",
+			filename: name,
+			contentType: fileType(a.contentType ?? "", name),
 			size: data ? data.length : a.size,
 			data,
 		};
