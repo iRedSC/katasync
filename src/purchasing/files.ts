@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, desc, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { poFileUploads, purchaseOrderFiles } from "#/db/schema";
+import { fileType } from "#/lib/file-type";
 import { isPdf, pdfText } from "#/purchasing/inbox/pdf-text";
 import {
 	lockForEdit,
@@ -19,18 +20,6 @@ const UPLOAD_LINK_MINUTES = 30;
 const ANY = ["draft", "sent", "closed", "cancelled"] as const;
 
 export type PoFileSource = "staff" | "claude";
-
-// What a file is called and what it is, from what the upload says. Browsers
-// send no type for some files (.eml on Windows), so the name decides then.
-function typeOf(contentType: string, filename: string) {
-	const given = contentType.split(";")[0].trim().toLowerCase();
-	if (given && given !== "application/octet-stream") return given;
-	if (/\.pdf$/i.test(filename)) return "application/pdf";
-	if (/\.eml$/i.test(filename)) return "message/rfc822";
-	if (/\.png$/i.test(filename)) return "image/png";
-	if (/\.jpe?g$/i.test(filename)) return "image/jpeg";
-	return "application/octet-stream";
-}
 
 const named = (filename: string) =>
 	filename.replace(/[/\\]/g, "_").trim().slice(0, 200);
@@ -54,7 +43,7 @@ export async function addPoFile(
 			`${filename} is ${(input.data.length / 1e6).toFixed(1)} MB; a PO's files can be up to ${MAX_PO_FILE_BYTES / 1e6} MB`,
 		);
 	const data = Buffer.from(input.data);
-	const contentType = typeOf(input.contentType, filename);
+	const contentType = fileType(input.contentType, filename);
 	// Read before the lock, so a slow PDF doesn't hold the PO.
 	const text = isPdf(contentType, filename) ? await pdfText(data) : null;
 	return db.transaction(async (tx) => {
