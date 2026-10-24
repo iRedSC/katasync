@@ -5,7 +5,7 @@ import {
 	stockCommitments,
 	unreservedShipments,
 } from "#/db/quantity-schema";
-import { orders } from "#/db/schema";
+import { orderLines, orderReturns, orders } from "#/db/schema";
 import { undoBatch } from "#/inventory/ledger";
 import { batchProductIds, lockRecipes } from "#/inventory/ledger/post";
 import {
@@ -25,6 +25,37 @@ export type RestoreResult =
 			voidedUnreserved: { orderLineId: number; quantity: number }[];
 	  };
 
+export async function assertFulfillmentRestorable(
+	db: Db,
+	input: { orderId: number; fulfillmentKey: string },
+) {
+	return db.transaction(async (tx) => {
+		if ((await readQuantityMode(tx)) === "legacy") return;
+		await tx
+			.select({ id: orders.id })
+			.from(orders)
+			.where(eq(orders.id, input.orderId))
+			.for("no key update");
+		const [returned] = await tx
+			.select({ id: orderReturns.id })
+			.from(orderReturns)
+			.innerJoin(orderLines, eq(orderLines.id, orderReturns.orderLineId))
+			.where(
+				and(
+					eq(orderLines.orderId, input.orderId),
+					sql`exists (
+				select 1 from stock_commitments c join stock_commitment_entries e on e.commitment_id = c.id
+				where c.order_line_id = ${orderReturns.orderLineId} and e.kind = 'consume' and e.fulfillment_key = ${input.fulfillmentKey}
+				and not exists (select 1 from stock_commitment_entries r where r.restores_entry_id = e.id)
+			)`,
+				),
+			)
+			.limit(1);
+		if (returned)
+			throw new Error("Undo the received returns before voiding this dispatch");
+	});
+}
+
 export async function restoreCommitments(
 	db: Db,
 	input: { orderId: number; fulfillmentKey: string },
@@ -37,6 +68,7 @@ export async function restoreCommitments(
 			.from(orders)
 			.where(eq(orders.id, input.orderId))
 			.for("no key update");
+		await assertFulfillmentRestorable(tx, input);
 		const entries = await tx
 			.select({
 				id: stockCommitmentEntries.id,

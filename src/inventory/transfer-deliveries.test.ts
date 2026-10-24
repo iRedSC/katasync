@@ -1,11 +1,12 @@
 import { and, eq } from "drizzle-orm";
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { postMovements, recordCount, transferStock, undoBatch } from "./ledger";
 import { setPosLocation, TRANSIT_LOCATION, transitLocation } from "./locations";
 import { onlineStock } from "./online-stock";
+import { refillSuggestions, setShelfTarget } from "./refill";
 import { stockPositions } from "./stock-position";
 import {
 	deliveryOf,
@@ -59,6 +60,45 @@ beforeEach(async () => {
 });
 
 describe("transfers through transit", () => {
+	test("refill shelf and transit quantities come from one statement before and after receipt", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await postMovements(db, {
+			lines: [
+				{
+					productId: wrench,
+					locationId: warehouse,
+					delta: 20,
+					reason: "receipt",
+				},
+			],
+		});
+		await setShelfTarget(db, {
+			productId: wrench,
+			locationId: retail,
+			target: 10,
+		});
+		const id = await sentDraft(wrench, 10);
+		const select = vi.spyOn(db, "select");
+		expect(
+			await refillSuggestions(db, {
+				fromLocationId: warehouse,
+				toLocationId: retail,
+			}),
+		).toEqual([]);
+		expect(select).toHaveBeenCalledOnce();
+		select.mockRestore();
+		await receiveTransfer(db, {
+			transferId: id,
+			receiptKey: "arrived",
+			lines: [{ productId: wrench, quantity: 10 }],
+		});
+		expect(
+			await refillSuggestions(db, {
+				fromLocationId: warehouse,
+				toLocationId: retail,
+			}),
+		).toEqual([]);
+	});
 	test("in-transit units cannot be replaced by a shelf count", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		const transit = await transitLocation(db);

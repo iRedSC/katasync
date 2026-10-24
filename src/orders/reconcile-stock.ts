@@ -1,12 +1,26 @@
-import { and, asc, eq, gt, gte, inArray, isNotNull, isNull } from "drizzle-orm";
+import {
+	and,
+	asc,
+	eq,
+	gt,
+	gte,
+	inArray,
+	isNotNull,
+	isNull,
+	or,
+} from "drizzle-orm";
 import type { StockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { orderLines, orders, stores } from "#/db/schema";
 import { type Channel, errorText } from "#/diagnostics/runs";
 import { readQuantityMode } from "#/inventory/commitments";
 import { lockRecipes } from "#/inventory/ledger/post";
-import { takeStock } from "./ingest";
-import { commitmentProductIds, stockEffectMissing } from "./stock-effects";
+import {
+	commitmentProductIds,
+	outstandingShipment,
+	stockEffectMissing,
+	syncLineStock,
+} from "./stock-effects";
 
 // Lines that should have taken stock and haven't: mapped to a product, no sale
 // batch yet, and on an order that takes stock. The rules are orderTakesStock's
@@ -15,10 +29,15 @@ import { commitmentProductIds, stockEffectMissing } from "./stock-effects";
 // reconcileStock still owes.
 export const unsettledStock = and(
 	isNotNull(orderLines.productId),
-	stockEffectMissing,
-	gt(orderLines.quantity, 0),
+	or(
+		outstandingShipment,
+		and(
+			stockEffectMissing,
+			gt(orderLines.quantity, 0),
+			isNull(orders.cancelledAt),
+		),
+	),
 	eq(orders.fulfilledByChannel, false),
-	isNull(orders.cancelledAt),
 	isNotNull(stores.stockFrom),
 	gte(orders.placedAt, stores.stockFrom),
 );
@@ -83,7 +102,11 @@ async function settleLine(
 		const [matched] = await tx
 			.select({
 				line: orderLines,
-				order: { name: orders.name, soldInStore: orders.soldInStore },
+				order: {
+					name: orders.name,
+					soldInStore: orders.soldInStore,
+					cancelledAt: orders.cancelledAt,
+				},
 			})
 			.from(orderLines)
 			.innerJoin(orders, eq(orders.id, orderLines.orderId))
@@ -98,16 +121,22 @@ async function settleLine(
 		const [line] = await tx
 			.select()
 			.from(orderLines)
-			.where(and(eq(orderLines.id, pending.id), stockEffectMissing))
+			.where(
+				and(
+					eq(orderLines.id, pending.id),
+					or(stockEffectMissing, outstandingShipment),
+				),
+			)
 			.for("update");
 		if (!line || line.productId !== matched.line.productId) return null;
 		return {
-			problem: await takeStock(
-				tx,
-				{ ...line, productId: matched.line.productId },
-				matched.order,
+			problem: await syncLineStock(tx, {
+				row: { ...line, productId: matched.line.productId },
+				sku: line.sku,
+				order: matched.order,
+				takesStock: matched.order.cancelledAt === null,
 				from,
-			),
+			}),
 		};
 	});
 }

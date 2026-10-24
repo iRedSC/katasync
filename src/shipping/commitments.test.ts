@@ -9,6 +9,7 @@ import {
 	quantityWorld,
 } from "#/inventory/commitments.fixtures";
 import { fromStore } from "#/orders/from-store";
+import { receiveReturn, undoReturns } from "#/orders/returns";
 import { createProduct, createTestDb } from "#/test/db";
 import { memoryLocker } from "./dispatch";
 import { addPackedDispatch } from "./dispatch.fixtures";
@@ -51,6 +52,44 @@ function outside(): Outside {
 
 const reserved = async () =>
 	(await committedUnits(db, [wrench])).get(wrench) ?? 0;
+
+test("a purchased label cannot authorize a return before consumption", async () => {
+	await addPackedDispatch(db, { orderIds: [orderId] });
+	await expect(
+		receiveReturn(db, {
+			orderId,
+			lines: [{ lineId: await world.lineId(orderId), quantity: 1 }],
+			outcome: "restock",
+		}),
+	).rejects.toThrow(/already returned|Only 0/);
+	expect(await world.onHand(wrench, world.warehouse)).toBe(5);
+	expect(await reserved()).toBe(3);
+});
+
+test("shipped units can return after cancellation; their return blocks void until undone", async () => {
+	const { dispatchId } = await addPackedDispatch(db, { orderIds: [orderId] });
+	const api = outside();
+	await sendTracking(db, dispatchId, api);
+	await world.ingest(
+		channelOrder({ cancelledAt: new Date(), fulfillmentStatus: "FULFILLED" }),
+	);
+	const returned = await receiveReturn(db, {
+		orderId,
+		lines: [{ lineId: await world.lineId(orderId), quantity: 3 }],
+		outcome: "restock",
+	});
+	expect(await world.onHand(wrench, world.warehouse)).toBe(5);
+	await expect(voidDispatch(db, dispatchId, api)).rejects.toThrow(
+		"Undo the received returns",
+	);
+	expect(api.shopifyCancel).not.toHaveBeenCalled();
+	expect(api.refund).not.toHaveBeenCalled();
+	expect(await world.onHand(wrench, world.warehouse)).toBe(5);
+	await undoReturns(db, returned.ids);
+	await voidDispatch(db, dispatchId, api);
+	expect(await world.onHand(wrench, world.warehouse)).toBe(5);
+	expect(await reserved()).toBe(0);
+});
 
 test("old packed evidence without an inventory line identity is held before any marketplace write", async () => {
 	const { dispatchId } = await addPackedDispatch(db, {

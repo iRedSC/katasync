@@ -80,10 +80,15 @@ export function returnBlocker(order: {
 	fulfilledByChannel: boolean;
 	fulfillmentStatus: string;
 	labeled: boolean;
+	shippedQuantity?: number;
 }): string | null {
 	if (order.fulfilledByChannel) {
 		return `${order.name} was shipped by the marketplace, so its returns go back there`;
 	}
+	if (order.shippedQuantity !== undefined)
+		return order.shippedQuantity > 0
+			? null
+			: `${order.name} hasn't shipped yet`;
 	if (order.cancelledAt) {
 		return `${order.name} was cancelled, so its stock already came back`;
 	}

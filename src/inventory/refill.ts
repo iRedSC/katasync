@@ -1,7 +1,6 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { products, shelfTargets, stockLevels } from "#/db/schema";
-import { inTransitTo } from "./transfer-deliveries";
+import { products, shelfTargets } from "#/db/schema";
 import { lockDraft, setTransferLines, TransferError } from "./transfers";
 
 // A location's target for a product: refills top it back up to this. null
@@ -70,44 +69,24 @@ export async function refillSuggestions(
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,
 			target: shelfTargets.target,
+			atDestination: sql<number>`coalesce((select s.on_hand from stock_levels s where s.product_id = ${products.id} and s.location_id = ${input.toLocationId}), 0)::int`,
+			atSource: sql<number>`coalesce((select s.on_hand from stock_levels s where s.product_id = ${products.id} and s.location_id = ${input.fromLocationId}), 0)::int`,
+			inTransit: sql<number>`coalesce((select sum(l.quantity - coalesce((
+				select sum(rl.quantity) from transfer_receipt_lines rl
+				join transfer_receipts r on r.id = rl.receipt_id
+				where r.dispatch_id = d.id and rl.product_id = l.product_id
+				and not exists (select 1 from movements u where u.reference = 'undo:' || r.batch_id::text)
+			), 0)) from transfer_dispatch_lines l
+			join transfer_dispatches d on d.id = l.dispatch_id
+			join transfers t on t.id = d.transfer_id and t.batch_id = d.batch_id
+			where t.to_location_id = ${input.toLocationId} and l.product_id = ${products.id}), 0)::int`,
 		})
 		.from(shelfTargets)
 		.innerJoin(products, eq(products.id, shelfTargets.productId))
 		.where(eq(shelfTargets.locationId, input.toLocationId))
 		.orderBy(products.sku);
-	if (targets.length === 0) return [];
-	const levels = await db
-		.select()
-		.from(stockLevels)
-		.where(
-			and(
-				inArray(
-					stockLevels.productId,
-					targets.map((t) => t.productId),
-				),
-				inArray(stockLevels.locationId, [
-					input.fromLocationId,
-					input.toLocationId,
-				]),
-			),
-		);
-	// Shelf levels by product and location, so each lookup is a map read.
-	const levelKey = (productId: number, locationId: number) =>
-		`${productId}:${locationId}`;
-	const onHand = new Map(
-		levels.map((l) => [levelKey(l.productId, l.locationId), l.onHand] as const),
-	);
-	const at = (productId: number, locationId: number) =>
-		onHand.get(levelKey(productId, locationId)) ?? 0;
-	const coming = await inTransitTo(
-		db,
-		input.toLocationId,
-		targets.map((t) => t.productId),
-	);
 	return targets.flatMap((t) => {
-		const atDestination = at(t.productId, input.toLocationId);
-		const atSource = at(t.productId, input.fromLocationId);
-		const inTransit = coming.get(t.productId) ?? 0;
+		const { atDestination, atSource, inTransit } = t;
 		const need = t.target - Math.max(0, atDestination) - inTransit;
 		if (need <= 0) return [];
 		return [
