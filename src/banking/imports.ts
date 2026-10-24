@@ -1,8 +1,12 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { recordedBy } from "#/audit/recorded-by";
+import type { Actor } from "#/auth/actor";
 import {
 	type BankCsvMapping,
 	bankImportRows,
 	bankImports,
+	bankMatches,
 	bankTransactions,
 } from "#/db/banking-schema";
 import type { Db } from "#/db/client";
@@ -40,6 +44,7 @@ export type ImportInput = {
 	text: string;
 	fileName: string | null;
 	mapping: BankCsvMapping;
+	replacesImportId?: number;
 };
 
 const CHUNK = 1000;
@@ -66,6 +71,7 @@ async function classify(
 			and(
 				eq(bankImports.accountId, account.id),
 				eq(bankImports.fileSha256, sha256),
+				isNull(bankImports.voidedAt),
 			),
 		);
 	const accepted = rows.flatMap((r) =>
@@ -93,6 +99,8 @@ async function classify(
 			.where(
 				and(
 					eq(bankTransactions.accountId, account.id),
+					isNull(bankTransactions.voidedAt),
+					sql`not exists (select 1 from bank_import_rows old where old.id = ${bankTransactions.importRowId} and old.import_id = ${input.replacesImportId ?? null})`,
 					inArray(bankTransactions.bankRef, part),
 				),
 			);
@@ -109,6 +117,8 @@ async function classify(
 			.where(
 				and(
 					eq(bankTransactions.accountId, account.id),
+					isNull(bankTransactions.voidedAt),
+					sql`not exists (select 1 from bank_import_rows old where old.id = ${bankTransactions.importRowId} and old.import_id = ${input.replacesImportId ?? null})`,
 					isNull(bankTransactions.bankRef),
 					inArray(bankTransactions.fingerprint, part),
 				),
@@ -167,7 +177,8 @@ async function classify(
 		value: {
 			sha256,
 			headers,
-			alreadyImported: already?.id ?? null,
+			alreadyImported:
+				already?.id === input.replacesImportId ? null : (already?.id ?? null),
 			rows: out,
 			cells,
 		},
@@ -200,7 +211,11 @@ export type Committed =
 
 export async function commitImport(
 	db: Db,
-	input: ImportInput & { skipRows: readonly number[] },
+	input: ImportInput & {
+		skipRows: readonly number[];
+		keepRows?: readonly number[];
+	},
+	actor: Actor,
 ): Promise<Parsed<Committed>> {
 	return db.transaction(async (tx) => {
 		const account = await loadAccount(tx, input.accountId, { lock: true });
@@ -209,12 +224,48 @@ export async function commitImport(
 		const preview = await classify(tx, account, input);
 		if (!preview.ok) return preview;
 		const p = preview.value;
-		if (p.alreadyImported !== null)
-			return {
-				ok: true,
-				value: { kind: "already", importId: p.alreadyImported },
-			};
+		const mapping = input.mapping;
+		const requestDigest = createHash("sha256")
+			.update(
+				JSON.stringify([
+					mapping.date,
+					mapping.dateFormat,
+					mapping.description,
+					mapping.bankId,
+					mapping.currency,
+					mapping.amount.kind === "signed"
+						? ["signed", mapping.amount.column, mapping.amount.positiveMeans]
+						: ["split", mapping.amount.moneyIn, mapping.amount.moneyOut],
+					[...new Set(input.skipRows)].sort((first, second) => first - second),
+					[...new Set(input.keepRows ?? [])].sort(
+						(first, second) => first - second,
+					),
+					input.replacesImportId ?? null,
+				]),
+			)
+			.digest("hex");
+		const [replay] = await tx
+			.select()
+			.from(bankImports)
+			.where(
+				and(
+					eq(bankImports.accountId, account.id),
+					eq(bankImports.fileSha256, p.sha256),
+					input.replacesImportId === undefined
+						? isNull(bankImports.replacesImportId)
+						: eq(bankImports.replacesImportId, input.replacesImportId),
+				),
+			);
+		if (replay)
+			return replay.requestDigest === requestDigest
+				? { ok: true, value: { kind: "already", importId: replay.id } }
+				: {
+						ok: false,
+						problem:
+							"This file was imported with different choices. Use Correct import.",
+					};
 		const skip = new Set(input.skipRows);
+		const keep = new Set(input.keepRows ?? []);
 		const skippable = new Set(
 			p.rows.flatMap((r) => (r.kind === "accepted" ? [r.rowNumber] : [])),
 		);
@@ -224,6 +275,74 @@ export async function commitImport(
 					ok: false,
 					problem: `Row ${n} isn't one that can be left out`,
 				};
+		for (const row of p.rows) {
+			if (
+				row.kind === "accepted" &&
+				row.repeatOf !== null &&
+				skip.has(row.rowNumber) === keep.has(row.rowNumber)
+			)
+				return {
+					ok: false,
+					problem: `Row ${row.rowNumber} may already be imported. Choose New transaction or Leave out.`,
+				};
+		}
+		if (input.replacesImportId !== undefined) {
+			const [previous] = await tx
+				.select()
+				.from(bankImports)
+				.where(
+					and(
+						eq(bankImports.id, input.replacesImportId),
+						eq(bankImports.accountId, account.id),
+						eq(bankImports.fileSha256, p.sha256),
+						isNull(bankImports.voidedAt),
+					),
+				);
+			if (!previous)
+				return {
+					ok: false,
+					problem:
+						"That import has already been corrected or is a different file",
+				};
+			const previousRows = await tx
+				.select({ id: bankTransactions.id })
+				.from(bankTransactions)
+				.innerJoin(
+					bankImportRows,
+					eq(bankImportRows.id, bankTransactions.importRowId),
+				)
+				.where(eq(bankImportRows.importId, previous.id))
+				.for("update", { of: bankTransactions });
+			const ids = previousRows.map((row) => row.id);
+			if (ids.length > 0) {
+				const [matched] = await tx
+					.select({ id: bankMatches.id })
+					.from(bankMatches)
+					.where(
+						and(
+							inArray(bankMatches.transactionId, ids),
+							isNull(bankMatches.undoneAt),
+						),
+					)
+					.limit(1);
+				if (matched)
+					return {
+						ok: false,
+						problem: "Undo this import's payout matches before correcting it",
+					};
+				await tx
+					.update(bankTransactions)
+					.set({
+						voidedAt: sql`clock_timestamp()`,
+						voidedBy: recordedBy(actor),
+					})
+					.where(inArray(bankTransactions.id, ids));
+			}
+			await tx
+				.update(bankImports)
+				.set({ voidedAt: sql`clock_timestamp()`, voidedBy: recordedBy(actor) })
+				.where(eq(bankImports.id, previous.id));
+		}
 		const [made] = await tx
 			.insert(bankImports)
 			.values({
@@ -232,9 +351,14 @@ export async function commitImport(
 				fileName: input.fileName?.slice(0, 200) || null,
 				mapping: input.mapping,
 				rowCount: p.rows.length,
+				importedBy: recordedBy(actor),
+				requestDigest,
+				replacesImportId: input.replacesImportId ?? null,
 			})
 			.returning({ id: bankImports.id });
-		const outcomeOf = (r: PreviewRow) =>
+		const outcomeOf = (
+			r: PreviewRow,
+		): typeof bankImportRows.$inferInsert.outcome =>
 			r.kind === "accepted"
 				? skip.has(r.rowNumber)
 					? "skipped"

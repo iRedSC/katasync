@@ -9,7 +9,8 @@ const FILES = [
 	"src/server/banking.ts",
 	"src/routes/reconciliation.tsx",
 	"src/db/banking-schema.ts",
-	"src/db/pending/banking.sql",
+	"drizzle/0126_banking.sql",
+	"drizzle/0127_banking_evidence.sql",
 ];
 
 const FORBIDDEN = [
@@ -42,6 +43,15 @@ describe("banking boundaries", () => {
 			expect({
 				file,
 				writes: /\.(insert|update|delete)\(payouts\)/.test(text),
+			}).toEqual({ file, writes: false });
+		}
+		for (const file of FILES.filter((f) => f.endsWith(".sql"))) {
+			expect({
+				file,
+				writes:
+					/\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+"?payouts"?\b/i.test(
+						readFileSync(file, "utf8"),
+					),
 			}).toEqual({ file, writes: false });
 		}
 	});

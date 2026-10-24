@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
+import { requireActor } from "#/audit/context";
 import { createAccount } from "#/banking/accounts";
 import { LIMITS } from "#/banking/csv";
 import { peekFile } from "#/banking/guess";
@@ -16,6 +17,7 @@ const importInput = type({
 	text: `string <= ${LIMITS.fileBytes}`,
 	fileName: "(string <= 200) | null",
 	mapping: mappingInput,
+	"replacesImportId?": id,
 });
 
 const part = type({
@@ -31,7 +33,7 @@ export type Reconciliation = Awaited<ReturnType<typeof getReconciliation>>;
 
 export const newBankAccount = createServerFn({ method: "POST" })
 	.validator(type({ name: "string <= 200", currency: "string <= 10" }))
-	.handler(async ({ data }) => createAccount(getDb(), data));
+	.handler(async ({ data }) => createAccount(getDb(), data, requireActor()));
 
 export const peekBankFile = createServerFn({ method: "POST" })
 	.validator(type({ text: `string <= ${LIMITS.fileBytes}` }))
@@ -49,9 +51,10 @@ export const importBankFile = createServerFn({ method: "POST" })
 	.validator(
 		importInput.and({
 			skipRows: type("number.integer > 0").array().atMostLength(LIMITS.rows),
+			"keepRows?": type("number.integer > 0").array().atMostLength(LIMITS.rows),
 		}),
 	)
-	.handler(async ({ data }) => commitImport(getDb(), data));
+	.handler(async ({ data }) => commitImport(getDb(), data, requireActor()));
 
 export const getMatchOptions = createServerFn()
 	.validator(type({ transactionId: id }))
@@ -69,8 +72,10 @@ export const matchBankRow = createServerFn({ method: "POST" })
 			replaces: type(id).or("null"),
 		}),
 	)
-	.handler(async ({ data }) => confirmMatch(getDb(), data));
+	.handler(async ({ data }) => confirmMatch(getDb(), data, requireActor()));
 
 export const undoBankMatch = createServerFn({ method: "POST" })
 	.validator(type({ matchId: id }))
-	.handler(async ({ data }) => undoMatch(getDb(), data.matchId));
+	.handler(async ({ data }) =>
+		undoMatch(getDb(), data.matchId, requireActor()),
+	);

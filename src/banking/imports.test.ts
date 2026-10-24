@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { systemActor } from "#/auth/actor";
 import {
 	bankAccounts,
 	bankImportRows,
@@ -55,13 +56,17 @@ describe("bank CSV import", () => {
 		expect(
 			p.value.rows.map((r) => r.kind === "accepted" && r.repeatOf !== null),
 		).toEqual([true, true, false, false]);
-		const r = await commitImport(db, {
-			accountId: a.id,
-			text: overlap,
-			fileName: null,
-			mapping: MAPPING,
-			skipRows: [1, 2],
-		});
+		const r = await commitImport(
+			db,
+			{
+				accountId: a.id,
+				text: overlap,
+				fileName: null,
+				mapping: MAPPING,
+				skipRows: [1, 2],
+			},
+			testActor,
+		);
 		expect(r).toMatchObject({
 			ok: true,
 			value: { kind: "imported", added: 2, skipped: 2 },
@@ -118,22 +123,30 @@ describe("bank CSV import", () => {
 		const db = await createTestDb();
 		const a = await account(db);
 		const text = csv("2026-10-01,A,1", "bad,B,2");
-		const r = await commitImport(db, {
-			accountId: a.id,
-			text,
-			fileName: null,
-			mapping: MAPPING,
-			skipRows: [2],
-		});
+		const r = await commitImport(
+			db,
+			{
+				accountId: a.id,
+				text,
+				fileName: null,
+				mapping: MAPPING,
+				skipRows: [2],
+			},
+			testActor,
+		);
 		expect(r.ok).toBe(false);
 		expect(await db.select().from(bankImportRows)).toHaveLength(0);
-		const wrong = await commitImport(db, {
-			accountId: a.id,
-			text,
-			fileName: null,
-			mapping: { ...MAPPING, date: "When" },
-			skipRows: [],
-		});
+		const wrong = await commitImport(
+			db,
+			{
+				accountId: a.id,
+				text,
+				fileName: null,
+				mapping: { ...MAPPING, date: "When" },
+				skipRows: [],
+			},
+			testActor,
+		);
 		expect(wrong).toEqual({
 			ok: false,
 			problem: expect.stringContaining("When"),
@@ -159,11 +172,13 @@ describe("bank CSV import", () => {
 	it("refuses currencies it can't keep in cents, and repeated names", async () => {
 		const db = await createTestDb();
 		expect(
-			await createAccount(db, { name: "Yen", currency: "JPY" }),
+			await createAccount(db, { name: "Yen", currency: "JPY" }, testActor),
 		).toMatchObject({ ok: false });
 		await account(db, "Main");
 		expect(
-			await createAccount(db, { name: " Main ", currency: "USD" }),
+			await createAccount(db, { name: " Main ", currency: "USD" }, testActor),
 		).toMatchObject({ ok: false });
 	});
 });
+
+const testActor = systemActor("script");

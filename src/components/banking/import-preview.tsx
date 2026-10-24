@@ -20,24 +20,32 @@ export function ImportPreview({
 	skip,
 	problem,
 	busy,
+	retry,
 	onSkip,
 	onBack,
 	onImport,
+	onCorrect,
 }: {
 	currency: string;
 	preview: Previewed;
 	skip: ReadonlySet<number>;
 	problem: string | null;
 	busy: boolean;
+	retry: boolean;
 	onSkip: (skip: ReadonlySet<number>) => void;
 	onBack: () => void;
-	onImport: () => void;
+	onImport: (keep: ReadonlySet<number>) => void;
+	onCorrect: () => void;
 }) {
+	const [keep, setKeep] = useState<ReadonlySet<number>>(new Set());
 	const [filter, setFilter] = useState<Filter>(() =>
 		preview.rows.some((r) => r.kind === "invalid") ? "invalid" : "all",
 	);
 	const accepted = preview.rows.filter((r) => r.kind === "accepted");
 	const repeats = accepted.filter(isRepeat);
+	const unchosen = repeats.filter(
+		(row) => !skip.has(row.rowNumber) && !keep.has(row.rowNumber),
+	).length;
 	const count = { duplicate: 0, invalid: 0 };
 	for (const r of preview.rows) if (r.kind !== "accepted") count[r.kind]++;
 	const shown = preview.rows.filter((r) =>
@@ -52,6 +60,19 @@ export function ImportPreview({
 		repeats.length > 0 && repeats.every((r) => skip.has(r.rowNumber));
 	const toggle = (n: number) => {
 		const next = new Set(skip);
+		if (repeats.some((row) => row.rowNumber === n)) {
+			const chosen = new Set(keep);
+			if (chosen.has(n)) {
+				chosen.delete(n);
+				next.add(n);
+			} else {
+				chosen.add(n);
+				next.delete(n);
+			}
+			setKeep(chosen);
+			onSkip(next);
+			return;
+		}
 		if (next.has(n)) next.delete(n);
 		else next.add(n);
 		onSkip(next);
@@ -68,6 +89,7 @@ export function ImportPreview({
 				<Button variant="ghost" onClick={onBack}>
 					Back
 				</Button>
+				<Button onClick={onCorrect}>Correct import</Button>
 			</div>
 		);
 
@@ -101,12 +123,19 @@ export function ImportPreview({
 						variant="ghost"
 						size="xs"
 						className="ml-auto"
-						disabled={busy}
+						disabled={busy || retry}
 						onClick={() => {
 							const next = new Set(skip);
+							const chosen = new Set(keep);
 							for (const r of repeats)
-								if (allRepeatsSkipped) next.delete(r.rowNumber);
-								else next.add(r.rowNumber);
+								if (allRepeatsSkipped) {
+									next.delete(r.rowNumber);
+									chosen.add(r.rowNumber);
+								} else {
+									next.add(r.rowNumber);
+									chosen.delete(r.rowNumber);
+								}
+							setKeep(chosen);
 							onSkip(next);
 						}}
 					>
@@ -124,7 +153,8 @@ export function ImportPreview({
 								row={r}
 								currency={currency}
 								skipped={skip.has(r.rowNumber)}
-								busy={busy}
+								kept={keep.has(r.rowNumber)}
+								busy={busy || retry}
 								onToggle={() => toggle(r.rowNumber)}
 							/>
 						))}
@@ -137,15 +167,22 @@ export function ImportPreview({
 				)}
 			</div>
 			<div className="flex items-center gap-3">
-				<Button variant="ghost" onClick={onBack} disabled={busy}>
+				<Button variant="ghost" onClick={onBack} disabled={busy || retry}>
 					Change columns
 				</Button>
-				<Button onClick={onImport} disabled={busy}>
+				<Button onClick={() => onImport(keep)} disabled={busy || unchosen > 0}>
 					{busy && <Loader2 className="animate-spin" />}
-					{adding > 0
-						? `Import ${formatCount(adding)} ${adding === 1 ? "row" : "rows"}`
-						: "Record file, add nothing"}
+					{retry
+						? "Retry import"
+						: adding > 0
+							? `Import ${formatCount(adding)} ${adding === 1 ? "row" : "rows"}`
+							: "Record file, add nothing"}
 				</Button>
+				{unchosen > 0 && (
+					<span className="text-xs text-warning-text">
+						Choose {formatCount(unchosen)} possible duplicates
+					</span>
+				)}
 				{problem && (
 					<span className="text-xs text-critical-text">{problem}</span>
 				)}
@@ -158,12 +195,14 @@ function PreviewLine({
 	row: r,
 	currency,
 	skipped,
+	kept,
 	busy,
 	onToggle,
 }: {
 	row: Row;
 	currency: string;
 	skipped: boolean;
+	kept: boolean;
 	busy: boolean;
 	onToggle: () => void;
 }) {
@@ -195,10 +234,10 @@ function PreviewLine({
 					<label className="flex items-center gap-1.5">
 						<input
 							type="checkbox"
-							checked={!skipped}
+							checked={!skipped && (r.repeatOf === null || kept)}
 							disabled={busy}
 							onChange={onToggle}
-							aria-label={`Keep row ${r.rowNumber}`}
+							aria-label={`${r.repeatOf === null ? "Keep" : "New transaction"} row ${r.rowNumber}`}
 						/>
 						{r.rowNumber}
 					</label>

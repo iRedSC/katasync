@@ -267,6 +267,7 @@ describe("export", () => {
 		expect(csvCell("@sum")).toBe("'@sum");
 		expect(csvCell("-1+2")).toBe("'-1+2");
 		expect(csvCell(-12.5)).toBe("-12.5");
-		expect(toCsv([["a,b", 'say "hi"', null]])).toBe('"a,b","say ""hi""",');
+		expect(toCsv([["a,b", 'say "hi"', null]])).toBe('"a,b","say ""hi""",\r\n');
+		expect(csvCell("  =1+1")).toBe("'  =1+1");
 	});
 });

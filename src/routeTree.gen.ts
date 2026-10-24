@@ -18,6 +18,7 @@ import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as MarketsRouteImport } from './routes/markets'
 import { Route as McpRouteImport } from './routes/mcp'
+import { Route as ReconciliationRouteImport } from './routes/reconciliation'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
@@ -120,6 +121,11 @@ const MarketsRoute = MarketsRouteImport.update({
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReconciliationRoute = ReconciliationRouteImport.update({
+  id: '/reconciliation',
+  path: '/reconciliation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReportsRoute = ReportsRouteImport.update({
@@ -429,6 +435,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/markets': typeof MarketsRoute
   '/mcp': typeof McpRoute
+  '/reconciliation': typeof ReconciliationRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -498,6 +505,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/markets': typeof MarketsRoute
   '/mcp': typeof McpRoute
+  '/reconciliation': typeof ReconciliationRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -568,6 +576,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/markets': typeof MarketsRoute
   '/mcp': typeof McpRoute
+  '/reconciliation': typeof ReconciliationRoute
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -639,6 +648,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/markets'
     | '/mcp'
+    | '/reconciliation'
     | '/reports'
     | '/settings'
     | '/setup'
@@ -708,6 +718,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/markets'
     | '/mcp'
+    | '/reconciliation'
     | '/reports'
     | '/settings'
     | '/setup'
@@ -777,6 +788,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/markets'
     | '/mcp'
+    | '/reconciliation'
     | '/reports'
     | '/settings'
     | '/setup'
@@ -847,6 +859,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   MarketsRoute: typeof MarketsRoute
   McpRoute: typeof McpRoute
+  ReconciliationRoute: typeof ReconciliationRoute
   ReportsRoute: typeof ReportsRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
@@ -970,6 +983,13 @@ declare module '@tanstack/react-router' {
       path: '/mcp'
       fullPath: '/mcp'
       preLoaderRoute: typeof McpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reconciliation': {
+      id: '/reconciliation'
+      path: '/reconciliation'
+      fullPath: '/reconciliation'
+      preLoaderRoute: typeof ReconciliationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reports': {
@@ -1391,6 +1411,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   MarketsRoute: MarketsRoute,
   McpRoute: McpRoute,
+  ReconciliationRoute: ReconciliationRoute,
   ReportsRoute: ReportsRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,

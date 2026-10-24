@@ -9,6 +9,7 @@ export type Draft = {
 	fileName: string | null;
 	peek: Peeked;
 	mapping: BankCsvMapping;
+	replacesImportId?: number;
 };
 
 export type Step =
@@ -17,7 +18,7 @@ export type Step =
 	| { kind: "mapping"; draft: Draft; problem: string | null }
 	| { kind: "previewing"; draft: Draft }
 	| {
-			kind: "preview";
+			kind: "preview" | "retry";
 			draft: Draft;
 			preview: Previewed;
 			skip: ReadonlySet<number>;

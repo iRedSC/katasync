@@ -883,6 +883,20 @@
       "when": 1792801471012,
       "tag": "0125_payables_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1792802775203,
+      "tag": "0126_banking",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1792802776816,
+      "tag": "0127_banking_evidence",
+      "breakpoints": true
     }
   ]
 }

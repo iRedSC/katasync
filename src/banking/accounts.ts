@@ -1,4 +1,6 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
+import { recordedBy } from "#/audit/recorded-by";
+import type { Actor } from "#/auth/actor";
 import { bankAccounts } from "#/db/banking-schema";
 import type { Db } from "#/db/client";
 import { type Currency, type Parsed, parseCurrency } from "./money";
@@ -31,18 +33,25 @@ export async function listAccounts(db: Reader): Promise<Account[]> {
 }
 
 export async function loadAccount(
-	db: Reader,
+	db: Db,
 	id: number,
 	{ lock = false } = {},
 ): Promise<Account | null> {
 	const query = db.select().from(bankAccounts).where(eq(bankAccounts.id, id));
-	const [row] = lock ? await query.for("update") : await query;
+	const [row] = lock
+		? await db
+				.update(bankAccounts)
+				.set({ name: sql`${bankAccounts.name}` })
+				.where(eq(bankAccounts.id, id))
+				.returning()
+		: await query;
 	return row ? toAccount(row) : null;
 }
 
 export async function createAccount(
 	db: Db,
 	input: { name: string; currency: string },
+	actor: Actor,
 ): Promise<Parsed<AccountView>> {
 	const name = input.name.trim().replace(/\s+/g, " ");
 	if (name.length === 0) return { ok: false, problem: "Name it" };
@@ -51,7 +60,7 @@ export async function createAccount(
 	if (!currency.ok) return currency;
 	const [row] = await db
 		.insert(bankAccounts)
-		.values({ name, currency: currency.value })
+		.values({ name, currency: currency.value, createdBy: recordedBy(actor) })
 		.onConflictDoNothing({ target: bankAccounts.name })
 		.returning();
 	if (!row) return { ok: false, problem: `"${name}" already exists` };

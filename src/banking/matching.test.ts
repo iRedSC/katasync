@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { systemActor } from "#/auth/actor";
 import { bankMatches, bankMatchParts } from "#/db/banking-schema";
 import { payouts } from "#/db/schema";
 import { createTestDb } from "#/test/db";
@@ -24,20 +25,28 @@ describe("matching bank rows to payouts", () => {
 			status: "pending",
 			reference: null,
 		});
-		const short = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p1, 10000), part(p2, 4999)],
-			replaces: null,
-		});
+		const short = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p1, 10000), part(p2, 4999)],
+				replaces: null,
+			},
+			testActor,
+		);
 		expect(short).toMatchObject({
 			ok: false,
 			problem: expect.stringContaining("add to"),
 		});
-		const r = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p1, 10000), part(p2, 5000)],
-			replaces: null,
-		});
+		const r = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p1, 10000), part(p2, 5000)],
+				replaces: null,
+			},
+			testActor,
+		);
 		expect(r).toMatchObject({ ok: true, value: { kind: "matched" } });
 		const parts = await db
 			.select()
@@ -79,25 +88,37 @@ describe("matching bank rows to payouts", () => {
 		const { db, ids } = await setup(["2026-10-02,SHOPIFY,100.00"]);
 		const p1 = await payout(db, "P1", 100);
 		const p2 = await payout(db, "P2", 100);
-		const first = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p1, 10000)],
-			replaces: null,
-		});
-		const again = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p1, 10000)],
-			replaces: null,
-		});
+		const first = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p1, 10000)],
+				replaces: null,
+			},
+			testActor,
+		);
+		const again = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p1, 10000)],
+				replaces: null,
+			},
+			testActor,
+		);
 		expect(again).toEqual({
 			ok: true,
 			value: { kind: "already", matchId: first.ok ? first.value.matchId : -1 },
 		});
-		const other = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p2, 10000)],
-			replaces: null,
-		});
+		const other = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p2, 10000)],
+				replaces: null,
+			},
+			testActor,
+		);
 		expect(other.ok).toBe(false);
 		expect(await db.select().from(bankMatches)).toHaveLength(1);
 	});
@@ -110,11 +131,15 @@ describe("matching bank rows to payouts", () => {
 		const p = await payout(db, "P1", 150);
 		const results = await Promise.all(
 			ids.map((transactionId) =>
-				confirmMatch(db, {
-					transactionId,
-					parts: [part(p, 10000)],
-					replaces: null,
-				}),
+				confirmMatch(
+					db,
+					{
+						transactionId,
+						parts: [part(p, 10000)],
+						replaces: null,
+					},
+					testActor,
+				),
 			),
 		);
 		expect(results.filter((r) => r.ok)).toHaveLength(1);
@@ -128,11 +153,15 @@ describe("matching bank rows to payouts", () => {
 	it("refuses a payout in another currency rather than converting", async () => {
 		const { db, ids } = await setup(["2026-10-02,A,100.00"]);
 		const p = await payout(db, "P1", 100, { currency: "CAD" });
-		const r = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p, 10000)],
-			replaces: null,
-		});
+		const r = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p, 10000)],
+				replaces: null,
+			},
+			testActor,
+		);
 		expect(r).toEqual({
 			ok: false,
 			problem: expect.stringContaining("conversion"),
@@ -149,17 +178,21 @@ describe("matching bank rows to payouts", () => {
 			"2026-10-03,B,100.00",
 		]);
 		const p = await payout(db, "P1", 100);
-		const r = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p, 10000)],
-			replaces: null,
-		});
+		const r = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p, 10000)],
+				replaces: null,
+			},
+			testActor,
+		);
 		if (!r.ok) throw new Error(r.problem);
-		expect(await undoMatch(db, r.value.matchId)).toMatchObject({
+		expect(await undoMatch(db, r.value.matchId, testActor)).toMatchObject({
 			ok: true,
 			value: { kind: "undone", parts: [part(p, 10000)] },
 		});
-		expect(await undoMatch(db, r.value.matchId)).toMatchObject({
+		expect(await undoMatch(db, r.value.matchId, testActor)).toMatchObject({
 			ok: true,
 			value: { kind: "already" },
 		});
@@ -170,11 +203,15 @@ describe("matching bank rows to payouts", () => {
 		await expect(
 			db.update(bankMatches).set({ undoneAt: null }),
 		).rejects.toThrow();
-		const other = await confirmMatch(db, {
-			transactionId: ids[1],
-			parts: [part(p, 10000)],
-			replaces: null,
-		});
+		const other = await confirmMatch(
+			db,
+			{
+				transactionId: ids[1],
+				parts: [part(p, 10000)],
+				replaces: null,
+			},
+			testActor,
+		);
 		expect(other.ok).toBe(true);
 		const o = await loadOverview(db, a.id);
 		expect(o.rows.find((x) => x.id === ids[0])).toMatchObject({
@@ -186,11 +223,15 @@ describe("matching bank rows to payouts", () => {
 	it("shows a match whose payout changed upstream as needs review, never as matched", async () => {
 		const { db, a, ids } = await setup(["2026-10-02,A,100.00"]);
 		const p = await payout(db, "P1", 100, { status: "pending" });
-		const r = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p, 10000)],
-			replaces: null,
-		});
+		const r = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p, 10000)],
+				replaces: null,
+			},
+			testActor,
+		);
 		if (!r.ok) throw new Error(r.problem);
 		const state = async () =>
 			(await matchStates(db, ids, a.currency)).states.get(ids[0]);
@@ -206,22 +247,30 @@ describe("matching bank rows to payouts", () => {
 		});
 		await db.update(payouts).set({ status: "failed" }).where(eq(payouts.id, p));
 		expect((await state())?.kind).toBe("needs-review");
-		const again = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p, 10000)],
-			replaces: r.value.matchId,
-		});
+		const again = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p, 10000)],
+				replaces: r.value.matchId,
+			},
+			testActor,
+		);
 		expect(again.ok).toBe(false);
 	});
 
 	it("catches a payout that changed and changed back", async () => {
 		const { db, a, ids } = await setup(["2026-10-02,A,100.00"]);
 		const p = await payout(db, "P1", 100);
-		const r = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p, 10000)],
-			replaces: null,
-		});
+		const r = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p, 10000)],
+				replaces: null,
+			},
+			testActor,
+		);
 		if (!r.ok) throw new Error(r.problem);
 		await db.update(payouts).set({ amount: 90 }).where(eq(payouts.id, p));
 		await db.update(payouts).set({ amount: 100 }).where(eq(payouts.id, p));
@@ -230,20 +279,30 @@ describe("matching bank rows to payouts", () => {
 			kind: "needs-review",
 			reasons: [expect.stringContaining("changed back")],
 		});
-		const again = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p, 10000)],
-			replaces: r.value.matchId,
-		});
+		const again = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p, 10000)],
+				replaces: r.value.matchId,
+			},
+			testActor,
+		);
 		expect(again).toMatchObject({ ok: true, value: { kind: "matched" } });
 		expect(
 			(await matchStates(db, ids, a.currency)).states.get(ids[0])?.kind,
 		).toBe("matched");
-		const stale = await confirmMatch(db, {
-			transactionId: ids[0],
-			parts: [part(p, 10000)],
-			replaces: r.value.matchId,
-		});
+		const stale = await confirmMatch(
+			db,
+			{
+				transactionId: ids[0],
+				parts: [part(p, 10000)],
+				replaces: r.value.matchId,
+			},
+			testActor,
+		);
 		expect(stale.ok).toBe(false);
 	});
 });
+
+const testActor = systemActor("script");

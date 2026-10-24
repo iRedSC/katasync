@@ -11,6 +11,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
+import { useIntent } from "#/lib/intent";
 import { optimism } from "#/lib/optimism";
 import {
 	importBankFile,
@@ -35,6 +36,8 @@ export function ImportDialog({
 	const [step, setStep] = useState<Step>({ kind: "source", problem: null });
 	const [pasted, setPasted] = useState("");
 	const run = useRef(0);
+	const committing = useRef(false);
+	const intent = useIntent<Parameters<typeof importBankFile>[0]["data"]>();
 	const body = useRef<HTMLDivElement>(null);
 
 	const reset = () => {
@@ -43,6 +46,10 @@ export function ImportDialog({
 		setPasted("");
 	};
 	const close = (next: boolean) => {
+		if (!next && (committing.current || intent.getSnapshot().kind !== "idle")) {
+			shake(body.current);
+			return;
+		}
 		if (!next) reset();
 		onOpenChange(next);
 	};
@@ -78,6 +85,7 @@ export function ImportDialog({
 				text: draft.text,
 				fileName: draft.fileName,
 				mapping: draft.mapping,
+				replacesImportId: draft.replacesImportId,
 			},
 		}).catch((e: Error) => ({ ok: false as const, problem: e.message }));
 		if (mine !== run.current) return;
@@ -91,25 +99,40 @@ export function ImportDialog({
 		});
 	}
 
-	async function commit(draft: Draft, skip: ReadonlySet<number>) {
-		if (step.kind !== "preview") return;
+	async function commit(
+		draft: Draft,
+		skip: ReadonlySet<number>,
+		keep: ReadonlySet<number>,
+	) {
+		if (
+			committing.current ||
+			(step.kind !== "preview" && step.kind !== "retry")
+		)
+			return;
+		committing.current = true;
 		const back = step;
 		const mine = ++run.current;
 		setStep({ kind: "importing", draft, preview: back.preview, skip });
-		const r = await optimism.change({
-			send: () =>
-				importBankFile({
-					data: {
-						accountId: account.id,
-						text: draft.text,
-						fileName: draft.fileName,
-						mapping: draft.mapping,
-						skipRows: [...skip],
-					},
-				}),
-		});
+		const r = await intent.run(
+			() => ({
+				accountId: account.id,
+				text: draft.text,
+				fileName: draft.fileName,
+				mapping: draft.mapping,
+				replacesImportId: draft.replacesImportId,
+				skipRows: [...skip],
+				keepRows: [...keep],
+			}),
+			(data) => optimism.change({ send: () => importBankFile({ data }) }),
+		);
+		committing.current = false;
 		if (mine !== run.current) return;
-		if (!r) return setStep(back);
+		if (!r)
+			return refuse({
+				...back,
+				kind: "retry",
+				problem: "Result not received. Retry this import.",
+			});
 		if (!r.value.ok) return refuse({ ...back, problem: r.value.problem });
 		const done = r.value.value;
 		close(false);
@@ -174,8 +197,24 @@ export function ImportDialog({
 							currency={account.currency}
 							preview={step.preview}
 							skip={step.skip}
-							problem={step.kind === "preview" ? step.problem : null}
+							problem={
+								step.kind === "preview" || step.kind === "retry"
+									? step.problem
+									: null
+							}
 							busy={step.kind === "importing"}
+							retry={step.kind === "retry"}
+							onCorrect={() =>
+								step.preview.alreadyImported !== null &&
+								setStep({
+									kind: "mapping",
+									draft: {
+										...step.draft,
+										replacesImportId: step.preview.alreadyImported,
+									},
+									problem: null,
+								})
+							}
 							onSkip={(skip) =>
 								step.kind === "preview" &&
 								setStep({ ...step, skip, problem: null })
@@ -183,8 +222,9 @@ export function ImportDialog({
 							onBack={() =>
 								setStep({ kind: "mapping", draft: step.draft, problem: null })
 							}
-							onImport={() =>
-								step.kind === "preview" && commit(step.draft, step.skip)
+							onImport={(keep) =>
+								(step.kind === "preview" || step.kind === "retry") &&
+								commit(step.draft, step.skip, keep)
 							}
 						/>
 					)}

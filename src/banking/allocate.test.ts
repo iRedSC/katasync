@@ -22,7 +22,11 @@ const payout = (
 
 const standing = (...ps: Standing[]) =>
 	new Map(ps.map((p) => [targetKey(p.ref), p]));
-const bank = { amountCents: 10000, currency: "USD" };
+const bank: {
+	amountCents: number;
+	currency: string;
+	reference?: string | null;
+} = { amountCents: 10000, currency: "USD" };
 const part = (id: number, amountCents: number) => ({
 	target: { kind: "payout" as const, id },
 	amountCents,
@@ -117,7 +121,7 @@ describe("driftOf", () => {
 		amountCents: 10000,
 		currency: "USD",
 		status: "pending",
-		reference: null,
+		reference: null as string | null,
 	};
 	const drift = (current: Partial<typeof seen> | null) =>
 		driftOf(seen, current && { ...seen, ...current }, payoutTarget.progresses);

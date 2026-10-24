@@ -1,10 +1,13 @@
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { recordedBy } from "#/audit/recorded-by";
+import type { Actor } from "#/auth/actor";
 import {
 	bankMatches,
 	bankMatchParts,
 	bankTransactions,
 } from "#/db/banking-schema";
 import type { Db } from "#/db/client";
+import { loadAccount } from "./accounts";
 import { checkAllocation, type Proposed, type Standing } from "./allocate";
 import type { Parsed } from "./money";
 import {
@@ -99,8 +102,15 @@ export async function confirmMatch(
 		parts: readonly Proposed[];
 		replaces: number | null;
 	},
+	actor: Actor,
 ): Promise<Parsed<Confirmed>> {
 	return db.transaction(async (tx) => {
+		const [owner] = await tx
+			.select({ accountId: bankTransactions.accountId })
+			.from(bankTransactions)
+			.where(eq(bankTransactions.id, input.transactionId));
+		if (!owner) return { ok: false, problem: "That bank row doesn't exist" };
+		await loadAccount(tx, owner.accountId, { lock: true });
 		const [bank] = await tx
 			.select({
 				id: bankTransactions.id,
@@ -108,7 +118,12 @@ export async function confirmMatch(
 				currency: bankTransactions.currency,
 			})
 			.from(bankTransactions)
-			.where(eq(bankTransactions.id, input.transactionId))
+			.where(
+				and(
+					eq(bankTransactions.id, input.transactionId),
+					isNull(bankTransactions.voidedAt),
+				),
+			)
 			.for("update");
 		if (!bank) return { ok: false, problem: "That bank row doesn't exist" };
 		const [active] = await tx
@@ -144,7 +159,7 @@ export async function confirmMatch(
 		if (input.replaces !== null) {
 			const undone = await tx
 				.update(bankMatches)
-				.set({ undoneAt: sql`clock_timestamp()` })
+				.set({ undoneAt: sql`clock_timestamp()`, undoneBy: recordedBy(actor) })
 				.where(
 					and(eq(bankMatches.id, input.replaces), isNull(bankMatches.undoneAt)),
 				)
@@ -154,7 +169,11 @@ export async function confirmMatch(
 		}
 		const [made] = await tx
 			.insert(bankMatches)
-			.values({ transactionId: bank.id, replaces: input.replaces })
+			.values({
+				transactionId: bank.id,
+				replaces: input.replaces,
+				matchedBy: recordedBy(actor),
+			})
 			.returning({ id: bankMatches.id });
 		await tx.insert(bankMatchParts).values(
 			checked.value.map((p) => {
@@ -183,6 +202,7 @@ export type Undone =
 export async function undoMatch(
 	db: Db,
 	matchId: number,
+	actor: Actor,
 ): Promise<Parsed<Undone>> {
 	return db.transaction(async (tx) => {
 		const [match] = await tx
@@ -190,9 +210,15 @@ export async function undoMatch(
 			.from(bankMatches)
 			.where(eq(bankMatches.id, matchId));
 		if (!match) return { ok: false, problem: "That match doesn't exist" };
+		const [owner] = await tx
+			.select({ accountId: bankTransactions.accountId })
+			.from(bankTransactions)
+			.where(eq(bankTransactions.id, match.transactionId));
+		if (!owner) return { ok: false, problem: "That bank row doesn't exist" };
+		await loadAccount(tx, owner.accountId, { lock: true });
 		const undone = await tx
 			.update(bankMatches)
-			.set({ undoneAt: sql`clock_timestamp()` })
+			.set({ undoneAt: sql`clock_timestamp()`, undoneBy: recordedBy(actor) })
 			.where(and(eq(bankMatches.id, matchId), isNull(bankMatches.undoneAt)))
 			.returning({ id: bankMatches.id });
 		const parts = (await partsOf(tx, [matchId])).map(

@@ -1,8 +1,9 @@
-import { and, asc, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, asc, inArray, ne, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import {
 	type BankTargetSnapshot,
 	bankMatchParts,
+	bankPayoutGuards,
 	bankTargetChanges,
 	type bankTargetKind,
 } from "#/db/banking-schema";
@@ -31,7 +32,7 @@ export type MatchTarget = {
 	kind: TargetKind;
 	partColumn: PgColumn;
 	changeColumn: PgColumn;
-	lock(tx: Reader, ids: number[]): Promise<Observed[]>;
+	lock(tx: Db, ids: number[]): Promise<Observed[]>;
 	read(db: Reader, ids: number[]): Promise<Observed[]>;
 	near(db: Reader, window: Window): Promise<Observed[]>;
 	progresses(from: string, to: string): boolean;
@@ -81,6 +82,14 @@ export const payoutTarget: MatchTarget = {
 	changeColumn: bankTargetChanges.payoutId,
 	async lock(tx, wanted) {
 		if (wanted.length === 0) return [];
+		for (const id of ids(wanted))
+			await tx
+				.insert(bankPayoutGuards)
+				.values({ payoutId: id })
+				.onConflictDoUpdate({
+					target: bankPayoutGuards.payoutId,
+					set: { version: sql`${bankPayoutGuards.version} + 1` },
+				});
 		const rows = await tx
 			.select(payoutFields)
 			.from(payouts)
@@ -105,8 +114,8 @@ export const payoutTarget: MatchTarget = {
 				and(
 					sql`upper(${payouts.currency}) = ${w.currency}`,
 					ne(payouts.status, "failed"),
-					gte(payouts.depositedAt, new Date(`${w.from}T00:00:00Z`)),
-					lte(payouts.depositedAt, new Date(`${w.to}T23:59:59Z`)),
+					sql`${payouts.depositedAt} >= (${w.from}::date::timestamp at time zone 'America/New_York')`,
+					sql`${payouts.depositedAt} < ((${w.to}::date + 1)::timestamp at time zone 'America/New_York')`,
 				),
 			)
 			.orderBy(asc(payouts.depositedAt))

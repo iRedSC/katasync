@@ -42,6 +42,7 @@ export const bankAccounts = pgTable(
 		name: text().notNull().unique(),
 		currency: text().notNull(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		createdBy: text().notNull(),
 	},
 	(t) => [
 		check("bank_accounts_currency", isCurrency(t.currency)),
@@ -64,9 +65,18 @@ export const bankImports = pgTable(
 		mapping: jsonb().$type<BankCsvMapping>().notNull(),
 		rowCount: integer().notNull(),
 		importedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		importedBy: text().notNull(),
+		createdTx: text().notNull().default(sql`txid_current()::text`),
+		requestDigest: text().notNull(),
+		replacesImportId: integer().references((): AnyPgColumn => bankImports.id),
+		voidedAt: timestamp({ withTimezone: true }),
+		voidedBy: text(),
 	},
 	(t) => [
-		unique("bank_imports_account_file").on(t.accountId, t.fileSha256),
+		uniqueIndex("bank_imports_account_file")
+			.on(t.accountId, t.fileSha256)
+			.where(sql`${t.voidedAt} is null`),
+		unique("bank_imports_replaces").on(t.replacesImportId),
 		check("bank_imports_sha", sql`${t.fileSha256} ~ '^[0-9a-f]{64}$'`),
 		check("bank_imports_row_count", sql`${t.rowCount} >= 0`),
 	],
@@ -122,9 +132,13 @@ export const bankTransactions = pgTable(
 		currency: text().notNull(),
 		bankRef: text(),
 		fingerprint: text().notNull(),
+		voidedAt: timestamp({ withTimezone: true }),
+		voidedBy: text(),
 	},
 	(t) => [
-		unique("bank_transactions_account_ref").on(t.accountId, t.bankRef),
+		uniqueIndex("bank_transactions_account_ref")
+			.on(t.accountId, t.bankRef)
+			.where(sql`${t.voidedAt} is null`),
 		index("bank_transactions_account_posted_idx").on(t.accountId, t.postedOn),
 		index("bank_transactions_fingerprint_idx").on(t.accountId, t.fingerprint),
 		check("bank_transactions_amount", sql`${t.amountCents} <> 0`),
@@ -138,6 +152,13 @@ export const bankTransactions = pgTable(
 
 export const bankTargetKind = pgEnum("bank_target_kind", ["payout"]);
 
+export const bankPayoutGuards = pgTable("bank_payout_guards", {
+	payoutId: integer()
+		.primaryKey()
+		.references(() => payouts.id),
+	version: bigint({ mode: "number" }).notNull().default(1),
+});
+
 export const bankMatches = pgTable(
 	"bank_matches",
 	{
@@ -149,6 +170,9 @@ export const bankMatches = pgTable(
 			.notNull()
 			.default(sql`clock_timestamp()`),
 		undoneAt: timestamp({ withTimezone: true }),
+		matchedBy: text().notNull(),
+		createdTx: text().notNull().default(sql`txid_current()::text`),
+		undoneBy: text(),
 		replaces: integer().references((): AnyPgColumn => bankMatches.id),
 	},
 	(t) => [

@@ -83,6 +83,7 @@ async function repeatedPrints(db: Db, accountId: number, prints: string[]) {
 		.where(
 			and(
 				eq(bankTransactions.accountId, accountId),
+				isNull(bankTransactions.voidedAt),
 				isNull(bankTransactions.bankRef),
 				inArray(bankTransactions.fingerprint, prints),
 			),
@@ -126,7 +127,10 @@ export async function loadOverview(
 ): Promise<Overview> {
 	const accounts: AccountView[] = (await listAccounts(db)).map(viewOf);
 	const account =
-		accounts.find((a) => a.id === accountId) ?? accounts[0] ?? null;
+		accountId === null
+			? (accounts[0] ?? null)
+			: accounts.find((account) => account.id === accountId);
+	if (account === undefined) throw new Error("That bank account doesn't exist");
 	if (!account)
 		return {
 			accounts,
@@ -143,7 +147,12 @@ export async function loadOverview(
 			bankImportRows,
 			eq(bankImportRows.id, bankTransactions.importRowId),
 		)
-		.where(eq(bankTransactions.accountId, account.id))
+		.where(
+			and(
+				eq(bankTransactions.accountId, account.id),
+				isNull(bankTransactions.voidedAt),
+			),
+		)
 		.orderBy(desc(bankTransactions.postedOn), desc(bankTransactions.id))
 		.limit(ROW_LIMIT + 1);
 	const truncated = found.length > ROW_LIMIT;
@@ -233,7 +242,12 @@ export async function matchOptions(
 			description: bankTransactions.description,
 		})
 		.from(bankTransactions)
-		.where(eq(bankTransactions.id, transactionId));
+		.where(
+			and(
+				eq(bankTransactions.id, transactionId),
+				isNull(bankTransactions.voidedAt),
+			),
+		);
 	if (!bank || !(await loadAccount(db, bank.accountId))) return null;
 	const near = await payoutTarget.near(db, {
 		currency: bank.currency,
