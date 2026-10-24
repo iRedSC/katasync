@@ -1,5 +1,7 @@
 import {
 	Download,
+	ExternalLink,
+	Eye,
 	FileText,
 	Image,
 	Loader2,
@@ -20,6 +22,13 @@ import { Card } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
 import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "#/components/ui/context-menu";
+import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
@@ -31,12 +40,12 @@ import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { MAX_PO_FILE_BYTES } from "#/purchasing/file-limits";
-import { type PurchaseOrderDetail, setPoFileOff } from "#/server/purchasing";
+import { type PurchaseOrderDetail, setPoFilesOff } from "#/server/purchasing";
 import { poData } from "./po-data";
 
 // Every file about the PO in one place: the ones put on it (dropped here or
-// by Claude) and the ones its emails carry, newest first. Each opens over
-// the page; one the browser can't show downloads.
+// by Claude) and the ones its emails carry, newest first, each once. Each
+// opens over the page; one the browser can't show downloads.
 
 type Row = {
 	key: string;
@@ -48,8 +57,12 @@ type Row = {
 	url: string;
 	from: string;
 	at: Date;
-	// Only the PO's own files come off; an email's stay with it.
-	own: boolean;
+	// Null for an email's file too large to keep: it can't be compared.
+	sha256: string | null;
+	// Everything this row stands for, the same file sent or added more than
+	// once; removing it takes them all off the PO.
+	files: number[];
+	attachments: number[];
 };
 
 type Upload = { key: number; filename: string; failed: boolean };
@@ -57,26 +70,58 @@ type Upload = { key: number; filename: string; failed: boolean };
 let nextKey = 0;
 
 function rowsOf(d: PurchaseOrderDetail): Row[] {
-	const own = d.files.map((f) => ({
+	const own: Row[] = d.files.map((f) => ({
 		key: `f${f.id}`,
 		...f,
 		kept: true,
 		url: `/api/po-files/${f.id}`,
 		from: f.addedBy === "claude" ? "Added by Claude" : "Added",
 		at: new Date(f.createdAt),
-		own: true,
+		files: [f.id],
+		attachments: [],
 	}));
-	const emailed = d.emails.flatMap((e) =>
-		e.attachments.map((a) => ({
-			key: `a${a.id}`,
-			...a,
-			url: attachmentUrl(a),
-			from: e.fromName ?? e.fromAddress,
-			at: new Date(e.receivedAt),
-			own: false,
-		})),
+	const emailed: Row[] = d.emails.flatMap((e) =>
+		e.attachments
+			.filter((a) => a.removedAt === null)
+			.map((a) => ({
+				key: `a${a.id}`,
+				...a,
+				url: attachmentUrl(a),
+				from: e.fromName ?? e.fromAddress,
+				at: new Date(e.receivedAt),
+				files: [],
+				attachments: [a.id],
+			})),
 	);
-	return [...own, ...emailed].sort((a, b) => b.at.getTime() - a.at.getTime());
+	// The same bytes twice (an email forwarded again, or a file added that an
+	// email has) are one row: the first email's, else the first added.
+	const first = [
+		...emailed.sort((a, b) => a.at.getTime() - b.at.getTime()),
+		...own.sort((a, b) => a.at.getTime() - b.at.getTime()),
+	];
+	const bySha = new Map<string, Row>();
+	const rows: Row[] = [];
+	for (const row of first) {
+		const same = row.sha256 ? bySha.get(row.sha256) : undefined;
+		if (same) {
+			same.files.push(...row.files);
+			same.attachments.push(...row.attachments);
+			continue;
+		}
+		if (row.sha256) bySha.set(row.sha256, row);
+		rows.push(row);
+	}
+	return rows.sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+async function sha256Of(file: File) {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		await file.arrayBuffer(),
+	);
+	return [...new Uint8Array(digest)]
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
 }
 
 async function upload(purchaseOrderId: number, file: File) {
@@ -102,8 +147,19 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const [uploads, setUploads] = useState<Upload[]>([]);
 	const [dragging, setDragging] = useState(false);
 	const [viewing, setViewing] = useState<Row | null>(null);
+	// The row a dropped file already is, lit for a moment.
+	const [found, setFound] = useState<string | null>(null);
 	const input = useRef<HTMLInputElement>(null);
 	const uploadRows = useRef(new Map<number, HTMLLIElement>());
+	const fileRows = useRef(new Map<string, HTMLLIElement>());
+
+	function point(row: Row) {
+		const el = fileRows.current.get(row.key) ?? null;
+		el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+		shake(el);
+		setFound(row.key);
+		setTimeout(() => setFound((k) => (k === row.key ? null : k)), 1500);
+	}
 
 	// Red, a shake, and gone; the toast says why.
 	function fail(key: number) {
@@ -116,8 +172,18 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 
 	// One request a file: Vercel takes 4.5 MB a request. Each shows as it
 	// goes up, and is in the list once the page has reloaded with it.
-	function add(files: File[]) {
-		for (const file of files) {
+	async function add(files: File[]) {
+		const shas = await Promise.all(
+			files.map((f) => sha256Of(f).catch(() => null)),
+		);
+		for (const [i, file] of files.entries()) {
+			// One the PO has is pointed at instead; the server refuses it too.
+			const there = rows.find((r) => r.sha256 && r.sha256 === shas[i]);
+			if (there) {
+				point(there);
+				toast(`${file.name} is already here`);
+				continue;
+			}
 			const key = nextKey++;
 			setUploads((us) => [...us, { key, filename: file.name, failed: false }]);
 			if (file.size > MAX_PO_FILE_BYTES) {
@@ -135,13 +201,22 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 	}
 
 	async function remove(row: Row) {
+		const ids = { files: row.files, attachments: row.attachments };
 		const r = await optimism.change({
 			label: `Removing ${row.filename}`,
 			patch: poData.patch(po.id, (data) => ({
 				...data,
-				files: data.files.filter((f) => f.id !== row.id),
+				files: data.files.filter((f) => !ids.files.includes(f.id)),
+				emails: data.emails.map((e) => ({
+					...e,
+					attachments: e.attachments.map((a) =>
+						ids.attachments.includes(a.id)
+							? { ...a, removedAt: new Date() }
+							: a,
+					),
+				})),
 			})),
-			send: () => setPoFileOff({ data: { id: row.id, removed: true } }),
+			send: () => setPoFilesOff({ data: { ...ids, removed: true } }),
 		});
 		if (!r) return;
 		offerUndo(`Removed ${row.filename}`, {
@@ -149,7 +224,7 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 				const back = await optimism.change({
 					label: `Putting ${row.filename} back`,
 					patch: [],
-					send: () => setPoFileOff({ data: { id: row.id, removed: false } }),
+					send: () => setPoFilesOff({ data: { ...ids, removed: false } }),
 				});
 				return back ? `${row.filename} is back` : null;
 			},
@@ -193,7 +268,8 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 				}}
 				onDrop={(e) => {
 					onDrag(e, false);
-					if (e.dataTransfer.files.length > 0) add([...e.dataTransfer.files]);
+					if (e.dataTransfer.files.length > 0)
+						void add([...e.dataTransfer.files]);
 				}}
 				className="pb-2"
 			>
@@ -203,7 +279,7 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 					multiple
 					hidden
 					onChange={(e) => {
-						if (e.target.files) add([...e.target.files]);
+						if (e.target.files) void add([...e.target.files]);
 						e.target.value = "";
 					}}
 				/>
@@ -246,7 +322,12 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 						{rows.map((row) => (
 							<FileRow
 								key={row.key}
+								ref={(el) => {
+									if (el) fileRows.current.set(row.key, el);
+									else fileRows.current.delete(row.key);
+								}}
 								row={row}
+								found={found === row.key}
 								onOpen={() => setViewing(row)}
 								onRemove={() => remove(row)}
 							/>
@@ -276,12 +357,23 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 	);
 }
 
+function download(row: Row) {
+	const a = document.createElement("a");
+	a.href = row.url;
+	a.download = row.filename;
+	a.click();
+}
+
 function FileRow({
+	ref,
 	row,
+	found,
 	onOpen,
 	onRemove,
 }: {
+	ref: (el: HTMLLIElement | null) => void;
 	row: Row;
+	found: boolean;
 	onOpen: () => void;
 	onRemove: () => void;
 }) {
@@ -308,33 +400,69 @@ function FileRow({
 	const style =
 		"flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface";
 	return (
-		<li className="group/file mx-2 flex items-center animate-in fade-in-0">
-			{how === "missing" ? (
-				<Tip content="Too large to keep; it's in Outlook">
-					<span className={cn(style, "opacity-60 hover:bg-transparent")}>
-						{body}
-					</span>
-				</Tip>
-			) : how === "download" ? (
-				<a href={row.url} className={style}>
-					{body}
-				</a>
-			) : (
-				<button type="button" onClick={onOpen} className={style}>
-					{body}
-				</button>
-			)}
-			{row.own && (
-				<Button
-					size="icon-sm"
-					variant="ghost"
-					aria-label={`Remove ${row.filename}`}
-					className="text-muted-foreground [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/file:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
-					onClick={onRemove}
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<li
+					ref={ref}
+					className={cn(
+						"group/file mx-2 flex items-center rounded-lg ring-ring transition-shadow animate-in fade-in-0",
+						found && "ring-2",
+					)}
+				>
+					{how === "missing" ? (
+						<Tip content="Too large to keep; it's in Outlook">
+							<span className={cn(style, "opacity-60 hover:bg-transparent")}>
+								{body}
+							</span>
+						</Tip>
+					) : how === "download" ? (
+						<a href={row.url} className={style}>
+							{body}
+						</a>
+					) : (
+						<button type="button" onClick={onOpen} className={style}>
+							{body}
+						</button>
+					)}
+					<Button
+						size="icon-sm"
+						variant="ghost"
+						aria-label={`Remove ${row.filename}`}
+						className="text-muted-foreground [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/file:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
+						onClick={onRemove}
+					>
+						<X />
+					</Button>
+				</li>
+			</ContextMenuTrigger>
+			<ContextMenuContent>
+				{how !== "missing" && how !== "download" && (
+					<ContextMenuItem onSelect={onOpen}>
+						<Eye />
+						Open
+					</ContextMenuItem>
+				)}
+				{(how === "pdf" || how === "image") && (
+					<ContextMenuItem onSelect={() => window.open(row.url, "_blank")}>
+						<ExternalLink />
+						Open in new tab
+					</ContextMenuItem>
+				)}
+				{how !== "missing" && (
+					<ContextMenuItem onSelect={() => download(row)}>
+						<Download />
+						Download
+					</ContextMenuItem>
+				)}
+				{how !== "missing" && <ContextMenuSeparator />}
+				<ContextMenuItem
+					onSelect={onRemove}
+					className="text-critical-text [&_svg]:text-critical-text"
 				>
 					<X />
-				</Button>
-			)}
-		</li>
+					Remove from PO
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }

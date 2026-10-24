@@ -57,7 +57,7 @@ export {
 	undoSuggestionSettings,
 	updateDraftFromSuggestions,
 } from "#/server/purchasing/drafts";
-export { setPoFileOff } from "#/server/purchasing/files";
+export { setPoFilesOff } from "#/server/purchasing/files";
 export { reopenPoFlag, resolvePoFlag } from "#/server/purchasing/flags";
 export {
 	addPoTracking,

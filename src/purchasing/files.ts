@@ -1,7 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, desc, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNotNull,
+	isNull,
+	ne,
+	notExists,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
-import { poFileUploads, purchaseOrderFiles } from "#/db/schema";
+import {
+	poEmailAttachments,
+	poEmails,
+	poFileUploads,
+	purchaseOrderFiles,
+} from "#/db/schema";
 import { fileType } from "#/lib/file-type";
 import { isPdf, pdfText } from "#/purchasing/inbox/pdf-text";
 import {
@@ -46,8 +62,16 @@ export async function addPoFile(
 	const contentType = fileType(input.contentType, filename);
 	// Read before the lock, so a slow PDF doesn't hold the PO.
 	const text = isPdf(contentType, filename) ? await pdfText(data) : null;
+	const sha256 = createHash("sha256").update(data).digest("hex");
 	return db.transaction(async (tx) => {
 		await lockForEdit(tx, input.purchaseOrderId, [...ANY]);
+		const same = await sameFileOn(tx, input.purchaseOrderId, sha256);
+		if (same)
+			throw new PurchaseOrderError(
+				same === filename
+					? `${filename} is already on this PO`
+					: `${filename} is already on this PO, as ${same}`,
+			);
 		const [row] = await tx
 			.insert(purchaseOrderFiles)
 			.values({
@@ -64,25 +88,118 @@ export async function addPoFile(
 	});
 }
 
-// Takes a file off its PO, or with removed false puts it back.
-export async function setPoFileRemoved(db: Db, id: number, removed = true) {
-	const [row] = await db
-		.update(purchaseOrderFiles)
-		.set({ removedAt: removed ? new Date() : null })
+// The name the PO has this file under already, among its own files and its
+// emails', or null.
+async function sameFileOn(db: Db, purchaseOrderId: number, sha256: string) {
+	const [own] = await db
+		.select({ filename: purchaseOrderFiles.filename })
+		.from(purchaseOrderFiles)
 		.where(
 			and(
-				eq(purchaseOrderFiles.id, id),
-				removed
-					? isNull(purchaseOrderFiles.removedAt)
-					: isNotNull(purchaseOrderFiles.removedAt),
+				eq(purchaseOrderFiles.purchaseOrderId, purchaseOrderId),
+				eq(purchaseOrderFiles.sha256, sha256),
+				isNull(purchaseOrderFiles.removedAt),
 			),
 		)
-		.returning({
+		.limit(1);
+	if (own) return own.filename;
+	const [emailed] = await db
+		.select({ filename: poEmailAttachments.filename })
+		.from(poEmailAttachments)
+		.innerJoin(poEmails, eq(poEmails.id, poEmailAttachments.emailId))
+		.where(
+			and(
+				eq(poEmails.purchaseOrderId, purchaseOrderId),
+				eq(poEmailAttachments.sha256, sha256),
+				isNull(poEmailAttachments.removedAt),
+				isNull(poEmailAttachments.contentId),
+			),
+		)
+		.limit(1);
+	return emailed?.filename ?? null;
+}
+
+const live = alias(purchaseOrderFiles, "live");
+
+// Takes files off a PO, its own and its emails' (the emails keep theirs), or
+// with removed false puts them back. An own file the PO has again since stays
+// off: the PO has it. Answers how many changed.
+export async function setPoFilesRemoved(
+	db: Db,
+	ids: { files: number[]; attachments: number[] },
+	removed: boolean,
+) {
+	const at = removed ? new Date() : null;
+	return db.transaction(async (tx) => {
+		const files =
+			ids.files.length === 0
+				? []
+				: await tx
+						.update(purchaseOrderFiles)
+						.set({ removedAt: at })
+						.where(
+							and(
+								inArray(purchaseOrderFiles.id, ids.files),
+								removed
+									? isNull(purchaseOrderFiles.removedAt)
+									: and(
+											isNotNull(purchaseOrderFiles.removedAt),
+											notExists(
+												tx
+													.select({ id: live.id })
+													.from(live)
+													.where(
+														and(
+															eq(
+																live.purchaseOrderId,
+																purchaseOrderFiles.purchaseOrderId,
+															),
+															eq(live.sha256, purchaseOrderFiles.sha256),
+															ne(live.id, purchaseOrderFiles.id),
+															isNull(live.removedAt),
+														),
+													),
+											),
+										),
+							),
+						)
+						.returning({ id: purchaseOrderFiles.id });
+		const attachments =
+			ids.attachments.length === 0
+				? []
+				: await tx
+						.update(poEmailAttachments)
+						.set({ removedAt: at })
+						.where(
+							and(
+								inArray(poEmailAttachments.id, ids.attachments),
+								isNull(poEmailAttachments.contentId),
+								removed
+									? isNull(poEmailAttachments.removedAt)
+									: isNotNull(poEmailAttachments.removedAt),
+							),
+						)
+						.returning({ id: poEmailAttachments.id });
+		return { files: files.length, attachments: attachments.length };
+	});
+}
+
+// Takes one of a PO's own files off it, or with removed false puts it back.
+export async function setPoFileRemoved(db: Db, id: number, removed = true) {
+	const [row] = await db
+		.select({
 			id: purchaseOrderFiles.id,
 			purchaseOrderId: purchaseOrderFiles.purchaseOrderId,
 			filename: purchaseOrderFiles.filename,
-		});
-	if (!row)
+		})
+		.from(purchaseOrderFiles)
+		.where(eq(purchaseOrderFiles.id, id));
+	const changed = await setPoFilesRemoved(
+		db,
+		{ files: [id], attachments: [] },
+		removed,
+	);
+	if (!row || changed.files === 0)
 		throw new PurchaseOrderError(
 			removed ? "That file is already off the PO" : "That file is on its PO",
 		);
@@ -99,6 +216,7 @@ export async function poFilesOf(db: Db, purchaseOrderId: number) {
 			size: purchaseOrderFiles.size,
 			addedBy: purchaseOrderFiles.addedBy,
 			createdAt: purchaseOrderFiles.createdAt,
+			sha256: purchaseOrderFiles.sha256,
 		})
 		.from(purchaseOrderFiles)
 		.where(

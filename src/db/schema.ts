@@ -1864,6 +1864,11 @@ export const poEmailAttachments = pgTable(
 		// Set for a picture shown inside the email (its cid:), which the
 		// formatted email shows and the list of files leaves out.
 		contentId: text(),
+		// The bytes' SHA-256, to know the same file sent twice. Null when the
+		// file was too large to keep.
+		sha256: text().generatedAlwaysAs(sql`encode(sha256("data"), 'hex')`),
+		// When it was taken off its PO's files. The email still has it.
+		removedAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [
 		index("po_email_attachments_email_idx").on(t.emailId),
@@ -2013,9 +2018,16 @@ export const purchaseOrderFiles = pgTable(
 		addedBy: poFileSource().notNull(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		removedAt: timestamp({ withTimezone: true }),
+		// The bytes' SHA-256: a PO has each file once.
+		sha256: text()
+			.notNull()
+			.generatedAlwaysAs(sql`encode(sha256("data"), 'hex')`),
 	},
 	(t) => [
 		index("purchase_order_files_po_idx").on(t.purchaseOrderId),
+		uniqueIndex("purchase_order_files_once")
+			.on(t.purchaseOrderId, t.sha256)
+			.where(sql`${t.removedAt} is null`),
 		check("purchase_order_files_named", sql`btrim(${t.filename}) <> ''`),
 		check(
 			"purchase_order_files_size",
