@@ -221,12 +221,11 @@ function RevisionRow({
 					Revision {r.revision}
 				</span>
 				<span className="tabular-nums">{formatDateTime(r.asOf)}</span>
-				<code
-					className="rounded bg-surface px-1 text-xs"
-					title={`sha256 ${r.digest}`}
-				>
-					{r.digest.slice(0, 12)}
-				</code>
+				<Tip content={`sha256 ${r.digest}`}>
+					<code className="rounded bg-surface px-1 text-xs">
+						{r.digest.slice(0, 12)}
+					</code>
+				</Tip>
 				{r.state.kind === "superseded" && (
 					<Badge>Superseded by {r.state.by}</Badge>
 				)}
