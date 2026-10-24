@@ -137,7 +137,10 @@ function OrderPage() {
 	const ship = () => pin !== null && openQuickShip(pin);
 	// Returns come back here once everything has left our shelf.
 	const returnable = lines
-		.map((l) => ({ ...l, left: l.returnQuantity - l.returned }))
+		.map((l) => ({
+			...l,
+			left: l.returnQuantity - l.returned - l.onBench.length,
+		}))
 		.filter((l) => l.left > 0);
 	const canReturn =
 		returnBlocker({

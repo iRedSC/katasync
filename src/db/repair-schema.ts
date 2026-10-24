@@ -10,12 +10,15 @@ import {
 	timestamp,
 	unique,
 	uniqueIndex,
+	uuid,
 } from "drizzle-orm/pg-core";
-import { products } from "./schema";
+import { orderLines, products } from "./schema";
 
-// Tool repairs for walk-in customers (src/repairs). Each one is billed on a
+// Tool repairs (src/repairs), of two kinds. A customer's is billed on a
 // Shopify draft order that katasync keeps in step with its labor and parts;
-// the customer lives in Shopify too. Rules live in src/repairs/status.ts.
+// the customer lives in Shopify too. A bench job is our own tool, fixed up
+// to sell as a refurb: a returned unit or one bought in. Rules live in
+// src/repairs/status.ts.
 
 // People in the shop, apart from the shared sign-in, so a repair can say who
 // has the tool. Removing one archives them: their repairs keep the name.
@@ -37,7 +40,9 @@ export const people = pgTable(
 );
 
 // received, waiting_parts, in_repair, ready: on the board, moved freely.
-// picked_up: its draft order was paid, or it had nothing to charge.
+// picked_up: a customer's; its draft order was paid, or it had nothing to
+//   charge.
+// refurbished: a bench job's; listed as the refurb in refurbProductId.
 // cancelled: called off; its charges came off the draft order.
 export const repairStatus = pgEnum("repair_status", [
 	"received",
@@ -46,7 +51,10 @@ export const repairStatus = pgEnum("repair_status", [
 	"ready",
 	"picked_up",
 	"cancelled",
+	"refurbished",
 ]);
+
+export const repairKind = pgEnum("repair_kind", ["customer", "bench"]);
 
 // Shown as "R1001", on the ticket tied to the tool.
 export const repairs = pgTable(
@@ -54,10 +62,11 @@ export const repairs = pgTable(
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity({ startWith: 1001 }),
 		status: repairStatus().notNull().default("received"),
-		// The Shopify customer, with what we last read of them, for the board
-		// and the ticket.
-		customerId: text().notNull(),
-		customerName: text().notNull(),
+		kind: repairKind().notNull().default("customer"),
+		// A customer's: the Shopify customer, with what we last read of them,
+		// for the board and the ticket. A bench job has none.
+		customerId: text(),
+		customerName: text(),
 		customerPhone: text(),
 		customerEmail: text(),
 		tool: text().notNull(),
@@ -72,6 +81,14 @@ export const repairs = pgTable(
 		// The order the draft became once paid.
 		orderId: text(),
 		orderName: text(),
+		// A bench job's: the product it is, which its refurb is made from;
+		// the returned line its unit came back on, if any, holding one of
+		// that line's units until it's listed; the refurb it was listed as;
+		// and the movement that took its parts off the shelf then.
+		productId: integer().references(() => products.id),
+		returnLineId: integer().references(() => orderLines.id),
+		refurbProductId: integer().references(() => products.id),
+		partsBatchId: uuid(),
 		statusChangedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
@@ -81,6 +98,28 @@ export const repairs = pgTable(
 			.on(t.status)
 			.where(sql`${t.status} not in ('picked_up', 'cancelled')`),
 		index("repairs_customer_idx").on(t.customerId),
+		index("repairs_return_line_idx")
+			.on(t.returnLineId)
+			.where(sql`${t.returnLineId} is not null`),
+		// A customer's has a customer; a bench job has no customer, no draft
+		// order, and the product it is. Statuses are compared as text: the
+		// enum value is new in the same migration.
+		check(
+			"repairs_customer_by_kind",
+			sql`case ${t.kind}::text
+				when 'customer' then ${t.customerId} is not null and ${t.customerName} is not null
+					and ${t.returnLineId} is null and ${t.refurbProductId} is null
+					and ${t.status}::text <> 'refurbished'
+				else ${t.customerId} is null and ${t.customerName} is null
+					and ${t.customerPhone} is null and ${t.customerEmail} is null
+					and ${t.draftOrderId} is null and ${t.orderId} is null
+					and ${t.productId} is not null and ${t.status}::text <> 'picked_up'
+			end`,
+		),
+		check(
+			"repairs_refurb_when_refurbished",
+			sql`(${t.status}::text = 'refurbished') = (${t.refurbProductId} is not null)`,
+		),
 		check(
 			"repairs_draft_name_pair",
 			sql`(${t.draftOrderId} is null) = (${t.draftOrderName} is null)`,
@@ -124,8 +163,10 @@ export const repairLabor = pgTable(
 	],
 );
 
-// Parts put into the tool, charged at their Shopify price. Their stock
-// comes off when the paid order syncs in, like any sale.
+// Parts put into the tool. A customer's are charged at their Shopify price,
+// and their stock comes off when the paid order syncs in, like any sale. A
+// bench job's come off the shelf when it's listed, and add their cost to
+// the refurb's.
 export const repairParts = pgTable(
 	"repair_parts",
 	{

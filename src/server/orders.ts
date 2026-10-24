@@ -205,6 +205,10 @@ export const getOrder = createServerFn({ method: "GET" })
 				fromStore,
 				// Units received back, and how many of those went on the shelf.
 				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
+				// Back and on the bench, not received yet: their repairs.
+				onBench: sql<
+					number[]
+				>`coalesce((select array_agg(b.id order by b.id) from repairs b where b.return_line_id = ${orderLines.id} and b.status::text in ('received', 'waiting_parts', 'in_repair', 'ready')), '{}')`,
 				// Back on a shelf, as itself or as a refurb, or before cutover.
 				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and (${orderReturns.restocked} or ${orderReturns.refurbProductId} is not null or ${orderReturns.preCutover})), 0)::int`,
 				productSku: products.sku,

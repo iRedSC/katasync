@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Printer } from "lucide-react";
 import { toast } from "sonner";
 import { Page } from "#/components/page";
+import { ListBenchCard, SourceCard } from "#/components/repairs/bench-side";
 import { LaborCard } from "#/components/repairs/labor-card";
 import { PartsCard } from "#/components/repairs/parts-card";
 import { repairActions, repairData } from "#/components/repairs/repair-data";
@@ -17,7 +18,7 @@ import { Button } from "#/components/ui/button";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { printPdf } from "#/printing/qz-client";
-import { isOnBoard, type RepairStatus, statusNames } from "#/repairs/status";
+import { isOnBoard, type MoveTarget, statusNames } from "#/repairs/status";
 import { listProductIndex } from "#/server/catalog";
 import {
 	emailRepairInvoice,
@@ -50,9 +51,10 @@ function RepairPage() {
 	const act = repairActions(d);
 	const editable = isOnBoard(r.status);
 
-	async function move(to: RepairStatus) {
+	async function move(to: MoveTarget) {
 		const from = r.status;
-		const go = (status: RepairStatus) =>
+		if (from === "refurbished") return;
+		const go = (status: MoveTarget) =>
 			optimism.change({
 				label: `Moving R${r.id}`,
 				patch: repairData.patch(r.id, (x) => ({
@@ -75,7 +77,7 @@ function RepairPage() {
 				<span className="flex items-baseline gap-3">
 					R{r.id}
 					<span className="truncate text-base font-medium text-muted-foreground">
-						{r.customerName}, {r.tool}
+						{r.kind === "bench" ? r.tool : `${r.customerName}, ${r.tool}`}
 					</span>
 				</span>
 			}
@@ -120,31 +122,36 @@ function RepairPage() {
 					/>
 				</div>
 				<div className="flex flex-col gap-4">
-					<CustomerCard
-						d={d}
-						editable={editable}
-						onChange={(c) =>
-							act.edit(
-								"The customer",
-								{
-									customer: {
-										id: c.id,
-										name: c.name,
-										phone: c.phone,
-										email: c.email,
+					{r.kind === "bench" ? (
+						<SourceCard d={d} />
+					) : (
+						<CustomerCard
+							d={d}
+							editable={editable}
+							onChange={(c) =>
+								act.edit(
+									"The customer",
+									{
+										customer: {
+											id: c.id,
+											name: c.name,
+											phone: c.phone,
+											email: c.email,
+										},
 									},
-								},
-								{
-									customerId: c.id,
-									customerName: c.name,
-									customerPhone: c.phone,
-									customerEmail: c.email,
-								},
-							)
-						}
-					/>
+									{
+										customerId: c.id,
+										customerName: c.name,
+										customerPhone: c.phone,
+										customerEmail: c.email,
+									},
+								)
+							}
+						/>
+					)}
 					<ToolCard
 						d={d}
+						products={index}
 						editable={editable}
 						onSave={(edit) => act.edit("The tool", edit, edit)}
 					/>
@@ -163,15 +170,19 @@ function RepairPage() {
 						}
 						onNotes={(notes) => act.edit("The notes", { notes }, { notes })}
 					/>
-					<BillCard
-						d={d}
-						onEmail={async () => {
-							const sent = await optimism.change({
-								send: () => emailRepairInvoice({ data: { id: r.id } }),
-							});
-							if (sent) toast.success(`Invoice sent to ${sent.value.sentTo}`);
-						}}
-					/>
+					{r.kind === "bench" ? (
+						<ListBenchCard d={d} editable={editable} />
+					) : (
+						<BillCard
+							d={d}
+							onEmail={async () => {
+								const sent = await optimism.change({
+									send: () => emailRepairInvoice({ data: { id: r.id } }),
+								});
+								if (sent) toast.success(`Invoice sent to ${sent.value.sentTo}`);
+							}}
+						/>
+					)}
 				</div>
 			</div>
 		</Page>

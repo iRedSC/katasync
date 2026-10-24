@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { readDraft } from "#/channels/shopify/draft-orders";
 import type { Db } from "#/db/client";
 import { people, repairLabor, repairParts, repairs } from "#/db/repair-schema";
-import { products } from "#/db/schema";
+import { orderLines, orders, products } from "#/db/schema";
 import { isOurs } from "./draft-lines";
 import { markPaid } from "./draft-sync";
 import { boardStatuses } from "./status";
@@ -14,6 +14,20 @@ import { laborVariants, shopifyVariants } from "./variants";
 const card = {
 	id: repairs.id,
 	status: repairs.status,
+	kind: repairs.kind,
+	productId: repairs.productId,
+	// A bench job's: the order its unit came back from, and its refurb once
+	// listed.
+	returnOrderId: sql<
+		number | null
+	>`(select l.order_id from ${orderLines} l where l.id = ${repairs.returnLineId})`,
+	returnOrderName: sql<
+		string | null
+	>`(select o.name from ${orderLines} l join ${orders} o on o.id = l.order_id where l.id = ${repairs.returnLineId})`,
+	refurbSku: sql<
+		string | null
+	>`(select p.sku from ${products} p where p.id = ${repairs.refurbProductId})`,
+	refurbProductId: repairs.refurbProductId,
 	customerId: repairs.customerId,
 	customerName: repairs.customerName,
 	customerPhone: repairs.customerPhone,
@@ -31,7 +45,7 @@ const card = {
 };
 
 // Everything on the board, oldest in each column first, and what was
-// picked up in the last week.
+// picked up or listed in the last week.
 export async function boardRepairs(db: Db) {
 	return db
 		.select(card)
@@ -41,7 +55,7 @@ export async function boardRepairs(db: Db) {
 			or(
 				inArray(repairs.status, [...boardStatuses]),
 				and(
-					eq(repairs.status, "picked_up"),
+					inArray(repairs.status, ["picked_up", "refurbished"]),
 					gte(repairs.statusChangedAt, sql`now() - interval '7 days'`),
 				),
 			),
@@ -171,6 +185,8 @@ export async function getRepair(db: Db, id: number) {
 			name: products.name,
 			variantName: products.variantName,
 			imageUrl: products.imageUrl,
+			// What a bench job's refurb is charged for it, at its average now.
+			unitCost: products.unitCost,
 		})
 		.from(repairParts)
 		.innerJoin(products, eq(products.id, repairParts.productId))
@@ -180,7 +196,8 @@ export async function getRepair(db: Db, id: number) {
 		db,
 		parts.map((p) => p.productId),
 	);
-	const variants = await laborVariants().catch(() => null);
+	const variants =
+		row.kind === "bench" ? null : await laborVariants().catch(() => null);
 	return {
 		repair: row,
 		labor,

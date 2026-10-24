@@ -10,7 +10,6 @@ import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { RefurbDetails, RefurbishOptions } from "#/orders/refurbish";
-import { getRefurbishOptions } from "#/server/orders";
 
 // What a refurb becomes, chosen at the bench: its condition (the shop's
 // own), and either a new Shopify draft, starting from everything the
@@ -29,15 +28,17 @@ const amount = (text: string) =>
 	text.trim() === "" ? null : Number(text.replace(/[^\d.]/g, ""));
 
 export function RefurbishForm({
-	orderId,
-	lineId,
+	load,
+	loadKey,
 	quantity,
 	name,
 	onBack,
 	onChoose,
 }: {
-	orderId: number;
-	lineId: number;
+	// What it starts as: a returned line's, or a bench job's. Loaded again
+	// when loadKey changes.
+	load: () => Promise<RefurbishOptions>;
+	loadKey: string;
 	quantity: number;
 	name: string;
 	onBack: () => void;
@@ -62,9 +63,10 @@ export function RefurbishForm({
 		(key: keyof typeof form) => (e: { target: { value: string } }) =>
 			setForm((f) => ({ ...f, [key]: e.target.value }));
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: load is new each render; loadKey names what it loads
 	useEffect(() => {
 		let live = true;
-		getRefurbishOptions({ data: { orderId, lineId } }).then(
+		load().then(
 			(o) => {
 				if (!live) return;
 				setOptions(o);
@@ -92,7 +94,7 @@ export function RefurbishForm({
 		return () => {
 			live = false;
 		};
-	}, [orderId, lineId]);
+	}, [loadKey]);
 
 	const header = (
 		<DialogHeader>

@@ -91,7 +91,10 @@ export function repairActions(d: Detail) {
 								? x.parts.map((p) =>
 										p.productId === part.productId ? { ...p, quantity } : p,
 									)
-								: [...x.parts, { ...part, quantity, onShopify: true }];
+								: [
+										...x.parts,
+										{ ...part, quantity, onShopify: true, unitCost: null },
+									];
 					return { ...x, parts };
 				}),
 				send: () =>

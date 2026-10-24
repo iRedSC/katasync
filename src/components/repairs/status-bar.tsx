@@ -3,7 +3,7 @@ import { shake } from "#/components/shake";
 import { cn } from "#/lib/utils";
 import {
 	boardStatuses,
-	type RepairStatus,
+	type MoveTarget,
 	refuseMove,
 	statusNames,
 } from "#/repairs/status";
@@ -21,18 +21,19 @@ export function StatusBar({
 	onMove,
 }: {
 	d: Detail;
-	onMove: (to: RepairStatus) => void;
+	onMove: (to: MoveTarget) => void;
 }) {
 	const r = d.repair;
 	const state = {
 		status: r.status,
+		bench: r.kind === "bench",
 		hasDraft: r.draftOrderId !== null,
 		paid: r.orderId !== null,
 	};
 	const [refused, setRefused] = useState<string | null>(null);
 	const bar = useRef<HTMLDivElement>(null);
 
-	function go(to: RepairStatus) {
+	function go(to: MoveTarget) {
 		if (to === r.status) return;
 		const why = refuseMove(state, to);
 		if (why) {
@@ -54,7 +55,8 @@ export function StatusBar({
 					cancelled && "opacity-50",
 				)}
 			>
-				{steps.map((s) => (
+				{/* A bench job has no pickup: it's done when listed, from its page. */}
+				{(r.kind === "bench" ? boardStatuses : steps).map((s) => (
 					<button
 						key={s}
 						type="button"
@@ -72,6 +74,11 @@ export function StatusBar({
 						{statusNames[s]}
 					</button>
 				))}
+				{r.status === "refurbished" && (
+					<span className="flex h-9 items-center bg-success-fill px-4 font-semibold text-success-text">
+						{statusNames.refurbished}
+					</span>
+				)}
 			</div>
 			<span
 				className={cn(
@@ -86,7 +93,7 @@ export function StatusBar({
 							? "Since today"
 							: `For ${daysIn(r.statusChangedAt)}`)}
 			</span>
-			{!r.orderId && (
+			{!r.orderId && r.status !== "refurbished" && (
 				<button
 					type="button"
 					onClick={() => go(cancelled ? "received" : "cancelled")}

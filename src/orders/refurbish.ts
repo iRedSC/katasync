@@ -80,11 +80,17 @@ async function originalOf(db: Db, orderId: number, lineId: number) {
 		throw new ReturnError(
 			`Match ${line.title} to a product before refurbishing it`,
 		);
+	return { line, ...(await originalProduct(db, line.productId)) };
+}
+
+// The product a refurb is made from, and its live Shopify listing, to copy
+// the product's page from.
+export async function originalProduct(db: Db, productId: number) {
 	const [product] = await db
 		.select()
 		.from(products)
-		.where(eq(products.id, line.productId));
-	// Its live Shopify listing, to copy the product's page from.
+		.where(eq(products.id, productId));
+	if (!product) throw new ReturnError("No such product");
 	const [listing] = await db
 		.select({ storeId: listings.storeId, variantId: listings.externalId })
 		.from(listings)
@@ -98,7 +104,7 @@ async function originalOf(db: Db, orderId: number, lineId: number) {
 		)
 		.orderBy(asc(listings.id))
 		.limit(1);
-	return { line, product, listing: listing ?? null };
+	return { product, listing: listing ?? null };
 }
 
 // The next "<SKU>-RFB<n>" that's nobody's SKU, barcode or alias here, no
@@ -159,15 +165,19 @@ const slug = (s: string) =>
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-|-$/g, "");
 
+// What a refurb starts as: of a returned line, or of a product (a bench
+// job's tool, bought in), priced at what it sells for new.
 export async function refurbishOptions(
 	db: Db,
-	input: { orderId: number; lineId: number },
+	input: { orderId: number; lineId: number } | { productId: number },
 ): Promise<RefurbishOptions> {
-	const { line, product, listing } = await originalOf(
-		db,
-		input.orderId,
-		input.lineId,
-	);
+	const { line, product, listing } =
+		"productId" in input
+			? {
+					...(await originalProduct(db, input.productId)),
+					line: null,
+				}
+			: await originalOf(db, input.orderId, input.lineId);
 	const [shop, conditions, shopTags, { sku }, existing] = await Promise.all([
 		listing ? shopifyOriginal(listing.variantId) : null,
 		shopifyConditions(),
@@ -199,10 +209,10 @@ export async function refurbishOptions(
 		shopTags,
 		details: {
 			title: shop?.product.title ?? product.name,
-			price: shop ? Number(shop.price) : line.unitPrice,
+			price: shop ? Number(shop.price) : (line?.unitPrice ?? 0),
 			// What it costs new, so the listing shows the saving once the
 			// price comes down.
-			compareAtPrice: shop ? Number(shop.price) : line.unitPrice,
+			compareAtPrice: shop ? Number(shop.price) : (line?.unitPrice ?? null),
 			weightGrams: gramsOf(shop) ?? product.weightGrams,
 			vendor: shop?.product.vendor ?? "",
 			productType: shop?.product.productType ?? "",
@@ -214,16 +224,9 @@ export async function refurbishOptions(
 	};
 }
 
-// Makes the refurb and receives the line's units into it. Shopify's draft
-// is made inside the transaction, holding the original product's row, so
-// two people can't make the same SKU at once; if anything here fails after
-// it, the draft is deleted again and nothing is left half made.
-export async function refurbishReturn(
-	db: Db,
-	input: { orderId: number; lineId: number; quantity: number } & RefurbDetails,
-) {
-	const title = input.title.trim();
-	if (!title) throw new ReturnError("Give it a title");
+// The listing a refurb's details make, checked: its Shopify condition.
+async function checkedCondition(input: RefurbDetails) {
+	if (!input.title.trim()) throw new ReturnError("Give it a title");
 	if (!(input.price > 0)) throw new ReturnError("Give it a price");
 	if (input.compareAtPrice !== null && !(input.compareAtPrice > input.price))
 		throw new ReturnError("A compare-at price is more than the price");
@@ -232,23 +235,116 @@ export async function refurbishReturn(
 	);
 	if (!condition)
 		throw new ReturnError(`Shopify has no condition "${input.condition}"`);
-	const { line, product, listing } = await originalOf(
-		db,
-		input.orderId,
-		input.lineId,
-	);
+	return condition;
+}
+
+type Original = Awaited<ReturnType<typeof originalProduct>>;
+
+// Makes a refurb of `original`: its Shopify draft and its product here,
+// linked, then runs `receive` to put its units on the shelf. Run inside a
+// transaction. The draft is made holding the original product's row, so two
+// people can't make the same SKU at once; if anything fails after it,
+// `receive` included, the draft is deleted again and nothing is left half
+// made.
+export async function makeRefurb<T>(
+	tx: Db,
+	input: {
+		original: Original;
+		details: RefurbDetails;
+		quantity: number;
+		unitCost: number | null;
+	},
+	receive: (refurbId: number) => Promise<T>,
+) {
+	const { product, listing } = input.original;
+	const condition = await checkedCondition(input.details);
+	const title = input.details.title.trim();
 	const shop = listing ? await shopifyOriginal(listing.variantId) : null;
 	const [store] = listing
 		? [{ id: listing.storeId }]
-		: await db
+		: await tx
 				.select({ id: stores.id })
 				.from(stores)
 				.where(eq(stores.channel, "shopify"))
 				.orderBy(asc(stores.id))
 				.limit(1);
 	if (!store) throw new ReturnError("No Shopify store is synced yet");
-	const unitCost = line.unitCost ?? product.unitCost;
+	await tx
+		.select({ id: products.id })
+		.from(products)
+		.where(eq(products.id, product.id))
+		.for("update");
+	const { sku, n } = await nextRefurbSku(tx, product.sku);
+	const d = input.details;
+	const draft = await createRefurbDraft(shop, {
+		handle: `${shop?.product.handle ?? slug(title)}-refurbished-${n}`,
+		title,
+		vendor: d.vendor.trim(),
+		productType: d.productType.trim(),
+		tags: d.tags.map((t) => t.trim()).filter(Boolean),
+		conditionId: condition.id,
+		googleCondition: googleCondition(condition.handle),
+		notes: d.notes,
+		sku,
+		price: d.price,
+		compareAtPrice: d.compareAtPrice,
+		unitCost: input.unitCost,
+		weightGrams: d.weightGrams,
+		quantity: input.quantity,
+	});
+	try {
+		const [refurb] = await tx
+			.insert(products)
+			.values({
+				sku,
+				barcode: sku,
+				name: title,
+				kind: "simple",
+				refurbishedFromId: product.id,
+				condition: condition.handle,
+				notes: d.notes.trim() || null,
+				unitCost: input.unitCost,
+				category: product.category,
+				weightGrams: d.weightGrams ?? product.weightGrams,
+				lengthMm: product.lengthMm,
+				widthMm: product.widthMm,
+				heightMm: product.heightMm,
+				insureWhenShipped: product.insureWhenShipped,
+				aerosol: product.aerosol,
+			})
+			.returning({ id: products.id });
+		await tx.insert(listings).values({
+			storeId: store.id,
+			externalId: draft.variantId,
+			externalSku: sku,
+			title,
+			status: "DRAFT",
+			vendor: d.vendor.trim() || null,
+			productType: d.productType.trim() || null,
+			productId: refurb.id,
+		});
+		const received = await receive(refurb.id);
+		return {
+			received,
+			sku,
+			productId: refurb.id,
+			shopifyUrl: shopifyAdminProductUrl(draft.productId),
+		};
+	} catch (error) {
+		await deleteShopifyVariant(draft.variantId).catch(() => {});
+		throw error;
+	}
+}
 
+// Makes the refurb and receives the line's units into it, at what the unit
+// cost when it sold.
+export async function refurbishReturn(
+	db: Db,
+	input: { orderId: number; lineId: number; quantity: number } & RefurbDetails,
+) {
+	await checkedCondition(input);
+	const original = await originalOf(db, input.orderId, input.lineId);
+	const unitCost = original.line.unitCost ?? original.product.unitCost;
 	return db.transaction(async (tx) => {
 		await readQuantityMode(tx);
 		await tx
@@ -256,73 +352,17 @@ export async function refurbishReturn(
 			.from(orders)
 			.where(eq(orders.id, input.orderId))
 			.for("no key update");
-		await tx
-			.select({ id: products.id })
-			.from(products)
-			.where(eq(products.id, product.id))
-			.for("update");
-		const { sku, n } = await nextRefurbSku(tx, product.sku);
-		const draft = await createRefurbDraft(shop, {
-			handle: `${shop?.product.handle ?? slug(title)}-refurbished-${n}`,
-			title,
-			vendor: input.vendor.trim(),
-			productType: input.productType.trim(),
-			tags: input.tags.map((t) => t.trim()).filter(Boolean),
-			conditionId: condition.id,
-			googleCondition: googleCondition(condition.handle),
-			notes: input.notes,
-			sku,
-			price: input.price,
-			compareAtPrice: input.compareAtPrice,
-			unitCost,
-			weightGrams: input.weightGrams,
-			quantity: input.quantity,
-		});
-		try {
-			const [refurb] = await tx
-				.insert(products)
-				.values({
-					sku,
-					barcode: sku,
-					name: title,
-					kind: "simple",
-					refurbishedFromId: product.id,
-					condition: condition.handle,
-					notes: input.notes.trim() || null,
-					unitCost,
-					category: product.category,
-					weightGrams: input.weightGrams ?? product.weightGrams,
-					lengthMm: product.lengthMm,
-					widthMm: product.widthMm,
-					heightMm: product.heightMm,
-					insureWhenShipped: product.insureWhenShipped,
-					aerosol: product.aerosol,
-				})
-				.returning({ id: products.id });
-			await tx.insert(listings).values({
-				storeId: store.id,
-				externalId: draft.variantId,
-				externalSku: sku,
-				title,
-				status: "DRAFT",
-				vendor: input.vendor.trim() || null,
-				productType: input.productType.trim() || null,
-				productId: refurb.id,
-			});
-			const { ids } = await receiveReturn(tx, {
-				orderId: input.orderId,
-				lines: [{ lineId: input.lineId, quantity: input.quantity }],
-				outcome: { refurbishInto: refurb.id },
-			});
-			return {
-				ids,
-				sku,
-				productId: refurb.id,
-				shopifyUrl: shopifyAdminProductUrl(draft.productId),
-			};
-		} catch (error) {
-			await deleteShopifyVariant(draft.variantId).catch(() => {});
-			throw error;
-		}
+		const made = await makeRefurb(
+			tx,
+			{ original, details: input, quantity: input.quantity, unitCost },
+			(refurbId) =>
+				receiveReturn(tx, {
+					orderId: input.orderId,
+					lines: [{ lineId: input.lineId, quantity: input.quantity }],
+					outcome: { refurbishInto: refurbId },
+				}),
+		);
+		const { received, ...rest } = made;
+		return { ids: received.ids, ...rest };
 	});
 }

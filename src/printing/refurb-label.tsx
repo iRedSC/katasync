@@ -7,10 +7,11 @@ import {
 	Text,
 	View,
 } from "@react-pdf/renderer";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import QRCode from "qrcode";
 import type { Db } from "#/db/client";
+import { repairs } from "#/db/repair-schema";
 import { orderLines, orderReturns, orders, products } from "#/db/schema";
 
 // A 4x6 label for the box a refurbished unit sits in until it ships, one
@@ -55,6 +56,37 @@ export async function refurbLabel(
 		.where(eq(orderReturns.id, returnId));
 	if (!row?.condition) return null;
 	return { ...row, condition: conditionName(row.condition) };
+}
+
+// The label for a listed bench job's refurb: the order its unit came back
+// on, or the job itself for one bought in.
+export async function benchLabel(
+	db: Db,
+	repairId: number,
+): Promise<RefurbLabel | null> {
+	const [row] = await db
+		.select({
+			sku: products.sku,
+			name: products.name,
+			condition: products.condition,
+			notes: products.notes,
+			originalSku: original.sku,
+			orderName: sql<
+				string | null
+			>`(select o.name from ${orderLines} l join ${orders} o on o.id = l.order_id where l.id = ${repairs.returnLineId})`,
+			receivedAt: repairs.statusChangedAt,
+		})
+		.from(repairs)
+		.innerJoin(products, eq(products.id, repairs.refurbProductId))
+		.innerJoin(original, eq(original.id, products.refurbishedFromId))
+		.where(eq(repairs.id, repairId));
+	if (!row?.condition) return null;
+	return {
+		...row,
+		quantity: 1,
+		orderName: row.orderName ?? `R${repairId}`,
+		condition: conditionName(row.condition),
+	};
 }
 
 // A Shopify condition handle as words: "new-previous-gen" → "New previous gen".

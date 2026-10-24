@@ -64,6 +64,7 @@ import { Route as ApiPoEmailAttachmentsAttachmentIdRouteImport } from './routes/
 import { Route as ApiPoFileUploadsPurchaseOrderIdRouteImport } from './routes/api/po-file-uploads/$purchaseOrderId'
 import { Route as ApiPoFilesFileIdRouteImport } from './routes/api/po-files/$fileId'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
+import { Route as LabelsBenchIdRouteImport } from './routes/labels/bench.$id'
 import { Route as LabelsRefurbsReturnIdRouteImport } from './routes/labels/refurbs.$returnId'
 import { Route as LabelsRepairsIdRouteImport } from './routes/labels/repairs.$id'
 import { Route as OrdersReturnsInsightsRouteImport } from './routes/orders/returns_.insights'
@@ -360,6 +361,11 @@ const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
   path: '/api/webhooks/$channel',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LabelsBenchIdRoute = LabelsBenchIdRouteImport.update({
+  id: '/labels/bench/$id',
+  path: '/labels/bench/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LabelsRefurbsReturnIdRoute = LabelsRefurbsReturnIdRouteImport.update({
   id: '/labels/refurbs/$returnId',
   path: '/labels/refurbs/$returnId',
@@ -504,6 +510,7 @@ export interface FileRoutesByFullPath {
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/bench/$id': typeof LabelsBenchIdRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
@@ -578,6 +585,7 @@ export interface FileRoutesByTo {
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/bench/$id': typeof LabelsBenchIdRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
@@ -653,6 +661,7 @@ export interface FileRoutesById {
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
+  '/labels/bench/$id': typeof LabelsBenchIdRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
   '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns_/insights': typeof OrdersReturnsInsightsRoute
@@ -729,6 +738,7 @@ export interface FileRouteTypes {
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
+    | '/labels/bench/$id'
     | '/labels/refurbs/$returnId'
     | '/labels/repairs/$id'
     | '/orders/returns/insights'
@@ -803,6 +813,7 @@ export interface FileRouteTypes {
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
+    | '/labels/bench/$id'
     | '/labels/refurbs/$returnId'
     | '/labels/repairs/$id'
     | '/orders/returns/insights'
@@ -877,6 +888,7 @@ export interface FileRouteTypes {
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
+    | '/labels/bench/$id'
     | '/labels/refurbs/$returnId'
     | '/labels/repairs/$id'
     | '/orders/returns_/insights'
@@ -952,6 +964,7 @@ export interface RootRouteChildren {
   ApiPoFileUploadsPurchaseOrderIdRoute: typeof ApiPoFileUploadsPurchaseOrderIdRoute
   ApiPoFilesFileIdRoute: typeof ApiPoFilesFileIdRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
+  LabelsBenchIdRoute: typeof LabelsBenchIdRoute
   LabelsRefurbsReturnIdRoute: typeof LabelsRefurbsReturnIdRoute
   LabelsRepairsIdRoute: typeof LabelsRepairsIdRoute
   OrdersReturnsInsightsRoute: typeof OrdersReturnsInsightsRoute
@@ -1359,6 +1372,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWebhooksChannelRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/labels/bench/$id': {
+      id: '/labels/bench/$id'
+      path: '/labels/bench/$id'
+      fullPath: '/labels/bench/$id'
+      preLoaderRoute: typeof LabelsBenchIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/labels/refurbs/$returnId': {
       id: '/labels/refurbs/$returnId'
       path: '/labels/refurbs/$returnId'
@@ -1538,6 +1558,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPoFileUploadsPurchaseOrderIdRoute: ApiPoFileUploadsPurchaseOrderIdRoute,
   ApiPoFilesFileIdRoute: ApiPoFilesFileIdRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
+  LabelsBenchIdRoute: LabelsBenchIdRoute,
   LabelsRefurbsReturnIdRoute: LabelsRefurbsReturnIdRoute,
   LabelsRepairsIdRoute: LabelsRepairsIdRoute,
   OrdersReturnsInsightsRoute: OrdersReturnsInsightsRoute,
