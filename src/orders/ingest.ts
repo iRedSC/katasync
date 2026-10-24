@@ -87,6 +87,7 @@ export async function ingestOrder(
 	from: StockLocations,
 ): Promise<{ orderId: number; problems: string[] }> {
 	return db.transaction(async (tx) => {
+		await readQuantityMode(tx);
 		const { lines, tax, ...fields } = order;
 		const [before] = await tx
 			.select({ cancelledAt: orders.cancelledAt })
@@ -152,14 +153,17 @@ export async function ingestOrder(
 			if (line.productId !== null) roots.add(line.productId);
 			if (line.saleBatchId !== null) saleBatches.push(line.saleBatchId);
 		}
-		await readQuantityMode(tx);
-		await lockRecipes(tx, [...roots], [
-			...(await batchProductIds(tx, saleBatches)),
-			...(await commitmentProductIds(
-				tx,
-				savedLines.map((line) => line.id),
-			)),
-		]);
+		await lockRecipes(
+			tx,
+			[...roots],
+			[
+				...(await batchProductIds(tx, saleBatches)),
+				...(await commitmentProductIds(
+					tx,
+					savedLines.map((line) => line.id),
+				)),
+			],
+		);
 		// Lines written or read back earlier in this pass. Their saved copy may
 		// predate a stock take, so a repeat of one is read again, not trusted.
 		const handled = new Set<string>();

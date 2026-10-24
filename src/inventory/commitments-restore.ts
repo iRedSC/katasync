@@ -5,6 +5,7 @@ import {
 	stockCommitments,
 	unreservedShipments,
 } from "#/db/quantity-schema";
+import { orders } from "#/db/schema";
 import { undoBatch } from "#/inventory/ledger";
 import { batchProductIds, lockRecipes } from "#/inventory/ledger/post";
 import {
@@ -31,6 +32,11 @@ export async function restoreCommitments(
 	const key = input.fulfillmentKey.trim();
 	return db.transaction(async (tx) => {
 		if ((await readQuantityMode(tx)) === "legacy") return { kind: "legacy" };
+		await tx
+			.select({ id: orders.id })
+			.from(orders)
+			.where(eq(orders.id, input.orderId))
+			.for("no key update");
 		const entries = await tx
 			.select({
 				id: stockCommitmentEntries.id,

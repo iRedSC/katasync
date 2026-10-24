@@ -5,10 +5,14 @@ import {
 	stockCommitments,
 	unreservedShipments,
 } from "#/db/quantity-schema";
-import { orderLines } from "#/db/schema";
+import { orderLines, orders } from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { lockStockProducts } from "#/inventory/ledger/post";
-import { type LineHistory, lineHistories, readQuantityMode } from "./commitments";
+import {
+	type LineHistory,
+	lineHistories,
+	readQuantityMode,
+} from "./commitments";
 import {
 	allocate,
 	ConsumeError,
@@ -107,12 +111,20 @@ export async function evidenceUnder(
 }
 
 export function splitOverOpen(history: LineHistory, quantity: number) {
-	const takes: { commitmentId: number; quantity: number; parts: LineHistory["open"][number]["parts"] }[] = [];
+	const takes: {
+		commitmentId: number;
+		quantity: number;
+		parts: LineHistory["open"][number]["parts"];
+	}[] = [];
 	let left = quantity;
 	for (const revision of history.open) {
 		if (left === 0) break;
 		const take = Math.min(left, revision.remaining);
-		takes.push({ commitmentId: revision.id, quantity: take, parts: revision.parts });
+		takes.push({
+			commitmentId: revision.id,
+			quantity: take,
+			parts: revision.parts,
+		});
 		left -= take;
 	}
 	return left === 0 ? takes : null;
@@ -134,6 +146,11 @@ export async function consumeCommitments(
 			);
 	return db.transaction(async (tx) => {
 		if ((await readQuantityMode(tx)) === "legacy") return { kind: "legacy" };
+		await tx
+			.select({ id: orders.id })
+			.from(orders)
+			.where(eq(orders.id, input.orderId))
+			.for("no key update");
 		const rows =
 			ids.length === 0
 				? []
@@ -189,7 +206,11 @@ export async function consumeCommitments(
 						throw new ConsumeError(
 							`Fulfillment ${key} already shipped ${proof.quantity} of line ${line.orderLineId}, not ${line.quantity}`,
 						);
-					untracked.push({ ...line, why: "shipped_unreserved", repeated: true });
+					untracked.push({
+						...line,
+						why: "shipped_unreserved",
+						repeated: true,
+					});
 					continue;
 				}
 				const row = rows.find((r) => r.id === line.orderLineId);
@@ -223,14 +244,23 @@ export async function consumeCommitments(
 		const shelves = await shippingShelves(tx);
 		const holds = await lockedHolds(
 			tx,
-			[...new Set(pending.flatMap((p) => p.takes.flatMap((t) => t.parts.map((x) => x.productId))))],
+			[
+				...new Set(
+					pending.flatMap((p) =>
+						p.takes.flatMap((t) => t.parts.map((x) => x.productId)),
+					),
+				),
+			],
 			shelves,
 		);
 		for (const line of pending) {
 			const units = new Map<number, number>();
 			for (const t of line.takes)
 				for (const p of t.parts)
-					units.set(p.productId, (units.get(p.productId) ?? 0) + p.perUnit * t.quantity);
+					units.set(
+						p.productId,
+						(units.get(p.productId) ?? 0) + p.perUnit * t.quantity,
+					);
 			const { batchId } = await postMovements(tx, {
 				reference: `order:${input.orderId}:${line.orderLineId}`,
 				lines: allocate(
@@ -283,7 +313,9 @@ export async function returnSaleOf(
 		.groupBy(stockCommitmentEntries.batchId)
 		.orderBy(sql`min(${stockCommitmentEntries.id})`)
 		.limit(1);
-	return entry ? { batchId: entry.batchId, quantity: Number(entry.quantity) } : null;
+	return entry
+		? { batchId: entry.batchId, quantity: Number(entry.quantity) }
+		: null;
 }
 
 export async function fulfillmentOfBatch(

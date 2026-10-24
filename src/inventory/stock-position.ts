@@ -20,6 +20,16 @@ export async function stockPositions(
 	db: Db,
 	productIds: number[],
 ): Promise<Map<number, StockPosition>> {
+	return db.transaction((tx) => positionsIn(tx, productIds), {
+		isolationLevel: "repeatable read",
+		accessMode: "read only",
+	});
+}
+
+async function positionsIn(
+	db: Db,
+	productIds: number[],
+): Promise<Map<number, StockPosition>> {
 	const result = new Map<number, StockPosition>();
 	if (productIds.length === 0) return result;
 	const stocked = await db
@@ -45,7 +55,9 @@ export async function stockPositions(
 	]);
 	for (const id of ids) {
 		const shelves = rows.filter((r) => r.productId === id);
-		const ours = shelves.filter((r) => r.kind === "owned" || r.kind === "retail");
+		const ours = shelves.filter(
+			(r) => r.kind === "owned" || r.kind === "retail",
+		);
 		const physical = ours.reduce((n, r) => n + r.onHand, 0);
 		const inTransit = shelves
 			.filter((r) => r.kind === "transit")

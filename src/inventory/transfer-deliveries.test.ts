@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
-import { postMovements, transferStock, undoBatch } from "./ledger";
+import { postMovements, recordCount, transferStock, undoBatch } from "./ledger";
 import { setPosLocation, TRANSIT_LOCATION, transitLocation } from "./locations";
 import { onlineStock } from "./online-stock";
 import { stockPositions } from "./stock-position";
@@ -59,11 +59,30 @@ beforeEach(async () => {
 });
 
 describe("transfers through transit", () => {
+	test("in-transit units cannot be replaced by a shelf count", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const transit = await transitLocation(db);
+		await expect(
+			recordCount(db, {
+				productId: wrench,
+				locationId: transit,
+				counted: 12,
+				note: "not a shelf",
+			}),
+		).rejects.toThrow(/in-transit/);
+		expect(await onHand(wrench, transit)).toBe(0);
+	});
+
 	test("send 10, receive 4: the store has 4 and 6 are still on the way", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await postMovements(db, {
 			lines: [
-				{ productId: wrench, locationId: warehouse, delta: 10, reason: "receipt" },
+				{
+					productId: wrench,
+					locationId: warehouse,
+					delta: 10,
+					reason: "receipt",
+				},
 			],
 		});
 		const id = await sentDraft(wrench, 10);
@@ -96,17 +115,29 @@ describe("transfers through transit", () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await postMovements(db, {
 			lines: [
-				{ productId: wrench, locationId: warehouse, delta: 5, reason: "receipt" },
+				{
+					productId: wrench,
+					locationId: warehouse,
+					delta: 5,
+					reason: "receipt",
+				},
 			],
 		});
 		const id = await sentDraft(wrench, 5);
-		const box = { transferId: id, receiptKey: "box-1", lines: [{ productId: wrench, quantity: 3 }] };
+		const box = {
+			transferId: id,
+			receiptKey: "box-1",
+			lines: [{ productId: wrench, quantity: 3 }],
+		};
 		const first = await receiveTransfer(db, box);
 		const again = await receiveTransfer(db, box);
 		expect(again).toMatchObject({ repeated: true, receiptId: first.receiptId });
 		expect(await onHand(wrench, retail)).toBe(3);
 		await expect(
-			receiveTransfer(db, { ...box, lines: [{ productId: wrench, quantity: 2 }] }),
+			receiveTransfer(db, {
+				...box,
+				lines: [{ productId: wrench, quantity: 2 }],
+			}),
 		).rejects.toThrow("other counts");
 		await expect(
 			receiveTransfer(db, {
@@ -122,12 +153,20 @@ describe("transfers through transit", () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await postMovements(db, {
 			lines: [
-				{ productId: wrench, locationId: warehouse, delta: 5, reason: "receipt" },
+				{
+					productId: wrench,
+					locationId: warehouse,
+					delta: 5,
+					reason: "receipt",
+				},
 			],
 		});
 		const id = await sentDraft(wrench, 5);
 		const transit = await transitLocation(db);
-		const { receiptId } = await receiveTransfer(db, { transferId: id, receiptKey: "all" });
+		const { receiptId } = await receiveTransfer(db, {
+			transferId: id,
+			receiptKey: "all",
+		});
 		expect(await deliveryOf(db, id)).toMatchObject({ kind: "received" });
 		await expect(unsendTransfer(db, id, { discard: true })).rejects.toThrow(
 			"undo those receipts first",
@@ -151,7 +190,12 @@ describe("transfers through transit", () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await postMovements(db, {
 			lines: [
-				{ productId: wrench, locationId: warehouse, delta: 8, reason: "receipt" },
+				{
+					productId: wrench,
+					locationId: warehouse,
+					delta: 8,
+					reason: "receipt",
+				},
 			],
 		});
 		const old = await createTransfer(db, {

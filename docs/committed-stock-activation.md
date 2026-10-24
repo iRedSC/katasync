@@ -1,6 +1,6 @@
 # Committed stock: activation runbook
 
-The migration carrying `src/db/pending/quantity.sql` is additive and leaves
+Migration `0121_quantity_commitments` is additive and leaves
 `quantity_mode` at `legacy`. In legacy mode everything behaves as before:
 orders take stock when they sync (net stock). Nothing switches modes on its own.
 
@@ -16,10 +16,14 @@ Committed mode means shelves hold physical units, unshipped orders reserve
    crons, webhooks, or syncs.
 2. Pause order sync, webhooks, and quick ship for the window (the job that
    calls `ingestOrder`, `reconcileStock`, and shipping handoff).
-3. The parent hooks listed in the integration contract are deployed:
-   `consumeCommitments` in the shipping handoff, `restoreCommitments` on
-   void, `stockEffectMissing` in reconciliation, and the `readQuantityMode`
-   prelock in every caller of `takeStock`.
+3. Migration `0122_quantity_dispatch_evidence` and the complete shipping,
+   reconciliation, and actor-attribution integration are deployed. Packed
+   dispatches from before that migration have no frozen inventory line ID
+   and are held in committed mode. Resolve or void and repack them before
+   activation; do not reconstruct historical IDs from today's order lines.
+4. Take and verify an isolated recoverable database branch before activation.
+   There is no in-app mode reversal. Follow `docs/disaster-recovery.md` for
+   recovery handling if that runbook is deployed.
 
 ## Dry run (read-only)
 

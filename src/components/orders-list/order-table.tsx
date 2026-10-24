@@ -168,12 +168,12 @@ export function OrderTable({
 											{o.unmatched > 0 && (
 												<Badge tone="critical">Unknown product</Badge>
 											)}
-											{o.lines.some((l) => l.fromStore.length > 0) && (
+											{o.lines.some((l) => (l.fromStore?.length ?? 0) > 0) && (
 												<Badge tone="warning">
 													Fetch from{" "}
 													{
-														o.lines.find((l) => l.fromStore.length > 0)
-															?.fromStore[0].location
+														o.lines.find((l) => (l.fromStore?.length ?? 0) > 0)
+															?.fromStore?.[0].location
 													}
 												</Badge>
 											)}

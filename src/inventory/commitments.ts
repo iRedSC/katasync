@@ -1,6 +1,5 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { orderLines, orders, stores } from "#/db/schema";
 import {
 	committedStock,
 	quantityMode,
@@ -8,6 +7,8 @@ import {
 	stockCommitmentParts,
 	stockCommitments,
 } from "#/db/quantity-schema";
+import { orderLines, orders, stores } from "#/db/schema";
+import { lockRecipes } from "#/inventory/ledger/post";
 
 export type Part = { productId: number; perUnit: number };
 
@@ -141,7 +142,7 @@ export async function settleLine(
 		orderId: number;
 		productId: number;
 		target: number;
-		freshParts: () => Promise<Part[] | null>;
+		freshParts: (tx: Db) => Promise<Part[] | null>;
 		legacySaleBatchId?: string;
 	},
 ): Promise<Settlement> {
@@ -150,7 +151,20 @@ export async function settleLine(
 			`A line commits a whole number from 0, got ${input.target}`,
 		);
 	return db.transaction(async (tx) => {
+		await readQuantityMode(tx);
+		await tx
+			.select({ id: orders.id })
+			.from(orders)
+			.where(eq(orders.id, input.orderId))
+			.for("no key update");
 		const history = await lineHistory(tx, input.orderLineId);
+		await lockRecipes(
+			tx,
+			[input.productId],
+			history.revisions.flatMap((revision) =>
+				revision.parts.map((part) => part.productId),
+			),
+		);
 		const { latest } = history;
 		const sameProduct = latest?.productId === input.productId;
 		const accounted = history.consumed + history.remaining;
@@ -174,9 +188,10 @@ export async function settleLine(
 				consumed: history.consumed,
 				target: input.target,
 			} as const;
-		if (quantity === 0) return { kind: "released", quantity: released } as const;
+		if (quantity === 0)
+			return { kind: "released", quantity: released } as const;
 		const parts =
-			sameProduct && latest ? latest.parts : await input.freshParts();
+			sameProduct && latest ? latest.parts : await input.freshParts(tx);
 		if (!parts || parts.length === 0)
 			throw new CommitmentError(
 				`Product ${input.productId} has no parts to reserve`,
@@ -197,7 +212,12 @@ export async function settleLine(
 			.insert(stockCommitmentParts)
 			.values(parts.map((p) => ({ ...p, commitmentId: made.id })));
 		return latest
-			? ({ kind: "revised", released, commitmentId: made.id, quantity } as const)
+			? ({
+					kind: "revised",
+					released,
+					commitmentId: made.id,
+					quantity,
+				} as const)
 			: ({ kind: "reserved", commitmentId: made.id, quantity } as const);
 	});
 }

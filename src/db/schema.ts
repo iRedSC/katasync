@@ -1144,6 +1144,7 @@ export const dispatchLines = pgTable(
 		dispatchId: integer().notNull(),
 		orderId: integer().notNull(),
 		lineExternalId: text().notNull(),
+		orderLineId: integer(),
 		productId: integer(),
 		sku: text(),
 		title: text().notNull(),

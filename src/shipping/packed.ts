@@ -14,7 +14,10 @@ import { contentsKey } from "./contents";
 // (dispatch_lines in schema.ts) and checked against the order again before
 // any marketplace is told it shipped.
 
-export type PackedLine = Omit<typeof dispatchLines.$inferSelect, "dispatchId">;
+export type PackedLine = Omit<
+	typeof dispatchLines.$inferSelect,
+	"dispatchId" | "orderLineId"
+> & { orderLineId?: number | null };
 
 // What katasync knows a dispatch held. unknown: bought before contents were
 // kept, so nothing about its lines may be assumed.
@@ -35,6 +38,7 @@ export async function linesToPack(
 	return db
 		.select({
 			orderId: orderLines.orderId,
+			orderLineId: orderLines.id,
 			lineExternalId: orderLines.externalId,
 			productId: orderLines.productId,
 			sku: orderLines.sku,
@@ -74,6 +78,7 @@ export async function contentsOf(
 	const lines = await db
 		.select({
 			orderId: dispatchLines.orderId,
+			orderLineId: dispatchLines.orderLineId,
 			lineExternalId: dispatchLines.lineExternalId,
 			productId: dispatchLines.productId,
 			sku: dispatchLines.sku,

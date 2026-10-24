@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	countLog,
+	locations,
 	movements,
 	products,
 	stockCounts,
@@ -335,6 +336,14 @@ export async function recordCount(
 		throw new LedgerError(`Count must be a whole number, got ${input.counted}`);
 	}
 	return db.transaction(async (tx) => {
+		const [location] = await tx
+			.select({ kind: locations.kind })
+			.from(locations)
+			.where(eq(locations.id, input.locationId));
+		if (location?.kind === "transit")
+			throw new LedgerError(
+				"Receive or undo the transfer instead of counting in-transit stock",
+			);
 		const product = await getProduct(tx, input.productId);
 		if (product.kind === "bundle") {
 			throw new LedgerError(

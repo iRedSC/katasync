@@ -14,6 +14,9 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
+import { consumeCommitments } from "#/inventory/commitments-consume";
+import { restoreCommitments } from "#/inventory/commitments-restore";
 import { deliver } from "./deliver";
 import { destinationOf } from "./destination";
 import { lockOnOwnConnection, type OrderLocker, ordersOf } from "./dispatch";
@@ -218,19 +221,72 @@ async function tell(
 	}
 	if (to.kind === "hold")
 		return hold({ kind: "unmappable", why: to.why }, to.why);
+	const packed = packedOf(contents.lines, order.id);
+	const commitmentLines = packed.flatMap((line) =>
+		line.orderLineId == null
+			? []
+			: [{ orderLineId: line.orderLineId, quantity: line.quantity }],
+	);
+	if (
+		commitmentLines.length !== packed.length &&
+		(await readQuantityMode(db, "none")) === "committed"
+	)
+		return hold(
+			{
+				kind: "unmappable",
+				why: "This dispatch has no frozen inventory line identity",
+			},
+			"Void and repack this dispatch before shipping reserved stock",
+		);
 
-	let delivered: Awaited<ReturnType<typeof deliver>>;
+	let phase: "delivery" | "recording" = "delivery";
 	try {
-		delivered = await deliver(
+		const delivered = await deliver(
 			db,
 			{ to, order, boxes, packed: packedOf(contents.lines, order.id) },
 			outside,
 		);
+		phase = "recording";
+		// Recorded together, so a retry never finds it sent while the order is
+		// still on To ship.
+		await db.transaction(async (tx) => {
+			if (
+				(await readQuantityMode(tx)) === "committed" &&
+				commitmentLines.length !== packed.length
+			)
+				throw new Error("The dispatch has no frozen inventory line identity");
+			await consumeCommitments(tx, {
+				orderId: order.id,
+				lines: commitmentLines,
+				fulfillmentKey: `dispatch:${handoff.dispatchId}:order:${order.id}`,
+			});
+			await tx
+				.update(dispatchOrders)
+				.set({
+					channelSentAt: new Date(),
+					channelFulfillmentId: delivered.fulfillmentId,
+					channelError: null,
+					channelRetryAt: null,
+					handoffHold: null,
+				})
+				.where(sameMember(member));
+			// Shipped now, not on the next sync: off To ship unless the
+			// marketplace still has more of it to ship.
+			await tx
+				.update(orders)
+				.set({
+					fulfillmentStatus:
+						delivered.remaining > 0 ? "PARTIALLY_FULFILLED" : "FULFILLED",
+				})
+				.where(eq(orders.id, order.id));
+		});
 	} catch (err) {
-		const why = err instanceof Error ? err.message : String(err);
-		if (err instanceof Held) return hold(err.hold, why);
-		// Tried again on its own (src/shipping/retry.ts) until ten minutes
-		// after the first refusal.
+		const detail = err instanceof Error ? err.message : String(err);
+		if (err instanceof Held) return hold(err.hold, detail);
+		const why =
+			phase === "recording"
+				? `Marketplace accepted tracking; inventory recording failed: ${detail}`
+				: detail;
 		const now = new Date();
 		const firstFailedAt = handoff.channelFirstFailedAt ?? now;
 		const attempts = handoff.channelAttempts + 1;
@@ -247,32 +303,9 @@ async function tell(
 			.where(sameMember(member));
 		return done(
 			false,
-			`Tracking didn't reach ${name}: ${why}${retryAt ? ". Retrying on its own; Diagnostics shows it if it gives up" : ""}`,
+			`${phase === "recording" ? "Dispatch not recorded" : `Tracking didn't reach ${name}`}: ${why}${retryAt ? ". Retrying on its own; Diagnostics shows it if it gives up" : ""}`,
 		);
 	}
-	// Recorded together, so a retry never finds it sent while the order is
-	// still on To ship.
-	await db.transaction(async (tx) => {
-		await tx
-			.update(dispatchOrders)
-			.set({
-				channelSentAt: new Date(),
-				channelFulfillmentId: delivered.fulfillmentId,
-				channelError: null,
-				channelRetryAt: null,
-				handoffHold: null,
-			})
-			.where(sameMember(member));
-		// Shipped now, not on the next sync: off To ship unless the
-		// marketplace still has more of it to ship.
-		await tx
-			.update(orders)
-			.set({
-				fulfillmentStatus:
-					delivered.remaining > 0 ? "PARTIALLY_FULFILLED" : "FULFILLED",
-			})
-			.where(eq(orders.id, order.id));
-	});
 	return done(
 		true,
 		to.kind === "tiktok"
@@ -382,6 +415,7 @@ export async function voidDispatch(
 				// One live dispatch per order, so voiding it means nothing has
 				// shipped. Recorded together with the order going back.
 				await db.transaction(async (tx) => {
+					await readQuantityMode(tx);
 					const [newer] = await tx
 						.select({ dispatchId: dispatchOrders.dispatchId })
 						.from(dispatchOrders)
@@ -404,6 +438,11 @@ export async function voidDispatch(
 							.set({ fulfillmentStatus: "UNFULFILLED" })
 							.where(eq(orders.id, order.id));
 					}
+					if (handoff.channelSentAt !== null && !newer)
+						await restoreCommitments(tx, {
+							orderId: order.id,
+							fulfillmentKey: `dispatch:${dispatchId}:order:${order.id}`,
+						});
 					await tx
 						.update(dispatchOrders)
 						.set({ reversedAt: new Date() })

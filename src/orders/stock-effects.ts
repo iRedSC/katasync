@@ -1,13 +1,8 @@
 import { and, eq, inArray, isNotNull, isNull, not, or } from "drizzle-orm";
 import { type StockLocations, saleLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
-import {
-	stockCommitmentParts,
-	stockCommitments,
-} from "#/db/quantity-schema";
+import { stockCommitmentParts, stockCommitments } from "#/db/quantity-schema";
 import { orderLines } from "#/db/schema";
-import { LedgerError, recordSale } from "#/inventory/ledger";
-import { lockRecipes } from "#/inventory/ledger/post";
 import {
 	CommitmentError,
 	lineHasCommitment,
@@ -22,6 +17,8 @@ import {
 	entriesUnder,
 	evidenceUnder,
 } from "#/inventory/commitments-consume";
+import { LedgerError, recordSale } from "#/inventory/ledger";
+import { lockRecipes } from "#/inventory/ledger/post";
 
 export type StockEffect =
 	| { kind: "none" }
@@ -50,7 +47,9 @@ export async function lineStockEffect(
 		const shipped = (await evidenceUnder(db, [line.id]))
 			.filter((e) => !e.voided)
 			.reduce((n, e) => n + e.quantity, 0);
-		return shipped > 0 ? { kind: "shipped_unreserved", shipped } : { kind: "none" };
+		return shipped > 0
+			? { kind: "shipped_unreserved", shipped }
+			: { kind: "none" };
 	}
 	return history.remaining > 0
 		? {
@@ -74,7 +73,12 @@ export async function commitmentProductIds(db: Db, orderLineIds: number[]) {
 	return rows.map((r) => r.productId);
 }
 
-type Line = { id: number; orderId: number; productId: number; quantity: number };
+type Line = {
+	id: number;
+	orderId: number;
+	productId: number;
+	quantity: number;
+};
 
 async function reserve(
 	db: Db,
@@ -83,20 +87,22 @@ async function reserve(
 	order: { name: string },
 ): Promise<string | null> {
 	try {
-		const settled = await settleLine(db, {
-			orderLineId: line.id,
-			orderId: line.orderId,
-			productId: line.productId,
-			target,
-			freshParts: async () => {
-				const { products, recipes } = await lockRecipes(db, [line.productId]);
-				const product = products.find((p) => p.id === line.productId);
-				return product ? partsFor(product, recipes) : null;
-			},
+		return await db.transaction(async (tx) => {
+			const settled = await settleLine(tx, {
+				orderLineId: line.id,
+				orderId: line.orderId,
+				productId: line.productId,
+				target,
+				freshParts: async (tx) => {
+					const { products, recipes } = await lockRecipes(tx, [line.productId]);
+					const product = products.find((p) => p.id === line.productId);
+					return product ? partsFor(product, recipes) : null;
+				},
+			});
+			if (settled.kind === "overshipped")
+				return `${order.name}: ${settled.consumed} already shipped, more than the ${settled.target} ordered now`;
+			return target > 0 ? applyShipped(tx, line, order) : null;
 		});
-		if (settled.kind === "overshipped")
-			return `${order.name}: ${settled.consumed} already shipped, more than the ${settled.target} ordered now`;
-		return target > 0 ? applyShipped(db, line, order) : null;
 	} catch (error) {
 		if (!(error instanceof CommitmentError || error instanceof LedgerError))
 			throw error;

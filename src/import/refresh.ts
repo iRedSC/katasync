@@ -11,6 +11,7 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
 import { postMovements, requestCounts } from "#/inventory/ledger";
 import { markNotCounted } from "#/inventory/not-counted";
 import { setRecipe } from "#/inventory/recipes";
@@ -63,6 +64,10 @@ export async function refreshFromSumtracker(
 	if (options.exportedAt.getTime() > Date.now())
 		throw new Error("The export time is in the future");
 	return db.transaction(async (tx) => {
+		if ((await readQuantityMode(tx)) !== "legacy")
+			throw new Error(
+				"Committed stock cannot be replaced by a Sumtracker refresh",
+			);
 		await tx.execute(
 			// orders too: an order syncing in waits here, then sees the new
 			// stockFrom (ingestOrder reads it after saving the order).

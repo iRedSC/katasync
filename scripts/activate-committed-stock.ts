@@ -1,12 +1,15 @@
 import { readFileSync } from "node:fs";
+import { actAsScript } from "#/audit/script";
 import { getDb } from "#/db/client";
+import { committedDrift, readQuantityMode } from "#/inventory/commitments";
 import {
 	ActivationBlocked,
 	activateCommittedMode,
 	planActivation,
 	type Resolution,
 } from "#/inventory/commitments-activation";
-import { committedDrift, readQuantityMode } from "#/inventory/commitments";
+
+actAsScript("activate-committed-stock");
 
 try {
 	process.loadEnvFile(".env.local");
@@ -28,7 +31,9 @@ const plan = await planActivation(db, { resolutions });
 console.log(
 	`Convert ${plan.convert.length} open eager sale line(s) to reservations (${plan.convert.filter((l) => l.shipped > 0).length} partly shipped).`,
 );
-console.log(`Keep ${plan.keep.shipped} shipped and ${plan.keep.pos} POS line(s) as sold.`);
+console.log(
+	`Keep ${plan.keep.shipped} shipped and ${plan.keep.pos} POS line(s) as sold.`,
+);
 for (const u of plan.unresolved)
 	console.log(
 		`UNRESOLVED ${u.orderName} line ${u.orderLineId} qty ${u.quantity} ${u.fulfillmentStatus}: ${u.why}`,
@@ -39,7 +44,9 @@ console.log(`Fingerprint: ${plan.fingerprint}`);
 
 if (!args.includes("--write")) process.exit(plan.unresolved.length > 0 ? 2 : 0);
 if (!args.includes("--old-workers-drained")) {
-	console.error("Refusing: pass --old-workers-drained once the old deployment's crons and syncs are stopped.");
+	console.error(
+		"Refusing: pass --old-workers-drained once the old deployment's crons and syncs are stopped.",
+	);
 	process.exit(1);
 }
 const fingerprint = flag("--fingerprint");

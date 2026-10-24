@@ -15,11 +15,13 @@ import {
 	listings,
 	locations,
 	orderLines,
+	orders,
 	productAliases,
 	products,
 	stockLevels,
 	stores,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
 import { isOurs } from "#/inventory/locations";
 import { carried, listingEnded } from "#/products/archive";
 import { ReturnError, receiveReturn } from "./returns";
@@ -248,6 +250,12 @@ export async function refurbishReturn(
 	const unitCost = line.unitCost ?? product.unitCost;
 
 	return db.transaction(async (tx) => {
+		await readQuantityMode(tx);
+		await tx
+			.select({ id: orders.id })
+			.from(orders)
+			.where(eq(orders.id, input.orderId))
+			.for("no key update");
 		await tx
 			.select({ id: products.id })
 			.from(products)

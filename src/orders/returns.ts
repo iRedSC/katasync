@@ -10,6 +10,8 @@ import {
 	products,
 	stockLevels,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
+import { returnSaleOf } from "#/inventory/commitments-consume";
 import { recordReturn, undoBatch } from "#/inventory/ledger";
 import { lockBatchProducts } from "#/inventory/ledger/post";
 import { isOurs } from "#/inventory/locations";
@@ -49,6 +51,7 @@ export async function receiveReturn(
 	if (refurb !== null && wanted.length > 1)
 		throw new ReturnError("Refurbish one item at a time");
 	return db.transaction(async (tx) => {
+		await readQuantityMode(tx);
 		// Locks the order so two people receiving the same box can't both
 		// count it.
 		const [order] = await tx
@@ -103,11 +106,24 @@ export async function receiveReturn(
 				),
 			);
 
+		const sales = new Map(
+			await Promise.all(
+				lines.map(
+					async (line) =>
+						[
+							line.id,
+							line.saleBatchId
+								? { batchId: line.saleBatchId, quantity: line.quantity }
+								: await returnSaleOf(tx, line.id),
+						] as const,
+				),
+			),
+		);
 		if (restockAt !== null)
 			await lockBatchProducts(
 				tx,
-				lines.flatMap((line) =>
-					line.saleBatchId === null ? [] : [line.saleBatchId],
+				[...sales.values()].flatMap((sale) =>
+					sale === null ? [] : [sale.batchId],
 				),
 				[
 					...lines.flatMap((line) =>
@@ -164,9 +180,7 @@ export async function receiveReturn(
 					quantity: want.quantity,
 					locationId: restockAt,
 					reference: `return:${order.id}:${line.id}`,
-					sale: line.saleBatchId
-						? { batchId: line.saleBatchId, quantity: line.quantity }
-						: null,
+					sale: sales.get(line.id) ?? null,
 					unitCost: line.unitCost,
 				}));
 			}
@@ -199,6 +213,7 @@ export async function undoReturns(
 ): Promise<{ problems: string[] }> {
 	if (ids.length === 0) return { problems: [] };
 	const refurbs = await db.transaction(async (tx) => {
+		await readQuantityMode(tx);
 		const rows = await tx
 			.delete(orderReturns)
 			.where(inArray(orderReturns.id, ids))

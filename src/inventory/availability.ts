@@ -1,7 +1,8 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
+import { committedStock } from "#/db/quantity-schema";
 import { productComponents, products, stockLevels } from "#/db/schema";
-import { committedUnits } from "./commitments";
 import type { OnlineStock } from "./online-stock";
 
 // Sellable units per SKU across the given locations. Simple SKUs and kits use
@@ -19,101 +20,69 @@ export async function getAvailability(
 	const { locationIds, keep } = from;
 	const result = new Map<number, number>();
 	if (productIds.length === 0) return result;
-
-	const requested = await db
-		.select()
+	const stocked = alias(products, "availability_stocked");
+	const stockedId = sql<
+		number | null
+	>`case when ${products.kind} = 'bundle' then ${productComponents.componentProductId} else ${products.id} end`;
+	const keptId = keep?.locationId ?? -1;
+	const rows = await db
+		.select({
+			id: products.id,
+			kind: products.kind,
+			stockedId,
+			quantity: sql<number>`coalesce(${productComponents.quantity}, 1)`,
+			notCountedSince: stocked.notCountedSince,
+			main: sql<number>`coalesce(sum(case when ${stockLevels.locationId} <> ${keptId} then ${stockLevels.onHand} else 0 end), 0)::int`,
+			kept: sql<number>`coalesce(max(case when ${stockLevels.locationId} = ${keptId} then ${stockLevels.onHand} end), 0)::int`,
+			committed: sql<number>`case when (select mode from quantity_mode where id = 1) = 'committed' then coalesce(${committedStock.units}, 0) else 0 end`,
+		})
 		.from(products)
-		.where(inArray(products.id, productIds));
-	const bundleIds = requested
-		.filter((s) => s.kind === "bundle")
-		.map((s) => s.id);
-	const recipes =
-		bundleIds.length === 0
-			? []
-			: await db
-					.select()
-					.from(productComponents)
-					.where(inArray(productComponents.parentProductId, bundleIds));
-
-	const stockedIds = [
-		...new Set([
-			...requested.filter((s) => s.kind !== "bundle").map((s) => s.id),
-			...recipes.map((r) => r.componentProductId),
-		]),
-	];
-	const onHand = new Map<number, number>();
-	if (stockedIds.length > 0 && locationIds.length > 0) {
-		const rows = await db
-			.select({
-				productId: stockLevels.productId,
-				locationId: stockLevels.locationId,
-				onHand: stockLevels.onHand,
-			})
-			.from(stockLevels)
-			.where(
-				and(
-					inArray(stockLevels.productId, stockedIds),
-					inArray(stockLevels.locationId, locationIds),
-				),
-			);
-		// The other shelves together, then what the kept one can spare.
-		const main = new Map<number, number>();
-		const spare = new Map<number, number>();
-		for (const row of rows) {
-			if (keep && row.locationId === keep.locationId)
-				spare.set(row.productId, Math.max(0, row.onHand - keep.units));
-			else main.set(row.productId, (main.get(row.productId) ?? 0) + row.onHand);
-		}
-		for (const id of new Set([...main.keys(), ...spare.keys()]))
-			onHand.set(id, Math.max(0, main.get(id) ?? 0) + (spare.get(id) ?? 0));
-	}
-	if (stockedIds.length > 0)
-		for (const [id, units] of await committedUnits(db, stockedIds))
-			onHand.set(id, Math.max(0, (onHand.get(id) ?? 0) - units));
-	const { uncounted } = options;
-	const unlimited = new Set<number>();
-	if (uncounted !== undefined && stockedIds.length > 0) {
-		const rows = await db
-			.select({ id: products.id })
-			.from(products)
-			.where(
-				and(
-					inArray(products.id, stockedIds),
-					isNotNull(products.notCountedSince),
-				),
-			);
-		for (const row of rows) {
-			unlimited.add(row.id);
-			onHand.set(row.id, uncounted);
-		}
-	}
-
-	// Each bundle's parts, found once rather than scanned for every bundle.
-	const partsOf = new Map<number, (typeof productComponents.$inferSelect)[]>();
-	for (const r of recipes) {
-		const parts = partsOf.get(r.parentProductId) ?? [];
-		parts.push(r);
-		partsOf.set(r.parentProductId, parts);
-	}
-	for (const sku of requested) {
-		if (sku.kind !== "bundle") {
-			result.set(sku.id, onHand.get(sku.id) ?? 0);
-			continue;
-		}
-		const parts = partsOf.get(sku.id) ?? [];
+		.leftJoin(
+			productComponents,
+			and(
+				eq(productComponents.parentProductId, products.id),
+				eq(products.kind, "bundle"),
+			),
+		)
+		.leftJoin(stocked, eq(stocked.id, stockedId))
+		.leftJoin(committedStock, eq(committedStock.productId, stocked.id))
+		.leftJoin(
+			stockLevels,
+			and(
+				eq(stockLevels.productId, stocked.id),
+				locationIds.length > 0
+					? inArray(stockLevels.locationId, locationIds)
+					: sql`false`,
+			),
+		)
+		.where(inArray(products.id, productIds))
+		.groupBy(
+			products.id,
+			products.kind,
+			productComponents.componentProductId,
+			productComponents.quantity,
+			stocked.id,
+			stocked.notCountedSince,
+			committedStock.units,
+		);
+	for (const row of rows) {
+		const override =
+			row.notCountedSince !== null ? options.uncounted : undefined;
+		const physical =
+			Math.max(0, row.main) + (keep ? Math.max(0, row.kept - keep.units) : 0);
+		const units = override ?? Math.max(0, physical - row.committed);
+		const available =
+			row.kind === "bundle"
+				? row.stockedId === null
+					? 0
+					: override !== undefined
+						? units
+						: Math.floor(units / row.quantity)
+				: units;
+		const previous = result.get(row.id);
 		result.set(
-			sku.id,
-			parts.length === 0
-				? 0
-				: Math.min(
-						...parts.map((p) => {
-							const has = onHand.get(p.componentProductId) ?? 0;
-							// However many it takes, a part without limit doesn't limit.
-							return unlimited.has(p.componentProductId)
-								? has
-								: Math.floor(has / p.quantity);
-						}),
-					),
+			row.id,
+			previous === undefined ? available : Math.min(previous, available),
 		);
 	}
 	return result;

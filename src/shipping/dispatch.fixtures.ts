@@ -15,6 +15,7 @@ export async function addPackedDispatch(
 		bought?: boolean;
 		boxes?: Partial<typeof schema.shipments.$inferInsert>[];
 		unitIds?: string[];
+		legacyLineIdentity?: true;
 	},
 ) {
 	const boxes = input.boxes ?? [{}];
@@ -47,6 +48,7 @@ export async function addPackedDispatch(
 				dispatchId: dispatch.id,
 				orderId: l.orderId,
 				lineExternalId: l.externalId,
+				orderLineId: input.legacyLineIdentity ? null : l.id,
 				productId: l.productId,
 				sku: l.sku,
 				title: l.title,

@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { type } from "arktype";
-import { and, eq, like, ne } from "drizzle-orm";
+import { and, eq, getTableColumns, like, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orderLines, orders } from "#/db/schema";
 import {
@@ -10,6 +10,7 @@ import {
 } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
+import { stockEffectApplied } from "#/orders/stock-effects";
 import { needsShipping } from "#/orders/to-ship";
 import { markGoneListings, matchListings, syncListings } from "./listings";
 import { type OrderUpdate, orderUpdate } from "./order-update";
@@ -454,7 +455,10 @@ export async function takeOver(
 		const claimed = new Set<string>();
 		const matches: { lineId: number; to: ChannelOrder["lines"][number] }[] = [];
 		const lines = await tx
-			.select()
+			.select({
+				...getTableColumns(orderLines),
+				stockApplied: sql<boolean>`coalesce(${stockEffectApplied}, false)`,
+			})
 			.from(orderLines)
 			.where(eq(orderLines.orderId, existing.id));
 		for (const line of lines) {
@@ -470,7 +474,7 @@ export async function takeOver(
 				problems.push(
 					`${existing.name}: ${line.title} isn't on the TikTok order`,
 				);
-				if (line.saleBatchId) blocked = true;
+				if (line.stockApplied) blocked = true;
 				continue;
 			}
 			claimed.add(match.externalId);

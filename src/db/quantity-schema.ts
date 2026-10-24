@@ -60,6 +60,7 @@ export const stockCommitments = pgTable(
 		quantity: integer().notNull(),
 		source: commitmentSource().notNull(),
 		legacySaleBatchId: uuid(),
+		createdTx: text().notNull().default(sql`txid_current()::text`),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
@@ -185,6 +186,7 @@ export const transferDispatches = pgTable(
 		transitLocationId: integer()
 			.notNull()
 			.references(() => locations.id),
+		createdTx: text().notNull().default(sql`txid_current()::text`),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [index("transfer_dispatches_transfer_idx").on(t.transferId)],
@@ -215,6 +217,7 @@ export const transferReceipts = pgTable(
 			.notNull()
 			.references(() => transferDispatches.id),
 		receiptKey: text().notNull(),
+		createdTx: text().notNull().default(sql`txid_current()::text`),
 		batchId: uuid().notNull().unique(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},

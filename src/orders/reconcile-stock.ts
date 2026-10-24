@@ -73,13 +73,13 @@ async function settleLine(
 	pending: { id: number; orderId: number },
 ) {
 	return db.transaction(async (tx) => {
+		await readQuantityMode(tx);
 		const [owner] = await tx
 			.select({ id: orders.id })
 			.from(orders)
 			.where(eq(orders.id, pending.orderId))
 			.for("update");
 		if (!owner) return null;
-		await readQuantityMode(tx);
 		const [matched] = await tx
 			.select({
 				line: orderLines,

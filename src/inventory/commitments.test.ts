@@ -4,6 +4,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { addDispatch, createProduct, createTestDb } from "#/test/db";
 import { committedUnits, readQuantityMode } from "./commitments";
+import { activate, channelOrder, quantityWorld } from "./commitments.fixtures";
 import {
 	ActivationBlocked,
 	activateCommittedMode,
@@ -11,7 +12,6 @@ import {
 } from "./commitments-activation";
 import { consumeCommitments } from "./commitments-consume";
 import { restoreCommitments } from "./commitments-restore";
-import { activate, channelOrder, quantityWorld } from "./commitments.fixtures";
 
 let db: Db;
 let world: Awaited<ReturnType<typeof quantityWorld>>;
@@ -32,6 +32,52 @@ const committed = async (productId: number) =>
 	(await committedUnits(db, [productId])).get(productId) ?? 0;
 
 describe("consuming reservations at dispatch", () => {
+	test("frozen parts reject late additions and history rejects truncation", async () => {
+		await activate(db);
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const knife = await createProduct(db, "KNIFE", "simple");
+		await world.stock(wrench, world.warehouse, 5);
+		await world.ingest(channelOrder());
+		const {
+			rows: [row],
+		} = (await db.execute(
+			sql`select id from stock_commitments`,
+		)) as unknown as { rows: { id: number }[] };
+		await expect(
+			db.execute(
+				sql`insert into stock_commitment_parts (commitment_id, product_id, per_unit) values (${row.id}, ${knife}, 1)`,
+			),
+		).rejects.toMatchObject({
+			cause: expect.objectContaining({
+				message: expect.stringContaining("creation transaction"),
+			}),
+		});
+		await expect(
+			db.execute(sql`truncate stock_commitment_entries`),
+		).rejects.toMatchObject({
+			cause: expect.objectContaining({
+				message: expect.stringContaining("append-only"),
+			}),
+		});
+		expect(await committed(wrench)).toBe(3);
+		expect(await committed(knife)).toBe(0);
+	});
+
+	test("activation cannot be reset by clearing or deleting the mode row", async () => {
+		await activate(db);
+		for (const statement of [
+			sql`update quantity_mode set mode = 'legacy', activated_at = null`,
+			sql`delete from quantity_mode`,
+			sql`truncate quantity_mode`,
+		])
+			await expect(db.execute(statement)).rejects.toMatchObject({
+				cause: expect.objectContaining({
+					message: expect.stringMatching(/cannot|legacy/),
+				}),
+			});
+		expect(await readQuantityMode(db, "none")).toBe("committed");
+	});
+
 	test("in legacy mode a dispatch changes nothing", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
 		await world.stock(wrench, world.warehouse, 5);
@@ -53,7 +99,11 @@ describe("consuming reservations at dispatch", () => {
 		expect(await world.onHand(wrench, world.warehouse)).toBe(5);
 		expect(await committed(wrench)).toBe(3);
 
-		const first = { orderId, lines: [{ orderLineId, quantity: 1 }], fulfillmentKey: "d1" };
+		const first = {
+			orderId,
+			lines: [{ orderLineId, quantity: 1 }],
+			fulfillmentKey: "d1",
+		};
 		expect(await consumeCommitments(db, first)).toMatchObject({
 			kind: "consumed",
 			lines: [{ orderLineId, quantity: 1, repeated: false }],
@@ -62,7 +112,10 @@ describe("consuming reservations at dispatch", () => {
 			lines: [{ repeated: true }],
 		});
 		await expect(
-			consumeCommitments(db, { ...first, lines: [{ orderLineId, quantity: 2 }] }),
+			consumeCommitments(db, {
+				...first,
+				lines: [{ orderLineId, quantity: 2 }],
+			}),
 		).rejects.toThrow("already shipped 1");
 		expect(await world.onHand(wrench, world.warehouse)).toBe(4);
 		expect(await committed(wrench)).toBe(2);
@@ -105,10 +158,16 @@ describe("consuming reservations at dispatch", () => {
 		await world.stock(wrench, world.warehouse, 5);
 		const { orderId } = await world.ingest(channelOrder());
 		const orderLineId = await world.lineId(orderId);
-		const shipped = { orderId, lines: [{ orderLineId, quantity: 2 }], fulfillmentKey: "d1" };
+		const shipped = {
+			orderId,
+			lines: [{ orderLineId, quantity: 2 }],
+			fulfillmentKey: "d1",
+		};
 		await consumeCommitments(db, shipped);
 		await restoreCommitments(db, { orderId, fulfillmentKey: "d1" });
-		expect(await restoreCommitments(db, { orderId, fulfillmentKey: "d1" })).toEqual({
+		expect(
+			await restoreCommitments(db, { orderId, fulfillmentKey: "d1" }),
+		).toEqual({
 			kind: "restored",
 			lines: [],
 			voidedUnreserved: [],
@@ -122,19 +181,30 @@ describe("consuming reservations at dispatch", () => {
 describe("activation", () => {
 	test("open eager sales become reservations without doubling demand or moving costs", async () => {
 		const wrench = await createProduct(db, "WRENCH", "simple");
-		await db.update(schema.products).set({ unitCost: 4 }).where(eq(schema.products.id, wrench));
+		await db
+			.update(schema.products)
+			.set({ unitCost: 4 })
+			.where(eq(schema.products.id, wrench));
 		await world.stock(wrench, world.warehouse, 10);
 		await world.stock(wrench, world.retail, 4);
 		await world.ingest(channelOrder());
 		await world.ingest(
-			channelOrder({ externalId: "shipped", name: "#1002", fulfillmentStatus: "FULFILLED" }),
+			channelOrder({
+				externalId: "shipped",
+				name: "#1002",
+				fulfillmentStatus: "FULFILLED",
+			}),
 		);
-		await world.ingest(channelOrder({ externalId: "pos", name: "#1003", soldInStore: true }));
+		await world.ingest(
+			channelOrder({ externalId: "pos", name: "#1003", soldInStore: true }),
+		);
 		const before = {
 			warehouse: await world.onHand(wrench, world.warehouse),
 			available: await world.available(wrench),
 			demand: await demand(wrench),
-			costs: await db.select({ unitCost: schema.orderLines.unitCost }).from(schema.orderLines),
+			costs: await db
+				.select({ unitCost: schema.orderLines.unitCost })
+				.from(schema.orderLines),
 		};
 		expect(before.warehouse).toBe(4);
 
@@ -149,7 +219,9 @@ describe("activation", () => {
 		expect(await world.available(wrench)).toBe(before.available);
 		expect(await demand(wrench)).toBe(before.demand);
 		expect(
-			await db.select({ unitCost: schema.orderLines.unitCost }).from(schema.orderLines),
+			await db
+				.select({ unitCost: schema.orderLines.unitCost })
+				.from(schema.orderLines),
 		).toEqual(before.costs);
 		await expect(activate(db)).rejects.toThrow("already active");
 	});
@@ -159,7 +231,11 @@ describe("activation", () => {
 		await world.stock(wrench, world.warehouse, 5);
 		const { orderId } = await world.ingest(channelOrder());
 		await world.ingest(
-			channelOrder({ externalId: "partial", name: "#1004", fulfillmentStatus: "PARTIALLY_FULFILLED" }),
+			channelOrder({
+				externalId: "partial",
+				name: "#1004",
+				fulfillmentStatus: "PARTIALLY_FULFILLED",
+			}),
 		);
 		await addDispatch(db, { orderIds: [orderId] });
 		const plan = await planActivation(db);
@@ -176,13 +252,19 @@ describe("activation", () => {
 		expect(await readQuantityMode(db, "none")).toBe("legacy");
 		expect(await world.onHand(wrench, world.warehouse)).toBe(-1);
 
-		const [labelled, partial] = plan.unresolved.sort((a, b) => a.orderLineId - b.orderLineId);
+		const [labelled, partial] = plan.unresolved.sort(
+			(a, b) => a.orderLineId - b.orderLineId,
+		);
 		const resolutions = [
 			{ orderLineId: labelled.orderLineId, shipped: 1 },
 			{ orderLineId: partial.orderLineId, shipped: 3 },
 		];
 		await expect(
-			activateCommittedMode(db, { fingerprint: "stale", resolutions, oldWorkersDrained: true }),
+			activateCommittedMode(db, {
+				fingerprint: "stale",
+				resolutions,
+				oldWorkersDrained: true,
+			}),
 		).rejects.toThrow("plan changed");
 		await activate(db, resolutions);
 		expect(await world.onHand(wrench, world.warehouse)).toBe(1);

@@ -27,6 +27,7 @@ import { ListingsCard } from "#/components/product-page/listings-card";
 import { limits, PartsCard } from "#/components/product-page/parts-card";
 import { StockTable } from "#/components/product-page/stock-table";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
+import { StockPosition } from "#/components/stock-position";
 import { StockRangeForm } from "#/components/stock-range-form";
 import { SupplierCard } from "#/components/supplier-card";
 import { TransferDialog } from "#/components/transfer-dialog";
@@ -44,17 +45,24 @@ import {
 	saveProductStockRange,
 } from "#/server/catalog";
 import { getProductId } from "#/server/catalog/product-detail";
+import { getStockPositions } from "#/server/commitments";
 import { getProductSupplier } from "#/server/purchasing";
 
 export const Route = createFileRoute("/products/$sku")({
 	loader: async ({ params }) => {
 		const productId = await getProductId({ data: { sku: params.sku } });
-		const [detail, supplier, defaultRange] = await Promise.all([
+		const [detail, supplier, defaultRange, positions] = await Promise.all([
 			getProductDetail({ data: { productId } }),
 			getProductSupplier({ data: { productId } }),
 			getDefaultRange({ data: { productId } }),
+			getStockPositions({ data: { productIds: [productId] } }),
 		]);
-		return { ...detail, supplier, defaultRange };
+		return {
+			...detail,
+			supplier,
+			defaultRange,
+			position: positions[0] ?? null,
+		};
 	},
 	component: ProductPage,
 	pendingComponent: () => (
@@ -81,6 +89,7 @@ type ProductSupplier = Awaited<ReturnType<typeof getProductSupplier>>;
 type Loaded = ProductDetail & {
 	supplier: ProductSupplier;
 	defaultRange: StockRange;
+	position: Awaited<ReturnType<typeof getStockPositions>>[number] | null;
 };
 
 // The page's data with changes the server hasn't confirmed laid over it.
@@ -291,6 +300,11 @@ function ProductPage() {
 							}
 							flush
 						>
+							{d.position && (
+								<div className="border-b px-4 py-3">
+									<StockPosition position={d.position} />
+								</div>
+							)}
 							<StockTable
 								productId={p.id}
 								stock={d.stock}

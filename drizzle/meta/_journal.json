@@ -848,6 +848,27 @@
       "when": 1792798180888,
       "tag": "0120_staff_authority",
       "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1792798624469,
+      "tag": "0121_quantity_commitments",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1792800466407,
+      "tag": "0122_quantity_dispatch_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1792800647702,
+      "tag": "0123_quantity_read_models",
+      "breakpoints": true
     }
   ]
 }

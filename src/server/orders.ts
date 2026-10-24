@@ -44,6 +44,7 @@ import {
 	markNoReturn,
 	restoreNoReturn,
 } from "#/orders/returns-due";
+import { stockEffectApplied } from "#/orders/stock-effects";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
@@ -196,7 +197,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				quantity: orderLines.quantity,
 				unitPrice: orderLines.unitPrice,
 				unitCost: orderLines.unitCost,
-				tookStock: sql<boolean>`${orderLines.saleBatchId} is not null`,
+				tookStock: sql<boolean>`coalesce(${stockEffectApplied}, false)`,
 				fromStore,
 				// Units received back, and how many of those went on the shelf.
 				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,

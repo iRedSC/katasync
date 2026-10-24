@@ -31,7 +31,7 @@ function Figure({
 export function StockPosition({ position }: { position: Position }) {
 	if (position.mode === "legacy")
 		return (
-			<div className="flex items-end gap-6">
+			<div className="flex flex-wrap items-end gap-6">
 				<Figure label="Net of open orders" value={position.net} />
 				{position.inTransit !== 0 && (
 					<Figure label="In transit" value={position.inTransit} tone="muted" />
@@ -40,7 +40,7 @@ export function StockPosition({ position }: { position: Position }) {
 			</div>
 		);
 	return (
-		<div className="flex items-end gap-6">
+		<div className="grid grid-cols-2 gap-4 sm:flex sm:flex-wrap sm:items-end sm:gap-6">
 			<Figure label="On the shelf" value={position.physical} />
 			<Figure label="Reserved" value={position.committed} tone="muted" />
 			<Figure

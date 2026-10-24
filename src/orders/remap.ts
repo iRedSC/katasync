@@ -16,9 +16,11 @@ import {
 	products,
 	stores,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
 import { lockRecipes } from "#/inventory/ledger/post";
 import { costOf, resolveProduct } from "./ingest";
 import { reconcileStock, type StockScope } from "./reconcile-stock";
+import { commitmentProductIds } from "./stock-effects";
 
 type Pending = {
 	line: typeof orderLines.$inferSelect;
@@ -44,9 +46,14 @@ const pendingColumns = {
 // Gives each line its product and cost. Stock is taken by reconcileStock, so a
 // line whose stock fails is still picked up by the next catch-up or sync.
 async function catchUp(tx: Db, found: (Pending & { productId: number })[]) {
+	await readQuantityMode(tx);
 	await lockRecipes(
 		tx,
 		found.map((match) => match.productId),
+		await commitmentProductIds(
+			tx,
+			found.map((match) => match.line.id),
+		),
 	);
 	for (const { line, productId } of found.sort(
 		(left, right) => left.line.id - right.line.id,
