@@ -215,6 +215,13 @@ describe("over MCP", () => {
 			});
 			expect(again.data.alreadyRecorded).toMatch(/already recorded/);
 			await tool("void_supplier_invoice", { id: data.invoices[0].id });
+			expect(
+				(await tool("get_purchase_order", { id: po })).data.invoices[0],
+			).toMatchObject({
+				voided: { reason: null },
+				payment: { kind: "void" },
+				match: { kind: "void" },
+			});
 			expect(await db.select().from(schema.supplierInvoices)).toHaveLength(1);
 			expect((await tool("po_payables", { po })).data.invoices[0].voided).toBe(
 				true,

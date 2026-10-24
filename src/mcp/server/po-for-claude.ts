@@ -76,6 +76,9 @@ export async function orderForClaude(db: Db, id: number) {
 			invoicedOn: i.invoicedOn,
 			dueOn: i.dueOn,
 			total: i.total,
+			voided: i.voided,
+			payment: i.payment,
+			match: i.match,
 		})),
 		// Read one with read_po_email.
 		emails: emails.map((e) => ({

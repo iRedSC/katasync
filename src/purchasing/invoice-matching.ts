@@ -46,6 +46,7 @@ export type BillablePoLine = {
 	packSize: number;
 	receivedUnits: number;
 	prices: number[];
+	netUnitPrice: number | null;
 };
 
 export type MatchableLine =
@@ -103,7 +104,8 @@ export type Discrepancy =
 			expectedCents: number;
 			amountCents: number;
 	  }
-	| { kind: "total_arithmetic"; offCents: number };
+	| { kind: "total_arithmetic"; offCents: number }
+	| { kind: "missing_discount"; expectedCents: number; billedCents: number };
 
 export type LineAllocation = {
 	position: number;
@@ -178,6 +180,8 @@ export function matchBilling(
 		const discrepancies: Discrepancy[] = [];
 		const allocations: LineAllocation[] = [];
 		let linesCents = 0;
+		let netCents = 0;
+		let netKnown = true;
 		for (const line of lines) {
 			if (line.kind === "credit") {
 				linesCents -= line.amountCents;
@@ -194,6 +198,7 @@ export function matchBilling(
 				});
 			const po = line.poLineId === null ? undefined : byId.get(line.poLineId);
 			if (!po) {
+				netKnown = false;
 				discrepancies.push({
 					kind: "not_on_po",
 					position: line.position,
@@ -202,6 +207,11 @@ export function matchBilling(
 				continue;
 			}
 			const billedItems = line.quantity * line.packSize;
+			if (po.netUnitPrice === null) netKnown = false;
+			else
+				netCents += Math.round(
+					(billedItems * po.netUnitPrice * 100) / po.packSize,
+				);
 			const available = left.get(po.id) ?? 0;
 			const matchedItems = Math.min(billedItems, available);
 			const billedEarlierItems = billed.get(po.id) ?? 0;
@@ -249,6 +259,12 @@ export function matchBilling(
 						Math.round((billedItems * listPrice * 100) / po.packSize),
 				});
 		}
+		if (netKnown && linesCents > netCents)
+			discrepancies.push({
+				kind: "missing_discount",
+				expectedCents: netCents,
+				billedCents: linesCents,
+			});
 		const offCents = inv.totalCents - (linesCents + freightCents + taxCents);
 		if (offCents !== 0)
 			discrepancies.push({ kind: "total_arithmetic", offCents });
@@ -288,6 +304,8 @@ export function explainDiscrepancy(d: Discrepancy): string {
 			return `Line ${d.position}: amount is off by $${((d.amountCents - d.expectedCents) / 100).toFixed(2)}`;
 		case "total_arithmetic":
 			return `Total is off by $${(d.offCents / 100).toFixed(2)}`;
+		case "missing_discount":
+			return `Missing $${((d.billedCents - d.expectedCents) / 100).toFixed(2)} of PO discounts`;
 		default: {
 			const unreachable: never = d;
 			return unreachable;
