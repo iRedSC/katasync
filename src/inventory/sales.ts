@@ -11,10 +11,7 @@ import {
 } from "drizzle-orm";
 import { alias, unionAll } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
-import {
-	stockCommitmentParts,
-	stockCommitments,
-} from "#/db/quantity-schema";
+import { stockCommitmentParts, stockCommitments } from "#/db/quantity-schema";
 import {
 	movements,
 	orderLines,

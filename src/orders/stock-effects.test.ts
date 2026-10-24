@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import { stockCommitmentEntries } from "#/db/quantity-schema";
-import { lineStockEffect } from "#/orders/stock-effects";
+import { committedUnits } from "#/inventory/commitments";
 import {
 	activate,
 	channelOrder,
@@ -9,7 +9,7 @@ import {
 } from "#/inventory/commitments.fixtures";
 import { setRecipe } from "#/inventory/recipes";
 import { stockPositions } from "#/inventory/stock-position";
-import { committedUnits } from "#/inventory/commitments";
+import { lineStockEffect } from "#/orders/stock-effects";
 import { createProduct, createTestDb } from "#/test/db";
 
 let db: Db;
@@ -62,7 +62,10 @@ describe("stock effects once committed", () => {
 			inTransit: 0,
 		});
 		expect(
-			await lineStockEffect(db, { id: await world.lineId(orderId), saleBatchId: null }),
+			await lineStockEffect(db, {
+				id: await world.lineId(orderId),
+				saleBatchId: null,
+			}),
 		).toEqual({ kind: "reserved", remaining: 3, consumed: 0 });
 	});
 
@@ -106,7 +109,11 @@ describe("stock effects once committed", () => {
 		await world.ingest(channelOrder({ soldInStore: true }));
 		expect(await world.onHand(wrench, world.retail)).toBe(2);
 		await world.ingest(
-			channelOrder({ externalId: "fba-1", name: "#FBA", fulfilledByChannel: true }),
+			channelOrder({
+				externalId: "fba-1",
+				name: "#FBA",
+				fulfilledByChannel: true,
+			}),
 		);
 		expect((await committedUnits(db, [wrench])).get(wrench) ?? 0).toBe(0);
 		expect(await world.onHand(wrench, world.retail)).toBe(2);
