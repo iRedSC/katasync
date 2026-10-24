@@ -7,6 +7,7 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import { financialStatus } from "#/orders/to-ship";
 
 // The channels katasync sends tracking to, by the name people use.
 export const trackingChannels: Record<string, string> = {
@@ -40,7 +41,7 @@ export async function load(db: Db, dispatchId: number) {
 				externalId: orders.externalId,
 				fulfillmentStatus: orders.fulfillmentStatus,
 				cancelledAt: orders.cancelledAt,
-				financialStatus: orders.financialStatus,
+				financialStatus,
 				salesChannel: orders.salesChannel,
 				marketplaceOrderId: orders.marketplaceOrderId,
 				shipCountry: orders.shipCountry,

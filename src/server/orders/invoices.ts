@@ -14,7 +14,7 @@ import {
 import { cityLine } from "#/lib/format";
 import { groupBy } from "#/lib/group-by";
 import { sharingOrders } from "#/orders/invoice-index";
-import { needsShipping } from "#/orders/to-ship";
+import { financialStatus, needsShipping } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
 import { liveDispatches } from "#/shipping/dispatch";
@@ -59,7 +59,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					shipCountry: orders.shipCountry,
 					total: orders.total,
 					shippingCharged: orders.shippingCharged,
-					financialStatus: orders.financialStatus,
+					financialStatus,
 					channel: stores.channel,
 					marketplaceOrderId: orders.marketplaceOrderId,
 					externalId: orders.externalId,

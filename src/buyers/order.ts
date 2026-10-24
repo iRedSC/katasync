@@ -11,7 +11,7 @@ import {
 } from "#/db/schema";
 import { returnStages } from "#/orders/return-stage";
 import { orderStatus } from "#/orders/status";
-import { labelToVoid } from "#/orders/to-ship";
+import { financialStatus, labelToVoid } from "#/orders/to-ship";
 import type { Carrier } from "#/purchasing/inbox/tracking-numbers";
 import { askShippo } from "#/purchasing/tracking";
 
@@ -61,7 +61,7 @@ export async function orderSummary(db: Db, orderId: number) {
 				name: orders.name,
 				cancelledAt: orders.cancelledAt,
 				fulfillmentStatus: orders.fulfillmentStatus,
-				financialStatus: orders.financialStatus,
+				financialStatus,
 				channel: stores.channel,
 				salesChannel: orders.salesChannel,
 				marketplaceOrderId: orders.marketplaceOrderId,
