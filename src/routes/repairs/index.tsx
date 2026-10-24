@@ -19,10 +19,14 @@ import { printPdf } from "#/printing/qz-client";
 import { repairNumber } from "#/repairs/number";
 import type { RepairCard } from "#/repairs/read";
 import { type RepairStatus, statusNames } from "#/repairs/status";
+import { listProductIndex } from "#/server/catalog";
 import { getBoard, moveRepairTo } from "#/server/repairs";
 
 export const Route = createFileRoute("/repairs/")({
-	loader: () => getBoard(),
+	loader: async () => {
+		const [board, index] = await Promise.all([getBoard(), listProductIndex()]);
+		return { board, index };
+	},
 	component: Repairs,
 	pendingComponent: () => <ListSkeleton title="Repairs" />,
 });
@@ -45,7 +49,7 @@ function useRefresh() {
 
 function Repairs() {
 	const loaded = Route.useLoaderData();
-	const d = boardData.useData("all", loaded);
+	const d = boardData.useData("all", loaded.board);
 	const navigate = useNavigate();
 	const [creating, setCreating] = useState(false);
 	const [fresh, setFresh] = useState<number | null>(null);
@@ -146,6 +150,7 @@ function Repairs() {
 				open={creating}
 				onOpenChange={setCreating}
 				people={d.people}
+				products={loaded.index}
 				onMade={(id) => {
 					setFresh(id);
 					setTimeout(() => setFresh((f) => (f === id ? null : f)), 4000);

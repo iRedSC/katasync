@@ -145,6 +145,7 @@ function RepairPage() {
 					/>
 					<ToolCard
 						d={d}
+						products={index}
 						editable={editable}
 						onSave={(edit) => act.edit("The tool", edit, edit)}
 					/>

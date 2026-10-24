@@ -1,12 +1,14 @@
 import { ExternalLink, Mail, Pencil } from "lucide-react";
 import { useState } from "react";
 import { Card } from "#/components/page";
+import type { IndexedProduct } from "#/components/transfers/add-product";
 import { Button } from "#/components/ui/button";
 import { formatMoney, formatPhone } from "#/lib/format";
 import { CustomerPicker, type FoundCustomer } from "./customer-picker";
 import { NoteField } from "./labor-card";
 import type { Detail } from "./repair-data";
 import { TechPicker } from "./tech-picker";
+import { ToolInput } from "./tool-input";
 
 // The side of a repair's page: whose it is, what it is, who has it, and
 // what it comes to on the draft order.
@@ -68,10 +70,12 @@ export function CustomerCard({
 
 export function ToolCard({
 	d,
+	products,
 	editable,
 	onSave,
 }: {
 	d: Detail;
+	products: IndexedProduct[];
 	editable: boolean;
 	onSave: (edit: {
 		tool?: string;
@@ -81,15 +85,22 @@ export function ToolCard({
 }) {
 	const r = d.repair;
 	const [problem, setProblem] = useState(r.problem);
+	const [tool, setTool] = useState(r.tool);
 	return (
 		<Card title="Tool">
 			<div className="flex flex-col gap-1">
 				<div className="-mx-2 text-base font-semibold">
-					<NoteField
-						value={r.tool}
+					<ToolInput
+						value={tool}
+						products={products}
 						disabled={!editable}
-						placeholder="Tool"
-						onSave={(tool) => tool.trim() && onSave({ tool })}
+						onChange={setTool}
+						onDone={(t) => {
+							// A tool can't be blank; clearing it puts the old one back.
+							if (!t.trim()) setTool(r.tool);
+							else if (t !== r.tool) onSave({ tool: t });
+						}}
+						className="h-8 rounded-lg bg-transparent px-2 outline-none hover:bg-surface focus:bg-surface disabled:hover:bg-transparent"
 					/>
 				</div>
 				<div className="-mx-2 text-muted-foreground">

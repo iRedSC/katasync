@@ -118,11 +118,11 @@ export function CustomerPicker({
 							<span className="min-w-0 flex-1 truncate font-medium">
 								{c.name}
 							</span>
-							<span className="text-muted-foreground tabular-nums">
+							<span className="min-w-0 truncate text-muted-foreground tabular-nums">
 								{c.phone ? formatPhone(c.phone) : c.email}
 							</span>
 							{c.openRepairs > 0 && (
-								<span className="text-xs text-info-text">
+								<span className="shrink-0 text-xs text-info-text">
 									{c.openRepairs} in shop
 								</span>
 							)}

@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import type { IndexedProduct } from "#/components/transfers/add-product";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -20,6 +21,7 @@ import {
 	type NewCustomer,
 } from "./customer-picker";
 import { TechPicker } from "./tech-picker";
+import { ToolInput } from "./tool-input";
 
 // Taking a tool in at the counter: whose it is, what it is, what's wrong,
 // and who'll fix it. Saving prints the ticket to tie on it.
@@ -32,11 +34,13 @@ export function NewRepairDialog({
 	open,
 	onOpenChange,
 	people,
+	products,
 	onMade,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	people: Person[];
+	products: IndexedProduct[];
 	onMade: (id: number) => void;
 }) {
 	const [who, setWho] = useState<Who | null>(null);
@@ -101,7 +105,7 @@ export function NewRepairDialog({
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-lg">
-				<form onSubmit={submit} className="flex flex-col gap-5">
+				<form onSubmit={submit} className="flex min-w-0 flex-col gap-5">
 					<DialogHeader>
 						<DialogTitle>New repair</DialogTitle>
 						<DialogDescription className="sr-only">
@@ -153,9 +157,10 @@ export function NewRepairDialog({
 					)}
 
 					<div className="grid grid-cols-[2fr_1fr] gap-2">
-						<input
+						<ToolInput
 							value={tool}
-							onChange={(e) => setTool(e.target.value)}
+							products={products}
+							onChange={setTool}
 							placeholder="Tool, e.g. TapeTech 88TTE taper"
 							className="h-9 rounded-lg border border-input bg-white px-3 outline-none focus:border-ring"
 						/>
