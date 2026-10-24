@@ -94,21 +94,35 @@ export function assertShippable(
 // holding exactly the attempt's units and nothing else, on an order TikTok
 // has moved on. Anything less certain stays unknown.
 export function packageFor(order: TiktokOrderUnits, unitIds: string[]): Lookup {
+	return combinedPackageFor([order], unitIds);
+}
+
+// packageFor for a label that may cover several orders (one combined box):
+// one package holding exactly the attempt's units across them, on orders
+// TikTok has all moved on. Nothing bought only when every order is untouched.
+export function combinedPackageFor(
+	orders: TiktokOrderUnits[],
+	unitIds: string[],
+): Lookup {
 	const ids = new Set(unitIds);
-	const mine = order.units.filter((u) => ids.has(u.id));
+	const units = orders.flatMap((o) => o.units);
+	const mine = units.filter((u) => ids.has(u.id));
 	if (mine.length !== ids.size) return { kind: "pending" };
 	const packages = new Set(mine.map((u) => u.packageId));
 	const [only] = packages;
 	if (packages.size !== 1) return { kind: "pending" };
 	if (only === null) {
-		return order.status === "AWAITING_SHIPMENT" && order.packages.length === 0
+		return orders.every(
+			(o) => o.status === "AWAITING_SHIPMENT" && o.packages.length === 0,
+		)
 			? { kind: "none" }
 			: { kind: "pending" };
 	}
-	const covers = order.units.filter((u) => u.packageId === only);
+	const covers = units.filter((u) => u.packageId === only);
 	if (
-		order.status === "AWAITING_SHIPMENT" ||
-		!order.packages.includes(only) ||
+		orders.some(
+			(o) => o.status === "AWAITING_SHIPMENT" || !o.packages.includes(only),
+		) ||
 		covers.length !== ids.size
 	) {
 		return { kind: "pending" };

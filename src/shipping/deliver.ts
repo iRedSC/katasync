@@ -38,10 +38,14 @@ export async function deliver(
 ): Promise<Delivered> {
 	const { to, order, boxes, packed } = input;
 	if (to.kind === "tiktok") {
-		const unitIds = await unitsOf(db, boxes);
+		// A combined box's label holds every order's units; each order is
+		// checked against its own, cancelled ones included, so a unit
+		// cancelled since the purchase still stops it.
+		const live = await outside.tiktokUnits(to.orderId);
+		const ours = new Set(live.units.map((u) => u.id));
 		assertShippable(
-			await outside.tiktokUnits(to.orderId),
-			unitIds,
+			live,
+			(await unitsOf(db, boxes)).filter((id) => ours.has(id)),
 			packed,
 			to.relayed,
 		);

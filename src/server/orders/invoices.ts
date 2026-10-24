@@ -63,6 +63,8 @@ export const listInvoices = createServerFn({ method: "GET" })
 					channel: stores.channel,
 					marketplaceOrderId: orders.marketplaceOrderId,
 					externalId: orders.externalId,
+					storeId: orders.storeId,
+					buyerId: orders.buyerId,
 					needsShipping,
 				})
 				.from(orders)

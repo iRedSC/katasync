@@ -31,7 +31,22 @@ describe("tiktokBuyLabel", () => {
 					shipping_services: [{ id: "svc-1", name: "Ground", price: "$6.10" }],
 				};
 			}
-			if (path === "/fulfillment/202309/packages") return create();
+			if (path === "/order/202309/orders") {
+				return {
+					orders: [
+						{
+							id: "577",
+							status: "AWAITING_SHIPMENT",
+							line_items: [{ id: "u1" }],
+						},
+					],
+				};
+			}
+			if (
+				path === "/fulfillment/202309/packages" ||
+				path === "/fulfillment/202512/packages"
+			)
+				return create();
 			return undefined;
 		});
 	const call = (path: string) =>
@@ -42,7 +57,7 @@ describe("tiktokBuyLabel", () => {
 			package_id: "pkg-2",
 			shipping_service_info: { price: "$6.25" },
 		}));
-		const label = await tiktokBuyLabel("577", parcel, "svc-1", ["u1", "u2"]);
+		const label = await tiktokBuyLabel(["577"], parcel, "svc-1", ["u1", "u2"]);
 		expect(label).toMatchObject({ packageId: "pkg-2", rate: { cost: 6.25 } });
 		expect(call("/order/202309/orders")).toBeUndefined();
 		expect(call("/fulfillment/202309/packages")?.[2]).toMatchObject({
@@ -51,10 +66,35 @@ describe("tiktokBuyLabel", () => {
 		});
 	});
 
+	test("several orders make one combined package, quoted on the first", async () => {
+		answers(async () => ({
+			package_id: "pkg-3",
+			shipping_service_info: { price: "$7.40" },
+		}));
+		const label = await tiktokBuyLabel(["577", "578"], parcel, "svc-1", [
+			"u1",
+			"u2",
+		]);
+		expect(label).toMatchObject({ packageId: "pkg-3", rate: { cost: 7.4 } });
+		expect(call("/fulfillment/202309/packages")).toBeUndefined();
+		// Quoted on the first order's own units.
+		expect(
+			call("/fulfillment/202309/orders/577/shipping_services/query")?.[2],
+		).toMatchObject({ order_line_item_ids: ["u1"] });
+		expect(call("/fulfillment/202512/packages")?.[2]).toMatchObject({
+			ship_type: "3",
+			order_list_ids: ["577", "578"],
+			shipping_service_id: "svc-1",
+		});
+		expect(call("/fulfillment/202512/packages")?.[2]).not.toHaveProperty(
+			"order_id",
+		);
+	});
+
 	test("a service no longer offered is a refusal, with nothing bought", async () => {
 		answers(async () => ({ package_id: "x" }));
 		await expect(
-			tiktokBuyLabel("577", parcel, "svc-gone", ["u1"]),
+			tiktokBuyLabel(["577"], parcel, "svc-gone", ["u1"]),
 		).rejects.toBeInstanceOf(LabelRefused);
 		expect(call("/fulfillment/202309/packages")).toBeUndefined();
 	});
@@ -64,12 +104,12 @@ describe("tiktokBuyLabel", () => {
 			throw new TiktokError(1, "/fulfillment/202309/packages", "bad parcel");
 		});
 		await expect(
-			tiktokBuyLabel("577", parcel, "svc-1", ["u1"]),
+			tiktokBuyLabel(["577"], parcel, "svc-1", ["u1"]),
 		).rejects.toBeInstanceOf(LabelRefused);
 		answers(async () => {
 			throw new Error("socket hang up");
 		});
-		const lost = tiktokBuyLabel("577", parcel, "svc-1", ["u1"]);
+		const lost = tiktokBuyLabel(["577"], parcel, "svc-1", ["u1"]);
 		await expect(lost).rejects.toThrow("socket hang up");
 		await expect(lost).rejects.not.toBeInstanceOf(LabelRefused);
 	});

@@ -173,14 +173,16 @@ async function lookup(db: Db, attempt: Attempt, outside: CheckOutside) {
 		return outside.findShippo(attempt.rateId, attempt.id);
 	}
 	if (!attempt.unitIds) return { kind: "pending" } as const;
-	const [order] = await db
+	// A combined box's label covers every order in it.
+	const list = await db
 		.select({ marketplaceOrderId: orders.marketplaceOrderId })
 		.from(dispatchOrders)
 		.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
-		.where(eq(dispatchOrders.dispatchId, attempt.dispatchId));
-	if (!order) throw new Error("The purchase's order is gone");
+		.where(eq(dispatchOrders.dispatchId, attempt.dispatchId))
+		.orderBy(orders.id);
+	if (list.length === 0) throw new Error("The purchase's order is gone");
 	return outside.findTiktok(
-		tiktokOrderId(order.marketplaceOrderId),
+		list.map((o) => tiktokOrderId(o.marketplaceOrderId)),
 		attempt.unitIds,
 	);
 }

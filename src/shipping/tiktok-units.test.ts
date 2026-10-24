@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { ContentsChanged, Held } from "./packed";
 import {
 	assertShippable,
+	combinedPackageFor,
 	packageFor,
 	type TiktokUnit,
 	unitsToBuy,
@@ -163,5 +164,68 @@ describe("packageFor", () => {
 			packageFor(order([unit("u1")], "AWAITING_COLLECTION"), ["u1"]).kind,
 		).toBe("pending");
 		expect(packageFor(order([]), ["u1"]).kind).toBe("pending");
+	});
+});
+
+describe("combinedPackageFor", () => {
+	const of = (
+		id: string,
+		status: string,
+		packages: string[],
+		units: { id: string; packageId: string | null }[],
+	) => ({
+		status,
+		packages,
+		units: units.map((u) => ({
+			...u,
+			skuId: u.id,
+			sellerSku: null,
+			cancelled: false,
+		})),
+		id,
+	});
+
+	test("finds one package holding every order's units", () => {
+		const found = combinedPackageFor(
+			[
+				of("a", "AWAITING_COLLECTION", ["p"], [{ id: "u1", packageId: "p" }]),
+				of("b", "AWAITING_COLLECTION", ["p"], [{ id: "u2", packageId: "p" }]),
+			],
+			["u1", "u2"],
+		);
+		expect(found).toMatchObject({ kind: "bought", label: { externalId: "p" } });
+	});
+
+	test("stays unknown while any order is untouched or the packages differ", () => {
+		expect(
+			combinedPackageFor(
+				[
+					of("a", "AWAITING_COLLECTION", ["p"], [{ id: "u1", packageId: "p" }]),
+					of("b", "AWAITING_SHIPMENT", [], [{ id: "u2", packageId: null }]),
+				],
+				["u1", "u2"],
+			).kind,
+		).toBe("pending");
+		expect(
+			combinedPackageFor(
+				[
+					of("a", "AWAITING_COLLECTION", ["p"], [{ id: "u1", packageId: "p" }]),
+					of("b", "AWAITING_COLLECTION", ["q"], [{ id: "u2", packageId: "q" }]),
+				],
+				["u1", "u2"],
+			).kind,
+		).toBe("pending");
+	});
+
+	test("nothing bought only when every order is untouched", () => {
+		expect(
+			combinedPackageFor(
+				[
+					of("a", "AWAITING_SHIPMENT", [], [{ id: "u1", packageId: null }]),
+					of("b", "AWAITING_SHIPMENT", [], [{ id: "u2", packageId: null }]),
+				],
+				["u1", "u2"],
+			).kind,
+		).toBe("none");
 	});
 });

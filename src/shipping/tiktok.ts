@@ -3,7 +3,7 @@ import { shopCipher, TiktokError, tiktokApi } from "#/channels/tiktok";
 import { shipsAerosols } from "./hazmat";
 import { LabelRefused, type Lookup } from "./label-attempt-state";
 import type { Parcel, Rate } from "./shippo";
-import { packageFor, type TiktokOrderUnits } from "./tiktok-units";
+import { combinedPackageFor, type TiktokOrderUnits } from "./tiktok-units";
 
 // TikTok sells its own labels for TikTok orders (shipping_type TIKTOK), paid
 // out of the shop's settlement. Buying one marks the order shipped on TikTok,
@@ -190,6 +190,10 @@ const documentData = type({ doc_url: "string", "tracking_number?": "string" });
 // Buys the label for the chosen service, for exactly these units (checked
 // against the box by the caller, and saved with the attempt). The service is
 // quoted again, so what gets recorded is TikTok's price, not the browser's.
+// Several orders make one combined package (ship_type 3), every unit of each
+// order in it; TikTok checks they share a buyer, address, and warehouse, and
+// refuses the label if not. TikTok quotes one order at a time, so a combined
+// box is quoted on the first order's units at the whole box's size.
 // Creating the package is the step that costs money. Telling TikTok it's
 // ready to ship, and picking up the tracking number, is the handoff's job
 // (tiktokShipPackage), so a failure there can be retried. A package that
@@ -200,14 +204,22 @@ const documentData = type({ doc_url: "string", "tracking_number?": "string" });
 // refusals (nothing bought). TikTok's own error answer to the create is a
 // refusal too; anything else there leaves it unknown.
 export async function tiktokBuyLabel(
-	orderId: string,
+	orderIds: string[],
 	parcel: Box,
 	serviceId: string,
 	unitIds: string[],
 ) {
+	const [lead] = orderIds;
+	if (!lead) throw new LabelRefused("No TikTok order to buy for");
+	const combined = orderIds.length > 1;
 	const before = async () => {
 		const cipher = await shopCipher();
-		const { rates } = await quote(orderId, cipher, parcel, unitIds);
+		const { rates } = await quote(
+			lead,
+			cipher,
+			parcel,
+			combined ? undefined : unitIds,
+		);
 		const rate = rates.find((r) => r.id === serviceId);
 		if (!rate)
 			throw new Error("TikTok no longer offers that service; price again");
@@ -218,15 +230,27 @@ export async function tiktokBuyLabel(
 	});
 
 	const created = createdData.assert(
-		await tiktokApi(
-			"/fulfillment/202309/packages",
-			{ shop_cipher: cipher },
-			{
-				order_id: orderId,
-				order_line_item_ids: unitIds,
-				shipping_service_id: serviceId,
-				...toTiktokParcel(parcel),
-			},
+		await (combined
+			? tiktokApi(
+					"/fulfillment/202512/packages",
+					{ shop_cipher: cipher },
+					{
+						ship_type: "3",
+						order_list_ids: orderIds,
+						shipping_service_id: serviceId,
+						...toTiktokParcel(parcel),
+					},
+				)
+			: tiktokApi(
+					"/fulfillment/202309/packages",
+					{ shop_cipher: cipher },
+					{
+						order_id: lead,
+						order_line_item_ids: unitIds,
+						shipping_service_id: serviceId,
+						...toTiktokParcel(parcel),
+					},
+				)
 		).catch((err: unknown) => {
 			if (err instanceof TiktokError) throw new LabelRefused(err.message);
 			throw err;
@@ -248,12 +272,16 @@ export async function tiktokBuyLabel(
 }
 
 // Whether TikTok made the package for an unanswered purchase: only one
-// covering exactly its units (see packageFor). Reads only.
+// covering exactly its units, across every order in the box (see
+// combinedPackageFor). Reads only.
 export async function tiktokFindLabel(
-	orderId: string,
+	orderIds: string[],
 	unitIds: string[],
 ): Promise<Lookup> {
-	return packageFor(await tiktokOrderUnits(orderId), unitIds);
+	return combinedPackageFor(
+		await Promise.all(orderIds.map((id) => tiktokOrderUnits(id))),
+		unitIds,
+	);
 }
 
 // TikTok's answers for a package it's still working on: "arrange shipment

@@ -1,9 +1,7 @@
-import { ExternalLink } from "lucide-react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Truncate } from "#/components/truncate";
-import { adminUrls } from "#/orders/admin-urls";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import { Key } from "./key";
 import type { Found } from "./types";
@@ -21,6 +19,9 @@ export function OrderSummary({
 }) {
 	const o = found.order;
 	const combined = plan.orderIds.length > 1;
+	// TikTok hides the address, so its orders match on the buyer.
+	const toSame =
+		found.labelSource === "tiktok" ? "from this buyer" : "to this address";
 	return (
 		<div className="flex flex-col gap-3 border-b px-6 py-4">
 			<div className="flex items-center justify-between gap-3">
@@ -66,8 +67,8 @@ export function OrderSummary({
 				<div className="flex flex-col gap-2 rounded-xl border-2 border-info-border bg-info-surface px-4 py-3 text-info-text">
 					<p className="text-lg font-semibold">
 						{found.companions.length === 1
-							? "Another order to this address"
-							: `${found.companions.length} more orders to this address`}
+							? `Another order ${toSame}`
+							: `${found.companions.length} more orders ${toSame}`}
 						{canCombine && (
 							<span className="font-normal">
 								{" "}
@@ -101,47 +102,6 @@ export function OrderSummary({
 					</ul>
 				</div>
 			)}
-			{found.sameBuyer.length > 0 && (
-				<SameBuyerNotice order={o} others={found.sameBuyer} />
-			)}
-		</div>
-	);
-}
-
-// TikTok won't combine US orders for an app, so the buyer's other orders are
-// combined in Seller Center, which then sells the one label.
-function SameBuyerNotice({
-	order,
-	others,
-}: {
-	order: Found["order"];
-	others: Found["sameBuyer"];
-}) {
-	const tiktok = adminUrls(order).find((p) => p.channel === "tiktok");
-	return (
-		<div className="flex flex-col gap-2 rounded-xl border-2 border-warning-border bg-warning-surface px-4 py-3 text-warning-text">
-			<div className="flex items-center justify-between gap-3">
-				<p className="text-lg font-semibold">Same buyer · combine in TikTok</p>
-				{tiktok && (
-					<a
-						href={tiktok.url}
-						target="_blank"
-						rel="noreferrer"
-						className="inline-flex shrink-0 items-center gap-1 font-semibold hover:underline"
-					>
-						Open in TikTok
-						<ExternalLink className="size-4" />
-					</a>
-				)}
-			</div>
-			<ul className="flex flex-col gap-1 text-base">
-				{others.map((c) => (
-					<li key={c.id}>
-						<span className="font-semibold">{c.name}</span>
-						{c.pin !== null && <span> · pin {c.pin}</span>}
-					</li>
-				))}
-			</ul>
 		</div>
 	);
 }

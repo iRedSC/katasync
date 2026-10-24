@@ -1,24 +1,24 @@
 import { groupBy } from "#/lib/group-by";
-import { addressKey, whyNotTogether } from "#/shipping/dispatch";
+import { boxKey, whyNotTogether } from "#/shipping/dispatch";
 
 type Order = Parameters<typeof whyNotTogether>[0][number];
 
 // For each order to print, the other orders still to ship that can share its
-// box, by name and pin. Orders are bucketed by address first, so each one only
-// checks the orders at its own address.
+// box, by name and pin. Orders are bucketed by boxKey first, so each one only
+// checks the orders that could share its box.
 export function sharingOrders<T extends Order & { pin: number | null }>(
 	toShip: T[],
 	pool: T[],
 	live: { orderId: number }[],
 ) {
-	const byAddress = groupBy(
-		pool.filter((c) => addressKey(c) !== null),
-		(c) => addressKey(c) ?? "",
+	const byKey = groupBy(
+		pool.filter((c) => boxKey(c) !== null),
+		(c) => boxKey(c) ?? "",
 	);
 	const sharing = new Map<number, { name: string; pin: number | null }[]>();
 	for (const o of toShip) {
-		const key = addressKey(o);
-		const others = (key === null ? [] : (byAddress.get(key) ?? [])).filter(
+		const key = boxKey(o);
+		const others = (key === null ? [] : (byKey.get(key) ?? [])).filter(
 			(c) => c.id !== o.id && whyNotTogether([o, c], live) === null,
 		);
 		sharing.set(

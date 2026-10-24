@@ -14,11 +14,10 @@ export type SameBuyer = {
 
 type Open = SameBuyer & { storeId: number; buyerId: string | null };
 
-// TikTok sells one label per order, and its combine endpoints refuse a US
-// shop, so one buyer's orders only share a box if someone combines them in
-// Seller Center before a label is bought. For each order, the same buyer's
-// other orders on the same store; orders with a label are left out, since
-// it's too late for them.
+// TikTok hides the buyer's address, so one buyer's orders are found by their
+// TikTok account, to pack in one box on one combined label. For each order,
+// the same buyer's other orders on the same store; orders with a label are
+// left out, since it's too late for them.
 export function sameBuyerGroups(
 	open: readonly Open[],
 	live: readonly { orderId: number }[],
