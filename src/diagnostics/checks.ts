@@ -102,7 +102,8 @@ async function checkShopify(s: Steps) {
 		const scopes = data.currentAppInstallation.accessScopes.map(
 			(a) => a.handle,
 		);
-		// Reading orders and products is the sync; the rest is shipping.
+		// Reading orders and products is the sync; the rest is shipping and
+		// repairs.
 		const missing = ["read_orders", "read_products"].filter(
 			(scope) => !scopes.includes(scope),
 		);
@@ -117,6 +118,10 @@ async function checkShopify(s: Steps) {
 				"no fulfillment scope, so tracking can't be sent to Shopify",
 			!scopes.includes("write_orders") &&
 				"no write_orders, so the storefront tracking page can't get Shippo carriers",
+			!scopes.includes("write_draft_orders") &&
+				"no write_draft_orders, so repairs can't be billed",
+			!scopes.includes("write_customers") &&
+				"no write_customers, so repairs can't add customers",
 		].filter(Boolean);
 		const granted = `Granted: ${scopes.join(", ")}`;
 		return warnings.length > 0

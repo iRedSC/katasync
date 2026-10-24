@@ -44,6 +44,9 @@ import { Route as PurchasingIdRouteImport } from './routes/purchasing/$id'
 import { Route as PurchasingEmailsRouteImport } from './routes/purchasing/emails'
 import { Route as ReceiveIndexRouteImport } from './routes/receive/index'
 import { Route as ReceiveIdRouteImport } from './routes/receive/$id'
+import { Route as RepairsIndexRouteImport } from './routes/repairs/index'
+import { Route as RepairsIdRouteImport } from './routes/repairs/$id'
+import { Route as RepairsCustomersRouteImport } from './routes/repairs/customers'
 import { Route as TransfersIndexRouteImport } from './routes/transfers/index'
 import { Route as TransfersIdRouteImport } from './routes/transfers/$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -62,6 +65,7 @@ import { Route as ApiPoFileUploadsPurchaseOrderIdRouteImport } from './routes/ap
 import { Route as ApiPoFilesFileIdRouteImport } from './routes/api/po-files/$fileId'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as LabelsRefurbsReturnIdRouteImport } from './routes/labels/refurbs.$returnId'
+import { Route as LabelsRepairsIdRouteImport } from './routes/labels/repairs.$id'
 import { Route as OrdersReturnsInsightsRouteImport } from './routes/orders/returns_.insights'
 import { Route as PurchasingCatalogPhotoIdRouteImport } from './routes/purchasing/catalog-photo.$id'
 import { Route as PurchasingCatalogsIndexRouteImport } from './routes/purchasing/catalogs/index'
@@ -253,6 +257,21 @@ const ReceiveIdRoute = ReceiveIdRouteImport.update({
   path: '/receive/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RepairsIndexRoute = RepairsIndexRouteImport.update({
+  id: '/repairs/',
+  path: '/repairs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RepairsIdRoute = RepairsIdRouteImport.update({
+  id: '/repairs/$id',
+  path: '/repairs/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RepairsCustomersRoute = RepairsCustomersRouteImport.update({
+  id: '/repairs/customers',
+  path: '/repairs/customers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TransfersIndexRoute = TransfersIndexRouteImport.update({
   id: '/transfers/',
   path: '/transfers/',
@@ -344,6 +363,11 @@ const ApiWebhooksChannelRoute = ApiWebhooksChannelRouteImport.update({
 const LabelsRefurbsReturnIdRoute = LabelsRefurbsReturnIdRouteImport.update({
   id: '/labels/refurbs/$returnId',
   path: '/labels/refurbs/$returnId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LabelsRepairsIdRoute = LabelsRepairsIdRouteImport.update({
+  id: '/labels/repairs/$id',
+  path: '/labels/repairs/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrdersReturnsInsightsRoute = OrdersReturnsInsightsRouteImport.update({
@@ -456,12 +480,15 @@ export interface FileRoutesByFullPath {
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/emails': typeof PurchasingEmailsRoute
   '/receive/$id': typeof ReceiveIdRoute
+  '/repairs/$id': typeof RepairsIdRoute
+  '/repairs/customers': typeof RepairsCustomersRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/orders/': typeof OrdersIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/profit/': typeof ProfitIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/repairs/': typeof RepairsIndexRoute
   '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
@@ -478,6 +505,7 @@ export interface FileRoutesByFullPath {
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
+  '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
   '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
@@ -526,12 +554,15 @@ export interface FileRoutesByTo {
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/emails': typeof PurchasingEmailsRoute
   '/receive/$id': typeof ReceiveIdRoute
+  '/repairs/$id': typeof RepairsIdRoute
+  '/repairs/customers': typeof RepairsCustomersRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/orders': typeof OrdersIndexRoute
   '/products': typeof ProductsIndexRoute
   '/profit': typeof ProfitIndexRoute
   '/purchasing': typeof PurchasingIndexRoute
   '/receive': typeof ReceiveIndexRoute
+  '/repairs': typeof RepairsIndexRoute
   '/transfers': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
@@ -548,6 +579,7 @@ export interface FileRoutesByTo {
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
+  '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
   '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
@@ -597,12 +629,15 @@ export interface FileRoutesById {
   '/purchasing/$id': typeof PurchasingIdRoute
   '/purchasing/emails': typeof PurchasingEmailsRoute
   '/receive/$id': typeof ReceiveIdRoute
+  '/repairs/$id': typeof RepairsIdRoute
+  '/repairs/customers': typeof RepairsCustomersRoute
   '/transfers/$id': typeof TransfersIdRoute
   '/orders/': typeof OrdersIndexRoute
   '/products/': typeof ProductsIndexRoute
   '/profit/': typeof ProfitIndexRoute
   '/purchasing/': typeof PurchasingIndexRoute
   '/receive/': typeof ReceiveIndexRoute
+  '/repairs/': typeof RepairsIndexRoute
   '/transfers/': typeof TransfersIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/inbox': typeof ApiCronInboxRoute
@@ -619,6 +654,7 @@ export interface FileRoutesById {
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/refurbs/$returnId': typeof LabelsRefurbsReturnIdRoute
+  '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns_/insights': typeof OrdersReturnsInsightsRoute
   '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
   '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
@@ -669,12 +705,15 @@ export interface FileRouteTypes {
     | '/purchasing/$id'
     | '/purchasing/emails'
     | '/receive/$id'
+    | '/repairs/$id'
+    | '/repairs/customers'
     | '/transfers/$id'
     | '/orders/'
     | '/products/'
     | '/profit/'
     | '/purchasing/'
     | '/receive/'
+    | '/repairs/'
     | '/transfers/'
     | '/api/auth/$'
     | '/api/cron/inbox'
@@ -691,6 +730,7 @@ export interface FileRouteTypes {
     | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
+    | '/labels/repairs/$id'
     | '/orders/returns/insights'
     | '/purchasing/catalog-photo/$id'
     | '/purchasing/catalogs/$id'
@@ -739,12 +779,15 @@ export interface FileRouteTypes {
     | '/purchasing/$id'
     | '/purchasing/emails'
     | '/receive/$id'
+    | '/repairs/$id'
+    | '/repairs/customers'
     | '/transfers/$id'
     | '/orders'
     | '/products'
     | '/profit'
     | '/purchasing'
     | '/receive'
+    | '/repairs'
     | '/transfers'
     | '/api/auth/$'
     | '/api/cron/inbox'
@@ -761,6 +804,7 @@ export interface FileRouteTypes {
     | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
+    | '/labels/repairs/$id'
     | '/orders/returns/insights'
     | '/purchasing/catalog-photo/$id'
     | '/purchasing/catalogs/$id'
@@ -809,12 +853,15 @@ export interface FileRouteTypes {
     | '/purchasing/$id'
     | '/purchasing/emails'
     | '/receive/$id'
+    | '/repairs/$id'
+    | '/repairs/customers'
     | '/transfers/$id'
     | '/orders/'
     | '/products/'
     | '/profit/'
     | '/purchasing/'
     | '/receive/'
+    | '/repairs/'
     | '/transfers/'
     | '/api/auth/$'
     | '/api/cron/inbox'
@@ -831,6 +878,7 @@ export interface FileRouteTypes {
     | '/api/po-files/$fileId'
     | '/api/webhooks/$channel'
     | '/labels/refurbs/$returnId'
+    | '/labels/repairs/$id'
     | '/orders/returns_/insights'
     | '/purchasing/catalog-photo/$id'
     | '/purchasing/catalogs/$id'
@@ -880,12 +928,15 @@ export interface RootRouteChildren {
   PurchasingIdRoute: typeof PurchasingIdRoute
   PurchasingEmailsRoute: typeof PurchasingEmailsRoute
   ReceiveIdRoute: typeof ReceiveIdRoute
+  RepairsIdRoute: typeof RepairsIdRoute
+  RepairsCustomersRoute: typeof RepairsCustomersRoute
   TransfersIdRoute: typeof TransfersIdRoute
   OrdersIndexRoute: typeof OrdersIndexRoute
   ProductsIndexRoute: typeof ProductsIndexRoute
   ProfitIndexRoute: typeof ProfitIndexRoute
   PurchasingIndexRoute: typeof PurchasingIndexRoute
   ReceiveIndexRoute: typeof ReceiveIndexRoute
+  RepairsIndexRoute: typeof RepairsIndexRoute
   TransfersIndexRoute: typeof TransfersIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiCronInboxRoute: typeof ApiCronInboxRoute
@@ -902,6 +953,7 @@ export interface RootRouteChildren {
   ApiPoFilesFileIdRoute: typeof ApiPoFilesFileIdRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   LabelsRefurbsReturnIdRoute: typeof LabelsRefurbsReturnIdRoute
+  LabelsRepairsIdRoute: typeof LabelsRepairsIdRoute
   OrdersReturnsInsightsRoute: typeof OrdersReturnsInsightsRoute
   PurchasingCatalogPhotoIdRoute: typeof PurchasingCatalogPhotoIdRoute
   PurchasingCatalogsIdRoute: typeof PurchasingCatalogsIdRoute
@@ -1167,6 +1219,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReceiveIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/repairs/': {
+      id: '/repairs/'
+      path: '/repairs'
+      fullPath: '/repairs/'
+      preLoaderRoute: typeof RepairsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/repairs/$id': {
+      id: '/repairs/$id'
+      path: '/repairs/$id'
+      fullPath: '/repairs/$id'
+      preLoaderRoute: typeof RepairsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/repairs/customers': {
+      id: '/repairs/customers'
+      path: '/repairs/customers'
+      fullPath: '/repairs/customers'
+      preLoaderRoute: typeof RepairsCustomersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/transfers/': {
       id: '/transfers/'
       path: '/transfers'
@@ -1291,6 +1364,13 @@ declare module '@tanstack/react-router' {
       path: '/labels/refurbs/$returnId'
       fullPath: '/labels/refurbs/$returnId'
       preLoaderRoute: typeof LabelsRefurbsReturnIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/labels/repairs/$id': {
+      id: '/labels/repairs/$id'
+      path: '/labels/repairs/$id'
+      fullPath: '/labels/repairs/$id'
+      preLoaderRoute: typeof LabelsRepairsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/orders/returns_/insights': {
@@ -1432,12 +1512,15 @@ const rootRouteChildren: RootRouteChildren = {
   PurchasingIdRoute: PurchasingIdRoute,
   PurchasingEmailsRoute: PurchasingEmailsRoute,
   ReceiveIdRoute: ReceiveIdRoute,
+  RepairsIdRoute: RepairsIdRoute,
+  RepairsCustomersRoute: RepairsCustomersRoute,
   TransfersIdRoute: TransfersIdRoute,
   OrdersIndexRoute: OrdersIndexRoute,
   ProductsIndexRoute: ProductsIndexRoute,
   ProfitIndexRoute: ProfitIndexRoute,
   PurchasingIndexRoute: PurchasingIndexRoute,
   ReceiveIndexRoute: ReceiveIndexRoute,
+  RepairsIndexRoute: RepairsIndexRoute,
   TransfersIndexRoute: TransfersIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCronInboxRoute: ApiCronInboxRoute,
@@ -1456,6 +1539,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPoFilesFileIdRoute: ApiPoFilesFileIdRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   LabelsRefurbsReturnIdRoute: LabelsRefurbsReturnIdRoute,
+  LabelsRepairsIdRoute: LabelsRepairsIdRoute,
   OrdersReturnsInsightsRoute: OrdersReturnsInsightsRoute,
   PurchasingCatalogPhotoIdRoute: PurchasingCatalogPhotoIdRoute,
   PurchasingCatalogsIdRoute: PurchasingCatalogsIdRoute,
@@ -1476,3 +1560,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

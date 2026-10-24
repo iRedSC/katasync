@@ -49,6 +49,14 @@ export const Route = createFileRoute("/api/webhooks/$channel")({
 						console.error(`${channel} webhook drain:`, error),
 					),
 				);
+				// A new Shopify order may be a repair's draft just paid, so the
+				// board moves it without waiting for someone to open it.
+				if (channel === "shopify")
+					waitUntil(
+						import("#/repairs/draft-sync")
+							.then(({ refreshDrafts }) => refreshDrafts(db))
+							.catch((error) => console.error("repair drafts:", error)),
+					);
 				return Response.json({ accepted: result.orderId });
 			},
 		},
