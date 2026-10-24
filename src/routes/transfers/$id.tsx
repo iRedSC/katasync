@@ -45,8 +45,13 @@ export const Route = createFileRoute("/transfers/$id")({
 });
 
 function TransferPage() {
-	const { transfer: t, lines, suggestions, index, delivery } =
-		Route.useLoaderData();
+	const {
+		transfer: t,
+		lines,
+		suggestions,
+		index,
+		delivery,
+	} = Route.useLoaderData();
 	const navigate = useNavigate();
 	const draft = t.status === "draft";
 	const name = `T${t.id}`;
@@ -234,9 +239,7 @@ function TransferPage() {
 					to={t.to}
 					onReceive={receive}
 					onUndo={(receiptId) =>
-						change(() =>
-							undoTransferArrival({ data: { id: t.id, receiptId } }),
-						)
+						change(() => undoTransferArrival({ data: { id: t.id, receiptId } }))
 					}
 				/>
 			)}

@@ -73,7 +73,8 @@ const WAITING = new Set(["UNFULFILLED", "ON_HOLD", "AWAITING_PAYMENT"]);
 const GONE = new Set(["FULFILLED", "FULFILLMENT_NOT_REQUIRED"]);
 
 export function classifyLegacyLine(c: Candidate): Decision {
-	if (c.cancelled) return { kind: "unresolved", why: "cancelled_sale_not_undone" };
+	if (c.cancelled)
+		return { kind: "unresolved", why: "cancelled_sale_not_undone" };
 	if (c.fulfilledByChannel)
 		return { kind: "unresolved", why: "channel_fulfilled_with_sale" };
 	if (c.soldInStore) return { kind: "keep", why: "pos" };
@@ -166,10 +167,14 @@ function partsOfBatch(
 	rows: { productId: number; reason: string; delta: number }[],
 	quantity: number,
 ): Part[] | null {
-	if (rows.length === 0 || rows.some((r) => r.reason !== "sale" || r.delta >= 0))
+	if (
+		rows.length === 0 ||
+		rows.some((r) => r.reason !== "sale" || r.delta >= 0)
+	)
 		return null;
 	const units = new Map<number, number>();
-	for (const r of rows) units.set(r.productId, (units.get(r.productId) ?? 0) - r.delta);
+	for (const r of rows)
+		units.set(r.productId, (units.get(r.productId) ?? 0) - r.delta);
 	const parts: Part[] = [];
 	for (const [productId, n] of [...units].sort((a, b) => a[0] - b[0])) {
 		if (n % quantity !== 0) return null;
@@ -236,7 +241,8 @@ export async function planActivation(
 				orderName: c.orderName,
 				quantity: c.quantity,
 				fulfillmentStatus: c.fulfillmentStatus,
-				why: decision.kind === "unresolved" ? decision.why : "uneven_sale_batch",
+				why:
+					decision.kind === "unresolved" ? decision.why : "uneven_sale_batch",
 			});
 			continue;
 		}
@@ -314,7 +320,8 @@ export async function activateCommittedMode(
 			resolutions: input.resolutions,
 			lock: true,
 		});
-		if (plan.unresolved.length > 0) throw new ActivationBlocked(plan.unresolved);
+		if (plan.unresolved.length > 0)
+			throw new ActivationBlocked(plan.unresolved);
 		if (plan.fingerprint !== input.fingerprint)
 			throw new ActivationError(
 				"The plan changed since the dry run; run it again and review",
@@ -355,7 +362,9 @@ export async function activateCommittedMode(
 				)
 				.returning({ id: orderLines.id });
 			if (cleared.length !== 1)
-				throw new ActivationError(`Line ${line.orderLineId} changed mid-activation`);
+				throw new ActivationError(
+					`Line ${line.orderLineId} changed mid-activation`,
+				);
 			await settleLine(tx, {
 				orderLineId: line.orderLineId,
 				orderId: line.orderId,

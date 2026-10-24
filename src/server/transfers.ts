@@ -298,7 +298,9 @@ export const receiveTransferNow = createServerFn({ method: "POST" })
 	});
 
 export const undoTransferArrival = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0", receiptId: "number.integer > 0" }))
+	.validator(
+		type({ id: "number.integer > 0", receiptId: "number.integer > 0" }),
+	)
 	.handler(async ({ data }) => {
 		const delivery = await undoTransferReceipt(getDb(), {
 			transferId: data.id,
