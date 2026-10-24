@@ -54,7 +54,8 @@ export function registerInvoiceTools(server: McpServer, db: Db) {
 			},
 			annotations: WRITE,
 		},
-		async ({ id, reason }) => json(await voidInvoice(db, { id, reason }, requireActor())),
+		async ({ id, reason }) =>
+			json(await voidInvoice(db, { id, reason }, requireActor())),
 	);
 
 	server.registerTool(
@@ -74,7 +75,7 @@ export function registerInvoiceTools(server: McpServer, db: Db) {
 			description:
 				"Writes down a payment staff already made to a supplier. It moves no money and contacts no one. Ask the user first. Applies it to invoices up to their open balance; the rest is unapplied credit. Retrying with the same payment_id is safe.",
 			inputSchema: {
-				payment_id: z.string().uuid().optional(),
+				payment_id: z.string().uuid(),
 				supplier_id: z.number().int().positive(),
 				amount_cents: z.number().int().positive(),
 				paid_on: z.string().describe("YYYY-MM-DD"),
@@ -96,7 +97,7 @@ export function registerInvoiceTools(server: McpServer, db: Db) {
 				await recordPayment(
 					db,
 					{
-						id: input.payment_id ?? randomUUID(),
+						id: input.payment_id,
 						supplierId: input.supplier_id,
 						amountCents: input.amount_cents,
 						paidOn: input.paid_on,
@@ -125,6 +126,12 @@ export function registerInvoiceTools(server: McpServer, db: Db) {
 			annotations: { ...WRITE, destructiveHint: true },
 		},
 		async ({ payment_id, reason }) =>
-			json(await reversePayment(db, { paymentId: payment_id, reason }, requireActor())),
+			json(
+				await reversePayment(
+					db,
+					{ paymentId: payment_id, reason },
+					requireActor(),
+				),
+			),
 	);
 }

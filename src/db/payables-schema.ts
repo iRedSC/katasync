@@ -30,6 +30,7 @@ export const supplierInvoiceDocuments = pgTable(
 		taxCents: cents().notNull().default(0),
 		recordedBy: text(),
 		createdAt: at().notNull().defaultNow(),
+		createdTx: text().notNull().default(sql`txid_current()::text`),
 	},
 	(t) => [
 		check("supplier_invoice_documents_usd", sql`${t.currency} = 'USD'`),
@@ -161,6 +162,7 @@ export const supplierPayments = pgTable(
 		currency: text().notNull().default("USD"),
 		amountCents: cents().notNull(),
 		paidOn: date({ mode: "string" }).notNull(),
+		requestDigest: text().notNull(),
 		method: text({ enum: paymentMethods }).notNull(),
 		reference: text(),
 		recordedBy: text(),
@@ -208,10 +210,7 @@ export const supplierPaymentApplications = pgTable(
 		}),
 		index("supplier_payment_applications_payment_idx").on(t.paymentId),
 		index("supplier_payment_applications_invoice_idx").on(t.invoiceId),
-		check(
-			"supplier_payment_applications_positive",
-			sql`${t.amountCents} > 0`,
-		),
+		check("supplier_payment_applications_positive", sql`${t.amountCents} > 0`),
 		check(
 			"supplier_payment_applications_reversal_whole",
 			sql`${t.reversedBy} is null or ${t.reversedAt} is not null`,

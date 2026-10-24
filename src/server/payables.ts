@@ -66,8 +66,12 @@ export const assertInvoiceHistory = createServerFn({ method: "POST" })
 			"note?": "string | null",
 		}),
 	)
-	.handler(async ({ data }) => assertOpeningHistory(getDb(), data, requireActor()));
+	.handler(async ({ data }) =>
+		assertOpeningHistory(getDb(), data, requireActor()),
+	);
 
 export const withdrawInvoiceHistory = createServerFn({ method: "POST" })
 	.validator(type({ invoiceId: "number.integer > 0" }))
-	.handler(async ({ data }) => withdrawOpeningHistory(getDb(), data, requireActor()));
+	.handler(async ({ data }) =>
+		withdrawOpeningHistory(getDb(), data, requireActor()),
+	);

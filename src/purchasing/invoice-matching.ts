@@ -145,9 +145,7 @@ const samePerItem = (
 	pack: number,
 	other: number,
 	otherPack: number,
-) =>
-	priceUnits(price) * otherPack ===
-	Math.round(other * 10_000) * pack;
+) => priceUnits(price) * otherPack === Math.round(other * 10_000) * pack;
 
 export function lineAmountCents(quantity: number, unitPrice: number) {
 	return Math.round((quantity * priceUnits(unitPrice)) / 100);
@@ -252,7 +250,8 @@ export function matchBilling(
 				});
 		}
 		const offCents = inv.totalCents - (linesCents + freightCents + taxCents);
-		if (offCents !== 0) discrepancies.push({ kind: "total_arithmetic", offCents });
+		if (offCents !== 0)
+			discrepancies.push({ kind: "total_arithmetic", offCents });
 		const [first, ...rest] = discrepancies;
 		result.set(
 			inv.id,

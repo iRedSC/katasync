@@ -869,6 +869,20 @@
       "when": 1792800647702,
       "tag": "0123_quantity_read_models",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1792801366191,
+      "tag": "0124_receipt_payables",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1792801471012,
+      "tag": "0125_payables_evidence",
+      "breakpoints": true
     }
   ]
 }

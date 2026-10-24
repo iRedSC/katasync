@@ -1,4 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { currentContext, runAs } from "#/audit/context";
+import { type Actor, systemActor } from "#/auth/actor";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
@@ -21,6 +23,7 @@ export async function callMcp(
 	canWrite: boolean,
 	method: string,
 	params: Record<string, unknown> = {},
+	actor: Actor | null = systemActor("script"),
 ) {
 	const server = buildServer(db, { canWrite });
 	const transport = new WebStandardStreamableHTTPServerTransport({
@@ -28,16 +31,21 @@ export async function callMcp(
 		enableJsonResponse: true,
 	});
 	await server.connect(transport);
-	const response = await transport.handleRequest(
-		new Request("http://katasync.test/mcp", {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				accept: "application/json, text/event-stream",
-			},
-			body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-		}),
-	);
+	const request = () =>
+		transport.handleRequest(
+			new Request("http://katasync.test/mcp", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+			}),
+		);
+	const response =
+		currentContext() || actor === null
+			? await request()
+			: await runAs(actor, "test:mcp", request);
 	const body = await response.json();
 	if (body.error) throw new Error(JSON.stringify(body.error));
 	return body.result;

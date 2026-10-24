@@ -1,9 +1,10 @@
-import { Plus, Undo2, X } from "lucide-react";
+import { LoaderCircle, Plus, Undo2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Card } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
 import { formatDay, formatMoney } from "#/lib/format";
+import { useIntent } from "#/lib/intent";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
@@ -58,6 +59,9 @@ export function PaymentsCard({
 }) {
 	const [paying, setPaying] = useState<number | null>(null);
 	const [fresh, setFresh] = useState<string | null>(null);
+	const historyIntent = useIntent<{ invoiceId: number; paidCents: number }>();
+	const creditIntent =
+		useIntent<Parameters<typeof applySupplierCredit>[0]["data"][]>();
 	useEffect(() => {
 		if (!fresh) return;
 		const t = setTimeout(() => setFresh(null), 2500);
@@ -70,48 +74,64 @@ export function PaymentsCard({
 	const credit = payables.payments.filter((p) => p.unappliedCents > 0);
 
 	async function applyCredit(inv: Invoice) {
-		let left = openCentsOf(inv.payment);
-		for (const p of credit) {
-			if (left <= 0) break;
-			const amountCents = Math.min(left, p.unappliedCents);
-			left -= amountCents;
-			const r = await optimism.change({
-				label: `Applying ${usd(amountCents)} credit to ${inv.number}`,
-				patch: [],
-				send: () =>
-					applySupplierCredit({
-						data: {
-							id: crypto.randomUUID(),
-							paymentId: p.paymentId,
-							invoiceId: inv.id,
-							amountCents,
-						},
-					}),
-			});
-			if (!r) return;
-		}
-		setFresh(`invoice-${inv.id}`);
+		const result = await creditIntent.run(
+			() => {
+				let left = openCentsOf(inv.payment);
+				return credit.flatMap((payment) => {
+					const amountCents = Math.min(left, payment.unappliedCents);
+					left -= amountCents;
+					return amountCents > 0
+						? [
+								{
+									id: crypto.randomUUID(),
+									paymentId: payment.paymentId,
+									invoiceId: inv.id,
+									amountCents,
+								},
+							]
+						: [];
+				});
+			},
+			async (applications) => {
+				for (const data of applications) {
+					const result = await optimism.change({
+						label: `Applying ${usd(data.amountCents)} credit`,
+						patch: [],
+						send: () => applySupplierCredit({ data }),
+					});
+					if (!result) return null;
+				}
+				return applications[0]?.invoiceId ?? inv.id;
+			},
+		);
+		if (result !== null) setFresh(`invoice-${result}`);
 	}
 
 	async function assertHistory(inv: Invoice, paidCents: number) {
-		const r = await optimism.change({
-			label: `Saving ${inv.number}'s history`,
-			patch: [],
-			send: () =>
-				assertInvoiceHistory({ data: { invoiceId: inv.id, paidCents } }),
-		});
+		const r = await historyIntent.run(
+			() => ({ invoiceId: inv.id, paidCents }),
+			(data) =>
+				optimism.change({
+					label: `Saving ${inv.number}'s history`,
+					patch: [],
+					send: () => assertInvoiceHistory({ data }),
+				}),
+		);
 		if (!r) return;
 		setFresh(`invoice-${inv.id}`);
-		offerUndo(`${inv.number} ${paidCents === 0 ? "was unpaid" : "was paid"} before`, {
-			undo: async () =>
-				(await optimism.change({
-					label: `Forgetting ${inv.number}'s history`,
-					patch: [],
-					send: () => withdrawInvoiceHistory({ data: { invoiceId: inv.id } }),
-				}))
-					? `${inv.number}'s history is unknown again`
-					: null,
-		});
+		offerUndo(
+			`${inv.number} ${paidCents === 0 ? "was unpaid" : "was paid"} before`,
+			{
+				undo: async () =>
+					(await optimism.change({
+						label: `Forgetting ${inv.number}'s history`,
+						patch: [],
+						send: () => withdrawInvoiceHistory({ data: { invoiceId: inv.id } }),
+					}))
+						? `${inv.number}'s history is unknown again`
+						: null,
+			},
+		);
 	}
 
 	return (
@@ -151,25 +171,53 @@ export function PaymentsCard({
 											<span className="text-xs text-muted-foreground">
 												Before Katasync:
 											</span>
-											<Button size="xs" variant="ghost" onClick={() => assertHistory(inv, 0)}>
+											<Button
+												size="xs"
+												variant="ghost"
+												onClick={() => assertHistory(inv, 0)}
+												disabled={historyIntent.state.kind === "pending"}
+											>
 												Unpaid
 											</Button>
 											<Button
 												size="xs"
 												variant="ghost"
 												onClick={() => assertHistory(inv, open)}
+												disabled={historyIntent.state.kind === "pending"}
 											>
-												Paid
+												{historyIntent.state.kind === "pending" &&
+												historyIntent.state.payload.invoiceId === inv.id ? (
+													<LoaderCircle className="animate-spin" />
+												) : (
+													"Paid"
+												)}
 											</Button>
 										</>
 									)}
 									{open > 0 && credit.length > 0 && (
-										<Button size="xs" variant="ghost" onClick={() => applyCredit(inv)}>
+										<Button
+											size="xs"
+											variant="ghost"
+											disabled={
+												creditIntent.state.kind === "pending" ||
+												(creditIntent.state.kind === "retry" &&
+													creditIntent.state.payload[0]?.invoiceId !== inv.id)
+											}
+											onClick={() => applyCredit(inv)}
+										>
+											{creditIntent.state.kind === "pending" &&
+												creditIntent.state.payload[0]?.invoiceId === inv.id && (
+													<LoaderCircle className="animate-spin" />
+												)}
 											Use credit
 										</Button>
 									)}
 									{open > 0 && paying !== inv.id && (
-										<Button size="xs" variant="ghost" onClick={() => setPaying(inv.id)}>
+										<Button
+											size="xs"
+											variant="ghost"
+											onClick={() => setPaying(inv.id)}
+										>
 											<Plus />
 											Payment
 										</Button>
@@ -203,7 +251,11 @@ export function PaymentsCard({
 			{payables.payments.length > 0 && (
 				<ul className="border-t py-2">
 					{payables.payments.map((p) => (
-						<PaymentRow key={p.paymentId} payment={p} fresh={fresh === p.paymentId} />
+						<PaymentRow
+							key={p.paymentId}
+							payment={p}
+							fresh={fresh === p.paymentId}
+						/>
 					))}
 				</ul>
 			)}
@@ -248,13 +300,19 @@ function Applied({
 	application: PaymentEvidence["applications"][number];
 	payment: PaymentEvidence;
 }) {
+	const intent = useIntent<string>();
 	async function unapply() {
-		const r = await optimism.change({
-			label: `Taking ${usd(a.amountCents)} off ${inv.number}`,
-			patch: [],
-			send: () => unapplySupplierPayment({ data: { applicationId: a.id } }),
-		});
+		const r = await intent.run(
+			() => a.id,
+			(applicationId) =>
+				optimism.change({
+					label: `Taking ${usd(a.amountCents)} off ${inv.number}`,
+					patch: [],
+					send: () => unapplySupplierPayment({ data: { applicationId } }),
+				}),
+		);
 		if (!r) return;
+		const id = crypto.randomUUID();
 		offerUndo(`${usd(a.amountCents)} is unapplied credit now`, {
 			undo: async () =>
 				(await optimism.change({
@@ -263,7 +321,7 @@ function Applied({
 					send: () =>
 						applySupplierCredit({
 							data: {
-								id: crypto.randomUUID(),
+								id,
 								paymentId: p.paymentId,
 								invoiceId: inv.id,
 								amountCents: a.amountCents,
@@ -288,8 +346,13 @@ function Applied({
 				aria-label={`Take ${usd(a.amountCents)} off ${inv.number}`}
 				className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
 				onClick={unapply}
+				disabled={intent.state.kind === "pending"}
 			>
-				<X />
+				{intent.state.kind === "pending" ? (
+					<LoaderCircle className="animate-spin" />
+				) : (
+					<X />
+				)}
 			</Button>
 		</div>
 	);
@@ -297,14 +360,24 @@ function Applied({
 
 function Proof() {
 	return (
-		<span className="rounded-full bg-muted px-1.5" title="Not confirmed by a bank import">
+		<span
+			className="rounded-full bg-muted px-1.5"
+			title="Not confirmed by a bank import"
+		>
 			Staff recorded
 		</span>
 	);
 }
 
-function PaymentRow({ payment: p, fresh }: { payment: PaymentEvidence; fresh: boolean }) {
+function PaymentRow({
+	payment: p,
+	fresh,
+}: {
+	payment: PaymentEvidence;
+	fresh: boolean;
+}) {
 	const [armed, setArmed] = useState(false);
+	const intent = useIntent<string>();
 	useEffect(() => {
 		if (!armed) return;
 		const t = setTimeout(() => setArmed(false), 3000);
@@ -315,11 +388,15 @@ function PaymentRow({ payment: p, fresh }: { payment: PaymentEvidence; fresh: bo
 	async function reverse() {
 		if (!armed) return setArmed(true);
 		setArmed(false);
-		await optimism.change({
-			label: `Reversing ${usd(p.amountCents)} payment`,
-			patch: [],
-			send: () => reverseSupplierPayment({ data: { paymentId: p.paymentId } }),
-		});
+		await intent.run(
+			() => p.paymentId,
+			(paymentId) =>
+				optimism.change({
+					label: `Reversing ${usd(p.amountCents)} payment`,
+					patch: [],
+					send: () => reverseSupplierPayment({ data: { paymentId } }),
+				}),
+		);
 	}
 
 	return (
@@ -329,7 +406,12 @@ function PaymentRow({ payment: p, fresh }: { payment: PaymentEvidence; fresh: bo
 				fresh && "bg-success-fill",
 			)}
 		>
-			<span className={cn("tabular-nums", reversed && "text-muted-foreground line-through")}>
+			<span
+				className={cn(
+					"tabular-nums",
+					reversed && "text-muted-foreground line-through",
+				)}
+			>
 				{usd(p.amountCents)}
 			</span>
 			<span className="text-muted-foreground">
@@ -355,8 +437,13 @@ function PaymentRow({ payment: p, fresh }: { payment: PaymentEvidence; fresh: bo
 						armed && "bg-critical-fill text-critical-text opacity-100",
 					)}
 					onClick={reverse}
+					disabled={intent.state.kind === "pending"}
 				>
-					<Undo2 />
+					{intent.state.kind === "pending" ? (
+						<LoaderCircle className="animate-spin" />
+					) : (
+						<Undo2 />
+					)}
 					{armed ? `Reverse ${usd(p.amountCents)}?` : "Reverse"}
 				</Button>
 			)}
@@ -377,44 +464,45 @@ function PaymentForm({
 	onClose: () => void;
 	onRecorded: (paymentId: string) => void;
 }) {
-	const [id] = useState(() => crypto.randomUUID());
-	const [applicationId] = useState(() => crypto.randomUUID());
 	const [amount, setAmount] = useState((openCents / 100).toFixed(2));
 	const [paidOn, setPaidOn] = useState(today);
 	const [method, setMethod] = useState<PaymentMethod>("ach");
 	const [reference, setReference] = useState("");
-	const [saving, setSaving] = useState(false);
+	const intent =
+		useIntent<Parameters<typeof recordSupplierPayment>[0]["data"]>();
+	const saving = intent.state.kind === "pending";
+	const locked = intent.state.kind !== "idle";
 	const form = useRef<HTMLDivElement>(null);
 	const cents = centsFrom(amount);
 	const extra = cents === null ? 0 : cents - openCents;
 
 	async function record() {
+		if (saving) return;
 		if (cents === null || cents <= 0) return shake(form.current);
-		setSaving(true);
-		const r = await optimism.change({
-			label: `Recording ${usd(cents)} paid`,
-			patch: [],
-			send: () =>
-				recordSupplierPayment({
-					data: {
-						id,
-						supplierId,
-						amountCents: cents,
-						paidOn,
-						method,
-						reference: reference.trim() || null,
-						applications: [
-							{
-								id: applicationId,
-								invoiceId: inv.id,
-								amountCents: Math.min(cents, openCents),
-							},
-						],
+		const r = await intent.run(
+			() => ({
+				id: crypto.randomUUID(),
+				supplierId,
+				amountCents: cents,
+				paidOn,
+				method,
+				reference: reference.trim() || null,
+				applications: [
+					{
+						id: crypto.randomUUID(),
+						invoiceId: inv.id,
+						amountCents: Math.min(cents, openCents),
 					},
+				],
+			}),
+			(data) =>
+				optimism.change({
+					label: `Recording ${usd(cents)} paid`,
+					patch: [],
+					send: () => recordSupplierPayment({ data }),
 				}),
-		});
-		setSaving(false);
-		if (r) onRecorded(id);
+		);
+		if (r) onRecorded(r.value.paymentId);
 		else shake(form.current);
 	}
 
@@ -425,17 +513,23 @@ function PaymentForm({
 				autoFocus
 				inputMode="decimal"
 				aria-label="Amount paid"
+				disabled={locked}
 				value={amount}
 				onChange={(e) => setAmount(e.target.value)}
 				onKeyDown={(e) => {
-					if (e.key === "Escape") onClose();
+					if (e.key === "Escape" && !saving) onClose();
 					if (e.key === "Enter") record();
 				}}
-				className={cn(input, "w-28 text-right tabular-nums", cents === null && bad)}
+				className={cn(
+					input,
+					"w-28 text-right tabular-nums",
+					cents === null && bad,
+				)}
 			/>
 			<input
 				type="date"
 				aria-label="Paid on"
+				disabled={locked}
 				value={paidOn}
 				max={today()}
 				onChange={(e) => setPaidOn(e.target.value || today())}
@@ -443,6 +537,7 @@ function PaymentForm({
 			/>
 			<select
 				aria-label="Method"
+				disabled={locked}
 				value={method}
 				onChange={(e) =>
 					setMethod(
@@ -459,15 +554,17 @@ function PaymentForm({
 			</select>
 			<input
 				aria-label="Check or confirmation number"
+				disabled={locked}
 				placeholder="Ref"
 				value={reference}
 				onChange={(e) => setReference(e.target.value)}
 				className={cn(input, "w-32 font-mono text-xs")}
 			/>
 			<Button size="sm" disabled={saving} onClick={record}>
-				Record paid
+				{saving && <LoaderCircle className="animate-spin" />}
+				{intent.state.kind === "retry" ? "Retry" : "Record paid"}
 			</Button>
-			<Button size="sm" variant="ghost" onClick={onClose}>
+			<Button size="sm" variant="ghost" disabled={saving} onClick={onClose}>
 				Cancel
 			</Button>
 			{extra > 0 && (

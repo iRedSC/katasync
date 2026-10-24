@@ -8,11 +8,11 @@ import {
 	registerInboxReadTools,
 	registerInboxWriteTools,
 } from "./server/inbox-tools";
+import { INSTRUCTIONS } from "./server/instructions";
 import {
 	registerInvoiceReadTools,
 	registerInvoiceTools,
 } from "./server/invoice-tools";
-import { INSTRUCTIONS } from "./server/instructions";
 import { registerListingTools } from "./server/listing-tools";
 import {
 	registerMailRuleReadTools,

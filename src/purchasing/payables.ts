@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Actor } from "#/auth/actor";
 import type { Db } from "#/db/client";
@@ -36,16 +37,17 @@ function idOf(id: string, what: string) {
 }
 
 function positiveCents(cents: number, what: string) {
-	if (wholeCents(cents, what) <= 0) throw new MoneyError(`${what} must be more than $0`);
+	if (wholeCents(cents, what) <= 0)
+		throw new MoneyError(`${what} must be more than $0`);
 	return cents;
 }
 
 export async function lockSupplier(db: Db, supplierId: number) {
 	const [found] = await db
-		.select({ id: suppliers.id, name: suppliers.name })
-		.from(suppliers)
+		.update(suppliers)
+		.set({ name: sql`${suppliers.name}` })
 		.where(eq(suppliers.id, supplierId))
-		.for("no key update");
+		.returning({ id: suppliers.id, name: suppliers.name });
 	if (!found) throw new PayableError(`No supplier ${supplierId}`);
 	return found;
 }
@@ -141,13 +143,17 @@ async function applyWithin(
 	if (payment.reversedAt) throw new PayableError("That payment was reversed");
 	const room = await invoiceRoom(db, application.invoiceId);
 	if (room.invoice.supplierId !== payment.supplierId)
-		throw new PayableError(`Invoice ${room.invoice.number} is another supplier's`);
-	if (room.voided) throw new PayableError(`Invoice ${room.invoice.number} is void`);
+		throw new PayableError(
+			`Invoice ${room.invoice.number} is another supplier's`,
+		);
+	if (room.voided)
+		throw new PayableError(`Invoice ${room.invoice.number} is void`);
 	if (amountCents > room.openCents)
 		throw new PayableError(
 			`Invoice ${room.invoice.number} has only $${(room.openCents / 100).toFixed(2)} open`,
 		);
-	const unapplied = payment.amountCents - (await appliedToPayment(db, payment.id));
+	const unapplied =
+		payment.amountCents - (await appliedToPayment(db, payment.id));
 	if (amountCents > unapplied)
 		throw new PayableError(
 			`The payment has only $${(unapplied / 100).toFixed(2)} unapplied`,
@@ -196,9 +202,29 @@ export async function recordPayment(
 	);
 	if (appliedCents > amountCents)
 		throw new MoneyError("A payment can't apply more than it paid");
-	if (new Set(applications.map((a) => a.invoiceId)).size !== applications.length)
+	if (
+		new Set(applications.map((a) => a.invoiceId)).size !== applications.length
+	)
 		throw new PayableError("Apply to each invoice once");
 	const reference = input.reference?.trim() || null;
+	const requestDigest = createHash("sha256")
+		.update(
+			JSON.stringify({
+				supplierId: input.supplierId,
+				amountCents,
+				currency: CURRENCY,
+				paidOn: input.paidOn,
+				method: input.method,
+				reference,
+				applications: applications
+					.map((application) => ({
+						invoiceId: application.invoiceId,
+						amountCents: application.amountCents,
+					}))
+					.sort((first, second) => first.invoiceId - second.invoiceId),
+			}),
+		)
+		.digest("hex");
 	return db.transaction(async (tx) => {
 		await lockSupplier(tx, input.supplierId);
 		const [replay] = await tx
@@ -207,6 +233,7 @@ export async function recordPayment(
 			.where(eq(supplierPayments.id, id));
 		if (replay) {
 			if (
+				replay.requestDigest !== requestDigest ||
 				replay.supplierId !== input.supplierId ||
 				replay.amountCents !== amountCents ||
 				replay.paidOn !== input.paidOn ||
@@ -223,6 +250,7 @@ export async function recordPayment(
 				supplierId: input.supplierId,
 				currency: CURRENCY,
 				amountCents,
+				requestDigest,
 				paidOn: input.paidOn,
 				method: input.method,
 				reference,
@@ -251,7 +279,12 @@ async function lockedPayment(db: Db, paymentId: string) {
 
 export async function applyCredit(
 	db: Db,
-	input: { id: string; paymentId: string; invoiceId: number; amountCents: number },
+	input: {
+		id: string;
+		paymentId: string;
+		invoiceId: number;
+		amountCents: number;
+	},
 	actor: Actor,
 ) {
 	return db.transaction(async (tx) => {
@@ -301,7 +334,12 @@ export async function reversePayment(
 				reversedBy: recordedBy(actor),
 				reversalReason: input.reason?.trim() || null,
 			})
-			.where(and(eq(supplierPayments.id, payment.id), isNull(supplierPayments.reversedAt)))
+			.where(
+				and(
+					eq(supplierPayments.id, payment.id),
+					isNull(supplierPayments.reversedAt),
+				),
+			)
 			.returning({ id: supplierPayments.id });
 		if (reversed.length > 0)
 			await tx
@@ -333,13 +371,20 @@ export async function assertOpeningHistory(
 		await lockSupplier(tx, header.supplierId);
 		const room = await invoiceRoom(tx, header.id);
 		if (!room.legacy)
-			throw new PayableError(`Invoice ${header.number} was recorded here, so its payments are known`);
+			throw new PayableError(
+				`Invoice ${header.number} was recorded here, so its payments are known`,
+			);
 		if (room.openingCents !== null) {
-			if (room.openingCents === input.paidCents) return billingOf(tx, header.purchaseOrderId);
-			throw new PayableError(`Invoice ${header.number} already has its history; withdraw it first`);
+			if (room.openingCents === input.paidCents)
+				return billingOf(tx, header.purchaseOrderId);
+			throw new PayableError(
+				`Invoice ${header.number} already has its history; withdraw it first`,
+			);
 		}
 		if (input.paidCents > room.openCents)
-			throw new MoneyError(`Invoice ${header.number} has only $${(room.openCents / 100).toFixed(2)} open`);
+			throw new MoneyError(
+				`Invoice ${header.number} has only $${(room.openCents / 100).toFixed(2)} open`,
+			);
 		await tx.insert(supplierInvoiceOpenings).values({
 			invoiceId: header.id,
 			paidCents: input.paidCents,
@@ -435,7 +480,10 @@ export async function paymentEvidence(
 		.from(supplierPayments)
 		.where(
 			"paymentIds" in where
-				? inArray(supplierPayments.id, where.paymentIds.map((id) => idOf(id, "Payment")))
+				? inArray(
+						supplierPayments.id,
+						where.paymentIds.map((id) => idOf(id, "Payment")),
+					)
 				: eq(supplierPayments.supplierId, where.supplierId),
 		)
 		.orderBy(supplierPayments.paidOn, supplierPayments.recordedAt);
@@ -466,7 +514,12 @@ export async function paymentEvidence(
 			source: "staff_recorded",
 			recorded: { by: p.recordedBy, at: p.recordedAt },
 			state: p.reversedAt
-				? { kind: "reversed", at: p.reversedAt, by: p.reversedBy, reason: p.reversalReason }
+				? {
+						kind: "reversed",
+						at: p.reversedAt,
+						by: p.reversedBy,
+						reason: p.reversalReason,
+					}
 				: { kind: "recorded" },
 			appliedCents,
 			unappliedCents: p.reversedAt ? 0 : p.amountCents - appliedCents,
@@ -487,6 +540,13 @@ async function evidenceOne(db: Db, paymentId: string) {
 }
 
 export async function orderPayables(db: Db, purchaseOrderId: number) {
+	return db.transaction((tx) => readOrderPayables(tx, purchaseOrderId), {
+		isolationLevel: "repeatable read",
+		accessMode: "read only",
+	});
+}
+
+async function readOrderPayables(db: Db, purchaseOrderId: number) {
 	const billing = await billingOf(db, purchaseOrderId);
 	const [po] = await db
 		.select({ supplierId: purchaseOrders.supplierId })
@@ -499,7 +559,8 @@ export async function orderPayables(db: Db, purchaseOrderId: number) {
 		billing,
 		payments: payments.filter(
 			(p) =>
-				p.unappliedCents > 0 || p.applications.some((a) => ids.has(a.invoiceId)),
+				p.unappliedCents > 0 ||
+				p.applications.some((a) => ids.has(a.invoiceId)),
 		),
 		unappliedCents: payments.reduce((n, p) => n + p.unappliedCents, 0),
 	};

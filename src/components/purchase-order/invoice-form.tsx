@@ -16,7 +16,10 @@ import {
 	type Discrepancy,
 	explainDiscrepancy,
 } from "#/purchasing/invoice-matching";
-import { type PurchaseOrderDetail, saveSupplierSkus } from "#/server/purchasing";
+import {
+	type PurchaseOrderDetail,
+	saveSupplierSkus,
+} from "#/server/purchasing";
 import {
 	checkSupplierInvoice,
 	type InvoiceCheck,
@@ -97,6 +100,7 @@ export function InvoiceForm({
 	const [credits, setCredits] = useState("");
 	const [rows, setRows] = useState<Row[]>(() => [blank()]);
 	const [recording, setRecording] = useState(false);
+	const inFlight = useRef(false);
 	const [savingSkus, setSavingSkus] = useState(false);
 	const form = useRef<HTMLDivElement>(null);
 
@@ -203,7 +207,8 @@ export function InvoiceForm({
 	}
 
 	async function record() {
-		if (!canRecord || totalValue == null) return;
+		if (inFlight.current || !canRecord || totalValue == null) return;
+		inFlight.current = true;
 		setRecording(true);
 		const r = await optimism.change({
 			label: `Recording invoice ${number.trim()}`,
@@ -224,6 +229,7 @@ export function InvoiceForm({
 				}),
 		});
 		setRecording(false);
+		inFlight.current = false;
 		if (r) onRecorded(r.value.number);
 		else shake(form.current);
 	}

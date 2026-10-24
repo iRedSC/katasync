@@ -20,8 +20,8 @@ import {
 	MoneyError,
 	priceUnits,
 } from "./invoice-matching";
-import { recordedBy } from "./recorded-by";
 import { lockSupplier } from "./payables";
+import { recordedBy } from "./recorded-by";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -33,7 +33,11 @@ const ANY_STATUS = [
 	"cancelled",
 ] as const;
 
-export async function recordedInvoice(db: Db, supplierId: number, number: string) {
+export async function recordedInvoice(
+	db: Db,
+	supplierId: number,
+	number: string,
+) {
 	const [found] = await db
 		.select({
 			invoice: supplierInvoices,
@@ -75,7 +79,9 @@ export function evidenceOf(lines: InvoiceLine[], poLines: OrderLines) {
 	return lines.map((inv, i) => {
 		const position = inv.line ?? i + 1;
 		if (!Number.isInteger(position) || position < 1 || positions.has(position))
-			throw new PurchaseOrderError(`Invoice line ${position} is given twice or isn't a line number`);
+			throw new PurchaseOrderError(
+				`Invoice line ${position} is given twice or isn't a line number`,
+			);
 		positions.add(position);
 		const ref = {
 			position,
@@ -100,12 +106,16 @@ export function evidenceOf(lines: InvoiceLine[], poLines: OrderLines) {
 			};
 		}
 		if (!Number.isInteger(inv.quantity) || inv.quantity < 0)
-			throw new PurchaseOrderError(`Line ${position}: quantity can't be ${inv.quantity}`);
+			throw new PurchaseOrderError(
+				`Line ${position}: quantity can't be ${inv.quantity}`,
+			);
 		priceUnits(inv.unitCost, `Line ${position}'s unit price`);
 		const match = findLine(poLines, inv);
 		const packSize = inv.packSize ?? match.line?.packSize ?? 1;
 		if (!Number.isInteger(packSize) || packSize < 1)
-			throw new PurchaseOrderError(`Line ${position}: pack size can't be ${packSize}`);
+			throw new PurchaseOrderError(
+				`Line ${position}: pack size can't be ${packSize}`,
+			);
 		return {
 			...ref,
 			kind: "merchandise" as const,
@@ -220,12 +230,17 @@ export async function recordInvoice(
 		});
 	} catch (e) {
 		if (isUniqueViolation(e))
-			throw new PurchaseOrderError(`Invoice ${number} was just recorded elsewhere`);
+			throw new PurchaseOrderError(
+				`Invoice ${number} was just recorded elsewhere`,
+			);
 		throw e;
 	}
 }
 
-async function withBilling(db: Db, header: typeof supplierInvoices.$inferSelect) {
+async function withBilling(
+	db: Db,
+	header: typeof supplierInvoices.$inferSelect,
+) {
 	const billing = await billingOf(db, header.purchaseOrderId);
 	const mine = billing.invoices.find((i) => i.id === header.id);
 	if (!mine) throw new PurchaseOrderError(`No invoice ${header.id}`);
@@ -259,7 +274,8 @@ export async function voidInvoice(
 					isNull(supplierInvoiceVoids.restoredAt),
 				),
 			);
-		if (open) return { invoice: await withBilling(tx, header), releasedCents: 0 };
+		if (open)
+			return { invoice: await withBilling(tx, header), releasedCents: 0 };
 		await tx.insert(supplierInvoiceVoids).values({
 			invoiceId: header.id,
 			reason: input.reason?.trim() || null,

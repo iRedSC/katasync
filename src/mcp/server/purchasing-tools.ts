@@ -27,7 +27,6 @@ import { supplierByRef } from "#/purchasing/suppliers";
 import { setLineTerms } from "#/purchasing/units";
 import { registerChargeTools } from "./charge-tools";
 import { registerDiscountTools } from "./discount-tools";
-import { invoiceLineInput, toInvoiceLine } from "./read-tools";
 import {
 	catalogIds,
 	lineOf,
@@ -36,6 +35,7 @@ import {
 	productsBySku,
 } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
+import { invoiceLineInput, toInvoiceLine } from "./read-tools";
 import { json, unitTerms, WRITE } from "./tool-shapes";
 
 export function registerPurchasingTools(server: McpServer, db: Db) {
