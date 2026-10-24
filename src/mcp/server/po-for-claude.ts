@@ -8,6 +8,7 @@ import {
 	lineCents,
 } from "#/purchasing/discount";
 import { poFilesOf } from "#/purchasing/files";
+import { openFlagsOf } from "#/purchasing/flags";
 import { emailSummariesOf } from "#/purchasing/inbox/ingest";
 import { invoicesOf } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
@@ -30,6 +31,7 @@ export async function orderForClaude(db: Db, id: number) {
 		trackingOf(db, id),
 		poFilesOf(db, id),
 	]);
+	const flags = await openFlagsOf(db, id);
 	// Only drafts hold tool sets; sending splits them into parts.
 	const parts = po.lines.some((l) => l.kind === "bundle")
 		? await setPartsOf(db, id)
@@ -76,6 +78,16 @@ export async function orderForClaude(db: Db, id: number) {
 			invoicedOn: i.invoicedOn,
 			dueOn: i.dueOn,
 			total: i.total,
+		})),
+		// What should change, waiting on staff (resolve_po_flag).
+		flags: flags.map((f) => ({
+			id: f.id,
+			kind: f.kind,
+			sku: f.sku,
+			...(f.value !== null ? { value: f.value } : {}),
+			note: f.note,
+			by: f.by,
+			fromEmail: f.emailId,
 		})),
 		// Read one with read_po_email.
 		emails: emails.map((e) => ({

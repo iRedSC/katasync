@@ -22,10 +22,12 @@ import {
 	type ReturnState,
 	returnRequestLines,
 	returnRequests,
+	returnTracking,
 	stores,
 } from "#/db/schema";
 import { returnPage } from "./admin-urls";
 import { committedStock, returnQuantity } from "./return-stock";
+import { type PackageAt, trackingFor } from "./return-tracking";
 import { isLabeled, returnBlocker } from "./status";
 
 // What the Returns tab shows: orders with something due back (rules in the
@@ -53,6 +55,8 @@ export type ReturnOrder = {
 		trackingNumber: string | null;
 		carrier: string | null;
 		requestedAt: Date;
+		// Where its package is, as Shippo last said; null until asked.
+		tracking: PackageAt | null;
 	}[];
 	// Items an open request names that no line matched, so which line
 	// they are is decided when the box is opened.
@@ -201,8 +205,18 @@ async function returnOrders(
 				trackingNumber: returnRequests.trackingNumber,
 				carrier: returnRequests.carrier,
 				requestedAt: returnRequests.requestedAt,
+				saved: {
+					number: returnTracking.number,
+					status: returnTracking.status,
+					statusAt: returnTracking.statusAt,
+					eta: returnTracking.eta,
+				},
 			})
 			.from(returnRequests)
+			.leftJoin(
+				returnTracking,
+				eq(returnTracking.returnRequestId, returnRequests.id),
+			)
 			.where(and(inArray(returnRequests.orderId, ids), open))
 			.orderBy(desc(returnRequests.requestedAt)),
 		db
@@ -242,7 +256,17 @@ async function returnOrders(
 			}),
 			requests: requests
 				.filter((r) => r.orderId === o.id)
-				.map(({ orderId: _, ...r }) => r),
+				.map(({ orderId: _, saved, ...r }) => {
+					const t = trackingFor(r.trackingNumber, saved);
+					return {
+						...r,
+						tracking: t && {
+							status: t.status,
+							statusAt: t.statusAt,
+							eta: t.eta,
+						},
+					};
+				}),
 			unmatched: unmatched
 				.filter((u) => u.orderId === o.id)
 				.map(({ orderId: _, ...u }) => u),
