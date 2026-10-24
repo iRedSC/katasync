@@ -213,6 +213,7 @@ export async function recordInvoice(
 					invoicedOn: input.invoicedOn,
 					dueOn: input.dueOn ?? null,
 					total: totalCents / 100,
+					createdAt: sql`clock_timestamp()`,
 				})
 				.returning();
 			await tx.insert(supplierInvoiceDocuments).values({
@@ -307,7 +308,10 @@ export async function restoreInvoice(
 		const header = await lockedInvoice(tx, input.id);
 		await tx
 			.update(supplierInvoiceVoids)
-			.set({ restoredAt: sql`now()`, restoredBy: recordedBy(actor) })
+			.set({
+				restoredAt: sql`clock_timestamp()`,
+				restoredBy: recordedBy(actor),
+			})
 			.where(
 				and(
 					eq(supplierInvoiceVoids.invoiceId, header.id),

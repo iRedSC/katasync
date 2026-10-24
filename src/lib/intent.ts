@@ -47,5 +47,5 @@ export function useIntent<Payload>() {
 		intent.getSnapshot,
 		intent.getSnapshot,
 	);
-	return { state, run: intent.run };
+	return { state, run: intent.run, getSnapshot: intent.getSnapshot };
 }

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Card } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import { formatDay, formatMoney } from "#/lib/format";
 import { useIntent } from "#/lib/intent";
 import { optimism } from "#/lib/optimism";
@@ -26,6 +27,7 @@ import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { middayOf, today } from "./days";
 
 type Invoice = OrderPayables["billing"]["invoices"][number];
+type PaymentInput = Parameters<typeof recordSupplierPayment>[0]["data"];
 
 const METHODS: { value: PaymentMethod; label: string }[] = [
 	{ value: "ach", label: "ACH" },
@@ -59,7 +61,12 @@ export function PaymentsCard({
 }) {
 	const [paying, setPaying] = useState<number | null>(null);
 	const [fresh, setFresh] = useState<string | null>(null);
-	const historyIntent = useIntent<{ invoiceId: number; paidCents: number }>();
+	const historyIntent = useIntent<{
+		invoiceId: number;
+		number: string;
+		paidCents: number;
+	}>();
+	const paymentIntent = useIntent<PaymentInput>();
 	const creditIntent =
 		useIntent<Parameters<typeof applySupplierCredit>[0]["data"][]>();
 	useEffect(() => {
@@ -108,27 +115,39 @@ export function PaymentsCard({
 	}
 
 	async function assertHistory(inv: Invoice, paidCents: number) {
+		if (
+			historyIntent.state.kind !== "idle" &&
+			(historyIntent.state.payload.invoiceId !== inv.id ||
+				historyIntent.state.payload.paidCents !== paidCents)
+		)
+			return;
 		const r = await historyIntent.run(
-			() => ({ invoiceId: inv.id, paidCents }),
-			(data) =>
-				optimism.change({
-					label: `Saving ${inv.number}'s history`,
+			() => ({ invoiceId: inv.id, number: inv.number, paidCents }),
+			async (data) => {
+				const result = await optimism.change({
+					label: `Saving ${data.number}'s history`,
 					patch: [],
-					send: () => assertInvoiceHistory({ data }),
-				}),
+					send: () =>
+						assertInvoiceHistory({
+							data: { invoiceId: data.invoiceId, paidCents: data.paidCents },
+						}),
+				});
+				return result ? data : null;
+			},
 		);
 		if (!r) return;
-		setFresh(`invoice-${inv.id}`);
+		setFresh(`invoice-${r.invoiceId}`);
 		offerUndo(
-			`${inv.number} ${paidCents === 0 ? "was unpaid" : "was paid"} before`,
+			`${r.number} ${r.paidCents === 0 ? "was unpaid" : "was paid"} before`,
 			{
 				undo: async () =>
 					(await optimism.change({
-						label: `Forgetting ${inv.number}'s history`,
+						label: `Forgetting ${r.number}'s history`,
 						patch: [],
-						send: () => withdrawInvoiceHistory({ data: { invoiceId: inv.id } }),
+						send: () =>
+							withdrawInvoiceHistory({ data: { invoiceId: r.invoiceId } }),
 					}))
-						? `${inv.number}'s history is unknown again`
+						? `${r.number}'s history is unknown again`
 						: null,
 			},
 		);
@@ -175,7 +194,12 @@ export function PaymentsCard({
 												size="xs"
 												variant="ghost"
 												onClick={() => assertHistory(inv, 0)}
-												disabled={historyIntent.state.kind === "pending"}
+												disabled={
+													historyIntent.state.kind !== "idle" &&
+													(historyIntent.state.kind === "pending" ||
+														historyIntent.state.payload.invoiceId !== inv.id ||
+														historyIntent.state.payload.paidCents !== 0)
+												}
 											>
 												Unpaid
 											</Button>
@@ -183,7 +207,12 @@ export function PaymentsCard({
 												size="xs"
 												variant="ghost"
 												onClick={() => assertHistory(inv, open)}
-												disabled={historyIntent.state.kind === "pending"}
+												disabled={
+													historyIntent.state.kind !== "idle" &&
+													(historyIntent.state.kind === "pending" ||
+														historyIntent.state.payload.invoiceId !== inv.id ||
+														historyIntent.state.payload.paidCents !== open)
+												}
 											>
 												{historyIntent.state.kind === "pending" &&
 												historyIntent.state.payload.invoiceId === inv.id ? (
@@ -216,7 +245,11 @@ export function PaymentsCard({
 										<Button
 											size="xs"
 											variant="ghost"
-											onClick={() => setPaying(inv.id)}
+											onClick={() => {
+												if (paymentIntent.getSnapshot().kind === "idle")
+													setPaying(inv.id);
+											}}
+											disabled={paymentIntent.state.kind !== "idle"}
 										>
 											<Plus />
 											Payment
@@ -234,10 +267,14 @@ export function PaymentsCard({
 							))}
 							{paying === inv.id && (
 								<PaymentForm
+									intent={paymentIntent}
 									supplierId={payables.supplierId}
 									invoice={inv}
 									openCents={open}
-									onClose={() => setPaying(null)}
+									onClose={() => {
+										if (paymentIntent.getSnapshot().kind === "idle")
+											setPaying(null);
+									}}
 									onRecorded={(id) => {
 										setPaying(null);
 										setFresh(id);
@@ -360,12 +397,9 @@ function Applied({
 
 function Proof() {
 	return (
-		<span
-			className="rounded-full bg-muted px-1.5"
-			title="Not confirmed by a bank import"
-		>
-			Staff recorded
-		</span>
+		<Tip content="Not confirmed by a bank import">
+			<span className="rounded-full bg-muted px-1.5">Staff recorded</span>
+		</Tip>
 	);
 }
 
@@ -452,12 +486,14 @@ function PaymentRow({
 }
 
 function PaymentForm({
+	intent,
 	supplierId,
 	invoice: inv,
 	openCents,
 	onClose,
 	onRecorded,
 }: {
+	intent: ReturnType<typeof useIntent<PaymentInput>>;
 	supplierId: number;
 	invoice: Invoice;
 	openCents: number;
@@ -468,8 +504,6 @@ function PaymentForm({
 	const [paidOn, setPaidOn] = useState(today);
 	const [method, setMethod] = useState<PaymentMethod>("ach");
 	const [reference, setReference] = useState("");
-	const intent =
-		useIntent<Parameters<typeof recordSupplierPayment>[0]["data"]>();
 	const saving = intent.state.kind === "pending";
 	const locked = intent.state.kind !== "idle";
 	const form = useRef<HTMLDivElement>(null);
@@ -517,7 +551,7 @@ function PaymentForm({
 				value={amount}
 				onChange={(e) => setAmount(e.target.value)}
 				onKeyDown={(e) => {
-					if (e.key === "Escape" && !saving) onClose();
+					if (e.key === "Escape" && !locked) onClose();
 					if (e.key === "Enter") record();
 				}}
 				className={cn(
@@ -564,7 +598,7 @@ function PaymentForm({
 				{saving && <LoaderCircle className="animate-spin" />}
 				{intent.state.kind === "retry" ? "Retry" : "Record paid"}
 			</Button>
-			<Button size="sm" variant="ghost" disabled={saving} onClick={onClose}>
+			<Button size="sm" variant="ghost" disabled={locked} onClick={onClose}>
 				Cancel
 			</Button>
 			{extra > 0 && (

@@ -5,8 +5,8 @@ import {
 	currencyOf,
 	type MatchableInvoice,
 	type MatchableLine,
-	matchBilling,
 	MoneyError,
+	matchBilling,
 	openCentsOf,
 	paymentState,
 	priceUnits,
@@ -19,6 +19,7 @@ const blade = (receivedUnits: number): BillablePoLine => ({
 	packSize: 12,
 	receivedUnits,
 	prices: [24],
+	netUnitPrice: 24,
 });
 
 const bill = (
@@ -49,6 +50,35 @@ const cases = (position: number, quantity: number, unitPrice = 24) => ({
 });
 
 describe("cumulative matching", () => {
+	test("list price needs its promised discount, as a net price or printed credit", () => {
+		const discounted = {
+			...blade(1),
+			prices: [100, 50],
+			netUnitPrice: 50,
+			packSize: 1,
+		};
+		const item = { ...cases(1, 1, 100), packSize: 1 };
+		expect(
+			matchBilling([discounted], [bill(1, [item])]).invoices.get(1),
+		).toMatchObject({
+			kind: "exception",
+			discrepancies: [
+				{ kind: "missing_discount", expectedCents: 5000, billedCents: 10000 },
+			],
+		});
+		expect(
+			matchBilling(
+				[discounted],
+				[bill(1, [item, { kind: "credit", position: 2, amountCents: 5000 }])],
+			).invoices.get(1)?.kind,
+		).toBe("matched");
+		expect(
+			matchBilling(
+				[discounted],
+				[bill(1, [{ ...item, unitPrice: 50, amountCents: 5000 }])],
+			).invoices.get(1)?.kind,
+		).toBe("matched");
+	});
 	test("two partial bills each match what was received", () => {
 		const billing = matchBilling(
 			[blade(4)],
@@ -57,7 +87,13 @@ describe("cumulative matching", () => {
 		expect(billing.invoices.get(1)?.kind).toBe("matched");
 		expect(billing.invoices.get(2)?.kind).toBe("matched");
 		expect(billing.lines).toEqual([
-			{ poLineId: 1, sku: "BLADE", receivedItems: 48, matchedItems: 48, billedItems: 48 },
+			{
+				poLineId: 1,
+				sku: "BLADE",
+				receivedItems: 48,
+				matchedItems: 48,
+				billedItems: 48,
+			},
 		]);
 	});
 
@@ -98,7 +134,10 @@ describe("cumulative matching", () => {
 	test("a void frees its units and a restored invoice goes to the back", () => {
 		const first = bill(1, [cases(1, 2)]);
 		const second = bill(2, [cases(1, 2)]);
-		const voided = matchBilling([blade(2)], [{ ...first, voided: true }, second]);
+		const voided = matchBilling(
+			[blade(2)],
+			[{ ...first, voided: true }, second],
+		);
 		expect(voided.invoices.get(1)?.kind).toBe("void");
 		expect(voided.invoices.get(2)?.kind).toBe("matched");
 		const restored = matchBilling(
@@ -112,18 +151,24 @@ describe("cumulative matching", () => {
 	test("an each-priced bill matches a case-priced line per item", () => {
 		const billing = matchBilling(
 			[blade(1)],
-			[
-				bill(1, [
-					{ ...cases(1, 12, 2), packSize: 1, amountCents: 2400 },
-				]),
-			],
+			[bill(1, [{ ...cases(1, 12, 2), packSize: 1, amountCents: 2400 }])],
 		);
 		expect(billing.invoices.get(1)?.kind).toBe("matched");
 	});
 
 	test("price, missing line, arithmetic, and unpriced lines are exceptions", () => {
 		const billing = matchBilling(
-			[blade(10), { id: 2, sku: "TAPE", packSize: 1, receivedUnits: 5, prices: [] }],
+			[
+				blade(10),
+				{
+					id: 2,
+					sku: "TAPE",
+					packSize: 1,
+					receivedUnits: 5,
+					prices: [],
+					netUnitPrice: null,
+				},
+			],
 			[
 				bill(1, [
 					cases(1, 1, 25),
@@ -189,7 +234,11 @@ describe("payment state", () => {
 
 	test("legacy invoices are unknown until history is asserted", () => {
 		const unknown = paymentState({ ...base, legacy: true, appliedCents: 2500 });
-		expect(unknown).toEqual({ kind: "unknown", totalCents: 10_000, paidHereCents: 2500 });
+		expect(unknown).toEqual({
+			kind: "unknown",
+			totalCents: 10_000,
+			paidHereCents: 2500,
+		});
 		expect(openCentsOf(unknown)).toBe(7500);
 		expect(paymentState({ ...base, legacy: true, openingCents: 0 }).kind).toBe(
 			"unpaid",
@@ -207,9 +256,9 @@ describe("payment state", () => {
 			paidCents: 4000,
 			openCents: 6000,
 		});
-		expect(paymentState({ ...base, voided: true, appliedCents: 4000 }).kind).toBe(
-			"void",
-		);
+		expect(
+			paymentState({ ...base, voided: true, appliedCents: 4000 }).kind,
+		).toBe("void");
 	});
 });
 

@@ -14,15 +14,19 @@ import {
 	type BillablePoLine,
 	CURRENCY,
 	type InvoiceMatch,
+	type InvoicePayment,
 	type MatchableInvoice,
 	type MatchableLine,
 	matchBilling,
-	paymentState,
-	type InvoicePayment,
 	type PoLineBilling,
+	paymentState,
 } from "./invoice-matching";
 
-export { type InvoicePayment, openCentsOf, paymentState } from "./invoice-matching";
+export {
+	type InvoicePayment,
+	openCentsOf,
+	paymentState,
+} from "./invoice-matching";
 
 export const totalCentsOf = (total: number) => Math.round(total * 100);
 
@@ -115,6 +119,10 @@ export async function billingOf(
 			sku: l.sku,
 			packSize: l.packSize,
 			receivedUnits: l.received,
+			netUnitPrice:
+				net === null || l.quantity === 0
+					? l.unitCost
+					: net / (100 * l.quantity),
 			prices:
 				l.unitCost === null
 					? []
@@ -126,7 +134,9 @@ export async function billingOf(
 
 	const matchable = headers.map((h): MatchableInvoice => {
 		const history = voidsOf.get(h.id) ?? [];
-		const restored = history.flatMap((v) => (v.restoredAt ? [v.restoredAt] : []));
+		const restored = history.flatMap((v) =>
+			v.restoredAt ? [v.restoredAt] : [],
+		);
 		const document = documentOf.get(h.id);
 		const evidence = linesOf.get(h.id) ?? [];
 		return {
@@ -147,7 +157,10 @@ export async function billingOf(
 		};
 	});
 
-	const billing = matchBilling(poLines, draft ? [...matchable, draft] : matchable);
+	const billing = matchBilling(
+		poLines,
+		draft ? [...matchable, draft] : matchable,
+	);
 
 	return {
 		invoices: headers.map((h): LedgerInvoice => {
@@ -182,7 +195,8 @@ export async function billingOf(
 
 function groupBy<T>(rows: T[], by: (row: T) => number) {
 	const groups = new Map<number, T[]>();
-	for (const row of rows) groups.set(by(row), [...(groups.get(by(row)) ?? []), row]);
+	for (const row of rows)
+		groups.set(by(row), [...(groups.get(by(row)) ?? []), row]);
 	return groups;
 }
 
@@ -190,7 +204,9 @@ function toMatchable(l: EvidenceLine): MatchableLine {
 	if (l.kind === "credit")
 		return { kind: "credit", position: l.position, amountCents: l.amountCents };
 	if (l.quantity === null || l.packSize === null || l.unitPrice === null)
-		throw new Error(`Invoice line ${l.id} is merchandise without its quantity, pack, or price`);
+		throw new Error(
+			`Invoice line ${l.id} is merchandise without its quantity, pack, or price`,
+		);
 	return {
 		kind: "merchandise",
 		position: l.position,
