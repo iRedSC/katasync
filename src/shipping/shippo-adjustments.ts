@@ -3,7 +3,14 @@ import { type } from "arktype";
 import { parse } from "csv-parse/sync";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { shipmentAdjustments, shipments } from "#/db/schema";
+import {
+	dispatchOrders,
+	orders,
+	shipmentAdjustments,
+	shipments,
+	stores,
+} from "#/db/schema";
+import { alertRebill, crossesLarge } from "#/inbox/rebill-alerts";
 import { shippo, shippoGet } from "./shippo";
 
 // What Shippo billed on katasync's labels after buying them: the carrier
@@ -189,6 +196,8 @@ export async function saveShippoRebills(db: Db, rebills: ShippoRebill[]) {
 			},
 		];
 	});
+	const touched = [...new Set(rows.map((r) => r.shipmentId))];
+	const before = await rebilledOn(db, touched);
 	if (rows.length > 0)
 		await db
 			.insert(shipmentAdjustments)
@@ -202,12 +211,54 @@ export async function saveShippoRebills(db: Db, rebills: ShippoRebill[]) {
 					postedAt: sql`excluded.posted_at`,
 				},
 			});
+	const after = await rebilledOn(db, touched);
+	for (const id of touched) {
+		const now = after.get(id);
+		if (!now || !crossesLarge(before.get(id)?.amount ?? 0, now.amount))
+			continue;
+		await alertRebill(db, {
+			key: `shipment:${id}`,
+			orderId: now.orderId,
+			orderName: now.orderName,
+			market: now.market,
+			marketplaceId: now.marketplaceOrderId?.split(":")[1] ?? null,
+			amount: now.amount,
+			label: now.label,
+		});
+	}
 	return {
 		rebills: rebills.length,
 		saved: rows.length,
 		elsewhere: rebills.filter((r) => !byTransaction.has(r.transactionId))
 			.length,
 	};
+}
+
+// What was re-billed on each label, with the label's cost and the first of
+// its orders, for the inbox's alert.
+async function rebilledOn(db: Db, shipmentIds: number[]) {
+	if (shipmentIds.length === 0) return new Map();
+	const rows = await db
+		.selectDistinctOn([shipments.id], {
+			shipmentId: shipments.id,
+			label: shipments.cost,
+			amount: sql<number>`(select coalesce(sum(${shipmentAdjustments.amount}), 0)::float8
+				from ${shipmentAdjustments} where ${shipmentAdjustments.shipmentId} = ${shipments.id})`,
+			orderId: orders.id,
+			orderName: orders.name,
+			market: stores.channel,
+			marketplaceOrderId: orders.marketplaceOrderId,
+		})
+		.from(shipments)
+		.innerJoin(
+			dispatchOrders,
+			eq(dispatchOrders.dispatchId, shipments.dispatchId),
+		)
+		.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.where(inArray(shipments.id, shipmentIds))
+		.orderBy(shipments.id, orders.id);
+	return new Map(rows.map((r) => [r.shipmentId, r]));
 }
 
 export async function importShippoRebills(db: Db) {
