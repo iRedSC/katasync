@@ -39,6 +39,7 @@ import {
 	setMarketEmailDone,
 	setMarketEmailRead,
 } from "#/server/inbox";
+import { MailOrders } from "./buyer-order";
 import { folderIcon, type MarketView } from "./folders";
 import { InboxFrame } from "./frame";
 import { MailPane } from "./mail-pane";
@@ -270,6 +271,7 @@ function Listing({ view, market, page, counts }: BoxProps) {
 						onRead={() => read(e, e.readAt === null)}
 					/>
 				)}
+				aboutOf={(e) => <MailOrders emailId={e.id} />}
 				keysOf={(e) => ({
 					e: () => done(e, e.doneAt === null),
 					i: () => star(e),

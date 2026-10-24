@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
+import { takeSuggestion, undoFiling } from "#/purchasing/inbox/ai-filing";
 import {
 	countUnfiled,
 	fileEmail,
@@ -46,6 +47,16 @@ export const filePoEmail = createServerFn({ method: "POST" })
 export const setAsidePoEmail = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0", aside: "boolean" }))
 	.handler(async ({ data }) => setAside(getDb(), data.id, data.aside));
+
+// Files an email on the PO the AI suggested, with the changes it read.
+export const takeAiSuggestion = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => takeSuggestion(getDb(), data.id));
+
+// Sets back what the AI's filing of an email changed.
+export const undoAiFiling = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => undoFiling(getDb(), data.id));
 
 export const addPoTracking = createServerFn({ method: "POST" })
 	.validator(

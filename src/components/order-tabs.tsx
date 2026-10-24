@@ -1,32 +1,36 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 
-export type OrderTab = "ship" | "all";
+export type OrderTab = "ship" | "all" | "returns";
 
-const tabs: { key: OrderTab; label: string }[] = [
-	{ key: "ship", label: "To ship" },
-	{ key: "all", label: "All orders" },
-];
+const tabs = [
+	{ key: "ship", label: "To ship", to: "/orders", search: {} },
+	{ key: "all", label: "All orders", to: "/orders", search: { view: "all" } },
+	{ key: "returns", label: "Returns", to: "/orders/returns", search: {} },
+] as const;
 
-// The tabs over every order list. The open one shows how many it lists.
+// The tabs over every order list, Returns among them: a return is an order
+// with something coming back. The open one shows how many it lists; `aside`
+// sits at the far end, for the tab's own views.
 export function OrderTabs({
 	active,
 	count,
+	aside,
 }: {
 	active: OrderTab;
-	count: number;
+	// Left out where the page isn't a list to count (Returns › Insights).
+	count?: number;
+	aside?: ReactNode;
 }) {
-	const navigate = useNavigate();
-	const go = (key: OrderTab) =>
-		navigate({ to: "/orders", search: key === "ship" ? {} : { view: key } });
 	return (
-		<div className="flex gap-1 border-b p-2">
+		<div className="flex items-center gap-1 border-b p-2">
 			{tabs.map((t) => (
-				<button
+				<Link
 					key={t.key}
-					type="button"
-					onClick={() => go(t.key)}
+					to={t.to}
+					search={t.search}
 					className={cn(
 						"inline-flex h-7 items-center rounded-lg px-2.5 font-medium",
 						active === t.key
@@ -35,12 +39,40 @@ export function OrderTabs({
 					)}
 				>
 					{t.label}
-					{t.key === active && (
+					{t.key === active && count !== undefined && (
 						<span className="ml-1.5 text-muted-foreground tabular-nums">
 							{formatCount(count)}
 						</span>
 					)}
-				</button>
+				</Link>
+			))}
+			{aside && <div className="ml-auto flex items-center gap-1">{aside}</div>}
+		</div>
+	);
+}
+
+// Returns' two views, at the far end of its tab bar: what's due back, and
+// insights into why things come back.
+export function ReturnsViews({ active }: { active: "due" | "insights" }) {
+	const views = [
+		{ key: "due", label: "Due back", to: "/orders/returns" },
+		{ key: "insights", label: "Insights", to: "/orders/returns/insights" },
+	] as const;
+	return (
+		<div className="flex rounded-lg bg-surface p-0.5">
+			{views.map((v) => (
+				<Link
+					key={v.key}
+					to={v.to}
+					className={cn(
+						"inline-flex h-6 items-center rounded-md px-2 text-xs font-medium",
+						active === v.key
+							? "bg-card text-foreground shadow-card"
+							: "text-muted-foreground hover:text-foreground",
+					)}
+				>
+					{v.label}
+				</Link>
 			))}
 		</div>
 	);
