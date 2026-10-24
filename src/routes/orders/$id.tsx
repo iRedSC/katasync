@@ -6,6 +6,7 @@ import { FromStoreBadge } from "#/components/order-page/from-store";
 import { Line } from "#/components/order-page/line";
 import { ProfitCard } from "#/components/order-page/profit-card";
 import { SendRow } from "#/components/order-page/send-row";
+import { OrderStatusBadge } from "#/components/order-status";
 import { Badge, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
@@ -230,7 +231,7 @@ function OrderPage() {
 			title={
 				<span className="flex items-center gap-2">
 					{order.name}
-					<Badge tone={status.tone}>{status.label}</Badge>
+					<OrderStatusBadge status={status} />
 					{order.pin !== null && (
 						<span className="font-mono text-base text-muted-foreground">
 							Pin {order.pin}

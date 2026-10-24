@@ -100,7 +100,6 @@ export async function mailOrders(db: Db, emailId: number) {
 		.select({
 			id: orders.id,
 			name: orders.name,
-			cancelledAt: orders.cancelledAt,
 			market: stores.channel,
 			externalId: orders.externalId,
 			marketplaceOrderId: orders.marketplaceOrderId,
@@ -119,7 +118,7 @@ export async function mailOrders(db: Db, emailId: number) {
 	const found = rows.sort((a, b) => place(a) - place(b));
 	return {
 		orders: await Promise.all(
-			found.slice(0, MOST_SHOWN).map((o) => orderSummary(db, o)),
+			found.slice(0, MOST_SHOWN).map((o) => orderSummary(db, o.id)),
 		),
 		more: Math.max(0, found.length - MOST_SHOWN),
 	};

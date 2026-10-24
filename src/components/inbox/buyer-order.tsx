@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { BuyerOrder as Order } from "#/buyers/order";
+import { OrderStatusBadge } from "#/components/order-status";
 import { ProductImage } from "#/components/product";
 import { Tip } from "#/components/ui/tooltip";
 import type { MailOrders as Found } from "#/inbox/mail-orders";
@@ -45,8 +46,7 @@ export function BuyerOrder({
 	return <OrderStrip order={order} />;
 }
 
-// Above a marketplace email: each order it names that katasync has, by its
-// number, since there may be several.
+// Above a marketplace email: each order it names that katasync has.
 export function MailOrders({ emailId }: { emailId: number }) {
 	const [found, setFound] = useState<Found | null>(null);
 	useEffect(() => {
@@ -62,7 +62,7 @@ export function MailOrders({ emailId }: { emailId: number }) {
 	return (
 		<div className="flex flex-col gap-2 border-b px-5 py-3">
 			{found.orders.map((o) => (
-				<OrderStrip key={o.id} order={o} named />
+				<OrderStrip key={o.id} order={o} />
 			))}
 			{found.more > 0 && (
 				<p className="text-sm text-muted-foreground">
@@ -74,20 +74,17 @@ export function MailOrders({ emailId }: { emailId: number }) {
 	);
 }
 
-function OrderStrip({ order, named }: { order: Order; named?: boolean }) {
+// Its status first, where a list of them is scanned.
+function OrderStrip({ order }: { order: Order }) {
 	const [first] = order.lines;
 	return (
 		<div className="flex flex-wrap items-center gap-x-4 gap-y-2 animate-in fade-in-0">
+			<OrderStatusBadge status={order.status} />
 			<Link
 				to="/orders/$id"
 				params={{ id: String(order.id) }}
 				className="flex min-w-0 items-center gap-2 rounded-lg hover:bg-surface"
 			>
-				{named && (
-					<span className="shrink-0 text-sm font-medium tabular-nums">
-						{order.name}
-					</span>
-				)}
 				<span className="flex shrink-0 gap-1">
 					{order.lines.slice(0, 3).map((l) => (
 						<ProductImage key={l.id} src={l.imageUrl} className="size-8" />
@@ -109,11 +106,6 @@ function OrderStrip({ order, named }: { order: Order; named?: boolean }) {
 						: `${formatCount(order.lines.length)} products`}
 				</span>
 			</Link>
-			{order.cancelledAt && (
-				<span className="text-sm font-medium text-critical-text">
-					Cancelled
-				</span>
-			)}
 			{order.packages.map((p) => (
 				<PackageChip key={p.id} pkg={p} />
 			))}

@@ -1,25 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import {
-	and,
-	asc,
-	desc,
-	eq,
-	gt,
-	inArray,
-	isNull,
-	ne,
-	or,
-	type SQL,
-	sql,
-} from "drizzle-orm";
-import { shippingLocation } from "#/channels/stores";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
 	dispatches,
 	dispatchOrders,
-	locations,
 	orderCharges,
 	orderCostChecks,
 	orderCostReports,
@@ -28,31 +14,16 @@ import {
 	orderReturns,
 	orderReturnsDue,
 	orders,
-	productComponents,
 	products,
 	type ReturnState,
 	returnRequests,
 	shipments,
 	stores,
 } from "#/db/schema";
-import { cityLine } from "#/lib/format";
-import { groupBy } from "#/lib/group-by";
 import { adminUrls } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
-import { sharingOrders } from "#/orders/invoice-index";
-import { refurbishOptions, refurbishReturn } from "#/orders/refurbish";
-import { receiveReturn, undoReturns } from "#/orders/returns";
-import {
-	findReturnable,
-	listReturns,
-	markNoReturn,
-	restoreNoReturn,
-} from "#/orders/returns-due";
+import { returnStages } from "#/orders/return-stage";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
-import { boxSize } from "#/shipping/box-filter";
-import { contentsKey } from "#/shipping/contents";
-import { liveDispatches } from "#/shipping/dispatch";
-import { lastPackedFor } from "#/shipping/quick-ship";
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
 	async () => {
@@ -150,8 +121,16 @@ export const listOrders = createServerFn({ method: "GET" })
 			.select({ total: sql<number>`count(*)::int` })
 			.from(orders)
 			.where(scope);
+		const stages = await returnStages(
+			getDb(),
+			listed.map((o) => o.id),
+		);
 		return {
-			orders: listed.map((o) => ({ ...o, lines: linesOf.get(o.id) ?? [] })),
+			orders: listed.map((o) => ({
+				...o,
+				returnStage: stages.get(o.id) ?? null,
+				lines: linesOf.get(o.id) ?? [],
+			})),
 			total,
 		};
 	});
@@ -294,7 +273,7 @@ export const getOrder = createServerFn({ method: "GET" })
 			};
 		});
 		// What it made, and what each marketplace said it charged.
-		const [[profit], charges, reports, checks, [due], requests] =
+		const [[profit], charges, reports, checks, [due], requests, stages] =
 			await Promise.all([
 				db.select().from(orderProfit).where(eq(orderProfit.orderId, data.id)),
 				db
@@ -342,9 +321,10 @@ export const getOrder = createServerFn({ method: "GET" })
 					.from(returnRequests)
 					.where(eq(returnRequests.orderId, data.id))
 					.orderBy(desc(returnRequests.requestedAt)),
+				returnStages(db, [data.id]),
 			]);
 		return {
-			order,
+			order: { ...order, returnStage: stages.get(data.id) ?? null },
 			lines,
 			sends,
 			// Amazon orders already link there to fulfill.
@@ -358,231 +338,19 @@ export const getOrder = createServerFn({ method: "GET" })
 		};
 	});
 
-export const receiveOrderReturn = createServerFn({ method: "POST" })
-	.validator(
-		type({
-			orderId: "number.integer > 0",
-			lines: type({
-				lineId: "number.integer > 0",
-				quantity: "number.integer >= 0",
-			}).array(),
-			outcome: type("'restock' | 'write_off'").or({
-				refurbishInto: "number.integer > 0",
-			}),
-		}),
-	)
-	.handler(({ data }) => receiveReturn(getDb(), data));
-
-export const undoOrderReturn = createServerFn({ method: "POST" })
-	.validator(type({ ids: "(number.integer > 0)[]" }))
-	.handler(({ data }) => undoReturns(getDb(), data.ids));
-
-// The refurb dialog: what a returned line's refurb starts as.
-export const getRefurbishOptions = createServerFn({ method: "POST" })
-	.validator(
-		type({ orderId: "number.integer > 0", lineId: "number.integer > 0" }),
-	)
-	.handler(({ data }) => refurbishOptions(getDb(), data));
-
-export const refurbishOrderReturn = createServerFn({ method: "POST" })
-	.validator(
-		type({
-			orderId: "number.integer > 0",
-			lineId: "number.integer > 0",
-			quantity: "number.integer > 0",
-			condition: "string > 0",
-			title: "string > 0",
-			price: "number > 0",
-			compareAtPrice: "number > 0 | null",
-			weightGrams: "number.integer > 0 | null",
-			vendor: "string",
-			productType: "string",
-			tags: "string[]",
-			notes: "string",
-		}),
-	)
-	.handler(({ data }) => refurbishReturn(getDb(), data));
-
-// The Returns tab: what's due back, and what came back lately.
-export const getReturns = createServerFn({ method: "GET" }).handler(() =>
-	listReturns(getDb()),
-);
-
-export const searchReturnable = createServerFn({ method: "GET" })
-	.validator(type({ q: "string <= 200" }))
-	.handler(({ data }) => findReturnable(getDb(), data.q));
-
-export const markOrderNoReturn = createServerFn({ method: "POST" })
-	.validator(type({ orderId: "number.integer > 0" }))
-	.handler(({ data }) => markNoReturn(getDb(), data.orderId));
-
-export const undoOrderNoReturn = createServerFn({ method: "POST" })
-	.validator(type({ orderId: "number.integer > 0", previous: "Date | null" }))
-	.handler(({ data }) => restoreNoReturn(getDb(), data.orderId, data.previous));
-
-// Everything the invoices for orders still to ship print, in pin order so
-// the stack matches what packers type. `ids` picks the orders instead,
-// whether or not they still need shipping.
-// Called by the invoices page once the print dialog closes, with the
-// orders it held, so the next Print all skips them.
-export const markInvoicesPrinted = createServerFn({ method: "POST" })
-	.validator(type({ ids: "(number.integer > 0)[] > 0" }))
-	.handler(async ({ data }) => {
-		await getDb()
-			.update(orders)
-			.set({ invoicePrintedAt: new Date() })
-			.where(inArray(orders.id, data.ids));
-	});
-
-export const listInvoices = createServerFn({ method: "GET" })
-	.validator(type({ "ids?": "(number.integer > 0)[]" }))
-	.handler(async ({ data }) => {
-		const db = getDb();
-		const locationId = await shippingLocation(db);
-		const [from] = locationId
-			? await db.select().from(locations).where(eq(locations.id, locationId))
-			: [];
-		const select = (where: SQL) =>
-			db
-				.select({
-					id: orders.id,
-					name: orders.name,
-					pin: orders.pin,
-					placedAt: orders.placedAt,
-					salesChannel: orders.salesChannel,
-					customerName: orders.customerName,
-					shipAddress1: orders.shipAddress1,
-					shipAddress2: orders.shipAddress2,
-					shipCity: orders.shipCity,
-					shipRegion: orders.shipRegion,
-					shipPostalCode: orders.shipPostalCode,
-					shipCountry: orders.shipCountry,
-					total: orders.total,
-					shippingCharged: orders.shippingCharged,
-					financialStatus: orders.financialStatus,
-					channel: stores.channel,
-					marketplaceOrderId: orders.marketplaceOrderId,
-					externalId: orders.externalId,
-					needsShipping,
-				})
-				.from(orders)
-				.innerJoin(stores, eq(stores.id, orders.storeId))
-				.where(where)
-				.orderBy(asc(orders.pin), asc(orders.placedAt));
-		// The orders picked, printed before or not, or every order still to
-		// ship that hasn't been printed.
-		const toShip = await select(
-			data.ids
-				? inArray(orders.id, data.ids)
-				: sql`${needsShipping} and ${isNull(orders.invoicePrintedAt)}`,
-		);
-		const lines = toShip.length
-			? await db
-					.select({
-						orderId: orderLines.orderId,
-						productId: orderLines.productId,
-						sku: sql<
-							string | null
-						>`coalesce(${products.sku}, ${orderLines.sku})`,
-						title: orderLines.title,
-						quantity: orderLines.quantity,
-						unitPrice: orderLines.unitPrice,
-						// The size or option to pick, from the catalog: channel
-						// titles don't always carry it.
-						variantName: products.variantName,
-						weightGrams: products.weightGrams,
-						imageUrl: products.imageUrl,
-					})
-					.from(orderLines)
-					.leftJoin(products, eq(products.id, orderLines.productId))
-					.where(
-						and(
-							inArray(
-								orderLines.orderId,
-								toShip.map((o) => o.id),
-							),
-							gt(orderLines.quantity, 0),
-						),
-					)
-					.orderBy(orderLines.id)
-			: [];
-		// What's inside each set sold (kit or bundle), one level down, so the
-		// invoice lists the pieces under it.
-		const setIds = [
-			...new Set(lines.flatMap((l) => (l.productId ? [l.productId] : []))),
-		];
-		const parts = setIds.length
-			? await db
-					.select({
-						setId: productComponents.parentProductId,
-						sku: products.sku,
-						name: products.name,
-						variantName: products.variantName,
-						imageUrl: products.imageUrl,
-						perSet: productComponents.quantity,
-					})
-					.from(productComponents)
-					.innerJoin(
-						products,
-						eq(products.id, productComponents.componentProductId),
-					)
-					.where(inArray(productComponents.parentProductId, setIds))
-					.orderBy(asc(products.sku))
-			: [];
-		const partsBy = groupBy(parts, (p) => p.setId);
-		const partsOf = (productId: number | null) =>
-			productId === null ? [] : (partsBy.get(productId) ?? []);
-		const linesBy = groupBy(lines, (l) => l.orderId);
-		const linesOf = (id: number) => linesBy.get(id) ?? [];
-		const keys = new Map(toShip.map((o) => [o.id, contentsKey(linesOf(o.id))]));
-		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
-		// Any order still to ship can share the box, printed or not, so a
-		// packer printing a few still hears about the rest.
-		const pool = data.ids ? await select(needsShipping) : toShip;
-		// Orders already holding a label can't join another box.
-		const live = await liveDispatches(db, [
-			...new Set([...toShip, ...pool].map((o) => o.id)),
-		]);
-		// Other orders to the same address that can share the box, so the
-		// packer gathers them before typing the pin.
-		const sharing = sharingOrders(toShip, pool, live);
-		return {
-			from: from
-				? {
-						name: from.shipFromName ?? from.name,
-						lines: [
-							from.address1,
-							from.address2,
-							cityLine(from.city, from.region, from.postalCode),
-						].filter((l): l is string => !!l),
-						phone: from.phone,
-						email: from.email,
-					}
-				: null,
-			invoices: toShip.map((o) => {
-				const own = linesOf(o.id);
-				const last = lastPacked.get(keys.get(o.id) ?? "");
-				return {
-					...o,
-					lines: own.map((l) => ({ ...l, parts: partsOf(l.productId) })),
-					shipsWith: sharing.get(o.id) ?? [],
-					// What quick ship will suggest: the box and weight these exact
-					// contents went out in last time, else the items' own weight.
-					// Name and size apart, so the invoice can set them differently.
-					box: last ? { name: last.boxName, size: boxSize(last) } : null,
-					// How many boxes these contents took last time; the box and
-					// weight above are the first one's.
-					boxes: last?.boxes ?? 1,
-					weightGrams:
-						last?.weightGrams ??
-						(own.every((l) => l.weightGrams !== null)
-							? own.reduce((g, l) => g + (l.weightGrams ?? 0) * l.quantity, 0)
-							: null),
-				};
-			}),
-		};
-	});
+export { listInvoices, markInvoicesPrinted } from "./orders/invoices";
+// Split out by what they serve; kept here so callers import one place.
+export {
+	getRefurbishOptions,
+	getReturns,
+	markOrderNoReturn,
+	type ReturnsData,
+	receiveOrderReturn,
+	refurbishOrderReturn,
+	searchReturnable,
+	undoOrderNoReturn,
+	undoOrderReturn,
+} from "./orders/returns";
 
 export type OrderRow = Awaited<ReturnType<typeof listOrders>>["orders"][number];
 export type OrderDetail = Awaited<ReturnType<typeof getOrder>>;
-export type ReturnsData = Awaited<ReturnType<typeof getReturns>>;
