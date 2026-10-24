@@ -1,6 +1,8 @@
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { purchaseOrders, suppliers } from "#/db/schema";
+import { groupBy } from "#/lib/group-by";
+import { flagsOfEmails } from "#/purchasing/flags";
 import { inboxAddress } from "./graph";
 import {
 	countUnfiled,
@@ -41,7 +43,7 @@ export function likelihood(
 }
 
 // POs an email can go on: sent in the last half year, newest first.
-function recentPos(db: Db) {
+export function recentPos(db: Db) {
 	return db
 		.select({
 			id: purchaseOrders.id,
@@ -68,6 +70,13 @@ export async function inboxPage(db: Db, view: InboxView) {
 		recentPos(db),
 		countUnfiled(db),
 	]);
+	const flags = groupBy(
+		await flagsOfEmails(
+			db,
+			emails.map((e) => e.id),
+		),
+		(f) => f.emailId,
+	);
 	return {
 		connected: inboxAddress() !== null,
 		// Unread, as the Inbox page counts.
@@ -80,6 +89,10 @@ export async function inboxPage(db: Db, view: InboxView) {
 			};
 			return {
 				...e,
+				// Those read from it on the PO it's on.
+				flags: (flags.get(e.id) ?? []).filter(
+					(f) => f.purchaseOrderId === e.purchaseOrderId,
+				),
 				likelyPos: pos
 					.filter((p) => rank(p) < 2 && p.id !== e.purchaseOrderId)
 					.sort((a, b) => rank(a) - rank(b))
