@@ -1,6 +1,6 @@
 # Committed stock: activation runbook
 
-Migration `0121_quantity_commitments` is additive and leaves
+Migration `0123_quantity_commitments` is additive and leaves
 `quantity_mode` at `legacy`. In legacy mode everything behaves as before:
 orders take stock when they sync (net stock). Nothing switches modes on its own.
 
@@ -16,7 +16,7 @@ Committed mode means shelves hold physical units, unshipped orders reserve
    crons, webhooks, or syncs.
 2. Pause order sync, webhooks, and quick ship for the window (the job that
    calls `ingestOrder`, `reconcileStock`, and shipping handoff).
-3. Migration `0122_quantity_dispatch_evidence` and the complete shipping,
+3. Migration `0124_quantity_dispatch_evidence` and the complete shipping,
    reconciliation, and actor-attribution integration are deployed. Packed
    dispatches from before that migration have no frozen inventory line ID
    and are held in committed mode. Resolve or void and repack them before

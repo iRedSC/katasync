@@ -1,1003 +1,9 @@
 {
-  "id": "6dbbb472-3dd2-4f2f-b71e-b21febe0ed06",
-  "prevId": "f84ca81e-b6e5-448e-8ef8-624ec3469025",
+  "id": "5eb4ce60-a388-4006-891e-14cc23edb628",
+  "prevId": "af652a4e-f3a8-4c57-aab1-19d0e53a4408",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.bank_accounts": {
-      "name": "bank_accounts",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "name": "bank_accounts_id_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "public",
-            "type": "always"
-          }
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "bank_accounts_name_unique": {
-          "name": "bank_accounts_name_unique",
-          "columns": [
-            "name"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "bank_accounts_currency": {
-          "name": "bank_accounts_currency",
-          "value": "\"bank_accounts\".\"currency\" ~ '^[A-Z]{3}$'"
-        },
-        "bank_accounts_name": {
-          "name": "bank_accounts_name",
-          "value": "\"bank_accounts\".\"name\" = btrim(\"bank_accounts\".\"name\") and length(\"bank_accounts\".\"name\") between 1 and 80"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.bank_import_rows": {
-      "name": "bank_import_rows",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "name": "bank_import_rows_id_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "public",
-            "type": "always"
-          }
-        },
-        "import_id": {
-          "name": "import_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "row_number": {
-          "name": "row_number",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "cells": {
-          "name": "cells",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "bank_row_outcome",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "problem": {
-          "name": "problem",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "duplicate_of": {
-          "name": "duplicate_of",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "bank_import_rows_import_id_bank_imports_id_fk": {
-          "name": "bank_import_rows_import_id_bank_imports_id_fk",
-          "tableFrom": "bank_import_rows",
-          "columnsFrom": [
-            "import_id"
-          ],
-          "tableTo": "bank_imports",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        },
-        "bank_import_rows_duplicate_of_bank_transactions_id_fk": {
-          "name": "bank_import_rows_duplicate_of_bank_transactions_id_fk",
-          "tableFrom": "bank_import_rows",
-          "columnsFrom": [
-            "duplicate_of"
-          ],
-          "tableTo": "bank_transactions",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "bank_import_rows_import_row": {
-          "name": "bank_import_rows_import_row",
-          "columns": [
-            "import_id",
-            "row_number"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "bank_import_rows_problem": {
-          "name": "bank_import_rows_problem",
-          "value": "(\"bank_import_rows\".\"outcome\" = 'invalid') = (\"bank_import_rows\".\"problem\" is not null)"
-        },
-        "bank_import_rows_duplicate": {
-          "name": "bank_import_rows_duplicate",
-          "value": "(\"bank_import_rows\".\"outcome\" = 'duplicate') = (\"bank_import_rows\".\"duplicate_of\" is not null)"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.bank_imports": {
-      "name": "bank_imports",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "name": "bank_imports_id_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "public",
-            "type": "always"
-          }
-        },
-        "account_id": {
-          "name": "account_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "file_sha256": {
-          "name": "file_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "file_name": {
-          "name": "file_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "mapping": {
-          "name": "mapping",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "row_count": {
-          "name": "row_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "imported_at": {
-          "name": "imported_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "imported_by": {
-          "name": "imported_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_tx": {
-          "name": "created_tx",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "txid_current()::text"
-        },
-        "request_digest": {
-          "name": "request_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "replaces_import_id": {
-          "name": "replaces_import_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "voided_at": {
-          "name": "voided_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "voided_by": {
-          "name": "voided_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "bank_imports_account_file": {
-          "name": "bank_imports_account_file",
-          "columns": [
-            {
-              "expression": "account_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "file_sha256",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "with": {},
-          "method": "btree",
-          "where": "\"bank_imports\".\"voided_at\" is null",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "bank_imports_account_id_bank_accounts_id_fk": {
-          "name": "bank_imports_account_id_bank_accounts_id_fk",
-          "tableFrom": "bank_imports",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "tableTo": "bank_accounts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        },
-        "bank_imports_replaces_import_id_bank_imports_id_fk": {
-          "name": "bank_imports_replaces_import_id_bank_imports_id_fk",
-          "tableFrom": "bank_imports",
-          "columnsFrom": [
-            "replaces_import_id"
-          ],
-          "tableTo": "bank_imports",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "bank_imports_replaces": {
-          "name": "bank_imports_replaces",
-          "columns": [
-            "replaces_import_id"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "bank_imports_sha": {
-          "name": "bank_imports_sha",
-          "value": "\"bank_imports\".\"file_sha256\" ~ '^[0-9a-f]{64}$'"
-        },
-        "bank_imports_row_count": {
-          "name": "bank_imports_row_count",
-          "value": "\"bank_imports\".\"row_count\" >= 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.bank_match_parts": {
-      "name": "bank_match_parts",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "name": "bank_match_parts_id_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "public",
-            "type": "always"
-          }
-        },
-        "match_id": {
-          "name": "match_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "target_kind": {
-          "name": "target_kind",
-          "type": "bank_target_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "payout_id": {
-          "name": "payout_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "amount_cents": {
-          "name": "amount_cents",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_amount_cents": {
-          "name": "observed_amount_cents",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_currency": {
-          "name": "observed_currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_status": {
-          "name": "observed_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_reference": {
-          "name": "observed_reference",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "observed_on": {
-          "name": "observed_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "bank_match_parts_payout_idx": {
-          "name": "bank_match_parts_payout_idx",
-          "columns": [
-            {
-              "expression": "payout_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "bank_match_parts_match_id_bank_matches_id_fk": {
-          "name": "bank_match_parts_match_id_bank_matches_id_fk",
-          "tableFrom": "bank_match_parts",
-          "columnsFrom": [
-            "match_id"
-          ],
-          "tableTo": "bank_matches",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        },
-        "bank_match_parts_payout_id_payouts_id_fk": {
-          "name": "bank_match_parts_payout_id_payouts_id_fk",
-          "tableFrom": "bank_match_parts",
-          "columnsFrom": [
-            "payout_id"
-          ],
-          "tableTo": "payouts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "bank_match_parts_target": {
-          "name": "bank_match_parts_target",
-          "columns": [
-            "match_id",
-            "target_kind",
-            "payout_id"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "bank_match_parts_payout": {
-          "name": "bank_match_parts_payout",
-          "value": "(\"bank_match_parts\".\"target_kind\" = 'payout') = (\"bank_match_parts\".\"payout_id\" is not null)"
-        },
-        "bank_match_parts_amount": {
-          "name": "bank_match_parts_amount",
-          "value": "\"bank_match_parts\".\"amount_cents\" <> 0"
-        },
-        "bank_match_parts_within": {
-          "name": "bank_match_parts_within",
-          "value": "sign(\"bank_match_parts\".\"amount_cents\") = sign(\"bank_match_parts\".\"observed_amount_cents\") and abs(\"bank_match_parts\".\"amount_cents\") <= abs(\"bank_match_parts\".\"observed_amount_cents\")"
-        },
-        "bank_match_parts_currency": {
-          "name": "bank_match_parts_currency",
-          "value": "\"bank_match_parts\".\"observed_currency\" ~ '^[A-Z]{3}$'"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.bank_matches": {
-      "name": "bank_matches",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "name": "bank_matches_id_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "public",
-            "type": "always"
-          }
-        },
-        "transaction_id": {
-          "name": "transaction_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "matched_at": {
-          "name": "matched_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "clock_timestamp()"
-        },
-        "undone_at": {
-          "name": "undone_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "matched_by": {
-          "name": "matched_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_tx": {
-          "name": "created_tx",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "txid_current()::text"
-        },
-        "undone_by": {
-          "name": "undone_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "replaces": {
-          "name": "replaces",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "bank_matches_active_transaction": {
-          "name": "bank_matches_active_transaction",
-          "columns": [
-            {
-              "expression": "transaction_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "with": {},
-          "method": "btree",
-          "where": "\"bank_matches\".\"undone_at\" is null",
-          "concurrently": false
-        },
-        "bank_matches_replaces": {
-          "name": "bank_matches_replaces",
-          "columns": [
-            {
-              "expression": "replaces",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "bank_matches_transaction_id_bank_transactions_id_fk": {
-          "name": "bank_matches_transaction_id_bank_transactions_id_fk",
-          "tableFrom": "bank_matches",
-          "columnsFrom": [
-            "transaction_id"
-          ],
-          "tableTo": "bank_transactions",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        },
-        "bank_matches_replaces_bank_matches_id_fk": {
-          "name": "bank_matches_replaces_bank_matches_id_fk",
-          "tableFrom": "bank_matches",
-          "columnsFrom": [
-            "replaces"
-          ],
-          "tableTo": "bank_matches",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "bank_matches_undone_after": {
-          "name": "bank_matches_undone_after",
-          "value": "\"bank_matches\".\"undone_at\" is null or \"bank_matches\".\"undone_at\" >= \"bank_matches\".\"matched_at\""
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.bank_payout_guards": {
-      "name": "bank_payout_guards",
-      "schema": "",
-      "columns": {
-        "payout_id": {
-          "name": "payout_id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "version": {
-          "name": "version",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "bank_payout_guards_payout_id_payouts_id_fk": {
-          "name": "bank_payout_guards_payout_id_payouts_id_fk",
-          "tableFrom": "bank_payout_guards",
-          "columnsFrom": [
-            "payout_id"
-          ],
-          "tableTo": "payouts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.bank_target_changes": {
-      "name": "bank_target_changes",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "name": "bank_target_changes_id_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "public",
-            "type": "always"
-          }
-        },
-        "target_kind": {
-          "name": "target_kind",
-          "type": "bank_target_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "payout_id": {
-          "name": "payout_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "changed_at": {
-          "name": "changed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "clock_timestamp()"
-        },
-        "before": {
-          "name": "before",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "after": {
-          "name": "after",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "bank_target_changes_payout_idx": {
-          "name": "bank_target_changes_payout_idx",
-          "columns": [
-            {
-              "expression": "payout_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "changed_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "bank_target_changes_payout_id_payouts_id_fk": {
-          "name": "bank_target_changes_payout_id_payouts_id_fk",
-          "tableFrom": "bank_target_changes",
-          "columnsFrom": [
-            "payout_id"
-          ],
-          "tableTo": "payouts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "bank_target_changes_payout": {
-          "name": "bank_target_changes_payout",
-          "value": "(\"bank_target_changes\".\"target_kind\" = 'payout') = (\"bank_target_changes\".\"payout_id\" is not null)"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.bank_transactions": {
-      "name": "bank_transactions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "name": "bank_transactions_id_seq",
-            "increment": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "startWith": "1",
-            "cache": "1",
-            "cycle": false,
-            "schema": "public",
-            "type": "always"
-          }
-        },
-        "account_id": {
-          "name": "account_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "import_row_id": {
-          "name": "import_row_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "posted_on": {
-          "name": "posted_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "amount_cents": {
-          "name": "amount_cents",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "bank_ref": {
-          "name": "bank_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "fingerprint": {
-          "name": "fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "voided_at": {
-          "name": "voided_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "voided_by": {
-          "name": "voided_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "bank_transactions_account_ref": {
-          "name": "bank_transactions_account_ref",
-          "columns": [
-            {
-              "expression": "account_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "bank_ref",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "with": {},
-          "method": "btree",
-          "where": "\"bank_transactions\".\"voided_at\" is null",
-          "concurrently": false
-        },
-        "bank_transactions_account_posted_idx": {
-          "name": "bank_transactions_account_posted_idx",
-          "columns": [
-            {
-              "expression": "account_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "posted_on",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
-        "bank_transactions_fingerprint_idx": {
-          "name": "bank_transactions_fingerprint_idx",
-          "columns": [
-            {
-              "expression": "account_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "fingerprint",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
-      "foreignKeys": {
-        "bank_transactions_account_id_bank_accounts_id_fk": {
-          "name": "bank_transactions_account_id_bank_accounts_id_fk",
-          "tableFrom": "bank_transactions",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "tableTo": "bank_accounts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        },
-        "bank_transactions_import_row_id_bank_import_rows_id_fk": {
-          "name": "bank_transactions_import_row_id_bank_import_rows_id_fk",
-          "tableFrom": "bank_transactions",
-          "columnsFrom": [
-            "import_row_id"
-          ],
-          "tableTo": "bank_import_rows",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "bank_transactions_importRowId_unique": {
-          "name": "bank_transactions_importRowId_unique",
-          "columns": [
-            "import_row_id"
-          ],
-          "nullsNotDistinct": false
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "bank_transactions_amount": {
-          "name": "bank_transactions_amount",
-          "value": "\"bank_transactions\".\"amount_cents\" <> 0"
-        },
-        "bank_transactions_amount_bound": {
-          "name": "bank_transactions_amount_bound",
-          "value": "abs(\"bank_transactions\".\"amount_cents\") < 1000000000000"
-        },
-        "bank_transactions_currency": {
-          "name": "bank_transactions_currency",
-          "value": "\"bank_transactions\".\"currency\" ~ '^[A-Z]{3}$'"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.audit_events": {
       "name": "audit_events",
       "schema": "",
@@ -12928,26 +11934,439 @@
         }
       },
       "isRLSEnabled": false
+    },
+    "public.po_flags": {
+      "name": "po_flags",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "po_flags_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "purchase_order_id": {
+          "name": "purchase_order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_id": {
+          "name": "email_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "po_flag_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "numeric(12, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "by": {
+          "name": "by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution": {
+          "name": "resolution",
+          "type": "po_flag_resolution",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "before": {
+          "name": "before",
+          "type": "numeric(12, 4)",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "po_flags_po_idx": {
+          "name": "po_flags_po_idx",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "po_flags_email_idx": {
+          "name": "po_flags_email_idx",
+          "columns": [
+            {
+              "expression": "email_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "po_flags_one_open": {
+          "name": "po_flags_one_open",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "product_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"po_flags\".\"resolved_at\" is null and \"po_flags\".\"kind\" <> 'note'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "po_flags_purchase_order_id_purchase_orders_id_fk": {
+          "name": "po_flags_purchase_order_id_purchase_orders_id_fk",
+          "tableFrom": "po_flags",
+          "tableTo": "purchase_orders",
+          "columnsFrom": [
+            "purchase_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "po_flags_email_id_po_emails_id_fk": {
+          "name": "po_flags_email_id_po_emails_id_fk",
+          "tableFrom": "po_flags",
+          "tableTo": "po_emails",
+          "columnsFrom": [
+            "email_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "po_flags_product_id_products_id_fk": {
+          "name": "po_flags_product_id_products_id_fk",
+          "tableFrom": "po_flags",
+          "tableTo": "products",
+          "columnsFrom": [
+            "product_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "po_flags_shape": {
+          "name": "po_flags_shape",
+          "value": "case \"po_flags\".\"kind\"\n\t\t\t\twhen 'price' then \"po_flags\".\"product_id\" is not null and \"po_flags\".\"value\" >= 0\n\t\t\t\twhen 'quantity' then \"po_flags\".\"product_id\" is not null and \"po_flags\".\"value\" >= 0 and \"po_flags\".\"value\" = trunc(\"po_flags\".\"value\")\n\t\t\t\twhen 'back_order' then \"po_flags\".\"product_id\" is not null and \"po_flags\".\"value\" is null\n\t\t\t\telse \"po_flags\".\"value\" is null\n\t\t\tend"
+        },
+        "po_flags_resolved": {
+          "name": "po_flags_resolved",
+          "value": "(\"po_flags\".\"resolved_at\" is null) = (\"po_flags\".\"resolution\" is null)"
+        },
+        "po_flags_before_applied": {
+          "name": "po_flags_before_applied",
+          "value": "\"po_flags\".\"before\" is null or \"po_flags\".\"resolution\" = 'applied'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.return_tracking": {
+      "name": "return_tracking",
+      "schema": "",
+      "columns": {
+        "return_request_id": {
+          "name": "return_request_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "carrier": {
+          "name": "carrier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "number": {
+          "name": "number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "tracking_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status_detail": {
+          "name": "status_detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status_at": {
+          "name": "status_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "eta": {
+          "name": "eta",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "original_eta": {
+          "name": "original_eta",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "service": {
+          "name": "service",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination": {
+          "name": "destination",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "history": {
+          "name": "history",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "return_tracking_return_request_id_return_requests_id_fk": {
+          "name": "return_tracking_return_request_id_return_requests_id_fk",
+          "tableFrom": "return_tracking",
+          "tableTo": "return_requests",
+          "columnsFrom": [
+            "return_request_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "return_tracking_number_shape": {
+          "name": "return_tracking_number_shape",
+          "value": "\"return_tracking\".\"number\" ~ '^[0-9A-Z]{8,40}$'"
+        },
+        "return_tracking_carrier": {
+          "name": "return_tracking_carrier",
+          "value": "\"return_tracking\".\"carrier\" in ('ups', 'usps', 'fedex')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.po_email_ai": {
+      "name": "po_email_ai",
+      "schema": "",
+      "columns": {
+        "email_id": {
+          "name": "email_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "po_email_ai_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purchase_order_id": {
+          "name": "purchase_order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "proposal": {
+          "name": "proposal",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "applied": {
+          "name": "applied",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "po_email_ai_email_id_po_emails_id_fk": {
+          "name": "po_email_ai_email_id_po_emails_id_fk",
+          "tableFrom": "po_email_ai",
+          "tableTo": "po_emails",
+          "columnsFrom": [
+            "email_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "po_email_ai_purchase_order_id_purchase_orders_id_fk": {
+          "name": "po_email_ai_purchase_order_id_purchase_orders_id_fk",
+          "tableFrom": "po_email_ai",
+          "tableTo": "purchase_orders",
+          "columnsFrom": [
+            "purchase_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "po_email_ai_po": {
+          "name": "po_email_ai_po",
+          "value": "(\"po_email_ai\".\"state\" in ('filed', 'suggested', 'undone')) = (\"po_email_ai\".\"purchase_order_id\" is not null)"
+        },
+        "po_email_ai_applied": {
+          "name": "po_email_ai_applied",
+          "value": "(\"po_email_ai\".\"state\" in ('filed', 'undone')) = (\"po_email_ai\".\"applied\" is not null)"
+        },
+        "po_email_ai_proposal": {
+          "name": "po_email_ai_proposal",
+          "value": "\"po_email_ai\".\"state\" <> 'suggested' or \"po_email_ai\".\"proposal\" is not null"
+        }
+      },
+      "isRLSEnabled": false
     }
   },
   "enums": {
-    "public.bank_row_outcome": {
-      "name": "bank_row_outcome",
-      "schema": "public",
-      "values": [
-        "accepted",
-        "invalid",
-        "duplicate",
-        "skipped"
-      ]
-    },
-    "public.bank_target_kind": {
-      "name": "bank_target_kind",
-      "schema": "public",
-      "values": [
-        "payout"
-      ]
-    },
     "public.audit_op": {
       "name": "audit_op",
       "schema": "public",
@@ -13177,7 +12596,8 @@
         "address",
         "subject",
         "staff",
-        "claude"
+        "claude",
+        "ai"
       ]
     },
     "public.po_file_source": {
@@ -13274,6 +12694,36 @@
       "values": [
         "draft",
         "sent"
+      ]
+    },
+    "public.po_flag_resolution": {
+      "name": "po_flag_resolution",
+      "schema": "public",
+      "values": [
+        "applied",
+        "dismissed"
+      ]
+    },
+    "public.po_flag_kind": {
+      "name": "po_flag_kind",
+      "schema": "public",
+      "values": [
+        "price",
+        "quantity",
+        "back_order",
+        "note"
+      ]
+    },
+    "public.po_email_ai_state": {
+      "name": "po_email_ai_state",
+      "schema": "public",
+      "values": [
+        "working",
+        "filed",
+        "suggested",
+        "unmatched",
+        "failed",
+        "undone"
       ]
     }
   },

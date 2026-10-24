@@ -9,8 +9,8 @@ const FILES = [
 	"src/server/banking.ts",
 	"src/routes/reconciliation.tsx",
 	"src/db/banking-schema.ts",
-	"drizzle/0126_banking.sql",
-	"drizzle/0127_banking_evidence.sql",
+	"drizzle/0128_banking.sql",
+	"drizzle/0129_banking_evidence.sql",
 ];
 
 const FORBIDDEN = [

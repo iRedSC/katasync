@@ -10,6 +10,11 @@ import { createFileRoute } from "@tanstack/react-router";
 // three days for anything a run missed and asks Shippo about packages still
 // on their way. Signed with `Authorization: Bearer $CRON_SECRET`.
 
+// How long the AI may spend filing what nothing filed by itself, from the
+// run's start: Vercel stops a function at 300s, and a sweep has Shippo and
+// old emails' HTML to do after it.
+const AI_BUDGET_MS = 150_000;
+
 // Longer than the cron's interval, so a late run doesn't leave a gap.
 const LOOK_BACK_MS = 7 * 60 * 1000;
 const SWEEP_LOOK_BACK_MS = 3 * 86_400_000;
@@ -57,6 +62,7 @@ export const Route = createFileRoute("/api/cron/inbox")({
 });
 
 async function readPurchasing(sweep: boolean) {
+	const started = Date.now();
 	const [{ INBOX_ENV, messagesSince }, { missingEnv }] = await Promise.all([
 		import("#/purchasing/inbox/graph"),
 		import("#/diagnostics/checks"),
@@ -74,7 +80,10 @@ async function readPurchasing(sweep: boolean) {
 			import("#/db/client"),
 		]);
 	const db = getDb();
-	const result = await ingest(db, messages, undefined, { retrack: sweep });
+	const result = {
+		...(await ingest(db, messages, undefined, { retrack: sweep })),
+		ai: await fileByAi(db, started + AI_BUDGET_MS),
+	};
 	if (!sweep) return result;
 	const [graph, { readHtml }] = await Promise.all([
 		import("#/purchasing/inbox/graph"),
@@ -88,4 +97,19 @@ async function readPurchasing(sweep: boolean) {
 			readHtml(graph, messageId, "purchasing"),
 		),
 	};
+}
+
+// The AI's go at the emails that weren't filed by themselves; a failed one is
+// tried again on a later run.
+async function fileByAi(db: import("#/db/client").Db, deadline: number) {
+	const [{ aiConfigured, runAgent }, { fileWithAi }] = await Promise.all([
+		import("#/ai/harness"),
+		import("#/purchasing/inbox/ai-filing"),
+	]);
+	if (!aiConfigured()) return { skipped: "set AI_PROXY_URL and AI_PROXY_KEY" };
+	const run: typeof runAgent = (agent, input, options) =>
+		runAgent(agent, input, { ...options, deadline });
+	return fileWithAi(db, { run }).catch((e: unknown) => ({
+		problems: [e instanceof Error ? e.message : String(e)],
+	}));
 }

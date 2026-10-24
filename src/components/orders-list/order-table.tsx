@@ -1,6 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import { type RefObject, useEffect, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
+import { OrderStatusBadge } from "#/components/order-status";
 import { Badge } from "#/components/page";
 import { TickCell } from "#/components/tick-cell";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
@@ -164,7 +165,7 @@ export function OrderTable({
 									</td>
 									<td className="px-4 py-2.5">
 										<div className="flex gap-1.5">
-											<Badge tone={status.tone}>{status.label}</Badge>
+											<OrderStatusBadge status={status} />
 											{o.unmatched > 0 && (
 												<Badge tone="critical">Unknown product</Badge>
 											)}
