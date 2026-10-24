@@ -8,7 +8,10 @@ export class ConsumeError extends Error {
 	name = "ConsumeError";
 }
 
-export type Shelves = { main: number; overflow: { locationId: number; keep: number } | null };
+export type Shelves = {
+	main: number;
+	overflow: { locationId: number; keep: number } | null;
+};
 
 export function allocate(
 	shelves: Shelves,
@@ -68,7 +71,11 @@ export async function shippingShelves(db: Db): Promise<Shelves> {
 	};
 }
 
-export async function lockedHolds(db: Db, productIds: number[], shelves: Shelves) {
+export async function lockedHolds(
+	db: Db,
+	productIds: number[],
+	shelves: Shelves,
+) {
 	const locationIds = [
 		shelves.main,
 		...(shelves.overflow ? [shelves.overflow.locationId] : []),
@@ -89,4 +96,3 @@ export async function lockedHolds(db: Db, productIds: number[], shelves: Shelves
 					.for("update");
 	return new Map(rows.map((r) => [`${r.productId}:${r.locationId}`, r.onHand]));
 }
-

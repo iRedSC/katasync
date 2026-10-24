@@ -8,7 +8,10 @@ import { cn } from "#/lib/utils";
 import type { getTransfer } from "#/server/transfers";
 
 type Loaded = Awaited<ReturnType<typeof getTransfer>>;
-type Delivery = Extract<Loaded["delivery"], { kind: "in_transit" | "received" }>;
+type Delivery = Extract<
+	Loaded["delivery"],
+	{ kind: "in_transit" | "received" }
+>;
 
 export function Arrivals({
 	delivery,
@@ -40,7 +43,10 @@ export function Arrivals({
 	const total = parsed.reduce((n, p) => n + (p.quantity ?? 0), 0);
 	const product = (id: number) => lines.find((l) => l.productId === id);
 	return (
-		<Card title={open.length > 0 ? `On the way to ${to}` : `Arrived at ${to}`} flush>
+		<Card
+			title={open.length > 0 ? `On the way to ${to}` : `Arrived at ${to}`}
+			flush
+		>
 			{open.length > 0 && (
 				<>
 					<table className="w-full">
@@ -52,7 +58,10 @@ export function Arrivals({
 									<tr key={l.productId} className="border-t">
 										<td className="px-4 py-2">
 											{p ? (
-												<ProductName name={p.name} variantName={p.variantName} />
+												<ProductName
+													name={p.name}
+													variantName={p.variantName}
+												/>
 											) : (
 												l.productId
 											)}
@@ -66,7 +75,10 @@ export function Arrivals({
 												aria-label={`${p?.sku ?? l.productId} arrived`}
 												value={counts[l.productId] ?? String(l.inTransit)}
 												onChange={(e) =>
-													setCounts({ ...counts, [l.productId]: e.target.value })
+													setCounts({
+														...counts,
+														[l.productId]: e.target.value,
+													})
 												}
 												className={cn(
 													"w-full rounded-lg bg-surface px-2 py-1 text-right tabular-nums outline-none",
@@ -85,7 +97,9 @@ export function Arrivals({
 							onClick={async () => {
 								const r = await onReceive(
 									parsed.flatMap((p) =>
-										p.quantity ? [{ productId: p.productId, quantity: p.quantity }] : [],
+										p.quantity
+											? [{ productId: p.productId, quantity: p.quantity }]
+											: [],
 									),
 								);
 								if (r) setCounts({});
@@ -107,7 +121,9 @@ export function Arrivals({
 					<span className="tabular-nums">
 						{formatCount(r.lines.reduce((n, l) => n + l.quantity, 0))} arrived
 					</span>
-					<span className="text-muted-foreground">{formatDateTime(r.createdAt)}</span>
+					<span className="text-muted-foreground">
+						{formatDateTime(r.createdAt)}
+					</span>
 					{!r.undone && (
 						<button
 							type="button"

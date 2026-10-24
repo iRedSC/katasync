@@ -219,7 +219,10 @@ export async function receiveTransfer(
 	for (const l of input.lines ?? [])
 		if (!Number.isInteger(l.quantity) || l.quantity < 0)
 			throw new DeliveryError("Received counts are whole numbers from 0");
-	if (input.lines && new Set(input.lines.map((l) => l.productId)).size !== input.lines.length)
+	if (
+		input.lines &&
+		new Set(input.lines.map((l) => l.productId)).size !== input.lines.length
+	)
 		throw new DeliveryError("Count each product once per receipt");
 	return db.transaction(async (tx) => {
 		const { transfer, delivery } = await lockSent(tx, input.transferId);
@@ -231,24 +234,36 @@ export async function receiveTransfer(
 			);
 		const lines = (
 			input.lines ??
-			delivery.lines.map((l) => ({ productId: l.productId, quantity: l.inTransit }))
+			delivery.lines.map((l) => ({
+				productId: l.productId,
+				quantity: l.inTransit,
+			}))
 		).filter((l) => l.quantity > 0);
 		const earlier = delivery.receipts.find((r) => r.receiptKey === key);
 		if (earlier) {
 			if (input.lines && !sameLines(earlier.lines, lines))
-				throw new DeliveryError(`Receipt ${key} was recorded with other counts`);
+				throw new DeliveryError(
+					`Receipt ${key} was recorded with other counts`,
+				);
 			const [row] = await tx
 				.select({ batchId: transferReceipts.batchId })
 				.from(transferReceipts)
 				.where(eq(transferReceipts.id, earlier.id));
-			return { receiptId: earlier.id, batchId: row.batchId, repeated: true, delivery };
+			return {
+				receiptId: earlier.id,
+				batchId: row.batchId,
+				repeated: true,
+				delivery,
+			};
 		}
 		if (lines.length === 0)
 			throw new DeliveryError(`Nothing of T${transfer.id} is still in transit`);
 		for (const l of lines) {
 			const open = delivery.lines.find((d) => d.productId === l.productId);
 			if (!open)
-				throw new DeliveryError(`Product ${l.productId} isn't on T${transfer.id}`);
+				throw new DeliveryError(
+					`Product ${l.productId} isn't on T${transfer.id}`,
+				);
 			if (l.quantity > open.inTransit)
 				throw new DeliveryError(
 					`Only ${open.inTransit} of product ${l.productId} is still in transit`,
@@ -286,8 +301,10 @@ export async function undoTransferReceipt(
 		if (delivery.kind !== "in_transit" && delivery.kind !== "received")
 			throw new DeliveryError("That transfer has no receipts to undo");
 		const receipt = delivery.receipts.find((r) => r.id === input.receiptId);
-		if (!receipt) throw new DeliveryError("That receipt isn't on this transfer");
-		if (receipt.undone) throw new DeliveryError("That receipt was already undone");
+		if (!receipt)
+			throw new DeliveryError("That receipt isn't on this transfer");
+		if (receipt.undone)
+			throw new DeliveryError("That receipt was already undone");
 		const [row] = await tx
 			.select({ batchId: transferReceipts.batchId })
 			.from(transferReceipts)

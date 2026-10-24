@@ -3,13 +3,13 @@ import type { StockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
+import { getAvailability } from "./availability";
 import {
 	activateCommittedMode,
 	planActivation,
 	type Resolution,
 } from "./commitments-activation";
 import { postMovements } from "./ledger";
-import { getAvailability } from "./availability";
 import { onlineStock } from "./online-stock";
 
 export const stockFrom = new Date("2026-10-01T00:00:00Z");
