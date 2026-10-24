@@ -2,6 +2,7 @@ import { Command as CommandPrimitive } from "cmdk";
 import { Loader2, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ProductImage, ProductName } from "#/components/product";
+import { productSearch } from "#/lib/product-search";
 import { listProductIndex } from "#/server/catalog";
 
 export type IndexedProduct = Awaited<
@@ -42,17 +43,7 @@ export function ProductSearch({
 }) {
 	const products = useCatalog();
 	const [query, setQuery] = useState("");
-	const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-	const results =
-		words.length > 0 && products
-			? products
-					.filter((p) => {
-						const text =
-							`${p.sku} ${p.name} ${p.variantName ?? ""}`.toLowerCase();
-						return words.every((w) => text.includes(w));
-					})
-					.slice(0, 20)
-			: [];
+	const results = products ? productSearch(products, query, { limit: 20 }) : [];
 
 	return (
 		<CommandPrimitive
@@ -78,11 +69,11 @@ export function ProductSearch({
 					placeholder={placeholder}
 					className="h-9 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
 				/>
-				{(busy || (words.length > 0 && !products)) && (
+				{(busy || (query.trim() !== "" && !products)) && (
 					<Loader2 className="size-4 animate-spin text-muted-foreground" />
 				)}
 			</div>
-			{words.length > 0 && products && !busy && (
+			{query.trim() !== "" && products && !busy && (
 				<CommandPrimitive.List className="max-h-80 overflow-y-auto border-t p-1">
 					{results.length === 0 && (
 						<p className="px-3 py-4 text-muted-foreground">No products</p>

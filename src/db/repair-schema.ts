@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
 	boolean,
 	check,
+	doublePrecision,
 	index,
 	integer,
 	pgEnum,
@@ -81,15 +82,23 @@ export const repairs = pgTable(
 		// The order the draft became once paid.
 		orderId: text(),
 		orderName: text(),
-		// A bench job's: the product it is, which its refurb is made from;
-		// the returned line its unit came back on, if any, holding one of
-		// that line's units until it's listed; the refurb it was listed as;
-		// and the movement that took its parts off the shelf then.
+		// The catalog product the tool is: a customer's when picked as one,
+		// and always a bench job's, which its refurb is made from.
 		productId: integer().references(() => products.id),
+		// A bench job's: the returned line its unit came back on, if any,
+		// holding one of that line's units until it's listed; the refurb it
+		// was listed as; and the movement that took its parts off the shelf
+		// then.
 		returnLineId: integer().references(() => orderLines.id),
 		refurbProductId: integer().references(() => products.id),
 		partsBatchId: uuid(),
 		statusChangedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		// Its place in its column's queue, smallest at the top. New ones and
+		// ones moved in go last; dropping one between two puts it halfway
+		// (src/repairs/queue.ts).
+		position: doublePrecision()
+			.notNull()
+			.default(sql`extract(epoch from now())`),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

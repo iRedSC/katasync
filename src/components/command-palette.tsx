@@ -38,7 +38,9 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { useHotkeys } from "#/lib/hotkeys";
+import { productSearch } from "#/lib/product-search";
 import { useRowLink } from "#/lib/row-link";
+import { matchText, textMatcher } from "#/lib/search-ranking";
 import { listProductIndex } from "#/server/catalog";
 import type { NavCounts } from "#/server/nav";
 
@@ -266,17 +268,10 @@ export function CommandPalette() {
 
 	// cmdk filters fine on its own, but rendering thousands of items is slow;
 	// only render matches once someone types.
-	const q = query.trim().toLowerCase();
+	const q = query.trim();
 	const matches =
-		q.length < 2 || !index
-			? []
-			: index
-					.filter(
-						(p) =>
-							p.sku.toLowerCase().includes(q) ||
-							p.name.toLowerCase().includes(q),
-					)
-					.slice(0, 30);
+		q.length < 2 || !index ? [] : productSearch(index, q, { limit: 30 });
+	const pageMatches = textMatcher(q);
 
 	function go(to: () => void) {
 		setOpen(false);
@@ -346,7 +341,7 @@ export function CommandPalette() {
 						)}
 						<CommandGroup heading="Go to">
 							{pages
-								.filter((p) => q === "" || p.label.toLowerCase().includes(q))
+								.filter((p) => pageMatches(matchText(p.label)))
 								.map((p) => (
 									<CommandItem
 										key={p.to}

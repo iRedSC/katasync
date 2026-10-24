@@ -4,6 +4,7 @@ import { Card } from "#/components/page";
 import type { IndexedProduct } from "#/components/transfers/add-product";
 import { Button } from "#/components/ui/button";
 import { formatMoney, formatPhone } from "#/lib/format";
+import { cn } from "#/lib/utils";
 import { CustomerPicker, type FoundCustomer } from "./customer-picker";
 import { NoteField } from "./labor-card";
 import type { Detail } from "./repair-data";
@@ -79,28 +80,44 @@ export function ToolCard({
 	editable: boolean;
 	onSave: (edit: {
 		tool?: string;
+		productId?: number | null;
 		serial?: string | null;
 		problem?: string;
 	}) => void;
 }) {
 	const r = d.repair;
+	const bench = r.kind === "bench";
 	const [problem, setProblem] = useState(r.problem);
 	const [tool, setTool] = useState(r.tool);
+	// A bench job stays the product it came in as; its name is a label.
+	const [productId, setProductId] = useState(r.productId);
 	return (
 		<Card title="Tool">
 			<div className="flex flex-col gap-1">
 				<div className="-mx-2 text-base font-semibold">
 					<ToolInput
 						value={tool}
+						productId={productId}
 						products={products}
 						disabled={!editable}
-						onChange={setTool}
-						onDone={(t) => {
-							// A tool can't be blank; clearing it puts the old one back.
-							if (!t.trim()) setTool(r.tool);
-							else if (t !== r.tool) onSave({ tool: t });
+						onChange={(text, id) => {
+							setTool(text);
+							if (!bench) setProductId(id);
 						}}
-						className="h-8 rounded-lg bg-transparent px-2 outline-none hover:bg-surface focus:bg-surface disabled:hover:bg-transparent"
+						onDone={(t, id) => {
+							// A tool can't be blank; clearing it puts the old one back.
+							if (!t.trim()) {
+								setTool(r.tool);
+								setProductId(r.productId);
+							} else if (bench) {
+								if (t !== r.tool) onSave({ tool: t });
+							} else if (t !== r.tool || id !== r.productId)
+								onSave({ tool: t, productId: id });
+						}}
+						className={cn(
+							"h-8 rounded-lg px-2 focus-within:bg-surface",
+							editable && "hover:bg-surface",
+						)}
 					/>
 				</div>
 				<div className="-mx-2 text-muted-foreground">

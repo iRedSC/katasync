@@ -7,18 +7,24 @@ import {
 import { Plus, Search, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Page } from "#/components/page";
-import { Board } from "#/components/repairs/board";
+import {
+	Board,
+	nextInColumn,
+	type Place,
+	positionAt,
+} from "#/components/repairs/board";
 import { NewRepairDialog } from "#/components/repairs/new-repair-dialog";
 import { ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic } from "#/lib/optimism";
+import { matchText, textMatcher } from "#/lib/search-ranking";
 import { offerUndo } from "#/lib/undo";
 import { printPdf } from "#/printing/qz-client";
 import { repairNumber } from "#/repairs/number";
 import type { RepairCard } from "#/repairs/read";
-import { type MoveTarget, statusNames } from "#/repairs/status";
+import { statusNames } from "#/repairs/status";
 import { listProductIndex } from "#/server/catalog";
 import { getBoard, moveRepairTo } from "#/server/repairs";
 
@@ -57,46 +63,66 @@ function Repairs() {
 	useHotkeys({ n: () => setCreating(true) });
 	useRefresh();
 
-	const q = query.trim().toLowerCase();
+	const q = query.trim();
+	const typed = textMatcher(q);
 	const cards = q
 		? d.cards.filter((c) =>
-				[
-					`r${c.id}`,
-					c.customerName ?? "",
-					c.returnOrderName ?? "",
-					c.customerPhone ?? "",
-					c.tool,
-					c.serial ?? "",
-					c.technician ?? "",
-				].some((s) => s.toLowerCase().includes(q)),
+				typed(
+					matchText(
+						[
+							`r${c.id}`,
+							c.customerName,
+							c.returnOrderName,
+							c.customerPhone,
+							c.tool,
+							c.serial,
+							c.technician,
+						].join(" "),
+					),
+				),
 			)
 		: d.cards;
 
-	async function move(card: RepairCard, to: MoveTarget) {
+	async function move(card: RepairCard, place: Place) {
 		const from = card.status;
 		// A listed bench job is done for good (the board refuses it).
 		if (from === "refurbished") return;
-		const set = (status: MoveTarget) =>
+		const back: Place = { to: from, before: nextInColumn(d.cards, card) };
+		const set = ({ to, before }: Place) =>
 			boardData.patch("all", (b) => ({
 				...b,
 				cards: b.cards.map((c) =>
-					c.id === card.id ? { ...c, status, statusChangedAt: new Date() } : c,
+					c.id === card.id
+						? {
+								...c,
+								status: to,
+								position: positionAt(b.cards, c, { to, before }),
+								statusChangedAt:
+									to === c.status ? c.statusChangedAt : new Date(),
+							}
+						: c,
 				),
 			}));
+		const send =
+			({ to, before }: Place) =>
+			() =>
+				moveRepairTo({ data: { id: card.id, to, before } });
 		const r = await optimism.change({
 			label: `Moving R${card.id}`,
-			patch: set(to),
-			send: () => moveRepairTo({ data: { id: card.id, to } }),
+			patch: set(place),
+			send: send(place),
 		});
 		if (!r) return;
-		offerUndo(`R${card.id} to ${statusNames[to]}`, {
+		// Moving within a column is undone by moving it back by hand.
+		if (place.to === from) return;
+		offerUndo(`R${card.id} to ${statusNames[place.to]}`, {
 			undo: async () => {
-				const back = await optimism.change({
+				const done = await optimism.change({
 					label: `Moving R${card.id} back`,
-					patch: set(from),
-					send: () => moveRepairTo({ data: { id: card.id, to: from } }),
+					patch: set(back),
+					send: send(back),
 				});
-				return back && `R${card.id} back in ${statusNames[from]}`;
+				return done && `R${card.id} back in ${statusNames[from]}`;
 			},
 		});
 	}

@@ -22,6 +22,7 @@ import { returnQuantity } from "#/orders/return-stock";
 import { receiveReturn } from "#/orders/returns";
 import { onBench } from "./bench-holds";
 import { lockRepair, RepairError } from "./draft-sync";
+import { lastIn } from "./queue";
 import { isOnBoard, statusNames } from "./status";
 
 // Bench jobs: our own tools, fixed up at the bench to sell as refurbs. One
@@ -283,6 +284,7 @@ export async function listBench(db: Db, id: number, as: ListAs) {
 					refurbProductId: refurbId,
 					partsBatchId: parts.batchId,
 					statusChangedAt: sql`now()`,
+					position: await lastIn(tx, "refurbished", id),
 				})
 				.where(and(eq(repairs.id, id), eq(repairs.status, r.status)))
 				.returning({ id: repairs.id });

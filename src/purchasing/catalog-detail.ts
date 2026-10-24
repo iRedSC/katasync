@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, ilike, or, sql } from "drizzle-orm";
+import { asc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	catalogs,
@@ -10,6 +10,7 @@ import {
 	suppliers,
 	supplierUnavailable,
 } from "#/db/schema";
+import { productSearch } from "#/lib/product-search";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
 // How far back a catalog's page counts sales.
@@ -114,12 +115,22 @@ export async function catalogDetail(db: Db, id: number) {
 
 export type CatalogDetail = Awaited<ReturnType<typeof catalogDetail>>;
 
-// Products whose SKU or name has the text, with the catalog each is in now,
-// so adding one says where it moves from.
+// Products found by the text (src/lib/product-search.ts), best first, with
+// the catalog each is in now, so adding one says where it moves from.
 export async function findForCatalog(db: Db, query: string) {
-	const words = query.trim().split(/\s+/).filter(Boolean).slice(0, 6);
-	if (words.length === 0) return [];
-	return db
+	if (query.trim() === "") return [];
+	const all = await db
+		.select({
+			id: products.id,
+			sku: products.sku,
+			name: products.name,
+			variantName: products.variantName,
+		})
+		.from(products)
+		.where(sql`${products.archivedAt} is null`);
+	const ids = productSearch(all, query, { limit: 25 }).map((p) => p.id);
+	if (ids.length === 0) return [];
+	const rows = await db
 		.select({
 			id: products.id,
 			sku: products.sku,
@@ -131,19 +142,6 @@ export async function findForCatalog(db: Db, query: string) {
 		})
 		.from(products)
 		.leftJoin(catalogs, eq(catalogs.id, products.catalogId))
-		.where(
-			and(
-				sql`${products.archivedAt} is null`,
-				...words.map((w) => {
-					const like = `%${w.replace(/[\\%_]/g, "\\$&")}%`;
-					return or(
-						ilike(products.sku, like),
-						ilike(products.name, like),
-						ilike(products.variantName, like),
-					);
-				}),
-			),
-		)
-		.orderBy(asc(products.name), asc(products.variantName))
-		.limit(25);
+		.where(inArray(products.id, ids));
+	return ids.flatMap((id) => rows.filter((r) => r.id === id));
 }

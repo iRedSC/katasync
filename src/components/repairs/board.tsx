@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, Clock, Package } from "lucide-react";
-import { type PointerEvent, useRef, useState } from "react";
+import { Fragment, type PointerEvent, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ProductImage } from "#/components/product";
 import { shake } from "#/components/shake";
 import { formatPhone } from "#/lib/format";
 import { cn } from "#/lib/utils";
@@ -16,9 +17,10 @@ import {
 import { PersonChip } from "./person-chip";
 import { useCardDrag } from "./use-card-drag";
 
-// The corkboard: a column per stage, oldest at the top, and the last week's
-// pickups and listed refurbs at the end. Cards are picked up and dropped on another column;
-// the arrow on each moves it one column on, for anyone not dragging.
+// The corkboard: a column per stage, each a queue worked from the top, and
+// the last week's pickups and listed refurbs at the end. Cards are picked up
+// and dropped between others, in their column or another; the arrow on
+// each moves it one column on (last), for anyone not dragging.
 
 const columns = [...boardStatuses, "picked_up"] as const;
 
@@ -28,6 +30,47 @@ export const stateOf = (c: RepairCard) => ({
 	hasDraft: c.draftOrderName !== null,
 	paid: c.orderName !== null,
 });
+
+// The column a card shows in: Done holds both ways of being done.
+const columnOf = (c: RepairCard): MoveTarget =>
+	c.status === "refurbished" ? "picked_up" : c.status;
+
+// Where a card would go: above `before` (or last, null) in `to`.
+export type Place = { to: MoveTarget; before: number | null };
+
+const inQueue = (list: RepairCard[]) =>
+	list.sort((a, b) => a.position - b.position || a.id - b.id);
+
+// The place a card takes, as the server works it out (src/repairs/queue.ts),
+// so it lands there at once.
+export function positionAt(
+	cards: RepairCard[],
+	card: RepairCard,
+	{ to, before }: Place,
+) {
+	const list = inQueue(
+		cards.filter(
+			(c) =>
+				c.id !== card.id && columnOf(c) === columnOf({ ...card, status: to }),
+		),
+	);
+	const at = before === null ? -1 : list.findIndex((c) => c.id === before);
+	if (at === -1) return (list.at(-1)?.position ?? 0) + 1;
+	const below = list[at].position;
+	return ((at === 0 ? below - 1 : list[at - 1].position) + below) / 2;
+}
+
+// The card after it in its column, which undoing a move puts it back above.
+export function nextInColumn(cards: RepairCard[], card: RepairCard) {
+	const list = inQueue(cards.filter((c) => columnOf(c) === columnOf(card)));
+	return list[list.findIndex((c) => c.id === card.id) + 1]?.id ?? null;
+}
+
+// Whether dropping it there leaves it where it is.
+function stays(list: RepairCard[], c: RepairCard, before: number | null) {
+	const at = list.findIndex((x) => x.id === c.id);
+	return at !== -1 && (list[at + 1]?.id ?? null) === before;
+}
 
 export function daysIn(since: Date | string) {
 	const days = Math.floor(
@@ -44,40 +87,58 @@ export function Board({
 	cards: RepairCard[];
 	// Just made, so it stands out as it lands.
 	fresh: number | null;
-	onMove: (card: RepairCard, to: MoveTarget) => void;
+	// To another column, or (to its own status) to another place in its own.
+	onMove: (card: RepairCard, place: Place) => void;
 }) {
 	const [refused, setRefused] = useState<{
 		to: MoveTarget;
 		why: string;
 	} | null>(null);
 	const columnEls = useRef(new Map<MoveTarget, HTMLElement>());
-	const { lifted, pickUp } = useCardDrag<RepairCard>((card, column) => {
-		const to = columns.find((s) => s === column);
-		if (to && to !== card.status) move(card, to);
-	});
+	const listOf = (status: (typeof columns)[number]) =>
+		inQueue(cards.filter((c) => columnOf(c) === status));
+	const { lifted, pickUp } = useCardDrag<RepairCard>(
+		(c) => String(c.id),
+		(card, spot) => {
+			const column = columns.find((s) => s === spot.column);
+			if (!column) return;
+			const before = spot.before === null ? null : Number(spot.before);
+			if (column !== columnOf(card)) move(card, { to: column, before });
+			// A listed refurb is done with for good, its place too.
+			else if (
+				card.status !== "refurbished" &&
+				!stays(listOf(column), card, before)
+			)
+				onMove(card, { to: card.status, before });
+		},
+	);
 	const over = lifted?.over;
+	// The line where the carried card would land, unless that's where it is.
+	const landing = (status: (typeof columns)[number], list: RepairCard[]) =>
+		lifted &&
+		over?.column === status &&
+		!stays(list, lifted.item, over.before === null ? null : Number(over.before))
+			? over.before
+			: undefined;
 
 	// A move that can't happen shakes the column it was aimed at, and says
 	// why in a few words.
-	function move(card: RepairCard, to: MoveTarget) {
-		const why = refuseMove(stateOf(card), to);
+	function move(card: RepairCard, place: Place) {
+		const why = refuseMove(stateOf(card), place.to);
 		if (why) {
-			shake(columnEls.current.get(to) ?? null);
-			setRefused({ to, why });
+			shake(columnEls.current.get(place.to) ?? null);
+			setRefused({ to: place.to, why });
 			setTimeout(() => setRefused(null), 2500);
 			return;
 		}
-		onMove(card, to);
+		onMove(card, place);
 	}
 
 	return (
 		<div className="grid min-h-[60vh] grid-flow-col auto-cols-[minmax(11.5rem,1fr)] gap-3 overflow-x-auto pb-2">
 			{columns.map((status) => {
-				const list = cards.filter(
-					(c) =>
-						c.status === status ||
-						(status === "picked_up" && c.status === "refurbished"),
-				);
+				const list = listOf(status);
+				const line = landing(status, list);
 				return (
 					<section
 						key={status}
@@ -88,8 +149,9 @@ export function Board({
 						// Rings inset, so the board's scrolling edge doesn't clip them.
 						className={cn(
 							"flex flex-col gap-2 rounded-xl bg-surface p-2 transition-colors",
-							over === status &&
-								over !== lifted?.item.status &&
+							over?.column === status &&
+								lifted &&
+								columnOf(lifted.item) !== status &&
 								"bg-info-surface ring-2 ring-inset ring-info-border",
 							refused?.to === status &&
 								"bg-critical-surface ring-2 ring-inset ring-critical-border",
@@ -111,15 +173,18 @@ export function Board({
 							</span>
 						</header>
 						{list.map((c) => (
-							<Card
-								key={c.id}
-								card={c}
-								fresh={c.id === fresh}
-								left={lifted?.item.id === c.id}
-								onPickUp={(e) => pickUp(e, c)}
-								onNext={nextArrow(c, status, move)}
-							/>
+							<Fragment key={c.id}>
+								{line === String(c.id) && <Landing />}
+								<Card
+									card={c}
+									fresh={c.id === fresh}
+									left={lifted?.item.id === c.id}
+									onPickUp={(e) => pickUp(e, c)}
+									onNext={nextArrow(c, status, move)}
+								/>
+							</Fragment>
 						))}
+						{line === null && <Landing />}
 					</section>
 				);
 			})}
@@ -141,6 +206,10 @@ export function Board({
 	);
 }
 
+const Landing = () => (
+	<div className="-my-1 h-0.5 rounded-full bg-info-border animate-in fade-in" />
+);
+
 const nextOf = (s: MoveTarget): MoveTarget | null =>
 	columns[columns.indexOf(s as (typeof columns)[number]) + 1] ?? null;
 
@@ -149,11 +218,11 @@ const nextOf = (s: MoveTarget): MoveTarget | null =>
 function nextArrow(
 	c: RepairCard,
 	status: MoveTarget,
-	move: (c: RepairCard, to: MoveTarget) => void,
+	move: (c: RepairCard, place: Place) => void,
 ) {
 	const next = nextOf(status);
 	if (!next || (c.kind === "bench" && next === "picked_up")) return null;
-	return () => move(c, next);
+	return () => move(c, { to: next, before: null });
 }
 
 function Card({
@@ -180,6 +249,7 @@ function Card({
 		Date.now() - new Date(c.statusChangedAt).getTime() > 7 * 86_400_000;
 	return (
 		<article
+			data-card={lifted ? undefined : c.id}
 			onPointerDown={onPickUp}
 			className={cn(
 				"group relative rounded-lg bg-card p-3 shadow-card transition-shadow select-none [-webkit-touch-callout:none] hover:shadow-md",
@@ -222,13 +292,20 @@ function Card({
 					</span>
 					<span className="truncate text-xs text-muted-foreground">
 						{c.refurbSku ??
-							(c.returnOrderName ? `Return ${c.returnOrderName}` : "Bought in")}
+							(c.returnOrderName
+								? `Return ${c.returnOrderName}`
+								: "Not from a return")}
 					</span>
 				</div>
 			) : (
 				<div className="mt-1.5 truncate font-semibold">{c.customerName}</div>
 			)}
-			<div className="truncate">{c.tool}</div>
+			<div className="mt-0.5 flex items-center gap-2">
+				{c.imageUrl && (
+					<ProductImage src={c.imageUrl} className="size-7 shrink-0" />
+				)}
+				<span className="truncate">{c.tool}</span>
+			</div>
 			{c.problem && (
 				<div className="line-clamp-2 text-xs text-muted-foreground">
 					{c.problem}

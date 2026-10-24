@@ -28,7 +28,9 @@ export function SourceCard({ d }: { d: Detail }) {
 					Returned on {r.returnOrderName}
 				</Link>
 			) : (
-				<span className="text-muted-foreground">Bought in</span>
+				<span className="text-muted-foreground">
+					Not from a return: listing adds it to stock
+				</span>
 			)}
 		</Card>
 	);

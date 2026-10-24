@@ -3,7 +3,8 @@ import { type PointerEvent as ReactPointerEvent, useState } from "react";
 // Picking up a card by hand: with a mouse it lifts once moved a few pixels,
 // with a finger after a short hold (so a swipe still scrolls the board). It
 // follows the pointer and drops on the column under it, marked
-// data-column="<id>". Escape puts it back.
+// data-column="<id>", above the first card there (data-card="<key>") whose
+// middle is below the pointer, or last. Escape puts it back.
 
 export type Lifted<T> = {
 	item: T;
@@ -13,15 +14,29 @@ export type Lifted<T> = {
 	grabX: number;
 	grabY: number;
 	width: number;
-	over: string | null;
+	over: Spot | null;
 };
+
+// Where it would land: a column, above a card in it or (null) last.
+export type Spot = { column: string; before: string | null };
 
 const SLOP_PX = 5;
 const HOLD_MS = 200;
 
-const columnAt = (x: number, y: number) =>
-	document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-column]")
-		?.dataset.column ?? null;
+function spotAt(x: number, y: number, own: string): Spot | null {
+	const column = document
+		.elementFromPoint(x, y)
+		?.closest<HTMLElement>("[data-column]");
+	if (!column?.dataset.column) return null;
+	const below = [...column.querySelectorAll<HTMLElement>("[data-card]")].find(
+		(card) => {
+			if (card.dataset.card === own) return false;
+			const r = card.getBoundingClientRect();
+			return r.top + r.height / 2 > y;
+		},
+	);
+	return { column: column.dataset.column, before: below?.dataset.card ?? null };
+}
 
 // The click that ends a drag would otherwise open what it was dropped on.
 function swallowNextClick() {
@@ -33,10 +48,14 @@ function swallowNextClick() {
 	setTimeout(() => window.removeEventListener("click", stop, true), 0);
 }
 
-export function useCardDrag<T>(onDrop: (item: T, column: string) => void) {
+export function useCardDrag<T>(
+	keyOf: (item: T) => string,
+	onDrop: (item: T, to: Spot) => void,
+) {
 	const [lifted, setLifted] = useState<Lifted<T> | null>(null);
 
 	function pickUp(e: ReactPointerEvent<HTMLElement>, item: T) {
+		const own = keyOf(item);
 		if (
 			e.button !== 0 ||
 			(e.target as Element).closest("button, a[href^='tel:']")
@@ -57,7 +76,7 @@ export function useCardDrag<T>(onDrop: (item: T, column: string) => void) {
 				grabX: x0 - rect.left,
 				grabY: y0 - rect.top,
 				width: rect.width,
-				over: columnAt(x, y),
+				over: spotAt(x, y, own),
 			};
 			setLifted(live);
 		};
@@ -74,7 +93,7 @@ export function useCardDrag<T>(onDrop: (item: T, column: string) => void) {
 					...live,
 					x: ev.clientX,
 					y: ev.clientY,
-					over: columnAt(ev.clientX, ev.clientY),
+					over: spotAt(ev.clientX, ev.clientY, own),
 				};
 				setLifted(live);
 			} else if (Math.hypot(ev.clientX - x0, ev.clientY - y0) >= SLOP_PX) {
