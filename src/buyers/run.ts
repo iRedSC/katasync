@@ -10,9 +10,10 @@ import { threadAmazonMail } from "./amazon-mail";
 import { draftWaiting, readNewMessages } from "./drafts";
 import { syncEbayMessages } from "./ebay-messages";
 import { settleReplies } from "./send";
+import { syncTiktokMessages } from "./tiktok-messages";
 
-// One run of buyer messages: Amazon's emails into threads, eBay's
-// conversations read, and every reply in flight settled. Each part records
+// One run of buyer messages: Amazon's emails into threads, eBay's and
+// TikTok's conversations read, and every reply in flight settled. Each part records
 // how it went on its own, so one failing never hides or stops another.
 export async function runBuyerMessages(db: Db, { sweep = false } = {}) {
 	const started = Date.now();
@@ -33,6 +34,9 @@ export async function runBuyerMessages(db: Db, { sweep = false } = {}) {
 	const ebay = process.env.EBAY_REFRESH_TOKEN
 		? await syncEbayMessages(db, { sweep })
 		: { skipped: "set EBAY_REFRESH_TOKEN" };
+	const tiktok = process.env.TIKTOK_REFRESH_TOKEN
+		? await syncTiktokMessages(db, { sweep })
+		: { skipped: "set TIKTOK_REFRESH_TOKEN" };
 	// Then the agent: buyers' words in English, and replies suggested.
 	// One deadline for all of it, well inside Vercel's limit on a function:
 	// what doesn't fit waits for the next run.
@@ -49,5 +53,5 @@ export async function runBuyerMessages(db: Db, { sweep = false } = {}) {
 					problems: [e instanceof Error ? e.message : String(e)],
 				}))
 		: { skipped: "set AI_PROXY_URL and AI_PROXY_KEY" };
-	return { amazon, ebay, ai };
+	return { amazon, ebay, tiktok, ai };
 }

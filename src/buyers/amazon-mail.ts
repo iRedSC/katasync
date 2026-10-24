@@ -353,6 +353,7 @@ export async function sendAmazonReply(r: {
 	inReplyTo: string | null;
 	text: string;
 	requestKey: string;
+	attachments?: { filename: string; content: string }[];
 }) {
 	const key = process.env.RESEND_API_KEY;
 	const from = replyFrom();
@@ -375,6 +376,7 @@ export async function sendAmazonReply(r: {
 				to: [r.to],
 				subject: /^re:/i.test(r.subject) ? r.subject : `Re: ${r.subject}`,
 				text: r.text,
+				...(r.attachments?.length ? { attachments: r.attachments } : {}),
 				...(r.inReplyTo
 					? { headers: { "In-Reply-To": r.inReplyTo, References: r.inReplyTo } }
 					: {}),

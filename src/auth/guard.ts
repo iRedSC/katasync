@@ -11,7 +11,9 @@ import { SESSION_COOKIE, sessionCookie } from "./sessions";
 // /api/oauth/ and /.well-known/ are how MCP clients get one (approving still
 // needs a session); /api/cron/ checks the CRON_SECRET Vercel Cron sends, and
 // /api/webhooks/ the channel's signature; /api/uploads/ checks the upload link's
-// own token.
+// own token. /api/shared-files/ only reads a file attached to a buyer reply,
+// named by its own unguessable token, for the marketplace (eBay) that fetches
+// it.
 const PUBLIC_PATHS = new Set([
 	"/mcp",
 	"/login",
@@ -32,7 +34,8 @@ export function isPublic(pathname: string) {
 		pathname.startsWith("/api/cron/") ||
 		pathname.startsWith("/api/webhooks/") ||
 		pathname.startsWith("/assets/") ||
-		pathname.startsWith("/api/uploads/")
+		pathname.startsWith("/api/uploads/") ||
+		pathname.startsWith("/api/shared-files/")
 	);
 }
 

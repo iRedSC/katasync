@@ -42,7 +42,7 @@ Each computer then picks its label printer in Settings; the choice is kept in th
 
 ## Buyer messages and AI replies
 
-The Inbox's Buyers folder answers Amazon and eBay buyers in place (`src/buyers`). Amazon's messages come from the marketplaces mailbox and replies go through Resend from `MARKETPLACE_INBOX` (or `BUYER_REPLY_FROM`), which must be an approved sender in Seller Central. eBay's need the `commerce.message` scope: run `pnpm ebay:authorize` once.
+The Inbox's Buyers folder answers Amazon, eBay, and TikTok Shop buyers in place (`src/buyers`). Amazon's messages come from the marketplaces mailbox and replies go through Resend from `MARKETPLACE_INBOX` (or `BUYER_REPLY_FROM`), which must be an approved sender in Seller Central. eBay's need the `commerce.message` scope: run `pnpm ebay:authorize` once. TikTok's need `seller.customer_service` (in `TIKTOK_SCOPES`); only chats a buyer wrote in become threads, and TikTok's own notices in them are left out.
 
 An agent drafts a suggested reply for each thread waiting on us, following the Precedents folder (when this, then that), and reads buyers' messages into English (`src/ai`). It calls models through a CLIProxyAPI: set `AI_PROXY_URL`, `AI_PROXY_KEY`, and optionally `AI_MODEL` (default `claude-sonnet-5-5`). The proxy must be reachable from Vercel. Without them, everything else works and nothing is drafted.
 

@@ -16,6 +16,7 @@ import {
 	Undo2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { refuseWords, rulesFor } from "#/buyers/attachments";
 import type { BuyerThread } from "#/buyers/threads";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
@@ -45,6 +46,7 @@ import {
 	undo,
 	useOutgoing,
 } from "./outgoing";
+import { AttachButton, AttachedFiles, useReplyFiles } from "./reply-files";
 import { Suggestion } from "./suggestion";
 
 // "Spanish" for es, in English.
@@ -55,8 +57,6 @@ const languageName = (code: string | null) =>
 // One conversation: the buyer's messages on the left, ours on the right,
 // each of ours marked with how far it got, and a reply box under them.
 // A reply shows at once as sending, then moves on as the server learns.
-
-const EBAY_MAX = 2000;
 
 type Status = OutStatus;
 
@@ -90,17 +90,24 @@ export function BuyerConversation({
 }) {
 	const router = useRouter();
 	const outgoing = useOutgoing();
-	const [text, setText] = useState(() => takeReturned(t.id) ?? "");
-	// Undo puts the words back in the box, also while this thread is open.
+	const [why, setWhy] = useState<string | null>(null);
+	const files = useReplyFiles(t.market, (reason) => {
+		setWhy(reason);
+		shake(box.current);
+	});
+	const [text, setText] = useState("");
+	const [dragging, setDragging] = useState(false);
+	// Undo puts the words and files back in the box, also while this thread
+	// is open.
 	useEffect(() => {
 		setRefresh(() => router.invalidate());
 		const back = takeReturned(t.id);
 		if (back !== undefined) {
-			setText(back);
+			setText(back.body);
+			files.restore(back.media);
 			box.current?.focus();
 		}
 	});
-	const [why, setWhy] = useState<string | null>(null);
 	// The English the box's words say, kept with the exact words it's for:
 	// any change to them hides it, since it no longer says what they do.
 	const [gloss, setGloss] = useState<{ english: string; for: string } | null>(
@@ -146,23 +153,32 @@ export function BuyerConversation({
 		if (count) end.current?.scrollIntoView({ block: "end" });
 	}, [count]);
 
-	const limit = t.market === "ebay" ? EBAY_MAX : null;
-	const over = limit !== null && text.trim().length > limit;
+	const limit = rulesFor(t.market)?.maxChars ?? null;
+	const over = refuseWords(t.market, text.trim()) !== null;
 
-	// Holds words as a reply, then sends them; undo takes them back. A key
-	// given (a suggestion's) sends them once however many times it's clicked.
-	function send(body: string, key?: string) {
+	// Holds words (and the box's files) as a reply, then sends them; undo
+	// takes them back. A key given (a suggestion's) sends them once however
+	// many times it's clicked; media given (sending one again) goes instead
+	// of the box's files.
+	function send(body: string, key?: string, again?: Shown["media"]) {
 		const words = body.trim();
-		const tooLong = limit !== null && words.length > limit;
-		if (!words || tooLong) {
+		const media = again ?? files.media();
+		const problem =
+			refuseWords(t.market, words) ??
+			(!again && files.busy ? "Still uploading" : null) ??
+			(t.market === "ebay" && !words && media.length > 0
+				? "eBay needs words with the files"
+				: null);
+		if ((!words && media.length === 0) || problem) {
 			shake(box.current);
-			setWhy(tooLong ? `eBay takes ${limit} characters` : null);
+			setWhy(problem);
 			box.current?.focus();
 			return;
 		}
 		const requestKey = key ?? crypto.randomUUID();
-		if (!hold({ key: requestKey, threadId: t.id, body: words })) return;
+		if (!hold({ key: requestKey, threadId: t.id, body: words, media })) return;
 		setText("");
+		if (!again) files.clear();
 		setGloss(null);
 		setWhy(null);
 		offerUndo(`Sending in ${HOLD_MS / 1000}s`, {
@@ -208,7 +224,7 @@ export function BuyerConversation({
 	const again = (m: Shown) => {
 		// Unheard: the same reply again. Failed or unconfirmed: a new one.
 		if (m.status === "unheard") retry(m.key);
-		else send(m.body);
+		else send(m.body, undefined, m.media ?? []);
 	};
 
 	return (
@@ -289,13 +305,29 @@ export function BuyerConversation({
 						e.preventDefault();
 						send(text);
 					}}
+					onDragOver={(e) => {
+						if (!files.takesFiles || !e.dataTransfer.types.includes("Files"))
+							return;
+						e.preventDefault();
+						setDragging(true);
+					}}
+					onDragLeave={() => setDragging(false)}
+					onDrop={(e) => {
+						if (!files.takesFiles) return;
+						e.preventDefault();
+						setDragging(false);
+						setWhy(null);
+						void files.add([...e.dataTransfer.files]);
+					}}
 				>
 					<div
 						className={cn(
-							"rounded-lg border bg-background focus-within:ring-2 focus-within:ring-ring",
+							"rounded-lg border bg-background transition-colors focus-within:ring-2 focus-within:ring-ring",
 							(over || why) && "border-critical-text",
+							dragging && "border-primary bg-primary/5 ring-2 ring-primary",
 						)}
 					>
+						<AttachedFiles files={files} />
 						<textarea
 							ref={box}
 							value={text}
@@ -304,6 +336,13 @@ export function BuyerConversation({
 								setText(e.target.value);
 								setWhy(null);
 								if (!e.target.value.trim()) setGloss(null);
+							}}
+							onPaste={(e) => {
+								const pasted = [...e.clipboardData.files];
+								if (pasted.length === 0 || !files.takesFiles) return;
+								e.preventDefault();
+								setWhy(null);
+								void files.add(pasted);
 							}}
 							onKeyDown={(e) => {
 								if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -315,6 +354,7 @@ export function BuyerConversation({
 							className="block w-full resize-none rounded-t-lg bg-transparent px-3 pt-2 outline-none"
 						/>
 						<div className="flex items-center justify-end gap-1 px-1.5 pb-1.5">
+							<AttachButton files={files} />
 							{foreign && (
 								<Tip content={`Into ${languageName(t.language)}`}>
 									<Button
@@ -335,7 +375,7 @@ export function BuyerConversation({
 											<Button
 												type="submit"
 												aria-label="Send"
-												disabled={!text.trim()}
+												disabled={!text.trim() && files.items.length === 0}
 											>
 												<SendHorizontal />
 											</Button>

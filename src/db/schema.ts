@@ -3026,8 +3026,43 @@ export const mailboxChecks = pgTable(
 );
 
 // A picture or file sent with a buyer message. kind is eBay's (IMAGE, PDF,
-// DOC, TXT) or, for an Amazon email's file, image when it's a picture.
-export type BuyerMedia = { kind: string; name: string; url: string };
+// DOC, TXT), TikTok's (IMAGE, VIDEO), or, for an Amazon email's file, image
+// when it's a picture. On one of ours, fileId is the buyer_reply_files row it
+// was sent from, and externalId the marketplace's own message for it when
+// it went as a message of its own (TikTok sends each picture apart).
+export type BuyerMedia = {
+	kind: string;
+	name: string;
+	url: string;
+	fileId?: number;
+	externalId?: string;
+};
+
+// A file staff attached to a reply, uploaded before the reply is sent so
+// every try sends the same bytes. shareToken names it at a public address
+// for a marketplace that fetches files itself (eBay); tiktokImage is
+// TikTok's copy once uploaded there, so a picture goes up once.
+export const buyerReplyFiles = pgTable(
+	"buyer_reply_files",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		filename: text().notNull(),
+		contentType: text().notNull(),
+		size: integer().notNull(),
+		data: bytea().notNull(),
+		shareToken: text().notNull(),
+		tiktokImage: jsonb().$type<{
+			url: string;
+			width: number;
+			height: number;
+		}>(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex("buyer_reply_files_share_token").on(t.shareToken),
+		check("buyer_reply_files_size", sql`${t.size} <= 4500000`),
+	],
+);
 
 // Where a reply we wrote stands (src/buyers/states.ts). sending: written,
 // handed to the marketplace (or Resend) or about to be, outcome not known

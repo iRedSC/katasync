@@ -25,7 +25,8 @@ import type { Market } from "#/markets/market";
 import { answers, type ReplyStatus } from "./states";
 
 // Conversations with buyers, as katasync keeps them: read in from each
-// marketplace (./amazon-mail.ts, ./ebay-messages.ts), answered from the
+// marketplace (./amazon-mail.ts, ./ebay-messages.ts,
+// ./tiktok-messages.ts), answered from the
 // Inbox (./send.ts). Server only.
 
 // How long each marketplace gives to answer a buyer. Amazon counts 24 hours,
@@ -421,6 +422,7 @@ export async function messageSources(db: Db, now = Date.now()) {
 	const box = mailbox[0];
 	const amazon = of("amazon");
 	const ebay = of("ebay");
+	const tiktok = of("tiktok");
 	const stale = (at: Date | null | undefined, ms: number) =>
 		!at || now - at.getTime() > ms;
 	return [
@@ -437,6 +439,12 @@ export async function messageSources(db: Db, now = Date.now()) {
 			checkedAt: ebay?.checkedAt ?? null,
 			error: ebay?.error ?? null,
 			behind: stale(ebay?.checkedAt, RUN_STALE_MS),
+		},
+		{
+			market: "tiktok" as const,
+			checkedAt: tiktok?.checkedAt ?? null,
+			error: tiktok?.error ?? null,
+			behind: stale(tiktok?.checkedAt, RUN_STALE_MS),
 		},
 	];
 }

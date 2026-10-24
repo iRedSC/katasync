@@ -8,6 +8,7 @@ import {
 	parseRelayed,
 	threadAmazonMail,
 } from "./amazon-mail";
+import { addReplyFile } from "./reply-files";
 import { reply, settleReplies } from "./send";
 import { settleReply } from "./states";
 import { logOurs, threadsPage, waitingOn } from "./threads";
@@ -187,6 +188,45 @@ describe("answering", () => {
 		const [after] = await threadsPage(db, "open", null);
 		expect(after?.messages.at(-1)?.status).toBe("delivered");
 		expect(after?.waiting).toBeNull();
+	});
+
+	test("files go with the email, and only kinds Amazon takes", async () => {
+		await email();
+		await threadAmazonMail(db);
+		const [thread] = await threadsPage(db, "open", null);
+		const pdf = await addReplyFile(db, {
+			filename: "label.pdf",
+			contentType: "application/pdf",
+			data: new TextEncoder().encode("%PDF-1"),
+		});
+		const word = await addReplyFile(db, {
+			filename: "note.doc",
+			contentType: "application/msword",
+			data: new Uint8Array([1]),
+		});
+		await expect(
+			reply(db, thread?.id ?? 0, "", crypto.randomUUID(), [word.id]),
+		).rejects.toThrow(/Takes PDF, JPG, PNG/);
+		const calls = resend([json(200, { id: "re_2" })]);
+		const r = await reply(db, thread?.id ?? 0, "", crypto.randomUUID(), [
+			pdf.id,
+		]);
+		expect(r.status).toBe("sent");
+		expect(JSON.parse(String(calls[0]?.init?.body)).attachments).toEqual([
+			{
+				filename: "label.pdf",
+				content: Buffer.from("%PDF-1").toString("base64"),
+			},
+		]);
+		const [after] = await threadsPage(db, "open", null);
+		expect(after?.messages.at(-1)?.media).toEqual([
+			{
+				kind: "PDF",
+				name: "label.pdf",
+				url: `/api/buyer-files/${pdf.id}`,
+				fileId: pdf.id,
+			},
+		]);
 	});
 
 	test("an unsure send is tried again with the same key; a refused one fails", async () => {

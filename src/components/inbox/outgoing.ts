@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { ReplyStatus } from "#/buyers/states";
+import type { BuyerMedia } from "#/db/schema";
 import { replyToBuyer } from "#/server/buyers";
 
 // Replies on their way out of this browser, kept outside any one
@@ -18,6 +19,8 @@ export type Outgoing = {
 	key: string;
 	threadId: number;
 	body: string;
+	// Files already uploaded, each with its fileId.
+	media: BuyerMedia[];
 	at: Date;
 	status: OutStatus;
 	error: string | null;
@@ -28,8 +31,9 @@ export type Outgoing = {
 let items: Outgoing[] = [];
 const listeners = new Set<() => void>();
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
-// Words taken back by undo, for their conversation's reply box.
-const returned = new Map<number, string>();
+// What undo took back, for its conversation's reply box.
+export type Returned = { body: string; media: BuyerMedia[] };
+const returned = new Map<number, Returned>();
 let refresh: () => Promise<unknown> = async () => {};
 
 function emit() {
@@ -60,7 +64,12 @@ export function setRefresh(fn: () => Promise<unknown>) {
 }
 
 // Holds a reply, then sends it. False when that key is already out.
-export function hold(o: { key: string; threadId: number; body: string }) {
+export function hold(o: {
+	key: string;
+	threadId: number;
+	body: string;
+	media: BuyerMedia[];
+}) {
 	if (items.some((x) => x.key === o.key)) return false;
 	const sendAt = Date.now() + HOLD_MS;
 	items = [
@@ -81,23 +90,24 @@ export function sendNow(key: string) {
 	void deliver(key);
 }
 
-// Takes a held one back, its words to its reply box. False once it's gone.
+// Takes a held one back, its words and files to its reply box. False once
+// it's gone.
 export function undo(key: string) {
 	const o = items.find((x) => x.key === key);
 	if (o?.status !== "held") return false;
 	clearTimeout(timers.get(key));
 	timers.delete(key);
 	items = items.filter((x) => x.key !== key);
-	returned.set(o.threadId, o.body);
+	returned.set(o.threadId, { body: o.body, media: o.media });
 	emit();
 	return true;
 }
 
-// The words undo took back for a conversation, once.
+// What undo took back for a conversation, once.
 export function takeReturned(threadId: number) {
-	const words = returned.get(threadId);
+	const back = returned.get(threadId);
 	returned.delete(threadId);
-	return words;
+	return back;
 }
 
 // Sends one whose answer never came, again under the same key.
@@ -114,7 +124,12 @@ async function deliver(key: string) {
 	update(key, { status: "sending", error: null });
 	try {
 		const r = await replyToBuyer({
-			data: { threadId: o.threadId, text: o.body, requestKey: key },
+			data: {
+				threadId: o.threadId,
+				text: o.body,
+				requestKey: key,
+				fileIds: o.media.flatMap((m) => (m.fileId ? [m.fileId] : [])),
+			},
 		});
 		update(key, { status: r.status ?? "sending" });
 	} catch (error) {
