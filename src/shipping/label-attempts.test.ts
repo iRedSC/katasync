@@ -570,7 +570,7 @@ describe("label attempts", () => {
 			const a = await tiktokOrder();
 			const outside = fakes({ tiktokUnits: units(["u1", "u2"]), tiktokBuy });
 			expect((await buy([a], 1, outside)).failed).toBeNull();
-			expect(tiktokBuy).toHaveBeenCalledWith("577", box, "r", ["u1", "u2"]);
+			expect(tiktokBuy).toHaveBeenCalledWith(["577"], box, "r", ["u1", "u2"]);
 			const [attempt] = await db.select().from(schema.labelAttempts);
 			expect(attempt).toMatchObject({
 				unitIds: ["u1", "u2"],
@@ -604,7 +604,7 @@ describe("label attempts", () => {
 				findShippo: vi.fn(),
 				findTiktok,
 			});
-			expect(findTiktok).toHaveBeenCalledWith("577", ["u1", "u2"]);
+			expect(findTiktok).toHaveBeenCalledWith(["577"], ["u1", "u2"]);
 			expect(r.attempt.state).toBe("succeeded");
 		});
 	});

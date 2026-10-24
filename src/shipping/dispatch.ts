@@ -155,6 +155,27 @@ export function addressKey(o: AddressFields): string | null {
 	return [street, clean(o.shipAddress2), postal, country].join("|");
 }
 
+type BoxFields = AddressFields & {
+	channel: string;
+	salesChannel: string | null;
+	storeId: number;
+	buyerId: string | null;
+};
+
+// What orders must share to go in one box. TikTok hides the buyer's address,
+// so its orders match on the buyer, and TikTok checks the address itself
+// when it sells the combined label. Everything else matches on the address.
+// Null when unknown, so it never matches anything.
+export function boxKey(o: BoxFields): string | null {
+	if (labelSource(o) === "tiktok") {
+		return o.buyerId === null ? null : `tiktok|${o.storeId}|${o.buyerId}`;
+	}
+	return addressKey(o);
+}
+
+// Most orders TikTok lets share one tracking number.
+export const TIKTOK_MAX_COMBINED = 20;
+
 const candidateFields = {
 	id: orders.id,
 	name: orders.name,
@@ -170,6 +191,8 @@ const candidateFields = {
 	shipAddress2: orders.shipAddress2,
 	shipPostalCode: orders.shipPostalCode,
 	shipCountry: orders.shipCountry,
+	storeId: orders.storeId,
+	buyerId: orders.buyerId,
 };
 type Candidate = {
 	id: number;
@@ -179,12 +202,12 @@ type Candidate = {
 	marketplaceOrderId: string | null;
 	externalId: string;
 	needsShipping: boolean;
-} & AddressFields;
+} & BoxFields;
 
 // Why these orders can't go out together in one dispatch, or null if they
 // can. Every order must still need shipping, have no live dispatch, take a
 // label katasync buys itself, share one label seller, and (with more than
-// one) go to the same address.
+// one) share a boxKey.
 export function whyNotTogether(
 	list: Candidate[],
 	live: { orderId: number; unsure?: boolean }[],
@@ -203,15 +226,19 @@ export function whyNotTogether(
 		const external = externalFulfillment(o);
 		if (external) return `${o.name} ships on ${external.name}'s own label`;
 	}
-	// TikTok sells one label per order package; combining happens in Seller
-	// Center.
-	if (list.length > 1 && list.some((o) => labelSource(o) === "tiktok")) {
-		return "TikTok orders ship on TikTok's labels, one order per box. Combine TikTok orders in TikTok Seller Center.";
-	}
 	if (list.length > 1) {
-		const keys = new Set(list.map(addressKey));
+		const tiktok = list.filter((o) => labelSource(o) === "tiktok").length;
+		if (tiktok > 0 && tiktok < list.length) {
+			return "TikTok orders only share a box with TikTok orders";
+		}
+		if (tiktok > TIKTOK_MAX_COMBINED) {
+			return `TikTok combines at most ${TIKTOK_MAX_COMBINED} orders in one box`;
+		}
+		const keys = new Set(list.map(boxKey));
 		if (keys.has(null) || keys.size > 1) {
-			return "These orders don't go to the same address";
+			return tiktok
+				? "These TikTok orders aren't from the same buyer"
+				: "These orders don't go to the same address";
 		}
 	}
 	return null;
@@ -233,29 +260,30 @@ export async function assertTogether(db: Db, orderIds: number[]) {
 	return list;
 }
 
-// Other orders still to ship to the same address as this one, that could go
-// in the same box: quick ship offers them. Narrowed by ZIP in SQL, then
-// matched on the full address.
+// Other orders still to ship that could go in the same box as this one:
+// quick ship offers them. Narrowed in SQL (by buyer for TikTok, by ZIP for
+// the rest), then matched on boxKey.
 export async function companionsOf(db: Db, order: Candidate) {
-	const key = addressKey(order);
-	if (!key || !order.shipPostalCode) return [];
+	const key = boxKey(order);
+	if (!key) return [];
 	// The postal code's start, compared the way addressKey compares it.
 	const zipStart = (zip: unknown) =>
 		sql`left(regexp_replace(lower(${zip}), '[[:space:]]', '', 'g'), 5)`;
+	const narrowed =
+		labelSource(order) === "tiktok"
+			? and(
+					eq(orders.storeId, order.storeId),
+					eq(orders.buyerId, order.buyerId ?? ""),
+				)
+			: sql`${zipStart(orders.shipPostalCode)} = ${zipStart(order.shipPostalCode)}`;
 	const nearby = await db
 		.select(candidateFields)
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
-		.where(
-			and(
-				ne(orders.id, order.id),
-				needsShipping,
-				sql`${zipStart(orders.shipPostalCode)} = ${zipStart(order.shipPostalCode)}`,
-			),
-		)
+		.where(and(ne(orders.id, order.id), needsShipping, narrowed))
 		.orderBy(orders.placedAt);
 	const live = await liveDispatches(db, [order.id, ...nearby.map((o) => o.id)]);
 	return nearby.filter(
-		(o) => addressKey(o) === key && whyNotTogether([order, o], live) === null,
+		(o) => boxKey(o) === key && whyNotTogether([order, o], live) === null,
 	);
 }

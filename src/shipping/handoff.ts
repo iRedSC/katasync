@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, gt, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import {
 	shopifyCancelFulfillment,
 	shopifyFulfill,
@@ -6,28 +6,25 @@ import {
 	shopifySaveShippoTracking,
 } from "#/channels/shopify";
 import type { Db } from "#/db/client";
-import {
-	dispatches,
-	dispatchOrders,
-	type HandoffHold,
-	orders,
-	shipments,
-	stores,
-} from "#/db/schema";
+import { dispatchOrders, orders, shipments } from "#/db/schema";
 import { readQuantityMode } from "#/inventory/commitments";
-import { consumeCommitments } from "#/inventory/commitments-consume";
 import {
 	assertFulfillmentRestorable,
 	restoreCommitments,
 } from "#/inventory/commitments-restore";
-import { deliver } from "./deliver";
-import { destinationOf } from "./destination";
 import { lockOnOwnConnection, type OrderLocker, ordersOf } from "./dispatch";
 import { ebayShip } from "./ebay-handoff";
+import {
+	type Box,
+	boxColumns,
+	load,
+	type Member,
+	sameMember,
+} from "./handoff/members";
+import { blockerOfSharedPackage, done, type Told, tell } from "./handoff/tell";
 import { completeIfAllBought } from "./label-attempts";
-import { type Contents, contentsOf, Held, packedOf } from "./packed";
+import { contentsOf } from "./packed";
 import { assignOrderPins } from "./pins";
-import { nextRetry } from "./retry-window";
 import { refundLabel } from "./shippo";
 import { tiktokOrderUnits, tiktokShipPackage } from "./tiktok";
 
@@ -56,57 +53,6 @@ export const live: Outside = {
 	tiktokShip: tiktokShipPackage,
 	tiktokUnits: tiktokOrderUnits,
 };
-
-// The channels katasync sends tracking to, by the name people use.
-const trackingChannels: Record<string, string> = {
-	shopify: "Shopify",
-	ebay: "eBay",
-	tiktok: "TikTok",
-};
-
-// A box's columns but its label PDF: nothing here needs the PDF, and reading
-// it for every box of a dispatch was the slow part.
-const { labelPdf: _labelPdf, ...boxColumns } = getTableColumns(shipments);
-type Box = Omit<typeof shipments.$inferSelect, "labelPdf">;
-
-async function load(db: Db, dispatchId: number) {
-	const [dispatch] = await db
-		.select()
-		.from(dispatches)
-		.where(eq(dispatches.id, dispatchId));
-	const boxes = await db
-		.select(boxColumns)
-		.from(shipments)
-		.where(eq(shipments.dispatchId, dispatchId))
-		.orderBy(shipments.id);
-	const members = await db
-		.select({
-			handoff: dispatchOrders,
-			order: {
-				id: orders.id,
-				name: orders.name,
-				externalId: orders.externalId,
-				fulfillmentStatus: orders.fulfillmentStatus,
-				cancelledAt: orders.cancelledAt,
-				financialStatus: orders.financialStatus,
-				salesChannel: orders.salesChannel,
-				marketplaceOrderId: orders.marketplaceOrderId,
-				shipCountry: orders.shipCountry,
-			},
-			channel: stores.channel,
-		})
-		.from(dispatchOrders)
-		.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
-		.innerJoin(stores, eq(stores.id, orders.storeId))
-		.where(eq(dispatchOrders.dispatchId, dispatchId))
-		.orderBy(orders.id);
-	if (!dispatch || boxes.length === 0 || members.length === 0) {
-		throw new Error(`No dispatch ${dispatchId}`);
-	}
-	return { dispatch, boxes, members };
-}
-
-type Member = Awaited<ReturnType<typeof load>>["members"][number];
 
 export type Handoff = { sent: boolean; message: string };
 
@@ -140,7 +86,34 @@ export async function sendTracking(
 				);
 			}
 			const contents = await contentsOf(db, dispatchId);
-			const results: (Handoff & { newly: boolean })[] = [];
+			const label = (m: Member, message: string) =>
+				members.length > 1 ? `${m.order.name}: ${message}` : message;
+			if (
+				members.length > 1 &&
+				liveBoxes.every((b) => b.provider === "tiktok")
+			) {
+				const blocker = await blockerOfSharedPackage(
+					db,
+					members,
+					liveBoxes,
+					contents,
+					outside,
+				);
+				if (blocker) {
+					return members.map((m) =>
+						m === blocker.member
+							? { ...blocker.result, message: label(m, blocker.result.message) }
+							: done(
+									m.handoff.channelSentAt !== null,
+									label(
+										m,
+										`waits on ${blocker.member.order.name}, which shares its TikTok package`,
+									),
+								),
+					);
+				}
+			}
+			const results: Told[] = [];
 			for (const member of members) {
 				const result = await tell(db, member, liveBoxes, contents, outside);
 				// With several orders, each message says which one it's about.
@@ -163,168 +136,6 @@ export async function sendTracking(
 		message: [...outcome.map((r) => r.message), ...notes].join(". "),
 	};
 }
-
-// Tells one order's marketplace, once the marketplace itself shows exactly
-// what was packed still to ship (see deliver.ts). A dispatch bought before
-// contents were kept, a label that doesn't fit where the order was sold, or
-// any mismatch is held for a person instead.
-async function tell(
-	db: Db,
-	member: Member,
-	boxes: Box[],
-	contents: Contents,
-	outside: Outside,
-): Promise<Handoff & { newly: boolean }> {
-	const { order, channel, handoff } = member;
-	const to = destinationOf(
-		{ ...order, channel },
-		boxes.map((b) => b.provider),
-	);
-	const name =
-		to.kind === "hold"
-			? (trackingChannels[channel] ?? channel)
-			: trackingChannels[to.kind];
-	const done = (sent: boolean, message: string, newly = false) => ({
-		sent,
-		message,
-		newly,
-	});
-	if (handoff.channelSentAt) {
-		return done(true, `Tracking already sent to ${name}`);
-	}
-	// Telling the customer it shipped would be wrong; the box stays here.
-	if (order.cancelledAt) {
-		return done(false, "The order was cancelled; void the label instead");
-	}
-	if (
-		order.financialStatus === "REFUNDED" ||
-		order.financialStatus === "VOIDED"
-	) {
-		return done(
-			false,
-			"The order was refunded or voided; void the label instead",
-		);
-	}
-	// A test label's tracking number is fake; customers must never get it.
-	if (boxes.some((b) => b.test)) {
-		return done(false, `Test label, so ${name} wasn't told`);
-	}
-	const hold = async (held: HandoffHold, why: string) => {
-		await db
-			.update(dispatchOrders)
-			.set({ channelError: why, handoffHold: held, channelRetryAt: null })
-			.where(sameMember(member));
-		return done(false, `Not sent to ${name}: ${why}`);
-	};
-	if (contents.kind === "unknown") {
-		return hold(
-			{ kind: "unknownContents" },
-			`bought before katasync kept what was packed, so it can't check the box against the order. Tell ${name} by hand, or void and ship again`,
-		);
-	}
-	if (to.kind === "hold")
-		return hold({ kind: "unmappable", why: to.why }, to.why);
-	const packed = packedOf(contents.lines, order.id);
-	const commitmentLines = packed.flatMap((line) =>
-		line.orderLineId == null
-			? []
-			: [{ orderLineId: line.orderLineId, quantity: line.quantity }],
-	);
-	if (
-		commitmentLines.length !== packed.length &&
-		(await readQuantityMode(db, "none")) === "committed"
-	)
-		return hold(
-			{
-				kind: "unmappable",
-				why: "This dispatch has no frozen inventory line identity",
-			},
-			"Void and repack this dispatch before shipping reserved stock",
-		);
-
-	let phase: "delivery" | "recording" = "delivery";
-	try {
-		const delivered = await deliver(
-			db,
-			{ to, order, boxes, packed: packedOf(contents.lines, order.id) },
-			outside,
-		);
-		phase = "recording";
-		// Recorded together, so a retry never finds it sent while the order is
-		// still on To ship.
-		await db.transaction(async (tx) => {
-			if (
-				(await readQuantityMode(tx)) === "committed" &&
-				commitmentLines.length !== packed.length
-			)
-				throw new Error("The dispatch has no frozen inventory line identity");
-			await consumeCommitments(tx, {
-				orderId: order.id,
-				lines: commitmentLines,
-				fulfillmentKey: `dispatch:${handoff.dispatchId}:order:${order.id}`,
-			});
-			await tx
-				.update(dispatchOrders)
-				.set({
-					channelSentAt: new Date(),
-					channelFulfillmentId: delivered.fulfillmentId,
-					channelError: null,
-					channelRetryAt: null,
-					handoffHold: null,
-				})
-				.where(sameMember(member));
-			// Shipped now, not on the next sync: off To ship unless the
-			// marketplace still has more of it to ship.
-			await tx
-				.update(orders)
-				.set({
-					fulfillmentStatus:
-						delivered.remaining > 0 ? "PARTIALLY_FULFILLED" : "FULFILLED",
-				})
-				.where(eq(orders.id, order.id));
-		});
-	} catch (err) {
-		const detail = err instanceof Error ? err.message : String(err);
-		if (err instanceof Held) return hold(err.hold, detail);
-		const why =
-			phase === "recording"
-				? `Marketplace accepted tracking; inventory recording failed: ${detail}`
-				: detail;
-		const now = new Date();
-		const firstFailedAt = handoff.channelFirstFailedAt ?? now;
-		const attempts = handoff.channelAttempts + 1;
-		const retryAt = nextRetry(firstFailedAt, attempts, now);
-		await db
-			.update(dispatchOrders)
-			.set({
-				channelError: why,
-				channelFirstFailedAt: firstFailedAt,
-				channelAttempts: attempts,
-				channelRetryAt: retryAt,
-				handoffHold: null,
-			})
-			.where(sameMember(member));
-		return done(
-			false,
-			`${phase === "recording" ? "Dispatch not recorded" : `Tracking didn't reach ${name}`}: ${why}${retryAt ? ". Retrying on its own; Diagnostics shows it if it gives up" : ""}`,
-		);
-	}
-	return done(
-		true,
-		to.kind === "tiktok"
-			? "Ready for pickup on TikTok; TikTok tells the customer"
-			: to.kind === "ebay" && boxes.length > 1
-				? `Tracking sent to eBay; eBay takes one number, so the customer sees box 1's (${boxes[0].trackingNumber})`
-				: `Tracking sent to ${name}; the customer is emailed`,
-		true,
-	);
-}
-
-const sameMember = (member: Member) =>
-	and(
-		eq(dispatchOrders.dispatchId, member.handoff.dispatchId),
-		eq(dispatchOrders.orderId, member.handoff.orderId),
-	);
 
 // remaining: labels still live because their refund was refused; voiding
 // again retries them.

@@ -124,11 +124,13 @@ export const quickShipRates = createServerFn({ method: "POST" })
 		let notes: string[] = [];
 		let test = false;
 		if (labelSource(first) === "tiktok") {
-			if (data.orderIds.length > 1 || data.boxes.length > 1) {
+			if (data.boxes.length > 1) {
 				throw new Error(
-					"TikTok: one order per box. Combine or split in TikTok Seller Center.",
+					"TikTok: one box per label. Split it in TikTok Seller Center.",
 				);
 			}
+			// TikTok quotes one order at a time; a combined box is priced on the
+			// pin's order at the whole box's size, as buying does.
 			perBox = [
 				await tiktokRates(
 					tiktokOrderId(first.marketplaceOrderId),

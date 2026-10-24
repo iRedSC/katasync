@@ -263,6 +263,99 @@ describe("TikTok through Shopify", () => {
 		}
 	});
 
+	describe("two orders in one combined TikTok package", () => {
+		let otherId: number;
+		beforeEach(async () => {
+			const [first] = await db
+				.select({ storeId: schema.orders.storeId })
+				.from(schema.orders)
+				.where(eq(schema.orders.id, orderId));
+			const [other] = await db
+				.insert(schema.orders)
+				.values({
+					storeId: first.storeId,
+					externalId: "gid://shopify/Order/10",
+					name: "#10",
+					salesChannel: "TikTok",
+					marketplaceOrderId: "tiktok:578",
+					placedAt: new Date(),
+					fulfillmentStatus: "UNFULFILLED",
+					total: 10,
+					sourceUpdatedAt: new Date(),
+				})
+				.returning();
+			otherId = other.id;
+			await db.insert(schema.orderLines).values({
+				orderId: otherId,
+				externalId: "M1",
+				sku: "SAW",
+				title: "Saw",
+				quantity: 1,
+				unitPrice: 10,
+			});
+		});
+
+		// Each order's own units on TikTok, all in the one package.
+		const both = (otherCancelled = false) =>
+			vi.fn(async (id: string) =>
+				id === "577"
+					? await units()()
+					: {
+							status: "AWAITING_COLLECTION",
+							packages: ["pkg"],
+							units: [
+								{
+									id: "v1",
+									sellerSku: "SAW",
+									skuId: "s",
+									cancelled: otherCancelled,
+									packageId: "pkg",
+								},
+							],
+						},
+			);
+		const combinedBox = async () =>
+			(
+				await addPackedDispatch(db, {
+					orderIds: [orderId, otherId],
+					boxes: [
+						{ provider: "tiktok", externalId: "pkg", trackingNumber: null },
+					],
+					unitIds: ["u1", "u2", "u3", "v1"],
+				})
+			).dispatchId;
+
+		test("ships the package once both orders match it", async () => {
+			const outside = fakes({ tiktokUnits: both() });
+			expect((await sendTracking(db, await combinedBox(), outside)).sent).toBe(
+				true,
+			);
+			expect(outside.tiktokShip).toHaveBeenCalledWith("pkg");
+		});
+
+		test("one order changed on TikTok ships neither", async () => {
+			const outside = fakes({ tiktokUnits: both(true) });
+			const id = await combinedBox();
+			const result = await sendTracking(db, id, outside);
+			expect(result.sent).toBe(false);
+			expect(result.message).toContain("shares its TikTok package");
+			expect(outside.tiktokShip).not.toHaveBeenCalled();
+			expect(await holdOf(db, id, otherId)).toMatchObject({ kind: "drift" });
+		});
+
+		test("one order cancelled here ships neither", async () => {
+			await db
+				.update(schema.orders)
+				.set({ cancelledAt: new Date() })
+				.where(eq(schema.orders.id, otherId));
+			const outside = fakes({ tiktokUnits: both() });
+			expect((await sendTracking(db, await combinedBox(), outside)).sent).toBe(
+				false,
+			);
+			expect(outside.tiktokShip).not.toHaveBeenCalled();
+		});
+	});
+
 	test("a TikTok sale on a Shippo label is held as unmappable", async () => {
 		const outside = fakes();
 		const id = await packed();

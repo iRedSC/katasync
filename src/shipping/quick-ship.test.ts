@@ -390,6 +390,8 @@ describe("addressKey and whyNotTogether", () => {
 		shipAddress2: null,
 		shipPostalCode: "16501",
 		shipCountry: "US",
+		storeId: 1,
+		buyerId: null,
 		...extra,
 	});
 
@@ -419,16 +421,27 @@ describe("addressKey and whyNotTogether", () => {
 		expect(
 			whyNotTogether([order(1), order(2, { salesChannel: "TikTok" })], []),
 		).toContain("TikTok");
-		// Not even two TikTok orders: TikTok combines them itself.
+		// TikTok hides the address: its orders combine by buyer, on one
+		// TikTok label.
+		const tiktok = (id: number, buyerId: string | null) =>
+			order(id, {
+				channel: "tiktok",
+				salesChannel: "TikTok",
+				marketplaceOrderId: `tiktok:${id}`,
+				shipAddress1: null,
+				shipPostalCode: null,
+				buyerId,
+			});
+		expect(whyNotTogether([tiktok(1, "b"), tiktok(2, "b")], [])).toBeNull();
+		expect(whyNotTogether([tiktok(1, "b"), tiktok(2, "c")], [])).toContain(
+			"same buyer",
+		);
+		expect(whyNotTogether([tiktok(1, null), tiktok(2, null)], [])).toContain(
+			"same buyer",
+		);
 		expect(
-			whyNotTogether(
-				[
-					order(1, { salesChannel: "TikTok" }),
-					order(2, { salesChannel: "TikTok" }),
-				],
-				[],
-			),
-		).toContain("Seller Center");
+			whyNotTogether([tiktok(1, "b"), tiktok(2, "b")], [{ orderId: 2 }]),
+		).toContain("already has a label");
 		expect(whyNotTogether([order(1, { channel: "amazon" })], [])).toContain(
 			"Amazon",
 		);

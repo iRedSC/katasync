@@ -145,11 +145,11 @@ export async function buyDispatch(
 		const lead = list.find((o) => o.id === input.orderIds[0]);
 		if (!lead) throw new Error("One of these orders no longer exists");
 		const tiktok = labelSource(lead) === "tiktok";
-		// TikTok sells one label per order package; combining or splitting
-		// happens in Seller Center.
-		if (tiktok && (list.length > 1 || boxes.length > 1)) {
+		// TikTok sells one label per package, for one order or several
+		// combined; splitting an order into boxes happens in Seller Center.
+		if (tiktok && boxes.length > 1) {
 			throw new Error(
-				"TikTok: one order per box. Combine or split in TikTok Seller Center.",
+				"TikTok: one box per label. Split it in TikTok Seller Center.",
 			);
 		}
 		// Anything that could stop a record being saved is checked before
@@ -241,7 +241,13 @@ export async function buyDispatch(
 			let saved: Shipment;
 			try {
 				saved = await purchase(db, attempt, prepared, {
-					tiktokOrderId: tiktok ? tiktokOrderId(lead.marketplaceOrderId) : null,
+					tiktokOrderIds: tiktok
+						? [...new Set(input.orderIds)].map((id) =>
+								tiktokOrderId(
+									list.find((o) => o.id === id)?.marketplaceOrderId ?? null,
+								),
+							)
+						: null,
 					plan,
 					choice,
 					rateId: rates[i]?.id,
@@ -292,7 +298,8 @@ export async function buyDispatch(
 // What each order's marketplace still has to ship must be exactly what was
 // packed, asked of eBay and TikTok themselves before money is spent (Shopify
 // is asked at handoff, where its fulfillment names each quantity). Returns
-// the TikTok units the label is for, or null for a Shippo label.
+// the TikTok units the label is for, every order's, or null for a Shippo
+// label.
 async function assertMarketplacesAsPacked(
 	list: Awaited<ReturnType<typeof assertTogether>>,
 	lines: LineToPack[],
@@ -308,11 +315,14 @@ async function assertMarketplacesAsPacked(
 			await outside.ebayCheck(order.externalId, byLine(packed));
 		}
 		if (to.kind === "tiktok") {
-			unitIds = unitsToBuy(
-				await outside.tiktokUnits(to.orderId),
-				packed,
-				to.relayed,
-			);
+			unitIds = [
+				...(unitIds ?? []),
+				...unitsToBuy(
+					await outside.tiktokUnits(to.orderId),
+					packed,
+					to.relayed,
+				),
+			];
 		}
 	}
 	return unitIds;
@@ -328,7 +338,8 @@ async function purchase(
 	attempt: Awaited<ReturnType<typeof beginAttempt>>,
 	prepared: PreparedBox,
 	ctx: {
-		tiktokOrderId: string | null;
+		// Every order in the box, the pin's first.
+		tiktokOrderIds: string[] | null;
 		plan: BoxPlan;
 		choice: ServiceChoice;
 		rateId: string | undefined;
@@ -339,11 +350,11 @@ async function purchase(
 	let label: Label;
 	let overrides: Partial<PreparedBox> = {};
 	if (attempt.provider === "tiktok") {
-		if (!attempt.unitIds || !ctx.tiktokOrderId) {
+		if (!attempt.unitIds || !ctx.tiktokOrderIds?.length) {
 			throw new LabelRefused("No TikTok units to buy");
 		}
 		const bought = await outside.tiktokBuy(
-			ctx.tiktokOrderId,
+			ctx.tiktokOrderIds,
 			ctx.plan,
 			ctx.choice.id,
 			attempt.unitIds,
