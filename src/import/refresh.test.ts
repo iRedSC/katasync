@@ -124,6 +124,71 @@ test("starts stock over from the export and takes again only the sales since", a
 	expect(result.added).toEqual([]);
 });
 
+test("refuses to discard invoice evidence, even on a draft", async () => {
+	const product = await createProduct(db, "PRESERVED", "simple");
+	await postMovements(db, {
+		lines: [
+			{
+				productId: product,
+				locationId: shelf,
+				delta: 4,
+				reason: "opening_balance",
+			},
+		],
+	});
+	const [supplier] = await db
+		.insert(schema.suppliers)
+		.values({ name: "Evidence", code: "EVIDENCE" })
+		.returning();
+	const [order] = await db
+		.insert(schema.purchaseOrders)
+		.values({ supplierId: supplier.id, locationId: shelf })
+		.returning();
+	await db.insert(schema.supplierInvoices).values({
+		purchaseOrderId: order.id,
+		supplierId: supplier.id,
+		number: "KEPT",
+		invoicedOn: "2026-10-01",
+		total: 10,
+	});
+	await expect(
+		refreshFromSumtracker(db, plan({ products: [item("PRESERVED")] }), options),
+	).rejects.toThrow(/Purchasing evidence.*Nothing changed/);
+	expect(await onHand(product)).toBe(4);
+	expect(await db.select().from(schema.supplierInvoices)).toHaveLength(1);
+	expect(await db.select().from(schema.purchaseOrders)).toHaveLength(1);
+});
+
+test("refuses to discard a sent purchase order without an invoice", async () => {
+	const [supplier] = await db
+		.insert(schema.suppliers)
+		.values({ name: "Sent", code: "SENT" })
+		.returning();
+	await db
+		.insert(schema.purchaseOrders)
+		.values({ supplierId: supplier.id, locationId: shelf, status: "sent" });
+	await expect(refreshFromSumtracker(db, plan({}), options)).rejects.toThrow(
+		/Purchasing evidence.*Nothing changed/,
+	);
+	expect(await db.select().from(schema.purchaseOrders)).toHaveLength(1);
+});
+
+test("can discard only non-evidence suggested drafts during cutover", async () => {
+	const [supplier] = await db
+		.insert(schema.suppliers)
+		.values({ name: "Suggested", code: "SUGGESTED" })
+		.returning();
+	await db.insert(schema.purchaseOrders).values({
+		supplierId: supplier.id,
+		locationId: shelf,
+		status: "suggested",
+	});
+	await expect(
+		refreshFromSumtracker(db, plan({}), options),
+	).resolves.toBeDefined();
+	expect(await db.select().from(schema.purchaseOrders)).toHaveLength(0);
+});
+
 test("fills in and changes details by SKU, never blanks one, and adds what's new", async () => {
 	const a = await createProduct(db, "A", "simple");
 	await db
