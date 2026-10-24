@@ -38,17 +38,7 @@ export async function deliver(
 ): Promise<Delivered> {
 	const { to, order, boxes, packed } = input;
 	if (to.kind === "tiktok") {
-		// A combined box's label holds every order's units; each order is
-		// checked against its own, cancelled ones included, so a unit
-		// cancelled since the purchase still stops it.
-		const live = await outside.tiktokUnits(to.orderId);
-		const ours = new Set(live.units.map((u) => u.id));
-		assertShippable(
-			live,
-			(await unitsOf(db, boxes)).filter((id) => ours.has(id)),
-			packed,
-			to.relayed,
-		);
+		await assertTiktokShippable(db, { to, boxes, packed }, outside);
 		let fulfillmentId: string | null = null;
 		for (const box of boxes) {
 			const shipped = await outside.tiktokShip(box.externalId);
@@ -85,6 +75,31 @@ export async function deliver(
 		trackingNumber: first.trackingNumber as string,
 		shippedAt: first.createdAt,
 	});
+}
+
+// Throws Held unless TikTok still has exactly this order's packed units to
+// ship. A combined box's label holds every order's units; each order is
+// checked against its own, cancelled ones included, so a unit cancelled
+// since the purchase still stops it. Reads only, so handoff can check every
+// order sharing a package before shipping it.
+export async function assertTiktokShippable(
+	db: Db,
+	input: {
+		to: Extract<Destination, { kind: "tiktok" }>;
+		boxes: Box[];
+		packed: PackedLine[];
+	},
+	outside: Pick<DeliverOutside, "tiktokUnits">,
+) {
+	const { to, boxes, packed } = input;
+	const live = await outside.tiktokUnits(to.orderId);
+	const ours = new Set(live.units.map((u) => u.id));
+	assertShippable(
+		live,
+		(await unitsOf(db, boxes)).filter((id) => ours.has(id)),
+		packed,
+		to.relayed,
+	);
 }
 
 // The TikTok units a dispatch's packages were bought for, from their
