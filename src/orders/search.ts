@@ -39,6 +39,7 @@ export type SearchableOrder = {
 	fulfillmentStatus: string;
 	financialStatus: string | null;
 	labelToVoid: boolean;
+	fulfilledByChannel: boolean;
 	returnStage: ReturnStage;
 	total: number;
 	items: number;

@@ -28,6 +28,7 @@ function order(over: Partial<SearchableOrder> = {}): SearchableOrder {
 		fulfillmentStatus: "UNFULFILLED",
 		financialStatus: "PAID",
 		labelToVoid: false,
+		fulfilledByChannel: false,
 		returnStage: null,
 		total: 40,
 		items: 1,
@@ -121,10 +122,10 @@ describe("%status", () => {
 		const language = orderLanguage(facetCounts([facetsOf(store)]));
 		const typing = parseQuery("%").filters[0];
 		const shown = language.suggest(typing, []);
-		expect(shown.find((s) => s.value === "returning")).toEqual({
-			value: "returning",
+		expect(shown.find((s) => s.value === "fba")).toEqual({
+			value: "fba",
 			count: 0,
-			detail: "Returning",
+			detail: "FBA Fulfilled",
 		});
 	});
 });
