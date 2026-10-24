@@ -30,6 +30,7 @@ type Rows = { rows: Record<string, unknown>[] };
 // and refused by name in queries.
 export const SECRET_TABLES = [
 	"staff_owner_guard",
+	"bank_payout_guards",
 	"sessions",
 	"passkeys",
 	"oauth_clients",

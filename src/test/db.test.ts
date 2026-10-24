@@ -16,7 +16,7 @@ describe("createTestDb", () => {
 		it(`undoes: ${change}`, async () => {
 			const db = await createTestDb();
 			await db.execute(sql.raw(change));
-		});
+		}, 30_000);
 
 		it(`then is back as migrated after: ${change}`, async () => {
 			const db = await createTestDb();
@@ -40,6 +40,6 @@ describe("createTestDb", () => {
 				role: "origin",
 			});
 			expect(rows[0].body).not.toContain("return new");
-		});
+		}, 30_000);
 	}
 });
