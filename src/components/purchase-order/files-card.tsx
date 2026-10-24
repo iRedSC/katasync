@@ -405,7 +405,7 @@ function FileRow({
 				<li
 					ref={ref}
 					className={cn(
-						"group/file mx-2 flex items-center rounded-lg ring-ring transition-shadow animate-in fade-in-0",
+						"mx-2 flex items-center rounded-lg ring-ring transition-shadow animate-in fade-in-0",
 						found && "ring-2",
 					)}
 				>
@@ -424,15 +424,6 @@ function FileRow({
 							{body}
 						</button>
 					)}
-					<Button
-						size="icon-sm"
-						variant="ghost"
-						aria-label={`Remove ${row.filename}`}
-						className="text-muted-foreground [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/file:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
-						onClick={onRemove}
-					>
-						<X />
-					</Button>
 				</li>
 			</ContextMenuTrigger>
 			<ContextMenuContent>
