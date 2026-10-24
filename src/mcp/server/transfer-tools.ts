@@ -87,7 +87,8 @@ async function describeTransfer(db: Db, id: number) {
 		.where(eq(transferLines.transferId, id))
 		.orderBy(products.sku);
 	const delivery = await deliveryOf(db, id);
-	const sentIds = "lines" in delivery ? delivery.lines.map((l) => l.productId) : [];
+	const sentIds =
+		"lines" in delivery ? delivery.lines.map((l) => l.productId) : [];
 	const skuOf = new Map(
 		sentIds.length === 0
 			? []
