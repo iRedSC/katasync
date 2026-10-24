@@ -73,15 +73,22 @@ export function Tile({
 export function SidePanel({
 	open,
 	onClose,
+	className,
 	children,
 }: {
 	open: boolean;
 	onClose: () => void;
+	className?: string;
 	children: ReactNode;
 }) {
 	return (
 		<Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-			<DialogContent className="top-0 right-0 left-auto flex h-dvh w-full max-w-lg translate-x-0 translate-y-0 flex-col gap-4 overflow-y-auto rounded-none border-y-0 border-r-0 p-5 sm:max-w-lg data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right">
+			<DialogContent
+				className={cn(
+					"top-0 right-0 left-auto flex h-dvh w-full max-w-lg translate-x-0 translate-y-0 flex-col gap-4 overflow-y-auto rounded-none border-y-0 border-r-0 p-5 sm:max-w-lg data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+					className,
+				)}
+			>
 				{children}
 			</DialogContent>
 		</Dialog>

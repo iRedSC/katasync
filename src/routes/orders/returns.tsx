@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import {
 	Ban,
 	ExternalLink,
@@ -14,6 +14,7 @@ import { ChannelBadge } from "#/components/channel-badge";
 import { conditionName } from "#/components/order-page/return-card";
 import { OrderTabs, ReturnsViews } from "#/components/order-tabs";
 import { OrderProducts } from "#/components/orders-list/order-products";
+import { PackageWhere } from "#/components/package-status";
 import { Badge, Card, EmptyState, Page, type Tone } from "#/components/page";
 import { type Received, ReturnDialog } from "#/components/return-dialog";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
@@ -25,7 +26,6 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { useRowLink } from "#/lib/row-link";
 import { offerUndo } from "#/lib/undo";
-import { cn } from "#/lib/utils";
 import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
 import { printPdf } from "#/printing/qz-client";
@@ -135,13 +135,10 @@ type OtherSearch =
 function Returns() {
 	const loaded = Route.useLoaderData();
 	const { due, received } = returnsData.useData("all", loaded);
-	const navigate = useNavigate();
 	const { link } = useRowLink();
 	const input = useRef<HTMLInputElement>(null);
-	const list = useRef<HTMLTableSectionElement>(null);
 	const [query, setQuery] = useState("");
 	const [others, setOthers] = useState<OtherSearch | null>(null);
-	const [selected, setSelected] = useState(0);
 	const [receiving, setReceiving] = useState<ReturnOrder | null>(null);
 
 	const shown = useMemo(
@@ -177,13 +174,10 @@ function Returns() {
 	const extraFailed = found?.state === "failed";
 	const rows = [...shown, ...extra];
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: back to the top when the search changes
-	useEffect(() => setSelected(0), [query]);
-	useEffect(() => {
-		list.current
-			?.querySelector(`[data-index="${selected}"]`)
-			?.scrollIntoView({ block: "nearest" });
-	}, [selected]);
+	// The one order a search has narrowed to, which Enter receives: a box
+	// scanned or typed in goes straight to its dialog, and a search that
+	// still matches several receives nothing until it's narrowed.
+	const only = rows.length === 1 ? rows[0] : undefined;
 
 	function receive(o: ReturnOrder | undefined) {
 		if (!o) return;
@@ -266,32 +260,17 @@ function Returns() {
 			if (document.activeElement === input.current) input.current?.blur();
 			else if (query) setQuery("");
 		},
-		j: () => setSelected((i) => Math.min(i + 1, rows.length - 1)),
-		k: () => setSelected((i) => Math.max(i - 1, 0)),
-		Enter: () => receive(rows[selected]),
-		o: () => {
-			const o = rows[selected];
-			if (o) navigate({ to: "/orders/$id", params: { id: String(o.id) } });
-		},
-		n: () => nothingComing(rows[selected]),
 	});
 
-	let index = 0;
-	const row = (o: ReturnOrder) => {
-		const i = index++;
-		return (
-			<ReturnRow
-				key={o.id}
-				order={o}
-				index={i}
-				selected={i === selected}
-				onHover={() => setSelected(i)}
-				onReceive={() => receive(o)}
-				onNothing={o.state ? () => nothingComing(o) : undefined}
-				link={link}
-			/>
-		);
-	};
+	const row = (o: ReturnOrder) => (
+		<ReturnRow
+			key={o.id}
+			order={o}
+			onReceive={() => receive(o)}
+			onNothing={o.state ? () => nothingComing(o) : undefined}
+			link={link}
+		/>
+	);
 	const groups = (Object.keys(states) as ReturnState[])
 		.map((s) => ({ state: s, orders: shown.filter((o) => o.state === s) }))
 		.filter((g) => g.orders.length > 0);
@@ -314,13 +293,7 @@ function Returns() {
 							onKeyDown={(e) => {
 								if (e.key === "Enter") {
 									e.preventDefault();
-									receive(rows[selected]);
-								} else if (e.key === "ArrowDown") {
-									e.preventDefault();
-									setSelected((i) => Math.min(i + 1, rows.length - 1));
-								} else if (e.key === "ArrowUp") {
-									e.preventDefault();
-									setSelected((i) => Math.max(i - 1, 0));
+									receive(only);
 								}
 							}}
 							placeholder="What's on the box: order number, name, city, zip, SKU, tracking"
@@ -365,7 +338,7 @@ function Returns() {
 								<th className="w-0 px-2 py-2" />
 							</tr>
 						</thead>
-						<tbody ref={list}>
+						<tbody>
 							{groups.map((g) => (
 								<Fragment key={g.state}>
 									<GroupHeading>
@@ -528,21 +501,15 @@ function GroupHeading({ children }: { children: React.ReactNode }) {
 }
 
 // One order with something coming back, laid out as the orders list lays
-// out an order. A click opens the order, where its whole return is; Enter
-// (or the row's Receive) opens the box.
+// out an order. A click opens the order, where its whole return is; its
+// Receive opens the box.
 function ReturnRow({
 	order: o,
-	index,
-	selected,
-	onHover,
 	onReceive,
 	onNothing,
 	link,
 }: {
 	order: ReturnOrder;
-	index: number;
-	selected: boolean;
-	onHover: () => void;
 	onReceive: () => void;
 	onNothing?: () => void;
 	link: ReturnType<typeof useRowLink>["link"];
@@ -560,20 +527,10 @@ function ReturnRow({
 		imageUrl: l.imageUrl,
 		fromStore: [],
 	}));
-	const why = [
-		request?.reason && returnReason(request.reason),
-		request?.trackingNumber &&
-			`${request.carrier ? `${request.carrier} ` : ""}${request.trackingNumber}`,
-	].filter(Boolean);
 	return (
 		<tr
-			data-index={index}
 			{...link({ to: "/orders/$id", params: { id: String(o.id) } })}
-			onMouseMove={onHover}
-			className={cn(
-				"group cursor-pointer border-t first:border-t-0",
-				selected ? "bg-surface" : "hover:bg-subtle",
-			)}
+			className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
 		>
 			<td className="px-4 py-2.5 font-semibold">{o.name}</td>
 			<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
@@ -590,7 +547,23 @@ function ReturnRow({
 				<OrderProducts lines={coming} />
 			</td>
 			<td className="hidden max-w-56 px-4 py-2.5 lg:table-cell">
-				<div className="truncate text-muted-foreground">{why.join(" · ")}</div>
+				{request?.reason && (
+					<div className="truncate text-muted-foreground">
+						{returnReason(request.reason)}
+					</div>
+				)}
+				{request?.tracking ? (
+					<div className="truncate text-xs">
+						<PackageWhere t={request.tracking} />
+					</div>
+				) : (
+					request?.trackingNumber && (
+						<div className="truncate font-mono text-xs text-muted-foreground">
+							{request.carrier && `${request.carrier} `}
+							{request.trackingNumber}
+						</div>
+					)
+				)}
 				{o.unmatched.map((u, i) => (
 					<div
 						// biome-ignore lint/suspicious/noArrayIndexKey: two requests can name the same SKU
@@ -623,19 +596,12 @@ function ReturnRow({
 			<td className="py-1.5 pr-2">
 				<div className="flex items-center justify-end gap-1">
 					{!o.blocker && (
-						<Button
-							size="sm"
-							variant={selected ? "default" : "outline"}
-							onClick={onReceive}
-						>
+						<Button size="sm" variant="outline" onClick={onReceive}>
 							Receive
-							{selected && (
-								<kbd className="ml-1 rounded bg-white/15 px-1 text-xs">↵</kbd>
-							)}
 						</Button>
 					)}
 					{onNothing ? (
-						<Tip content="Nothing coming back (n)">
+						<Tip content="Nothing coming back">
 							<button
 								type="button"
 								aria-label="Nothing coming back"

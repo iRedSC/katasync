@@ -1,4 +1,11 @@
 import { Ban, ExternalLink, Printer, Undo2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+	CARRIER,
+	carrierPage,
+	type FollowedPackage,
+	PackageStatus,
+} from "#/components/package-status";
 import { Badge, Card, type Tone } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Button } from "#/components/ui/button";
@@ -7,7 +14,7 @@ import type { ReturnState } from "#/db/schema";
 import { channelName, formatCount, formatOrderDate } from "#/lib/format";
 import { returnReason } from "#/orders/return-reasons";
 import { printPdf } from "#/printing/qz-client";
-import type { OrderDetail } from "#/server/orders";
+import { followReturnNow, type OrderDetail } from "#/server/orders";
 
 // Where an order's return stands, all in one place: what's due back and
 // why, each request the buyer opened on a marketplace, and every return
@@ -38,18 +45,6 @@ const REQUEST_TONE: Record<
 // A Shopify condition handle as words: "new-previous-gen" → "New previous gen".
 export const conditionName = (handle: string) =>
 	handle.charAt(0).toUpperCase() + handle.slice(1).replace(/-/g, " ");
-
-// The carrier's own page for a return's tracking, when the carrier is one
-// katasync knows by name.
-function trackingPage(carrier: string | null, number: string) {
-	const c = carrier?.toLowerCase() ?? "";
-	if (c.includes("usps"))
-		return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${number}`;
-	if (c.includes("fedex"))
-		return `https://www.fedex.com/fedextrack/?trknbr=${number}`;
-	if (c.includes("ups")) return `https://www.ups.com/track?tracknum=${number}`;
-	return null;
-}
 
 type Received = OrderDetail["returnsReceived"][number];
 
@@ -150,14 +145,6 @@ export function ReturnCard({
 								<dd>{returnReason(r.reason)}</dd>
 							</>
 						)}
-						{r.trackingNumber && (
-							<>
-								<dt className="text-muted-foreground">Tracking</dt>
-								<dd className="truncate">
-									<Tracking carrier={r.carrier} number={r.trackingNumber} />
-								</dd>
-							</>
-						)}
 						{r.lines.length > 0 && (
 							<>
 								<dt className="text-muted-foreground">Sending</dt>
@@ -176,6 +163,14 @@ export function ReturnCard({
 							</>
 						)}
 					</dl>
+					{r.trackingNumber && (
+						<ReturnPackage
+							id={r.id}
+							carrier={r.carrier}
+							number={r.trackingNumber}
+							saved={r.tracking}
+						/>
+					)}
 					{r.note && (
 						<blockquote className="mt-2 border-l-2 pl-3 text-muted-foreground">
 							{r.note}
@@ -269,27 +264,85 @@ function Section({
 	);
 }
 
-function Tracking({
+type Followed =
+	| { state: "asking" }
+	| { state: "followed"; t: FollowedPackage }
+	// Its carrier isn't one Shippo follows, or Shippo couldn't be asked.
+	| { state: "unfollowed" };
+
+// The package coming back, followed on Shippo as a PO's are: asked the
+// first time its order opens, then every four hours until it arrives.
+function ReturnPackage({
+	id,
 	carrier,
 	number,
+	saved,
 }: {
+	id: number;
 	carrier: string | null;
 	number: string;
+	// What Shippo last said, kept; null until it's been asked.
+	saved: FollowedPackage | null;
 }) {
-	const page = trackingPage(carrier, number);
-	const text = `${carrier ? `${carrier} ` : ""}${number}`;
-	return page ? (
-		<a
-			href={page}
-			target="_blank"
-			rel="noreferrer"
-			className="inline-flex items-center gap-1 font-mono text-link hover:underline"
-		>
-			{text}
-			<ExternalLink className="size-3" />
-		</a>
-	) : (
-		<span className="font-mono">{text}</span>
+	const [followed, setFollowed] = useState<Followed>(
+		saved ? { state: "followed", t: saved } : { state: "asking" },
+	);
+	useEffect(() => {
+		if (saved) {
+			setFollowed({ state: "followed", t: saved });
+			return;
+		}
+		let current = true;
+		setFollowed({ state: "asking" });
+		followReturnNow({ data: { id } }).then(
+			(t) =>
+				current &&
+				setFollowed(t ? { state: "followed", t } : { state: "unfollowed" }),
+			() => current && setFollowed({ state: "unfollowed" }),
+		);
+		return () => {
+			current = false;
+		};
+	}, [id, saved]);
+	const known = followed.state === "followed" ? followed.t : null;
+	const page = known ? carrierPage(known) : null;
+	const text =
+		`${known ? CARRIER[known.carrier as keyof typeof CARRIER] : (carrier ?? "")} ${known?.number ?? number}`.trim();
+	return (
+		<div className="mt-2">
+			{page ? (
+				<a
+					href={page}
+					target="_blank"
+					rel="noreferrer"
+					className="block truncate font-mono text-xs text-link hover:underline"
+				>
+					{text}
+				</a>
+			) : (
+				<span className="block truncate font-mono text-xs">{text}</span>
+			)}
+			{followed.state !== "unfollowed" && (
+				<PackageStatus
+					t={
+						known ?? {
+							carrier: carrier ?? "",
+							number,
+							status: null,
+							statusDetail: null,
+							statusAt: null,
+							eta: null,
+							originalEta: null,
+							service: null,
+							origin: null,
+							destination: null,
+							history: [],
+							checkedAt: null,
+						}
+					}
+				/>
+			)}
+		</div>
 	);
 }
 

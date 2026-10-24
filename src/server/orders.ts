@@ -19,6 +19,7 @@ import {
 	type ReturnState,
 	returnRequestLines,
 	returnRequests,
+	returnTracking,
 	shipments,
 	stores,
 } from "#/db/schema";
@@ -26,6 +27,7 @@ import { orderMail } from "#/inbox/order-mail";
 import { adminUrls, returnPage } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
 import { returnStages } from "#/orders/return-stage";
+import { followReturn, trackingFor } from "#/orders/return-tracking";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
 
 const refurbs = alias(products, "refurbs");
@@ -347,8 +349,26 @@ export const getOrder = createServerFn({ method: "GET" })
 					trackingNumber: returnRequests.trackingNumber,
 					carrier: returnRequests.carrier,
 					requestedAt: returnRequests.requestedAt,
+					saved: {
+						carrier: returnTracking.carrier,
+						number: returnTracking.number,
+						status: returnTracking.status,
+						statusDetail: returnTracking.statusDetail,
+						statusAt: returnTracking.statusAt,
+						eta: returnTracking.eta,
+						originalEta: returnTracking.originalEta,
+						service: returnTracking.service,
+						origin: returnTracking.origin,
+						destination: returnTracking.destination,
+						history: returnTracking.history,
+						checkedAt: returnTracking.checkedAt,
+					},
 				})
 				.from(returnRequests)
+				.leftJoin(
+					returnTracking,
+					eq(returnTracking.returnRequestId, returnRequests.id),
+				)
 				.where(eq(returnRequests.orderId, data.id))
 				.orderBy(desc(returnRequests.requestedAt)),
 			db
@@ -426,8 +446,10 @@ export const getOrder = createServerFn({ method: "GET" })
 			returnState: (due[0]?.state ?? null) as ReturnState | null,
 			// Units expected back per line; for a maybe, the most that could come.
 			expected: due.map(({ lineId, expected }) => ({ lineId, expected })),
-			returnRequests: requests.map((r) => ({
+			returnRequests: requests.map(({ saved, ...r }) => ({
 				...r,
+				// Where its package is, as Shippo last said; null until asked.
+				tracking: trackingFor(r.trackingNumber, saved),
 				lines: requestLines
 					.filter((l) => l.requestId === r.id)
 					.map(({ requestId: _, ...l }) => l),
@@ -446,6 +468,27 @@ export const getOrder = createServerFn({ method: "GET" })
 			mail,
 			buyerOrders,
 		};
+	});
+
+// Asks Shippo where a return request's package is and keeps the answer,
+// for an order opened before the four-hourly sweep has asked. Null when
+// its carrier isn't one Shippo follows.
+export const followReturnNow = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [r] = await db
+			.select({
+				id: returnRequests.id,
+				carrier: returnRequests.carrier,
+				trackingNumber: returnRequests.trackingNumber,
+			})
+			.from(returnRequests)
+			.where(eq(returnRequests.id, data.id));
+		const saved = r ? await followReturn(db, r) : null;
+		if (!saved) return null;
+		const { returnRequestId: _, ...t } = saved;
+		return t;
 	});
 
 export { listInvoices, markInvoicesPrinted } from "./orders/invoices";

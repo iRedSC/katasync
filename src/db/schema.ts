@@ -1753,6 +1753,43 @@ export type TrackingEvent = {
 	place: string | null;
 };
 
+// Where the package a return request names is, as Shippo last said: one
+// row per request, for the number it had when asked. When the marketplace
+// changes the number, the row no longer matches it and isn't shown; the
+// next look asks about the new one and replaces it.
+export const returnTracking = pgTable(
+	"return_tracking",
+	{
+		returnRequestId: integer()
+			.primaryKey()
+			.references(() => returnRequests.id, { onDelete: "cascade" }),
+		// Shippo's carrier token: ups, usps, fedex.
+		carrier: text().notNull(),
+		// Uppercase, no spaces.
+		number: text().notNull(),
+		status: trackingStatus().notNull(),
+		statusDetail: text(),
+		statusAt: timestamp({ withTimezone: true }),
+		eta: timestamp({ withTimezone: true }),
+		originalEta: timestamp({ withTimezone: true }),
+		service: text(),
+		origin: text(),
+		destination: text(),
+		history: jsonb().$type<TrackingEvent[]>().notNull().default([]),
+		checkedAt: timestamp({ withTimezone: true }).notNull(),
+	},
+	(t) => [
+		check(
+			"return_tracking_number_shape",
+			sql`${t.number} ~ '^[0-9A-Z]{8,40}$'`,
+		),
+		check(
+			"return_tracking_carrier",
+			sql`${t.carrier} in ('ups', 'usps', 'fedex')`,
+		),
+	],
+);
+
 // Packages a supplier sent for a PO, followed on Shippo. Only ever evidence:
 // a delivery never receives or closes the PO.
 export const purchaseOrderTracking = pgTable(
