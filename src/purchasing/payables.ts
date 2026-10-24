@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import type { Actor } from "#/auth/actor";
 import type { Db } from "#/db/client";
 import {
 	paymentMethods,
@@ -12,14 +13,13 @@ import { purchaseOrders, supplierInvoices, suppliers } from "#/db/schema";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { billingOf, totalCentsOf } from "./invoice-ledger";
 import {
-	actorOf,
 	CURRENCY,
 	type Currency,
 	currencyOf,
 	MoneyError,
-	type StaffContext,
 	wholeCents,
 } from "./invoice-matching";
+import { recordedBy } from "./recorded-by";
 
 export type PaymentMethod = (typeof paymentMethods)[number];
 
@@ -121,7 +121,7 @@ async function applyWithin(
 	db: Db,
 	payment: Payment,
 	application: { id: string; invoiceId: number; amountCents: number },
-	ctx: StaffContext,
+	actor: Actor,
 ) {
 	const id = idOf(application.id, "Application");
 	const amountCents = positiveCents(application.amountCents, "Applied amount");
@@ -160,7 +160,7 @@ async function applyWithin(
 			supplierId: payment.supplierId,
 			invoiceId: application.invoiceId,
 			amountCents,
-			appliedBy: actorOf(ctx),
+			appliedBy: recordedBy(actor),
 		})
 		.returning();
 	return saved;
@@ -180,7 +180,7 @@ export type RecordPaymentInput = {
 export async function recordPayment(
 	db: Db,
 	input: RecordPaymentInput,
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	const id = idOf(input.id, "Payment");
 	const amountCents = positiveCents(input.amountCents, "Payment");
@@ -226,10 +226,10 @@ export async function recordPayment(
 				paidOn: input.paidOn,
 				method: input.method,
 				reference,
-				recordedBy: actorOf(ctx),
+				recordedBy: recordedBy(actor),
 			})
 			.returning();
-		for (const a of applications) await applyWithin(tx, payment, a, ctx);
+		for (const a of applications) await applyWithin(tx, payment, a, actor);
 		return evidenceOne(tx, id);
 	});
 }
@@ -252,11 +252,11 @@ async function lockedPayment(db: Db, paymentId: string) {
 export async function applyCredit(
 	db: Db,
 	input: { id: string; paymentId: string; invoiceId: number; amountCents: number },
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	return db.transaction(async (tx) => {
 		const payment = await lockedPayment(tx, input.paymentId);
-		await applyWithin(tx, payment, input, ctx);
+		await applyWithin(tx, payment, input, actor);
 		return evidenceOne(tx, payment.id);
 	});
 }
@@ -264,7 +264,7 @@ export async function applyCredit(
 export async function unapplyPayment(
 	db: Db,
 	input: { applicationId: string },
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	const id = idOf(input.applicationId, "Application");
 	return db.transaction(async (tx) => {
@@ -276,7 +276,7 @@ export async function unapplyPayment(
 		await lockSupplier(tx, found.supplierId);
 		await tx
 			.update(supplierPaymentApplications)
-			.set({ reversedAt: sql`now()`, reversedBy: actorOf(ctx) })
+			.set({ reversedAt: sql`now()`, reversedBy: recordedBy(actor) })
 			.where(
 				and(
 					eq(supplierPaymentApplications.id, id),
@@ -290,7 +290,7 @@ export async function unapplyPayment(
 export async function reversePayment(
 	db: Db,
 	input: { paymentId: string; reason?: string | null },
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	return db.transaction(async (tx) => {
 		const payment = await lockedPayment(tx, input.paymentId);
@@ -298,7 +298,7 @@ export async function reversePayment(
 			.update(supplierPayments)
 			.set({
 				reversedAt: sql`now()`,
-				reversedBy: actorOf(ctx),
+				reversedBy: recordedBy(actor),
 				reversalReason: input.reason?.trim() || null,
 			})
 			.where(and(eq(supplierPayments.id, payment.id), isNull(supplierPayments.reversedAt)))
@@ -306,7 +306,7 @@ export async function reversePayment(
 		if (reversed.length > 0)
 			await tx
 				.update(supplierPaymentApplications)
-				.set({ reversedAt: sql`now()`, reversedBy: actorOf(ctx) })
+				.set({ reversedAt: sql`now()`, reversedBy: recordedBy(actor) })
 				.where(
 					and(
 						eq(supplierPaymentApplications.paymentId, payment.id),
@@ -320,7 +320,7 @@ export async function reversePayment(
 export async function assertOpeningHistory(
 	db: Db,
 	input: { invoiceId: number; paidCents: number; note?: string | null },
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	if (wholeCents(input.paidCents, "Paid before") < 0)
 		throw new MoneyError("Paid before can't be negative");
@@ -344,7 +344,7 @@ export async function assertOpeningHistory(
 			invoiceId: header.id,
 			paidCents: input.paidCents,
 			note: input.note?.trim() || null,
-			assertedBy: actorOf(ctx),
+			assertedBy: recordedBy(actor),
 		});
 		return billingOf(tx, header.purchaseOrderId);
 	});
@@ -353,7 +353,7 @@ export async function assertOpeningHistory(
 export async function withdrawOpeningHistory(
 	db: Db,
 	input: { invoiceId: number },
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	return db.transaction(async (tx) => {
 		const [header] = await tx
@@ -364,7 +364,7 @@ export async function withdrawOpeningHistory(
 		await lockSupplier(tx, header.supplierId);
 		await tx
 			.update(supplierInvoiceOpenings)
-			.set({ withdrawnAt: sql`now()`, withdrawnBy: actorOf(ctx) })
+			.set({ withdrawnAt: sql`now()`, withdrawnBy: recordedBy(actor) })
 			.where(
 				and(
 					eq(supplierInvoiceOpenings.invoiceId, header.id),

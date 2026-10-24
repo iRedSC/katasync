@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { requireActor } from "#/audit/context";
 import type { Db } from "#/db/client";
 import { paymentMethods } from "#/db/payables-schema";
 import { restoreInvoice, voidInvoice } from "#/purchasing/invoices";
-import type { StaffContext } from "#/purchasing/invoice-matching";
 import {
 	orderPayables,
 	recordPayment,
@@ -29,11 +29,7 @@ async function payablesFor(db: Db, po: number) {
 	};
 }
 
-export function registerInvoiceTools(
-	server: McpServer,
-	db: Db,
-	ctx: StaffContext = {},
-) {
+export function registerInvoiceReadTools(server: McpServer, db: Db) {
 	server.registerTool(
 		"po_payables",
 		{
@@ -44,7 +40,9 @@ export function registerInvoiceTools(
 		},
 		async ({ po }) => json(await payablesFor(db, po)),
 	);
+}
 
+export function registerInvoiceTools(server: McpServer, db: Db) {
 	server.registerTool(
 		"void_supplier_invoice",
 		{
@@ -56,7 +54,7 @@ export function registerInvoiceTools(
 			},
 			annotations: WRITE,
 		},
-		async ({ id, reason }) => json(await voidInvoice(db, { id, reason }, ctx)),
+		async ({ id, reason }) => json(await voidInvoice(db, { id, reason }, requireActor())),
 	);
 
 	server.registerTool(
@@ -67,7 +65,7 @@ export function registerInvoiceTools(
 			inputSchema: { id: z.number().int().positive() },
 			annotations: WRITE,
 		},
-		async ({ id }) => json(await restoreInvoice(db, { id }, ctx)),
+		async ({ id }) => json(await restoreInvoice(db, { id }, requireActor())),
 	);
 
 	server.registerTool(
@@ -110,7 +108,7 @@ export function registerInvoiceTools(
 							amountCents: a.amount_cents,
 						})),
 					},
-					ctx,
+					requireActor(),
 				),
 			),
 	);
@@ -127,6 +125,6 @@ export function registerInvoiceTools(
 			annotations: { ...WRITE, destructiveHint: true },
 		},
 		async ({ payment_id, reason }) =>
-			json(await reversePayment(db, { paymentId: payment_id, reason }, ctx)),
+			json(await reversePayment(db, { paymentId: payment_id, reason }, requireActor())),
 	);
 }

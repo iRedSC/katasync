@@ -8,6 +8,10 @@ import {
 	registerInboxReadTools,
 	registerInboxWriteTools,
 } from "./server/inbox-tools";
+import {
+	registerInvoiceReadTools,
+	registerInvoiceTools,
+} from "./server/invoice-tools";
 import { INSTRUCTIONS } from "./server/instructions";
 import { registerListingTools } from "./server/listing-tools";
 import {
@@ -49,6 +53,7 @@ export const READ_TOOLS = new Set([
 	"get_purchase_order",
 	"list_purchase_units",
 	"match_invoice",
+	"po_payables",
 	"unmatched_listings",
 	"suggest_matches",
 	"refill_suggestions",
@@ -72,6 +77,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 	);
 
 	registerReadTools(server, db);
+	registerInvoiceReadTools(server, db);
 	registerTransferReadTools(server, db);
 	registerInboxReadTools(server, db);
 	registerFileReadTools(server, db);
@@ -86,6 +92,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 // src/routes/mcp.ts logs every call to them.
 function registerWriteTools(server: McpServer, db: Db) {
 	registerPurchasingTools(server, db);
+	registerInvoiceTools(server, db);
 	registerSupplierTools(server, db);
 	registerCatalogTools(server, db);
 	registerListingTools(server, db);

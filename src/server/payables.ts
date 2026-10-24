@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
+import { requireActor } from "#/audit/context";
 import { getDb } from "#/db/client";
 import { paymentMethods } from "#/db/payables-schema";
 import {
@@ -11,7 +12,6 @@ import {
 	unapplyPayment,
 	withdrawOpeningHistory,
 } from "#/purchasing/payables";
-import { staff } from "./purchasing/invoices";
 
 const uuid = "string.uuid";
 const cents = "number.integer > 0";
@@ -37,7 +37,7 @@ export const recordSupplierPayment = createServerFn({ method: "POST" })
 			}).array(),
 		}),
 	)
-	.handler(async ({ data }) => recordPayment(getDb(), data, staff()));
+	.handler(async ({ data }) => recordPayment(getDb(), data, requireActor()));
 
 export const applySupplierCredit = createServerFn({ method: "POST" })
 	.validator(
@@ -48,15 +48,15 @@ export const applySupplierCredit = createServerFn({ method: "POST" })
 			amountCents: cents,
 		}),
 	)
-	.handler(async ({ data }) => applyCredit(getDb(), data, staff()));
+	.handler(async ({ data }) => applyCredit(getDb(), data, requireActor()));
 
 export const unapplySupplierPayment = createServerFn({ method: "POST" })
 	.validator(type({ applicationId: uuid }))
-	.handler(async ({ data }) => unapplyPayment(getDb(), data, staff()));
+	.handler(async ({ data }) => unapplyPayment(getDb(), data, requireActor()));
 
 export const reverseSupplierPayment = createServerFn({ method: "POST" })
 	.validator(type({ paymentId: uuid, "reason?": "string | null" }))
-	.handler(async ({ data }) => reversePayment(getDb(), data, staff()));
+	.handler(async ({ data }) => reversePayment(getDb(), data, requireActor()));
 
 export const assertInvoiceHistory = createServerFn({ method: "POST" })
 	.validator(
@@ -66,8 +66,8 @@ export const assertInvoiceHistory = createServerFn({ method: "POST" })
 			"note?": "string | null",
 		}),
 	)
-	.handler(async ({ data }) => assertOpeningHistory(getDb(), data, staff()));
+	.handler(async ({ data }) => assertOpeningHistory(getDb(), data, requireActor()));
 
 export const withdrawInvoiceHistory = createServerFn({ method: "POST" })
 	.validator(type({ invoiceId: "number.integer > 0" }))
-	.handler(async ({ data }) => withdrawOpeningHistory(getDb(), data, staff()));
+	.handler(async ({ data }) => withdrawOpeningHistory(getDb(), data, requireActor()));

@@ -3,10 +3,6 @@ export type Currency = typeof CURRENCY;
 
 const MAX_CENTS = Number.MAX_SAFE_INTEGER / 10_000;
 
-export type StaffContext = { readonly actor?: string };
-
-export const actorOf = (ctx: StaffContext) => ctx.actor ?? null;
-
 export class MoneyError extends Error {
 	name = "MoneyError";
 }

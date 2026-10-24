@@ -1,11 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { inArray } from "drizzle-orm";
+import { requireActor } from "#/audit/context";
 import { getDb } from "#/db/client";
 import { products } from "#/db/schema";
 import { billingOf } from "#/purchasing/invoice-ledger";
 import type { InvoiceLine } from "#/purchasing/invoice-lines";
-import { centsOf, type StaffContext } from "#/purchasing/invoice-matching";
+import { centsOf } from "#/purchasing/invoice-matching";
 import { draftMatchable, evidenceOf } from "#/purchasing/invoice-records";
 import {
 	matchInvoice,
@@ -16,8 +17,6 @@ import {
 import { loadOrder } from "#/purchasing/load";
 import { fillSupplierSkus } from "#/purchasing/suppliers";
 import { id } from "./id-input";
-
-export const staff = (): StaffContext => ({});
 
 const invoiceLine = type({
 	line: "number.integer > 0",
@@ -113,19 +112,19 @@ export const recordSupplierInvoice = createServerFn({ method: "POST" })
 				...data,
 				lines: lines || credits ? linesOf(lines ?? [], credits) : undefined,
 			},
-			staff(),
+			requireActor(),
 		),
 	);
 
 export const voidSupplierInvoice = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0", "reason?": "string | null" }))
-	.handler(async ({ data }) => voidInvoice(getDb(), data, staff()));
+	.handler(async ({ data }) => voidInvoice(getDb(), data, requireActor()));
 
 export const removeSupplierInvoice = voidSupplierInvoice;
 
 export const restoreSupplierInvoice = createServerFn({ method: "POST" })
 	.validator(id)
-	.handler(async ({ data }) => restoreInvoice(getDb(), data, staff()));
+	.handler(async ({ data }) => restoreInvoice(getDb(), data, requireActor()));
 
 // Saves the item numbers an invoice showed onto the PO's products, for its
 // supplier. A product that already has a number keeps it.

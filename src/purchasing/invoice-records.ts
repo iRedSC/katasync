@@ -1,4 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
+import type { Actor } from "#/auth/actor";
 import type { Db } from "#/db/client";
 import {
 	supplierInvoiceDocuments,
@@ -12,15 +13,14 @@ import { lockOrder, PurchaseOrderError, poName } from "#/purchasing/orders";
 import { billingOf } from "./invoice-ledger";
 import { findLine, type InvoiceLine } from "./invoice-lines";
 import {
-	actorOf,
 	centsOf,
 	currencyOf,
 	lineAmountCents,
 	type MatchableLine,
 	MoneyError,
 	priceUnits,
-	type StaffContext,
 } from "./invoice-matching";
+import { recordedBy } from "./recorded-by";
 import { lockSupplier } from "./payables";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -154,7 +154,7 @@ const isUniqueViolation = (e: unknown) => {
 export async function recordInvoice(
 	db: Db,
 	input: RecordInvoiceInput,
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	const number = input.number.trim();
 	if (!number) throw new PurchaseOrderError("Give the invoice's number");
@@ -210,7 +210,7 @@ export async function recordInvoice(
 				currency,
 				freightCents,
 				taxCents,
-				recordedBy: actorOf(ctx),
+				recordedBy: recordedBy(actor),
 			});
 			if (evidence.length > 0)
 				await tx
@@ -245,7 +245,7 @@ async function lockedInvoice(db: Db, id: number) {
 export async function voidInvoice(
 	db: Db,
 	input: { id: number; reason?: string | null },
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	return db.transaction(async (tx) => {
 		const header = await lockedInvoice(tx, input.id);
@@ -263,11 +263,11 @@ export async function voidInvoice(
 		await tx.insert(supplierInvoiceVoids).values({
 			invoiceId: header.id,
 			reason: input.reason?.trim() || null,
-			voidedBy: actorOf(ctx),
+			voidedBy: recordedBy(actor),
 		});
 		const released = await tx
 			.update(supplierPaymentApplications)
-			.set({ reversedAt: sql`now()`, reversedBy: actorOf(ctx) })
+			.set({ reversedAt: sql`now()`, reversedBy: recordedBy(actor) })
 			.where(
 				and(
 					eq(supplierPaymentApplications.invoiceId, header.id),
@@ -285,13 +285,13 @@ export async function voidInvoice(
 export async function restoreInvoice(
 	db: Db,
 	input: { id: number },
-	ctx: StaffContext = {},
+	actor: Actor,
 ) {
 	return db.transaction(async (tx) => {
 		const header = await lockedInvoice(tx, input.id);
 		await tx
 			.update(supplierInvoiceVoids)
-			.set({ restoredAt: sql`now()`, restoredBy: actorOf(ctx) })
+			.set({ restoredAt: sql`now()`, restoredBy: recordedBy(actor) })
 			.where(
 				and(
 					eq(supplierInvoiceVoids.invoiceId, header.id),
@@ -302,6 +302,6 @@ export async function restoreInvoice(
 	});
 }
 
-export async function removeInvoice(db: Db, id: number) {
-	return (await voidInvoice(db, { id })).invoice;
+export async function removeInvoice(db: Db, id: number, actor: Actor) {
+	return (await voidInvoice(db, { id }, actor)).invoice;
 }

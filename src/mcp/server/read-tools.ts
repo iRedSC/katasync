@@ -24,7 +24,7 @@ const theirLine = z
 	.describe("Their line number; defaults to its place in this list");
 
 // A line as the invoice shows it: merchandise, or a credit taking money off.
-const invoiceLineInput = z.union([
+export const invoiceLineInput = z.union([
 	z.object({
 		kind: z.literal("merchandise").optional(),
 		line: theirLine,
@@ -47,7 +47,9 @@ const invoiceLineInput = z.union([
 ]);
 
 // As matchInvoice takes it. A credit is never a negative price.
-function toInvoiceLine(l: z.infer<typeof invoiceLineInput>): InvoiceLine {
+export function toInvoiceLine(
+	l: z.infer<typeof invoiceLineInput>,
+): InvoiceLine {
 	if (l.kind === "credit")
 		return {
 			kind: "credit",
