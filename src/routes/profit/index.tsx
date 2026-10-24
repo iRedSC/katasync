@@ -1,36 +1,46 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { Receipt, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Receipt, SearchX } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { FilterBar, useSearchRows } from "#/components/filter-bar";
 import { Card, EmptyState, Page } from "#/components/page";
-import {
-	PROFIT_DEFAULTS,
-	ProfitViews,
-	RangeTabs,
-	rangeSearch,
-} from "#/components/profit-nav";
-import { Chip } from "#/components/profit-page/filter-chip";
-import { SHOWS, type Show } from "#/components/profit-page/filters";
+import { PROFIT_DEFAULTS, ProfitViews } from "#/components/profit-nav";
 import { itemsData } from "#/components/profit-page/items-store";
 import { Row } from "#/components/profit-page/row";
+import { type ProfitChip, profitSearch } from "#/components/profit-page/search";
 import { Th } from "#/components/profit-page/sort-header";
-import { SORT_VALUE, type SortKey } from "#/components/profit-page/sorting";
+import {
+	PROFIT_SORTS,
+	type SortKey,
+	sortValuesOf,
+} from "#/components/profit-page/sorting";
 import { Summary } from "#/components/profit-page/summary";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
-import { channelName, formatCount } from "#/lib/format";
+import { formatCount } from "#/lib/format";
+import { useHotkeys } from "#/lib/hotkeys";
+import { ALL_TIME, isAllTime, parsePeriod, spellPeriod } from "#/lib/period";
+import type { Sort } from "#/products/sort";
 import { getProfitItems } from "#/server/profit";
 
 // Every item sold in a stretch of time and what it made: its sales less its
 // cost, less its share of its order's fees, labels, refunds and adjustments
 // (order_line_profit). A product with no cost can be given one right here.
+// The stretch is the search's ~ chip, which the page loads by; removing it
+// is all time.
 
 const VIEW = "/profit";
 const DEFAULT = PROFIT_DEFAULTS[VIEW];
 
 export const Route = createFileRoute("/profit/")({
-	validateSearch: rangeSearch(VIEW),
-	loaderDeps: ({ search }) => ({ range: search.range ?? DEFAULT }),
-	loader: ({ deps }) => getProfitItems({ data: { range: deps.range } }),
+	// The period as lib/period.ts spells it, left out when it's the default.
+	// Older links named it range.
+	validateSearch: (search: Record<string, unknown>): { period?: string } => {
+		const raw = search.period ?? search.range;
+		const p = typeof raw === "string" ? parsePeriod(raw) : null;
+		return p && spellPeriod(p) !== DEFAULT ? { period: spellPeriod(p) } : {};
+	},
+	loaderDeps: ({ search }) => ({ range: search.period ?? DEFAULT }),
+	loader: ({ deps }) => getProfitItems({ data: { period: deps.range } }),
 	component: Items,
 	pendingComponent: () => (
 		<ListSkeleton title="Profit">
@@ -43,63 +53,61 @@ const PAGE = 200;
 
 function Items() {
 	const loaded = Route.useLoaderData();
-	const { range = DEFAULT } = Route.useSearch();
+	const { period: range = DEFAULT } = Route.useSearch();
+	const navigate = useNavigate({ from: Route.fullPath });
 	const items = itemsData.useData(range, loaded.items);
+	const input = useRef<HTMLInputElement>(null);
 	const [text, setText] = useState("");
-	const [shows, setShows] = useState<Set<Show>>(new Set());
-	const [channels, setChannels] = useState<Set<string>>(new Set());
-	const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
-		key: "date",
-		desc: true,
-	});
+	const [others, setOthers] = useState<ProfitChip[]>([]);
+	// Newest first, as the server sends them, until a column is picked.
+	const [sort, setSort] = useState<Sort<SortKey>>([]);
 	const [limit, setLimit] = useState(PAGE);
+	const period = parsePeriod(range);
 
-	const soldOn = useMemo(
-		() => [...new Set(items.map((i) => i.soldOn))].sort(),
-		[items],
+	// The period is a chip like the rest, but it lives in the URL and the
+	// loader fetches by it. All time is no chip.
+	const chips = useMemo<ProfitChip[]>(
+		() =>
+			!isAllTime(parsePeriod(range) ?? ALL_TIME)
+				? [
+						{ field: "sold", value: range, exclude: false, exact: true },
+						...others,
+					]
+				: others,
+		[range, others],
 	);
+	function setChips(next: ProfitChip[]) {
+		const sold = next.find((c) => c.field === "sold")?.value ?? "..";
+		if (sold !== range)
+			navigate({ search: sold === DEFAULT ? {} : { period: sold } });
+		setOthers(next.filter((c) => c.field !== "sold"));
+		setLimit(PAGE);
+	}
 
-	const shown = useMemo(() => {
-		const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
-		const tests = SHOWS.filter(([key]) => shows.has(key)).map(([, , t]) => t);
-		const value = SORT_VALUE[sort.key];
-		return items
-			.filter(
-				(i) =>
-					(channels.size === 0 || channels.has(i.soldOn)) &&
-					tests.every((t) => t(i)) &&
-					words.every((w) =>
-						[i.sku, i.name, i.variantName, i.orderName].some((f) =>
-							f?.toLowerCase().includes(w),
-						),
-					),
-			)
-			.sort((a, b) => {
-				// Unknowns last either way.
-				const x = value(a);
-				const y = value(b);
-				if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
-				return sort.desc ? y - x : x - y;
-			});
-	}, [items, text, shows, channels, sort]);
-
-	const toggle = <T,>(set: Set<T>, value: T) => {
-		const next = new Set(set);
-		if (!next.delete(value)) next.add(value);
-		return next;
-	};
+	const { idx, shown, filtering } = useSearchRows(
+		profitSearch,
+		items,
+		chips,
+		text,
+		{ sort, columns: PROFIT_SORTS, values: sortValuesOf },
+	);
 	const sortBy = (key: SortKey) =>
-		setSort((s) =>
-			s.key === key ? { key, desc: !s.desc } : { key, desc: key !== "date" },
-		);
+		setSort((s) => [
+			{ key, desc: s[0]?.key === key ? !s[0].desc : key !== "date" },
+		]);
+	useHotkeys({ "/": () => input.current?.focus() });
 
 	return (
 		<Page
 			title="Profit"
 			width="wide"
-			actions={<ProfitViews view={VIEW} range={range} />}
+			actions={
+				<ProfitViews
+					view={VIEW}
+					range={period?.kind === "range" ? period.key : null}
+				/>
+			}
 		>
-			<RangeTabs view={VIEW} range={range} />
 			{loaded.unshipped > 0 && (
 				<p className="text-muted-foreground">
 					{formatCount(loaded.unshipped)} more{" "}
@@ -108,127 +116,92 @@ function Items() {
 					{loaded.unshipped === 1 ? "it ships" : "they ship"}.
 				</p>
 			)}
-			{items.length === 0 ? (
-				<EmptyState icon={Receipt} title="Nothing shipped in this range" />
-			) : (
-				<>
-					<Summary items={shown} cut={loaded.cut} />
-					<Card flush>
-						<div className="flex flex-wrap items-center gap-2 border-b p-2">
-							<label className="flex h-8 min-w-56 flex-1 items-center gap-2 rounded-lg border border-input px-2.5 focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
-								<Search className="size-4 text-muted-foreground" />
-								<input
-									value={text}
-									onChange={(e) => {
-										setText(e.target.value);
-										setLimit(PAGE);
-									}}
-									placeholder="SKU, name, or order"
-									className="min-w-0 flex-1 bg-transparent outline-none"
-								/>
-							</label>
-							{soldOn.length > 1 &&
-								soldOn.map((c) => (
-									<Chip
-										key={c}
-										on={channels.has(c)}
-										onClick={() => {
-											setChannels(toggle(channels, c));
-											setLimit(PAGE);
-										}}
+			<Summary items={shown} cut={loaded.cut} />
+			<Card flush className="overflow-visible">
+				<FilterBar
+					search={profitSearch}
+					idx={idx}
+					inputRef={input}
+					text={text}
+					onText={(t) => {
+						setText(t);
+						setLimit(PAGE);
+					}}
+					chips={chips}
+					onChips={setChips}
+					sorting={{ sort, onSort: setSort, columns: PROFIT_SORTS }}
+					placeholder="Search, or ~last_month $amazon %thin ^profit"
+					className="border-b p-2"
+				/>
+				{items.length === 0 ? (
+					<EmptyState icon={Receipt} title="Nothing shipped then" />
+				) : shown.length === 0 && filtering ? (
+					<EmptyState icon={SearchX} title="No items match" />
+				) : (
+					<div className="overflow-x-auto">
+						<table className="w-full whitespace-nowrap tabular-nums">
+							<thead>
+								<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
+									<Th sort={sort} by="date" onSort={sortBy}>
+										Order
+									</Th>
+									<th className="w-full px-2.5 py-2 font-medium">Item</th>
+									<Th sort={sort} by="revenue" onSort={sortBy} right>
+										Sales
+									</Th>
+									<Th sort={sort} by="cost" onSort={sortBy} right>
+										Cost
+									</Th>
+									<Th sort={sort} by="fees" onSort={sortBy} right>
+										Fees
+									</Th>
+									<Th sort={sort} by="shipping" onSort={sortBy} right>
+										Shipping
+									</Th>
+									<Th sort={sort} by="other" onSort={sortBy} right>
+										Refunds
+									</Th>
+									<Th
+										sort={sort}
+										by="profit"
+										onSort={sortBy}
+										right
+										also={["margin", "Margin"]}
 									>
-										{channelName(c)}
-									</Chip>
+										Contribution
+									</Th>
+									<th className="px-2.5 py-2 font-medium">
+										<span className="sr-only">Contribution at a glance</span>
+									</th>
+								</tr>
+							</thead>
+							<tbody>
+								{shown.slice(0, limit).map((i) => (
+									<Row key={i.lineId} item={i} range={range} />
 								))}
-							{SHOWS.map(([key, label, test]) => (
-								<Chip
-									key={key}
-									on={shows.has(key)}
-									onClick={() => {
-										setShows(toggle(shows, key));
-										setLimit(PAGE);
-									}}
-								>
-									{label}
-									<span className="ml-1.5 text-muted-foreground tabular-nums">
-										{formatCount(items.filter(test).length)}
-									</span>
-								</Chip>
-							))}
-						</div>
-						{shown.length === 0 ? (
-							<p className="p-6 text-center text-muted-foreground">
-								No items match.
-							</p>
-						) : (
-							<div className="overflow-x-auto">
-								<table className="w-full whitespace-nowrap tabular-nums">
-									<thead>
-										<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
-											<Th sort={sort} by="date" onSort={sortBy}>
-												Order
-											</Th>
-											<th className="w-full px-2.5 py-2 font-medium">Item</th>
-											<Th sort={sort} by="revenue" onSort={sortBy} right>
-												Sales
-											</Th>
-											<Th sort={sort} by="cost" onSort={sortBy} right>
-												Cost
-											</Th>
-											<Th sort={sort} by="fees" onSort={sortBy} right>
-												Fees
-											</Th>
-											<Th sort={sort} by="shipping" onSort={sortBy} right>
-												Shipping
-											</Th>
-											<Th sort={sort} by="other" onSort={sortBy} right>
-												Refunds
-											</Th>
-											<Th
-												sort={sort}
-												by="profit"
-												onSort={sortBy}
-												right
-												also={["margin", "Margin"]}
-											>
-												Contribution
-											</Th>
-											<th className="px-2.5 py-2 font-medium">
-												<span className="sr-only">
-													Contribution at a glance
-												</span>
-											</th>
-										</tr>
-									</thead>
-									<tbody>
-										{shown.slice(0, limit).map((i) => (
-											<Row key={i.lineId} item={i} range={range} />
-										))}
-									</tbody>
-								</table>
-							</div>
-						)}
-						{shown.length > limit ? (
-							<div className="border-t p-2 text-center">
-								<Button
-									variant="ghost"
-									size="sm"
-									onClick={() => setLimit((l) => l + PAGE)}
-								>
-									Show more ({formatCount(shown.length - limit)} left)
-								</Button>
-							</div>
-						) : (
-							loaded.cut && (
-								<p className="border-t p-3 text-center text-muted-foreground">
-									Older items in this range aren't loaded. Pick a shorter range
-									to see them.
-								</p>
-							)
-						)}
-					</Card>
-				</>
-			)}
+							</tbody>
+						</table>
+					</div>
+				)}
+				{shown.length > limit ? (
+					<div className="border-t p-2 text-center">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setLimit((l) => l + PAGE)}
+						>
+							Show more ({formatCount(shown.length - limit)} left)
+						</Button>
+					</div>
+				) : (
+					loaded.cut && (
+						<p className="border-t p-3 text-center text-muted-foreground">
+							Older items in this range aren't loaded. Pick a shorter range to
+							see them.
+						</p>
+					)
+				)}
+			</Card>
 		</Page>
 	);
 }

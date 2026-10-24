@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Card } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
+import { DateInput } from "#/components/ui/calendar";
 import { Tip } from "#/components/ui/tooltip";
 import { formatDay, formatMoney } from "#/lib/format";
 import { useIntent } from "#/lib/intent";
@@ -560,14 +561,12 @@ function PaymentForm({
 					cents === null && bad,
 				)}
 			/>
-			<input
-				type="date"
+			<DateInput
 				aria-label="Paid on"
 				disabled={locked}
 				value={paidOn}
 				max={today()}
-				onChange={(e) => setPaidOn(e.target.value || today())}
-				className={cn(input, "tabular-nums")}
+				onChange={setPaidOn}
 			/>
 			<select
 				aria-label="Method"

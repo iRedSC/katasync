@@ -8,9 +8,10 @@ import {
 	SearchX,
 	Undo2,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
+import { FilterBar, useSearchRows } from "#/components/filter-bar";
 import { conditionName } from "#/components/order-page/return-card";
 import { OrderTabs, ReturnsViews } from "#/components/order-tabs";
 import { OrderProducts } from "#/components/orders-list/order-products";
@@ -21,6 +22,7 @@ import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
+import { type Chip, defineSearch } from "#/lib/facet-search";
 import { formatCount, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
@@ -28,6 +30,7 @@ import { useRowLink } from "#/lib/row-link";
 import { offerUndo } from "#/lib/undo";
 import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
+import { marketplaceOf } from "#/orders/search";
 import { printPdf } from "#/printing/qz-client";
 import {
 	getReturns,
@@ -107,9 +110,41 @@ const unreceivedPatch = (id: number): Patch =>
 // Nothing to lay over: the reload shows the order again.
 const reloadOnly = returnsData.patch("all", (d) => d);
 
-function matches(o: ReturnOrder, q: string) {
-	const words = q.toLowerCase().replace(/#/g, "").split(/\s+/).filter(Boolean);
-	const hay = [
+// What's on the box finds the order: its number, buyer, where it went,
+// what was in it, and the return's tracking.
+const returnSearch = defineSearch<
+	ReturnOrder,
+	"state" | "marketplace" | "placed"
+>({
+	fields: {
+		state: {
+			kind: "values",
+			sigil: "%",
+			label: "status",
+			menu: "Status",
+			words: ["status"],
+			of: (o) => (o.state ? states[o.state].label.toLowerCase() : null),
+			known: Object.values(states).map((s) => s.label.toLowerCase()),
+			closed: true,
+		},
+		marketplace: {
+			kind: "values",
+			sigil: "$",
+			label: "sold on",
+			menu: "Marketplace",
+			words: ["marketplace", "channel", "sold"],
+			of: marketplaceOf,
+		},
+		placed: {
+			kind: "period",
+			sigil: "~",
+			label: "placed",
+			menu: "Placed",
+			words: ["placed", "date", "when"],
+			at: (o) => o.placedAt,
+		},
+	},
+	text: (o) => [
 		o.name,
 		o.externalId,
 		o.marketplaceOrderId,
@@ -119,13 +154,8 @@ function matches(o: ReturnOrder, q: string) {
 		...o.lines.flatMap((l) => [l.sku, l.title]),
 		...o.requests.map((r) => r.trackingNumber),
 		...o.unmatched.map((u) => u.sku),
-	]
-		.filter(Boolean)
-		.join(" ")
-		.toLowerCase()
-		.replace(/#/g, "");
-	return words.every((w) => hay.includes(w));
-}
+	],
+});
 
 // The search for orders not due back: the query it answers, and what came back.
 type OtherSearch =
@@ -138,17 +168,19 @@ function Returns() {
 	const { link } = useRowLink();
 	const input = useRef<HTMLInputElement>(null);
 	const [query, setQuery] = useState("");
+	const [chips, setChips] = useState<
+		Chip<"state" | "marketplace" | "placed">[]
+	>([]);
 	const [others, setOthers] = useState<OtherSearch | null>(null);
 	const [receiving, setReceiving] = useState<ReturnOrder | null>(null);
 
-	const shown = useMemo(
-		() => (query.trim() ? due.filter((o) => matches(o, query)) : due),
-		[due, query],
-	);
+	const { idx, shown, words } = useSearchRows(returnSearch, due, chips, query);
 	// Orders that can take a return but aren't expected to, for a box that
-	// turns up first. Asked for once typing pauses.
+	// turns up first, found by the words typed. Asked for once typing pauses.
+	// Chips narrow what's due, which these aren't.
+	const wordsTyped = chips.length === 0 ? words.join(" ") : "";
 	useEffect(() => {
-		const q = query.trim();
+		const q = wordsTyped;
 		if (q.length < 3) return;
 		// A search that a later query has overtaken is dropped, so an older
 		// answer never replaces a newer one.
@@ -167,9 +199,9 @@ function Returns() {
 			current = false;
 			clearTimeout(timer);
 		};
-	}, [query]);
+	}, [wordsTyped]);
 	const found =
-		query.trim().length >= 3 && others?.q === query.trim() ? others : null;
+		wordsTyped.length >= 3 && others?.q === wordsTyped ? others : null;
 	const extra = found?.state === "done" ? found.rows : [];
 	const extraFailed = found?.state === "failed";
 	const rows = [...shown, ...extra];
@@ -259,6 +291,7 @@ function Returns() {
 		Escape: () => {
 			if (document.activeElement === input.current) input.current?.blur();
 			else if (query) setQuery("");
+			else if (chips.length) setChips([]);
 		},
 	});
 
@@ -283,35 +316,31 @@ function Returns() {
 					count={due.length}
 					aside={<ReturnsViews active="due" />}
 				/>
-				<div className="border-b p-2">
-					<div className="relative">
-						<Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
-						<input
-							ref={input}
-							value={query}
-							onChange={(e) => setQuery(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") {
-									e.preventDefault();
-									receive(only);
-								}
-							}}
-							placeholder="What's on the box: order number, name, city, zip, SKU, tracking"
-							className="h-8 w-full rounded-lg border border-input bg-white pr-3 pl-8 outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
-						/>
-					</div>
-				</div>
+				<FilterBar
+					search={returnSearch}
+					idx={idx}
+					inputRef={input}
+					text={query}
+					onText={setQuery}
+					chips={chips}
+					onChips={setChips}
+					onSubmit={() => receive(only)}
+					placeholder="What's on the box: order number, name, zip, SKU, tracking, or %refunded"
+					className="border-b p-2"
+				/>
 
 				{extraFailed && rows.length === 0 ? (
 					<EmptyState icon={Search} title="Search didn't finish">
 						Type to search again.
 					</EmptyState>
 				) : rows.length === 0 ? (
-					query.trim() ? (
+					query.trim() || chips.length ? (
 						<EmptyState icon={SearchX} title="No order matches">
-							{query.trim().length < 3
-								? "Type a few more letters to search every order."
-								: "Try the buyer's name, a SKU, or the zip on the label."}
+							{chips.length
+								? null
+								: wordsTyped.length < 3
+									? "Type a few more letters to search every order."
+									: "Try the buyer's name, a SKU, or the zip on the label."}
 						</EmptyState>
 					) : (
 						<EmptyState icon={PackageOpen} title="Nothing due back" />
@@ -371,7 +400,7 @@ function Returns() {
 				)}
 			</Card>
 
-			{received.length > 0 && !query.trim() && (
+			{received.length > 0 && !query.trim() && chips.length === 0 && (
 				<Card title="Received in the last 30 days" flush>
 					<table className="w-full whitespace-nowrap">
 						<tbody>

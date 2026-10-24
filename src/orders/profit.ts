@@ -10,6 +10,7 @@ import {
 	products,
 } from "#/db/schema";
 import { SHOP_TIME_ZONE } from "#/lib/format";
+import type { Day, Period, RangeKey } from "#/lib/period";
 
 // Profit over a stretch of time, from the order_profit and order_line_profit
 // views (drizzle/0050_order_profit.sql, 0051_order_line_profit.sql). Days
@@ -18,18 +19,7 @@ import { SHOP_TIME_ZONE } from "#/lib/format";
 // The shop's zone, the same one every date is shown in.
 export const TIME_ZONE = SHOP_TIME_ZONE;
 
-export const RANGES = {
-	today: "Today",
-	yesterday: "Yesterday",
-	this_week: "This week",
-	last_week: "Last week",
-	this_month: "This month",
-	last_month: "Last month",
-	last_30_days: "Last 30 days",
-	last_90_days: "Last 90 days",
-	this_year: "This year",
-} as const;
-export type RangeKey = keyof typeof RANGES;
+export { RANGES, type RangeKey } from "#/lib/period";
 
 // Each range in shop-local time `l` (now), and how far back the one it's
 // compared with is. Ranges still running compare with the same stretch of
@@ -104,6 +94,27 @@ export async function resolveRange(
 		previousStart: new Date(row.previousStart),
 		previousEnd: new Date(row.previousEnd),
 	};
+}
+
+// When a period starts and ends. A named range is resolveRange's; picked
+// days run from the first one's midnight to the midnight after the last.
+// An open start reaches back past any order, and an open end runs to now.
+export async function resolvePeriod(
+	db: Db,
+	period: Period,
+	now = new Date(),
+): Promise<{ start: Date; end: Date }> {
+	if (period.kind === "range") return resolveRange(db, period.key, now);
+	const tz = sql.raw(`'${TIME_ZONE}'`);
+	const midnight = (d: Day, plus: number) =>
+		sql`((${d}::date + ${plus}::int)::timestamp at time zone ${tz})`;
+	const result = (await db.execute(sql`
+		select
+			${period.from ? midnight(period.from, 0) : sql`'epoch'::timestamptz`} as "start",
+			${period.to ? midnight(period.to, 1) : sql`${now.toISOString()}::timestamptz`} as "end"
+	`)) as unknown as { rows: { start: string | Date; end: string | Date }[] };
+	const row = result.rows[0];
+	return { start: new Date(row.start), end: new Date(row.end) };
 }
 
 const p = orderProfit;

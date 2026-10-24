@@ -364,9 +364,11 @@ function ProductList() {
 								chips={filters}
 								onChips={(next) => setSearch({ filters: next })}
 								language={language}
-								sort={sort}
-								onSort={(s) => setSearch({ sort: s })}
-								columns={PRODUCT_SORTS}
+								sorting={{
+									sort: sort,
+									onSort: (s) => setSearch({ sort: s }),
+									columns: PRODUCT_SORTS,
+								}}
 								placeholder="Search, or filter by tag, vendor, status…"
 							/>
 						</div>

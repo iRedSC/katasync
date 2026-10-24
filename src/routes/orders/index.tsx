@@ -6,8 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { PackageCheck, Printer, SearchX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FilterPicker, SortMenu, ValueList } from "#/components/filter-menu";
-import { FilterSearch } from "#/components/filter-search";
+import { FilterBar, useSearchRows } from "#/components/filter-bar";
 import { LiveSync } from "#/components/live-sync";
 import { MatchDialog } from "#/components/match-picker";
 import { OrderTabs } from "#/components/order-tabs";
@@ -26,26 +25,13 @@ import { formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { useRowLink } from "#/lib/row-link";
 import {
-	chipsFromUrl,
-	facetCounts,
-	facetsOf,
-	matches,
 	ORDER_SORTS,
 	type OrderFilter,
 	type OrderSortKey,
-	orderLanguage,
-	parseQuery,
-	STATUS_DETAILS,
+	orderSearch,
 	sortValuesOf,
 } from "#/orders/search";
-import {
-	isColumn,
-	parseSort,
-	type Sort,
-	sortRows,
-	spellSort,
-	withTerm,
-} from "#/products/sort";
+import { parseSort, type Sort, spellSort } from "#/products/sort";
 import { listOrders } from "#/server/orders";
 
 type View = "ship" | "all";
@@ -56,7 +42,7 @@ type Search = { view?: View; f?: OrderFilter[]; sort?: string; q?: string };
 
 export const Route = createFileRoute("/orders/")({
 	validateSearch: (search: Record<string, unknown>): Search => {
-		const f = chipsFromUrl(search.f);
+		const f = orderSearch.chipsFromUrl(search.f);
 		const sort = spellSort(parseSort(String(search.sort ?? ""), ORDER_SORTS));
 		// The URL parser turns "?q=12" into a number, so take it back.
 		const q = typeof search.q === "number" ? String(search.q) : search.q;
@@ -76,11 +62,6 @@ export const Route = createFileRoute("/orders/")({
 		</ListSkeleton>
 	),
 });
-
-const FIELD_MENU = [
-	{ key: "marketplace", label: "Marketplace", typed: "$" },
-	{ key: "status", label: "Status", typed: "%" },
-] as const;
 
 function Orders() {
 	const { orders: rows, total } = Route.useLoaderData();
@@ -145,28 +126,13 @@ function Orders() {
 		setSearch({ q: text });
 	}
 
-	const facets = useMemo(() => rows.map(facetsOf), [rows]);
-	const counts = useMemo(() => facetCounts(facets), [facets]);
-	const language = useMemo(() => orderLanguage(counts), [counts]);
-	const q = useMemo(() => parseQuery(query), [query]);
-	const filtering =
-		chips.length > 0 || q.filters.some((f) => f.value) || q.words.length > 0;
-	const shown = useMemo(() => {
-		const all = [...chips, ...q.filters];
-		// A sort still being typed applies once it names a column exactly.
-		const by = q.sorts.reduce<Sort<OrderSortKey>>(
-			(s, t) =>
-				isColumn(t.value, ORDER_SORTS)
-					? withTerm(s, { key: t.value, desc: t.desc })
-					: s,
-			sort,
-		);
-		return sortRows(
-			rows.filter((_, i) => matches(facets[i], all, q.words)),
-			by,
-			sortValuesOf,
-		);
-	}, [rows, facets, chips, q, sort]);
+	const { idx, shown, filtering } = useSearchRows(
+		orderSearch,
+		rows,
+		chips,
+		query,
+		{ sort, columns: ORDER_SORTS, values: sortValuesOf },
+	);
 	const plan = printPlan({ view, ticks, shown, filtering });
 
 	// Printing happens in another tab and marks the orders printed there, so
@@ -257,42 +223,22 @@ function Orders() {
 		>
 			<Card flush className="overflow-visible">
 				<OrderTabs active={view} count={total} />
-				<div className="flex items-start gap-1 border-b p-2">
-					<div className="min-w-0 flex-1">
-						<FilterSearch
-							inputRef={input}
-							text={query}
-							onText={setQuery}
-							chips={chips}
-							onChips={(f) => setSearch({ f })}
-							language={language}
-							sort={sort}
-							onSort={(s) => setSearch({ sort: s })}
-							columns={ORDER_SORTS}
-							placeholder="Search, or $tiktok %unfulfilled ^total"
-						/>
-					</div>
-					<FilterPicker<OrderFilter>
-						fields={FIELD_MENU.map((f) => ({
-							...f,
-							body: (add) => (
-								<ValueList
-									values={counts.get(f.key) ?? new Map()}
-									details={f.key === "status" ? STATUS_DETAILS : undefined}
-									onAdd={(value, exclude) =>
-										add({ field: f.key, value, exclude, exact: true })
-									}
-								/>
-							),
-						}))}
-						onAdd={(f) => setSearch({ f: [...chips, f] })}
-					/>
-					<SortMenu
-						sort={sort}
-						onSort={(s) => setSearch({ sort: s })}
-						columns={ORDER_SORTS}
-					/>
-				</div>
+				<FilterBar
+					search={orderSearch}
+					idx={idx}
+					inputRef={input}
+					text={query}
+					onText={setQuery}
+					chips={chips}
+					onChips={(f) => setSearch({ f })}
+					sorting={{
+						sort,
+						onSort: (s) => setSearch({ sort: s }),
+						columns: ORDER_SORTS,
+					}}
+					placeholder="Search, or $tiktok %unfulfilled ~today ^total"
+					className="border-b p-2"
+				/>
 				{truncated && (
 					<p className="border-b px-4 py-1.5 text-xs text-muted-foreground tabular-nums">
 						Showing the newest {formatCount(rows.length)} of{" "}
