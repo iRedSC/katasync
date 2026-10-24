@@ -27,7 +27,7 @@ import { returnStages } from "#/orders/return-stage";
 import { committedStock, returnQuantity } from "#/orders/return-stock";
 import { followReturn, trackingFor } from "#/orders/return-tracking";
 import { stockEffectApplied } from "#/orders/stock-effects";
-import { labelToVoid, needsShipping } from "#/orders/to-ship";
+import { financialStatus, labelToVoid, needsShipping } from "#/orders/to-ship";
 import { type SameBuyer, sameBuyerOrders } from "#/shipping/same-buyer";
 import { sendsOf } from "#/shipping/sends";
 
@@ -74,7 +74,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				placedAt: orders.placedAt,
 				cancelledAt: orders.cancelledAt,
 				fulfillmentStatus: orders.fulfillmentStatus,
-				financialStatus: orders.financialStatus,
+				financialStatus,
 				customerName: orders.customerName,
 				shipCity: orders.shipCity,
 				shipCountry: orders.shipCountry,
@@ -166,7 +166,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				cancelledAt: orders.cancelledAt,
 				fulfillmentStatus: orders.fulfillmentStatus,
 				fulfilledByChannel: orders.fulfilledByChannel,
-				financialStatus: orders.financialStatus,
+				financialStatus,
 				customerName: orders.customerName,
 				shipAddress1: orders.shipAddress1,
 				shipAddress2: orders.shipAddress2,
