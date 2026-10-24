@@ -41,12 +41,19 @@ export const replyToBuyer = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			threadId: "number.integer > 0",
-			text: "string > 0",
+			text: "string",
 			requestKey: "string.uuid",
+			"fileIds?": "(number.integer > 0)[] <= 5",
 		}),
 	)
 	.handler(async ({ data }) =>
-		reply(getDb(), data.threadId, data.text, data.requestKey),
+		reply(
+			getDb(),
+			data.threadId,
+			data.text,
+			data.requestKey,
+			data.fileIds ?? [],
+		),
 	);
 
 // A reply sent on the marketplace itself, added without sending, and its

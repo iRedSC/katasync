@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
-import { buyerMessageChecks, buyerThreads } from "#/db/schema";
+import { buyerMessageChecks, buyerReplyFiles, buyerThreads } from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { syncEbayMessages } from "./ebay-messages";
+import { addReplyFile } from "./reply-files";
 import { reply, settleReplies } from "./send";
 import { logOurs, threadsPage, unlogOurs } from "./threads";
 
@@ -121,6 +122,35 @@ describe("eBay messages", () => {
 		const [after] = await threadsPage(db, "open", null);
 		expect(after?.messages).toHaveLength(2);
 		expect(after?.waiting).toBeNull();
+	});
+
+	test("files go as links eBay fetches, and need words with them", async () => {
+		vi.stubEnv("AUTH_ORIGIN", "https://katasync.test");
+		await syncEbayMessages(db);
+		const [thread] = await threadsPage(db, "open", null);
+		const photo = await addReplyFile(db, {
+			filename: "box.png",
+			contentType: "image/png",
+			data: new Uint8Array([1, 2]),
+		});
+		await expect(
+			reply(db, thread?.id ?? 0, "", crypto.randomUUID(), [photo.id]),
+		).rejects.toThrow(/needs words/);
+		await reply(db, thread?.id ?? 0, "Here", crypto.randomUUID(), [photo.id]);
+		const [file] = await db.select().from(buyerReplyFiles);
+		expect(sent).toEqual([
+			{
+				conversationId: "c1",
+				messageText: "Here",
+				messageMedia: [
+					{
+						mediaName: "box.png",
+						mediaType: "IMAGE",
+						mediaUrl: `https://katasync.test/api/shared-files/${file?.shareToken}`,
+					},
+				],
+			},
+		]);
 	});
 
 	test("an unsure send is never sent again, only found or given up on", async () => {

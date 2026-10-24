@@ -29,9 +29,9 @@ export {
 	tiktokToChannelOrder,
 } from "./tiktok/channel-order";
 
-// TikTok Shop US through the Partner API (202309 versions). The app is shared
-// with profit-margarine and needs TIKTOK_SCOPES in Partner Center; the shop
-// grants them when it authorizes the app (pnpm tiktok:authorize).
+// TikTok Shop US through the Partner API (202309 versions). The app needs
+// TIKTOK_SCOPES in Partner Center; the shop grants them when it authorizes
+// the app (pnpm tiktok:authorize).
 // US apps still call the global host; open-api.us.tiktokglobalshop.com is a
 // dead 404.
 const API = "https://open-api.tiktokglobalshop.com";
@@ -46,6 +46,11 @@ export const TIKTOK_SCOPES = [
 	"seller.finance.info",
 	// Returns, with reasons (tiktok-returns.ts).
 	"seller.return_refund.basic",
+	// One label for several orders (combined packages, shipping/tiktok.ts).
+	"seller.fulfillment.package.write",
+	// Shop Performance Score (markets/tiktok-standing.ts).
+	"data.shop_analytics.public.read",
+	"seller.customer_service",
 ] as const;
 // Refreshing has its own path; /token/get only trades an authorization code.
 const AUTH = "https://auth.tiktok-shops.com/api/v2/token/refresh";
@@ -105,7 +110,7 @@ let refreshWarning: string | null = null;
 
 // Trades the refresh token for an access token. TikTok hands back a new
 // refresh token every time, but earlier ones keep working until they expire
-// (decades out), so the stored one can be shared with profit-margarine.
+// (decades out), so the stored one stays good.
 async function accessToken() {
 	if (cachedToken && cachedToken.expiresAt > Date.now() + 5 * 60_000) {
 		return cachedToken.value;
@@ -160,6 +165,8 @@ export function signRequest(
 // if asked again shortly. It clusters at the top of the hour, when every
 // app's cron calls at once.
 const RETRY_LATER = new Set([36009003]);
+// A refusal that's TikTok struggling, not a no: the call may yet have gone.
+export const retryLater = (e: TiktokError) => RETRY_LATER.has(e.code);
 // Waits before the second and third tries, each jittered by half either way:
 // at most 6 seconds, well inside a function's time limit.
 const TRANSIENT_WAITS_MS = [1000, 3000];
@@ -235,6 +242,31 @@ export async function tiktokApi(
 		}
 		return unwrap(JSON.parse(text), path);
 	}
+}
+
+// A file sent as a multipart form (an image for a buyer chat). TikTok signs
+// a form without its body.
+export async function tiktokUpload(
+	path: string,
+	query: Record<string, string>,
+	form: FormData,
+): Promise<unknown> {
+	const { appKey, secret } = credentials();
+	const signed: Record<string, string> = {
+		...query,
+		app_key: appKey,
+		timestamp: String(Math.floor(Date.now() / 1000)),
+	};
+	signed.sign = signRequest(path, signed, "", secret);
+	const response = await fetch(`${API}${path}?${new URLSearchParams(signed)}`, {
+		method: "POST",
+		headers: { "x-tts-access-token": await accessToken() },
+		body: form,
+	});
+	const text = await response.text();
+	if (!response.ok)
+		throw new Error(`TikTok answered ${response.status} on ${path}: ${text}`);
+	return unwrap(JSON.parse(text), path);
 }
 
 const shopsData = type({

@@ -6,13 +6,12 @@ import {
 	applyAmazonRefusals,
 	sendAmazonReply,
 } from "./amazon-mail";
+import { refuseWords } from "./attachments";
 import { clearDraft } from "./drafts";
-import {
-	EBAY_MAX_CHARS,
-	rereadEbayThread,
-	sendEbayMessage,
-} from "./ebay-messages";
+import { rereadEbayThread, sendEbayMessage } from "./ebay-messages";
+import { filesForReply, replyFileData, sharedFileUrl } from "./reply-files";
 import { Refused, settleReply, unsettledReplies } from "./states";
+import { rereadTiktokThread, sendTiktokReply } from "./tiktok-messages";
 
 // Answering a buyer from katasync. The reply is kept, with everything it
 // will send, before anything is sent, so whatever happens next (a crash, a
@@ -20,12 +19,13 @@ import { Refused, settleReply, unsettledReplies } from "./states";
 // settleReplies then finds out how it went. The browser names each reply
 // with its own key, so sending it again after a lost answer is the same
 // reply, not a second. An Amazon reply is tried again with that key, which
-// Resend sends once; an eBay one is never sent twice, only looked for in the
-// conversation. When neither can tell, it's unconfirmed, never failed.
+// Resend sends once; an eBay or TikTok one is never sent twice, only looked
+// for in the conversation. When neither can tell, it's unconfirmed, never failed.
 
 // Resend keeps a request key a day; past that a retry could send it twice.
 const RETRY_FOR_MS = 23 * 3_600_000;
-// How long an unsure eBay reply is looked for before it's unconfirmed.
+// How long an unsure eBay or TikTok reply is looked for before it's
+// unconfirmed.
 const LOOK_FOR_MS = 15 * 60_000;
 
 type Thread = typeof buyerThreads.$inferSelect;
@@ -36,18 +36,23 @@ export async function reply(
 	threadId: number,
 	text: string,
 	requestKey: string,
+	fileIds: number[] = [],
 ) {
 	const body = text.trim();
-	if (!body) throw new Error("Write something first");
+	if (!body && fileIds.length === 0) throw new Error("Write something first");
 	const [thread] = await db
 		.select()
 		.from(buyerThreads)
 		.where(eq(buyerThreads.id, threadId));
 	if (!thread) throw new Error(`There's no buyer thread ${threadId}`);
-	if (thread.market !== "amazon" && thread.market !== "ebay")
+	if (thread.market === "shopify")
 		throw new Error(`katasync can't answer ${thread.market} buyers yet`);
-	if (thread.market === "ebay" && body.length > EBAY_MAX_CHARS)
-		throw new Error(`eBay takes up to ${EBAY_MAX_CHARS} characters`);
+	const tooLong = refuseWords(thread.market, body);
+	if (tooLong) throw new Error(tooLong);
+	// eBay sends no message without words.
+	if (!body && thread.market === "ebay")
+		throw new Error("eBay needs words with the files");
+	const media = await filesForReply(db, thread.market, fileIds);
 	const now = new Date();
 	const [row] = await db
 		.insert(buyerMessages)
@@ -56,6 +61,7 @@ export async function reply(
 			fromBuyer: false,
 			body,
 			at: now,
+			media,
 			status: "sending",
 			requestKey,
 			statusAt: now,
@@ -109,17 +115,53 @@ async function attempt(db: Db, thread: Thread, r: Reply) {
 							inReplyTo: r.inReplyTo,
 							text: r.body,
 							requestKey: r.requestKey ?? r.id.toString(),
+							attachments: await filesOf(db, r),
 						}),
 					}
 				: {
 						kind: "delivered",
-						externalId: await sendEbayMessage(thread.externalId, r.body),
+						externalId:
+							thread.market === "tiktok"
+								? await sendTiktokReply(db, {
+										id: r.id,
+										conversationId: thread.externalId,
+										text: r.body,
+										media: r.media,
+									})
+								: await sendEbayMessage(
+										thread.externalId,
+										r.body,
+										await linksOf(db, r),
+									),
 					};
 	} catch (error) {
 		if (error instanceof Refused)
 			outcome = { kind: "failed", error: error.message };
 	}
 	if (outcome) await settleReply(db, r.id, outcome).catch(() => false);
+}
+
+// A reply's files for an email; failing to read them, nothing has gone.
+async function filesOf(db: Db, r: Reply) {
+	const files = await replyFileData(db, r.media).catch((error: unknown) => {
+		throw new Refused(error instanceof Error ? error.message : String(error));
+	});
+	return files.map((f) => ({
+		filename: f.filename,
+		content: f.data.toString("base64"),
+	}));
+}
+
+// A reply's files at the public addresses eBay fetches them from.
+async function linksOf(db: Db, r: Reply) {
+	const files = await replyFileData(db, r.media).catch((error: unknown) => {
+		throw new Refused(error instanceof Error ? error.message : String(error));
+	});
+	return files.map((f) => ({
+		mediaName: f.filename,
+		mediaType: r.media.find((m) => m.fileId === f.id)?.kind ?? "IMAGE",
+		mediaUrl: sharedFileUrl(f.shareToken),
+	}));
 }
 
 // The Message-ID of the buyer's latest email, so the reply threads under it.
@@ -162,11 +204,12 @@ export async function settleReplies(db: Db, now = Date.now()) {
 		const age = now - r.at.getTime();
 		try {
 			if (thread.market === "amazon") await settleAmazon(db, thread, r, age);
-			else if (thread.market === "ebay") {
+			else if (thread.market === "ebay" || thread.market === "tiktok") {
+				const { name, reread: lookFor } = LOOK_IN[thread.market];
 				if (!reread.has(thread.id)) {
 					reread.add(thread.id);
 					// Looked for; failing to look still lets it go unconfirmed.
-					await rereadEbayThread(db, thread.id).catch((e: unknown) =>
+					await lookFor(db, thread.id).catch((e: unknown) =>
 						problems.push(e instanceof Error ? e.message : String(e)),
 					);
 				}
@@ -174,8 +217,7 @@ export async function settleReplies(db: Db, now = Date.now()) {
 					// Only from sending: a reply the reread found stays found.
 					await settleReply(db, r.id, {
 						kind: "unconfirmed",
-						error:
-							"eBay never said whether it went. Check the conversation on eBay before sending it again",
+						error: `${name} never said whether it went. Check the conversation on ${name} before sending it again`,
 					});
 			}
 		} catch (error) {
@@ -185,6 +227,12 @@ export async function settleReplies(db: Db, now = Date.now()) {
 	const refused = await applyAmazonRefusals(db);
 	return { open: open.length, refused, problems };
 }
+
+// Where an unsure reply is looked for.
+const LOOK_IN = {
+	ebay: { name: "eBay", reread: rereadEbayThread },
+	tiktok: { name: "TikTok", reread: rereadTiktokThread },
+};
 
 async function settleAmazon(db: Db, thread: Thread, r: Reply, age: number) {
 	if (r.status === "sending") {

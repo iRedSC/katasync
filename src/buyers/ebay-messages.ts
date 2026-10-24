@@ -3,9 +3,10 @@ import { eq } from "drizzle-orm";
 import { API, accessToken } from "#/channels/ebay";
 import { scopedToken } from "#/channels/ebay-scoped-token";
 import type { Db } from "#/db/client";
-import { buyerMessageChecks, buyerMessages, buyerThreads } from "#/db/schema";
-import { Refused, settleReply, Unsure, unsureStatus } from "./states";
-import { ensureThread, isLogged, recordFromBuyer, recordOurs } from "./threads";
+import { buyerMessageChecks, buyerThreads } from "#/db/schema";
+import { keepConversation } from "./conversation";
+import { Refused, Unsure, unsureStatus } from "./states";
+import { ensureThread } from "./threads";
 
 // eBay buyer messages through its Message API (commerce/message/v1): every
 // conversation members started with us, read in each run from a little
@@ -98,9 +99,6 @@ async function sellerUsername() {
 	return me;
 }
 
-const same = (a: string, b: string) =>
-	a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
-
 const ours = (m: Message, seller: string) =>
 	m.senderUsername?.toLowerCase() === seller;
 
@@ -121,78 +119,18 @@ async function readConversation(
 		all.push(...(page.messages ?? []));
 		url = page.next;
 	}
-	const kept = await db
-		.select({
-			id: buyerMessages.id,
-			body: buyerMessages.body,
-			at: buyerMessages.at,
-			status: buyerMessages.status,
-			externalId: buyerMessages.externalId,
-		})
-		.from(buyerMessages)
-		.where(eq(buyerMessages.threadId, threadId))
-		.orderBy(buyerMessages.at);
-	// eBay's IDs already on a message here: never given to another.
-	const claimed = new Set(kept.map((k) => k.externalId).filter(Boolean));
-	// Ours whose send didn't say how it went, oldest first.
-	// And ours staff added without sending, which eBay now reads back.
-	const waiting = kept.filter(
-		(k) =>
-			isLogged(k.externalId) ||
-			(k.externalId === null &&
-				(k.status === "sending" || k.status === "unconfirmed")),
-	);
-	all.sort((a, b) => a.createdDate.getTime() - b.createdDate.getTime());
-	for (const m of all) {
-		const body = m.messageBody ?? "";
-		if (!ours(m, seller)) {
-			await recordFromBuyer(db, threadId, {
-				externalId: m.messageId,
-				body,
-				at: m.createdDate,
-				media: mediaOf(m),
-			});
-			continue;
-		}
-		if (claimed.has(m.messageId)) continue;
-		// The same words, sent no earlier than we wrote them (allowing for
-		// clocks).
-		// One added without sending was sent on eBay before it was added.
-		const match = waiting.findIndex(
-			(w) =>
-				same(w.body, body) &&
-				m.createdDate.getTime() >=
-					w.at.getTime() -
-						(isLogged(w.externalId) ? LOGGED_SLACK_MS : CLOCK_SLACK_MS),
-		);
-		const pending = match >= 0 ? waiting.splice(match, 1)[0] : undefined;
-		claimed.add(m.messageId);
-		if (pending && isLogged(pending.externalId)) {
-			await db
-				.update(buyerMessages)
-				.set({ externalId: m.messageId })
-				.where(eq(buyerMessages.id, pending.id));
-			continue;
-		}
-		if (
-			pending &&
-			(await settleReply(db, pending.id, {
-				kind: "delivered",
-				externalId: m.messageId,
-			}).catch(() => false))
-		)
-			continue;
-		await recordOurs(db, threadId, {
+	await keepConversation(
+		db,
+		threadId,
+		all.map((m) => ({
 			externalId: m.messageId,
-			body,
+			body: m.messageBody ?? "",
 			at: m.createdDate,
+			ours: ours(m, seller),
 			media: mediaOf(m),
-		});
-	}
+		})),
+	);
 }
-
-const CLOCK_SLACK_MS = 2 * 60_000;
-const LOGGED_SLACK_MS = 24 * 3_600_000;
 
 // Reads conversations with anything since a little before the last full
 // read; on a sweep, two weeks. Records how it went, so a source that stops
@@ -301,7 +239,11 @@ export async function rereadEbayThread(db: Db, threadId: number) {
 // Sends a reply into a conversation; eBay's message ID back. Throws Unsure
 // when it may have gone anyway: eBay has no request key, so that's never
 // sent again blind, only looked for (rereadEbayThread).
-export async function sendEbayMessage(conversationId: string, text: string) {
+export async function sendEbayMessage(
+	conversationId: string,
+	text: string,
+	media: { mediaName: string; mediaType: string; mediaUrl: string }[] = [],
+) {
 	let t: string;
 	try {
 		t = await token();
@@ -318,7 +260,11 @@ export async function sendEbayMessage(conversationId: string, text: string) {
 				Authorization: `Bearer ${t}`,
 				"Content-Type": "application/json",
 			},
-			body: JSON.stringify({ conversationId, messageText: text }),
+			body: JSON.stringify({
+				conversationId,
+				messageText: text,
+				...(media.length ? { messageMedia: media } : {}),
+			}),
 		});
 		body = await res.text();
 	} catch (error) {
@@ -337,6 +283,3 @@ export async function sendEbayMessage(conversationId: string, text: string) {
 	const why = `eBay answered ${res.status}: ${body}`;
 	throw unsureStatus(res.status) ? new Unsure(why) : new Refused(why);
 }
-
-// eBay's own limit on a message.
-export const EBAY_MAX_CHARS = 2000;

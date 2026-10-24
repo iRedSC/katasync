@@ -136,6 +136,7 @@ describe("guard", () => {
 			"/api/oauth/token",
 			"/.well-known/oauth-protected-resource/mcp",
 			"/api/uploads/damage/abc",
+			"/api/shared-files/abc",
 			"/logo.svg",
 			"/assets/main-abc.js",
 		])
