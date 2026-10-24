@@ -32,12 +32,24 @@ export function parseCurrency(input: string): Parsed<Currency> {
 const AMOUNT =
 	/^(?<neg>-)?(?<open>\()?(?<sym>[$€£])?(?<int>\d{1,3}(?:,\d{3})+|\d+)(?:\.(?<frac>\d{1,2}))?(?<close>\))?$/;
 
-export function parseCents(input: string): Parsed<number> {
+export function parseCents(input: string, currency: string): Parsed<number> {
 	const raw = input.trim().replaceAll(" ", "");
 	if (raw === "") return { ok: false, problem: "Amount is empty" };
 	const unsigned = raw.startsWith("+") ? raw.slice(1) : raw;
 	const m = AMOUNT.exec(unsigned)?.groups;
 	if (!m) return { ok: false, problem: `"${clip(input)}" isn't an amount` };
+	const symbol = new Intl.NumberFormat("en-US", {
+		style: "currency",
+		currency,
+		currencyDisplay: "narrowSymbol",
+	})
+		.formatToParts(0)
+		.find((part) => part.type === "currency")?.value;
+	if (m.sym && m.sym !== symbol)
+		return {
+			ok: false,
+			problem: `Amount uses ${m.sym}; the account is ${currency}, and conversion isn't supported`,
+		};
 	const mixed = raw !== unsigned && unsigned.startsWith("-");
 	if (mixed || Boolean(m.open) !== Boolean(m.close) || (m.neg && m.open))
 		return { ok: false, problem: `"${clip(input)}" isn't an amount` };

@@ -133,7 +133,17 @@ export function ImportDialog({
 				kind: "retry",
 				problem: "Result not received. Retry this import.",
 			});
-		if (!r.value.ok) return refuse({ ...back, problem: r.value.problem });
+		if (!r.value.ok) {
+			const problem = r.value.problem;
+			await preview(draft);
+			setStep((current) =>
+				current.kind === "preview" || current.kind === "mapping"
+					? { ...current, problem }
+					: current,
+			);
+			shake(body.current);
+			return;
+		}
 		const done = r.value.value;
 		close(false);
 		if (done.kind === "already") {

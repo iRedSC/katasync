@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
 	type BankTargetSnapshot,
 	bankMatches,
@@ -139,6 +139,37 @@ export async function matchStates(
 }
 
 export type BankState = "none" | "partial" | "matched" | "needs-review";
+
+export async function reviewingTargets(
+	db: Db,
+	refs: readonly TargetRef[],
+	currency: string,
+): Promise<Set<string>> {
+	const payoutIds = refs.map((ref) => ref.id);
+	if (payoutIds.length === 0) return new Set();
+	const contributors = await db
+		.selectDistinct({ transactionId: bankMatches.transactionId })
+		.from(bankMatches)
+		.innerJoin(bankMatchParts, eq(bankMatchParts.matchId, bankMatches.id))
+		.where(
+			and(
+				inArray(bankMatchParts.payoutId, payoutIds),
+				isNull(bankMatches.undoneAt),
+			),
+		);
+	const all = await matchStates(
+		db,
+		contributors.map((match) => match.transactionId),
+		currency,
+	);
+	return new Set(
+		[...all.states.values()].flatMap((state) =>
+			state.kind === "needs-review"
+				? state.match.parts.map((part) => targetKey(part.target))
+				: [],
+		),
+	);
+}
 
 export function bankStateOf(
 	t: Standing,

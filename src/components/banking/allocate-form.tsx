@@ -63,7 +63,7 @@ export function AllocateForm({
 	const money = (c: number) => formatCents(c, bank.currency);
 	const parts = [...picked].map(([id, text]) => ({
 		id,
-		parsed: parseCents(text),
+		parsed: parseCents(text, bank.currency),
 	}));
 	const sum = parts.reduce((s, p) => s + (p.parsed.ok ? p.parsed.value : 0), 0);
 	const left = bank.amountCents - sum;
@@ -182,7 +182,9 @@ export function AllocateForm({
 										}}
 										inputMode="decimal"
 										aria-label={`Amount for ${c.label}`}
-										aria-invalid={!parseCents(picked.get(c.ref.id) ?? "").ok}
+										aria-invalid={
+											!parseCents(picked.get(c.ref.id) ?? "", bank.currency).ok
+										}
 										className="h-8 w-28 rounded-lg border border-input bg-white px-2 text-right tabular-nums outline-none focus:border-ring aria-invalid:border-critical-text"
 									/>
 								) : (

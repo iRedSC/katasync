@@ -11,8 +11,9 @@ import {
 } from "#/db/banking-schema";
 import { auditEvents } from "#/db/identity-schema";
 import { payouts } from "#/db/schema";
+import { createIntent } from "#/lib/intent";
 import { createTestDb } from "#/test/db";
-import { commitImport } from "./imports";
+import { commitImport, previewImport } from "./imports";
 import { confirmMatch, undoMatch } from "./matching";
 import { loadOverview } from "./overview";
 import { payoutTarget } from "./targets";
@@ -29,6 +30,127 @@ import {
 const actor = systemActor("script");
 
 describe("banking integration boundaries", () => {
+	it("reclassifies a definitive retry refusal so correction is reachable", async () => {
+		const db = await createTestDb();
+		const made = await account(db);
+		const input = {
+			accountId: made.id,
+			text: csv("2026-10-01,A,10"),
+			fileName: null,
+			mapping: MAPPING,
+			skipRows: [] as number[],
+		};
+		const intent = createIntent<typeof input>();
+		await intent.run(
+			() => input,
+			async () => null,
+		);
+		expect(intent.getSnapshot().kind).toBe("retry");
+		const other = await commitImport(db, { ...input, skipRows: [1] }, actor);
+		if (!other.ok) throw new Error(other.problem);
+		const refused = await intent.run(
+			() => ({ ...input, skipRows: [1] }),
+			(payload) => commitImport(db, payload, actor),
+		);
+		expect(refused).toMatchObject({
+			ok: false,
+			problem: expect.stringContaining("Correct import"),
+		});
+		expect(intent.getSnapshot().kind).toBe("idle");
+		expect(await previewImport(db, input)).toMatchObject({
+			ok: true,
+			value: { alreadyImported: other.value.importId },
+		});
+	});
+	it("retains foreign-symbol rows as invalid rather than matching them as USD", async () => {
+		const db = await createTestDb();
+		const made = await account(db);
+		const result = await imported(
+			db,
+			made.id,
+			csv("2026-10-01,Euro,€100.00", "2026-10-01,Pound,£100.00"),
+		);
+		expect(result).toMatchObject({ kind: "imported", added: 0, invalid: 2 });
+		expect(await bankRows(db, made.id)).toHaveLength(0);
+	});
+
+	it("keeps disputed payout evidence visible across accounts and beyond the row limit", async () => {
+		const db = await createTestDb();
+		const first = await account(db, "A");
+		const second = await account(db, "B");
+		await imported(db, first.id, csv("2026-10-01,Deposit,10"));
+		await imported(db, second.id, csv("2026-10-01,Nearby,1"));
+		const [row] = await bankRows(db, first.id);
+		const targetId = await payout(db, "DISPUTED", 10, { reference: "BEFORE" });
+		expect(
+			await confirmMatch(
+				db,
+				{
+					transactionId: row.id,
+					parts: [part(targetId, 1000)],
+					replaces: null,
+				},
+				actor,
+			),
+		).toMatchObject({ ok: true });
+		await db
+			.update(payouts)
+			.set({ reference: "AFTER" })
+			.where(eq(payouts.id, targetId));
+		expect(
+			(await loadOverview(db, second.id)).payouts.find(
+				(target) => target.ref.id === targetId,
+			)?.bank,
+		).toBe("needs-review");
+		await imported(
+			db,
+			first.id,
+			csv(
+				...Array.from(
+					{ length: 1001 },
+					(_, index) => `2026-10-02,New ${index},1`,
+				),
+			),
+		);
+		const overview = await loadOverview(db, first.id);
+		expect(overview.truncated).toBe(true);
+		expect(overview.rows.some((visible) => visible.id === row.id)).toBe(false);
+		expect(
+			overview.payouts.find((target) => target.ref.id === targetId)?.bank,
+		).toBe("needs-review");
+	});
+
+	it("does not acknowledge duplicate proposed allocations as an exact retry", async () => {
+		const db = await createTestDb();
+		const made = await account(db);
+		await imported(db, made.id, csv("2026-10-01,Deposit,10"));
+		const [row] = await bankRows(db, made.id);
+		const left = await payout(db, "LEFT", 5),
+			right = await payout(db, "RIGHT", 5);
+		const input = {
+			transactionId: row.id,
+			replaces: null,
+			parts: [part(left, 500), part(right, 500)],
+		};
+		expect(await confirmMatch(db, input, actor)).toMatchObject({
+			ok: true,
+			value: { kind: "matched" },
+		});
+		expect(
+			await confirmMatch(
+				db,
+				{ ...input, parts: [part(right, 500), part(left, 500)] },
+				actor,
+			),
+		).toMatchObject({ ok: true, value: { kind: "already" } });
+		expect(
+			await confirmMatch(
+				db,
+				{ ...input, parts: [part(left, 500), part(left, 500)] },
+				actor,
+			),
+		).toMatchObject({ ok: false });
+	});
 	it("rejects an unknown explicit account rather than selecting another", async () => {
 		const db = await createTestDb();
 		const made = await account(db);

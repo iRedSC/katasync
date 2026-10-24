@@ -43,9 +43,13 @@ export function fingerprintOf(
 	return sha256(`${t.postedOn}\u0000${t.amountCents}\u0000${description}`);
 }
 
-function amountOf(cells: string[], amount: Columns["amount"]): Parsed<number> {
+function amountOf(
+	cells: string[],
+	amount: Columns["amount"],
+	currency: Currency,
+): Parsed<number> {
 	if (amount.kind === "signed") {
-		const parsed = parseCents(cells[amount.column] ?? "");
+		const parsed = parseCents(cells[amount.column] ?? "", currency);
 		if (!parsed.ok) return parsed;
 		return {
 			ok: true,
@@ -58,7 +62,7 @@ function amountOf(cells: string[], amount: Columns["amount"]): Parsed<number> {
 		return { ok: false, problem: "Both money in and money out are filled" };
 	if (inText === "" && outText === "")
 		return { ok: false, problem: "Neither money in nor money out is filled" };
-	const parsed = parseCents(inText || outText);
+	const parsed = parseCents(inText || outText, currency);
 	if (!parsed.ok) return parsed;
 	if (parsed.value < 0)
 		return {
@@ -84,7 +88,7 @@ function parseRow(
 		return { ok: false, problem: "A cell is too long" };
 	const postedOn = parseBankDate(cells[columns.date], mapping.dateFormat);
 	if (!postedOn.ok) return postedOn;
-	const amount = amountOf(cells, columns.amount);
+	const amount = amountOf(cells, columns.amount, currency);
 	if (!amount.ok) return amount;
 	if (amount.value === 0) return { ok: false, problem: "Amount is zero" };
 	if (columns.currency !== null) {

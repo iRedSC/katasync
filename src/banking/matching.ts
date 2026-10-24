@@ -86,9 +86,11 @@ export async function partsOf(
 const sameParts = (a: readonly Proposed[], b: readonly Proposed[]) => {
 	const key = (p: Proposed) => `${targetKey(p.target)}=${p.amountCents}`;
 	const left = new Set(a.map(key));
+	const right = new Set(b.map(key));
 	return (
 		a.length === b.length &&
 		left.size === a.length &&
+		right.size === b.length &&
 		b.every((p) => left.has(key(p)))
 	);
 };

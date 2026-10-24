@@ -19,9 +19,10 @@ import {
 	bankStateOf,
 	type MatchState,
 	matchStates,
+	reviewingTargets,
 } from "./review";
 import { type Suggestions, suggest, usable, WINDOW_DAYS } from "./suggest";
-import { payoutTarget, targetKey } from "./targets";
+import { payoutTarget } from "./targets";
 
 export const ROW_LIMIT = 1000;
 
@@ -125,6 +126,16 @@ export async function loadOverview(
 	db: Db,
 	accountId: number | null,
 ): Promise<Overview> {
+	return db.transaction((tx) => readOverview(tx, accountId), {
+		isolationLevel: "repeatable read",
+		accessMode: "read only",
+	});
+}
+
+async function readOverview(
+	db: Db,
+	accountId: number | null,
+): Promise<Overview> {
 	const accounts: AccountView[] = (await listAccounts(db)).map(viewOf);
 	const account =
 		accountId === null
@@ -181,13 +192,6 @@ export async function loadOverview(
 			state: evidence.states.get(t.id) ?? { kind: "unmatched" },
 		}),
 	);
-	const reviewing = new Set(
-		rows.flatMap((r) =>
-			r.state.kind === "needs-review"
-				? r.state.match.parts.map((p) => targetKey(p.target))
-				: [],
-		),
-	);
 	const days = txns.map((t) => t.postedOn).sort();
 	const near =
 		days.length === 0
@@ -204,6 +208,11 @@ export async function loadOverview(
 	);
 	for (const [key, t] of evidence.targets)
 		if (t.currency === account.currency) standing.set(key, t);
+	const reviewing = await reviewingTargets(
+		db,
+		[...standing.values()].map((target) => target.ref),
+		account.currency,
+	);
 	const payouts = [...standing.values()]
 		.sort((a, b) => b.on.localeCompare(a.on))
 		.map((t) => ({ ...t, bank: bankStateOf(t, reviewing) }));

@@ -28,6 +28,24 @@ function rows(text: string, mapping = signed) {
 
 describe("parseCents", () => {
 	it.each([
+		["€100", "USD"],
+		["£100", "USD"],
+		["$100", "EUR"],
+		["€100", "GBP"],
+	])("refuses %s in a %s account", (text, currency) => {
+		expect(parseCents(text, currency)).toMatchObject({
+			ok: false,
+			problem: expect.stringContaining("conversion"),
+		});
+	});
+	it.each([
+		["€100", "EUR"],
+		["£100", "GBP"],
+		["$100", "CAD"],
+	])("preserves compatible symbol evidence in %s for %s", (text, currency) => {
+		expect(parseCents(text, currency)).toEqual({ ok: true, value: 10000 });
+	});
+	it.each([
 		["12.34", 1234],
 		["-12.34", -1234],
 		["(1,234.50)", -123450],
@@ -35,7 +53,7 @@ describe("parseCents", () => {
 		["+5.5", 550],
 		["0.07", 7],
 	])("reads %s as %i cents", (text, cents) => {
-		expect(parseCents(text)).toEqual({ ok: true, value: cents });
+		expect(parseCents(text, "USD")).toEqual({ ok: true, value: cents });
 	});
 
 	it.each([
@@ -51,7 +69,7 @@ describe("parseCents", () => {
 		"abc",
 		"99999999999.00",
 	])("refuses %s", (text) => {
-		expect(parseCents(text).ok).toBe(false);
+		expect(parseCents(text, "USD").ok).toBe(false);
 	});
 });
 
