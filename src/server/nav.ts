@@ -7,6 +7,7 @@ import { countImportant } from "#/inbox/market-mail";
 import { countCountsDue } from "#/inventory/counts-due";
 import { countAtRisk } from "#/markets/refresh";
 import { countReturnsDue } from "#/orders/return-rates";
+import { countRepairsToDo } from "#/repairs/read";
 import { countOrdersToShip } from "#/server/orders";
 import { countEmailsToFile, countPosReady } from "#/server/purchasing";
 
@@ -26,6 +27,7 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 			attention,
 			atRisk,
 			buyers,
+			repairsToDo,
 		] = await Promise.all([
 			countOrdersToShip(),
 			countReturnsDue(db),
@@ -37,6 +39,7 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 			diagnosticsAttention(db),
 			countAtRisk(db),
 			countWaiting(db, null),
+			countRepairsToDo(db),
 		]);
 		return {
 			toShip,
@@ -52,6 +55,8 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 			unmatched,
 			attention,
 			atRisk,
+			// Tools in the shop not fixed yet.
+			repairsToDo,
 		};
 	},
 );

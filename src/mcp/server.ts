@@ -24,6 +24,11 @@ import { registerPurchasingTools } from "./server/purchasing-tools";
 import { registerReadTools } from "./server/read-tools";
 import { registerReceivingTools } from "./server/receiving-tools";
 import {
+	REPAIR_READ_TOOLS,
+	registerRepairReadTools,
+	registerRepairTools,
+} from "./server/repair-tools";
+import {
 	registerSettingsReadTools,
 	registerSettingsWriteTools,
 } from "./server/settings-tools";
@@ -68,6 +73,7 @@ export const READ_TOOLS = new Set([
 	"read_marketplace_email",
 	"mail_rules",
 	"email_templates",
+	...REPAIR_READ_TOOLS,
 ]);
 
 export function buildServer(db: Db, access: { canWrite: boolean }) {
@@ -84,6 +90,7 @@ export function buildServer(db: Db, access: { canWrite: boolean }) {
 	registerMarketTools(server, db);
 	registerMailRuleReadTools(server, db);
 	registerSettingsReadTools(server, db);
+	registerRepairReadTools(server, db);
 	if (access.canWrite) registerWriteTools(server, db);
 	return server;
 }
@@ -107,4 +114,5 @@ function registerWriteTools(server: McpServer, db: Db) {
 	registerMailRuleWriteTools(server, db);
 	registerBuyerWriteTools(server, db);
 	registerSettingsWriteTools(server, db);
+	registerRepairTools(server, db);
 }

@@ -18,6 +18,8 @@ import {
 	Trophy,
 	Truck,
 	Undo2,
+	Users,
+	Wrench,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -162,6 +164,22 @@ export const pages = [
 		icon: Library,
 		keys: "g c",
 		parent: "/purchasing",
+		count: null,
+	},
+	{
+		to: "/repairs",
+		label: "Repairs",
+		icon: Wrench,
+		keys: "g w",
+		parent: null,
+		count: "repairsToDo",
+	},
+	{
+		to: "/repairs/customers",
+		label: "Customers",
+		icon: Users,
+		keys: "g u",
+		parent: "/repairs",
 		count: null,
 	},
 	{

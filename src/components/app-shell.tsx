@@ -199,6 +199,7 @@ const problem: Record<keyof NavCounts, boolean | ((c: NavCounts) => boolean)> =
 		unmatched: true,
 		attention: true,
 		atRisk: true,
+		repairsToDo: false,
 	};
 const isProblem = (k: keyof NavCounts, c: NavCounts) => {
 	const p = problem[k];
