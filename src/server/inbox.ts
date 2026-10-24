@@ -109,8 +109,8 @@ export const inboxCounts = createServerFn({ method: "GET" })
 				FOLDERS.map((f) => [f, rows.find((r) => r.folder === f)?.n ?? 0]),
 			) as Record<(typeof FOLDERS)[number], number>),
 			buyers,
-			toFile: unfiled.toFileUnread,
-			setAside: unfiled.setAsideUnread,
+			// Unread purchasing emails waiting to be filed.
+			unfiled: unfiled.toFileUnread,
 		};
 	});
 

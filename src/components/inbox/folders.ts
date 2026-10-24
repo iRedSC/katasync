@@ -1,7 +1,6 @@
 import {
 	Archive,
 	Bell,
-	FileQuestion,
 	FolderCheck,
 	Inbox,
 	type LucideIcon,
@@ -20,7 +19,7 @@ import { FOLDER_NAMES, FOLDERS, type Folder } from "#/inbox/rules";
 // purchasing mailbox's, and the rules that sort the first.
 
 export type MarketView = "important" | Folder | "done";
-export type PurchasingView = "to-file" | "set-aside" | "on-po";
+export type PurchasingView = "unfiled" | "filed";
 export type InboxFolder =
 	| "buyers"
 	| "precedents"
@@ -47,10 +46,11 @@ export const MARKET_FOLDERS: Entry[] = [
 	{ folder: "done", name: "Done", icon: Archive },
 ];
 
+// Unfiled waits on a decision; Filed holds those decided: on a PO, or set
+// aside as about none.
 export const PURCHASING_FOLDERS: Entry[] = [
-	{ folder: "to-file", name: "To file", icon: Inbox },
-	{ folder: "set-aside", name: "Set aside", icon: FileQuestion },
-	{ folder: "on-po", name: "On a PO", icon: FolderCheck },
+	{ folder: "unfiled", name: "Unfiled", icon: Inbox },
+	{ folder: "filed", name: "Filed", icon: FolderCheck },
 ];
 
 // Conversations with buyers, answered in place.
@@ -87,6 +87,11 @@ const ALL = [
 export const isInboxFolder = (v: unknown): v is InboxFolder =>
 	ALL.some((e) => e.folder === v);
 
-// The purchasing mailbox's own name for a view.
-export const purchasingView = (f: PurchasingView) =>
-	f === "on-po" ? ("filed" as const) : f;
+// A purchasing folder by its name, or by a name from before Unfiled and
+// Filed that links and bookmarks still use.
+export const purchasingFolderOf = (v: unknown): PurchasingView | null =>
+	v === "unfiled" || v === "to-file"
+		? "unfiled"
+		: v === "filed" || v === "set-aside" || v === "on-po"
+			? "filed"
+			: null;

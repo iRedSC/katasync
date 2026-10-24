@@ -1,17 +1,18 @@
-import { Link } from "@tanstack/react-router";
-import { Sparkles, Truck, Undo2 } from "lucide-react";
+import { Copy, Sparkles, Truck, Undo2 } from "lucide-react";
 import type { ReactNode } from "react";
-import { FlagList, ProposedFlags } from "#/components/purchase-order/flags";
+import { FoldingFlags, ProposedFlags } from "#/components/purchase-order/flags";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
+import { formatDay } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { Applied, Proposal } from "#/purchasing/inbox/ai-filing-shapes";
 import type { InboxPage } from "#/purchasing/inbox/views";
 
 // What the AI made of a supplier's email, under its header: reading it, the
-// PO it filed it on with the tracking it followed and the flags it raised
+// tracking it followed and the flags it raised on the PO it filed it on
 // (each applied or dismissed here; undo takes the email off), the PO it
-// suggests (one click files it), or why it found none.
+// suggests (one click files it), the earlier email it set it aside as a copy
+// of (undo brings it back), or why it found none.
 
 type Email = InboxPage["emails"][number];
 
@@ -19,10 +20,12 @@ export function AiFiling({
 	email: e,
 	onTake,
 	onUndo,
+	onUndoAside,
 }: {
 	email: Email;
 	onTake: (po: number) => void;
 	onUndo: () => void;
+	onUndoAside: () => void;
 }) {
 	const ai = e.ai;
 	if (!ai) return null;
@@ -60,17 +63,37 @@ export function AiFiling({
 			</Box>
 		);
 
+	if (ai.state === "set_aside" && e.setAsideAt !== null && e.original)
+		return (
+			<Box>
+				<Sparkles className="size-3.5 text-primary" />
+				<Tip content={e.original.subject || "(no subject)"}>
+					<span className="inline-flex items-center gap-1 rounded-md bg-surface-strong px-1.5 py-0.5 text-xs tabular-nums [&_svg]:size-3">
+						<Copy />
+						{formatDay(e.original.receivedAt)}
+						{e.original.purchaseOrderId !== null &&
+							` · PO ${e.original.purchaseOrderId}`}
+					</span>
+				</Tip>
+				{ai.reason && (
+					<span className="text-muted-foreground">{ai.reason}</span>
+				)}
+				<Button
+					size="sm"
+					variant="ghost"
+					onClick={onUndoAside}
+					className="ml-auto"
+				>
+					<Undo2 />
+					Undo
+				</Button>
+			</Box>
+		);
+
 	if (ai.state === "filed" && ai.purchaseOrderId && ai.applied)
 		return (
 			<Box>
 				<Sparkles className="size-3.5 text-primary" />
-				<Link
-					to="/purchasing/$id"
-					params={{ id: String(ai.purchaseOrderId) }}
-					className="font-medium tabular-nums hover:underline"
-				>
-					PO {ai.purchaseOrderId}
-				</Link>
 				{ai.reason && (
 					<span className="text-muted-foreground">{ai.reason}</span>
 				)}
@@ -81,7 +104,7 @@ export function AiFiling({
 				</Button>
 				{e.flags.length > 0 && (
 					<div className="-mx-3 -mb-2 basis-full border-t">
-						<FlagList flags={e.flags} />
+						<FoldingFlags flags={e.flags} className="px-3 py-2" />
 					</div>
 				)}
 			</Box>
@@ -94,7 +117,7 @@ function Box({ dashed, children }: { dashed?: boolean; children: ReactNode }) {
 	return (
 		<div
 			className={cn(
-				"flex flex-wrap items-center gap-1.5 rounded-xl border px-3 py-2 text-sm animate-in fade-in-0 slide-in-from-top-1",
+				"flex flex-wrap items-center gap-1.5 overflow-hidden rounded-xl border px-3 py-2 text-sm animate-in fade-in-0 slide-in-from-top-1",
 				dashed ? "border-dashed" : "bg-surface",
 			)}
 		>

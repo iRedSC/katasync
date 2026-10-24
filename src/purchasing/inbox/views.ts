@@ -80,7 +80,7 @@ export async function inboxPage(db: Db, view: InboxView) {
 	return {
 		connected: inboxAddress() !== null,
 		// Unread, as the Inbox page counts.
-		counts: { toFile: unfiled.toFileUnread, setAside: unfiled.setAsideUnread },
+		counts: { unfiled: unfiled.toFileUnread },
 		emails: emails.map((e) => {
 			const mentions = mentionedPos(`${e.subject}\n${e.body}`);
 			const rank = (p: (typeof pos)[number]) => {

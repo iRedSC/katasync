@@ -13,6 +13,7 @@ import { discountOf, lineCents } from "#/purchasing/discount";
 import { countUnfiled } from "#/purchasing/inbox/ingest";
 import { backOrderedUnits, receivedByLine } from "#/purchasing/load";
 import { readyToOrder, suggestPurchases } from "#/purchasing/reorder";
+import { id } from "./id-input";
 
 type Status = (typeof purchaseOrderStatus.enumValues)[number];
 
@@ -92,12 +93,38 @@ async function packagesOf(db: Db, purchaseOrderIds: number[]) {
 	return of;
 }
 
-// The POs in these statuses, newest first, with their totals. The caller
-// caps the rows when it needs to.
+// One PO as the purchasing list shows it, for the emails filed on it.
+export const getPoSummary = createServerFn({ method: "GET" })
+	.validator(id)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const [order] = await orderRows(
+			db,
+			receivedByLine(db),
+			["suggested", "draft", "sent", "closed", "cancelled"],
+			data.id,
+		);
+		if (!order) return null;
+		const [off, packages] = await Promise.all([
+			discountsOff(db, [order.id]),
+			packagesOf(db, [order.id]),
+		]);
+		return {
+			...order,
+			total: order.total - (off.get(order.id) ?? 0),
+			packages: packages.get(order.id) ?? NO_PACKAGES,
+		};
+	});
+
+export type PoSummary = NonNullable<Awaited<ReturnType<typeof getPoSummary>>>;
+
+// The POs in these statuses, newest first, with their totals; only the one
+// given an id. The caller caps the rows when it needs to.
 function orderRows(
 	db: Db,
 	received: ReturnType<typeof receivedByLine>,
 	statuses: Status[],
+	id?: number,
 ) {
 	return (
 		db
@@ -126,7 +153,12 @@ function orderRows(
 			)
 			.leftJoin(received, eq(received.lineId, purchaseOrderLines.id))
 			// Suggested POs show as their suggestion, under Ready to order.
-			.where(inArray(purchaseOrders.status, statuses))
+			.where(
+				and(
+					inArray(purchaseOrders.status, statuses),
+					id === undefined ? undefined : eq(purchaseOrders.id, id),
+				),
+			)
 			.groupBy(purchaseOrders.id, suppliers.id)
 			.orderBy(desc(purchaseOrders.id))
 	);

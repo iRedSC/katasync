@@ -68,7 +68,7 @@ describe("keeping an email as sent", () => {
 
 	test("purchasing: the same", async () => {
 		await ingest(db, [message("Your quote")], read);
-		const [email] = await inboxEmails(db, "to-file");
+		const [email] = await inboxEmails(db, "unfiled");
 		expect(email.attachments.map((a) => a.filename)).toEqual(["label.png"]);
 		expect(await emailHtml(db, email.id)).toMatch(
 			/src="\/api\/po-email-attachments\/\d+"/,

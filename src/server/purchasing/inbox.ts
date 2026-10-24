@@ -1,7 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
-import { takeSuggestion, undoFiling } from "#/purchasing/inbox/ai-filing";
+import {
+	takeSuggestion,
+	undoFiling,
+	undoSetAside,
+} from "#/purchasing/inbox/ai-filing";
 import {
 	countUnfiled,
 	fileEmail,
@@ -18,7 +22,7 @@ import { id } from "./id-input";
 
 // One list of the supplier-email inbox page.
 export const listPoEmails = createServerFn({ method: "GET" })
-	.validator(type({ view: "'to-file' | 'set-aside' | 'filed'" }))
+	.validator(type({ view: "'unfiled' | 'filed'" }))
 	.handler(async ({ data }) => inboxPage(getDb(), data.view));
 
 // Unfiled emails, the ones likeliest about this PO first.
@@ -57,6 +61,11 @@ export const takeAiSuggestion = createServerFn({ method: "POST" })
 export const undoAiFiling = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) => undoFiling(getDb(), data.id));
+
+// Brings back an email the AI set aside as a copy.
+export const undoAiSetAside = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) => undoSetAside(getDb(), data.id));
 
 export const addPoTracking = createServerFn({ method: "POST" })
 	.validator(
