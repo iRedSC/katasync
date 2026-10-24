@@ -3,6 +3,7 @@ import { type Draft, reader, replierWith, translator } from "#/ai/agents";
 import { OutOfTimeError, runAgent } from "#/ai/harness";
 import type { Db } from "#/db/client";
 import {
+	buyerMarketplaceMessages,
 	buyerMessages,
 	buyerThreads,
 	dispatchOrders,
@@ -156,46 +157,55 @@ async function brief(db: Db, threadId: number) {
 				)
 				.limit(1)
 		: [];
-	const [lines, sent, messages, precedents, language] = await Promise.all([
-		order
-			? db
-					.select({ title: orderLines.title, quantity: orderLines.quantity })
-					.from(orderLines)
-					.where(eq(orderLines.orderId, order.id))
-			: [],
-		order
-			? db
-					.select({
-						carrier: shipments.carrier,
-						service: shipments.serviceName,
-						tracking: shipments.trackingNumber,
-						shippedAt: shipments.createdAt,
-					})
-					.from(shipments)
-					.innerJoin(
-						dispatchOrders,
-						eq(dispatchOrders.dispatchId, shipments.dispatchId),
-					)
-					.where(
-						and(
-							eq(dispatchOrders.orderId, order.id),
-							isNull(shipments.voidedAt),
-						),
-					)
-			: [],
-		db
-			.select({
-				fromBuyer: buyerMessages.fromBuyer,
-				body: buyerMessages.body,
-				at: buyerMessages.at,
-				status: buyerMessages.status,
-			})
-			.from(buyerMessages)
-			.where(eq(buyerMessages.threadId, threadId))
-			.orderBy(buyerMessages.at),
-		listPrecedents(db),
-		languageOf(db, threadId),
-	]);
+	const [lines, sent, messages, precedents, language, theirs] =
+		await Promise.all([
+			order
+				? db
+						.select({ title: orderLines.title, quantity: orderLines.quantity })
+						.from(orderLines)
+						.where(eq(orderLines.orderId, order.id))
+				: [],
+			order
+				? db
+						.select({
+							carrier: shipments.carrier,
+							service: shipments.serviceName,
+							tracking: shipments.trackingNumber,
+							shippedAt: shipments.createdAt,
+						})
+						.from(shipments)
+						.innerJoin(
+							dispatchOrders,
+							eq(dispatchOrders.dispatchId, shipments.dispatchId),
+						)
+						.where(
+							and(
+								eq(dispatchOrders.orderId, order.id),
+								isNull(shipments.voidedAt),
+							),
+						)
+				: [],
+			db
+				.select({
+					fromBuyer: buyerMessages.fromBuyer,
+					body: buyerMessages.body,
+					at: buyerMessages.at,
+					status: buyerMessages.status,
+				})
+				.from(buyerMessages)
+				.where(eq(buyerMessages.threadId, threadId))
+				.orderBy(buyerMessages.at),
+			listPrecedents(db),
+			languageOf(db, threadId),
+			db
+				.select({
+					kind: buyerMarketplaceMessages.kind,
+					body: buyerMarketplaceMessages.body,
+					at: buyerMarketplaceMessages.at,
+				})
+				.from(buyerMarketplaceMessages)
+				.where(eq(buyerMarketplaceMessages.threadId, threadId)),
+		]);
 	return JSON.stringify(
 		{
 			marketplace: thread.market,
@@ -224,13 +234,23 @@ async function brief(db: Db, threadId: number) {
 				: thread.orderRef
 					? { number: thread.orderRef, note: "not in our records yet" }
 					: null,
-			conversation: messages
-				.filter((m) => m.fromBuyer || m.status !== "failed")
-				.map((m) => ({
-					from: m.fromBuyer ? "buyer" : "us",
-					at: m.at,
-					text: m.body,
-				})),
+			// With what the marketplace's assistant already told the buyer.
+			conversation: [
+				...messages
+					.filter((m) => m.fromBuyer || m.status !== "failed")
+					.map((m) => ({
+						from: m.fromBuyer ? "buyer" : "us",
+						at: m.at,
+						text: m.body,
+					})),
+				...theirs
+					.filter((m) => m.body)
+					.map((m) => ({
+						from: `${thread.market} ${m.kind === "assistant" ? "assistant (automatic, not us)" : "notice"}`,
+						at: m.at,
+						text: m.body,
+					})),
+			].sort((a, b) => a.at.getTime() - b.at.getTime()),
 			precedents: precedents.map((p) => ({
 				id: p.id,
 				name: p.name,

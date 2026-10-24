@@ -130,6 +130,31 @@ describe("TikTok messages", () => {
 		expect(check).toMatchObject({ market: "tiktok", error: null });
 	});
 
+	test("TikTok's own messages are kept with the thread, and never answer the buyer", async () => {
+		conversations.c1?.push(
+			text("r3", "ROBOT", "Se vende en paquetes de 5.", -9),
+			{
+				...card("n1", "NOTIFICATION", { content: "The chat timed out" }, -8),
+				sender: { role: "SYSTEM", nickname: "ECDT" },
+			},
+			card("x1", "OTHER", { content: "[Other] See Seller Center" }, -7),
+			{ ...card("x2", "OTHER", { content: "" }, -6), is_visible: false },
+		);
+		await syncTiktokMessages(db);
+		await syncTiktokMessages(db, { sweep: true });
+		const [thread] = await threadsPage(db, "open", null);
+		expect(thread?.waiting).not.toBeNull();
+		expect(
+			thread?.marketplace.map((m) => [m.kind, m.body || m.orderRef]),
+		).toEqual([
+			["order_card", "5770001"],
+			["assistant", "Thanks for your order!"],
+			["assistant", "Se vende en paquetes de 5."],
+			["notice", "The chat timed out"],
+			["other", null],
+		]);
+	});
+
 	test("an answer from Seller Center counts as ours", async () => {
 		conversations.c1?.push(text("h1", "CUSTOMER_SERVICE", "On its way", -2));
 		await syncTiktokMessages(db);
