@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
 import { stockValueByKind } from "#/inventory/stock-value";
+import { parsePeriod } from "#/lib/period";
 import {
 	groupBoxes,
 	groupPostage,
@@ -18,6 +19,7 @@ import {
 	profitTotals,
 	RANGES,
 	type RangeKey,
+	resolvePeriod,
 	resolveRange,
 } from "#/orders/profit";
 import { updateProductDetails } from "#/products/details";
@@ -69,12 +71,22 @@ export const getProfit = createServerFn({ method: "GET" })
 		};
 	});
 
-// Every item sold in the range, with what each made.
+// A named range or picked days, as lib/period.ts spells them. Checked here
+// and parsed in the handler, so what crosses the wire stays a string.
+const periodType = type("string").narrow(
+	(text, ctx) =>
+		parsePeriod(text) !== null ||
+		ctx.mustBe("a range or days such as 2026-10-01..2026-10-15"),
+);
+
+// Every item sold in the period, with what each made.
 export const getProfitItems = createServerFn({ method: "GET" })
-	.validator(type({ range: rangeType }))
+	.validator(type({ period: periodType }))
 	.handler(async ({ data }) => {
 		const db = getDb();
-		const range = await resolveRange(db, data.range);
+		const period = parsePeriod(data.period);
+		if (!period) throw new Error(`Not a period: ${data.period}`);
+		const range = await resolvePeriod(db, period);
 		return { range, ...(await profitItems(db, range.start, range.end)) };
 	});
 

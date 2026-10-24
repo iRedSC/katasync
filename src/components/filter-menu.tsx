@@ -77,7 +77,7 @@ export function FilterPicker<F>({
 			<PopoverTrigger className={iconButton} aria-label="Add a filter">
 				<ListFilter className="size-4" />
 			</PopoverTrigger>
-			<PopoverContent className="w-72">
+			<PopoverContent className="w-auto max-w-[22rem] min-w-72">
 				{!field ? (
 					<ul>
 						{fields.map((f) => (

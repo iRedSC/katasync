@@ -1,45 +1,117 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, BookOpen, Search, X } from "lucide-react";
-import { useRef } from "react";
+import { ArrowDown, ArrowUp, BookOpen } from "lucide-react";
+import { useMemo, useRef } from "react";
 import { CatalogMark } from "#/components/catalog-mark";
+import { FilterBar, useSearchRows } from "#/components/filter-bar";
 import { Badge, Card, Page } from "#/components/page";
 import { ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
+import { type Chip, defineSearch } from "#/lib/facet-search";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { useRowLink } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
+import {
+	DATE,
+	NUMBER,
+	parseSort,
+	type Sort,
+	spellSort,
+	TEXT,
+} from "#/products/sort";
 import { MIN_MEASURED_POS } from "#/purchasing/forecast";
 import { listSupplierTable, type SupplierTableRow } from "#/server/purchasing";
 
-// What each header sorts by, and which way a first click goes: names A to
-// Z, numbers biggest first.
+// What each column sorts by, and which way a first click on its header
+// goes: names A to Z, numbers biggest first.
 const SORTS = {
-	name: { get: (r) => r.supplier.name.toLowerCase(), desc: false },
-	catalogs: { get: (r) => r.catalogs.length, desc: true },
-	products: { get: (r) => r.products, desc: true },
-	open: { get: (r) => r.openOrders, desc: true },
-	last: { get: (r) => r.lastSentAt?.getTime() ?? null, desc: true },
-	spend: { get: (r) => r.spendYear, desc: true },
-	lead: { get: (r) => r.leadTime.days, desc: false },
-	threshold: { get: (r) => r.supplier.minimumOrder, desc: true },
-} satisfies Record<
-	string,
-	{ get: (r: SupplierTableRow) => string | number | null; desc: boolean }
->;
+	name: { label: "Supplier", ...TEXT, first: false },
+	catalogs: { label: "Catalogs", ...NUMBER, first: true },
+	products: { label: "Products", ...NUMBER, first: true },
+	open: { label: "On order", ...NUMBER, first: true },
+	last: { label: "Last PO", ...DATE, first: true },
+	spend: { label: "Spent, 12 mo", ...NUMBER, first: true },
+	lead: { label: "Lead time", ...NUMBER, first: false },
+	threshold: { label: "Threshold", ...NUMBER, first: true },
+} as const;
 type SortKey = keyof typeof SORTS;
-const isSort = (k: unknown): k is SortKey =>
-	typeof k === "string" && Object.hasOwn(SORTS, k);
 
-type SupplierSearch = { q?: string; sort?: SortKey; desc?: boolean };
+const sortValuesOf = (r: SupplierTableRow) => ({
+	name: r.supplier.name,
+	catalogs: r.catalogs.length,
+	products: r.products,
+	open: r.openOrders,
+	last: r.lastSentAt?.getTime() ?? null,
+	spend: r.spendYear,
+	lead: r.leadTime.days,
+	threshold: r.supplier.minimumOrder,
+});
+
+const supplierSearch = defineSearch<
+	SupplierTableRow,
+	"catalog" | "state" | "last"
+>({
+	fields: {
+		catalog: {
+			kind: "values",
+			sigil: "/",
+			label: "carries",
+			menu: "Catalog",
+			words: ["catalog", "carries"],
+			of: (r) => r.catalogs.map((c) => c.name),
+		},
+		state: {
+			kind: "values",
+			sigil: "%",
+			label: "status",
+			menu: "Status",
+			words: ["status", "ordering"],
+			of: (r) => [
+				r.openOrders > 0 ? "on order" : null,
+				r.draftId !== null ? "draft" : null,
+				r.lastSentAt === null ? "never ordered" : null,
+			],
+			known: ["on order", "draft", "never ordered"],
+			details: new Map([
+				["on order", "A sent PO still coming"],
+				["draft", "A draft or suggested PO waiting"],
+				["never ordered", "No PO sent yet"],
+			]),
+			closed: true,
+		},
+		last: {
+			kind: "period",
+			sigil: "~",
+			label: "last PO",
+			menu: "Last PO",
+			words: ["last", "sent", "date"],
+			at: (r) => r.lastSentAt,
+		},
+	},
+	text: (r) => [
+		r.supplier.name,
+		r.supplier.code,
+		r.supplier.contactName,
+		r.supplier.email,
+		r.supplier.city,
+		...r.catalogs.map((c) => c.name),
+	],
+});
+type SupplierChip = Chip<"catalog" | "state" | "last">;
+
+type SupplierSearch = { q?: string; f?: SupplierChip[]; sort?: string };
 
 export const Route = createFileRoute("/purchasing/suppliers/")({
-	validateSearch: (s: Record<string, unknown>): SupplierSearch => ({
-		q: typeof s.q === "string" && s.q !== "" ? s.q : undefined,
-		sort: isSort(s.sort) && s.sort !== "name" ? s.sort : undefined,
-		desc: typeof s.desc === "boolean" ? s.desc : undefined,
-	}),
+	validateSearch: (s: Record<string, unknown>): SupplierSearch => {
+		const f = supplierSearch.chipsFromUrl(s.f);
+		const sort = spellSort(parseSort(String(s.sort ?? ""), SORTS));
+		return {
+			q: typeof s.q === "string" && s.q !== "" ? s.q : undefined,
+			f: f.length ? f : undefined,
+			sort: sort || undefined,
+		};
+	},
 	loader: () => listSupplierTable(),
 	component: Suppliers,
 	pendingComponent: () => (
@@ -60,23 +132,15 @@ function ago(at: Date, now: Date) {
 	return formatDay(at);
 }
 
-// Everything a search can find a supplier by.
-const haystack = (r: SupplierTableRow) =>
-	[
-		r.supplier.name,
-		r.supplier.code,
-		r.supplier.contactName,
-		r.supplier.email,
-		r.supplier.city,
-		...r.catalogs.map((c) => c.name),
-	]
-		.filter(Boolean)
-		.join(" ")
-		.toLowerCase();
-
 function Suppliers() {
 	const rows = Route.useLoaderData();
-	const { q = "", sort = "name", desc } = Route.useSearch();
+	const search = Route.useSearch();
+	const q = search.q ?? "";
+	const chipsKey = JSON.stringify(search.f ?? []);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by content, as the router hands back a new array each render
+	const chips = useMemo(() => search.f ?? [], [chipsKey]);
+	const sortText = search.sort ?? "";
+	const sort = useMemo(() => parseSort(sortText, SORTS), [sortText]);
 	const navigate = useNavigate({ from: Route.fullPath });
 	const searchBox = useRef<HTMLInputElement>(null);
 	useHotkeys({
@@ -86,33 +150,28 @@ function Suppliers() {
 		},
 	});
 	const now = new Date();
-	const { get, desc: firstDesc } = SORTS[sort];
-	const down = desc ?? firstDesc;
-
-	const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-	const shown = rows
-		.filter((r) => {
-			const hay = haystack(r);
-			return words.every((w) => hay.includes(w));
-		})
-		.sort((a, b) => {
-			const x = get(a);
-			const y = get(b);
-			// Nothing to sort by goes last whichever way.
-			if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
-			const c = x < y ? -1 : x > y ? 1 : 0;
-			return (down ? -c : c) || a.supplier.name.localeCompare(b.supplier.name);
-		});
+	// Names A to Z until a column is picked, and to break its ties.
+	const by = useMemo<Sort<SortKey>>(
+		() => [...sort, { key: "name", desc: false }],
+		[sort],
+	);
+	const { idx, shown } = useSearchRows(supplierSearch, rows, chips, q, {
+		sort: by,
+		columns: SORTS,
+		values: sortValuesOf,
+	});
+	const lead = by[0];
+	const down = lead.desc;
+	const setSearch = (next: SupplierSearch) =>
+		navigate({ search: (s) => ({ ...s, ...next }), replace: true });
 	const spend = shown.reduce((n, r) => n + r.spendYear, 0);
 
 	const sortBy = (key: SortKey) =>
-		navigate({
-			search: (s) => ({
-				...s,
-				sort: key === "name" ? undefined : key,
-				desc: key === sort ? !down : undefined,
-			}),
-			replace: true,
+		setSearch({
+			sort:
+				spellSort([
+					{ key, desc: key === lead.key ? !down : SORTS[key].first },
+				]) || undefined,
 		});
 
 	return (
@@ -128,38 +187,23 @@ function Suppliers() {
 				</Button>
 			}
 		>
-			<div className="flex items-center gap-3">
-				<div className="relative max-w-md flex-1">
-					<Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-					<input
-						ref={searchBox}
-						value={q}
-						onChange={(e) =>
-							navigate({
-								search: (s) => ({ ...s, q: e.target.value || undefined }),
-								replace: true,
-							})
-						}
-						onKeyDown={(e) => {
-							if (e.key === "Escape") e.currentTarget.blur();
-						}}
-						placeholder="Search by name, contact, email, or catalog"
-						aria-label="Search suppliers"
-						className="h-9 w-full rounded-lg border border-input bg-white pr-8 pl-8 outline-none focus:border-ring"
-					/>
-					{q && (
-						<button
-							type="button"
-							aria-label="Clear search"
-							onClick={() =>
-								navigate({ search: (s) => ({ ...s, q: undefined }) })
-							}
-							className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-subtle"
-						>
-							<X className="size-3.5" />
-						</button>
-					)}
-				</div>
+			<div className="flex items-start gap-3">
+				<FilterBar
+					search={supplierSearch}
+					idx={idx}
+					inputRef={searchBox}
+					text={q}
+					onText={(t) => setSearch({ q: t || undefined })}
+					chips={chips}
+					onChips={(f) => setSearch({ f: f.length ? f : undefined })}
+					sorting={{
+						sort,
+						onSort: (s) => setSearch({ sort: spellSort(s) || undefined }),
+						columns: SORTS,
+					}}
+					placeholder="Search, or /catalog %draft ~this_year"
+					className="max-w-xl flex-1"
+				/>
 				<span className="text-muted-foreground tabular-nums">
 					{shown.length === rows.length
 						? `${formatCount(rows.length)} suppliers`
@@ -171,45 +215,49 @@ function Suppliers() {
 				<table className="w-full">
 					<thead className="sticky top-14 z-10">
 						<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
-							<Header k="name" label="Supplier" {...{ sort, down, sortBy }} />
+							<Header
+								k="name"
+								label="Supplier"
+								{...{ sort: lead.key, down, sortBy }}
+							/>
 							<Header
 								k="catalogs"
 								label="Catalogs"
 								className="hidden lg:table-cell"
-								{...{ sort, down, sortBy }}
+								{...{ sort: lead.key, down, sortBy }}
 							/>
 							<Header
 								k="products"
 								label="Products"
 								align="right"
-								{...{ sort, down, sortBy }}
+								{...{ sort: lead.key, down, sortBy }}
 							/>
 							<Header
 								k="open"
 								label="On order"
 								align="right"
 								className="hidden md:table-cell"
-								{...{ sort, down, sortBy }}
+								{...{ sort: lead.key, down, sortBy }}
 							/>
 							<Header
 								k="last"
 								label="Last PO"
 								className="hidden md:table-cell"
-								{...{ sort, down, sortBy }}
+								{...{ sort: lead.key, down, sortBy }}
 							/>
 							<Header
 								k="spend"
 								label="Spent, 12 mo"
 								align="right"
 								tip="Sent POs over the past year, after discounts"
-								{...{ sort, down, sortBy }}
+								{...{ sort: lead.key, down, sortBy }}
 							/>
 							<Header
 								k="lead"
 								label="Lead time"
 								align="right"
 								className="hidden xl:table-cell"
-								{...{ sort, down, sortBy }}
+								{...{ sort: lead.key, down, sortBy }}
 							/>
 							<Header
 								k="threshold"
@@ -217,7 +265,7 @@ function Suppliers() {
 								align="right"
 								className="hidden xl:table-cell"
 								tip="Spend at which a suggested PO is ready"
-								{...{ sort, down, sortBy }}
+								{...{ sort: lead.key, down, sortBy }}
 							/>
 						</tr>
 					</thead>
@@ -231,7 +279,7 @@ function Suppliers() {
 									colSpan={8}
 									className="px-4 py-10 text-center text-muted-foreground"
 								>
-									No supplier matches “{q}”
+									No supplier matches
 								</td>
 							</tr>
 						)}

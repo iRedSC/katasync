@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
+import { DateInput } from "#/components/ui/calendar";
 import { formatMoney } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
@@ -282,20 +283,20 @@ export function InvoiceForm({
 					/>
 				</Field>
 				<Field label="Dated">
-					<input
-						type="date"
+					<DateInput
 						value={invoicedOn}
-						onChange={(e) => setInvoicedOn(e.target.value || today())}
-						className={cn(input, "tabular-nums")}
+						onChange={setInvoicedOn}
+						className="w-full"
 					/>
 				</Field>
 				<Field label="Due">
-					<input
-						type="date"
+					<DateInput
 						value={dueOn}
 						min={invoicedOn}
-						onChange={(e) => setDueOn(e.target.value)}
-						className={cn(input, "tabular-nums", !dueValid && bad)}
+						clearable
+						onChange={setDueOn}
+						invalid={!dueValid}
+						className="w-full"
 					/>
 				</Field>
 				<Field label="Freight">

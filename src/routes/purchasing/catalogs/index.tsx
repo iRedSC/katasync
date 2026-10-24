@@ -4,12 +4,13 @@ import {
 	FileText,
 	Library,
 	Plus,
-	Search,
+	SearchX,
 	Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CatalogMark } from "#/components/catalog-mark";
 import { NewCatalogDialog } from "#/components/catalogs/new-catalog";
+import { FilterBar, useSearchRows } from "#/components/filter-bar";
 import { Card, EmptyState, Page } from "#/components/page";
 import { ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
@@ -20,11 +21,13 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
+import { type Chip, defineSearch } from "#/lib/facet-search";
 import { formatCount } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic } from "#/lib/optimism";
 import { useRowLink } from "#/lib/row-link";
 import { offerUndo } from "#/lib/undo";
+import { NUMBER, type Sort, TEXT } from "#/products/sort";
 import {
 	type CatalogRow,
 	deleteCatalog,
@@ -49,22 +52,70 @@ export const catalogRows = optimistic<CatalogRow[]>("catalogs");
 
 // What a search matches a catalog on: its name, what it's about, and who
 // carries it.
-const haystack = (c: CatalogRow) =>
-	[c.name, c.description ?? "", ...c.suppliers.map((s) => s.name)]
-		.join(" ")
-		.toLowerCase();
+const catalogSearch = defineSearch<CatalogRow, "supplier" | "state">({
+	fields: {
+		supplier: {
+			kind: "values",
+			sigil: "&",
+			label: "carried by",
+			menu: "Supplier",
+			words: ["supplier", "carried"],
+			of: (c) => c.suppliers.map((s) => s.name),
+		},
+		state: {
+			kind: "values",
+			sigil: "%",
+			label: "status",
+			menu: "Status",
+			words: ["status"],
+			of: (c) => [
+				c.suppliers.length === 0 ? "no supplier" : null,
+				c.products === 0 ? "empty" : null,
+			],
+			known: ["no supplier", "empty"],
+			details: new Map([
+				["no supplier", "Nobody carries it, so nothing in it is reordered"],
+				["empty", "No products in it"],
+			]),
+			closed: true,
+		},
+	},
+	text: (c) => [c.name, c.description, ...c.suppliers.map((s) => s.name)],
+});
+
+const SORTS = {
+	name: { label: "Name", ...TEXT },
+	products: { label: "Products", ...NUMBER },
+	suppliers: { label: "Suppliers", ...NUMBER },
+} as const;
+const sortValuesOf = (c: CatalogRow) => ({
+	name: c.name,
+	products: c.products,
+	suppliers: c.suppliers.length,
+});
 
 function Catalogs() {
 	const loaded = Route.useLoaderData();
 	const catalogs = catalogRows.useData("all", loaded);
 	const [query, setQuery] = useState("");
+	const [chips, setChips] = useState<Chip<"supplier" | "state">[]>([]);
+	const [sort, setSort] = useState<Sort<keyof typeof SORTS>>([]);
 	const [making, setMaking] = useState(false);
-	const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-	const shown = catalogs.filter((c) => {
-		const h = haystack(c);
-		return words.every((w) => h.includes(w));
+	const input = useRef<HTMLInputElement>(null);
+	const { idx, shown, filtering } = useSearchRows(
+		catalogSearch,
+		catalogs,
+		chips,
+		query,
+		{ sort, columns: SORTS, values: sortValuesOf },
+	);
+	useHotkeys({
+		n: () => setMaking(true),
+		"/": (e) => {
+			e.preventDefault();
+			input.current?.focus();
+		},
 	});
-	useHotkeys({ n: () => setMaking(true) });
 
 	return (
 		<Page
@@ -78,28 +129,31 @@ function Catalogs() {
 				</Button>
 			}
 		>
-			<Card flush>
-				<label className="flex items-center gap-2 border-b px-4">
-					<Search className="size-4 text-muted-foreground" />
-					<input
-						value={query}
-						onChange={(e) => setQuery(e.target.value)}
-						placeholder="Search names, descriptions, suppliers"
-						className="h-11 flex-1 bg-transparent outline-none"
-					/>
-					{query !== "" && (
-						<span className="text-xs text-muted-foreground tabular-nums">
-							{formatCount(shown.length)} of {formatCount(catalogs.length)}
-						</span>
-					)}
-				</label>
+			<Card flush className="overflow-visible">
+				<FilterBar
+					search={catalogSearch}
+					idx={idx}
+					inputRef={input}
+					text={query}
+					onText={setQuery}
+					chips={chips}
+					onChips={setChips}
+					sorting={{ sort, onSort: setSort, columns: SORTS }}
+					placeholder="Search, or &supplier %empty ^products"
+					className="border-b p-2"
+				/>
+				{filtering && (
+					<p className="border-b px-4 py-1.5 text-xs text-muted-foreground tabular-nums">
+						{formatCount(shown.length)} of {formatCount(catalogs.length)}
+					</p>
+				)}
 				{catalogs.length === 0 ? (
 					<EmptyState icon={Library} title="No catalogs yet">
 						A catalog is a line of products, like a brand. Suppliers carry whole
 						catalogs.
 					</EmptyState>
 				) : shown.length === 0 ? (
-					<EmptyState icon={Search} title={`Nothing matches “${query}”`} />
+					<EmptyState icon={SearchX} title="No catalog matches" />
 				) : (
 					<table className="w-full">
 						<tbody>

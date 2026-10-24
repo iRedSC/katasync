@@ -27,8 +27,15 @@ export function rangeSearch(view: ProfitView) {
 			: {};
 }
 
-export const searchFor = (view: ProfitView, range: RangeKey) =>
-	range === PROFIT_DEFAULTS[view] ? {} : { range };
+// Null is days picked on the items list, which the other views can't show,
+// so they open on their own.
+// The items list keeps it as `period`, since it can also be picked days.
+export const searchFor = (view: ProfitView, range: RangeKey | null) =>
+	range === null || range === PROFIT_DEFAULTS[view]
+		? {}
+		: view === "/profit"
+			? { period: range }
+			: { range };
 
 const tab = (active: boolean) =>
 	cn(
@@ -43,7 +50,7 @@ export function ProfitViews({
 	range,
 }: {
 	view: ProfitView;
-	range: RangeKey;
+	range: RangeKey | null;
 }) {
 	const views: [ProfitView, string][] = [
 		["/profit", "Items sold"],

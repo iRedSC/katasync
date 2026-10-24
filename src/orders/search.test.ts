@@ -1,15 +1,8 @@
 import { describe, expect, test } from "vitest";
-import {
-	chipsFromUrl,
-	facetCounts,
-	facetsOf,
-	lock,
-	matches,
-	type OrderFilter,
-	orderLanguage,
-	parseQuery,
-	type SearchableOrder,
-} from "./search";
+import type { Day } from "#/lib/period";
+import { type OrderFilter, orderSearch, type SearchableOrder } from "./search";
+
+const { chipsFromUrl, parseQuery } = orderSearch;
 
 function order(over: Partial<SearchableOrder> = {}): SearchableOrder {
 	return {
@@ -54,14 +47,16 @@ const amazon = order({
 });
 const relayedTiktok = order({ name: "#1002", salesChannel: "TikTok" });
 
+const on = "2026-10-24" as Day;
 const find = (
 	orders: SearchableOrder[],
 	text: string,
 	chips: OrderFilter[] = [],
 ) => {
 	const q = parseQuery(text);
-	return orders
-		.filter((o) => matches(facetsOf(o), [...chips, ...q.filters], q.words))
+	const idx = orderSearch.index(orders, on);
+	return orderSearch
+		.filter(orders, idx, [...chips, ...q.filters], q.words, on)
 		.map((o) => o.name);
 };
 
@@ -114,14 +109,16 @@ describe("%status", () => {
 
 	test("only a real status can be locked in, in any case", () => {
 		const typing = parseQuery("%Ext").filters[0];
-		expect(lock(typing, "External")).toEqual(chip("status", "external"));
-		expect(lock(typing, "nonsense")).toBeNull();
+		expect(orderSearch.lock(typing, "External")).toEqual(
+			chip("status", "external"),
+		);
+		expect(orderSearch.lock(typing, "nonsense")).toBeNull();
 	});
 
 	test("every status is suggested with its badge's words, even unused ones", () => {
-		const language = orderLanguage(facetCounts([facetsOf(store)]));
+		const idx = orderSearch.index([store], on);
 		const typing = parseQuery("%").filters[0];
-		const shown = language.suggest(typing, []);
+		const shown = orderSearch.suggest(idx, typing, []);
 		expect(shown.find((s) => s.value === "fba")).toEqual({
 			value: "fba",
 			count: 0,
@@ -176,5 +173,46 @@ describe("chips in the URL", () => {
 		]);
 		expect(chipsFromUrl("nonsense")).toEqual([]);
 		expect(chipsFromUrl([{ field: "vendor", value: "x" }])).toEqual([]);
+	});
+});
+
+describe("~placed", () => {
+	const early = order({ name: "#1", placedAt: new Date("2026-10-01T16:00Z") });
+	// 11 PM in New York on the 23rd is already the 24th in UTC.
+	const late = order({ name: "#2", placedAt: new Date("2026-10-24T03:00Z") });
+	const now = order({ name: "#3", placedAt: new Date("2026-10-24T15:00Z") });
+	const all = [early, late, now];
+
+	test("named ranges count in the shop's days", () => {
+		expect(find(all, "", [chip("placed", "today")])).toEqual(["#3"]);
+		expect(find(all, "", [chip("placed", "yesterday")])).toEqual(["#2"]);
+	});
+
+	test("picked days include both ends, and either can be open", () => {
+		expect(find(all, "", [chip("placed", "2026-10-01..2026-10-23")])).toEqual([
+			"#1",
+			"#2",
+		]);
+		expect(find(all, "", [chip("placed", "2026-10-02..")])).toEqual([
+			"#2",
+			"#3",
+		]);
+		expect(find(all, "", [chip("placed", "..2026-10-01")])).toEqual(["#1"]);
+	});
+
+	test("one period at a time, and all time is no chip", () => {
+		const a = orderSearch.add([], chip("placed", "today"));
+		const b = orderSearch.add(a, chip("placed", "last_week"));
+		expect(b).toEqual([chip("placed", "last_week")]);
+		expect(orderSearch.add(b, chip("placed", ".."))).toEqual([]);
+	});
+
+	test("a period locks in only when it is one", () => {
+		const typing = parseQuery("~").filters[0];
+		expect(orderSearch.lock(typing, "2026-10-15..2026-10-01")?.value).toBe(
+			"2026-10-01..2026-10-15",
+		);
+		expect(orderSearch.lock(typing, "2026-02-30..")).toBeNull();
+		expect(orderSearch.lock(typing, "soon")).toBeNull();
 	});
 });

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Card } from "#/components/page";
 import { cancelWithUndo } from "#/components/po-cancel";
 import { Button } from "#/components/ui/button";
+import { DateInput } from "#/components/ui/calendar";
 import { cn } from "#/lib/utils";
 import { cancelledOnList } from "#/purchasing/list-patches";
 import {
@@ -51,20 +52,17 @@ export function OtherActions({
 						>
 							Mark as sent
 						</Button>
-						<input
-							type="date"
+						<DateInput
 							aria-label="Sent on"
 							value={sentOn}
 							min={earliest}
 							max={latest}
 							disabled={busy}
-							// Cleared, it goes back to today.
-							onChange={(e) => setSentOn(e.target.value || today())}
+							onChange={setSentOn}
+							invalid={!sentOnValid}
 							className={cn(
-								"h-8 rounded-lg border border-input bg-background px-2 text-xs tabular-nums",
+								"text-xs",
 								sentOn === latest && "text-muted-foreground",
-								!sentOnValid &&
-									"border-critical-border ring-2 ring-critical-border/40",
 							)}
 						/>
 					</div>

@@ -307,9 +307,7 @@ function Table({
 							setShown(PAGE);
 						}}
 						language={language}
-						sort={sort}
-						onSort={changeSort}
-						columns={COLUMNS}
+						sorting={{ sort: sort, onSort: changeSort, columns: COLUMNS }}
 						placeholder="Search, or %status *class >=3 ^sort"
 					/>
 				</div>
