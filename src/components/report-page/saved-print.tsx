@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useRef, useState } from "react";
+import { Tip } from "#/components/ui/tooltip";
 import type { getReportArtifact } from "#/server/reports";
 
 export function SavedPrint({
@@ -21,12 +22,11 @@ export function SavedPrint({
 				</Link>
 				<span className="flex items-center gap-2">
 					<span className="font-semibold">Revision {file.revision}</span>
-					<code
-						className="rounded bg-surface-strong px-1 text-xs"
-						title={`sha256 ${file.sha256}`}
-					>
-						{file.sha256.slice(0, 12)}
-					</code>
+					<Tip content={`sha256 ${file.sha256}`}>
+						<code className="rounded bg-surface-strong px-1 text-xs">
+							{file.sha256.slice(0, 12)}
+						</code>
+					</Tip>
 				</span>
 				<button
 					type="button"
