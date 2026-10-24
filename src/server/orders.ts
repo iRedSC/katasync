@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
@@ -16,14 +17,18 @@ import {
 	orders,
 	products,
 	type ReturnState,
+	returnRequestLines,
 	returnRequests,
 	shipments,
 	stores,
 } from "#/db/schema";
-import { adminUrls } from "#/orders/admin-urls";
+import { orderMail } from "#/inbox/order-mail";
+import { adminUrls, returnPage } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
 import { returnStages } from "#/orders/return-stage";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
+
+const refurbs = alias(products, "refurbs");
 
 export const countOrdersToShip = createServerFn({ method: "GET" }).handler(
 	async () => {
@@ -166,6 +171,12 @@ export const getOrder = createServerFn({ method: "GET" })
 				store: stores.name,
 				channel: stores.channel,
 				labelToVoid,
+				soldInStore: orders.soldInStore,
+				noReturnAt: orders.noReturnAt,
+				invoicePrintedAt: orders.invoicePrintedAt,
+				taxRemittedBy: orders.taxRemittedBy,
+				sourceUpdatedAt: orders.sourceUpdatedAt,
+				syncedAt: orders.syncedAt,
 			})
 			.from(orders)
 			.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -273,57 +284,135 @@ export const getOrder = createServerFn({ method: "GET" })
 				shippedWith: others.filter((o) => o.dispatchId === h.dispatchId),
 			};
 		});
-		// What it made, and what each marketplace said it charged.
-		const [[profit], charges, reports, checks, [due], requests, stages] =
-			await Promise.all([
-				db.select().from(orderProfit).where(eq(orderProfit.orderId, data.id)),
-				db
-					.select({
-						billedBy: orderCharges.billedBy,
-						kind: orderCharges.kind,
-						description: orderCharges.description,
-						amount: orderCharges.amount,
-					})
-					.from(orderCharges)
-					.where(eq(orderCharges.orderId, data.id))
-					.orderBy(orderCharges.id),
-				db
-					.select({
-						billedBy: orderCostReports.billedBy,
-						settled: orderCostReports.settled,
-						fetchedAt: orderCostReports.fetchedAt,
-					})
-					.from(orderCostReports)
-					.where(eq(orderCostReports.orderId, data.id)),
-				db
-					.select({
-						billedBy: orderCostChecks.billedBy,
-						checkedAt: orderCostChecks.checkedAt,
-						error: orderCostChecks.error,
-					})
-					.from(orderCostChecks)
-					.where(eq(orderCostChecks.orderId, data.id)),
-				// What's due back, as the Returns tab has it.
-				db
-					.select({ state: orderReturnsDue.state })
-					.from(orderReturnsDue)
-					.where(eq(orderReturnsDue.orderId, data.id))
-					.limit(1),
-				db
-					.select({
-						billedBy: returnRequests.billedBy,
-						status: returnRequests.status,
-						rawStatus: returnRequests.rawStatus,
-						reason: returnRequests.reason,
-						trackingNumber: returnRequests.trackingNumber,
-						carrier: returnRequests.carrier,
-						requestedAt: returnRequests.requestedAt,
-					})
-					.from(returnRequests)
-					.where(eq(returnRequests.orderId, data.id))
-					.orderBy(desc(returnRequests.requestedAt)),
-				returnStages(db, [data.id]),
-			]);
+		// What it made, and what each marketplace said it charged; where its
+		// return stands; the mail about it; and the buyer's other orders.
+		const [
+			[profit],
+			charges,
+			reports,
+			checks,
+			due,
+			requests,
+			requestLines,
+			received,
+			stages,
+			mail,
+			buyerOrders,
+		] = await Promise.all([
+			db.select().from(orderProfit).where(eq(orderProfit.orderId, data.id)),
+			db
+				.select({
+					billedBy: orderCharges.billedBy,
+					kind: orderCharges.kind,
+					description: orderCharges.description,
+					amount: orderCharges.amount,
+				})
+				.from(orderCharges)
+				.where(eq(orderCharges.orderId, data.id))
+				.orderBy(orderCharges.id),
+			db
+				.select({
+					billedBy: orderCostReports.billedBy,
+					settled: orderCostReports.settled,
+					fetchedAt: orderCostReports.fetchedAt,
+				})
+				.from(orderCostReports)
+				.where(eq(orderCostReports.orderId, data.id)),
+			db
+				.select({
+					billedBy: orderCostChecks.billedBy,
+					checkedAt: orderCostChecks.checkedAt,
+					error: orderCostChecks.error,
+				})
+				.from(orderCostChecks)
+				.where(eq(orderCostChecks.orderId, data.id)),
+			// What's due back, line by line, as the Returns tab has it.
+			db
+				.select({
+					lineId: orderReturnsDue.lineId,
+					state: orderReturnsDue.state,
+					expected: orderReturnsDue.expected,
+				})
+				.from(orderReturnsDue)
+				.where(eq(orderReturnsDue.orderId, data.id)),
+			db
+				.select({
+					id: returnRequests.id,
+					externalId: returnRequests.externalId,
+					note: returnRequests.note,
+					billedBy: returnRequests.billedBy,
+					status: returnRequests.status,
+					rawStatus: returnRequests.rawStatus,
+					reason: returnRequests.reason,
+					trackingNumber: returnRequests.trackingNumber,
+					carrier: returnRequests.carrier,
+					requestedAt: returnRequests.requestedAt,
+				})
+				.from(returnRequests)
+				.where(eq(returnRequests.orderId, data.id))
+				.orderBy(desc(returnRequests.requestedAt)),
+			db
+				.select({
+					requestId: returnRequestLines.requestId,
+					orderLineId: returnRequestLines.orderLineId,
+					sku: returnRequestLines.sku,
+					quantity: returnRequestLines.quantity,
+				})
+				.from(returnRequestLines)
+				.innerJoin(
+					returnRequests,
+					eq(returnRequests.id, returnRequestLines.requestId),
+				)
+				.where(eq(returnRequests.orderId, data.id))
+				.orderBy(returnRequestLines.id),
+			// Each return received, and where its units went.
+			db
+				.select({
+					id: orderReturns.id,
+					lineId: orderReturns.orderLineId,
+					quantity: orderReturns.quantity,
+					restocked: orderReturns.restocked,
+					preCutover: orderReturns.preCutover,
+					refurbId: refurbs.id,
+					refurbSku: refurbs.sku,
+					refurbCondition: refurbs.condition,
+					createdAt: orderReturns.createdAt,
+				})
+				.from(orderReturns)
+				.innerJoin(orderLines, eq(orderLines.id, orderReturns.orderLineId))
+				.leftJoin(refurbs, eq(refurbs.id, orderReturns.refurbProductId))
+				.where(eq(orderLines.orderId, data.id))
+				.orderBy(desc(orderReturns.createdAt), orderReturns.id),
+			returnStages(db, [data.id]),
+			orderMail(db, order),
+			// The same buyer by name and postal code. Masked names (TikTok's
+			// "C****** D****") say nothing about who it is, so they're left out.
+			order.customerName &&
+			!order.customerName.includes("*") &&
+			order.shipPostalCode
+				? db
+						.select({
+							id: orders.id,
+							name: orders.name,
+							placedAt: orders.placedAt,
+							total: orders.total,
+							channel: stores.channel,
+							salesChannel: orders.salesChannel,
+							cancelledAt: orders.cancelledAt,
+						})
+						.from(orders)
+						.innerJoin(stores, eq(stores.id, orders.storeId))
+						.where(
+							and(
+								ne(orders.id, data.id),
+								sql`lower(${orders.customerName}) = lower(${order.customerName})`,
+								eq(orders.shipPostalCode, order.shipPostalCode),
+							),
+						)
+						.orderBy(desc(orders.placedAt))
+						.limit(10)
+				: Promise.resolve([]),
+		]);
 		return {
 			order: { ...order, returnStage: stages.get(data.id) ?? null },
 			lines,
@@ -334,8 +423,28 @@ export const getOrder = createServerFn({ method: "GET" })
 			charges,
 			reports,
 			checks,
-			returnState: (due?.state ?? null) as ReturnState | null,
-			returnRequests: requests,
+			returnState: (due[0]?.state ?? null) as ReturnState | null,
+			// Units expected back per line; for a maybe, the most that could come.
+			expected: due.map(({ lineId, expected }) => ({ lineId, expected })),
+			returnRequests: requests.map((r) => ({
+				...r,
+				lines: requestLines
+					.filter((l) => l.requestId === r.id)
+					.map(({ requestId: _, ...l }) => l),
+				// Where it's handled, to confirm it arrived or refund it.
+				page: returnPage(order, r.billedBy),
+			})),
+			returnsReceived: received.map(
+				({ refurbId, refurbSku, refurbCondition, ...r }) => ({
+					...r,
+					refurb:
+						refurbId && refurbSku && refurbCondition
+							? { id: refurbId, sku: refurbSku, condition: refurbCondition }
+							: null,
+				}),
+			),
+			mail,
+			buyerOrders,
 		};
 	});
 
