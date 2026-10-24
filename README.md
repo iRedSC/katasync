@@ -60,6 +60,10 @@ Production deploys apply pending migrations before building (`scripts/vercel-bui
 
 The dispatch cutover (`0031` through `0035`) requires a coordinated deployment. Back up the database first, stop old packing and sync processes, apply migrations using the direct connection, then deploy the dispatch-aware app before resuming work. `0033` removes the old shipment order and handoff columns after copying their data into dispatches; an old app cannot safely use that schema. A rollback requires restoring both the database and app, not just reverting the code.
 
+## Backups and recovery
+
+Recovery steps, including the attachment bytes stored in the database and how to rehearse a restore, are in [docs/disaster-recovery.md](docs/disaster-recovery.md). Neon's point-in-time history is not a portable copy, and the runbook lists what the operator must verify.
+
 ## Inventory model
 
 - **Locations** are `owned` (we pick from them) or `fba` (Amazon's stock, mirrored read-only).
