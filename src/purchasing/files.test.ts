@@ -12,6 +12,7 @@ import {
 	poFilesOf,
 	poForUploadLink,
 	setPoFileRemoved,
+	setPoFilesRemoved,
 } from "./files";
 import { deleteDraft } from "./orders";
 
@@ -37,12 +38,16 @@ async function statusOf(id: number) {
 	return row.status;
 }
 
-const add = (purchaseOrderId: number, filename = "quote.pdf") =>
+const add = (
+	purchaseOrderId: number,
+	filename = "quote.pdf",
+	data = "not really a pdf",
+) =>
 	addPoFile(db, {
 		purchaseOrderId,
 		filename,
 		contentType: "",
-		data: bytes("not really a pdf"),
+		data: bytes(data),
 		addedBy: "staff",
 	});
 
@@ -64,14 +69,14 @@ describe("a PO's own files", () => {
 	test("kept with a type from the name, and listed newest first", async () => {
 		const id = await po("sent");
 		await add(id, "quote.pdf");
-		await add(id, "bol.eml");
+		await add(id, "bol.eml", "not really an email");
 		const files = await poFilesOf(db, id);
 		expect(files.map((f) => [f.filename, f.contentType])).toEqual([
 			["bol.eml", "message/rfc822"],
 			["quote.pdf", "application/pdf"],
 		]);
 		expect((await poFile(db, files[0].id))?.data.toString()).toBe(
-			"not really a pdf",
+			"not really an email",
 		);
 	});
 
@@ -123,6 +128,76 @@ describe("a PO's own files", () => {
 		await setPoFileRemoved(db, file.id);
 		await deleteDraft(db, id);
 		expect(await poFile(db, file.id)).toBeNull();
+	});
+});
+
+async function emailedFile(purchaseOrderId: number, data: string) {
+	const [email] = await db
+		.insert(schema.poEmails)
+		.values({
+			messageId: `<${Math.random()}@x>`,
+			fromAddress: "orders@supplier.com",
+			recipients: [],
+			subject: "Your order",
+			body: "",
+			receivedAt: new Date(),
+			purchaseOrderId,
+			matchedBy: "staff",
+		})
+		.returning();
+	const [file] = await db
+		.insert(schema.poEmailAttachments)
+		.values({
+			emailId: email.id,
+			filename: "Order Confirmation.pdf",
+			contentType: "application/pdf",
+			size: data.length,
+			data: Buffer.from(data),
+		})
+		.returning();
+	return file.id;
+}
+
+describe("the same file twice", () => {
+	test("isn't added again, as its own or an email's", async () => {
+		const id = await po("sent");
+		await add(id, "quote.pdf");
+		await expect(add(id, "quote.pdf")).rejects.toThrow(
+			/quote\.pdf is already on this PO$/,
+		);
+		await expect(add(id, "copy.pdf")).rejects.toThrow(/as quote\.pdf/);
+		await emailedFile(id, "confirmation");
+		await expect(
+			addPoFile(db, {
+				purchaseOrderId: id,
+				filename: "saved.pdf",
+				contentType: "",
+				data: bytes("confirmation"),
+				addedBy: "claude",
+			}),
+		).rejects.toThrow(/as Order Confirmation\.pdf/);
+		// Another PO, or this one once it's off, takes it.
+		await add(await po("sent"), "quote.pdf");
+		const [file] = await poFilesOf(db, id);
+		await setPoFileRemoved(db, file.id);
+		await add(id, "quote.pdf");
+	});
+
+	test("comes off with its copies, and back unless the PO has it again", async () => {
+		const id = await po("sent");
+		const file = await add(id);
+		const attachment = await emailedFile(id, "confirmation");
+		const ids = { files: [file.id], attachments: [attachment] };
+		expect(await setPoFilesRemoved(db, ids, true)).toEqual({
+			files: 1,
+			attachments: 1,
+		});
+		const again = await add(id);
+		expect(await setPoFilesRemoved(db, ids, false)).toEqual({
+			files: 0,
+			attachments: 1,
+		});
+		expect((await poFilesOf(db, id)).map((f) => f.id)).toEqual([again.id]);
 	});
 });
 

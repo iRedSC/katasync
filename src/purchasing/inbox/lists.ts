@@ -39,6 +39,9 @@ const attachmentSummary = {
 	size: poEmailAttachments.size,
 	kept: sql<boolean>`${poEmailAttachments.data} is not null`,
 	hasText: sql<boolean>`${poEmailAttachments.text} is not null`,
+	sha256: poEmailAttachments.sha256,
+	// Taken off its PO's files; the email still shows it.
+	removedAt: poEmailAttachments.removedAt,
 };
 
 async function withAttachments<T extends { id: number }>(db: Db, emails: T[]) {
