@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { type } from "arktype";
-import { and, eq, getTableColumns, like, ne, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, isNull, like, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orderLines, orders } from "#/db/schema";
 import {
@@ -290,8 +290,12 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 		store.ordersSyncedThrough ?? new Date(Date.now() - FIRST_SYNC_DAYS * DAY);
 	const startedAt = new Date();
 	// Orders changed since the last pass, plus relayed orders still open, so
-	// those move over even if TikTok hasn't touched them lately.
-	const ids = new Set(await openRelayed(db, store.id));
+	// those move over even if TikTok hasn't touched them lately, and open ones
+	// saved before katasync kept the buyer.
+	const ids = new Set([
+		...(await openRelayed(db, store.id)),
+		...(await openWithoutBuyer(db, store.id)),
+	]);
 	let pageToken: string | undefined;
 	do {
 		const page = searchPage.assert(
@@ -415,6 +419,18 @@ async function openRelayed(db: Db, storeId: number) {
 			),
 		);
 	return rows.map((r) => (r.marketplaceOrderId ?? "").slice("tiktok:".length));
+}
+
+// This store's orders still to ship with no buyer yet. TikTok always sends
+// one, so each is asked for once more and then drops out.
+async function openWithoutBuyer(db: Db, storeId: number) {
+	const rows = await db
+		.select({ externalId: orders.externalId })
+		.from(orders)
+		.where(
+			and(eq(orders.storeId, storeId), isNull(orders.buyerId), needsShipping),
+		);
+	return rows.map((r) => r.externalId);
 }
 
 // Moves an order Shopify relayed over to the TikTok store, so TikTok's own

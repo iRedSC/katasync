@@ -8,6 +8,7 @@ import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
 import { formatMoney, formatOrderDate } from "#/lib/format";
 import type { useRowLink } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
+import { adminUrls } from "#/orders/admin-urls";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { orderStatus } from "#/orders/status";
 import type { OrderRow } from "#/server/orders";
@@ -178,6 +179,7 @@ export function OrderTable({
 													}
 												</Badge>
 											)}
+											{o.sameBuyer.length > 0 && <SameBuyerChip order={o} />}
 											{/* Print all skips it, so the list says why. */}
 											{view === "ship" && o.invoicePrintedAt && (
 												<Badge>Printed</Badge>
@@ -194,5 +196,34 @@ export function OrderTable({
 				)}
 			</ContextMenu>
 		</table>
+	);
+}
+
+// The buyer has more orders to ship. TikTok won't combine US orders for an
+// app, so the chip opens this one in Seller Center, which offers the combine.
+function SameBuyerChip({ order }: { order: OrderRow }) {
+	const tiktok = adminUrls(order).find((p) => p.channel === "tiktok");
+	const pins = order.sameBuyer
+		.map((c) => c.pin)
+		.filter((p) => p !== null)
+		.join(", ");
+	const chip = (
+		<Badge tone="warning">
+			Same buyer{pins && ` · pin ${pins}`}
+			{tiktok && <ExternalLink className="ml-1 size-3" />}
+		</Badge>
+	);
+	return tiktok ? (
+		<a
+			href={tiktok.url}
+			target="_blank"
+			rel="noreferrer"
+			title="Combine in TikTok"
+			onClick={(e) => e.stopPropagation()}
+		>
+			{chip}
+		</a>
+	) : (
+		chip
 	);
 }

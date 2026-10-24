@@ -28,6 +28,7 @@ import { committedStock, returnQuantity } from "#/orders/return-stock";
 import { followReturn, trackingFor } from "#/orders/return-tracking";
 import { stockEffectApplied } from "#/orders/stock-effects";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
+import { type SameBuyer, sameBuyerOrders } from "#/shipping/same-buyer";
 import { sendsOf } from "#/shipping/sends";
 
 const refurbs = alias(products, "refurbs");
@@ -133,11 +134,17 @@ export const listOrders = createServerFn({ method: "GET" })
 			getDb(),
 			listed.map((o) => o.id),
 		);
+		// One buyer's orders, to combine in TikTok before packing.
+		const sameBuyer =
+			data.view === "ship"
+				? await sameBuyerOrders(getDb())
+				: new Map<number, SameBuyer[]>();
 		return {
 			orders: listed.map((o) => ({
 				...o,
 				returnStage: stages.get(o.id) ?? null,
 				lines: linesOf.get(o.id) ?? [],
+				sameBuyer: sameBuyer.get(o.id) ?? [],
 			})),
 			total,
 		};

@@ -637,6 +637,9 @@ export const orders = pgTable(
 		soldInStore: boolean().notNull().default(false),
 		financialStatus: text(),
 		customerName: text(),
+		// The buyer's account on the marketplace (TikTok's user_id). TikTok hides
+		// the address from us, so it's how two orders are known to be one buyer's.
+		buyerId: text(),
 		shipAddress1: text(),
 		shipAddress2: text(),
 		shipCity: text(),
@@ -669,6 +672,9 @@ export const orders = pgTable(
 	(t) => [
 		unique("orders_store_external_id").on(t.storeId, t.externalId),
 		index("orders_placed_at_idx").on(t.placedAt),
+		index("orders_buyer_id_idx")
+			.on(t.storeId, t.buyerId)
+			.where(sql`${t.buyerId} is not null`),
 		uniqueIndex("orders_pin_unique").on(t.pin).where(sql`${t.pin} is not null`),
 		check("orders_pin_range", sql`${t.pin} between 1 and 999`),
 	],

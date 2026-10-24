@@ -24,6 +24,7 @@ const base = {
 	soldInStore: false,
 	financialStatus: "PAID",
 	customerName: null,
+	buyerId: null,
 	shipAddress1: null,
 	shipAddress2: null,
 	shipCity: null,
@@ -295,4 +296,16 @@ test("a masked TikTok buyer name is kept, a masked address is not", () => {
 		customerName: "D*****",
 		shipAddress1: null,
 	});
+});
+
+test("the buyer's TikTok account is kept, so their orders can be combined", () => {
+	const order = (user_id?: string) =>
+		tiktokToChannelOrder(
+			tiktokOrder.assert({
+				...detail("AWAITING_SHIPMENT", ["TO_SHIP"]),
+				...(user_id ? { user_id } : {}),
+			}),
+		);
+	expect(order("7495356570490079829").buyerId).toBe("7495356570490079829");
+	expect(order().buyerId).toBeNull();
 });

@@ -27,6 +27,7 @@ export function channelOrder(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 		soldInStore: false,
 		financialStatus: "PAID",
 		customerName: "Pat Doe",
+		buyerId: null,
 		shipCity: "Harrisburg",
 		shipRegion: "PA",
 		shipCountry: "US",

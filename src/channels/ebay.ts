@@ -193,6 +193,7 @@ export function ebayToChannelOrder(
 		soldInStore: false,
 		financialStatus: payment[order.orderPaymentStatus ?? ""] ?? null,
 		customerName: shipTo?.fullName ?? null,
+		buyerId: null,
 		shipCity: shipTo?.contactAddress?.city ?? null,
 		shipRegion: shipTo?.contactAddress?.stateOrProvince ?? null,
 		shipCountry: shipTo?.contactAddress?.countryCode ?? null,

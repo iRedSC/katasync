@@ -75,6 +75,7 @@ const sell = (listingExternalId: string | null, sku: string | null) =>
 			soldInStore: false,
 			financialStatus: "PAID",
 			customerName: null,
+			buyerId: null,
 			shipCity: null,
 			shipRegion: null,
 			shipCountry: null,

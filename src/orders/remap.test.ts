@@ -24,6 +24,7 @@ const order = (extra: Partial<ChannelOrder> = {}): ChannelOrder => ({
 	soldInStore: false,
 	financialStatus: "PAID",
 	customerName: null,
+	buyerId: null,
 	shipCity: null,
 	shipRegion: null,
 	shipCountry: null,

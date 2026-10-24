@@ -22,6 +22,7 @@ import {
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { contentsKey } from "./contents";
 import { companionsOf, liveDispatches } from "./dispatch";
+import { sameBuyerOrders } from "./same-buyer";
 import type { Rate } from "./shippo";
 
 // Orders worth more than this get the insurance step even if no item asks
@@ -73,6 +74,8 @@ export async function orderForShipping(db: Db, pin: number) {
 			shipPostalCode: orders.shipPostalCode,
 			shipCountry: orders.shipCountry,
 			shipPhone: orders.shipPhone,
+			storeId: orders.storeId,
+			buyerId: orders.buyerId,
 		})
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -85,6 +88,16 @@ export async function orderForShipping(db: Db, pin: number) {
 		external || live
 			? []
 			: await companionsOf(db, { ...order, needsShipping: true });
+	// The same buyer's other orders, to combine in TikTok before its label.
+	const sameBuyer =
+		external || live || order.buyerId === null
+			? []
+			: ((
+					await sameBuyerOrders(db, {
+						storeId: order.storeId,
+						buyerId: order.buyerId,
+					})
+				).get(order.id) ?? []);
 	const items = companions.length
 		? await db
 				.select({
@@ -114,6 +127,7 @@ export async function orderForShipping(db: Db, pin: number) {
 			customerName: c.customerName,
 			items: items.find((i) => i.orderId === c.id)?.items ?? 0,
 		})),
+		sameBuyer,
 		plan: await shipmentPlan(db, [order.id]),
 	};
 }

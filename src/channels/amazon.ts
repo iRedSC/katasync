@@ -121,6 +121,7 @@ export function amazonToChannelOrder(
 		financialStatus: order.OrderStatus === "Pending" ? "PENDING" : "PAID",
 		// Buyer names need Amazon's restricted-data token; city and state don't.
 		customerName: null,
+		buyerId: null,
 		shipCity: order.ShippingAddress?.City ?? null,
 		shipRegion: order.ShippingAddress?.StateOrRegion ?? null,
 		shipCountry: order.ShippingAddress?.CountryCode ?? null,
