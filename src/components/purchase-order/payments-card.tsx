@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Card } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import { formatDay, formatMoney } from "#/lib/format";
 import { useIntent } from "#/lib/intent";
 import { optimism } from "#/lib/optimism";
@@ -396,12 +397,9 @@ function Applied({
 
 function Proof() {
 	return (
-		<span
-			className="rounded-full bg-muted px-1.5"
-			title="Not confirmed by a bank import"
-		>
-			Staff recorded
-		</span>
+		<Tip content="Not confirmed by a bank import">
+			<span className="rounded-full bg-muted px-1.5">Staff recorded</span>
+		</Tip>
 	);
 }
 
