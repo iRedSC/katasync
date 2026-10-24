@@ -5,6 +5,7 @@ import { OrderStatusBadge } from "#/components/order-status";
 import { Badge } from "#/components/page";
 import { TickCell } from "#/components/tick-cell";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
+import { Tip } from "#/components/ui/tooltip";
 import { formatMoney, formatOrderDate } from "#/lib/format";
 import type { useRowLink } from "#/lib/row-link";
 import { cn } from "#/lib/utils";
@@ -214,15 +215,16 @@ function SameBuyerChip({ order }: { order: OrderRow }) {
 		</Badge>
 	);
 	return tiktok ? (
-		<a
-			href={tiktok.url}
-			target="_blank"
-			rel="noreferrer"
-			title="Combine in TikTok"
-			onClick={(e) => e.stopPropagation()}
-		>
-			{chip}
-		</a>
+		<Tip content="Combine in TikTok">
+			<a
+				href={tiktok.url}
+				target="_blank"
+				rel="noreferrer"
+				onClick={(e) => e.stopPropagation()}
+			>
+				{chip}
+			</a>
+		</Tip>
 	) : (
 		chip
 	);
