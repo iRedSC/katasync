@@ -49,7 +49,14 @@ export async function buyerOrder(db: Db, threadId: number) {
 		)
 		.where(eq(buyerThreads.id, threadId))
 		.limit(1);
-	if (!found) return null;
+	return found ? orderSummary(db, found) : null;
+}
+
+// An order's products and packages, wherever it's shown beside mail.
+export async function orderSummary(
+	db: Db,
+	found: { id: number; name: string; cancelledAt: Date | null },
+) {
 	const [lines, sent] = await Promise.all([
 		db
 			.select({
@@ -111,4 +118,4 @@ export async function buyerOrder(db: Db, threadId: number) {
 	return { ...found, lines, packages };
 }
 
-export type BuyerOrder = NonNullable<Awaited<ReturnType<typeof buyerOrder>>>;
+export type BuyerOrder = Awaited<ReturnType<typeof orderSummary>>;
