@@ -15,6 +15,7 @@ const base = {
 	externalId: "gid://shopify/Order/1",
 	shipCountry: "US",
 	labelToVoid: false,
+	fulfilledByChannel: false,
 	returnStage: null,
 } as const;
 const keyOf = (over: Partial<Parameters<typeof orderStatus>[0]>) =>
@@ -56,6 +57,20 @@ describe("orderStatus", () => {
 			"fulfilled",
 		);
 		expect(keyOf({ fulfillmentStatus: "RESTOCKED" })).toBe("cancelled");
+	});
+
+	test("Amazon's own stock is FBA fulfilled, never ours to ship", () => {
+		const fba = {
+			channel: "amazon",
+			marketplaceOrderId: "amazon:111-1",
+			fulfilledByChannel: true,
+		};
+		expect(orderStatus({ ...base, ...fba })).toMatchObject({
+			key: "fba",
+			label: "FBA Fulfilled",
+		});
+		expect(keyOf({ ...fba, fulfillmentStatus: "FULFILLED" })).toBe("fba");
+		expect(keyOf({ ...fba, cancelledAt: new Date() })).toBe("cancelled");
 	});
 
 	test("a return outranks its refund; a live label outranks everything", () => {

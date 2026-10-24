@@ -67,6 +67,7 @@ export async function orderSummary(db: Db, orderId: number) {
 				marketplaceOrderId: orders.marketplaceOrderId,
 				externalId: orders.externalId,
 				shipCountry: orders.shipCountry,
+				fulfilledByChannel: orders.fulfilledByChannel,
 				labelToVoid,
 			})
 			.from(orders)

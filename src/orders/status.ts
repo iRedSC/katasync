@@ -10,6 +10,8 @@ export const ORDER_STATUSES = {
 	external: "Unfulfilled",
 	pending: "Pending",
 	fulfilled: "Fulfilled",
+	// Amazon shipped it from its own stock (FBA); it never takes ours.
+	fba: "FBA Fulfilled",
 	cancelled: "Cancelled",
 	refunded: "Refunded",
 	returning: "Returning",
@@ -44,6 +46,7 @@ export function orderStatus(order: {
 	marketplaceOrderId: string | null;
 	externalId: string;
 	shipCountry: string | null;
+	fulfilledByChannel: boolean;
 	// Cancelled or refunded with a label still live (see to-ship.ts).
 	labelToVoid: boolean;
 	returnStage: ReturnStage;
@@ -63,6 +66,8 @@ export function orderStatus(order: {
 	if (order.returnStage) return is(order.returnStage);
 	if (order.cancelledAt) return is("cancelled");
 	if (order.financialStatus === "REFUNDED") return is("refunded");
+	// Nothing for us to ship, whatever Amazon's progress.
+	if (order.fulfilledByChannel) return is("fba");
 	switch (order.fulfillmentStatus) {
 		case "FULFILLED":
 		case "FULFILLMENT_NOT_REQUIRED":

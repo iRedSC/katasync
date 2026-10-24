@@ -77,6 +77,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				items: sql<number>`coalesce(${lineStats.items}, 0)`,
 				unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
 				labelToVoid,
+				fulfilledByChannel: orders.fulfilledByChannel,
 				invoicePrintedAt: orders.invoicePrintedAt,
 			})
 			.from(orders)
