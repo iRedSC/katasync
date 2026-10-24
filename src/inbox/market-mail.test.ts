@@ -37,7 +37,8 @@ describe("Shopify's order notices", () => {
 	afterEach(() => {
 		vi.unstubAllEnvs();
 	});
-	const subject = "[East Coast Drywall Tools] Order #5754 placed by M***** A*****";
+	const subject =
+		"[East Coast Drywall Tools] Order #5754 placed by M***** A*****";
 
 	test("sent as the mailbox, they're Shopify's", () => {
 		expect(
