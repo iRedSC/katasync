@@ -10,6 +10,8 @@ import {
 	removeDamage,
 } from "#/purchasing/damage";
 import { MAX_PHOTO_BYTES, MAX_PHOTOS } from "#/purchasing/damage-limits";
+import { raiseFlag, reopenFlag, resolveFlag } from "#/purchasing/flags";
+import type { FlagInput } from "#/purchasing/inbox/ai-filing-shapes";
 import {
 	PurchaseOrderError,
 	receive,
@@ -122,6 +124,56 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 			});
 			return json({ po, sku, back_ordered, ...result });
 		},
+	);
+
+	server.registerTool(
+		"flag_po",
+		{
+			description:
+				"Flags something a sent PO should change, for staff to apply or dismiss in the app: a line's price (per its unit), its quantity (in its unit), a line back-ordered, or a note about anything else. Changes nothing itself. A product's open flag of the same kind is replaced. get_purchase_order lists open flags; the AI raises them from suppliers' emails too.",
+			inputSchema: {
+				po: z.number().int().positive(),
+				kind: z.enum(["price", "quantity", "back_order", "note"]),
+				sku: z.string().optional().describe("Needed except for a note"),
+				value: z
+					.number()
+					.min(0)
+					.optional()
+					.describe("price or quantity: what it should be"),
+				note: z.string().min(1).describe("Why, in a few words"),
+			},
+			annotations: WRITE,
+		},
+		async ({ po, kind, sku, value, note }) => {
+			const flag: FlagInput =
+				kind === "note"
+					? { kind, sku: sku ?? null, note }
+					: kind === "back_order"
+						? { kind, sku: sku ?? "", note }
+						: { kind, sku: sku ?? "", value: value ?? Number.NaN, note };
+			return json(
+				await raiseFlag(db, { purchaseOrderId: po, by: "claude", flag }),
+			);
+		},
+	);
+
+	server.registerTool(
+		"resolve_po_flag",
+		{
+			description:
+				"Applies a PO flag (makes the change it says, as adjust_sent_po_line or set_po_line_back_ordered would) or dismisses it; reopen puts a resolved one back, setting back what applying it changed. A note can only be dismissed. Ask the user before applying one you didn't raise.",
+			inputSchema: {
+				id: z.number().int().positive(),
+				action: z.enum(["apply", "dismiss", "reopen"]),
+			},
+			annotations: WRITE,
+		},
+		async ({ id, action }) =>
+			json(
+				action === "reopen"
+					? await reopenFlag(db, id)
+					: await resolveFlag(db, { id, apply: action === "apply" }),
+			),
 	);
 
 	server.registerTool(

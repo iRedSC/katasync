@@ -58,6 +58,7 @@ export {
 	updateDraftFromSuggestions,
 } from "#/server/purchasing/drafts";
 export { setPoFileOff } from "#/server/purchasing/files";
+export { reopenPoFlag, resolvePoFlag } from "#/server/purchasing/flags";
 export {
 	addPoTracking,
 	countEmailsToFile,
@@ -68,6 +69,8 @@ export {
 	removePoTracking,
 	setAsidePoEmail,
 	setPoEmailRead,
+	takeAiSuggestion,
+	undoAiFiling,
 } from "#/server/purchasing/inbox";
 export {
 	checkSupplierInvoice,
