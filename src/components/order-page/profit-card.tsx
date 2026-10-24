@@ -1,7 +1,10 @@
-import { Badge, Card } from "#/components/page";
+import { Card } from "#/components/page";
 import { channelName, formatCount, formatMoney } from "#/lib/format";
+import { cn } from "#/lib/utils";
 import type { OrderDetail } from "#/server/orders";
 import { Line } from "./line";
+
+const formatPercent = (n: number) => `${Math.round(n * 100)}%`;
 
 const feesNote: Record<string, string | undefined> = {
 	final: undefined,
@@ -18,24 +21,31 @@ const labelsNote: Record<string, string | undefined> = {
 };
 
 // What the order made, and what each marketplace said it charged
-// (src/orders/profit.ts). Anything not final says so.
+// (src/orders/profit.ts). A figure that isn't final is italic, and its
+// label says why on hover.
 export function ProfitCard({
 	profit: p,
 	charges,
-	reports,
 	checks,
-}: Pick<OrderDetail, "charges" | "reports" | "checks"> & {
+}: Pick<OrderDetail, "charges" | "checks"> & {
 	profit: NonNullable<OrderDetail["profit"]>;
 }) {
 	const failed = checks.filter((c) => c.error);
+	const sold = p.revenue + p.shippingCharged;
 	return (
 		<Card
 			title="Profit"
 			aside={
-				p.complete ? undefined : (
-					<Badge tone="warning">
-						{p.awaitingReturn ? "Awaiting return" : "Waiting on a cost"}
-					</Badge>
+				sold > 0 && (
+					<span
+						className={cn(
+							"text-xs tabular-nums",
+							p.profit < 0 ? "text-critical-text" : "text-muted-foreground",
+							!p.complete && "italic",
+						)}
+					>
+						{formatPercent(p.profit / sold)} margin
+					</span>
 				)
 			}
 		>
@@ -76,7 +86,18 @@ export function ProfitCard({
 					<Line label="Adjustments" value={formatMoney(-p.adjustments)} />
 				)}
 				<div className="mt-1 border-t pt-1">
-					<Line label="Profit" value={formatMoney(p.profit)} strong />
+					<Line
+						label="Profit"
+						value={formatMoney(p.profit)}
+						strong
+						note={
+							p.complete
+								? undefined
+								: p.awaitingReturn
+									? "Awaiting the return"
+									: "Waiting on a cost"
+						}
+					/>
 				</div>
 			</dl>
 			{charges.length > 0 && (
@@ -97,11 +118,6 @@ export function ProfitCard({
 						))}
 					</ul>
 				</details>
-			)}
-			{reports.length === 0 && checks.length === 0 && (
-				<p className="mt-3 text-xs text-muted-foreground">
-					Not asked about yet; the marketplace is asked within ten minutes.
-				</p>
 			)}
 			{failed.map((c) => (
 				<p key={c.billedBy} className="mt-3 text-xs text-critical-text">

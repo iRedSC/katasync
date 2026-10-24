@@ -8,15 +8,19 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { BuyerOrder as Order } from "#/buyers/order";
+import { OrderStatusBadge } from "#/components/order-status";
 import { ProductImage } from "#/components/product";
 import { Tip } from "#/components/ui/tooltip";
+import type { MailOrders as Found } from "#/inbox/mail-orders";
 import { formatCount, formatDay } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { getBuyerOrder } from "#/server/buyers";
+import { getMailOrders } from "#/server/inbox";
 
-// Under the buyer's name: what they ordered, as on the orders list, and
-// each package as the carrier tells it now. Asked as the thread opens;
-// until then, the order number it already knows.
+// Under the buyer's name, and above a marketplace email: what they ordered,
+// as on the orders list, and each package as the carrier tells it now.
+// Asked as the thread or email opens; until then, the order number it
+// already knows.
 
 type Package = Order["packages"][number];
 
@@ -39,40 +43,72 @@ export function BuyerOrder({
 		};
 	}, [threadId]);
 	if (!order) return <>{fallback}</>;
+	return <OrderStrip order={order} />;
+}
+
+// Above a marketplace email: each order it names that katasync has.
+export function MailOrders({ emailId }: { emailId: number }) {
+	const [found, setFound] = useState<Found | null>(null);
+	useEffect(() => {
+		let current = true;
+		getMailOrders({ data: { id: emailId } })
+			.then((f) => current && setFound(f))
+			.catch(() => current && setFound(null));
+		return () => {
+			current = false;
+		};
+	}, [emailId]);
+	if (!found || found.orders.length === 0) return null;
+	return (
+		<div className="flex flex-col gap-2 border-b px-5 py-3">
+			{found.orders.map((o) => (
+				<OrderStrip key={o.id} order={o} />
+			))}
+			{found.more > 0 && (
+				<p className="text-sm text-muted-foreground">
+					+{formatCount(found.more)} more{" "}
+					{found.more === 1 ? "order" : "orders"}
+				</p>
+			)}
+		</div>
+	);
+}
+
+// Its status first, where a list of them is scanned.
+function OrderStrip({ order }: { order: Order }) {
 	const [first] = order.lines;
 	return (
 		<div className="flex flex-wrap items-center gap-x-4 gap-y-2 animate-in fade-in-0">
-			<Link
-				to="/orders/$id"
-				params={{ id: String(order.id) }}
-				className="flex min-w-0 items-center gap-2 rounded-lg hover:bg-surface"
-			>
-				<span className="flex shrink-0 gap-1">
-					{order.lines.slice(0, 3).map((l) => (
-						<ProductImage key={l.id} src={l.imageUrl} className="size-8" />
-					))}
-					{order.lines.length > 3 && (
-						<span className="flex size-8 items-center justify-center rounded-lg border bg-subtle text-xs font-semibold text-muted-foreground tabular-nums">
-							+{formatCount(order.lines.length - 3)}
-						</span>
-					)}
-				</span>
-				<span
-					className={cn(
-						"truncate text-sm",
-						order.lines.length > 1 && "text-muted-foreground",
-					)}
+			{/* The status stays beside the products; the title gives way. */}
+			<span className="flex min-w-0 max-w-full items-center gap-2">
+				<OrderStatusBadge status={order.status} />
+				<Link
+					to="/orders/$id"
+					params={{ id: String(order.id) }}
+					className="flex min-w-0 items-center gap-2 rounded-lg hover:bg-surface"
 				>
-					{order.lines.length === 1 && first
-						? `${first.title}${first.quantity > 1 ? ` × ${formatCount(first.quantity)}` : ""}`
-						: `${formatCount(order.lines.length)} products`}
-				</span>
-			</Link>
-			{order.cancelledAt && (
-				<span className="text-sm font-medium text-critical-text">
-					Cancelled
-				</span>
-			)}
+					<span className="flex shrink-0 gap-1">
+						{order.lines.slice(0, 3).map((l) => (
+							<ProductImage key={l.id} src={l.imageUrl} className="size-8" />
+						))}
+						{order.lines.length > 3 && (
+							<span className="flex size-8 items-center justify-center rounded-lg border bg-subtle text-xs font-semibold text-muted-foreground tabular-nums">
+								+{formatCount(order.lines.length - 3)}
+							</span>
+						)}
+					</span>
+					<span
+						className={cn(
+							"truncate text-sm",
+							order.lines.length > 1 && "text-muted-foreground",
+						)}
+					>
+						{order.lines.length === 1 && first
+							? `${first.title}${first.quantity > 1 ? ` × ${formatCount(first.quantity)}` : ""}`
+							: `${formatCount(order.lines.length)} products`}
+					</span>
+				</Link>
+			</span>
 			{order.packages.map((p) => (
 				<PackageChip key={p.id} pkg={p} />
 			))}
