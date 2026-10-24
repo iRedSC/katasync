@@ -393,6 +393,15 @@ const bodies = async () =>
 	]);
 
 describe("sent in Seller Central", () => {
+	// Just after the copy arrived, so it's read as recent and words added
+	// by hand now are near it.
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ["Date"], now: Date.UTC(2026, 9, 22, 18) });
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	test("reads the order and only our words", () => {
 		expect(parseCopy({ subject: "Your e-mail to Rick", body: COPY })).toEqual({
 			orderRef: "113-1228890-8225003",

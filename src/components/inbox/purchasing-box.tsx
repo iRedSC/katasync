@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { Inbox, Mail, MailOpen, Undo2, X } from "lucide-react";
+import { Inbox, Mail, MailOpen, Sparkles, Undo2, X } from "lucide-react";
+import { toast } from "sonner";
 import { PoPicker } from "#/components/emails/po-picker";
 import { EmptyState } from "#/components/page";
 import { Button } from "#/components/ui/button";
@@ -13,7 +14,10 @@ import {
 	filePoEmail,
 	setAsidePoEmail,
 	setPoEmailRead,
+	takeAiSuggestion,
+	undoAiFiling,
 } from "#/server/purchasing";
+import { AiFiling } from "./ai-filing";
 import { type PurchasingView, purchasingView } from "./folders";
 import { InboxFrame } from "./frame";
 import { MailPane } from "./mail-pane";
@@ -143,6 +147,44 @@ export function PurchasingBox({
 		});
 	}
 
+	// Takes the AI's undo: what someone changed since stays, and says so.
+	async function undoAi(email: Email) {
+		const r = await optimism.change({
+			label: "Undoing",
+			patch: moved(view, email, "to-file", d.pos),
+			send: () => undoAiFiling({ data: { id: email.id } }),
+		});
+		if (!r) return;
+		if (r.value.kept.length > 0)
+			toast.warning("Undone, but kept", {
+				description: r.value.kept.join(", "),
+			});
+		else toast(said("to-file"));
+	}
+
+	async function takeAi(email: Email, po: number) {
+		const r = await optimism.change({
+			label: said({ po }),
+			patch: moved(view, email, { po }, d.pos),
+			send: () => takeAiSuggestion({ data: { id: email.id } }),
+		});
+		if (!r) return;
+		offerUndo(said({ po }), {
+			tone: "success",
+			undo: async () => {
+				const back = await optimism.change({
+					label: "Putting it back",
+					patch: [],
+					send: () => undoAiFiling({ data: { id: email.id } }),
+				});
+				if (!back) return null;
+				return back.value.kept.length > 0
+					? `Kept ${back.value.kept.join(", ")}`
+					: said("to-file");
+			},
+		});
+	}
+
 	const read = (email: Email, isRead: boolean) =>
 		optimism.change({
 			label: isRead ? "Read" : "Unread",
@@ -159,7 +201,21 @@ export function PurchasingBox({
 			<MailPane
 				box="purchasing"
 				emails={d.emails}
-				tagOf={(e) => e.purchaseOrderId !== null && `PO ${e.purchaseOrderId}`}
+				tagOf={(e) =>
+					e.purchaseOrderId !== null && (
+						<span className="inline-flex items-center gap-1">
+							{e.matchedBy === "ai" && <Sparkles className="size-3" />}
+							PO {e.purchaseOrderId}
+						</span>
+					)
+				}
+				aboutOf={(e) => (
+					<AiFiling
+						email={e}
+						onTake={(po) => takeAi(e, po)}
+						onUndo={() => undoAi(e)}
+					/>
+				)}
 				unreadOf={(e) => e.readAt === null}
 				onShown={(e) => e.readAt === null && read(e, true)}
 				keysOf={(e) => ({ u: () => read(e, e.readAt === null) })}

@@ -17,6 +17,7 @@ import { catalogsOf } from "#/purchasing/catalogs";
 import { damagesOf } from "#/purchasing/damage";
 import { emailConfigured } from "#/purchasing/email";
 import { poFilesOf } from "#/purchasing/files";
+import { openFlagsOf } from "#/purchasing/flags";
 import { leadTimes } from "#/purchasing/forecast";
 import { emailsOf } from "#/purchasing/inbox/ingest";
 import { loadOrder, receivedByLine } from "#/purchasing/load";
@@ -181,6 +182,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			chargesOf(db, data.id),
 			landedTerms(db, data.id),
 		]);
+		const flags = await openFlagsOf(db, data.id);
 		return {
 			leadTime: leadTimeOf(lead, po.supplier.id),
 			changes: { added: changes.added },
@@ -208,6 +210,8 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			recommended,
 			receipts,
 			amendments,
+			// What should change on it, waiting on someone to apply or dismiss.
+			flags,
 			invoices: payables.billing.invoices,
 			payables,
 			// Freight and the like, and how they spread: each line's added cost

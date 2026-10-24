@@ -68,7 +68,7 @@ const date = (s: string | null | undefined) => (s ? new Date(s) : null);
 
 // Shippo is asked about this many numbers at once, so a backlog can't turn
 // into a burst of requests.
-const CONCURRENCY = 4;
+export const CONCURRENCY = 4;
 // One request, throttle waits included, gets this long before it counts as
 // failed.
 const REQUEST_MS = 10_000;
@@ -154,7 +154,7 @@ async function check(
 
 // Runs `run` on every item, at most `limit` at a time. Results keep the order
 // of `items`.
-async function eachLimit<T, R>(
+export async function eachLimit<T, R>(
 	items: T[],
 	limit: number,
 	run: (item: T) => Promise<R>,
