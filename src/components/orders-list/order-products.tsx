@@ -134,7 +134,7 @@ function LineRow({ line }: { line: Line }) {
 						<> → {line.productSku}</>
 					)}
 				</p>
-				{line.fromStore.length > 0 && (
+				{(line.fromStore === null || line.fromStore.length > 0) && (
 					<div className="mt-1">
 						<FromStoreBadge parts={line.fromStore} sku={line.productSku} />
 					</div>

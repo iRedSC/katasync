@@ -252,7 +252,9 @@ export async function addLine(
 			`Quantity must be a whole number above 0, got ${input.quantity}`,
 		);
 	return db.transaction(async (tx) => {
-		const po = await lockForEdit(tx, input.purchaseOrderId, allowed);
+		const po = await lockForEdit(tx, input.purchaseOrderId, allowed, [
+			input.productId,
+		]);
 		const result = await insertLine(tx, po, input);
 		if (result.added && po.status !== "draft")
 			await tx.insert(purchaseOrderAmendments).values({

@@ -2,13 +2,47 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
 import { parsePeriod, salesReport } from "#/orders/sales-report";
+import {
+	handOff,
+	readArtifact,
+	reportPage,
+	saveRevision,
+} from "#/reports/store";
 
-// Sales and sales tax for one month, quarter or year ("2026-09", "2026-Q3",
-// "2026"), for the accountant.
+function periodOf(text: string) {
+	const period = parsePeriod(text);
+	if (!period) throw new Error(`Not a period: ${text}`);
+	return period;
+}
+
 export const getSalesReport = createServerFn({ method: "GET" })
 	.validator(type({ period: "string" }))
+	.handler(async ({ data }) => salesReport(getDb(), periodOf(data.period)));
+
+export const getReportPage = createServerFn({ method: "GET" })
+	.validator(type({ period: "string" }))
+	.handler(async ({ data }) => reportPage(getDb(), periodOf(data.period)));
+
+export const saveReportRevision = createServerFn({ method: "POST" })
+	.validator(type({ period: "string" }))
+	.handler(async ({ data }) => saveRevision(getDb(), periodOf(data.period)));
+
+export const getReportArtifact = createServerFn({ method: "GET" })
+	.validator(
+		type({ snapshotId: "number.integer > 0", name: /^[a-z-]+\.(csv|html)$/ }),
+	)
+	.handler(async ({ data }) => readArtifact(getDb(), data));
+
+export const handOffRevision = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			snapshotId: "number.integer > 0",
+			digest: /^[0-9a-f]{64}$/,
+			recipient: "0 < string <= 200",
+			"note?": "string <= 1000 | null",
+		}),
+	)
 	.handler(async ({ data }) => {
-		const period = parsePeriod(data.period);
-		if (!period) throw new Error(`Not a period: ${data.period}`);
-		return salesReport(getDb(), period);
+		const row = await handOff(getDb(), data);
+		return { id: row.id, handedAt: row.handedAt };
 	});

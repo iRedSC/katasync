@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { shippoDangerousGoods, shipsAerosols } from "./hazmat";
+import { LabelRefused, type Lookup, shippoLookup } from "./label-attempt-state";
 
 // Shippo buys labels for orders whose marketplace doesn't sell its own
 // (Shopify web, POS, draft orders, and eBay).
@@ -63,9 +64,8 @@ export async function shippo(path: string, body: unknown): Promise<unknown> {
 	});
 	const json = await response.json();
 	if (!response.ok) {
-		throw new Error(
-			`Shippo answered ${response.status}: ${JSON.stringify(json)}`,
-		);
+		const said = `Shippo answered ${response.status}: ${JSON.stringify(json)}`;
+		throw response.status < 500 ? new LabelRefused(said) : new Error(said);
 	}
 	return json;
 }
@@ -216,22 +216,28 @@ const transactionResponse = type({
 	"label_url?": "string | null",
 	"tracking_number?": "string | null",
 	"tracking_url_provider?": "string | null",
+	"metadata?": "string | null",
 	"messages?": message.array(),
 });
 
 // Buys the label for a rate. This is the step that costs money with a live
-// key.
-export async function buyLabel(rateId: string) {
+// key. The purchase is tagged with katasync's attempt id, so finding it
+// again (findLabel) can tell it apart. Only Shippo's ERROR or a 4xx is a
+// refusal; a 5xx, a dropped connection, or any other answer short of a
+// label leaves it unknown whether it was bought.
+export async function buyLabel(rateId: string, attemptId: string) {
 	const body = transactionResponse.assert(
 		await shippo("/transactions/", {
 			rate: rateId,
 			label_file_type: "PDF_4x6",
+			metadata: attemptId,
 			async: false,
 		}),
 	);
 	if (body.status !== "SUCCESS" || !body.label_url) {
 		const why = (body.messages ?? []).flatMap((m) => (m.text ? [m.text] : []));
-		throw new Error(`Label not bought: ${why.join("; ") || body.status}`);
+		const said = `Label not bought: ${why.join("; ") || body.status}`;
+		throw body.status === "ERROR" ? new LabelRefused(said) : new Error(said);
 	}
 	return {
 		id: body.object_id,
@@ -239,6 +245,22 @@ export async function buyLabel(rateId: string) {
 		trackingNumber: body.tracking_number ?? null,
 		trackingUrl: body.tracking_url_provider || null,
 	};
+}
+
+const transactionsPage = type({ results: transactionResponse.array() });
+
+// What Shippo has for an attempt's rate: every label bought (or tried) with
+// it, read with GET /transactions?rate=. Reads only; never buys.
+export async function findLabel(
+	rateId: string,
+	attemptId: string,
+): Promise<Lookup> {
+	const { results } = transactionsPage.assert(
+		await shippoGet(
+			`/transactions/?rate=${encodeURIComponent(rateId)}&results=100`,
+		),
+	);
+	return shippoLookup(attemptId, results);
 }
 
 const refundResponse = type({ object_id: "string", status: "string" });

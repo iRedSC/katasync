@@ -6,6 +6,7 @@ import { Connections } from "#/components/diagnostics/connection-tiles";
 import { diagnosticsData } from "#/components/diagnostics/diagnostics-data";
 import { Problems } from "#/components/diagnostics/problem-list";
 import { SyncStopped } from "#/components/diagnostics/sync-stopped";
+import { WebhookBacklog } from "#/components/diagnostics/webhook-backlog";
 import { LiveSync } from "#/components/live-sync";
 import { Page } from "#/components/page";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
@@ -40,6 +41,7 @@ function DiagnosticsPage() {
 			}
 		>
 			<Connections d={d} open={setSheet} />
+			<WebhookBacklog backlog={d.webhooks} />
 			<Problems d={d} open={setSheet} />
 			<AgentChanges calls={d.claude} />
 			<Sheet d={d} target={sheet} onClose={() => setSheet(null)} />

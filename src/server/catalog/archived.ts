@@ -17,7 +17,7 @@ export const listArchivedProducts = createServerFn({ method: "GET" }).handler(
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 				archivedAt: sql<Date>`${products.archivedAt}`,
-				onHand: sql<number>`coalesce((select sum(${stockLevels.onHand}) from ${stockLevels} join ${locations} on ${locations.id} = ${stockLevels.locationId} where ${stockLevels.productId} = ${products.id} and ${locations.kind} <> 'fba'), 0)::int`,
+				onHand: sql<number>`coalesce((select sum(${stockLevels.onHand}) from ${stockLevels} join ${locations} on ${locations.id} = ${stockLevels.locationId} where ${stockLevels.productId} = ${products.id} and ${locations.kind} in ('owned', 'retail')), 0)::int`,
 			})
 			.from(products)
 			.where(isNotNull(products.archivedAt))

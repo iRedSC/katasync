@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { systemActor } from "./actor";
 import {
 	answerAuthorize,
 	checkAccessToken,
@@ -15,6 +16,7 @@ import {
 } from "./oauth";
 
 const ORIGIN = "https://katasync.test";
+const OWNER = systemActor("dev-server");
 const CALLBACK = "https://claude.ai/api/mcp/auth_callback";
 const now = new Date("2026-10-10T12:00:00Z");
 const minutes = (n: number) => new Date(now.getTime() + n * 60_000);
@@ -49,6 +51,7 @@ const request = (over: Record<string, string | undefined> = {}) => ({
 async function approve(canWrite = true, at = now) {
 	const r = await answerAuthorize(
 		db,
+		OWNER,
 		request(),
 		ORIGIN,
 		{ approve: true, canWrite },
@@ -131,6 +134,7 @@ describe("approving", () => {
 			(
 				await checkAuthorize(
 					db,
+					OWNER,
 					request({ ...over, response_type: "token" }),
 					ORIGIN,
 				)
@@ -139,7 +143,7 @@ describe("approving", () => {
 		for (const approve of [true, false])
 			expect(
 				(
-					await answerAuthorize(db, request(over), ORIGIN, {
+					await answerAuthorize(db, OWNER, request(over), ORIGIN, {
 						approve,
 						canWrite: true,
 					})
@@ -148,7 +152,7 @@ describe("approving", () => {
 	});
 
 	test("asks with the app's name and where it goes back to", async () => {
-		expect(await checkAuthorize(db, request(), ORIGIN)).toEqual({
+		expect(await checkAuthorize(db, OWNER, request(), ORIGIN)).toEqual({
 			kind: "ask",
 			clientName: "Claude",
 			redirectHost: "claude.ai",
@@ -160,10 +164,10 @@ describe("approving", () => {
 			{ client_id: "made-up" },
 			{ redirect_uri: "https://evil.example/cb" },
 		]) {
-			expect((await checkAuthorize(db, request(over), ORIGIN)).kind).toBe(
-				"invalid",
-			);
-			const r = await answerAuthorize(db, request(over), ORIGIN, {
+			expect(
+				(await checkAuthorize(db, OWNER, request(over), ORIGIN)).kind,
+			).toBe("invalid");
+			const r = await answerAuthorize(db, OWNER, request(over), ORIGIN, {
 				approve: true,
 				canWrite: true,
 			});
@@ -179,14 +183,16 @@ describe("approving", () => {
 			[{ response_type: "token" }, "unsupported_response_type"],
 			[{ resource: "https://elsewhere.example/mcp" }, "invalid_target"],
 		] as const) {
-			const r = await checkAuthorize(db, request(over), ORIGIN);
+			const r = await checkAuthorize(db, OWNER, request(over), ORIGIN);
 			if (r.kind !== "refused") throw new Error(r.kind);
 			expect(new URL(r.redirect).searchParams.get("error")).toBe(error);
 		}
 	});
 
 	test("denying tells the app and makes nothing", async () => {
-		const r = await answerAuthorize(db, request(), ORIGIN, { approve: false });
+		const r = await answerAuthorize(db, OWNER, request(), ORIGIN, {
+			approve: false,
+		});
 		if (r.kind !== "redirect") throw new Error(r.message);
 		expect(new URL(r.url).searchParams.get("error")).toBe("access_denied");
 		expect(await db.select().from(schema.oauthGrants)).toHaveLength(0);
@@ -226,10 +232,13 @@ describe("tokens", () => {
 	test("access lasts an hour and carries read only", async () => {
 		const { access_token, scope } = await trade(await approve(false));
 		expect(scope).toBe("read");
-		expect(await checkAccessToken(db, access_token, minutes(59))).toEqual({
-			name: "Claude",
-			canWrite: false,
-		});
+		expect(await checkAccessToken(db, access_token, minutes(59))).toMatchObject(
+			{
+				name: "Claude",
+				canWrite: false,
+				actor: { kind: "legacy", via: { kind: "grant", name: "Claude" } },
+			},
+		);
 		expect(await checkAccessToken(db, access_token, minutes(61))).toBeNull();
 		expect(await checkAccessToken(db, "ks_made-up")).toBeNull();
 	});
@@ -314,7 +323,7 @@ describe("tokens", () => {
 		const [app] = await listConnections(db);
 		expect(app).toMatchObject({ name: "Claude", canWrite: true });
 		expect(app.lastUsedAt).toEqual(minutes(1));
-		await disconnect(db, app.id);
+		await disconnect(db, OWNER, app.id);
 		expect(await checkAccessToken(db, access_token, minutes(2))).toBeNull();
 		expect(await listConnections(db)).toHaveLength(0);
 	});

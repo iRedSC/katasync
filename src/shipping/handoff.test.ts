@@ -5,6 +5,7 @@ import * as schema from "#/db/schema";
 import { labelToVoid } from "#/orders/to-ship";
 import { addDispatch, createTestDb } from "#/test/db";
 import { memoryLocker } from "./dispatch";
+import { addPackedDispatch } from "./dispatch.fixtures";
 import {
 	type Outside,
 	retryStorefrontTracking,
@@ -27,13 +28,27 @@ afterEach(() => vi.unstubAllEnvs());
 function fakes(overrides: Partial<Outside> = {}): Outside {
 	return {
 		lock: memoryLocker(),
-		shopifyFulfill: vi.fn(async () => "gid://shopify/Fulfillment/1"),
+		shopifyFulfill: vi.fn(async () => ({
+			fulfillmentId: "gid://shopify/Fulfillment/1",
+			remaining: 0,
+		})),
 		shopifyCancel: vi.fn(async () => {}),
 		shopifySaveTracking: vi.fn(async () => {}),
 		shopifyRemoveTracking: vi.fn(async () => {}),
-		ebayFulfill: vi.fn(async () => "ebay-f-1"),
+		ebayShip: vi.fn(async () => ({ fulfillmentId: "ebay-f-1", remaining: 0 })),
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokShip: vi.fn(async (id: string) => ({ id, trackingNumber: "TT1" })),
+		tiktokUnits: vi.fn(async () => ({
+			status: "AWAITING_COLLECTION",
+			packages: ["1157817232461763469"],
+			units: ["unit-1", "unit-2"].map((id) => ({
+				id,
+				skuId: "s1",
+				sellerSku: "WRENCH",
+				cancelled: false,
+				packageId: "1157817232461763469",
+			})),
+		})),
 		...overrides,
 	};
 }
@@ -76,7 +91,12 @@ async function setUp(channel: "shopify" | "ebay") {
 const ship = (
 	boxes?: Partial<typeof schema.shipments.$inferInsert>[],
 	orderIds = [orderId],
-) => addDispatch(db, { orderIds, boxes }).then((d) => d.dispatchId);
+) =>
+	addPackedDispatch(db, {
+		orderIds,
+		boxes,
+		unitIds: ["unit-1", "unit-2"],
+	}).then((d) => d.dispatchId);
 
 const orderRow = async (id = orderId) =>
 	(await db.select().from(schema.orders).where(eq(schema.orders.id, id)))[0];
@@ -103,6 +123,10 @@ describe("sendTracking", () => {
 	beforeEach(() => setUp("shopify"));
 
 	test("a TikTok label is marked ready on TikTok, which has the tracking", async () => {
+		await db
+			.update(schema.orders)
+			.set({ salesChannel: "TikTok", marketplaceOrderId: "tiktok:577" })
+			.where(eq(schema.orders.id, orderId));
 		const outside = fakes();
 		const id = await ship([
 			{
@@ -151,6 +175,7 @@ describe("sendTracking", () => {
 					},
 				],
 			},
+			new Map([["line-9", 2]]),
 		);
 		expect((await handoffOf(id)).channelFulfillmentId).toBe(
 			"gid://shopify/Fulfillment/1",
@@ -172,6 +197,7 @@ describe("sendTracking", () => {
 					expect.objectContaining({ number: "9400B" }),
 				],
 			}),
+			new Map([["line-9", 2]]),
 		);
 	});
 
@@ -243,7 +269,7 @@ describe("sendTracking", () => {
 		const outside = fakes({
 			shopifyFulfill: vi.fn(async (externalId: string) => {
 				if (externalId.endsWith("/10")) throw new Error("Access denied");
-				return "gid://shopify/Fulfillment/1";
+				return { fulfillmentId: "gid://shopify/Fulfillment/1", remaining: 0 };
 			}),
 		});
 		const id = await ship(undefined, [orderId, other]);
@@ -263,6 +289,7 @@ describe("sendTracking", () => {
 		expect(retry.shopifyFulfill).toHaveBeenCalledWith(
 			"gid://shopify/Order/10",
 			expect.anything(),
+			new Map([["line-10", 2]]),
 		);
 	});
 
@@ -347,10 +374,10 @@ describe("sendTracking on eBay", () => {
 	test("sends every line with its quantity", async () => {
 		const outside = fakes();
 		await sendTracking(db, await ship(), outside);
-		expect(outside.ebayFulfill).toHaveBeenCalledWith(
+		expect(outside.ebayShip).toHaveBeenCalledWith(
 			"9",
+			new Map([["line-9", 2]]),
 			expect.objectContaining({
-				lineItems: [{ lineItemId: "line-9", quantity: 2 }],
 				carrier: "USPS",
 				trackingNumber: "9400100000000000000000",
 			}),
@@ -364,9 +391,10 @@ describe("sendTracking on eBay", () => {
 			await ship([{}, { trackingNumber: "9400B" }]),
 			outside,
 		);
-		expect(outside.ebayFulfill).toHaveBeenCalledTimes(1);
-		expect(outside.ebayFulfill).toHaveBeenCalledWith(
+		expect(outside.ebayShip).toHaveBeenCalledTimes(1);
+		expect(outside.ebayShip).toHaveBeenCalledWith(
 			"9",
+			expect.any(Map),
 			expect.objectContaining({ trackingNumber: "9400100000000000000000" }),
 		);
 		expect(result.message).toContain("one number");

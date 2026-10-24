@@ -9,12 +9,17 @@ import {
 	productAliases,
 	productGroups,
 	products,
+	purchaseOrders,
 	stores,
+	supplierInvoices,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
 import { postMovements, requestCounts } from "#/inventory/ledger";
 import { markNotCounted } from "#/inventory/not-counted";
 import { setRecipe } from "#/inventory/recipes";
 import { takeStock } from "#/orders/ingest";
+import { deleteDraft } from "#/purchasing/orders/delete-draft";
+import { lockForEdit } from "#/purchasing/orders/lock";
 import type { ImportPlan } from "./sumtracker";
 
 // Cutover from Sumtracker onto a database that's already in use. Sumtracker
@@ -63,11 +68,32 @@ export async function refreshFromSumtracker(
 	if (options.exportedAt.getTime() > Date.now())
 		throw new Error("The export time is in the future");
 	return db.transaction(async (tx) => {
+		if ((await readQuantityMode(tx)) !== "legacy")
+			throw new Error(
+				"Committed stock cannot be replaced by a Sumtracker refresh",
+			);
 		await tx.execute(
 			// orders too: an order syncing in waits here, then sees the new
 			// stockFrom (ingestOrder reads it after saving the order).
-			sql`lock table movements, orders, order_lines in share row exclusive mode`,
+			sql`lock table products, movements, orders, order_lines, purchase_orders in access exclusive mode nowait`,
 		);
+		const purchaseHistory = await tx
+			.select({ id: purchaseOrders.id, status: purchaseOrders.status })
+			.from(purchaseOrders)
+			.orderBy(purchaseOrders.id);
+		const [invoice] = await tx
+			.select({ id: supplierInvoices.id })
+			.from(supplierInvoices)
+			.limit(1);
+		if (
+			invoice ||
+			purchaseHistory.some(
+				(order) => order.status !== "draft" && order.status !== "suggested",
+			)
+		)
+			throw new Error(
+				"Purchasing evidence exists; refreshing would discard it. Nothing changed.",
+			);
 		// A restock put units back through a movement this would wipe, and
 		// nothing here takes it again.
 		const [restocked] = await tx
@@ -94,9 +120,10 @@ export async function refreshFromSumtracker(
 				`Refreshing would wipe ${retail.name}'s stock, which Sumtracker doesn't have. Nothing changed.`,
 			);
 
-		await tx.execute(
-			sql`truncate purchase_orders, damage_photo_uploads cascade`,
-		);
+		for (const order of purchaseHistory) {
+			if (order.status === "suggested") await lockForEdit(tx, order.id);
+			await deleteDraft(tx, order.id);
+		}
 		// The ledger refuses to be rewritten (movements_append_only); starting
 		// stock over is the one deliberate exception, lifted only inside this
 		// transaction, so a failure anywhere puts the guard back too.

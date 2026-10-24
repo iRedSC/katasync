@@ -36,6 +36,7 @@ import { LineTable } from "#/components/purchase-order/line-table";
 import { browseLine } from "#/components/purchase-order/new-lines";
 import { NotesCard } from "#/components/purchase-order/notes-card";
 import { OtherActions } from "#/components/purchase-order/other-actions";
+import { PaymentsCard } from "#/components/purchase-order/payments-card";
 import {
 	draftTotals,
 	isUnsent,
@@ -440,6 +441,7 @@ function PurchaseOrderPage() {
 								</Card>
 							)}
 							<InvoicesCard detail={d} />
+							<PaymentsCard detail={d} payables={d.payables} />
 							<Timeline detail={d} />
 						</>
 					)}

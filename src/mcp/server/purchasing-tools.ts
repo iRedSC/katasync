@@ -1,9 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { requireActor } from "#/audit/context";
 import type { Db } from "#/db/client";
 import { purchaseOrderLines, supplierOffers } from "#/db/schema";
-import { recordInvoice, removeInvoice } from "#/purchasing/invoices";
+import { recordInvoice } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
 import {
 	addLine,
@@ -34,6 +35,7 @@ import {
 	productsBySku,
 } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
+import { invoiceLineInput, toInvoiceLine } from "./read-tools";
 import { json, unitTerms, WRITE } from "./tool-shapes";
 
 export function registerPurchasingTools(server: McpServer, db: Db) {
@@ -428,37 +430,36 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 		"record_supplier_invoice",
 		{
 			description:
-				"Keeps a supplier's invoice on its PO: number, date, due date, and total. The PO must be on order (sent or closed). The same invoice number from the same supplier is refused, on any PO, so nothing is paid twice. Check it with match_invoice first.",
+				"Keeps a supplier's invoice on its PO: number, date, due date, total, and its lines as printed, which are checked against what was received (net of undos) and earlier invoices. One billing past what arrived is kept as an exception, never matched; without lines it stays unverified. The PO must be on order (sent or closed). The same invoice number from the same supplier is refused on any PO, voided ones too (restore_supplier_invoice brings those back). Check it with match_invoice first.",
 			inputSchema: {
 				po: z.number().int().positive(),
 				number: z.string().min(1),
 				invoiced_on: z.string().describe("YYYY-MM-DD"),
 				due_on: z.string().nullable().optional().describe("YYYY-MM-DD"),
-				total: z.number().min(0).describe("Total due, USD"),
+				total: z.number().min(0).describe("Total due, USD, whole cents"),
+				freight: z.number().min(0).optional().describe("USD"),
+				tax: z.number().min(0).optional().describe("USD"),
+				lines: z.array(invoiceLineInput).optional(),
 			},
 			annotations: WRITE,
 		},
-		async ({ po, number, invoiced_on, due_on, total }) =>
+		async ({ po, number, invoiced_on, due_on, total, freight, tax, lines }) =>
 			json(
-				await recordInvoice(db, {
-					purchaseOrderId: po,
-					number,
-					invoicedOn: invoiced_on,
-					dueOn: due_on,
-					total,
-				}),
+				await recordInvoice(
+					db,
+					{
+						purchaseOrderId: po,
+						number,
+						invoicedOn: invoiced_on,
+						dueOn: due_on,
+						total,
+						freight,
+						tax,
+						lines: lines?.map(toInvoiceLine),
+					},
+					requireActor(),
+				),
 			),
-	);
-
-	server.registerTool(
-		"remove_supplier_invoice",
-		{
-			description:
-				"Takes a recorded invoice off its PO, e.g. one put on the wrong PO. Its id is in get_purchase_order's invoices.",
-			inputSchema: { id: z.number().int().positive() },
-			annotations: { ...WRITE, destructiveHint: true },
-		},
-		async ({ id }) => json({ removed: await removeInvoice(db, id) }),
 	);
 
 	server.registerTool(

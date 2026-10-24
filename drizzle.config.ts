@@ -9,7 +9,7 @@ try {
 
 export default defineConfig({
 	dialect: "postgresql",
-	schema: "./src/db/schema.ts",
+	schema: "./src/db/capability-schema.ts",
 	out: "./drizzle",
 	casing: "snake_case",
 	// Migrations use the direct connection; the pooler doesn't suit DDL.

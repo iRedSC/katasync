@@ -2,8 +2,9 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { addDispatch, createTestDb } from "#/test/db";
+import { createTestDb } from "#/test/db";
 import { memoryLocker } from "./dispatch";
+import { addPackedDispatch } from "./dispatch.fixtures";
 import type { Outside } from "./handoff";
 import { followUpTracking, resendTrackingNow, retryDueTracking } from "./retry";
 import { nextRetry, RETRY_FOR_MS } from "./retry-window";
@@ -12,16 +13,17 @@ let db: Db;
 let orderId: number;
 let dispatchId: number;
 
-function fakes(ebayFulfill: Outside["ebayFulfill"]): Outside {
+function fakes(ebayShip: Outside["ebayShip"]): Outside {
 	return {
 		lock: memoryLocker(),
 		shopifyFulfill: vi.fn(),
 		shopifyCancel: vi.fn(),
 		shopifySaveTracking: vi.fn(),
 		shopifyRemoveTracking: vi.fn(),
-		ebayFulfill,
+		ebayShip,
 		refund: vi.fn(),
 		tiktokShip: vi.fn(),
+		tiktokUnits: vi.fn(),
 	};
 }
 
@@ -31,7 +33,8 @@ const refused = () =>
 			throw new Error("eBay answered 503");
 		}),
 	);
-const accepted = () => fakes(vi.fn(async () => "ebay-f-1"));
+const accepted = () =>
+	fakes(vi.fn(async () => ({ fulfillmentId: "ebay-f-1", remaining: 0 })));
 
 const handoff = async () =>
 	(
@@ -70,7 +73,7 @@ beforeEach(async () => {
 		quantity: 1,
 		unitPrice: 30,
 	});
-	({ dispatchId } = await addDispatch(db, { orderIds: [orderId] }));
+	({ dispatchId } = await addPackedDispatch(db, { orderIds: [orderId] }));
 });
 
 describe("nextRetry", () => {
@@ -103,7 +106,7 @@ describe("retryDueTracking", () => {
 			tried: 0,
 			sent: 0,
 		});
-		expect(early.ebayFulfill).not.toHaveBeenCalled();
+		expect(early.ebayShip).not.toHaveBeenCalled();
 
 		const due = accepted();
 		expect(await retryDueTracking(db, later(31_000), due)).toEqual({
@@ -165,7 +168,7 @@ describe("followUpTracking", () => {
 		const clock = fakeClock();
 		const outside = accepted();
 		await followUpTracking(db, dispatchId, outside, clock);
-		expect(outside.ebayFulfill).toHaveBeenCalledTimes(1);
+		expect(outside.ebayShip).toHaveBeenCalledTimes(1);
 		expect(clock.sleep).toHaveBeenCalledTimes(1);
 		expect((await handoff()).channelSentAt).not.toBeNull();
 	});
@@ -181,7 +184,7 @@ describe("followUpTracking", () => {
 		await resendTrackingNow(db, dispatchId, outside);
 		await followUpTracking(db, dispatchId, outside, fakeClock());
 		// Retries at 30s, 1, 2 and 4 minutes; the next, at 8, is past its time.
-		expect(outside.ebayFulfill).toHaveBeenCalledTimes(5);
+		expect(outside.ebayShip).toHaveBeenCalledTimes(5);
 		const after = await handoff();
 		expect(after.channelSentAt).toBeNull();
 		expect(after.channelRetryAt).not.toBeNull();

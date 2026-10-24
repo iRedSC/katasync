@@ -109,6 +109,14 @@ export const pages = [
 		count: null,
 	},
 	{
+		to: "/reconciliation",
+		label: "Reconciliation",
+		icon: ListChecks,
+		keys: "g b",
+		parent: "/analytics",
+		count: null,
+	},
+	{
 		to: "/products",
 		label: "Products",
 		icon: Package,

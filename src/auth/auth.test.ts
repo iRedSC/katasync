@@ -7,20 +7,20 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { systemActor } from "./actor";
 import { safeNext } from "./client";
+import { checkSetupLink, issueSetupLink, spendSetupLink } from "./enrollment";
 import { cookieValue, guard, isPublic } from "./guard";
 import {
-	checkSetupLink,
 	consumeChallenge,
 	createSession,
-	createSetupLink,
 	endSession,
 	hashToken,
 	SESSION_COOKIE,
 	saveChallenge,
 	sessionFor,
-	useSetupLink,
 } from "./sessions";
+import { addPerson } from "./staff.fixtures";
 import {
 	authenticationOptions,
 	finishAuthentication,
@@ -82,30 +82,39 @@ describe("sessions", () => {
 });
 
 test("setup links work once, until they expire", async () => {
-	const token = await createSetupLink(db, 15, now);
-	await checkSetupLink(db, token, minutes(10));
+	const sam = await addPerson(db, "Sam", "operator");
+	const { token } = await db.transaction((tx) =>
+		issueSetupLink(tx, systemActor("recovery-script"), sam.staffId, {
+			minutes: 15,
+			now,
+		}),
+	);
+	expect(await checkSetupLink(db, token, minutes(10))).toMatchObject({
+		staffName: "Sam",
+	});
 	await expect(checkSetupLink(db, token, minutes(16))).rejects.toThrow(
 		/expired/,
 	);
 	await expect(checkSetupLink(db, "made-up", now)).rejects.toThrow(
 		/isn't valid/,
 	);
-	await useSetupLink(db, token, minutes(5));
-	await expect(useSetupLink(db, token, minutes(6))).rejects.toThrow(
-		/already used/,
-	);
+	await db.transaction((tx) => spendSetupLink(tx, token, minutes(5)));
+	await expect(
+		db.transaction((tx) => spendSetupLink(tx, token, minutes(6))),
+	).rejects.toThrow(/already used/);
 	await expect(checkSetupLink(db, token, minutes(6))).rejects.toThrow(
 		/already used/,
 	);
 });
 
-test("a challenge answers once, within five minutes", async () => {
-	await saveChallenge(db, "c1", now);
-	await saveChallenge(db, "c2", now);
-	expect(await consumeChallenge(db, "c1", minutes(1))).toBe(true);
-	expect(await consumeChallenge(db, "c1", minutes(1))).toBe(false);
-	expect(await consumeChallenge(db, "c2", minutes(6))).toBe(false);
-	expect(await consumeChallenge(db, "never", now)).toBe(false);
+test("a challenge answers once, within five minutes, for its own ceremony", async () => {
+	const login = { purpose: "login" } as const;
+	await saveChallenge(db, "c1", login, now);
+	await saveChallenge(db, "c2", login, now);
+	expect(await consumeChallenge(db, "c1", login, minutes(1))).toBe(true);
+	expect(await consumeChallenge(db, "c1", login, minutes(1))).toBe(false);
+	expect(await consumeChallenge(db, "c2", login, minutes(6))).toBe(false);
+	expect(await consumeChallenge(db, "never", login, now)).toBe(false);
 });
 
 test("device names are trimmed and required", () => {
@@ -329,7 +338,7 @@ describe("finishAuthentication", () => {
 	});
 
 	test("refuses an expired challenge", async () => {
-		await saveChallenge(db, "old", days(-1));
+		await saveChallenge(db, "old", { purpose: "login" }, days(-1));
 		signedWith("old");
 		await expect(finishAuthentication(db, response)).rejects.toThrow(
 			/Unexpected challenge/,

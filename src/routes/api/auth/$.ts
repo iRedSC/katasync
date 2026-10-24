@@ -44,6 +44,10 @@ export const Route = createFileRoute("/api/auth/$")({
 				const json = await request.json().catch(() => ({}));
 				try {
 					switch (params._splat) {
+						case "register/link": {
+							const { setupToken } = parse(setupBody, json);
+							return Response.json(await auth.setupLinkFor(db, setupToken));
+						}
 						case "register/options": {
 							const { setupToken } = parse(setupBody, json);
 							return Response.json(

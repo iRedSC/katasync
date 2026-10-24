@@ -137,11 +137,16 @@ function OrderPage() {
 	const ship = () => pin !== null && openQuickShip(pin);
 	// Returns come back here once everything has left our shelf.
 	const returnable = lines
-		.map((l) => ({ ...l, left: l.quantity - l.returned }))
+		.map((l) => ({ ...l, left: l.returnQuantity - l.returned }))
 		.filter((l) => l.left > 0);
 	const canReturn =
-		returnBlocker({ ...order, labeled: isLabeled(profit?.labelsStatus) }) ===
-			null && returnable.length > 0;
+		returnBlocker({
+			...order,
+			labeled: isLabeled(profit?.labelsStatus),
+			shippedQuantity: order.committedStock
+				? returnable.reduce((total, line) => total + line.left, 0)
+				: undefined,
+		}) === null && returnable.length > 0;
 	// Refunded in full: what hasn't come back yet is expected.
 	const awaitingReturn = profit?.awaitingReturn ?? false;
 	const [returning, setReturning] = useState(false);

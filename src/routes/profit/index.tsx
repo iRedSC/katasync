@@ -191,10 +191,12 @@ function Items() {
 												right
 												also={["margin", "Margin"]}
 											>
-												Profit
+												Contribution
 											</Th>
 											<th className="px-2.5 py-2 font-medium">
-												<span className="sr-only">Profit at a glance</span>
+												<span className="sr-only">
+													Contribution at a glance
+												</span>
 											</th>
 										</tr>
 									</thead>

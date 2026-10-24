@@ -12,6 +12,8 @@ export function FromStoreBadge({
 	parts: FromStore;
 	sku: string | null;
 }) {
+	if (parts === null)
+		return <Badge tone="info">Shelf assigned at dispatch</Badge>;
 	if (parts.length === 0) return null;
 	const where = parts[0].location;
 	const own = parts.length === 1 && parts[0].sku === sku;

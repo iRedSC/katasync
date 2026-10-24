@@ -3,6 +3,63 @@ import { afterArrival } from "#/inventory/stock-state";
 import { type Forecast, SERVICE_LEVELS } from "#/purchasing/forecast";
 import type { SetMembership } from "#/purchasing/sets";
 
+const DAY_MS = 86_400_000;
+
+export type Arrival = { units: number; arrivesAt: number | null };
+
+export type Incoming = {
+	timely: number;
+	aim: number;
+	unknown: number;
+	lateDue: number | null;
+	schedule: { units: number; dueDays: number }[];
+};
+
+export function incomingFor(
+	now: number,
+	onHand: number,
+	dailyDemand: number,
+	horizonDays: number,
+	arrivals: Arrival[],
+): Incoming {
+	const horizonEnd = now + horizonDays * DAY_MS;
+	const dated = arrivals
+		.flatMap((a) =>
+			a.arrivesAt === null || a.arrivesAt < now
+				? []
+				: [{ units: a.units, at: a.arrivesAt }],
+		)
+		.sort((a, b) => a.at - b.at);
+	const unknown = arrivals.reduce(
+		(sum, a) => sum + (a.arrivesAt === null || a.arrivesAt < now ? a.units : 0),
+		0,
+	);
+	let shelf = Math.max(onHand, 0);
+	let timely = 0;
+	let aim = 0;
+	let lateDue: number | null = null;
+	for (const { units, at } of dated) {
+		const daysAway = (at - now) / DAY_MS;
+		const inTime =
+			dailyDemand === 0 || (daysAway >= 0 && daysAway * dailyDemand <= shelf);
+		if (inTime) {
+			timely += units;
+			shelf += units;
+		} else if (lateDue === null) lateDue = Math.max(daysAway, 0);
+		if (inTime || at <= horizonEnd) aim += units;
+	}
+	return {
+		timely,
+		aim,
+		unknown,
+		lateDue,
+		schedule: dated.map(({ units, at }) => ({
+			units,
+			dueDays: (at - now) / DAY_MS,
+		})),
+	};
+}
+
 // What reorder works from for one product. Demand, stock, what's on order,
 // and minStock count the product itself; packSize is how many of it one of
 // the supplier's units holds.
@@ -10,6 +67,7 @@ export type ReorderInput = {
 	dailyDemand: number;
 	onHand: number;
 	onOrder: number;
+	incoming?: Incoming;
 	leadTimeDays: number;
 	safetyStock: number;
 	coverDays: number;
@@ -22,10 +80,55 @@ export type ReorderInput = {
 	packSize: number;
 };
 
-// Shelf plus on order, as it stands once what's ordered arrives. Oversold
-// stock counts as 0, since receiving writes it off.
-function position(p: ReorderInput) {
-	return afterArrival(p.onHand, p.onOrder);
+function incomingOf(p: ReorderInput): Incoming {
+	return (
+		p.incoming ?? {
+			timely: p.onOrder,
+			aim: p.onOrder,
+			unknown: 0,
+			lateDue: null,
+			schedule: [{ units: p.onOrder, dueDays: 0 }],
+		}
+	);
+}
+
+// Shelf plus what's in time, as it stands once that arrives. Oversold stock
+// counts as 0, since receiving writes it off.
+function timelyPosition(p: ReorderInput) {
+	return afterArrival(p.onHand, incomingOf(p).timely);
+}
+
+function aimPosition(p: ReorderInput) {
+	return afterArrival(p.onHand, incomingOf(p).aim);
+}
+
+function untilLate(p: ReorderInput) {
+	if (p.dailyDemand === 0) return 0;
+	const horizon = p.leadTimeDays + p.coverDays;
+	let shelf = Math.max(p.onHand, 0);
+	let day = 0;
+	let shortage = 0;
+	for (const arrival of incomingOf(p).schedule) {
+		if (arrival.dueDays > horizon) break;
+		if (arrival.dueDays <= p.leadTimeDays) {
+			shelf = Math.max(shelf - (arrival.dueDays - day) * p.dailyDemand, 0);
+		} else {
+			if (day < p.leadTimeDays) {
+				shelf = Math.max(shelf - (p.leadTimeDays - day) * p.dailyDemand, 0);
+				day = p.leadTimeDays;
+			}
+			shelf -= (arrival.dueDays - day) * p.dailyDemand;
+			shortage = Math.max(shortage, -shelf);
+		}
+		shelf += arrival.units;
+		day = arrival.dueDays;
+	}
+	if (day < p.leadTimeDays) {
+		shelf = Math.max(shelf - (p.leadTimeDays - day) * p.dailyDemand, 0);
+		day = p.leadTimeDays;
+	}
+	shortage = Math.max(shortage, (horizon - day) * p.dailyDemand - shelf);
+	return Math.max(Math.ceil(shortage), 0);
 }
 
 // Below this, a product needs ordering: what sells before a PO sent today
@@ -37,7 +140,7 @@ function reorderPoint(p: ReorderInput) {
 // Oversold with nothing on order: the shelf owes units nobody is bringing,
 // so order at least one even with no recent sales or min stock.
 function oversoldFloor(p: ReorderInput) {
-	return p.onHand < 0 && p.onOrder === 0 ? 1 : 0;
+	return p.onHand < 0 && incomingOf(p).timely === 0 ? 1 : 0;
 }
 
 // The least shelf plus on order may be: min stock, one of each of its tool
@@ -49,21 +152,24 @@ const floorOf = (p: ReorderInput) =>
 // (stockTarget, or its floor if more), rounded up to whole units and to at
 // least the supplier's minimum. 0 when it's already there.
 export function coverQuantity(p: ReorderInput) {
-	const need = Math.max(stockTarget(p), floorOf(p)) - position(p);
+	const need = Math.max(
+		Math.max(stockTarget(p), floorOf(p)) - aimPosition(p),
+		untilLate(p),
+	);
 	if (need <= 0) return 0;
 	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
 }
 
 // How many of the supplier's unit to order, or 0 to leave it off the PO: a
-// top-up once shelf plus on order drops below the reorder point.
+// top-up once shelf plus what's in time drops below the reorder point.
 export function reorderQuantity(p: ReorderInput): number {
-	return position(p) < reorderPoint(p) ? coverQuantity(p) : 0;
+	return timelyPosition(p) < reorderPoint(p) ? coverQuantity(p) : 0;
 }
 
 // Days until a product that doesn't need ordering yet will, at its current
 // sales. null when it never will (no sales) or already does.
 export function daysUntilReorder(p: ReorderInput): number | null {
-	const left = position(p) - reorderPoint(p);
+	const left = timelyPosition(p) - reorderPoint(p);
 	if (p.dailyDemand === 0 || left < 0) return null;
 	return Math.floor(left / p.dailyDemand);
 }
@@ -101,7 +207,7 @@ export function forecastMax(
 // How many of the supplier's unit fill stock up to max, rounded up to whole
 // units and to at least the supplier's minimum. 0 when it's already there.
 export function fillToMax(p: ReorderInput, max: number) {
-	const need = max - position(p);
+	const need = max - aimPosition(p);
 	if (need <= 0) return 0;
 	return Math.max(Math.ceil(need / p.packSize), p.minimumQuantity);
 }
@@ -128,6 +234,8 @@ export type ReorderWhy = {
 	serviceShare: number;
 	onHand: number;
 	onOrder: number;
+	incoming: Incoming;
+	untilLate: number;
 	// What a reorder tops shelf plus on order up to.
 	aim:
 		| {
@@ -167,6 +275,7 @@ export type ReorderWhy = {
 				roundedUp: "pack" | "minimum" | null;
 		  }
 		| { kind: "later"; days: number }
+		| { kind: "awaiting"; days: number; gapDays: number }
 		// No sales and nothing below min: nothing will ever need ordering.
 		| { kind: "idle" };
 };
@@ -206,7 +315,8 @@ export function explainReorder(
 				};
 	const quantity = reorderQuantity(p);
 	const days = daysUntilReorder(p);
-	const shortfall = aim.total - position(p);
+	const shortfall = Math.max(aim.total - aimPosition(p), untilLate(p));
+	const lateDue = incomingOf(p).lateDue;
 	const verdict: ReorderWhy["verdict"] =
 		quantity > 0
 			? {
@@ -222,7 +332,13 @@ export function explainReorder(
 								: null,
 				}
 			: days === null
-				? { kind: "idle" }
+				? lateDue !== null && p.dailyDemand > 0
+					? {
+							kind: "awaiting",
+							days: Math.ceil(lateDue),
+							gapDays: Math.ceil(lateDue - timelyPosition(p) / p.dailyDemand),
+						}
+					: { kind: "idle" }
 				: { kind: "later", days };
 	return {
 		dailyDemand: p.dailyDemand,
@@ -234,6 +350,8 @@ export function explainReorder(
 		serviceShare: SERVICE_LEVELS[context.abc ?? "C"].share,
 		onHand: p.onHand,
 		onOrder: p.onOrder,
+		incoming: incomingOf(p),
+		untilLate: untilLate(p),
 		aim,
 		minStock: floor,
 		minFrom,

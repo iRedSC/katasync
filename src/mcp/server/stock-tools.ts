@@ -3,6 +3,7 @@ import { inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
 import { locations, products } from "#/db/schema";
+import { fulfillmentOfBatch } from "#/inventory/commitments-consume";
 import { requestProductCount } from "#/inventory/count-requests";
 import {
 	cancelCountRequests,
@@ -126,6 +127,10 @@ export function registerStockTools(server: McpServer, db: Db) {
 			annotations: WRITE,
 		},
 		async ({ batch_id }) => {
+			if (await fulfillmentOfBatch(db, batch_id))
+				throw new PurchaseOrderError(
+					"This stock shipped on a dispatch. Void that dispatch in the app so its fulfillment and reservations are reversed together.",
+				);
 			const po = await purchaseOrderOfBatch(db, batch_id);
 			if (po !== null)
 				throw new PurchaseOrderError(

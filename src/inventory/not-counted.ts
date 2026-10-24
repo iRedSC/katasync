@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, products } from "#/db/schema";
 import { LedgerError, requestCounts } from "#/inventory/ledger";
+import { lockStockProducts } from "#/inventory/ledger/post";
 
 // Not counted: a product nobody has counted yet sells without limit. Stock
 // push sends every channel UNLIMITED for it (and for tool sets made only of
@@ -19,6 +20,7 @@ export const UNLIMITED = 999;
 export async function markNotCounted(db: Db, productIds: number[]) {
 	if (productIds.length === 0) return 0;
 	return db.transaction(async (tx) => {
+		await lockStockProducts(tx, productIds);
 		const bundles = await tx
 			.select({ sku: products.sku })
 			.from(products)

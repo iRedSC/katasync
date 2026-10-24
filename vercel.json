@@ -19,6 +19,7 @@
     { "path": "/api/cron/messages?sweep=1", "schedule": "15 */4 * * *" },
     { "path": "/api/cron/messages", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/orders/amazon", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/orders/ebay", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/orders/ebay", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/webhooks", "schedule": "*/5 * * * *" }
   ]
 }

@@ -147,7 +147,11 @@ function Settings() {
 					</Card>
 					<EmailTemplatesCard templates={templates} />
 					<DevicesCard devices={devices} />
-					<ConnectionsCard endpoint={loaded.connections.endpoint} apps={apps} />
+					<ConnectionsCard
+						endpoint={loaded.connections.endpoint}
+						apps={apps}
+						canAdminister={loaded.connections.canAdminister}
+					/>
 				</div>
 			</div>
 		</Page>

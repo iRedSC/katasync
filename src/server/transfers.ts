@@ -18,6 +18,11 @@ import {
 	setShelfTarget,
 } from "#/inventory/refill";
 import {
+	deliveriesOf,
+	receiveTransfer,
+	undoTransferReceipt,
+} from "#/inventory/transfer-deliveries";
+import {
 	createDraftWith,
 	createTransfer,
 	deleteTransfer,
@@ -94,9 +99,23 @@ export const listTransfers = createServerFn({ method: "GET" }).handler(
 				.orderBy(locations.kind, locations.name),
 			pair ? refillSuggestions(db, pair) : Promise.resolve([]),
 		]);
+		const deliveries = await deliveriesOf(
+			db,
+			sent.map((t) => t.id),
+		);
 		return {
 			drafts,
-			sent,
+			sent: sent.map((t) => {
+				const d = deliveries.get(t.id);
+				return {
+					...t,
+					delivery: d?.kind ?? "completed",
+					inTransit:
+						d?.kind === "in_transit"
+							? d.lines.reduce((n, l) => n + l.inTransit, 0)
+							: 0,
+				};
+			}),
 			places,
 			refill: {
 				possible: pair !== null,
@@ -144,7 +163,7 @@ export const getTransfer = createServerFn({ method: "GET" })
 			.where(eq(transferLines.transferId, t.id))
 			.orderBy(products.sku);
 		const ids = lines.map((l) => l.productId);
-		const [levels, targets, suggestions] = await Promise.all([
+		const [levels, targets, suggestions, deliveries] = await Promise.all([
 			ids.length === 0
 				? []
 				: db
@@ -171,12 +190,14 @@ export const getTransfer = createServerFn({ method: "GET" })
 							),
 						),
 			t.status === "draft" ? refillSuggestions(db, t) : [],
+			deliveriesOf(db, [t.id]),
 		]);
 		const at = (productId: number, locationId: number) =>
 			levels.find(
 				(l) => l.productId === productId && l.locationId === locationId,
 			)?.onHand ?? 0;
 		return {
+			delivery: deliveries.get(t.id) ?? { kind: "completed" as const },
 			transfer: t,
 			lines: lines.map((l) => ({
 				...l,
@@ -255,6 +276,38 @@ export const undoTransferSend = createServerFn({ method: "POST" })
 	.handler(async ({ data }) =>
 		unsendTransfer(getDb(), data.id, { discard: data.discard }),
 	);
+
+export const receiveTransferNow = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			id: "number.integer > 0",
+			receiptKey: "string > 0",
+			"lines?": type({
+				productId: "number.integer > 0",
+				quantity: "number.integer >= 0",
+			}).array(),
+		}),
+	)
+	.handler(async ({ data }) => {
+		const { delivery, ...result } = await receiveTransfer(getDb(), {
+			transferId: data.id,
+			receiptKey: data.receiptKey,
+			lines: data.lines,
+		});
+		return { ...result, kind: delivery.kind };
+	});
+
+export const undoTransferArrival = createServerFn({ method: "POST" })
+	.validator(
+		type({ id: "number.integer > 0", receiptId: "number.integer > 0" }),
+	)
+	.handler(async ({ data }) => {
+		const delivery = await undoTransferReceipt(getDb(), {
+			transferId: data.id,
+			receiptId: data.receiptId,
+		});
+		return { kind: delivery.kind };
+	});
 
 // One product moved now from the product page.
 export const recordTransfer = createServerFn({ method: "POST" })

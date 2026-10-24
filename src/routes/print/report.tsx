@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
+import { SavedPrint } from "#/components/report-page/saved-print";
 import { formatCount, formatMoney } from "#/lib/format";
 import { placeName, taxName } from "#/lib/places";
 import { cn } from "#/lib/utils";
@@ -26,26 +27,54 @@ import {
 	periodText,
 	taxedElsewhere,
 } from "#/orders/sales-report";
-import { getSalesReport } from "#/server/reports";
+import { getReportArtifact, getSalesReport } from "#/server/reports";
 
 // The month's sales and sales tax on one or two letter pages, for the
 // accountant: what needs a look first, the totals, a row per channel, and
 // the tax, owed and not. Rows of zeros are left out. Same numbers as the
 // Reports tab.
 export const Route = createFileRoute("/print/report")({
-	validateSearch: (search: Record<string, unknown>): { period?: string } => {
+	validateSearch: (
+		search: Record<string, unknown>,
+	): { period?: string; snapshot?: number } => {
 		const period = String(search.period ?? "");
-		return parsePeriod(period) ? { period } : {};
+		const snapshot = Number(search.snapshot);
+		return {
+			...(parsePeriod(period) ? { period } : {}),
+			...(Number.isInteger(snapshot) && snapshot > 0 ? { snapshot } : {}),
+		};
 	},
 	loaderDeps: ({ search }) => ({
 		period: search.period ?? periodText(lastMonth()),
+		snapshot: search.snapshot,
 	}),
-	loader: ({ deps }) => getSalesReport({ data: { period: deps.period } }),
+	loader: async ({ deps }) =>
+		deps.snapshot
+			? {
+					kind: "saved" as const,
+					file: await getReportArtifact({
+						data: { snapshotId: deps.snapshot, name: "report.html" },
+					}),
+				}
+			: {
+					kind: "live" as const,
+					report: await getSalesReport({ data: { period: deps.period } }),
+				},
 	head: () => ({ meta: [{ title: "Sales and sales tax report" }] }),
-	component: PrintReport,
+	component: PrintPage,
 });
 
 type Data = Awaited<ReturnType<typeof getSalesReport>>;
+
+function PrintPage() {
+	const loaded = Route.useLoaderData();
+	return loaded.kind === "saved" ? (
+		<SavedPrint file={loaded.file} />
+	) : (
+		<PrintReport d={loaded.report} />
+	);
+}
+
 type Source = ChannelRow["source"];
 
 // Columns in a fixed order, so every report reads the same way.
@@ -76,8 +105,7 @@ const CHIPS: Record<Source, ReactNode> = Object.fromEntries(
 const sum = <T,>(rows: T[], get: (r: T) => number) =>
 	rows.reduce((s, r) => s + get(r), 0);
 
-function PrintReport() {
-	const d = Route.useLoaderData();
+function PrintReport({ d }: { d: Data }) {
 	const { period: text } = Route.useSearch();
 	const period = parsePeriod(text ?? "") ?? lastMonth();
 	const home = d.business.homeState;
@@ -131,7 +159,7 @@ function PrintReport() {
 							<Section icon={Store} title="Sales by channel">
 								<Channels rows={d.channels} />
 							</Section>
-							<Section icon={Landmark} title="Sales tax you owe">
+							<Section icon={Landmark} title="Sales tax you collected">
 								<Owed rows={d.jurisdictions} />
 							</Section>
 						</>
@@ -226,9 +254,13 @@ function Totals({ channels }: { channels: ChannelRow[] }) {
 	// that was never ours.
 	const figures: [string, number, string][] = [
 		["Gross sales", sum(channels, (c) => c.grossSales), "border-info-icon"],
-		["Net", sum(channels, (c) => c.net), "border-success-icon"],
 		[
-			"Sales tax you owe",
+			"Proceeds before cost",
+			sum(channels, (c) => c.net),
+			"border-success-icon",
+		],
+		[
+			"Sales tax you collected",
 			sum(channels, (c) => c.ourTax),
 			"border-warning-icon",
 		],
@@ -380,7 +412,7 @@ function Channels({ rows }: { rows: ChannelRow[] }) {
 				"Fees",
 				"Labels",
 				"Postage",
-				"Net",
+				"Proceeds before cost",
 			]}
 			rows={ordered.map(({ s, name, r }) => ({
 				key: name,

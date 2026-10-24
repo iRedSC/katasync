@@ -387,8 +387,8 @@ export function QuickShip() {
 		}
 		const result = r.value;
 		if (result.failed) {
-			// A label still live blocks buying again; it has to be voided.
-			if (result.boxes.length > 0) {
+			// A label still live, or one maybe charged, blocks buying again.
+			if (result.boxes.length > 0 || result.unsure) {
 				setRates(null);
 				return setError(result.failed);
 			}

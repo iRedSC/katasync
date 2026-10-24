@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	productSuppliers,
@@ -16,7 +16,7 @@ import { discountRow, receiptUnitCost } from "#/purchasing/discount";
 import { closeIfComplete, reopen, shortLines } from "./closing";
 import { checkDiscounts, checkOff } from "./discount-checks";
 import { insertLine } from "./lines";
-import { lockOrder, PurchaseOrderError, poName } from "./lock";
+import { lockOrder, lockOrders, PurchaseOrderError, poName } from "./lock";
 import { landedTerms, receiptWorth, revaluePurchaseOrder } from "./revalue";
 
 // What arrived for one line, in the line's unit: 2 cases of 30 puts 60 on the
@@ -191,6 +191,20 @@ export async function receiveAll(db: Db, purchaseOrderId: number) {
 // if one can't be, none.
 export async function undoReceipts(db: Db, receiptIds: number[]) {
 	return db.transaction(async (tx) => {
+		if (receiptIds.length === 0) return;
+		const owners = await tx
+			.selectDistinct({ id: purchaseOrderLines.purchaseOrderId })
+			.from(purchaseOrderReceipts)
+			.innerJoin(
+				purchaseOrderLines,
+				eq(purchaseOrderLines.id, purchaseOrderReceipts.lineId),
+			)
+			.where(inArray(purchaseOrderReceipts.id, receiptIds));
+		await lockOrders(
+			tx,
+			owners.map((owner) => owner.id),
+			["sent", "closed"],
+		);
 		for (const id of [...receiptIds].reverse()) await undoReceipt(tx, id);
 	});
 }
@@ -301,7 +315,12 @@ export async function receiveExtra(
 	},
 ) {
 	return db.transaction(async (tx) => {
-		const po = await lockOrder(tx, input.purchaseOrderId, ["sent", "closed"]);
+		const po = await lockOrder(
+			tx,
+			input.purchaseOrderId,
+			["sent", "closed"],
+			[input.productId],
+		);
 		const { line } = await insertLine(tx, po, {
 			productId: input.productId,
 			quantity: 0,

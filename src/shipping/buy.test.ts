@@ -4,7 +4,10 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { type BoxPlan, type BuyOutside, buyDispatch } from "./buy";
+import { contentsKey } from "./contents";
 import { memoryLocker } from "./dispatch";
+import { LabelRefused } from "./label-attempt-state";
+import { linesToPack } from "./packed";
 
 let db: Db;
 let storeId: number;
@@ -31,8 +34,19 @@ async function addOrder(name: string, extra: Record<string, unknown> = {}) {
 			...extra,
 		})
 		.returning();
+	await db.insert(schema.orderLines).values({
+		orderId: row.id,
+		externalId: `${name}-line`,
+		sku: "WRENCH",
+		title: "Wrench",
+		quantity: 1,
+		unitPrice: 30,
+	});
 	return row.id;
 }
+
+const keyOf = async (orderIds: number[]) =>
+	contentsKey(await linesToPack(db, orderIds));
 
 // Shippo ids are unique, across every fake.
 let n = 0;
@@ -85,6 +99,8 @@ function fakes(overrides: Partial<BuyOutside> = {}): BuyOutside {
 		})),
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokBuy: vi.fn(),
+		tiktokUnits: vi.fn(),
+		ebayCheck: vi.fn(async () => {}),
 		isTest: () => false,
 		...overrides,
 	};
@@ -107,7 +123,7 @@ const ground = {
 	id: "browser-rate",
 	total: 100,
 };
-const buy = (
+const buy = async (
 	orderIds: number[],
 	boxes: BoxPlan[],
 	outside = fakes(),
@@ -115,7 +131,13 @@ const buy = (
 ) =>
 	buyDispatch(
 		db,
-		{ orderIds, contentsKey: "X", boxes, choice: ground, signature },
+		{
+			orderIds,
+			contentsKey: await keyOf(orderIds),
+			boxes,
+			choice: ground,
+			signature,
+		},
 		outside,
 	);
 
@@ -258,7 +280,7 @@ describe("buyDispatch", () => {
 				db,
 				{
 					orderIds: [a],
-					contentsKey: "X",
+					contentsKey: await keyOf([a]),
 					boxes: [box()],
 					choice: { carrier: "UPS", service: "ground", id: "x", total: 100 },
 					signature: false,
@@ -297,7 +319,7 @@ describe("buyDispatch", () => {
 				db,
 				{
 					orderIds: [a],
-					contentsKey: "X",
+					contentsKey: await keyOf([a]),
 					boxes: [box(), box()],
 					choice: { ...ground, total: 13 },
 					signature: false,
@@ -330,7 +352,7 @@ describe("buyDispatch", () => {
 			buyLabel: vi.fn(async () => {
 				n++;
 				calls++;
-				if (calls === 2) throw new Error("carrier down");
+				if (calls === 2) throw new LabelRefused("carrier down");
 				return {
 					id: `tx${n}`,
 					labelUrl: "u",
@@ -359,7 +381,7 @@ describe("buyDispatch", () => {
 			buyLabel: vi.fn(async () => {
 				n++;
 				calls++;
-				if (calls === 2) throw new Error("carrier down");
+				if (calls === 2) throw new LabelRefused("carrier down");
 				return {
 					id: `tx${n}`,
 					labelUrl: "u",
@@ -381,7 +403,7 @@ describe("buyDispatch", () => {
 		const a = await addOrder("#1");
 		const outside = fakes({
 			buyLabel: vi.fn(async () => {
-				throw new Error("bad address");
+				throw new LabelRefused("bad address");
 			}),
 		});
 		await expect(buy([a], [box()], outside)).rejects.toThrow("bad address");

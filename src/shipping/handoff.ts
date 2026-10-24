@@ -1,5 +1,4 @@
 import { and, eq, getTableColumns, gt, isNotNull, isNull } from "drizzle-orm";
-import { ebayFulfill } from "#/channels/ebay";
 import {
 	shopifyCancelFulfillment,
 	shopifyFulfill,
@@ -10,17 +9,27 @@ import type { Db } from "#/db/client";
 import {
 	dispatches,
 	dispatchOrders,
-	orderLines,
+	type HandoffHold,
 	orders,
 	shipments,
 	stores,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
+import { consumeCommitments } from "#/inventory/commitments-consume";
+import {
+	assertFulfillmentRestorable,
+	restoreCommitments,
+} from "#/inventory/commitments-restore";
+import { deliver } from "./deliver";
+import { destinationOf } from "./destination";
 import { lockOnOwnConnection, type OrderLocker, ordersOf } from "./dispatch";
+import { ebayShip } from "./ebay-handoff";
+import { completeIfAllBought } from "./label-attempts";
+import { type Contents, contentsOf, Held, packedOf } from "./packed";
 import { assignOrderPins } from "./pins";
 import { nextRetry } from "./retry-window";
 import { refundLabel } from "./shippo";
-import { tiktokShipPackage } from "./tiktok";
-import { storefrontTrackingUrl } from "./tracking-link";
+import { tiktokOrderUnits, tiktokShipPackage } from "./tiktok";
 
 // The outside calls, passed in so tests can stand in for Shopify, eBay, and
 // Shippo.
@@ -30,9 +39,10 @@ export type Outside = {
 	shopifyCancel: typeof shopifyCancelFulfillment;
 	shopifySaveTracking: typeof shopifySaveShippoTracking;
 	shopifyRemoveTracking: typeof shopifyRemoveShippoTracking;
-	ebayFulfill: typeof ebayFulfill;
+	ebayShip: typeof ebayShip;
 	refund: typeof refundLabel;
 	tiktokShip: typeof tiktokShipPackage;
+	tiktokUnits: typeof tiktokOrderUnits;
 };
 
 export const live: Outside = {
@@ -41,9 +51,10 @@ export const live: Outside = {
 	shopifyCancel: shopifyCancelFulfillment,
 	shopifySaveTracking: shopifySaveShippoTracking,
 	shopifyRemoveTracking: shopifyRemoveShippoTracking,
-	ebayFulfill,
+	ebayShip,
 	refund: refundLabel,
 	tiktokShip: tiktokShipPackage,
+	tiktokUnits: tiktokOrderUnits,
 };
 
 // The channels katasync sends tracking to, by the name people use.
@@ -78,6 +89,9 @@ async function load(db: Db, dispatchId: number) {
 				fulfillmentStatus: orders.fulfillmentStatus,
 				cancelledAt: orders.cancelledAt,
 				financialStatus: orders.financialStatus,
+				salesChannel: orders.salesChannel,
+				marketplaceOrderId: orders.marketplaceOrderId,
+				shipCountry: orders.shipCountry,
 			},
 			channel: stores.channel,
 		})
@@ -115,7 +129,7 @@ export async function sendTracking(
 			if (liveBoxes.length === 0) throw new Error("This label was voided");
 			// Telling a marketplace it shipped with only some of its boxes
 			// would be wrong; such a shipment can only be voided.
-			if (!dispatch.boughtAt) {
+			if (!dispatch.boughtAt && !(await completeIfAllBought(db, dispatchId))) {
 				throw new Error(
 					"Not every box in this shipment was bought. Void it and ship again.",
 				);
@@ -125,9 +139,10 @@ export async function sendTracking(
 					"Some labels in this shipment were voided. Void the rest and ship again.",
 				);
 			}
+			const contents = await contentsOf(db, dispatchId);
 			const results: (Handoff & { newly: boolean })[] = [];
 			for (const member of members) {
-				const result = await tell(db, member, liveBoxes, outside);
+				const result = await tell(db, member, liveBoxes, contents, outside);
 				// With several orders, each message says which one it's about.
 				results.push(
 					members.length > 1
@@ -149,18 +164,26 @@ export async function sendTracking(
 	};
 }
 
-// Tells one order's marketplace.
+// Tells one order's marketplace, once the marketplace itself shows exactly
+// what was packed still to ship (see deliver.ts). A dispatch bought before
+// contents were kept, a label that doesn't fit where the order was sold, or
+// any mismatch is held for a person instead.
 async function tell(
 	db: Db,
 	member: Member,
 	boxes: Box[],
+	contents: Contents,
 	outside: Outside,
 ): Promise<Handoff & { newly: boolean }> {
 	const { order, channel, handoff } = member;
-	// A TikTok label is TikTok's own; what's left is telling TikTok the box
-	// is ready for pickup.
-	const to = boxes[0].provider === "tiktok" ? "tiktok" : channel;
-	const name = trackingChannels[to] ?? to;
+	const to = destinationOf(
+		{ ...order, channel },
+		boxes.map((b) => b.provider),
+	);
+	const name =
+		to.kind === "hold"
+			? (trackingChannels[channel] ?? channel)
+			: trackingChannels[to.kind];
 	const done = (sent: boolean, message: string, newly = false) => ({
 		sent,
 		message,
@@ -186,44 +209,87 @@ async function tell(
 	if (boxes.some((b) => b.test)) {
 		return done(false, `Test label, so ${name} wasn't told`);
 	}
-	if (!(to in trackingChannels)) {
-		return done(false, `${name} orders are shipped on ${name}`);
+	const hold = async (held: HandoffHold, why: string) => {
+		await db
+			.update(dispatchOrders)
+			.set({ channelError: why, handoffHold: held, channelRetryAt: null })
+			.where(sameMember(member));
+		return done(false, `Not sent to ${name}: ${why}`);
+	};
+	if (contents.kind === "unknown") {
+		return hold(
+			{ kind: "unknownContents" },
+			`bought before katasync kept what was packed, so it can't check the box against the order. Tell ${name} by hand, or void and ship again`,
+		);
 	}
+	if (to.kind === "hold")
+		return hold({ kind: "unmappable", why: to.why }, to.why);
+	const packed = packedOf(contents.lines, order.id);
+	const commitmentLines = packed.flatMap((line) =>
+		line.orderLineId == null
+			? []
+			: [{ orderLineId: line.orderLineId, quantity: line.quantity }],
+	);
+	if (
+		commitmentLines.length !== packed.length &&
+		(await readQuantityMode(db, "none")) === "committed"
+	)
+		return hold(
+			{
+				kind: "unmappable",
+				why: "This dispatch has no frozen inventory line identity",
+			},
+			"Void and repack this dispatch before shipping reserved stock",
+		);
 
-	let fulfillmentId: string | null;
+	let phase: "delivery" | "recording" = "delivery";
 	try {
-		if (to === "tiktok") {
-			// TikTok has its own label's tracking already; katasync just
-			// records it.
-			fulfillmentId = null;
-			for (const box of boxes) {
-				const shipped = await outside.tiktokShip(box.externalId);
-				fulfillmentId ??= shipped.id;
-				if (shipped.trackingNumber && !box.trackingNumber) {
-					await db
-						.update(shipments)
-						.set({ trackingNumber: shipped.trackingNumber })
-						.where(eq(shipments.id, box.id));
-				}
-			}
-		} else if (boxes.some((b) => !b.trackingNumber)) {
-			throw new Error("The label has no tracking number");
-		} else if (channel === "shopify") {
-			const storefrontUrl = await storefrontTrackingUrl(order.externalId);
-			fulfillmentId = await outside.shopifyFulfill(order.externalId, {
-				company: boxes[0].carrier,
-				boxes: boxes.map((b) => ({
-					number: b.trackingNumber as string,
-					url: storefrontUrl ?? b.trackingUrl,
-				})),
+		const delivered = await deliver(
+			db,
+			{ to, order, boxes, packed: packedOf(contents.lines, order.id) },
+			outside,
+		);
+		phase = "recording";
+		// Recorded together, so a retry never finds it sent while the order is
+		// still on To ship.
+		await db.transaction(async (tx) => {
+			if (
+				(await readQuantityMode(tx)) === "committed" &&
+				commitmentLines.length !== packed.length
+			)
+				throw new Error("The dispatch has no frozen inventory line identity");
+			await consumeCommitments(tx, {
+				orderId: order.id,
+				lines: commitmentLines,
+				fulfillmentKey: `dispatch:${handoff.dispatchId}:order:${order.id}`,
 			});
-		} else {
-			fulfillmentId = await tellEbay(db, order, boxes, outside);
-		}
+			await tx
+				.update(dispatchOrders)
+				.set({
+					channelSentAt: new Date(),
+					channelFulfillmentId: delivered.fulfillmentId,
+					channelError: null,
+					channelRetryAt: null,
+					handoffHold: null,
+				})
+				.where(sameMember(member));
+			// Shipped now, not on the next sync: off To ship unless the
+			// marketplace still has more of it to ship.
+			await tx
+				.update(orders)
+				.set({
+					fulfillmentStatus:
+						delivered.remaining > 0 ? "PARTIALLY_FULFILLED" : "FULFILLED",
+				})
+				.where(eq(orders.id, order.id));
+		});
 	} catch (err) {
-		const why = err instanceof Error ? err.message : String(err);
-		// Tried again on its own (src/shipping/retry.ts) until ten minutes
-		// after the first refusal.
+		const detail = err instanceof Error ? err.message : String(err);
+		if (err instanceof Held) return hold(err.hold, detail);
+		const why =
+			phase === "recording"
+				? `Marketplace accepted tracking; inventory recording failed: ${detail}`
+				: detail;
 		const now = new Date();
 		const firstFailedAt = handoff.channelFirstFailedAt ?? now;
 		const attempts = handoff.channelAttempts + 1;
@@ -235,65 +301,23 @@ async function tell(
 				channelFirstFailedAt: firstFailedAt,
 				channelAttempts: attempts,
 				channelRetryAt: retryAt,
+				handoffHold: null,
 			})
 			.where(sameMember(member));
 		return done(
 			false,
-			`Tracking didn't reach ${name}: ${why}${retryAt ? ". Retrying on its own; Diagnostics shows it if it gives up" : ""}`,
+			`${phase === "recording" ? "Dispatch not recorded" : `Tracking didn't reach ${name}`}: ${why}${retryAt ? ". Retrying on its own; Diagnostics shows it if it gives up" : ""}`,
 		);
 	}
-	// Recorded together, so a retry never finds it sent while the order is
-	// still on To ship.
-	await db.transaction(async (tx) => {
-		await tx
-			.update(dispatchOrders)
-			.set({
-				channelSentAt: new Date(),
-				channelFulfillmentId: fulfillmentId,
-				channelError: null,
-				channelRetryAt: null,
-			})
-			.where(sameMember(member));
-		// Shipped now, not on the next sync: off To ship.
-		await tx
-			.update(orders)
-			.set({ fulfillmentStatus: "FULFILLED" })
-			.where(eq(orders.id, order.id));
-	});
 	return done(
 		true,
-		to === "tiktok"
+		to.kind === "tiktok"
 			? "Ready for pickup on TikTok; TikTok tells the customer"
-			: channel === "ebay" && boxes.length > 1
+			: to.kind === "ebay" && boxes.length > 1
 				? `Tracking sent to eBay; eBay takes one number, so the customer sees box 1's (${boxes[0].trackingNumber})`
 				: `Tracking sent to ${name}; the customer is emailed`,
 		true,
 	);
-}
-
-// eBay allows one tracking number per line item, and a fulfillment can't be
-// changed once made. So a multi-box order sends every line once, with the
-// first box's tracking; the other boxes' numbers stay in katasync.
-async function tellEbay(
-	db: Db,
-	order: Member["order"],
-	boxes: Box[],
-	outside: Outside,
-) {
-	const lines = await db
-		.select({
-			lineItemId: orderLines.externalId,
-			quantity: orderLines.quantity,
-		})
-		.from(orderLines)
-		.where(eq(orderLines.orderId, order.id));
-	const [first] = boxes;
-	return outside.ebayFulfill(order.externalId, {
-		lineItems: lines.filter((l) => l.quantity > 0),
-		carrier: first.carrier,
-		trackingNumber: first.trackingNumber as string,
-		shippedAt: first.createdAt,
-	});
 }
 
 const sameMember = (member: Member) =>
@@ -329,6 +353,12 @@ export async function voidDispatch(
 			const { boxes, members } = await load(db, dispatchId);
 			const liveBoxes = boxes.filter((b) => !b.voidedAt);
 			const pending = members.filter((m) => !m.handoff.reversedAt);
+			for (const member of pending) {
+				await assertFulfillmentRestorable(db, {
+					orderId: member.order.id,
+					fulfillmentKey: `dispatch:${dispatchId}:order:${member.order.id}`,
+				});
+			}
 			if (liveBoxes.length === 0 && pending.length === 0) {
 				throw new Error("This label is already voided");
 			}
@@ -394,6 +424,7 @@ export async function voidDispatch(
 				// One live dispatch per order, so voiding it means nothing has
 				// shipped. Recorded together with the order going back.
 				await db.transaction(async (tx) => {
+					await readQuantityMode(tx);
 					const [newer] = await tx
 						.select({ dispatchId: dispatchOrders.dispatchId })
 						.from(dispatchOrders)
@@ -416,6 +447,11 @@ export async function voidDispatch(
 							.set({ fulfillmentStatus: "UNFULFILLED" })
 							.where(eq(orders.id, order.id));
 					}
+					if (handoff.channelSentAt !== null && !newer)
+						await restoreCommitments(tx, {
+							orderId: order.id,
+							fulfillmentKey: `dispatch:${dispatchId}:order:${order.id}`,
+						});
 					await tx
 						.update(dispatchOrders)
 						.set({ reversedAt: new Date() })

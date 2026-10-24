@@ -34,6 +34,12 @@ export async function signIn() {
 	}
 }
 
+export async function setupLinkFor(
+	setupToken: string,
+): Promise<{ staffName: string }> {
+	return post("register/link", { setupToken });
+}
+
 export async function addDevice(setupToken: string, name: string) {
 	try {
 		const optionsJSON = await post("register/options", { setupToken });

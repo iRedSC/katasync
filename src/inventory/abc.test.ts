@@ -275,8 +275,6 @@ describe("with a database", () => {
 		}
 		const daysAhead = (n: number) => daysAgo(-n);
 
-		// A PO is due its supplier's lead time after it was sent. The expected
-		// date it carries is only a copy of that, so it isn't read.
 		test("ignores a PO that arrives after the shelf runs out", async () => {
 			await fastWithSentPo({ expectedAt: null }, 15);
 			expect(await aItemsAtRisk(db, now)).toMatchObject([
@@ -297,8 +295,13 @@ describe("with a database", () => {
 			]);
 		});
 
-		test("a stale expected date doesn't override the lead time", async () => {
+		test("a current promised date overrides the supplier's lead time", async () => {
 			await fastWithSentPo({ expectedAt: daysAhead(3) }, 30);
+			expect(await aItemsAtRisk(db, now)).toEqual([]);
+		});
+
+		test("a past promised date needs a new date instead of inventing a lead-time arrival", async () => {
+			await fastWithSentPo({ expectedAt: daysAgo(1) }, 3);
 			expect(await aItemsAtRisk(db, now)).toMatchObject([
 				{ sku: "FAST", daysLeft: 5 },
 			]);

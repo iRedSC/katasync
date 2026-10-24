@@ -78,6 +78,9 @@ export async function orderForClaude(db: Db, id: number) {
 			invoicedOn: i.invoicedOn,
 			dueOn: i.dueOn,
 			total: i.total,
+			voided: i.voided,
+			payment: i.payment,
+			match: i.match,
 		})),
 		// What should change, waiting on staff (resolve_po_flag).
 		flags: flags.map((f) => ({

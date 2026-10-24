@@ -1,5 +1,6 @@
 import { createMiddleware, createStart } from "@tanstack/react-start";
 import { waitUntil } from "@vercel/functions";
+import { requestOperation } from "#/audit/request-operation";
 
 // Everything needs a signed-in device except the sign-in pages (see
 // src/auth/guard.ts). The dev server skips this: passkeys are tied to the
@@ -7,23 +8,29 @@ import { waitUntil } from "@vercel/functions";
 //
 // Cross-site form posts are covered by the session cookie being SameSite=Lax:
 // without the cookie a request is refused.
+//
+// Each request then runs as whoever it was admitted as (src/audit/context.ts),
+// so the audit log credits its changes to them.
 const signedIn = createMiddleware().server(async ({ request, next }) => {
-	if (import.meta.env.DEV) return next();
-	const [{ guard }, { getDb }] = await Promise.all([
+	const [{ admit }, { getDb }, { runAs }, { systemActor }] = await Promise.all([
 		import("#/auth/guard"),
 		import("#/db/client"),
+		import("#/audit/context"),
+		import("#/auth/actor"),
 	]);
-	const renewed: { cookie?: string } = {};
-	const refused = await guard(request, getDb(), (setCookie) => {
-		renewed.cookie = setCookie;
-	});
-	if (refused) return refused;
-	const result = await next();
-	if (!renewed.cookie) return result;
+	const operation = requestOperation(request);
+	if (import.meta.env.DEV)
+		return runAs(systemActor("dev-server"), operation, () => next());
+	const admission = await admit(request, getDb());
+	if (admission.kind === "refused") return admission.response;
+	const actor = admission.actor;
+	const result = await (actor ? runAs(actor, operation, () => next()) : next());
+	const renewed = admission.kind === "signed-in" ? admission.setCookie : null;
+	if (!renewed) return result;
 	// The session was renewed, so the cookie's lifetime moves with it. The
 	// headers of a response from elsewhere may be read-only, so copy it.
 	const headers = new Headers(result.response.headers);
-	headers.append("Set-Cookie", renewed.cookie);
+	headers.append("Set-Cookie", renewed);
 	return {
 		...result,
 		response: new Response(result.response.body, {
@@ -50,12 +57,17 @@ const pushesStock = createMiddleware().server(async ({ request, next }) => {
 	const result = await next();
 	waitUntil(
 		(async () => {
-			const [{ pushMoved }, { getDb }] = await Promise.all([
-				import("#/stock-push/on-change"),
-				import("#/db/client"),
-			]);
-			for (const p of await pushMoved(getDb(), started))
-				for (const problem of p.problems) console.warn(problem);
+			const [{ pushMoved }, { getDb }, { runAs }, { systemActor }] =
+				await Promise.all([
+					import("#/stock-push/on-change"),
+					import("#/db/client"),
+					import("#/audit/context"),
+					import("#/auth/actor"),
+				]);
+			await runAs(systemActor("stock-push"), "stock-push", async () => {
+				for (const p of await pushMoved(getDb(), started))
+					for (const problem of p.problems) console.warn(problem);
+			});
 		})().catch((error) => console.error("Stock push after a request:", error)),
 	);
 	return result;

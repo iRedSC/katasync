@@ -15,7 +15,7 @@ export function Summary({ items, cut }: { items: Item[]; cut: boolean }) {
 	const revenue = sum((i) => i.revenue);
 	const losses = items.filter((i) => i.profit < 0);
 	const stats: [string, string, boolean?][] = [
-		["Profit", formatMoney(profit), profit < 0],
+		["Contribution", formatMoney(profit), profit < 0],
 		["Margin", percent(margin({ profit, revenue }))],
 		["Sales", formatMoney(revenue)],
 		["Items sold", formatCount(sum((i) => i.quantity))],

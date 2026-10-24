@@ -1,9 +1,13 @@
-// Prints a one-time link for adding a device: the first one, or any time
-// every device has lost its passkey. Running it needs the database, which is
+// Prints a one-time link that adds a device for a named owner: the first
+// owner, or one who lost every device. Someone with that name is made an
+// active owner if they aren't one. Running it needs the database, which is
 // what makes it safe.
 //
-//   pnpm auth:setup-link
-import { createSetupLink } from "#/auth/sessions";
+//   pnpm auth:setup-link "Sam Rivera"
+
+import { audited } from "#/audit/audited-db";
+import { runAs } from "#/audit/context";
+import { recoverOwner } from "#/auth/staff";
 import { getDb } from "#/db/client";
 
 try {
@@ -15,9 +19,20 @@ try {
 const origin = process.env.AUTH_ORIGIN;
 if (!origin)
 	throw new Error("Set AUTH_ORIGIN, e.g. https://katasync.example.com");
+const name = process.argv.slice(2).join(" ");
+if (!name.trim())
+	throw new Error('Give the owner\'s name: pnpm auth:setup-link "Sam Rivera"');
 const minutes = 30;
-const token = await createSetupLink(getDb(), minutes);
+const actor = { kind: "system", name: "recovery-script" } as const;
+const made = await runAs(actor, "auth:setup-link", () =>
+	recoverOwner(audited(getDb()), actor, name, { minutes }),
+);
+const what = {
+	created: `Made ${name} an owner.`,
+	reinstated: `${name} is an active owner again.`,
+	unchanged: `${name} is already an owner.`,
+}[made.outcome];
 console.log(
-	`Open this on the device within ${minutes} minutes:\n\n${origin}/setup?token=${token}\n`,
+	`${what} Open this on their device within ${minutes} minutes:\n\n${origin}/setup?token=${made.token}\n`,
 );
 process.exit(0);

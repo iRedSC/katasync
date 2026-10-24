@@ -1,4 +1,5 @@
 import { and, desc, eq, isNotNull, isNull, max, sql } from "drizzle-orm";
+import { backlogSummary } from "#/channels/webhook-inbox";
 import type { Db } from "#/db/client";
 import {
 	dispatches,
@@ -7,11 +8,13 @@ import {
 	orderCostChecks,
 	orderLines,
 	orders,
+	products,
 	shipments,
 	stores,
 	syncIssues,
 	syncRuns,
 } from "#/db/schema";
+import { unsettledStock } from "#/orders/reconcile-stock";
 import { emailConfigured } from "#/purchasing/email";
 import { INBOX_ENV, inboxAddress } from "#/purchasing/inbox/graph";
 import { channelEnv, missingEnv, type SyncedChannel } from "./checks";
@@ -27,6 +30,7 @@ import {
 // Everything Diagnostics shows, read in one go. Server only.
 
 const RECENT_RUNS = 15;
+const UNSETTLED_ROWS = 500;
 
 // Dismissed problems are still listed, marked `dismissed`.
 export async function diagnosticsOverview(db: Db, now = new Date()) {
@@ -43,6 +47,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 		unmapped,
 		claude,
 		charges,
+		webhooks,
 	] = await Promise.all([
 		db.select({ lastStartedAt: max(syncRuns.startedAt) }).from(syncRuns),
 		failedHandoffs(db, isDismissed),
@@ -59,6 +64,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 				rows.map((r) => ({ ...r, arguments: JSON.stringify(r.arguments) })),
 			),
 		chargeFailures(db, isDismissed),
+		backlogSummary(db),
 	]);
 	const shippoKey = process.env.SHIPPO_API_KEY;
 	return {
@@ -72,6 +78,7 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 		unmapped,
 		claude,
 		charges,
+		webhooks,
 		services: {
 			shippo: {
 				configured: Boolean(shippoKey),
@@ -100,7 +107,7 @@ async function channelOverview(
 	isDismissed: IsDismissed,
 ) {
 	const missing = missingEnv(channelEnv[channel]);
-	const [runs, [lastSuccess]] = await Promise.all([
+	const [runs, [lastSuccess], unsettled] = await Promise.all([
 		db
 			.select()
 			.from(syncRuns)
@@ -119,6 +126,7 @@ async function channelOverview(
 			)
 			.orderBy(desc(syncRuns.startedAt))
 			.limit(1),
+		unsettledStockRows(db, channel),
 	]);
 	const status = channelHealth({
 		configured: missing.length === 0,
@@ -147,8 +155,22 @@ async function channelOverview(
 				unmatched: r.message.startsWith("no product for "),
 			}))
 		: [];
+	const stock = unsettled.map((r) => {
+		const message = `Stock not taken for ${r.sku}`;
+		return {
+			reference: r.orderName,
+			message,
+			dismissed: isDismissed(
+				dismissalKey.issue(channel, r.orderName, message),
+				message,
+			),
+			unmatched: false,
+		};
+	});
 	const issues = [false, true].flatMap((dismissed) =>
-		groupIssues(rows.filter((r) => r.dismissed === dismissed)).map((g) => ({
+		groupIssues(
+			[...rows, ...stock].filter((r) => r.dismissed === dismissed),
+		).map((g) => ({
 			...g,
 			dismissed,
 			unmatched: g.message.startsWith("no product for "),
@@ -160,8 +182,13 @@ async function channelOverview(
 	const openIssues =
 		(latest?.problems ?? 0) -
 		rows.filter((r) => r.dismissed || r.unmatched).length;
+	const clean = openIssues <= 0 && stock.every((r) => r.dismissed);
 	const health =
-		status.health === "degraded" && openIssues <= 0 ? "healthy" : status.health;
+		status.health === "degraded" && clean
+			? "healthy"
+			: status.health === "healthy" && !clean
+				? "degraded"
+				: status.health;
 	const hintSource =
 		status.latestError ??
 		(missing.length > 0 ? `Set ${missing.join(", ")}` : null);
@@ -337,6 +364,19 @@ function unmappedSkus(db: Db) {
 		.limit(50);
 }
 
+// Lines that should have taken stock and still haven't (reconcile-stock.ts).
+// Read from the lines, not the latest run, so a newer clean run doesn't hide them.
+function unsettledStockRows(db: Db, channel: SyncedChannel) {
+	return db
+		.selectDistinct({ orderName: orders.name, sku: products.sku })
+		.from(orderLines)
+		.innerJoin(orders, eq(orders.id, orderLines.orderId))
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.innerJoin(products, eq(products.id, orderLines.productId))
+		.where(and(eq(stores.channel, channel), unsettledStock))
+		.limit(UNSETTLED_ROWS);
+}
+
 // For the nav badge: channels failing or stale, the worker being down,
 // tracking that didn't reach a marketplace, and charges that couldn't be
 // read. Unmapped SKUs have their own home
@@ -354,6 +394,7 @@ export async function diagnosticsAttention(db: Db, now = new Date()) {
 		stuck.length +
 		open(o.handoffs) +
 		open(o.storefrontTracking) +
-		open(o.charges)
+		open(o.charges) +
+		(o.webhooks.failing > 0 || (o.webhooks.oldestAgeSeconds ?? 0) > 300 ? 1 : 0)
 	);
 }

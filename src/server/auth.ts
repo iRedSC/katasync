@@ -1,7 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getCookie, getRequest } from "@tanstack/react-start/server";
+import { getRequest } from "@tanstack/react-start/server";
 import { type } from "arktype";
-import { asc, eq } from "drizzle-orm";
+import { requireActor } from "#/audit/context";
+import { type Actor, mayAdminister } from "#/auth/actor";
+import {
+	assignDevice as assign,
+	listDevices as devices,
+	removeDevice as remove,
+	renameDevice as rename,
+} from "#/auth/devices";
 import {
 	answerAuthorize,
 	checkAuthorize,
@@ -10,85 +17,86 @@ import {
 	listConnections as oauthConnections,
 	originOf,
 } from "#/auth/oauth";
-import {
-	AuthError,
-	createSetupLink,
-	SESSION_COOKIE,
-	SETUP_LINK_MINUTES,
-	sessionFor,
-} from "#/auth/sessions";
-import { passkeyName } from "#/auth/webauthn";
+import { listStaff } from "#/auth/staff";
 import { getDb } from "#/db/client";
-import { passkeys } from "#/db/schema";
+import { staff } from "#/db/identity-schema";
 
-// The devices that can sign in, for Settings. Only reachable signed in.
+// Who's signed in, the staff list, and the devices that can sign in, for
+// Settings. Owners see and change everything; anyone else sees themselves.
+
+const whoIs = (actor: Actor) => {
+	switch (actor.kind) {
+		case "staff":
+			return {
+				kind: "staff" as const,
+				staffId: actor.staffId,
+				name: actor.name,
+				role: actor.role,
+			};
+		case "legacy":
+			return { kind: "unassigned" as const, name: actor.via.name };
+		case "system":
+			return { kind: "system" as const, name: actor.name };
+	}
+};
 
 export const listDevices = createServerFn({ method: "GET" }).handler(
 	async () => {
 		const db = getDb();
-		const token = getCookie(SESSION_COOKIE);
-		const session = token ? await sessionFor(db, token) : null;
-		const rows = await db
-			.select({
-				id: passkeys.id,
-				name: passkeys.name,
-				createdAt: passkeys.createdAt,
-				lastUsedAt: passkeys.lastUsedAt,
-			})
-			.from(passkeys)
-			.orderBy(asc(passkeys.createdAt));
-		return rows.map((p) => ({ ...p, current: p.id === session?.passkeyId }));
+		const actor = requireActor();
+		const owner = mayAdminister(actor);
+		const currentPasskey =
+			actor.kind !== "system" && actor.via.kind === "device"
+				? actor.via.passkeyId
+				: null;
+		const [allDevices, people, [anyOwner]] = await Promise.all([
+			devices(db),
+			owner ? listStaff(db) : Promise.resolve([]),
+			db.select({ id: staff.id }).from(staff).limit(1),
+		]);
+		const mine = (d: (typeof allDevices)[number]) =>
+			d.id === currentPasskey ||
+			(actor.kind === "staff" && d.staffId === actor.staffId);
+		return {
+			me: whoIs(actor),
+			owner,
+			needsOwner: actor.kind === "legacy" && !anyOwner,
+			staff: people,
+			devices: allDevices
+				.filter((d) => owner || mine(d))
+				.map((d) => ({ ...d, current: d.id === currentPasskey })),
+		};
 	},
 );
 
 export const renameDevice = createServerFn({ method: "POST" })
 	.validator(type({ id: "string > 0", name: "string" }))
-	.handler(async ({ data }) => {
-		await getDb()
-			.update(passkeys)
-			.set({ name: passkeyName(data.name) })
-			.where(eq(passkeys.id, data.id));
-	});
+	.handler(async ({ data }) =>
+		rename(getDb(), requireActor(), data.id, data.name),
+	);
 
-// Removing a device's passkey also signs out every browser it signed in.
 export const removeDevice = createServerFn({ method: "POST" })
 	.validator(type({ id: "string > 0" }))
-	.handler(async ({ data }) => {
-		const removed = await getDb()
-			.delete(passkeys)
-			.where(eq(passkeys.id, data.id))
-			.returning();
-		if (removed.length === 0)
-			throw new AuthError("That device is already gone");
-	});
+	.handler(async ({ data }) => remove(getDb(), requireActor(), data.id));
 
-// A one-time link for adding a device, good for SETUP_LINK_MINUTES.
-export const createDeviceLink = createServerFn({ method: "POST" }).handler(
-	async () => {
-		const token = await createSetupLink(getDb());
-		const origin = process.env.AUTH_ORIGIN ?? new URL(getRequest().url).origin;
-		return {
-			url: `${origin}/setup?token=${token}`,
-			expiresAt: new Date(Date.now() + SETUP_LINK_MINUTES * 60_000),
-		};
-	},
-);
+export const assignDevice = createServerFn({ method: "POST" })
+	.validator(type({ id: "string > 0", staffId: "string.uuid" }))
+	.handler(async ({ data }) =>
+		assign(getDb(), requireActor(), data.id, data.staffId),
+	);
 
-// Apps connected to /mcp over OAuth (src/auth/oauth.ts), and the address to
-// connect them with.
 export const listConnections = createServerFn({ method: "GET" }).handler(
 	async () => ({
 		endpoint: endpoints(originOf(getRequest())).resource,
+		canAdminister: mayAdminister(requireActor()),
 		apps: await oauthConnections(getDb()),
 	}),
 );
 
 export const disconnectApp = createServerFn({ method: "POST" })
 	.validator(type({ id: "string.uuid" }))
-	.handler(async ({ data }) => disconnect(getDb(), data.id));
+	.handler(async ({ data }) => disconnect(getDb(), requireActor(), data.id));
 
-// The approval page. Both re-check the request from scratch, so what's
-// approved is what the app asked, not what the page was told.
 const authorizeParams = type({
 	"response_type?": "string",
 	"client_id?": "string",
@@ -102,7 +110,7 @@ const authorizeParams = type({
 export const checkAuthorization = createServerFn({ method: "GET" })
 	.validator(authorizeParams)
 	.handler(async ({ data }) =>
-		checkAuthorize(getDb(), data, originOf(getRequest())),
+		checkAuthorize(getDb(), requireActor(), data, originOf(getRequest())),
 	);
 
 export const answerAuthorization = createServerFn({ method: "POST" })
@@ -115,5 +123,11 @@ export const answerAuthorization = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) =>
-		answerAuthorize(getDb(), data.params, originOf(getRequest()), data.answer),
+		answerAuthorize(
+			getDb(),
+			requireActor(),
+			data.params,
+			originOf(getRequest()),
+			data.answer,
+		),
 	);

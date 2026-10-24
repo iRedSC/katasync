@@ -18,9 +18,11 @@ export const connectionsData = optimistic<App[]>("connections");
 export function ConnectionsCard({
 	endpoint,
 	apps,
+	canAdminister,
 }: {
 	endpoint: string;
 	apps: App[];
+	canAdminister: boolean;
 }) {
 	async function remove(a: App) {
 		if (
@@ -76,11 +78,13 @@ export function ConnectionsCard({
 						<Row
 							key={a.id}
 							actions={
-								<IconAction
-									icon={Trash2}
-									label="Disconnect"
-									onClick={() => remove(a)}
-								/>
+								canAdminister && (
+									<IconAction
+										icon={Trash2}
+										label="Disconnect"
+										onClick={() => remove(a)}
+									/>
+								)
 							}
 						>
 							<div className="min-w-0 flex-1">

@@ -9,6 +9,7 @@ import {
 	refillSuggestions,
 	setShelfTarget,
 } from "./refill";
+import { receiveTransfer, undoTransferReceipt } from "./transfer-deliveries";
 import {
 	createTransfer,
 	moveNow,
@@ -132,18 +133,27 @@ describe("transfers", () => {
 
 		const { batchId } = await sendTransfer(db, id);
 		expect(await statusOf(id)).toBe("sent");
-		expect(await onHand(wrench, retail)).toBe(3);
+		expect(await onHand(wrench, retail)).toBe(0);
 		expect(await transferOfBatch(db, batchId)).toBe(id);
 		await expect(
 			setTransferLines(db, id, [{ productId: wrench, quantity: 1 }]),
 		).rejects.toThrow("Undo the send to change it");
+		const { receiptId } = await receiveTransfer(db, {
+			transferId: id,
+			receiptKey: "all",
+		});
+		expect(await onHand(wrench, retail)).toBe(3);
+		await expect(unsendTransfer(db, id)).rejects.toThrow(
+			"undo those receipts first",
+		);
+		await undoTransferReceipt(db, { transferId: id, receiptId });
 
 		await unsendTransfer(db, id);
 		expect(await statusOf(id)).toBe("draft");
 		expect(await onHand(wrench, retail)).toBe(0);
 		expect(await onHand(wrench, warehouse)).toBe(10);
-		// And it can go again.
 		await sendTransfer(db, id);
+		await receiveTransfer(db, { transferId: id, receiptKey: "again" });
 		expect(await onHand(wrench, retail)).toBe(3);
 	});
 
@@ -170,6 +180,7 @@ describe("transfers", () => {
 
 		await updateTransfer(db, id, { swap: true });
 		await sendTransfer(db, id);
+		await receiveTransfer(db, { transferId: id, receiptKey: "all" });
 		expect(await onHand(wrench, warehouse)).toBe(2);
 		expect(await onHand(wrench, retail)).toBe(0);
 
@@ -239,6 +250,15 @@ describe("refills", () => {
 		});
 		expect(await fillFromSuggestions(db, id)).toEqual({ filled: 2, none: [] });
 		await sendTransfer(db, id);
+		expect(
+			await refillSuggestions(db, {
+				fromLocationId: warehouse,
+				toLocationId: retail,
+			}),
+		).toEqual([
+			expect.objectContaining({ sku: "KNIFE", inTransit: 2, suggested: 0 }),
+		]);
+		await receiveTransfer(db, { transferId: id, receiptKey: "all" });
 		expect(await onHand(wrench, retail)).toBe(4);
 		expect(await onHand(knife, retail)).toBe(2);
 		expect(

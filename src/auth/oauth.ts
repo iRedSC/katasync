@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, gt, isNull, lt, notExists } from "drizzle-orm";
 import type { Db } from "#/db/client";
+import { oauthGrantStaff, staff } from "#/db/identity-schema";
 import {
 	oauthClients,
 	oauthCodes,
 	oauthGrants,
 	oauthTokens,
 } from "#/db/schema";
+import { type Actor, mayAdminister } from "./actor";
+import { assertOwner, ONLY_OWNERS } from "./authority";
 import { hashToken, newToken } from "./sessions";
 
 // OAuth 2.1 for /mcp, as the MCP spec asks: an app registers itself, someone
@@ -254,9 +257,11 @@ async function validate(
 
 export async function checkAuthorize(
 	db: Db,
+	by: Actor,
 	p: AuthorizeParams,
 	origin: string,
 ): Promise<AuthorizeCheck> {
+	if (!mayAdminister(by)) return { kind: "invalid", message: ONLY_OWNERS };
 	const v = await validate(db, p, origin);
 	if (v.kind !== "valid") return v;
 	return {
@@ -270,6 +275,7 @@ export async function checkAuthorize(
 // way, where to send the browser.
 export async function answerAuthorize(
 	db: Db,
+	by: Actor,
 	p: AuthorizeParams,
 	origin: string,
 	answer: { approve: true; canWrite: boolean } | { approve: false },
@@ -291,8 +297,10 @@ export async function answerAuthorize(
 				state,
 			}),
 		};
+	if (!mayAdminister(by)) return { kind: "invalid", message: ONLY_OWNERS };
 	const code = newToken();
 	await db.transaction(async (tx) => {
+		const approver = await assertOwner(tx, by);
 		// Kept past use until they expire, to catch a second try.
 		await tx.delete(oauthCodes).where(lt(oauthCodes.expiresAt, now));
 		const [grant] = await tx
@@ -303,6 +311,13 @@ export async function answerAuthorize(
 				createdAt: now,
 			})
 			.returning();
+		if (approver.kind === "staff")
+			await tx.insert(oauthGrantStaff).values({
+				grantId: grant.id,
+				staffId: approver.staffId,
+				passkeyId:
+					approver.via.kind === "device" ? approver.via.passkeyId : null,
+			});
 		await tx.insert(oauthCodes).values({
 			codeHash: hashToken(code),
 			grantId: grant.id,
@@ -495,13 +510,15 @@ export async function exchange(
 	);
 }
 
-// Who an access token from /mcp belongs to, or null. Notes when the
-// connection was last used, at most once an hour.
+// Who an access token from /mcp acts as, or null. A connection an owner
+// approved works only while that person is still an active owner; one from
+// before staff existed acts as an unassigned app. Notes when the connection
+// was last used, at most once an hour.
 export async function checkAccessToken(
 	db: Db,
 	token: string,
 	now = new Date(),
-) {
+): Promise<{ name: string; canWrite: boolean; actor: Actor } | null> {
 	if (!token.startsWith(PREFIX)) return null;
 	const [row] = await db
 		.select({
@@ -509,10 +526,16 @@ export async function checkAccessToken(
 			name: oauthClients.name,
 			canWrite: oauthGrants.canWrite,
 			lastUsedAt: oauthGrants.lastUsedAt,
+			boundTo: oauthGrantStaff.staffId,
+			staffName: staff.name,
+			role: staff.role,
+			status: staff.status,
 		})
 		.from(oauthTokens)
 		.innerJoin(oauthGrants, eq(oauthGrants.id, oauthTokens.grantId))
 		.innerJoin(oauthClients, eq(oauthClients.id, oauthGrants.clientId))
+		.leftJoin(oauthGrantStaff, eq(oauthGrantStaff.grantId, oauthGrants.id))
+		.leftJoin(staff, eq(staff.id, oauthGrantStaff.staffId))
 		.where(
 			and(
 				eq(oauthTokens.tokenHash, hashToken(token)),
@@ -521,16 +544,32 @@ export async function checkAccessToken(
 			),
 		);
 	if (!row) return null;
+	const via = { kind: "grant" as const, grantId: row.grantId, name: row.name };
+	let actor: Actor;
+	if (row.boundTo === null) actor = { kind: "legacy", via };
+	else if (
+		row.status === "active" &&
+		row.role === "owner" &&
+		row.staffName !== null
+	)
+		actor = {
+			kind: "staff",
+			staffId: row.boundTo,
+			name: row.staffName,
+			role: row.role,
+			via,
+		};
+	else return null;
 	if (!row.lastUsedAt || now.getTime() - row.lastUsedAt.getTime() > 3_600_000)
 		await db
 			.update(oauthGrants)
 			.set({ lastUsedAt: now })
 			.where(eq(oauthGrants.id, row.grantId));
-	return { name: row.name, canWrite: row.canWrite };
+	return { name: row.name, canWrite: row.canWrite, actor };
 }
 
-// The approved apps, for Settings. One that approved but never traded its
-// code still shows, so it can be removed.
+// The approved apps, for Settings, with who approved each. One that approved
+// but never traded its code still shows, so it can be removed.
 export function listConnections(db: Db) {
 	return db
 		.select({
@@ -539,13 +578,19 @@ export function listConnections(db: Db) {
 			canWrite: oauthGrants.canWrite,
 			createdAt: oauthGrants.createdAt,
 			lastUsedAt: oauthGrants.lastUsedAt,
+			approvedBy: staff.name,
 		})
 		.from(oauthGrants)
 		.innerJoin(oauthClients, eq(oauthClients.id, oauthGrants.clientId))
+		.leftJoin(oauthGrantStaff, eq(oauthGrantStaff.grantId, oauthGrants.id))
+		.leftJoin(staff, eq(staff.id, oauthGrantStaff.staffId))
 		.orderBy(desc(oauthGrants.createdAt));
 }
 
 // Its tokens stop working at once.
-export async function disconnect(db: Db, grantId: string) {
-	await db.delete(oauthGrants).where(eq(oauthGrants.id, grantId));
+export async function disconnect(db: Db, by: Actor, grantId: string) {
+	await db.transaction(async (tx) => {
+		await assertOwner(tx, by);
+		await tx.delete(oauthGrants).where(eq(oauthGrants.id, grantId));
+	});
 }

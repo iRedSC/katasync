@@ -1,84 +1,37 @@
-import { Check, Plus, TriangleAlert, X } from "lucide-react";
-import {
-	type ClipboardEvent,
-	type ReactNode,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
-import { toast } from "sonner";
+import { Check, Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Card } from "#/components/page";
-import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
 import { formatDay, formatMoney } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { explainDiscrepancy } from "#/purchasing/invoice-matching";
+import type { PurchaseOrderDetail } from "#/server/purchasing";
 import {
-	checkSupplierInvoice,
-	type InvoiceCheck,
-	type PurchaseOrderDetail,
-	recordSupplierInvoice,
-	removeSupplierInvoice,
-	saveSupplierSkus,
-} from "#/server/purchasing";
-import { middayOf, today } from "./days";
+	restoreSupplierInvoice,
+	voidSupplierInvoice,
+} from "#/server/purchasing/invoices";
+import { middayOf } from "./days";
+import { InvoiceForm } from "./invoice-form";
 import { poData } from "./po-data";
 
 type Invoice = PurchaseOrderDetail["invoices"][number];
 
-// One line as typed or pasted off the invoice.
-type Row = { key: number; item: string; quantity: string; unitCost: string };
-
-let nextKey = 0;
-const blank = (): Row => ({
-	key: nextKey++,
-	item: "",
-	quantity: "",
-	unitCost: "",
-});
-const isBlank = (r: Row) => !r.item.trim() && !r.quantity && !r.unitCost;
-
-// "$1,234.50" reads as 1234.5; anything else that isn't a number is null.
-function money(s: string) {
-	const t = s.replace(/[$,\s]/g, "");
-	return /^\d*\.?\d+$/.test(t) ? Number(t) : null;
-}
-const count = (s: string) =>
-	/^\d+$/.test(s.replace(/,/g, "").trim()) ? Number(s.replace(/,/g, "")) : null;
-
-// Letters and digits only, as the server compares item numbers.
-const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-// Always one empty row at the end to type the next line into. Rows emptied
-// above it stay, so clearing one while typing doesn't take it away.
-const withSpare = (rows: Row[]) =>
-	rows.length > 0 && isBlank(rows[rows.length - 1]) ? rows : [...rows, blank()];
-
-// Rows copied from a spreadsheet or PDF: the item first, then its quantity,
-// then the price after it. Other columns, like a description, are passed
-// over. Each lands as a row to check and fix by hand.
-function parsePasted(text: string): Row[] {
-	return text
-		.split(/\r?\n/)
-		.map((l) => l.split("\t").map((c) => c.trim()))
-		.filter((cols) => cols.some(Boolean))
-		.map((cols) => {
-			const q = cols.findIndex((c, i) => i > 0 && count(c) !== null);
-			const p =
-				q === -1 ? -1 : cols.findIndex((c, i) => i > q && money(c) !== null);
-			return {
-				key: nextKey++,
-				item: cols[0],
-				quantity: q === -1 ? "" : String(count(cols[q])),
-				unitCost: p === -1 ? "" : String(money(cols[p])),
-			};
-		});
-}
-
-const input =
-	"h-8 w-full min-w-0 rounded-lg border border-input bg-background px-2 outline-none focus:border-ring";
-const bad = "border-critical-border ring-2 ring-critical-border/40";
+const markVoid = (poId: number, id: number, voided: Invoice["voided"]) =>
+	poData.patch(poId, (data) => ({
+		...data,
+		invoices: data.invoices.map((x) =>
+			x.id === id
+				? {
+						...x,
+						voided,
+						match: voided ? { kind: "void" as const } : x.match,
+						payment: voided ? { kind: "void" as const } : x.payment,
+					}
+				: x,
+		),
+	}));
 
 // A sent PO's supplier invoices: recorded ones, and checking a new one line
 // by line against the PO before recording it.
@@ -95,36 +48,31 @@ export function InvoicesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 
 	if (po.status !== "sent" && po.status !== "closed") return null;
 
+	async function restore(inv: Invoice) {
+		const r = await optimism.change({
+			label: `Restoring invoice ${inv.number}`,
+			patch: markVoid(po.id, inv.id, null),
+			send: () => restoreSupplierInvoice({ data: { id: inv.id } }),
+		});
+		if (r) setFresh(inv.number);
+		return r;
+	}
+
 	async function remove(inv: Invoice) {
 		const r = await optimism.change({
-			label: `Removing invoice ${inv.number}`,
-			patch: poData.patch(po.id, (data) => ({
-				...data,
-				invoices: data.invoices.filter((x) => x.id !== inv.id),
-			})),
-			send: () => removeSupplierInvoice({ data: { id: inv.id } }),
+			label: `Voiding invoice ${inv.number}`,
+			patch: markVoid(po.id, inv.id, { at: new Date(), reason: null }),
+			send: () => voidSupplierInvoice({ data: { id: inv.id } }),
 		});
 		if (!r) return;
-		offerUndo(`Removed invoice ${inv.number}`, {
-			undo: async () => {
-				const back = await optimism.change({
-					label: `Putting invoice ${inv.number} back`,
-					patch: [],
-					send: () =>
-						recordSupplierInvoice({
-							data: {
-								purchaseOrderId: po.id,
-								number: inv.number,
-								invoicedOn: inv.invoicedOn,
-								dueOn: inv.dueOn,
-								total: inv.total,
-							},
-						}),
-				});
-				if (!back) return null;
-				setFresh(inv.number);
-				return `Invoice ${inv.number} is back`;
-			},
+		const released = r.value.releasedCents;
+		offerUndo(`Voided invoice ${inv.number}`, {
+			description:
+				released > 0
+					? `${formatMoney(released / 100)} of payments is unapplied credit now`
+					: undefined,
+			undo: async () =>
+				(await restore(inv)) ? `Invoice ${inv.number} is back` : null,
 		});
 	}
 
@@ -149,34 +97,17 @@ export function InvoicesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 			{d.invoices.length > 0 && (
 				<ul className="pb-2">
 					{d.invoices.map((inv) => (
-						<li
+						<InvoiceRow
 							key={inv.id}
-							className={cn(
-								"group flex items-center gap-3 px-4 py-1.5 transition-colors duration-700",
-								fresh === inv.number && "bg-success-fill",
-							)}
-						>
-							<span className="font-semibold">{inv.number}</span>
-							<span className="text-muted-foreground">
-								{formatDay(middayOf(inv.invoicedOn))}
-								{inv.dueOn && <>, due {formatDay(middayOf(inv.dueOn))}</>}
-							</span>
-							<span className="ml-auto tabular-nums">
-								{formatMoney(inv.total)}
-							</span>
-							<Button
-								size="icon-xs"
-								variant="ghost"
-								aria-label={`Remove invoice ${inv.number}`}
-								className="text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-								onClick={() => remove(inv)}
-							>
-								<X />
-							</Button>
-						</li>
+							invoice={inv}
+							fresh={fresh === inv.number}
+							onVoid={() => remove(inv)}
+							onRestore={() => restore(inv)}
+						/>
 					))}
 				</ul>
 			)}
+			<UnverifiedNote detail={d} />
 			{checking && (
 				<InvoiceForm
 					detail={d}
@@ -191,493 +122,157 @@ export function InvoicesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 	);
 }
 
-function InvoiceForm({
-	detail: d,
-	onClose,
-	onRecorded,
+function InvoiceRow({
+	invoice: inv,
+	fresh,
+	onVoid,
+	onRestore,
 }: {
-	detail: PurchaseOrderDetail;
-	onClose: () => void;
-	onRecorded: (number: string) => void;
+	invoice: Invoice;
+	fresh: boolean;
+	onVoid: () => void;
+	onRestore: () => void;
 }) {
-	const po = d.order;
-	const [number, setNumber] = useState("");
-	const [invoicedOn, setInvoicedOn] = useState(today);
-	const [dueOn, setDueOn] = useState("");
-	const [total, setTotal] = useState("");
-	const [freight, setFreight] = useState("");
-	const [tax, setTax] = useState("");
-	const [credits, setCredits] = useState("");
-	const [rows, setRows] = useState<Row[]>(() => [blank()]);
-	const [recording, setRecording] = useState(false);
-	const [savingSkus, setSavingSkus] = useState(false);
-	const form = useRef<HTMLDivElement>(null);
-
-	// Our SKUs on the PO; an item typed as one of them matches by SKU, any
-	// other by the supplier's item number.
-	const ourSkus = new Set(d.lines.map((l) => key(l.sku)));
-	const complete = rows.flatMap((r, i) => {
-		const item = r.item.trim();
-		const quantity = count(r.quantity);
-		const unitCost = money(r.unitCost);
-		if (!item || quantity === null || unitCost === null) return [];
-		return [
-			{
-				line: i + 1,
-				...(ourSkus.has(key(item)) ? { sku: item } : { supplierSku: item }),
-				quantity,
-				unitCost,
-			},
-		];
-	});
-	const totalValue = total ? money(total) : undefined;
-	const freightValue = freight ? money(freight) : undefined;
-	const taxValue = tax ? money(tax) : undefined;
-	const creditsValue = credits ? money(credits) : undefined;
-	const request =
-		complete.length === 0
-			? null
-			: JSON.stringify({
-					purchaseOrderId: po.id,
-					...(number.trim() ? { number: number.trim() } : {}),
-					...(totalValue != null ? { total: totalValue } : {}),
-					...(freightValue != null ? { freight: freightValue } : {}),
-					...(taxValue != null ? { tax: taxValue } : {}),
-					...(creditsValue ? { credits: creditsValue } : {}),
-					lines: complete,
-				});
-
-	// Checked a moment after typing stops. A result is only shown against
-	// what it was checked for; until the next one lands, the last one fades.
-	const [check, setCheck] = useState<{
-		request: string;
-		value: InvoiceCheck;
-	} | null>(null);
-	const [nonce, setNonce] = useState(0);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: nonce checks again once item numbers are saved
-	useEffect(() => {
-		if (!request) return;
-		let live = true;
-		const t = setTimeout(() => {
-			checkSupplierInvoice({ data: JSON.parse(request) }).then(
-				(value) => live && setCheck({ request, value }),
-				(error: unknown) =>
-					live &&
-					toast.error(error instanceof Error ? error.message : String(error)),
-			);
-		}, 400);
-		return () => {
-			live = false;
-			clearTimeout(t);
-		};
-	}, [request, nonce]);
-	const result = request && check ? check.value : null;
-	const stale = check !== null && check.request !== request;
-
-	const differences = new Map(result?.differences.map((x) => [x.line, x]));
-	const notOnPo = new Map(result?.notOnPo.map((x) => [x.line, x]));
-	const checkedLines = new Set(
-		check
-			? JSON.parse(check.request).lines.map((l: { line: number }) => l.line)
-			: [],
-	);
-
-	const alreadyRecorded =
-		!stale && result?.alreadyRecorded ? result.alreadyRecorded : null;
-	const dueValid = !dueOn || dueOn >= invoicedOn;
-	const canRecord =
-		number.trim() !== "" &&
-		invoicedOn !== "" &&
-		totalValue != null &&
-		dueValid &&
-		!alreadyRecorded &&
-		!recording;
-
-	function edit(i: number, change: Partial<Row>) {
-		setRows((rs) =>
-			withSpare(rs.map((r, j) => (j === i ? { ...r, ...change } : r))),
-		);
-	}
-
-	function paste(i: number, e: ClipboardEvent<HTMLInputElement>) {
-		const text = e.clipboardData.getData("text");
-		if (!/[\t\n]/.test(text.trim())) return;
-		e.preventDefault();
-		const pasted = parsePasted(text);
-		setRows((rs) =>
-			withSpare([...rs.slice(0, i), ...pasted, ...rs.slice(i + 1)]),
-		);
-	}
-
-	async function record() {
-		if (!canRecord || totalValue == null) return;
-		setRecording(true);
-		const r = await optimism.change({
-			label: `Recording invoice ${number.trim()}`,
-			patch: [],
-			send: () =>
-				recordSupplierInvoice({
-					data: {
-						purchaseOrderId: po.id,
-						number: number.trim(),
-						invoicedOn,
-						dueOn: dueOn || null,
-						total: totalValue,
-					},
-				}),
-		});
-		setRecording(false);
-		if (r) onRecorded(r.value.number);
-		else shake(form.current);
-	}
-
-	async function saveSkus(items: { sku: string; supplierSku: string }[]) {
-		setSavingSkus(true);
-		const skus = new Set(items.map((i) => i.sku));
-		const given = new Map(items.map((i) => [i.sku, i.supplierSku]));
-		const r = await optimism.change({
-			label: "Saving item numbers",
-			patch: poData.patch(po.id, (data) => ({
-				...data,
-				lines: data.lines.map((l) =>
-					skus.has(l.sku) && l.supplierSku === null
-						? { ...l, supplierSku: given.get(l.sku) ?? null }
-						: l,
-				),
-			})),
-			send: () => saveSupplierSkus({ data: { purchaseOrderId: po.id, items } }),
-		});
-		setSavingSkus(false);
-		if (!r) return;
-		const { filled, kept, skipped } = r.value;
-		const missed = [...kept.map((k) => k.sku), ...skipped.map((s) => s.sku)];
-		if (missed.length > 0)
-			toast.warning(`Not saved for ${missed.join(", ")}`, {
-				description: [
-					...kept.map((k) => `${k.sku} already has ${k.ours}`),
-					...skipped.map((s) => `${s.sku}: ${s.reason}`),
-				].join("; "),
-			});
-		else
-			toast.success(
-				`Saved ${filled.length} item ${filled.length === 1 ? "number" : "numbers"}`,
-			);
-		setNonce((n) => n + 1);
-	}
-
+	const voided = inv.voided !== null;
 	return (
-		<div ref={form} className="flex flex-col gap-3 border-t px-4 py-3">
-			<div className="grid grid-cols-2 gap-2 sm:grid-cols-7">
-				<Field label="Invoice number" className="col-span-2">
-					<input
-						// biome-ignore lint/a11y/noAutofocus: opened by clicking Add
-						autoFocus
-						value={number}
-						onChange={(e) => setNumber(e.target.value)}
-						onKeyDown={(e) => e.key === "Escape" && onClose()}
-						className={cn(input, "font-mono", alreadyRecorded && bad)}
-					/>
-				</Field>
-				<Field label="Dated">
-					<input
-						type="date"
-						value={invoicedOn}
-						onChange={(e) => setInvoicedOn(e.target.value || today())}
-						className={cn(input, "tabular-nums")}
-					/>
-				</Field>
-				<Field label="Due">
-					<input
-						type="date"
-						value={dueOn}
-						min={invoicedOn}
-						onChange={(e) => setDueOn(e.target.value)}
-						className={cn(input, "tabular-nums", !dueValid && bad)}
-					/>
-				</Field>
-				<Field label="Freight">
-					<MoneyInput value={freight} onChange={setFreight} />
-				</Field>
-				<Field label="Tax">
-					<MoneyInput value={tax} onChange={setTax} />
-				</Field>
-				<Field label="Discounts">
-					<MoneyInput value={credits} onChange={setCredits} />
-				</Field>
-			</div>
-
-			<table className="w-full table-fixed">
-				<thead className="text-left text-xs text-muted-foreground">
-					<tr>
-						<th className="w-6 font-normal">#</th>
-						<th className="font-normal">Their item number or our SKU</th>
-						<th className="w-20 font-normal">Qty</th>
-						<th className="w-28 font-normal">Unit price</th>
-						<th className="w-24 text-right font-normal">Amount</th>
-						<th className="w-[40%] pl-3 font-normal" />
-					</tr>
-				</thead>
-				<tbody className={cn("transition-opacity", stale && "opacity-60")}>
-					{rows.map((r, i) => {
-						const line = i + 1;
-						const q = count(r.quantity);
-						const p = money(r.unitCost);
-						return (
-							<tr key={r.key} className="align-top">
-								<td className="pt-2 text-xs text-muted-foreground tabular-nums">
-									{isBlank(r) ? "" : line}
-								</td>
-								<td className="py-0.5 pr-1">
-									<input
-										value={r.item}
-										placeholder={i === 0 ? "Paste rows from the invoice" : ""}
-										onChange={(e) => edit(i, { item: e.target.value })}
-										onPaste={(e) => paste(i, e)}
-										className={cn(input, "font-mono text-xs")}
-									/>
-								</td>
-								<td className="py-0.5 pr-1">
-									<input
-										inputMode="numeric"
-										value={r.quantity}
-										onChange={(e) => edit(i, { quantity: e.target.value })}
-										className={cn(
-											input,
-											"text-right tabular-nums",
-											r.quantity && q === null && bad,
-										)}
-									/>
-								</td>
-								<td className="py-0.5 pr-1">
-									<input
-										inputMode="decimal"
-										value={r.unitCost}
-										onChange={(e) => edit(i, { unitCost: e.target.value })}
-										className={cn(
-											input,
-											"text-right tabular-nums",
-											r.unitCost && p === null && bad,
-										)}
-									/>
-								</td>
-								<td className="pt-1.5 text-right tabular-nums">
-									{q !== null && p !== null && formatMoney(q * p)}
-								</td>
-								<td className="pt-1.5 pl-3">
-									{result && checkedLines.has(line) && (
-										<LineResult
-											difference={differences.get(line)}
-											missing={notOnPo.get(line)}
-										/>
-									)}
-								</td>
-							</tr>
-						);
-					})}
-				</tbody>
-			</table>
-
-			{result && (
-				<Summary
-					result={result}
-					stale={stale}
-					savingSkus={savingSkus}
-					onSaveSkus={saveSkus}
-				/>
-			)}
-
-			<div className="flex items-end justify-end gap-2">
-				{alreadyRecorded && (
-					<span className="mr-auto self-center text-critical-text">
-						{alreadyRecorded}
-					</span>
-				)}
-				<Field label="Total due">
-					<MoneyInput value={total} onChange={setTotal} />
-				</Field>
-				<Button size="sm" variant="ghost" onClick={onClose}>
-					Cancel
-				</Button>
-				<Button size="sm" disabled={!canRecord} onClick={record}>
-					Record invoice
-				</Button>
-			</div>
-		</div>
-	);
-}
-
-function Field({
-	label,
-	className,
-	children,
-}: {
-	label: string;
-	className?: string;
-	children: ReactNode;
-}) {
-	return (
-		// biome-ignore lint/a11y/noLabelWithoutControl: the control is its child
-		<label className={cn("flex flex-col gap-0.5", className)}>
-			<span className="text-xs text-muted-foreground">{label}</span>
-			{children}
-		</label>
-	);
-}
-
-function MoneyInput({
-	value,
-	onChange,
-}: {
-	value: string;
-	onChange: (v: string) => void;
-}) {
-	return (
-		<input
-			inputMode="decimal"
-			value={value}
-			onChange={(e) => onChange(e.target.value)}
+		<li
 			className={cn(
-				input,
-				"w-28 text-right tabular-nums",
-				value && money(value) === null && bad,
-			)}
-		/>
-	);
-}
-
-// A line's verdict: a check when it agrees with the PO, what the PO says
-// where it doesn't, or why it fits no PO line.
-function LineResult({
-	difference,
-	missing,
-}: {
-	difference?: InvoiceCheck["differences"][number];
-	missing?: InvoiceCheck["notOnPo"][number];
-}) {
-	if (missing)
-		return (
-			<span className="flex items-start gap-1 text-critical-text">
-				<X className="mt-0.5 size-4 shrink-0" />
-				<span className="min-w-0">{missing.reason}</span>
-			</span>
-		);
-	if (difference) {
-		const has = (issue: string) => difference.issues.includes(issue);
-		return (
-			<span className="flex items-start gap-1 text-warning-text">
-				<TriangleAlert className="mt-0.5 size-4 shrink-0" />
-				<span className="min-w-0">
-					<span className="font-mono text-xs">{difference.sku}</span>, PO has{" "}
-					<span className={cn(has("quantity") && "font-semibold")}>
-						{difference.po.quantity} {difference.unit}
-					</span>{" "}
-					at{" "}
-					<span
-						className={cn(
-							(has("price") || has("PO has no price")) && "font-semibold",
-						)}
-					>
-						{formatMoney(difference.po.unitCost)}
-					</span>
-				</span>
-			</span>
-		);
-	}
-	return (
-		<span className="flex items-center gap-1 text-success-text">
-			<Check className="size-4" />
-		</span>
-	);
-}
-
-function Summary({
-	result,
-	stale,
-	savingSkus,
-	onSaveSkus,
-}: {
-	result: InvoiceCheck;
-	stale: boolean;
-	savingSkus: boolean;
-	onSaveSkus: (items: { sku: string; supplierSku: string }[]) => void;
-}) {
-	const t = result.totals;
-	const over = t.invoiceOverPo;
-	// The invoice's own arithmetic, when it gives a total to check.
-	const off = t.invoiceArithmeticOff;
-	return (
-		<div
-			className={cn(
-				"flex flex-col gap-2 rounded-lg px-3 py-2 transition-opacity",
-				result.matches ? "bg-success-fill" : "bg-warning-fill",
-				stale && "opacity-60",
+				"group flex flex-col px-4 py-1.5 transition-colors duration-700",
+				fresh && "bg-success-fill",
 			)}
 		>
-			<p className="flex flex-wrap items-center gap-x-4 gap-y-1">
-				{result.matches ? (
-					<span className="flex items-center gap-1 font-semibold text-success-text">
-						<Check className="size-4" />
-						Matches the PO
-					</span>
-				) : (
-					<span className="font-semibold text-warning-text">
-						{t.matchingLines} of {t.poLines} PO lines match
-					</span>
-				)}
-				<span className="tabular-nums">
-					Lines {formatMoney(t.invoiceLinesTotal)} · PO {formatMoney(t.poTotal)}
-					{over !== 0 && (
-						<span className="font-semibold text-warning-text">
-							{" "}
-							· {formatMoney(Math.abs(over))} {over > 0 ? "over" : "under"}
-						</span>
+			<div className="flex items-center gap-3">
+				<span
+					className={cn(
+						"font-semibold",
+						voided && "text-muted-foreground line-through",
 					)}
+				>
+					{inv.number}
 				</span>
-				{off !== undefined && off !== 0 && (
-					<span className="font-semibold text-critical-text tabular-nums">
-						Total is {formatMoney(Math.abs(off))} {off > 0 ? "more" : "less"}{" "}
-						than lines, freight, and tax
-					</span>
-				)}
-			</p>
-			{result.note && <p className="text-warning-text">{result.note}</p>}
-			{result.notOnInvoice.length > 0 && (
-				<p className="text-critical-text">
-					Not on the invoice:{" "}
-					{result.notOnInvoice.map((l, i) => (
-						<span key={l.sku}>
-							{i > 0 && ", "}
-							<span className="font-mono text-xs">{l.sku}</span> ({l.quantity}{" "}
-							{l.unit})
-						</span>
-					))}
-				</p>
-			)}
-			{result.supplierSkuConflicts.map((c) => (
-				<p key={c.sku} className="text-warning-text">
-					<span className="font-mono text-xs">{c.sku}</span> is{" "}
-					<span className="font-mono text-xs">{c.ours}</span> to us,{" "}
-					<span className="font-mono text-xs">{c.invoice}</span> on the invoice
-				</p>
-			))}
-			{result.supplierSkusToSave.length > 0 && (
-				<div className="flex items-center gap-3">
+				<span className="text-muted-foreground">
+					{formatDay(middayOf(inv.invoicedOn))}
+					{inv.dueOn && <>, due {formatDay(middayOf(inv.dueOn))}</>}
+				</span>
+				<MatchChip match={inv.match} />
+				<span
+					className={cn(
+						"ml-auto tabular-nums",
+						voided && "text-muted-foreground line-through",
+					)}
+				>
+					{formatMoney(inv.total)}
+				</span>
+				<PaymentChip payment={inv.payment} />
+				{voided ? (
 					<Button
-						size="sm"
-						variant="outline"
-						disabled={savingSkus || stale}
-						onClick={() => onSaveSkus(result.supplierSkusToSave)}
+						size="xs"
+						variant="ghost"
+						className="text-muted-foreground"
+						onClick={onRestore}
 					>
-						Save {result.supplierSkusToSave.length} item{" "}
-						{result.supplierSkusToSave.length === 1 ? "number" : "numbers"}
+						<RotateCcw />
+						Restore
 					</Button>
-					<span className="text-xs text-muted-foreground">
-						{result.supplierSkusToSave
-							.map((s) => `${s.sku} = ${s.supplierSku}`)
-							.join(", ")}
-					</span>
-				</div>
+				) : (
+					<Button
+						size="icon-xs"
+						variant="ghost"
+						aria-label={`Void invoice ${inv.number}`}
+						className="text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+						onClick={onVoid}
+					>
+						<X />
+					</Button>
+				)}
+			</div>
+			{inv.match.kind === "exception" && (
+				<ul className="pl-1 text-xs text-warning-text">
+					{inv.match.discrepancies.map((x) => (
+						<li key={`${x.kind}-${"position" in x ? x.position : 0}`}>
+							{explainDiscrepancy(x)}
+						</li>
+					))}
+				</ul>
 			)}
-		</div>
+		</li>
+	);
+}
+
+function MatchChip({ match }: { match: Invoice["match"] }) {
+	const chip = "flex items-center gap-1 rounded-full px-2 text-xs";
+	switch (match.kind) {
+		case "matched":
+			return (
+				<span className={cn(chip, "bg-success-fill text-success-text")}>
+					<Check className="size-3" />
+					Matched
+				</span>
+			);
+		case "exception":
+			return (
+				<span className={cn(chip, "bg-warning-fill text-warning-text")}>
+					<TriangleAlert className="size-3" />
+					Exception
+				</span>
+			);
+		case "header_only":
+			return (
+				<span className={cn(chip, "bg-muted text-muted-foreground")}>
+					No lines
+				</span>
+			);
+		case "legacy":
+			return (
+				<span className={cn(chip, "bg-muted text-muted-foreground")}>
+					Unverified
+				</span>
+			);
+		case "void":
+			return (
+				<span className={cn(chip, "bg-muted text-muted-foreground")}>Void</span>
+			);
+		default: {
+			const unreachable: never = match;
+			return unreachable;
+		}
+	}
+}
+
+function PaymentChip({ payment }: { payment: Invoice["payment"] }) {
+	switch (payment.kind) {
+		case "void":
+			return null;
+		case "paid":
+			return <span className="text-xs text-success-text">Paid</span>;
+		case "partial":
+			return (
+				<span className="text-xs text-warning-text tabular-nums">
+					{formatMoney(payment.openCents / 100)} open
+				</span>
+			);
+		case "unpaid":
+			return <span className="text-xs text-muted-foreground">Unpaid</span>;
+		case "unknown":
+			return (
+				<span className="text-xs text-muted-foreground">Paid? Unknown</span>
+			);
+		default: {
+			const unreachable: never = payment;
+			return unreachable;
+		}
+	}
+}
+
+function UnverifiedNote({ detail: d }: { detail: PurchaseOrderDetail }) {
+	const unverified = d.invoices.filter(
+		(i) => i.match.kind === "legacy" || i.match.kind === "header_only",
+	).length;
+	if (unverified === 0) return null;
+	return (
+		<p className="px-4 pb-2 text-xs text-muted-foreground">
+			{unverified === 1 ? "1 invoice has" : `${unverified} invoices have`} no
+			lines, so billing can't be checked against receipts
+		</p>
 	);
 }

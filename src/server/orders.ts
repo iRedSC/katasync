@@ -5,8 +5,6 @@ import { alias } from "drizzle-orm/pg-core";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
-	dispatches,
-	dispatchOrders,
 	orderCharges,
 	orderCostChecks,
 	orderCostReports,
@@ -20,15 +18,17 @@ import {
 	returnRequestLines,
 	returnRequests,
 	returnTracking,
-	shipments,
 	stores,
 } from "#/db/schema";
 import { orderMail } from "#/inbox/order-mail";
 import { adminUrls, returnPage } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
 import { returnStages } from "#/orders/return-stage";
+import { committedStock, returnQuantity } from "#/orders/return-stock";
 import { followReturn, trackingFor } from "#/orders/return-tracking";
+import { stockEffectApplied } from "#/orders/stock-effects";
 import { labelToVoid, needsShipping } from "#/orders/to-ship";
+import { sendsOf } from "#/shipping/sends";
 
 const refurbs = alias(products, "refurbs");
 
@@ -149,6 +149,7 @@ export const getOrder = createServerFn({ method: "GET" })
 		const db = getDb();
 		const [order] = await db
 			.select({
+				committedStock,
 				id: orders.id,
 				name: orders.name,
 				pin: orders.pin,
@@ -191,8 +192,9 @@ export const getOrder = createServerFn({ method: "GET" })
 				sku: orderLines.sku,
 				quantity: orderLines.quantity,
 				unitPrice: orderLines.unitPrice,
+				returnQuantity,
 				unitCost: orderLines.unitCost,
-				tookStock: sql<boolean>`${orderLines.saleBatchId} is not null`,
+				tookStock: sql<boolean>`coalesce(${stockEffectApplied}, false)`,
 				fromStore,
 				// Units received back, and how many of those went on the shelf.
 				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
@@ -213,79 +215,7 @@ export const getOrder = createServerFn({ method: "GET" })
 			.leftJoin(products, eq(products.id, orderLines.productId))
 			.where(eq(orderLines.orderId, data.id))
 			.orderBy(orderLines.id);
-		// Every dispatch this order went out in (or will): its boxes, this
-		// order's tracking handoff, and any other orders in the same box.
-		const handoffs = await db
-			.select({
-				dispatchId: dispatchOrders.dispatchId,
-				channelSentAt: dispatchOrders.channelSentAt,
-				channelError: dispatchOrders.channelError,
-				channelRetryAt: dispatchOrders.channelRetryAt,
-				reversedAt: dispatchOrders.reversedAt,
-				boughtAt: dispatches.boughtAt,
-			})
-			.from(dispatchOrders)
-			.innerJoin(dispatches, eq(dispatches.id, dispatchOrders.dispatchId))
-			.where(eq(dispatchOrders.orderId, data.id))
-			.orderBy(dispatchOrders.dispatchId);
-		const ids = handoffs.map((h) => h.dispatchId);
-		const boxes = ids.length
-			? await db
-					.select({
-						id: shipments.id,
-						dispatchId: shipments.dispatchId,
-						serviceName: shipments.serviceName,
-						cost: shipments.cost,
-						trackingNumber: shipments.trackingNumber,
-						trackingUrl: shipments.trackingUrl,
-						provider: shipments.provider,
-						test: shipments.test,
-						voidedAt: shipments.voidedAt,
-						refundStatus: shipments.refundStatus,
-						storefrontTrackingError: shipments.storefrontTrackingError,
-						createdAt: shipments.createdAt,
-					})
-					.from(shipments)
-					.where(inArray(shipments.dispatchId, ids))
-					.orderBy(shipments.id)
-			: [];
-		const others = ids.length
-			? await db
-					.select({
-						dispatchId: dispatchOrders.dispatchId,
-						id: orders.id,
-						name: orders.name,
-					})
-					.from(dispatchOrders)
-					.innerJoin(orders, eq(orders.id, dispatchOrders.orderId))
-					.where(
-						and(
-							inArray(dispatchOrders.dispatchId, ids),
-							ne(dispatchOrders.orderId, data.id),
-						),
-					)
-					.orderBy(orders.id)
-			: [];
-		// A purchase whose first box failed leaves a dispatch with no boxes;
-		// there's nothing to show for it.
-		const sends = handoffs.flatMap((h) => {
-			const own = boxes.filter((b) => b.dispatchId === h.dispatchId);
-			if (own.length === 0) return [];
-			return {
-				id: h.dispatchId,
-				channelSentAt: h.channelSentAt,
-				channelError: h.channelError,
-				// Still being sent again on its own (src/shipping/retry.ts).
-				retrying: h.channelRetryAt !== null,
-				// False when a box failed part way: void only, never send.
-				complete: h.boughtAt !== null,
-				// Voided, but taking it back for this order didn't finish.
-				unfinishedVoid: h.reversedAt === null,
-				boxes: own,
-				live: own.some((b) => b.voidedAt === null),
-				shippedWith: others.filter((o) => o.dispatchId === h.dispatchId),
-			};
-		});
+		const sends = await sendsOf(db, data.id);
 		// What it made, and what each marketplace said it charged; where its
 		// return stands; the mail about it; and the buyer's other orders.
 		const [

@@ -9,6 +9,11 @@ import {
 	setShelfTarget,
 } from "#/inventory/refill";
 import {
+	deliveryOf,
+	receiveTransfer,
+	undoTransferReceipt,
+} from "#/inventory/transfer-deliveries";
+import {
 	createDraftWith,
 	deleteTransfer,
 	moveNow,
@@ -81,7 +86,41 @@ async function describeTransfer(db: Db, id: number) {
 		.innerJoin(products, eq(products.id, transferLines.productId))
 		.where(eq(transferLines.transferId, id))
 		.orderBy(products.sku);
-	return { transfer: transferName(id), ...t, lines };
+	const delivery = await deliveryOf(db, id);
+	const sentIds =
+		"lines" in delivery ? delivery.lines.map((l) => l.productId) : [];
+	const skuOf = new Map(
+		sentIds.length === 0
+			? []
+			: (
+					await db
+						.select({ id: products.id, sku: products.sku })
+						.from(products)
+						.where(inArray(products.id, sentIds))
+				).map((p) => [p.id, p.sku] as const),
+	);
+	return {
+		transfer: transferName(id),
+		...t,
+		lines,
+		delivery:
+			"lines" in delivery
+				? {
+						kind: delivery.kind,
+						lines: delivery.lines.map(({ productId, ...l }) => ({
+							sku: skuOf.get(productId),
+							...l,
+						})),
+						receipts: delivery.receipts.map((r) => ({
+							receipt_id: r.id,
+							key: r.receiptKey,
+							at: r.createdAt,
+							undone: r.undone,
+							units: r.lines.reduce((n, l) => n + l.quantity, 0),
+						})),
+					}
+				: { kind: delivery.kind },
+	};
 }
 
 export function registerTransferReadTools(server: McpServer, db: Db) {
@@ -111,7 +150,7 @@ export function registerTransferReadTools(server: McpServer, db: Db) {
 		"get_transfer",
 		{
 			description:
-				"A transfer: its route, status (draft or sent), note, and lines. List them with the query tool (transfers, transfer_lines).",
+				"A transfer: its route, status (draft or sent), note, lines, and delivery: completed (arrived when sent), in_transit or received, with what's still on the way and each receipt. List them with the query tool (transfers, transfer_lines, transfer_dispatches, transfer_receipts).",
 			inputSchema: { transfer: transferId },
 			annotations: READ,
 		},
@@ -232,7 +271,7 @@ export function registerTransferTools(server: McpServer, db: Db) {
 		"send_transfer",
 		{
 			description:
-				"Sends a draft transfer: every line moves at once. Refused, moving nothing, if the source is short of any line. Undo with undo_transfer.",
+				"Sends a draft transfer: every line leaves the source at once and is in transit (not sellable anywhere) until receive_transfer puts it on the destination's shelf. Refused, moving nothing, if the source is short of any line. Undo with undo_transfer.",
 			inputSchema: { transfer: transferId },
 			annotations: WRITE,
 		},
@@ -246,12 +285,62 @@ export function registerTransferTools(server: McpServer, db: Db) {
 		"undo_transfer",
 		{
 			description:
-				"Moves a sent transfer's stock back. It becomes a draft again, to fix and send again or delete.",
+				"Moves a sent transfer's stock back. It becomes a draft again, to fix and send again or delete. Refused while any receipt stands; undo those with undo_transfer_receipt first.",
 			inputSchema: { transfer: transferId },
 			annotations: WRITE,
 		},
 		async ({ transfer }) => {
 			await unsendTransfer(db, transfer);
+			return json(await describeTransfer(db, transfer));
+		},
+	);
+
+	server.registerTool(
+		"receive_transfer",
+		{
+			description:
+				"Records what of a sent transfer arrived at its destination, moving it from transit onto that shelf. Without lines, everything still on the way arrived. A receipt_key names this delivery: sending the same key again changes nothing. Refused when a count is more than is still on the way.",
+			inputSchema: {
+				transfer: transferId,
+				receipt_key: z.string().min(1),
+				lines: z
+					.array(
+						z.object({ sku: z.string(), quantity: z.number().int().min(0) }),
+					)
+					.optional(),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ transfer, receipt_key, lines }) => {
+			const result = await receiveTransfer(db, {
+				transferId: transfer,
+				receiptKey: receipt_key,
+				lines: lines ? await linesBySku(db, lines) : undefined,
+			});
+			return json({
+				receipt_id: result.receiptId,
+				repeated: result.repeated,
+				...(await describeTransfer(db, transfer)),
+			});
+		},
+	);
+
+	server.registerTool(
+		"undo_transfer_receipt",
+		{
+			description:
+				"Takes back one receipt of a transfer: its units go from the destination's shelf back into transit.",
+			inputSchema: {
+				transfer: transferId,
+				receipt_id: z.number().int().positive(),
+			},
+			annotations: WRITE,
+		},
+		async ({ transfer, receipt_id }) => {
+			await undoTransferReceipt(db, {
+				transferId: transfer,
+				receiptId: receipt_id,
+			});
 			return json(await describeTransfer(db, transfer));
 		},
 	);

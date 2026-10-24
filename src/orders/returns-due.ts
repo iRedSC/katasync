@@ -26,6 +26,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { returnPage } from "./admin-urls";
+import { committedStock, returnQuantity } from "./return-stock";
 import { type PackageAt, trackingFor } from "./return-tracking";
 import { isLabeled, returnBlocker } from "./status";
 
@@ -177,6 +178,7 @@ async function returnOrders(
 				fulfilledByChannel: orders.fulfilledByChannel,
 				fulfillmentStatus: orders.fulfillmentStatus,
 				labelsStatus: orderProfit.labelsStatus,
+				committedStock,
 			})
 			.from(orders)
 			.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -189,7 +191,7 @@ async function returnOrders(
 				title: orderLines.title,
 				sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 				imageUrl: products.imageUrl,
-				left: sql<number>`${orderLines.quantity} - coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
+				left: sql<number>`${returnQuantity} - coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
 			})
 			.from(orderLines)
 			.leftJoin(products, eq(products.id, orderLines.productId))
@@ -246,6 +248,11 @@ async function returnOrders(
 				cancelledAt,
 				fulfilledByChannel,
 				labeled: isLabeled(labelsStatus ?? undefined),
+				shippedQuantity: o.committedStock
+					? lines
+							.filter((line) => line.orderId === o.id)
+							.reduce((total, line) => total + Math.max(0, line.left), 0)
+					: undefined,
 			}),
 			requests: requests
 				.filter((r) => r.orderId === o.id)

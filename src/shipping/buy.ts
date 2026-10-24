@@ -1,13 +1,32 @@
 import { eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { dispatches, dispatchOrders, packages, shipments } from "#/db/schema";
+import {
+	dispatches,
+	dispatchLines,
+	dispatchOrders,
+	type PreparedBox,
+	packages,
+	shipments,
+} from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
 import { shipAddresses } from "./addresses";
+import { destinationOf } from "./destination";
 import {
 	assertTogether,
 	lockOnOwnConnection,
 	type OrderLocker,
 } from "./dispatch";
+import { ebayAssertAsPacked } from "./ebay-handoff";
+import { type Label, LabelRefused, outcomeOf } from "./label-attempt-state";
+import { beginAttempt, recordBought, settleWithout } from "./label-attempts";
+import {
+	assertAsPacked,
+	byLine,
+	type LineToPack,
+	linesToPack,
+	packedOf,
+	unmappable,
+} from "./packed";
 import { overShown } from "./price-check";
 import { signatureRequired } from "./quick-ship";
 import {
@@ -18,7 +37,8 @@ import {
 	refundLabel,
 	shippoIsTest,
 } from "./shippo";
-import { tiktokBuyLabel, tiktokOrderId } from "./tiktok";
+import { tiktokBuyLabel, tiktokOrderId, tiktokOrderUnits } from "./tiktok";
+import { unitsToBuy } from "./tiktok-units";
 
 // The outside calls, passed in so tests can stand in for Shippo, TikTok,
 // and the order locks.
@@ -29,6 +49,8 @@ export type BuyOutside = {
 	buyLabel: typeof buyLabel;
 	refund: typeof refundLabel;
 	tiktokBuy: typeof tiktokBuyLabel;
+	tiktokUnits: typeof tiktokOrderUnits;
+	ebayCheck: typeof ebayAssertAsPacked;
 	isTest: () => boolean;
 };
 
@@ -39,6 +61,8 @@ export const liveBuy: BuyOutside = {
 	buyLabel,
 	refund: refundLabel,
 	tiktokBuy: tiktokBuyLabel,
+	tiktokUnits: tiktokOrderUnits,
+	ebayCheck: ebayAssertAsPacked,
 	isTest: shippoIsTest,
 };
 
@@ -76,6 +100,9 @@ export type Bought = {
 	boxes: Shipment[];
 	// Why the purchase stopped part way, with what was bought refunded.
 	failed: string | null;
+	// A box whose purchase got no clear answer, so it may have been charged:
+	// the orders can't get a new label until it's checked (label-attempts.ts).
+	unsure: string | null;
 };
 
 // Buys one label per box for these orders, all with one service, as one
@@ -84,11 +111,16 @@ export type Bought = {
 //
 // Each box is priced again here from the orders' own address and the box's
 // own size, so a stale or mismatched quote from the browser can't be bought.
-// Each label is recorded the moment it's paid for, and the records commit as
-// they go (see lockOnOwnConnection), so nothing paid for can be rolled back.
-// If a later box fails, the ones already bought are refunded and the
-// failure is returned; the dispatch never counts as bought, so it can't
-// send tracking, only be voided.
+// Each purchase is saved before the provider is asked and settled from its
+// answer (label-attempts.ts), and the records commit as they go (see
+// lockOnOwnConnection), so nothing paid for can be rolled back or bought
+// twice. If a later box is refused, the ones already bought are refunded and
+// the failure is returned; the dispatch never counts as bought, so it can't
+// send tracking, only be voided. A box with no clear answer stops the
+// purchase with nothing refunded: checking it settles the dispatch.
+//
+// What's packed is checked against the orders as quick ship showed them
+// (contentsKey), then kept with the dispatch as its contents.
 export async function buyDispatch(
 	db: Db,
 	input: {
@@ -122,6 +154,14 @@ export async function buyDispatch(
 		}
 		// Anything that could stop a record being saved is checked before
 		// money is spent.
+		const lines = await linesToPack(db, input.orderIds);
+		assertAsPacked(lines, input.contentsKey);
+		const unitIds = await assertMarketplacesAsPacked(
+			list,
+			lines,
+			tiktok,
+			outside,
+		);
 		await assertBoxesExist(db, boxes);
 		const signature =
 			!tiktok && (input.signature || signatureRequired(list) !== null);
@@ -139,11 +179,18 @@ export async function buyDispatch(
 		const dispatchId = await db.transaction(async (tx) => {
 			const [dispatch] = await tx
 				.insert(dispatches)
-				.values({ contentsKey: input.contentsKey })
+				.values({
+					contentsKey: input.contentsKey,
+					contents: "packed",
+					boxCount: boxes.length,
+				})
 				.returning();
 			await tx
 				.insert(dispatchOrders)
 				.values(list.map((o) => ({ dispatchId: dispatch.id, orderId: o.id })));
+			await tx
+				.insert(dispatchLines)
+				.values(lines.map((l) => ({ ...l, dispatchId: dispatch.id })));
 			return dispatch.id;
 		});
 
@@ -158,58 +205,65 @@ export async function buyDispatch(
 				weightGrams: plan.weightGrams,
 				hazmat: plan.hazmat,
 			};
-			let row: typeof shipments.$inferInsert;
-			try {
-				if (tiktok) {
-					// A package TikTok already made for this order is recorded,
-					// not bought again (a retry after a lost response).
-					const label = await outside.tiktokBuy(
-						tiktokOrderId(lead.marketplaceOrderId),
-						plan,
-						choice.id,
-					);
-					row = {
+			const prepared: PreparedBox = tiktok
+				? {
 						...box,
 						provider: "tiktok",
-						carrier: label.rate.carrier,
-						service: label.rate.service,
-						serviceName: label.rate.serviceName,
-						cost: label.rate.cost,
+						carrier: choice.carrier,
+						service: choice.service,
+						serviceName: choice.service,
+						cost: choice.total,
 						insuredAmount: null,
 						signature: false,
-						trackingNumber: null,
-						trackingUrl: null,
-						// TikTok's links expire; label-file.ts fetches by package.
-						labelUrl: null,
-						externalId: label.packageId,
 						test: false,
-					};
-				} else {
-					const rate = rates[i];
-					const label = await outside.buyLabel(rate.id);
-					row = {
+					}
+				: {
 						...box,
 						provider: "shippo",
-						carrier: rate.carrier,
-						carrierToken: rate.carrierToken ?? null,
-						service: rate.service,
-						serviceName: rate.serviceName,
-						cost: rate.cost,
+						carrier: rates[i].carrier,
+						carrierToken: rates[i].carrierToken ?? null,
+						service: rates[i].service,
+						serviceName: rates[i].serviceName,
+						cost: rates[i].cost,
 						insuredAmount: plan.insureAmount,
 						signature,
-						trackingNumber: label.trackingNumber,
-						trackingUrl: label.trackingUrl,
-						labelUrl: label.labelUrl,
-						externalId: label.id,
 						test: outside.isTest(),
 					};
-				}
-				bought.push(await record(db, row, outside));
+			const attempt = await beginAttempt(db, {
+				dispatchId,
+				boxIndex: i,
+				provider: tiktok ? "tiktok" : "shippo",
+				rateId: tiktok ? choice.id : rates[i].id,
+				unitIds,
+				box: prepared,
+			});
+			const of = `Box ${i + 1} of ${boxes.length}`;
+			let saved: Shipment;
+			try {
+				saved = await purchase(db, attempt, prepared, {
+					tiktokOrderId: tiktok ? tiktokOrderId(lead.marketplaceOrderId) : null,
+					plan,
+					choice,
+					rateId: rates[i]?.id,
+					outside,
+				});
 			} catch (err) {
+				const why = err instanceof Error ? err.message : String(err);
+				if (outcomeOf(err) === "unknown") {
+					await settleWithout(db, attempt, "unknown", { error: why }).catch(
+						() => {},
+					);
+					return {
+						dispatchId,
+						boxes: bought,
+						failed: `${of}: no clear answer from ${tiktok ? "TikTok" : "Shippo"} (${why}), so it may have been bought. Check it on the order page before buying again.`,
+						unsure: attempt.id,
+					};
+				}
+				await settleWithout(db, attempt, "failed", { error: why });
 				// Nothing bought yet: nothing to keep, so the empty dispatch
 				// stays behind unused (it never counts as live).
 				if (bought.length === 0) throw err;
-				const why = err instanceof Error ? err.message : String(err);
 				const after = await refundAll(db, bought, outside);
 				const stillLive = after.filter((b) => !b.voidedAt).length;
 				if (stillLive === 0) {
@@ -221,20 +275,123 @@ export async function buyDispatch(
 				return {
 					dispatchId,
 					boxes: after,
-					failed: `Box ${i + 1} of ${boxes.length} wasn't bought (${why}). ${
+					failed: `${of} wasn't bought (${why}). ${
 						stillLive === 0
 							? "The labels already bought were refunded; press again to retry."
 							: `${stillLive} label${stillLive === 1 ? "" : "s"} already bought couldn't be refunded; void ${stillLive === 1 ? "it" : "them"} on the order page.`
 					}`,
+					unsure: null,
 				};
 			}
+			bought.push(saved);
 		}
-		await db
-			.update(dispatches)
-			.set({ boughtAt: new Date() })
-			.where(eq(dispatches.id, dispatchId));
-		return { dispatchId, boxes: bought, failed: null };
+		return { dispatchId, boxes: bought, failed: null, unsure: null };
 	});
+}
+
+// What each order's marketplace still has to ship must be exactly what was
+// packed, asked of eBay and TikTok themselves before money is spent (Shopify
+// is asked at handoff, where its fulfillment names each quantity). Returns
+// the TikTok units the label is for, or null for a Shippo label.
+async function assertMarketplacesAsPacked(
+	list: Awaited<ReturnType<typeof assertTogether>>,
+	lines: LineToPack[],
+	tiktok: boolean,
+	outside: BuyOutside,
+): Promise<string[] | null> {
+	let unitIds: string[] | null = null;
+	for (const order of list) {
+		const to = destinationOf(order, [tiktok ? "tiktok" : "shippo"]);
+		const packed = packedOf(lines, order.id);
+		if (to.kind === "hold") throw unmappable(to.why);
+		if (to.kind === "ebay") {
+			await outside.ebayCheck(order.externalId, byLine(packed));
+		}
+		if (to.kind === "tiktok") {
+			unitIds = unitsToBuy(
+				await outside.tiktokUnits(to.orderId),
+				packed,
+				to.relayed,
+			);
+		}
+	}
+	return unitIds;
+}
+
+// Pays for one box's label and records it. A refusal is a LabelRefused;
+// anything else thrown may have come after the charge. A label paid for but
+// not saved is refunded where it can be (a refusal then, since nothing is
+// left charged); if not, it stays unknown, and checking finds and records
+// it.
+async function purchase(
+	db: Db,
+	attempt: Awaited<ReturnType<typeof beginAttempt>>,
+	prepared: PreparedBox,
+	ctx: {
+		tiktokOrderId: string | null;
+		plan: BoxPlan;
+		choice: ServiceChoice;
+		rateId: string | undefined;
+		outside: BuyOutside;
+	},
+): Promise<Shipment> {
+	const { outside } = ctx;
+	let label: Label;
+	let overrides: Partial<PreparedBox> = {};
+	if (attempt.provider === "tiktok") {
+		if (!attempt.unitIds || !ctx.tiktokOrderId) {
+			throw new LabelRefused("No TikTok units to buy");
+		}
+		const bought = await outside.tiktokBuy(
+			ctx.tiktokOrderId,
+			ctx.plan,
+			ctx.choice.id,
+			attempt.unitIds,
+		);
+		label = {
+			externalId: bought.packageId,
+			trackingNumber: null,
+			trackingUrl: null,
+			// TikTok's links expire; label-file.ts fetches by package.
+			labelUrl: null,
+			voided: null,
+		};
+		overrides = {
+			carrier: bought.rate.carrier,
+			service: bought.rate.service,
+			serviceName: bought.rate.serviceName,
+			cost: bought.rate.cost,
+		};
+	} else {
+		if (!ctx.rateId) throw new LabelRefused("No rate to buy");
+		const bought = await outside.buyLabel(ctx.rateId, attempt.id);
+		label = {
+			externalId: bought.id,
+			trackingNumber: bought.trackingNumber,
+			trackingUrl: bought.trackingUrl,
+			labelUrl: bought.labelUrl,
+			voided: null,
+		};
+	}
+	try {
+		return (await recordBought(db, attempt, label, overrides)).shipment;
+	} catch (err) {
+		const why = err instanceof Error ? err.message : String(err);
+		if (prepared.provider === "shippo") {
+			const refunded = await outside
+				.refund(label.externalId)
+				.then(() => true)
+				.catch(() => false);
+			if (refunded) {
+				throw new LabelRefused(
+					`A label was bought but couldn't be saved (${why}); it was refunded`,
+				);
+			}
+		}
+		throw new Error(
+			`A label was bought but couldn't be saved (${why}); check it to record it`,
+		);
+	}
 }
 
 async function assertBoxesExist(db: Db, boxes: BoxPlan[]) {
@@ -299,33 +456,6 @@ async function quoteEach(
 			return confirmed;
 		}),
 	);
-}
-
-// Saves a bought label. If saving fails, the label is refunded so no money
-// is spent on a label katasync doesn't know about, and the error goes on.
-async function record(
-	db: Db,
-	row: typeof shipments.$inferInsert,
-	outside: BuyOutside,
-): Promise<Shipment> {
-	try {
-		const [saved] = await db.insert(shipments).values(row).returning();
-		return saved;
-	} catch (err) {
-		const why = err instanceof Error ? err.message : String(err);
-		const byHand = `cancel ${row.provider} label ${row.externalId} by hand`;
-		// TikTok labels can't be cancelled from here (see voidDispatch).
-		const refunded =
-			row.provider === "shippo"
-				? await outside
-						.refund(row.externalId)
-						.then(() => "it was refunded")
-						.catch(() => byHand)
-				: byHand;
-		throw new Error(
-			`A label was bought but couldn't be saved (${why}); ${refunded}`,
-		);
-	}
 }
 
 // Refunds the boxes of a purchase that stopped part way, recording each

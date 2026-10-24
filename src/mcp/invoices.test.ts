@@ -214,8 +214,22 @@ describe("over MCP", () => {
 				lines: [{ sku: "BLADE", quantity: 4, unit_cost: 1.5 }],
 			});
 			expect(again.data.alreadyRecorded).toMatch(/already recorded/);
-			await tool("remove_supplier_invoice", { id: data.invoices[0].id });
-			expect(await db.select().from(schema.supplierInvoices)).toEqual([]);
+			await tool("void_supplier_invoice", { id: data.invoices[0].id });
+			expect(
+				(await tool("get_purchase_order", { id: po })).data.invoices[0],
+			).toMatchObject({
+				voided: { reason: null },
+				payment: { kind: "void" },
+				match: { kind: "void" },
+			});
+			expect(await db.select().from(schema.supplierInvoices)).toHaveLength(1);
+			expect((await tool("po_payables", { po })).data.invoices[0].voided).toBe(
+				true,
+			);
+			await tool("restore_supplier_invoice", { id: data.invoices[0].id });
+			expect((await tool("po_payables", { po })).data.invoices[0].voided).toBe(
+				false,
+			);
 		});
 
 		test("item numbers fill in only for that supplier's products, keeping others", async () => {

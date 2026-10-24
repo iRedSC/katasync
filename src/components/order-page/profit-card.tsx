@@ -34,7 +34,7 @@ export function ProfitCard({
 	const sold = p.revenue + p.shippingCharged;
 	return (
 		<Card
-			title="Profit"
+			title="Contribution"
 			aside={
 				sold > 0 && (
 					<span
@@ -87,7 +87,7 @@ export function ProfitCard({
 				)}
 				<div className="mt-1 border-t pt-1">
 					<Line
-						label="Profit"
+						label="Contribution"
 						value={formatMoney(p.profit)}
 						strong
 						note={

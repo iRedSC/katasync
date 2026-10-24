@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { type } from "arktype";
-import { and, eq, like, ne } from "drizzle-orm";
+import { and, eq, getTableColumns, like, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orderLines, orders } from "#/db/schema";
 import {
@@ -10,8 +10,10 @@ import {
 } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
 import { importReturns } from "#/orders/return-requests";
+import { stockEffectApplied } from "#/orders/stock-effects";
 import { needsShipping } from "#/orders/to-ship";
 import { markGoneListings, matchListings, syncListings } from "./listings";
+import { type OrderUpdate, orderUpdate } from "./order-update";
 import {
 	advanceOrderCursor,
 	ensureStore,
@@ -380,7 +382,10 @@ export async function ingestDetail(
 
 // One order by id, for a webhook. It doesn't move the sync cursor; the next
 // pass sees the order again and reports any problems with it on Diagnostics.
-export async function ingestTiktokOrder(db: Db, orderId: string) {
+export async function ingestTiktokOrder(
+	db: Db,
+	orderId: string,
+): Promise<OrderUpdate> {
 	const cipher = await shopCipher();
 	const store = await ensureStore(db, "tiktok", STORE);
 	const details = detailPage.assert(
@@ -389,9 +394,12 @@ export async function ingestTiktokOrder(db: Db, orderId: string) {
 			ids: orderId,
 		}),
 	);
-	const stock = await stockLocations(db);
-	for (const raw of details.orders ?? [])
-		await ingestDetail(db, store, raw, stock);
+	const raw = details.orders?.find((order) => order.id === orderId);
+	if (!raw) return { kind: "retry", error: `TikTok didn't return ${orderId}` };
+	const result = await ingestDetail(db, store, raw, await stockLocations(db));
+	if (!result.ingested && result.problems.length === 0)
+		return { kind: "retry", error: `TikTok order ${orderId} wasn't applied` };
+	return orderUpdate(result.problems);
 }
 
 // TikTok orders Shopify relayed that still need shipping.
@@ -447,7 +455,10 @@ export async function takeOver(
 		const claimed = new Set<string>();
 		const matches: { lineId: number; to: ChannelOrder["lines"][number] }[] = [];
 		const lines = await tx
-			.select()
+			.select({
+				...getTableColumns(orderLines),
+				stockApplied: sql<boolean>`coalesce(${stockEffectApplied}, false)`,
+			})
 			.from(orderLines)
 			.where(eq(orderLines.orderId, existing.id));
 		for (const line of lines) {
@@ -463,7 +474,7 @@ export async function takeOver(
 				problems.push(
 					`${existing.name}: ${line.title} isn't on the TikTok order`,
 				);
-				if (line.saleBatchId) blocked = true;
+				if (line.stockApplied) blocked = true;
 				continue;
 			}
 			claimed.add(match.externalId);

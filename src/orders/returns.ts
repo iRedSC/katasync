@@ -10,9 +10,13 @@ import {
 	products,
 	stockLevels,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
+import { returnSaleOf } from "#/inventory/commitments-consume";
 import { recordReturn, undoBatch } from "#/inventory/ledger";
+import { lockBatchProducts } from "#/inventory/ledger/post";
 import { isOurs } from "#/inventory/locations";
 import { retireRefurbs } from "./refurb-retire";
+import { returnQuantity } from "./return-stock";
 import { isLabeled, returnBlocker } from "./status";
 
 export class ReturnError extends Error {
@@ -48,6 +52,7 @@ export async function receiveReturn(
 	if (refurb !== null && wanted.length > 1)
 		throw new ReturnError("Refurbish one item at a time");
 	return db.transaction(async (tx) => {
+		const mode = await readQuantityMode(tx);
 		// Locks the order so two people receiving the same box can't both
 		// count it.
 		const [order] = await tx
@@ -66,7 +71,9 @@ export async function receiveReturn(
 			...order,
 			labeled: isLabeled(profit?.labelsStatus),
 		});
-		if (blocked) throw new ReturnError(blocked);
+		if (order.fulfilledByChannel || mode === "legacy") {
+			if (blocked) throw new ReturnError(blocked);
+		}
 		let restockAt: number | null = null;
 		if (input.outcome !== "write_off") {
 			const shelf = saleLocation(await stockLocations(tx), order);
@@ -82,6 +89,7 @@ export async function receiveReturn(
 				sku: orderLines.sku,
 				title: orderLines.title,
 				quantity: orderLines.quantity,
+				returnQuantity,
 				saleBatchId: orderLines.saleBatchId,
 				unitCost: orderLines.unitCost,
 				// The outer table is named: in a one-table select Drizzle leaves
@@ -102,13 +110,39 @@ export async function receiveReturn(
 				),
 			);
 
+		const sales = new Map(
+			await Promise.all(
+				lines.map(
+					async (line) =>
+						[
+							line.id,
+							line.saleBatchId
+								? { batchId: line.saleBatchId, quantity: line.quantity }
+								: await returnSaleOf(tx, line.id),
+						] as const,
+				),
+			),
+		);
+		if (restockAt !== null)
+			await lockBatchProducts(
+				tx,
+				[...sales.values()].flatMap((sale) =>
+					sale === null ? [] : [sale.batchId],
+				),
+				[
+					...lines.flatMap((line) =>
+						line.productId === null ? [] : [line.productId],
+					),
+					...(refurb === null ? [] : [refurb]),
+				],
+			);
 		const ids: number[] = [];
 		for (const want of wanted) {
 			const line = lines.find((l) => l.id === want.lineId);
 			if (!line)
 				throw new ReturnError(`No line ${want.lineId} on ${order.name}`);
 			const name = line.sku ?? line.title;
-			const left = line.quantity - line.returned;
+			const left = line.returnQuantity - line.returned;
 			if (!Number.isInteger(want.quantity) || want.quantity > left) {
 				throw new ReturnError(
 					left === 0
@@ -150,9 +184,7 @@ export async function receiveReturn(
 					quantity: want.quantity,
 					locationId: restockAt,
 					reference: `return:${order.id}:${line.id}`,
-					sale: line.saleBatchId
-						? { batchId: line.saleBatchId, quantity: line.quantity }
-						: null,
+					sale: sales.get(line.id) ?? null,
 					unitCost: line.unitCost,
 				}));
 			}
@@ -185,12 +217,20 @@ export async function undoReturns(
 ): Promise<{ problems: string[] }> {
 	if (ids.length === 0) return { problems: [] };
 	const refurbs = await db.transaction(async (tx) => {
+		await readQuantityMode(tx);
 		const rows = await tx
 			.delete(orderReturns)
 			.where(inArray(orderReturns.id, ids))
 			.returning();
 		if (rows.length !== new Set(ids).size)
 			throw new ReturnError("That return was already undone");
+		await lockBatchProducts(
+			tx,
+			rows.flatMap((row) => (row.batchId === null ? [] : [row.batchId])),
+			rows.flatMap((row) =>
+				row.refurbProductId === null ? [] : [row.refurbProductId],
+			),
+		);
 		for (const row of rows) {
 			if (row.refurbProductId !== null) {
 				const [refurb] = await tx

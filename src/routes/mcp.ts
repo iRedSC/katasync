@@ -4,8 +4,18 @@ import { createFileRoute } from "@tanstack/react-router";
 // own server and transport, so nothing is kept between calls. Callers sign in
 // with OAuth (src/auth/oauth.ts): without a token, the 401 points them to
 // the metadata that starts it. An app approved read only gets only the tools
-// that read. Every change is logged (src/mcp/log.ts). Tools are in
-// src/mcp/server.ts.
+// that read. Every change is logged (src/mcp/log.ts) and runs as whoever the
+// connection acts for right now (checkAccessToken), so the audit log credits
+// it to them. Tools are in src/mcp/server.ts.
+
+const toolNames = (body: unknown) =>
+	(Array.isArray(body) ? body : [body])
+		.map((m) =>
+			m && typeof m === "object" && "params" in m
+				? (m.params as { name?: unknown } | null)?.name
+				: undefined,
+		)
+		.filter((n): n is string => typeof n === "string");
 
 async function handle(request: Request) {
 	const [
@@ -14,12 +24,16 @@ async function handle(request: Request) {
 		{ buildServer },
 		{ hasChanges, logCalls },
 		transport,
+		{ runAs },
+		{ describeActor },
 	] = await Promise.all([
 		import("#/db/client"),
 		import("#/auth/oauth"),
 		import("#/mcp/server"),
 		import("#/mcp/log"),
 		import("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"),
+		import("#/audit/context"),
+		import("#/auth/actor"),
 	]);
 	const db = getDb();
 	const bearer = /^Bearer (.+)$/.exec(
@@ -47,20 +61,23 @@ async function handle(request: Request) {
 					.json()
 					.catch(() => undefined)
 			: undefined;
-	const server = buildServer(db, { canWrite: token.canWrite });
-	const http = new transport.WebStandardStreamableHTTPServerTransport({
-		sessionIdGenerator: undefined,
-		enableJsonResponse: true,
+	const operation = `mcp ${toolNames(body).join(",")}`.trim();
+	const response = await runAs(token.actor, operation, async () => {
+		const server = buildServer(db, { canWrite: token.canWrite });
+		const http = new transport.WebStandardStreamableHTTPServerTransport({
+			sessionIdGenerator: undefined,
+			enableJsonResponse: true,
+		});
+		await server.connect(http);
+		return http.handleRequest(request, { parsedBody: body });
 	});
-	await server.connect(http);
-	const response = await http.handleRequest(request, { parsedBody: body });
 	// Only a request with a change is logged, so only then is its reply read.
 	if (body !== undefined && response.ok && hasChanges(body)) {
 		const reply = await response
 			.clone()
 			.json()
 			.catch(() => undefined);
-		await logCalls(db, token.name, body, reply).catch((error) =>
+		await logCalls(db, describeActor(token.actor), body, reply).catch((error) =>
 			console.error("Couldn't log an MCP call:", error),
 		);
 	}

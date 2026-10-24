@@ -7,6 +7,7 @@ vi.mock("#/channels/tiktok", async (actual) => ({
 }));
 
 import { TiktokError, tiktokApi } from "#/channels/tiktok";
+import { LabelRefused } from "./label-attempt-state";
 import { labelPrice, tiktokBuyLabel, tiktokShipPackage } from "./tiktok";
 
 const parcel = {
@@ -22,106 +23,55 @@ beforeEach(() => {
 });
 
 describe("tiktokBuyLabel", () => {
-	test("recovers a package TikTok already made instead of buying another", async () => {
+	const answers = (create: () => Promise<unknown>) =>
 		vi.mocked(tiktokApi).mockImplementation(async (...args) => {
 			const [path] = args;
-			if (path === "/order/202309/orders") {
-				return {
-					orders: [
-						{
-							id: "577",
-							status: "AWAITING_COLLECTION",
-							packages: [{ id: "pkg-1" }],
-							line_items: [{ id: "u1" }],
-						},
-					],
-				};
-			}
-			if (path === "/fulfillment/202309/packages/pkg-1") {
-				return { shipping_provider_name: "USPS" };
-			}
-			return undefined;
-		});
-
-		const label = await tiktokBuyLabel("577", parcel, "svc-1");
-
-		expect(label).toMatchObject({
-			packageId: "pkg-1",
-			recovered: true,
-			rate: { carrier: "USPS", cost: 0 },
-		});
-		expect(vi.mocked(tiktokApi).mock.calls.map(([path]) => path)).toEqual([
-			"/order/202309/orders",
-			"/fulfillment/202309/packages/pkg-1",
-		]);
-	});
-
-	test("buys while the order still awaits shipment, even with a package listed", async () => {
-		vi.mocked(tiktokApi).mockImplementation(async (...args) => {
-			const [path] = args;
-			if (path === "/order/202309/orders") {
-				return {
-					orders: [
-						{
-							id: "577",
-							status: "AWAITING_SHIPMENT",
-							packages: [{ id: "pkg-0" }],
-							line_items: [{ id: "u1" }],
-						},
-					],
-				};
-			}
 			if (path?.endsWith("/shipping_services/query")) {
 				return {
 					shipping_services: [{ id: "svc-1", name: "Ground", price: "$6.10" }],
 				};
 			}
-			if (path === "/fulfillment/202309/packages") {
-				return { package_id: "pkg-2" };
-			}
+			if (path === "/fulfillment/202309/packages") return create();
 			return undefined;
 		});
+	const call = (path: string) =>
+		vi.mocked(tiktokApi).mock.calls.find(([p]) => p === path);
 
-		const label = await tiktokBuyLabel("577", parcel, "svc-1");
-
-		expect(label).toMatchObject({ packageId: "pkg-2", recovered: false });
+	test("buys a package for exactly the units given, never taking one that exists", async () => {
+		answers(async () => ({
+			package_id: "pkg-2",
+			shipping_service_info: { price: "$6.25" },
+		}));
+		const label = await tiktokBuyLabel("577", parcel, "svc-1", ["u1", "u2"]);
+		expect(label).toMatchObject({ packageId: "pkg-2", rate: { cost: 6.25 } });
+		expect(call("/order/202309/orders")).toBeUndefined();
+		expect(call("/fulfillment/202309/packages")?.[2]).toMatchObject({
+			order_id: "577",
+			order_line_item_ids: ["u1", "u2"],
+		});
 	});
 
-	test("buys when the order has no package yet", async () => {
-		vi.mocked(tiktokApi).mockImplementation(async (...args) => {
-			const [path] = args;
-			if (path === "/order/202309/orders") {
-				return {
-					orders: [
-						{
-							id: "577",
-							status: "AWAITING_SHIPMENT",
-							line_items: [{ id: "u1" }],
-						},
-					],
-				};
-			}
-			if (path?.endsWith("/shipping_services/query")) {
-				return {
-					shipping_services: [{ id: "svc-1", name: "Ground", price: "$6.10" }],
-				};
-			}
-			if (path === "/fulfillment/202309/packages") {
-				return {
-					package_id: "pkg-2",
-					shipping_service_info: { price: "$6.25" },
-				};
-			}
-			return undefined;
-		});
+	test("a service no longer offered is a refusal, with nothing bought", async () => {
+		answers(async () => ({ package_id: "x" }));
+		await expect(
+			tiktokBuyLabel("577", parcel, "svc-gone", ["u1"]),
+		).rejects.toBeInstanceOf(LabelRefused);
+		expect(call("/fulfillment/202309/packages")).toBeUndefined();
+	});
 
-		const label = await tiktokBuyLabel("577", parcel, "svc-1");
-
-		expect(label).toMatchObject({
-			packageId: "pkg-2",
-			recovered: false,
-			rate: { cost: 6.25 },
+	test("TikTok's own error on the create is a refusal; a dropped connection isn't", async () => {
+		answers(async () => {
+			throw new TiktokError(1, "/fulfillment/202309/packages", "bad parcel");
 		});
+		await expect(
+			tiktokBuyLabel("577", parcel, "svc-1", ["u1"]),
+		).rejects.toBeInstanceOf(LabelRefused);
+		answers(async () => {
+			throw new Error("socket hang up");
+		});
+		const lost = tiktokBuyLabel("577", parcel, "svc-1", ["u1"]);
+		await expect(lost).rejects.toThrow("socket hang up");
+		await expect(lost).rejects.not.toBeInstanceOf(LabelRefused);
 	});
 });
 

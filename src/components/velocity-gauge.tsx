@@ -27,6 +27,8 @@ const COLORS = {
 	min: "oklch(0.7 0.12 75)",
 	shelf: "var(--success-icon)",
 	coming: "var(--info-icon)",
+	late: "oklch(0.8 0.12 75)",
+	unmet: "oklch(0.62 0.2 25)",
 	order: "var(--primary)",
 } as const;
 
@@ -205,7 +207,9 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 				"rounded-lg px-3 py-2",
 				v.kind === "order"
 					? "bg-info-surface text-info-text"
-					: "bg-surface text-foreground",
+					: v.kind === "awaiting"
+						? "bg-warning-surface text-warning-text"
+						: "bg-surface text-foreground",
 			)}
 		>
 			<p className="font-semibold">
@@ -218,7 +222,9 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 						? v.days === 0
 							? "Reorder today"
 							: `Reorder in ${plural(v.days, "day")}`
-						: "Nothing to order"}
+						: v.kind === "awaiting"
+							? `Delivery in ${plural(v.days, "day")}, ${plural(v.gapDays, "day")} short`
+							: "Nothing to order"}
 			</p>
 			{poText !== null && suggested !== poText && (
 				<p className="text-xs opacity-80">
@@ -264,9 +270,27 @@ function Bars({ why }: { why: ReorderWhy }) {
 							? [{ key: "cover", units: why.aim.cover, color: COLORS.cover }]
 							: []),
 					];
+	const incoming = why.incoming;
 	const have: Segment[] = [
 		{ key: "shelf", units: Math.max(why.onHand, 0), color: COLORS.shelf },
-		{ key: "coming", units: why.onOrder, color: COLORS.coming, striped: true },
+		{
+			key: "coming",
+			units: incoming.timely,
+			color: COLORS.coming,
+			striped: true,
+		},
+		{
+			key: "late",
+			units: incoming.aim - incoming.timely,
+			color: COLORS.late,
+			striped: true,
+		},
+		{
+			key: "unmet",
+			units: why.onOrder - incoming.aim,
+			color: COLORS.unmet,
+			striped: true,
+		},
 		...(ordering
 			? [{ key: "order", units: v.units, color: COLORS.order, striped: true }]
 			: []),
@@ -339,7 +363,16 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 	const cushion = `${why.abc ? `${why.abc} item` : "Unclassed"}, ${Math.round(why.serviceShare * 100)}% service`;
 	const minSetsPoint =
 		why.aim.kind === "min" || why.orderBelow > restockPoint(why);
-	const have = afterArrival(why.onHand, why.onOrder);
+	const have = afterArrival(why.onHand, why.incoming.aim);
+	const notCounted = why.onOrder - why.incoming.aim;
+	const notCountedNote = [
+		why.incoming.unknown > 0 &&
+			`${formatCount(why.incoming.unknown)} without a current delivery date`,
+		why.incoming.aim < why.onOrder - why.incoming.unknown &&
+			"due after the shelf runs out",
+	]
+		.filter(Boolean)
+		.join(", ");
 	const minLabel = {
 		stock: "Min stock",
 		sets: "Enough to build each tool set",
@@ -398,18 +431,41 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 				}
 				value={minus(Math.max(why.onHand, 0))}
 			/>,
-			...(why.onOrder > 0
+			...(why.incoming.aim > 0
 				? [
 						<Row
 							key="coming"
 							color={COLORS.coming}
 							striped
 							label="Incoming"
-							value={minus(why.onOrder)}
+							value={minus(why.incoming.aim)}
+						/>,
+					]
+				: []),
+			...(notCounted > 0
+				? [
+						<Row
+							key="unmet"
+							color={COLORS.unmet}
+							striped
+							label="Not counted"
+							note={notCountedNote}
+							value={formatCount(notCounted)}
 						/>,
 					]
 				: []),
 			<Total key="short" label="Short" value={formatCount(short)} />,
+			...(why.untilLate > 0
+				? [
+						<Row
+							key="late"
+							color={COLORS.late}
+							striped
+							label="Bridge delivery gaps"
+							value={formatCount(why.untilLate)}
+						/>,
+					]
+				: []),
 			<Row
 				key="order"
 				color={COLORS.order}
@@ -471,8 +527,8 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 				color={COLORS.shelf}
 				label="Have"
 				note={
-					why.onOrder > 0
-						? `${formatCount(Math.max(why.onHand, 0))} on shelf + ${formatCount(why.onOrder)} incoming`
+					why.incoming.aim > 0
+						? `${formatCount(Math.max(why.onHand, 0))} on shelf + ${formatCount(why.incoming.aim)} incoming`
 						: undefined
 				}
 				value={formatCount(have)}

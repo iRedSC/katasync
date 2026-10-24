@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	countLog,
+	locations,
 	movements,
 	products,
 	stockCounts,
@@ -12,8 +13,10 @@ import { carriedOrStocked } from "#/products/archive";
 import {
 	assertPositiveInteger,
 	getProduct,
-	getRecipe,
 	LedgerError,
+	lockBatchProducts,
+	lockRecipe,
+	lockStockProducts,
 	postMovements,
 	type StockLevel,
 } from "./ledger/post";
@@ -67,9 +70,8 @@ async function convertKits(
 ) {
 	assertPositiveInteger(input.quantity);
 	return db.transaction(async (tx) => {
-		const kit = await getProduct(tx, input.kitProductId);
+		const { parent: kit, recipe } = await lockRecipe(tx, input.kitProductId);
 		if (kit.kind !== "kit") throw new LedgerError(`${kit.sku} is not a kit`);
-		const recipe = await getRecipe(tx, kit.id);
 		if (recipe.length === 0)
 			throw new LedgerError(`Kit ${kit.sku} has no components`);
 
@@ -196,6 +198,16 @@ export async function requestCounts(
 	input: { productIds: number[]; locationId: number },
 ) {
 	if (input.productIds.length === 0) return [];
+	return db.transaction(async (tx) => {
+		await lockStockProducts(tx, input.productIds);
+		return putCountRequests(tx, input);
+	});
+}
+
+async function putCountRequests(
+	db: Db,
+	input: { productIds: number[]; locationId: number },
+) {
 	const bundles = await db
 		.select({ sku: products.sku })
 		.from(products)
@@ -281,6 +293,7 @@ export async function postReceipt(
 	},
 ): Promise<{ batchId: string; levels: StockLevel[] }> {
 	return db.transaction(async (tx) => {
+		await lockStockProducts(tx, [input.productId]);
 		// Locked, so a sale landing now can't slip under the write-off.
 		const [level] = await tx
 			.select({ onHand: stockLevels.onHand })
@@ -323,6 +336,14 @@ export async function recordCount(
 		throw new LedgerError(`Count must be a whole number, got ${input.counted}`);
 	}
 	return db.transaction(async (tx) => {
+		const [location] = await tx
+			.select({ kind: locations.kind })
+			.from(locations)
+			.where(eq(locations.id, input.locationId));
+		if (location?.kind === "transit")
+			throw new LedgerError(
+				"Receive or undo the transfer instead of counting in-transit stock",
+			);
 		const product = await getProduct(tx, input.productId);
 		if (product.kind === "bundle") {
 			throw new LedgerError(
@@ -419,6 +440,11 @@ export async function undoBatch(
 	options: { costs?: CostLine[] } = {},
 ) {
 	return db.transaction(async (tx) => {
+		await lockBatchProducts(
+			tx,
+			[batchId],
+			(options.costs ?? []).map((cost) => cost.productId),
+		);
 		// Held to the end of this transaction, so an undo of the same batch waits
 		// here, then sees the reversal this one commits.
 		await tx.execute(

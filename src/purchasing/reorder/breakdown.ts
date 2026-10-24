@@ -18,11 +18,12 @@ import { DEFAULT_COVER_DAYS, loadPlan, type Plan, planFor } from "./plan";
 import {
 	explainReorder,
 	forecastMax,
+	incomingFor,
 	type ReorderInput,
 	reorderQuantity,
 	velocityRanks,
 } from "./quantity";
-import { setRecipes, stockAndOrders } from "./stock";
+import { setRecipes, stockAndArrivals } from "./stock";
 import { isCritical, ordersItself, type SuggestedLine } from "./suggested";
 
 type Supplier = {
@@ -70,11 +71,14 @@ export async function reorderBreakdown(
 	// The same window the forecast's days are read over, so the sales shown
 	// and the explanation for them cover the same orders.
 	const demand = demandWindow(now);
+	const plan = Promise.resolve(options.plan ?? loadPlan(db, now));
 	const [sold, supply, defaultMin, rows, planned, counted, setsSold, recipes] =
 		await Promise.all([
 			soldInWindow(db, demand),
 			// On hand and on order are read together, so they're from one moment.
-			stockAndOrders(db, productIds),
+			plan.then((planned) =>
+				stockAndArrivals(db, planned.leadTimes, productIds),
+			),
 			// Read here rather than from inventory/stock-range, which imports this
 			// file.
 			db
@@ -138,7 +142,7 @@ export async function reorderBreakdown(
 					),
 				)
 				.orderBy(products.name, products.variantName),
-			options.plan ?? loadPlan(db, now),
+			plan,
 			// Products counted on any of our own shelves, ever.
 			db
 				.selectDistinct({ productId: stockLevels.productId })
@@ -149,7 +153,7 @@ export async function reorderBreakdown(
 			setsSoldIn(db, demand),
 			setRecipes(db),
 		]);
-	const { onHand, onOrder } = supply;
+	const { onHand, onOrder, arrivals } = supply;
 	const ranks = velocityRanks(planned.forecasts);
 	const sets = setMembership(recipes, onHand, setsSold);
 
@@ -206,6 +210,13 @@ export async function reorderBreakdown(
 			minimumQuantity: terms.minimumQuantity,
 			packSize: terms.packSize,
 		};
+		input.incoming = incomingFor(
+			now.getTime(),
+			input.onHand,
+			input.dailyDemand,
+			input.leadTimeDays + input.coverDays,
+			arrivals.get(p.productId) ?? [],
+		);
 		const line: SuggestedLine = {
 			productId: p.productId,
 			sku: p.sku,

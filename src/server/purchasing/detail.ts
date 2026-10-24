@@ -20,7 +20,6 @@ import { poFilesOf } from "#/purchasing/files";
 import { openFlagsOf } from "#/purchasing/flags";
 import { leadTimes } from "#/purchasing/forecast";
 import { emailsOf } from "#/purchasing/inbox/ingest";
-import { invoicesOf } from "#/purchasing/invoices";
 import { loadOrder, receivedByLine } from "#/purchasing/load";
 import {
 	draftChanges,
@@ -33,6 +32,7 @@ import {
 } from "#/purchasing/orders";
 import { chargesOf } from "#/purchasing/orders/charges";
 import { landedTerms } from "#/purchasing/orders/revalue";
+import { orderPayables } from "#/purchasing/payables";
 import {
 	DEFAULT_SETTINGS,
 	recommendedAdditions,
@@ -108,7 +108,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			amendments,
 			recommended,
 			whys,
-			invoices,
+			payables,
 			damages,
 			emails,
 			tracking,
@@ -174,7 +174,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			reorderBreakdown(db, { productIds }).then(
 				(all) => new Map(all.map((b) => [b.line.productId, b.why])),
 			),
-			invoicesOf(db, data.id),
+			orderPayables(db, data.id),
 			damagesOf(db, data.id),
 			emailsOf(db, data.id),
 			trackingOf(db, data.id),
@@ -212,7 +212,8 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			amendments,
 			// What should change on it, waiting on someone to apply or dismiss.
 			flags,
-			invoices,
+			invoices: payables.billing.invoices,
+			payables,
 			// Freight and the like, and how they spread: each line's added cost
 			// per single item.
 			charges,
