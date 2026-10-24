@@ -11,7 +11,12 @@ import {
 	resolveFlag,
 } from "#/purchasing/flags";
 import { createPurchasingDb } from "#/purchasing/purchasing.fixtures";
-import { fileWithAi, takeSuggestion, undoFiling } from "./ai-filing";
+import {
+	fileWithAi,
+	takeSuggestion,
+	undoFiling,
+	undoSetAside,
+} from "./ai-filing";
 import { fileEmail } from "./ingest";
 
 // The agent: calls its flag tool with each of flags, then answers as told,
@@ -265,6 +270,64 @@ describe("the AI filing emails", () => {
 			"the email, moved since",
 		]);
 		expect((await theEmail()).purchaseOrderId).toBe(other);
+	});
+
+	// An earlier email, from another sender, carrying the same invoice.
+	async function earlierWithSameFile() {
+		const pdf = Buffer.from("%PDF invoice 991");
+		const [{ id: first }] = await db
+			.insert(schema.poEmails)
+			.values({
+				messageId: "<m0@other.com>",
+				fromAddress: "ap@other.com",
+				recipients: ["purchasing@eastcoastdrywall.com"],
+				subject: "Invoice 991",
+				body: "Attached",
+				receivedAt: new Date(Date.now() - 86_400_000),
+			})
+			.returning();
+		await db.insert(schema.poEmailAttachments).values(
+			[first, email].map((emailId) => ({
+				emailId,
+				filename: emailId === first ? "inv.pdf" : "invoice-991.pdf",
+				contentType: "application/pdf",
+				size: pdf.length,
+				data: pdf,
+			})),
+		);
+		return first;
+	}
+
+	test("sets aside a copy of an earlier email, and undo brings it back for good", async () => {
+		const first = await earlierWithSameFile();
+		await db.insert(schema.poEmailAi).values({
+			emailId: first,
+			state: "unmatched",
+			reason: "x",
+		});
+		const { run, asked } = agent({ po, duplicateOf: first });
+		expect(await fileWithAi(db, { run })).toMatchObject({ set_aside: 1 });
+		expect(JSON.parse(asked[0]).earlierEmails).toMatchObject([
+			{ id: first, on: "unfiled", sameFiles: ["inv.pdf"] },
+		]);
+		expect(await theEmail()).toMatchObject({ purchaseOrderId: null });
+		expect((await theEmail()).setAsideAt).not.toBeNull();
+		expect(await ai()).toMatchObject({
+			state: "set_aside",
+			duplicateOf: first,
+		});
+
+		expect(await undoSetAside(db, email)).toEqual({ kept: [] });
+		expect(await theEmail()).toMatchObject({ setAsideAt: null });
+		expect(await ai()).toMatchObject({ state: "undone", duplicateOf: first });
+		expect(await fileWithAi(db, { run })).toMatchObject({ set_aside: 0 });
+		await expect(undoSetAside(db, email)).rejects.toThrow(/nothing set aside/);
+	});
+
+	test("files it as usual when the copy it names isn't an earlier email", async () => {
+		const { run } = agent({ po, duplicateOf: 99_999 });
+		expect(await fileWithAi(db, { run })).toMatchObject({ filed: 1 });
+		expect(await theEmail()).toMatchObject({ purchaseOrderId: po });
 	});
 });
 

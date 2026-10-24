@@ -1,8 +1,25 @@
-import { and, desc, eq, gte, isNull, lt, or } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	gte,
+	isNotNull,
+	isNull,
+	lt,
+	ne,
+	or,
+	sql,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { type Filing, filer } from "#/ai/agents";
 import { type Agent, OutOfTimeError, runAgent } from "#/ai/harness";
 import type { Db } from "#/db/client";
-import { poEmailAi, poEmails, purchaseOrderTracking } from "#/db/schema";
+import {
+	poEmailAi,
+	poEmailAttachments,
+	poEmails,
+	purchaseOrderTracking,
+} from "#/db/schema";
 import { orderForClaude } from "#/mcp/server/po-for-claude";
 import { flagsOfEmails, lineFor, raiseFlag } from "#/purchasing/flags";
 import { PurchaseOrderError } from "#/purchasing/orders";
@@ -12,8 +29,9 @@ import { EmailMovedError, emailWithFiles, fileEmail } from "./ingest";
 import { likelihood, mentionedPos, recentPos } from "./views";
 
 // The AI's go at emails that nothing filed by itself (src/purchasing/inbox
-// /ingest.ts): the filer agent says which PO each is about, its tracking,
-// and flags what it says should change there. When it's sure, this files the
+// /ingest.ts): the filer agent says which earlier email each is a copy of,
+// which it sets aside, or else which PO it's about, its tracking, and flags
+// what it says should change there. When it's sure, this files the
 // email, follows the tracking, and raises the flags (src/purchasing/flags.ts),
 // which staff apply or dismiss: nothing here changes a PO's lines. When it
 // isn't sure, the PO waits as a suggestion staff take with one click. Undo
@@ -33,9 +51,13 @@ const FILES = 6;
 // POs read in full up front, and listed by name for read_po.
 const LIKELY_POS = 3;
 const OTHER_POS = 40;
+// Earlier emails it may be a copy of: the sender's lately, and any with the
+// same file.
+const EARLIER_EMAILS = 8;
+const EARLIER_BODY_CHARS = 1_500;
 
 type Run = typeof runAgent;
-export type Outcome = "filed" | "suggested" | "unmatched";
+export type Outcome = "filed" | "suggested" | "unmatched" | "set_aside";
 
 // Which claims a run may take: none yet, a failure old enough to try again,
 // or a dead run's.
@@ -96,13 +118,102 @@ async function settle(
 		.where(and(eq(poEmailAi.emailId, emailId), eq(poEmailAi.state, "working")));
 }
 
-// What the agent reads: the email and its files, the POs it's likeliest
-// about in full, and the rest of the recent ones by name.
+// Emails before this one it may be a copy of: from the same sender in the
+// last LOOK_BACK_MS, or carrying a file with the same bytes (name and size,
+// for a file too big to keep). Pictures inside the body, logos, don't count.
+async function earlierEmails(
+	db: Db,
+	email: { id: number; fromAddress: string; receivedAt: Date },
+) {
+	const mine = alias(poEmailAttachments, "mine");
+	const same = await db
+		.selectDistinct({
+			emailId: poEmailAttachments.emailId,
+			filename: poEmailAttachments.filename,
+		})
+		.from(poEmailAttachments)
+		.innerJoin(
+			mine,
+			and(
+				eq(mine.emailId, email.id),
+				isNull(mine.contentId),
+				eq(mine.size, poEmailAttachments.size),
+				sql`case when ${mine.data} is null or ${poEmailAttachments.data} is null
+					then ${mine.filename} = ${poEmailAttachments.filename}
+					else md5(${mine.data}) = md5(${poEmailAttachments.data}) end`,
+			),
+		)
+		.where(
+			and(
+				ne(poEmailAttachments.emailId, email.id),
+				isNull(poEmailAttachments.contentId),
+			),
+		);
+	const sameFiles = new Map<number, string[]>();
+	for (const f of same)
+		sameFiles.set(f.emailId, [...(sameFiles.get(f.emailId) ?? []), f.filename]);
+	const before = or(
+		lt(poEmails.receivedAt, email.receivedAt),
+		and(eq(poEmails.receivedAt, email.receivedAt), lt(poEmails.id, email.id)),
+	);
+	const rows = await db
+		.select({
+			id: poEmails.id,
+			from: poEmails.fromAddress,
+			subject: poEmails.subject,
+			receivedAt: poEmails.receivedAt,
+			purchaseOrderId: poEmails.purchaseOrderId,
+			setAsideAt: poEmails.setAsideAt,
+			body: poEmails.body,
+		})
+		.from(poEmails)
+		.where(
+			and(
+				before,
+				or(
+					and(
+						sql`lower(${poEmails.fromAddress}) = ${email.fromAddress.toLowerCase()}`,
+						gte(
+							poEmails.receivedAt,
+							new Date(email.receivedAt.getTime() - LOOK_BACK_MS),
+						),
+					),
+					sameFiles.size > 0
+						? sql`${poEmails.id} in (${sql.join(
+								[...sameFiles.keys()].map((id) => sql`${id}`),
+								sql`, `,
+							)})`
+						: undefined,
+				),
+			),
+		)
+		.orderBy(desc(poEmails.receivedAt))
+		.limit(EARLIER_EMAILS);
+	return rows.map((e) => ({
+		id: e.id,
+		from: e.from,
+		subject: e.subject,
+		receivedAt: e.receivedAt,
+		on:
+			e.purchaseOrderId !== null
+				? `PO ${e.purchaseOrderId}`
+				: e.setAsideAt
+					? "set aside"
+					: "unfiled",
+		sameFiles: sameFiles.get(e.id) ?? [],
+		body: e.body.slice(0, EARLIER_BODY_CHARS),
+	}));
+}
+
+// What the agent reads: the email and its files, the earlier emails it may
+// be a copy of, the POs it's likeliest about in full, and the rest of the
+// recent ones by name.
 async function brief(db: Db, emailId: number) {
 	const [{ email, files }, pos] = await Promise.all([
 		emailWithFiles(db, emailId),
 		recentPos(db),
 	]);
+	const earlier = await earlierEmails(db, email);
 	const mentions = mentionedPos(`${email.subject}\n${email.body}`);
 	const rank = (p: (typeof pos)[number]) => {
 		const l = likelihood(email, p, mentions);
@@ -124,6 +235,7 @@ async function brief(db: Db, emailId: number) {
 				text: f.text?.slice(0, FILE_CHARS) ?? null,
 			})),
 		},
+		earlierEmails: earlier,
 		likelyPos: await Promise.all(likely.map((p) => orderForClaude(db, p.id))),
 		otherPos: others.map((p) => ({
 			po: p.id,
@@ -131,7 +243,11 @@ async function brief(db: Db, emailId: number) {
 			sentAt: p.sentAt,
 		})),
 	});
-	return { input, candidates: new Set(pos.map((p) => p.id)) };
+	return {
+		input,
+		candidates: new Set(pos.map((p) => p.id)),
+		earlier: new Set(earlier.map((e) => e.id)),
+	};
 }
 
 const FLAG_PARAMETERS = {
@@ -284,10 +400,50 @@ async function apply(
 	return applied;
 }
 
+// Sets the email aside as a copy of an earlier one. Throws EmailMovedError,
+// doing nothing, when someone filed it meanwhile.
+async function setAsideCopy(
+	db: Db,
+	input: { emailId: number; duplicateOf: number; reason: string },
+) {
+	const [moved] = await db
+		.update(poEmails)
+		.set({ setAsideAt: new Date() })
+		.where(
+			and(
+				eq(poEmails.id, input.emailId),
+				isNull(poEmails.purchaseOrderId),
+				isNull(poEmails.setAsideAt),
+			),
+		)
+		.returning({ id: poEmails.id });
+	if (!moved)
+		throw new EmailMovedError("Filed or set aside by someone meanwhile");
+	await settle(db, input.emailId, {
+		state: "set_aside",
+		duplicateOf: input.duplicateOf,
+		reason: input.reason,
+	});
+}
+
 async function fileOne(db: Db, emailId: number, run: Run): Promise<Outcome> {
-	const { input, candidates } = await brief(db, emailId);
+	const { input, candidates, earlier } = await brief(db, emailId);
 	const flagged: { po: number; flag: FlagInput }[] = [];
 	const answer = await run(filerFor(db, candidates, flagged), input);
+	if (answer.duplicateOf != null && earlier.has(answer.duplicateOf)) {
+		try {
+			await setAsideCopy(db, {
+				emailId,
+				duplicateOf: answer.duplicateOf,
+				reason: answer.reason,
+			});
+		} catch (error) {
+			if (!(error instanceof EmailMovedError)) throw error;
+			await settle(db, emailId, { state: "unmatched", reason: error.message });
+			return "unmatched";
+		}
+		return "set_aside";
+	}
 	const proposal: Proposal = {
 		tracking: answer.tracking,
 		flags: flagged.filter((f) => f.po === answer.po).map((f) => f.flag),
@@ -343,6 +499,7 @@ export async function fileWithAi(
 		filed: 0,
 		suggested: 0,
 		unmatched: 0,
+		set_aside: 0,
 		problems: [] as string[],
 	};
 	await Promise.all(
@@ -391,7 +548,7 @@ export async function takeSuggestion(db: Db, emailId: number) {
 	return { purchaseOrderId: row.purchaseOrderId, applied };
 }
 
-// Takes the email the AI filed back off its PO, to To file: its tracking and
+// Takes the email the AI filed back off its PO, to Unfiled: its tracking and
 // the flags read from it that nobody acted on go with it. Flags someone
 // applied or dismissed are theirs and stay, as does an email someone moved:
 // each one kept is said, so an undo never looks complete when it isn't.
@@ -419,4 +576,25 @@ export async function undoFiling(db: Db, emailId: number) {
 		kept.push("the email, moved since");
 	}
 	return { purchaseOrderId: po, kept };
+}
+
+// Takes the email the AI set aside as a copy back to Unfiled, for good: the
+// AI won't set it aside again. An email someone filed or brought back
+// meanwhile stays where it is, and says so.
+export async function undoSetAside(db: Db, emailId: number) {
+	const [row] = await db
+		.update(poEmailAi)
+		.set({ state: "undone", updatedAt: new Date() })
+		.where(
+			and(eq(poEmailAi.emailId, emailId), eq(poEmailAi.state, "set_aside")),
+		)
+		.returning();
+	if (!row)
+		throw new PurchaseOrderError("There's nothing set aside by the AI to undo");
+	const [back] = await db
+		.update(poEmails)
+		.set({ setAsideAt: null })
+		.where(and(eq(poEmails.id, emailId), isNotNull(poEmails.setAsideAt)))
+		.returning({ id: poEmails.id });
+	return { kept: back ? [] : ["the email, moved since"] };
 }

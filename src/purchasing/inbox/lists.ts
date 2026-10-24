@@ -1,4 +1,14 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	or,
+	sql,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
 	poEmailAi,
@@ -105,9 +115,11 @@ export async function unfiledEmails(
 	return withAttachments(db, rows);
 }
 
-// Which emails the inbox page lists: waiting to be filed, set aside as about
-// no PO, or already on a PO.
-export type InboxView = "to-file" | "set-aside" | "filed";
+// Which emails the inbox page lists: waiting to be filed, or decided: on a
+// PO or set aside as about no PO.
+export type InboxView = "unfiled" | "filed";
+
+const original = alias(poEmails, "original");
 
 // One of the inbox page's lists, newest first, each email with the supplier
 // of the PO it's on.
@@ -125,20 +137,26 @@ export async function inboxEmails(db: Db, view: InboxView, limit = 100) {
 				proposal: poEmailAi.proposal,
 				applied: poEmailAi.applied,
 			},
+			// The earlier email the AI set it aside as a copy of.
+			original: {
+				id: original.id,
+				subject: original.subject,
+				receivedAt: original.receivedAt,
+				purchaseOrderId: original.purchaseOrderId,
+			},
 		})
 		.from(poEmails)
 		.leftJoin(purchaseOrders, eq(purchaseOrders.id, poEmails.purchaseOrderId))
 		.leftJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
 		.leftJoin(poEmailAi, eq(poEmailAi.emailId, poEmails.id))
+		.leftJoin(original, eq(original.id, poEmailAi.duplicateOf))
 		.where(
 			view === "filed"
-				? isNotNull(poEmails.purchaseOrderId)
-				: and(
-						isNull(poEmails.purchaseOrderId),
-						view === "set-aside"
-							? isNotNull(poEmails.setAsideAt)
-							: isNull(poEmails.setAsideAt),
-					),
+				? or(
+						isNotNull(poEmails.purchaseOrderId),
+						isNotNull(poEmails.setAsideAt),
+					)
+				: and(isNull(poEmails.purchaseOrderId), isNull(poEmails.setAsideAt)),
 		)
 		.orderBy(desc(poEmails.receivedAt))
 		.limit(limit);

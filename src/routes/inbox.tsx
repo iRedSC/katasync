@@ -6,7 +6,7 @@ import {
 	isInboxFolder,
 	isMarketView,
 	isPurchasingView,
-	purchasingView,
+	purchasingFolderOf,
 } from "#/components/inbox/folders";
 import { InboxFrame, MarketFilter } from "#/components/inbox/frame";
 import { MarketplaceBox } from "#/components/inbox/marketplace-box";
@@ -39,20 +39,16 @@ type Search = {
 	to?: Folder;
 };
 
-// Links from before folders: ?box=purchasing&view=set-aside, ?view=orders.
+// Links from before folders: ?box=purchasing&view=set-aside, ?view=orders;
+// and from before Unfiled and Filed: ?folder=to-file.
 function legacy(s: Record<string, unknown>): unknown {
-	if (s.box === "purchasing")
-		return s.view === "filed"
-			? "on-po"
-			: s.view === "set-aside"
-				? "set-aside"
-				: "to-file";
+	if (s.box === "purchasing") return purchasingFolderOf(s.view) ?? "unfiled";
 	return s.view === "attention" ? "important" : s.view;
 }
 
 export const Route = createFileRoute("/inbox")({
 	validateSearch: (s: Record<string, unknown>): Search => {
-		const folder = s.folder ?? legacy(s);
+		const folder = purchasingFolderOf(s.folder) ?? s.folder ?? legacy(s);
 		return {
 			...(isInboxFolder(folder) && folder !== "important" ? { folder } : {}),
 			...(MARKETS.includes(s.market as Market)
@@ -100,7 +96,7 @@ export const Route = createFileRoute("/inbox")({
 			return {
 				kind: "purchasing" as const,
 				folder,
-				page: await listPoEmails({ data: { view: purchasingView(folder) } }),
+				page: await listPoEmails({ data: { view: folder } }),
 				counts: await counts,
 			};
 		if (!isMarketView(folder)) throw new Error(`No folder ${folder}`);

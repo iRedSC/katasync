@@ -1882,8 +1882,8 @@ export const poEmailAttachments = pgTable(
 
 // Where the AI is with an email nothing filed by itself: reading it, filed
 // it on a PO (following its tracking and flagging what it says), suggests a
-// PO it isn't sure of, found none, failed (tried again later), or staff undid
-// its filing.
+// PO it isn't sure of, found none, failed (tried again later), set it aside
+// as a copy of an earlier email, or staff undid its filing or setting aside.
 export const poEmailAiState = pgEnum("po_email_ai_state", [
 	"working",
 	"filed",
@@ -1891,6 +1891,7 @@ export const poEmailAiState = pgEnum("po_email_ai_state", [
 	"unmatched",
 	"failed",
 	"undone",
+	"set_aside",
 ]);
 
 // The AI's go at one unfiled email (src/purchasing/inbox/ai-filing.ts). One
@@ -1910,17 +1911,29 @@ export const poEmailAi = pgTable(
 		proposal: jsonb().$type<Proposal>(),
 		// What filing did, kept after an undo too.
 		applied: jsonb().$type<Applied>(),
+		// The earlier email it set this one aside as a copy of, kept after an
+		// undo too.
+		duplicateOf: integer().references((): AnyPgColumn => poEmails.id, {
+			onDelete: "cascade",
+		}),
 		error: text(),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
+		// An undo keeps what it undid: a filing's PO, or a setting aside's
+		// original. State is compared as text: set_aside is new to the enum in
+		// the migration that adds these.
 		check(
 			"po_email_ai_po",
-			sql`(${t.state} in ('filed', 'suggested', 'undone')) = (${t.purchaseOrderId} is not null)`,
+			sql`(${t.state}::text in ('filed', 'suggested') or (${t.state}::text = 'undone' and ${t.duplicateOf} is null)) = (${t.purchaseOrderId} is not null)`,
 		),
 		check(
 			"po_email_ai_applied",
-			sql`(${t.state} in ('filed', 'undone')) = (${t.applied} is not null)`,
+			sql`(${t.state}::text = 'filed' or (${t.state}::text = 'undone' and ${t.purchaseOrderId} is not null)) = (${t.applied} is not null)`,
+		),
+		check(
+			"po_email_ai_duplicate",
+			sql`(${t.state}::text = 'set_aside' or (${t.state}::text = 'undone' and ${t.purchaseOrderId} is null)) = (${t.duplicateOf} is not null)`,
 		),
 		check(
 			"po_email_ai_proposal",

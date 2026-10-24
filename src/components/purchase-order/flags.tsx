@@ -1,4 +1,12 @@
-import { Check, Clock, DollarSign, Hash, MessageSquare, X } from "lucide-react";
+import {
+	Check,
+	ChevronRight,
+	Clock,
+	DollarSign,
+	Hash,
+	MessageSquare,
+	X,
+} from "lucide-react";
 import { useState } from "react";
 import { Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
@@ -152,12 +160,57 @@ export function FlagList({ flags }: { flags: Flag[] }) {
 	);
 }
 
+// Flags under a header that folds them away; open while any wait.
+export function FoldingFlags({
+	flags,
+	className,
+}: {
+	flags: Flag[];
+	// The header's tint and padding, as where it sits needs.
+	className?: string;
+}) {
+	const waiting = flags.filter((f) => f.resolution === null).length;
+	const [open, setOpen] = useState(waiting > 0);
+	return (
+		<>
+			<button
+				type="button"
+				onClick={() => setOpen((o) => !o)}
+				aria-expanded={open}
+				className={cn(
+					"flex w-full items-center gap-2 text-left text-sm font-semibold",
+					className,
+				)}
+			>
+				<ChevronRight
+					className={cn(
+						"size-4 shrink-0 transition-transform",
+						open && "rotate-90",
+					)}
+				/>
+				<span className="flex-1">Flags</span>
+				<span className="font-medium tabular-nums">
+					{waiting > 0 ? waiting : flags.length}
+				</span>
+			</button>
+			{open && (
+				<div className="border-t animate-in fade-in-0 slide-in-from-top-1">
+					<FlagList flags={flags} />
+				</div>
+			)}
+		</>
+	);
+}
+
 // The PO page's flags, above its lines while any wait.
 export function FlagsCard({ flags }: { flags: Flag[] }) {
 	if (flags.length === 0) return null;
 	return (
-		<Card flush title="Flags" tone="warning" aside={String(flags.length)}>
-			<FlagList flags={flags} />
+		<Card flush>
+			<FoldingFlags
+				flags={flags}
+				className="bg-warning-surface px-4 py-4 text-warning-text"
+			/>
 		</Card>
 	);
 }

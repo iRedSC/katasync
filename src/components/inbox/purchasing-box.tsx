@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Inbox, Mail, MailOpen, Sparkles, Undo2, X } from "lucide-react";
+import { Copy, Inbox, Mail, MailOpen, Sparkles, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { PoPicker } from "#/components/emails/po-picker";
 import { EmptyState } from "#/components/page";
@@ -7,6 +7,7 @@ import { Button } from "#/components/ui/button";
 import { ContextMenuItem } from "#/components/ui/context-menu";
 import { optimism, optimistic } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
+import { cn } from "#/lib/utils";
 import type { InboxView } from "#/purchasing/inbox/ingest";
 import type { InboxPage } from "#/purchasing/inbox/views";
 import type { InboxCounts } from "#/server/inbox";
@@ -16,14 +17,17 @@ import {
 	setPoEmailRead,
 	takeAiSuggestion,
 	undoAiFiling,
+	undoAiSetAside,
 } from "#/server/purchasing";
 import { AiFiling } from "./ai-filing";
-import { type PurchasingView, purchasingView } from "./folders";
+import { EmailPo } from "./email-po";
+import type { PurchasingView } from "./folders";
 import { InboxFrame } from "./frame";
 import { MailPane } from "./mail-pane";
 
-// The purchasing folders on the Inbox page: suppliers' emails, filed on
-// their POs. Linking one opens the next.
+// The purchasing folders on the Inbox page: suppliers' emails waiting to be
+// filed, and those filed, each tagged with where it went and whether the AI
+// put it there. Filing one opens the next.
 
 type Email = InboxPage["emails"][number];
 
@@ -37,7 +41,7 @@ const placeOf = (e: Email): Place =>
 			? "set-aside"
 			: "to-file";
 
-const viewOf = (p: Place): InboxView => (typeof p === "object" ? "filed" : p);
+const viewOf = (p: Place): InboxView => (p === "to-file" ? "unfiled" : "filed");
 
 // Filing clears set-aside, so going to set-aside takes it off any PO first.
 async function sendTo(id: number, place: Place) {
@@ -55,13 +59,13 @@ const said = (p: Place) =>
 	typeof p === "object"
 		? `Linked to PO ${p.po}`
 		: p === "to-file"
-			? "Back in To file"
+			? "Back in Unfiled"
 			: "Set aside";
 
 const inbox = optimistic<InboxPage>("po-emails");
 
-// The email leaves the list it's in unless it stays there (moved from one PO
-// to another), and the tab counts follow it.
+// The email leaves the list it's in unless it stays there (filed elsewhere),
+// retagged, and Unfiled's count follows it.
 function moved(
 	view: InboxView,
 	email: Email,
@@ -70,26 +74,28 @@ function moved(
 ) {
 	const from = viewOf(placeOf(email));
 	// Only unread emails are counted.
-	const count = (v: InboxView) =>
-		email.readAt !== null
+	const by =
+		email.readAt !== null || from === viewOf(to)
 			? 0
-			: (v === viewOf(to) ? 1 : 0) - (v === from ? 1 : 0);
+			: viewOf(to) === "unfiled"
+				? 1
+				: -1;
+	const po = typeof to === "object" ? to.po : null;
 	return inbox.patch(view, (d) => ({
 		...d,
-		counts: {
-			toFile: d.counts.toFile + count("to-file"),
-			setAside: d.counts.setAside + count("set-aside"),
-		},
+		counts: { unfiled: d.counts.unfiled + by },
 		emails:
-			viewOf(to) === view && typeof to === "object"
+			viewOf(to) === view
 				? d.emails.map((e) =>
 						e.id !== email.id
 							? e
 							: {
 									...e,
-									purchaseOrderId: to.po,
-									poSupplier: pos.find((p) => p.id === to.po)?.supplier ?? null,
-									likelyPos: e.likelyPos.filter((id) => id !== to.po),
+									purchaseOrderId: po,
+									matchedBy: po === null ? null : ("staff" as const),
+									setAsideAt: to === "set-aside" ? new Date() : null,
+									poSupplier: pos.find((p) => p.id === po)?.supplier ?? null,
+									likelyPos: e.likelyPos.filter((id) => id !== po),
 								},
 					)
 				: d.emails.filter((e) => e.id !== email.id),
@@ -104,8 +110,7 @@ function marked(view: InboxView, email: Email, read: boolean) {
 		return {
 			...d,
 			counts: {
-				toFile: d.counts.toFile + (place === "to-file" ? by : 0),
-				setAside: d.counts.setAside + (place === "set-aside" ? by : 0),
+				unfiled: d.counts.unfiled + (place === "unfiled" ? by : 0),
 			},
 			emails: d.emails.map((e) =>
 				e.id === email.id ? { ...e, readAt: read ? new Date() : null } : e,
@@ -115,7 +120,7 @@ function marked(view: InboxView, email: Email, read: boolean) {
 }
 
 export function PurchasingBox({
-	view: folder,
+	view,
 	page,
 	counts,
 }: {
@@ -123,7 +128,6 @@ export function PurchasingBox({
 	page: InboxPage;
 	counts: InboxCounts;
 }) {
-	const view = purchasingView(folder);
 	const d = inbox.useData(view, page);
 
 	async function move(email: Email, to: Place) {
@@ -153,6 +157,21 @@ export function PurchasingBox({
 			label: "Undoing",
 			patch: moved(view, email, "to-file", d.pos),
 			send: () => undoAiFiling({ data: { id: email.id } }),
+		});
+		if (!r) return;
+		if (r.value.kept.length > 0)
+			toast.warning("Undone, but kept", {
+				description: r.value.kept.join(", "),
+			});
+		else toast(said("to-file"));
+	}
+
+	// Brings back an email the AI set aside as a copy.
+	async function undoAiAside(email: Email) {
+		const r = await optimism.change({
+			label: "Undoing",
+			patch: moved(view, email, "to-file", d.pos),
+			send: () => undoAiSetAside({ data: { id: email.id } }),
 		});
 		if (!r) return;
 		if (r.value.kept.length > 0)
@@ -193,28 +212,24 @@ export function PurchasingBox({
 		});
 
 	return (
-		<InboxFrame
-			folder={folder}
-			market={null}
-			counts={{ ...counts, ...d.counts }}
-		>
+		<InboxFrame folder={view} market={null} counts={{ ...counts, ...d.counts }}>
 			<MailPane
 				box="purchasing"
 				emails={d.emails}
-				tagOf={(e) =>
-					e.purchaseOrderId !== null && (
-						<span className="inline-flex items-center gap-1">
-							{e.matchedBy === "ai" && <Sparkles className="size-3" />}
-							PO {e.purchaseOrderId}
-						</span>
-					)
-				}
+				tagOf={(e) => <Decision email={e} />}
 				aboutOf={(e) => (
-					<AiFiling
-						email={e}
-						onTake={(po) => takeAi(e, po)}
-						onUndo={() => undoAi(e)}
-					/>
+					// Hidden when it has nothing to show.
+					<div className="flex flex-col gap-2 border-b px-5 py-3 empty:hidden">
+						{e.purchaseOrderId !== null && (
+							<EmailPo po={e.purchaseOrderId} supplier={e.poSupplier} />
+						)}
+						<AiFiling
+							email={e}
+							onTake={(po) => takeAi(e, po)}
+							onUndo={() => undoAi(e)}
+							onUndoAside={() => undoAiAside(e)}
+						/>
+					</div>
 				)}
 				unreadOf={(e) => e.readAt === null}
 				onShown={(e) => e.readAt === null && read(e, true)}
@@ -234,7 +249,7 @@ export function PurchasingBox({
 							) : (
 								<ContextMenuItem onSelect={() => move(e, "to-file")}>
 									<Undo2 />
-									{place === "set-aside" ? "Back to To file" : "Take off PO"}
+									{place === "set-aside" ? "Back to Unfiled" : "Take off PO"}
 								</ContextMenuItem>
 							)}
 							<ContextMenuItem
@@ -265,20 +280,6 @@ function Actions({
 	const place = placeOf(e);
 	return (
 		<>
-			{typeof place === "object" && (
-				<Button asChild size="sm" variant="secondary">
-					<Link
-						to="/purchasing/$id"
-						params={{ id: String(place.po) }}
-						className="tabular-nums"
-					>
-						PO {place.po}
-						{e.poSupplier && (
-							<span className="font-normal opacity-80">{e.poSupplier}</span>
-						)}
-					</Link>
-				</Button>
-			)}
 			<PoPicker
 				pos={pos}
 				likely={e.likelyPos}
@@ -293,15 +294,71 @@ function Actions({
 			) : (
 				<Button size="sm" variant="ghost" onClick={() => onMove("to-file")}>
 					<Undo2 />
-					{place === "set-aside" ? "Back to To file" : "Take off PO"}
+					{place === "set-aside" ? "Back to Unfiled" : "Take off PO"}
 				</Button>
 			)}
 		</>
 	);
 }
 
+// What was decided for it, in the list: the PO it's on, or set aside as about
+// none or as a copy; the AI's guess while it waits. A sparkle marks the AI's.
+function Decision({ email: e }: { email: Email }) {
+	const ai = e.ai;
+	const place = placeOf(e);
+	const byAi =
+		typeof place === "object"
+			? e.matchedBy === "ai"
+			: place === "set-aside"
+				? ai?.state === "set_aside"
+				: ai !== null &&
+					(ai.state === "suggested" ||
+						ai.state === "unmatched" ||
+						ai.state === "working");
+	const label =
+		typeof place === "object" ? (
+			`PO ${place.po}`
+		) : place === "set-aside" ? (
+			ai?.state === "set_aside" ? (
+				<>
+					<Copy className="size-3" />
+					Copy
+				</>
+			) : (
+				"Not a PO"
+			)
+		) : ai?.state === "suggested" ? (
+			`PO ${ai.purchaseOrderId}?`
+		) : ai?.state === "unmatched" ? (
+			"No PO"
+		) : null;
+	if (!byAi && label === null) return null;
+	return (
+		<span
+			className={cn(
+				"inline-flex items-center gap-1 rounded-md px-1.5 text-xs font-medium tabular-nums",
+				place === "to-file"
+					? "text-muted-foreground"
+					: place === "set-aside"
+						? "bg-surface-strong text-muted-foreground"
+						: "bg-surface-strong",
+			)}
+		>
+			{byAi && (
+				<Sparkles
+					className={cn(
+						"size-3",
+						ai?.state === "working" && place === "to-file" && "animate-pulse",
+					)}
+				/>
+			)}
+			{label}
+		</span>
+	);
+}
+
 function Empty({ view, connected }: { view: InboxView; connected: boolean }) {
-	if (!connected && view === "to-file")
+	if (!connected && view === "unfiled")
 		return (
 			<EmptyState icon={Inbox} title="The purchasing inbox isn't connected">
 				<Link to="/diagnostics" className="text-link hover:underline">
@@ -313,13 +370,7 @@ function Empty({ view, connected }: { view: InboxView; connected: boolean }) {
 	return (
 		<EmptyState
 			icon={Inbox}
-			title={
-				view === "to-file"
-					? "Every email is filed"
-					: view === "set-aside"
-						? "Nothing set aside"
-						: "No emails on POs yet"
-			}
+			title={view === "unfiled" ? "Every email is filed" : "Nothing filed yet"}
 		/>
 	);
 }

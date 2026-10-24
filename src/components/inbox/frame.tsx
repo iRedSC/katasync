@@ -32,13 +32,7 @@ export const folderSearch = (folder: InboxFolder, market: Market | null) => ({
 });
 
 const waiting = (folder: InboxFolder, c: InboxCounts): number | null =>
-	folder === "to-file"
-		? c.toFile
-		: folder === "set-aside"
-			? c.setAside
-			: folder in c
-				? c[folder as keyof InboxCounts]
-				: null;
+	folder in c ? c[folder as keyof InboxCounts] : null;
 
 export function InboxFrame({
 	folder,
