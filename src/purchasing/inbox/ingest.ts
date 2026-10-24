@@ -1,23 +1,14 @@
-import {
-	and,
-	desc,
-	eq,
-	inArray,
-	isNotNull,
-	isNull,
-	ne,
-	sql,
-} from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	poEmailAttachments,
 	poEmails,
+	poFlags,
 	purchaseOrders,
 	purchaseOrderTracking,
 	suppliers,
 } from "#/db/schema";
 import { pointPictures } from "#/inbox/html";
-import { groupBy } from "#/lib/group-by";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { addTracking } from "#/purchasing/tracking";
 import {
@@ -27,8 +18,21 @@ import {
 	messageContent,
 	poOfAddress,
 } from "./graph";
+import { emailRow } from "./lists";
 import { isPdf, pdfText } from "./pdf-text";
 import { findTracking } from "./tracking-numbers";
+
+export {
+	attachmentFile,
+	attachmentOf,
+	countUnfiled,
+	emailSummariesOf,
+	emailsOf,
+	emailWithFiles,
+	type InboxView,
+	inboxEmails,
+	unfiledEmails,
+} from "./lists";
 
 // Puts emails from the purchasing inbox on their POs. An email is matched
 // only by something it can't have by accident: the PO's own reply address,
@@ -283,10 +287,9 @@ export async function ingest(
 	return { read: read_, filed, problems };
 }
 
-async function emailRow(db: Db, id: number) {
-	const [row] = await db.select().from(poEmails).where(eq(poEmails.id, id));
-	if (!row) throw new PurchaseOrderError(`There's no email ${id}`);
-	return row;
+// The email isn't where the caller expected (see fileEmail's onlyFrom).
+export class EmailMovedError extends PurchaseOrderError {
+	name = "EmailMovedError";
 }
 
 // The email's row, locked until the transaction ends, so its PO can't change
@@ -302,13 +305,17 @@ async function lockedEmail(tx: Db, id: number) {
 }
 
 // Files an email on a PO, or moves it to another, and follows its tracking
-// there. Null takes it off its PO, back to unfiled.
+// there. Null takes it off its PO, back to unfiled. With onlyFrom, it moves
+// only if the email is still where the caller last saw it (null: waiting to
+// be filed), checked under the email's lock, so the AI can't take an email
+// staff filed or set aside a moment before.
 export async function fileEmail(
 	db: Db,
 	input: {
 		emailId: number;
 		purchaseOrderId: number | null;
-		by: "staff" | "claude";
+		by: "staff" | "claude" | "ai";
+		onlyFrom?: number | null;
 	},
 ) {
 	if (input.purchaseOrderId !== null) {
@@ -325,6 +332,16 @@ export async function fileEmail(
 	}
 	const email = await db.transaction(async (tx) => {
 		const before = await lockedEmail(tx, input.emailId);
+		if (
+			input.onlyFrom !== undefined &&
+			(before.purchaseOrderId !== input.onlyFrom ||
+				(input.onlyFrom === null && before.setAsideAt !== null))
+		)
+			throw new EmailMovedError(
+				before.purchaseOrderId === null
+					? "Someone set it aside first"
+					: `Someone put it on PO ${before.purchaseOrderId} first`,
+			);
 		await tx
 			.update(poEmails)
 			.set({
@@ -333,11 +350,12 @@ export async function fileEmail(
 				setAsideAt: null,
 			})
 			.where(eq(poEmails.id, input.emailId));
-		// Its packages go with it: the old PO stops following them.
+		// Its packages go with it: the old PO stops following them. So do the
+		// flags read from it that nobody acted on.
 		if (
 			before.purchaseOrderId !== null &&
 			before.purchaseOrderId !== input.purchaseOrderId
-		)
+		) {
 			await tx
 				.delete(purchaseOrderTracking)
 				.where(
@@ -346,6 +364,16 @@ export async function fileEmail(
 						eq(purchaseOrderTracking.purchaseOrderId, before.purchaseOrderId),
 					),
 				);
+			await tx
+				.delete(poFlags)
+				.where(
+					and(
+						eq(poFlags.emailId, before.id),
+						eq(poFlags.purchaseOrderId, before.purchaseOrderId),
+						isNull(poFlags.resolvedAt),
+					),
+				);
+		}
 		return before;
 	});
 	const problems =
@@ -411,184 +439,6 @@ export async function importEmail(
 			)[0].id;
 	}
 	return fileEmail(db, { emailId: id, purchaseOrderId, by: "claude" });
-}
-
-const summary = {
-	id: poEmails.id,
-	purchaseOrderId: poEmails.purchaseOrderId,
-	matchedBy: poEmails.matchedBy,
-	setAsideAt: poEmails.setAsideAt,
-	readAt: poEmails.readAt,
-	fromAddress: poEmails.fromAddress,
-	fromName: poEmails.fromName,
-	subject: poEmails.subject,
-	receivedAt: poEmails.receivedAt,
-};
-
-const attachmentSummary = {
-	id: poEmailAttachments.id,
-	emailId: poEmailAttachments.emailId,
-	filename: poEmailAttachments.filename,
-	contentType: poEmailAttachments.contentType,
-	size: poEmailAttachments.size,
-	kept: sql<boolean>`${poEmailAttachments.data} is not null`,
-	hasText: sql<boolean>`${poEmailAttachments.text} is not null`,
-};
-
-async function withAttachments<T extends { id: number }>(db: Db, emails: T[]) {
-	if (emails.length === 0) return [];
-	const files = await db
-		.select(attachmentSummary)
-		.from(poEmailAttachments)
-		.where(
-			and(
-				inArray(
-					poEmailAttachments.emailId,
-					emails.map((e) => e.id),
-				),
-				isNull(poEmailAttachments.contentId),
-			),
-		)
-		.orderBy(poEmailAttachments.id);
-	const byEmail = groupBy(files, (f) => f.emailId);
-	return emails.map((e) => ({
-		...e,
-		attachments: (byEmail.get(e.id) ?? []).map(({ emailId: _, ...f }) => f),
-	}));
-}
-
-// A PO's emails, newest first, with their bodies.
-export async function emailsOf(db: Db, purchaseOrderId: number) {
-	const rows = await db
-		.select({ ...summary, body: poEmails.body })
-		.from(poEmails)
-		.where(eq(poEmails.purchaseOrderId, purchaseOrderId))
-		.orderBy(desc(poEmails.receivedAt));
-	return withAttachments(db, rows);
-}
-
-// A PO's emails, newest first, without their bodies, for summaries.
-export async function emailSummariesOf(db: Db, purchaseOrderId: number) {
-	const rows = await db
-		.select(summary)
-		.from(poEmails)
-		.where(eq(poEmails.purchaseOrderId, purchaseOrderId))
-		.orderBy(desc(poEmails.receivedAt));
-	return withAttachments(db, rows);
-}
-
-// Emails waiting to be filed, newest first; set-aside ones too if asked.
-export async function unfiledEmails(
-	db: Db,
-	options: { setAside?: boolean; limit?: number } = {},
-) {
-	const rows = await db
-		.select({ ...summary, body: poEmails.body })
-		.from(poEmails)
-		.where(
-			and(
-				isNull(poEmails.purchaseOrderId),
-				options.setAside ? undefined : isNull(poEmails.setAsideAt),
-			),
-		)
-		.orderBy(desc(poEmails.receivedAt))
-		.limit(options.limit ?? 100);
-	return withAttachments(db, rows);
-}
-
-// Which emails the inbox page lists: waiting to be filed, set aside as about
-// no PO, or already on a PO.
-export type InboxView = "to-file" | "set-aside" | "filed";
-
-// One of the inbox page's lists, newest first, each email with the supplier
-// of the PO it's on.
-export async function inboxEmails(db: Db, view: InboxView, limit = 100) {
-	const rows = await db
-		.select({ ...summary, body: poEmails.body, poSupplier: suppliers.name })
-		.from(poEmails)
-		.leftJoin(purchaseOrders, eq(purchaseOrders.id, poEmails.purchaseOrderId))
-		.leftJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
-		.where(
-			view === "filed"
-				? isNotNull(poEmails.purchaseOrderId)
-				: and(
-						isNull(poEmails.purchaseOrderId),
-						view === "set-aside"
-							? isNotNull(poEmails.setAsideAt)
-							: isNull(poEmails.setAsideAt),
-					),
-		)
-		.orderBy(desc(poEmails.receivedAt))
-		.limit(limit);
-	return withAttachments(db, rows);
-}
-
-// Emails not on a PO, waiting and set aside, and of those how many are
-// unread (what the Inbox page counts).
-export async function countUnfiled(db: Db) {
-	const unread = sql`${poEmails.readAt} is null`;
-	const [row] = await db
-		.select({
-			toFile: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is null)::int`,
-			setAside: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is not null)::int`,
-			toFileUnread: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is null and ${unread})::int`,
-			setAsideUnread: sql<number>`count(*) filter (where ${poEmails.setAsideAt} is not null and ${unread})::int`,
-		})
-		.from(poEmails)
-		.where(isNull(poEmails.purchaseOrderId));
-	return row;
-}
-
-// An email with its files' names, sizes, and text, but not their bytes: read
-// one of those with attachmentOf.
-export async function emailWithFiles(db: Db, id: number) {
-	const email = await emailRow(db, id);
-	const files = await db
-		.select({
-			id: poEmailAttachments.id,
-			filename: poEmailAttachments.filename,
-			contentType: poEmailAttachments.contentType,
-			size: poEmailAttachments.size,
-			text: poEmailAttachments.text,
-			kept: sql<boolean>`${poEmailAttachments.data} is not null`,
-		})
-		.from(poEmailAttachments)
-		.where(
-			and(
-				eq(poEmailAttachments.emailId, id),
-				isNull(poEmailAttachments.contentId),
-			),
-		)
-		.orderBy(poEmailAttachments.id);
-	return { email, files };
-}
-
-// One file of an email, with its bytes. Null unless the email has that file,
-// so the bytes come only for a file asked for.
-export async function attachmentOf(
-	db: Db,
-	emailId: number,
-	attachmentId: number,
-) {
-	const [file] = await db
-		.select()
-		.from(poEmailAttachments)
-		.where(
-			and(
-				eq(poEmailAttachments.id, attachmentId),
-				eq(poEmailAttachments.emailId, emailId),
-				isNull(poEmailAttachments.contentId),
-			),
-		);
-	return file ?? null;
-}
-
-export async function attachmentFile(db: Db, id: number) {
-	const [file] = await db
-		.select()
-		.from(poEmailAttachments)
-		.where(eq(poEmailAttachments.id, id));
-	return file ?? null;
 }
 
 // Keeps an email's HTML, with its pictures kept and pointed at.

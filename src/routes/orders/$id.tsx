@@ -1,11 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Ban, ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
+import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
 import { useCallback, useState } from "react";
+import { toast } from "sonner";
+import { ChannelBadge } from "#/components/channel-badge";
 import { MatchDialog } from "#/components/match-picker";
+import { DetailsCard } from "#/components/order-page/details-card";
 import { FromStoreBadge } from "#/components/order-page/from-store";
 import { Line } from "#/components/order-page/line";
+import { MailCard } from "#/components/order-page/mail-card";
 import { ProfitCard } from "#/components/order-page/profit-card";
+import { hasReturn, ReturnCard } from "#/components/order-page/return-card";
 import { SendRow } from "#/components/order-page/send-row";
+import { TimelineCard } from "#/components/order-page/timeline-card";
+import { OrderStatusBadge } from "#/components/order-status";
 import { Badge, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
@@ -20,6 +27,7 @@ import {
 	channelName,
 	cityLine,
 	formatCount,
+	formatDate,
 	formatMoney,
 	formatOrderDate,
 	formatPhone,
@@ -28,14 +36,15 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { externalFulfillment } from "#/orders/fulfillment";
-import { returnReason } from "#/orders/return-reasons";
 import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
 import {
 	getOrder,
 	markOrderNoReturn,
 	type OrderDetail,
+	receiveOrderReturn,
 	undoOrderNoReturn,
+	undoOrderReturn,
 } from "#/server/orders";
 
 export const Route = createFileRoute("/orders/$id")({
@@ -73,8 +82,32 @@ const returnedPatch =
 			}),
 		}));
 
+// Taking a received return back: it leaves the Return card, and its units
+// leave the line's returned (and restocked) counts.
+const takenBackPatch = (
+	orderId: number,
+	r: OrderDetail["returnsReceived"][number],
+): Patch =>
+	orderData.patch(orderId, (d) => ({
+		...d,
+		returnsReceived: d.returnsReceived.filter((x) => x.id !== r.id),
+		lines: d.lines.map((l) =>
+			l.id !== r.lineId
+				? l
+				: {
+						...l,
+						returned: l.returned - r.quantity,
+						restocked:
+							r.restocked || r.refurb || r.preCutover
+								? l.restocked - r.quantity
+								: l.restocked,
+					},
+		),
+	}));
+
 function OrderPage() {
 	const loaded = Route.useLoaderData();
+	const detail = orderData.useData(loaded.order.id, loaded);
 	const {
 		order,
 		lines,
@@ -82,11 +115,9 @@ function OrderPage() {
 		adminUrls,
 		profit,
 		charges,
-		reports,
 		checks,
-		returnState,
-		returnRequests,
-	} = orderData.useData(loaded.order.id, loaded);
+		buyerOrders,
+	} = detail;
 	const goBack = useBack({ to: "/orders" });
 	const status = orderStatus(order);
 	const external = externalFulfillment(order);
@@ -139,6 +170,41 @@ function OrderPage() {
 						}),
 				});
 				return undone && `${order.name} is back on Returns`;
+			},
+		});
+	}
+	// Takes a received return back off, long after its own Undo toast is
+	// gone: restocked units leave the shelf and the order is due again.
+	async function takeBack(r: OrderDetail["returnsReceived"][number]) {
+		const line = lines.find((l) => l.id === r.lineId);
+		const what = `${formatCount(r.quantity)} × ${line?.sku ?? line?.title ?? "an item"}`;
+		const done = await optimism.change({
+			label: `Taking back return on ${order.name}`,
+			patch: takenBackPatch(order.id, r),
+			send: () => undoOrderReturn({ data: { ids: [r.id] } }),
+		});
+		if (!done) return;
+		if (done.value.problems.length > 0)
+			toast.error(done.value.problems.join("; "));
+		offerUndo(`Return on ${order.name} taken back`, {
+			description: r.restocked || r.refurb ? `${what} off the shelf` : what,
+			undo: async () => {
+				// Nothing to lay over: the reload shows it received again.
+				const again = await optimism.change({
+					send: () =>
+						receiveOrderReturn({
+							data: {
+								orderId: order.id,
+								lines: [{ lineId: r.lineId, quantity: r.quantity }],
+								outcome: r.refurb
+									? { refurbishInto: r.refurb.id }
+									: r.restocked
+										? "restock"
+										: "write_off",
+							},
+						}),
+				});
+				return again && `Return on ${order.name} received again`;
 			},
 		});
 	}
@@ -201,12 +267,6 @@ function OrderPage() {
 							</a>
 						</Button>
 					)}
-					{returnState && (
-						<Button size="sm" variant="ghost" onClick={nothingComing}>
-							<Ban />
-							Nothing coming back
-						</Button>
-					)}
 					{canReturn && (
 						<Button
 							size="sm"
@@ -230,7 +290,7 @@ function OrderPage() {
 			title={
 				<span className="flex items-center gap-2">
 					{order.name}
-					<Badge tone={status.tone}>{status.label}</Badge>
+					<OrderStatusBadge status={status} />
 					{order.pin !== null && (
 						<span className="font-mono text-base text-muted-foreground">
 							Pin {order.pin}
@@ -239,30 +299,13 @@ function OrderPage() {
 				</span>
 			}
 		>
-			<p className="-mt-3 text-muted-foreground">
-				{formatOrderDate(order.placedAt)} on{" "}
-				{order.salesChannel ?? channelName(order.channel)}
+			<p className="-mt-3 flex items-center gap-2 text-muted-foreground">
+				<ChannelBadge
+					channel={order.channel}
+					salesChannel={order.salesChannel}
+				/>
+				{formatOrderDate(order.placedAt)}
 			</p>
-			{returnRequests.map((r) => (
-				<p key={`${r.billedBy}${r.requestedAt.getTime()}`} className="-mt-2">
-					<Badge
-						tone={
-							r.status === "closed" || r.status === "cancelled"
-								? undefined
-								: "info"
-						}
-					>
-						Return {r.rawStatus.toLowerCase().replace(/_/g, " ")}
-					</Badge>{" "}
-					<span className="text-muted-foreground">
-						Opened {formatOrderDate(r.requestedAt)} on {channelName(r.billedBy)}
-						{r.reason && `: ${returnReason(r.reason)}`}
-						{r.trackingNumber &&
-							`, tracking ${r.carrier ? `${r.carrier} ` : ""}${r.trackingNumber}`}
-					</span>
-				</p>
-			))}
-
 			<MatchDialog orderId={matching ? order.id : null} onClose={closeMatch} />
 
 			{returning && (
@@ -279,90 +322,108 @@ function OrderPage() {
 				/>
 			)}
 
-			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-				<Card title="Items" flush>
-					<ul>
-						{lines.map((l) => (
-							<li
-								key={l.id}
-								className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
-							>
-								<ProductImage src={l.imageUrl} className="size-10" />
-								<div
-									className={`min-w-0 flex-1 ${l.quantity === 0 ? "text-muted-foreground" : ""}`}
+			<div className="grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+				<div className="flex flex-col gap-4">
+					<Card title="Items" flush>
+						<ul>
+							{lines.map((l) => (
+								<li
+									key={l.id}
+									className="flex items-center gap-3 border-t px-4 py-3 first:border-t-0"
 								>
-									{l.productSku ? (
-										<Link
-											to="/products/$sku"
-											params={{ sku: l.productSku }}
-											className="block truncate font-medium hover:underline"
-										>
-											{l.title}
-										</Link>
-									) : (
-										<div className="truncate font-medium">{l.title}</div>
-									)}
-									<div className="flex gap-2 text-xs text-muted-foreground">
-										<span>
-											{l.sku ?? "No SKU"}
-											{l.productSku && l.sku !== l.productSku && (
-												<> → {l.productSku}</>
-											)}
-										</span>
-										{l.quantity === 0 && <Badge>Cancelled</Badge>}
-										<FromStoreBadge parts={l.fromStore} sku={l.productSku} />
-										{l.restocked > 0 && (
-											<Badge tone="info">
-												{formatCount(l.restocked)} returned to shelf
-											</Badge>
+									<ProductImage src={l.imageUrl} className="size-10" />
+									<div
+										className={`min-w-0 flex-1 ${l.quantity === 0 ? "text-muted-foreground" : ""}`}
+									>
+										{l.productSku ? (
+											<Link
+												to="/products/$sku"
+												params={{ sku: l.productSku }}
+												className="block truncate font-medium hover:underline"
+											>
+												{l.title}
+											</Link>
+										) : (
+											<div className="truncate font-medium">{l.title}</div>
 										)}
-										{l.returned > l.restocked && (
-											<Badge>
-												{formatCount(l.returned - l.restocked)} returned damaged
-											</Badge>
-										)}
-										{awaitingReturn &&
-											l.tookStock &&
-											l.quantity > l.returned && (
-												<Badge tone="warning">
-													{formatCount(l.quantity - l.returned)} refunded, not
-													back yet
+										<div className="flex gap-2 text-xs text-muted-foreground">
+											<span>
+												{l.sku ?? "No SKU"}
+												{l.productSku && l.sku !== l.productSku && (
+													<> → {l.productSku}</>
+												)}
+											</span>
+											{l.quantity === 0 && <Badge>Cancelled</Badge>}
+											<FromStoreBadge parts={l.fromStore} sku={l.productSku} />
+											{l.restocked > 0 && (
+												<Badge tone="info">
+													{formatCount(l.restocked)} returned to shelf
 												</Badge>
 											)}
-										{l.awaitsMatch && (
-											<>
-												<Badge tone="critical">No stock taken</Badge>
-												<button
-													type="button"
-													onClick={() => setMatching(true)}
-													className="font-medium text-link hover:underline"
-												>
-													Match
-												</button>
-											</>
-										)}
+											{l.returned > l.restocked && (
+												<Badge>
+													{formatCount(l.returned - l.restocked)} returned
+													damaged
+												</Badge>
+											)}
+											{awaitingReturn &&
+												l.tookStock &&
+												l.quantity > l.returned && (
+													<Badge tone="warning">
+														{formatCount(l.quantity - l.returned)} refunded, not
+														back yet
+													</Badge>
+												)}
+											{l.awaitsMatch && (
+												<>
+													<Badge tone="critical">No stock taken</Badge>
+													<button
+														type="button"
+														onClick={() => setMatching(true)}
+														className="font-medium text-link hover:underline"
+													>
+														Match
+													</button>
+												</>
+											)}
+										</div>
 									</div>
-								</div>
-								<div className="text-right whitespace-nowrap tabular-nums">
-									<div>
-										{formatMoney(l.unitPrice)} × {formatCount(l.quantity)}
+									<div className="text-right whitespace-nowrap tabular-nums">
+										<div>
+											{formatMoney(l.unitPrice)} × {formatCount(l.quantity)}
+										</div>
+										<div className="font-semibold">
+											{formatMoney(l.unitPrice * l.quantity)}
+										</div>
 									</div>
-									<div className="font-semibold">
-										{formatMoney(l.unitPrice * l.quantity)}
-									</div>
-								</div>
-							</li>
-						))}
-					</ul>
-					<dl className="flex flex-col gap-1 border-t bg-subtle px-4 py-3">
-						<Line label="Items" value={formatMoney(subtotal)} />
-						<Line
-							label="Shipping charged"
-							value={formatMoney(order.shippingCharged)}
+								</li>
+							))}
+						</ul>
+						<dl className="flex flex-col gap-1 border-t bg-subtle px-4 py-3">
+							<Line label="Items" value={formatMoney(subtotal)} />
+							<Line
+								label="Shipping charged"
+								value={formatMoney(order.shippingCharged)}
+							/>
+							<Line
+								label="Total paid"
+								value={formatMoney(order.total)}
+								strong
+							/>
+						</dl>
+					</Card>
+					{hasReturn(detail) && (
+						<ReturnCard
+							detail={detail}
+							canReceive={canReturn}
+							onReceive={() => setReturning(true)}
+							onNothing={nothingComing}
+							onTakeBack={takeBack}
 						/>
-						<Line label="Total paid" value={formatMoney(order.total)} strong />
-					</dl>
-				</Card>
+					)}
+					<MailCard mail={detail.mail} />
+					<TimelineCard detail={detail} />
+				</div>
 
 				<div className="flex flex-col gap-4">
 					{sends.length > 0 && (
@@ -397,14 +458,9 @@ function OrderPage() {
 						</Card>
 					)}
 					{profit && (
-						<ProfitCard
-							profit={profit}
-							charges={charges}
-							reports={reports}
-							checks={checks}
-						/>
+						<ProfitCard profit={profit} charges={charges} checks={checks} />
 					)}
-					<Card title="Ship to">
+					<Card title="Customer">
 						<p className="font-medium">{order.customerName ?? "No name"}</p>
 						{address.length > 0 ? (
 							address.map((l) => <p key={l}>{l}</p>)
@@ -416,7 +472,53 @@ function OrderPage() {
 								{formatPhone(order.shipPhone)}
 							</p>
 						)}
+						{buyerOrders.length > 0 && (
+							<div className="mt-3 border-t pt-3">
+								<p className="mb-1.5 flex justify-between text-xs text-muted-foreground">
+									<span>
+										{formatCount(buyerOrders.length)} other{" "}
+										{buyerOrders.length === 1 ? "order" : "orders"}
+									</span>
+									<span className="tabular-nums">
+										{formatMoney(
+											buyerOrders
+												.filter((b) => !b.cancelledAt)
+												.reduce((n, b) => n + b.total, 0),
+										)}
+									</span>
+								</p>
+								<ul className="flex flex-col gap-1">
+									{buyerOrders.map((b) => (
+										<li key={b.id}>
+											<Link
+												to="/orders/$id"
+												params={{ id: String(b.id) }}
+												className="-mx-1.5 flex items-center gap-2 rounded-md px-1.5 py-0.5 hover:bg-subtle"
+											>
+												<ChannelBadge
+													channel={b.channel}
+													salesChannel={b.salesChannel}
+													compact
+												/>
+												<span
+													className={`min-w-0 flex-1 truncate font-medium ${b.cancelledAt ? "text-muted-foreground line-through" : ""}`}
+												>
+													{b.name}
+												</span>
+												<span className="text-xs text-muted-foreground">
+													{formatDate(b.placedAt)}
+												</span>
+												<span className="w-16 text-right tabular-nums">
+													{formatMoney(b.total)}
+												</span>
+											</Link>
+										</li>
+									))}
+								</ul>
+							</div>
+						)}
 					</Card>
+					<DetailsCard detail={detail} />
 				</div>
 			</div>
 		</Page>

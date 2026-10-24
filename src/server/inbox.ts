@@ -5,6 +5,7 @@ import { z } from "zod";
 import { countWaiting } from "#/buyers/threads";
 import { getDb } from "#/db/client";
 import { marketEmails } from "#/db/schema";
+import { mailOrders } from "#/inbox/mail-orders";
 import {
 	marketEmailHtml,
 	marketMailPage,
@@ -165,3 +166,9 @@ export const getEmailHtml = createServerFn({ method: "GET" })
 			? emailHtml(getDb(), data.id)
 			: marketEmailHtml(getDb(), data.id),
 	);
+
+// The orders a marketplace email names, and their packages, asked of the
+// carriers as it opens.
+export const getMailOrders = createServerFn({ method: "GET" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(async ({ data }) => mailOrders(getDb(), data.id));
