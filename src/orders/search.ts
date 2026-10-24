@@ -20,7 +20,7 @@ import { brandOf } from "#/components/channel-badge";
 import type { SearchLanguage } from "#/components/filter-search";
 import { channelName } from "#/lib/format";
 import { DATE, NUMBER, parseSortWord, TEXT } from "#/products/sort";
-import { ORDER_STATUSES, orderStatus } from "./status";
+import { ORDER_STATUSES, orderStatus, type ReturnStage } from "./status";
 
 // What the search reads from an order: the columns the orders list loads.
 export type SearchableOrder = {
@@ -39,6 +39,8 @@ export type SearchableOrder = {
 	fulfillmentStatus: string;
 	financialStatus: string | null;
 	labelToVoid: boolean;
+	fulfilledByChannel: boolean;
+	returnStage: ReturnStage;
 	total: number;
 	items: number;
 	unmatched: number;
@@ -82,6 +84,7 @@ const MARKETPLACES = {
 // Each status word and what it means: the badge's words.
 export const STATUS_DETAILS: ReadonlyMap<string, string> = new Map([
 	...Object.entries(ORDER_STATUSES),
+	["external", "Unfulfilled, shipped from the marketplace"],
 	["unmatched", "Unknown product"],
 ]);
 

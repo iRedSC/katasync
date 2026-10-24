@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ChevronRight, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
+import { OrderTabs, ReturnsViews } from "#/components/order-tabs";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { day, ordersCount, ReturnRow } from "#/components/return-row";
-import { ReturnsTabs } from "#/components/returns-tabs";
 import { FieldsCard, ListCard, ListSkeleton } from "#/components/skeleton";
 import { Tip } from "#/components/ui/tooltip";
 import { channelName, formatCount } from "#/lib/format";
@@ -22,7 +22,7 @@ export const Route = createFileRoute("/orders/returns_/insights")({
 	loader: () => getReturnInsights(),
 	component: Insights,
 	pendingComponent: () => (
-		<ListSkeleton title="Returns">
+		<ListSkeleton title="Orders">
 			<FieldsCard lines={2} />
 			<ListCard rows={6} picture />
 		</ListSkeleton>
@@ -53,9 +53,12 @@ function Insights() {
 		.join(", ");
 
 	return (
-		<Page title="Returns">
+		<Page title="Orders">
 			<Card flush>
-				<ReturnsTabs active="insights" />
+				<OrderTabs
+					active="returns"
+					aside={<ReturnsViews active="insights" />}
+				/>
 				<div className="flex flex-col gap-3 p-4">
 					<p className="text-muted-foreground">
 						Orders placed {day(data.window.from)} to {day(data.window.until)}.
