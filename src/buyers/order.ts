@@ -9,6 +9,9 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import { returnStages } from "#/orders/return-stage";
+import { orderStatus } from "#/orders/status";
+import { labelToVoid } from "#/orders/to-ship";
 import type { Carrier } from "#/purchasing/inbox/tracking-numbers";
 import { askShippo } from "#/purchasing/tracking";
 
@@ -33,11 +36,7 @@ const pageOf = (carrier: Carrier, number: string) =>
 
 export async function buyerOrder(db: Db, threadId: number) {
 	const [found] = await db
-		.select({
-			id: orders.id,
-			name: orders.name,
-			cancelledAt: orders.cancelledAt,
-		})
+		.select({ id: orders.id })
 		.from(buyerThreads)
 		.innerJoin(stores, eq(stores.channel, buyerThreads.market))
 		.innerJoin(
@@ -49,15 +48,31 @@ export async function buyerOrder(db: Db, threadId: number) {
 		)
 		.where(eq(buyerThreads.id, threadId))
 		.limit(1);
-	return found ? orderSummary(db, found) : null;
+	return found ? orderSummary(db, found.id) : null;
 }
 
-// An order's products and packages, wherever it's shown beside mail.
-export async function orderSummary(
-	db: Db,
-	found: { id: number; name: string; cancelledAt: Date | null },
-) {
-	const [lines, sent] = await Promise.all([
+// An order's status, products, and packages, wherever it's shown beside
+// mail.
+export async function orderSummary(db: Db, orderId: number) {
+	const [[order], stages, lines, sent] = await Promise.all([
+		db
+			.select({
+				id: orders.id,
+				name: orders.name,
+				cancelledAt: orders.cancelledAt,
+				fulfillmentStatus: orders.fulfillmentStatus,
+				financialStatus: orders.financialStatus,
+				channel: stores.channel,
+				salesChannel: orders.salesChannel,
+				marketplaceOrderId: orders.marketplaceOrderId,
+				externalId: orders.externalId,
+				shipCountry: orders.shipCountry,
+				labelToVoid,
+			})
+			.from(orders)
+			.innerJoin(stores, eq(stores.id, orders.storeId))
+			.where(eq(orders.id, orderId)),
+		returnStages(db, [orderId]),
 		db
 			.select({
 				id: orderLines.id,
@@ -68,7 +83,7 @@ export async function orderSummary(
 			})
 			.from(orderLines)
 			.leftJoin(products, eq(products.id, orderLines.productId))
-			.where(eq(orderLines.orderId, found.id))
+			.where(eq(orderLines.orderId, orderId))
 			.orderBy(orderLines.id),
 		db
 			.select({
@@ -85,7 +100,7 @@ export async function orderSummary(
 				eq(dispatchOrders.dispatchId, shipments.dispatchId),
 			)
 			.where(
-				and(eq(dispatchOrders.orderId, found.id), isNull(shipments.voidedAt)),
+				and(eq(dispatchOrders.orderId, orderId), isNull(shipments.voidedAt)),
 			)
 			.orderBy(shipments.createdAt),
 	]);
@@ -115,7 +130,17 @@ export async function orderSummary(
 			}
 		}),
 	);
-	return { ...found, lines, packages };
+	if (!order) throw new Error(`No order ${orderId}`);
+	return {
+		id: order.id,
+		name: order.name,
+		status: orderStatus({
+			...order,
+			returnStage: stages.get(orderId) ?? null,
+		}),
+		lines,
+		packages,
+	};
 }
 
 export type BuyerOrder = Awaited<ReturnType<typeof orderSummary>>;

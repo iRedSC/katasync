@@ -5,21 +5,36 @@ import { externalFulfillment } from "./fulfillment";
 // types (%unfulfilled) and the words its badge shows.
 export const ORDER_STATUSES = {
 	void: "Cancelled or refunded, void label",
+	unfulfilled: "Unfulfilled",
+	// Unfulfilled too, but shipped from the marketplace's own page.
+	external: "Unfulfilled",
+	pending: "Pending",
+	fulfilled: "Fulfilled",
 	cancelled: "Cancelled",
 	refunded: "Refunded",
-	fulfilled: "Fulfilled",
-	noshipping: "No shipping needed",
-	restocked: "Restocked",
-	partial: "Partly shipped",
-	unpaid: "Waiting for payment",
-	hold: "On hold",
-	external: "Fulfill externally",
-	unfulfilled: "To ship",
+	returning: "Returning",
+	returned: "Returned",
 } as const;
 export type OrderStatusKey = keyof typeof ORDER_STATUSES;
 
+// Where a return stands: one requested or expected and not yet received,
+// or received. From returnStages (return-stage.ts).
+export type ReturnStage = "returning" | "returned" | null;
+
+// One shipped from the marketplace's page links there.
+export type OrderStatus =
+	| { key: Exclude<OrderStatusKey, "external">; label: string; tone?: Tone }
+	| {
+			key: "external";
+			label: string;
+			tone: "info";
+			url: string;
+			on: string;
+	  };
+
 // How an order's state reads to a person, in one place so lists, detail
-// pages, and search agree. Only states that need attention get a color.
+// pages, search, and the inbox agree. Only states that need someone get a
+// color: yellow to ship here, blue to ship on the marketplace.
 export function orderStatus(order: {
 	cancelledAt: Date | null;
 	fulfillmentStatus: string;
@@ -30,9 +45,10 @@ export function orderStatus(order: {
 	externalId: string;
 	shipCountry: string | null;
 	// Cancelled or refunded with a label still live (see to-ship.ts).
-	labelToVoid?: boolean;
-}): { key: OrderStatusKey; label: string; tone?: Tone } {
-	const is = (key: OrderStatusKey, tone?: Tone) => ({
+	labelToVoid: boolean;
+	returnStage: ReturnStage;
+}): OrderStatus {
+	const is = (key: Exclude<OrderStatusKey, "external">, tone?: Tone) => ({
 		key,
 		label: ORDER_STATUSES[key],
 		tone,
@@ -44,27 +60,32 @@ export function orderStatus(order: {
 			tone: "critical",
 		};
 	}
+	if (order.returnStage) return is(order.returnStage);
 	if (order.cancelledAt) return is("cancelled");
 	if (order.financialStatus === "REFUNDED") return is("refunded");
 	switch (order.fulfillmentStatus) {
 		case "FULFILLED":
-			return is("fulfilled");
 		case "FULFILLMENT_NOT_REQUIRED":
-			return is("noshipping");
+			return is("fulfilled");
 		// Shopify: every item was removed or refunded before shipping.
 		case "RESTOCKED":
-			return is("restocked");
-		case "PARTIALLY_FULFILLED":
-			return is("partial", "warning");
+			return is("cancelled");
 		case "AWAITING_PAYMENT":
-			return is("unpaid");
 		case "ON_HOLD":
-			return is("hold", "warning");
-		default:
-			// Shipped from the marketplace's own page, not from katasync.
-			return externalFulfillment(order)
-				? is("external", "info")
+			return is("pending");
+		default: {
+			// Partly shipped is still unfulfilled: the rest has to go.
+			const external = externalFulfillment(order);
+			return external
+				? {
+						key: "external",
+						label: ORDER_STATUSES.external,
+						tone: "info",
+						url: external.url,
+						on: external.name,
+					}
 				: is("unfulfilled", "warning");
+		}
 	}
 }
 
