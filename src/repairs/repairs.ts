@@ -3,6 +3,7 @@ import { sendDraftInvoice } from "#/channels/shopify/draft-orders";
 import type { Db } from "#/db/client";
 import { people, repairLabor, repairParts, repairs } from "#/db/repair-schema";
 import { products } from "#/db/schema";
+import { rehold } from "./bench";
 import {
 	type Locked,
 	lockRepair,
@@ -19,8 +20,9 @@ import {
 	refuseMove,
 } from "./status";
 
-// What staff do to a repair. Each change that touches what it charges
-// writes the draft order too (src/repairs/draft-sync.ts).
+// What staff do to a repair. Each change to a customer's that touches what
+// it charges writes the draft order too (src/repairs/draft-sync.ts); a
+// bench job (src/repairs/bench.ts) has none.
 
 export { RepairError };
 
@@ -131,7 +133,7 @@ async function withCharges<T>(
 		id,
 		async (tx, r) => {
 			const result = await change(tx, r);
-			await syncDraft(tx, await lockRepair(tx, id));
+			if (r.kind === "customer") await syncDraft(tx, await lockRepair(tx, id));
 			return result;
 		},
 		{ sync: false },
@@ -160,7 +162,9 @@ export async function editRepair(db: Db, id: number, edit: RepairEdit) {
 	await withRepair(
 		db,
 		id,
-		async (tx) => {
+		async (tx, r) => {
+			if (edit.customer && r.kind === "bench")
+				throw new RepairError(`R${id} is ours; it has no customer`);
 			await tx
 				.update(repairs)
 				.set({
@@ -195,6 +199,7 @@ export async function moveRepair(db: Db, id: number, to: RepairStatus) {
 			const why = refuseMove(
 				{
 					status: r.status,
+					bench: r.kind === "bench",
 					hasDraft: r.draftOrderId !== null,
 					paid: r.orderId !== null,
 				},
@@ -203,7 +208,10 @@ export async function moveRepair(db: Db, id: number, to: RepairStatus) {
 			if (why) throw new RepairError(why);
 			if (r.status === to) return { from: r.status };
 			// Off the draft first: a closed repair can't hold one.
-			if (to === "cancelled") await syncDraft(tx, r, { charges: false });
+			if (to === "cancelled" && r.kind === "customer")
+				await syncDraft(tx, r, { charges: false });
+			// Back from cancelled, a bench job takes its returned unit again.
+			if (r.status === "cancelled" && r.kind === "bench") await rehold(tx, r);
 			const moved = await tx
 				.update(repairs)
 				.set({ status: to, statusChangedAt: sql`now()` })
@@ -211,7 +219,8 @@ export async function moveRepair(db: Db, id: number, to: RepairStatus) {
 				.returning({ id: repairs.id });
 			if (moved.length === 0)
 				throw new RepairError(`R${id} just changed; try again`);
-			if (r.status === "cancelled") await syncDraft(tx, { ...r, status: to });
+			if (r.status === "cancelled" && r.kind === "customer")
+				await syncDraft(tx, { ...r, status: to });
 			return { from: r.status };
 		},
 		{ sync: false, open: false },

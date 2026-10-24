@@ -25,7 +25,9 @@ export function LaborCard({
 	onEdit: (laborId: number, edit: { minutes?: number; note?: string }) => void;
 	onRemove: (laborId: number) => void;
 }) {
-	const rate = d.laborVariants ? hourlyRate(d.laborVariants) : null;
+	// A bench job's time isn't charged to anyone, so it has no price.
+	const bench = d.repair.kind === "bench";
+	const rate = d.laborVariants && !bench ? hourlyRate(d.laborVariants) : null;
 	const total = d.labor.reduce((n, l) => n + l.minutes, 0);
 	const price = (m: number) => (rate === null ? null : (rate * m) / 60);
 	return (
@@ -59,9 +61,11 @@ export function LaborCard({
 							disabled={!editable}
 							onSave={(note) => onEdit(l.id, { note })}
 						/>
-						<span className="w-20 text-right tabular-nums text-muted-foreground">
-							{formatMoney(price(l.minutes))}
-						</span>
+						{!bench && (
+							<span className="w-20 text-right tabular-nums text-muted-foreground">
+								{formatMoney(price(l.minutes))}
+							</span>
+						)}
 						{editable && (
 							<Button
 								variant="ghost"
@@ -76,7 +80,7 @@ export function LaborCard({
 				))}
 			</ul>
 			{editable && <AddLabor onAdd={onAdd} rate={rate} />}
-			{!d.laborVariants && (
+			{!d.laborVariants && !bench && (
 				<p className="border-t px-4 py-2 text-warning-text">
 					Couldn't read the labor product from Shopify
 				</p>

@@ -9,7 +9,7 @@ import { formatMinutes } from "#/repairs/labor";
 import type { RepairCard } from "#/repairs/read";
 import {
 	boardStatuses,
-	type RepairStatus,
+	type MoveTarget,
 	refuseMove,
 	statusNames,
 } from "#/repairs/status";
@@ -17,13 +17,14 @@ import { PersonChip } from "./person-chip";
 import { useCardDrag } from "./use-card-drag";
 
 // The corkboard: a column per stage, oldest at the top, and the last week's
-// pickups at the end. Cards are picked up and dropped on another column;
+// pickups and listed refurbs at the end. Cards are picked up and dropped on another column;
 // the arrow on each moves it one column on, for anyone not dragging.
 
 const columns = [...boardStatuses, "picked_up"] as const;
 
 export const stateOf = (c: RepairCard) => ({
 	status: c.status,
+	bench: c.kind === "bench",
 	hasDraft: c.draftOrderName !== null,
 	paid: c.orderName !== null,
 });
@@ -43,13 +44,13 @@ export function Board({
 	cards: RepairCard[];
 	// Just made, so it stands out as it lands.
 	fresh: number | null;
-	onMove: (card: RepairCard, to: RepairStatus) => void;
+	onMove: (card: RepairCard, to: MoveTarget) => void;
 }) {
 	const [refused, setRefused] = useState<{
-		to: RepairStatus;
+		to: MoveTarget;
 		why: string;
 	} | null>(null);
-	const columnEls = useRef(new Map<RepairStatus, HTMLElement>());
+	const columnEls = useRef(new Map<MoveTarget, HTMLElement>());
 	const { lifted, pickUp } = useCardDrag<RepairCard>((card, column) => {
 		const to = columns.find((s) => s === column);
 		if (to && to !== card.status) move(card, to);
@@ -58,7 +59,7 @@ export function Board({
 
 	// A move that can't happen shakes the column it was aimed at, and says
 	// why in a few words.
-	function move(card: RepairCard, to: RepairStatus) {
+	function move(card: RepairCard, to: MoveTarget) {
 		const why = refuseMove(stateOf(card), to);
 		if (why) {
 			shake(columnEls.current.get(to) ?? null);
@@ -72,7 +73,11 @@ export function Board({
 	return (
 		<div className="grid min-h-[60vh] grid-flow-col auto-cols-[minmax(11.5rem,1fr)] gap-3 overflow-x-auto pb-2">
 			{columns.map((status) => {
-				const list = cards.filter((c) => c.status === status);
+				const list = cards.filter(
+					(c) =>
+						c.status === status ||
+						(status === "picked_up" && c.status === "refurbished"),
+				);
 				return (
 					<section
 						key={status}
@@ -92,7 +97,9 @@ export function Board({
 						)}
 					>
 						<header className="flex items-center justify-between px-1 pt-1">
-							<h2 className="text-sm font-semibold">{statusNames[status]}</h2>
+							<h2 className="text-sm font-semibold">
+								{status === "picked_up" ? "Done" : statusNames[status]}
+							</h2>
 							<span className="text-xs text-muted-foreground tabular-nums">
 								{refused?.to === status ? (
 									<span className="font-medium text-critical-text">
@@ -110,9 +117,7 @@ export function Board({
 								fresh={c.id === fresh}
 								left={lifted?.item.id === c.id}
 								onPickUp={(e) => pickUp(e, c)}
-								onNext={
-									nextOf(status) && (() => move(c, nextOf(status) ?? status))
-								}
+								onNext={nextArrow(c, status, move)}
 							/>
 						))}
 					</section>
@@ -136,8 +141,20 @@ export function Board({
 	);
 }
 
-const nextOf = (s: RepairStatus): RepairStatus | null =>
+const nextOf = (s: MoveTarget): MoveTarget | null =>
 	columns[columns.indexOf(s as (typeof columns)[number]) + 1] ?? null;
+
+// The arrow to the next column, where there's one it can go to: a bench
+// job leaves Ready by being listed, from its page.
+function nextArrow(
+	c: RepairCard,
+	status: MoveTarget,
+	move: (c: RepairCard, to: MoveTarget) => void,
+) {
+	const next = nextOf(status);
+	if (!next || (c.kind === "bench" && next === "picked_up")) return null;
+	return () => move(c, next);
+}
 
 function Card({
 	card: c,
@@ -198,7 +215,19 @@ function Card({
 					</span>
 				)}
 			</div>
-			<div className="mt-1.5 truncate font-semibold">{c.customerName}</div>
+			{c.kind === "bench" ? (
+				<div className="mt-1.5 flex items-center gap-2">
+					<span className="rounded-md bg-foreground px-1.5 text-xs font-semibold text-background">
+						Refurb
+					</span>
+					<span className="truncate text-xs text-muted-foreground">
+						{c.refurbSku ??
+							(c.returnOrderName ? `Return ${c.returnOrderName}` : "Bought in")}
+					</span>
+				</div>
+			) : (
+				<div className="mt-1.5 truncate font-semibold">{c.customerName}</div>
+			)}
 			<div className="truncate">{c.tool}</div>
 			{c.problem && (
 				<div className="line-clamp-2 text-xs text-muted-foreground">

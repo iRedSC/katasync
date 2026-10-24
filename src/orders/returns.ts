@@ -15,6 +15,7 @@ import { returnSaleOf } from "#/inventory/commitments-consume";
 import { recordReturn, undoBatch } from "#/inventory/ledger";
 import { lockBatchProducts } from "#/inventory/ledger/post";
 import { isOurs } from "#/inventory/locations";
+import { onBench } from "#/repairs/bench-holds";
 import { retireRefurbs } from "./refurb-retire";
 import { returnQuantity } from "./return-stock";
 import { isLabeled, returnBlocker } from "./status";
@@ -37,6 +38,9 @@ export type ReturnOutcome = "restock" | "write_off" | { refurbishInto: number };
 // A line can't take back more than it sold, counting earlier returns.
 // Returns are received here whatever the channel says: katasync owns stock,
 // so a restock clicked in Shopify would only be overwritten.
+// Units on the bench can't be received here, except by listing their job:
+// `bench` names it, so its own unit can come in, and gives the refurb's cost
+// (the unit's plus its parts). Only src/repairs/bench.ts passes it.
 export async function receiveReturn(
 	db: Db,
 	input: {
@@ -44,6 +48,7 @@ export async function receiveReturn(
 		lines: { lineId: number; quantity: number }[];
 		outcome: ReturnOutcome;
 	},
+	bench: { repairId: number; unitCost: number | null } | null = null,
 ): Promise<{ ids: number[] }> {
 	const wanted = input.lines.filter((l) => l.quantity > 0);
 	if (wanted.length === 0) throw new ReturnError("Nothing to return");
@@ -98,6 +103,7 @@ export async function receiveReturn(
 					select sum(r.quantity) from ${orderReturns} r
 					where r.order_line_id = "order_lines"."id"
 				), 0)::int`,
+				onBench: onBench(bench?.repairId ?? null),
 			})
 			.from(orderLines)
 			.where(
@@ -142,11 +148,13 @@ export async function receiveReturn(
 			if (!line)
 				throw new ReturnError(`No line ${want.lineId} on ${order.name}`);
 			const name = line.sku ?? line.title;
-			const left = line.returnQuantity - line.returned;
+			const left = line.returnQuantity - line.returned - line.onBench;
 			if (!Number.isInteger(want.quantity) || want.quantity > left) {
 				throw new ReturnError(
 					left === 0
-						? `${name} was already returned`
+						? line.onBench > 0
+							? `${name} is on the bench; list it from its repair`
+							: `${name} was already returned`
 						: `Only ${left} of ${name} can still come back`,
 				);
 			}
@@ -176,7 +184,7 @@ export async function receiveReturn(
 					locationId: restockAt,
 					reference: `return:${order.id}:${line.id}`,
 					sale: null,
-					unitCost: line.unitCost,
+					unitCost: bench ? bench.unitCost : line.unitCost,
 				}));
 			} else if (restockAt !== null && line.productId !== null) {
 				({ batchId } = await recordReturn(tx, {

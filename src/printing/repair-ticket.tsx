@@ -7,20 +7,24 @@ import {
 	Text,
 	View,
 } from "@react-pdf/renderer";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import QRCode from "qrcode";
 import type { Db } from "#/db/client";
 import { people, repairs } from "#/db/repair-schema";
+import { orderLines, orders } from "#/db/schema";
 import { formatPhone } from "#/lib/format";
 
 // The 4x6 ticket tied to a tool left for repair: its number and whose it
 // is, big enough to read across the shop, and a QR code that opens the
 // repair in katasync (a phone's camera, or the scanner into the board's
-// search).
+// search). A bench job's says it's ours, and the order it came back on.
 
 export type RepairTicket = {
 	id: number;
-	customerName: string;
+	customerName: string | null;
+	// A bench job's: the order it came back on, if it did.
+	bench: boolean;
+	returnOrder: string | null;
 	customerPhone: string | null;
 	tool: string;
 	serial: string | null;
@@ -37,6 +41,10 @@ export async function repairTicket(
 		.select({
 			id: repairs.id,
 			customerName: repairs.customerName,
+			bench: sql<boolean>`${repairs.kind} = 'bench'`,
+			returnOrder: sql<
+				string | null
+			>`(select o.name from ${orderLines} l join ${orders} o on o.id = l.order_id where l.id = ${repairs.returnLineId})`,
 			customerPhone: repairs.customerPhone,
 			tool: repairs.tool,
 			serial: repairs.serial,
@@ -62,7 +70,14 @@ export async function renderRepairTicket(ticket: RepairTicket, origin: string) {
 					<Text style={s.number}>R{ticket.id}</Text>
 					<Image src={qr} style={s.qr} />
 				</View>
-				<Text style={s.customer}>{ticket.customerName}</Text>
+				<Text style={s.customer}>
+					{ticket.bench ? "IN-HOUSE REFURB" : ticket.customerName}
+				</Text>
+				{ticket.bench && (
+					<Text style={s.phone}>
+						{ticket.returnOrder ? `Return ${ticket.returnOrder}` : "Bought in"}
+					</Text>
+				)}
 				{ticket.customerPhone && (
 					<Text style={s.phone}>{formatPhone(ticket.customerPhone)}</Text>
 				)}

@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { Ban, ExternalLink, Printer, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -53,6 +54,7 @@ export function hasReturn(d: OrderDetail) {
 		d.returnState !== null ||
 		d.returnRequests.length > 0 ||
 		d.returnsReceived.length > 0 ||
+		d.lines.some((l) => l.onBench.length > 0) ||
 		d.order.noReturnAt !== null
 	);
 }
@@ -73,6 +75,8 @@ export function ReturnCard({
 	const lines = new Map(d.lines.map((l) => [l.id, l]));
 	const state = d.returnState ? RETURN_STATES[d.returnState] : null;
 	const expected = d.expected.filter((e) => e.expected > 0);
+	// Back and on the repair board, to list as refurbs once fixed.
+	const benched = d.lines.filter((l) => l.onBench.length > 0);
 	return (
 		<Card
 			title="Return"
@@ -82,6 +86,8 @@ export function ReturnCard({
 					<Badge tone={state.tone}>{state.label}</Badge>
 				) : d.order.noReturnAt ? (
 					<Badge>Nothing coming back</Badge>
+				) : benched.length > 0 ? (
+					<Badge tone="info">On the bench</Badge>
 				) : d.returnsReceived.length > 0 ? (
 					<Badge tone="success">Received</Badge>
 				) : undefined
@@ -107,6 +113,31 @@ export function ReturnCard({
 								</li>
 							);
 						})}
+					</ul>
+				</Section>
+			)}
+
+			{benched.length > 0 && (
+				<Section title="On the bench">
+					<ul className="flex flex-col gap-2">
+						{benched.map((l) => (
+							<li key={l.id} className="flex items-center gap-3">
+								<ProductImage src={l.imageUrl} className="size-8" />
+								<span className="min-w-0 flex-1 truncate">{l.title}</span>
+								<span className="flex shrink-0 gap-2 font-semibold">
+									{l.onBench.map((id) => (
+										<Link
+											key={id}
+											to="/repairs/$id"
+											params={{ id: String(id) }}
+											className="font-mono text-link"
+										>
+											R{id}
+										</Link>
+									))}
+								</span>
+							</li>
+						))}
 					</ul>
 				</Section>
 			)}

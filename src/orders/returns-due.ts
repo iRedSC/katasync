@@ -25,6 +25,7 @@ import {
 	returnTracking,
 	stores,
 } from "#/db/schema";
+import { onBench } from "#/repairs/bench-holds";
 import { returnPage } from "./admin-urls";
 import { committedStock, returnQuantity } from "./return-stock";
 import { type PackageAt, trackingFor } from "./return-tracking";
@@ -191,7 +192,7 @@ async function returnOrders(
 				title: orderLines.title,
 				sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 				imageUrl: products.imageUrl,
-				left: sql<number>`${returnQuantity} - coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
+				left: sql<number>`${returnQuantity} - coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int - ${onBench()}`,
 			})
 			.from(orderLines)
 			.leftJoin(products, eq(products.id, orderLines.productId))

@@ -1,3 +1,4 @@
+import { Link, useRouter } from "@tanstack/react-router";
 import { ExternalLink, Minus, Plus } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
@@ -16,11 +17,14 @@ import { formatCount } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { printPdf } from "#/printing/qz-client";
+import { startBenchJob } from "#/server/bench";
 import {
+	getRefurbishOptions,
 	receiveOrderReturn,
 	refurbishOrderReturn,
 	undoOrderReturn,
 } from "#/server/orders";
+import { moveRepairTo } from "#/server/repairs";
 
 type ReturnLine = {
 	id: number;
@@ -41,7 +45,8 @@ export type Outcome = "restock" | "refurbish" | "write_off";
 // What came back in the box, line by line. Starts at everything still
 // returnable (or what's expected), since most returns are the whole order; Enter puts it all
 // back on the shelf. Refurbish (one line at a time) turns to choosing the
-// refurb. It closes at once: the page shows the return before the server
+// refurb; Bench puts them on the repair board to fix first, a job and a
+// ticket each, and lists them from there (src/repairs/bench.ts). It closes at once: the page shows the return before the server
 // has it, and a failure says why in a toast.
 export function ReturnDialog({
 	open,
@@ -64,6 +69,7 @@ export function ReturnDialog({
 	};
 }) {
 	const [refurbishing, setRefurbishing] = useState(false);
+	const router = useRouter();
 	const [counts, setCounts] = useState(
 		() =>
 			new Map(lines.map((l) => [l.id, Math.min(l.start ?? l.left, l.left)])),
@@ -150,6 +156,49 @@ export function ReturnDialog({
 		}
 	}
 
+	async function bench() {
+		if (!single) return;
+		onOpenChange(false);
+		const r = await optimism.change({
+			send: () =>
+				startBenchJob({
+					data: {
+						orderId,
+						lineId: single.lineId,
+						quantity: single.quantity,
+					},
+				}),
+		});
+		if (!r) return;
+		const { ids } = r.value;
+		for (const id of ids)
+			void printPdf(`/labels/repairs/${id}`, `R${id} ticket`);
+		void router.invalidate();
+		const names = ids.map((id) => `R${id}`).join(", ");
+		offerUndo(`${names} on the bench`, {
+			tone: "success",
+			description: (
+				<Link
+					to="/repairs/$id"
+					params={{ id: String(ids[0]) }}
+					className="text-link underline"
+				>
+					Open {ids.length === 1 ? names : `R${ids[0]}`}
+				</Link>
+			),
+			undo: async () => {
+				const off = await optimism.change({
+					send: () =>
+						Promise.all(
+							ids.map((id) => moveRepairTo({ data: { id, to: "cancelled" } })),
+						),
+				});
+				void router.invalidate();
+				return off && `${names} off the bench`;
+			},
+		});
+	}
+
 	// Every refurbished box gets its label, to find it by and ship it from.
 	const printBoxLabel = (r: { ids: number[] }) =>
 		r.ids[0] !== undefined &&
@@ -196,8 +245,12 @@ export function ReturnDialog({
 			<DialogContent className={refurbishing ? "sm:max-w-xl" : "sm:max-w-lg"}>
 				{refurbishing && single && singleLine ? (
 					<RefurbishForm
-						orderId={orderId}
-						lineId={single.lineId}
+						load={() =>
+							getRefurbishOptions({
+								data: { orderId, lineId: single.lineId },
+							})
+						}
+						loadKey={`${orderId}:${single.lineId}`}
 						quantity={single.quantity}
 						name={singleLine.sku ?? singleLine.title}
 						onBack={() => setRefurbishing(false)}
@@ -256,7 +309,7 @@ export function ReturnDialog({
 							})}
 						</ul>
 
-						<DialogFooter className="gap-2 sm:justify-between">
+						<DialogFooter className="flex-wrap gap-2 sm:justify-between">
 							<div className="flex gap-2">
 								<Button
 									type="button"
@@ -273,6 +326,14 @@ export function ReturnDialog({
 									onClick={() => setRefurbishing(true)}
 								>
 									Refurbish
+								</Button>
+								<Button
+									type="button"
+									variant="outline"
+									disabled={!single}
+									onClick={bench}
+								>
+									Bench
 								</Button>
 							</div>
 							<Button type="submit" disabled={total === 0}>

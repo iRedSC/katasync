@@ -63,6 +63,8 @@ export async function syncDraft(
 	r: Locked,
 	{ charges = true }: { charges?: boolean } = {},
 ) {
+	if (r.kind === "bench")
+		throw new RepairError(`R${r.id} is ours; it has no draft order`);
 	const [labor] = await tx
 		.select({
 			minutes: sql<number>`coalesce(sum(${repairLabor.minutes}), 0)::int`,
@@ -104,7 +106,7 @@ export async function syncDraft(
 	const draft = await currentDraft(r);
 	const lineItems = draftLines(draft?.lineItems.nodes ?? [], ours);
 	const input = {
-		customerId: r.customerId,
+		customerId: r.customerId ?? undefined,
 		note: draftNote(r),
 		lineItems,
 	};

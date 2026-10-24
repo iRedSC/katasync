@@ -42,6 +42,7 @@ export function ToolInput({
 	value,
 	products,
 	onChange,
+	onPick,
 	onDone,
 	disabled,
 	placeholder = "Tool",
@@ -50,6 +51,8 @@ export function ToolInput({
 	value: string;
 	products: IndexedProduct[];
 	onChange: (text: string) => void;
+	// A catalog product picked for it.
+	onPick?: (product: IndexedProduct) => void;
 	// Typing finished: blurred, Enter, or a product picked.
 	onDone?: (text: string) => void;
 	disabled?: boolean;
@@ -63,6 +66,7 @@ export function ToolInput({
 	function pick(p: IndexedProduct) {
 		const name = toolName(p);
 		onChange(name);
+		onPick?.(p);
 		setOpen(false);
 		onDone?.(name);
 	}

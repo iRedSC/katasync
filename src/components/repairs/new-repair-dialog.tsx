@@ -12,7 +12,9 @@ import {
 } from "#/components/ui/dialog";
 import { formatPhone } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
+import { cn } from "#/lib/utils";
 import type { Person } from "#/repairs/people";
+import { startBenchJob } from "#/server/bench";
 import { startRepair } from "#/server/repairs";
 import {
 	CustomerFields,
@@ -21,7 +23,7 @@ import {
 	type NewCustomer,
 } from "./customer-picker";
 import { TechPicker } from "./tech-picker";
-import { ToolInput } from "./tool-input";
+import { ToolInput, toolName } from "./tool-input";
 
 // Taking a tool in at the counter: whose it is, what it is, what's wrong,
 // and who'll fix it. Saving prints the ticket to tie on it.
@@ -44,6 +46,10 @@ export function NewRepairDialog({
 	onMade: (id: number) => void;
 }) {
 	const [who, setWho] = useState<Who | null>(null);
+	// Ours, to refurbish: no customer, and a catalog product to make the
+	// refurb from (src/repairs/bench.ts).
+	const [bench, setBench] = useState(false);
+	const [picked, setPicked] = useState<IndexedProduct | null>(null);
 	const [tool, setTool] = useState("");
 	const [serial, setSerial] = useState("");
 	const [problem, setProblem] = useState("");
@@ -54,10 +60,12 @@ export function NewRepairDialog({
 		who?.kind === "found" ||
 		(who?.kind === "new" &&
 			(who.fields.firstName.trim() || who.fields.lastName.trim()));
-	const ready = named && tool.trim() !== "" && !busy;
+	const ready =
+		(bench ? picked !== null : named && tool.trim() !== "") && !busy;
 
 	function reset() {
 		setWho(null);
+		setPicked(null);
 		setTool("");
 		setSerial("");
 		setProblem("");
@@ -66,7 +74,30 @@ export function NewRepairDialog({
 
 	async function submit(e: FormEvent) {
 		e.preventDefault();
-		if (!ready || !who) return;
+		if (!ready) return;
+		if (bench) {
+			if (!picked) return;
+			setBusy(true);
+			const made = await optimism.change({
+				send: () =>
+					startBenchJob({
+						data: {
+							productId: picked.id,
+							tool,
+							serial: serial.trim() || null,
+							problem,
+							technicianId,
+						},
+					}),
+			});
+			setBusy(false);
+			if (!made) return;
+			reset();
+			onOpenChange(false);
+			onMade(made.value.ids[0]);
+			return;
+		}
+		if (!who) return;
 		setBusy(true);
 		const customer =
 			who.kind === "found"
@@ -113,7 +144,26 @@ export function NewRepairDialog({
 						</DialogDescription>
 					</DialogHeader>
 
-					{who === null ? (
+					<div className="flex rounded-lg bg-surface p-0.5 text-sm font-medium">
+						{[
+							{ label: "Customer's", value: false },
+							{ label: "Ours, to refurbish", value: true },
+						].map((o) => (
+							<button
+								key={o.label}
+								type="button"
+								onClick={() => setBench(o.value)}
+								className={cn(
+									"flex-1 rounded-md py-1.5 text-muted-foreground",
+									bench === o.value && "bg-card text-foreground shadow-card",
+								)}
+							>
+								{o.label}
+							</button>
+						))}
+					</div>
+
+					{bench ? null : who === null ? (
 						<CustomerPicker
 							onPick={(customer) => setWho({ kind: "found", customer })}
 							onNew={(fields) => setWho({ kind: "new", fields })}
@@ -160,9 +210,25 @@ export function NewRepairDialog({
 						<ToolInput
 							value={tool}
 							products={products}
-							onChange={setTool}
-							placeholder="Tool, e.g. TapeTech 88TTE taper"
-							className="h-9 rounded-lg border border-input bg-white px-3 outline-none focus:border-ring"
+							onChange={(text) => {
+								setTool(text);
+								// Typed over: no longer that product.
+								if (picked && text !== toolName(picked)) setPicked(null);
+							}}
+							onPick={setPicked}
+							placeholder={
+								bench
+									? "Pick the tool from the catalog"
+									: "Tool, e.g. TapeTech 88TTE taper"
+							}
+							className={cn(
+								"h-9 rounded-lg border border-input bg-white px-3 outline-none focus:border-ring",
+								// Ours needs a catalog product to make its refurb from.
+								bench &&
+									tool.trim() !== "" &&
+									!picked &&
+									"border-warning-border focus:border-warning-border",
+							)}
 						/>
 						<input
 							value={serial}

@@ -52,6 +52,7 @@ describe("moving", () => {
 		paid = false,
 	) => ({
 		status,
+		bench: false,
 		hasDraft,
 		paid,
 	});
