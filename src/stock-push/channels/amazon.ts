@@ -1,14 +1,6 @@
 import { type } from "arktype";
 import { MARKETPLACE_US, spApi } from "#/channels/amazon-api";
-import { errorText } from "#/diagnostics/runs";
 import type { Found, StockChannel } from "../channel";
-
-// Amazon US, through the Listings Items API (needs the Product Listing role
-// and AMAZON_SELLER_ID, the merchant token from Seller Central). Only
-// listings we ship (fulfillment channel DEFAULT) are read; FBA stock is
-// Amazon's. A quantity is written as the listing's whole
-// fulfillment_availability entry with only the quantity changed, so its
-// handling time stays as set.
 
 const LISTINGS = "/listings/2021-08-01/items";
 
@@ -102,56 +94,8 @@ async function read() {
 	return found;
 }
 
-const patchResult = type({
-	status: "string",
-	"issues?": type({ message: "string", severity: "string" }).array(),
-});
-
-// One PATCH per listing; Amazon has no batch call that answers right away.
-async function write(writes: Parameters<StockChannel<Target>["write"]>[0]) {
-	const seller = encodeURIComponent(sellerId());
-	const failures = new Map<string, string>();
-	for (const w of writes) {
-		try {
-			const r = patchResult.assert(
-				await spApi(
-					`${LISTINGS}/${seller}/${encodeURIComponent(w.externalId)}?marketplaceIds=${MARKETPLACE_US}`,
-					{
-						productType: w.target.productType,
-						patches: [
-							{
-								op: "replace",
-								path: "/attributes/fulfillment_availability",
-								value: [
-									{
-										...w.target.availability,
-										fulfillment_channel_code: "DEFAULT",
-										quantity: w.quantity,
-									},
-								],
-							},
-						],
-					},
-					"PATCH",
-				),
-			);
-			const errors = (r.issues ?? []).filter((i) => i.severity === "ERROR");
-			if (r.status !== "ACCEPTED" || errors.length > 0)
-				failures.set(
-					w.externalId,
-					errors.map((i) => i.message).join("; ") ||
-						`Amazon answered ${r.status}`,
-				);
-		} catch (error) {
-			failures.set(w.externalId, errorText(error));
-		}
-	}
-	return failures;
-}
-
 export const amazonStock: StockChannel<Target> = {
 	name: "Amazon",
 	target,
 	read,
-	write,
 };

@@ -44,6 +44,7 @@ const RATE_FROM = 5;
 export type ListingProblem =
 	| { kind: "shows_zero" }
 	| { kind: "push_failed"; error: string }
+	| { kind: "push_blocked" }
 	| { kind: "unpushable"; reason: string };
 export type ListingState =
 	| { kind: "live"; problem: ListingProblem | null }
@@ -191,6 +192,8 @@ export function listingState(l: {
 			kind: "live",
 			problem: { kind: "unpushable", reason: sp.reason },
 		};
+	if (sp?.state === "ready" && sp.delivery?.kind === "blocked")
+		return { kind: "live", problem: { kind: "push_blocked" } };
 	if (sp?.state === "ready" && sp.error)
 		return {
 			kind: "live",

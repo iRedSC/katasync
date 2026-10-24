@@ -1,11 +1,11 @@
 import { type } from "arktype";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
-import type { Found, StockChannel, StockWrite } from "./channel";
+import type { Found, StockChannel } from "./channel";
 import { movedSince, pushMoved } from "./on-change";
 
 const target = type({ slot: "string" });
@@ -30,19 +30,16 @@ const opening = (productId: number, delta: number) =>
 
 // A channel that shows `shows` for each listing and records what it's sent.
 function channel(shows: Record<string, number>) {
-	const writes: StockWrite<{ slot: string }>[] = [];
+	const write = vi.fn();
 	const adapter: StockChannel<{ slot: string }> = {
 		name: "Fake",
 		target,
 		async read() {
 			throw new Error("a push of moved stock reads nothing");
 		},
-		async write(list) {
-			writes.push(...list);
-			return new Map();
-		},
 	};
-	return { adapter: adapter as unknown as StockChannel<never>, writes, shows };
+	Object.assign(adapter, { write });
+	return { adapter: adapter as unknown as StockChannel<never>, write, shows };
 }
 
 async function store(
@@ -91,7 +88,7 @@ test("finds what moved, and the sets made from it", async () => {
 	);
 });
 
-test("pushes only what moved, to every store with push on but the one left out", async () => {
+test("plans only moved stock without delivering to any store", async () => {
 	const sold = await createProduct(db, "SOLD", "simple");
 	const other = await createProduct(db, "OTHER", "simple");
 	await opening(other, 5);
@@ -105,29 +102,33 @@ test("pushes only what moved, to every store with push on but the one left out",
 	const since = new Date();
 	await opening(sold, 3);
 
-	await pushMoved(db, since, {
-		mode: "write",
+	const first = await pushMoved(db, since, {
+		mode: "preview",
 		adapters: { shopify: shop.adapter, tiktok: tiktok.adapter },
 	});
 	// OTHER moved too (within the slack), and Shopify shows 1 of its 5.
-	expect(shop.writes.map((w) => [w.externalId, w.quantity]).sort()).toEqual([
+	expect(
+		first[0].changes.map((change) => [change.externalId, change.to]).sort(),
+	).toEqual([
 		["s-other", 5],
 		["s-sold", 3],
 	]);
-	expect(tiktok.writes.map((w) => [w.externalId, w.quantity])).toEqual([
-		["t-sold", 3],
-	]);
+	expect(
+		first[1].changes.map((change) => [change.externalId, change.to]),
+	).toEqual([["t-sold", 3]]);
 
-	shop.writes.length = 0;
-	tiktok.writes.length = 0;
+	expect(shop.write).not.toHaveBeenCalled();
+	expect(tiktok.write).not.toHaveBeenCalled();
 	await opening(sold, -1);
-	await pushMoved(db, since, {
+	const second = await pushMoved(db, since, {
 		except: "shopify",
-		mode: "write",
+		mode: "preview",
 		adapters: { shopify: shop.adapter, tiktok: tiktok.adapter },
 	});
-	expect(shop.writes).toEqual([]);
-	expect(tiktok.writes.map((w) => [w.externalId, w.quantity])).toEqual([
-		["t-sold", 2],
-	]);
+	expect(shop.write).not.toHaveBeenCalled();
+	expect(tiktok.write).not.toHaveBeenCalled();
+	expect(second).toHaveLength(1);
+	expect(
+		second[0].changes.map((change) => [change.externalId, change.to]),
+	).toEqual([["t-sold", 2]]);
 });

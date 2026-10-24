@@ -547,6 +547,7 @@ export type ListingStockPush =
 			target: unknown;
 			shows: number | null;
 			error: string | null;
+			delivery?: { kind: "blocked"; wanted: number };
 	  }
 	| { state: "unpushable"; reason: string }
 	| { state: "unreported" };

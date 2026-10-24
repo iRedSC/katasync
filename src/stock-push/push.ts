@@ -13,32 +13,21 @@ import { errorText } from "#/diagnostics/runs";
 import { getAvailability } from "#/inventory/availability";
 import { UNLIMITED } from "#/inventory/not-counted";
 import { onlineStock } from "#/inventory/online-stock";
-import { chunks, type StockChannel, type StockWrite } from "./channel";
-
-// Stock push: sets each mapped listing's quantity on its channel to what
-// katasync can sell, for stores with push on. Runs at the end of every sync
-// pass (src/channels/sync.ts), so a sale on one channel reaches the others
-// within a pass. Only listings whose quantity differs from what the channel
-// last showed are written; every READ_EVERY_MS the channel's own quantities
-// are read back, so anything that drifted (someone edited stock on the
-// channel) is put right. A listing no read has looked for yet (one made since
-// the last read) brings the read forward, so it's set in the same pass.
+import { chunks, type StockChannel } from "./channel";
+import { STOCK_WRITE_HOLD } from "./policy";
 
 export const READ_EVERY_MS = 25 * 60 * 1000;
 
-// write: sets quantities on the channel.
-// preview: works out the same changes and writes nothing. Every database but
-// production's syncs the same live stores, so only production may write.
-export type PushMode = "write" | "preview";
+export type PushMode = "preview";
 
-export const pushMode = (): PushMode =>
-	process.env.VERCEL_ENV === "production" ? "write" : "preview";
+export const pushMode = (): PushMode => "preview";
 
 export type Change = {
 	sku: string;
 	externalId: string;
 	from: number | null;
 	to: number;
+	state: "blocked";
 };
 
 export type StorePush = {
@@ -46,15 +35,15 @@ export type StorePush = {
 	changes: Change[];
 	// Changes the channel refused (always 0 in preview).
 	failed: number;
+	blocked: number;
 	problems: string[];
 };
 
 class Blocked extends Error {}
 
-// Why no quantity katasync works out can be trusted yet, if one can't. A
-// store whose orders don't take stock leaves its sales out of every number,
-// and with nothing imported every listing would be set to 0.
-export async function stockBlocker(db: Db): Promise<string | null> {
+export const stockBlocker = (): string => STOCK_WRITE_HOLD;
+
+async function inventoryBlocker(db: Db): Promise<string | null> {
 	const untracked = await db
 		.select({ name: stores.name })
 		.from(stores)
@@ -97,16 +86,6 @@ export async function holdStore(tx: Db, storeId: number) {
 	);
 }
 
-// One store's push. Never throws: a failure is kept on the store for
-// Settings and returned as a problem for Diagnostics. `only` limits it to
-// those products' listings (src/stock-push/on-change.ts) and skips the
-// read-back, which the next full push does, unless one of them has a
-// listing no read has looked for yet.
-//
-// Pushes to one store take turns, each in a transaction holding the store:
-// each reads the store's settings and works out its quantities once it holds
-// it, so a push that started earlier, with older numbers or a since-disabled
-// store, can't write over a later one.
 export async function pushStoreStock<T>(
 	db: Db,
 	store: typeof stores.$inferSelect,
@@ -114,8 +93,10 @@ export async function pushStoreStock<T>(
 	mode: PushMode,
 	now = new Date(),
 	only?: number[],
+	refresh = false,
 ): Promise<StorePush> {
 	try {
+		if (mode !== "preview") throw new Blocked(STOCK_WRITE_HOLD);
 		return await db.transaction(async (tx) => {
 			// The transaction waits on the channel's API between statements, and
 			// Neon ends ones idle for 5 minutes; a Vercel function can't outlive 15.
@@ -127,14 +108,18 @@ export async function pushStoreStock<T>(
 				.select()
 				.from(stores)
 				.where(eq(stores.id, store.id));
-			if (!held?.pushStock)
-				return { store: store.name, changes: [], failed: 0, problems: [] };
-			return await pushHeld(tx, held, adapter, mode, now, only);
+			if (!held)
+				return {
+					store: store.name,
+					changes: [],
+					failed: 0,
+					blocked: 0,
+					problems: [],
+				};
+			return await pushHeld(tx, held, adapter, now, only, refresh);
 		});
 	} catch (error) {
 		const message = errorText(error);
-		// The rollback forgot any quantities a failed write had already set on the
-		// channel, so the next push reads the channel before trusting what's cached.
 		await db
 			.update(stores)
 			.set({ stockPushError: message, stockReadAt: null })
@@ -143,6 +128,7 @@ export async function pushStoreStock<T>(
 			store: store.name,
 			changes: [],
 			failed: 0,
+			blocked: 0,
 			problems: [`Stock push to ${store.name} stopped: ${message}`],
 		};
 	}
@@ -152,31 +138,29 @@ async function pushHeld<T>(
 	db: Db,
 	store: typeof stores.$inferSelect,
 	adapter: StockChannel<T>,
-	mode: PushMode,
 	now: Date,
 	only: number[] | undefined,
+	refresh: boolean,
 ): Promise<StorePush> {
-	const blocker = await stockBlocker(db);
+	const blocker = await inventoryBlocker(db);
 	if (blocker) throw new Blocked(blocker);
 	const due =
+		refresh ||
 		(!only &&
 			(!store.stockReadAt ||
 				now.getTime() - store.stockReadAt.getTime() >= READ_EVERY_MS)) ||
 		(await hasUnread(db, store, only));
 	if (due) await readStock(db, store, adapter, now);
-	const result = await pushListings(db, store, adapter, mode, only);
+	const result = await pushListings(db, store, adapter, only);
 	await db
 		.update(stores)
 		.set({
-			stockPushError: null,
-			...(mode === "write" ? { stockPushedAt: now } : {}),
+			stockPushError: STOCK_WRITE_HOLD,
 		})
 		.where(eq(stores.id, store.id));
 	return { store: store.name, ...result };
 }
 
-// The listings push sets, of `only`'s products if given: mapped, stocked by
-// us, and not deleted.
 const pushable = (store: typeof stores.$inferSelect, only?: number[]) =>
 	and(
 		eq(listings.storeId, store.id),
@@ -190,9 +174,6 @@ const pushable = (store: typeof stores.$inferSelect, only?: number[]) =>
 		only ? inArray(listings.productId, only) : undefined,
 	);
 
-// Whether a listing push would set hasn't been looked for by any read yet.
-// One the channel didn't report is `unreported`, not null, so it doesn't
-// bring every read forward.
 async function hasUnread(
 	db: Db,
 	store: typeof stores.$inferSelect,
@@ -206,8 +187,6 @@ async function hasUnread(
 	return row !== undefined;
 }
 
-// Records what the channel shows for each of the store's listings. A write
-// error stays until the next write tells otherwise.
 async function readStock<T>(
 	db: Db,
 	store: typeof stores.$inferSelect,
@@ -251,7 +230,6 @@ async function pushListings<T>(
 	db: Db,
 	store: typeof stores.$inferSelect,
 	adapter: StockChannel<T>,
-	mode: PushMode,
 	only?: number[],
 ): Promise<Omit<StorePush, "store">> {
 	const rows = await db
@@ -276,86 +254,51 @@ async function pushListings<T>(
 		{ uncounted: UNLIMITED },
 	);
 
-	const problems: string[] = [];
-	const pending: {
-		row: (typeof rows)[number];
-		write: StockWrite<T>;
-		before: Extract<ListingStockPush, { state: "ready" }>;
-	}[] = [];
+	const problems: string[] = [STOCK_WRITE_HOLD];
+	const changes: Change[] = [];
 	const settled: { id: number; stockPush: ListingStockPush }[] = [];
+	let blocked = 0;
 	for (const row of rows) {
 		const sp = row.stockPush;
-		// Null only if hasUnread raced a listing made mid-pass; the next pass
-		// reads it.
 		if (!sp || sp.state === "unreported") {
 			problems.push(
-				`${row.sku}: ${adapter.name} didn't report this listing's stock, so katasync isn't setting it`,
+				`${row.sku}: ${adapter.name} did not report this listing's stock`,
 			);
 			continue;
 		}
 		if (sp.state === "unpushable") {
-			problems.push(
-				`${row.sku}: katasync can't set its ${adapter.name} stock: ${sp.reason}`,
-			);
+			problems.push(`${row.sku}: ${sp.reason}`);
 			continue;
 		}
 		const target = adapter.target(sp.target);
 		if (target instanceof type.errors) {
 			problems.push(
-				`${row.sku}: its ${adapter.name} stock address is unreadable until the next stock read`,
+				`${row.sku}: its ${adapter.name} stock address is unreadable`,
 			);
 			continue;
 		}
 		const has = sellable.get(row.productId) ?? 0;
-		// At or below its close-at, the channels show none left.
 		const quantity = row.closeAt !== null && has <= row.closeAt ? 0 : has;
-		if (quantity === sp.shows) {
-			// Already right, so an earlier failure no longer matters.
-			if (sp.error)
-				settled.push({ id: row.id, stockPush: { ...sp, error: null } });
-			continue;
-		}
-		pending.push({
-			row,
-			before: sp,
-			write: { externalId: row.externalId, target: target as T, quantity },
-		});
-	}
-
-	const changes = pending.map(({ row, before, write }) => ({
-		sku: row.sku,
-		externalId: row.externalId,
-		from: before.shows,
-		to: write.quantity,
-	}));
-	if (mode === "preview") {
-		await saveStockPush(db, settled);
-		if (changes.length > 0)
-			problems.push(
-				`Stock push to ${store.name} is preview only here (not production): ${changes.length} ${changes.length === 1 ? "listing" : "listings"} would change`,
-			);
-		return { changes, failed: 0, problems };
-	}
-
-	const failures =
-		pending.length > 0
-			? await adapter.write(pending.map((p) => p.write))
-			: new Map<string, string>();
-	for (const { row, before, write } of pending) {
-		const error = failures.get(row.externalId) ?? null;
-		if (error)
-			problems.push(`${row.sku}: ${adapter.name} refused its stock: ${error}`);
+		blocked++;
+		if (quantity !== sp.shows)
+			changes.push({
+				sku: row.sku,
+				externalId: row.externalId,
+				from: sp.shows,
+				to: quantity,
+				state: "blocked",
+			});
 		settled.push({
 			id: row.id,
 			stockPush: {
-				...before,
-				shows: error ? before.shows : write.quantity,
-				error,
+				...sp,
+				error: STOCK_WRITE_HOLD,
+				delivery: { kind: "blocked", wanted: quantity },
 			},
 		});
 	}
 	await saveStockPush(db, settled);
-	return { changes, failed: failures.size, problems };
+	return { changes, failed: 0, blocked, problems };
 }
 
 // Writes many listings' stock push state in a few statements.

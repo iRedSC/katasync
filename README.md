@@ -2,7 +2,9 @@
 
 # katasync
 
-Inventory, purchasing, and order fulfillment for Shopify, Amazon, eBay, and TikTok Shop. Replaces Sumtracker.
+Inventory, purchasing, and order fulfillment for Shopify, Amazon, eBay, and TikTok Shop.
+
+Automatic marketplace stock writes are blocked. Stock adapters are read-only: previews show proposed differences, not delivered changes, and old successful-push timestamps are not proof of synchronization. Do not disable an existing inventory service expecting katasync to replace its stock writes. Zero containment is also not submitted by this release. See [stock-write safety](docs/stock-write-safety.md) for the deployment boundary and requirements for future delivery.
 
 Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Vercel Cron for syncing.
 

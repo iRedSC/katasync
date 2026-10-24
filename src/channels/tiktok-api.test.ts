@@ -103,7 +103,7 @@ describe("tiktokApi on TikTok's transient failures", () => {
 	});
 });
 
-test("only reads and quantity updates are safe to repeat", () => {
+test("only reads are safe to repeat, never absolute inventory replacements", () => {
 	expect(safeToRepeat("GET", "/fulfillment/202309/packages/1")).toBe(true);
 	expect(safeToRepeat("POST", "/order/202309/orders/search")).toBe(true);
 	expect(
@@ -114,7 +114,7 @@ test("only reads and quantity updates are safe to repeat", () => {
 	).toBe(true);
 	expect(
 		safeToRepeat("POST", "/product/202309/products/1/inventory/update"),
-	).toBe(true);
+	).toBe(false);
 	expect(safeToRepeat("POST", "/fulfillment/202309/packages")).toBe(false);
 	expect(safeToRepeat("POST", "/fulfillment/202309/packages/1/ship")).toBe(
 		false,

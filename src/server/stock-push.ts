@@ -3,7 +3,7 @@ import { type } from "arktype";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { listings, stores } from "#/db/schema";
-import { pushMode, stockBlocker } from "#/stock-push/push";
+import { stockBlocker } from "#/stock-push/push";
 import { setStorePush } from "#/stock-push/switch";
 
 // Each store's stock push, for Settings: whether it's on, how its last pass
@@ -50,15 +50,12 @@ export const listStockPush = createServerFn({ method: "GET" }).handler(
 			.orderBy(stores.name);
 		return {
 			stores: rows,
-			// Off production a pass only works out what it would set.
-			writes: pushMode() === "write",
-			blocker: await stockBlocker(db),
+			writes: false,
+			blocker: stockBlocker(),
 		};
 	},
 );
 
-// Turns a store's stock push on or off. Turning it on starts from a fresh
-// read of the channel, so the first pass writes only what really differs.
 export const setStockPush = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0", on: "boolean" }))
+	.validator(type({ id: "number.integer > 0", on: "false" }))
 	.handler(async ({ data }) => setStorePush(getDb(), data.id, data.on));

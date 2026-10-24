@@ -1,11 +1,6 @@
 import { type } from "arktype";
 import { shopCipher, tiktokApi } from "#/channels/tiktok";
-import { errorText } from "#/diagnostics/runs";
 import { chunks, type Found, type StockChannel } from "../channel";
-
-// TikTok keeps stock per SKU per warehouse. katasync sets a SKU's stock in
-// the one sales warehouse that holds it; a SKU split across several is left
-// for a person, since katasync can't know how the split should go.
 
 const target = type({ productId: "string", warehouseId: "string" });
 type Target = typeof target.infer;
@@ -109,41 +104,8 @@ async function read() {
 	return found;
 }
 
-// One call per product, all its SKUs at once. TikTok answers for the whole
-// product, so a refusal is every one of its SKUs' error.
-async function write(writes: Parameters<StockChannel<Target>["write"]>[0]) {
-	const cipher = await shopCipher();
-	const byProduct = new Map<string, typeof writes>();
-	for (const w of writes)
-		byProduct.set(w.target.productId, [
-			...(byProduct.get(w.target.productId) ?? []),
-			w,
-		]);
-	const failures = new Map<string, string>();
-	for (const [productId, skus] of byProduct) {
-		try {
-			await tiktokApi(
-				`/product/202309/products/${productId}/inventory/update`,
-				{ shop_cipher: cipher },
-				{
-					skus: skus.map((w) => ({
-						id: w.externalId,
-						inventory: [
-							{ warehouse_id: w.target.warehouseId, quantity: w.quantity },
-						],
-					})),
-				},
-			);
-		} catch (error) {
-			for (const w of skus) failures.set(w.externalId, errorText(error));
-		}
-	}
-	return failures;
-}
-
 export const tiktokStock: StockChannel<Target> = {
 	name: "TikTok",
 	target,
 	read,
-	write,
 };

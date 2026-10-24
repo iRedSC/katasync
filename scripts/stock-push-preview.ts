@@ -1,13 +1,3 @@
-// What stock push would set on one channel's store, without writing to it.
-// Run it before turning a store on in Settings, against the database you'll
-// push from, to check the numbers.
-//
-//   pnpm stock-push:preview shopify
-//
-// Reads the channel's quantities now (and saves what it read, as a push pass
-// would), then lists every listing whose quantity would change and every
-// listing katasync can't set.
-
 import { eq } from "drizzle-orm";
 import { actAsScript } from "#/audit/script";
 import { isSyncedChannel } from "#/channels/sync";
@@ -38,16 +28,19 @@ if (!store) throw new Error(`No ${channel} store yet; run pnpm sync first`);
 // A null read time makes the pass read the channel now.
 const result = await pushStoreStock(
 	db,
-	{ ...store, stockReadAt: null },
+	store,
 	stockChannels[channel],
 	"preview",
+	new Date(),
+	undefined,
+	true,
 );
 for (const c of result.changes)
 	console.log(
-		`${c.sku.padEnd(24)} ${String(c.from ?? "?").padStart(6)} -> ${c.to}`,
+		`BLOCKED ${c.sku.padEnd(24)} ${String(c.from ?? "?").padStart(6)} -> ${c.to}`,
 	);
 console.log(
-	`\n${result.changes.length} listings would change on ${store.name}.`,
+	`\n${result.changes.length} differences on ${store.name}; ${result.blocked} addressable listings blocked. No remote writes.`,
 );
 const problems = result.problems.filter((p) => !p.includes("preview only"));
 if (problems.length > 0) {

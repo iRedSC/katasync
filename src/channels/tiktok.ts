@@ -164,16 +164,8 @@ const RETRY_LATER = new Set([36009003]);
 // at most 6 seconds, well inside a function's time limit.
 const TRANSIENT_WAITS_MS = [1000, 3000];
 
-// Whether a call can go out again after TikTok failed on its side, when the
-// first try may still have gone through: reads, and inventory updates, which
-// set a quantity rather than add one. Buying a label or shipping a package is
-// never sent twice.
 export function safeToRepeat(method: string, path: string) {
-	return (
-		method === "GET" ||
-		/\/(search|query)$/.test(path) ||
-		path.endsWith("/inventory/update")
-	);
+	return method === "GET" || /\/(search|query)$/.test(path);
 }
 
 function transient(status: number, text: string) {

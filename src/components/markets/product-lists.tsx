@@ -66,6 +66,15 @@ export function ListingChip({ listing }: { listing: ListingState }) {
 		case "live": {
 			const p = listing.problem;
 			if (!p) return null;
+			if (p.kind === "push_blocked")
+				return (
+					<Tipped
+						tip="Automatic stock writes are blocked; this quantity is observed, not synchronized."
+						tone="critical"
+					>
+						Stock sync blocked
+					</Tipped>
+				);
 			if (p.kind === "shows_zero")
 				return (
 					<Tipped tip={LISTING_TIPS.shows_zero} tone="critical">

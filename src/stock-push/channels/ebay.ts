@@ -1,12 +1,7 @@
 import { type } from "arktype";
 import { XMLParser } from "fast-xml-parser";
 import { API, accessToken } from "#/channels/ebay";
-import { chunks, type Found, type StockChannel } from "../channel";
-
-// eBay listings are keyed like src/channels/ebay.ts keys them: by SKU, or by
-// item ID when there's none. One SKU can sell on several items, so a listing
-// sets the quantity on every item (or variation) carrying it. eBay's
-// Trading API takes the quantity available, not counting units sold.
+import type { Found, StockChannel } from "../channel";
 
 const target = type({
 	items: type({ itemId: "string", variationSku: "string | null" }).array(),
@@ -88,7 +83,6 @@ export function ebayStockPage(
 	return response.ActiveList?.PaginationResult.TotalNumberOfPages ?? 0;
 }
 
-// Every place's quantity, or null when they differ, so a write evens them.
 export function ebayStockFound(places: Place[]): Found<Target> {
 	const shown = new Set(places.map((p) => p.shows));
 	return {
@@ -157,61 +151,8 @@ async function read() {
 	return found;
 }
 
-const xmlText = (text: string) =>
-	text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-const reviseResult = type({
-	ReviseInventoryStatusResponse: {
-		Ack: "string",
-		"Errors?": type({
-			LongMessage: "string",
-			SeverityCode: "string",
-		}).array(),
-	},
-});
-
-// ReviseInventoryStatus takes four places a call. A listing fails if any of
-// its places does.
-async function write(writes: Parameters<StockChannel<Target>["write"]>[0]) {
-	const statuses = writes.flatMap((w) =>
-		w.target.items.map((item) => ({
-			...item,
-			externalId: w.externalId,
-			quantity: w.quantity,
-		})),
-	);
-	const failures = new Map<string, string>();
-	for (const part of chunks(statuses, 4)) {
-		const body = `<?xml version="1.0" encoding="utf-8"?>
-<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-${part
-	.map(
-		(s) =>
-			`	<InventoryStatus><ItemID>${xmlText(s.itemId)}</ItemID>${s.variationSku === null ? "" : `<SKU>${xmlText(s.variationSku)}</SKU>`}<Quantity>${s.quantity}</Quantity></InventoryStatus>`,
-	)
-	.join("\n")}
-</ReviseInventoryStatusRequest>`;
-		let error: string | null;
-		try {
-			const r = reviseResult.assert(
-				xml.parse(await trading("ReviseInventoryStatus", body)),
-			).ReviseInventoryStatusResponse;
-			const errors = (r.Errors ?? []).filter((e) => e.SeverityCode === "Error");
-			error =
-				r.Ack === "Failure" || errors.length > 0
-					? errors.map((e) => e.LongMessage).join("; ") || "eBay refused it"
-					: null;
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		}
-		if (error) for (const s of part) failures.set(s.externalId, error);
-	}
-	return failures;
-}
-
 export const ebayStock: StockChannel<Target> = {
 	name: "eBay",
 	target,
 	read,
-	write,
 };

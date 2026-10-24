@@ -1,70 +1,65 @@
 import { type } from "arktype";
 import { eq, inArray } from "drizzle-orm";
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { postMovements } from "#/inventory/ledger";
 import { markNotCounted, UNLIMITED } from "#/inventory/not-counted";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
-import type { Found, StockChannel, StockWrite } from "./channel";
-import { pushChannelStock, pushStoreStock, READ_EVERY_MS } from "./push";
+import type { Found, StockChannel } from "./channel";
+import { STOCK_WRITE_HOLD } from "./policy";
+import {
+	pushChannelStock,
+	pushMode,
+	pushStoreStock,
+	READ_EVERY_MS,
+} from "./push";
 import { stockPushStatus } from "./status";
+import { setStorePush } from "./switch";
 
 const target = type({ slot: "string" });
 type Target = typeof target.infer;
-
-// A channel kept in memory: what it shows per listing, which listings it
-// refuses, and every write it was sent.
 function fakeChannel(shows: Record<string, number | null | "unpushable">) {
-	const refuse = new Set<string>();
-	const writes: StockWrite<Target>[] = [];
 	let reads = 0;
+	const write = vi.fn();
 	const channel: StockChannel<Target> = {
 		name: "Fake",
 		target,
 		async read() {
 			reads++;
-			const found = new Map<string, Found<Target>>();
-			for (const [id, q] of Object.entries(shows))
-				found.set(
-					id,
-					q === "unpushable"
-						? { state: "unpushable", reason: "it can't hold stock" }
-						: { state: "ready", target: { slot: `slot-${id}` }, shows: q },
-				);
-			return found;
-		},
-		async write(list) {
-			writes.push(...list);
-			const failures = new Map<string, string>();
-			for (const w of list) {
-				if (refuse.has(w.externalId)) failures.set(w.externalId, "nope");
-				else shows[w.externalId] = w.quantity;
-			}
-			return failures;
+			return new Map(
+				Object.entries(shows).map(
+					([externalId, quantity]): [string, Found<Target>] => [
+						externalId,
+						quantity === "unpushable"
+							? { state: "unpushable", reason: "unsupported address" }
+							: {
+									state: "ready",
+									target: { slot: externalId },
+									shows: quantity,
+								},
+					],
+				),
+			);
 		},
 	};
-	return { channel, shows, refuse, writes, reads: () => reads };
+	Object.assign(channel, { write });
+	return { channel, shows, write, reads: () => reads };
 }
-
 let db: Db;
 let warehouse: number;
 let store: typeof schema.stores.$inferSelect;
-
-async function stock(productId: number, delta: number) {
-	await postMovements(db, {
+const stock = (productId: number, delta: number) =>
+	postMovements(db, {
 		lines: [
 			{ productId, locationId: warehouse, delta, reason: "opening_balance" },
 		],
 	});
-}
-
 async function list(
 	externalId: string,
 	productId: number | null,
-	fulfillment: "merchant" | "fba" = "merchant",
-	status: string | null = null,
+	more: Partial<typeof schema.listings.$inferInsert> = {},
 ) {
 	await db.insert(schema.listings).values({
 		storeId: store.id,
@@ -72,27 +67,23 @@ async function list(
 		externalSku: externalId,
 		title: externalId,
 		productId,
-		fulfillment,
-		status,
+		...more,
 	});
 }
-
-async function reload() {
-	[store] = await db
-		.select()
-		.from(schema.stores)
-		.where(eq(schema.stores.id, store.id));
-	return store;
-}
-
-async function listingPush(externalId: string) {
+async function state(externalId: string) {
 	const [row] = await db
-		.select({ stockPush: schema.listings.stockPush })
+		.select()
 		.from(schema.listings)
 		.where(eq(schema.listings.externalId, externalId));
 	return row.stockPush;
 }
-
+async function reload() {
+	const [row] = await db
+		.select()
+		.from(schema.stores)
+		.where(eq(schema.stores.id, store.id));
+	return row;
+}
 beforeEach(async () => {
 	db = await createTestDb();
 	[{ id: warehouse }] = await db
@@ -110,346 +101,203 @@ beforeEach(async () => {
 		.returning();
 });
 
-describe("pushStoreStock", () => {
-	test("shows none at or below a product's close-at, and every unit above it", async () => {
-		const low = await createProduct(db, "LOW", "simple");
-		const high = await createProduct(db, "HIGH", "simple");
-		const free = await createProduct(db, "FREE", "simple");
-		await db
-			.update(schema.products)
-			.set({ closeAt: 2 })
-			.where(inArray(schema.products.id, [low, high, free]));
-		await stock(low, 2);
-		await stock(high, 3);
-		await markNotCounted(db, [free]);
-		await list("1", low);
-		await list("2", high);
-		await list("3", free);
-		const fake = fakeChannel({ "1": 2, "2": 0, "3": 0 });
-		await pushStoreStock(db, store, fake.channel, "write");
-		expect(fake.shows).toEqual({ "1": 0, "2": 3, "3": UNLIMITED });
-	});
-
-	test("writes only the listings whose quantity differs, then remembers it", async () => {
-		const a = await createProduct(db, "A", "simple");
-		const b = await createProduct(db, "B", "simple");
-		await stock(a, 5);
-		await stock(b, 3);
-		await list("1", a);
-		await list("2", b);
-		const fake = fakeChannel({ "1": 2, "2": 3 });
-
-		const result = await pushStoreStock(db, store, fake.channel, "write");
-		expect(result.changes).toEqual([
-			{ sku: "A", externalId: "1", from: 2, to: 5 },
-		]);
-		expect(fake.writes).toEqual([
-			{ externalId: "1", target: { slot: "slot-1" }, quantity: 5 },
-		]);
-		expect(await listingPush("1")).toMatchObject({
-			state: "ready",
-			shows: 5,
-			error: null,
-		});
-		expect((await reload()).stockPushedAt).not.toBeNull();
-
-		// Nothing changed, so the next pass writes nothing and doesn't read.
-		fake.writes.length = 0;
-		await pushStoreStock(db, await reload(), fake.channel, "write");
-		expect(fake.writes).toEqual([]);
-		expect(fake.reads()).toBe(1);
-	});
-
-	test("a bundle sells as many as its scarcest part allows; oversold stock is 0", async () => {
-		const part = await createProduct(db, "PART", "simple");
-		const pair = await createProduct(db, "PAIR", "bundle");
-		const gone = await createProduct(db, "GONE", "simple");
-		await setRecipe(db, pair, [{ productId: part, quantity: 2 }]);
-		await stock(part, 5);
-		await stock(gone, -2);
-		await list("pair", pair);
-		await list("gone", gone);
-		const fake = fakeChannel({ pair: null, gone: 4 });
-
-		await pushStoreStock(db, store, fake.channel, "write");
-		expect(
-			Object.fromEntries(fake.writes.map((w) => [w.externalId, w.quantity])),
-		).toEqual({
-			pair: 2,
-			gone: 0,
-		});
-	});
-
-	test("leaves unmapped and FBA listings alone", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("loose", null);
-		await list("fba", a, "fba");
-		const fake = fakeChannel({ loose: 1, fba: 1 });
-
-		const result = await pushStoreStock(db, store, fake.channel, "write");
-		expect(fake.writes).toEqual([]);
-		expect(result.problems).toEqual([]);
-	});
-
-	test("leaves deleted listings alone", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("gone", a, "merchant", "DELETED");
-		await list("live", a, "merchant", "ACTIVATE");
-		const fake = fakeChannel({ gone: 1, live: 1 });
-
-		const result = await pushStoreStock(db, store, fake.channel, "write");
-		expect(fake.writes.map((w) => w.externalId)).toEqual(["live"]);
-		expect(result.problems).toEqual([]);
-	});
-
-	test("a refused write is kept, reported, and tried again until it goes through", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("1", a);
-		const fake = fakeChannel({ "1": 1 });
-		fake.refuse.add("1");
-
-		const first = await pushStoreStock(db, store, fake.channel, "write");
-		expect(first.failed).toBe(1);
-		expect(first.problems).toEqual(["A: Fake refused its stock: nope"]);
-		expect(await listingPush("1")).toMatchObject({ shows: 1, error: "nope" });
-
-		fake.refuse.clear();
-		const second = await pushStoreStock(db, store, fake.channel, "write");
-		expect(second.problems).toEqual([]);
-		expect(await listingPush("1")).toMatchObject({ shows: 5, error: null });
-	});
-
-	test("preview works out the changes and writes nothing", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("1", a);
-		const fake = fakeChannel({ "1": 1 });
-
-		const result = await pushStoreStock(db, store, fake.channel, "preview");
-		expect(result.changes).toHaveLength(1);
-		expect(fake.writes).toEqual([]);
-		expect(await listingPush("1")).toMatchObject({ shows: 1 });
-		expect((await reload()).stockPushedAt).toBeNull();
-		expect(result.problems[0]).toMatch(/preview only/);
-	});
-
-	test("reads the channel again once the last read is old, putting drift right", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("1", a);
-		const fake = fakeChannel({ "1": 5 });
-		const start = new Date();
-		await pushStoreStock(db, store, fake.channel, "write", start);
-		expect(fake.writes).toEqual([]);
-
-		// Someone edits the quantity on the channel.
-		fake.shows["1"] = 9;
-		await pushStoreStock(
-			db,
-			await reload(),
-			fake.channel,
-			"write",
-			new Date(start.getTime() + 60_000),
-		);
-		expect(fake.writes).toEqual([]);
-		await pushStoreStock(
-			db,
-			await reload(),
-			fake.channel,
-			"write",
-			new Date(start.getTime() + READ_EVERY_MS),
-		);
-		expect(fake.writes.map((w) => w.quantity)).toEqual([5]);
-		expect(fake.reads()).toBe(2);
-	});
-
-	test("listings it can't set, or the channel didn't report, are problems", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("odd", a);
-		await list("missing", a);
-		const fake = fakeChannel({ odd: "unpushable" });
-
-		const result = await pushStoreStock(db, store, fake.channel, "write");
-		expect(fake.writes).toEqual([]);
-		expect([...result.problems].sort()).toEqual([
-			"A: Fake didn't report this listing's stock, so katasync isn't setting it",
-			"A: katasync can't set its Fake stock: it can't hold stock",
-		]);
-	});
-
-	test("a listing made since the last read is read and set in the same pass", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("1", a);
-		const fake = fakeChannel({ "1": 5 });
-		const start = new Date();
-		await pushStoreStock(db, store, fake.channel, "write", start);
-		expect(fake.reads()).toBe(1);
-
-		// A new product and its listing arrive well before the next read is due.
-		const b = await createProduct(db, "B", "simple");
-		await stock(b, 3);
-		await list("2", b);
-		fake.shows["2"] = 0;
-		const result = await pushStoreStock(
-			db,
-			await reload(),
-			fake.channel,
-			"write",
-			new Date(start.getTime() + 60_000),
-		);
-		expect(fake.reads()).toBe(2);
-		expect(result.problems).toEqual([]);
-		expect(fake.writes).toEqual([
-			{ externalId: "2", target: { slot: "slot-2" }, quantity: 3 },
-		]);
-	});
-
-	test("a push of what moved reads first only when one of its listings is new", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("1", a);
-		const fake = fakeChannel({ "1": 5 });
-		const start = new Date();
-		await pushStoreStock(db, store, fake.channel, "write", start);
-
-		// A received on a PO: its listing is known, so no read.
-		await stock(a, 1);
-		const later = new Date(start.getTime() + 60_000);
-		await pushStoreStock(db, await reload(), fake.channel, "write", later, [a]);
-		expect(fake.reads()).toBe(1);
-		expect(fake.writes.map((w) => w.quantity)).toEqual([6]);
-
-		// A new product's listing has never been read, so this push reads.
-		const b = await createProduct(db, "B", "simple");
-		await stock(b, 3);
-		await list("2", b);
-		fake.shows["2"] = 0;
-		const result = await pushStoreStock(
-			db,
-			await reload(),
-			fake.channel,
-			"write",
-			later,
-			[b],
-		);
-		expect(fake.reads()).toBe(2);
-		expect(result.problems).toEqual([]);
-		expect(fake.writes.at(-1)).toEqual({
-			externalId: "2",
-			target: { slot: "slot-2" },
-			quantity: 3,
-		});
-	});
-
-	test("a listing the channel didn't report waits for the next due read", async () => {
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("missing", a);
-		const fake = fakeChannel({});
-		const start = new Date();
-		const problem =
-			"A: Fake didn't report this listing's stock, so katasync isn't setting it";
-
-		const first = await pushStoreStock(db, store, fake.channel, "write", start);
-		expect(first.problems).toEqual([problem]);
-		expect(await listingPush("missing")).toEqual({ state: "unreported" });
-
-		const second = await pushStoreStock(
-			db,
-			await reload(),
-			fake.channel,
-			"write",
-			new Date(start.getTime() + 60_000),
-		);
-		expect(second.problems).toEqual([problem]);
-		expect(fake.reads()).toBe(1);
-
-		await pushStoreStock(
-			db,
-			await reload(),
-			fake.channel,
-			"write",
-			new Date(start.getTime() + READ_EVERY_MS),
-		);
-		expect(fake.reads()).toBe(2);
-	});
-
-	test("won't push while a store's orders don't take stock", async () => {
-		await db
-			.insert(schema.stores)
-			.values({ channel: "ebay", name: "Old eBay" });
-		const a = await createProduct(db, "A", "simple");
-		await stock(a, 5);
-		await list("1", a);
-		const fake = fakeChannel({ "1": 0 });
-
-		const result = await pushStoreStock(db, store, fake.channel, "write");
-		expect(fake.reads()).toBe(0);
-		expect(fake.writes).toEqual([]);
-		expect(result.problems[0]).toMatch(/Old eBay doesn't take stock/);
-		expect((await reload()).stockPushError).toMatch(/Old eBay/);
-	});
-
-	test("a channel that fails stops that store's pass and says why", async () => {
-		const fake = fakeChannel({});
-		fake.channel.read = async () => {
-			throw new Error("Access denied: write_inventory");
-		};
-		const result = await pushStoreStock(db, store, fake.channel, "write");
-		expect(result.problems).toEqual([
-			"Stock push to Shop stopped: Access denied: write_inventory",
-		]);
-		expect((await reload()).stockPushError).toBe(
-			"Access denied: write_inventory",
-		);
-	});
-});
-
-test("pushChannelStock skips stores with push off", async () => {
-	await db.update(schema.stores).set({ pushStock: false });
-	const fake = fakeChannel({});
-	expect(await pushChannelStock(db, "shopify", fake.channel, "write")).toEqual(
-		[],
+test.each([
+	0,
+	2,
+	5,
+	9,
+	null,
+])("blocks positive targets against remote %s, including equality and unknown stock", async (shows) => {
+	const product = await createProduct(db, "A", "simple");
+	await stock(product, 5);
+	await list("a", product);
+	const fake = fakeChannel({ a: shows });
+	const result = await pushStoreStock(db, store, fake.channel, "preview");
+	expect(result.blocked).toBe(1);
+	expect(result.problems).toContain(STOCK_WRITE_HOLD);
+	expect(result.changes).toEqual(
+		shows === 5
+			? []
+			: [{ sku: "A", externalId: "a", from: shows, to: 5, state: "blocked" }],
 	);
-	expect(fake.reads()).toBe(0);
+	expect(fake.write).not.toHaveBeenCalled();
+	expect(fake.shows.a).toBe(shows);
+	expect(await state("a")).toMatchObject({
+		shows,
+		error: STOCK_WRITE_HOLD,
+		delivery: { kind: "blocked", wanted: 5 },
+	});
+	expect((await reload()).stockPushedAt).toBeNull();
 });
 
-describe("stockPushStatus", () => {
+test("preserves close-at, uncounted, bundle and shortage math without delivering even zero", async () => {
+	const low = await createProduct(db, "LOW", "simple"),
+		high = await createProduct(db, "HIGH", "simple"),
+		free = await createProduct(db, "FREE", "simple"),
+		pair = await createProduct(db, "PAIR", "bundle"),
+		gone = await createProduct(db, "GONE", "simple");
+	await db
+		.update(schema.products)
+		.set({ closeAt: 2 })
+		.where(inArray(schema.products.id, [low, high, free]));
+	await setRecipe(db, pair, [{ productId: high, quantity: 2 }]);
+	await stock(low, 2);
+	await stock(high, 5);
+	await stock(gone, -2);
+	await markNotCounted(db, [free]);
+	for (const [externalId, productId] of [
+		["low", low],
+		["high", high],
+		["free", free],
+		["pair", pair],
+		["gone", gone],
+	] as const)
+		await list(externalId, productId);
+	const fake = fakeChannel({ low: 9, high: 9, free: 0, pair: null, gone: 9 });
+	const result = await pushStoreStock(db, store, fake.channel, "preview");
+	expect(
+		Object.fromEntries(
+			result.changes.map((change) => [change.externalId, change.to]),
+		),
+	).toEqual({ low: 0, high: 5, free: UNLIMITED, pair: 2, gone: 0 });
+	expect(fake.write).not.toHaveBeenCalled();
+	expect(await state("gone")).toMatchObject({ shows: 9 });
+});
+
+test("excludes unmapped, FBA, deleted and gone listings", async () => {
+	const product = await createProduct(db, "A", "simple");
+	await stock(product, 5);
+	await list("ours", product);
+	await list("unmapped", null);
+	await list("fba", product, { fulfillment: "fba" });
+	await list("deleted", product, { status: "DELETED" });
+	await list("gone", product, { goneAt: new Date() });
+	const fake = fakeChannel({
+		ours: 0,
+		unmapped: 0,
+		fba: 0,
+		deleted: 0,
+		gone: 0,
+	});
+	expect(
+		(await pushStoreStock(db, store, fake.channel, "preview")).changes.map(
+			(change) => change.externalId,
+		),
+	).toEqual(["ours"]);
+});
+
+test("keeps read caching and explicitly refreshes an off store without enabling it", async () => {
+	const product = await createProduct(db, "A", "simple");
+	await stock(product, 5);
+	await list("a", product);
+	const fake = fakeChannel({ a: 5 });
+	const start = new Date();
+	await pushStoreStock(db, store, fake.channel, "preview", start);
+	fake.shows.a = 2;
+	await pushStoreStock(
+		db,
+		await reload(),
+		fake.channel,
+		"preview",
+		new Date(start.getTime() + 1000),
+	);
+	expect(fake.reads()).toBe(1);
+	await pushStoreStock(
+		db,
+		await reload(),
+		fake.channel,
+		"preview",
+		new Date(start.getTime() + READ_EVERY_MS),
+	);
+	expect(fake.reads()).toBe(2);
+	expect(await state("a")).toMatchObject({ shows: 2 });
+	await setStorePush(db, store.id, false);
+	fake.shows.a = 1;
+	await pushStoreStock(
+		db,
+		store,
+		fake.channel,
+		"preview",
+		new Date(),
+		undefined,
+		true,
+	);
+	expect(fake.reads()).toBe(3);
+	expect(await state("a")).toMatchObject({ shows: 1 });
+	expect((await reload()).pushStock).toBe(false);
+});
+
+test("keeps unsupported and missing observations distinct", async () => {
+	const product = await createProduct(db, "A", "simple");
+	await list("odd", product);
+	await list("missing", product);
+	const fake = fakeChannel({ odd: "unpushable" });
+	const result = await pushStoreStock(db, store, fake.channel, "preview");
+	expect(result.blocked).toBe(0);
+	expect(result.problems).toHaveLength(3);
+	expect(await state("odd")).toEqual({
+		state: "unpushable",
+		reason: "unsupported address",
+	});
+	expect(await state("missing")).toEqual({ state: "unreported" });
+});
+
+test("refuses legacy write mode and enabling before touching the channel", async () => {
+	const fake = fakeChannel({});
+	const result = await pushStoreStock(
+		db,
+		store,
+		fake.channel,
+		"write" as never,
+	);
+	expect(result.problems[0]).toContain(STOCK_WRITE_HOLD);
+	expect(fake.reads()).toBe(0);
+	expect(fake.write).not.toHaveBeenCalled();
+	expect(pushMode()).toBe("preview");
+	await setStorePush(db, store.id, false);
+	expect(
+		await pushChannelStock(db, "shopify", fake.channel, "preview"),
+	).toEqual([]);
+	await expect(setStorePush(db, store.id, true as never)).rejects.toThrow(
+		STOCK_WRITE_HOLD,
+	);
+});
+
+test("retains prerequisite and read failures without claiming delivery", async () => {
+	const fake = fakeChannel({});
+	await db.insert(schema.stores).values({ channel: "ebay", name: "Old eBay" });
+	expect(
+		(await pushStoreStock(db, store, fake.channel, "preview")).problems[0],
+	).toContain("Old eBay doesn't take stock");
+	expect(fake.reads()).toBe(0);
+	await db.update(schema.stores).set({ stockFrom: new Date() });
+	fake.channel.read = async () => {
+		throw new Error("Read denied");
+	};
+	expect(
+		(await pushStoreStock(db, store, fake.channel, "preview")).problems[0],
+	).toContain("Read denied");
+	expect((await reload()).stockPushedAt).toBeNull();
+});
+
+test("legacy timestamps and quantity equality never imply synchronized stock", () => {
 	const row = {
 		on: true,
-		pushedAt: null,
+		pushedAt: new Date(),
 		error: null,
-		listed: 12,
-		mapped: 10,
-		ready: 8,
+		listed: 2,
+		mapped: 2,
+		ready: 2,
 		failing: 0,
 	};
-	const live = { writes: true, blocker: null };
-
-	test("reads each state one way", () => {
-		expect(stockPushStatus({ ...row, on: false }, live).kind).toBe("off");
-		expect(stockPushStatus(row, { ...live, blocker: "no stock" }).kind).toBe(
-			"blocked",
-		);
-		expect(stockPushStatus({ ...row, error: "denied" }, live).kind).toBe(
-			"stopped",
-		);
-		expect(stockPushStatus({ ...row, listed: 0 }, live).kind).toBe("unlisted");
-		expect(stockPushStatus(row, { ...live, writes: false }).kind).toBe(
-			"preview",
-		);
-		expect(stockPushStatus(row, live).kind).toBe("starting");
-		expect(
-			stockPushStatus({ ...row, pushedAt: new Date() }, live),
-		).toMatchObject({
-			kind: "pushing",
-			ready: 8,
-			mapped: 10,
-		});
+	expect(stockPushStatus(row, { writes: true, blocker: null })).toEqual({
+		kind: "blocked",
+		why: STOCK_WRITE_HOLD,
 	});
+	expect(
+		stockPushStatus(
+			{ on: false },
+			{ writes: false, blocker: STOCK_WRITE_HOLD },
+		),
+	).toEqual({ kind: "off" });
 });

@@ -73,7 +73,6 @@ export async function syncPass(
 			stockChannels[channel],
 			pushMode(),
 		);
-		// This channel's sales reach the others now, not at their own passes.
 		const elsewhere = await pushMoved(db, started, { except: channel });
 		// A refurb this pass sold out is archived, here and in Shopify.
 		const retired = await retireRefurbs(db);

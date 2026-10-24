@@ -144,8 +144,8 @@ export function registerActionTools(server: McpServer, db: Db) {
 		"set_stock_push",
 		{
 			description:
-				"Turns a store's stock push on or off, by store name (see the stores table). While on, katasync sets that store's quantities from ours. Turning it on is refused while something would make every quantity wrong, and starts from a fresh read of the channel.",
-			inputSchema: { store: z.string(), on: z.boolean() },
+				"Disables a store's legacy stock-push setting. Enabling and all automatic marketplace stock writes are blocked. Channel quantities are read only; calculated differences are not delivered.",
+			inputSchema: { store: z.string(), on: z.literal(false) },
 			annotations: { ...WRITE, idempotentHint: true },
 		},
 		async ({ store, on }) => {
