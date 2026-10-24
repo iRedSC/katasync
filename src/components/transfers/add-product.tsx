@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useState } from "react";
 import { ProductImage, ProductName } from "#/components/product";
+import { productSearch } from "#/lib/product-search";
 import { cn } from "#/lib/utils";
 
 export type IndexedProduct = {
@@ -10,35 +11,32 @@ export type IndexedProduct = {
 	variantName: string | null;
 	imageUrl: string | null;
 	kind: "simple" | "kit" | "bundle";
+	part: boolean;
 };
 
-// Finds a product to put on a transfer by SKU or name. Tool sets aren't
-// offered: they have no stock of their own and move as their parts.
+// Finds a product to put on a transfer (or a repair) by SKU or name. Tool
+// sets aren't offered: they have no stock of their own and move as their
+// parts.
 export function AddProduct({
 	products,
 	onAdd,
 	exclude,
+	parts = false,
 }: {
 	products: IndexedProduct[];
 	onAdd: (product: IndexedProduct) => void;
 	// Already on the transfer.
 	exclude: Set<number>;
+	// Parts are what's wanted: they rank first.
+	parts?: boolean;
 }) {
 	const [query, setQuery] = useState("");
 	const [active, setActive] = useState(0);
-	const q = query.trim().toLowerCase();
-	const matches =
-		q === ""
-			? []
-			: products
-					.filter(
-						(p) =>
-							p.kind !== "bundle" &&
-							!exclude.has(p.id) &&
-							(p.sku.toLowerCase().includes(q) ||
-								p.name.toLowerCase().includes(q)),
-					)
-					.slice(0, 8);
+	const q = query.trim();
+	const matches = productSearch(products, q, {
+		where: (p) => p.kind !== "bundle" && !exclude.has(p.id),
+		prefer: parts ? (p) => p.part : undefined,
+	});
 
 	function pick(p: IndexedProduct) {
 		onAdd(p);

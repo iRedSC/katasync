@@ -14,6 +14,7 @@ import {
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
+import { productSearch } from "#/lib/product-search";
 import {
 	createListingProduct,
 	listProductIndex,
@@ -45,15 +46,8 @@ function useCatalog() {
 	return products;
 }
 
-function search(products: Product[], query: string) {
-	const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-	return products
-		.filter((p) => {
-			const text = `${p.sku} ${p.name} ${p.variantName ?? ""}`.toLowerCase();
-			return words.every((w) => text.includes(w));
-		})
-		.slice(0, 30);
-}
+const search = (products: Product[], query: string) =>
+	productSearch(products, query, { limit: 30 });
 
 // What one resolution does: match to a product, or make a new one.
 export type Resolution =

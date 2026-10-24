@@ -6,55 +6,49 @@ import {
 	PopoverAnchor,
 	PopoverContent,
 } from "#/components/ui/popover";
+import { productSearch } from "#/lib/product-search";
 import { cn } from "#/lib/utils";
 
-// What the tool is: picked from the catalog as its name is typed, or
-// typed out for one we don't sell. Enter keeps the typing unless a match
-// was arrowed to.
+// What the tool is: picked from the catalog as its name is typed, showing
+// its photo, or typed out for one we don't sell. Typing over a picked one
+// makes it typed out. Enter keeps the typing unless a match was arrowed to.
 
 const MATCHES = 6;
 
 export const toolName = (p: IndexedProduct) =>
 	p.variantName ? `${p.name} (${p.variantName})` : p.name;
 
-// Every word somewhere in the SKU or name. Whole tools rank above parts
-// (named "[part number] ..."), then the typing as one phrase, then shorter
-// names, so "tapetech taper" finds the taper before the kits for it.
+// Whole tools rank above their parts here; typos and word order are
+// forgiven (src/lib/product-search.ts).
 function matching(products: IndexedProduct[], text: string) {
-	const phrase = text.trim().toLowerCase();
-	const words = phrase.split(/\s+/).filter(Boolean);
-	if (words.length === 0) return [];
-	const found = products.filter((p) => {
-		if (p.kind === "bundle") return false;
-		const hay = `${p.sku} ${p.name} ${p.variantName ?? ""}`.toLowerCase();
-		return words.every((w) => hay.includes(w));
+	const found = productSearch(products, text, {
+		limit: MATCHES + 1,
+		where: (p) => p.kind !== "bundle",
+		prefer: (p) => !p.part,
 	});
 	// Already exactly this product: nothing left to offer.
-	if (found.some((p) => toolName(p).toLowerCase() === phrase)) return [];
-	const rank = (p: IndexedProduct) =>
-		(p.name.startsWith("[") ? 10_000 : 0) +
-		(toolName(p).toLowerCase().includes(phrase) ? 0 : 1_000) +
-		toolName(p).length;
-	return found.sort((a, b) => rank(a) - rank(b)).slice(0, MATCHES);
+	const typed = text.trim().toLowerCase();
+	if (found.some((p) => toolName(p).toLowerCase() === typed)) return [];
+	return found.slice(0, MATCHES);
 }
 
 export function ToolInput({
 	value,
+	productId,
 	products,
 	onChange,
-	onPick,
 	onDone,
 	disabled,
 	placeholder = "Tool",
 	className,
 }: {
 	value: string;
+	// The catalog product it is, or null when typed out.
+	productId: number | null;
 	products: IndexedProduct[];
-	onChange: (text: string) => void;
-	// A catalog product picked for it.
-	onPick?: (product: IndexedProduct) => void;
+	onChange: (text: string, productId: number | null) => void;
 	// Typing finished: blurred, Enter, or a product picked.
-	onDone?: (text: string) => void;
+	onDone?: (text: string, productId: number | null) => void;
 	disabled?: boolean;
 	placeholder?: string;
 	className?: string;
@@ -62,13 +56,14 @@ export function ToolInput({
 	const [open, setOpen] = useState(false);
 	const [active, setActive] = useState(-1);
 	const matches = open ? matching(products, value) : [];
+	const picked =
+		productId === null ? null : products.find((p) => p.id === productId);
 
 	function pick(p: IndexedProduct) {
 		const name = toolName(p);
-		onChange(name);
-		onPick?.(p);
+		onChange(name, p.id);
 		setOpen(false);
-		onDone?.(name);
+		onDone?.(name, p.id);
 	}
 
 	return (
@@ -79,37 +74,51 @@ export function ToolInput({
 			}}
 		>
 			<PopoverAnchor asChild>
-				<input
-					value={value}
-					disabled={disabled}
-					placeholder={disabled ? "" : placeholder}
-					onFocus={() => setOpen(true)}
-					onChange={(e) => {
-						onChange(e.target.value);
-						setOpen(true);
-						setActive(-1);
-					}}
-					onBlur={() => {
-						setOpen(false);
-						onDone?.(value);
-					}}
-					onKeyDown={(e) => {
-						if (e.key === "ArrowDown") {
-							e.preventDefault();
-							setActive((a) => Math.min(a + 1, matches.length - 1));
-						} else if (e.key === "ArrowUp") {
-							e.preventDefault();
-							setActive((a) => Math.max(a - 1, -1));
-						} else if (e.key === "Enter") {
-							const p = matches[active];
-							if (p) {
+				<div className={cn("flex items-center gap-2", className)}>
+					{picked && (
+						<ProductImage
+							key={picked.id}
+							src={picked.imageUrl}
+							className="size-6 shrink-0 animate-in fade-in zoom-in-90"
+						/>
+					)}
+					<input
+						value={value}
+						disabled={disabled}
+						placeholder={disabled ? "" : placeholder}
+						onFocus={() => setOpen(true)}
+						onChange={(e) => {
+							const text = e.target.value;
+							// Typed over: no longer that product.
+							onChange(
+								text,
+								picked && text === toolName(picked) ? picked.id : null,
+							);
+							setOpen(true);
+							setActive(-1);
+						}}
+						onBlur={() => {
+							setOpen(false);
+							onDone?.(value, picked?.id ?? null);
+						}}
+						onKeyDown={(e) => {
+							if (e.key === "ArrowDown") {
 								e.preventDefault();
-								pick(p);
-							} else if (onDone) e.currentTarget.blur();
-						}
-					}}
-					className={cn("w-full min-w-0", className)}
-				/>
+								setActive((a) => Math.min(a + 1, matches.length - 1));
+							} else if (e.key === "ArrowUp") {
+								e.preventDefault();
+								setActive((a) => Math.max(a - 1, -1));
+							} else if (e.key === "Enter") {
+								const p = matches[active];
+								if (p) {
+									e.preventDefault();
+									pick(p);
+								} else if (onDone) e.currentTarget.blur();
+							}
+						}}
+						className="h-full w-full min-w-0 bg-transparent outline-none"
+					/>
+				</div>
 			</PopoverAnchor>
 			<PopoverContent
 				align="start"

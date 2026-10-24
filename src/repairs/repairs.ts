@@ -13,6 +13,7 @@ import {
 	syncDraft,
 } from "./draft-sync";
 import { LABOR_STEP } from "./labor";
+import { lastIn, placeIn } from "./queue";
 import {
 	boardStatuses,
 	isOnBoard,
@@ -45,6 +46,17 @@ async function technician(db: Db, id: number | null) {
 	return p.id;
 }
 
+// The catalog product a tool is, checked to be one.
+async function toolProduct(db: Db, id: number | null) {
+	if (id === null) return null;
+	const [p] = await db
+		.select({ id: products.id })
+		.from(products)
+		.where(eq(products.id, id));
+	if (!p) throw new RepairError("That product isn't in the catalog");
+	return p.id;
+}
+
 // A customer was edited in Shopify: their open repairs show the new name
 // and phone.
 export async function customerChanged(db: Db, c: CustomerRef) {
@@ -68,6 +80,8 @@ export async function createRepair(
 	input: {
 		customer: CustomerRef;
 		tool: string;
+		// The catalog product it is, when picked as one.
+		productId?: number | null;
 		serial?: string | null;
 		problem?: string;
 		technicianId?: number | null;
@@ -83,6 +97,7 @@ export async function createRepair(
 			customerPhone: input.customer.phone,
 			customerEmail: input.customer.email,
 			tool,
+			productId: await toolProduct(db, input.productId ?? null),
 			serial: clean(input.serial),
 			problem: input.problem?.trim() ?? "",
 			technicianId: await technician(db, input.technicianId ?? null),
@@ -142,6 +157,9 @@ async function withCharges<T>(
 
 export type RepairEdit = {
 	tool?: string;
+	// The catalog product the tool is, or null for one typed out. Goes with
+	// the tool: naming it anew without one makes it typed out.
+	productId?: number | null;
 	serial?: string | null;
 	problem?: string;
 	notes?: string;
@@ -165,10 +183,26 @@ export async function editRepair(db: Db, id: number, edit: RepairEdit) {
 		async (tx, r) => {
 			if (edit.customer && r.kind === "bench")
 				throw new RepairError(`R${id} is ours; it has no customer`);
+			if (edit.productId !== undefined && tool === undefined)
+				throw new RepairError("Name the tool along with its product");
+			// A bench job is always the product it came in as.
+			if (
+				r.kind === "bench" &&
+				edit.productId !== undefined &&
+				edit.productId !== r.productId
+			)
+				throw new RepairError(
+					`R${id} is ours; it stays the tool it came in as`,
+				);
+			const productId =
+				r.kind === "customer" && tool !== undefined
+					? await toolProduct(tx, edit.productId ?? null)
+					: undefined;
 			await tx
 				.update(repairs)
 				.set({
 					...(tool !== undefined && { tool }),
+					...(productId !== undefined && { productId }),
 					...(edit.serial !== undefined && { serial: clean(edit.serial) }),
 					...(edit.problem !== undefined && { problem: edit.problem.trim() }),
 					...(edit.notes !== undefined && { notes: edit.notes }),
@@ -189,9 +223,16 @@ export async function editRepair(db: Db, id: number, edit: RepairEdit) {
 	);
 }
 
-// Moves a repair to another column, or off the board. Cancelling takes its
-// charges off the draft order; restoring puts them back.
-export async function moveRepair(db: Db, id: number, to: RepairStatus) {
+// Moves a repair to another column, or off the board, going last in it.
+// Cancelling takes its charges off the draft order; restoring puts them
+// back. With `before`, it goes just above that repair instead, which also
+// reorders a column (src/repairs/queue.ts); null puts it last.
+export async function moveRepair(
+	db: Db,
+	id: number,
+	to: RepairStatus,
+	before?: number | null,
+) {
 	return withRepair(
 		db,
 		id,
@@ -206,7 +247,10 @@ export async function moveRepair(db: Db, id: number, to: RepairStatus) {
 				to,
 			);
 			if (why) throw new RepairError(why);
-			if (r.status === to) return { from: r.status };
+			if (r.status === to) {
+				if (before !== undefined) await placeIn(tx, id, to, before);
+				return { from: r.status };
+			}
 			// Off the draft first: a closed repair can't hold one.
 			if (to === "cancelled" && r.kind === "customer")
 				await syncDraft(tx, r, { charges: false });
@@ -214,11 +258,16 @@ export async function moveRepair(db: Db, id: number, to: RepairStatus) {
 			if (r.status === "cancelled" && r.kind === "bench") await rehold(tx, r);
 			const moved = await tx
 				.update(repairs)
-				.set({ status: to, statusChangedAt: sql`now()` })
+				.set({
+					status: to,
+					statusChangedAt: sql`now()`,
+					position: await lastIn(tx, to, id),
+				})
 				.where(and(eq(repairs.id, id), eq(repairs.status, r.status)))
 				.returning({ id: repairs.id });
 			if (moved.length === 0)
 				throw new RepairError(`R${id} just changed; try again`);
+			if (before != null) await placeIn(tx, id, to, before);
 			if (r.status === "cancelled" && r.kind === "customer")
 				await syncDraft(tx, { ...r, status: to });
 			return { from: r.status };

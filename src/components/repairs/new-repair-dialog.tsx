@@ -23,7 +23,7 @@ import {
 	type NewCustomer,
 } from "./customer-picker";
 import { TechPicker } from "./tech-picker";
-import { ToolInput, toolName } from "./tool-input";
+import { ToolInput } from "./tool-input";
 
 // Taking a tool in at the counter: whose it is, what it is, what's wrong,
 // and who'll fix it. Saving prints the ticket to tie on it.
@@ -120,6 +120,7 @@ export function NewRepairDialog({
 					data: {
 						customer,
 						tool,
+						productId: picked?.id ?? null,
 						serial: serial.trim() || null,
 						problem,
 						technicianId,
@@ -209,25 +210,28 @@ export function NewRepairDialog({
 					<div className="grid grid-cols-[2fr_1fr] gap-2">
 						<ToolInput
 							value={tool}
+							productId={picked?.id ?? null}
 							products={products}
-							onChange={(text) => {
+							onChange={(text, id) => {
 								setTool(text);
-								// Typed over: no longer that product.
-								if (picked && text !== toolName(picked)) setPicked(null);
+								setPicked(
+									id === null
+										? null
+										: (products.find((p) => p.id === id) ?? null),
+								);
 							}}
-							onPick={setPicked}
 							placeholder={
 								bench
 									? "Pick the tool from the catalog"
 									: "Tool, e.g. TapeTech 88TTE taper"
 							}
 							className={cn(
-								"h-9 rounded-lg border border-input bg-white px-3 outline-none focus:border-ring",
+								"h-9 rounded-lg border border-input bg-white px-3 focus-within:border-ring",
 								// Ours needs a catalog product to make its refurb from.
 								bench &&
 									tool.trim() !== "" &&
 									!picked &&
-									"border-warning-border focus:border-warning-border",
+									"border-warning-border focus-within:border-warning-border",
 							)}
 						/>
 						<input

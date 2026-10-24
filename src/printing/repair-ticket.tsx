@@ -73,10 +73,8 @@ export async function renderRepairTicket(ticket: RepairTicket, origin: string) {
 				<Text style={s.customer}>
 					{ticket.bench ? "IN-HOUSE REFURB" : ticket.customerName}
 				</Text>
-				{ticket.bench && (
-					<Text style={s.phone}>
-						{ticket.returnOrder ? `Return ${ticket.returnOrder}` : "Bought in"}
-					</Text>
+				{ticket.returnOrder && (
+					<Text style={s.phone}>Return {ticket.returnOrder}</Text>
 				)}
 				{ticket.customerPhone && (
 					<Text style={s.phone}>{formatPhone(ticket.customerPhone)}</Text>

@@ -4,6 +4,7 @@ import { getDb } from "#/db/client";
 import { locations, products, stores } from "#/db/schema";
 import { setPosLocation } from "#/inventory/locations";
 import { carried } from "#/products/archive";
+import { isPart } from "#/products/parts";
 
 export const listProductIndex = createServerFn({ method: "GET" }).handler(
 	async () =>
@@ -15,6 +16,7 @@ export const listProductIndex = createServerFn({ method: "GET" }).handler(
 				kind: products.kind,
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
+				part: isPart,
 			})
 			.from(products)
 			.where(carried)

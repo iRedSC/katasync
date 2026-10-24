@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
 import { cn } from "#/lib/utils"
+import { matchText, textMatcher } from "#/lib/search-ranking"
 import { SearchIcon } from "lucide-react"
 
 import {
@@ -13,6 +14,11 @@ import {
   DialogTitle,
 } from "#/components/ui/dialog.tsx"
 
+// Items found as every list is searched (src/lib/search-ranking.ts), not by
+// cmdk's own letter-skipping match.
+const findAsTyped = (value: string, search: string, keywords?: string[]) =>
+  textMatcher(search)(matchText([value, ...(keywords ?? [])].join(" "))) ? 1 : 0
+
 function Command({
   className,
   ...props
@@ -20,6 +26,7 @@ function Command({
   return (
     <CommandPrimitive
       data-slot="command"
+      filter={findAsTyped}
       className={cn(
         "flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
         className

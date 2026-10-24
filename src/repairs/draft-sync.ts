@@ -11,6 +11,7 @@ import type { Db } from "#/db/client";
 import { repairLabor, repairParts, repairs } from "#/db/repair-schema";
 import { products } from "#/db/schema";
 import { draftLines, ourLines } from "./draft-lines";
+import { lastIn } from "./queue";
 import { boardStatuses } from "./status";
 import { laborVariants, shopifyVariants } from "./variants";
 
@@ -144,6 +145,7 @@ export async function markPaid(
 			draftOrderId: null,
 			draftOrderName: null,
 			statusChangedAt: sql`now()`,
+			position: await lastIn(db, "picked_up", id),
 		})
 		.where(and(eq(repairs.id, id), inArray(repairs.status, [...boardStatuses])))
 		.returning({ id: repairs.id });

@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { type Db, getDb } from "#/db/client";
 import {
 	products,
@@ -9,6 +9,7 @@ import {
 	supplierOffers,
 	suppliers,
 } from "#/db/schema";
+import { productSearch } from "#/lib/product-search";
 import { carried } from "#/products/archive";
 import { cheapestOffers } from "#/purchasing/catalogs";
 import {
@@ -22,8 +23,9 @@ import { setSuppliers } from "#/purchasing/suppliers";
 import { listProducts } from "#/server/catalog/product-list";
 import { onHandOf } from "./on-hand";
 
-// Products to add to a PO, best match first: an exact SKU, barcode, or this
-// supplier's SKU (a scan) leads, then products this PO's supplier sells.
+// Products to add to a PO, best match first (src/lib/product-search.ts): a
+// SKU, barcode, or this supplier's SKU as typed or started (a scan) leads,
+// then products this PO's supplier sells.
 // Each says if it's already on the PO, whether this supplier sells it, and
 // who reorder buys it from (its cheapest), so the picker can warn before
 // adding the wrong thing.
@@ -39,11 +41,33 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 			.where(eq(purchaseOrders.id, data.purchaseOrderId));
 		if (!po)
 			throw new PurchaseOrderError(`PO ${data.purchaseOrderId} doesn't exist`);
+		const all = await db
+			.select({
+				id: products.id,
+				sku: products.sku,
+				name: products.name,
+				variantName: products.variantName,
+				barcode: products.barcode,
+				supplierSku: supplierOffers.supplierSku,
+				sold: sql<boolean>`${supplierOffers.productId} is not null`,
+			})
+			.from(products)
+			.leftJoin(
+				supplierOffers,
+				and(
+					eq(supplierOffers.productId, products.id),
+					eq(supplierOffers.supplierId, po.supplierId),
+				),
+			)
+			.where(carried);
+		const ids = productSearch(
+			all.map((p) => ({ ...p, codes: [p.barcode, p.supplierSku] })),
+			q,
+			{ limit: 12, prefer: (p) => p.sold },
+		).map((p) => p.id);
+		if (ids.length === 0) return [];
 		const cheapestOffer = cheapestOffers(db);
-		const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-		// Coalesced: descending order puts nulls first.
-		const exact = sql<boolean>`coalesce(lower(${products.sku}) = lower(${q}) or ${products.barcode} = ${q} or lower(${supplierOffers.supplierSku}) = lower(${q}), false)`;
-		const rows = await db
+		const found = await db
 			.select({
 				productId: products.id,
 				sku: products.sku,
@@ -79,25 +103,8 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 					eq(purchaseOrderLines.productId, products.id),
 				),
 			)
-			.where(
-				and(
-					carried,
-					or(
-						sql`${products.sku} ilike ${like}`,
-						sql`${products.name} ilike ${like}`,
-						sql`${products.variantName} ilike ${like}`,
-						sql`${products.barcode} ilike ${like}`,
-						sql`${supplierOffers.supplierSku} ilike ${like}`,
-					),
-				),
-			)
-			.orderBy(
-				desc(exact),
-				desc(sql`${supplierOffers.productId} is not null`),
-				products.name,
-				products.variantName,
-			)
-			.limit(12);
+			.where(inArray(products.id, ids));
+		const rows = ids.flatMap((id) => found.filter((r) => r.productId === id));
 		const onHand = await onHandOf(
 			db,
 			rows.map((r) => r.productId),

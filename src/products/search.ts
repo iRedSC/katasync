@@ -17,6 +17,7 @@
 // A filter still being typed matches by substring, so the list narrows live.
 // Locking it in (Tab on a suggestion) makes it a chip that matches exactly.
 
+import { type MatchText, matchText, textMatcher } from "#/lib/search-ranking";
 import { parseSortWord } from "./sort";
 
 // Every field, in one list so the URL and database checks (views.ts) can't
@@ -181,12 +182,14 @@ const lower = (s: string) => s.toLowerCase();
 
 // Each product's text lowercased once, not once per search or facet count.
 // Facets are built once per load, so the cache lives as long as they do.
-type Folded = Record<Exclude<Field, NumberField> | "text", string[]>;
+type Folded = Record<Exclude<Field, NumberField>, string[]> & {
+	text: MatchText;
+};
 const folds = new WeakMap<Facets, Folded>();
 function foldOf(facets: Facets): Folded {
 	const known = folds.get(facets);
 	if (known) return known;
-	const out = { text: facets.text.map(lower) } as Folded;
+	const out = { text: matchText(facets.text.join(" ")) } as Folded;
 	for (const field of FIELDS) {
 		if (!isNumber(field)) out[field] = facets[field].map(lower);
 	}
@@ -231,7 +234,7 @@ function checkOf(field: Field, fs: Filter[]): Check {
 // product fails, or is null when its free text fails, which no facet can
 // make up for.
 export function compile(filters: Filter[], words: string[]) {
-	const text = words.map(lower);
+	const text = textMatcher(words.join(" "));
 	const checks = new Map<Field, Check>();
 	for (const field of FIELDS) {
 		const fs = filters.filter((f) => f.field === field && f.value !== "");
@@ -239,7 +242,7 @@ export function compile(filters: Filter[], words: string[]) {
 	}
 	const missing = (facets: Facets): Field[] | null => {
 		const folded = foldOf(facets);
-		if (!text.every((w) => folded.text.some((t) => t.includes(w)))) return null;
+		if (!text(folded.text)) return null;
 		const out: Field[] = [];
 		for (const [field, check] of checks) {
 			if (!check(facets, folded)) out.push(field);

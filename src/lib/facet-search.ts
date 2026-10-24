@@ -18,6 +18,7 @@
 
 import { type } from "arktype";
 import type { FieldEntry } from "#/components/filter-fields";
+import { type MatchText, matchText, textMatcher } from "#/lib/search-ranking";
 import {
 	type Day,
 	dayOf,
@@ -90,7 +91,7 @@ export const CUSTOM = "custom";
 
 export type Index<K extends string> = {
 	// Per row, each field's values (lowercased) and its text.
-	facets: { values: Record<K, string[]>; day: Day | null; text: string }[];
+	facets: { values: Record<K, string[]>; day: Day | null; text: MatchText }[];
 	// Every value of each field across the rows, with how many have it.
 	counts: Map<K, Map<string, number>>;
 };
@@ -182,11 +183,12 @@ export function defineSearch<R, K extends string>(def: {
 					}
 				}
 			}
-			const text = def
-				.text(row)
-				.filter((t) => t !== null && t !== undefined && t !== "")
-				.join(" ")
-				.toLowerCase();
+			const text = matchText(
+				def
+					.text(row)
+					.filter((t) => t !== null && t !== undefined && t !== "")
+					.join(" "),
+			);
 			return { values, day, text };
 		});
 		return { facets, counts };
@@ -228,12 +230,10 @@ export function defineSearch<R, K extends string>(def: {
 					(wanted.length === 0 || wanted.some((c) => hit(fs.values[k], c))),
 			];
 		});
-		const lowered = words.map((w) => w.toLowerCase());
+		const typed = textMatcher(words.join(" "));
 		return rows.filter((_, i) => {
 			const fs = idx.facets[i];
-			return (
-				lowered.every((w) => fs.text.includes(w)) && tests.every((t) => t(fs))
-			);
+			return typed(fs.text) && tests.every((t) => t(fs));
 		});
 	}
 

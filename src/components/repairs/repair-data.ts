@@ -89,11 +89,27 @@ export function repairActions(d: Detail) {
 							? x.parts.filter((p) => p.productId !== part.productId)
 							: has
 								? x.parts.map((p) =>
-										p.productId === part.productId ? { ...p, quantity } : p,
+										p.productId === part.productId
+											? {
+													...p,
+													quantity,
+													charged: p.charged && {
+														each: p.charged.each,
+														total: p.charged.each * quantity,
+													},
+												}
+											: p,
 									)
 								: [
 										...x.parts,
-										{ ...part, quantity, onShopify: true, unitCost: null },
+										{
+											...part,
+											quantity,
+											onShopify: true,
+											unitCost: null,
+											onHand: null,
+											charged: null,
+										},
 									];
 					return { ...x, parts };
 				}),

@@ -86,6 +86,7 @@ export const startRepair = createServerFn({ method: "POST" })
 		type({
 			customer: customerRef.or({ new: customerFields }),
 			tool: "string",
+			"productId?": "number.integer > 0 | null",
 			serial: "string | null",
 			problem: "string",
 			technicianId: "number | null",
@@ -113,6 +114,7 @@ export const changeRepair = createServerFn({ method: "POST" })
 		type({
 			id: "number.integer > 0",
 			"tool?": "string",
+			"productId?": "number.integer > 0 | null",
 			"serial?": "string | null",
 			"problem?": "string",
 			"notes?": "string",
@@ -125,8 +127,16 @@ export const changeRepair = createServerFn({ method: "POST" })
 	);
 
 export const moveRepairTo = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0", to: status }))
-	.handler(async ({ data }) => moveRepair(getDb(), data.id, data.to));
+	.validator(
+		type({
+			id: "number.integer > 0",
+			to: status,
+			"before?": "number.integer > 0 | null",
+		}),
+	)
+	.handler(async ({ data }) =>
+		moveRepair(getDb(), data.id, data.to, data.before),
+	);
 
 export const addRepairLabor = createServerFn({ method: "POST" })
 	.validator(

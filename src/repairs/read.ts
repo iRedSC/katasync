@@ -2,7 +2,14 @@ import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { readDraft } from "#/channels/shopify/draft-orders";
 import type { Db } from "#/db/client";
 import { people, repairLabor, repairParts, repairs } from "#/db/repair-schema";
-import { orderLines, orders, products } from "#/db/schema";
+import {
+	locations,
+	orderLines,
+	orders,
+	products,
+	stockLevels,
+} from "#/db/schema";
+import { isOurs as isOurLocation } from "#/inventory/locations";
 import { isOurs } from "./draft-lines";
 import { markPaid } from "./draft-sync";
 import { boardStatuses } from "./status";
@@ -16,6 +23,9 @@ const card = {
 	status: repairs.status,
 	kind: repairs.kind,
 	productId: repairs.productId,
+	imageUrl: sql<
+		string | null
+	>`(select p.image_url from ${products} p where p.id = ${repairs.productId})`,
 	// A bench job's: the order its unit came back from, and its refurb once
 	// listed.
 	returnOrderId: sql<
@@ -39,13 +49,15 @@ const card = {
 	draftOrderName: repairs.draftOrderName,
 	orderName: repairs.orderName,
 	statusChangedAt: repairs.statusChangedAt,
+	position: repairs.position,
 	createdAt: repairs.createdAt,
 	laborMinutes: sql<number>`(select coalesce(sum(minutes), 0)::int from ${repairLabor} where repair_id = ${repairs.id})`,
 	parts: sql<number>`(select coalesce(sum(quantity), 0)::int from ${repairParts} where repair_id = ${repairs.id})`,
 };
 
-// Everything on the board, oldest in each column first, and what was
-// picked up or listed in the last week.
+// Everything on the board, each column in its queue's order
+// (src/repairs/queue.ts), and what was picked up or listed in the last
+// week.
 export async function boardRepairs(db: Db) {
 	return db
 		.select(card)
@@ -60,7 +72,7 @@ export async function boardRepairs(db: Db) {
 				),
 			),
 		)
-		.orderBy(asc(repairs.statusChangedAt));
+		.orderBy(asc(repairs.position), asc(repairs.id));
 }
 export type RepairCard = Awaited<ReturnType<typeof boardRepairs>>[number];
 
@@ -129,6 +141,8 @@ export async function getRepair(db: Db, id: number) {
 		.where(eq(repairs.id, id));
 	if (!row) return null;
 	let draft: DraftView = { kind: "none" };
+	// What Shopify charges for each of our part lines, by variant.
+	const charged = new Map<string, { each: number; total: number }>();
 	if (row.draftOrderId) {
 		try {
 			const d = await readDraft(row.draftOrderId);
@@ -141,6 +155,12 @@ export async function getRepair(db: Db, id: number) {
 				const lines = d.lineItems.nodes;
 				const total = (l: (typeof lines)[number]) =>
 					Number(l.discountedTotalSet.shopMoney.amount);
+				for (const l of lines)
+					if (isOurs(l) && l.variant)
+						charged.set(l.variant.id, {
+							each: Number(l.originalUnitPriceSet.shopMoney.amount),
+							total: total(l),
+						});
 				draft = {
 					kind: "open",
 					id: d.id,
@@ -187,6 +207,10 @@ export async function getRepair(db: Db, id: number) {
 			imageUrl: products.imageUrl,
 			// What a bench job's refurb is charged for it, at its average now.
 			unitCost: products.unitCost,
+			// Number | null: a part just added shows none until this is read.
+			onHand: sql<
+				number | null
+			>`(select coalesce(sum(s.on_hand), 0)::int from ${stockLevels} s join ${locations} on ${locations.id} = s.location_id where s.product_id = ${repairParts.productId} and ${isOurLocation})`,
 		})
 		.from(repairParts)
 		.innerJoin(products, eq(products.id, repairParts.productId))
@@ -201,7 +225,15 @@ export async function getRepair(db: Db, id: number) {
 	return {
 		repair: row,
 		labor,
-		parts: parts.map((p) => ({ ...p, onShopify: onShopify.has(p.productId) })),
+		parts: parts.map((p) => {
+			const variant = onShopify.get(p.productId);
+			return {
+				...p,
+				onShopify: variant !== undefined,
+				// Null until the draft has it, or when Shopify can't be read.
+				charged: variant === undefined ? null : (charged.get(variant) ?? null),
+			};
+		}),
 		draft,
 		laborVariants: variants,
 	};
