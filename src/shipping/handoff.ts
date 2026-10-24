@@ -16,7 +16,10 @@ import {
 } from "#/db/schema";
 import { readQuantityMode } from "#/inventory/commitments";
 import { consumeCommitments } from "#/inventory/commitments-consume";
-import { restoreCommitments } from "#/inventory/commitments-restore";
+import {
+	assertFulfillmentRestorable,
+	restoreCommitments,
+} from "#/inventory/commitments-restore";
 import { deliver } from "./deliver";
 import { destinationOf } from "./destination";
 import { lockOnOwnConnection, type OrderLocker, ordersOf } from "./dispatch";
@@ -350,6 +353,12 @@ export async function voidDispatch(
 			const { boxes, members } = await load(db, dispatchId);
 			const liveBoxes = boxes.filter((b) => !b.voidedAt);
 			const pending = members.filter((m) => !m.handoff.reversedAt);
+			for (const member of pending) {
+				await assertFulfillmentRestorable(db, {
+					orderId: member.order.id,
+					fulfillmentKey: `dispatch:${dispatchId}:order:${member.order.id}`,
+				});
+			}
 			if (liveBoxes.length === 0 && pending.length === 0) {
 				throw new Error("This label is already voided");
 			}

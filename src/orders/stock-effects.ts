@@ -1,8 +1,8 @@
-import { and, eq, inArray, isNotNull, isNull, not, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, not, or, sql } from "drizzle-orm";
 import { type StockLocations, saleLocation } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { stockCommitmentParts, stockCommitments } from "#/db/quantity-schema";
-import { orderLines } from "#/db/schema";
+import { orderLines, orders } from "#/db/schema";
 import {
 	CommitmentError,
 	lineHasCommitment,
@@ -36,6 +36,13 @@ export const stockEffectMissing = and(
 	isNull(orderLines.saleBatchId),
 	not(lineHasCommitment),
 );
+
+export const outstandingShipment = sql<boolean>`exists (
+	select 1 from unreserved_shipments s
+	where s.order_line_id = ${orderLines.id} and s.kind = 'shipped'
+	and not exists (select 1 from unreserved_shipments v where v.order_line_id = s.order_line_id and v.fulfillment_key = s.fulfillment_key and v.kind = 'voided')
+	and not exists (select 1 from stock_commitment_entries e join stock_commitments c on c.id = e.commitment_id where c.order_line_id = s.order_line_id and e.fulfillment_key = s.fulfillment_key and e.kind = 'consume')
+)`;
 
 export async function lineStockEffect(
 	db: Db,
@@ -88,20 +95,50 @@ async function reserve(
 ): Promise<string | null> {
 	try {
 		return await db.transaction(async (tx) => {
-			const settled = await settleLine(tx, {
-				orderLineId: line.id,
-				orderId: line.orderId,
-				productId: line.productId,
-				target,
-				freshParts: async (tx) => {
-					const { products, recipes } = await lockRecipes(tx, [line.productId]);
-					const product = products.find((p) => p.id === line.productId);
-					return product ? partsFor(product, recipes) : null;
-				},
-			});
+			await readQuantityMode(tx);
+			await tx
+				.select({ id: orders.id })
+				.from(orders)
+				.where(eq(orders.id, line.orderId))
+				.for("no key update");
+			const settle = (quantity: number) =>
+				settleLine(tx, {
+					orderLineId: line.id,
+					orderId: line.orderId,
+					productId: line.productId,
+					target: quantity,
+					freshParts: async (tx) => {
+						const { products, recipes } = await lockRecipes(tx, [
+							line.productId,
+						]);
+						const product = products.find((p) => p.id === line.productId);
+						return product ? partsFor(product, recipes) : null;
+					},
+				});
+			const proofs = (await evidenceUnder(tx, [line.id])).filter(
+				(proof) => !proof.voided,
+			);
+			const pending = await Promise.all(
+				proofs.map(async (proof) =>
+					(await entriesUnder(tx, [line.id], proof.fulfillmentKey)).length === 0
+						? proof.quantity
+						: 0,
+				),
+			);
+			const history = await lineHistory(tx, line.id);
+			await settle(
+				Math.max(
+					target,
+					history.consumed +
+						pending.reduce((total, quantity) => total + quantity, 0),
+				),
+			);
+			const problem = await applyShipped(tx, line, order);
+			if (problem) throw new CommitmentError(problem);
+			const settled = await settle(target);
 			if (settled.kind === "overshipped")
 				return `${order.name}: ${settled.consumed} already shipped, more than the ${settled.target} ordered now`;
-			return target > 0 ? applyShipped(tx, line, order) : null;
+			return null;
 		});
 	} catch (error) {
 		if (!(error instanceof CommitmentError || error instanceof LedgerError))

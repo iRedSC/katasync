@@ -37,6 +37,7 @@ import { adminUrls } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
 import { sharingOrders } from "#/orders/invoice-index";
 import { refurbishOptions, refurbishReturn } from "#/orders/refurbish";
+import { committedStock, returnQuantity } from "#/orders/return-stock";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import {
 	findReturnable,
@@ -160,6 +161,7 @@ export const getOrder = createServerFn({ method: "GET" })
 		const db = getDb();
 		const [order] = await db
 			.select({
+				committedStock,
 				id: orders.id,
 				name: orders.name,
 				pin: orders.pin,
@@ -196,6 +198,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				sku: orderLines.sku,
 				quantity: orderLines.quantity,
 				unitPrice: orderLines.unitPrice,
+				returnQuantity,
 				unitCost: orderLines.unitCost,
 				tookStock: sql<boolean>`coalesce(${stockEffectApplied}, false)`,
 				fromStore,
