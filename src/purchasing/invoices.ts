@@ -6,17 +6,12 @@ import {
 } from "#/purchasing/discount";
 import { loadOrder } from "#/purchasing/load";
 import { poName } from "#/purchasing/orders";
-import {
-	describe,
-	findLine,
-	type InvoiceLine,
-	key,
-} from "./invoice-lines";
+import { describe, findLine, type InvoiceLine, key } from "./invoice-lines";
 
 import { recordedInvoice } from "./invoice-records";
 
-export type { InvoiceLine } from "./invoice-lines";
 export { invoicesOf } from "./invoice-ledger";
+export type { InvoiceLine } from "./invoice-lines";
 export {
 	recordInvoice,
 	removeInvoice,
