@@ -8,6 +8,7 @@ import {
 	ingestMarketMail,
 	marketMailPage,
 	marketOf,
+	marketOfEmail,
 	moveTo,
 	readMarketMail,
 	setDone,
@@ -26,6 +27,38 @@ describe("by sender", () => {
 		// Lookalikes aren't the marketplace.
 		expect(marketOf("deals@notamazon.com")).toBeNull();
 		expect(marketOf("someone@gmail.com")).toBeNull();
+	});
+});
+
+describe("Shopify's order notices", () => {
+	beforeEach(() => {
+		vi.stubEnv("MARKETPLACE_INBOX", "marketplaces@example.com");
+	});
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+	const subject =
+		"[East Coast Drywall Tools] Order #5754 placed by M***** A*****";
+
+	test("sent as the mailbox, they're Shopify's", () => {
+		expect(
+			marketOfEmail({ fromAddress: "Marketplaces@example.com", subject }),
+		).toBe("shopify");
+	});
+
+	test("the same subject from anyone else isn't", () => {
+		expect(
+			marketOfEmail({ fromAddress: "someone@gmail.com", subject }),
+		).toBeNull();
+	});
+
+	test("other mail we send isn't", () => {
+		expect(
+			marketOfEmail({
+				fromAddress: "marketplaces@example.com",
+				subject: "Re: Order #5754",
+			}),
+		).toBeNull();
 	});
 });
 

@@ -247,10 +247,12 @@ async function pages(
 }
 
 // Emails that reached a mailbox since `since`, newest first, leaving out
-// drafts and anything we sent. Asks Graph only.
+// drafts and anything we sent, except what `keepOurs` asks for (a notice a
+// service sends as us). Asks Graph only.
 export async function messagesSince(
 	since: Date,
 	box: Mailbox = "purchasing",
+	keepOurs?: (m: InboxMessage) => boolean,
 ): Promise<InboxMessage[]> {
 	const all = await pages(
 		`${mailbox(box)}/messages?$filter=receivedDateTime ge ${since.toISOString()}&$orderby=receivedDateTime desc&$select=${SELECT}&$top=50`,
@@ -258,7 +260,10 @@ export async function messagesSince(
 		undefined,
 		box,
 	);
-	return all.filter((m) => !m.ours).map(({ ours: _, ...m }) => m);
+	return all
+		.map(({ ours, ...m }) => ({ ours, m }))
+		.filter(({ ours, m }) => !ours || keepOurs?.(m))
+		.map(({ m }) => m);
 }
 
 // The whole mailbox, every folder, for Claude: by words (Outlook's search:
