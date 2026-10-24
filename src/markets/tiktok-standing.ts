@@ -12,10 +12,9 @@ import {
 
 // TikTok Shop: its Shop Performance Score (SPS) as the verdict, and the
 // products TikTok failed in review, froze, or took down, with its reasons.
-// SPS needs a scope not among TIKTOK_SCOPES yet (until it's approved in
-// Partner Center and the shop authorizes again, the verdict says so); the
-// products need only seller.product.basic, which the app has. Violation
-// points have no public API; Seller Center shows them.
+// SPS needs data.shop_analytics.public.read (until the shop authorizes with
+// it, the verdict says so); the products need only seller.product.basic.
+// Violation points have no public API; Seller Center shows them.
 
 const OVERVIEW = "/analytics/202606/shop_performances/overview";
 

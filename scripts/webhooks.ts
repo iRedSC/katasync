@@ -5,8 +5,7 @@
 //                       subscribe both channels (safe to repeat)
 //   pnpm webhooks       show what each channel sends where
 //
-// The TikTok app is shared with profit-margarine, and a shop has one
-// order-status URL per app. If it already points somewhere else, this stops
+// A shop has one TikTok order-status URL per app. If it already points somewhere else, this stops
 // and says where; add --replace to take it over.
 import { parseArgs } from "node:util";
 import { type } from "arktype";
