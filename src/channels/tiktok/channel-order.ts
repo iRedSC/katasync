@@ -15,6 +15,8 @@ export const tiktokOrder = type({
 	"cancel_time?": "number",
 	// FULFILLMENT_BY_SELLER, or FULFILLMENT_BY_TIKTOK from TikTok's warehouse.
 	"fulfillment_type?": "string",
+	// The buyer's TikTok account, unmasked even when the address is.
+	"user_id?": "string",
 	"payment?": {
 		"total_amount?": "string",
 		"shipping_fee?": "string",
@@ -158,6 +160,7 @@ export function tiktokToChannelOrder(
 		financialStatus: order.status === "UNPAID" ? "PENDING" : "PAID",
 		// A masked name ("D*****") still tells orders apart on the dashboard.
 		customerName: address?.name || null,
+		buyerId: order.user_id || null,
 		shipAddress1: shown(address?.address_line1),
 		shipAddress2: shown(address?.address_line2),
 		shipCity: district("city"),

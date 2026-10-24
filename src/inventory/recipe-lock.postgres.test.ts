@@ -124,6 +124,7 @@ describe.skipIf(!url)("inventory product lock ordering", () => {
 			soldInStore: false,
 			financialStatus: "PAID",
 			customerName: null,
+			buyerId: null,
 			shipAddress1: null,
 			shipAddress2: null,
 			shipCity: null,

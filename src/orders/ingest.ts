@@ -42,6 +42,9 @@ export type ChannelOrder = {
 	soldInStore: boolean;
 	financialStatus: string | null;
 	customerName: string | null;
+	// The buyer's account on the marketplace, when it tells us (TikTok's
+	// user_id). It matches their orders even when the address is hidden.
+	buyerId: string | null;
 	shipAddress1: string | null;
 	shipAddress2: string | null;
 	shipCity: string | null;

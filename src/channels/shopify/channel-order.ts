@@ -97,6 +97,7 @@ export function shopifyToChannelOrder(
 		soldInStore: isPosOrder(o),
 		financialStatus: o.displayFinancialStatus,
 		customerName: o.shippingAddress?.name ?? null,
+		buyerId: null,
 		shipCity: o.shippingAddress?.city ?? null,
 		shipRegion: o.shippingAddress?.provinceCode ?? null,
 		shipCountry: o.shippingAddress?.countryCodeV2 ?? null,
