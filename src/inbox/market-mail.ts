@@ -48,6 +48,29 @@ export function marketOf(fromAddress: string): Market | null {
 	return SENDERS.find(([pattern]) => pattern.test(address))?.[1] ?? null;
 }
 
+// Shopify's new-order email to staff, which it sends as the mailbox itself
+// ("[East Coast Drywall Tools] Order #5754 placed by ..."), so it would read
+// as one of ours. Every order, TikTok Shop's too, since Shopify relays them.
+export function isShopifyOrderNotice(m: {
+	fromAddress: string;
+	subject: string;
+}) {
+	const inbox = process.env.MARKETPLACE_INBOX?.trim().toLowerCase();
+	return (
+		Boolean(inbox) &&
+		m.fromAddress.trim().toLowerCase() === inbox &&
+		/^\[[^\]]+\] Order #\d+ placed by /i.test(m.subject)
+	);
+}
+
+// The marketplace an email is from: its sender's, or Shopify for its order
+// notices.
+export function marketOfEmail(m: { fromAddress: string; subject: string }) {
+	return (
+		marketOf(m.fromAddress) ?? (isShopifyOrderNotice(m) ? "shopify" : null)
+	);
+}
+
 // Reads new emails in: skips ones already kept, keeps each with its files,
 // sorted. One that fails to read is reported and left for the next run.
 export async function ingestMarketMail(
@@ -73,7 +96,7 @@ export async function ingestMarketMail(
 		known.add(m.messageId);
 		try {
 			const content = await read(m.graphId);
-			const market = marketOf(m.fromAddress);
+			const market = marketOfEmail(m);
 			const inserted = await db.transaction(async (tx) => {
 				// Sorted under the lock, so a rule saved meanwhile isn't missed.
 				await lockRules(tx);
@@ -567,7 +590,11 @@ export async function readMarketMail(options: {
 	}
 	let messages: InboxMessage[];
 	try {
-		messages = await graph.messagesSince(since, "marketplaces");
+		messages = await graph.messagesSince(
+			since,
+			"marketplaces",
+			isShopifyOrderNotice,
+		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (options.sweep)
