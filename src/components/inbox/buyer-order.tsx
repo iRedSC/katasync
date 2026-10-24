@@ -79,33 +79,36 @@ function OrderStrip({ order }: { order: Order }) {
 	const [first] = order.lines;
 	return (
 		<div className="flex flex-wrap items-center gap-x-4 gap-y-2 animate-in fade-in-0">
-			<OrderStatusBadge status={order.status} />
-			<Link
-				to="/orders/$id"
-				params={{ id: String(order.id) }}
-				className="flex min-w-0 items-center gap-2 rounded-lg hover:bg-surface"
-			>
-				<span className="flex shrink-0 gap-1">
-					{order.lines.slice(0, 3).map((l) => (
-						<ProductImage key={l.id} src={l.imageUrl} className="size-8" />
-					))}
-					{order.lines.length > 3 && (
-						<span className="flex size-8 items-center justify-center rounded-lg border bg-subtle text-xs font-semibold text-muted-foreground tabular-nums">
-							+{formatCount(order.lines.length - 3)}
-						</span>
-					)}
-				</span>
-				<span
-					className={cn(
-						"truncate text-sm",
-						order.lines.length > 1 && "text-muted-foreground",
-					)}
+			{/* The status stays beside the products; the title gives way. */}
+			<span className="flex min-w-0 max-w-full items-center gap-2">
+				<OrderStatusBadge status={order.status} />
+				<Link
+					to="/orders/$id"
+					params={{ id: String(order.id) }}
+					className="flex min-w-0 items-center gap-2 rounded-lg hover:bg-surface"
 				>
-					{order.lines.length === 1 && first
-						? `${first.title}${first.quantity > 1 ? ` × ${formatCount(first.quantity)}` : ""}`
-						: `${formatCount(order.lines.length)} products`}
-				</span>
-			</Link>
+					<span className="flex shrink-0 gap-1">
+						{order.lines.slice(0, 3).map((l) => (
+							<ProductImage key={l.id} src={l.imageUrl} className="size-8" />
+						))}
+						{order.lines.length > 3 && (
+							<span className="flex size-8 items-center justify-center rounded-lg border bg-subtle text-xs font-semibold text-muted-foreground tabular-nums">
+								+{formatCount(order.lines.length - 3)}
+							</span>
+						)}
+					</span>
+					<span
+						className={cn(
+							"truncate text-sm",
+							order.lines.length > 1 && "text-muted-foreground",
+						)}
+					>
+						{order.lines.length === 1 && first
+							? `${first.title}${first.quantity > 1 ? ` × ${formatCount(first.quantity)}` : ""}`
+							: `${formatCount(order.lines.length)} products`}
+					</span>
+				</Link>
+			</span>
 			{order.packages.map((p) => (
 				<PackageChip key={p.id} pkg={p} />
 			))}
