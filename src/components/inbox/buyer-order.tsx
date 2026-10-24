@@ -10,13 +10,16 @@ import { useEffect, useState } from "react";
 import type { BuyerOrder as Order } from "#/buyers/order";
 import { ProductImage } from "#/components/product";
 import { Tip } from "#/components/ui/tooltip";
+import type { MailOrders as Found } from "#/inbox/mail-orders";
 import { formatCount, formatDay } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { getBuyerOrder } from "#/server/buyers";
+import { getMailOrders } from "#/server/inbox";
 
-// Under the buyer's name: what they ordered, as on the orders list, and
-// each package as the carrier tells it now. Asked as the thread opens;
-// until then, the order number it already knows.
+// Under the buyer's name, and above a marketplace email: what they ordered,
+// as on the orders list, and each package as the carrier tells it now.
+// Asked as the thread or email opens; until then, the order number it
+// already knows.
 
 type Package = Order["packages"][number];
 
@@ -39,6 +42,39 @@ export function BuyerOrder({
 		};
 	}, [threadId]);
 	if (!order) return <>{fallback}</>;
+	return <OrderStrip order={order} />;
+}
+
+// Above a marketplace email: each order it names that katasync has, by its
+// number, since there may be several.
+export function MailOrders({ emailId }: { emailId: number }) {
+	const [found, setFound] = useState<Found | null>(null);
+	useEffect(() => {
+		let current = true;
+		getMailOrders({ data: { id: emailId } })
+			.then((f) => current && setFound(f))
+			.catch(() => current && setFound(null));
+		return () => {
+			current = false;
+		};
+	}, [emailId]);
+	if (!found || found.orders.length === 0) return null;
+	return (
+		<div className="flex flex-col gap-2 border-b px-5 py-3">
+			{found.orders.map((o) => (
+				<OrderStrip key={o.id} order={o} named />
+			))}
+			{found.more > 0 && (
+				<p className="text-sm text-muted-foreground">
+					+{formatCount(found.more)} more{" "}
+					{found.more === 1 ? "order" : "orders"}
+				</p>
+			)}
+		</div>
+	);
+}
+
+function OrderStrip({ order, named }: { order: Order; named?: boolean }) {
 	const [first] = order.lines;
 	return (
 		<div className="flex flex-wrap items-center gap-x-4 gap-y-2 animate-in fade-in-0">
@@ -47,6 +83,11 @@ export function BuyerOrder({
 				params={{ id: String(order.id) }}
 				className="flex min-w-0 items-center gap-2 rounded-lg hover:bg-surface"
 			>
+				{named && (
+					<span className="shrink-0 text-sm font-medium tabular-nums">
+						{order.name}
+					</span>
+				)}
 				<span className="flex shrink-0 gap-1">
 					{order.lines.slice(0, 3).map((l) => (
 						<ProductImage key={l.id} src={l.imageUrl} className="size-8" />
