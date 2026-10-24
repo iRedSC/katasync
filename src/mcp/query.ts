@@ -47,6 +47,8 @@ export const SECRET_TABLES = [
 	"qz_certificate",
 	"damage_photo_uploads",
 	"po_file_uploads",
+	// Each row's share_token is a public link to the file.
+	"buyer_reply_files",
 ];
 
 // Functions that change the session, reach outside the database, or signal
