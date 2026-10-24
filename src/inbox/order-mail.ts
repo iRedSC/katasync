@@ -1,6 +1,12 @@
-import { and, desc, eq, ilike, inArray, or } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { buyerMessages, buyerThreads, marketEmails } from "#/db/schema";
+import {
+	buyerMessages,
+	buyerThreads,
+	marketEmailAttachments,
+	marketEmails,
+} from "#/db/schema";
+import { groupBy } from "#/lib/group-by";
 import type { Market } from "#/markets/market";
 import { type OrderRef, orderRefs } from "./mail-orders";
 
@@ -19,9 +25,6 @@ type Order = {
 
 // Most emails shown; the newest win.
 const MOST_EMAILS = 20;
-// Most of an email's text sent to the page. Notices are short; a long one
-// is cut, and the inbox has the rest.
-const MOST_BODY = 6000;
 
 // Every number an email might name the order by, as orderRefs reads them.
 export function refsOf(o: Order): OrderRef[] {
@@ -76,12 +79,33 @@ export async function orderMail(db: Db, order: Order) {
 				refs.some((r) => same(r, found)),
 			),
 		)
-		.slice(0, MOST_EMAILS)
-		.map((e) => ({
-			...e,
-			body:
-				e.body.length > MOST_BODY ? `${e.body.slice(0, MOST_BODY)}…` : e.body,
-		}));
+		.slice(0, MOST_EMAILS);
+	// Their files, as the inbox lists them: inline pictures are part of the
+	// message, not files of their own.
+	const files =
+		emails.length === 0
+			? []
+			: await db
+					.select({
+						id: marketEmailAttachments.id,
+						emailId: marketEmailAttachments.emailId,
+						filename: marketEmailAttachments.filename,
+						contentType: marketEmailAttachments.contentType,
+						size: marketEmailAttachments.size,
+						kept: sql<boolean>`${marketEmailAttachments.data} is not null`,
+					})
+					.from(marketEmailAttachments)
+					.where(
+						and(
+							inArray(
+								marketEmailAttachments.emailId,
+								emails.map((e) => e.id),
+							),
+							isNull(marketEmailAttachments.contentId),
+						),
+					)
+					.orderBy(marketEmailAttachments.id);
+	const byEmail = groupBy(files, (f) => f.emailId);
 
 	// A buyer's thread names the order by the marketplace's ID for it.
 	const threads = await db
@@ -127,7 +151,10 @@ export async function orderMail(db: Db, order: Order) {
 					.orderBy(buyerMessages.at)
 			: [];
 	return {
-		emails,
+		emails: emails.map((e) => ({
+			...e,
+			attachments: (byEmail.get(e.id) ?? []).map(({ emailId: _, ...f }) => f),
+		})),
 		threads: threads.map((t) => ({
 			...t,
 			messages: messages

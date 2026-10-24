@@ -421,7 +421,6 @@ function OrderPage() {
 							onTakeBack={takeBack}
 						/>
 					)}
-					<MailCard mail={detail.mail} />
 					<TimelineCard detail={detail} />
 				</div>
 
@@ -518,6 +517,7 @@ function OrderPage() {
 							</div>
 						)}
 					</Card>
+					<MailCard mail={detail.mail} />
 					<DetailsCard detail={detail} />
 				</div>
 			</div>
