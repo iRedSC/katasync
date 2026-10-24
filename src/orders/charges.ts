@@ -1,4 +1,4 @@
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	type channel,
@@ -8,6 +8,7 @@ import {
 	orders,
 	stores,
 } from "#/db/schema";
+import { alertRebill, crossesLarge } from "#/inbox/rebill-alerts";
 
 export class ChargeError extends Error {
 	name = "ChargeError";
@@ -115,6 +116,11 @@ export async function saveCostReport(
 			.returning({ orderId: orderCostReports.orderId });
 		if (saved.length === 0) return false;
 
+		const rebilledBefore = await postageSum(
+			tx,
+			report.orderId,
+			report.billedBy,
+		);
 		await tx
 			.delete(orderCharges)
 			.where(
@@ -136,8 +142,37 @@ export async function saveCostReport(
 				})),
 			);
 		}
+		const rebilled = await postageSum(tx, report.orderId, report.billedBy);
+		if (crossesLarge(rebilledBefore.adjusted, rebilled.adjusted))
+			await alertRebill(tx, {
+				key: `order:${report.orderId}:${report.billedBy}`,
+				orderId: report.orderId,
+				orderName: order.name,
+				market: report.billedBy,
+				marketplaceId: order.marketplaceOrderId?.split(":")[1] ?? null,
+				amount: rebilled.adjusted,
+				label: rebilled.label,
+			});
 		return true;
 	});
+}
+
+// What a marketplace billed on an order's labels, and re-billed on them.
+async function postageSum(db: Db, orderId: number, billedBy: Channel) {
+	const [row] = await db
+		.select({
+			label: sql<number>`coalesce(sum(${orderCharges.amount}) filter (where ${orderCharges.kind} = 'label'), 0)::float8`,
+			adjusted: sql<number>`coalesce(sum(${orderCharges.amount}) filter (where ${orderCharges.kind} = 'postage_adjustment'), 0)::float8`,
+		})
+		.from(orderCharges)
+		.where(
+			and(
+				eq(orderCharges.orderId, orderId),
+				eq(orderCharges.billedBy, billedBy),
+				inArray(orderCharges.kind, ["label", "postage_adjustment"]),
+			),
+		);
+	return row ?? { label: 0, adjusted: 0 };
 }
 
 // Whether the report on file has label charges from an authoritative label
