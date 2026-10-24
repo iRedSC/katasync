@@ -16,7 +16,7 @@ export function OrderStatusBadge({ status }: { status: OrderStatus }) {
 				rel="noreferrer"
 				// Inside a row that opens the order: this opens the marketplace's.
 				onClick={(e) => e.stopPropagation()}
-				className="rounded-md hover:opacity-80"
+				className="shrink-0 rounded-md hover:opacity-80"
 			>
 				<Badge tone={status.tone}>
 					{status.label}
