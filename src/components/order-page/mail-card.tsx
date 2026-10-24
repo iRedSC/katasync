@@ -2,8 +2,7 @@ import { Mail, MessageSquare } from "lucide-react";
 import { useState } from "react";
 import { EmailReader, snippet } from "#/components/emails/reader";
 import { Badge, Card } from "#/components/page";
-import { PanelHeader, SidePanel } from "#/components/panel";
-import { DialogTitle } from "#/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { channelName, formatCount, formatOrderDate } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { OrderDetail } from "#/server/orders";
@@ -15,7 +14,7 @@ type Entry =
 	| { kind: "thread"; key: string; at: Date; thread: Thread };
 
 // Everything written about the order: marketplace emails that name it and
-// buyers' conversations about it, newest first. A click opens one beside
+// buyers' conversations about it, newest first. A click opens one over
 // the page, read as the inbox reads it. With none, there's no card.
 export function MailCard({ mail }: { mail: OrderDetail["mail"] }) {
 	const [open, setOpen] = useState<Entry | null>(null);
@@ -54,27 +53,25 @@ export function MailCard({ mail }: { mail: OrderDetail["mail"] }) {
 					/>
 				))}
 			</ul>
-			<SidePanel
-				open={open?.kind === "email"}
-				onClose={() => setOpen(null)}
-				className="max-w-2xl gap-0 p-0 sm:max-w-2xl"
-			>
+			<Dialog open={open !== null} onOpenChange={(o) => !o && setOpen(null)}>
 				{open?.kind === "email" && (
-					<>
+					<DialogContent className="flex h-[min(85svh,56rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
 						<DialogTitle className="sr-only">{open.email.subject}</DialogTitle>
 						<EmailReader
 							key={open.email.id}
 							email={open.email}
 							box="marketplaces"
 							fileUrl={(a) => `/api/market-email-attachments/${a.id}`}
-							className="h-full"
+							className="min-h-0 flex-1"
 						/>
-					</>
+					</DialogContent>
 				)}
-			</SidePanel>
-			<SidePanel open={open?.kind === "thread"} onClose={() => setOpen(null)}>
-				{open?.kind === "thread" && <Conversation thread={open.thread} />}
-			</SidePanel>
+				{open?.kind === "thread" && (
+					<DialogContent className="flex max-h-[85svh] flex-col overflow-y-auto sm:max-w-xl">
+						<Conversation thread={open.thread} />
+					</DialogContent>
+				)}
+			</Dialog>
 		</Card>
 	);
 }
@@ -156,7 +153,9 @@ function Tags({ entry: e }: { entry: Entry }) {
 function Conversation({ thread: t }: { thread: Thread }) {
 	return (
 		<>
-			<PanelHeader title={t.subject || "(no subject)"} />
+			<DialogTitle className="pr-8 text-base">
+				{t.subject || "(no subject)"}
+			</DialogTitle>
 			<p className="-mt-2 text-sm text-muted-foreground">
 				{t.buyerName ?? "Buyer"} on {channelName(t.market)}
 			</p>
