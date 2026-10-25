@@ -19,6 +19,8 @@ import { emailConfigured } from "#/purchasing/email";
 import { INBOX_ENV, inboxAddress } from "#/purchasing/inbox/graph";
 import { channelEnv, missingEnv, type SyncedChannel } from "./checks";
 import { dismissalKey, type IsDismissed, loadDismissals } from "./dismissals";
+import { ALL_FEEDS, feedStatus } from "./feed-health";
+import { loadFeedRecords } from "./feed-record";
 import {
 	channelHealth,
 	groupIssues,
@@ -34,11 +36,15 @@ const UNSETTLED_ROWS = 500;
 
 // Dismissed problems are still listed, marked `dismissed`.
 export async function diagnosticsOverview(db: Db, now = new Date()) {
-	const isDismissed = await loadDismissals(db);
+	const [isDismissed, recordFor] = await Promise.all([
+		loadDismissals(db),
+		loadFeedRecords(db),
+	]);
 	const channels = await Promise.all(
-		(Object.keys(channelEnv) as SyncedChannel[]).map((c) =>
-			channelOverview(db, c, now, isDismissed),
-		),
+		(Object.keys(channelEnv) as SyncedChannel[]).map(async (c) => ({
+			...(await channelOverview(db, c, now, isDismissed)),
+			feeds: channelFeeds(c, recordFor, now),
+		})),
 	);
 	const [
 		[{ lastStartedAt }],
@@ -99,6 +105,30 @@ export async function diagnosticsOverview(db: Db, now = new Date()) {
 export type DiagnosticsOverview = Awaited<
 	ReturnType<typeof diagnosticsOverview>
 >;
+
+// Each feed of the channel, unsupported ones too, so every channel lists
+// the same columns.
+function channelFeeds(
+	channel: SyncedChannel,
+	recordFor: Awaited<ReturnType<typeof loadFeedRecords>>,
+	now: Date,
+) {
+	const configured = missingEnv(channelEnv[channel]).length === 0;
+	return ALL_FEEDS.map((feed) => {
+		const status = feedStatus({
+			channel,
+			feed,
+			configured,
+			record: recordFor(channel, feed),
+			now,
+		});
+		return {
+			feed,
+			...status,
+			hint: status.state === "failed" ? hintFor(channel, status.error) : null,
+		};
+	});
+}
 
 async function channelOverview(
 	db: Db,
@@ -377,7 +407,7 @@ function unsettledStockRows(db: Db, channel: SyncedChannel) {
 		.limit(UNSETTLED_ROWS);
 }
 
-// For the nav badge: channels failing or stale, the worker being down,
+// For the nav badge: channels with a feed failing or stale, the worker being down,
 // tracking that didn't reach a marketplace, and charges that couldn't be
 // read. Unmapped SKUs have their own home
 // on Listings, so they don't count here.
@@ -385,7 +415,12 @@ export async function diagnosticsAttention(db: Db, now = new Date()) {
 	const o = await diagnosticsOverview(db, now);
 	// With the worker down every channel goes stale; that's one problem.
 	const stuck = o.channels.filter(
-		(c) => c.health === "failing" || (o.worker.alive && c.health === "stale"),
+		(c) =>
+			c.health === "failing" ||
+			(o.worker.alive && c.health === "stale") ||
+			c.feeds.some(
+				(f) => f.state === "failed" || (o.worker.alive && f.state === "stale"),
+			),
 	);
 	const open = <T extends { dismissed: boolean }>(rows: T[]) =>
 		rows.some((r) => !r.dismissed) ? 1 : 0;

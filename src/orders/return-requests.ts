@@ -6,6 +6,8 @@ import {
 	returnRequestLines,
 	returnRequests,
 } from "#/db/schema";
+import type { FeedOutcome } from "#/diagnostics/feed-health";
+import { errorText } from "#/diagnostics/runs";
 
 // Returns buyers opened on a marketplace, as each channel's importer reads
 // them (amazon-returns.ts, shopify-returns.ts, ebay-returns.ts), saved one
@@ -294,21 +296,22 @@ export async function saveReturns(
 
 type ChannelReturnChannel = (typeof returnRequests.$inferInsert)["billedBy"];
 
-// One sync pass's returns for a channel, as problems to report. Returns
-// come from their own API, often with a permission of its own; when that
-// fails the pass names it and orders still sync. A return for an order
-// katasync doesn't have is named too: its box would turn up unexpected.
-// Null from fetch means nothing to read yet (a report still being built).
+// One returns pass for a channel, as an outcome for its feed's health.
+// Returns come from their own API, often with a permission of its own; when
+// that fails it's the returns feed that failed, not the channel. A return for
+// an order katasync doesn't have is named as a problem: its box would turn up
+// unexpected. Null from fetch means nothing to read yet (a report still
+// being built).
 export async function importReturns(
 	db: Db,
 	store: { id: number; channel: ChannelReturnChannel; name: string },
 	fetch: () => Promise<
 		ChannelReturn[] | { returns: ChannelReturn[]; problems: string[] } | null
 	>,
-): Promise<string[]> {
+): Promise<FeedOutcome> {
 	try {
 		const found = await fetch();
-		if (!found) return [];
+		if (!found) return { kind: "pending" };
 		const { returns, problems } = Array.isArray(found)
 			? { returns: found, problems: [] }
 			: found;
@@ -317,10 +320,8 @@ export async function importReturns(
 			problems.push(
 				`${store.name} returns for orders katasync doesn't have: ${missing.join(", ")}`,
 			);
-		return problems;
+		return { kind: "read", problems };
 	} catch (error) {
-		return [
-			`${store.name} returns: ${error instanceof Error ? error.message : error}`,
-		];
+		return { kind: "failed", error: errorText(error) };
 	}
 }

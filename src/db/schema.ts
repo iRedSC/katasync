@@ -3264,6 +3264,75 @@ export const buyerMarketplaceMessages = pgTable(
 	],
 );
 
+// What katasync reads from a marketplace, each on its own schedule. A
+// channel's health is per feed, so a clean orders pass can't hide that its
+// returns failed. Which feeds a channel has: src/diagnostics/feed-health.ts.
+export const syncFeed = pgEnum("sync_feed", [
+	"orders",
+	"returns",
+	"messages",
+	"charges",
+	"tracking",
+]);
+
+// How a feed's latest counted attempt went. ok: all of it was read.
+// partial: it was read, but some items went wrong (problems > 0). failed:
+// it couldn't be read; stays failed until the same feed reads again.
+// pending: the marketplace hasn't got it ready yet (Amazon's report).
+export const feedState = pgEnum("feed_state", [
+	"ok",
+	"partial",
+	"failed",
+	"pending",
+]);
+
+// One row per channel and feed, kept current by every attempt
+// (src/diagnostics/feed-record.ts). Times are when the attempt started, so
+// what's known is true as of then. The checks keep each state's fields
+// consistent, spelling out "is not null" since a check passes on null; the
+// transitions are in src/diagnostics/feed-health.ts.
+export const feedHealth = pgTable(
+	"feed_health",
+	{
+		channel: channel().notNull(),
+		feed: syncFeed().notNull(),
+		state: feedState().notNull(),
+		attemptedAt: timestamp({ withTimezone: true }).notNull(),
+		// The latest attempt that read everything (ok or partial).
+		succeededAt: timestamp({ withTimezone: true }),
+		// Read through to here; the next attempt resumes a little before it.
+		coveredThrough: timestamp({ withTimezone: true }),
+		problems: integer().notNull().default(0),
+		// Why it failed, or the first problem of a partial read.
+		detail: text(),
+		// When the current run of failures began.
+		failingSince: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		primaryKey({ columns: [t.channel, t.feed] }),
+		check(
+			"feed_health_ok",
+			sql`${t.state} <> 'ok' or (${t.problems} = 0 and ${t.detail} is null and ${t.failingSince} is null and ${t.succeededAt} is not null and ${t.succeededAt} = ${t.attemptedAt})`,
+		),
+		check(
+			"feed_health_partial",
+			sql`${t.state} <> 'partial' or (${t.problems} > 0 and ${t.detail} is not null and ${t.failingSince} is null and ${t.succeededAt} is not null and ${t.succeededAt} = ${t.attemptedAt})`,
+		),
+		check(
+			"feed_health_failed",
+			sql`${t.state} <> 'failed' or (${t.problems} = 0 and ${t.detail} is not null and ${t.failingSince} is not null and ${t.failingSince} <= ${t.attemptedAt} and (${t.succeededAt} is null or ${t.succeededAt} < ${t.failingSince}))`,
+		),
+		check(
+			"feed_health_pending",
+			sql`${t.state} <> 'pending' or (${t.problems} = 0 and ${t.detail} is null and ${t.failingSince} is null)`,
+		),
+		check(
+			"feed_health_covered_after_success",
+			sql`${t.coveredThrough} is null or ${t.succeededAt} is not null`,
+		),
+	],
+);
+
 // The last time each marketplace's buyer messages were read in full, and why
 // the latest try failed if it did, so a source katasync can't reach shows as
 // broken rather than quiet. Amazon's is the marketplaces mailbox's check.
