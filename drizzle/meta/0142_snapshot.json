@@ -1,5 +1,5 @@
 {
-  "id": "e8040c28-9d42-4539-902f-2b603bccb169",
+  "id": "fbd45425-1a05-4ca9-b07f-b5a548df44c2",
   "prevId": "fd1a9a53-f25b-4c96-ba1a-5f97ec986929",
   "version": "7",
   "dialect": "postgresql",
@@ -13050,6 +13050,53 @@
           "nullsNotDistinct": false,
           "columns": [
             "external_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.shopify_threads": {
+      "name": "shopify_threads",
+      "schema": "",
+      "columns": {
+        "thread_id": {
+          "name": "thread_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "reply_token": {
+          "name": "reply_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "shopify_threads_thread_id_buyer_threads_id_fk": {
+          "name": "shopify_threads_thread_id_buyer_threads_id_fk",
+          "tableFrom": "shopify_threads",
+          "tableTo": "buyer_threads",
+          "columnsFrom": [
+            "thread_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "shopify_threads_replyToken_unique": {
+          "name": "shopify_threads_replyToken_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "reply_token"
           ]
         }
       },

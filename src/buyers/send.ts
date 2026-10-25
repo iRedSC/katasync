@@ -140,7 +140,7 @@ async function sendEmail(db: Db, thread: Thread, r: Reply) {
 		attachments: await filesOf(db, r),
 	};
 	return thread.market === "shopify"
-		? sendShopifyEmail({
+		? sendShopifyEmail(db, {
 				...email,
 				threadId: thread.id,
 				to: await shopifyRecipient(db, thread.orderRef),

@@ -7,6 +7,7 @@ import {
 	marketEmails,
 	orderBuyerContacts,
 	orders,
+	shopifyThreads,
 	stores,
 } from "#/db/schema";
 import { ingestMarketMail } from "#/inbox/market-mail";
@@ -25,7 +26,6 @@ beforeEach(async () => {
 	db = await createTestDb();
 	vi.stubEnv("RESEND_API_KEY", "re_test");
 	vi.stubEnv("MARKETPLACE_INBOX", INBOX);
-	vi.stubEnv("CRON_SECRET", "test-cron-secret");
 	vi.stubEnv("SHOPIFY_STORE_DOMAIN", "ecdt.myshopify.com");
 	vi.stubEnv("SHOPIFY_ADMIN_TOKEN", "shpat_test");
 });
@@ -88,6 +88,16 @@ async function order(
 	return o;
 }
 
+// The reply address the thread was given when it started.
+async function addressOf(threadId: number) {
+	const [row] = await db
+		.select({ token: shopifyThreads.replyToken })
+		.from(shopifyThreads)
+		.where(eq(shopifyThreads.threadId, threadId));
+	if (!row) throw new Error("no reply token");
+	return threadAddress(row.token) ?? "";
+}
+
 async function email(over: Partial<typeof marketEmails.$inferInsert> = {}) {
 	n++;
 	const [row] = await db
@@ -109,12 +119,16 @@ async function email(over: Partial<typeof marketEmails.$inferInsert> = {}) {
 	return row;
 }
 
-describe("buyers' addresses", () => {
+describe("buyers' addresses and reply tokens", () => {
 	test("the query tool's role can't read them", async () => {
 		const { rows } = (await db.execute(
-			sql`select has_table_privilege('katasync_mcp', 'order_buyer_contacts', 'select') as can`,
-		)) as unknown as { rows: { can: boolean }[] };
-		expect(rows).toEqual([{ can: false }]);
+			sql`select t, has_table_privilege('katasync_mcp', t, 'select') as can
+				from unnest(array['order_buyer_contacts', 'shopify_threads']) t`,
+		)) as unknown as { rows: { t: string; can: boolean }[] };
+		expect(rows).toEqual([
+			{ t: "order_buyer_contacts", can: false },
+			{ t: "shopify_threads", can: false },
+		]);
 	});
 });
 
@@ -184,7 +198,7 @@ describe("emailing a Shopify buyer", () => {
 		expect(calls[0]?.body).toMatchObject({
 			from: `East Coast Drywall Tools <${INBOX}>`,
 			to: [BUYER],
-			reply_to: threadAddress(threadId),
+			reply_to: await addressOf(threadId),
 			subject: `Your order ${o.name}`,
 		});
 
@@ -220,7 +234,7 @@ describe("emailing a Shopify buyer", () => {
 	test("their answer is filed on the thread and done in the mailbox", async () => {
 		const { threadId } = await started();
 		const answer = await email({
-			recipients: [threadAddress(threadId) ?? ""],
+			recipients: [await addressOf(threadId)],
 			body: "Great, thanks!\n\nOn Mon someone wrote:\n> It ships today.",
 		});
 		const elsewhere = await email({ fromAddress: "sam@example.com" });
@@ -256,7 +270,7 @@ describe("emailing a Shopify buyer", () => {
 		const { threadId } = await started();
 		const forged = await email({
 			senderAuthenticated: false,
-			recipients: [threadAddress(threadId) ?? ""],
+			recipients: [await addressOf(threadId)],
 		});
 		expect(await threadShopifyMail(db)).toEqual({ filed: 0, unmatched: 1 });
 		const kept = await db

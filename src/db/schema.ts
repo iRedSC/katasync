@@ -3233,6 +3233,17 @@ export const buyerMessages = pgTable(
 	],
 );
 
+// A Shopify buyer's thread's reply address, marketplaces+so<token>@
+// (src/buyers/shopify-match.ts): a random token made when the thread starts,
+// so an address can't be guessed or made up, and an answer to it is filed
+// by looking it up. Kept from the query tool, like buyers' addresses.
+export const shopifyThreads = pgTable("shopify_threads", {
+	threadId: integer()
+		.primaryKey()
+		.references(() => buyerThreads.id),
+	replyToken: text().notNull().unique(),
+});
+
 // What the marketplace itself put in a conversation (TikTok's): its
 // assistant's answers, its notices (a buyer asking for a person, a chat
 // timing out), and its order and shipping cards. Shown with the thread,
