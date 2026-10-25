@@ -187,12 +187,24 @@ export type ReturnInsights = Awaited<ReturnType<typeof returnInsights>>;
 export type ReturnRate = ReturnInsights["flagged"][number];
 export type ReturnedLine = ReturnInsights["lines"][number];
 
-// Orders with something due back, for the sidebar.
+// Orders with something due back, and refunds waiting on our answer, for
+// the sidebar.
 export async function countReturnsDue(db: Db) {
-	const [{ count }] = await db
-		.select({
-			count: sql<number>`count(distinct ${orderReturnsDue.orderId})::int`,
-		})
-		.from(orderReturnsDue);
-	return count;
+	const [[{ due }], [{ refunds }]] = await Promise.all([
+		db
+			.select({
+				due: sql<number>`count(distinct ${orderReturnsDue.orderId})::int`,
+			})
+			.from(orderReturnsDue),
+		db
+			.select({ refunds: sql<number>`count(*)::int` })
+			.from(returnRequests)
+			.where(
+				and(
+					eq(returnRequests.kind, "refund"),
+					eq(returnRequests.status, "requested"),
+				),
+			),
+	]);
+	return { due, refunds };
 }

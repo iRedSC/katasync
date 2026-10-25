@@ -139,6 +139,7 @@ export function shopifyToReturn(
 	return {
 		externalId: r.id,
 		orderExternalId: orderId,
+		kind: "return",
 		status: shopifyReturnStatus(r.status, Boolean(tracking)),
 		rawStatus: r.status,
 		// Each item has its own reason; a return of several keeps them all.

@@ -68,6 +68,7 @@ describe("saveReturns", () => {
 		externalId: "RMA1",
 		orderExternalId: "111-1",
 		rawStatus: status,
+		kind: "return",
 		status,
 		reason: "DEFECTIVE",
 		note: "Leaks from the bottom",
@@ -159,6 +160,39 @@ describe("saveReturns", () => {
 			.from(schema.returnRequestLines)
 			.where(eq(schema.returnRequestLines.requestId, requests[0].id));
 		expect(lines).toMatchObject([{ orderLineId: lineId, quantity: 1 }]);
+	});
+
+	test("a refund waits on us without being due back, and never ships", async () => {
+		// The order went out before the store's cutover, so it left our shelf
+		// and a return request would make it due.
+		await db
+			.update(schema.stores)
+			.set({ stockFrom: new Date(Date.now() + 86_400_000) })
+			.where(eq(schema.stores.id, store.id));
+		await saveReturns(db, store, [
+			{ ...amazonReturn("requested"), kind: "refund", status: "requested" },
+		]);
+		const [request] = await db.select().from(schema.returnRequests);
+		expect(request).toMatchObject({ kind: "refund", status: "requested" });
+		expect(await db.select().from(schema.orderReturnsDue)).toEqual([]);
+		// The same request as a return is due.
+		await db
+			.update(schema.returnRequests)
+			.set({ kind: "return" })
+			.where(eq(schema.returnRequests.id, request.id));
+		expect(await db.select().from(schema.orderReturnsDue)).toMatchObject([
+			{ lineId, state: "requested", expected: 1 },
+		]);
+		await db
+			.update(schema.returnRequests)
+			.set({ kind: "refund" })
+			.where(eq(schema.returnRequests.id, request.id));
+		await expect(
+			db
+				.update(schema.returnRequests)
+				.set({ status: "shipped" })
+				.where(eq(schema.returnRequests.id, request.id)),
+		).rejects.toThrow();
 	});
 });
 

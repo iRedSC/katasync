@@ -285,6 +285,7 @@ export const getOrder = createServerFn({ method: "GET" })
 					externalId: returnRequests.externalId,
 					note: returnRequests.note,
 					billedBy: returnRequests.billedBy,
+					kind: returnRequests.kind,
 					status: returnRequests.status,
 					rawStatus: returnRequests.rawStatus,
 					reason: returnRequests.reason,

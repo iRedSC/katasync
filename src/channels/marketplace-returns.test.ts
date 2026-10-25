@@ -8,7 +8,7 @@ import {
 } from "./shopify/returns";
 import {
 	isSampleRefund,
-	tiktokReturnStatus,
+	tiktokReturnStage,
 	tiktokToReturn,
 } from "./tiktok-returns";
 
@@ -217,14 +217,26 @@ describe("tiktokToReturn", () => {
 		).toBe(false);
 	});
 
-	test("statuses, and a refund with nothing coming back isn't due", () => {
+	test("statuses, and a refund with nothing coming back waits on us, then settles", () => {
 		const s = (return_status: string, return_type?: string) =>
-			tiktokReturnStatus({ return_status, return_type });
-		expect(s("BUYER_SHIPPED_ITEM")).toBe("shipped");
-		expect(s("RETURN_OR_REFUND_REQUEST_COMPLETE")).toBe("closed");
-		expect(s("RETURN_OR_REFUND_REQUEST_CANCEL")).toBe("cancelled");
-		expect(s("REFUND_OR_RETURN_REQUEST_REJECT")).toBe("cancelled");
-		expect(s("RETURN_OR_REFUND_REQUEST_PENDING", "REFUND")).toBe("closed");
-		expect(s("RETURN_OR_REFUND_REQUEST_PENDING")).toBe("requested");
+			tiktokReturnStage({ return_status, return_type });
+		const ret = (status: string) => ({ kind: "return", status });
+		const refund = (status: string) => ({ kind: "refund", status });
+		expect(s("BUYER_SHIPPED_ITEM")).toEqual(ret("shipped"));
+		expect(s("RETURN_OR_REFUND_REQUEST_COMPLETE")).toEqual(ret("closed"));
+		expect(s("RETURN_OR_REFUND_REQUEST_CANCEL")).toEqual(ret("cancelled"));
+		expect(s("REFUND_OR_RETURN_REQUEST_REJECT")).toEqual(ret("cancelled"));
+		expect(s("RETURN_OR_REFUND_REQUEST_PENDING")).toEqual(ret("requested"));
+		expect(s("RETURN_OR_REFUND_REQUEST_PENDING", "REFUND")).toEqual(
+			refund("requested"),
+		);
+		expect(s("RETURN_OR_REFUND_REQUEST_COMPLETE", "REFUND")).toEqual(
+			refund("closed"),
+		);
+		expect(s("REFUND_OR_RETURN_REQUEST_REJECT", "REFUND")).toEqual(
+			refund("cancelled"),
+		);
+		// A refund never ships, whatever TikTok's status says.
+		expect(s("BUYER_SHIPPED_ITEM", "REFUND")).toEqual(refund("requested"));
 	});
 });

@@ -17,10 +17,11 @@ import { returnReason } from "#/orders/return-reasons";
 import { printPdf } from "#/printing/qz-client";
 import { followReturnNow, type OrderDetail } from "#/server/orders";
 
-// Where an order's return stands, all in one place: what's due back and
-// why, each request the buyer opened on a marketplace, and every return
-// received, each of which can be taken back. Shown only when something
-// about a return has happened.
+// Where an order's return or refund stands, all in one place: what's due
+// back and why, each request the buyer opened on a marketplace (a return,
+// or a refund with nothing coming back), and every return received, each of
+// which can be taken back. Shown only when something about a return or
+// refund has happened.
 
 export const RETURN_STATES: Record<
 	ReturnState,
@@ -48,6 +49,16 @@ export const conditionName = (handle: string) =>
 	handle.charAt(0).toUpperCase() + handle.slice(1).replace(/-/g, " ");
 
 type Received = OrderDetail["returnsReceived"][number];
+type Request = OrderDetail["returnRequests"][number];
+
+// A refund waiting on our answer stands out; one settled reads like any
+// request that's done.
+const requestTone = (r: Request) =>
+	r.kind === "refund" && r.status === "requested"
+		? "warning"
+		: REQUEST_TONE[r.status];
+
+const asking = (r: Request) => r.kind === "refund" && r.status === "requested";
 
 export function hasReturn(d: OrderDetail) {
 	return (
@@ -77,12 +88,18 @@ export function ReturnCard({
 	const expected = d.expected.filter((e) => e.expected > 0);
 	// Back and on the repair board, to list as refurbs once fixed.
 	const benched = d.lines.filter((l) => l.onBench.length > 0);
+	const onlyRefunds =
+		d.returnRequests.length > 0 &&
+		d.returnRequests.every((r) => r.kind === "refund") &&
+		d.returnsReceived.length === 0;
 	return (
 		<Card
-			title="Return"
+			title={onlyRefunds ? "Refund" : "Return"}
 			flush
 			aside={
-				state ? (
+				d.returnRequests.some(asking) ? (
+					<Badge tone="warning">Refund asked</Badge>
+				) : state ? (
 					<Badge tone={state.tone}>{state.label}</Badge>
 				) : d.order.noReturnAt ? (
 					<Badge>Nothing coming back</Badge>
@@ -147,7 +164,7 @@ export function ReturnCard({
 					key={r.id}
 					title={
 						<span className="flex items-center gap-2">
-							<Badge tone={REQUEST_TONE[r.status]}>
+							<Badge tone={requestTone(r)}>
 								{r.rawStatus.charAt(0).toUpperCase() +
 									r.rawStatus.slice(1).toLowerCase().replace(/_/g, " ")}
 							</Badge>
@@ -162,7 +179,7 @@ export function ReturnCard({
 									rel="noreferrer"
 									className="ml-auto inline-flex items-center gap-1 font-normal text-link hover:underline"
 								>
-									Open on {r.page.name}
+									{asking(r) ? "Answer" : "Open"} on {r.page.name}
 									<ExternalLink className="size-3" />
 								</a>
 							)}
@@ -178,7 +195,9 @@ export function ReturnCard({
 						)}
 						{r.lines.length > 0 && (
 							<>
-								<dt className="text-muted-foreground">Sending</dt>
+								<dt className="text-muted-foreground">
+									{r.kind === "refund" ? "Refund for" : "Sending"}
+								</dt>
 								<dd>
 									{r.lines
 										.map(

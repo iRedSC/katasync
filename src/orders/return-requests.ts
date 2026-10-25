@@ -12,8 +12,17 @@ import {
 // way so the Returns pages and order_line_returns read them alike.
 
 export type ReturnStatus = (typeof returnRequests.$inferInsert)["status"];
+// A refund with nothing coming back never ships (return_requests_refund_never_ships).
+export type RefundStatus = Extract<
+	ReturnStatus,
+	"requested" | "closed" | "cancelled"
+>;
+// What was asked for, and where it stands.
+export type RequestStage =
+	| { kind: "return"; status: ReturnStatus }
+	| { kind: "refund"; status: RefundStatus };
 
-export type ChannelReturn = {
+export type ChannelReturn = RequestStage & {
 	// The marketplace's id for the return, unique per channel.
 	externalId: string;
 	// The order's id there, as orders.externalId stores it.
@@ -22,7 +31,6 @@ export type ChannelReturn = {
 	// order Shopify passed on: "tiktok:<id>"). Such an order may since have
 	// moved to that marketplace's store, so it's found by this instead.
 	marketplaceOrderId?: string | null;
-	status: ReturnStatus;
 	// The marketplace's own wording.
 	rawStatus: string;
 	// Why, as the marketplace names it (a code or its words).
@@ -40,6 +48,12 @@ export type ChannelReturn = {
 		quantity: number;
 	}[];
 };
+
+// Just the stage, so a snapshot carries nothing else of the return.
+const stageOf = (r: RequestStage): RequestStage =>
+	r.kind === "return"
+		? { kind: "return", status: r.status }
+		: { kind: "refund", status: r.status };
 
 type Line = { id: number; externalId: string; sku: string | null };
 
@@ -62,9 +76,8 @@ export function matchLine(
 // makes the same snapshot as the saved one needs no write. Lines compare as a
 // set, since their order means nothing; a line that has since matched a
 // different order line changes its orderLineId, so the snapshot changes too.
-type Snapshot = {
+type Snapshot = RequestStage & {
 	orderId: number;
-	status: ReturnStatus;
 	rawStatus: string;
 	reason: string | null;
 	note: string | null;
@@ -74,9 +87,16 @@ type Snapshot = {
 	lines: { orderLineId: number | null; sku: string | null; quantity: number }[];
 };
 
-function canonical(s: Snapshot) {
+// As read back from the database, where kind and status are two columns.
+type Saved = Omit<Snapshot, keyof RequestStage> & {
+	kind: RequestStage["kind"];
+	status: ReturnStatus;
+};
+
+function canonical(s: Saved) {
 	return JSON.stringify([
 		s.orderId,
+		s.kind,
 		s.status,
 		s.rawStatus,
 		s.reason,
@@ -154,6 +174,7 @@ export async function saveReturns(
 			id: returnRequests.id,
 			externalId: returnRequests.externalId,
 			orderId: returnRequests.orderId,
+			kind: returnRequests.kind,
 			status: returnRequests.status,
 			rawStatus: returnRequests.rawStatus,
 			reason: returnRequests.reason,
@@ -217,7 +238,7 @@ export async function saveReturns(
 		const lines = linesOf.get(orderId) ?? [];
 		const next: Snapshot = {
 			orderId,
-			status: r.status,
+			...stageOf(r),
 			rawStatus: r.rawStatus,
 			reason: r.reason,
 			// A note the marketplace didn't send keeps the one saved.
@@ -240,6 +261,7 @@ export async function saveReturns(
 				orderId,
 				billedBy: store.channel,
 				externalId: r.externalId,
+				kind: next.kind,
 				status: next.status,
 				rawStatus: next.rawStatus,
 				reason: next.reason,

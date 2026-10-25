@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { errorText } from "#/diagnostics/runs";
-import type { ChannelReturn } from "#/orders/return-requests";
+import type { ChannelReturn, RequestStage } from "#/orders/return-requests";
 import { shopCipher, tiktokApi } from "./tiktok";
 
 // Returns buyers opened on TikTok Shop, with TikTok's reason, and what the
@@ -45,18 +45,24 @@ export const isSampleRefund = (r: { return_reason?: string }) =>
 	r.return_reason?.startsWith("system_refund_sample") ?? false;
 
 // TikTok's statuses, as a stage. A refund with nothing coming back (return
-// type REFUND) is closed: it still counts as returned in the rates, but
-// nothing is due back.
-export function tiktokReturnStatus(r: {
+// type REFUND) waits on our answer while it's pending, then is refunded
+// (closed) or turned down (cancelled); it never ships.
+export function tiktokReturnStage(r: {
 	return_status: string;
 	return_type?: string;
-}): ChannelReturn["status"] {
+}): RequestStage {
 	const s = r.return_status;
-	if (s.includes("CANCEL") || s.includes("REJECT")) return "cancelled";
-	if (r.return_type === "REFUND") return "closed";
-	if (s.includes("COMPLETE") || s.includes("SUCCESS")) return "closed";
-	if (s === "BUYER_SHIPPED_ITEM") return "shipped";
-	return "requested";
+	const ended = s.includes("CANCEL") || s.includes("REJECT");
+	const settled = s.includes("COMPLETE") || s.includes("SUCCESS");
+	if (r.return_type === "REFUND")
+		return {
+			kind: "refund",
+			status: ended ? "cancelled" : settled ? "closed" : "requested",
+		};
+	if (ended) return { kind: "return", status: "cancelled" };
+	if (settled) return { kind: "return", status: "closed" };
+	if (s === "BUYER_SHIPPED_ITEM") return { kind: "return", status: "shipped" };
+	return { kind: "return", status: "requested" };
 }
 
 // TikTok lists each unit as its own line; order_lines keeps one per SKU id,
@@ -78,7 +84,7 @@ export function tiktokToReturn(
 		externalId: r.return_id,
 		orderExternalId: r.order_id,
 		marketplaceOrderId: `tiktok:${r.order_id}`,
-		status: tiktokReturnStatus(r),
+		...tiktokReturnStage(r),
 		rawStatus: r.return_status,
 		reason: r.return_reason_text || r.return_reason || null,
 		note,

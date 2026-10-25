@@ -42,6 +42,7 @@ describe("saveReturns skips returns that haven't changed", () => {
 	const ret: ChannelReturn = {
 		externalId: "RMA1",
 		orderExternalId: "111-1",
+		kind: "return",
 		status: "requested",
 		rawStatus: "requested",
 		reason: "DEFECTIVE",
