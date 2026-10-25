@@ -24,6 +24,7 @@ import {
 import { orderMail } from "#/inbox/order-mail";
 import { adminUrls, returnPage } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
+import { labelRebills } from "#/orders/postage-adjustments";
 import { returnStages } from "#/orders/return-stage";
 import { committedStock, returnQuantity } from "#/orders/return-stock";
 import { followReturn, trackingFor } from "#/orders/return-tracking";
@@ -242,6 +243,7 @@ export const getOrder = createServerFn({ method: "GET" })
 			stages,
 			mail,
 			buyerOrders,
+			rebills,
 		] = await Promise.all([
 			db.select().from(orderProfit).where(eq(orderProfit.orderId, data.id)),
 			db
@@ -374,6 +376,7 @@ export const getOrder = createServerFn({ method: "GET" })
 						.orderBy(desc(orders.placedAt))
 						.limit(10)
 				: Promise.resolve([]),
+			labelRebills(db, [data.id]),
 		]);
 		return {
 			order: { ...order, returnStage: stages.get(data.id) ?? null },
@@ -383,6 +386,8 @@ export const getOrder = createServerFn({ method: "GET" })
 			adminUrls: adminUrls(order).filter((p) => p.channel !== "amazon"),
 			profit: profit ?? null,
 			charges,
+			// Why Shippo re-billed its labels, item by item.
+			rebills: rebills.get(data.id) ?? [],
 			reports,
 			checks,
 			returnState: (due[0]?.state ?? null) as ReturnState | null,

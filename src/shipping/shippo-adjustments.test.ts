@@ -6,6 +6,7 @@ import { saveCostReport } from "#/orders/charges";
 import {
 	groupBoxes,
 	groupPostage,
+	labelRebills,
 	postageBoxes,
 	postageLines,
 } from "#/orders/postage-adjustments";
@@ -140,6 +141,18 @@ test("saves re-bills on katasync's labels, shared across the label's orders, aga
 		weightGrams: 600,
 		soldOn: "shopify",
 	});
+
+	// Why, on each order, as the whole label's.
+	const why = await labelRebills(db, [small.id, big.id]);
+	for (const id of [small.id, big.id])
+		expect(why.get(id)).toMatchObject([
+			{
+				shipmentId: box,
+				reason: { kind: "charge", text: "Weight" },
+				amount: 4,
+				sharedWith: 1,
+			},
+		]);
 });
 
 // Shippo's reporting API as a script: each call takes the next answer.

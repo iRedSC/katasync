@@ -117,6 +117,7 @@ function OrderPage() {
 		profit,
 		charges,
 		checks,
+		rebills,
 		buyerOrders,
 	} = detail;
 	const goBack = useBack({ to: "/orders" });
@@ -468,7 +469,12 @@ function OrderPage() {
 					)}
 					<TrackingCard orderId={order.id} />
 					{profit && (
-						<ProfitCard profit={profit} charges={charges} checks={checks} />
+						<ProfitCard
+							profit={profit}
+							charges={charges}
+							checks={checks}
+							rebills={rebills}
+						/>
 					)}
 					<Card title="Customer">
 						<p className="font-medium">{order.customerName ?? "No name"}</p>

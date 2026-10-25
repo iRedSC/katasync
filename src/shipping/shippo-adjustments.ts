@@ -11,6 +11,8 @@ import {
 	stores,
 } from "#/db/schema";
 import { alertRebill, crossesLarge } from "#/inbox/rebill-alerts";
+import { formatMoney } from "#/lib/format";
+import { describeRebill, rebillReason } from "./rebill-reason";
 import { shippo, shippoGet } from "./shippo";
 
 // What Shippo billed on katasync's labels after buying them: the carrier
@@ -19,7 +21,8 @@ import { shippo, shippoGet } from "./shippo";
 // USPS and UPS), usually 30 to 60 days after shipping, as invoice items tied
 // to the label's transaction. Its old invoice API is gone; this asks its
 // reporting API for an invoice report, waits for it, and reads the file.
-// Nothing in it says what the carrier measured.
+// A charge correction's description names the package as billed and as
+// declared (src/shipping/rebill-reason.ts); a surcharge's only names it.
 
 // Invoice items that are a label's re-bill, not its purchase or refund.
 export const REBILL_TYPES = new Set([
@@ -224,6 +227,7 @@ export async function saveShippoRebills(db: Db, rebills: ShippoRebill[]) {
 			marketplaceId: now.marketplaceOrderId?.split(":")[1] ?? null,
 			amount: now.amount,
 			label: now.label,
+			reasons: await reasonsFor(db, id),
 		});
 	}
 	return {
@@ -259,6 +263,22 @@ async function rebilledOn(db: Db, shipmentIds: number[]) {
 		.where(inArray(shipments.id, shipmentIds))
 		.orderBy(shipments.id, orders.id);
 	return new Map(rows.map((r) => [r.shipmentId, r]));
+}
+
+// Why a label was re-billed, a line per item, for the inbox's alert.
+async function reasonsFor(db: Db, shipmentId: number) {
+	const items = await db
+		.select({
+			description: shipmentAdjustments.description,
+			amount: shipmentAdjustments.amount,
+		})
+		.from(shipmentAdjustments)
+		.where(eq(shipmentAdjustments.shipmentId, shipmentId))
+		.orderBy(shipmentAdjustments.postedAt, shipmentAdjustments.id);
+	return items.map(
+		(i) =>
+			`${describeRebill(rebillReason(i.description))}: ${formatMoney(i.amount)}`,
+	);
 }
 
 export async function importShippoRebills(db: Db) {

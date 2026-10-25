@@ -14,6 +14,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { contentsKey } from "#/shipping/contents";
+import { type RebillReason, rebillReason } from "#/shipping/rebill-reason";
 
 // What carriers re-billed on labels for a size or weight other than declared
 // (postage_adjustment charges), grouped so the cause can be fixed: by what was
@@ -25,7 +26,7 @@ import { contentsKey } from "#/shipping/contents";
 // box, and each re-billed order links to Seller Central, whose order page
 // shows the package as declared. Labels katasync buys from Shippo do have a
 // box, re-billed per label (shipment_adjustments), so those also group by
-// box, with what was declared.
+// box, with what was declared, and say why each was re-billed.
 
 const lp = orderLineProfit;
 
@@ -360,4 +361,43 @@ export function groupBoxes(boxes: PostageBox[]): BoxGroup[] {
 		.sort(
 			(a, b) => b.amount - a.amount || b.rebilled.length - a.rebilled.length,
 		);
+}
+
+export type LabelRebill = {
+	shipmentId: number;
+	reason: RebillReason;
+	// The whole label's, even when other orders share it.
+	amount: number;
+	postedAt: Date;
+	// Other orders on the same label, who share the amount.
+	sharedWith: number;
+};
+
+// Why Shippo re-billed the labels these orders shipped on, each item as it
+// billed it, by order.
+export async function labelRebills(db: Db, orderIds: number[]) {
+	const byOrder = new Map<number, LabelRebill[]>();
+	if (orderIds.length === 0) return byOrder;
+	const rows = await db
+		.select({
+			orderId: dispatchOrders.orderId,
+			shipmentId: shipmentAdjustments.shipmentId,
+			description: shipmentAdjustments.description,
+			amount: shipmentAdjustments.amount,
+			postedAt: shipmentAdjustments.postedAt,
+			sharedWith: sql<number>`(select count(*)::int - 1 from ${dispatchOrders} d
+				join ${orders} o on o.id = d.order_id and o.cancelled_at is null
+				where d.dispatch_id = ${shipments.dispatchId})`,
+		})
+		.from(shipmentAdjustments)
+		.innerJoin(shipments, eq(shipments.id, shipmentAdjustments.shipmentId))
+		.innerJoin(dispatchOrders, liveLabel)
+		.where(inArray(dispatchOrders.orderId, orderIds))
+		.orderBy(shipmentAdjustments.postedAt, shipmentAdjustments.id);
+	for (const { orderId, description, ...r } of rows) {
+		const list = byOrder.get(orderId) ?? [];
+		list.push({ ...r, reason: rebillReason(description) });
+		byOrder.set(orderId, list);
+	}
+	return byOrder;
 }

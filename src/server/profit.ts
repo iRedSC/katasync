@@ -6,6 +6,7 @@ import { parsePeriod } from "#/lib/period";
 import {
 	groupBoxes,
 	groupPostage,
+	labelRebills,
 	postageBoxes,
 	postageLines,
 } from "#/orders/postage-adjustments";
@@ -91,7 +92,7 @@ export const getProfitItems = createServerFn({ method: "GET" })
 	});
 
 // What carriers re-billed in the range, grouped by what was in the box and
-// by product.
+// by product, with why for labels katasync bought.
 export const getPostageAdjustments = createServerFn({ method: "GET" })
 	.validator(type({ range: rangeType }))
 	.handler(async ({ data }) => {
@@ -101,7 +102,14 @@ export const getPostageAdjustments = createServerFn({ method: "GET" })
 			postageLines(db, range.start, range.end),
 			postageBoxes(db, range.start, range.end),
 		]);
-		return { range, ...groupPostage(lines), byBox: groupBoxes(boxes) };
+		const postage = groupPostage(lines);
+		const byBox = groupBoxes(boxes);
+		const rebilled = new Set([
+			...postage.rebilled.map((o) => o.id),
+			...byBox.flatMap((g) => g.rebilled.map((o) => o.id)),
+		]);
+		const why = await labelRebills(db, [...rebilled]);
+		return { range, ...postage, byBox, why: Object.fromEntries(why) };
 	});
 
 // Sets what one of a product costs. Sales already in with no cost of their

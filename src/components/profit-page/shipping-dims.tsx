@@ -1,6 +1,11 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { GRAMS_PER_OUNCE, inches } from "#/components/quick-ship/units";
+import {
+	formatBox,
+	GRAMS_PER_OUNCE,
+	inches,
+	poundsOunces,
+} from "#/components/quick-ship/units";
 import { cn } from "#/lib/utils";
 import { setProductShipping } from "#/server/profit";
 
@@ -8,16 +13,6 @@ type Box = [number, number, number];
 
 const input =
 	"h-7 w-14 rounded-md border border-input bg-white px-1.5 text-right tabular-nums outline-none focus:border-ring focus:ring-1 focus:ring-ring";
-
-// Packed weight as Seller Central takes it, pounds and ounces.
-export function poundsOunces(grams: number) {
-	const oz = Math.round((grams / GRAMS_PER_OUNCE) * 10) / 10;
-	const lb = Math.floor(oz / 16);
-	const rest = Math.round((oz - lb * 16) * 10) / 10;
-	return lb > 0 ? `${lb} lb${rest > 0 ? ` ${rest} oz` : ""}` : `${rest} oz`;
-}
-
-export const formatBox = (box: Box) => `${box.map(inches).join(" × ")} in`;
 
 // A product's packed weight and box, as saved, and set right here: what to
 // type into Seller Central next time, and what katasync's own labels use.

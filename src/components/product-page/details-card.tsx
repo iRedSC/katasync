@@ -2,12 +2,10 @@ import { type ReactNode, useRef, useState } from "react";
 import { Card } from "#/components/page";
 import {
 	formatBox,
-	poundsOunces,
-} from "#/components/profit-page/shipping-dims";
-import {
 	GRAMS_PER_OUNCE,
 	inches,
 	MM_PER_INCH,
+	poundsOunces,
 } from "#/components/quick-ship/units";
 import { shake } from "#/components/shake";
 import { formatCount, formatDate, formatMoney } from "#/lib/format";
