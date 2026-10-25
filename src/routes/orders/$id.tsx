@@ -60,7 +60,11 @@ export const Route = createFileRoute("/orders/$id")({
 	loader: async ({ params, deps }) => {
 		const [detail, chat] = await Promise.all([
 			getOrder({ data: { id: Number(params.id) } }),
-			deps.chat ? getBuyerChat({ data: { threadId: deps.chat } }) : null,
+			deps.chat
+				? getBuyerChat({
+						data: { threadId: deps.chat, orderId: Number(params.id) },
+					})
+				: null,
 		]);
 		return { ...detail, buyerChat: chat };
 	},

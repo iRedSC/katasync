@@ -35,6 +35,26 @@ export function buyerMarket(
 	return o.marketplaceOrderId?.startsWith("tiktok:") ? "tiktok" : o.channel;
 }
 
+// The order's ID on the buyer's marketplace, as threads and drafts name it:
+// TikTok's for a sale Shopify relayed.
+export function marketRef(
+	o: Pick<ChatOrder, "channel" | "marketplaceOrderId"> & { externalId: string },
+) {
+	return o.channel !== "tiktok" && buyerMarket(o) === "tiktok"
+		? (o.marketplaceOrderId ?? "").slice("tiktok:".length)
+		: o.externalId;
+}
+
+// Whether a suggested reply was written about the order in view (null: the
+// thread's own). A buyer's one conversation can be opened from any of their
+// orders, and a reply about one mustn't be offered for another.
+export function draftFits(
+	draft: { forOrder: string | null },
+	orderRef: string | null,
+) {
+	return draft.forOrder === orderRef;
+}
+
 export function chatWay(o: ChatOrder, now: Date): ChatWay {
 	const market = buyerMarket(o);
 	const latest = o.threads
@@ -69,16 +89,58 @@ export type ChatOpening =
 	| { kind: "opened"; threadId: number }
 	// TikTok's conversation, now kept in katasync, empty of anything of ours.
 	| { kind: "started"; threadId: number }
-	// eBay: no conversation until the first message, which starts it.
-	| { kind: "compose"; to: string }
+	// eBay: no conversation until the first message, which starts it. The
+	// last try that may have gone, so it's never quietly sent again.
+	| { kind: "compose"; to: string; last: LastTry | null }
 	| { kind: "refused"; reason: string }
 	| { kind: "failed"; reason: string };
 
 // What sending the first eBay message came to. Both sent kinds mean the
 // buyer has it; unsure may have gone, so it's never sent again blind.
+// Sending: another request with the same key has it in hand.
 export type FirstMessage =
+	| { kind: "sending" }
 	| { kind: "sent"; threadId: number }
 	// Sent, but eBay doesn't list its conversation yet: the Inbox reads it in.
 	| { kind: "sent_unlisted" }
 	| { kind: "refused"; reason: string }
 	| { kind: "unsure"; reason: string };
+
+export type LastTry = { body: string; outcome: FirstMessage };
+
+// A try still sending this long after it began was cut off mid-send (the
+// function stopped): no one will hear how it went.
+export const SENDING_GIVE_UP_MS = 2 * 60_000;
+
+// A try as written down, as its outcome.
+export function attemptOutcome(
+	a: {
+		status: "sending" | "sent" | "refused" | "unsure";
+		threadId: number | null;
+		error: string | null;
+		createdAt: Date;
+	},
+	now: Date,
+): FirstMessage {
+	switch (a.status) {
+		case "sending":
+			return now.getTime() - a.createdAt.getTime() < SENDING_GIVE_UP_MS
+				? { kind: "sending" }
+				: {
+						kind: "unsure",
+						reason:
+							"katasync never heard how it went. Check eBay Messages before sending again",
+					};
+		case "sent":
+			return a.threadId
+				? { kind: "sent", threadId: a.threadId }
+				: { kind: "sent_unlisted" };
+		case "refused":
+			return { kind: "refused", reason: a.error ?? "eBay said no" };
+		case "unsure":
+			return {
+				kind: "unsure",
+				reason: a.error ?? "eBay didn't say whether it went",
+			};
+	}
+}

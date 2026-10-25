@@ -1,14 +1,16 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { detailPage, shopCipher, tiktokApi } from "#/channels/tiktok";
 import type { Db } from "#/db/client";
-import { buyerThreads, orders, stores } from "#/db/schema";
-import { refuseWords } from "./attachments";
-import { buyerMarket, type ChatOpening, type FirstMessage } from "./chat-way";
+import { buyerThreads } from "#/db/schema";
 import {
-	ebayOrderBuyer,
-	keepEbayConversationWith,
-	sendEbayMessage,
-} from "./ebay-messages";
+	type ChatOrderRow,
+	chatOrder,
+	type EbayOrder,
+	isEbay,
+} from "./chat-order";
+import { buyerMarket, type ChatOpening, marketRef } from "./chat-way";
+import { ebayOrderBuyer, keepEbayConversationWith } from "./ebay-messages";
+import { lastTry } from "./first-message";
 import { Refused } from "./states";
 import { ensureThread } from "./threads";
 import {
@@ -18,37 +20,14 @@ import {
 
 // Writing to an order's buyer from its page when they haven't written first
 // (chat-way.ts says when it's offered). Opening a conversation sends
-// nothing: on TikTok it's opened and kept as an empty thread, answered
-// through the usual reply path (send.ts); on eBay a conversation only
-// exists once a message is in it, so the first message starts it here.
-// Server only.
+// nothing: on TikTok it's opened and kept as a thread, answered through the
+// usual reply path (send.ts); on eBay a conversation only exists once a
+// message is in it, so the first message starts it (first-message.ts).
+// Nothing here moves an existing thread to another order: the page passes
+// the order it's opened from along with the thread. Server only.
 
 const why = (error: unknown) =>
 	error instanceof Error ? error.message : String(error);
-
-async function orderOf(db: Db, orderId: number) {
-	const [o] = await db
-		.select({
-			id: orders.id,
-			channel: stores.channel,
-			externalId: orders.externalId,
-			marketplaceOrderId: orders.marketplaceOrderId,
-			buyerId: orders.buyerId,
-		})
-		.from(orders)
-		.innerJoin(stores, eq(stores.id, orders.storeId))
-		.where(eq(orders.id, orderId));
-	if (!o) throw new Error(`No order ${orderId}`);
-	return o;
-}
-
-type Order = Awaited<ReturnType<typeof orderOf>>;
-
-// The order's ID on TikTok, its own or the one Shopify relayed.
-const tiktokId = (o: Order) =>
-	o.channel === "tiktok"
-		? o.externalId
-		: (o.marketplaceOrderId?.slice("tiktok:".length) ?? null);
 
 // A failure to open a TikTok conversation: TikTok's plain no (outside its
 // limits on the order), or anything else, which may pass if tried again.
@@ -58,23 +37,12 @@ export function tiktokStartFailure(error: unknown): ChatOpening {
 		: { kind: "failed", reason: why(error) };
 }
 
-// A first eBay message that didn't come back with an ID. Only a plain no
-// means it didn't go; anything else may have.
-export function firstMessageFailure(error: unknown): FirstMessage {
-	return error instanceof Refused
-		? { kind: "refused", reason: error.message }
-		: {
-				kind: "unsure",
-				reason: `eBay didn't say whether it went (${why(error)}). Check eBay Messages before sending again`,
-			};
-}
-
 export async function openChat(db: Db, orderId: number): Promise<ChatOpening> {
-	const o = await orderOf(db, orderId);
+	const o = await chatOrder(db, orderId);
 	const market = buyerMarket(o);
 	try {
 		if (market === "tiktok") return await openTiktok(db, o);
-		if (market === "ebay") return await openEbay(db, o);
+		if (isEbay(o) && market === "ebay") return await openEbay(db, o);
 	} catch (error) {
 		return { kind: "failed", reason: why(error) };
 	}
@@ -84,9 +52,8 @@ export async function openChat(db: Db, orderId: number): Promise<ChatOpening> {
 	};
 }
 
-async function openTiktok(db: Db, o: Order): Promise<ChatOpening> {
-	const ref = tiktokId(o);
-	if (!ref) return { kind: "failed", reason: "No TikTok order ID" };
+async function openTiktok(db: Db, o: ChatOrderRow): Promise<ChatOpening> {
+	const ref = marketRef(o);
 	// Older orders, and those Shopify relayed, may not have the buyer yet.
 	const buyer =
 		o.buyerId ??
@@ -107,105 +74,65 @@ async function openTiktok(db: Db, o: Order): Promise<ChatOpening> {
 	} catch (error) {
 		return tiktokStartFailure(error);
 	}
-	// TikTok keeps one conversation per buyer: it's about the order it was
-	// last opened from.
+	// TikTok keeps one conversation per buyer. A new one is about this order;
+	// one kept already stays about the order it was.
 	const thread = await ensureThread(db, {
 		market: "tiktok",
 		externalId: conversationId,
 		subject: "TikTok Shop chat",
 		orderRef: ref,
 	});
-	if (thread.orderRef !== ref)
-		await db
-			.update(buyerThreads)
-			.set({ orderRef: ref })
-			.where(eq(buyerThreads.id, thread.id));
 	// What TikTok already put in it; the thread works without it.
 	await readStartedTiktokThread(db, thread.id).catch(() => {});
 	return { kind: "started", threadId: thread.id };
 }
 
-// An eBay buyer's conversation katasync keeps, by their username.
-async function keptWith(db: Db, username: string) {
-	const [t] = await db
-		.select({ id: buyerThreads.id, orderRef: buyerThreads.orderRef })
+type Kept = { id: number; orderRef: string | null; itemRef: string | null };
+
+// Which of an eBay buyer's threads to open for an order, latest first: one
+// about the order, then one about its listing, then their latest.
+export function pickThread(
+	kept: Kept[],
+	orderRef: string,
+	itemId: string | null,
+) {
+	return (
+		kept.find((t) => t.orderRef === orderRef) ??
+		(itemId ? kept.find((t) => t.itemRef === itemId) : undefined) ??
+		kept[0] ??
+		null
+	);
+}
+
+async function openEbay(db: Db, o: EbayOrder): Promise<ChatOpening> {
+	const { username, itemId } = await ebayOrderBuyer(o.externalId);
+	if (!username)
+		return { kind: "failed", reason: "eBay didn't say who the buyer is" };
+	const kept = await db
+		.select({
+			id: buyerThreads.id,
+			orderRef: buyerThreads.orderRef,
+			itemRef: buyerThreads.itemRef,
+		})
 		.from(buyerThreads)
 		.where(
 			and(
 				eq(buyerThreads.market, "ebay"),
-				sql`lower(${buyerThreads.buyerName}) = lower(${username})`,
+				or(
+					eq(buyerThreads.orderRef, o.externalId),
+					sql`lower(${buyerThreads.buyerName}) = lower(${username})`,
+				),
 			),
 		)
-		.orderBy(desc(buyerThreads.id))
-		.limit(1);
-	return t ?? null;
-}
-
-async function openEbay(db: Db, o: Order): Promise<ChatOpening> {
-	const { username, itemId } = await ebayOrderBuyer(o.externalId);
-	if (!username)
-		return { kind: "failed", reason: "eBay didn't say who the buyer is" };
-	const kept = await keptWith(db, username);
-	if (kept) {
-		// Now the order page lists it too.
-		if (kept.orderRef === null)
-			await db
-				.update(buyerThreads)
-				.set({ orderRef: o.externalId })
-				.where(eq(buyerThreads.id, kept.id));
-		return { kind: "opened", threadId: kept.id };
-	}
+		.orderBy(desc(buyerThreads.id));
+	const picked = pickThread(kept, o.externalId, itemId);
+	if (picked) return { kind: "opened", threadId: picked.id };
 	// One from before katasync read eBay's messages.
 	const found = await keepEbayConversationWith(db, {
 		username,
 		itemId,
 		orderRef: o.externalId,
 	});
-	return found
-		? { kind: "opened", threadId: found.id }
-		: { kind: "compose", to: username };
-}
-
-// The first message to an eBay buyer, which starts the conversation. Sent
-// once per call and never again on its own: eBay has no request key.
-export async function firstEbayMessage(
-	db: Db,
-	orderId: number,
-	text: string,
-): Promise<FirstMessage> {
-	const body = text.trim();
-	if (!body) return { kind: "refused", reason: "Write something first" };
-	const tooLong = refuseWords("ebay", body);
-	if (tooLong) return { kind: "refused", reason: tooLong };
-	let to: Awaited<ReturnType<typeof ebayOrderBuyer>>;
-	let o: Order;
-	try {
-		o = await orderOf(db, orderId);
-		to = await ebayOrderBuyer(o.externalId);
-	} catch (error) {
-		// Nothing was sent yet.
-		return { kind: "refused", reason: why(error) };
-	}
-	const username = to.username;
-	if (!username)
-		return { kind: "refused", reason: "eBay didn't say who the buyer is" };
-	let messageId: string;
-	try {
-		messageId = await sendEbayMessage({ username, itemId: to.itemId }, body);
-	} catch (error) {
-		return firstMessageFailure(error);
-	}
-	try {
-		const thread = await keepEbayConversationWith(
-			db,
-			{ username, itemId: to.itemId, orderRef: o.externalId },
-			messageId,
-		);
-		return thread
-			? { kind: "sent", threadId: thread.id }
-			: { kind: "sent_unlisted" };
-	} catch {
-		// It went; only finding its conversation failed.
-		return { kind: "sent_unlisted" };
-	}
+	if (found) return { kind: "opened", threadId: found.id };
+	return { kind: "compose", to: username, last: await lastTry(db, o.id) };
 }

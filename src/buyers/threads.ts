@@ -386,6 +386,8 @@ export async function threadsPage(
 						by: d.by,
 						error: d.error,
 						updatedAt: d.updatedAt,
+						// The order it was written about (null: none).
+						forOrder: d.orderRef ?? t.orderRef,
 						// Written before the buyer's latest message.
 						stale:
 							latestTheirs !== undefined &&

@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { type ChatOrder, chatWay } from "./chat-way";
-import { firstMessageFailure, tiktokStartFailure } from "./start-chat";
+import {
+	attemptOutcome,
+	type ChatOrder,
+	chatWay,
+	draftFits,
+	marketRef,
+} from "./chat-way";
+import { firstMessageFailure } from "./first-message";
+import { pickThread, tiktokStartFailure } from "./start-chat";
 import { Refused, Unsure } from "./states";
 
 const now = new Date("2026-10-25T12:00:00Z");
@@ -107,5 +114,73 @@ describe("outcomes", () => {
 		});
 		for (const e of [new Unsure("eBay answered 503"), new Error("timeout")])
 			expect(firstMessageFailure(e).kind).toBe("unsure");
+	});
+});
+
+describe("attempts", () => {
+	const base = { threadId: null, error: null, createdAt: now };
+	test("each written-down try reads back as its outcome", () => {
+		expect(attemptOutcome({ ...base, status: "sending" }, now)).toEqual({
+			kind: "sending",
+		});
+		expect(
+			attemptOutcome({ ...base, status: "sent", threadId: 4 }, now),
+		).toEqual({ kind: "sent", threadId: 4 });
+		expect(attemptOutcome({ ...base, status: "sent" }, now)).toEqual({
+			kind: "sent_unlisted",
+		});
+		expect(
+			attemptOutcome({ ...base, status: "unsure", error: "eBay 503" }, now),
+		).toEqual({ kind: "unsure", reason: "eBay 503" });
+	});
+
+	test("a try cut off mid-send turns unsure", () => {
+		const later = new Date(now.getTime() + 3 * 60_000);
+		expect(attemptOutcome({ ...base, status: "sending" }, later).kind).toBe(
+			"unsure",
+		);
+	});
+});
+
+describe("order in view", () => {
+	test("a relayed TikTok sale is named by TikTok's ID", () => {
+		expect(
+			marketRef({
+				channel: "shopify",
+				externalId: "gid://shopify/Order/1",
+				marketplaceOrderId: "tiktok:577",
+			}),
+		).toBe("577");
+		expect(
+			marketRef({
+				channel: "ebay",
+				externalId: "12-1",
+				marketplaceOrderId: "ebay:12-1",
+			}),
+		).toBe("12-1");
+	});
+
+	test("a suggestion fits only the order it was written about", () => {
+		expect(draftFits({ forOrder: "A" }, "A")).toBe(true);
+		expect(draftFits({ forOrder: "A" }, "B")).toBe(false);
+	});
+});
+
+describe("pickThread", () => {
+	// A repeat buyer: latest first, as the query lists them.
+	const kept = [
+		{ id: 3, orderRef: null, itemRef: "item-9" },
+		{ id: 2, orderRef: null, itemRef: "item-1" },
+		{ id: 1, orderRef: "12-1", itemRef: "item-1" },
+	];
+	test("the thread about the order comes first", () => {
+		expect(pickThread(kept, "12-1", "item-1")?.id).toBe(1);
+	});
+	test("then the one about its listing", () => {
+		expect(pickThread(kept, "12-2", "item-1")?.id).toBe(2);
+	});
+	test("then the buyer's latest", () => {
+		expect(pickThread(kept, "12-3", "item-5")?.id).toBe(3);
+		expect(pickThread([], "12-3", null)).toBeNull();
 	});
 });
