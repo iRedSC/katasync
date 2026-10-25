@@ -35,6 +35,7 @@ import { translateReply } from "#/server/buyer-drafts";
 import { logBuyerReply, unlogBuyerReply } from "#/server/buyers";
 import { BuyerOrder } from "./buyer-order";
 import { DueChip } from "./due-chip";
+import { groupMarketplace, MarketplaceBubble } from "./marketplace-bubble";
 import {
 	HOLD_MS,
 	hold,
@@ -55,7 +56,8 @@ const languageName = (code: string | null) =>
 	code ? (languages.of(code) ?? code) : "their language";
 
 // One conversation: the buyer's messages on the left, ours on the right,
-// each of ours marked with how far it got, and a reply box under them.
+// each of ours marked with how far it got, the marketplace's own among them,
+// and a reply box under them.
 // A reply shows at once as sending, then moves on as the server learns.
 
 type Status = OutStatus;
@@ -148,7 +150,13 @@ export function BuyerConversation({
 			.filter((o) => o.threadId === t.id && !kept.has(o.key))
 			.map((o) => ({ ...o, fromBuyer: false })),
 	];
-	const count = shown.length;
+	// The marketplace's own, in among them by time.
+	const theirs = groupMarketplace(t.marketplace);
+	const timeline = [
+		...shown.map((m) => ({ key: m.key, at: m.at, m })),
+		...theirs.map((item) => ({ key: item.key, at: item.at, item })),
+	].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+	const count = timeline.length;
 	useEffect(() => {
 		if (count) end.current?.scrollIntoView({ block: "end" });
 	}, [count]);
@@ -283,9 +291,13 @@ export function BuyerConversation({
 				)}
 			</header>
 			<div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
-				{shown.map((m) => (
-					<Bubble key={m.key} message={m} onAgain={() => again(m)} />
-				))}
+				{timeline.map((e) =>
+					"m" in e ? (
+						<Bubble key={e.key} message={e.m} onAgain={() => again(e.m)} />
+					) : (
+						<MarketplaceBubble key={e.key} item={e.item} market={t.market} />
+					),
+				)}
 				<div ref={end} />
 			</div>
 			{/* The suggestion sits outside the form, so none of its buttons can

@@ -16,6 +16,10 @@ import {
 	buyerThreads,
 } from "#/db/schema";
 import { keepConversation, type ListedMessage } from "./conversation";
+import {
+	keepMarketplaceMessages,
+	type ListedMarketplaceMessage,
+} from "./marketplace-messages";
 import { replyFileData } from "./reply-files";
 import { Refused, Unsure } from "./states";
 import { ensureThread } from "./threads";
@@ -25,7 +29,8 @@ import { ensureThread } from "./threads";
 // so a run that failed or ran late leaves no gap; and our replies sent into
 // them. It needs the seller.customer_service scope (pnpm tiktok:authorize).
 // TikTok opens a conversation for every order and fills it with its own
-// notices (ROBOT and SYSTEM); only one a buyer wrote in becomes a thread.
+// notices (ROBOT and SYSTEM); only one a buyer wrote in becomes a thread,
+// and its notices are kept with it (marketplace-messages.ts).
 
 const BASE = "/customer_service/202309/conversations";
 
@@ -126,6 +131,49 @@ export function orderOf(messages: Message[]) {
 			if (id) return id;
 		}
 	return null;
+}
+
+// One of TikTok's own, as the thread shows it; none when hidden or empty.
+// Its order and shipping cards carry only IDs, so the card is katasync's
+// own, from the order.
+export function marketplaceMessage(
+	m: Message,
+): ListedMarketplaceMessage | null {
+	if (m.is_visible === false || fromPerson(m)) return null;
+	const c = contentOf(m);
+	const base = { externalId: m.id, at: new Date(m.create_time * 1000) };
+	const orderRef = field(c, "order_id");
+	switch (m.type) {
+		case "ORDER_CARD":
+			return orderRef
+				? { ...base, kind: "order_card", orderRef }
+				: { ...base, kind: "other" };
+		case "LOGISTICS_CARD":
+			return orderRef
+				? {
+						...base,
+						kind: "shipping_card",
+						orderRef,
+						packageRef: field(c, "package_id") ?? null,
+					}
+				: { ...base, kind: "other" };
+		case "TEXT":
+		case "NOTIFICATION":
+		case "ALLOCATED_SERVICE": {
+			const body = field(c, "content")?.trim();
+			if (!body) return null;
+			return {
+				...base,
+				kind:
+					m.type === "TEXT" && m.sender.role === "ROBOT"
+						? "assistant"
+						: "notice",
+				body,
+			};
+		}
+		default:
+			return { ...base, kind: "other" };
+	}
 }
 
 const listed = (m: Message): ListedMessage => ({
@@ -262,6 +310,11 @@ async function syncConversation(
 			orderRef: orderOf(messages),
 		}));
 	await keepConversation(db, kept.id, people.map(listed), { apart: true });
+	await keepMarketplaceMessages(
+		db,
+		kept.id,
+		messages.flatMap((m) => marketplaceMessage(m) ?? []),
+	);
 	const order = kept.orderRef ? null : orderOf(messages);
 	await db
 		.update(buyerThreads)

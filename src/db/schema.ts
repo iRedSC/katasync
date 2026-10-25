@@ -3189,6 +3189,53 @@ export const buyerMessages = pgTable(
 	],
 );
 
+// What the marketplace itself put in a conversation (TikTok's): its
+// assistant's answers, its notices (a buyer asking for a person, a chat
+// timing out), and its order and shipping cards. Shown with the thread,
+// kept apart from buyer_messages so none ever counts as the buyer writing
+// or as our answer. other: a kind only the marketplace's own site shows.
+export const marketplaceMessageKind = pgEnum("marketplace_message_kind", [
+	"assistant",
+	"notice",
+	"order_card",
+	"shipping_card",
+	"other",
+]);
+
+export const buyerMarketplaceMessages = pgTable(
+	"buyer_marketplace_messages",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		threadId: integer()
+			.notNull()
+			.references(() => buyerThreads.id),
+		externalId: text().notNull(),
+		kind: marketplaceMessageKind().notNull(),
+		body: text().notNull().default(""),
+		// The marketplace's order ID (cards), and its package (shipping).
+		orderRef: text(),
+		packageRef: text(),
+		at: timestamp({ withTimezone: true }).notNull(),
+		// As on buyer_messages: the language, and English when it isn't.
+		language: text(),
+		english: text(),
+	},
+	(t) => [
+		uniqueIndex("buyer_marketplace_messages_thread_external_id").on(
+			t.threadId,
+			t.externalId,
+		),
+		check(
+			"buyer_marketplace_messages_card_has_order",
+			sql`(${t.kind} in ('order_card', 'shipping_card')) = (${t.orderRef} is not null)`,
+		),
+		check(
+			"buyer_marketplace_messages_words_have_body",
+			sql`${t.kind} not in ('assistant', 'notice') or ${t.body} <> ''`,
+		),
+	],
+);
+
 // The last time each marketplace's buyer messages were read in full, and why
 // the latest try failed if it did, so a source katasync can't reach shows as
 // broken rather than quiet. Amazon's is the marketplaces mailbox's check.

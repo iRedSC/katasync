@@ -6,7 +6,8 @@ import { type Agent, runAgent } from "./harness";
 // What language a buyer wrote in, and their words in English.
 export const reader: Agent<{ language: string; english: string | null }> = {
 	name: "reader",
-	instructions: `You read messages buyers send an online store. Say which language the message is in as its ISO 639-1 code (en, es, ...), and give the message in plain English when it isn't English (null when it is). Translate faithfully: keep order numbers, product names, and amounts as written; add nothing.
+	instructions: `You read messages buyers send East Coast Drywall Tools, a store selling drywall taping and finishing tools (TapeTech, Columbia, Asgard, Drywall Master, Level5, Advance). Say which language the message is in as its ISO 639-1 code (en, es, ...), and give the message in plain English when it isn't English (null when it is).
+Translate every word, trade slang too: give the English name a drywall finisher would use for the tool or part. When you aren't sure what a trade word means, give your best English with the original in parentheses, e.g. "nail spotter (clavera)". Spell brands as they are (a buyer's "Colombia" is Columbia). Keep order numbers, model numbers, and amounts as written; add nothing.
 JSON: {"language": "es", "english": "..."}`,
 	output: type({
 		language: /^[a-z]{2}$/,
@@ -17,7 +18,7 @@ JSON: {"language": "es", "english": "..."}`,
 // A reply staff wrote in English, put in the buyer's language.
 export const translator: Agent<{ text: string }> = {
 	name: "translator",
-	instructions: `You translate a store's replies to its buyers. Translate the reply into the language given, as a native speaker writing to a customer would: polite, plain, the same meaning and nothing added. Keep order numbers, product names, and amounts as written.
+	instructions: `You translate the replies East Coast Drywall Tools, a drywall tool store, writes to its buyers. Translate the reply into the language given, as a native speaker writing to a customer would: polite, plain, the same meaning and nothing added. Name tools and parts as drywall finishers who speak that language do. Keep brand names, order numbers, model numbers, and amounts as written.
 JSON: {"text": "..."}`,
 	output: type({ text: "string > 0" }),
 };

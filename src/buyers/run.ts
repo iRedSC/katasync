@@ -9,6 +9,7 @@ import { buyerMessageChecks } from "#/db/schema";
 import { threadAmazonMail } from "./amazon-mail";
 import { draftWaiting, readNewMessages } from "./drafts";
 import { syncEbayMessages } from "./ebay-messages";
+import { readMarketplaceMessages } from "./marketplace-messages";
 import { settleReplies } from "./send";
 import { syncTiktokMessages } from "./tiktok-messages";
 
@@ -45,10 +46,16 @@ export async function runBuyerMessages(db: Db, { sweep = false } = {}) {
 		runAgent(agent, input, { ...options, deadline });
 	const ai = aiConfigured()
 		? await readNewMessages(db, 20, run)
-				.then(async (read) => ({
-					...read,
-					drafted: await draftWaiting(db, 4, run),
-				}))
+				.then(async (read) => {
+					// The marketplace's own words too, so a draft knows what its
+					// assistant already told the buyer.
+					const theirs = await readMarketplaceMessages(db, 20, run);
+					return {
+						read: read.read + theirs.read,
+						problems: [...read.problems, ...theirs.problems],
+						drafted: await draftWaiting(db, 4, run),
+					};
+				})
 				.catch((e: unknown) => ({
 					problems: [e instanceof Error ? e.message : String(e)],
 				}))

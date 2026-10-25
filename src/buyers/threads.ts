@@ -22,6 +22,7 @@ import {
 	stores,
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
+import { marketplaceMessagesOf } from "./marketplace-messages";
 import { answers, type ReplyStatus } from "./states";
 
 // Conversations with buyers, as katasync keeps them: read in from each
@@ -330,9 +331,9 @@ export async function threadsPage(
 						),
 					)
 					.orderBy(asc(buyerMessages.at), asc(buyerMessages.id));
-	const [drafts, precedents] =
+	const [drafts, precedents, marketplace] =
 		unique.length === 0
-			? [[], []]
+			? [[], [], []]
 			: await Promise.all([
 					db
 						.select()
@@ -346,6 +347,10 @@ export async function threadsPage(
 					db
 						.select({ id: replyPrecedents.id, name: replyPrecedents.name })
 						.from(replyPrecedents),
+					marketplaceMessagesOf(
+						db,
+						unique.map((t) => t.id),
+					),
 				]);
 	const shaped = unique.map((t) => {
 		const own = messages
@@ -361,6 +366,9 @@ export async function threadsPage(
 		return {
 			...t,
 			messages: own,
+			// The marketplace's own, shown with them; never counted as either
+			// side's.
+			marketplace: marketplace.filter((m) => m.threadId === t.id),
 			lastAt: last?.at ?? null,
 			waiting: t.doneAt ? null : waitingOn(t.market, own),
 			// The buyer's language, from their latest message read.
