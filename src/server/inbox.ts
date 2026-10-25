@@ -25,6 +25,7 @@ import {
 	updateRule,
 } from "#/inbox/rule-store";
 import { FOLDERS, ruleSchema } from "#/inbox/rules";
+import { retryVoicemail, voicemailProducts } from "#/inbox/voicemail";
 import { countUnfiled, emailHtml } from "#/purchasing/inbox/ingest";
 
 // The Inbox page's server side: the marketplaces mailbox and the rules that
@@ -38,13 +39,18 @@ const folder = "'orders' | 'returns' | 'violations' | 'updates'";
 export const listMarketMail = createServerFn({ method: "GET" })
 	.validator(
 		type({
-			view: `${folder} | 'important' | 'done'`,
+			view: `${folder} | 'important' | 'done' | 'voicemails'`,
 			market: `${market} | null`,
 			"after?": { at: "number.integer", id: "number.integer > 0" },
 		}),
 	)
 	.handler(async ({ data }) =>
-		marketMailPage(getDb(), data.view, data.market, { after: data.after }),
+		marketMailPage(
+			getDb(),
+			data.view,
+			data.view === "voicemails" ? null : data.market,
+			{ after: data.after },
+		),
 	);
 
 export const setMarketEmailDone = createServerFn({ method: "POST" })
@@ -71,7 +77,17 @@ export const markMarketEmailImportant = createServerFn({ method: "POST" })
 
 // Reads the mailbox now, as the sweep does, so staff needn't wait for it.
 export const checkMarketMailNow = createServerFn({ method: "POST" }).handler(
-	async () => readMarketMail({ since: new Date(), sweep: true, db: getDb }),
+	async () => {
+		const deadline = Date.now() + 150_000;
+		const mail = await readMarketMail({
+			since: new Date(),
+			sweep: true,
+			db: getDb,
+		});
+		const { triageVoicemails } = await import("#/inbox/voicemail");
+		await triageVoicemails(getDb(), { deadline });
+		return mail;
+	},
 );
 
 // What waits in every folder, for the side list: buyers waiting on a reply,
@@ -86,7 +102,7 @@ export const inboxCounts = createServerFn({ method: "GET" })
 			db
 				.select({
 					folder: marketEmails.folder,
-					n: sql<number>`count(*)::int`,
+					n: sql<number>`(count(*) filter (where ${marketEmails.voicemail} is null))::int`,
 					important: sql<number>`(count(*) filter (where ${marketEmails.important}))::int`,
 					critical: sql<number>`(count(*) filter (where ${marketEmails.critical}))::int`,
 				})
@@ -102,7 +118,18 @@ export const inboxCounts = createServerFn({ method: "GET" })
 			countUnfiled(db),
 			countWaiting(db, data.market),
 		]);
+		const [voicemails] = await db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(marketEmails)
+			.where(
+				and(
+					isNull(marketEmails.doneAt),
+					isNull(marketEmails.readAt),
+					sql`${marketEmails.voicemail} is not null`,
+				),
+			);
 		return {
+			voicemails: voicemails.count,
 			important: rows.reduce((s, r) => s + r.important, 0),
 			critical: rows.reduce((s, r) => s + r.critical, 0),
 			...(Object.fromEntries(
@@ -115,6 +142,14 @@ export const inboxCounts = createServerFn({ method: "GET" })
 	});
 
 export type InboxCounts = Awaited<ReturnType<typeof inboxCounts>>;
+
+export const retryVoicemailTriage = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(({ data }) => retryVoicemail(getDb(), data.id));
+
+export const getVoicemailProducts = createServerFn({ method: "GET" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(({ data }) => voicemailProducts(getDb(), data.id));
 
 export const getMailRules = createServerFn({ method: "GET" }).handler(
 	async () => listRules(getDb()),
