@@ -13,6 +13,7 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import { knownOf } from "#/orders/tracking-read";
 import { draftFits } from "./chat-way";
 import { orderSummary } from "./order";
 import { basePrompt, listPrecedents } from "./precedents";
@@ -227,15 +228,24 @@ async function brief(db: Db, threadId: number, about: string | null) {
 						items: lines,
 						// Where each package is now, by the carrier.
 						packages:
-							(await orderSummary(db, order.id)).packages.map((p) => ({
-								carrier: p.carrier,
-								tracking: p.number,
-								shipped: p.shippedAt,
-								status: p.status,
-								detail: p.statusDetail,
-								arrives: p.eta,
-								delivered: p.deliveredAt,
-							})) ?? sent,
+							(await orderSummary(db, order.id)).packages.map((p) => {
+								const t = knownOf(p.tracking);
+								return {
+									carrier: p.carrier,
+									tracking: p.number,
+									shipped: p.shippedAt,
+									status: t?.status ?? null,
+									detail: t?.statusDetail ?? null,
+									arrives: t?.eta ?? null,
+									delivered: t?.status === "DELIVERED" ? t.statusAt : null,
+									// Scans from before a failed refresh are only as of then.
+									as_of: t?.checkedAt ?? null,
+									...(p.tracking.state === "stale" ||
+									p.tracking.state === "failed"
+										? { tracking_unavailable: p.tracking.why }
+										: {}),
+								};
+							}) ?? sent,
 					}
 				: thread.orderRef
 					? { number: thread.orderRef, note: "not in our records yet" }

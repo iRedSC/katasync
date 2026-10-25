@@ -17,4 +17,5 @@ CREATE TABLE "buyer_chat_starts" (
 ALTER TABLE "reply_drafts" ADD COLUMN "order_ref" text;--> statement-breakpoint
 ALTER TABLE "buyer_chat_starts" ADD CONSTRAINT "buyer_chat_starts_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "buyer_chat_starts" ADD CONSTRAINT "buyer_chat_starts_thread_id_buyer_threads_id_fk" FOREIGN KEY ("thread_id") REFERENCES "public"."buyer_threads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "buyer_chat_starts_order_idx" ON "buyer_chat_starts" USING btree ("order_id","created_at");
+CREATE INDEX "buyer_chat_starts_order_idx" ON "buyer_chat_starts" USING btree ("order_id","created_at");--> statement-breakpoint
+GRANT SELECT ON "buyer_chat_starts" TO katasync_mcp;

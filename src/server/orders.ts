@@ -25,11 +25,17 @@ import {
 import { orderMail } from "#/inbox/order-mail";
 import { adminUrls, returnPage } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
+import { readTracking } from "#/orders/package-tracking";
 import { returnStages } from "#/orders/return-stage";
 import { committedStock, returnQuantity } from "#/orders/return-stock";
-import { followReturn, trackingFor } from "#/orders/return-tracking";
+import {
+	followReturn,
+	returnTrackingPage,
+	trackingFor,
+} from "#/orders/return-tracking";
 import { stockEffectApplied } from "#/orders/stock-effects";
 import { financialStatus, labelToVoid, needsShipping } from "#/orders/to-ship";
+import { afterFailure, type TrackingRead } from "#/orders/tracking-read";
 import { type SameBuyer, sameBuyerOrders } from "#/shipping/same-buyer";
 import { sendsOf } from "#/shipping/sends";
 
@@ -293,6 +299,7 @@ export const getOrder = createServerFn({ method: "GET" })
 					trackingNumber: returnRequests.trackingNumber,
 					carrier: returnRequests.carrier,
 					requestedAt: returnRequests.requestedAt,
+					unfollowedAt: returnRequests.unfollowedAt,
 					saved: {
 						carrier: returnTracking.carrier,
 						number: returnTracking.number,
@@ -394,6 +401,8 @@ export const getOrder = createServerFn({ method: "GET" })
 				...r,
 				// Where its package is, as Shippo last said; null until asked.
 				tracking: trackingFor(r.trackingNumber, saved),
+				// The carrier's own page for it, to look for ourselves.
+				trackingPage: returnTrackingPage(r.carrier, r.trackingNumber),
 				lines: requestLines
 					.filter((l) => l.requestId === r.id)
 					.map(({ requestId: _, ...l }) => l),
@@ -430,24 +439,46 @@ export const getOrder = createServerFn({ method: "GET" })
 	});
 
 // Asks Shippo where a return request's package is and keeps the answer,
-// for an order opened before the four-hourly sweep has asked. Null when
-// its carrier isn't one Shippo follows.
+// as its order opens, between the four-hourly sweeps.
 export const followReturnNow = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0" }))
-	.handler(async ({ data }) => {
+	.handler(async ({ data }): Promise<TrackingRead> => {
 		const db = getDb();
 		const [r] = await db
 			.select({
 				id: returnRequests.id,
 				carrier: returnRequests.carrier,
 				trackingNumber: returnRequests.trackingNumber,
+				saved: returnTracking,
 			})
 			.from(returnRequests)
+			.leftJoin(
+				returnTracking,
+				eq(returnTracking.returnRequestId, returnRequests.id),
+			)
 			.where(eq(returnRequests.id, data.id));
-		const saved = r ? await followReturn(db, r) : null;
-		if (!saved) return null;
-		const { returnRequestId: _, ...t } = saved;
-		return t;
+		if (!r) throw new Error(`No return request ${data.id}`);
+		const follow = await followReturn(db, r);
+		const strip = ({
+			returnRequestId: _,
+			...t
+		}: typeof returnTracking.$inferSelect) => t;
+		if (follow.state === "checked")
+			return { state: "fresh", t: strip(follow.saved) };
+		if (follow.state === "unsupported") return { state: "unsupported" };
+		const kept = trackingFor(r.trackingNumber, r.saved);
+		return afterFailure(kept && strip(kept), new Error(follow.why));
+	});
+
+// Stops, or starts again, following a return's package: one coming back
+// some other way, or never coming, isn't asked about every four hours.
+export const setReturnFollowed = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", followed: "boolean" }))
+	.handler(async ({ data }) => {
+		await getDb()
+			.update(returnRequests)
+			.set({ unfollowedAt: data.followed ? null : new Date() })
+			.where(eq(returnRequests.id, data.id));
 	});
 
 export { listInvoices, markInvoicesPrinted } from "./orders/invoices";
@@ -468,7 +499,20 @@ export type OrderRow = Awaited<ReturnType<typeof listOrders>>["orders"][number];
 export type OrderDetail = Awaited<ReturnType<typeof getOrder>>;
 
 // Each package the order went out in, with every scan the carrier has
-// given; asked of the channel and the carriers as the page opens.
+// given, and whether the channel's list of them could be read; asked of the
+// channel and the carriers as the page opens.
 export const getOrderPackages = createServerFn({ method: "GET" })
 	.validator(type({ id: "number.integer > 0" }))
-	.handler(async ({ data }) => (await orderSummary(getDb(), data.id)).packages);
+	.handler(async ({ data }) => {
+		const { packages, channel } = await orderSummary(getDb(), data.id);
+		return { packages, channel };
+	});
+
+// Asks Shippo again about one package, for its retry button.
+export const retryTracking = createServerFn({ method: "POST" })
+	.validator(
+		type({ carrier: "'ups' | 'usps' | 'fedex'", number: "0 < string <= 60" }),
+	)
+	.handler(async ({ data }) =>
+		readTracking(getDb(), data.carrier, data.number),
+	);

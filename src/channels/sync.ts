@@ -2,6 +2,8 @@ import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { type Db, withOwnConnection } from "#/db/client";
 import { syncRuns } from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
+import type { FeedOutcome } from "#/diagnostics/feed-health";
+import { readingFeed } from "#/diagnostics/feed-record";
 import { recordSyncRun } from "#/diagnostics/runs";
 import {
 	type PostedLister,
@@ -21,6 +23,7 @@ import { fetchEbayCharges } from "./finance/ebay";
 import { fetchShopifyCharges } from "./finance/shopify";
 import { fetchTiktokCharges } from "./finance/tiktok";
 import type { OrderUpdate, WebhookUpdate } from "./order-update";
+import { returnsPass } from "./returns-pass";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
 import { stockLocations } from "./stores";
 import { ingestTiktokOrder, syncTiktok } from "./tiktok";
@@ -28,7 +31,8 @@ import { ingestTiktokOrder, syncTiktok } from "./tiktok";
 // One sync pass of a channel: pull its orders (and, with `listings`, its
 // listings), catch up its lines that now have a product, set its stores'
 // listing quantities where stock push is on (src/stock-push), record the run
-// for Diagnostics, then pin any new orders to ship.
+// and the orders feed for Diagnostics, then pin any new orders to ship.
+// Returns have their own pass (returnsPassAlone).
 // Shared by `pnpm sync` (scripts/sync.ts) and the Vercel crons
 // (src/routes/api/cron/sync.$channel.ts). Server only.
 
@@ -59,7 +63,23 @@ export async function syncPass(
 	channel: SyncedChannel,
 	options: { listings: boolean },
 ) {
-	const result = await recordSyncRun(db, channel, async () => {
+	const result = await readingFeed(
+		db,
+		channel,
+		"orders",
+		() => ordersPass(db, channel, options),
+		(r) => ({ kind: "read", problems: r.problems }),
+	);
+	const pinned = await assignOrderPins(db);
+	return { ...result, pinned };
+}
+
+function ordersPass(
+	db: Db,
+	channel: SyncedChannel,
+	options: { listings: boolean },
+) {
+	return recordSyncRun(db, channel, async () => {
 		const started = new Date();
 		const pass = await passes[channel](db, options.listings);
 		const caughtUp = await applySkusToOrders(
@@ -90,8 +110,6 @@ export async function syncPass(
 			],
 		};
 	});
-	const pinned = await assignOrderPins(db);
-	return { ...result, pinned };
 }
 
 // The same pass, unless another of this channel is already running anywhere:
@@ -116,7 +134,7 @@ export type WatchedPass =
 	// Another pass or a webhook holds the channel; nothing finished for this ask.
 	| { state: "busy" }
 	// A pass finished within freshFor; another now would only repeat it.
-	| { state: "fresh"; at: Date }
+	| { state: "fresh"; at: Date; problems: number }
 	// The pass that finished within freshFor failed; it isn't retried until then.
 	| { state: "failed"; error: string };
 
@@ -135,7 +153,11 @@ export async function watchedPass(
 		async (): Promise<WatchedPass> => {
 			const since = new Date(Date.now() - freshForMs);
 			const [recent] = await db
-				.select({ finishedAt: syncRuns.finishedAt, error: syncRuns.error })
+				.select({
+					finishedAt: syncRuns.finishedAt,
+					error: syncRuns.error,
+					problems: syncRuns.problems,
+				})
 				.from(syncRuns)
 				.where(
 					and(
@@ -148,7 +170,11 @@ export async function watchedPass(
 				.limit(1);
 			if (recent?.finishedAt) {
 				if (recent.error) return { state: "failed", error: recent.error };
-				return { state: "fresh", at: recent.finishedAt };
+				return {
+					state: "fresh",
+					at: recent.finishedAt,
+					problems: recent.problems,
+				};
 			}
 			const result = await syncPass(db, channel, { listings: false });
 			return {
@@ -192,7 +218,7 @@ export async function costPassAlone(
 	// so it has a lock of its own: hours of old orders mustn't hold up new ones.
 	const purpose = options.history ? "cost-history" : "cost-pass";
 	const until = Date.now() + (options.keepGoingForMs ?? 0);
-	return holdingChannel(channel, { purpose }, async () => {
+	const pass = async () => {
 		const total = { checked: 0, reported: 0, problems: [] as string[] };
 		const listPosted = postedListers[channel];
 		if (listPosted && !options.history) {
@@ -230,7 +256,33 @@ export async function costPassAlone(
 			const allFailed = batch.problems.length >= batch.checked;
 			if (batch.checked === 0 || allFailed || Date.now() >= until) return total;
 		}
-	});
+	};
+	// The history catch-up reads orders no regular pass would; it isn't the
+	// charges feed.
+	return holdingChannel(channel, { purpose }, () =>
+		options.history
+			? pass()
+			: readingFeed(db, channel, "charges", pass, chargesOutcome),
+	);
+}
+
+// Every order failing is likely an outage or a login, not single orders.
+function chargesOutcome(total: {
+	checked: number;
+	problems: string[];
+}): FeedOutcome {
+	if (total.checked > 0 && total.problems.length >= total.checked)
+		return { kind: "failed", error: total.problems[0] };
+	return { kind: "read", problems: total.problems };
+}
+
+// One returns pass of the channel (returns-pass.ts), unless the last one is
+// still running. Returns null if it is. It writes returns, never orders, so
+// it doesn't wait on the order sync.
+export async function returnsPassAlone(db: Db, channel: SyncedChannel) {
+	return holdingChannel(channel, { purpose: "returns-pass" }, () =>
+		returnsPass(db, channel),
+	);
 }
 
 const ingestOne: Partial<
@@ -279,7 +331,7 @@ export async function ingestWebhookOrder(
 async function holdingChannel<T>(
 	channel: SyncedChannel,
 	options: {
-		purpose: "sync-pass" | "cost-pass" | "cost-history";
+		purpose: "sync-pass" | "cost-pass" | "cost-history" | "returns-pass";
 		waitFor?: string;
 	},
 	work: () => Promise<T>,

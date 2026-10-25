@@ -147,6 +147,8 @@ export async function syncEbayMessages(db: Db, { sweep = false } = {}) {
 			? new Date(check.readThrough.getTime() - 2 * 86_400_000)
 			: new Date(startedAt.getTime() - 30 * 86_400_000);
 	const problems: string[] = [];
+	// Why nothing could be read at all, apart from single conversations.
+	let failed: string | undefined;
 	let read = 0;
 	try {
 		const t = await token();
@@ -167,7 +169,8 @@ export async function syncEbayMessages(db: Db, { sweep = false } = {}) {
 			url = page.next;
 		}
 	} catch (error) {
-		problems.unshift(error instanceof Error ? error.message : String(error));
+		failed = error instanceof Error ? error.message : String(error);
+		problems.unshift(failed);
 	}
 	const set =
 		problems.length === 0
@@ -182,7 +185,7 @@ export async function syncEbayMessages(db: Db, { sweep = false } = {}) {
 		.insert(buyerMessageChecks)
 		.values({ market: "ebay", ...set })
 		.onConflictDoUpdate({ target: buyerMessageChecks.market, set });
-	return { read, problems };
+	return { read, problems, failed };
 }
 
 // One conversation; false when its latest message was already kept.

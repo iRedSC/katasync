@@ -121,13 +121,16 @@ test("a package shipped on the channel's label shows with every scan, once", asy
 			carrier: "FedEx",
 			number: "384131747581",
 			url: "https://www.fedex.com/fedextrack/?trknbr=384131747581",
-			status: "DELIVERED",
 			tracking: {
-				carrier: "fedex",
-				history: [
-					{ detail: "Picked up" },
-					{ detail: "Delivered, Front Door/Porch" },
-				],
+				state: "fresh",
+				t: {
+					carrier: "fedex",
+					status: "DELIVERED",
+					history: [
+						{ detail: "Picked up" },
+						{ detail: "Delivered, Front Door/Porch" },
+					],
+				},
 			},
 		},
 	]);
@@ -139,12 +142,20 @@ test("a package shipped on the channel's label shows with every scan, once", asy
 	expect(tiktokApi).toHaveBeenCalledTimes(2);
 });
 
-test("a channel that can't be asked keeps what was known", async () => {
+test("a channel that can't be asked keeps what was known, and says so", async () => {
 	await orderSummary(db, orderId);
 	await db.update(orders).set({ sourceUpdatedAt: new Date() });
 	vi.mocked(tiktokApi).mockRejectedValue(new Error("down"));
-	const { packages } = await orderSummary(db, orderId);
+	const { packages, channel } = await orderSummary(db, orderId);
 	expect(packages.map((p) => p.number)).toEqual(["384131747581", "9400 111"]);
+	expect(channel).toEqual({ state: "stale", why: "down", name: "tiktok" });
+});
+
+test("a channel never read that can't be asked fails, not empty", async () => {
+	vi.mocked(tiktokApi).mockRejectedValue(new Error("down"));
+	const { packages, channel } = await orderSummary(db, orderId);
+	expect(packages).toEqual([]);
+	expect(channel).toEqual({ state: "failed", why: "down", name: "tiktok" });
 });
 
 test("carriers by name, or by the number's shape", () => {

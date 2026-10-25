@@ -25,16 +25,22 @@ export const Route = createFileRoute("/api/cron/tracking")({
 					});
 				if (!fromVercel(request))
 					return new Response("Not from Vercel Cron", { status: 401 });
-				const [{ retryDueTracking }, { refreshReturnTracking }, { getDb }] =
-					await Promise.all([
-						import("#/shipping/retry"),
-						import("#/orders/return-tracking"),
-						import("#/db/client"),
-					]);
+				const [
+					{ retryDueTracking },
+					{ refreshReturnTracking },
+					{ sweepingTracking },
+					{ getDb },
+				] = await Promise.all([
+					import("#/shipping/retry"),
+					import("#/orders/return-tracking"),
+					import("#/shipping/tracking-feed"),
+					import("#/db/client"),
+				]);
 				const db = getDb();
 				// Each on its own, so Shippo being down never stops the retries.
+				// The retries count as each channel's tracking feed.
 				const [sent, returns] = await Promise.all([
-					retryDueTracking(db),
+					sweepingTracking(db, () => retryDueTracking(db)),
 					refreshReturnTracking(db).catch((e: unknown) => ({
 						error: e instanceof Error ? e.message : String(e),
 					})),

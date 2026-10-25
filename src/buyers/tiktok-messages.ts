@@ -223,6 +223,8 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 			? from
 			: new Date(check.readThrough.getTime() - 15 * 60_000);
 	const problems: string[] = [];
+	// Why nothing could be read at all, apart from single conversations.
+	let failed: string | undefined;
 	let read = 0;
 	try {
 		const cipher = await shopCipher();
@@ -256,7 +258,8 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 					: "";
 		} while (token);
 	} catch (error) {
-		problems.unshift(error instanceof Error ? error.message : String(error));
+		failed = error instanceof Error ? error.message : String(error);
+		problems.unshift(failed);
 	}
 	const set =
 		problems.length === 0
@@ -271,7 +274,7 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 		.insert(buyerMessageChecks)
 		.values({ market: "tiktok", ...set })
 		.onConflictDoUpdate({ target: buyerMessageChecks.market, set });
-	return { read, problems };
+	return { read, problems, failed };
 }
 
 // One conversation; false when nothing in it was new.

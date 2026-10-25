@@ -1,17 +1,9 @@
 import { type } from "arktype";
-import { and, eq, inArray, lt } from "drizzle-orm";
 import { XMLParser } from "fast-xml-parser";
 import type { Db } from "#/db/client";
-import { returnRequests } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
-import { importReturns } from "#/orders/return-requests";
 import type { OrderTax } from "#/orders/tax";
-import {
-	DISCOVERY_DAYS,
-	fetchEbayReturns,
-	fetchOlderOpenReturns,
-} from "./ebay-returns";
 import {
 	type ChannelListing,
 	markGoneListings,
@@ -329,28 +321,6 @@ async function activeListings(): Promise<ChannelListing[]> {
 }
 
 const FIRST_SYNC_DAYS = 60;
-const DAY = 24 * 60 * 60 * 1000;
-
-// eBay returns still open that discovery no longer reads by creation date.
-function openOlderReturns(db: Db, now: Date) {
-	return db
-		.select({
-			externalId: returnRequests.externalId,
-			requestedAt: returnRequests.requestedAt,
-		})
-		.from(returnRequests)
-		.where(
-			and(
-				eq(returnRequests.billedBy, "ebay"),
-				inArray(returnRequests.status, ["requested", "shipped", "delivered"]),
-				lt(
-					returnRequests.requestedAt,
-					new Date(now.getTime() - DISCOVERY_DAYS * DAY),
-				),
-			),
-		);
-}
-
 export async function syncEbay(db: Db, options: { listings: boolean }) {
 	const store = await ensureStore(db, "ebay", {
 		id: "ebay-us",
@@ -411,25 +381,6 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
-	// Returns after orders, so a return on a new order finds it. Every
-	// listings pass rereads recent returns, and each open older one from its
-	// own window, so a closure after discovery's reach comes through.
-	if (options.listings)
-		problems.push(
-			...(await importReturns(db, store, async () => {
-				const now = new Date();
-				return [
-					...(await fetchEbayReturns(
-						new Date(now.getTime() - DISCOVERY_DAYS * DAY),
-						now,
-					)),
-					...(await fetchOlderOpenReturns(
-						await openOlderReturns(db, now),
-						now,
-					)),
-				];
-			})),
-		);
 	return { store: store.name, listings, created, orders: count, problems };
 }
 
