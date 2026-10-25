@@ -616,6 +616,9 @@ export async function readMarketMail(options: {
 	const threaded = await import("#/buyers/amazon-mail")
 		.then((m) => m.threadAmazonMail(db))
 		.catch(() => null);
+	const shopify = await import("#/buyers/shopify-mail")
+		.then((m) => m.threadShopifyMail(db))
+		.catch(() => null);
 	const resorted = options.sweep ? await resort(db) : null;
 	const formatted = options.sweep
 		? await backfillMarketHtml(db, (messageId) =>
@@ -630,6 +633,7 @@ export async function readMarketMail(options: {
 	return {
 		...result,
 		threaded,
+		shopify,
 		resorted,
 		formatted,
 		...(outcome.state === "complete" ? {} : { error: outcome.error }),

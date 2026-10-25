@@ -296,7 +296,12 @@ export function BuyerConversation({
 			<div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
 				{timeline.map((e) =>
 					"m" in e ? (
-						<Bubble key={e.key} message={e.m} onAgain={() => again(e.m)} />
+						<Bubble
+							key={e.key}
+							message={e.m}
+							emailed={t.market === "shopify"}
+							onAgain={() => again(e.m)}
+						/>
 					) : (
 						<MarketplaceBubble key={e.key} item={e.item} market={t.market} />
 					),
@@ -509,6 +514,13 @@ const STATUS: Record<
 	},
 };
 
+// A Shopify buyer is emailed: delivered is only as far as their mail
+// server, and whether they read it is never known.
+const EMAILED: Partial<typeof STATUS> = {
+	sent: { icon: Check, label: "Sent, on its way to their mail server" },
+	delivered: { icon: CheckCheck, label: "Sent: their mail server took it" },
+};
+
 const LOGGED = {
 	icon: NotebookPen,
 	label: "Added without sending: sent on the marketplace",
@@ -524,12 +536,18 @@ const AGAIN: Partial<Record<Status, string>> = {
 
 function Bubble({
 	message: m,
+	emailed = false,
 	onAgain,
 }: {
 	message: Shown;
+	emailed?: boolean;
 	onAgain: () => void;
 }) {
-	const s = m.logged ? LOGGED : m.status ? STATUS[m.status] : null;
+	const s = m.logged
+		? LOGGED
+		: m.status
+			? ((emailed ? EMAILED[m.status] : undefined) ?? STATUS[m.status])
+			: null;
 	const [original, setOriginal] = useState(false);
 	const translated = Boolean(m.english) && !original;
 	return (

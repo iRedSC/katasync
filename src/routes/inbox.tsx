@@ -31,8 +31,9 @@ import { listPoEmails } from "#/server/purchasing";
 type Search = {
 	folder?: Exclude<InboxFolder, "important">;
 	market?: Market;
-	// Buyers: the threads done with rather than open.
+	// Buyers: the threads done with rather than open, and the one to open.
 	threads?: "done";
+	thread?: number;
 	// Rules: the one open, or a new one started from an email's sender.
 	rule?: number;
 	sender?: string;
@@ -56,6 +57,9 @@ export const Route = createFileRoute("/inbox")({
 				: {}),
 			...(folder === "buyers" && s.threads === "done"
 				? { threads: "done" as const }
+				: {}),
+			...(folder === "buyers" && typeof s.thread === "number"
+				? { thread: s.thread }
 				: {}),
 			...(folder === "rules" && typeof s.rule === "number"
 				? { rule: s.rule }
@@ -113,7 +117,7 @@ export const Route = createFileRoute("/inbox")({
 
 function InboxPage() {
 	const d = Route.useLoaderData();
-	const { market, rule, sender, to } = Route.useSearch();
+	const { market, rule, sender, to, thread } = Route.useSearch();
 	return (
 		<Page
 			title="Inbox"
@@ -134,6 +138,7 @@ function InboxPage() {
 					market={market ?? null}
 					page={d.page}
 					counts={d.counts}
+					open={thread ?? null}
 				/>
 			) : d.kind === "precedents" ? (
 				<InboxFrame

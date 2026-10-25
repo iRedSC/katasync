@@ -640,6 +640,10 @@ export const orders = pgTable(
 		// The buyer's account on the marketplace (TikTok's user_id). TikTok hides
 		// the address from us, so it's how two orders are known to be one buyer's.
 		buyerId: text(),
+		// Where to email the buyer from katasync (src/buyers/shopify-mail.ts).
+		// Shopify's own orders only: a relayed order's buyer is the
+		// marketplace's to talk to, so it never has one.
+		buyerEmail: text(),
 		shipAddress1: text(),
 		shipAddress2: text(),
 		shipCity: text(),

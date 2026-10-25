@@ -3,6 +3,7 @@ import { type } from "arktype";
 import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { orderSummary } from "#/buyers/order";
+import { emailUnready } from "#/buyers/shopify-mail";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
@@ -169,6 +170,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				fulfilledByChannel: orders.fulfilledByChannel,
 				financialStatus,
 				customerName: orders.customerName,
+				buyerEmail: orders.buyerEmail,
 				shipAddress1: orders.shipAddress1,
 				shipAddress2: orders.shipAddress2,
 				shipCity: orders.shipCity,
@@ -410,6 +412,14 @@ export const getOrder = createServerFn({ method: "GET" })
 			),
 			mail,
 			buyerOrders,
+			// Shopify's own buyers are emailed from katasync; why not yet, if
+			// it isn't set up.
+			emailBuyer:
+				order.channel === "shopify" &&
+				!order.marketplaceOrderId &&
+				order.buyerEmail
+					? { to: order.buyerEmail, unready: emailUnready() }
+					: null,
 		};
 	});
 
