@@ -104,9 +104,14 @@ test("the order's products and where each package is", async () => {
 			number: "9400111",
 			// TikTok labels have none of their own: the carrier's page.
 			url: "https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111",
-			status: "TRANSIT",
-			statusDetail: "Arrived at USPS facility",
-			eta: new Date("2026-10-24T20:00:00Z"),
+			tracking: {
+				state: "fresh",
+				t: {
+					status: "TRANSIT",
+					statusDetail: "Arrived at USPS facility",
+					eta: new Date("2026-10-24T20:00:00Z"),
+				},
+			},
 		},
 	]);
 });
@@ -118,5 +123,47 @@ test("a carrier that can't be asked leaves what katasync knows", async () => {
 		vi.fn(async () => new Response("down", { status: 503 })),
 	);
 	const [p] = (await buyerOrder(db, threadId))?.packages ?? [];
-	expect(p).toMatchObject({ url: "https://x.example/t", status: null });
+	expect(p).toMatchObject({
+		url: "https://x.example/t",
+		tracking: { state: "failed", why: expect.stringContaining("503") },
+	});
+});
+
+test("a refresh that fails after an answer keeps its scans, stale", async () => {
+	const threadId = await shippedOrder("USPS", null);
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () =>
+			Response.json({
+				tracking_status: { status: "TRANSIT" },
+				tracking_history: [{ status: "TRANSIT", status_details: "Picked up" }],
+			}),
+		),
+	);
+	await buyerOrder(db, threadId);
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => new Response("down", { status: 503 })),
+	);
+	const [p] = (await buyerOrder(db, threadId))?.packages ?? [];
+	expect(p?.tracking).toMatchObject({
+		state: "stale",
+		why: expect.stringContaining("503"),
+		t: { status: "TRANSIT", history: [{ detail: "Picked up" }] },
+	});
+});
+
+test("a package without a number, or with a carrier Shippo can't follow", async () => {
+	const threadId = await shippedOrder("DHL", null);
+	await db.update(shipments).set({ trackingNumber: "JD01" });
+	const fetch = vi.fn();
+	vi.stubGlobal("fetch", fetch);
+	expect((await buyerOrder(db, threadId))?.packages[0]?.tracking).toEqual({
+		state: "unsupported",
+	});
+	await db.update(shipments).set({ trackingNumber: null });
+	expect((await buyerOrder(db, threadId))?.packages[0]?.tracking).toEqual({
+		state: "untracked",
+	});
+	expect(fetch).not.toHaveBeenCalled();
 });
