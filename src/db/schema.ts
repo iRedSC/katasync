@@ -840,7 +840,12 @@ export const returnRequests = pgTable(
 		trackingNumber: text(),
 		carrier: text(),
 		requestedAt: timestamp({ withTimezone: true }).notNull(),
+		// When the marketplace last changed it, as its search goes by, when
+		// it says; otherwise when katasync last saw it change.
 		sourceUpdatedAt: timestamp({ withTimezone: true }).notNull(),
+		// The buyer's note couldn't be read (TikTok asks one request per
+		// return); every returns pass tries again until it is.
+		noteUnread: boolean().notNull().default(false),
 		syncedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
@@ -3275,13 +3280,16 @@ export const syncFeed = pgEnum("sync_feed", [
 	"tracking",
 ]);
 
-// How a feed's latest counted attempt went. ok: all of it was read.
-// partial: it was read, but some items went wrong (problems > 0). failed:
-// it couldn't be read; stays failed until the same feed reads again.
-// pending: the marketplace hasn't got it ready yet (Amazon's report).
+// How a feed's latest counted attempt went. ok: all of it was read, up to
+// now. partial: it was read, but some items went wrong (problems > 0).
+// catching_up: what it read was fine, but it's still reading its way back
+// up to now after an outage; never ok until it gets there. failed: it
+// couldn't be read; stays failed until the same feed reads again. pending:
+// the marketplace hasn't got it ready yet (Amazon's report).
 export const feedState = pgEnum("feed_state", [
 	"ok",
 	"partial",
+	"catching_up",
 	"failed",
 	"pending",
 ]);
@@ -3298,12 +3306,15 @@ export const feedHealth = pgTable(
 		feed: syncFeed().notNull(),
 		state: feedState().notNull(),
 		attemptedAt: timestamp({ withTimezone: true }).notNull(),
-		// The latest attempt that read everything (ok or partial).
+		// The latest attempt that read what it set out to (ok, partial, or
+		// catching_up).
 		succeededAt: timestamp({ withTimezone: true }),
-		// Read through to here; the next attempt resumes a little before it.
-		coveredThrough: timestamp({ withTimezone: true }),
+		// Where reading has got to, in the marketplace's own time: the next
+		// pass resumes a little before it. What's verified stops earlier at
+		// any open gap (feed_gaps).
+		readThrough: timestamp({ withTimezone: true }),
 		problems: integer().notNull().default(0),
-		// Why it failed, or the first problem of a partial read.
+		// Why it failed, or the first problem of a read with problems.
 		detail: text(),
 		// When the current run of failures began.
 		failingSince: timestamp({ withTimezone: true }),
@@ -3319,6 +3330,10 @@ export const feedHealth = pgTable(
 			sql`${t.state} <> 'partial' or (${t.problems} > 0 and ${t.detail} is not null and ${t.failingSince} is null and ${t.succeededAt} is not null and ${t.succeededAt} = ${t.attemptedAt})`,
 		),
 		check(
+			"feed_health_catching_up",
+			sql`${t.state} <> 'catching_up' or (${t.readThrough} is not null and ${t.readThrough} < ${t.attemptedAt} and (${t.problems} = 0) = (${t.detail} is null) and ${t.failingSince} is null and ${t.succeededAt} is not null and ${t.succeededAt} = ${t.attemptedAt})`,
+		),
+		check(
 			"feed_health_failed",
 			sql`${t.state} <> 'failed' or (${t.problems} = 0 and ${t.detail} is not null and ${t.failingSince} is not null and ${t.failingSince} <= ${t.attemptedAt} and (${t.succeededAt} is null or ${t.succeededAt} < ${t.failingSince}))`,
 		),
@@ -3327,9 +3342,37 @@ export const feedHealth = pgTable(
 			sql`${t.state} <> 'pending' or (${t.problems} = 0 and ${t.detail} is null and ${t.failingSince} is null)`,
 		),
 		check(
-			"feed_health_covered_after_success",
-			sql`${t.coveredThrough} is null or ${t.succeededAt} is not null`,
+			"feed_health_read_after_success",
+			sql`${t.readThrough} is null or ${t.succeededAt} is not null`,
 		),
+	],
+);
+
+// Why part of a feed isn't verified though reading went past it. unsaved:
+// records read there that couldn't be saved (a return for an order
+// katasync doesn't have, a Shopify return too big for one read). Each pass
+// reads it again, and it closes once a read of it saves everything.
+// unread: a stretch no regular pass can reach (Amazon's report only goes
+// back 60 days); a history import that covers it closes it.
+export const feedGapKind = pgEnum("feed_gap_kind", ["unsaved", "unread"]);
+
+// Open gaps only: a closed one is deleted. A feed with one open isn't ok.
+export const feedGaps = pgTable(
+	"feed_gaps",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		channel: channel().notNull(),
+		feed: syncFeed().notNull(),
+		kind: feedGapKind().notNull(),
+		// In the marketplace's own time, as its search goes by.
+		from: timestamp({ withTimezone: true }).notNull(),
+		until: timestamp({ withTimezone: true }).notNull(),
+		detail: text().notNull(),
+		openedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("feed_gaps_span").on(t.channel, t.feed, t.kind, t.from, t.until),
+		check("feed_gaps_ordered", sql`${t.from} <= ${t.until}`),
 	],
 );
 

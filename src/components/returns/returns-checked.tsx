@@ -12,8 +12,9 @@ import { channelName } from "#/lib/format";
 
 export type ReturnsCheck = { channel: string } & FeedStatus;
 
-// Read in full lately: ok, or read with a few problems.
-const verified = (c: ReturnsCheck) => c.state === "ok" || c.state === "partial";
+// Read in full up to lately, with nothing held or left unread. A feed with
+// problems, catching up, or missing history isn't proof nothing's due.
+const verified = (c: ReturnsCheck) => c.state === "ok";
 // Not connected isn't a marketplace katasync sells on yet.
 const counted = (checks: ReturnsCheck[]) =>
 	checks.filter((c) => c.state !== "not_connected");
@@ -22,7 +23,7 @@ export function ReturnsChecked({ checks }: { checks: ReturnsCheck[] }) {
 	const shown = counted(checks);
 	if (shown.length === 0) return null;
 	const times = shown.flatMap((c) =>
-		verified(c) ? [new Date(c.checkedAt).getTime()] : [],
+		c.state === "ok" ? [new Date(c.checkedAt).getTime()] : [],
 	);
 	const oldest =
 		times.length === shown.length ? new Date(Math.min(...times)) : null;
@@ -45,7 +46,7 @@ export function ReturnsChecked({ checks }: { checks: ReturnsCheck[] }) {
 }
 
 // The empty list, which says nothing's due only when every marketplace was
-// read; otherwise which couldn't be.
+// read in full; otherwise which weren't.
 export function NothingDue({ checks }: { checks: ReturnsCheck[] }) {
 	const unread = counted(checks).filter((c) => !verified(c));
 	if (unread.length === 0)
@@ -57,7 +58,7 @@ export function NothingDue({ checks }: { checks: ReturnsCheck[] }) {
 	return (
 		<EmptyState
 			icon={AlertTriangle}
-			title={`Couldn't check ${unread.map((c) => channelName(c.channel)).join(", ")}`}
+			title={`Couldn't fully check ${unread.map((c) => channelName(c.channel)).join(", ")}`}
 		>
 			<span className="flex justify-center">
 				<ReturnsChecked checks={checks} />

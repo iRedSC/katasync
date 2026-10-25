@@ -2,6 +2,7 @@ import { ago } from "#/components/diagnostics/status";
 import type { Tone } from "#/components/page";
 import { DOT } from "#/components/panel";
 import type { Feed, FeedStatus } from "#/diagnostics/feed-health";
+import { formatDay } from "#/lib/format";
 import { cn } from "#/lib/utils";
 
 // One feed's health as a dot, for the Diagnostics grid and the Returns tab.
@@ -21,10 +22,12 @@ export function feedTone(s: FeedStatus): Tone | "neutral" | null {
 			return "success";
 		case "partial":
 		case "stale":
+		case "needs_history":
 			return "warning";
 		case "failed":
 			return "critical";
 		case "pending":
+		case "catching_up":
 			return "info";
 		case "never":
 		case "not_connected":
@@ -34,14 +37,17 @@ export function feedTone(s: FeedStatus): Tone | "neutral" | null {
 	}
 }
 
-// When it last read everything, short.
+// When it last read everything, or how far behind it is, short.
 export function feedWhen(s: FeedStatus): string {
 	switch (s.state) {
+		case "catching_up":
+			return `${s.behindDays}d behind`;
 		case "ok":
 		case "partial":
 		case "stale":
 		case "failed":
 		case "pending":
+		case "needs_history":
 			return s.checkedAt ? ago(s.checkedAt) : "never";
 		case "never":
 			return "never";
@@ -59,6 +65,10 @@ export function feedWhy(s: FeedStatus): string {
 			return `All read ${ago(s.checkedAt)}`;
 		case "partial":
 			return `${s.problems} ${s.problems === 1 ? "problem" : "problems"}: ${s.detail}`;
+		case "catching_up":
+			return `Catching up: read through ${formatDay(s.coveredThrough)}`;
+		case "needs_history":
+			return `Needs a history import: ${s.gaps.map((g) => `${formatDay(g.from)} to ${formatDay(g.until)}`).join(", ")}`;
 		case "failed":
 			return `Failing since ${ago(s.failingSince)}: ${s.error}`;
 		case "pending":
@@ -88,7 +98,9 @@ export function FeedDot({
 			className={cn(
 				"inline-block size-2 shrink-0 rounded-full",
 				tone === "neutral" ? "bg-faint" : DOT[tone],
-				status.state === "failed" && "animate-pulse",
+				// Failing pulses; catching up pulses too, as it's still moving.
+				(status.state === "failed" || status.state === "catching_up") &&
+					"animate-pulse",
 				className,
 			)}
 		/>

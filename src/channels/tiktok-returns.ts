@@ -18,6 +18,7 @@ const returnOrder = type({
 	return_status: "string",
 	"return_type?": "string",
 	create_time: "number.integer",
+	"update_time?": "number.integer",
 	"return_reason?": "string",
 	"return_reason_text?": "string",
 	"return_tracking_number?": "string",
@@ -91,6 +92,7 @@ export function tiktokToReturn(
 		trackingNumber: r.return_tracking_number || null,
 		carrier: r.return_provider_name || null,
 		requestedAt: new Date(r.create_time * 1000),
+		updatedAt: new Date((r.update_time ?? r.create_time) * 1000),
 		lines: [...bySku].map(([skuId, l]) => ({
 			lineExternalId: skuId || null,
 			sku: l.sku,
@@ -111,28 +113,58 @@ async function buyerNote(cipher: string, returnId: string) {
 	return note?.trim() || null;
 }
 
-// One history request per return, a few at a time. A note that fails to load
-// is left out of the map: its return still saves, without touching its note.
+// One history request per return, a few at a time. A note that fails to
+// load is named in failed, so its return saves with noteUnread and a later
+// pass asks again; the note already saved stays as it is.
 const NOTE_REQUESTS_AT_ONCE = 4;
 
-async function buyerNotes(cipher: string, returnIds: string[]) {
+export async function readBuyerNotes(returnIds: string[]) {
 	const notes = new Map<string, string | null>();
+	const failed: { id: string; error: string }[] = [];
+	if (returnIds.length === 0) return { notes, failed };
+	const cipher = await shopCipher();
 	const queue = [...returnIds];
 	const worker = async () => {
 		for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
 			try {
 				notes.set(id, await buyerNote(cipher, id));
 			} catch (error) {
-				console.warn(`TikTok return ${id} note: ${errorText(error)}`);
+				failed.push({ id, error: errorText(error) });
 			}
 		}
 	};
 	await Promise.all(Array.from({ length: NOTE_REQUESTS_AT_ONCE }, worker));
-	return notes;
+	return { notes, failed };
+}
+
+// The returns with the notes of those in wanted read. Those whose note
+// couldn't be read are marked noteUnread and named as a problem.
+export async function withBuyerNotes(
+	returns: ChannelReturn[],
+	wanted: Set<string>,
+	read = readBuyerNotes,
+) {
+	const { notes, failed } = await read(
+		returns.map((r) => r.externalId).filter((id) => wanted.has(id)),
+	);
+	const unread = new Set(failed.map((f) => f.id));
+	return {
+		returns: returns.map((r) =>
+			notes.has(r.externalId)
+				? { ...r, note: notes.get(r.externalId), noteUnread: false }
+				: unread.has(r.externalId)
+					? { ...r, noteUnread: true }
+					: r,
+		),
+		problems: failed.map(
+			(f) => `TikTok return ${f.id} note: ${f.error}; asked again next pass`,
+		),
+	};
 }
 
 // Returns that changed between from and until (by: "update"), or were
-// opened then (by: "create", for history).
+// opened then (by: "create", for history), without their notes: those cost
+// a request each (withBuyerNotes).
 export async function fetchTiktokReturns(
 	from: Date,
 	until: Date,
@@ -161,9 +193,5 @@ export async function fetchTiktokReturns(
 			if (!isSampleRefund(r)) found.push(r);
 		pageToken = page.next_page_token || undefined;
 	} while (pageToken);
-	const notes = await buyerNotes(
-		cipher,
-		found.map((r) => r.return_id),
-	);
-	return found.map((r) => tiktokToReturn(r, notes.get(r.return_id)));
+	return found.map((r) => tiktokToReturn(r));
 }

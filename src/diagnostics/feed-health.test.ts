@@ -1,10 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
-import { returnsWindow } from "#/channels/returns-pass";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import {
+	type FeedGap,
 	type FeedRecord,
 	feedStatus,
 	nextRecord,
@@ -63,19 +63,19 @@ describe("nextRecord", () => {
 		expect(nextRecord(latest, minutesAgo(10), read())).toBeNull();
 	});
 
-	test("how far a feed has read never moves back", () => {
+	test("where reading got to never moves back", () => {
 		const far = nextRecord(null, minutesAgo(30), {
 			...read(),
-			coveredThrough: minutesAgo(30),
+			readThrough: minutesAgo(30),
 		});
 		expect(
 			nextRecord(far, minutesAgo(15), {
 				...read(),
-				coveredThrough: minutesAgo(90),
-			})?.coveredThrough,
+				readThrough: minutesAgo(90),
+			})?.readThrough,
 		).toEqual(minutesAgo(30));
 		expect(
-			nextRecord(far, minutesAgo(10), failed("down"))?.coveredThrough,
+			nextRecord(far, minutesAgo(10), failed("down"))?.readThrough,
 		).toEqual(minutesAgo(30));
 	});
 });
@@ -116,32 +116,71 @@ describe("feedStatus", () => {
 	});
 });
 
-describe("returnsWindow", () => {
-	const reach = { firstDays: 7, rereadDays: 0, spanDays: 30 };
-	const DAY = 86_400_000;
-
-	test("resumes a day before the mark, and catches a long outage up in steps", () => {
-		expect(returnsWindow(null, now, reach).from).toEqual(
-			new Date(now.getTime() - 7 * DAY),
-		);
-		const recent = returnsWindow(minutesAgo(15), now, reach);
-		expect(recent).toEqual({
-			from: new Date(minutesAgo(15).getTime() - DAY),
-			until: now,
+describe("catching up", () => {
+	test("is never ok, and becomes a read once it reaches now", () => {
+		const behind = nextRecord(null, now, {
+			kind: "catching_up",
+			problems: [],
+			readThrough: minutesAgo(20 * 24 * 60),
 		});
-		const outage = returnsWindow(
-			new Date(now.getTime() - 45 * DAY),
+		expect(behind).toMatchObject({ state: "catching_up" });
+		const status = feedStatus({
+			channel: "ebay",
+			feed: "returns",
+			configured: true,
+			record: behind,
 			now,
-			reach,
-		);
-		expect(outage.from).toEqual(new Date(now.getTime() - 46 * DAY));
-		expect(outage.until).toEqual(new Date(now.getTime() - 16 * DAY));
+		});
+		expect(status).toMatchObject({ state: "catching_up", behindDays: 20 });
+		expect(
+			nextRecord(behind, new Date(now.getTime() + 1), {
+				kind: "catching_up",
+				problems: [],
+				readThrough: new Date(now.getTime() + 1),
+			})?.state,
+		).toBe("ok");
 	});
 
-	test("rereads at least rereadDays", () => {
+	test("freshness goes by where reading got to, not the attempt", () => {
+		// Attempted just now, but read only through two hours ago.
+		const record = nextRecord(null, now, {
+			kind: "read",
+			problems: [],
+			readThrough: minutesAgo(120),
+		});
 		expect(
-			returnsWindow(minutesAgo(15), now, { ...reach, rereadDays: 60 }).from,
-		).toEqual(new Date(now.getTime() - 60 * DAY));
+			feedStatus({
+				channel: "ebay",
+				feed: "returns",
+				configured: true,
+				record,
+				now,
+			}).state,
+		).toBe("stale");
+	});
+
+	test("open gaps keep it from ok", () => {
+		const record = nextRecord(null, now, {
+			kind: "read",
+			problems: [],
+			readThrough: now,
+		});
+		const at = (gaps: FeedGap[]) =>
+			feedStatus({
+				channel: "amazon",
+				feed: "returns",
+				configured: true,
+				record,
+				gaps,
+				now,
+			});
+		const gap = { from: minutesAgo(60), until: minutesAgo(60), detail: "held" };
+		expect(at([{ ...gap, kind: "unsaved" }])).toMatchObject({
+			state: "partial",
+			coveredThrough: minutesAgo(60),
+		});
+		expect(at([{ ...gap, kind: "unread" }]).state).toBe("needs_history");
+		expect(at([]).state).toBe("ok");
 	});
 });
 
@@ -167,9 +206,9 @@ describe("recording feeds", () => {
 	test("a returns failure isn't cleared by the orders feed", async () => {
 		await recordFeed(db, "tiktok", "returns", minutesAgo(20), failed("403"));
 		await recordFeed(db, "tiktok", "orders", minutesAgo(10), read());
-		const recordFor = await loadFeedRecords(db);
-		expect(recordFor("tiktok", "returns")?.state).toBe("failed");
-		expect(recordFor("tiktok", "orders")?.state).toBe("ok");
+		const loaded = await loadFeedRecords(db);
+		expect(loaded.record("tiktok", "returns")?.state).toBe("failed");
+		expect(loaded.record("tiktok", "orders")?.state).toBe("ok");
 	});
 
 	test("a stale attempt changes nothing", async () => {

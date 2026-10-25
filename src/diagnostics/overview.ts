@@ -20,7 +20,7 @@ import { INBOX_ENV, inboxAddress } from "#/purchasing/inbox/graph";
 import { channelEnv, missingEnv, type SyncedChannel } from "./checks";
 import { dismissalKey, type IsDismissed, loadDismissals } from "./dismissals";
 import { ALL_FEEDS, feedStatus } from "./feed-health";
-import { loadFeedRecords } from "./feed-record";
+import { type FeedRecords, loadFeedRecords } from "./feed-record";
 import {
 	channelHealth,
 	groupIssues,
@@ -36,14 +36,14 @@ const UNSETTLED_ROWS = 500;
 
 // Dismissed problems are still listed, marked `dismissed`.
 export async function diagnosticsOverview(db: Db, now = new Date()) {
-	const [isDismissed, recordFor] = await Promise.all([
+	const [isDismissed, loaded] = await Promise.all([
 		loadDismissals(db),
 		loadFeedRecords(db),
 	]);
 	const channels = await Promise.all(
 		(Object.keys(channelEnv) as SyncedChannel[]).map(async (c) => ({
 			...(await channelOverview(db, c, now, isDismissed)),
-			feeds: channelFeeds(c, recordFor, now),
+			feeds: channelFeeds(c, loaded, now),
 		})),
 	);
 	const [
@@ -108,18 +108,15 @@ export type DiagnosticsOverview = Awaited<
 
 // Each feed of the channel, unsupported ones too, so every channel lists
 // the same columns.
-function channelFeeds(
-	channel: SyncedChannel,
-	recordFor: Awaited<ReturnType<typeof loadFeedRecords>>,
-	now: Date,
-) {
+function channelFeeds(channel: SyncedChannel, loaded: FeedRecords, now: Date) {
 	const configured = missingEnv(channelEnv[channel]).length === 0;
 	return ALL_FEEDS.map((feed) => {
 		const status = feedStatus({
 			channel,
 			feed,
 			configured,
-			record: recordFor(channel, feed),
+			record: loaded.record(channel, feed),
+			gaps: loaded.gaps(channel, feed),
 			now,
 		});
 		return {
@@ -419,7 +416,10 @@ export async function diagnosticsAttention(db: Db, now = new Date()) {
 			c.health === "failing" ||
 			(o.worker.alive && c.health === "stale") ||
 			c.feeds.some(
-				(f) => f.state === "failed" || (o.worker.alive && f.state === "stale"),
+				(f) =>
+					f.state === "failed" ||
+					f.state === "needs_history" ||
+					(o.worker.alive && f.state === "stale"),
 			),
 	);
 	const open = <T extends { dismissed: boolean }>(rows: T[]) =>

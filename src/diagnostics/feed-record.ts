@@ -1,9 +1,10 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { feedHealth } from "#/db/schema";
+import { feedGaps, feedHealth } from "#/db/schema";
 import { channelEnv, missingEnv, type SyncedChannel } from "./checks";
 import {
 	type Feed,
+	type FeedGap,
 	type FeedOutcome,
 	type FeedRecord,
 	feedStatus,
@@ -17,10 +18,7 @@ import { errorText } from "./runs";
 type Row = typeof feedHealth.$inferSelect;
 
 export function recordOf(row: Row): FeedRecord {
-	const common = {
-		attemptedAt: row.attemptedAt,
-		coveredThrough: row.coveredThrough,
-	};
+	const common = { attemptedAt: row.attemptedAt, readThrough: row.readThrough };
 	switch (row.state) {
 		case "ok":
 			return { ...common, state: "ok" };
@@ -30,6 +28,14 @@ export function recordOf(row: Row): FeedRecord {
 				state: "partial",
 				problems: row.problems,
 				detail: row.detail ?? "",
+			};
+		case "catching_up":
+			return {
+				state: "catching_up",
+				attemptedAt: row.attemptedAt,
+				readThrough: row.readThrough ?? row.attemptedAt,
+				problems: row.problems,
+				detail: row.detail,
 			};
 		case "failed":
 			return {
@@ -48,7 +54,7 @@ function rowOf(r: FeedRecord) {
 	const base = {
 		state: r.state,
 		attemptedAt: r.attemptedAt,
-		coveredThrough: r.coveredThrough,
+		readThrough: r.readThrough,
 		problems: 0,
 		detail: null as string | null,
 		failingSince: null as Date | null,
@@ -57,6 +63,7 @@ function rowOf(r: FeedRecord) {
 		case "ok":
 			return { ...base, succeededAt: r.attemptedAt };
 		case "partial":
+		case "catching_up":
 			return {
 				...base,
 				succeededAt: r.attemptedAt,
@@ -136,20 +143,35 @@ export async function readingFeed<T>(
 	return result;
 }
 
-// Every stored record, by channel and feed.
+// Every stored record and open gap, by channel and feed.
 export async function loadFeedRecords(db: Db) {
-	const rows = await db.select().from(feedHealth);
-	const byKey = new Map(
-		rows.map((r) => [`${r.channel}:${r.feed}`, recordOf(r)] as const),
+	const [rows, gapRows] = await Promise.all([
+		db.select().from(feedHealth),
+		db.select().from(feedGaps).orderBy(asc(feedGaps.from)),
+	]);
+	const key = (channel: string, feed: string) => `${channel}:${feed}`;
+	const records = new Map(
+		rows.map((r) => [key(r.channel, r.feed), recordOf(r)] as const),
 	);
-	return (channel: SyncedChannel, feed: Feed) =>
-		byKey.get(`${channel}:${feed}`) ?? null;
+	const gaps = new Map<string, FeedGap[]>();
+	for (const g of gapRows) {
+		const k = key(g.channel, g.feed);
+		gaps.set(k, [...(gaps.get(k) ?? []), g]);
+	}
+	return {
+		record: (channel: SyncedChannel, feed: Feed) =>
+			records.get(key(channel, feed)) ?? null,
+		gaps: (channel: SyncedChannel, feed: Feed) =>
+			gaps.get(key(channel, feed)) ?? [],
+	};
 }
+
+export type FeedRecords = Awaited<ReturnType<typeof loadFeedRecords>>;
 
 // One feed on every channel that has it, for a page showing when it was
 // last read (the Returns tab).
 export async function feedOnChannels(db: Db, feed: Feed, now = new Date()) {
-	const recordFor = await loadFeedRecords(db);
+	const loaded = await loadFeedRecords(db);
 	return (Object.keys(channelEnv) as SyncedChannel[])
 		.filter((channel) => hasFeed(channel, feed))
 		.map((channel) => ({
@@ -158,8 +180,68 @@ export async function feedOnChannels(db: Db, feed: Feed, now = new Date()) {
 				channel,
 				feed,
 				configured: missingEnv(channelEnv[channel]).length === 0,
-				record: recordFor(channel, feed),
+				record: loaded.record(channel, feed),
+				gaps: loaded.gaps(channel, feed),
 				now,
 			}),
 		}));
+}
+
+// The feed's open gaps, oldest first.
+export function openGaps(
+	db: Db,
+	channel: SyncedChannel,
+	feed: Feed,
+	kind?: FeedGap["kind"],
+) {
+	return db
+		.select()
+		.from(feedGaps)
+		.where(
+			and(
+				eq(feedGaps.channel, channel),
+				eq(feedGaps.feed, feed),
+				kind ? eq(feedGaps.kind, kind) : undefined,
+			),
+		)
+		.orderBy(asc(feedGaps.from));
+}
+
+// A read of from..until that saved everything closes the gaps of this kind
+// inside it; then those it found are opened (again). One transaction, so a
+// gap is never briefly closed while its record is still unsaved.
+export async function settleGaps(
+	db: Db,
+	channel: SyncedChannel,
+	feed: Feed,
+	read: { kind: FeedGap["kind"]; from: Date; until: Date },
+	found: { from: Date; until: Date; detail: string }[],
+) {
+	await db.transaction(async (tx) => {
+		await tx
+			.delete(feedGaps)
+			.where(
+				and(
+					eq(feedGaps.channel, channel),
+					eq(feedGaps.feed, feed),
+					eq(feedGaps.kind, read.kind),
+					gte(feedGaps.from, read.from),
+					lte(feedGaps.until, read.until),
+				),
+			);
+		if (found.length > 0)
+			await tx
+				.insert(feedGaps)
+				.values(found.map((g) => ({ channel, feed, kind: read.kind, ...g })))
+				.onConflictDoUpdate({
+					target: [
+						feedGaps.channel,
+						feedGaps.feed,
+						feedGaps.kind,
+						feedGaps.from,
+						feedGaps.until,
+					],
+					set: { detail: sql`excluded.detail` },
+				});
+	});
 }

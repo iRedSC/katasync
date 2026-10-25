@@ -14,6 +14,7 @@ const reportsPage = type({
 		reportId: "string",
 		processingStatus: "string",
 		createdTime: "string.date.iso.parse",
+		"dataStartTime?": "string.date.iso.parse",
 		"dataEndTime?": "string.date.iso.parse",
 		"reportDocumentId?": "string",
 	}).array(),
