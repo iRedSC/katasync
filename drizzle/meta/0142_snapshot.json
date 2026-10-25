@@ -1,5 +1,5 @@
 {
-  "id": "850714a4-84ba-449b-9b03-c40c3e3367da",
+  "id": "331aae67-ccd7-48ae-9687-162b3aae816d",
   "prevId": "fd1a9a53-f25b-4c96-ba1a-5f97ec986929",
   "version": "7",
   "dialect": "postgresql",
@@ -5815,6 +5815,203 @@
         "email_templates_body_given": {
           "name": "email_templates_body_given",
           "value": "btrim(\"email_templates\".\"body\") <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.feed_gaps": {
+      "name": "feed_gaps",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "feed_gaps_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "channel": {
+          "name": "channel",
+          "type": "channel",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "feed": {
+          "name": "feed",
+          "type": "sync_feed",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "feed_gap_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from": {
+          "name": "from",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "until": {
+          "name": "until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opened_at": {
+          "name": "opened_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "feed_gaps_span": {
+          "name": "feed_gaps_span",
+          "nullsNotDistinct": false,
+          "columns": [
+            "channel",
+            "feed",
+            "kind",
+            "from",
+            "until"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "feed_gaps_ordered": {
+          "name": "feed_gaps_ordered",
+          "value": "\"feed_gaps\".\"from\" <= \"feed_gaps\".\"until\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.feed_health": {
+      "name": "feed_health",
+      "schema": "",
+      "columns": {
+        "channel": {
+          "name": "channel",
+          "type": "channel",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "feed": {
+          "name": "feed",
+          "type": "sync_feed",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "feed_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempted_at": {
+          "name": "attempted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "succeeded_at": {
+          "name": "succeeded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_through": {
+          "name": "read_through",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "problems": {
+          "name": "problems",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failing_since": {
+          "name": "failing_since",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "feed_health_channel_feed_pk": {
+          "name": "feed_health_channel_feed_pk",
+          "columns": [
+            "channel",
+            "feed"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "feed_health_ok": {
+          "name": "feed_health_ok",
+          "value": "\"feed_health\".\"state\" <> 'ok' or (\"feed_health\".\"problems\" = 0 and \"feed_health\".\"detail\" is null and \"feed_health\".\"failing_since\" is null and \"feed_health\".\"succeeded_at\" is not null and \"feed_health\".\"succeeded_at\" = \"feed_health\".\"attempted_at\")"
+        },
+        "feed_health_partial": {
+          "name": "feed_health_partial",
+          "value": "\"feed_health\".\"state\" <> 'partial' or (\"feed_health\".\"problems\" > 0 and \"feed_health\".\"detail\" is not null and \"feed_health\".\"failing_since\" is null and \"feed_health\".\"succeeded_at\" is not null and \"feed_health\".\"succeeded_at\" = \"feed_health\".\"attempted_at\")"
+        },
+        "feed_health_catching_up": {
+          "name": "feed_health_catching_up",
+          "value": "\"feed_health\".\"state\" <> 'catching_up' or (\"feed_health\".\"read_through\" is not null and \"feed_health\".\"read_through\" < \"feed_health\".\"attempted_at\" and (\"feed_health\".\"problems\" = 0) = (\"feed_health\".\"detail\" is null) and \"feed_health\".\"failing_since\" is null and \"feed_health\".\"succeeded_at\" is not null and \"feed_health\".\"succeeded_at\" = \"feed_health\".\"attempted_at\")"
+        },
+        "feed_health_failed": {
+          "name": "feed_health_failed",
+          "value": "\"feed_health\".\"state\" <> 'failed' or (\"feed_health\".\"problems\" = 0 and \"feed_health\".\"detail\" is not null and \"feed_health\".\"failing_since\" is not null and \"feed_health\".\"failing_since\" <= \"feed_health\".\"attempted_at\" and (\"feed_health\".\"succeeded_at\" is null or \"feed_health\".\"succeeded_at\" < \"feed_health\".\"failing_since\"))"
+        },
+        "feed_health_pending": {
+          "name": "feed_health_pending",
+          "value": "\"feed_health\".\"state\" <> 'pending' or (\"feed_health\".\"problems\" = 0 and \"feed_health\".\"detail\" is null and \"feed_health\".\"failing_since\" is null)"
+        },
+        "feed_health_read_after_success": {
+          "name": "feed_health_read_after_success",
+          "value": "\"feed_health\".\"read_through\" is null or \"feed_health\".\"succeeded_at\" is not null"
         }
       },
       "isRLSEnabled": false
@@ -12261,6 +12458,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "note_unread": {
+          "name": "note_unread",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "synced_at": {
           "name": "synced_at",
           "type": "timestamp with time zone",
@@ -14516,6 +14720,25 @@
         "damage_report"
       ]
     },
+    "public.feed_gap_kind": {
+      "name": "feed_gap_kind",
+      "schema": "public",
+      "values": [
+        "unsaved",
+        "unread"
+      ]
+    },
+    "public.feed_state": {
+      "name": "feed_state",
+      "schema": "public",
+      "values": [
+        "ok",
+        "partial",
+        "catching_up",
+        "failed",
+        "pending"
+      ]
+    },
     "public.listing_fulfillment": {
       "name": "listing_fulfillment",
       "schema": "public",
@@ -14700,12 +14923,21 @@
       "schema": "public",
       "values": [
         "requested",
-        "processing",
-        "unknown",
         "shipped",
         "delivered",
         "closed",
         "cancelled"
+      ]
+    },
+    "public.sync_feed": {
+      "name": "sync_feed",
+      "schema": "public",
+      "values": [
+        "orders",
+        "returns",
+        "messages",
+        "charges",
+        "tracking"
       ]
     },
     "public.tax_remitter": {

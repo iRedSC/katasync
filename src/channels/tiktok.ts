@@ -9,7 +9,6 @@ import {
 	resolveProduct,
 } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
-import { importReturns } from "#/orders/return-requests";
 import { stockEffectApplied } from "#/orders/stock-effects";
 import { needsShipping } from "#/orders/to-ship";
 import { markGoneListings, matchListings, syncListings } from "./listings";
@@ -21,7 +20,6 @@ import {
 	stockLocations,
 } from "./stores";
 import { tiktokOrder, tiktokToChannelOrder } from "./tiktok/channel-order";
-import { fetchTiktokReturns } from "./tiktok-returns";
 
 export {
 	tiktokOrder,
@@ -388,17 +386,6 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 			: startedAt,
 	);
 	if (refreshWarning) problems.push(refreshWarning);
-	// Returns after orders, so a return on a new order finds it. Every
-	// listings pass rereads the last week's changes.
-	if (options.listings)
-		problems.push(
-			...(await importReturns(db, store, () =>
-				fetchTiktokReturns(
-					new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-					new Date(),
-				),
-			)),
-		);
 	return { store: store.name, created, orders: count, problems };
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Badge } from "#/components/page";
+import { Tip } from "#/components/ui/tooltip";
 import type { returnRequests } from "#/db/schema";
 import { channelName } from "#/lib/format";
 
@@ -43,12 +44,13 @@ export function CaseObligation({ request }: { request: CaseObligationData }) {
 				<Badge tone="warning">Unknown status</Badge>
 			)}
 			{chip && (
-				<span
-					title={deadline?.toLocaleString()}
-					className={chip.overdue ? "motion-safe:animate-pulse" : undefined}
-				>
-					<Badge tone={chip.tone}>{chip.label}</Badge>
-				</span>
+				<Tip content={deadline?.toLocaleString()}>
+					<span
+						className={chip.overdue ? "motion-safe:animate-pulse" : undefined}
+					>
+						<Badge tone={chip.tone}>{chip.label}</Badge>
+					</span>
+				</Tip>
 			)}
 			{request.waitingOn === "marketplace" && request.status !== "unknown" && (
 				<span className="text-xs text-muted-foreground">

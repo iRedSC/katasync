@@ -146,6 +146,7 @@ describe("saveReturns", () => {
 			saved: 1,
 			skipped: 0,
 			missing: [],
+			unsaved: [],
 		});
 		const [saved] = await db.select().from(schema.returnRequestLines);
 		expect(saved.orderLineId).toBe(line.id);
@@ -163,6 +164,8 @@ describe("saveReturns", () => {
 			saved: 1,
 			skipped: 1,
 			missing: ["999"],
+			// Handed back, so the pass holds its place there.
+			unsaved: [unknown],
 		});
 		await saveReturns(db, store, [amazonReturn("closed")]);
 

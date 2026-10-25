@@ -6,7 +6,7 @@ vi.mock("./tiktok", () => ({
 }));
 
 import { tiktokApi } from "./tiktok";
-import { fetchTiktokReturns } from "./tiktok-returns";
+import { fetchTiktokReturns, withBuyerNotes } from "./tiktok-returns";
 
 const from = new Date("2026-10-18T00:00:00Z");
 const until = new Date("2026-10-25T00:00:00Z");
@@ -16,6 +16,7 @@ const sku = {
 	return_type: "REFUND",
 	return_status: "RETURN_OR_REFUND_REQUEST_PENDING",
 	create_time: 1792000000,
+	update_time: 1792800000,
 	seller_next_action_response: [
 		{ action: "SELLER_RESPOND_REFUND", deadline: 1793037279 },
 	],
@@ -54,7 +55,12 @@ test("new aftersales pagination preserves legacy ids, forward lines, total and r
 		.mockResolvedValueOnce({
 			records: [{ role: "BUYER", note: " Handle missing " }],
 		});
-	const found = await fetchTiktokReturns(from, until);
+	const raw = await fetchTiktokReturns(from, until);
+	expect(api).toHaveBeenCalledTimes(3);
+	const { returns: found } = await withBuyerNotes(
+		raw,
+		new Set(raw.map((row) => row.externalId)),
+	);
 	expect(api.mock.calls[0]).toEqual([
 		"/return_refund/202603/aftersales/search",
 		{ shop_cipher: "cipher" },
@@ -90,6 +96,7 @@ test("new aftersales pagination preserves legacy ids, forward lines, total and r
 			amount: "101.77",
 			currency: "USD",
 			note: "Handle missing",
+			updatedAt: new Date(1792800000000),
 			lines: [
 				{ lineExternalId: "577620148778013424", sku: "TT-CF25TT", quantity: 1 },
 			],
@@ -203,14 +210,54 @@ test("failed notes do not erase a saved note and unknown statuses remain reporta
 		})
 		.mockResolvedValueOnce({})
 		.mockRejectedValueOnce(new Error("unavailable"));
-	const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-	expect(await fetchTiktokReturns(from, until)).toMatchObject([
+	const raw = await fetchTiktokReturns(from, until);
+	const result = await withBuyerNotes(
+		raw,
+		new Set(raw.map((row) => row.externalId)),
+	);
+	expect(result.returns).toMatchObject([
 		{
 			status: "unknown",
 			waitingOn: "marketplace",
 			note: undefined,
+			noteUnread: true,
 			problems: ["Unknown TikTok return status: FUTURE_STATUS"],
 		},
 	]);
-	expect(warn).toHaveBeenCalled();
+	expect(result.problems).toEqual([
+		`TikTok return ${sku.return_id} note: unavailable; asked again next pass`,
+	]);
+});
+
+test.each([
+	"aftersales",
+	"RMA",
+])("truncated %s search cannot count as a complete read", async (source) => {
+	api.mockResolvedValueOnce({
+		aftersales_requests: [parent],
+		total_count: source === "aftersales" ? 2 : 1,
+	});
+	if (source === "RMA")
+		api.mockResolvedValueOnce({
+			return_merchandise_authorizations: [],
+			total_count: 1,
+		});
+	await expect(fetchTiktokReturns(from, until)).rejects.toThrow(
+		/TikTok .*truncated/,
+	);
+});
+
+test("repeated pagination cannot loop forever or verify a partial read", async () => {
+	api
+		.mockResolvedValueOnce({
+			aftersales_requests: [parent],
+			next_page_token: "same",
+		})
+		.mockResolvedValueOnce({
+			aftersales_requests: [],
+			next_page_token: "same",
+		});
+	await expect(fetchTiktokReturns(from, until)).rejects.toThrow(
+		"repeated its page token",
+	);
 });

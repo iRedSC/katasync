@@ -3,6 +3,7 @@ import { errorText } from "#/diagnostics/runs";
 import type { ChannelReturn } from "#/orders/return-requests";
 import { shopCipher, tiktokApi } from "./tiktok";
 import { tiktokReturnStage } from "./tiktok-case-stage";
+import { TiktokReturnPages } from "./tiktok-return-pages";
 
 export { tiktokReturnStage } from "./tiktok-case-stage";
 
@@ -28,6 +29,7 @@ const returnOrder = type({
 	}).array(),
 	"refund_amount?": { currency: /^[A-Z]{3}$/, refund_total: "string.numeric" },
 	create_time: "number.integer",
+	"update_time?": "number.integer",
 	"return_reason?": "string",
 	"return_reason_text?": "string",
 	"return_tracking_number?": "string",
@@ -46,6 +48,7 @@ const aftersales = type({
 });
 const searchPage = type({
 	"aftersales_requests?": aftersales.array(),
+	"total_count?": "number.integer >= 0",
 	"next_page_token?": "string",
 });
 const rma = type({
@@ -60,6 +63,7 @@ const rma = type({
 });
 const rmaPage = type({
 	"return_merchandise_authorizations?": rma.array(),
+	"total_count?": "number.integer >= 0",
 	"next_page_token?": "string",
 });
 const recordList = type({
@@ -122,6 +126,7 @@ export function tiktokToReturn(
 		trackingNumber: r.return_tracking_number || null,
 		carrier: r.return_provider_name || null,
 		requestedAt: new Date(r.create_time * 1000),
+		updatedAt: new Date((r.update_time ?? r.create_time) * 1000),
 		lines: [...byLine].map(([lineId, line]) => ({
 			lineExternalId: lineId || null,
 			alternateLineExternalId: line.skuId,
@@ -143,28 +148,58 @@ async function buyerNote(cipher: string, returnId: string) {
 	return note?.trim() || null;
 }
 
-// One history request per return, a few at a time. A note that fails to load
-// is left out of the map: its return still saves, without touching its note.
+// One history request per return, a few at a time. A note that fails to
+// load is named in failed, so its return saves with noteUnread and a later
+// pass asks again; the note already saved stays as it is.
 const NOTE_REQUESTS_AT_ONCE = 4;
 
-async function buyerNotes(cipher: string, returnIds: string[]) {
+export async function readBuyerNotes(returnIds: string[]) {
 	const notes = new Map<string, string | null>();
+	const failed: { id: string; error: string }[] = [];
+	if (returnIds.length === 0) return { notes, failed };
+	const cipher = await shopCipher();
 	const queue = [...returnIds];
 	const worker = async () => {
 		for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
 			try {
 				notes.set(id, await buyerNote(cipher, id));
 			} catch (error) {
-				console.warn(`TikTok return ${id} note: ${errorText(error)}`);
+				failed.push({ id, error: errorText(error) });
 			}
 		}
 	};
 	await Promise.all(Array.from({ length: NOTE_REQUESTS_AT_ONCE }, worker));
-	return notes;
+	return { notes, failed };
+}
+
+// The returns with the notes of those in wanted read. Those whose note
+// couldn't be read are marked noteUnread and named as a problem.
+export async function withBuyerNotes(
+	returns: ChannelReturn[],
+	wanted: Set<string>,
+	read = readBuyerNotes,
+) {
+	const { notes, failed } = await read(
+		returns.map((r) => r.externalId).filter((id) => wanted.has(id)),
+	);
+	const unread = new Set(failed.map((f) => f.id));
+	return {
+		returns: returns.map((r) =>
+			notes.has(r.externalId)
+				? { ...r, note: notes.get(r.externalId), noteUnread: false }
+				: unread.has(r.externalId)
+					? { ...r, noteUnread: true }
+					: r,
+		),
+		problems: failed.map(
+			(f) => `TikTok return ${f.id} note: ${f.error}; asked again next pass`,
+		),
+	};
 }
 
 // Returns that changed between from and until (by: "update"), or were
-// opened then (by: "create", for history).
+// opened then (by: "create", for history), without their notes: those cost
+// a request each (withBuyerNotes).
 export async function fetchTiktokReturns(
 	from: Date,
 	until: Date,
@@ -173,6 +208,7 @@ export async function fetchTiktokReturns(
 	const cipher = await shopCipher();
 	const seconds = (d: Date) => Math.floor(d.getTime() / 1000);
 	const found: (typeof aftersales.infer)[] = [];
+	const pages = new TiktokReturnPages("aftersales search");
 	let pageToken: string | undefined;
 	do {
 		const page = searchPage.assert(
@@ -199,10 +235,13 @@ export async function fetchTiktokReturns(
 			),
 		);
 		found.push(...(page.aftersales_requests ?? []));
-		pageToken = page.next_page_token || undefined;
+		pageToken = pages.read(page.aftersales_requests ?? [], page);
 	} while (pageToken);
 	const packages = new Map<string, typeof rma.infer>();
 	for (const parent of found) {
+		if (parent.sku_return_requests.length === 0)
+			throw new Error(`TikTok aftersales ${parent.id} has no SKU requests`);
+		const packagePages = new TiktokReturnPages(`RMA search for ${parent.id}`);
 		let token: string | undefined;
 		do {
 			const page = rmaPage.assert(
@@ -224,6 +263,8 @@ export async function fetchTiktokReturns(
 					throw new Error(
 						`TikTok RMA ${pkg.id} belongs to another aftersales request`,
 					);
+				if (pkg.sku_return_requests.length === 0)
+					throw new Error(`TikTok RMA ${pkg.id} has no SKU requests`);
 				for (const request of pkg.sku_return_requests ?? []) {
 					if (
 						!parent.sku_return_requests.some(
@@ -242,17 +283,16 @@ export async function fetchTiktokReturns(
 					packages.set(request.return_id, pkg);
 				}
 			}
-			token = page.next_page_token || undefined;
+			token = packagePages.read(
+				page.return_merchandise_authorizations ?? [],
+				page,
+			);
 		} while (token);
 	}
 	const requests = found.flatMap((parent) =>
 		parent.sku_return_requests
 			.filter((request) => !isSampleRefund(request))
 			.map((request) => ({ parent, request })),
-	);
-	const notes = await buyerNotes(
-		cipher,
-		requests.map(({ request }) => request.return_id),
 	);
 	return requests.map(({ parent, request }) => {
 		const pkg = packages.get(request.return_id);
@@ -267,7 +307,7 @@ export async function fetchTiktokReturns(
 				return_provider_name:
 					shipped?.return_provider_name ?? request.return_provider_name,
 			},
-			notes.get(request.return_id),
+			undefined,
 			{
 				...parent,
 				rmaStatus: pkg?.status,

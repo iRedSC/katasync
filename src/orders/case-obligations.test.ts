@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, test, vi } from "vitest";
 import { tiktokToReturn } from "#/channels/tiktok-returns";
 import { CaseObligation } from "#/components/returns/case-obligation";
+import { TooltipProvider } from "#/components/ui/tooltip";
 import type { Db } from "#/db/client";
 import { openCases, orders, returnRequests, stores } from "#/db/schema";
 import { createTestDb } from "#/test/db";
@@ -181,9 +182,11 @@ test("unknown statuses are saved without becoming seller work and surface as imp
 		return_status: "FUTURE_STATE",
 		create_time: 1792000000,
 	});
-	expect(await importReturns(db, store, async () => [unknown])).toEqual([
-		"Unknown TikTok return status: FUTURE_STATE",
-	]);
+	expect(await importReturns(db, store, async () => [unknown])).toEqual({
+		kind: "read",
+		problems: ["Unknown TikTok return status: FUTURE_STATE"],
+		held: [],
+	});
 	expect(await db.select().from(openCases)).toMatchObject([
 		{ status: "unknown", waitingOn: "marketplace", respondBy: null },
 	]);
@@ -222,7 +225,7 @@ test("the migration backfills legacy owners without guessing unknown TikTok work
 		},
 	]);
 	const migration = readFileSync(
-		new URL("../../drizzle/0143_case_obligations.sql", import.meta.url),
+		new URL("../../drizzle/0144_case_obligations.sql", import.meta.url),
 		"utf8",
 	);
 	const backfill = migration.match(
@@ -257,9 +260,11 @@ test.each([
 			? [{ action: "SUBMIT_EVIDENCE", deadline: 1793037279 }]
 			: [],
 	});
-	expect(await importReturns(db, store, async () => [unknown])).toEqual([
-		"Unknown TikTok arbitration status: FUTURE_ARBITRATION",
-	]);
+	expect(await importReturns(db, store, async () => [unknown])).toEqual({
+		kind: "read",
+		problems: ["Unknown TikTok arbitration status: FUTURE_ARBITRATION"],
+		held: [],
+	});
 	const [saved] = await db.select().from(returnRequests);
 	expect(saved).toMatchObject({
 		status: "unknown",
@@ -269,7 +274,11 @@ test.each([
 		nextAction: sellerAction ? "SUBMIT_EVIDENCE" : null,
 	});
 	const html = renderToStaticMarkup(
-		createElement(CaseObligation, { request: saved }),
+		createElement(
+			TooltipProvider,
+			null,
+			createElement(CaseObligation, { request: saved }),
+		),
 	);
 	expect(html).toContain("Unknown status");
 	expect(html).not.toContain("TikTok processing");

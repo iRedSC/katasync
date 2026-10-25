@@ -10,7 +10,7 @@ import {
 	TIKTOK_RETURN_STATES,
 	tiktokReturnStage,
 } from "#/channels/tiktok-case-stage";
-import { openCases, returnRequests } from "#/db/schema";
+import { feedHealth, openCases, returnRequests } from "#/db/schema";
 import { createTestDb } from "#/test/db";
 
 test("upgrade from before #236 reopens legacy SUCCESS and preserves both pending refunds", async () => {
@@ -67,6 +67,37 @@ test("upgrade from before #236 reopens legacy SUCCESS and preserves both pending
 			waitingOn: "marketplace",
 			respondBy: null,
 		},
+	]);
+});
+
+test("upgrade from deployed feed health preserves coverage and unread-note retries", async () => {
+	const db = await createTestDb({
+		beforeMigration: 143,
+		seed: async (pg) => {
+			await pg.query(
+				"INSERT INTO stores (channel, name) VALUES ('tiktok', 'Upgrade')",
+			);
+			await pg.query(`INSERT INTO orders (store_id, external_id, name, placed_at, fulfillment_status, total, source_updated_at)
+				SELECT id, 'order', 'order', now(), 'FULFILLED', 0, now() FROM stores WHERE name = 'Upgrade'`);
+			await pg.query(`INSERT INTO return_requests
+				(order_id, billed_by, external_id, kind, status, raw_status, note, note_unread, requested_at, source_updated_at)
+				SELECT id, 'tiktok', 'legacy-refund', 'refund', 'closed', 'RETURN_OR_REFUND_REQUEST_SUCCESS', 'Keep this note', true, '2025-01-01', '2026-10-20' FROM orders`);
+			await pg.query(`INSERT INTO feed_health (channel, feed, state, attempted_at, succeeded_at, read_through)
+				VALUES ('tiktok', 'returns', 'pending', '2026-10-25', '2026-10-24', '2026-10-24')`);
+		},
+	});
+	expect(await db.select().from(returnRequests)).toMatchObject([
+		{
+			kind: "refund",
+			status: "processing",
+			waitingOn: "marketplace",
+			note: "Keep this note",
+			noteUnread: true,
+			sourceUpdatedAt: new Date("2026-10-20T00:00:00Z"),
+		},
+	]);
+	expect(await db.select().from(feedHealth)).toMatchObject([
+		{ state: "pending", readThrough: new Date("2026-10-24T00:00:00Z") },
 	]);
 });
 

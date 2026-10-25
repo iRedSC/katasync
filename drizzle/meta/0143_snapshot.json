@@ -1,6 +1,6 @@
 {
-  "id": "5d93c6bf-1748-4b85-aae1-e8142751ea75",
-  "prevId": "850714a4-84ba-449b-9b03-c40c3e3367da",
+  "id": "917cab60-1c4a-42cd-932d-6c32c5ee640a",
+  "prevId": "331aae67-ccd7-48ae-9687-162b3aae816d",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -5815,6 +5815,203 @@
         "email_templates_body_given": {
           "name": "email_templates_body_given",
           "value": "btrim(\"email_templates\".\"body\") <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.feed_gaps": {
+      "name": "feed_gaps",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "feed_gaps_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "channel": {
+          "name": "channel",
+          "type": "channel",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "feed": {
+          "name": "feed",
+          "type": "sync_feed",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "feed_gap_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from": {
+          "name": "from",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "until": {
+          "name": "until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opened_at": {
+          "name": "opened_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "feed_gaps_span": {
+          "name": "feed_gaps_span",
+          "nullsNotDistinct": false,
+          "columns": [
+            "channel",
+            "feed",
+            "kind",
+            "from",
+            "until"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "feed_gaps_ordered": {
+          "name": "feed_gaps_ordered",
+          "value": "\"feed_gaps\".\"from\" <= \"feed_gaps\".\"until\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.feed_health": {
+      "name": "feed_health",
+      "schema": "",
+      "columns": {
+        "channel": {
+          "name": "channel",
+          "type": "channel",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "feed": {
+          "name": "feed",
+          "type": "sync_feed",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "feed_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempted_at": {
+          "name": "attempted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "succeeded_at": {
+          "name": "succeeded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_through": {
+          "name": "read_through",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "problems": {
+          "name": "problems",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failing_since": {
+          "name": "failing_since",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "feed_health_channel_feed_pk": {
+          "name": "feed_health_channel_feed_pk",
+          "columns": [
+            "channel",
+            "feed"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "feed_health_ok": {
+          "name": "feed_health_ok",
+          "value": "\"feed_health\".\"state\" <> 'ok' or (\"feed_health\".\"problems\" = 0 and \"feed_health\".\"detail\" is null and \"feed_health\".\"failing_since\" is null and \"feed_health\".\"succeeded_at\" is not null and \"feed_health\".\"succeeded_at\" = \"feed_health\".\"attempted_at\")"
+        },
+        "feed_health_partial": {
+          "name": "feed_health_partial",
+          "value": "\"feed_health\".\"state\" <> 'partial' or (\"feed_health\".\"problems\" > 0 and \"feed_health\".\"detail\" is not null and \"feed_health\".\"failing_since\" is null and \"feed_health\".\"succeeded_at\" is not null and \"feed_health\".\"succeeded_at\" = \"feed_health\".\"attempted_at\")"
+        },
+        "feed_health_catching_up": {
+          "name": "feed_health_catching_up",
+          "value": "\"feed_health\".\"state\" <> 'catching_up' or (\"feed_health\".\"read_through\" is not null and \"feed_health\".\"read_through\" < \"feed_health\".\"attempted_at\" and (\"feed_health\".\"problems\" = 0) = (\"feed_health\".\"detail\" is null) and \"feed_health\".\"failing_since\" is null and \"feed_health\".\"succeeded_at\" is not null and \"feed_health\".\"succeeded_at\" = \"feed_health\".\"attempted_at\")"
+        },
+        "feed_health_failed": {
+          "name": "feed_health_failed",
+          "value": "\"feed_health\".\"state\" <> 'failed' or (\"feed_health\".\"problems\" = 0 and \"feed_health\".\"detail\" is not null and \"feed_health\".\"failing_since\" is not null and \"feed_health\".\"failing_since\" <= \"feed_health\".\"attempted_at\" and (\"feed_health\".\"succeeded_at\" is null or \"feed_health\".\"succeeded_at\" < \"feed_health\".\"failing_since\"))"
+        },
+        "feed_health_pending": {
+          "name": "feed_health_pending",
+          "value": "\"feed_health\".\"state\" <> 'pending' or (\"feed_health\".\"problems\" = 0 and \"feed_health\".\"detail\" is null and \"feed_health\".\"failing_since\" is null)"
+        },
+        "feed_health_read_after_success": {
+          "name": "feed_health_read_after_success",
+          "value": "\"feed_health\".\"read_through\" is null or \"feed_health\".\"succeeded_at\" is not null"
         }
       },
       "isRLSEnabled": false
@@ -12219,50 +12416,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "waiting_on": {
-          "name": "waiting_on",
-          "type": "case_waiting_on",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "respond_by": {
-          "name": "respond_by",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "next_action": {
-          "name": "next_action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "escalation": {
-          "name": "escalation",
-          "type": "case_escalation",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "case_ref": {
-          "name": "case_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "raw_status": {
           "name": "raw_status",
           "type": "text",
@@ -12304,6 +12457,13 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "note_unread": {
+          "name": "note_unread",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "synced_at": {
           "name": "synced_at",
@@ -12360,19 +12520,7 @@
       "checkConstraints": {
         "return_requests_refund_never_ships": {
           "name": "return_requests_refund_never_ships",
-          "value": "\"return_requests\".\"kind\" = 'return' or \"return_requests\".\"status\"::text in ('requested', 'processing', 'unknown', 'closed', 'cancelled')"
-        },
-        "return_requests_resolved_owner": {
-          "name": "return_requests_resolved_owner",
-          "value": "(\"return_requests\".\"waiting_on\" = 'nobody') = (\"return_requests\".\"status\" in ('closed', 'cancelled'))"
-        },
-        "return_requests_deadline_owner": {
-          "name": "return_requests_deadline_owner",
-          "value": "\"return_requests\".\"respond_by\" is null or \"return_requests\".\"waiting_on\" = 'us'"
-        },
-        "return_requests_money_pair": {
-          "name": "return_requests_money_pair",
-          "value": "(\"return_requests\".\"amount\" is null) = (\"return_requests\".\"currency\" is null)"
+          "value": "\"return_requests\".\"kind\" = 'return' or \"return_requests\".\"status\" in ('requested', 'closed', 'cancelled')"
         }
       },
       "isRLSEnabled": false
@@ -14513,26 +14661,6 @@
         "unconfirmed"
       ]
     },
-    "public.case_escalation": {
-      "name": "case_escalation",
-      "schema": "public",
-      "values": [
-        "in_progress",
-        "buyer_won",
-        "seller_won",
-        "closed"
-      ]
-    },
-    "public.case_waiting_on": {
-      "name": "case_waiting_on",
-      "schema": "public",
-      "values": [
-        "us",
-        "buyer",
-        "marketplace",
-        "nobody"
-      ]
-    },
     "public.channel": {
       "name": "channel",
       "schema": "public",
@@ -14590,6 +14718,25 @@
       "values": [
         "purchase_order",
         "damage_report"
+      ]
+    },
+    "public.feed_gap_kind": {
+      "name": "feed_gap_kind",
+      "schema": "public",
+      "values": [
+        "unsaved",
+        "unread"
+      ]
+    },
+    "public.feed_state": {
+      "name": "feed_state",
+      "schema": "public",
+      "values": [
+        "ok",
+        "partial",
+        "catching_up",
+        "failed",
+        "pending"
       ]
     },
     "public.listing_fulfillment": {
@@ -14782,6 +14929,17 @@
         "delivered",
         "closed",
         "cancelled"
+      ]
+    },
+    "public.sync_feed": {
+      "name": "sync_feed",
+      "schema": "public",
+      "values": [
+        "orders",
+        "returns",
+        "messages",
+        "charges",
+        "tracking"
       ]
     },
     "public.tax_remitter": {
