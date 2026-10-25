@@ -1,20 +1,16 @@
 import { Link } from "@tanstack/react-router";
-import {
-	CircleAlert,
-	ExternalLink,
-	PackageCheck,
-	Tag,
-	Truck,
-} from "lucide-react";
+import { ExternalLink, Tag } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { BuyerOrder as Order } from "#/buyers/order";
 import { OrderStatusBadge } from "#/components/order-status";
+import { ReadMark } from "#/components/package-read";
 import { PackageStatus } from "#/components/package-status";
 import { ProductImage } from "#/components/product";
 import { Tip } from "#/components/ui/tooltip";
 import type { MailOrders as Found } from "#/inbox/mail-orders";
 import { formatCount, formatDay } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { knownOf } from "#/orders/tracking-read";
 import { getBuyerOrder } from "#/server/buyers";
 import { getMailOrders } from "#/server/inbox";
 
@@ -117,73 +113,52 @@ function OrderStrip({ order }: { order: Order }) {
 	);
 }
 
-// Where it is, by the carrier's word; when it lands or landed.
-function where(p: Package) {
-	if (p.status === "DELIVERED")
-		return {
-			icon: PackageCheck,
-			text: p.deliveredAt
-				? `Delivered ${formatDay(p.deliveredAt)}`
-				: "Delivered",
-			tone: "text-success-text",
-		};
-	if (p.status === "RETURNED" || p.status === "FAILURE")
-		return {
-			icon: CircleAlert,
-			text: p.status === "RETURNED" ? "Returning to us" : "Delivery problem",
-			tone: "text-critical-text",
-		};
-	if (p.status === "TRANSIT")
-		return {
-			icon: Truck,
-			text: p.eta ? `Arrives ${formatDay(p.eta)}` : "On its way",
-			tone: "text-foreground",
-		};
-	return {
-		icon: Tag,
-		text:
-			p.status === "PRE_TRANSIT"
-				? "Label made"
-				: p.shippedAt
-					? `Shipped ${formatDay(p.shippedAt)}`
-					: "Shipped",
-		tone: "text-muted-foreground",
-	};
-}
-
-// Its timeline when the carrier has scanned it, every scan on hover;
-// otherwise where katasync last knew it was.
+// Its timeline when the carrier has scanned it, every scan on hover, aged
+// with an amber dot when they couldn't be refreshed; otherwise when it
+// shipped, and why there are no scans.
 function PackageChip({ pkg: p }: { pkg: Package }) {
-	if (p.tracking)
+	const t = knownOf(p.tracking);
+	if (t)
 		return (
 			<div className="w-56 text-sm">
-				<a
-					href={p.url ?? undefined}
-					target="_blank"
-					rel="noreferrer"
-					className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums hover:text-foreground"
-				>
-					{p.carrier} {p.number}
-					<ExternalLink className="size-3" />
-				</a>
-				<PackageStatus t={p.tracking} />
+				<span className="flex items-center gap-2 text-xs text-muted-foreground">
+					<a
+						href={p.url ?? undefined}
+						target="_blank"
+						rel="noreferrer"
+						className="flex min-w-0 items-center gap-1 tabular-nums hover:text-foreground"
+					>
+						<span className="truncate">
+							{p.carrier} {p.number}
+						</span>
+						<ExternalLink className="size-3 shrink-0" />
+					</a>
+					<span className="ml-auto shrink-0">
+						<ReadMark read={p.tracking} />
+					</span>
+				</span>
+				<PackageStatus t={t} />
 			</div>
 		);
-	const w = where(p);
 	const body = (
 		<>
-			<w.icon className={cn("size-4 shrink-0", w.tone)} />
-			<span className={cn("font-medium", w.tone)}>{w.text}</span>
+			<Tag className="size-4 shrink-0 text-muted-foreground" />
+			<span className="font-medium text-muted-foreground">
+				{p.shippedAt ? `Shipped ${formatDay(p.shippedAt)}` : "Shipped"}
+			</span>
 			<span className="text-muted-foreground">
 				{p.carrier} {p.number ?? ""}
 			</span>
 			{p.url && <ExternalLink className="size-3 text-muted-foreground" />}
+			<span className="text-xs text-muted-foreground">
+				<ReadMark read={p.tracking} />
+			</span>
 		</>
 	);
 	const chip =
 		"flex items-center gap-1.5 rounded-lg border px-2 py-1 text-sm tabular-nums";
 	return (
-		<Tip content={p.statusDetail ?? p.service}>
+		<Tip content={p.service}>
 			{p.url ? (
 				<a
 					href={p.url}

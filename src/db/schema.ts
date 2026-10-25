@@ -842,6 +842,9 @@ export const returnRequests = pgTable(
 		requestedAt: timestamp({ withTimezone: true }).notNull(),
 		sourceUpdatedAt: timestamp({ withTimezone: true }).notNull(),
 		syncedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		// When staff stopped following its package; null while it's followed.
+		// Never set by a sync, so the marketplace can't undo it.
+		unfollowedAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [
 		unique("return_requests_billed_by_external_id").on(
@@ -2138,6 +2141,37 @@ export const returnTracking = pgTable(
 		),
 		check(
 			"return_tracking_carrier",
+			sql`${t.carrier} in ('ups', 'usps', 'fedex')`,
+		),
+	],
+);
+
+// What Shippo last said about a package sent to a buyer, by the carrier
+// and number, kept so a refresh that fails still shows the scans known
+// (src/orders/package-tracking.ts). Only answers are kept: a failed ask
+// leaves the row as it was.
+export const packageTracking = pgTable(
+	"package_tracking",
+	{
+		// Shippo's carrier token: ups, usps, fedex.
+		carrier: text().notNull(),
+		// Uppercase, no spaces.
+		number: text().notNull(),
+		status: trackingStatus().notNull(),
+		statusDetail: text(),
+		statusAt: timestamp({ withTimezone: true }),
+		eta: timestamp({ withTimezone: true }),
+		originalEta: timestamp({ withTimezone: true }),
+		service: text(),
+		origin: text(),
+		destination: text(),
+		history: jsonb().$type<TrackingEvent[]>().notNull().default([]),
+		checkedAt: timestamp({ withTimezone: true }).notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.carrier, t.number] }),
+		check(
+			"package_tracking_carrier",
 			sql`${t.carrier} in ('ups', 'usps', 'fedex')`,
 		),
 	],
