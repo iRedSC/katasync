@@ -7,6 +7,7 @@ import { emailUnready } from "#/buyers/shopify-mail";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
+	orderBuyerContacts,
 	orderCharges,
 	orderCostChecks,
 	orderCostReports,
@@ -170,7 +171,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				fulfilledByChannel: orders.fulfilledByChannel,
 				financialStatus,
 				customerName: orders.customerName,
-				buyerEmail: orders.buyerEmail,
+				buyerEmail: orderBuyerContacts.email,
 				shipAddress1: orders.shipAddress1,
 				shipAddress2: orders.shipAddress2,
 				shipCity: orders.shipCity,
@@ -193,6 +194,7 @@ export const getOrder = createServerFn({ method: "GET" })
 			})
 			.from(orders)
 			.innerJoin(stores, eq(stores.id, orders.storeId))
+			.leftJoin(orderBuyerContacts, eq(orderBuyerContacts.orderId, orders.id))
 			.where(eq(orders.id, data.id));
 		if (!order) throw new Error(`No order ${data.id}`);
 		const lines = await db

@@ -153,11 +153,7 @@ async function checkShopify(s: Steps) {
 				warn: `Shopify won't share buyer emails, so Shopify buyers can't be emailed from katasync. Grant the app protected customer data access with the Email field in Shopify's app settings. Shopify said: ${error instanceof Error ? error.message : String(error)}`,
 			};
 		}
-		return process.env.SHOPIFY_EMAIL_FROM?.trim()
-			? "Readable"
-			: {
-					warn: "Readable, but set SHOPIFY_EMAIL_FROM to email buyers from katasync",
-				};
+		return "Readable";
 	});
 }
 

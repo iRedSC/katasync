@@ -640,10 +640,6 @@ export const orders = pgTable(
 		// The buyer's account on the marketplace (TikTok's user_id). TikTok hides
 		// the address from us, so it's how two orders are known to be one buyer's.
 		buyerId: text(),
-		// Where to email the buyer from katasync (src/buyers/shopify-mail.ts).
-		// Shopify's own orders only: a relayed order's buyer is the
-		// marketplace's to talk to, so it never has one.
-		buyerEmail: text(),
 		shipAddress1: text(),
 		shipAddress2: text(),
 		shipCity: text(),
@@ -683,6 +679,18 @@ export const orders = pgTable(
 		check("orders_pin_range", sql`${t.pin} between 1 and 999`),
 	],
 );
+
+// Where to email an order's buyer from katasync (src/buyers/shopify-mail.ts).
+// Shopify's own orders only: a relayed order's buyer is the marketplace's
+// to talk to, so it never has one. Apart from orders so the query tool
+// (katasync_mcp) can read orders but never buyers' addresses.
+export const orderBuyerContacts = pgTable("order_buyer_contacts", {
+	orderId: integer()
+		.primaryKey()
+		.references(() => orders.id),
+	email: text().notNull(),
+	updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 // The packages the channel says an order went out in, labels bought there
 // included (TikTok Shipping, Shopify's admin), read whole as the order is
@@ -2948,6 +2956,10 @@ export const marketEmails = pgTable(
 		// is unread.
 		readAt: timestamp({ withTimezone: true }),
 		fromAddress: text().notNull(),
+		// Microsoft vouched the sender owns fromAddress's domain (its
+		// Authentication-Results: compauth or aligned DMARC passed). Only
+		// asked of mail from no marketplace; false when not known.
+		senderAuthenticated: boolean().notNull().default(false),
 		fromName: text(),
 		// Every To and Cc address, lowercased.
 		recipients: text().array().notNull(),

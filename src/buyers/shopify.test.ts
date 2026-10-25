@@ -1,18 +1,19 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { keepShopifyEmails } from "#/channels/shopify/order-emails";
 import type { Db } from "#/db/client";
-import { buyerMessages, marketEmails, orders, stores } from "#/db/schema";
+import {
+	buyerMessages,
+	marketEmails,
+	orderBuyerContacts,
+	orders,
+	stores,
+} from "#/db/schema";
+import { ingestMarketMail } from "#/inbox/market-mail";
 import { createTestDb } from "#/test/db";
 import { reply, settleReplies } from "./send";
-import {
-	matchShopifyReply,
-	replyText,
-	type ShopifyThreadRef,
-	startShopifyThread,
-	threadAddress,
-	threadShopifyMail,
-} from "./shopify-mail";
+import { startShopifyThread, threadShopifyMail } from "./shopify-mail";
+import { threadAddress } from "./shopify-match";
 import { threadsPage } from "./threads";
 
 const BUYER = "pat@example.com";
@@ -24,7 +25,7 @@ beforeEach(async () => {
 	db = await createTestDb();
 	vi.stubEnv("RESEND_API_KEY", "re_test");
 	vi.stubEnv("MARKETPLACE_INBOX", INBOX);
-	vi.stubEnv("SHOPIFY_EMAIL_FROM", "East Coast Drywall Tools <sales@ecdt.com>");
+	vi.stubEnv("CRON_SECRET", "test-cron-secret");
 	vi.stubEnv("SHOPIFY_STORE_DOMAIN", "ecdt.myshopify.com");
 	vi.stubEnv("SHOPIFY_ADMIN_TOKEN", "shpat_test");
 });
@@ -58,9 +59,11 @@ async function store() {
 	return s;
 }
 
+// An order, with its buyer's email unless that's null.
 async function order(
 	storeId: number,
 	over: Partial<typeof orders.$inferInsert> = {},
+	buyerEmail: string | null = BUYER,
 ) {
 	n++;
 	const [o] = await db
@@ -74,11 +77,14 @@ async function order(
 			total: 40,
 			sourceUpdatedAt: new Date(),
 			customerName: "Pat Doe",
-			buyerEmail: BUYER,
 			...over,
 		})
 		.returning();
 	if (!o) throw new Error("no order");
+	if (buyerEmail)
+		await db
+			.insert(orderBuyerContacts)
+			.values({ orderId: o.id, email: buyerEmail });
 	return o;
 }
 
@@ -91,6 +97,7 @@ async function email(over: Partial<typeof marketEmails.$inferInsert> = {}) {
 			market: null,
 			folder: "updates",
 			fromAddress: BUYER,
+			senderAuthenticated: true,
 			recipients: [INBOX],
 			subject: "Re: Your order",
 			body: "Thanks!",
@@ -102,102 +109,24 @@ async function email(over: Partial<typeof marketEmails.$inferInsert> = {}) {
 	return row;
 }
 
-describe("matching a buyer's email to a thread", () => {
-	const at = new Date(Date.UTC(2026, 9, 1));
-	const thread = (id: number, orderName: string, open = true) =>
-		({
-			id,
-			email: BUYER,
-			orderName,
-			open,
-			createdAt: at,
-		}) satisfies ShopifyThreadRef;
-	const mail = (over: Partial<Parameters<typeof matchShopifyReply>[0]>) => ({
-		fromAddress: BUYER,
-		recipients: [INBOX],
-		subject: "Hello",
-		body: "",
-		receivedAt: new Date(Date.UTC(2026, 9, 2)),
-		...over,
-	});
-	const two = [thread(1, "#5536"), thread(2, "#5537")];
-
-	test("its thread address wins over the order it names", () => {
-		expect(
-			matchShopifyReply(
-				mail({ recipients: [threadAddress(2) ?? ""], subject: "Re: #5536" }),
-				two,
-			),
-		).toEqual({ threadId: 2, by: "address" });
-	});
-
-	test("another buyer's thread address is left unmatched", () => {
-		const theirs = { ...thread(3, "#5538"), email: "sam@example.com" };
-		expect(
-			matchShopifyReply(mail({ recipients: [threadAddress(3) ?? ""] }), [
-				...two,
-				theirs,
-			]).threadId,
-		).toBeNull();
-	});
-
-	test("falls back to the one order it names, never a longer number", () => {
-		expect(
-			matchShopifyReply(mail({ subject: "Re: Your order #5537" }), two),
-		).toEqual({ threadId: 2, by: "order" });
-		expect(
-			matchShopifyReply(mail({ subject: "Re: Your order #55370" }), two)
-				.threadId,
-		).toBeNull();
-	});
-
-	test("two of their orders named, or two open threads, is left unmatched", () => {
-		expect(
-			matchShopifyReply(mail({ body: "About #5536 and #5537" }), two),
-		).toMatchObject({ threadId: null });
-		expect(matchShopifyReply(mail({}), two)).toMatchObject({ threadId: null });
-	});
-
-	test("their one open thread takes what names nothing", () => {
-		expect(
-			matchShopifyReply(mail({}), [
-				thread(1, "#5536"),
-				thread(2, "#5537", false),
-			]),
-		).toEqual({ threadId: 1, by: "sender" });
-	});
-
-	test("mail from before the thread, or from someone else, isn't an answer", () => {
-		const one = [thread(1, "#5536")];
-		expect(
-			matchShopifyReply(
-				mail({ receivedAt: new Date(Date.UTC(2026, 8, 1)) }),
-				one,
-			).threadId,
-		).toBeNull();
-		expect(
-			matchShopifyReply(mail({ fromAddress: "sam@example.com" }), one).threadId,
-		).toBeNull();
-	});
-
-	test("keeps their words above the quoted email", () => {
-		expect(
-			replyText(
-				"Yes please.\r\n\r\nOn Mon, Oct 5, 2026 at 9:00 AM ECDT <sales@ecdt.com> wrote:\r\n> Your order",
-			),
-		).toBe("Yes please.");
-		expect(replyText("Just this")).toBe("Just this");
+describe("buyers' addresses", () => {
+	test("the query tool's role can't read them", async () => {
+		const { rows } = (await db.execute(
+			sql`select has_table_privilege('katasync_mcp', 'order_buyer_contacts', 'select') as can`,
+		)) as unknown as { rows: { can: boolean }[] };
+		expect(rows).toEqual([{ can: false }]);
 	});
 });
 
 describe("relayed TikTok orders", () => {
 	test("are never asked for an email or given one", async () => {
 		const s = await store();
-		const own = await order(s.id, { buyerEmail: null });
-		const relayed = await order(s.id, {
-			buyerEmail: null,
-			marketplaceOrderId: "tiktok:576",
-		});
+		const own = await order(s.id, {}, null);
+		const relayed = await order(
+			s.id,
+			{ marketplaceOrderId: "tiktok:576" },
+			null,
+		);
 		const calls = answers([
 			json(200, {
 				data: {
@@ -217,13 +146,12 @@ describe("relayed TikTok orders", () => {
 			variables: { ids: [own.externalId] },
 		});
 		const kept = await db
-			.select({ id: orders.id, email: orders.buyerEmail })
-			.from(orders)
-			.orderBy(orders.id);
-		expect(kept).toEqual([
-			{ id: own.id, email: BUYER },
-			{ id: relayed.id, email: null },
-		]);
+			.select({
+				orderId: orderBuyerContacts.orderId,
+				email: orderBuyerContacts.email,
+			})
+			.from(orderBuyerContacts);
+		expect(kept).toEqual([{ orderId: own.id, email: BUYER }]);
 		await expect(startShopifyThread(db, relayed.id)).rejects.toThrow(
 			"answered on its marketplace",
 		);
@@ -231,7 +159,7 @@ describe("relayed TikTok orders", () => {
 
 	test("Shopify refusing to say leaves orders syncing", async () => {
 		const s = await store();
-		const own = await order(s.id, { buyerEmail: null });
+		const own = await order(s.id, {}, null);
 		answers([
 			json(200, { errors: [{ message: "Access denied for email field" }] }),
 		]);
@@ -248,15 +176,15 @@ describe("emailing a Shopify buyer", () => {
 		return { o, threadId };
 	}
 
-	test("sends from the store, answered at the thread's address", async () => {
+	test("sends from the marketplaces mailbox, answered at the thread's address", async () => {
 		const { o, threadId } = await started();
 		const calls = answers([json(200, { id: "re_1" })]);
 		const r = await reply(db, threadId, "It ships today.", crypto.randomUUID());
 		expect(r.status).toBe("sent");
 		expect(calls[0]?.body).toMatchObject({
-			from: "East Coast Drywall Tools <sales@ecdt.com>",
+			from: `East Coast Drywall Tools <${INBOX}>`,
 			to: [BUYER],
-			reply_to: `marketplaces+so${threadId}@eastcoastdrywall.com`,
+			reply_to: threadAddress(threadId),
 			subject: `Your order ${o.name}`,
 		});
 
@@ -292,7 +220,7 @@ describe("emailing a Shopify buyer", () => {
 	test("their answer is filed on the thread and done in the mailbox", async () => {
 		const { threadId } = await started();
 		const answer = await email({
-			recipients: [`marketplaces+so${threadId}@eastcoastdrywall.com`],
+			recipients: [threadAddress(threadId) ?? ""],
 			body: "Great, thanks!\n\nOn Mon someone wrote:\n> It ships today.",
 		});
 		const elsewhere = await email({ fromAddress: "sam@example.com" });
@@ -322,5 +250,61 @@ describe("emailing a Shopify buyer", () => {
 			.from(marketEmails)
 			.where(eq(marketEmails.id, unsure.id));
 		expect(row?.doneAt).toBeNull();
+	});
+
+	test("a forged From is never filed as the buyer's", async () => {
+		const { threadId } = await started();
+		const forged = await email({
+			senderAuthenticated: false,
+			recipients: [threadAddress(threadId) ?? ""],
+		});
+		expect(await threadShopifyMail(db)).toEqual({ filed: 0, unmatched: 1 });
+		const kept = await db
+			.select()
+			.from(buyerMessages)
+			.where(eq(buyerMessages.marketEmailId, forged.id));
+		expect(kept).toEqual([]);
+	});
+
+	test("the mailbox keeps whether Microsoft vouched for a buyer's sender", async () => {
+		const message = (from: string) => {
+			n++;
+			return {
+				graphId: `g${n}`,
+				messageId: `<i${n}@mail>`,
+				receivedAt: new Date(),
+				subject: "Re: Your order",
+				fromAddress: from,
+				fromName: null,
+				recipients: [INBOX],
+			};
+		};
+		const vouched = message(BUYER);
+		const forged = message("sam@example.com");
+		await ingestMarketMail(
+			db,
+			[vouched, forged],
+			async () => ({ body: "Hi", attachments: [] }),
+			async (id) => [
+				{
+					name: "Authentication-Results",
+					value:
+						id === vouched.graphId
+							? "dmarc=pass header.from=example.com;compauth=pass reason=100"
+							: "dmarc=fail header.from=example.com;compauth=fail reason=000",
+				},
+			],
+		);
+		const rows = await db
+			.select({
+				from: marketEmails.fromAddress,
+				ok: marketEmails.senderAuthenticated,
+			})
+			.from(marketEmails)
+			.orderBy(marketEmails.id);
+		expect(rows).toEqual([
+			{ from: BUYER, ok: true },
+			{ from: "sam@example.com", ok: false },
+		]);
 	});
 });

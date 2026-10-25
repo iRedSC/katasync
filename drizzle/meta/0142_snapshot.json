@@ -1,5 +1,5 @@
 {
-  "id": "a7120a1a-1a09-45c8-9b4a-c62fb5d141a9",
+  "id": "e8040c28-9d42-4539-902f-2b603bccb169",
   "prevId": "fd1a9a53-f25b-4c96-ba1a-5f97ec986929",
   "version": "7",
   "dialect": "postgresql",
@@ -6670,6 +6670,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "sender_authenticated": {
+          "name": "sender_authenticated",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "from_name": {
           "name": "from_name",
           "type": "text",
@@ -7362,6 +7369,52 @@
           "value": "\"oauth_tokens\".\"kind\" = 'refresh' or \"oauth_tokens\".\"used_at\" is null"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.order_buyer_contacts": {
+      "name": "order_buyer_contacts",
+      "schema": "",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "order_buyer_contacts_order_id_orders_id_fk": {
+          "name": "order_buyer_contacts_order_id_orders_id_fk",
+          "tableFrom": "order_buyer_contacts",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.order_channel_tracking": {
@@ -8150,12 +8203,6 @@
         },
         "buyer_id": {
           "name": "buyer_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "buyer_email": {
-          "name": "buyer_email",
           "type": "text",
           "primaryKey": false,
           "notNull": false

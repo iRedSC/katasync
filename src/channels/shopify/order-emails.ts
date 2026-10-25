@@ -1,7 +1,7 @@
 import { type } from "arktype";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { orders } from "#/db/schema";
+import { orderBuyerContacts, orders } from "#/db/schema";
 import { tiktokOrderId } from "./channel-order";
 import { shopifyQuery } from "./client";
 import type { ShopifyOrder } from "./order-shapes";
@@ -57,18 +57,33 @@ export async function keepShopifyEmails(
 	} catch (error) {
 		return error instanceof Error ? error.message : String(error);
 	}
-	for (const [externalId, email] of found)
+	const saved = await db
+		.select({ id: orders.id, externalId: orders.externalId })
+		.from(orders)
+		.where(
+			and(
+				eq(orders.storeId, storeId),
+				inArray(orders.externalId, [...found.keys()]),
+				// Saved as relayed by another source: still not ours to email.
+				isNull(orders.marketplaceOrderId),
+			),
+		);
+	for (const o of saved) {
+		const email = found.get(o.externalId) ?? null;
+		if (email === null) {
+			await db
+				.delete(orderBuyerContacts)
+				.where(eq(orderBuyerContacts.orderId, o.id));
+			continue;
+		}
 		await db
-			.update(orders)
-			.set({ buyerEmail: email })
-			.where(
-				and(
-					eq(orders.storeId, storeId),
-					eq(orders.externalId, externalId),
-					// Saved as relayed by another source: still not ours to email.
-					isNull(orders.marketplaceOrderId),
-					sql`${orders.buyerEmail} is distinct from ${email}`,
-				),
-			);
+			.insert(orderBuyerContacts)
+			.values({ orderId: o.id, email })
+			.onConflictDoUpdate({
+				target: orderBuyerContacts.orderId,
+				set: { email, updatedAt: new Date() },
+				setWhere: sql`${orderBuyerContacts.email} <> ${email}`,
+			});
+	}
 	return null;
 }
