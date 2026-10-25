@@ -680,6 +680,20 @@ export const orders = pgTable(
 	],
 );
 
+// The packages the channel says an order went out in, labels bought there
+// included (TikTok Shipping, Shopify's admin), read whole as the order is
+// looked at (src/orders/channel-tracking.ts). readFor is the order's
+// sourceUpdatedAt when read: the order changing since means reading again.
+export type ChannelPackage = { carrier: string; number: string };
+
+export const orderChannelTracking = pgTable("order_channel_tracking", {
+	orderId: integer()
+		.primaryKey()
+		.references(() => orders.id),
+	packages: jsonb().$type<ChannelPackage[]>().notNull(),
+	readFor: timestamp({ withTimezone: true }).notNull(),
+});
+
 export const orderLines = pgTable(
 	"order_lines",
 	{

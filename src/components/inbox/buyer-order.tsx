@@ -9,6 +9,7 @@ import {
 import { useEffect, useState } from "react";
 import type { BuyerOrder as Order } from "#/buyers/order";
 import { OrderStatusBadge } from "#/components/order-status";
+import { PackageStatus } from "#/components/package-status";
 import { ProductImage } from "#/components/product";
 import { Tip } from "#/components/ui/tooltip";
 import type { MailOrders as Found } from "#/inbox/mail-orders";
@@ -110,7 +111,7 @@ function OrderStrip({ order }: { order: Order }) {
 				</Link>
 			</span>
 			{order.packages.map((p) => (
-				<PackageChip key={p.id} pkg={p} />
+				<PackageChip key={p.key} pkg={p} />
 			))}
 		</div>
 	);
@@ -143,12 +144,31 @@ function where(p: Package) {
 		text:
 			p.status === "PRE_TRANSIT"
 				? "Label made"
-				: `Shipped ${formatDay(p.shippedAt)}`,
+				: p.shippedAt
+					? `Shipped ${formatDay(p.shippedAt)}`
+					: "Shipped",
 		tone: "text-muted-foreground",
 	};
 }
 
+// Its timeline when the carrier has scanned it, every scan on hover;
+// otherwise where katasync last knew it was.
 function PackageChip({ pkg: p }: { pkg: Package }) {
+	if (p.tracking)
+		return (
+			<div className="w-56 text-sm">
+				<a
+					href={p.url ?? undefined}
+					target="_blank"
+					rel="noreferrer"
+					className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums hover:text-foreground"
+				>
+					{p.carrier} {p.number}
+					<ExternalLink className="size-3" />
+				</a>
+				<PackageStatus t={p.tracking} />
+			</div>
+		);
 	const w = where(p);
 	const body = (
 		<>
