@@ -9,6 +9,7 @@ import {
 import { PackageDetails } from "#/components/package-status";
 import { Card } from "#/components/page";
 import { Bone } from "#/components/skeleton";
+import { Tip } from "#/components/ui/tooltip";
 import { channelName } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { knownOf } from "#/orders/tracking-read";
@@ -121,10 +122,11 @@ function Trouble({
 		<p
 			ref={ref}
 			className="-mx-2 flex items-center gap-2 rounded-lg px-2 text-xs text-critical-text"
-			title={why}
 		>
 			<span className="size-2 shrink-0 rounded-full bg-critical-icon" />
-			{text}
+			<Tip content={why}>
+				<span>{text}</span>
+			</Tip>
 			<button
 				type="button"
 				onClick={again}

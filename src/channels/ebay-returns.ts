@@ -11,7 +11,8 @@ const SEARCH = "https://api.ebay.com/post-order/v2/return/search";
 const PAGE = 200;
 const DAY = 24 * 60 * 60 * 1000;
 export const HISTORY_DAYS = 540;
-// Regular passes read this far back by creation date. Older windows are as wide.
+// A first pass reads this far back by creation date; each window the open
+// returns are read again in is as wide.
 export const DISCOVERY_DAYS = 60;
 const WINDOW = DISCOVERY_DAYS * DAY;
 
@@ -104,10 +105,10 @@ export async function fetchEbayReturns(from: Date, until: Date) {
 	}
 }
 
-// Open returns older than discovery reaches. eBay searches by creation date,
-// so each older window that holds one is read again, keeping only the returns
-// still open here: a closure eBay made since then comes through.
-export async function fetchOlderOpenReturns(
+// Returns still open here, read again. eBay searches by creation date, so
+// each window that holds one is read again, keeping only those: a change
+// eBay made since (shipped, closed) comes through.
+export async function fetchOpenReturns(
 	open: { externalId: string; requestedAt: Date }[],
 	now: Date,
 ): Promise<ChannelReturn[]> {
@@ -116,7 +117,7 @@ export async function fetchOlderOpenReturns(
 	for (const o of open) {
 		const age = now.getTime() - o.requestedAt.getTime();
 		const back = Math.floor(age / WINDOW);
-		if (back >= 1 && age < HISTORY_DAYS * DAY) windows.add(back);
+		if (age < HISTORY_DAYS * DAY) windows.add(back);
 	}
 	const returns: ChannelReturn[] = [];
 	for (const back of windows) {

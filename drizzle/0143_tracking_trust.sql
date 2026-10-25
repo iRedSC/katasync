@@ -15,4 +15,5 @@ CREATE TABLE "package_tracking" (
 	CONSTRAINT "package_tracking_carrier" CHECK ("package_tracking"."carrier" in ('ups', 'usps', 'fedex'))
 );
 --> statement-breakpoint
-ALTER TABLE "return_requests" ADD COLUMN "unfollowed_at" timestamp with time zone;
+ALTER TABLE "return_requests" ADD COLUMN "unfollowed_at" timestamp with time zone;--> statement-breakpoint
+GRANT SELECT ON "package_tracking" TO katasync_mcp;

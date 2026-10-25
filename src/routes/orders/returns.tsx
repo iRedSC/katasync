@@ -1,12 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-	ExternalLink,
-	PackageOpen,
-	Printer,
-	Search,
-	SearchX,
-	Undo2,
-} from "lucide-react";
+import { ExternalLink, Printer, Search, SearchX, Undo2 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FilterBar, useSearchRows } from "#/components/filter-bar";
@@ -20,6 +13,10 @@ import {
 	ReturnRow,
 	states,
 } from "#/components/returns/return-row";
+import {
+	NothingDue,
+	ReturnsChecked,
+} from "#/components/returns/returns-checked";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
@@ -146,7 +143,10 @@ type OtherSearch =
 
 function Returns() {
 	const loaded = Route.useLoaderData();
-	const { refunds, due, received } = returnsData.useData("all", loaded);
+	const { refunds, due, received, checked } = returnsData.useData(
+		"all",
+		loaded,
+	);
 	const { link } = useRowLink();
 	const input = useRef<HTMLInputElement>(null);
 	const [query, setQuery] = useState("");
@@ -298,7 +298,12 @@ function Returns() {
 				<OrderTabs
 					active="returns"
 					count={refunds.length + due.length}
-					aside={<ReturnsViews active="due" />}
+					aside={
+						<>
+							<ReturnsChecked checks={checked} />
+							<ReturnsViews active="due" />
+						</>
+					}
 				/>
 				<FilterBar
 					search={returnSearch}
@@ -327,10 +332,7 @@ function Returns() {
 									: "Try the buyer's name, a SKU, or the zip on the label."}
 						</EmptyState>
 					) : (
-						<EmptyState
-							icon={PackageOpen}
-							title="Nothing to answer or receive"
-						/>
+						<NothingDue checks={checked} />
 					)
 				) : (
 					<table className="w-full whitespace-nowrap">

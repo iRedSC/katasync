@@ -1,5 +1,5 @@
 import { useRouter } from "@tanstack/react-router";
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
@@ -20,11 +20,19 @@ const BUSY_AGAIN_MS = 5_000;
 const BUSY_TRIES = 30;
 
 type Failed = { channel: string; error: string };
+type Troubled = { channel: string; problems: number };
 type Status =
 	| { kind: "syncing"; lastAt: Date | null }
 	// `lastAt` is the newest completion the server reported, never the time
 	// this request returned. `busy` channels are held by another pass.
-	| { kind: "synced"; lastAt: Date | null; failed: Failed[]; busy: string[] }
+	// `troubled` channels finished, with problems on some orders or listings.
+	| {
+			kind: "synced";
+			lastAt: Date | null;
+			failed: Failed[];
+			busy: string[];
+			troubled: Troubled[];
+	  }
 	// The request itself failed: offline, signed out, the server down.
 	| { kind: "unreachable"; lastAt: Date | null; error: string }
 	| { kind: "paused"; lastAt: Date | null };
@@ -61,6 +69,7 @@ export function LiveSync({ repeat }: { repeat: boolean }) {
 					lastAt: done ?? s.lastAt,
 					failed: failedOf(passes),
 					busy,
+					troubled: troubledOf(passes),
 				}));
 				if (done) await router.invalidate();
 				if (busy.length === 0) busyTries.current = 0;
@@ -147,25 +156,31 @@ export function LiveSync({ repeat }: { repeat: boolean }) {
 								`${status.failed.map((f) => channelName(f.channel)).join(", ")} didn't sync`,
 								`${status.failed.map((f) => `${channelName(f.channel)}: ${f.error}`).join("\n")}\nDiagnostics has details. Click to try again`,
 							]
-						: status.busy.length > 0
+						: status.troubled.length > 0 && lastAt
 							? [
-									<Loader2 key="i" className="animate-spin" />,
-									"Syncing",
-									`${status.busy.map(channelName).join(", ")} is being synced by another pass. Click to check again`,
+									<AlertTriangle key="i" className="text-warning-text" />,
+									`Synced ${formatTime(lastAt)}`,
+									`${status.troubled.map((t) => `${channelName(t.channel)}: ${t.problems} ${t.problems === 1 ? "problem" : "problems"}`).join("\n")}\nDiagnostics has details. Click to sync now`,
 								]
-							: lastAt
+							: status.busy.length > 0
 								? [
-										<RefreshCw key="i" />,
-										`Synced ${formatTime(lastAt)}`,
-										repeat
-											? "Orders sync every two minutes while you're here. Click to sync now"
-											: "Synced when this page opened. Click to sync again",
+										<Loader2 key="i" className="animate-spin" />,
+										"Syncing",
+										`${status.busy.map(channelName).join(", ")} is being synced by another pass. Click to check again`,
 									]
-								: [
-										<RefreshCw key="i" />,
-										"Nothing to sync",
-										"No marketplace is connected. Diagnostics says why",
-									];
+								: lastAt
+									? [
+											<RefreshCw key="i" />,
+											`Synced ${formatTime(lastAt)}`,
+											repeat
+												? "Orders sync every two minutes while you're here. Click to sync now"
+												: "Synced when this page opened. Click to sync again",
+										]
+									: [
+											<RefreshCw key="i" />,
+											"Nothing to sync",
+											"No marketplace is connected. Diagnostics says why",
+										];
 
 	return (
 		<Tip content={<span className="whitespace-pre-line">{tip}</span>}>
@@ -200,5 +215,13 @@ function busyOf(passes: SyncedNow[]): string[] {
 function failedOf(passes: SyncedNow[]): Failed[] {
 	return passes.flatMap((p) =>
 		p.state === "failed" ? [{ channel: p.channel, error: p.error }] : [],
+	);
+}
+
+function troubledOf(passes: SyncedNow[]): Troubled[] {
+	return passes.flatMap((p) =>
+		(p.state === "ran" || p.state === "fresh") && p.problems > 0
+			? [{ channel: p.channel, problems: p.problems }]
+			: [],
 	);
 }
