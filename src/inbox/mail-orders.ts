@@ -1,4 +1,4 @@
-import { and, eq, or, type SQL } from "drizzle-orm";
+import { and, eq, inArray, or, type SQL } from "drizzle-orm";
 import { orderSummary } from "#/buyers/order";
 import type { Db } from "#/db/client";
 import { marketEmails, orders, stores } from "#/db/schema";
@@ -89,9 +89,26 @@ export async function mailOrders(db: Db, emailId: number) {
 			subject: marketEmails.subject,
 			body: marketEmails.body,
 			market: marketEmails.market,
+			voicemail: marketEmails.voicemail,
 		})
 		.from(marketEmails)
 		.where(eq(marketEmails.id, emailId));
+	if (email?.voicemail) {
+		const ids =
+			email.voicemail.state === "ready" ? email.voicemail.orderIds : [];
+		const found = ids.length
+			? await db
+					.select({ id: orders.id })
+					.from(orders)
+					.where(inArray(orders.id, ids))
+			: [];
+		return {
+			orders: await Promise.all(
+				found.map((order) => orderSummary(db, order.id)),
+			),
+			more: 0,
+		};
+	}
 	const refs = email
 		? orderRefs(`${email.subject}\n${email.body}`, email.market)
 		: [];
