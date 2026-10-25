@@ -8,11 +8,16 @@ export type OrderTab = "ship" | "all" | "returns";
 const tabs = [
 	{ key: "ship", label: "To ship", to: "/orders", search: {} },
 	{ key: "all", label: "All orders", to: "/orders", search: { view: "all" } },
-	{ key: "returns", label: "Returns", to: "/orders/returns", search: {} },
+	{
+		key: "returns",
+		label: "Returns & refunds",
+		to: "/orders/returns",
+		search: {},
+	},
 ] as const;
 
-// The tabs over every order list, Returns among them: a return is an order
-// with something coming back. The open one shows how many it lists; `aside`
+// The tabs over every order list, Returns & refunds among them: an order
+// with something coming back, or a refund waiting on our answer. The open one shows how many it lists; `aside`
 // sits at the far end, for the tab's own views.
 export function OrderTabs({
 	active,
@@ -51,11 +56,11 @@ export function OrderTabs({
 	);
 }
 
-// Returns' two views, at the far end of its tab bar: what's due back, and
-// insights into why things come back.
+// Returns' two views, at the far end of its tab bar: what's open (refunds
+// to answer, what's due back), and insights into why things come back.
 export function ReturnsViews({ active }: { active: "due" | "insights" }) {
 	const views = [
-		{ key: "due", label: "Due back", to: "/orders/returns" },
+		{ key: "due", label: "Open", to: "/orders/returns" },
 		{ key: "insights", label: "Insights", to: "/orders/returns/insights" },
 	] as const;
 	return (

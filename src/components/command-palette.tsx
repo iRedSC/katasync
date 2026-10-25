@@ -66,7 +66,7 @@ export const pages = [
 	},
 	{
 		to: "/orders/returns",
-		label: "Returns",
+		label: "Returns & refunds",
 		icon: Undo2,
 		keys: "g e",
 		parent: "/orders",

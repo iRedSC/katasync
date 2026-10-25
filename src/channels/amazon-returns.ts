@@ -75,6 +75,7 @@ export function parseReturnsReport(text: string): {
 			externalId: rmaId,
 			orderExternalId: orderId,
 			rawStatus: row["Return request status"],
+			kind: "return",
 			status: returnStatus({
 				status: row["Return request status"],
 				delivered: row["Return delivery date"] !== "",

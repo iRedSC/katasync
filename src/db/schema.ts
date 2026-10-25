@@ -808,6 +808,15 @@ export const returnRequestStatus = pgEnum("return_request_status", [
 	"cancelled",
 ]);
 
+// What a buyer asked for: their money back for an item they're sending
+// back, or a refund with nothing coming back (TikTok's "missing items", a
+// package they say never came). A refund waits on our answer while it's
+// requested, and never ships, so it's never shipped or delivered.
+export const returnRequestKind = pgEnum("return_request_kind", [
+	"return",
+	"refund",
+]);
+
 // A return a buyer opened on the marketplace the order was billed by, as it
 // last reported it. What's due back is worked out from these and refunds in
 // the order_returns_due view (drizzle/0082_returns_due_unmatched.sql).
@@ -820,6 +829,7 @@ export const returnRequests = pgTable(
 			.references(() => orders.id),
 		billedBy: channel().notNull(),
 		externalId: text().notNull(),
+		kind: returnRequestKind().notNull().default("return"),
 		status: returnRequestStatus().notNull(),
 		// The marketplace's own wording.
 		rawStatus: text().notNull(),
@@ -839,6 +849,10 @@ export const returnRequests = pgTable(
 			t.externalId,
 		),
 		index("return_requests_order_idx").on(t.orderId),
+		check(
+			"return_requests_refund_never_ships",
+			sql`${t.kind} = 'return' or ${t.status} in ('requested', 'closed', 'cancelled')`,
+		),
 	],
 );
 

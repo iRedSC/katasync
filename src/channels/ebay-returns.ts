@@ -52,6 +52,7 @@ export function ebayToReturn(m: EbayReturn): ChannelReturn {
 	return {
 		externalId: m.returnId,
 		orderExternalId: m.orderId,
+		kind: "return",
 		status: ebayReturnStatus(m.state),
 		rawStatus: m.state,
 		reason: m.creationInfo.reason ?? null,

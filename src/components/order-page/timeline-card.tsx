@@ -95,7 +95,7 @@ export function TimelineCard({ detail: d }: { detail: OrderDetail }) {
 		events.push({
 			key: `rr${r.id}`,
 			at: new Date(r.requestedAt),
-			body: `Return opened on ${channelName(r.billedBy)}${r.reason ? `: ${returnReason(r.reason)}` : ""}`,
+			body: `${r.kind === "refund" ? "Refund asked" : "Return opened"} on ${channelName(r.billedBy)}${r.reason ? `: ${returnReason(r.reason)}` : ""}`,
 			tone: "info",
 		});
 	for (const r of d.returnsReceived) {
