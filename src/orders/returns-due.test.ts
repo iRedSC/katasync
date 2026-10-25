@@ -88,6 +88,14 @@ async function request(
 			billedBy: "shopify",
 			externalId: crypto.randomUUID(),
 			status,
+			waitingOn:
+				status === "closed" || status === "cancelled"
+					? "nobody"
+					: status === "delivered"
+						? "us"
+						: status === "requested"
+							? "buyer"
+							: "marketplace",
 			rawStatus: status,
 			requestedAt: new Date(),
 			sourceUpdatedAt: new Date(),
@@ -272,7 +280,7 @@ describe("order_returns_due", () => {
 
 		await db
 			.update(schema.returnRequests)
-			.set({ status: "closed" })
+			.set({ status: "closed", waitingOn: "nobody" })
 			.where(eq(schema.returnRequests.id, requestId));
 		expect((await listReturns(db)).received[0].confirmOn).toBeNull();
 		vi.unstubAllEnvs();

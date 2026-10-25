@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { ChannelReturn } from "#/orders/return-requests";
+import { type ChannelReturn, returnStage } from "#/orders/return-requests";
 import { tiktokOrderId } from "./channel-order";
 import { shopifyQuery } from "./client";
 
@@ -139,8 +139,11 @@ export function shopifyToReturn(
 	return {
 		externalId: r.id,
 		orderExternalId: orderId,
-		kind: "return",
-		status: shopifyReturnStatus(r.status, Boolean(tracking)),
+		...returnStage(shopifyReturnStatus(r.status, Boolean(tracking))),
+		amount: null,
+		currency: null,
+		nextAction: null,
+		caseRef: null,
 		rawStatus: r.status,
 		// Each item has its own reason; a return of several keeps them all.
 		reason: joined(items.map(itemReason)),

@@ -15,45 +15,83 @@ export type ReturnStatus = (typeof returnRequests.$inferInsert)["status"];
 // A refund with nothing coming back never ships (return_requests_refund_never_ships).
 export type RefundStatus = Extract<
 	ReturnStatus,
-	"requested" | "closed" | "cancelled"
+	"requested" | "processing" | "unknown" | "closed" | "cancelled"
 >;
 // What was asked for, and where it stands.
-export type RequestStage =
+type Ownership =
+	| { waitingOn: "us"; respondBy: Date | null }
+	| { waitingOn: "buyer" | "marketplace"; respondBy: null };
+type OpenStatus = Exclude<ReturnStatus, "closed" | "cancelled">;
+export type RequestStage = (
 	| { kind: "return"; status: ReturnStatus }
-	| { kind: "refund"; status: RefundStatus };
+	| { kind: "refund"; status: RefundStatus }
+) &
+	(
+		| ({ status: OpenStatus } & Ownership)
+		| { status: "closed" | "cancelled"; waitingOn: "nobody"; respondBy: null }
+	) & { escalation: (typeof returnRequests.$inferSelect)["escalation"] };
 
-export type ChannelReturn = RequestStage & {
-	// The marketplace's id for the return, unique per channel.
-	externalId: string;
-	// The order's id there, as orders.externalId stores it.
-	orderExternalId: string;
-	// Where it really sold, when another marketplace relayed it (a TikTok
-	// order Shopify passed on: "tiktok:<id>"). Such an order may since have
-	// moved to that marketplace's store, so it's found by this instead.
-	marketplaceOrderId?: string | null;
-	// The marketplace's own wording.
-	rawStatus: string;
-	// Why, as the marketplace names it (a code or its words).
-	reason: string | null;
-	// What the buyer wrote, when they wrote anything. Left out when it wasn't
-	// asked for or couldn't be read: a note already saved stays as it is.
-	note?: string | null;
-	trackingNumber: string | null;
-	carrier: string | null;
-	requestedAt: Date;
-	lines: {
-		// The line's id there, as order_lines.externalId stores it.
-		lineExternalId: string | null;
-		sku: string | null;
-		quantity: number;
-	}[];
-};
+export type CaseMoney =
+	| { amount: string; currency: string }
+	| { amount: null; currency: null };
 
-// Just the stage, so a snapshot carries nothing else of the return.
-const stageOf = (r: RequestStage): RequestStage =>
-	r.kind === "return"
-		? { kind: "return", status: r.status }
-		: { kind: "refund", status: r.status };
+// Wave 2 fills other marketplaces' deadlines from their own APIs.
+export function returnStage(
+	status: ReturnStatus,
+): RequestStage & { kind: "return" } {
+	if (status === "closed" || status === "cancelled")
+		return {
+			kind: "return",
+			status,
+			waitingOn: "nobody",
+			respondBy: null,
+			escalation: null,
+		};
+	return {
+		kind: "return",
+		status,
+		waitingOn:
+			status === "requested"
+				? "buyer"
+				: status === "delivered"
+					? "us"
+					: "marketplace",
+		respondBy: null,
+		escalation: null,
+	};
+}
+
+export type ChannelReturn = RequestStage &
+	CaseMoney & {
+		nextAction: string | null;
+		caseRef: string | null;
+		problems?: string[];
+		// The marketplace's id for the return, unique per channel.
+		externalId: string;
+		// The order's id there, as orders.externalId stores it.
+		orderExternalId: string;
+		// Where it really sold, when another marketplace relayed it (a TikTok
+		// order Shopify passed on: "tiktok:<id>"). Such an order may since have
+		// moved to that marketplace's store, so it's found by this instead.
+		marketplaceOrderId?: string | null;
+		// The marketplace's own wording.
+		rawStatus: string;
+		// Why, as the marketplace names it (a code or its words).
+		reason: string | null;
+		// What the buyer wrote, when they wrote anything. Left out when it wasn't
+		// asked for or couldn't be read: a note already saved stays as it is.
+		note?: string | null;
+		trackingNumber: string | null;
+		carrier: string | null;
+		requestedAt: Date;
+		lines: {
+			// The line's id there, as order_lines.externalId stores it.
+			lineExternalId: string | null;
+			alternateLineExternalId?: string | null;
+			sku: string | null;
+			quantity: number;
+		}[];
+	};
 
 type Line = { id: number; externalId: string; sku: string | null };
 
@@ -67,6 +105,10 @@ export function matchLine(
 		? lines.find((l) => l.externalId === item.lineExternalId)
 		: undefined;
 	if (byId) return byId.id;
+	const byAlternateId = item.alternateLineExternalId
+		? lines.find((line) => line.externalId === item.alternateLineExternalId)
+		: undefined;
+	if (byAlternateId) return byAlternateId.id;
 	const bySku = item.sku ? lines.filter((l) => l.sku === item.sku) : [];
 	if (bySku.length === 1) return bySku[0].id;
 	return lines.length === 1 ? lines[0].id : null;
@@ -77,6 +119,10 @@ export function matchLine(
 // set, since their order means nothing; a line that has since matched a
 // different order line changes its orderLineId, so the snapshot changes too.
 type Snapshot = RequestStage & {
+	amount: string | null;
+	currency: string | null;
+	nextAction: string | null;
+	caseRef: string | null;
 	orderId: number;
 	rawStatus: string;
 	reason: string | null;
@@ -91,6 +137,9 @@ type Snapshot = RequestStage & {
 type Saved = Omit<Snapshot, keyof RequestStage> & {
 	kind: RequestStage["kind"];
 	status: ReturnStatus;
+	waitingOn: RequestStage["waitingOn"];
+	respondBy: Date | null;
+	escalation: RequestStage["escalation"];
 };
 
 function canonical(s: Saved) {
@@ -98,6 +147,13 @@ function canonical(s: Saved) {
 		s.orderId,
 		s.kind,
 		s.status,
+		s.waitingOn,
+		s.respondBy?.getTime() ?? null,
+		s.escalation,
+		s.nextAction,
+		s.caseRef,
+		s.amount,
+		s.currency,
 		s.rawStatus,
 		s.reason,
 		s.note,
@@ -176,6 +232,13 @@ export async function saveReturns(
 			orderId: returnRequests.orderId,
 			kind: returnRequests.kind,
 			status: returnRequests.status,
+			waitingOn: returnRequests.waitingOn,
+			respondBy: returnRequests.respondBy,
+			escalation: returnRequests.escalation,
+			nextAction: returnRequests.nextAction,
+			caseRef: returnRequests.caseRef,
+			amount: returnRequests.amount,
+			currency: returnRequests.currency,
 			rawStatus: returnRequests.rawStatus,
 			reason: returnRequests.reason,
 			note: returnRequests.note,
@@ -238,7 +301,11 @@ export async function saveReturns(
 		const lines = linesOf.get(orderId) ?? [];
 		const next: Snapshot = {
 			orderId,
-			...stageOf(r),
+			...r,
+			amount: r.amount,
+			currency: r.currency,
+			nextAction: r.nextAction,
+			caseRef: r.caseRef,
 			rawStatus: r.rawStatus,
 			reason: r.reason,
 			// A note the marketplace didn't send keeps the one saved.
@@ -263,6 +330,13 @@ export async function saveReturns(
 				externalId: r.externalId,
 				kind: next.kind,
 				status: next.status,
+				waitingOn: next.waitingOn,
+				respondBy: next.respondBy,
+				escalation: next.escalation,
+				nextAction: next.nextAction,
+				caseRef: next.caseRef,
+				amount: next.amount,
+				currency: next.currency,
 				rawStatus: next.rawStatus,
 				reason: next.reason,
 				note: next.note,
@@ -313,6 +387,7 @@ export async function importReturns(
 			? { returns: found, problems: [] }
 			: found;
 		const { missing } = await saveReturns(db, store, returns);
+		problems.push(...returns.flatMap((r) => r.problems ?? []));
 		if (missing.length > 0)
 			problems.push(
 				`${store.name} returns for orders katasync doesn't have: ${missing.join(", ")}`,

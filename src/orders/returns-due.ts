@@ -13,6 +13,7 @@ import {
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
+	openCases,
 	orderLines,
 	orderProfit,
 	orderReturns,
@@ -52,6 +53,11 @@ export type ReturnOrder = {
 	// Why its return can't be received here, if it can't.
 	blocker: string | null;
 	requests: {
+		waitingOn: (typeof returnRequests.$inferSelect)["waitingOn"];
+		respondBy: Date | null;
+		amount: string | null;
+		currency: string | null;
+		billedBy: (typeof returnRequests.$inferSelect)["billedBy"];
 		status: (typeof returnRequests.$inferSelect)["status"];
 		reason: string | null;
 		trackingNumber: string | null;
@@ -99,11 +105,18 @@ export async function listReturns(db: Db) {
 				stateOrder.indexOf(b.state ?? "maybe") ||
 			a.placedAt.getTime() - b.placedAt.getTime(),
 	);
-	const [refunds, received] = await Promise.all([
-		refundsToAnswer(db),
+	const [cases, received] = await Promise.all([
+		openCaseRows(db),
 		recentlyReceived(db),
 	]);
-	return { refunds, due: found, received };
+	return {
+		cases,
+		refunds: cases.filter(
+			(request) => request.kind === "refund" && request.waitingOn === "us",
+		),
+		due: found,
+		received,
+	};
 }
 
 // Orders matching what's on the box (order number, buyer, city or postal
@@ -207,6 +220,11 @@ async function returnOrders(
 			.select({
 				orderId: returnRequests.orderId,
 				status: returnRequests.status,
+				waitingOn: returnRequests.waitingOn,
+				respondBy: returnRequests.respondBy,
+				amount: returnRequests.amount,
+				currency: returnRequests.currency,
+				billedBy: returnRequests.billedBy,
 				reason: returnRequests.reason,
 				trackingNumber: returnRequests.trackingNumber,
 				carrier: returnRequests.carrier,
@@ -286,14 +304,21 @@ async function returnOrders(
 	);
 }
 
-export type RefundRequest = Awaited<ReturnType<typeof refundsToAnswer>>[number];
+export type CaseRequest = Awaited<ReturnType<typeof openCaseRows>>[number];
 
-// Refunds a buyer asked for with nothing coming back, waiting on our answer
-// on the marketplace, oldest first: the nearest to its deadline.
-async function refundsToAnswer(db: Db) {
+// Obligations and incoming packages are separate queues: receiving a box
+// does not settle the marketplace's case.
+async function openCaseRows(db: Db) {
 	const rows = await db
 		.select({
 			id: returnRequests.id,
+			kind: returnRequests.kind,
+			status: returnRequests.status,
+			rawStatus: returnRequests.rawStatus,
+			waitingOn: returnRequests.waitingOn,
+			respondBy: returnRequests.respondBy,
+			amount: returnRequests.amount,
+			currency: returnRequests.currency,
 			orderId: orders.id,
 			name: orders.name,
 			channel: stores.channel,
@@ -310,16 +335,11 @@ async function refundsToAnswer(db: Db) {
 			note: returnRequests.note,
 			requestedAt: returnRequests.requestedAt,
 		})
-		.from(returnRequests)
+		.from(openCases)
+		.innerJoin(returnRequests, eq(returnRequests.id, openCases.id))
 		.innerJoin(orders, eq(orders.id, returnRequests.orderId))
 		.innerJoin(stores, eq(stores.id, orders.storeId))
-		.where(
-			and(
-				eq(returnRequests.kind, "refund"),
-				eq(returnRequests.status, "requested"),
-			),
-		)
-		.orderBy(returnRequests.requestedAt);
+		.orderBy(sql`${openCases.respondBy} nulls last`, openCases.id);
 	const ids = rows.map((r) => r.id);
 	const lines =
 		ids.length > 0
@@ -345,6 +365,7 @@ async function refundsToAnswer(db: Db) {
 			: [];
 	return rows.map(({ externalId, marketplaceOrderId, billedBy, ...r }) => ({
 		...r,
+		billedBy,
 		externalId,
 		marketplaceOrderId,
 		answerOn: returnPage(

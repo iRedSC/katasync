@@ -1,4 +1,4 @@
-import type { ChannelReturn } from "#/orders/return-requests";
+import { type ChannelReturn, returnStage } from "#/orders/return-requests";
 import {
 	listReports,
 	parseTsv,
@@ -75,12 +75,17 @@ export function parseReturnsReport(text: string): {
 			externalId: rmaId,
 			orderExternalId: orderId,
 			rawStatus: row["Return request status"],
-			kind: "return",
-			status: returnStatus({
-				status: row["Return request status"],
-				delivered: row["Return delivery date"] !== "",
-				tracked: row["Tracking ID"] !== "",
-			}),
+			...returnStage(
+				returnStatus({
+					status: row["Return request status"],
+					delivered: row["Return delivery date"] !== "",
+					tracked: row["Tracking ID"] !== "",
+				}),
+			),
+			amount: null,
+			currency: null,
+			nextAction: null,
+			caseRef: null,
 			reason: row["Return Reason"] || null,
 			// Amazon's report has no buyer comments.
 			note: null,

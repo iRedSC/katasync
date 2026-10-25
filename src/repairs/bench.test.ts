@@ -119,6 +119,7 @@ async function returnedOrder() {
 			billedBy: "shopify",
 			externalId: `rr-${Math.random()}`,
 			status: "requested",
+			waitingOn: "buyer",
 			rawStatus: "REQUESTED",
 			requestedAt: new Date(),
 			sourceUpdatedAt: new Date(),

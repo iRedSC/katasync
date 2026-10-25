@@ -37,6 +37,7 @@ beforeEach(async () => {
 			billedBy: "amazon",
 			externalId: "r1",
 			status: "shipped",
+			waitingOn: "marketplace",
 			rawStatus: "Approved",
 			trackingNumber: "1Z999AA10123456784",
 			carrier: "UPS",
@@ -99,7 +100,7 @@ test("a changed number is asked about, and replaces the old answer", async () =>
 test("a closed request isn't followed", async () => {
 	await db
 		.update(schema.returnRequests)
-		.set({ status: "closed" })
+		.set({ status: "closed", waitingOn: "nobody" })
 		.where(eq(schema.returnRequests.id, request));
 	expect(await refreshReturnTracking(db)).toEqual({ checked: 0, problems: [] });
 });

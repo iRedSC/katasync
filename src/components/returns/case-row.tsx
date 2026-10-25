@@ -6,18 +6,14 @@ import { Tip } from "#/components/ui/tooltip";
 import { formatOrderDate } from "#/lib/format";
 import type { useRowLink } from "#/lib/row-link";
 import { returnReason } from "#/orders/return-reasons";
-import type { RefundRequest } from "#/orders/returns-due";
+import type { CaseRequest } from "#/orders/returns-due";
+import { CaseObligation } from "./case-obligation";
 
-// A refund a buyer asked for with nothing coming back ("missing items", a
-// package they say never came), waiting on our answer on the marketplace,
-// laid out as a return row is. What they claim sits beside the order; a
-// click opens the order, where its package's scans show whether it was
-// delivered.
-export function RefundRow({
-	refund: r,
+export function CaseRow({
+	request: r,
 	link,
 }: {
-	refund: RefundRequest;
+	request: CaseRequest;
 	link: ReturnType<typeof useRowLink>["link"];
 }) {
 	return (
@@ -62,7 +58,20 @@ export function RefundRow({
 				<ChannelBadge channel={r.channel} salesChannel={r.salesChannel} />
 			</td>
 			<td className="px-4 py-2.5">
-				<Badge tone="warning">Refund asked</Badge>
+				<div className="flex flex-col items-start gap-1">
+					{r.status === "unknown" ? (
+						<span title={r.rawStatus}>
+							<Badge tone="warning">Unknown status</Badge>
+						</span>
+					) : (
+						r.waitingOn === "us" && (
+							<Badge tone="warning">
+								{r.kind === "refund" ? "Refund asked" : "Return asked"}
+							</Badge>
+						)
+					)}
+					<CaseObligation request={r} />
+				</div>
 			</td>
 			<td className="py-1.5 pr-2">
 				<div className="flex items-center justify-end">
@@ -73,7 +82,7 @@ export function RefundRow({
 							rel="noreferrer"
 							className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-link hover:bg-surface-strong"
 						>
-							Answer on {r.answerOn.name}
+							{r.waitingOn === "us" ? "Answer" : "Open"} on {r.answerOn.name}
 							<ExternalLink className="size-3.5" />
 						</a>
 					)}

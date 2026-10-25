@@ -4,7 +4,12 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { returnReasons } from "./return-reasons";
-import { type ChannelReturn, matchLine, saveReturns } from "./return-requests";
+import {
+	type ChannelReturn,
+	matchLine,
+	returnStage,
+	saveReturns,
+} from "./return-requests";
 
 describe("matchLine", () => {
 	const lines = [
@@ -23,6 +28,18 @@ describe("matchLine", () => {
 		// Two lines share the SKU: unclear, so none.
 		expect(matchLine(lines, item("Z", "HAWK"))).toBeNull();
 		expect(matchLine([lines[2]], item(null, null))).toBe(3);
+		expect(
+			matchLine(lines, {
+				...item("forward-line", "HAWK"),
+				alternateLineExternalId: "A",
+			}),
+		).toBe(1);
+		expect(
+			matchLine(lines, {
+				...item("B", "WRENCH"),
+				alternateLineExternalId: "A",
+			}),
+		).toBe(2);
 	});
 });
 
@@ -68,8 +85,11 @@ describe("saveReturns", () => {
 		externalId: "RMA1",
 		orderExternalId: "111-1",
 		rawStatus: status,
-		kind: "return",
-		status,
+		...returnStage(status),
+		amount: null,
+		currency: null,
+		nextAction: null,
+		caseRef: null,
 		reason: "DEFECTIVE",
 		note: "Leaks from the bottom",
 		trackingNumber: null,
@@ -170,7 +190,13 @@ describe("saveReturns", () => {
 			.set({ stockFrom: new Date(Date.now() + 86_400_000) })
 			.where(eq(schema.stores.id, store.id));
 		await saveReturns(db, store, [
-			{ ...amazonReturn("requested"), kind: "refund", status: "requested" },
+			{
+				...amazonReturn("requested"),
+				kind: "refund",
+				status: "requested",
+				waitingOn: "us",
+				respondBy: null,
+			},
 		]);
 		const [request] = await db.select().from(schema.returnRequests);
 		expect(request).toMatchObject({ kind: "refund", status: "requested" });

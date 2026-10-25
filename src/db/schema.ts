@@ -802,6 +802,8 @@ export const orderReturns = pgTable(
 // the carrier says it reached us; it's still due until it's received here.
 export const returnRequestStatus = pgEnum("return_request_status", [
 	"requested",
+	"processing",
+	"unknown",
 	"shipped",
 	"delivered",
 	"closed",
@@ -815,6 +817,19 @@ export const returnRequestStatus = pgEnum("return_request_status", [
 export const returnRequestKind = pgEnum("return_request_kind", [
 	"return",
 	"refund",
+]);
+
+export const caseWaitingOn = pgEnum("case_waiting_on", [
+	"us",
+	"buyer",
+	"marketplace",
+	"nobody",
+]);
+export const caseEscalation = pgEnum("case_escalation", [
+	"in_progress",
+	"buyer_won",
+	"seller_won",
+	"closed",
 ]);
 
 // A return a buyer opened on the marketplace the order was billed by, as it
@@ -831,6 +846,13 @@ export const returnRequests = pgTable(
 		externalId: text().notNull(),
 		kind: returnRequestKind().notNull().default("return"),
 		status: returnRequestStatus().notNull(),
+		waitingOn: caseWaitingOn().notNull(),
+		respondBy: timestamp({ withTimezone: true }),
+		nextAction: text(),
+		amount: numeric(),
+		currency: text(),
+		escalation: caseEscalation(),
+		caseRef: text(),
 		// The marketplace's own wording.
 		rawStatus: text().notNull(),
 		// Why, as the marketplace names it (a code or its words).
@@ -851,10 +873,38 @@ export const returnRequests = pgTable(
 		index("return_requests_order_idx").on(t.orderId),
 		check(
 			"return_requests_refund_never_ships",
-			sql`${t.kind} = 'return' or ${t.status} in ('requested', 'closed', 'cancelled')`,
+			sql`${t.kind} = 'return' or ${t.status}::text in ('requested', 'processing', 'unknown', 'closed', 'cancelled')`,
+		),
+		check(
+			"return_requests_resolved_owner",
+			sql`(${t.waitingOn} = 'nobody') = (${t.status} in ('closed', 'cancelled'))`,
+		),
+		check(
+			"return_requests_deadline_owner",
+			sql`${t.respondBy} is null or ${t.waitingOn} = 'us'`,
+		),
+		check(
+			"return_requests_money_pair",
+			sql`(${t.amount} is null) = (${t.currency} is null)`,
 		),
 	],
 );
+
+export const openCases = pgView("open_cases", {
+	id: integer().notNull(),
+	orderId: integer().notNull(),
+	billedBy: channel().notNull(),
+	externalId: text().notNull(),
+	caseRef: text(),
+	kind: returnRequestKind().notNull(),
+	status: returnRequestStatus().notNull(),
+	waitingOn: caseWaitingOn().notNull(),
+	respondBy: timestamp({ withTimezone: true }),
+	nextAction: text(),
+	amount: numeric(),
+	currency: text(),
+	escalation: caseEscalation(),
+}).existing();
 
 // What a return request says is coming back. orderLineId is null when the
 // marketplace's line couldn't be matched to one of ours.

@@ -139,6 +139,7 @@ describe("returnStages", () => {
 				billedBy: "shopify",
 				externalId: crypto.randomUUID(),
 				status: "requested",
+				waitingOn: "buyer",
 				rawStatus: "requested",
 				requestedAt: new Date(),
 				sourceUpdatedAt: new Date(),

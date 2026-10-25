@@ -14,7 +14,7 @@ import { conditionName } from "#/components/order-page/return-card";
 import { OrderTabs, ReturnsViews } from "#/components/order-tabs";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { type Received, ReturnDialog } from "#/components/return-dialog";
-import { RefundRow } from "#/components/returns/refund-row";
+import { CaseGroups } from "#/components/returns/case-groups";
 import {
 	ICON_BUTTON,
 	ReturnRow,
@@ -146,7 +146,7 @@ type OtherSearch =
 
 function Returns() {
 	const loaded = Route.useLoaderData();
-	const { refunds, due, received } = returnsData.useData("all", loaded);
+	const { cases, due, received } = returnsData.useData("all", loaded);
 	const { link } = useRowLink();
 	const input = useRef<HTMLInputElement>(null);
 	const [query, setQuery] = useState("");
@@ -286,8 +286,8 @@ function Returns() {
 			link={link}
 		/>
 	);
-	// Refunds have no box to search for: they show while nothing's typed.
-	const asking = !query.trim() && chips.length === 0 ? refunds : [];
+	// Case obligations stay separate from the boxes being received.
+	const asking = !query.trim() && chips.length === 0 ? cases : [];
 	const groups = (Object.keys(states) as ReturnState[])
 		.map((s) => ({ state: s, orders: shown.filter((o) => o.state === s) }))
 		.filter((g) => g.orders.length > 0);
@@ -297,7 +297,12 @@ function Returns() {
 			<Card flush className="overflow-visible">
 				<OrderTabs
 					active="returns"
-					count={refunds.length + due.length}
+					count={
+						new Set([
+							...cases.map((request) => request.orderId),
+							...due.map((order) => order.id),
+						]).size
+					}
 					aside={<ReturnsViews active="due" />}
 				/>
 				<FilterBar
@@ -355,19 +360,7 @@ function Returns() {
 							</tr>
 						</thead>
 						<tbody>
-							{asking.length > 0 && (
-								<>
-									<GroupHeading>
-										Refunds to answer
-										<span className="ml-1.5 tabular-nums">
-											{formatCount(asking.length)}
-										</span>
-									</GroupHeading>
-									{asking.map((r) => (
-										<RefundRow key={`refund-${r.id}`} refund={r} link={link} />
-									))}
-								</>
-							)}
+							<CaseGroups cases={asking} link={link} />
 							{groups.map((g) => (
 								<Fragment key={g.state}>
 									<GroupHeading>

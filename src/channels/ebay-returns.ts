@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { ChannelReturn } from "#/orders/return-requests";
+import { type ChannelReturn, returnStage } from "#/orders/return-requests";
 import { accessToken } from "./ebay";
 
 // Returns buyers opened on eBay, with eBay's reason and what the buyer
@@ -52,8 +52,11 @@ export function ebayToReturn(m: EbayReturn): ChannelReturn {
 	return {
 		externalId: m.returnId,
 		orderExternalId: m.orderId,
-		kind: "return",
-		status: ebayReturnStatus(m.state),
+		...returnStage(ebayReturnStatus(m.state)),
+		amount: null,
+		currency: null,
+		nextAction: null,
+		caseRef: null,
 		rawStatus: m.state,
 		reason: m.creationInfo.reason ?? null,
 		note: m.creationInfo.comments?.content?.trim() || null,
