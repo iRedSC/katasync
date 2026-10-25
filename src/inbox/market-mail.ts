@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { isRelayed } from "#/buyers/amazon-mail";
 import type { Db } from "#/db/client";
 import {
 	mailboxChecks,
@@ -58,8 +59,9 @@ export function marketOfEmail(m: { fromAddress: string; subject: string }) {
 
 // Reads new emails in: skips ones already kept, keeps each with its files,
 // sorted. One that fails to read is reported and left for the next run.
-// Mail from no marketplace (a buyer answering) has its headers read too, for
-// whether its sender is who it says.
+// Mail from no marketplace (a buyer answering) or from Amazon (its buyer
+// relay, its copies and notices) has its headers read too, for whether its
+// sender is who it says: those become buyer threads.
 export async function ingestMarketMail(
 	db: Db,
 	messages: InboxMessage[],
@@ -86,8 +88,13 @@ export async function ingestMarketMail(
 			const content = await read(m.graphId);
 			const market = marketOfEmail(m);
 			const authenticated =
-				market === null &&
+				(market === null || market === "amazon") &&
 				senderAuthenticated(await readHeaders(m.graphId), m.fromAddress);
+			// The rules close Amazon's relayed buyer messages on arrival, since
+			// they're answered in Buyers. One that can't be filed there stays
+			// open and unread here instead, so it isn't missed.
+			const heldBack =
+				market === "amazon" && !authenticated && isRelayed(m.fromAddress);
 			const inserted = await db.transaction(async (tx) => {
 				// Sorted under the lock, so a rule saved meanwhile isn't missed.
 				await lockRules(tx);
@@ -103,8 +110,8 @@ export async function ingestMarketMail(
 						market,
 						folder: sorted.folder,
 						...flagsOf(sorted.level),
-						readAt: sorted.read ? new Date() : null,
-						doneAt: sorted.done ? new Date() : null,
+						readAt: sorted.read && !heldBack ? new Date() : null,
+						doneAt: sorted.done && !heldBack ? new Date() : null,
 						fromAddress: m.fromAddress,
 						senderAuthenticated: authenticated,
 						fromName: m.fromName,

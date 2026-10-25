@@ -9,8 +9,10 @@ import {
 	or,
 	sql,
 } from "drizzle-orm";
+import { isRelayed, parseCopy } from "#/buyers/amazon-mail";
 import type { Db } from "#/db/client";
 import {
+	buyerMessages,
 	mailboxChecks,
 	marketEmailAttachments,
 	marketEmails,
@@ -39,6 +41,7 @@ const summary = {
 	doneAt: marketEmails.doneAt,
 	readAt: marketEmails.readAt,
 	fromAddress: marketEmails.fromAddress,
+	senderAuthenticated: marketEmails.senderAuthenticated,
 	fromName: marketEmails.fromName,
 	subject: marketEmails.subject,
 	body: marketEmails.body,
@@ -74,6 +77,25 @@ function why(
 		important:
 			e.importanceSetAt !== null ? "by-hand" : s.importantRules.map(named),
 	};
+}
+
+// Why an Amazon buyer message (or Amazon's copy of ours) wasn't put on its
+// thread: Microsoft didn't vouch it came from Amazon, so anyone could have
+// written it. Null for the rest.
+function unverified(
+	e: {
+		market: Market | null;
+		fromAddress: string;
+		senderAuthenticated: boolean;
+		subject: string;
+		body: string;
+	},
+	filed: boolean,
+) {
+	if (filed || e.senderAuthenticated || e.market !== "amazon") return null;
+	return isRelayed(e.fromAddress) || parseCopy(e)
+		? "Not put on a buyer thread: Microsoft couldn't confirm Amazon sent it"
+		: null;
 }
 
 // Where the next page of a view starts: the sort time and id of the page's last
@@ -161,6 +183,20 @@ export async function marketMailPage(
 					)
 					.orderBy(marketEmailAttachments.id);
 	const byEmail = groupBy(files, (f) => f.emailId);
+	const filed = new Set(
+		(rows.length === 0
+			? []
+			: await db
+					.select({ emailId: buyerMessages.marketEmailId })
+					.from(buyerMessages)
+					.where(
+						inArray(
+							buyerMessages.marketEmailId,
+							rows.map((r) => r.id),
+						),
+					)
+		).map((m) => m.emailId),
+	);
 	return {
 		connected: Boolean(process.env.MARKETPLACE_INBOX?.trim()),
 		check: check ?? null,
@@ -180,6 +216,7 @@ export async function marketMailPage(
 		},
 		emails: rows.map(({ relabelledAt, importanceSetAt, ...r }) => ({
 			...r,
+			unverified: unverified(r, filed.has(r.id)),
 			why: why(rules, { ...r, relabelledAt, importanceSetAt }),
 			attachments: (byEmail.get(r.id) ?? []).map(({ emailId: _, ...f }) => f),
 		})),

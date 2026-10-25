@@ -59,6 +59,8 @@ async function email(over: Partial<typeof marketEmails.$inferInsert> = {}) {
 			market: "amazon",
 			folder: "orders",
 			fromAddress: RELAY,
+			// Microsoft vouched it came from Amazon (./amazon-auth.test.ts).
+			senderAuthenticated: true,
 			recipients: ["marketplaces@eastcoastdrywall.com"],
 			subject: SUBJECT,
 			body: BODY,

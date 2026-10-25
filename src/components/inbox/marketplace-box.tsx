@@ -339,7 +339,8 @@ function Listing({ view, market, page, counts }: BoxProps) {
 	);
 }
 
-// In a row: a star when important (a red octagon when critical), the folder
+// In a row: a star when important (a red octagon when critical), an Amazon
+// buyer message left off its thread for an unverified sender, the folder
 // where the list mixes them, and the marketplace where it isn't filtered to
 // one.
 function Tags({
@@ -364,6 +365,7 @@ function Tags({
 					<Star className="size-3.5 fill-warning-fill text-warning-text" />
 				)
 			)}
+			{e.unverified && <Badge tone="warning">Sender unverified</Badge>}
 			{(view === "important" || view === "done") && (
 				<Badge>{FOLDER_NAMES[e.folder]}</Badge>
 			)}
@@ -399,6 +401,11 @@ function Actions({
 					<ChannelBadge channel={e.market} salesChannel={null} />
 				)}
 				<WhyChip email={e} />
+				{e.unverified && (
+					<Tip content={e.unverified}>
+						<Badge tone="warning">Sender unverified</Badge>
+					</Tip>
+				)}
 			</span>
 			<Tip content={e.readAt === null ? "Mark read (U)" : "Mark unread (U)"}>
 				<Button
