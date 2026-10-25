@@ -852,8 +852,16 @@ export const returnRequests = pgTable(
 		trackingNumber: text(),
 		carrier: text(),
 		requestedAt: timestamp({ withTimezone: true }).notNull(),
+		// When the marketplace last changed it, as its search goes by, when
+		// it says; otherwise when katasync last saw it change.
 		sourceUpdatedAt: timestamp({ withTimezone: true }).notNull(),
+		// The buyer's note couldn't be read (TikTok asks one request per
+		// return); every returns pass tries again until it is.
+		noteUnread: boolean().notNull().default(false),
 		syncedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		// When staff stopped following its package; null while it's followed.
+		// Never set by a sync, so the marketplace can't undo it.
+		unfollowedAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [
 		unique("return_requests_billed_by_external_id").on(
@@ -2155,6 +2163,37 @@ export const returnTracking = pgTable(
 	],
 );
 
+// What Shippo last said about a package sent to a buyer, by the carrier
+// and number, kept so a refresh that fails still shows the scans known
+// (src/orders/package-tracking.ts). Only answers are kept: a failed ask
+// leaves the row as it was.
+export const packageTracking = pgTable(
+	"package_tracking",
+	{
+		// Shippo's carrier token: ups, usps, fedex.
+		carrier: text().notNull(),
+		// Uppercase, no spaces.
+		number: text().notNull(),
+		status: trackingStatus().notNull(),
+		statusDetail: text(),
+		statusAt: timestamp({ withTimezone: true }),
+		eta: timestamp({ withTimezone: true }),
+		originalEta: timestamp({ withTimezone: true }),
+		service: text(),
+		origin: text(),
+		destination: text(),
+		history: jsonb().$type<TrackingEvent[]>().notNull().default([]),
+		checkedAt: timestamp({ withTimezone: true }).notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.carrier, t.number] }),
+		check(
+			"package_tracking_carrier",
+			sql`${t.carrier} in ('ups', 'usps', 'fedex')`,
+		),
+	],
+);
+
 // Packages a supplier sent for a PO, followed on Shippo. Only ever evidence:
 // a delivery never receives or closes the PO.
 export const purchaseOrderTracking = pgTable(
@@ -3244,6 +3283,50 @@ export const shopifyThreads = pgTable("shopify_threads", {
 	replyToken: text().notNull().unique(),
 });
 
+// How a first message to an eBay buyer stands. It's what starts their
+// conversation, and eBay has no request key, so each try is written down
+// before it goes:
+//
+//   sending ──eBay gave its ID──▶ sent
+//      ├──eBay plainly said no──▶ refused
+//      └──anything else──▶ unsure (may have gone; never sent again blind)
+export const buyerChatStartStatus = pgEnum("buyer_chat_start_status", [
+	"sending",
+	"sent",
+	"refused",
+	"unsure",
+]);
+
+// One try at a first message to an eBay buyer from their order
+// (src/buyers/first-message.ts). The browser's key names the try, so asking
+// again after a lost answer reads this back instead of sending twice.
+export const buyerChatStarts = pgTable(
+	"buyer_chat_starts",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		requestKey: uuid().notNull().unique(),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		body: text().notNull(),
+		status: buyerChatStartStatus().notNull().default("sending"),
+		// eBay's ID for the message, once sent.
+		messageId: text(),
+		// The conversation it started, once eBay lists it.
+		threadId: integer().references(() => buyerThreads.id),
+		error: text(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		statusAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("buyer_chat_starts_order_idx").on(t.orderId, t.createdAt),
+		check(
+			"buyer_chat_starts_sent_has_id",
+			sql`(${t.status} = 'sent') = (${t.messageId} is not null)`,
+		),
+	],
+);
+
 // What the marketplace itself put in a conversation (TikTok's): its
 // assistant's answers, its notices (a buyer asking for a person, a chat
 // timing out), and its order and shipping cards. Shown with the thread,
@@ -3288,6 +3371,113 @@ export const buyerMarketplaceMessages = pgTable(
 			"buyer_marketplace_messages_words_have_body",
 			sql`${t.kind} not in ('assistant', 'notice') or ${t.body} <> ''`,
 		),
+	],
+);
+
+// What katasync reads from a marketplace, each on its own schedule. A
+// channel's health is per feed, so a clean orders pass can't hide that its
+// returns failed. Which feeds a channel has: src/diagnostics/feed-health.ts.
+export const syncFeed = pgEnum("sync_feed", [
+	"orders",
+	"returns",
+	"messages",
+	"charges",
+	"tracking",
+]);
+
+// How a feed's latest counted attempt went. ok: all of it was read, up to
+// now. partial: it was read, but some items went wrong (problems > 0).
+// catching_up: what it read was fine, but it's still reading its way back
+// up to now after an outage; never ok until it gets there. failed: it
+// couldn't be read; stays failed until the same feed reads again. pending:
+// the marketplace hasn't got it ready yet (Amazon's report).
+export const feedState = pgEnum("feed_state", [
+	"ok",
+	"partial",
+	"catching_up",
+	"failed",
+	"pending",
+]);
+
+// One row per channel and feed, kept current by every attempt
+// (src/diagnostics/feed-record.ts). Times are when the attempt started, so
+// what's known is true as of then. The checks keep each state's fields
+// consistent, spelling out "is not null" since a check passes on null; the
+// transitions are in src/diagnostics/feed-health.ts.
+export const feedHealth = pgTable(
+	"feed_health",
+	{
+		channel: channel().notNull(),
+		feed: syncFeed().notNull(),
+		state: feedState().notNull(),
+		attemptedAt: timestamp({ withTimezone: true }).notNull(),
+		// The latest attempt that read what it set out to (ok, partial, or
+		// catching_up).
+		succeededAt: timestamp({ withTimezone: true }),
+		// Where reading has got to, in the marketplace's own time: the next
+		// pass resumes a little before it. What's verified stops earlier at
+		// any open gap (feed_gaps).
+		readThrough: timestamp({ withTimezone: true }),
+		problems: integer().notNull().default(0),
+		// Why it failed, or the first problem of a read with problems.
+		detail: text(),
+		// When the current run of failures began.
+		failingSince: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		primaryKey({ columns: [t.channel, t.feed] }),
+		check(
+			"feed_health_ok",
+			sql`${t.state} <> 'ok' or (${t.problems} = 0 and ${t.detail} is null and ${t.failingSince} is null and ${t.succeededAt} is not null and ${t.succeededAt} = ${t.attemptedAt})`,
+		),
+		check(
+			"feed_health_partial",
+			sql`${t.state} <> 'partial' or (${t.problems} > 0 and ${t.detail} is not null and ${t.failingSince} is null and ${t.succeededAt} is not null and ${t.succeededAt} = ${t.attemptedAt})`,
+		),
+		check(
+			"feed_health_catching_up",
+			sql`${t.state} <> 'catching_up' or (${t.readThrough} is not null and ${t.readThrough} < ${t.attemptedAt} and (${t.problems} = 0) = (${t.detail} is null) and ${t.failingSince} is null and ${t.succeededAt} is not null and ${t.succeededAt} = ${t.attemptedAt})`,
+		),
+		check(
+			"feed_health_failed",
+			sql`${t.state} <> 'failed' or (${t.problems} = 0 and ${t.detail} is not null and ${t.failingSince} is not null and ${t.failingSince} <= ${t.attemptedAt} and (${t.succeededAt} is null or ${t.succeededAt} < ${t.failingSince}))`,
+		),
+		check(
+			"feed_health_pending",
+			sql`${t.state} <> 'pending' or (${t.problems} = 0 and ${t.detail} is null and ${t.failingSince} is null)`,
+		),
+		check(
+			"feed_health_read_after_success",
+			sql`${t.readThrough} is null or ${t.succeededAt} is not null`,
+		),
+	],
+);
+
+// Why part of a feed isn't verified though reading went past it. unsaved:
+// records read there that couldn't be saved (a return for an order
+// katasync doesn't have, a Shopify return too big for one read). Each pass
+// reads it again, and it closes once a read of it saves everything.
+// unread: a stretch no regular pass can reach (Amazon's report only goes
+// back 60 days); a history import that covers it closes it.
+export const feedGapKind = pgEnum("feed_gap_kind", ["unsaved", "unread"]);
+
+// Open gaps only: a closed one is deleted. A feed with one open isn't ok.
+export const feedGaps = pgTable(
+	"feed_gaps",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		channel: channel().notNull(),
+		feed: syncFeed().notNull(),
+		kind: feedGapKind().notNull(),
+		// In the marketplace's own time, as its search goes by.
+		from: timestamp({ withTimezone: true }).notNull(),
+		until: timestamp({ withTimezone: true }).notNull(),
+		detail: text().notNull(),
+		openedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("feed_gaps_span").on(t.channel, t.feed, t.kind, t.from, t.until),
+		check("feed_gaps_ordered", sql`${t.from} <= ${t.until}`),
 	],
 );
 
@@ -3341,6 +3531,10 @@ export const replyDrafts = pgTable(
 		// The buyer's latest message when it was written: a newer one means
 		// it's out of date and drafted again.
 		forMessageId: integer().references(() => buyerMessages.id),
+		// The order it was written about (the marketplace's ID), when that
+		// isn't the thread's own: a buyer's one conversation can be opened
+		// from any of their orders. Null is the thread's.
+		orderRef: text(),
 		by: text().$type<"ai" | "staff" | "claude">().notNull(),
 		// The precedents it followed.
 		precedentIds: integer().array().notNull().default(sql`'{}'::integer[]`),

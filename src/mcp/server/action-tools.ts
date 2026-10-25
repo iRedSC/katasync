@@ -1,9 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { returnsPassAlone } from "#/channels/sync";
 import { syncAllChannels } from "#/channels/sync-now";
 import type { Db } from "#/db/client";
 import { stores } from "#/db/schema";
+import { errorText } from "#/diagnostics/runs";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import { markNoReturn, restoreNoReturn } from "#/orders/returns-due";
 import { cancelOrder, closeOrder, restoreOrder } from "#/purchasing/orders";
@@ -162,9 +164,25 @@ export function registerActionTools(server: McpServer, db: Db) {
 		"sync_now",
 		{
 			description:
-				"Syncs every connected channel now (orders, listings, stock push), as the Sync button does, and says how each went. Can take a minute.",
+				"Syncs every connected channel now (orders, stock push), as the Sync button does, then reads each one's returns (the 15-minute returns pass), and says how each went. Can take a few minutes.",
 			annotations: WRITE,
 		},
-		async () => json(await syncAllChannels(db, 0)),
+		async () => {
+			const passes = await syncAllChannels(db, 0);
+			// After orders, so a return on a new order finds it.
+			const returns = await Promise.all(
+				passes.map(async (p) => ({
+					channel: p.channel,
+					returns:
+						(await returnsPassAlone(db, p.channel).catch((e: unknown) => ({
+							kind: "failed" as const,
+							error: errorText(e),
+						}))) ?? "the last returns pass is still running",
+				})),
+			);
+			return json(
+				passes.map((p, i) => ({ ...p, returns: returns[i].returns })),
+			);
+		},
 	);
 }

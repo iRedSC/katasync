@@ -25,13 +25,6 @@ export type { Tracking as FollowedPackage };
 
 export const CARRIER = { ups: "UPS", usps: "USPS", fedex: "FedEx" } as const;
 
-export const carrierPage = (t: Pick<Tracking, "carrier" | "number">) =>
-	t.carrier === "ups"
-		? `https://www.ups.com/track?tracknum=${t.number}`
-		: t.carrier === "usps"
-			? `https://tools.usps.com/go/TrackConfirmAction?tLabels=${t.number}`
-			: `https://www.fedex.com/fedextrack/?trknbr=${t.number}`;
-
 // The stops on a package's timeline.
 const STOPS = [
 	{ label: "Label made", icon: Tag },

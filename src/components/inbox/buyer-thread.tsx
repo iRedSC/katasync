@@ -85,11 +85,16 @@ type Shown = {
 export function BuyerConversation({
 	thread: t,
 	ai,
+	order,
 	onDone,
 }: {
 	thread: BuyerThread;
 	// Whether the AI is set up: translating and drafting need it.
 	ai: boolean;
+	// The order it's opened from (an order page), which the header shows and
+	// a suggestion is about. A buyer's one conversation can be opened from
+	// any of their orders; without one, it's the thread's own.
+	order?: { id: number; ref: string };
 	onDone: (done: boolean) => void;
 }) {
 	const router = useRouter();
@@ -249,6 +254,7 @@ export function BuyerConversation({
 					</p>
 					<BuyerOrder
 						threadId={t.id}
+						orderId={order?.id}
 						fallback={
 							<p className="truncate text-sm text-muted-foreground">
 								{t.orderId ? (
@@ -313,6 +319,7 @@ export function BuyerConversation({
 			<div className="border-t p-3">
 				<Suggestion
 					thread={t}
+					orderRef={order ? order.ref : t.orderRef}
 					ai={ai}
 					onEdit={(body, english) => {
 						setText(body);

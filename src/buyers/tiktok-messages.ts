@@ -223,6 +223,8 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 			? from
 			: new Date(check.readThrough.getTime() - 15 * 60_000);
 	const problems: string[] = [];
+	// Why nothing could be read at all, apart from single conversations.
+	let failed: string | undefined;
 	let read = 0;
 	try {
 		const cipher = await shopCipher();
@@ -256,7 +258,8 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 					: "";
 		} while (token);
 	} catch (error) {
-		problems.unshift(error instanceof Error ? error.message : String(error));
+		failed = error instanceof Error ? error.message : String(error);
+		problems.unshift(failed);
 	}
 	const set =
 		problems.length === 0
@@ -271,7 +274,7 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 		.insert(buyerMessageChecks)
 		.values({ market: "tiktok", ...set })
 		.onConflictDoUpdate({ target: buyerMessageChecks.market, set });
-	return { read, problems };
+	return { read, problems, failed };
 }
 
 // One conversation; false when nothing in it was new.
@@ -321,6 +324,59 @@ async function syncConversation(
 		.set({ readLatestId: latest.id, ...(order ? { orderRef: order } : {}) })
 		.where(eq(buyerThreads.id, kept.id));
 	return true;
+}
+
+const created = type({ conversation_id: "string", "+": "ignore" });
+
+// Opens the shop's conversation with a buyer (TikTok's user ID for them),
+// reopening the one they had if any; its ID back. Nothing is sent: TikTok
+// only allows it within its limits on the order, so a plain no is Refused.
+export async function openTiktokConversation(buyerUserId: string) {
+	try {
+		return created.assert(
+			await tiktokApi(
+				BASE,
+				{ shop_cipher: await shopCipher() },
+				{ buyer_user_id: buyerUserId },
+			),
+		).conversation_id;
+	} catch (error) {
+		const why = error instanceof Error ? error.message : String(error);
+		throw error instanceof TiktokError && !retryLater(error)
+			? new Refused(why)
+			: error;
+	}
+}
+
+// A conversation staff started, kept whole like one a buyer wrote in, so
+// the thread shows what TikTok already put in it.
+export async function readStartedTiktokThread(db: Db, threadId: number) {
+	const [thread] = await db
+		.select()
+		.from(buyerThreads)
+		.where(eq(buyerThreads.id, threadId));
+	if (!thread) return;
+	const messages = await allMessages(await shopCipher(), thread.externalId);
+	await keepConversation(
+		db,
+		thread.id,
+		messages.filter(fromPerson).map(listed),
+		{ apart: true },
+	);
+	await keepMarketplaceMessages(
+		db,
+		thread.id,
+		messages.flatMap((m) => marketplaceMessage(m) ?? []),
+	);
+	const latest = messages.reduce<Message | undefined>(
+		(a, m) => (!a || m.create_time >= a.create_time ? m : a),
+		undefined,
+	);
+	if (latest)
+		await db
+			.update(buyerThreads)
+			.set({ readLatestId: latest.id })
+			.where(eq(buyerThreads.id, thread.id));
 }
 
 // Reads one thread's conversation again, to settle a reply whose send
