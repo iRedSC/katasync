@@ -50,6 +50,7 @@ beforeEach(async () => {
 	vi.stubEnv("SHIPPO_API_KEY", "test");
 	vi.stubGlobal("fetch", async (url: string) => {
 		asked.push(decodeURIComponent(url.split("/").pop() ?? ""));
+		if (answer === "DOWN") return new Response("down", { status: 400 });
 		return Response.json({ tracking_status: { status: answer } });
 	});
 });
@@ -76,7 +77,12 @@ test("follows a package until it arrives", async () => {
 	expect((await saved())?.status).toBe("DELIVERED");
 
 	// There: not asked about again.
-	expect(await refreshReturnTracking(db)).toEqual({ checked: 0, problems: [] });
+	expect(await refreshReturnTracking(db)).toEqual({
+		checked: 0,
+		unsupported: 0,
+		failed: [],
+		skipped: 1,
+	});
 	expect(asked).toHaveLength(2);
 });
 
@@ -97,10 +103,66 @@ test("a changed number is asked about, and replaces the old answer", async () =>
 	});
 });
 
-test("a closed request isn't followed", async () => {
-	await db
+const set = (values: Partial<typeof schema.returnRequests.$inferInsert>) =>
+	db
 		.update(schema.returnRequests)
-		.set({ status: "closed", waitingOn: "nobody" })
+		.set(values)
 		.where(eq(schema.returnRequests.id, request));
-	expect(await refreshReturnTracking(db)).toEqual({ checked: 0, problems: [] });
+
+test("a closed request isn't followed", async () => {
+	await set({ status: "closed", waitingOn: "nobody" });
+	expect(await refreshReturnTracking(db)).toEqual({
+		checked: 0,
+		unsupported: 0,
+		failed: [],
+		skipped: 0,
+	});
+});
+
+test("an unresolved return is followed however long it takes", async () => {
+	await set({ requestedAt: new Date(Date.now() - 200 * 86_400_000) });
+	expect((await refreshReturnTracking(db)).checked).toBe(1);
+});
+
+test("one staff stopped following isn't asked about, until followed again", async () => {
+	await set({ unfollowedAt: new Date() });
+	await refreshReturnTracking(db);
+	expect(asked).toEqual([]);
+	await set({ unfollowedAt: null });
+	await refreshReturnTracking(db);
+	expect(asked).toHaveLength(1);
+});
+
+test("a carrier Shippo doesn't follow isn't counted as checked", async () => {
+	await set({ carrier: "DHL", trackingNumber: "JD014600006281234567" });
+	expect(await refreshReturnTracking(db)).toEqual({
+		checked: 0,
+		unsupported: 1,
+		failed: [],
+		skipped: 0,
+	});
+	expect(asked).toEqual([]);
+});
+
+test("a failed ask is reported, keeps the last answer, and is asked again", async () => {
+	await refreshReturnTracking(db);
+	answer = "DOWN";
+	const r = await refreshReturnTracking(db);
+	expect(r.checked).toBe(0);
+	expect(r.failed).toEqual([
+		expect.stringMatching(/^1Z999AA10123456784: Shippo answered 400/),
+	]);
+	expect((await saved())?.status).toBe("TRANSIT");
+	answer = "DELIVERED";
+	expect((await refreshReturnTracking(db)).checked).toBe(1);
+});
+
+test("one without a number is skipped", async () => {
+	await set({ trackingNumber: null });
+	expect(await refreshReturnTracking(db)).toEqual({
+		checked: 0,
+		unsupported: 0,
+		failed: [],
+		skipped: 1,
+	});
 });

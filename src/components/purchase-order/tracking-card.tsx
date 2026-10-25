@@ -1,11 +1,7 @@
 import { Copy, ExternalLink, Plus, X } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { toast } from "sonner";
-import {
-	CARRIER,
-	carrierPage,
-	PackageStatus,
-} from "#/components/package-status";
+import { CARRIER, PackageStatus } from "#/components/package-status";
 import { Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import {
@@ -18,6 +14,7 @@ import {
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { carrierPage } from "#/orders/tracking-read";
 import { lacksHistory } from "#/purchasing/tracking-history";
 import {
 	addPoTracking,

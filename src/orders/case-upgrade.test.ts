@@ -70,9 +70,9 @@ test("upgrade from before #236 reopens legacy SUCCESS and preserves both pending
 	]);
 });
 
-test("upgrade from deployed feed health preserves coverage and unread-note retries", async () => {
+test("upgrade from main preserves coverage and unread-note retries", async () => {
 	const db = await createTestDb({
-		beforeMigration: 143,
+		beforeMigration: 144,
 		seed: async (pg) => {
 			await pg.query(
 				"INSERT INTO stores (channel, name) VALUES ('tiktok', 'Upgrade')",

@@ -225,7 +225,7 @@ test("the migration backfills legacy owners without guessing unknown TikTok work
 		},
 	]);
 	const migration = readFileSync(
-		new URL("../../drizzle/0144_case_obligations.sql", import.meta.url),
+		new URL("../../drizzle/0145_case_obligations.sql", import.meta.url),
 		"utf8",
 	);
 	const backfill = migration.match(

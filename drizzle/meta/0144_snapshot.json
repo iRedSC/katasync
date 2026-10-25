@@ -1,6 +1,6 @@
 {
-  "id": "5c7e529e-3278-4219-af38-0db39c65119e",
-  "prevId": "917cab60-1c4a-42cd-932d-6c32c5ee640a",
+  "id": "5b19cab8-233d-4829-bcb3-702b8e8bf183",
+  "prevId": "52fb2bae-772c-4b43-9db1-597338e67554",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -8542,6 +8542,106 @@
       },
       "isRLSEnabled": false
     },
+    "public.package_tracking": {
+      "name": "package_tracking",
+      "schema": "",
+      "columns": {
+        "carrier": {
+          "name": "carrier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "number": {
+          "name": "number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "tracking_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status_detail": {
+          "name": "status_detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status_at": {
+          "name": "status_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "eta": {
+          "name": "eta",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "original_eta": {
+          "name": "original_eta",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "service": {
+          "name": "service",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination": {
+          "name": "destination",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "history": {
+          "name": "history",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "package_tracking_carrier_number_pk": {
+          "name": "package_tracking_carrier_number_pk",
+          "columns": [
+            "carrier",
+            "number"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "package_tracking_carrier": {
+          "name": "package_tracking_carrier",
+          "value": "\"package_tracking\".\"carrier\" in ('ups', 'usps', 'fedex')"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.packages": {
       "name": "packages",
       "schema": "",
@@ -12416,50 +12516,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "waiting_on": {
-          "name": "waiting_on",
-          "type": "case_waiting_on",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "respond_by": {
-          "name": "respond_by",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "next_action": {
-          "name": "next_action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "escalation": {
-          "name": "escalation",
-          "type": "case_escalation",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "case_ref": {
-          "name": "case_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "raw_status": {
           "name": "raw_status",
           "type": "text",
@@ -12515,6 +12571,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "unfollowed_at": {
+          "name": "unfollowed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -12564,19 +12626,7 @@
       "checkConstraints": {
         "return_requests_refund_never_ships": {
           "name": "return_requests_refund_never_ships",
-          "value": "\"return_requests\".\"kind\" = 'return' or \"return_requests\".\"status\"::text in ('requested', 'processing', 'unknown', 'closed', 'cancelled')"
-        },
-        "return_requests_resolved_owner": {
-          "name": "return_requests_resolved_owner",
-          "value": "(\"return_requests\".\"waiting_on\" = 'nobody') = (\"return_requests\".\"status\" in ('closed', 'cancelled'))"
-        },
-        "return_requests_deadline_owner": {
-          "name": "return_requests_deadline_owner",
-          "value": "\"return_requests\".\"respond_by\" is null or \"return_requests\".\"waiting_on\" = 'us'"
-        },
-        "return_requests_money_pair": {
-          "name": "return_requests_money_pair",
-          "value": "(\"return_requests\".\"amount\" is null) = (\"return_requests\".\"currency\" is null)"
+          "value": "\"return_requests\".\"kind\" = 'return' or \"return_requests\".\"status\" in ('requested', 'closed', 'cancelled')"
         }
       },
       "isRLSEnabled": false
@@ -14717,26 +14767,6 @@
         "unconfirmed"
       ]
     },
-    "public.case_escalation": {
-      "name": "case_escalation",
-      "schema": "public",
-      "values": [
-        "in_progress",
-        "buyer_won",
-        "seller_won",
-        "closed"
-      ]
-    },
-    "public.case_waiting_on": {
-      "name": "case_waiting_on",
-      "schema": "public",
-      "values": [
-        "us",
-        "buyer",
-        "marketplace",
-        "nobody"
-      ]
-    },
     "public.channel": {
       "name": "channel",
       "schema": "public",
@@ -15110,97 +15140,6 @@
         }
       },
       "name": "count_history",
-      "schema": "public",
-      "isExisting": true,
-      "materialized": false
-    },
-    "public.open_cases": {
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "orderId": {
-          "name": "orderId",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "billedBy": {
-          "name": "billedBy",
-          "type": "channel",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "externalId": {
-          "name": "externalId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "caseRef": {
-          "name": "caseRef",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "return_request_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "return_request_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "waitingOn": {
-          "name": "waitingOn",
-          "type": "case_waiting_on",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "respondBy": {
-          "name": "respondBy",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "nextAction": {
-          "name": "nextAction",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "escalation": {
-          "name": "escalation",
-          "type": "case_escalation",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "name": "open_cases",
       "schema": "public",
       "isExisting": true,
       "materialized": false
