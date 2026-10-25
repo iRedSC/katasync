@@ -258,10 +258,11 @@ export function waitingOn(
 
 // The threads of a view, those waiting first, soonest due first; then the
 // rest, latest first. Each with its messages, oldest first. Every open one,
-// so none waiting is ever cut off; done ones, the latest done.
+// so none waiting is ever cut off; done ones, the latest done. Or just one,
+// open or done.
 export async function threadsPage(
 	db: Db,
-	view: "open" | "done",
+	view: "open" | "done" | { id: number },
 	market: Market | null,
 	limit = 200,
 ) {
@@ -294,9 +295,11 @@ export async function threadsPage(
 		)
 		.where(
 			and(
-				view === "done"
-					? isNotNull(buyerThreads.doneAt)
-					: isNull(buyerThreads.doneAt),
+				typeof view === "object"
+					? eq(buyerThreads.id, view.id)
+					: view === "done"
+						? isNotNull(buyerThreads.doneAt)
+						: isNull(buyerThreads.doneAt),
 				market ? eq(buyerThreads.market, market) : undefined,
 			),
 		)
