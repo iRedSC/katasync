@@ -23,22 +23,25 @@ type Package = Order["packages"][number];
 
 export function BuyerOrder({
 	threadId,
+	orderId,
 	fallback,
 }: {
 	threadId: number;
+	// The order the conversation was opened from, when not the thread's own.
+	orderId?: number;
 	// What shows until the order is read, and when katasync doesn't have it.
 	fallback: React.ReactNode;
 }) {
 	const [order, setOrder] = useState<Order | null | undefined>(undefined);
 	useEffect(() => {
 		let current = true;
-		getBuyerOrder({ data: { threadId } })
+		getBuyerOrder({ data: { threadId, ...(orderId ? { orderId } : {}) } })
 			.then((o) => current && setOrder(o))
 			.catch(() => current && setOrder(null));
 		return () => {
 			current = false;
 		};
-	}, [threadId]);
+	}, [threadId, orderId]);
 	if (!order) return <>{fallback}</>;
 	return <OrderStrip order={order} />;
 }

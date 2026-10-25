@@ -8,6 +8,7 @@ import { DetailsCard } from "#/components/order-page/details-card";
 import { FromStoreBadge } from "#/components/order-page/from-store";
 import { Line } from "#/components/order-page/line";
 import { MailCard } from "#/components/order-page/mail-card";
+import { MessageBuyer } from "#/components/order-page/message-buyer";
 import { ProfitCard } from "#/components/order-page/profit-card";
 import { hasReturn, ReturnCard } from "#/components/order-page/return-card";
 import { SendRow } from "#/components/order-page/send-row";
@@ -39,6 +40,7 @@ import { offerUndo } from "#/lib/undo";
 import { externalFulfillment } from "#/orders/fulfillment";
 import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
+import { getBuyerChat } from "#/server/buyer-chat";
 import {
 	getOrder,
 	markOrderNoReturn,
@@ -49,7 +51,23 @@ import {
 } from "#/server/orders";
 
 export const Route = createFileRoute("/orders/$id")({
-	loader: ({ params }) => getOrder({ data: { id: Number(params.id) } }),
+	// The buyer's conversation open over the page.
+	validateSearch: (search: Record<string, unknown>): { chat?: number } =>
+		Number.isInteger(search.chat) && Number(search.chat) > 0
+			? { chat: Number(search.chat) }
+			: {},
+	loaderDeps: ({ search }) => ({ chat: search.chat }),
+	loader: async ({ params, deps }) => {
+		const [detail, chat] = await Promise.all([
+			getOrder({ data: { id: Number(params.id) } }),
+			deps.chat
+				? getBuyerChat({
+						data: { threadId: deps.chat, orderId: Number(params.id) },
+					})
+				: null,
+		]);
+		return { ...detail, buyerChat: chat };
+	},
 	component: OrderPage,
 	pendingComponent: () => (
 		<DetailSkeleton
@@ -108,6 +126,7 @@ const takenBackPatch = (
 
 function OrderPage() {
 	const loaded = Route.useLoaderData();
+	const search = Route.useSearch();
 	const detail = orderData.useData(loaded.order.id, loaded);
 	const {
 		order,
@@ -482,6 +501,12 @@ function OrderPage() {
 								{formatPhone(order.shipPhone)}
 							</p>
 						)}
+						<MessageBuyer
+							orderId={order.id}
+							way={detail.chat}
+							chatId={search.chat}
+							chat={loaded.buyerChat}
+						/>
 						{buyerOrders.length > 0 && (
 							<div className="mt-3 border-t pt-3">
 								<p className="mb-1.5 flex justify-between text-xs text-muted-foreground">
