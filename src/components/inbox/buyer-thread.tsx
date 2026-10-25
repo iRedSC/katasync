@@ -16,7 +16,9 @@ import {
 	Undo2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { refuseWords, rulesFor } from "#/buyers/attachments";
+import { chatPage } from "#/buyers/chat-page";
 import type { BuyerThread } from "#/buyers/threads";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
@@ -276,6 +278,7 @@ export function BuyerConversation({
 						}
 					/>
 				</div>
+				<ChatLink thread={t} />
 				{t.doneAt === null ? (
 					<Tip content="Needs no reply (E)">
 						<Button size="sm" variant="secondary" onClick={() => onDone(true)}>
@@ -614,5 +617,33 @@ function Bubble({
 				</span>
 			)}
 		</div>
+	);
+}
+
+// The conversation on the marketplace's site. TikTok's inbox can't be opened
+// at one chat, so the buyer's name goes on the clipboard for its search.
+function ChatLink({ thread: t }: { thread: BuyerThread }) {
+	const page = chatPage(t);
+	if (!page) return null;
+	const { copy } = page;
+	return (
+		<Tip content={copy ? `Copies "${copy}" for its search` : "Open the chat"}>
+			<Button size="sm" variant="ghost" asChild>
+				<a
+					href={page.url}
+					target="_blank"
+					rel="noreferrer"
+					onClick={() => {
+						if (copy)
+							navigator.clipboard
+								.writeText(copy)
+								.then(() => toast.success(`Copied ${copy}`));
+					}}
+				>
+					<ExternalLink />
+					{page.name}
+				</a>
+			</Button>
+		</Tip>
 	);
 }
