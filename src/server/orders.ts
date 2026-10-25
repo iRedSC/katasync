@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { orderSummary } from "#/buyers/order";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
@@ -448,3 +449,9 @@ export {
 
 export type OrderRow = Awaited<ReturnType<typeof listOrders>>["orders"][number];
 export type OrderDetail = Awaited<ReturnType<typeof getOrder>>;
+
+// Each package the order went out in, with every scan the carrier has
+// given; asked of the channel and the carriers as the page opens.
+export const getOrderPackages = createServerFn({ method: "GET" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(async ({ data }) => (await orderSummary(getDb(), data.id)).packages);

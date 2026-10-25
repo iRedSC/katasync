@@ -12,6 +12,7 @@ import { ProfitCard } from "#/components/order-page/profit-card";
 import { hasReturn, ReturnCard } from "#/components/order-page/return-card";
 import { SendRow } from "#/components/order-page/send-row";
 import { TimelineCard } from "#/components/order-page/timeline-card";
+import { TrackingCard } from "#/components/order-page/tracking-card";
 import { OrderStatusBadge } from "#/components/order-status";
 import { Badge, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
@@ -465,6 +466,7 @@ function OrderPage() {
 							</ul>
 						</Card>
 					)}
+					<TrackingCard orderId={order.id} />
 					{profit && (
 						<ProfitCard profit={profit} charges={charges} checks={checks} />
 					)}

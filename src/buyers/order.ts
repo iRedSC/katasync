@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	buyerThreads,
@@ -9,22 +9,21 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import { carrierOf, channelPackages } from "#/orders/channel-tracking";
 import { returnStages } from "#/orders/return-stage";
 import { orderStatus } from "#/orders/status";
 import { financialStatus, labelToVoid } from "#/orders/to-ship";
-import type { Carrier } from "#/purchasing/inbox/tracking-numbers";
+import {
+	type Carrier,
+	normalTracking,
+} from "#/purchasing/inbox/tracking-numbers";
 import { askShippo } from "#/purchasing/tracking";
 
 // What a buyer's order is and where its packages are, for the top of their
-// conversation: the products, and each package's tracking as the carrier
-// tells it now (through Shippo). A carrier that can't be asked leaves what
+// conversation and the order page: the products, and each package (ours,
+// and those the channel says it shipped on labels bought there) with every
+// scan the carrier has given (through Shippo). A carrier that can't be asked leaves what
 // katasync knows. Server only.
-
-const CARRIERS: Record<string, Carrier> = {
-	usps: "usps",
-	ups: "ups",
-	fedex: "fedex",
-};
 
 // The carrier's own tracking page, for labels without one (TikTok's).
 const pageOf = (carrier: Carrier, number: string) =>
@@ -66,6 +65,7 @@ export async function orderSummary(db: Db, orderId: number) {
 				salesChannel: orders.salesChannel,
 				marketplaceOrderId: orders.marketplaceOrderId,
 				externalId: orders.externalId,
+				sourceUpdatedAt: orders.sourceUpdatedAt,
 				shipCountry: orders.shipCountry,
 				fulfilledByChannel: orders.fulfilledByChannel,
 				labelToVoid,
@@ -94,44 +94,79 @@ export async function orderSummary(db: Db, orderId: number) {
 				number: shipments.trackingNumber,
 				url: shipments.trackingUrl,
 				shippedAt: shipments.createdAt,
+				voidedAt: shipments.voidedAt,
 			})
 			.from(shipments)
 			.innerJoin(
 				dispatchOrders,
 				eq(dispatchOrders.dispatchId, shipments.dispatchId),
 			)
-			.where(
-				and(eq(dispatchOrders.orderId, orderId), isNull(shipments.voidedAt)),
-			)
+			.where(eq(dispatchOrders.orderId, orderId))
 			.orderBy(shipments.createdAt),
 	]);
+	if (!order) throw new Error(`No order ${orderId}`);
+	// The channel's too, bought on its site; a number of a label of ours,
+	// voided ones included, is ours and not shown twice.
+	const ours = new Set(
+		sent.flatMap((p) => (p.number ? [normalTracking(p.number)] : [])),
+	);
+	const theirs = (await channelPackages(db, order)).filter(
+		(p) => !ours.has(normalTracking(p.number)),
+	);
+	const known = [
+		...sent
+			.filter((p) => p.voidedAt === null)
+			.map((p) => ({
+				key: `s${p.id}`,
+				carrier: p.carrier,
+				service: p.service,
+				number: p.number,
+				url: p.url,
+				shippedAt: p.shippedAt as Date | null,
+			})),
+		...theirs.map((p) => ({
+			key: `c${normalTracking(p.number)}`,
+			carrier: p.carrier,
+			service: null,
+			number: p.number as string | null,
+			url: null,
+			shippedAt: null,
+		})),
+	];
 	const packages = await Promise.all(
-		sent.map(async (p) => {
-			const carrier = CARRIERS[p.carrier.toLowerCase()];
-			const known = {
+		known.map(async (p) => {
+			const carrier = p.number ? carrierOf(p.carrier, p.number) : null;
+			const base = {
 				...p,
 				url: p.url ?? (carrier && p.number ? pageOf(carrier, p.number) : null),
 				status: null,
 				statusDetail: null,
 				eta: null,
 				deliveredAt: null,
+				// Every scan, for the timeline; null when Shippo wasn't asked.
+				tracking: null,
 			};
-			if (!carrier || !p.number || !process.env.SHIPPO_API_KEY) return known;
+			if (!carrier || !p.number || !process.env.SHIPPO_API_KEY) return base;
 			try {
 				const t = await askShippo(carrier, p.number);
 				return {
-					...known,
+					...base,
 					status: t.status,
 					statusDetail: t.statusDetail,
 					eta: t.eta,
 					deliveredAt: t.status === "DELIVERED" ? t.statusAt : null,
+					tracking: {
+						...t,
+						carrier,
+						number: p.number,
+						checkedAt: new Date(),
+					},
 				};
 			} catch {
-				return known;
+				return base;
 			}
 		}),
 	);
-	if (!order) throw new Error(`No order ${orderId}`);
 	return {
 		id: order.id,
 		name: order.name,

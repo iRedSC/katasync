@@ -144,7 +144,7 @@ function Timeline({ status }: { status: Tracking["status"] }) {
 // Everything Shippo told us about one package, for its hover card: where
 // it stands, the service and route, when it's due (and the day first
 // promised, if that slipped), and every scan, newest first.
-function Details({ t }: { t: Tracking }) {
+export function PackageDetails({ t }: { t: Tracking }) {
 	const s = t.status ? STATUS[t.status] : null;
 	const tone = toneOf(t.status);
 	const route = [t.origin, t.destination].filter(Boolean).join(" → ");
@@ -294,7 +294,7 @@ export function PackageStatus({ t }: { t: Tracking }) {
 					collisionPadding={12}
 					className="z-50 w-80 rounded-xl bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-black/10"
 				>
-					<Details t={t} />
+					<PackageDetails t={t} />
 				</HoverCard.Content>
 			</HoverCard.Portal>
 		</HoverCard.Root>
