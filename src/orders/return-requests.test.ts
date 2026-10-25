@@ -85,7 +85,7 @@ describe("saveReturns", () => {
 		externalId: "RMA1",
 		orderExternalId: "111-1",
 		rawStatus: status,
-		...returnStage(status),
+		...returnStage(status, "buyer"),
 		amount: null,
 		currency: null,
 		nextAction: null,

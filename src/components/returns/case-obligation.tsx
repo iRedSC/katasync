@@ -5,7 +5,7 @@ import { channelName } from "#/lib/format";
 
 export type CaseObligationData = Pick<
 	typeof returnRequests.$inferSelect,
-	"waitingOn" | "respondBy" | "amount" | "currency" | "billedBy"
+	"status" | "waitingOn" | "respondBy" | "amount" | "currency" | "billedBy"
 >;
 
 export function deadlineChip(deadline: Date, now: number) {
@@ -39,6 +39,9 @@ export function CaseObligation({ request }: { request: CaseObligationData }) {
 	const chip = deadline ? deadlineChip(deadline, now) : null;
 	return (
 		<span className="inline-flex flex-wrap items-center gap-1.5">
+			{request.status === "unknown" && (
+				<Badge tone="warning">Unknown status</Badge>
+			)}
 			{chip && (
 				<span
 					title={deadline?.toLocaleString()}
@@ -47,7 +50,7 @@ export function CaseObligation({ request }: { request: CaseObligationData }) {
 					<Badge tone={chip.tone}>{chip.label}</Badge>
 				</span>
 			)}
-			{request.waitingOn === "marketplace" && (
+			{request.waitingOn === "marketplace" && request.status !== "unknown" && (
 				<span className="text-xs text-muted-foreground">
 					{channelName(request.billedBy)} processing
 				</span>

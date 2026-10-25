@@ -59,16 +59,10 @@ export function CaseRow({
 			</td>
 			<td className="px-4 py-2.5">
 				<div className="flex flex-col items-start gap-1">
-					{r.status === "unknown" ? (
-						<span title={r.rawStatus}>
-							<Badge tone="warning">Unknown status</Badge>
-						</span>
-					) : (
-						r.waitingOn === "us" && (
-							<Badge tone="warning">
-								{r.kind === "refund" ? "Refund asked" : "Return asked"}
-							</Badge>
-						)
+					{r.status !== "unknown" && r.waitingOn === "us" && (
+						<Badge tone="warning">
+							{r.kind === "refund" ? "Refund asked" : "Return asked"}
+						</Badge>
 					)}
 					<CaseObligation request={r} />
 				</div>

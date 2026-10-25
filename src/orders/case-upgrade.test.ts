@@ -1,0 +1,127 @@
+import { expect, test } from "vitest";
+import {
+	amazonReturnStage,
+	EBAY_CASE_STATES,
+	ebayReturnStage,
+	SHOPIFY_CASE_STATES,
+	shopifyReturnStage,
+} from "#/channels/marketplace-case-stage";
+import {
+	TIKTOK_RETURN_STATES,
+	tiktokReturnStage,
+} from "#/channels/tiktok-case-stage";
+import { openCases, returnRequests } from "#/db/schema";
+import { createTestDb } from "#/test/db";
+
+test("upgrade from before #236 reopens legacy SUCCESS and preserves both pending refunds", async () => {
+	const db = await createTestDb({
+		beforeMigration: 141,
+		seed: async (pg) => {
+			await pg.query(
+				"INSERT INTO stores (channel, name) VALUES ('tiktok', 'Upgrade')",
+			);
+			await pg.query(`INSERT INTO orders (store_id, external_id, name, placed_at, fulfillment_status, total, source_updated_at)
+				SELECT id, 'order', 'order', now(), 'FULFILLED', 0, now() FROM stores WHERE name = 'Upgrade'`);
+			const rows = [
+				["legacy-success", "RETURN_OR_REFUND_REQUEST_SUCCESS"],
+				["4035352486720738032", "RETURN_OR_REFUND_REQUEST_PENDING"],
+				["4035353434457018423", "RETURN_OR_REFUND_REQUEST_PENDING"],
+				["unknown", "FUTURE_SUCCESS"],
+				["settled", "RETURN_OR_REFUND_REQUEST_COMPLETE"],
+			];
+			for (const [id, raw] of rows)
+				await pg.query(
+					`INSERT INTO return_requests
+				(order_id, billed_by, external_id, status, raw_status, requested_at, source_updated_at)
+				SELECT id, 'tiktok', $1, 'closed', $2, '2025-01-01', now() FROM orders`,
+					[id, raw],
+				);
+		},
+	});
+	expect(
+		await db.select().from(openCases).orderBy(openCases.externalId),
+	).toMatchObject([
+		{
+			externalId: "4035352486720738032",
+			kind: "refund",
+			status: "requested",
+			waitingOn: "us",
+			respondBy: null,
+		},
+		{
+			externalId: "4035353434457018423",
+			kind: "refund",
+			status: "requested",
+			waitingOn: "us",
+			respondBy: null,
+		},
+		{
+			externalId: "legacy-success",
+			status: "processing",
+			waitingOn: "marketplace",
+			respondBy: null,
+		},
+		{
+			externalId: "unknown",
+			status: "unknown",
+			waitingOn: "marketplace",
+			respondBy: null,
+		},
+	]);
+});
+
+test("upgrade ownership mirrors raw marketplace mappings rather than collapsed requested stages", async () => {
+	const cases = [
+		...Object.keys(TIKTOK_RETURN_STATES).map((raw) => ({
+			channel: "tiktok",
+			raw,
+			expected: tiktokReturnStage({ return_status: raw }),
+		})),
+		...Object.keys(EBAY_CASE_STATES).map((raw) => ({
+			channel: "ebay",
+			raw,
+			expected: ebayReturnStage(raw),
+		})),
+		...Object.keys(SHOPIFY_CASE_STATES).map((raw) => ({
+			channel: "shopify",
+			raw,
+			expected: shopifyReturnStage(raw, false),
+		})),
+		...["Pending", "Approved", "Rejected", "Closed", "FUTURE"].map((raw) => ({
+			channel: "amazon",
+			raw,
+			expected: amazonReturnStage({
+				status: raw,
+				tracked: false,
+				delivered: false,
+			}),
+		})),
+	];
+	const db = await createTestDb({
+		beforeMigration: 142,
+		seed: async (pg) => {
+			await pg.query(
+				"INSERT INTO stores (channel, name) VALUES ('tiktok', 'Upgrade')",
+			);
+			await pg.query(`INSERT INTO orders (store_id, external_id, name, placed_at, fulfillment_status, total, source_updated_at)
+				SELECT id, 'order', 'order', now(), 'FULFILLED', 0, now() FROM stores WHERE name = 'Upgrade'`);
+			for (const row of cases)
+				await pg.query(
+					`INSERT INTO return_requests
+				(order_id, billed_by, external_id, status, raw_status, requested_at, source_updated_at)
+				SELECT id, $1::channel, $2, 'requested', $3, now(), now() FROM orders`,
+					[row.channel, `${row.channel}:${row.raw}`, row.raw],
+				);
+		},
+	});
+	const saved = await db.select().from(returnRequests);
+	for (const row of cases)
+		expect(
+			saved.find((value) => value.externalId === `${row.channel}:${row.raw}`),
+			`${row.channel}:${row.raw}`,
+		).toMatchObject({
+			status: row.expected.status,
+			waitingOn: row.expected.waitingOn,
+			respondBy: null,
+		});
+});

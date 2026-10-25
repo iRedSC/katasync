@@ -126,14 +126,15 @@ test.each([
 	);
 });
 
-test("RMA review and tracking attach only to their SKU request", async () => {
+test.each([
+	"package",
+	"sku",
+])("RMA-only %s review and tracking attach only to their SKU request", async (actionLocation) => {
 	const physical = {
 		...sku,
 		return_type: "RETURN_AND_REFUND",
 		return_status: "BUYER_SHIPPED_ITEM",
-		seller_next_action_response: [
-			{ action: "REVIEW_PACKAGE", deadline: 1793164840 },
-		],
+		seller_next_action_response: [],
 	};
 	api
 		.mockResolvedValueOnce({
@@ -151,9 +152,18 @@ test("RMA review and tracking attach only to their SKU request", async () => {
 					id: "rma",
 					aftersales_request_id: parent.id,
 					status: "PENDING_PACKAGE_REVIEW",
+					seller_next_action_response:
+						actionLocation === "package"
+							? [{ action: "REVIEW_PACKAGE", deadline: 1793164840 }]
+							: [],
 					sku_return_requests: [
 						{
 							...physical,
+							seller_next_action_response:
+								actionLocation === "sku"
+									? [{ action: "REVIEW_PACKAGE", deadline: 1793164840 }]
+									: [],
+							refund_amount: { refund_total: "999.99", currency: "USD" },
 							return_tracking_number: "tracking",
 							return_provider_name: "UPS",
 						},
@@ -167,6 +177,8 @@ test("RMA review and tracking attach only to their SKU request", async () => {
 			status: "delivered",
 			waitingOn: "us",
 			respondBy: new Date("2026-10-28T05:20:40Z"),
+			nextAction: "REVIEW_PACKAGE",
+			amount: "101.77",
 			trackingNumber: "tracking",
 			carrier: "UPS",
 		},

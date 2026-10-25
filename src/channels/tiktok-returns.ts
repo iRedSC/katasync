@@ -52,6 +52,10 @@ const rma = type({
 	id: "string",
 	aftersales_request_id: "string",
 	status: "string",
+	"seller_next_action_response?": type({
+		action: "string",
+		"deadline?": "number.integer >= 0",
+	}).array(),
 	sku_return_requests: returnOrder.array(),
 });
 const rmaPage = type({
@@ -75,7 +79,12 @@ export const isSampleRefund = (r: { return_reason?: string }) =>
 export function tiktokToReturn(
 	r: TiktokReturn,
 	note?: string | null,
-	parent?: { id: string; status: string; rmaStatus?: string },
+	parent?: {
+		id: string;
+		status: string;
+		rmaStatus?: string;
+		packageReviewActions?: { action: string; deadline?: number }[];
+	},
 ): ChannelReturn {
 	const byLine = new Map<
 		string,
@@ -98,6 +107,7 @@ export function tiktokToReturn(
 			...r,
 			afterSalesStatus: parent?.status,
 			rmaStatus: parent?.rmaStatus,
+			packageReviewActions: parent?.packageReviewActions,
 		}),
 		...(r.refund_amount
 			? {
@@ -106,10 +116,6 @@ export function tiktokToReturn(
 				}
 			: { amount: null, currency: null }),
 		caseRef: parent?.id ?? null,
-		nextAction:
-			r.seller_next_action_response
-				?.map((action) => action.action)
-				.join(", ") || null,
 		rawStatus: r.return_status,
 		reason: r.return_reason_text || r.return_reason || null,
 		note,
@@ -262,7 +268,14 @@ export async function fetchTiktokReturns(
 					shipped?.return_provider_name ?? request.return_provider_name,
 			},
 			notes.get(request.return_id),
-			{ ...parent, rmaStatus: pkg?.status },
+			{
+				...parent,
+				rmaStatus: pkg?.status,
+				packageReviewActions: [
+					...(pkg?.seller_next_action_response ?? []),
+					...(shipped?.seller_next_action_response ?? []),
+				],
+			},
 		);
 	});
 }

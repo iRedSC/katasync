@@ -162,8 +162,9 @@ describe("ebayToReturn", () => {
 	test("states", () => {
 		expect(ebayReturnStatus("ITEM_SHIPPED")).toBe("shipped");
 		expect(ebayReturnStatus("ITEM_DELIVERED")).toBe("delivered");
-		expect(ebayReturnStatus("RETURN_REQUEST_CANCELLED")).toBe("cancelled");
-		expect(ebayReturnStatus("RETURN_STARTED")).toBe("requested");
+		expect(ebayReturnStatus("RETURN_REJECTED")).toBe("cancelled");
+		expect(ebayReturnStatus("RETURN_REQUESTED")).toBe("requested");
+		expect(ebayReturnStatus("RETURN_STARTED")).toBe("unknown");
 	});
 });
 

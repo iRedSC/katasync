@@ -38,6 +38,7 @@ export type CaseMoney =
 // Wave 2 fills other marketplaces' deadlines from their own APIs.
 export function returnStage(
 	status: ReturnStatus,
+	waitingOn: "us" | "buyer" | "marketplace",
 ): RequestStage & { kind: "return" } {
 	if (status === "closed" || status === "cancelled")
 		return {
@@ -50,12 +51,7 @@ export function returnStage(
 	return {
 		kind: "return",
 		status,
-		waitingOn:
-			status === "requested"
-				? "buyer"
-				: status === "delivered"
-					? "us"
-					: "marketplace",
+		waitingOn,
 		respondBy: null,
 		escalation: null,
 	};

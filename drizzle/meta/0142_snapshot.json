@@ -1,5 +1,5 @@
 {
-  "id": "5d93c6bf-1748-4b85-aae1-e8142751ea75",
+  "id": "850714a4-84ba-449b-9b03-c40c3e3367da",
   "prevId": "fd1a9a53-f25b-4c96-ba1a-5f97ec986929",
   "version": "7",
   "dialect": "postgresql",
@@ -12219,50 +12219,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "waiting_on": {
-          "name": "waiting_on",
-          "type": "case_waiting_on",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "respond_by": {
-          "name": "respond_by",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "next_action": {
-          "name": "next_action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "escalation": {
-          "name": "escalation",
-          "type": "case_escalation",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "case_ref": {
-          "name": "case_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "raw_status": {
           "name": "raw_status",
           "type": "text",
@@ -12360,19 +12316,7 @@
       "checkConstraints": {
         "return_requests_refund_never_ships": {
           "name": "return_requests_refund_never_ships",
-          "value": "\"return_requests\".\"kind\" = 'return' or \"return_requests\".\"status\"::text in ('requested', 'processing', 'unknown', 'closed', 'cancelled')"
-        },
-        "return_requests_resolved_owner": {
-          "name": "return_requests_resolved_owner",
-          "value": "(\"return_requests\".\"waiting_on\" = 'nobody') = (\"return_requests\".\"status\" in ('closed', 'cancelled'))"
-        },
-        "return_requests_deadline_owner": {
-          "name": "return_requests_deadline_owner",
-          "value": "\"return_requests\".\"respond_by\" is null or \"return_requests\".\"waiting_on\" = 'us'"
-        },
-        "return_requests_money_pair": {
-          "name": "return_requests_money_pair",
-          "value": "(\"return_requests\".\"amount\" is null) = (\"return_requests\".\"currency\" is null)"
+          "value": "\"return_requests\".\"kind\" = 'return' or \"return_requests\".\"status\" in ('requested', 'closed', 'cancelled')"
         }
       },
       "isRLSEnabled": false
@@ -14511,26 +14455,6 @@
         "delivered",
         "failed",
         "unconfirmed"
-      ]
-    },
-    "public.case_escalation": {
-      "name": "case_escalation",
-      "schema": "public",
-      "values": [
-        "in_progress",
-        "buyer_won",
-        "seller_won",
-        "closed"
-      ]
-    },
-    "public.case_waiting_on": {
-      "name": "case_waiting_on",
-      "schema": "public",
-      "values": [
-        "us",
-        "buyer",
-        "marketplace",
-        "nobody"
       ]
     },
     "public.channel": {

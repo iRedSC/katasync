@@ -48,6 +48,7 @@ export type TiktokStageInput = {
 	return_type?: string;
 	arbitration_status?: string;
 	seller_next_action_response?: { action: string; deadline?: number }[];
+	packageReviewActions?: { action: string; deadline?: number }[];
 	afterSalesStatus?: string;
 	rmaStatus?: string;
 };
@@ -62,7 +63,7 @@ function knownEntry<Value>(
 // SKU outcomes establish settlement; parent review completion does not.
 export function tiktokReturnStage(
 	input: TiktokStageInput,
-): RequestStage & { problems: string[] } {
+): RequestStage & { problems: string[]; nextAction: string | null } {
 	const problems: string[] = [];
 	const known = knownEntry(TIKTOK_RETURN_STATES, input.return_status);
 	let status: ReturnStatus = known?.[0] ?? "unknown";
@@ -72,10 +73,13 @@ export function tiktokReturnStage(
 	const escalation = input.arbitration_status
 		? (knownEntry(TIKTOK_ARBITRATION_STATES, input.arbitration_status) ?? null)
 		: null;
-	if (input.arbitration_status && escalation === null)
+	if (input.arbitration_status && escalation === null) {
 		problems.push(
 			`Unknown TikTok arbitration status: ${input.arbitration_status}`,
 		);
+		status = "unknown";
+		owner = "marketplace";
+	}
 	for (const [value, values, name] of [
 		[input.afterSalesStatus, TIKTOK_AFTERSALES_STATES, "aftersales"],
 		[input.rmaStatus, TIKTOK_RMA_STATES, "RMA"],
@@ -122,7 +126,9 @@ export function tiktokReturnStage(
 		if (resolved()) status = "processing";
 		owner = "marketplace";
 	}
-	const actions = input.seller_next_action_response ?? [];
+	const requestReviewActions = input.seller_next_action_response ?? [];
+	const packageReviewActions = input.packageReviewActions ?? [];
+	const actions = [...requestReviewActions, ...packageReviewActions];
 	if (actions.length > 0) {
 		if (resolved()) status = "processing";
 		owner = "us";
@@ -139,7 +145,9 @@ export function tiktokReturnStage(
 		problems.push(`TikTok refund has shipping status: ${input.return_status}`);
 		status = "unknown";
 	}
-	const details = { escalation, problems };
+	const nextAction =
+		[...new Set(actions.map((action) => action.action))].join(", ") || null;
+	const details = { escalation, problems, nextAction };
 	if (status === "closed" || status === "cancelled")
 		return { kind, status, waitingOn: "nobody", respondBy: null, ...details };
 	const ownership =

@@ -1,6 +1,7 @@
 import { type } from "arktype";
-import { type ChannelReturn, returnStage } from "#/orders/return-requests";
+import type { ChannelReturn } from "#/orders/return-requests";
 import { accessToken } from "./ebay";
+import { ebayReturnStage } from "./marketplace-case-stage";
 
 // Returns buyers opened on eBay, with eBay's reason and what the buyer
 // wrote, from the Post-Order API. It takes the same user token as the rest
@@ -38,11 +39,7 @@ const page = type({
 
 // eBay's states, as a stage.
 export function ebayReturnStatus(state: string): ChannelReturn["status"] {
-	if (state.includes("CANCEL")) return "cancelled";
-	if (state.includes("CLOSED")) return "closed";
-	if (state === "ITEM_DELIVERED") return "delivered";
-	if (state === "ITEM_SHIPPED") return "shipped";
-	return "requested";
+	return ebayReturnStage(state).status;
 }
 
 // An eBay return is one item. Its transaction id is the line's id
@@ -52,7 +49,7 @@ export function ebayToReturn(m: EbayReturn): ChannelReturn {
 	return {
 		externalId: m.returnId,
 		orderExternalId: m.orderId,
-		...returnStage(ebayReturnStatus(m.state)),
+		...ebayReturnStage(m.state),
 		amount: null,
 		currency: null,
 		nextAction: null,

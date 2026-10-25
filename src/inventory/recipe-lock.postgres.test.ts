@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import * as schema from "#/db/capability-schema";
 import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { reconcileStock } from "#/orders/reconcile-stock";
+import { migrateDatabase } from "../../scripts/migrate-database";
 import { postMovements } from "./ledger";
 import { setRecipe } from "./recipes";
 
@@ -71,9 +71,7 @@ describe.skipIf(!url)("inventory product lock ordering", () => {
 		} = await second.query<{ pid: number }>("select pg_backend_pid() as pid");
 		secondPid = pid;
 		db = drizzle(first, { schema, casing: "snake_case" });
-		await migrate(drizzle(first, { casing: "snake_case" }), {
-			migrationsFolder: "drizzle",
-		});
+		await migrateDatabase(first);
 		await first.query("set statement_timeout = '10s'");
 		await second.query("set statement_timeout = '10s'");
 		[store] = await db

@@ -42,6 +42,7 @@ describe("TikTok case mapping", () => {
 			waitingOn,
 			respondBy: null,
 			escalation: null,
+			nextAction: null,
 			problems: [],
 		});
 	});
@@ -177,6 +178,25 @@ describe("TikTok case mapping", () => {
 			}),
 		).toMatchObject({ status: "delivered", waitingOn: "us", respondBy: null });
 	});
+	test("request and package reviews keep both actions and the earliest supplied deadline", () => {
+		expect(
+			tiktokReturnStage({
+				return_status: "BUYER_SHIPPED_ITEM",
+				rmaStatus: "PENDING_PACKAGE_REVIEW",
+				seller_next_action_response: [
+					{ action: "REVIEW_REQUEST", deadline: 1793164840 },
+				],
+				packageReviewActions: [
+					{ action: "REVIEW_PACKAGE", deadline: 1793037279 },
+				],
+			}),
+		).toMatchObject({
+			status: "delivered",
+			waitingOn: "us",
+			respondBy: new Date(1793037279000),
+			nextAction: "REVIEW_REQUEST, REVIEW_PACKAGE",
+		});
+	});
 	test.each([
 		{ afterSalesStatus: "FUTURE_PARENT" },
 		{ rmaStatus: "FUTURE_RMA" },
@@ -187,6 +207,7 @@ describe("TikTok case mapping", () => {
 			...extra,
 		});
 		expect(mapped.waitingOn).toBe("marketplace");
+		expect(mapped.status).toBe("unknown");
 		expect(mapped.problems).toHaveLength(1);
 	});
 });

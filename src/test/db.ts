@@ -1,9 +1,10 @@
 import { PGlite } from "@electric-sql/pglite";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
-import { expect } from "vitest";
+import { expect, onTestFinished } from "vitest";
 import * as schema from "#/db/capability-schema";
 import type { Db } from "#/db/client";
+import { migrateDatabase } from "../../scripts/migrate-database";
 
 // Booting PGlite and migrating take seconds; wiping its tables takes about
 // 0.1s. So each worker process boots and migrates once, kept on globalThis
@@ -87,9 +88,7 @@ async function wipeFor(pg: PGlite) {
 
 async function boot(): Promise<Shared> {
 	const pg = new PGlite();
-	await migrate(drizzle(pg, { casing: "snake_case" }), {
-		migrationsFolder: "drizzle",
-	});
+	await migrateDatabase(pg);
 	const wipe = await wipeFor(pg);
 	return {
 		pg,
@@ -110,7 +109,19 @@ function claim(shared: Shared) {
 	shared.handedTo = test;
 }
 
-export async function createTestDb(): Promise<Db> {
+export async function createTestDb(upgrade?: {
+	beforeMigration: number;
+	seed: (pg: PGlite) => Promise<void>;
+}): Promise<Db> {
+	if (upgrade) {
+		const pg = new PGlite();
+		onTestFinished(() => pg.close());
+		const migrations = readMigrationFiles({ migrationsFolder: "drizzle" });
+		await migrateDatabase(pg, migrations.slice(0, upgrade.beforeMigration));
+		await upgrade.seed(pg);
+		await migrateDatabase(pg, migrations);
+		return drizzle(pg, { schema, casing: "snake_case" });
+	}
 	store[key] ??= boot();
 	const shared = await store[key];
 	claim(shared);

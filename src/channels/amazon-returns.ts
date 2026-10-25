@@ -1,4 +1,4 @@
-import { type ChannelReturn, returnStage } from "#/orders/return-requests";
+import type { ChannelReturn } from "#/orders/return-requests";
 import {
 	listReports,
 	parseTsv,
@@ -7,6 +7,7 @@ import {
 	requestReport,
 	waitForReport,
 } from "./amazon-reports";
+import { amazonReturnStage } from "./marketplace-case-stage";
 
 // Returns buyers opened on orders we shipped ourselves, with Amazon's reason,
 // from its returns report (amazon-reports.ts). Needs the SP-API Inventory and
@@ -39,12 +40,7 @@ export function returnStatus(row: {
 	delivered: boolean;
 	tracked: boolean;
 }): ChannelReturn["status"] {
-	const s = row.status.toLowerCase();
-	if (s.includes("cancel") || s.includes("reject")) return "cancelled";
-	if (s.includes("closed")) return "closed";
-	if (row.delivered) return "delivered";
-	if (row.tracked) return "shipped";
-	return "requested";
+	return amazonReturnStage(row).status;
 }
 
 // One row per item returned; a return of several items shares its RMA ID.
@@ -75,13 +71,11 @@ export function parseReturnsReport(text: string): {
 			externalId: rmaId,
 			orderExternalId: orderId,
 			rawStatus: row["Return request status"],
-			...returnStage(
-				returnStatus({
-					status: row["Return request status"],
-					delivered: row["Return delivery date"] !== "",
-					tracked: row["Tracking ID"] !== "",
-				}),
-			),
+			...amazonReturnStage({
+				status: row["Return request status"],
+				delivered: row["Return delivery date"] !== "",
+				tracked: row["Tracking ID"] !== "",
+			}),
 			amount: null,
 			currency: null,
 			nextAction: null,

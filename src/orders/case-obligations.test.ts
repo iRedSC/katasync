@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, test, vi } from "vitest";
 import { tiktokToReturn } from "#/channels/tiktok-returns";
+import { CaseObligation } from "#/components/returns/case-obligation";
 import type { Db } from "#/db/client";
 import { openCases, orders, returnRequests, stores } from "#/db/schema";
 import { createTestDb } from "#/test/db";
@@ -219,7 +222,7 @@ test("the migration backfills legacy owners without guessing unknown TikTok work
 		},
 	]);
 	const migration = readFileSync(
-		new URL("../../drizzle/0142_case_obligations.sql", import.meta.url),
+		new URL("../../drizzle/0143_case_obligations.sql", import.meta.url),
 		"utf8",
 	);
 	const backfill = migration.match(
@@ -238,4 +241,37 @@ test("the migration backfills legacy owners without guessing unknown TikTok work
 		["seller", "us"],
 		["unknown", "marketplace"],
 	]);
+});
+
+test.each([
+	false,
+	true,
+])("unknown arbitration saves an unknown badge and retains seller work: %s", async (sellerAction) => {
+	const unknown = tiktokToReturn({
+		return_id: "unknown-arbitration",
+		order_id: "577620148777947888",
+		return_status: "RETURN_OR_REFUND_REQUEST_COMPLETE",
+		arbitration_status: "FUTURE_ARBITRATION",
+		create_time: 1792000000,
+		seller_next_action_response: sellerAction
+			? [{ action: "SUBMIT_EVIDENCE", deadline: 1793037279 }]
+			: [],
+	});
+	expect(await importReturns(db, store, async () => [unknown])).toEqual([
+		"Unknown TikTok arbitration status: FUTURE_ARBITRATION",
+	]);
+	const [saved] = await db.select().from(returnRequests);
+	expect(saved).toMatchObject({
+		status: "unknown",
+		escalation: null,
+		waitingOn: sellerAction ? "us" : "marketplace",
+		respondBy: sellerAction ? new Date(1793037279000) : null,
+		nextAction: sellerAction ? "SUBMIT_EVIDENCE" : null,
+	});
+	const html = renderToStaticMarkup(
+		createElement(CaseObligation, { request: saved }),
+	);
+	expect(html).toContain("Unknown status");
+	expect(html).not.toContain("TikTok processing");
+	if (sellerAction) expect(html).toMatch(/overdue|left/);
 });
