@@ -1,4 +1,4 @@
-// Pulls orders and listings from every connected channel.
+// Pulls orders, listings, and returns from every connected channel.
 //
 //   pnpm sync                one pass of every channel
 //   pnpm sync --watch        keep going, each channel on its own schedule
@@ -23,6 +23,7 @@
 
 import { parseArgs } from "node:util";
 import { actAsScript } from "#/audit/script";
+import { channelPass } from "#/channels/channel-pass";
 import {
 	backfillOrders,
 	type OrderChannel,
@@ -33,7 +34,7 @@ import {
 	type ReturnChannel,
 	returnChannels,
 } from "#/channels/returns-history";
-import { costPassAlone, syncPass } from "#/channels/sync";
+import { costPassAlone } from "#/channels/sync";
 import { getDb } from "#/db/client";
 import { channelEnv } from "#/diagnostics/checks";
 
@@ -71,30 +72,30 @@ const channels = [
 // Cost passes, like the costs crons, every 10 minutes per channel.
 const COSTS_EVERY = 10 * MINUTE;
 const listingsAt = new Map<string, number>();
+// Returns, like their crons, every 15 minutes per channel.
+const RETURNS_EVERY = 15 * MINUTE;
+const returnsAt = new Map<string, number>();
 const selected = channels.filter((c) => !values.only || c.name === values.only);
 
-// Each returns whether the pass worked, for the one-shot exit status.
+// Each returns whether the pass worked, for the one-shot exit status. A
+// one-shot run reads returns every time; --watch every RETURNS_EVERY.
 async function pass(channel: (typeof channels)[number]): Promise<boolean> {
 	const started = Date.now();
 	const listings =
 		"listingsEvery" in channel &&
 		started - (listingsAt.get(channel.name) ?? 0) >= channel.listingsEvery;
-	try {
-		const result = await syncPass(getDb(), channel.name, { listings });
-		if (listings) listingsAt.set(channel.name, started);
-		const seconds = ((Date.now() - started) / 1000).toFixed(1);
-		console.log(
-			`${new Date().toISOString()} ${result.store}: ${result.orders} orders in ${seconds}s`,
-		);
-		for (const problem of result.problems) console.log(`  ${problem}`);
-		if (result.pinned > 0)
-			console.log(`  ${result.pinned} new orders to ship got pins`);
-		return true;
-	} catch (error) {
-		// One channel failing (an outage, an expired token) doesn't stop the rest.
-		console.error(`${new Date().toISOString()} ${channel.name} failed:`, error);
-		return false;
-	}
+	const returns =
+		!values.watch ||
+		started - (returnsAt.get(channel.name) ?? 0) >= RETURNS_EVERY;
+	const result = await channelPass(getDb(), channel.name, {
+		listings,
+		returns,
+	});
+	if (listings) listingsAt.set(channel.name, started);
+	if (returns) returnsAt.set(channel.name, started);
+	for (const line of result.lines)
+		(result.ok ? console.log : console.error)(line);
+	return result.ok;
 }
 
 async function costPass(channel: (typeof channels)[number]): Promise<boolean> {
