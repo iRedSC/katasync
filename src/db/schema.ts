@@ -3306,6 +3306,50 @@ export const buyerMessages = pgTable(
 	],
 );
 
+// How a first message to an eBay buyer stands. It's what starts their
+// conversation, and eBay has no request key, so each try is written down
+// before it goes:
+//
+//   sending ──eBay gave its ID──▶ sent
+//      ├──eBay plainly said no──▶ refused
+//      └──anything else──▶ unsure (may have gone; never sent again blind)
+export const buyerChatStartStatus = pgEnum("buyer_chat_start_status", [
+	"sending",
+	"sent",
+	"refused",
+	"unsure",
+]);
+
+// One try at a first message to an eBay buyer from their order
+// (src/buyers/first-message.ts). The browser's key names the try, so asking
+// again after a lost answer reads this back instead of sending twice.
+export const buyerChatStarts = pgTable(
+	"buyer_chat_starts",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		requestKey: uuid().notNull().unique(),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		body: text().notNull(),
+		status: buyerChatStartStatus().notNull().default("sending"),
+		// eBay's ID for the message, once sent.
+		messageId: text(),
+		// The conversation it started, once eBay lists it.
+		threadId: integer().references(() => buyerThreads.id),
+		error: text(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		statusAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index("buyer_chat_starts_order_idx").on(t.orderId, t.createdAt),
+		check(
+			"buyer_chat_starts_sent_has_id",
+			sql`(${t.status} = 'sent') = (${t.messageId} is not null)`,
+		),
+	],
+);
+
 // What the marketplace itself put in a conversation (TikTok's): its
 // assistant's answers, its notices (a buyer asking for a person, a chat
 // timing out), and its order and shipping cards. Shown with the thread,
@@ -3510,6 +3554,10 @@ export const replyDrafts = pgTable(
 		// The buyer's latest message when it was written: a newer one means
 		// it's out of date and drafted again.
 		forMessageId: integer().references(() => buyerMessages.id),
+		// The order it was written about (the marketplace's ID), when that
+		// isn't the thread's own: a buyer's one conversation can be opened
+		// from any of their orders. Null is the thread's.
+		orderRef: text(),
 		by: text().$type<"ai" | "staff" | "claude">().notNull(),
 		// The precedents it followed.
 		precedentIds: integer().array().notNull().default(sql`'{}'::integer[]`),

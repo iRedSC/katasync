@@ -1,5 +1,5 @@
 {
-  "id": "5b19cab8-233d-4829-bcb3-702b8e8bf183",
+  "id": "8aef192d-1999-45c7-b95c-faf5421acdfd",
   "prevId": "52fb2bae-772c-4b43-9db1-597338e67554",
   "version": "7",
   "dialect": "postgresql",
@@ -4222,6 +4222,156 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.buyer_chat_starts": {
+      "name": "buyer_chat_starts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "identity": {
+            "type": "always",
+            "name": "buyer_chat_starts_id_seq",
+            "schema": "public",
+            "increment": "1",
+            "startWith": "1",
+            "minValue": "1",
+            "maxValue": "2147483647",
+            "cache": "1",
+            "cycle": false
+          }
+        },
+        "request_key": {
+          "name": "request_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "buyer_chat_start_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'sending'"
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "status_at": {
+          "name": "status_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "buyer_chat_starts_order_idx": {
+          "name": "buyer_chat_starts_order_idx",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "buyer_chat_starts_order_id_orders_id_fk": {
+          "name": "buyer_chat_starts_order_id_orders_id_fk",
+          "tableFrom": "buyer_chat_starts",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "buyer_chat_starts_thread_id_buyer_threads_id_fk": {
+          "name": "buyer_chat_starts_thread_id_buyer_threads_id_fk",
+          "tableFrom": "buyer_chat_starts",
+          "tableTo": "buyer_threads",
+          "columnsFrom": [
+            "thread_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "buyer_chat_starts_requestKey_unique": {
+          "name": "buyer_chat_starts_requestKey_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "request_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "buyer_chat_starts_sent_has_id": {
+          "name": "buyer_chat_starts_sent_has_id",
+          "value": "(\"buyer_chat_starts\".\"status\" = 'sent') = (\"buyer_chat_starts\".\"message_id\" is not null)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.buyer_marketplace_messages": {
@@ -12216,6 +12366,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "order_ref": {
+          "name": "order_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "by": {
           "name": "by",
           "type": "text",
@@ -14756,6 +14912,16 @@
         "sales_tax_month"
       ]
     },
+    "public.buyer_chat_start_status": {
+      "name": "buyer_chat_start_status",
+      "schema": "public",
+      "values": [
+        "sending",
+        "sent",
+        "refused",
+        "unsure"
+      ]
+    },
     "public.buyer_reply_status": {
       "name": "buyer_reply_status",
       "schema": "public",
@@ -15029,8 +15195,6 @@
       "schema": "public",
       "values": [
         "requested",
-        "processing",
-        "unknown",
         "shipped",
         "delivered",
         "closed",

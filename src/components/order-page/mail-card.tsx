@@ -1,3 +1,4 @@
+import { useNavigate } from "@tanstack/react-router";
 import { Mail, MessageSquare } from "lucide-react";
 import { useState } from "react";
 import { EmailReader, snippet } from "#/components/emails/reader";
@@ -15,8 +16,10 @@ type Entry =
 
 // Everything written about the order: marketplace emails that name it and
 // buyers' conversations about it, newest first. A click opens one over
-// the page, read as the inbox reads it. With none, there's no card.
+// the page, read as the inbox reads it; a conversation to answer in place
+// (message-buyer.tsx). With none, there's no card.
 export function MailCard({ mail }: { mail: OrderDetail["mail"] }) {
+	const navigate = useNavigate();
 	const [open, setOpen] = useState<Entry | null>(null);
 	const entries: Entry[] = [
 		...mail.emails.map((e) => ({
@@ -49,7 +52,19 @@ export function MailCard({ mail }: { mail: OrderDetail["mail"] }) {
 						key={e.key}
 						entry={e}
 						open={open?.key === e.key}
-						onOpen={() => setOpen(e)}
+						onOpen={() =>
+							e.kind === "thread"
+								? navigate({
+										to: ".",
+										search: (s: Record<string, unknown>) => ({
+											...s,
+											chat: e.thread.id,
+										}),
+										replace: true,
+										resetScroll: false,
+									})
+								: setOpen(e)
+						}
 					/>
 				))}
 			</ul>
@@ -64,11 +79,6 @@ export function MailCard({ mail }: { mail: OrderDetail["mail"] }) {
 							fileUrl={(a) => `/api/market-email-attachments/${a.id}`}
 							className="min-h-0 flex-1"
 						/>
-					</DialogContent>
-				)}
-				{open?.kind === "thread" && (
-					<DialogContent className="flex max-h-[85svh] flex-col overflow-y-auto sm:max-w-xl">
-						<Conversation thread={open.thread} />
 					</DialogContent>
 				)}
 			</Dialog>
@@ -148,39 +158,4 @@ function Tags({ entry: e }: { entry: Entry }) {
 			<Badge tone={level.tone}>{level.label}</Badge>
 		</span>
 	) : null;
-}
-
-function Conversation({ thread: t }: { thread: Thread }) {
-	return (
-		<>
-			<DialogTitle className="pr-8 text-base">
-				{t.subject || "(no subject)"}
-			</DialogTitle>
-			<p className="-mt-2 text-sm text-muted-foreground">
-				{t.buyerName ?? "Buyer"} on {channelName(t.market)}
-			</p>
-			<ol className="flex flex-col gap-3">
-				{t.messages.map((m) => (
-					<li
-						key={m.id}
-						className={cn(
-							"max-w-[85%] rounded-lg px-3 py-2",
-							m.fromBuyer ? "self-start bg-surface" : "self-end bg-info-fill",
-						)}
-					>
-						<div className="mb-1 text-xs text-muted-foreground">
-							{m.fromBuyer ? (t.buyerName ?? "Buyer") : "Us"} ·{" "}
-							{formatOrderDate(m.at)}
-							{m.status === "failed" && (
-								<span className="text-critical-text"> · Didn't send</span>
-							)}
-						</div>
-						<div className="whitespace-pre-wrap break-words">
-							{m.english ?? m.body}
-						</div>
-					</li>
-				))}
-			</ol>
-		</>
-	);
 }
