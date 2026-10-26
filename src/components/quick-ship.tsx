@@ -3,6 +3,7 @@ import { MAX_BOXES } from "#/components/quick-ship/constants";
 import { DoneStep } from "#/components/quick-ship/done-step";
 import { ExternalStep } from "#/components/quick-ship/external-step";
 import { startsHazmat } from "#/components/quick-ship/hazmat";
+import { InfoPanel } from "#/components/quick-ship/info-panel";
 import { splitInsurance } from "#/components/quick-ship/insurance";
 import { Key } from "#/components/quick-ship/key";
 import { Notice } from "#/components/quick-ship/notice";
@@ -11,6 +12,7 @@ import { PackageStep } from "#/components/quick-ship/package-step";
 import { lastFor, startingGrams } from "#/components/quick-ship/packaging";
 import { PinStep } from "#/components/quick-ship/pin-step";
 import { RatesStep } from "#/components/quick-ship/rates-step";
+import { stepNotes } from "#/components/quick-ship/step-notes";
 import { StepStrip, stepsFor } from "#/components/quick-ship/step-strip";
 import type {
 	Bought,
@@ -19,6 +21,7 @@ import type {
 	Extras,
 	Found,
 	Packed,
+	Quote,
 	Rates,
 	Step,
 } from "#/components/quick-ship/types";
@@ -88,6 +91,8 @@ export function QuickShip() {
 	// The prices shown, and the extras they were quoted with.
 	const [rates, setRates] = useState<(Rates & { for: Extras }) | null>(null);
 	const [bought, setBought] = useState<Bought | null>(null);
+	// The service highlighted on the rates step.
+	const [focused, setFocused] = useState<Quote | null>(null);
 
 	// Lookups, plans, and prices already asked for, so asking again is
 	// instant.
@@ -116,6 +121,7 @@ export function QuickShip() {
 		setExtras(noExtras);
 		setRates(null);
 		setBought(null);
+		setFocused(null);
 		clear();
 	}
 
@@ -420,6 +426,8 @@ export function QuickShip() {
 		count,
 	});
 
+	const notes = stepNotes({ step, rates: rates?.list ?? null, focused });
+
 	return (
 		<Dialog
 			open={open}
@@ -430,9 +438,8 @@ export function QuickShip() {
 			}}
 		>
 			<DialogContent
-				// Never taller than the screen: a long order scrolls instead of
-				// pushing the steps off the top.
-				className="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] gap-0 overflow-y-auto bg-card p-0 sm:max-w-2xl"
+				// Scrolls inside, so the info panel can sit outside its edge.
+				className="grid-cols-[minmax(0,1fr)] gap-0 bg-card p-0 sm:max-w-2xl"
 				showCloseButton={false}
 				onKeyDown={(e: KeyboardEvent) => {
 					// An Enter typed in a field finishes that step only. Without this,
@@ -463,112 +470,118 @@ export function QuickShip() {
 				onEscapeKeyDown={(e) => e.preventDefault()}
 			>
 				<DialogTitle className="sr-only">Quick ship</DialogTitle>
-				<StepStrip steps={steps} current={step} />
+				{/* Never taller than the screen: a long order scrolls instead of
+				    pushing the steps off the top. */}
+				<div className="max-h-[calc(100dvh-2rem)] min-w-0 overflow-y-auto rounded-lg">
+					<StepStrip steps={steps} current={step} />
 
-				{found && plan && step !== "pin" && (
-					<OrderSummary
-						found={found}
-						plan={plan}
-						canCombine={step === "package" && packed.length === 0}
-						onToggle={toggleCompanion}
-					/>
-				)}
-
-				<div className="flex flex-col gap-4 p-6">
-					{step === "pin" && (
-						<PinStep busy={busy} lookUp={lookUp} onSubmit={choosePin} />
-					)}
-
-					{step === "package" && external && (
-						<ExternalStep
-							name={external.name}
-							why={external.why}
-							onOpen={() => {
-								window.open(external.url, "_blank", "noreferrer");
-								setOpen(false);
-							}}
+					{found && plan && step !== "pin" && (
+						<OrderSummary
+							found={found}
+							plan={plan}
+							canCombine={step === "package" && packed.length === 0}
+							onToggle={toggleCompanion}
 						/>
 					)}
 
-					{step === "package" &&
-						found &&
-						!external &&
-						found.liveDispatchId !== null && (
-							<Notice tone="info">
-								Already labeled. Void it on the order page to change boxes.
-							</Notice>
+					<div className="flex flex-col gap-4 p-6">
+						{step === "pin" && (
+							<PinStep busy={busy} lookUp={lookUp} onSubmit={choosePin} />
 						)}
 
-					{step === "package" &&
-						found &&
-						!external &&
-						found.liveDispatchId === null && (
-							<PackageStep
-								// A fresh step for each box, and again when orders join or
-								// leave the box, starting from that box's suggestion.
-								key={`${packed.length}:${plan?.orderIds.join(",")}`}
-								boxes={boxes}
-								current={box}
-								dims={dims}
-								hazmat={hazmat}
-								onHazmat={toggleHazmat}
-								// Through the ref: saving a custom box finishes later, and
-								// must reach the current choosePackage, not this render's.
-								onChoose={(next) => choosePackageRef.current(next)}
-								onSaved={(saved) => setBoxes((list) => [...list, saved])}
+						{step === "package" && external && (
+							<ExternalStep
+								name={external.name}
+								why={external.why}
+								onOpen={() => {
+									window.open(external.url, "_blank", "noreferrer");
+									setOpen(false);
+								}}
 							/>
 						)}
 
-					{step === "weight" && (
-						<WeightStep
-							key={packed.length}
-							initialGrams={weightGrams}
-							hint={
-								lastHere
-									? plan?.last && plan.last.length > 1
-										? `Box ${packed.length + 1} of ${plan.last.length} last time`
-										: "Same as last time"
-									: weightGrams !== null
-										? "Items plus box"
-										: null
-							}
-							// Last time needed more boxes than packed so far.
-							moreBoxes={(plan?.last?.length ?? 0) > packed.length + 1}
-							onDraft={setDraftGrams}
-							onSubmit={chooseWeight}
-							onAnother={anotherBox}
-						/>
-					)}
+						{step === "package" &&
+							found &&
+							!external &&
+							found.liveDispatchId !== null && (
+								<Notice tone="info">
+									Already labeled. Void it on the order page to change boxes.
+								</Notice>
+							)}
 
-					{step === "rates" && !(error && !rates) && (
-						<RatesStep
-							rates={rates}
-							stale={rates !== null && !sameExtras(rates.for, extras)}
-							boxes={count}
-							busy={busy}
-							offer={{
-								total: plan?.total ?? 0,
-								recommendInsurance: plan?.insure ?? false,
-								signatureRequired: plan?.signatureRequired ?? null,
-								unavailable: plan?.extras
-									? null
-									: "TikTok buys this label, and TikTok's labels can't add insurance or a signature",
-							}}
-							extras={extras}
-							onExtras={changeExtras}
-							onBuy={buy}
-						/>
-					)}
+						{step === "package" &&
+							found &&
+							!external &&
+							found.liveDispatchId === null && (
+								<PackageStep
+									// A fresh step for each box, and again when orders join or
+									// leave the box, starting from that box's suggestion.
+									key={`${packed.length}:${plan?.orderIds.join(",")}`}
+									boxes={boxes}
+									current={box}
+									dims={dims}
+									hazmat={hazmat}
+									onHazmat={toggleHazmat}
+									// Through the ref: saving a custom box finishes later, and
+									// must reach the current choosePackage, not this render's.
+									onChoose={(next) => choosePackageRef.current(next)}
+									onSaved={(saved) => setBoxes((list) => [...list, saved])}
+								/>
+							)}
 
-					{step === "done" && bought && (
-						<DoneStep bought={bought} onNext={reset} />
-					)}
+						{step === "weight" && (
+							<WeightStep
+								key={packed.length}
+								initialGrams={weightGrams}
+								hint={
+									lastHere
+										? plan?.last && plan.last.length > 1
+											? `Box ${packed.length + 1} of ${plan.last.length} last time`
+											: "Same as last time"
+										: weightGrams !== null
+											? "Items plus box"
+											: null
+								}
+								// Last time needed more boxes than packed so far.
+								moreBoxes={(plan?.last?.length ?? 0) > packed.length + 1}
+								onDraft={setDraftGrams}
+								onSubmit={chooseWeight}
+								onAnother={anotherBox}
+							/>
+						)}
 
-					{error && <Notice tone="critical">{error}</Notice>}
+						{step === "rates" && !(error && !rates) && (
+							<RatesStep
+								rates={rates}
+								stale={rates !== null && !sameExtras(rates.for, extras)}
+								boxes={count}
+								busy={busy}
+								offer={{
+									total: plan?.total ?? 0,
+									recommendInsurance: plan?.insure ?? false,
+									signatureRequired: plan?.signatureRequired ?? null,
+									unavailable: plan?.extras
+										? null
+										: "TikTok buys this label, and TikTok's labels can't add insurance or a signature",
+								}}
+								extras={extras}
+								onExtras={changeExtras}
+								onBuy={buy}
+								onFocusRate={setFocused}
+							/>
+						)}
 
-					<p className="text-center text-muted-foreground">
-						<Key>Enter</Key> next · <Key>Esc</Key> back
-					</p>
+						{step === "done" && bought && (
+							<DoneStep bought={bought} onNext={reset} />
+						)}
+
+						{error && <Notice tone="critical">{error}</Notice>}
+
+						<p className="text-center text-muted-foreground">
+							<Key>Enter</Key> next · <Key>Esc</Key> back
+						</p>
+					</div>
+					{notes.length > 0 && <InfoPanel>{notes}</InfoPanel>}
 				</div>
 			</DialogContent>
 		</Dialog>

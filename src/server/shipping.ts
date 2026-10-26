@@ -20,7 +20,9 @@ import {
 	combineRates,
 	extraCosts,
 	orderForShipping,
+	pastRebills,
 	rankRates,
+	rebillsByCarrier,
 	serviceHistory,
 	shipmentPlan,
 	signatureRequired,
@@ -168,11 +170,11 @@ export const quickShipRates = createServerFn({ method: "POST" })
 			notes = [...new Set(priced.flatMap((p) => p.notes))];
 			test = shippoIsTest();
 		}
-		const history = await serviceHistory(
-			db,
-			data.contentsKey,
-			data.boxes[0].packageId,
-		);
+		const [history, rebills] = await Promise.all([
+			serviceHistory(db, data.contentsKey, data.boxes[0].packageId),
+			pastRebills(db),
+		]);
+		const rebilled = rebillsByCarrier(data.boxes, rebills);
 		const rates = combineRates(perBox);
 		const insuranceCosts = noInsurance && extraCosts(rates, noInsurance);
 		const signatureCosts = noSignature && extraCosts(rates, noSignature);
@@ -183,6 +185,8 @@ export const quickShipRates = createServerFn({ method: "POST" })
 				// What insurance and a signature add to this service, when chosen.
 				insuranceCost: insuranceCosts?.get(key(r)) ?? null,
 				signatureCost: signatureCosts?.get(key(r)) ?? null,
+				// Labels this carrier billed more on after the fact, at this size.
+				rebills: rebilled.get(r.carrier.toLowerCase()) ?? [],
 			})),
 			notes,
 			test,
