@@ -91,12 +91,14 @@ export async function pushRetailShelf(db: Db): Promise<StorePush[]> {
 }
 
 // Pushes these products and every set containing one, e.g. after a product
-// changes kind, which changes what it can sell though no stock moved.
+// changes kind or a set's parts change, which changes what it can sell
+// though no stock moved.
 export async function pushProductsNow(
 	db: Db,
 	ids: number[],
+	options: Parameters<typeof pushProducts>[2] = {},
 ): Promise<StorePush[]> {
-	return pushProducts(db, await withSets(db, ids));
+	return pushProducts(db, await withSets(db, ids), options);
 }
 
 // Pushes these products to every store with push on, leaving out `except`'s

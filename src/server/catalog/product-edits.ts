@@ -8,6 +8,7 @@ import { isOurs } from "#/inventory/locations";
 import { setRecipe } from "#/inventory/recipes";
 import { deleteProduct } from "#/products/archive";
 import { ProductError, updateProductDetails } from "#/products/details";
+import { pushProductsNow } from "#/stock-push/on-change";
 
 // What staff change about a product on its page. Each calls the same core
 // function as Claude's tool for it, so the checks and refusals are the same.
@@ -43,7 +44,8 @@ export const updateProduct = createServerFn({ method: "POST" })
 		else throw new ProductError("A cost's date needs the cost with it");
 	});
 
-// Replaces what a kit or tool set is made of, the whole list at once.
+// Replaces what a kit or tool set is made of, the whole list at once. A tool
+// set sells as its parts, so channels get what it can sell now.
 export const setProductParts = createServerFn({ method: "POST" })
 	.validator(
 		type({
@@ -57,7 +59,9 @@ export const setProductParts = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => {
-		await setRecipe(getDb(), data.productId, data.parts);
+		const db = getDb();
+		await setRecipe(db, data.productId, data.parts);
+		await pushProductsNow(db, [data.productId]);
 	});
 
 // Builds kits from their parts on one of our shelves, or takes them apart.

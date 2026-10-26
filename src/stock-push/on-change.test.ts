@@ -6,7 +6,7 @@ import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
 import type { Found, StockChannel, StockWrite } from "./channel";
-import { movedSince, pushMoved } from "./on-change";
+import { movedSince, pushMoved, pushProductsNow } from "./on-change";
 
 const target = type({ slot: "string" });
 
@@ -129,5 +129,23 @@ test("pushes only what moved, to every store with push on but the one left out",
 	expect(shop.writes).toEqual([]);
 	expect(tiktok.writes.map((w) => [w.externalId, w.quantity])).toEqual([
 		["t-sold", 2],
+	]);
+});
+
+test("pushes a set whose parts changed, though no stock moved", async () => {
+	const part = await createProduct(db, "PART", "simple");
+	const set = await createProduct(db, "SET", "bundle");
+	await setRecipe(db, set, [{ productId: part, quantity: 1 }]);
+	await opening(part, 6);
+	const shop = channel({});
+	await store("shopify", [["s-set", set, 6]]);
+
+	await setRecipe(db, set, [{ productId: part, quantity: 2 }]);
+	await pushProductsNow(db, [set], {
+		mode: "write",
+		adapters: { shopify: shop.adapter },
+	});
+	expect(shop.writes.map((w) => [w.externalId, w.quantity])).toEqual([
+		["s-set", 3],
 	]);
 });
