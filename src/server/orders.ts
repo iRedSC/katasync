@@ -8,6 +8,7 @@ import { emailUnready } from "#/buyers/shopify-mail";
 import { lineAwaitsMatch } from "#/channels/unmatched";
 import { getDb } from "#/db/client";
 import {
+	marketplaceCases,
 	orderBuyerContacts,
 	orderCharges,
 	orderCostChecks,
@@ -402,6 +403,17 @@ export const getOrder = createServerFn({ method: "GET" })
 			charges,
 			reports,
 			checks,
+			marketplaceCases: (
+				await db
+					.select()
+					.from(marketplaceCases)
+					.where(eq(marketplaceCases.orderId, data.id))
+			).map((request) => ({
+				...request,
+				page: request.actionUrl
+					? { url: request.actionUrl, name: "eBay" }
+					: returnPage(order, request.billedBy),
+			})),
 			returnState: (due[0]?.state ?? null) as ReturnState | null,
 			// Units expected back per line; for a maybe, the most that could come.
 			expected: due.map(({ lineId, expected }) => ({ lineId, expected })),

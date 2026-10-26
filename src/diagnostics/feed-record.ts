@@ -176,6 +176,7 @@ export async function feedOnChannels(db: Db, feed: Feed, now = new Date()) {
 		.filter((channel) => hasFeed(channel, feed))
 		.map((channel) => ({
 			channel,
+			feed,
 			...feedStatus({
 				channel,
 				feed,

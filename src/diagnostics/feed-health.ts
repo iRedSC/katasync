@@ -14,7 +14,15 @@ export type FeedState = (typeof feedState.enumValues)[number];
 export const FEEDS = {
 	shopify: ["orders", "returns", "charges", "tracking"],
 	tiktok: ["orders", "returns", "messages", "charges", "tracking"],
-	ebay: ["orders", "returns", "messages", "charges", "tracking"],
+	ebay: [
+		"orders",
+		"returns",
+		"cases",
+		"disputes",
+		"messages",
+		"charges",
+		"tracking",
+	],
 	amazon: ["orders", "returns", "messages", "charges"],
 } as const satisfies Record<SyncedChannel, readonly Feed[]>;
 
@@ -24,6 +32,8 @@ export const ALL_FEEDS: readonly Feed[] = [
 	"messages",
 	"charges",
 	"tracking",
+	"cases",
+	"disputes",
 ];
 
 export const hasFeed = (channel: SyncedChannel, feed: Feed) =>
@@ -35,6 +45,8 @@ export const hasFeed = (channel: SyncedChannel, feed: Feed) =>
 export const STALE_AFTER: Record<Feed, number> = {
 	orders: STALE_AFTER_MINUTES,
 	returns: 50,
+	cases: 50,
+	disputes: 50,
 	messages: 30,
 	charges: STALE_AFTER_MINUTES,
 	tracking: STALE_AFTER_MINUTES,

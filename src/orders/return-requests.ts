@@ -19,18 +19,18 @@ export type RefundStatus = Extract<
 	"requested" | "processing" | "unknown" | "closed" | "cancelled"
 >;
 // What was asked for, and where it stands.
-type Ownership =
+export type Ownership =
 	| { waitingOn: "us"; respondBy: Date | null }
 	| { waitingOn: "buyer" | "marketplace"; respondBy: null };
-type OpenStatus = Exclude<ReturnStatus, "closed" | "cancelled">;
+export type ObligationStage<Status extends string> = (
+	| ({ status: Exclude<Status, "closed" | "cancelled"> } & Ownership)
+	| { status: "closed" | "cancelled"; waitingOn: "nobody"; respondBy: null }
+) & { escalation: (typeof returnRequests.$inferSelect)["escalation"] };
 export type RequestStage = (
 	| { kind: "return"; status: ReturnStatus }
 	| { kind: "refund"; status: RefundStatus }
 ) &
-	(
-		| ({ status: OpenStatus } & Ownership)
-		| { status: "closed" | "cancelled"; waitingOn: "nobody"; respondBy: null }
-	) & { escalation: (typeof returnRequests.$inferSelect)["escalation"] };
+	ObligationStage<ReturnStatus>;
 
 export type CaseMoney =
 	| { amount: string; currency: string }

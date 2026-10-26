@@ -24,6 +24,13 @@ export function CaseGroups({
 			),
 		},
 		{
+			label: "Marketplace cases to answer",
+			rows: cases.filter(
+				(request) =>
+					request.waitingOn === "us" && request.source === "marketplace",
+			),
+		},
+		{
 			label: "Waiting on buyer",
 			rows: cases.filter((request) => request.waitingOn === "buyer"),
 		},
@@ -46,7 +53,11 @@ export function CaseGroups({
 					</td>
 				</tr>
 				{group.rows.map((request) => (
-					<CaseRow key={request.id} request={request} link={link} />
+					<CaseRow
+						key={`${request.source}:${request.id}`}
+						request={request}
+						link={link}
+					/>
 				))}
 			</Fragment>
 		));

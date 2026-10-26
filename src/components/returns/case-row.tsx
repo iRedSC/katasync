@@ -8,6 +8,7 @@ import type { useRowLink } from "#/lib/row-link";
 import { returnReason } from "#/orders/return-reasons";
 import type { CaseRequest } from "#/orders/returns-due";
 import { CaseObligation } from "./case-obligation";
+import { caseKindLabel } from "./marketplace-case";
 
 export function CaseRow({
 	request: r,
@@ -18,10 +19,15 @@ export function CaseRow({
 }) {
 	return (
 		<tr
-			{...link({ to: "/orders/$id", params: { id: String(r.orderId) } })}
-			className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
+			{...(r.orderId === null
+				? {}
+				: link({ to: "/orders/$id", params: { id: String(r.orderId) } }))}
+			className="border-t first:border-t-0 hover:bg-subtle"
 		>
-			<td className="px-4 py-2.5 font-semibold">{r.name}</td>
+			<td className="px-4 py-2.5 font-semibold">
+				{r.name}
+				{r.orderId === null && <Badge tone="warning">Order not imported</Badge>}
+			</td>
 			<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
 				{formatOrderDate(r.requestedAt)}
 			</td>
@@ -59,12 +65,18 @@ export function CaseRow({
 			</td>
 			<td className="px-4 py-2.5">
 				<div className="flex flex-col items-start gap-1">
-					{r.status !== "unknown" && r.waitingOn === "us" && (
-						<Badge tone="warning">
-							{r.kind === "refund" ? "Refund asked" : "Return asked"}
+					{(r.source === "marketplace" ||
+						(r.status !== "unknown" && r.waitingOn === "us")) && (
+						<Badge tone={r.waitingOn === "us" ? "warning" : undefined}>
+							{caseKindLabel(r.kind)}
 						</Badge>
 					)}
 					<CaseObligation request={r} />
+					{r.source === "marketplace" && (
+						<span className="text-xs text-muted-foreground">
+							{r.externalId}
+						</span>
+					)}
 				</div>
 			</td>
 			<td className="py-1.5 pr-2">
@@ -76,7 +88,12 @@ export function CaseRow({
 							rel="noreferrer"
 							className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-link hover:bg-surface-strong"
 						>
-							{r.waitingOn === "us" ? "Answer" : "Open"} on {r.answerOn.name}
+							{r.source === "marketplace"
+								? "Open"
+								: r.waitingOn === "us"
+									? "Answer"
+									: "Open"}{" "}
+							on {r.answerOn.name}
 							<ExternalLink className="size-3.5" />
 						</a>
 					)}

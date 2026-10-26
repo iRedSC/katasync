@@ -3,6 +3,7 @@ import { Ban, ExternalLink, Printer, Undo2 } from "lucide-react";
 import { Badge, Card, type Tone } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { CaseObligation } from "#/components/returns/case-obligation";
+import { MarketplaceCaseCard } from "#/components/returns/marketplace-case";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
@@ -59,6 +60,7 @@ export function hasReturn(d: OrderDetail) {
 	return (
 		d.returnState !== null ||
 		d.returnRequests.length > 0 ||
+		d.marketplaceCases.length > 0 ||
 		d.returnsReceived.length > 0 ||
 		d.lines.some((l) => l.onBench.length > 0) ||
 		d.order.noReturnAt !== null
@@ -89,7 +91,13 @@ export function ReturnCard({
 		d.returnsReceived.length === 0;
 	return (
 		<Card
-			title={onlyRefunds ? "Refund" : "Return"}
+			title={
+				d.marketplaceCases.length > 0
+					? "Returns & marketplace cases"
+					: onlyRefunds
+						? "Refund"
+						: "Return"
+			}
 			flush
 			aside={
 				d.returnRequests.some(asking) ? (
@@ -154,6 +162,9 @@ export function ReturnCard({
 				</Section>
 			)}
 
+			{d.marketplaceCases.map((request) => (
+				<MarketplaceCaseCard key={request.id} request={request} />
+			))}
 			{d.returnRequests.map((r) => (
 				<Section
 					key={r.id}

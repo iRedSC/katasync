@@ -11,6 +11,8 @@ import { cn } from "#/lib/utils";
 export const FEED_NAMES: Record<Feed, string> = {
 	orders: "Orders",
 	returns: "Returns",
+	cases: "Marketplace cases",
+	disputes: "Payment disputes",
 	messages: "Messages",
 	charges: "Charges",
 	tracking: "Tracking",
