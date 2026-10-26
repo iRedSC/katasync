@@ -65,16 +65,16 @@ describe("incomingFor", () => {
 		});
 	});
 
-	test("back-ordered units have no date, so they're never in time", () => {
+	test("back-ordered units have no date, so they're never in time but still cover the aim", () => {
 		expect(
 			incomingFor(TODAY, 9, 1, 44, [{ units: 40, arrivesAt: null }]),
-		).toEqual({ timely: 0, aim: 0, unknown: 40, lateDue: null, schedule: [] });
+		).toEqual({ timely: 0, aim: 40, unknown: 40, lateDue: null, schedule: [] });
 	});
 
-	test("an overdue PO has no trustworthy arrival date", () => {
+	test("an overdue PO has no trustworthy arrival date, but is still coming", () => {
 		expect(
 			incomingFor(TODAY, 10, 1, 44, [{ units: 10, arrivesAt: on(-3) }]),
-		).toEqual({ timely: 0, aim: 0, unknown: 10, lateDue: null, schedule: [] });
+		).toEqual({ timely: 0, aim: 10, unknown: 10, lateDue: null, schedule: [] });
 	});
 
 	test("without sales future supply is in time but overdue supply remains unknown", () => {
@@ -86,7 +86,7 @@ describe("incomingFor", () => {
 			]),
 		).toEqual({
 			timely: 5,
-			aim: 5,
+			aim: 17,
 			unknown: 12,
 			lateDue: null,
 			schedule: [{ units: 5, dueDays: 300 }],
@@ -137,7 +137,7 @@ describe("reorderQuantity with time-aware incoming", () => {
 	test.each([
 		null,
 		on(-3),
-	])("unknown or overdue supply preserves the oversold floor (%s)", (arrivesAt) => {
+	])("unknown or overdue supply covers the oversold floor (%s)", (arrivesAt) => {
 		const input = {
 			...base,
 			dailyDemand: 0,
@@ -147,8 +147,11 @@ describe("reorderQuantity with time-aware incoming", () => {
 			minimumQuantity: 2,
 			incoming: incomingFor(TODAY, -5, 0, 44, [{ units: 40, arrivesAt }]),
 		};
-		expect(reorderQuantity(input)).toBe(2);
-		expect(explainReorder(input, context).minFrom).toBe("oversold");
+		expect(reorderQuantity(input)).toBe(0);
+		expect(explainReorder(input, context)).toMatchObject({
+			minFrom: "oversold",
+			verdict: { kind: "undated", units: 40 },
+		});
 	});
 
 	test("does not order a supplier minimum when late supply already covers the aim and bridge", () => {
@@ -192,17 +195,17 @@ describe("reorderQuantity with time-aware incoming", () => {
 		expect(daysUntilReorder(input)).toBe(11);
 	});
 
-	test("orders the full aim when the only supply has no date (on hand 9, back-ordered 40)", () => {
+	test("doesn't order again what's back-ordered (on hand 9, back-ordered 40)", () => {
 		const input = {
 			...base,
 			onHand: 9,
 			onOrder: 40,
 			incoming: incomingFor(TODAY, 9, 1, 44, [{ units: 40, arrivesAt: null }]),
 		};
-		expect(reorderQuantity(input)).toBe(35);
+		expect(reorderQuantity(input)).toBe(0);
 	});
 
-	test("overdue stock without a new date does not suppress the planned order", () => {
+	test("orders only what overdue stock leaves short (on hand 10, 10 overdue)", () => {
 		const input = {
 			...base,
 			onHand: 10,
@@ -211,7 +214,7 @@ describe("reorderQuantity with time-aware incoming", () => {
 				{ units: 10, arrivesAt: on(-3) },
 			]),
 		};
-		expect(reorderQuantity(input)).toBe(34);
+		expect(reorderQuantity(input)).toBe(24);
 	});
 
 	test("orders whole cases for the shortfall, with one of two cases already received (due Nov 22)", () => {
@@ -293,10 +296,10 @@ describe("explainReorder with time-aware incoming", () => {
 		});
 	});
 
-	test("keeps back-ordered units out of what's counted, and says so", () => {
+	test("counts back-ordered units and says it's awaiting them", () => {
 		const incoming: Incoming = {
 			timely: 0,
-			aim: 0,
+			aim: 40,
 			unknown: 40,
 			lateDue: null,
 			schedule: [],
@@ -305,7 +308,7 @@ describe("explainReorder with time-aware incoming", () => {
 			{ ...base, onHand: 9, onOrder: 40, incoming },
 			context,
 		);
-		expect(why.incoming.unknown).toBe(40);
-		expect(why.onOrder - why.incoming.aim).toBe(40);
+		expect(why.verdict).toEqual({ kind: "undated", units: 40 });
+		expect(why.onOrder - why.incoming.aim).toBe(0);
 	});
 });

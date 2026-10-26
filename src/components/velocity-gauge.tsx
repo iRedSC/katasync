@@ -207,7 +207,7 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 				"rounded-lg px-3 py-2",
 				v.kind === "order"
 					? "bg-info-surface text-info-text"
-					: v.kind === "awaiting"
+					: v.kind === "awaiting" || v.kind === "undated"
 						? "bg-warning-surface text-warning-text"
 						: "bg-surface text-foreground",
 			)}
@@ -224,7 +224,9 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 							: `Reorder in ${plural(v.days, "day")}`
 						: v.kind === "awaiting"
 							? `Delivery in ${plural(v.days, "day")}, ${plural(v.gapDays, "day")} short`
-							: "Nothing to order"}
+							: v.kind === "undated"
+								? `Awaiting ${formatCount(v.units)}, no delivery date`
+								: "Nothing to order"}
 			</p>
 			{poText !== null && suggested !== poText && (
 				<p className="text-xs opacity-80">
@@ -365,14 +367,6 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 		why.aim.kind === "min" || why.orderBelow > restockPoint(why);
 	const have = afterArrival(why.onHand, why.incoming.aim);
 	const notCounted = why.onOrder - why.incoming.aim;
-	const notCountedNote = [
-		why.incoming.unknown > 0 &&
-			`${formatCount(why.incoming.unknown)} without a current delivery date`,
-		why.incoming.aim < why.onOrder - why.incoming.unknown &&
-			"due after the shelf runs out",
-	]
-		.filter(Boolean)
-		.join(", ");
 	const minLabel = {
 		stock: "Min stock",
 		sets: "Enough to build each tool set",
@@ -438,6 +432,11 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 							color={COLORS.coming}
 							striped
 							label="Incoming"
+							note={
+								why.incoming.unknown > 0
+									? `${formatCount(why.incoming.unknown)} without a delivery date`
+									: undefined
+							}
 							value={minus(why.incoming.aim)}
 						/>,
 					]
@@ -449,7 +448,7 @@ function Breakdown({ why }: { why: ReorderWhy }) {
 							color={COLORS.unmet}
 							striped
 							label="Not counted"
-							note={notCountedNote}
+							note="due after the shelf runs out"
 							value={formatCount(notCounted)}
 						/>,
 					]

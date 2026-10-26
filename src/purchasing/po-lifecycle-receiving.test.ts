@@ -132,9 +132,8 @@ describe("a PO from draft to received", () => {
 		const [marked] = await linesOf(id);
 		expect(marked.backOrderedAt).toBeInstanceOf(Date);
 		expect((await unitsOnOrder(db)).get(blade)).toBe(44);
-		expect(await suggestPurchases(db, now)).toMatchObject([
-			{ lines: [{ productId: blade, quantity: 44 }] },
-		]);
+		// Still coming, so reorder doesn't buy the same 44 again.
+		expect(await suggestPurchases(db, now)).toEqual([]);
 
 		expect(
 			await setBackOrdered(db, { lineId: bladeLine.id, backOrdered: true }),

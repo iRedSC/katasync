@@ -9,7 +9,11 @@ export type Arrival = { units: number; arrivesAt: number | null };
 
 export type Incoming = {
 	timely: number;
+	// Everything coming that covers the aim, undated units included.
 	aim: number;
+	// Back-ordered or overdue: coming, but nobody knows when. They count toward
+	// the aim, since ordering them again wouldn't land any sooner and would
+	// only double up, but never as in time.
 	unknown: number;
 	lateDue: number | null;
 	schedule: { units: number; dueDays: number }[];
@@ -50,7 +54,7 @@ export function incomingFor(
 	}
 	return {
 		timely,
-		aim,
+		aim: aim + unknown,
 		unknown,
 		lateDue,
 		schedule: dated.map(({ units, at }) => ({
@@ -128,7 +132,9 @@ function untilLate(p: ReorderInput) {
 		day = p.leadTimeDays;
 	}
 	shortage = Math.max(shortage, (horizon - day) * p.dailyDemand - shelf);
-	return Math.max(Math.ceil(shortage), 0);
+	// Undated units could land any day, so they cover a gap as well as an
+	// order sent today would.
+	return Math.max(Math.ceil(shortage - incomingOf(p).unknown), 0);
 }
 
 // Below this, a product needs ordering: what sells before a PO sent today
@@ -276,6 +282,8 @@ export type ReorderWhy = {
 		  }
 		| { kind: "later"; days: number }
 		| { kind: "awaiting"; days: number; gapDays: number }
+		// Needs ordering, but back-ordered or overdue units already cover it.
+		| { kind: "undated"; units: number }
 		// No sales and nothing below min: nothing will ever need ordering.
 		| { kind: "idle" };
 };
@@ -316,7 +324,7 @@ export function explainReorder(
 	const quantity = reorderQuantity(p);
 	const days = daysUntilReorder(p);
 	const shortfall = Math.max(aim.total - aimPosition(p), untilLate(p));
-	const lateDue = incomingOf(p).lateDue;
+	const { lateDue, unknown } = incomingOf(p);
 	const verdict: ReorderWhy["verdict"] =
 		quantity > 0
 			? {
@@ -338,7 +346,9 @@ export function explainReorder(
 							days: Math.ceil(lateDue),
 							gapDays: Math.ceil(lateDue - timelyPosition(p) / p.dailyDemand),
 						}
-					: { kind: "idle" }
+					: unknown > 0 && timelyPosition(p) < reorderPoint(p)
+						? { kind: "undated", units: unknown }
+						: { kind: "idle" }
 				: { kind: "later", days };
 	return {
 		dailyDemand: p.dailyDemand,
