@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "#/lib/utils";
 
 // Beside the steps: what's worth knowing about the choice in front of you,
 // e.g. what the focused service's carrier re-billed before. Each section is
@@ -15,23 +16,28 @@ export function InfoPanel({ children }: { children: ReactNode }) {
 	);
 }
 
+// Whole class names, so Tailwind finds them.
+const toneText = {
+	critical: "text-critical-text",
+	warning: "text-warning-text",
+} as const;
+
 export function PanelSection({
 	title,
 	tone,
 	children,
 }: {
 	title: ReactNode;
-	tone?: "critical";
+	tone?: keyof typeof toneText;
 	children?: ReactNode;
 }) {
 	return (
 		<section className="flex flex-col gap-2 animate-in fade-in duration-150">
 			<h3
-				className={
-					tone === "critical"
-						? "font-semibold text-critical-text"
-						: "font-semibold text-muted-foreground"
-				}
+				className={cn(
+					"font-semibold",
+					tone ? toneText[tone] : "text-muted-foreground",
+				)}
 			>
 				{title}
 			</h3>
