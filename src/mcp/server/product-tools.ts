@@ -8,7 +8,9 @@ import {
 	deleteProduct,
 	restoreProduct,
 } from "#/products/archive";
-import { updateProductDetails } from "#/products/details";
+import { ProductError, updateProductDetails } from "#/products/details";
+import { setProductKind } from "#/products/kind";
+import { pushProductsNow } from "#/stock-push/on-change";
 import { ourLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
 
@@ -84,6 +86,59 @@ export function registerProductTools(server: McpServer, db: Db) {
 				});
 			await setRecipe(db, parent.id, parts);
 			return json({ sku, components });
+		},
+	);
+
+	server.registerTool(
+		"set_product_kind",
+		{
+			description:
+				"Converts a product to simple, kit (pre-assembled, own stock), or tool set (bundle: no stock of its own, sold as its parts). A kit or tool set needs its components in the same call (as set_components); simple drops them. A simple product's stock carries over as kits. Refused, saying what to settle first, when it's on an open PO or draft transfer, or a part of something that can't hold the new kind; becoming a tool set also needs nothing on any shelf or reserved, and no FBA listing. Pushes the new stock to channels at once. Call again with the old kind (and its parts) to undo.",
+			inputSchema: {
+				sku: z.string(),
+				kind: z.enum(["simple", "kit", "bundle"]),
+				components: z
+					.array(
+						z.object({
+							sku: z.string(),
+							quantity: z.number().int().positive(),
+						}),
+					)
+					.min(1)
+					.optional()
+					.describe("Required for kit and bundle; not allowed for simple"),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku, kind, components }) => {
+			const product = await productBySku(db, sku);
+			let result: Awaited<ReturnType<typeof setProductKind>>;
+			if (kind === "simple") {
+				if (components)
+					throw new ProductError("A simple product has no components");
+				result = await setProductKind(db, product.id, { kind });
+			} else {
+				if (!components)
+					throw new ProductError(`A ${kind} needs its components`);
+				const parts = [];
+				for (const c of components)
+					parts.push({
+						productId: (await productBySku(db, c.sku)).id,
+						quantity: c.quantity,
+					});
+				result = await setProductKind(db, product.id, {
+					kind,
+					components: parts,
+				});
+			}
+			const pushed = await pushProductsNow(db, [product.id]);
+			return json({
+				...result,
+				components: components ?? [],
+				pushProblems: pushed.flatMap((p) =>
+					p.problems.map((problem) => `${p.store}: ${problem}`),
+				),
+			});
 		},
 	);
 
