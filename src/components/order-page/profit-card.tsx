@@ -1,4 +1,5 @@
 import { Card } from "#/components/page";
+import { RebillReasons } from "#/components/rebill-reasons";
 import { channelName, formatCount, formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { OrderDetail } from "#/server/orders";
@@ -22,12 +23,14 @@ const labelsNote: Record<string, string | undefined> = {
 
 // What the order made, and what each marketplace said it charged
 // (src/orders/profit.ts). A figure that isn't final is italic, and its
-// label says why on hover.
+// label says why on hover. Postage adjustments on katasync's own labels say
+// why Shippo re-billed them underneath.
 export function ProfitCard({
 	profit: p,
 	charges,
 	checks,
-}: Pick<OrderDetail, "charges" | "checks"> & {
+	rebills,
+}: Pick<OrderDetail, "charges" | "checks" | "rebills"> & {
 	profit: NonNullable<OrderDetail["profit"]>;
 }) {
 	const failed = checks.filter((c) => c.error);
@@ -79,6 +82,7 @@ export function ProfitCard({
 						value={formatMoney(-p.postageAdjustments)}
 					/>
 				)}
+				<RebillReasons rebills={rebills} className="mb-1 ml-3" />
 				{p.refunds !== 0 && (
 					<Line label="Refunds" value={formatMoney(-p.refunds)} />
 				)}

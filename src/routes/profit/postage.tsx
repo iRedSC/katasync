@@ -10,11 +10,9 @@ import {
 	RangeTabs,
 	rangeSearch,
 } from "#/components/profit-nav";
-import {
-	formatBox,
-	poundsOunces,
-	ShippingDims,
-} from "#/components/profit-page/shipping-dims";
+import { ShippingDims } from "#/components/profit-page/shipping-dims";
+import { formatBox, poundsOunces } from "#/components/quick-ship/units";
+import { RebillReasons } from "#/components/rebill-reasons";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatMoney, formatOrderDate } from "#/lib/format";
@@ -44,6 +42,8 @@ export const Route = createFileRoute("/profit/postage")({
 });
 
 type Data = Awaited<ReturnType<typeof getPostageAdjustments>>;
+// Why Shippo re-billed each order's label, by order ID.
+type Why = Data["why"];
 
 const rate = (part: number, whole: number) => (whole === 0 ? 0 : part / whole);
 const pct = (value: number) => `${Math.round(value * 100)}%`;
@@ -81,9 +81,9 @@ function Postage() {
 							order's package as declared.
 						</p>
 					</Card>
-					{d.byBox.length > 0 && <Boxes groups={d.byBox} />}
-					<Contents groups={d.byContents} />
-					<Products groups={d.byProduct} unmatched={d.unmatched} />
+					{d.byBox.length > 0 && <Boxes groups={d.byBox} why={d.why} />}
+					<Contents groups={d.byContents} why={d.why} />
+					<Products groups={d.byProduct} unmatched={d.unmatched} why={d.why} />
 				</>
 			)}
 		</Page>
@@ -178,7 +178,7 @@ function Figures({
 // katasync's own labels by the box they went in: a saved box (fixed in
 // Settings, where its size and empty weight live) or a size typed for that
 // label alone. Each opens to its re-billed labels with the weight declared.
-function Boxes({ groups }: { groups: Data["byBox"] }) {
+function Boxes({ groups, why }: { groups: Data["byBox"]; why: Why }) {
 	return (
 		<Card title="By box" flush>
 			<ul>
@@ -212,7 +212,7 @@ function Boxes({ groups }: { groups: Data["byBox"] }) {
 									noun="labels"
 								/>
 							</summary>
-							<Orders orders={g.rebilled} />
+							<Orders orders={g.rebilled} why={why} />
 						</details>
 					</li>
 				))}
@@ -221,7 +221,7 @@ function Boxes({ groups }: { groups: Data["byBox"] }) {
 	);
 }
 
-function Contents({ groups }: { groups: Data["byContents"] }) {
+function Contents({ groups, why }: { groups: Data["byContents"]; why: Why }) {
 	return (
 		<Card title="By what was in the box" flush>
 			<ul>
@@ -259,7 +259,7 @@ function Contents({ groups }: { groups: Data["byContents"] }) {
 									labels={g.labels}
 								/>
 							</summary>
-							<Orders orders={g.rebilled} />
+							<Orders orders={g.rebilled} why={why} />
 						</details>
 					</li>
 				))}
@@ -271,9 +271,11 @@ function Contents({ groups }: { groups: Data["byContents"] }) {
 function Products({
 	groups,
 	unmatched,
+	why,
 }: {
 	groups: Data["byProduct"];
 	unmatched: number;
+	why: Why;
 }) {
 	return (
 		<Card
@@ -291,7 +293,7 @@ function Products({
 		>
 			<ul>
 				{groups.map((p) => (
-					<ProductRow key={p.productId} product={p} />
+					<ProductRow key={p.productId} product={p} why={why} />
 				))}
 			</ul>
 		</Card>
@@ -300,7 +302,13 @@ function Products({
 
 // A product, how it ships as saved (editable in place), and its re-bills;
 // the figures open the orders behind them.
-function ProductRow({ product: p }: { product: Data["byProduct"][number] }) {
+function ProductRow({
+	product: p,
+	why,
+}: {
+	product: Data["byProduct"][number];
+	why: Why;
+}) {
 	const [open, setOpen] = useState(false);
 	return (
 		<li className="border-t first:border-t-0">
@@ -342,60 +350,66 @@ function ProductRow({ product: p }: { product: Data["byProduct"][number] }) {
 					/>
 				</button>
 			</div>
-			{open && <Orders orders={p.rebilled} />}
+			{open && <Orders orders={p.rebilled} why={why} />}
 		</li>
 	);
 }
 
 // The re-billed orders behind a group, each opening in katasync and, for
-// Amazon, on Seller Central where the package as declared is.
+// Amazon, on Seller Central where the package as declared is. Orders on
+// katasync's own labels say why Shippo re-billed them underneath.
 function Orders({
 	orders,
+	why,
 }: {
 	orders: (RebilledOrder & { weightGrams?: number; serviceName?: string })[];
+	why: Why;
 }) {
 	return (
 		<ul className="border-t bg-subtle px-4 py-1.5">
 			{orders.map((o) => (
-				<li
-					key={o.id}
-					className="flex items-center gap-3 py-1 text-xs tabular-nums"
-				>
-					<ChannelBadge channel={o.soldOn} salesChannel={null} compact />
-					<Link
-						to="/orders/$id"
-						params={{ id: String(o.id) }}
-						className="font-medium text-link hover:underline"
-					>
-						{o.name}
-					</Link>
-					<span className="text-muted-foreground">
-						{formatOrderDate(o.placedAt)}
-					</span>
-					{o.soldOn === "amazon" && o.marketplaceId && (
-						<a
-							href={amazonOrderLink(o.marketplaceId)}
-							target="_blank"
-							rel="noreferrer"
-							className="inline-flex items-center gap-1 text-link hover:underline"
+				<li key={o.id} className="py-1">
+					<div className="flex items-center gap-3 text-xs tabular-nums">
+						<ChannelBadge channel={o.soldOn} salesChannel={null} compact />
+						<Link
+							to="/orders/$id"
+							params={{ id: String(o.id) }}
+							className="font-medium text-link hover:underline"
 						>
-							Seller Central
-							<ExternalLink className="size-3" />
-						</a>
-					)}
-					{o.weightGrams !== undefined && (
+							{o.name}
+						</Link>
 						<span className="text-muted-foreground">
-							declared {poundsOunces(o.weightGrams)} · {o.serviceName}
+							{formatOrderDate(o.placedAt)}
 						</span>
-					)}
-					<span className="flex-1 text-right text-muted-foreground">
-						{o.labels === 0
-							? "no label cost"
-							: `label ${formatMoney(o.labels)}`}
-					</span>
-					<span className="w-16 text-right font-medium text-critical-text">
-						{formatMoney(o.amount)}
-					</span>
+						{o.soldOn === "amazon" && o.marketplaceId && (
+							<a
+								href={amazonOrderLink(o.marketplaceId)}
+								target="_blank"
+								rel="noreferrer"
+								className="inline-flex items-center gap-1 text-link hover:underline"
+							>
+								Seller Central
+								<ExternalLink className="size-3" />
+							</a>
+						)}
+						{o.weightGrams !== undefined && (
+							<span className="text-muted-foreground">
+								declared {poundsOunces(o.weightGrams)} · {o.serviceName}
+							</span>
+						)}
+						<span className="flex-1 text-right text-muted-foreground">
+							{o.labels === 0
+								? "no label cost"
+								: `label ${formatMoney(o.labels)}`}
+						</span>
+						<span className="w-16 text-right font-medium text-critical-text">
+							{formatMoney(o.amount)}
+						</span>
+					</div>
+					<RebillReasons
+						rebills={why[o.id] ?? []}
+						className="mt-1 ml-8 max-w-md"
+					/>
 				</li>
 			))}
 		</ul>

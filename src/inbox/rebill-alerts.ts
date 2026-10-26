@@ -29,6 +29,8 @@ export type Rebill = {
 	// What was re-billed in all, and what the label cost to begin with.
 	amount: number;
 	label: number;
+	// Why, item by item, where the carrier said (Shippo's labels).
+	reasons?: string[];
 };
 
 // Whether a re-bill going from `before` to `after` just became large: so a
@@ -52,6 +54,7 @@ export async function alertRebill(db: Db, r: Rebill, now = new Date()) {
 			? amazonOrderLink(r.marketplaceId)
 			: null;
 	const summary = `Re-billed ${amount} on a ${label} label${times ? ` (${times}× the label)` : ""}.`;
+	const reasons = r.reasons ?? [];
 	const links: [string, string][] = [
 		["Fix postage", "/profit/postage"],
 		["Order in katasync", `/orders/${r.orderId}`],
@@ -75,9 +78,14 @@ export async function alertRebill(db: Db, r: Rebill, now = new Date()) {
 			body: [
 				`${r.orderName}`,
 				summary,
+				...reasons,
 				...links.map(([text, href]) => `${text}: ${href}`),
 			].join("\n"),
-			bodyHtml: `<p><b>${escapeHtml(r.orderName)}</b></p><p>${escapeHtml(summary)}</p><p>${links
+			bodyHtml: `<p><b>${escapeHtml(r.orderName)}</b></p><p>${escapeHtml(summary)}</p>${
+				reasons.length > 0
+					? `<ul>${reasons.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`
+					: ""
+			}<p>${links
 				.map(
 					([text, href]) =>
 						`<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`,
