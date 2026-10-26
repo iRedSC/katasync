@@ -2,12 +2,17 @@ import { Tags } from "lucide-react";
 import { HoverCard } from "radix-ui";
 import { formatCount, formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import { nextBreak, type PriceList, priceAt } from "#/purchasing/bulk";
+import {
+	nextBreak,
+	type PriceBreak,
+	type PriceList,
+	priceAt,
+} from "#/purchasing/bulk";
 
 // A supplier's bulk prices as a chip beside a product, like SetsChip:
 // hovering lists them. Given the order's quantity, the one it pays is marked
 // and the chip goes red when a cheaper one is close; `onOrder` then offers
-// to order that many.
+// to order that many at that price.
 export function BulkChip({
 	list,
 	unit,
@@ -17,7 +22,7 @@ export function BulkChip({
 	list: PriceList;
 	unit: string;
 	order?: { quantity: number; unitCost: number | null };
-	onOrder?: (quantity: number) => void;
+	onOrder?: (at: PriceBreak) => void;
 }) {
 	if (list.breaks.length === 0) return null;
 	const next = order ? nextBreak(list, order.quantity, order.unitCost) : null;
@@ -74,7 +79,7 @@ export function BulkChip({
 							{onOrder && (
 								<button
 									type="button"
-									onClick={() => onOrder(next.minQuantity)}
+									onClick={() => onOrder(next)}
 									className="shrink-0 cursor-pointer rounded-md bg-surface px-2 py-1 text-xs font-medium hover:bg-surface-strong"
 								>
 									Order {formatCount(next.minQuantity)}

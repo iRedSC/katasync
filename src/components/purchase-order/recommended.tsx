@@ -8,7 +8,6 @@ import { Tip } from "#/components/ui/tooltip";
 import { VelocityGauge } from "#/components/velocity-gauge";
 import { formatCount, formatMoney } from "#/lib/format";
 import { ids } from "#/lib/optimism";
-import { priceAt } from "#/purchasing/bulk";
 import { orderedItems } from "#/purchasing/sets";
 import { addRecommended, type PurchaseOrderDetail } from "#/server/purchasing";
 import { AfterPo } from "./after-po";
@@ -130,14 +129,7 @@ export function Recommended({
 													{r.sku}
 													<SetsChip sets={r.why.sets} />
 													{r.bulk && (
-														<BulkChip
-															list={r.bulk}
-															unit={r.unit}
-															order={{
-																quantity: r.quantity,
-																unitCost: priceAt(r.bulk, r.quantity),
-															}}
-														/>
+														<BulkChip list={r.bulk} unit={r.unit} order={r} />
 													)}
 													{r.critical && <Badge tone="info">Essential</Badge>}
 													{r.cheaperAt && <CheaperAt at={r.cheaperAt} />}

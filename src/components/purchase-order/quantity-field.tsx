@@ -232,11 +232,13 @@ export function QuantityField({
 }
 
 // A draft line's new quantity, as a change for useAction's save. A line on
-// the supplier's bulk prices moves to the price for it, as the server will.
+// the supplier's bulk prices moves to the price for it, as the server will;
+// `unitCost` sets the price instead, e.g. the bulk price it was raised to.
 export function draftQuantity(
 	line: Line,
 	purchaseOrderId: number,
 	quantity: number,
+	unitCost?: number,
 ) {
 	return {
 		label: `${line.sku}'s quantity`,
@@ -246,13 +248,18 @@ export function draftQuantity(
 			(l) => ({
 				...l,
 				quantity,
-				unitCost: followPrice(l.bulk, l, quantity),
+				unitCost: unitCost ?? followPrice(l.bulk, l, quantity),
 			}),
 			{ draftEdit: true },
 		),
 		send: () =>
 			setLine({
-				data: { purchaseOrderId, productId: line.productId, quantity },
+				data: {
+					purchaseOrderId,
+					productId: line.productId,
+					quantity,
+					...(unitCost !== undefined ? { unitCost } : {}),
+				},
 			}),
 	};
 }

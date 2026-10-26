@@ -13,7 +13,7 @@ import {
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
 import { stockRanges } from "#/inventory/stock-range";
-import type { PriceList } from "#/purchasing/bulk";
+import { type PriceList, priceAt } from "#/purchasing/bulk";
 import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
 import { catalogsOf } from "#/purchasing/catalogs";
 import { damagesOf } from "#/purchasing/damage";
@@ -48,9 +48,10 @@ import { onHandOf } from "./on-hand";
 import { leadTimeOf } from "./suppliers";
 
 // Recommendations with their supplier's bulk prices, which are in the terms
-// a recommendation is in; null when it has none.
+// a recommendation is in (null when it has none), priced at the one their
+// quantity reaches.
 async function withBulk<
-	T extends { productId: number; unitCost: number | null },
+	T extends { productId: number; quantity: number; unitCost: number | null },
 >(db: Db, supplierId: number, rows: T[]) {
 	const breaks = breaksByOffer(
 		await bulkPricesOf(
@@ -60,12 +61,10 @@ async function withBulk<
 	);
 	return rows.map((r) => {
 		const list = breaks.get(`${r.productId}:${supplierId}`);
-		return {
-			...r,
-			bulk: list
-				? ({ cost: r.unitCost, breaks: list } satisfies PriceList)
-				: null,
-		};
+		if (!list) return { ...r, bulk: null };
+		const bulk: PriceList = { cost: r.unitCost, breaks: list };
+		// Priced as the line adding it will be.
+		return { ...r, unitCost: priceAt(bulk, r.quantity), bulk };
 	});
 }
 

@@ -148,9 +148,18 @@ export function LineRow({
 									order={l}
 									onOrder={
 										draft && !previewing
-											? (quantity) => {
-													if (!refusedByDiscounts(l, { quantity }))
-														save(draftQuantity(l, d.order.id, quantity));
+											? (at) => {
+													if (
+														!refusedByDiscounts(l, { quantity: at.minQuantity })
+													)
+														save(
+															draftQuantity(
+																l,
+																d.order.id,
+																at.minQuantity,
+																at.cost,
+															),
+														);
 												}
 											: undefined
 									}

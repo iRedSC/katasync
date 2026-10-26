@@ -8,7 +8,8 @@ import {
 	purchaseUnits,
 	supplierOffers,
 } from "#/db/schema";
-import { holdBulkPrices } from "#/purchasing/bulk-prices";
+import { convertBreaks, type PriceList, priceAt } from "#/purchasing/bulk";
+import { putBulkPrices, takeBulkPrices } from "#/purchasing/bulk-prices";
 import { setOfferTerms } from "#/purchasing/catalogs";
 import {
 	convertDiscounts,
@@ -152,6 +153,9 @@ async function checkTerms(db: Db, t: UnitTerms) {
 // of 30.
 // Quantities round up to whole units, then up to the new minimum, so 30 EACH
 // in a CASE of 12 with a minimum of 4 becomes 4 CASE rather than 3.
+// `lists`, when the supplier's price list moves to these terms with it, keeps
+// a line that was at the list price on it: rounding up may reach a bulk
+// price the old quantity didn't.
 async function convertLine(
 	db: Db,
 	line: {
@@ -161,17 +165,24 @@ async function convertLine(
 		unitCost: number | null;
 	},
 	t: UnitTerms,
+	lists?: Lists,
 ) {
+	const quantity = Math.max(
+		Math.ceil((line.quantity * line.packSize) / t.packSize),
+		t.minimumQuantity,
+	);
+	const listed =
+		lists !== undefined &&
+		line.packSize === lists.before.packSize &&
+		line.unitCost === priceAt(lists.before, line.quantity);
 	await db
 		.update(purchaseOrderLines)
 		.set({
 			...t,
-			quantity: Math.max(
-				Math.ceil((line.quantity * line.packSize) / t.packSize),
-				t.minimumQuantity,
-			),
-			unitCost:
-				line.unitCost === null
+			quantity,
+			unitCost: listed
+				? priceAt(lists.after, quantity)
+				: line.unitCost === null
 					? null
 					: perPack(line.unitCost, line.packSize, t.packSize),
 		})
@@ -179,8 +190,16 @@ async function convertLine(
 	await convertDiscounts(db, line, t.packSize);
 }
 
+// A supplier's price list for a product before and after its terms change.
+type Lists = {
+	before: PriceList & { packSize: number };
+	after: PriceList;
+};
+
 // Sets a supplier's default terms for a product, converting its price and
-// bulk prices to the new pack size.
+// bulk prices to the new pack size. A bulk price every order now reaches
+// becomes the price, so it isn't lost. Returns the terms as they were, and
+// the price list before and after.
 async function setDefaultTerms(
 	db: Db,
 	productId: number,
@@ -207,21 +226,30 @@ async function setDefaultTerms(
 			),
 		)
 		.for("update");
+	const packSize = link?.packSize ?? 1;
+	const cost = link?.cost ?? null;
 	// Bulk prices are pinned to the pack size, so they come off before it
 	// changes and go back on converted.
-	const putBack = await holdBulkPrices(
-		db,
-		productId,
-		supplierId,
-		link?.packSize ?? 1,
+	const held = await takeBulkPrices(db, productId, supplierId);
+	const { breaks, floor } = convertBreaks(
+		held,
+		packSize,
+		t.packSize,
+		t.minimumQuantity,
 	);
+	const scaled = cost === null ? null : perPack(cost, packSize, t.packSize);
+	const newCost =
+		floor === null ? scaled : scaled === null ? floor : Math.min(scaled, floor);
 	const was = await setOfferTerms(db, productId, supplierId, {
 		...t,
-		cost:
-			link?.cost == null ? null : perPack(link.cost, link.packSize, t.packSize),
+		cost: newCost,
 	});
-	await putBack(t.packSize, t.minimumQuantity);
-	return was;
+	await putBulkPrices(db, productId, supplierId, t.packSize, breaks);
+	const lists: Lists = {
+		before: { packSize, cost, breaks: held },
+		after: { cost: newCost, breaks },
+	};
+	return { was, lists };
 }
 
 // Changes what one draft PO orders a product in, and the minimum shown on
@@ -249,9 +277,14 @@ export async function setLineTerms(
 				),
 			);
 		if (!line) throw new PurchaseOrderError("That product isn't on this PO");
-		await convertLine(tx, line, terms);
-		if (!makeDefault) return;
-		await setDefaultTerms(tx, productId, po.supplierId, terms);
+		if (!makeDefault) return convertLine(tx, line, terms);
+		const { lists } = await setDefaultTerms(
+			tx,
+			productId,
+			po.supplierId,
+			terms,
+		);
+		await convertLine(tx, line, terms, lists);
 	});
 }
 
@@ -286,7 +319,12 @@ export async function setPurchaseUnit(
 			)
 			.orderBy(asc(purchaseOrders.id))
 			.for("update");
-		const old = await setDefaultTerms(tx, productId, supplierId, terms);
+		const { was: old, lists } = await setDefaultTerms(
+			tx,
+			productId,
+			supplierId,
+			terms,
+		);
 		const lines = await tx
 			.select({
 				id: purchaseOrderLines.id,
@@ -311,7 +349,7 @@ export async function setPurchaseUnit(
 				),
 			)
 			.for("update");
-		for (const line of lines) await convertLine(tx, line, terms);
+		for (const line of lines) await convertLine(tx, line, terms, lists);
 	});
 }
 

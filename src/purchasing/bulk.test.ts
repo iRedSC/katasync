@@ -68,15 +68,23 @@ describe("breaksProblem", () => {
 
 describe("convertBreaks", () => {
 	test("keeps the same number of the product at the same price each", () => {
-		expect(convertBreaks(list.breaks, 1, 6, 1)).toEqual([
-			{ minQuantity: 2, cost: 48 },
-			{ minQuantity: 5, cost: 42 },
-		]);
+		expect(convertBreaks(list.breaks, 1, 6, 1)).toEqual({
+			breaks: [
+				{ minQuantity: 2, cost: 48 },
+				{ minQuantity: 5, cost: 42 },
+			],
+			floor: null,
+		});
 	});
 
-	test("drops one every order reaches", () => {
-		expect(convertBreaks(list.breaks, 1, 12, 1)).toEqual([
-			{ minQuantity: 3, cost: 84 },
-		]);
+	test("one every order reaches becomes the price", () => {
+		expect(convertBreaks(list.breaks, 1, 12, 1)).toEqual({
+			breaks: [{ minQuantity: 3, cost: 84 }],
+			floor: 96,
+		});
+		expect(convertBreaks(list.breaks, 1, 1, 10)).toEqual({
+			breaks: [{ minQuantity: 25, cost: 7 }],
+			floor: 8,
+		});
 	});
 });

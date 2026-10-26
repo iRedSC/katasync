@@ -3,7 +3,7 @@ import type { Db } from "#/db/client";
 import { productBulkPrices, productSuppliers } from "#/db/schema";
 import { setOfferTerms } from "#/purchasing/catalogs";
 import { PurchaseOrderError } from "#/purchasing/orders";
-import { breaksProblem, convertBreaks, type PriceBreak } from "./bulk";
+import { breaksProblem, type PriceBreak } from "./bulk";
 
 // Reading and saving suppliers' bulk prices (rules in ./bulk.ts).
 
@@ -97,15 +97,14 @@ export async function setBulkPrices(
 	});
 }
 
-// Takes a supplier's bulk prices off before its pack size changes, and
-// returns a function putting them back converted to the new size once it
-// has. Called with the terms row locked (setDefaultTerms).
-export async function holdBulkPrices(
+// Takes a supplier's bulk prices for a product off, returning them, so its
+// pack size can change; putBulkPrices puts them back in the new one. Called
+// with the terms row locked (setDefaultTerms in ./units.ts).
+export async function takeBulkPrices(
 	tx: Db,
 	productId: number,
 	supplierId: number,
-	fromPack: number,
-) {
+): Promise<PriceBreak[]> {
 	const held = await tx
 		.delete(productBulkPrices)
 		.where(
@@ -118,18 +117,20 @@ export async function holdBulkPrices(
 			minQuantity: productBulkPrices.minQuantity,
 			cost: productBulkPrices.cost,
 		});
-	return async (toPack: number, minimumQuantity: number) => {
-		const breaks = convertBreaks(held, fromPack, toPack, minimumQuantity);
-		if (breaks.length > 0)
-			await tx.insert(productBulkPrices).values(
-				breaks.map((b) => ({
-					productId,
-					supplierId,
-					packSize: toPack,
-					...b,
-				})),
-			);
-	};
+	return held.sort((a, b) => a.minQuantity - b.minQuantity);
+}
+
+export async function putBulkPrices(
+	tx: Db,
+	productId: number,
+	supplierId: number,
+	packSize: number,
+	breaks: PriceBreak[],
+) {
+	if (breaks.length > 0)
+		await tx
+			.insert(productBulkPrices)
+			.values(breaks.map((b) => ({ productId, supplierId, packSize, ...b })));
 }
 
 const offer = (p: { productId: number; supplierId: number }) =>

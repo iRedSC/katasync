@@ -91,24 +91,34 @@ export function breaksProblem(
 // Bulk prices in another pack size, meaning the same number of the product
 // at the same price each: from 2 CASE of 30 is from 60 EACH. One that every
 // order of `minimumQuantity` reaches in the new size is left out, since
-// it's just the price there.
+// it's just the price there: `floor` is the lowest of those, which the price
+// should drop to, or null when none was.
 export function convertBreaks(
 	breaks: PriceBreak[],
 	fromPack: number,
 	toPack: number,
 	minimumQuantity: number,
-): PriceBreak[] {
+): { breaks: PriceBreak[]; floor: number | null } {
 	const out = new Map<number, number>();
+	let floor: number | null = null;
 	for (const b of breaks) {
 		const minQuantity = Math.ceil((b.minQuantity * fromPack) / toPack);
-		if (minQuantity <= Math.max(1, minimumQuantity)) continue;
 		const cost = perPack(b.cost, fromPack, toPack);
+		if (minQuantity <= Math.max(1, minimumQuantity)) {
+			floor = floor === null ? cost : Math.min(floor, cost);
+			continue;
+		}
 		const had = out.get(minQuantity);
 		out.set(minQuantity, had === undefined ? cost : Math.min(had, cost));
 	}
-	return [...out]
-		.map(([minQuantity, cost]) => ({ minQuantity, cost }))
-		.sort((a, b) => a.minQuantity - b.minQuantity);
+	return {
+		breaks: [...out]
+			.map(([minQuantity, cost]) => ({ minQuantity, cost }))
+			.sort((a, b) => a.minQuantity - b.minQuantity)
+			// Still each under every one for fewer, once the price drops.
+			.filter((b) => floor === null || b.cost < floor),
+		floor,
+	};
 }
 
 // A draft line's price once its quantity changes, as the database's trigger

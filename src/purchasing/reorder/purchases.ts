@@ -5,6 +5,8 @@ import {
 	purchaseOrders,
 	supplierOffers,
 } from "#/db/schema";
+import { priceAt } from "#/purchasing/bulk";
+import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
 import { type CheaperAt, needsOf, reorderBreakdown } from "./breakdown";
 import { coverQuantity, daysUntilReorder, fillToMax } from "./quantity";
 import {
@@ -183,14 +185,33 @@ export async function suggestPurchases(
 			.where(eq(purchaseOrders.status, "draft")),
 	]);
 
+	const needs = needsOf(breakdown.filter((p) => p.ordersItself));
+	const breaks = breaksByOffer(
+		await bulkPricesOf(
+			db,
+			needs.map((n) => n.productId),
+		),
+	);
 	const bySupplier = new Map<number, SupplierSuggestion>();
 	for (const {
 		supplierId,
 		supplierName,
 		minimumOrder,
 		criticalThreshold,
-		...line
-	} of needsOf(breakdown.filter((p) => p.ordersItself))) {
+		...need
+	} of needs) {
+		// At the bulk price its quantity reaches, as its PO line will be, so
+		// the total weighs against the supplier's minimum as it'll be sent.
+		const list = breaks.get(`${need.productId}:${supplierId}`);
+		const line = list
+			? {
+					...need,
+					unitCost: priceAt(
+						{ cost: need.unitCost, breaks: list },
+						need.quantity,
+					),
+				}
+			: need;
 		let s = bySupplier.get(supplierId);
 		if (!s) {
 			s = {

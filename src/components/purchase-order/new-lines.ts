@@ -1,5 +1,4 @@
 import type { BrowseRow } from "#/components/po-browse";
-import { priceAt } from "#/purchasing/bulk";
 import type { Line, Recommendation } from "./types";
 
 // The order the server lists lines in: when they were added, then id.
@@ -33,13 +32,7 @@ export function recommendedLine(
 		defaultSupplierCount: r.supplierCount,
 		defaultMinimum: r.minimumQuantity,
 		quantity: r.quantity,
-		// At the bulk price its quantity reaches, as the server will.
-		unitCost:
-			r.kind === "bundle"
-				? null
-				: r.bulk
-					? priceAt(r.bulk, r.quantity)
-					: r.unitCost,
+		unitCost: r.kind === "bundle" ? null : r.unitCost,
 		bulk: r.bulk,
 		sentQuantity: null,
 		sentUnitCost: null,

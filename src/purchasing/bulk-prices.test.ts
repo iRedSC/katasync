@@ -4,7 +4,14 @@ import * as schema from "#/db/capability-schema";
 import type { Db } from "#/db/client";
 import { createProduct } from "#/test/db";
 import { bulkPricesOf, setBulkPrices } from "./bulk-prices";
-import { markSent, openDraft, receive, setDraftLine } from "./orders";
+import {
+	deleteDraft,
+	markSent,
+	openDraft,
+	receive,
+	restoreDraft,
+	setDraftLine,
+} from "./orders";
 import {
 	createPurchasingDb,
 	now,
@@ -180,6 +187,95 @@ describe("bulk prices", () => {
 			quantity: 2,
 		});
 		expect(await price(id)).toBe(40);
+	});
+
+	test("a price given equal to the price stays above a bulk quantity", async () => {
+		const id = await openDraft(db, canam);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 12,
+			unitCost: 10,
+		});
+		expect(await price(id)).toBe(10);
+	});
+
+	test("putting back a deleted draft keeps its prices", async () => {
+		const id = await openDraft(db, canam);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 12,
+			unitCost: 10,
+		});
+		await restoreDraft(db, await deleteDraft(db, id));
+		expect(await price(id)).toBe(10);
+	});
+
+	test("receiving after the pack size changed still finds the bulk price", async () => {
+		const id = await openDraft(db, canam);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 12,
+		});
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		await setPurchaseUnit(db, {
+			productId: blade,
+			supplierId: canam,
+			unit: "CASE",
+			packSize: 5,
+			supplierCount: 5,
+			minimumQuantity: 1,
+		});
+		const [line] = await linesOf(id);
+		await receive(db, { lineId: line.id, quantity: 12 });
+		// 12 each reached from 2 cases; $8 each is $40 a case. The price stays.
+		expect(await breaks()).toEqual([
+			{ minQuantity: 2, cost: 40 },
+			{ minQuantity: 5, cost: 35 },
+		]);
+		const [link] = await db
+			.select()
+			.from(schema.productSuppliers)
+			.where(eq(schema.productSuppliers.productId, blade));
+		expect(link.cost).toBe(50);
+	});
+
+	test("a bulk price every order reaches becomes the price", async () => {
+		await setPurchaseUnit(db, {
+			productId: blade,
+			supplierId: canam,
+			unit: "EACH",
+			packSize: 1,
+			supplierCount: 1,
+			minimumQuantity: 10,
+		});
+		expect(await breaks()).toEqual([{ minQuantity: 25, cost: 7 }]);
+		const [link] = await db
+			.select()
+			.from(schema.productSuppliers)
+			.where(eq(schema.productSuppliers.productId, blade));
+		expect(link.cost).toBe(8);
+	});
+
+	test("a draft line on the list lands on the new list when its unit changes", async () => {
+		const id = await openDraft(db, canam);
+		await setDraftLine(db, {
+			purchaseOrderId: id,
+			productId: blade,
+			quantity: 9,
+		});
+		await setPurchaseUnit(db, {
+			productId: blade,
+			supplierId: canam,
+			unit: "CASE",
+			packSize: 5,
+			supplierCount: 5,
+			minimumQuantity: 1,
+		});
+		// 9 each rounds up to 2 cases, which reaches $40 a case.
+		expect(await linesOf(id)).toMatchObject([{ quantity: 2, unitCost: 40 }]);
 	});
 
 	test("the pack size can't change around them", async () => {
