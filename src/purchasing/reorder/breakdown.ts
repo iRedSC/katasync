@@ -12,13 +12,18 @@ import {
 import { isOurs } from "#/inventory/locations";
 import { carried } from "#/products/archive";
 import { cheapestOffers } from "#/purchasing/catalogs";
-import { demandWindow, setsSoldIn, soldInWindow } from "#/purchasing/forecast";
+import {
+	demandWindow,
+	NO_FORECAST,
+	recentSales,
+	setsSoldIn,
+	soldInWindow,
+} from "#/purchasing/forecast";
 import { setFloorOf, setMembership, setsBlocked } from "#/purchasing/sets";
-import { DEFAULT_COVER_DAYS, loadPlan, type Plan, planFor } from "./plan";
+import { DEFAULT_COVER_DAYS, loadPlan, type Plan } from "./plan";
 import {
 	explainReorder,
 	forecastMax,
-	incomingFor,
 	type ReorderInput,
 	reorderQuantity,
 	velocityRanks,
@@ -153,7 +158,7 @@ export async function reorderBreakdown(
 			setsSoldIn(db, demand),
 			setRecipes(db),
 		]);
-	const { onHand, onOrder, arrivals } = supply;
+	const { onHand, onOrder } = supply;
 	const ranks = velocityRanks(planned.forecasts);
 	const sets = setMembership(recipes, onHand, setsSold);
 
@@ -201,22 +206,19 @@ export async function reorderBreakdown(
 			supplierCount: 1,
 			minimumQuantity: 1,
 		};
+		const coverDays = from?.coverDays ?? p.coverDays ?? DEFAULT_COVER_DAYS;
+		const forecast = planned.forecasts.get(p.productId) ?? NO_FORECAST;
+		const recent = recentSales(forecast, coverDays);
 		const input: ReorderInput = {
 			...stock,
-			...planFor(planned, p.productId, p.supplierId),
-			coverDays: from?.coverDays ?? p.coverDays ?? DEFAULT_COVER_DAYS,
+			recentSold: recent.sold,
+			dailyDemand: forecast.dailyDemand,
+			coverDays,
 			minStock: p.minStock ?? defaultMin,
 			setFloor: setFloorOf(membership),
 			minimumQuantity: terms.minimumQuantity,
 			packSize: terms.packSize,
 		};
-		input.incoming = incomingFor(
-			now.getTime(),
-			input.onHand,
-			input.dailyDemand,
-			input.leadTimeDays + input.coverDays,
-			arrivals.get(p.productId) ?? [],
-		);
 		const line: SuggestedLine = {
 			productId: p.productId,
 			sku: p.sku,
@@ -233,17 +235,10 @@ export async function reorderBreakdown(
 			unitCost: p.cost,
 			critical: isCritical(p.markedCritical, abcClass, blocked),
 		};
-		const lead =
-			p.supplierId === null ? undefined : planned.leadTimes.get(p.supplierId);
 		const why = explainReorder(input, {
-			inStockDays: planned.forecasts.get(p.productId)?.inStockDays ?? 0,
+			inStockDays: forecast.inStockDays,
+			outDays: recent.outDays,
 			rank: ranks.get(p.productId) ?? null,
-			leadTime: {
-				days: input.leadTimeDays,
-				from: lead?.measured ? "measured" : lead ? "supplier" : "default",
-				pos: lead?.measured?.pos ?? 0,
-			},
-			abc: abcClass,
 			purchase,
 			sets: membership,
 		});
@@ -269,7 +264,11 @@ export async function reorderBreakdown(
 		const range =
 			p.minStock !== null && p.maxStock !== null
 				? { min: p.minStock, max: p.maxStock, own: true }
-				: { min: defaultMin, max: forecastMax(defaultMin, input), own: false };
+				: {
+						min: defaultMin,
+						max: forecastMax(defaultMin, recent.sold),
+						own: false,
+					};
 		return {
 			line,
 			supplier,

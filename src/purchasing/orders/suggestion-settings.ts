@@ -9,6 +9,7 @@ import {
 	supplierCatalogs,
 } from "#/db/schema";
 import {
+	DEMAND_DAYS,
 	type SuggestedLine,
 	type SuggestionSettings,
 	suggestionFor,
@@ -89,8 +90,13 @@ async function checkSettings(
 	settings: SuggestionSettings,
 ) {
 	const days = settings.coverDays;
-	if (days !== null && !(Number.isInteger(days) && days >= 1 && days <= 365))
-		throw new PurchaseOrderError(`Cover days must be 1 to 365, got ${days}`);
+	if (
+		days !== null &&
+		!(Number.isInteger(days) && days >= 1 && days <= DEMAND_DAYS)
+	)
+		throw new PurchaseOrderError(
+			`Cover days must be 1 to ${DEMAND_DAYS}, got ${days}`,
+		);
 	const carried = await db
 		.select({ catalogId: supplierCatalogs.catalogId })
 		.from(supplierCatalogs)
@@ -108,6 +114,7 @@ async function draftLines(db: Db, purchaseOrderId: number) {
 			packSize: purchaseOrderLines.packSize,
 			locked: purchaseOrderLines.locked,
 			kind: products.kind,
+			unitCost: purchaseOrderLines.unitCost,
 		})
 		.from(purchaseOrderLines)
 		.innerJoin(products, eq(products.id, purchaseOrderLines.productId))
@@ -128,6 +135,33 @@ async function supplierOf(db: Db, purchaseOrderId: number) {
 	return po.supplierId;
 }
 
+// What the PO's lines would add up to after `plan`, at their prices before
+// discounts and charges, so it reads as about. Lines without a price add
+// nothing and are counted in `unpriced`.
+export function totalAfter(
+	draft: (DraftLine & { unitCost: number | null })[],
+	plan: SyncPlan,
+) {
+	const removed = new Set(plan.removed);
+	const to = new Map(plan.changed.map((c) => [c.productId, c.to]));
+	const lines = [
+		...draft
+			.filter((l) => !removed.has(l.productId))
+			.map((l) => ({
+				quantity: to.get(l.productId) ?? l.quantity,
+				unitCost: l.unitCost,
+			})),
+		...plan.added,
+	];
+	let total = 0;
+	let unpriced = 0;
+	for (const l of lines) {
+		if (l.unitCost === null) unpriced++;
+		else total += l.quantity * l.unitCost;
+	}
+	return { total: Math.round(total * 100) / 100, unpriced };
+}
+
 // What applying `settings` would do to the PO now, without doing it.
 export async function previewSettings(
 	db: Db,
@@ -142,7 +176,8 @@ export async function previewSettings(
 		draftLines(db, purchaseOrderId),
 		partsOfSets(db, purchaseOrderId),
 	]);
-	return summarize(syncPlan(lines, suggested, fromSets));
+	const plan = syncPlan(lines, suggested, fromSets);
+	return { ...summarize(plan), ...totalAfter(lines, plan) };
 }
 
 type LineRow = typeof purchaseOrderLines.$inferSelect;

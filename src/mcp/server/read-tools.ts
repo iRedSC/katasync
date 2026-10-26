@@ -137,7 +137,7 @@ export function registerReadTools(server: McpServer, db: Db) {
 		"reorder_suggestions",
 		{
 			description:
-				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Accounts for lead time, cover days, minimums, open POs, and tool sets a part leaves unsellable.",
+				"What each supplier should be sent today: per product, units sold in the last 90 days, on hand, on order, and the quantity to order in the supplier's unit. Each product is topped up to what it sold over the supplier's cover days, less on hand and open POs, with min stock, minimums, and tool sets a part leaves unsellable as floors.",
 			inputSchema: {
 				supplier: z.string().optional().describe("Code or name"),
 			},

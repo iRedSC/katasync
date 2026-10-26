@@ -41,11 +41,11 @@ describe("suggestPurchases", () => {
 		await sell(blade, 900, { placedAt: daysAgo(91) });
 
 		const [s] = await suggestPurchases(db, now);
-		// 60 sold over 90 days, for 10 + 20 days, plus safety stock
-		// capped at the lead time's 7 (all sold on one day): 27.
-		expect(s.lines).toMatchObject([{ sku: "BLADE", sold: 60, quantity: 27 }]);
+		// 60 sold in the cover days (the set's 30 blades count as parts), none
+		// on the shelf or on order: tops up to 60, at $5 each.
+		expect(s.lines).toMatchObject([{ sku: "BLADE", sold: 60, quantity: 60 }]);
 		expect(s).toMatchObject({
-			total: 135,
+			total: 300,
 			readiness: "ready",
 			draftId: null,
 		});
@@ -70,9 +70,9 @@ describe("suggestPurchases", () => {
 
 		const [s] = await suggestPurchases(db, now);
 		expect(s.lines.map((l) => l.sku)).toEqual(["BLADE", "KNIFE"]);
-		// Blade is an A item: 1 a day for 10 + 20 days plus 10
-		// safety (capped at the lead time's demand; it all sold on one day).
-		expect(s).toMatchObject({ total: 40, unpriced: 1, readiness: "waiting" });
+		// Blade is an A item: 90 sold in the cover days, none on the shelf, at
+		// $1. Knife is one short of zero, so it's ordered back to one.
+		expect(s).toMatchObject({ total: 90, unpriced: 1, readiness: "waiting" });
 	});
 
 	test("is ready below the minimum once enough critical products need it, and soon at twice that", async () => {

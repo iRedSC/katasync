@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireActor } from "#/audit/context";
 import type { Db } from "#/db/client";
 import { purchaseOrderLines, supplierOffers } from "#/db/schema";
+import { DEMAND_DAYS } from "#/purchasing/forecast";
 import { recordInvoice } from "#/purchasing/invoices";
 import { loadOrder } from "#/purchasing/load";
 import {
@@ -160,10 +161,12 @@ export function registerPurchasingTools(server: McpServer, db: Db) {
 					.number()
 					.int()
 					.min(1)
-					.max(365)
+					.max(DEMAND_DAYS)
 					.nullable()
 					.optional()
-					.describe("Days of sales to cover; null follows the supplier's"),
+					.describe(
+						"Lines restock what sold over this many days; null follows the supplier's",
+					),
 				exclude_catalogs: z
 					.array(z.string())
 					.optional()

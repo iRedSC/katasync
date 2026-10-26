@@ -7,7 +7,7 @@ import {
 	forecasts,
 	MIN_DEMAND_DAYS,
 	measuredLeadTime,
-	safetyStock,
+	recentSales,
 } from "./forecast";
 
 const days = (units: number[], inStock = true) =>
@@ -20,7 +20,7 @@ describe("forecastOf", () => {
 			...days(Array(30).fill(1)),
 			...days(Array(60).fill(0), false),
 		]);
-		expect(f).toMatchObject({ dailyDemand: 1, dailySd: 0, inStockDays: 30 });
+		expect(f).toMatchObject({ dailyDemand: 1, inStockDays: 30 });
 	});
 
 	test("a day that sold counts even if the shelf read empty", () => {
@@ -38,21 +38,25 @@ describe("forecastOf", () => {
 	});
 });
 
-describe("safetyStock", () => {
-	const steady = { dailyDemand: 2, dailySd: 1, inStockDays: 90 };
+describe("recentSales", () => {
+	const f = forecastOf([
+		...days(Array(60).fill(1)),
+		...days(Array(20).fill(0), false),
+		...days([3, 0, 0, 2, 0, 0, 0, 0, 0, 1]),
+	]);
 
-	test("is bigger for higher classes", () => {
-		const a = safetyStock(steady, "A", 16);
-		const b = safetyStock(steady, "B", 16);
-		const c = safetyStock(steady, "C", 16);
-		// z × 1 × √16: 8.2, 6.6, 5.1, rounded up.
-		expect([a, b, c]).toEqual([9, 7, 6]);
-		expect(safetyStock(steady, null, 16)).toBe(c);
+	test("adds up the last days, today included, and counts those sold out", () => {
+		expect(recentSales(f, 10)).toEqual({ sold: 6, outDays: 0 });
+		expect(recentSales(f, 30)).toEqual({ sold: 6, outDays: 20 });
+		expect(recentSales(f, 31)).toEqual({ sold: 7, outDays: 20 });
 	});
 
-	test("never more than the lead time's demand", () => {
-		const lumpy = { dailyDemand: 0.5, dailySd: 6, inStockDays: 90 };
-		expect(safetyStock(lumpy, "A", 10)).toBe(5);
+	test("reads no further back than the window", () => {
+		expect(recentSales(f, 365)).toEqual(recentSales(f, DEMAND_DAYS));
+	});
+
+	test("nothing known is nothing sold", () => {
+		expect(recentSales(forecastOf([]), 30)).toEqual({ sold: 0, outDays: 0 });
 	});
 });
 

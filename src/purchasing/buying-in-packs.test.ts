@@ -61,14 +61,13 @@ describe("buying in packs", () => {
 
 	test("changing the unit converts the price and draft lines", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
-		// 120 sold in 90 days for 10 + 20 days, plus safety capped at the lead
-		// time's demand (an A item), less 10 on hand: 44 to order.
+		// 120 sold inside the supplier's 20 cover days, less 10 on hand: 110 to order.
 		expect(await linesOf(id)).toMatchObject([
 			{
 				unit: "EACH",
 				packSize: 1,
 				supplierCount: 1,
-				quantity: 44,
+				quantity: 110,
 				unitCost: 2,
 			},
 		]);
@@ -80,13 +79,13 @@ describe("buying in packs", () => {
 			supplierCount: 12,
 			minimumQuantity: 1,
 		});
-		// 44 blades round up to 4 cases of 12, at 12 × $2.
+		// 110 blades round up to 10 cases of 12, at 12 × $2.
 		expect(await linesOf(id)).toMatchObject([
 			{
 				unit: "CASE",
 				packSize: 12,
 				supplierCount: 12,
-				quantity: 4,
+				quantity: 10,
 				unitCost: 24,
 			},
 		]);
@@ -167,7 +166,7 @@ describe("buying in packs", () => {
 			makeDefault: false,
 		});
 		expect(await linesOf(id)).toMatchObject([
-			{ ...terms, quantity: 4, unitCost: 24 },
+			{ ...terms, quantity: 10, unitCost: 24 },
 		]);
 		const [link] = await db.select().from(schema.productSuppliers);
 		expect(link).toMatchObject({
@@ -176,7 +175,7 @@ describe("buying in packs", () => {
 			supplierCount: 1,
 			cost: 2,
 		});
-		// 44 wanted is 4 cases: already enough, though the units differ.
+		// 110 wanted is 10 cases: already enough, though the units differ.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 0,
@@ -210,33 +209,33 @@ describe("buying in packs", () => {
 			minimumQuantity: 5,
 			cost: 8,
 		});
-		// 4 cases of 12 is 48, or 12 packs of 4.
+		// 10 cases of 12 is 120, or 30 packs of 4.
 		expect((await linesOf(id))[0]).toMatchObject({
 			unit: "PACK",
-			quantity: 12,
+			quantity: 30,
 		});
 	});
 
 	test("a converted line is raised to the new minimum", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
-		expect(await linesOf(id)).toMatchObject([{ unit: "EACH", quantity: 44 }]);
+		expect(await linesOf(id)).toMatchObject([{ unit: "EACH", quantity: 110 }]);
 		await setLineTerms(db, {
 			purchaseOrderId: id,
 			productId: blade,
 			unit: "CASE",
 			packSize: 12,
 			supplierCount: 12,
-			minimumQuantity: 5,
+			minimumQuantity: 12,
 			makeDefault: false,
 		});
-		// 44 blades are 4 cases, but the supplier won't sell fewer than 5.
+		// 110 blades are 10 cases, but the supplier won't sell fewer than 12.
 		expect(await linesOf(id)).toMatchObject([
 			{
 				unit: "CASE",
 				packSize: 12,
 				supplierCount: 12,
-				quantity: 5,
-				minimumQuantity: 5,
+				quantity: 12,
+				minimumQuantity: 12,
 			},
 		]);
 	});
@@ -328,12 +327,12 @@ describe("buying in packs", () => {
 			productId: blade,
 			quantity: 1,
 		});
-		// 44 wanted, 12 on the PO: raised to 4 cases.
+		// 110 wanted, none sent yet: raised to 10 cases.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 1,
 		});
-		expect((await linesOf(id))[0].quantity).toBe(4);
+		expect((await linesOf(id))[0].quantity).toBe(10);
 	});
 
 	test("only a supplier that sells it can take a PO's terms as its default", async () => {
@@ -427,7 +426,10 @@ describe("buying in packs", () => {
 		expect(poLock).toBeGreaterThanOrEqual(0);
 		expect(poLock).toBeLessThan(supplierLock);
 		expect(locks[poLock]).toContain('order by "purchase_orders"."id"');
-		expect((await linesOf(id))[0]).toMatchObject({ unit: "CASE", quantity: 4 });
+		expect((await linesOf(id))[0]).toMatchObject({
+			unit: "CASE",
+			quantity: 10,
+		});
 	});
 
 	test("a supplier's PACK of 5 can be one of ours: the PO says 5, stock gets 1", async () => {
@@ -440,13 +442,13 @@ describe("buying in packs", () => {
 			minimumQuantity: 1,
 		});
 		const id = await draftFromSuggestions(db, canam, now);
-		// 44 to order, one of ours per pack, at the product's own $2 a pack.
+		// 110 to order, one of ours per pack, at the product's own $2 a pack.
 		expect(await linesOf(id)).toMatchObject([
 			{
 				unit: "PACK",
 				packSize: 1,
 				supplierCount: 5,
-				quantity: 44,
+				quantity: 110,
 				unitCost: 2,
 			},
 		]);
@@ -495,7 +497,7 @@ describe("buying in packs", () => {
 		});
 		// The draft line was on the default, so it follows it.
 		expect(await linesOf(id)).toMatchObject([
-			{ packSize: 1, supplierCount: 5, quantity: 44, unitCost: 2 },
+			{ packSize: 1, supplierCount: 5, quantity: 110, unitCost: 2 },
 		]);
 		const [link] = await db.select().from(schema.productSuppliers);
 		expect(link).toMatchObject({ packSize: 1, supplierCount: 5, cost: 2 });

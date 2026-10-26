@@ -26,13 +26,11 @@ export {
 	daysUntilReorder,
 	explainReorder,
 	forecastMax,
-	type Incoming,
-	incomingFor,
 	MIN_FORECAST_MAX,
 	type ReorderInput,
 	type ReorderWhy,
 	reorderQuantity,
-	stockTarget,
+	timelyUnits,
 	velocityRanks,
 } from "#/purchasing/reorder/quantity";
 export {

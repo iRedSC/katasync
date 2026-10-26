@@ -10,10 +10,12 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
-import { formatCount } from "#/lib/format";
+import { Tip } from "#/components/ui/tooltip";
+import { formatCount, formatMoney } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
+import { DEMAND_DAYS } from "#/purchasing/forecast";
 import {
 	applySuggestionSettings,
 	type PurchaseOrderDetail,
@@ -25,7 +27,6 @@ type Settings = PurchaseOrderDetail["suggestion"]["settings"];
 type Preview = Awaited<ReturnType<typeof previewSuggestionSettings>>;
 
 const MIN_DAYS = 7;
-const MAX_DAYS = 180;
 
 // What a PO's suggestions are worked out with: how many days of sales to
 // cover, which of the supplier's catalogs, and whether to take items another
@@ -131,7 +132,7 @@ export function SuggestionsDialog({
 					<Slider.Root
 						value={[days]}
 						min={MIN_DAYS}
-						max={Math.max(MAX_DAYS, days)}
+						max={DEMAND_DAYS}
 						step={1}
 						onValueChange={([v]) =>
 							setDraft({
@@ -201,8 +202,9 @@ export function SuggestionsDialog({
 	);
 }
 
-// What applying would do, as colored counts. Dims while a newer answer is
-// on its way rather than blanking, so it doesn't flicker as the slider moves.
+// What applying would do, as colored counts, and what the PO would come to.
+// Dims while a newer answer is on its way rather than blanking, so it
+// doesn't flicker as the slider moves.
 function PreviewLine({
 	preview,
 	locked,
@@ -238,8 +240,20 @@ function PreviewLine({
 					</span>
 				))
 			)}
+			{preview !== null && (
+				<Tip content="Before discounts and charges">
+					<span className="ml-auto font-semibold tabular-nums">
+						≈ {formatMoney(preview.total)}
+						{preview.unpriced > 0 && (
+							<span className="ml-1 text-xs font-normal text-warning-text">
+								+{formatCount(preview.unpriced)} unpriced
+							</span>
+						)}
+					</span>
+				</Tip>
+			)}
 			{locked > 0 && (
-				<span className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground">
+				<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
 					<Lock aria-hidden className="size-3" />
 					{formatCount(locked)} stay
 				</span>

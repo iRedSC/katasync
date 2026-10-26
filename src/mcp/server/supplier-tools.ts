@@ -14,6 +14,7 @@ import {
 	setProductsCatalog,
 	setUnavailable,
 } from "#/purchasing/catalogs";
+import { DEMAND_DAYS } from "#/purchasing/forecast";
 import {
 	fillSupplierSkus,
 	setSupplierTerms,
@@ -431,7 +432,13 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 					.optional()
 					.describe("Printed on every PO"),
 				lead_time_days: z.number().int().min(1).max(365).optional(),
-				cover_days: z.number().int().min(1).max(365).optional(),
+				cover_days: z
+					.number()
+					.int()
+					.min(1)
+					.max(DEMAND_DAYS)
+					.optional()
+					.describe("Its POs restock what sold over this many days"),
 				minimum_order: z.number().min(0).optional(),
 				critical_threshold: z.number().int().min(1).optional(),
 			},

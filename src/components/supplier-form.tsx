@@ -13,7 +13,11 @@ import { Tip } from "#/components/ui/tooltip";
 import { optimism, type Patch } from "#/lib/optimism";
 import { caretAfterDigits, digitsBefore, formatPhoneInput } from "#/lib/phone";
 import { cn } from "#/lib/utils";
-import { type LeadTime, MIN_MEASURED_POS } from "#/purchasing/forecast";
+import {
+	DEMAND_DAYS,
+	type LeadTime,
+	MIN_MEASURED_POS,
+} from "#/purchasing/forecast";
 import type { PlaceAddress } from "#/server/places";
 import { type SupplierRow, updateSupplier } from "#/server/purchasing";
 
@@ -58,9 +62,13 @@ function refusal(v: Supplier): string | null {
 	)
 		return "Lead time must be a whole number of days, 1 to 365";
 	if (
-		!(Number.isInteger(v.coverDays) && v.coverDays >= 1 && v.coverDays <= 365)
+		!(
+			Number.isInteger(v.coverDays) &&
+			v.coverDays >= 1 &&
+			v.coverDays <= DEMAND_DAYS
+		)
 	)
-		return "Cover must be a whole number of days, 1 to 365";
+		return `Cover must be a whole number of days, 1 to ${DEMAND_DAYS}`;
 	if (!(v.minimumOrder >= 0))
 		return "Spend threshold must be a number, 0 or more";
 	if (!(Number.isInteger(v.criticalThreshold) && v.criticalThreshold >= 1))
@@ -312,7 +320,7 @@ export function SupplierForm({
 						/>
 					</Adorned>
 				</Field>
-				<Field label="Cover" hint="Days of sales each PO buys">
+				<Field label="Cover" hint="POs restock what sold over these days">
 					<Adorned after="days">
 						<input
 							name="coverDays"

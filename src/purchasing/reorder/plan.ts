@@ -6,12 +6,11 @@ import {
 	type LeadTime,
 	leadTimes,
 	NO_FORECAST,
-	safetyStock,
 } from "#/purchasing/forecast";
 
 // Everything reorder reads besides stock: each product's forecast, each
-// supplier's lead time, and the classes that set how much safety stock to
-// hold. Load it once and pass it around when several things need it.
+// supplier's lead time, and the classes that say what's critical. Load it
+// once and pass it around when several things need it.
 export type Plan = {
 	forecasts: Map<number, Forecast>;
 	leadTimes: Map<number, LeadTime>;
@@ -31,8 +30,8 @@ export async function loadPlan(
 	return { forecasts: f, leadTimes: l, abc: a };
 }
 
-// A product's demand, lead time, and safety stock under a plan. Without a
-// supplier it plans on the suppliers table's defaults.
+// A product's demand and lead time under a plan. Without a supplier it
+// plans on the suppliers table's defaults.
 export function planFor(
 	plan: Plan,
 	productId: number,
@@ -45,11 +44,6 @@ export function planFor(
 	return {
 		dailyDemand: forecast.dailyDemand,
 		leadTimeDays,
-		safetyStock: safetyStock(
-			forecast,
-			plan.abc.classes.get(productId)?.abc ?? null,
-			leadTimeDays,
-		),
 	};
 }
 

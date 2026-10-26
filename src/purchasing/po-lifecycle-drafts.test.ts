@@ -56,20 +56,19 @@ describe("a PO from draft to received", () => {
 	test("drafts from suggestions without overwriting edits", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		expect(await linesOf(id)).toMatchObject([
-			// 4 every 3 days for 10 + 20 days plus safety capped at
-			// the lead time's demand (an A item), less
-			// the 10 on hand.
-			{ productId: blade, quantity: 44, unitCost: 5 },
-			// 3 needed, but the supplier sells at least 6.
-			{ productId: knife, quantity: 6, unitCost: 2 },
+			// 120 sold in the last 20 days, less the 10 on hand.
+			{ productId: blade, quantity: 110, unitCost: 5 },
+			// 9 sold, none on hand; over the supplier's minimum of 6.
+			{ productId: knife, quantity: 9, unitCost: 2 },
 		]);
 		await setDraftLine(db, {
 			purchaseOrderId: id,
 			productId: blade,
-			quantity: 50,
+			quantity: 150,
 		});
 		expect(await draftFromSuggestions(db, canam, now)).toBe(id);
-		expect((await linesOf(id))[0].quantity).toBe(50);
+		// Above the 110 suggested, so it stays.
+		expect((await linesOf(id))[0].quantity).toBe(150);
 
 		await setDraftLine(db, {
 			purchaseOrderId: id,
@@ -134,7 +133,7 @@ describe("a PO from draft to received", () => {
 			added: 1,
 			raised: 0,
 		});
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([2, 6]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([2, 9]);
 
 		await lockDraftLine(db, {
 			purchaseOrderId: id,
@@ -145,7 +144,7 @@ describe("a PO from draft to received", () => {
 			added: 0,
 			raised: 1,
 		});
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([44, 6]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([110, 9]);
 	});
 
 	test("a frozen draft updates on request: adds new, raises short, never lowers", async () => {
@@ -155,12 +154,12 @@ describe("a PO from draft to received", () => {
 			productId: blade,
 			quantity: 2,
 		});
-		// Blade (suggested 44) is short of what's suggested; the knife is new.
+		// Blade (suggested 110) is short of what's suggested; the knife is new.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 1,
 			raised: 1,
 		});
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([44, 6]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([110, 9]);
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 0,
 			raised: 0,
@@ -173,7 +172,7 @@ describe("a PO from draft to received", () => {
 			quantity: 50,
 		});
 		await updateFromSuggestions(db, id, now);
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([44, 50]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([110, 50]);
 
 		await markSent(db, { purchaseOrderId: id, sentTo: null });
 		await expect(updateFromSuggestions(db, id, now)).rejects.toThrow(/is sent/);

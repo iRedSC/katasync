@@ -8,7 +8,7 @@ import {
 import { priceAt } from "#/purchasing/bulk";
 import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
 import { type CheaperAt, needsOf, reorderBreakdown } from "./breakdown";
-import { coverQuantity, daysUntilReorder, fillToMax } from "./quantity";
+import { daysUntilReorder, fillToMax } from "./quantity";
 import {
 	readiness,
 	type SuggestedLine,
@@ -89,17 +89,16 @@ async function plannedFrom(
 	return plans.filter((p) => p.supplier?.supplierId === supplierId);
 }
 
-// Whether a planned product goes on its PO's suggestion by itself: it needs
-// stock within cover days, it's the kind that orders itself, and this
-// supplier is the cheapest, or the PO takes pricier ones too.
+// Whether a planned product goes on its PO's suggestion by itself: it's
+// below what it sold over the PO's cover days, it's the kind that orders
+// itself, and this supplier is the cheapest, or the PO takes pricier ones
+// too. A product not counted yet has quantity 0.
 const suggests = (plan: Breakdown, settings: SuggestionSettings) =>
-	!plan.notCounted &&
-	coverQuantity(plan.input) > 0 &&
+	plan.line.quantity > 0 &&
 	plan.ordersItself &&
 	(plan.cheapest || settings.includePricier);
 
-// What a supplier's PO is suggested under its settings, including eligible
-// products needing stock within its cover days, not just those due today.
+// What a supplier's PO is suggested under its settings.
 export async function suggestionFor(
 	db: Db,
 	supplierId: number,
@@ -107,9 +106,7 @@ export async function suggestionFor(
 	now = new Date(),
 ): Promise<SuggestedLine[]> {
 	const plans = await plannedFrom(db, supplierId, settings, now);
-	return plans
-		.filter((p) => suggests(p, settings))
-		.map((p) => ({ ...p.line, quantity: coverQuantity(p.input) }));
+	return plans.filter((p) => suggests(p, settings)).map((p) => p.line);
 }
 
 type Breakdown = Awaited<ReturnType<typeof reorderBreakdown>>[number];
@@ -171,7 +168,7 @@ const dueOrder = (due: RecommendedLine["due"]) => (due === "now" ? -1 : due);
 
 // What each supplier should be sent today: what needs ordering among the
 // products that go on POs by themselves (see ordersItself), each from its
-// cheapest supplier, over that supplier's cover days. Computed fresh from
+// cheapest supplier, topped up to what sold over that supplier's cover days. Computed fresh from
 // sales, stock, and open POs rather than stored, so it never goes stale.
 export async function suggestPurchases(
 	db: Db,

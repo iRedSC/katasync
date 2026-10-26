@@ -41,13 +41,23 @@ describe("recommendedAdditions", () => {
 		const now_ = await createProduct(db, "NOW", "simple");
 		const onDraft = await createProduct(db, "ONDRAFT", "simple");
 		for (const id of [soon, later, far, now_, onDraft]) await supply(id, 2);
-		// Each sells 1 a day; lead time is 10, cover 20.
-		for (const id of [soon, later, far, now_, onDraft]) await sell(id, 90);
+		// Each sells 1 a day (90 in 90 days), 20 of it in the cover days.
+		for (const id of [soon, later, far, now_, onDraft]) {
+			await sell(id, 20);
+			await sell(id, 70, { placedAt: daysAgo(40) });
+		}
 		await stock(soon, 23);
 		await stock(later, 30);
 		await stock(far, 55);
 		await stock(now_, 5);
 		await stock(onDraft, 12);
+		// The default max is the cover-day sales (20), which SOON and LATER
+		// already hold, so they get an explicit min and max.
+		for (const id of [soon, later])
+			await db
+				.update(schema.products)
+				.set({ minStock: 10, maxStock: 40 })
+				.where(eq(schema.products.id, id));
 		await db
 			.update(schema.products)
 			.set({ critical: true })
@@ -60,9 +70,9 @@ describe("recommendedAdditions", () => {
 			DEFAULT_SETTINGS,
 			now,
 		);
-		// The leader makes these C items; safety stock is capped at 10, so the
-		// reorder point is 20 and a top-up goes to 40. NOW is marked critical,
-		// so it's a suggestion instead; FAR lasts past cover.
+		// The leader makes these C items. Each one's target is the 20 sold in
+		// the cover days; SOON and LATER top up to their max of 40. NOW is
+		// marked critical, so it's a suggestion instead; FAR lasts past cover.
 		expect(r.map((l) => [l.sku, l.due, l.quantity, l.critical])).toEqual([
 			["SOON", 3, 17, false],
 			["LATER", 10, 10, false],
@@ -75,7 +85,9 @@ describe("recommendedAdditions", () => {
 		const counted = await createProduct(db, "COUNTED", "simple");
 		const dormant = await createProduct(db, "DORMANT", "simple");
 		for (const id of [top, slow, counted, dormant]) await supply(id, 2);
-		await sell(top, 90);
+		// Sells 1 a day, 20 of it in the cover days: target 20, so it's above it.
+		await sell(top, 20);
+		await sell(top, 70, { placedAt: daysAgo(40) });
 		await stock(top, 23); // due in 3 days, as above
 		await sell(slow, 1); // a sliver of the margin: a C item
 		await stock(counted, 1);

@@ -20,7 +20,7 @@ import {
 	setMembership,
 } from "#/purchasing/sets";
 import { DEFAULT_LEAD_TIME_DAYS, loadPlan, planFor } from "./plan";
-import { type Arrival, incomingFor } from "./quantity";
+import { type Arrival, timelyUnits } from "./quantity";
 
 // Every tool set's recipe, with what each set shows as a product. A kit's
 // parts are in the kit, not a set.
@@ -308,11 +308,10 @@ export async function aItemsAtRisk(db: Db, now = new Date()) {
 		.flatMap((p) => {
 			const { dailyDemand, leadTimeDays } = planFor(plan, p.id, p.supplierId);
 			if (dailyDemand === 0) return [];
-			const { timely } = incomingFor(
+			const timely = timelyUnits(
 				now.getTime(),
 				onHand.get(p.id) ?? 0,
 				dailyDemand,
-				leadTimeDays,
 				arrivals.get(p.id) ?? [],
 			);
 			const position = Math.max(onHand.get(p.id) ?? 0, 0) + timely;

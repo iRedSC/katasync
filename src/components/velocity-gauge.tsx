@@ -21,16 +21,16 @@ const rankColor = (rank: number) =>
 
 // The pieces of the breakdown, in the order they stack in the bars.
 const COLORS = {
-	restock: "oklch(0.62 0.15 255)",
-	safety: "oklch(0.72 0.14 300)",
-	cover: "oklch(0.8 0.08 255)",
+	sold: "oklch(0.62 0.15 255)",
 	min: "oklch(0.7 0.12 75)",
 	shelf: "var(--success-icon)",
 	coming: "var(--info-icon)",
-	late: "oklch(0.8 0.12 75)",
-	unmet: "oklch(0.62 0.2 25)",
 	order: "var(--primary)",
 } as const;
+
+// Sold out for at least this share of the cover days: its recent sales read
+// low enough to flag on the ring.
+const OUT_FLAG_SHARE = 0.25;
 
 // Units a month in at most four characters: 120, 12, 3.5, 0.3, <0.1.
 export function monthlyText(dailyDemand: number) {
@@ -82,7 +82,7 @@ export function VelocityGauge({
 			<HoverCard.Trigger asChild>
 				<button
 					type="button"
-					aria-label={`${monthlyText(why.dailyDemand)} sold a month. Show why`}
+					aria-label={`${monthlyText(why.dailyDemand)} sold a month${soldOutLong(why) ? `, sold out ${plural(why.recent.outDays, "day")} lately` : ""}. Show why`}
 					className="mx-auto flex w-fit cursor-help rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
 					// The row behind opens the product; this only explains.
 					onClick={(e) => e.stopPropagation()}
@@ -108,6 +108,11 @@ export function VelocityGauge({
 	);
 }
 
+// Sold out long enough over the cover days that ordering up to its sales
+// buys too few.
+const soldOutLong = (why: ReorderWhy) =>
+	why.recent.outDays >= why.coverDays * OUT_FLAG_SHARE;
+
 function Ring({ why }: { why: ReorderWhy }) {
 	const fill = why.rank === null ? 0 : Math.max(why.rank, 0.04);
 	const text = monthlyText(why.dailyDemand);
@@ -116,6 +121,12 @@ function Ring({ why }: { why: ReorderWhy }) {
 			className="relative inline-flex shrink-0 items-center justify-center"
 			style={{ width: SIZE, height: SIZE }}
 		>
+			{soldOutLong(why) && (
+				<span
+					className="absolute -top-0.5 -right-0.5 z-10 size-2.5 rounded-full bg-warning-icon ring-2 ring-background"
+					aria-hidden="true"
+				/>
+			)}
 			<svg
 				width={SIZE}
 				height={SIZE}
@@ -207,9 +218,7 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 				"rounded-lg px-3 py-2",
 				v.kind === "order"
 					? "bg-info-surface text-info-text"
-					: v.kind === "awaiting"
-						? "bg-warning-surface text-warning-text"
-						: "bg-surface text-foreground",
+					: "bg-surface text-foreground",
 			)}
 		>
 			<p className="font-semibold">
@@ -222,9 +231,7 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 						? v.days === 0
 							? "Reorder today"
 							: `Reorder in ${plural(v.days, "day")}`
-						: v.kind === "awaiting"
-							? `Delivery in ${plural(v.days, "day")}, ${plural(v.gapDays, "day")} short`
-							: "Nothing to order"}
+						: "Nothing to order"}
 			</p>
 			{poText !== null && suggested !== poText && (
 				<p className="text-xs opacity-80">
@@ -236,80 +243,34 @@ function Verdict({ why, onPo }: { why: ReorderWhy; onPo?: OnPo }) {
 	);
 }
 
-// Where the sales side of the reorder point ends: the wait plus the cushion.
-const restockPoint = (why: ReorderWhy) =>
-	why.aim.kind === "forecast" ? why.aim.restock + why.aim.safetyStock : 0;
-
 type Segment = { key: string; units: number; color: string; striped?: boolean };
 
-// Two bars on one scale: what reorder aims for, and what there is. The gap
-// the order fills is plain to see, and the dashed line marks where ordering
-// starts.
+// Two bars on one scale: what reorder tops up to, and what there is. The
+// gap the order fills is plain to see.
 function Bars({ why }: { why: ReorderWhy }) {
 	const v = why.verdict;
-	const ordering = v.kind === "order";
-	if (v.kind === "idle" && why.minStock === 0) return null;
-	const min = (units: number): Segment[] => [
-		{ key: "min", units, color: COLORS.min },
+	if (why.aim.total === 0 && why.onOrder === 0 && why.onHand <= 0) return null;
+	const aim: Segment[] = [
+		{
+			key: why.aim.kind,
+			units: why.aim.total,
+			color: why.aim.kind === "min" ? COLORS.min : COLORS.sold,
+		},
 	];
-	// Ordering: everything an order tops up to. Otherwise only the reorder
-	// point matters, which min stock can raise past what sales call for.
-	const aim: Segment[] =
-		why.aim.kind === "min"
-			? min(ordering ? why.aim.total : why.orderBelow)
-			: !ordering && why.orderBelow > restockPoint(why)
-				? min(why.orderBelow)
-				: [
-						{ key: "restock", units: why.aim.restock, color: COLORS.restock },
-						{
-							key: "safety",
-							units: why.aim.safetyStock,
-							color: COLORS.safety,
-						},
-						...(ordering
-							? [{ key: "cover", units: why.aim.cover, color: COLORS.cover }]
-							: []),
-					];
-	const incoming = why.incoming;
 	const have: Segment[] = [
 		{ key: "shelf", units: Math.max(why.onHand, 0), color: COLORS.shelf },
-		{
-			key: "coming",
-			units: incoming.timely,
-			color: COLORS.coming,
-			striped: true,
-		},
-		{
-			key: "late",
-			units: incoming.aim - incoming.timely,
-			color: COLORS.late,
-			striped: true,
-		},
-		{
-			key: "unmet",
-			units: why.onOrder - incoming.aim,
-			color: COLORS.unmet,
-			striped: true,
-		},
-		...(ordering
+		{ key: "coming", units: why.onOrder, color: COLORS.coming, striped: true },
+		...(v.kind === "order"
 			? [{ key: "order", units: v.units, color: COLORS.order, striped: true }]
 			: []),
 	];
 	const total = (s: Segment[]) => s.reduce((sum, x) => sum + x.units, 0);
-	const scale = Math.max(total(aim), total(have), why.orderBelow, 1);
+	const scale = Math.max(total(aim), total(have), 1);
 	const pct = (n: number) => `${(n / scale) * 100}%`;
 	return (
-		<div className="relative flex flex-col gap-1.5 py-1">
+		<div className="flex flex-col gap-1.5 py-1">
 			<BarRow label="Need" segments={aim} pct={pct} />
 			<BarRow label="Have" segments={have} pct={pct} />
-			{why.orderBelow > 0 && (
-				<div
-					className="pointer-events-none absolute inset-y-0 ml-11 border-l border-dashed border-foreground/50"
-					style={{
-						left: `calc((100% - 2.75rem) * ${why.orderBelow / scale})`,
-					}}
-				/>
-			)}
 		</div>
 	);
 }
@@ -349,192 +310,88 @@ function BarRow({
 	);
 }
 
-// The arithmetic, one line per piece, each with the bar color it matches.
+// The arithmetic, one line per piece, each with the bar color it matches:
+// what sold (or the floor), less shelf and on order, is the order.
 function Breakdown({ why }: { why: ReorderWhy }) {
 	const v = why.verdict;
-	const lead = why.leadTime;
-	const leadNote = `${lead.days}-day lead time, ${
-		lead.from === "measured"
-			? "measured"
-			: lead.from === "supplier"
-				? "supplier's estimate"
-				: "no supplier"
-	}`;
-	const cushion = `${why.abc ? `${why.abc} item` : "Unclassed"}, ${Math.round(why.serviceShare * 100)}% service`;
-	const minSetsPoint =
-		why.aim.kind === "min" || why.orderBelow > restockPoint(why);
-	const have = afterArrival(why.onHand, why.incoming.aim);
-	const notCounted = why.onOrder - why.incoming.aim;
-	const notCountedNote = [
-		why.incoming.unknown > 0 &&
-			`${formatCount(why.incoming.unknown)} without a current delivery date`,
-		why.incoming.aim < why.onOrder - why.incoming.unknown &&
-			"due after the shelf runs out",
-	]
-		.filter(Boolean)
-		.join(", ");
-	const minLabel = {
-		stock: "Min stock",
-		sets: "Enough to build each tool set",
-		oversold: "Buy back what's oversold",
-	}[why.minFrom];
-
-	if (v.kind === "idle" && why.minStock === 0) return null;
-
-	const rows: ReactNode[] = [];
-	if (v.kind === "order") {
-		if (why.aim.kind === "forecast") {
-			rows.push(
-				<Row
-					key="restock"
-					color={COLORS.restock}
-					label="Sales during restock"
-					note={leadNote}
-					value={formatCount(why.aim.restock)}
-				/>,
-				<Row
-					key="safety"
-					color={COLORS.safety}
-					label="Safety cushion"
-					note={cushion}
-					value={`+${formatCount(why.aim.safetyStock)}`}
-				/>,
-				<Row
-					key="cover"
-					color={COLORS.cover}
-					label={`${why.coverDays} more days of sales`}
-					value={`+${formatCount(why.aim.cover)}`}
-				/>,
-			);
-		} else {
-			rows.push(
-				<Row
-					key="min"
-					color={COLORS.min}
-					label={minLabel}
-					note={`Sales alone: ${formatCount(why.aim.forecast)}`}
-					value={formatCount(why.aim.total)}
-				/>,
-			);
-		}
-		const short = why.aim.total - have;
+	if (v.kind === "idle" && why.aim.total === 0) return null;
+	const sold = (
+		<Row
+			key="sold"
+			color={COLORS.sold}
+			label={`Sold last ${plural(why.coverDays, "day")}`}
+			note={
+				why.recent.outDays > 0
+					? `Sold out ${plural(why.recent.outDays, "day")} of them`
+					: undefined
+			}
+			warn={soldOutLong(why)}
+			value={formatCount(why.recent.sold)}
+		/>
+	);
+	const rows: ReactNode[] =
+		why.aim.kind === "min"
+			? [
+					<Row
+						key="min"
+						color={COLORS.min}
+						label={
+							{
+								stock: "Min stock",
+								sets: "Enough to build each tool set",
+								oversold: "Buy back what's oversold",
+							}[why.minFrom]
+						}
+						note={`Sold last ${plural(why.coverDays, "day")}: ${formatCount(why.aim.sales)}`}
+						value={formatCount(why.aim.total)}
+					/>,
+				]
+			: [sold];
+	const short = why.aim.total - afterArrival(why.onHand, why.onOrder);
+	rows.push(
+		<Row
+			key="shelf"
+			color={COLORS.shelf}
+			label="On shelf"
+			note={
+				why.onHand < 0
+					? `${formatCount(-why.onHand)} oversold, written off on arrival`
+					: undefined
+			}
+			value={minus(Math.max(why.onHand, 0))}
+		/>,
+		...(why.onOrder > 0
+			? [
+					<Row
+						key="coming"
+						color={COLORS.coming}
+						striped
+						label="On order"
+						value={minus(why.onOrder)}
+					/>,
+				]
+			: []),
+	);
+	if (v.kind === "order")
 		rows.push(
-			<Total key="aim" label="Target" value={formatCount(why.aim.total)} />,
-			<Row
-				key="shelf"
-				color={COLORS.shelf}
-				label="On shelf"
-				note={
-					why.onHand < 0
-						? `${formatCount(-why.onHand)} oversold, written off on arrival`
-						: undefined
-				}
-				value={minus(Math.max(why.onHand, 0))}
-			/>,
-			...(why.incoming.aim > 0
-				? [
-						<Row
-							key="coming"
-							color={COLORS.coming}
-							striped
-							label="Incoming"
-							value={minus(why.incoming.aim)}
-						/>,
-					]
-				: []),
-			...(notCounted > 0
-				? [
-						<Row
-							key="unmet"
-							color={COLORS.unmet}
-							striped
-							label="Not counted"
-							note={notCountedNote}
-							value={formatCount(notCounted)}
-						/>,
-					]
-				: []),
 			<Total key="short" label="Short" value={formatCount(short)} />,
-			...(why.untilLate > 0
-				? [
-						<Row
-							key="late"
-							color={COLORS.late}
-							striped
-							label="Bridge delivery gaps"
-							value={formatCount(why.untilLate)}
-						/>,
-					]
-				: []),
 			<Row
 				key="order"
 				color={COLORS.order}
 				striped
 				label="Order"
 				note={
-					short <= 0 && why.onHand < 0
-						? "Oversold with nothing on order"
-						: !why.purchase || v.roundedUp === null
-							? undefined
-							: v.roundedUp === "minimum"
-								? `Supplier minimum: ${formatOrderQuantity({ quantity: why.purchase.minimumQuantity, ...why.purchase })}`
-								: `Rounded up to ${formatUnit(why.purchase)}`
+					!why.purchase || v.roundedUp === null
+						? undefined
+						: v.roundedUp === "minimum"
+							? `Supplier minimum: ${formatOrderQuantity({ quantity: why.purchase.minimumQuantity, ...why.purchase })}`
+							: `Rounded up to ${formatUnit(why.purchase)}`
 				}
 				value={formatCount(v.units)}
 			/>,
 		);
-	} else {
-		if (minSetsPoint) {
-			rows.push(
-				<Row
-					key="min"
-					color={COLORS.min}
-					label={minLabel}
-					note={
-						why.aim.kind === "forecast"
-							? `Sales alone: ${formatCount(restockPoint(why))}`
-							: undefined
-					}
-					value={formatCount(why.orderBelow)}
-				/>,
-			);
-		} else if (why.aim.kind === "forecast") {
-			rows.push(
-				<Row
-					key="restock"
-					color={COLORS.restock}
-					label="Sales during restock"
-					note={leadNote}
-					value={formatCount(why.aim.restock)}
-				/>,
-				<Row
-					key="safety"
-					color={COLORS.safety}
-					label="Safety cushion"
-					note={cushion}
-					value={`+${formatCount(why.aim.safetyStock)}`}
-				/>,
-			);
-		}
-		rows.push(
-			<Total
-				key="point"
-				label="Reorder below"
-				value={formatCount(why.orderBelow)}
-			/>,
-			<Row
-				key="have"
-				color={COLORS.shelf}
-				label="Have"
-				note={
-					why.incoming.aim > 0
-						? `${formatCount(Math.max(why.onHand, 0))} on shelf + ${formatCount(why.incoming.aim)} incoming`
-						: undefined
-				}
-				value={formatCount(have)}
-			/>,
-		);
-	}
+	else
+		rows.push(<Total key="spare" label="Spare" value={formatCount(-short)} />);
 	return <div className="flex flex-col gap-1.5 border-t pt-3">{rows}</div>;
 }
 
@@ -543,12 +400,15 @@ function Row({
 	striped = false,
 	label,
 	note,
+	warn = false,
 	value,
 }: {
 	color: string;
 	striped?: boolean;
 	label: string;
 	note?: string;
+	// The note says the number reads wrong: shown in the ring's flag color.
+	warn?: boolean;
 	value: string;
 }) {
 	return (
@@ -565,7 +425,14 @@ function Row({
 			<div className="min-w-0 flex-1">
 				<p className="leading-snug">{label}</p>
 				{note && (
-					<p className="text-xs leading-snug text-muted-foreground">{note}</p>
+					<p
+						className={cn(
+							"text-xs leading-snug",
+							warn ? "text-warning-text" : "text-muted-foreground",
+						)}
+					>
+						{note}
+					</p>
 				)}
 			</div>
 			<span className="font-medium tabular-nums">{value}</span>
