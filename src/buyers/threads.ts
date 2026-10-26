@@ -24,6 +24,7 @@ import {
 import type { Market } from "#/markets/market";
 import { marketplaceMessagesOf } from "./marketplace-messages";
 import { answers, type ReplyStatus } from "./states";
+import { isThreadOrder } from "./thread-order";
 
 // Conversations with buyers, as katasync keeps them: read in from each
 // marketplace (./amazon-mail.ts, ./ebay-messages.ts,
@@ -286,13 +287,7 @@ export async function threadsPage(
 				isNotNull(buyerThreads.orderRef),
 			),
 		)
-		.leftJoin(
-			orders,
-			and(
-				eq(orders.storeId, stores.id),
-				eq(orders.externalId, buyerThreads.orderRef),
-			),
-		)
+		.leftJoin(orders, isThreadOrder(buyerThreads.market, buyerThreads.orderRef))
 		.where(
 			and(
 				typeof view === "object"

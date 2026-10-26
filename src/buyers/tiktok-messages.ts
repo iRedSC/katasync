@@ -1,7 +1,8 @@
 import { type } from "arktype";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
 	retryLater,
+	searchPage,
 	shopCipher,
 	TiktokError,
 	tiktokApi,
@@ -30,13 +31,16 @@ import { ensureThread } from "./threads";
 // them. It needs the seller.customer_service scope (pnpm tiktok:authorize).
 // TikTok opens a conversation for every order and fills it with its own
 // notices (ROBOT and SYSTEM); only one a buyer wrote in becomes a thread,
-// and its notices are kept with it (marketplace-messages.ts).
+// and its notices are kept with it (marketplace-messages.ts). Conversations
+// only TikTok's assistant answered never reach Seller Center's inbox, so
+// what katasync keeps may be the only place to read one.
 
 const BASE = "/customer_service/202309/conversations";
 
 const sender = type({
 	role: "string",
 	"nickname?": "string",
+	"user_id?": "string",
 	"+": "ignore",
 });
 
@@ -131,6 +135,26 @@ export function orderOf(messages: Message[]) {
 			if (id) return id;
 		}
 	return null;
+}
+
+// The buyer's latest order, asked of TikTok: what the conversation is about
+// when no card in it says. TikTok's own order card mostly reaches the API as
+// OTHER, with no order ID, so most conversations need this; and it doesn't
+// depend on katasync having kept the buyer on the order.
+async function latestOrderOf(cipher: string, buyerUserId: string) {
+	const page = searchPage.assert(
+		await tiktokApi(
+			"/order/202309/orders/search",
+			{
+				shop_cipher: cipher,
+				page_size: "1",
+				sort_field: "create_time",
+				sort_order: "DESC",
+			},
+			{ buyer_user_id: buyerUserId },
+		),
+	);
+	return page.orders?.[0]?.id ?? null;
 }
 
 // One of TikTok's own, as the thread shows it; none when hidden or empty.
@@ -293,16 +317,34 @@ async function syncConversation(
 		.where(
 			and(eq(buyerThreads.market, "tiktok"), eq(buyerThreads.externalId, c.id)),
 		);
+	const buyer = c.participants?.find((p) => p.role === "BUYER");
+	// The buyer's latest order, onto a thread no card tied to one.
+	const fillOrder = async (threadId: number) => {
+		const order = buyer?.user_id
+			? await latestOrderOf(cipher, buyer.user_id)
+			: null;
+		if (order)
+			await db
+				.update(buyerThreads)
+				.set({ orderRef: order })
+				.where(
+					and(eq(buyerThreads.id, threadId), isNull(buyerThreads.orderRef)),
+				);
+	};
 	if (!sweep) {
-		// Unchanged since it was last read in full.
-		if (thread?.readLatestId === latest.id) return false;
+		// Unchanged since it was last read in full. One still waiting with no
+		// order asks TikTok again, in case the order wasn't findable yet.
+		if (thread?.readLatestId === latest.id) {
+			if (thread.orderRef === null && thread.doneAt === null)
+				await fillOrder(thread.id);
+			return false;
+		}
 		// Nothing since the last read, and no buyer had written in it then.
 		if (!thread && latest.create_time * 1000 < since.getTime()) return false;
 	}
 	const messages = await allMessages(cipher, c.id);
 	const people = messages.filter(fromPerson);
 	if (!thread && !people.some(fromBuyer)) return false;
-	const buyer = c.participants?.find((p) => p.role === "BUYER");
 	const kept =
 		thread ??
 		(await ensureThread(db, {
@@ -319,9 +361,16 @@ async function syncConversation(
 		messages.flatMap((m) => marketplaceMessage(m) ?? []),
 	);
 	const order = kept.orderRef ? null : orderOf(messages);
+	if (order)
+		await db
+			.update(buyerThreads)
+			.set({ orderRef: order })
+			.where(eq(buyerThreads.id, kept.id));
+	// Before it counts as read, so a failed ask is made again next run.
+	else if (!kept.orderRef) await fillOrder(kept.id);
 	await db
 		.update(buyerThreads)
-		.set({ readLatestId: latest.id, ...(order ? { orderRef: order } : {}) })
+		.set({ readLatestId: latest.id })
 		.where(eq(buyerThreads.id, kept.id));
 	return true;
 }
