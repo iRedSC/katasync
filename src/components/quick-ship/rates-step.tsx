@@ -53,6 +53,7 @@ export function RatesStep({
 	extras,
 	onExtras,
 	onBuy,
+	onFocusRate,
 }: {
 	rates: Rates | null;
 	// The prices shown are for other extras; new ones are on the way.
@@ -63,6 +64,8 @@ export function RatesStep({
 	extras: Extras;
 	onExtras: (next: Extras) => void;
 	onBuy: (quote: Rate) => void;
+	// The highlighted service, for the info panel beside the steps.
+	onFocusRate: (quote: Quote | null) => void;
 }) {
 	const [selected, setSelected] = useState(0);
 	const [draft, setDraft] = useState(insuranceText(extras.insure));
@@ -100,6 +103,7 @@ export function RatesStep({
 	function moveTo(i: number) {
 		setSelected(i);
 		chosen.current = rates?.list[i] ? serviceKey(rates.list[i]) : null;
+		onFocusRate(rates?.list[i] ?? null);
 		// Only five services fit; keep the arrow-key choice in view.
 		options.current?.children[i]?.scrollIntoView({ block: "nearest" });
 	}
@@ -233,12 +237,19 @@ export function RatesStep({
 										text={r.serviceName}
 										className="text-lg font-semibold"
 									/>
-									<span
-										className={
-											i === selected ? "text-white/70" : "text-muted-foreground"
-										}
-									>
-										{details(r).join(" · ")}
+									<span className="flex items-center gap-2">
+										<span
+											className={
+												i === selected
+													? "text-white/70"
+													: "text-muted-foreground"
+											}
+										>
+											{details(r).join(" · ")}
+										</span>
+										{r.rebills.length > 0 && (
+											<Badge tone="critical">Previously adjusted</Badge>
+										)}
 									</span>
 								</span>
 								<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">

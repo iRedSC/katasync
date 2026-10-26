@@ -15,8 +15,8 @@ import {
 // label: katasync, or the channel's own site (TikTok Shipping, Shopify's
 // admin, eBay). Read once an order has shipped and kept, then read again
 // only when the order changes, so an order looked at twice asks once. A
-// read that fails keeps what was known. Amazon isn't asked: its Orders API
-// here doesn't say. Server only.
+// read that fails keeps what was known, and says so. Amazon isn't asked:
+// its Orders API here doesn't say. Server only.
 
 type Order = {
 	id: number;
@@ -151,12 +151,19 @@ const READERS: Record<string, (id: string) => Promise<ChannelPackage[]>> = {
 	ebay: fromEbay,
 };
 
+// What the channel's package list is now. A read that fails keeps what was
+// known, marked stale, so a failure never passes for "no packages".
+export type ChannelRead =
+	| { state: "read"; packages: ChannelPackage[] }
+	| { state: "stale"; packages: ChannelPackage[]; why: string }
+	| { state: "failed"; why: string };
+
 // What the channel says, read now when it hasn't been since the order last
-// changed; what was known when it can't be asked.
+// changed; what was known, marked stale, when it can't be asked.
 export async function channelPackages(
 	db: Db,
 	order: Order,
-): Promise<ChannelPackage[]> {
+): Promise<ChannelRead> {
 	const [kept] = await db
 		.select()
 		.from(orderChannelTracking)
@@ -167,18 +174,22 @@ export async function channelPackages(
 		!SHIPPED.has(order.fulfillmentStatus) ||
 		kept?.readFor.getTime() === order.sourceUpdatedAt.getTime()
 	)
-		return kept?.packages ?? [];
+		return { state: "read", packages: kept?.packages ?? [] };
+	let packages: ChannelPackage[];
 	try {
-		const packages = await read(order.externalId);
-		await db
-			.insert(orderChannelTracking)
-			.values({ orderId: order.id, packages, readFor: order.sourceUpdatedAt })
-			.onConflictDoUpdate({
-				target: orderChannelTracking.orderId,
-				set: { packages, readFor: order.sourceUpdatedAt },
-			});
-		return packages;
-	} catch {
-		return kept?.packages ?? [];
+		packages = await read(order.externalId);
+	} catch (error) {
+		const why = error instanceof Error ? error.message : String(error);
+		return kept
+			? { state: "stale", packages: kept.packages, why }
+			: { state: "failed", why };
 	}
+	await db
+		.insert(orderChannelTracking)
+		.values({ orderId: order.id, packages, readFor: order.sourceUpdatedAt })
+		.onConflictDoUpdate({
+			target: orderChannelTracking.orderId,
+			set: { packages, readFor: order.sourceUpdatedAt },
+		});
+	return { state: "read", packages };
 }

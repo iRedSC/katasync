@@ -6,6 +6,7 @@ import {
 	returnRequestLines,
 	returnRequests,
 } from "#/db/schema";
+import { errorText } from "#/diagnostics/runs";
 
 // Returns buyers opened on a marketplace, as each channel's importer reads
 // them (amazon-returns.ts, shopify-returns.ts, ebay-returns.ts), saved one
@@ -38,9 +39,16 @@ export type ChannelReturn = RequestStage & {
 	// What the buyer wrote, when they wrote anything. Left out when it wasn't
 	// asked for or couldn't be read: a note already saved stays as it is.
 	note?: string | null;
+	// The note was asked for and couldn't be read, so it's asked again
+	// later. Left out keeps what's saved.
+	noteUnread?: boolean;
 	trackingNumber: string | null;
 	carrier: string | null;
 	requestedAt: Date;
+	// When the marketplace last changed it, by the time its search goes by
+	// (TikTok's update time, a Shopify order's). Left out where the search
+	// goes by when it was opened: requestedAt is that time.
+	updatedAt?: Date;
 	lines: {
 		// The line's id there, as order_lines.externalId stores it.
 		lineExternalId: string | null;
@@ -81,9 +89,12 @@ type Snapshot = RequestStage & {
 	rawStatus: string;
 	reason: string | null;
 	note: string | null;
+	noteUnread: boolean;
 	trackingNumber: string | null;
 	carrier: string | null;
 	requestedAt: Date;
+	// Null when the marketplace never said and nothing is saved yet.
+	sourceUpdatedAt: Date | null;
 	lines: { orderLineId: number | null; sku: string | null; quantity: number }[];
 };
 
@@ -101,9 +112,11 @@ function canonical(s: Saved) {
 		s.rawStatus,
 		s.reason,
 		s.note,
+		s.noteUnread,
 		s.trackingNumber,
 		s.carrier,
 		s.requestedAt.getTime(),
+		s.sourceUpdatedAt?.getTime() ?? null,
 		s.lines
 			.map((l) => JSON.stringify([l.orderLineId, l.sku, l.quantity]))
 			.sort(),
@@ -113,13 +126,20 @@ function canonical(s: Saved) {
 // Saves each return against its order in this store, replacing what the
 // marketplace said before. A return for an order katasync doesn't have
 // (older than its history, or never synced) is skipped, and its order named
-// in missing. A return that hasn't changed since it was saved is left alone.
+// in missing and handed back in unsaved, so the pass can hold its place. A
+// return that hasn't changed since it was saved is left alone.
 export async function saveReturns(
 	db: Db,
 	store: { id: number; channel: ChannelReturnChannel },
 	returns: ChannelReturn[],
-): Promise<{ saved: number; skipped: number; missing: string[] }> {
-	if (returns.length === 0) return { saved: 0, skipped: 0, missing: [] };
+): Promise<{
+	saved: number;
+	skipped: number;
+	missing: string[];
+	unsaved: ChannelReturn[];
+}> {
+	if (returns.length === 0)
+		return { saved: 0, skipped: 0, missing: [], unsaved: [] };
 	const known = await db
 		.select({ id: orders.id, externalId: orders.externalId })
 		.from(orders)
@@ -179,9 +199,11 @@ export async function saveReturns(
 			rawStatus: returnRequests.rawStatus,
 			reason: returnRequests.reason,
 			note: returnRequests.note,
+			noteUnread: returnRequests.noteUnread,
 			trackingNumber: returnRequests.trackingNumber,
 			carrier: returnRequests.carrier,
 			requestedAt: returnRequests.requestedAt,
+			sourceUpdatedAt: returnRequests.sourceUpdatedAt,
 		})
 		.from(returnRequests)
 		.where(
@@ -228,8 +250,10 @@ export async function saveReturns(
 	);
 	let saved = 0;
 	const missing = new Set<string>();
+	const unsaved: ChannelReturn[] = [];
 	for (const { r, orderId } of placed) {
 		if (orderId === undefined) {
+			unsaved.push(r);
 			// A Shopify gid reads as its number.
 			missing.add(r.orderExternalId.split("/").pop() ?? r.orderExternalId);
 			continue;
@@ -243,9 +267,11 @@ export async function saveReturns(
 			reason: r.reason,
 			// A note the marketplace didn't send keeps the one saved.
 			note: r.note === undefined ? (current?.note ?? null) : r.note,
+			noteUnread: r.noteUnread ?? current?.noteUnread ?? false,
 			trackingNumber: r.trackingNumber,
 			carrier: r.carrier,
 			requestedAt: r.requestedAt,
+			sourceUpdatedAt: r.updatedAt ?? current?.sourceUpdatedAt ?? null,
 			lines: r.lines.map((l) => ({
 				orderLineId: matchLine(lines, l),
 				sku: l.sku,
@@ -266,10 +292,12 @@ export async function saveReturns(
 				rawStatus: next.rawStatus,
 				reason: next.reason,
 				note: next.note,
+				noteUnread: next.noteUnread,
 				trackingNumber: next.trackingNumber,
 				carrier: next.carrier,
 				requestedAt: next.requestedAt,
-				sourceUpdatedAt: new Date(),
+				// Without the marketplace's time, when it changed here.
+				sourceUpdatedAt: r.updatedAt ?? new Date(),
 			};
 			const [request] = await tx
 				.insert(returnRequests)
@@ -289,38 +317,62 @@ export async function saveReturns(
 		});
 		saved++;
 	}
-	return { saved, skipped: returns.length - saved, missing: [...missing] };
+	return {
+		saved,
+		skipped: returns.length - saved,
+		missing: [...missing],
+		unsaved,
+	};
 }
 
 type ChannelReturnChannel = (typeof returnRequests.$inferInsert)["billedBy"];
 
-// One sync pass's returns for a channel, as problems to report. Returns
-// come from their own API, often with a permission of its own; when that
-// fails the pass names it and orders still sync. A return for an order
-// katasync doesn't have is named too: its box would turn up unexpected.
-// Null from fetch means nothing to read yet (a report still being built).
+// A record a read found but couldn't save, at the marketplace time its
+// search found it by: the pass keeps a gap open there (feed_gaps) until a
+// read of it saves.
+export type Held = { at: Date; detail: string };
+
+// What a channel's returns read hands back. held: records it found but
+// couldn't save whole (a Shopify return too big for one read).
+export type FoundReturns =
+	| ChannelReturn[]
+	| { returns: ChannelReturn[]; problems: string[]; held?: Held[] };
+
+export type ReturnsRead =
+	| { kind: "read"; problems: string[]; held: Held[] }
+	| { kind: "failed"; error: string }
+	| { kind: "pending" };
+
+// One read of a channel's returns, saved. Returns come from their own API,
+// often with a permission of its own; when that fails it's the returns feed
+// that failed, not the channel. A return for an order katasync doesn't have
+// is held: its box would turn up unexpected, and nothing past it is
+// verified until it saves. Null from fetch means nothing to read yet (a
+// report still being built).
 export async function importReturns(
 	db: Db,
 	store: { id: number; channel: ChannelReturnChannel; name: string },
-	fetch: () => Promise<
-		ChannelReturn[] | { returns: ChannelReturn[]; problems: string[] } | null
-	>,
-): Promise<string[]> {
+	fetch: () => Promise<FoundReturns | null>,
+): Promise<ReturnsRead> {
 	try {
 		const found = await fetch();
-		if (!found) return [];
-		const { returns, problems } = Array.isArray(found)
-			? { returns: found, problems: [] }
-			: found;
-		const { missing } = await saveReturns(db, store, returns);
-		if (missing.length > 0)
-			problems.push(
-				`${store.name} returns for orders katasync doesn't have: ${missing.join(", ")}`,
-			);
-		return problems;
+		if (!found) return { kind: "pending" };
+		const { returns, problems, held } = Array.isArray(found)
+			? { returns: found, problems: [], held: [] }
+			: { ...found, held: found.held ?? [] };
+		const { unsaved } = await saveReturns(db, store, returns);
+		return {
+			kind: "read",
+			problems,
+			held: [
+				...held,
+				...unsaved.map((r) => ({
+					at: r.updatedAt ?? r.requestedAt,
+					detail: `${store.name} return for order ${r.orderExternalId.split("/").pop()}, which katasync doesn't have`,
+				})),
+			],
+		};
 	} catch (error) {
-		return [
-			`${store.name} returns: ${error instanceof Error ? error.message : error}`,
-		];
+		return { kind: "failed", error: errorText(error) };
 	}
 }

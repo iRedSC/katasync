@@ -6,6 +6,7 @@ import {
 	marketEmails,
 	orderBuyerContacts,
 	orders,
+	shopifyThreads,
 	stores,
 } from "#/db/schema";
 import { mediaOf } from "./amazon-mail";
@@ -14,6 +15,7 @@ import {
 	type BuyerOrderRef,
 	inbox,
 	matchShopifyReply,
+	newReplyToken,
 	replyText,
 	type ShopifyThreadRef,
 	threadAddress,
@@ -37,7 +39,6 @@ export function emailUnready() {
 	const missing = [
 		!process.env.RESEND_API_KEY && "RESEND_API_KEY",
 		!inbox() && "MARKETPLACE_INBOX",
-		!process.env.CRON_SECRET && "CRON_SECRET",
 	].filter(Boolean);
 	return missing.length > 0 ? `Set ${missing.join(", ")}` : null;
 }
@@ -71,12 +72,28 @@ export async function startShopifyThread(db: Db, orderId: number) {
 		buyerName: o.customerName,
 		orderRef: o.externalId,
 	});
+	await replyTokenOf(db, thread.id);
 	if (thread.doneAt)
 		await db
 			.update(buyerThreads)
 			.set({ doneAt: null })
 			.where(eq(buyerThreads.id, thread.id));
 	return { threadId: thread.id };
+}
+
+// The token in a thread's reply address, made the first time it's asked
+// for. Two at once keep the first.
+async function replyTokenOf(db: Db, threadId: number) {
+	await db
+		.insert(shopifyThreads)
+		.values({ threadId, replyToken: newReplyToken() })
+		.onConflictDoNothing({ target: shopifyThreads.threadId });
+	const [row] = await db
+		.select({ token: shopifyThreads.replyToken })
+		.from(shopifyThreads)
+		.where(eq(shopifyThreads.threadId, threadId));
+	if (!row) throw new Error(`Thread ${threadId} has no reply address`);
+	return row.token;
 }
 
 // Where a thread's emails go: its order's buyer, as Shopify last said.
@@ -105,17 +122,20 @@ export async function shopifyRecipient(db: Db, orderRef: string | null) {
 
 // Hands one of ours to Resend. A first email has the thread's subject; one
 // answering the buyer is "Re:" it, under their latest email.
-export async function sendShopifyEmail(r: {
-	threadId: number;
-	to: string;
-	subject: string;
-	inReplyTo: string | null;
-	text: string;
-	requestKey: string;
-	attachments?: { filename: string; content: string }[];
-}) {
+export async function sendShopifyEmail(
+	db: Db,
+	r: {
+		threadId: number;
+		to: string;
+		subject: string;
+		inReplyTo: string | null;
+		text: string;
+		requestKey: string;
+		attachments?: { filename: string; content: string }[];
+	},
+) {
 	const box = inbox();
-	const replyTo = threadAddress(r.threadId);
+	const replyTo = threadAddress(await replyTokenOf(db, r.threadId));
 	if (!process.env.RESEND_API_KEY || !box || !replyTo)
 		throw new Refused(emailUnready() ?? "Not set up");
 	return sendWithResend({
@@ -138,6 +158,7 @@ export async function threadShopifyMail(db: Db) {
 	const rows = await db
 		.select({
 			id: buyerThreads.id,
+			replyToken: shopifyThreads.replyToken,
 			doneAt: buyerThreads.doneAt,
 			createdAt: buyerThreads.createdAt,
 			email: orderBuyerContacts.email,
@@ -153,9 +174,11 @@ export async function threadShopifyMail(db: Db) {
 			),
 		)
 		.innerJoin(orderBuyerContacts, eq(orderBuyerContacts.orderId, orders.id))
+		.leftJoin(shopifyThreads, eq(shopifyThreads.threadId, buyerThreads.id))
 		.where(eq(buyerThreads.market, "shopify"));
 	const threads: ShopifyThreadRef[] = rows.map((t) => ({
 		id: t.id,
+		replyToken: t.replyToken,
 		email: t.email,
 		orderName: t.orderName,
 		open: !t.doneAt,

@@ -21,20 +21,31 @@ import { getDb } from "#/db/client";
 
 const thread = "number.integer > 0";
 
-// Drafts the thread's reply again now, whatever there is.
+// Drafts the thread's reply again now, whatever there is; about the order
+// its chat was opened from, when that's given.
 export const draftReplyNow = createServerFn({ method: "POST" })
-	.validator(type({ threadId: thread }))
+	.validator(type({ threadId: thread, "orderRef?": "string | null" }))
 	.handler(async ({ data }) => {
 		if (!aiConfigured()) return null;
-		return draftThread(getDb(), data.threadId, { force: true });
+		return draftThread(getDb(), data.threadId, {
+			force: true,
+			orderRef: data.orderRef ?? null,
+		});
 	});
 
 // Staff's own version of the suggestion.
 export const saveReplyDraft = createServerFn({ method: "POST" })
 	.validator(
-		type({ threadId: thread, body: "string > 0", "english?": "string | null" }),
+		type({
+			threadId: thread,
+			body: "string > 0",
+			"english?": "string | null",
+			"orderRef?": "string | null",
+		}),
 	)
-	.handler(async ({ data }) => setDraft(getDb(), data.threadId, data, "staff"));
+	.handler(async ({ data }) =>
+		setDraft(getDb(), data.threadId, data, "staff", data.orderRef ?? null),
+	);
 
 // Staff's English, in the buyer's language.
 export const translateReply = createServerFn({ method: "POST" })

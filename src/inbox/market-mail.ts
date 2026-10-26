@@ -7,19 +7,26 @@ import {
 	marketEmails,
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
-import type { InboxMessage, InlinePicture } from "#/purchasing/inbox/graph";
+import type { InboxMessage } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
-import { pointPictures } from "./html";
+import { backfillMarketHtml, keepHtml, readHtml } from "./market-mail/content";
 import { listRules, locked, lockRules, resort } from "./rule-store";
 import { type Folder, flagsOf, type Level, sortEmail } from "./rules";
 import { type Header, senderAuthenticated } from "./sender-auth";
+import { isVoicemail } from "./voicemail-model";
+
+export {
+	backfillMarketHtml,
+	marketAttachment,
+	marketEmailHtml,
+	readHtml,
+} from "./market-mail/content";
+export * from "./market-mail/page";
 
 // The marketplaces mailbox in katasync: each notice read in from Microsoft
 // 365, sorted by marketplace and by the rules into a folder, some marked
 // important, and worked through like a mail app (done, moved, marked).
 // Server only. The Inbox's page of it is ./market-mail/page.ts.
-
-export * from "./market-mail/page";
 
 // Which marketplace an address belongs to, by its domain.
 const SENDERS: [RegExp, Market][] = [
@@ -86,6 +93,7 @@ export async function ingestMarketMail(
 		known.add(m.messageId);
 		try {
 			const content = await read(m.graphId);
+			const voicemail = isVoicemail({ ...m, body: content.body });
 			const market = marketOfEmail(m);
 			const authenticated =
 				(market === null || market === "amazon") &&
@@ -110,15 +118,26 @@ export async function ingestMarketMail(
 						market,
 						folder: sorted.folder,
 						...flagsOf(sorted.level),
+						senderAuthenticated: authenticated,
 						readAt: sorted.read && !heldBack ? new Date() : null,
 						doneAt: sorted.done && !heldBack ? new Date() : null,
 						fromAddress: m.fromAddress,
-						senderAuthenticated: authenticated,
 						fromName: m.fromName,
 						recipients: m.recipients,
 						subject: m.subject,
 						body: content.body,
 						receivedAt: m.receivedAt,
+						...(voicemail
+							? {
+									voicemail: { state: "pending" as const },
+									folder: "updates" as const,
+									relabelledAt: new Date(),
+									doneAt: null,
+									readAt: null,
+									important: false,
+									critical: false,
+								}
+							: {}),
 					})
 					// Another run read it first.
 					.onConflictDoNothing()
@@ -202,7 +221,14 @@ export async function newestMarketEmail(db: Db) {
 export async function setDone(db: Db, id: number, done: boolean) {
 	const [row] = await db
 		.update(marketEmails)
-		.set({ doneAt: done ? new Date() : null })
+		.set({
+			doneAt: done ? new Date() : null,
+			...(!done
+				? {
+						voicemail: sql`case when ${marketEmails.voicemail}->>'state' = 'dismissed' then jsonb_build_object('state', 'review', 'reason', left('Restored: ' || (${marketEmails.voicemail}->>'reason'), 500)) else ${marketEmails.voicemail} end`,
+					}
+				: {}),
+		})
 		.where(eq(marketEmails.id, id))
 		.returning({ id: marketEmails.id });
 	if (!row) throw new Error(`There's no marketplace email ${id}`);
@@ -229,9 +255,12 @@ export async function moveTo(db: Db, id: number, folder: Folder | null) {
 			.set(
 				folder ? { folder, relabelledAt: new Date() } : { relabelledAt: null },
 			)
-			.where(eq(marketEmails.id, id))
+			.where(and(eq(marketEmails.id, id), isNull(marketEmails.voicemail)))
 			.returning({ id: marketEmails.id });
-		if (!row) throw new Error(`There's no marketplace email ${id}`);
+		if (!row)
+			throw new Error(
+				`Email ${id} cannot be moved. Voicemails stay in Voicemails; use Done or priority instead.`,
+			);
 		if (!folder) await resort(tx, [id]);
 		return row;
 	});
@@ -273,101 +302,6 @@ export async function countImportant(db: Db) {
 			),
 		);
 	return { important: row?.important ?? 0, critical: row?.critical ?? 0 };
-}
-
-export async function marketAttachment(db: Db, id: number) {
-	const [file] = await db
-		.select()
-		.from(marketEmailAttachments)
-		.where(eq(marketEmailAttachments.id, id));
-	return file ?? null;
-}
-
-// Keeps an email's HTML, with its pictures kept and pointed at.
-async function keepHtml(
-	db: Db,
-	emailId: number,
-	html: string,
-	inline: InlinePicture[],
-) {
-	const kept =
-		inline.length === 0
-			? []
-			: await db
-					.insert(marketEmailAttachments)
-					.values(
-						inline.map((p) => ({
-							emailId,
-							filename: p.filename,
-							contentType: p.contentType,
-							size: p.size,
-							data: p.data,
-							contentId: p.contentId,
-						})),
-					)
-					.returning({
-						id: marketEmailAttachments.id,
-						contentId: marketEmailAttachments.contentId,
-					});
-	await db
-		.update(marketEmails)
-		.set({
-			bodyHtml: pointPictures(
-				html,
-				kept.map((k) => ({
-					contentId: k.contentId ?? "",
-					url: `/api/market-email-attachments/${k.id}`,
-				})),
-			),
-		})
-		.where(eq(marketEmails.id, emailId));
-}
-
-// Fetches the HTML of emails kept before katasync kept it, a few a run. One
-// gone from the mailbox keeps its text only (empty HTML). The few are picked
-// at random, so one that keeps failing can't hold back the rest; they're
-// written newest first. Returns how many had their HTML saved; a failure isn't
-// counted.
-export async function backfillMarketHtml(
-	db: Db,
-	read: (
-		messageId: string,
-	) => Promise<{ html: string; inline: InlinePicture[] } | null>,
-	limit = 25,
-) {
-	const rows = (
-		await db
-			.select({
-				id: marketEmails.id,
-				messageId: marketEmails.messageId,
-				receivedAt: marketEmails.receivedAt,
-			})
-			.from(marketEmails)
-			.where(isNull(marketEmails.bodyHtml))
-			.orderBy(sql`random()`)
-			.limit(limit)
-	).sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
-	let saved = 0;
-	for (const r of rows) {
-		try {
-			const found = await read(r.messageId);
-			await db.transaction((tx) =>
-				keepHtml(tx, r.id, found?.html ?? "", found?.inline ?? []),
-			);
-			saved++;
-		} catch {
-			// A failure leaves it for the next run.
-		}
-	}
-	return saved;
-}
-
-export async function marketEmailHtml(db: Db, id: number) {
-	const [row] = await db
-		.select({ html: marketEmails.bodyHtml })
-		.from(marketEmails)
-		.where(eq(marketEmails.id, id));
-	return row?.html || null;
 }
 
 // Back this far on a sweep at least, and from a day before the last sweep
@@ -427,7 +361,9 @@ export async function readMarketMail(options: {
 		messages = await graph.messagesSince(
 			since,
 			"marketplaces",
-			isShopifyOrderNotice,
+			(message) =>
+				isShopifyOrderNotice(message) ||
+				/^(?:fw|fwd):.*\bnew voicemail\b/i.test(message.subject),
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -442,19 +378,13 @@ export async function readMarketMail(options: {
 	}
 	if (messages.length === 0 && !options.sweep) return { quiet: true };
 	const db = options.db();
-	const result = await ingestMarketMail(
-		db,
-		messages,
-		(id) => graph.messageContent(id, "marketplaces"),
-		(id) => graph.messageHeaders(id, "marketplaces"),
+	const result = await ingestMarketMail(db, messages, (id) =>
+		graph.messageContent(id, "marketplaces"),
 	);
 	// Buyers' messages among them go to their threads now; the messages cron
 	// does it too, and says when it can't.
 	const threaded = await import("#/buyers/amazon-mail")
 		.then((m) => m.threadAmazonMail(db))
-		.catch(() => null);
-	const shopify = await import("#/buyers/shopify-mail")
-		.then((m) => m.threadShopifyMail(db))
 		.catch(() => null);
 	const resorted = options.sweep ? await resort(db) : null;
 	const formatted = options.sweep
@@ -470,21 +400,8 @@ export async function readMarketMail(options: {
 	return {
 		...result,
 		threaded,
-		shopify,
 		resorted,
 		formatted,
 		...(outcome.state === "complete" ? {} : { error: outcome.error }),
 	};
-}
-
-// One kept email's HTML from the mailbox, or null when it's gone.
-export async function readHtml(
-	graph: typeof import("#/purchasing/inbox/graph"),
-	messageId: string,
-	box: "purchasing" | "marketplaces",
-) {
-	const id = await graph.findMessage(messageId, box);
-	if (!id) return null;
-	const { html, inline } = await graph.messageHtml(id, box);
-	return { html, inline };
 }

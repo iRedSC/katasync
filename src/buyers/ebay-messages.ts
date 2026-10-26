@@ -147,6 +147,8 @@ export async function syncEbayMessages(db: Db, { sweep = false } = {}) {
 			? new Date(check.readThrough.getTime() - 2 * 86_400_000)
 			: new Date(startedAt.getTime() - 30 * 86_400_000);
 	const problems: string[] = [];
+	// Why nothing could be read at all, apart from single conversations.
+	let failed: string | undefined;
 	let read = 0;
 	try {
 		const t = await token();
@@ -167,7 +169,8 @@ export async function syncEbayMessages(db: Db, { sweep = false } = {}) {
 			url = page.next;
 		}
 	} catch (error) {
-		problems.unshift(error instanceof Error ? error.message : String(error));
+		failed = error instanceof Error ? error.message : String(error);
+		problems.unshift(failed);
 	}
 	const set =
 		problems.length === 0
@@ -182,7 +185,7 @@ export async function syncEbayMessages(db: Db, { sweep = false } = {}) {
 		.insert(buyerMessageChecks)
 		.values({ market: "ebay", ...set })
 		.onConflictDoUpdate({ target: buyerMessageChecks.market, set });
-	return { read, problems };
+	return { read, problems, failed };
 }
 
 // One conversation; false when its latest message was already kept.
@@ -236,11 +239,80 @@ export async function rereadEbayThread(db: Db, threadId: number) {
 	);
 }
 
-// Sends a reply into a conversation; eBay's message ID back. Throws Unsure
+// The buyer of an order as eBay has them, to start a conversation: their
+// username, and the listing to name it by (eBay's own item ID, which
+// katasync's lines don't keep when a listing has a SKU).
+const orderBuyer = type({
+	"buyer?": { "username?": "string" },
+	lineItems: type({ "legacyItemId?": "string" }).array(),
+});
+
+export async function ebayOrderBuyer(orderId: string) {
+	const res = await fetch(
+		`${API}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}`,
+		{
+			headers: {
+				Authorization: `Bearer ${await accessToken()}`,
+				Accept: "application/json",
+			},
+		},
+	);
+	if (!res.ok)
+		throw new Error(`eBay answered ${res.status}: ${await res.text()}`);
+	const o = orderBuyer.assert(await res.json());
+	return {
+		username: o.buyer?.username ?? null,
+		itemId: o.lineItems.find((l) => l.legacyItemId)?.legacyItemId ?? null,
+	};
+}
+
+// Our conversation with a member: the one holding the message given, or
+// else the latest about the listing, or else the latest. Null when there's
+// none. Kept as a thread about the order, with everything in it.
+export async function keepEbayConversationWith(
+	db: Db,
+	to: { username: string; itemId: string | null; orderRef: string },
+	messageId?: string,
+) {
+	const t = await token();
+	const page = conversationsPage.assert(
+		await get(
+			t,
+			`/conversation?conversation_type=FROM_MEMBERS&other_party_username=${encodeURIComponent(to.username)}&limit=50`,
+		),
+	);
+	const all = page.conversations ?? [];
+	const found = messageId
+		? all.find((c) => c.latestMessage?.messageId === messageId)
+		: (all.find(
+				(c) => c.referenceType === "LISTING" && c.referenceId === to.itemId,
+			) ?? all[0]);
+	if (!found) return null;
+	const thread = await ensureThread(db, {
+		market: "ebay",
+		externalId: found.conversationId,
+		subject: found.conversationTitle || "eBay message",
+		buyerName: to.username,
+		orderRef: to.orderRef,
+		itemRef:
+			found.referenceType === "LISTING" ? (found.referenceId ?? null) : null,
+	});
+	await readConversation(
+		db,
+		t,
+		await sellerUsername(),
+		thread.id,
+		found.conversationId,
+	);
+	return thread;
+}
+
+// Sends a message into a conversation, or to a member to start one (about
+// a listing, when there is one); eBay's message ID back. Throws Unsure
 // when it may have gone anyway: eBay has no request key, so that's never
 // sent again blind, only looked for (rereadEbayThread).
 export async function sendEbayMessage(
-	conversationId: string,
+	to: string | { username: string; itemId: string | null },
 	text: string,
 	media: { mediaName: string; mediaType: string; mediaUrl: string }[] = [],
 ) {
@@ -261,7 +333,19 @@ export async function sendEbayMessage(
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
-				conversationId,
+				...(typeof to === "string"
+					? { conversationId: to }
+					: {
+							otherPartyUsername: to.username,
+							...(to.itemId
+								? {
+										reference: {
+											referenceType: "LISTING",
+											referenceId: to.itemId,
+										},
+									}
+								: {}),
+						}),
 				messageText: text,
 				...(media.length ? { messageMedia: media } : {}),
 			}),

@@ -9,7 +9,6 @@ import {
 	or,
 	sql,
 } from "drizzle-orm";
-import { isRelayed, parseCopy } from "#/buyers/amazon-mail";
 import type { Db } from "#/db/client";
 import {
 	buyerMessages,
@@ -21,14 +20,20 @@ import { groupBy } from "#/lib/group-by";
 import type { Market } from "#/markets/market";
 import { listRules } from "../rule-store";
 import { FOLDERS, type Folder, type Rule, sortEmail } from "../rules";
+import { voicemailState } from "../voicemail-model";
+import { unverified } from "./unverified";
 
-// One page of the marketplaces mailbox as the Inbox shows it, with why each
-// email sits where it does. Server only.
+// The Inbox's page of the marketplaces mailbox (src/inbox/market-mail.ts).
 
 // A view of the page: the open emails that are important, or in one folder,
 // or those done.
-export type MarketView = "important" | Folder | "done";
-export const MARKET_VIEWS = ["important", ...FOLDERS, "done"] as const;
+export type MarketView = "important" | "voicemails" | Folder | "done";
+export const MARKET_VIEWS = [
+	"important",
+	"voicemails",
+	...FOLDERS,
+	"done",
+] as const;
 
 const summary = {
 	id: marketEmails.id,
@@ -45,6 +50,7 @@ const summary = {
 	fromName: marketEmails.fromName,
 	subject: marketEmails.subject,
 	body: marketEmails.body,
+	voicemail: marketEmails.voicemail,
 	receivedAt: marketEmails.receivedAt,
 };
 
@@ -79,25 +85,6 @@ function why(
 	};
 }
 
-// Why an Amazon buyer message (or Amazon's copy of ours) wasn't put on its
-// thread: Microsoft didn't vouch it came from Amazon, so anyone could have
-// written it. Null for the rest.
-function unverified(
-	e: {
-		market: Market | null;
-		fromAddress: string;
-		senderAuthenticated: boolean;
-		subject: string;
-		body: string;
-	},
-	filed: boolean,
-) {
-	if (filed || e.senderAuthenticated || e.market !== "amazon") return null;
-	return isRelayed(e.fromAddress) || parseCopy(e)
-		? "Not put on a buyer thread: Microsoft couldn't confirm Amazon sent it"
-		: null;
-}
-
 // Where the next page of a view starts: the sort time and id of the page's last
 // email. The id tells apart emails at the same moment, so none is skipped.
 export type MarketCursor = { at: number; id: number };
@@ -108,6 +95,7 @@ export async function marketMailPage(
 	market: Market | null,
 	{ limit = 150, after }: { limit?: number; after?: MarketCursor } = {},
 ) {
+	const scopedMarket = view === "voicemails" ? null : market;
 	const sortAt =
 		view === "done" ? marketEmails.doneAt : marketEmails.receivedAt;
 	const where = and(
@@ -117,9 +105,14 @@ export async function marketMailPage(
 					isNull(marketEmails.doneAt),
 					view === "important"
 						? eq(marketEmails.important, true)
-						: eq(marketEmails.folder, view),
+						: view === "voicemails"
+							? isNotNull(marketEmails.voicemail)
+							: and(
+									eq(marketEmails.folder, view),
+									isNull(marketEmails.voicemail),
+								),
 				),
-		market ? eq(marketEmails.market, market) : undefined,
+		scopedMarket ? eq(marketEmails.market, scopedMarket) : undefined,
 		after
 			? or(
 					lt(sortAt, new Date(after.at)),
@@ -138,7 +131,8 @@ export async function marketMailPage(
 			.select({
 				folder: marketEmails.folder,
 				market: marketEmails.market,
-				n: sql<number>`count(*)::int`,
+				n: sql<number>`(count(*) filter (where ${marketEmails.voicemail} is null))::int`,
+				voicemails: sql<number>`(count(*) filter (where ${marketEmails.voicemail} is not null))::int`,
 				important: sql<number>`(count(*) filter (where ${marketEmails.important}))::int`,
 				critical: sql<number>`(count(*) filter (where ${marketEmails.critical}))::int`,
 			})
@@ -158,7 +152,9 @@ export async function marketMailPage(
 	const lastAt = view === "done" ? last?.doneAt : last?.receivedAt;
 	const next =
 		more && last && lastAt ? { at: lastAt.getTime(), id: last.id } : null;
-	const shown = counts.filter((c) => !market || c.market === market);
+	const shown = counts.filter(
+		(c) => !scopedMarket || c.market === scopedMarket,
+	);
 	const files =
 		rows.length === 0
 			? []
@@ -205,6 +201,7 @@ export async function marketMailPage(
 		// Unread open emails per folder, and important (critical among them),
 		// within the market shown.
 		counts: {
+			voicemails: counts.reduce((sum, row) => sum + row.voicemails, 0),
 			important: shown.reduce((s, c) => s + c.important, 0),
 			critical: shown.reduce((s, c) => s + c.critical, 0),
 			...(Object.fromEntries(
@@ -216,6 +213,8 @@ export async function marketMailPage(
 		},
 		emails: rows.map(({ relabelledAt, importanceSetAt, ...r }) => ({
 			...r,
+			voicemail:
+				r.voicemail === null ? null : voicemailState.parse(r.voicemail),
 			unverified: unverified(r, filed.has(r.id)),
 			why: why(rules, { ...r, relabelledAt, importanceSetAt }),
 			attachments: (byEmail.get(r.id) ?? []).map(({ emailId: _, ...f }) => f),

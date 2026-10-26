@@ -4,6 +4,7 @@ import {
 	type BuyerEmail,
 	type BuyerOrderRef,
 	matchShopifyReply,
+	newReplyToken,
 	readThreadAddress,
 	replyText,
 	type ShopifyThreadRef,
@@ -15,14 +16,16 @@ const INBOX = "marketplaces@eastcoastdrywall.com";
 
 beforeEach(() => {
 	vi.stubEnv("MARKETPLACE_INBOX", INBOX);
-	vi.stubEnv("CRON_SECRET", "test-cron-secret");
 });
 afterEach(() => vi.unstubAllEnvs());
 
 const at = new Date(Date.UTC(2026, 9, 1));
+// Each thread's token, as random as the real ones.
+const token = (id: number) => `5e7c0a${id}`.padEnd(16, "f");
 const thread = (id: number, orderName: string, open = true) =>
 	({
 		id,
+		replyToken: token(id),
 		email: BUYER,
 		orderName,
 		open,
@@ -45,29 +48,18 @@ const orders: BuyerOrderRef[] = ["#5536", "#5537", "#9999"].map((name) => ({
 }));
 const match = (m: BuyerEmail, threads = two) =>
 	matchShopifyReply(m, threads, orders);
-const to = (id: number) => threadAddress(id) ?? "";
+const to = (id: number) => threadAddress(token(id)) ?? "";
 
 describe("thread addresses", () => {
-	test("are signed, and a changed or missing signature isn't ours", () => {
-		const address = to(12);
-		expect(address).toMatch(
-			/^marketplaces\+so12-[0-9a-f]{12}@eastcoastdrywall\.com$/,
-		);
-		expect(readThreadAddress(address)).toEqual({
-			kind: "thread",
-			threadId: 12,
+	test("carry a random token, read back as it was", () => {
+		const a = newReplyToken();
+		expect(a).toMatch(/^[0-9a-f]{16}$/);
+		expect(newReplyToken()).not.toBe(a);
+		expect(threadAddress(a)).toBe(`marketplaces+so${a}@eastcoastdrywall.com`);
+		expect(readThreadAddress(threadAddress(a) ?? "")).toEqual({
+			kind: "token",
+			token: a,
 		});
-		const flipped = address.replace(
-			/-([0-9a-f])/,
-			(_, c) => `-${c === "a" ? "b" : "a"}`,
-		);
-		expect(readThreadAddress(flipped).kind).toBe("forged");
-		expect(readThreadAddress(address.replace("so12-", "so13-")).kind).toBe(
-			"forged",
-		);
-		expect(
-			readThreadAddress("marketplaces+so12@eastcoastdrywall.com").kind,
-		).toBe("forged");
 		expect(readThreadAddress(INBOX).kind).toBe("other");
 	});
 });
@@ -81,7 +73,8 @@ describe("matching a buyer's email to a thread", () => {
 	});
 
 	test("a tampered thread address doesn't match, even beside a good one", () => {
-		const bad = to(2).replace("so2-", "so1-");
+		// One character off: a token no thread has.
+		const bad = to(2).replace(`${token(2)}@`, `${token(2).slice(0, -1)}0@`);
 		expect(match(mail({ recipients: [bad] })).threadId).toBeNull();
 		expect(match(mail({ recipients: [to(2), bad] })).threadId).toBeNull();
 	});

@@ -1,12 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import { Ban, ExternalLink, Printer, Undo2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import {
-	CARRIER,
-	carrierPage,
-	type FollowedPackage,
-	PackageStatus,
-} from "#/components/package-status";
 import { Badge, Card, type Tone } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Button } from "#/components/ui/button";
@@ -15,7 +8,8 @@ import type { ReturnState } from "#/db/schema";
 import { channelName, formatCount, formatOrderDate } from "#/lib/format";
 import { returnReason } from "#/orders/return-reasons";
 import { printPdf } from "#/printing/qz-client";
-import { followReturnNow, type OrderDetail } from "#/server/orders";
+import type { OrderDetail } from "#/server/orders";
+import { ReturnPackage } from "./return-package";
 
 // Where an order's return or refund stands, all in one place: what's due
 // back and why, each request the buyer opened on a marketplace (a return,
@@ -218,7 +212,10 @@ export function ReturnCard({
 							id={r.id}
 							carrier={r.carrier}
 							number={r.trackingNumber}
+							page={r.trackingPage}
 							saved={r.tracking}
+							open={r.status !== "closed" && r.status !== "cancelled"}
+							unfollowed={r.unfollowedAt !== null}
 						/>
 					)}
 					{r.note && (
@@ -310,88 +307,6 @@ function Section({
 				{title}
 			</div>
 			{children}
-		</div>
-	);
-}
-
-type Followed =
-	| { state: "asking" }
-	| { state: "followed"; t: FollowedPackage }
-	// Its carrier isn't one Shippo follows, or Shippo couldn't be asked.
-	| { state: "unfollowed" };
-
-// The package coming back, followed on Shippo as a PO's are: asked the
-// first time its order opens, then every four hours until it arrives.
-function ReturnPackage({
-	id,
-	carrier,
-	number,
-	saved,
-}: {
-	id: number;
-	carrier: string | null;
-	number: string;
-	// What Shippo last said, kept; null until it's been asked.
-	saved: FollowedPackage | null;
-}) {
-	const [followed, setFollowed] = useState<Followed>(
-		saved ? { state: "followed", t: saved } : { state: "asking" },
-	);
-	useEffect(() => {
-		if (saved) {
-			setFollowed({ state: "followed", t: saved });
-			return;
-		}
-		let current = true;
-		setFollowed({ state: "asking" });
-		followReturnNow({ data: { id } }).then(
-			(t) =>
-				current &&
-				setFollowed(t ? { state: "followed", t } : { state: "unfollowed" }),
-			() => current && setFollowed({ state: "unfollowed" }),
-		);
-		return () => {
-			current = false;
-		};
-	}, [id, saved]);
-	const known = followed.state === "followed" ? followed.t : null;
-	const page = known ? carrierPage(known) : null;
-	const text =
-		`${known ? CARRIER[known.carrier as keyof typeof CARRIER] : (carrier ?? "")} ${known?.number ?? number}`.trim();
-	return (
-		<div className="mt-2">
-			{page ? (
-				<a
-					href={page}
-					target="_blank"
-					rel="noreferrer"
-					className="block truncate font-mono text-xs text-link hover:underline"
-				>
-					{text}
-				</a>
-			) : (
-				<span className="block truncate font-mono text-xs">{text}</span>
-			)}
-			{followed.state !== "unfollowed" && (
-				<PackageStatus
-					t={
-						known ?? {
-							carrier: carrier ?? "",
-							number,
-							status: null,
-							statusDetail: null,
-							statusAt: null,
-							eta: null,
-							originalEta: null,
-							service: null,
-							origin: null,
-							destination: null,
-							history: [],
-							checkedAt: null,
-						}
-					}
-				/>
-			)}
 		</div>
 	);
 }

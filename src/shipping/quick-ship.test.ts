@@ -4,6 +4,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { addDispatch, createProduct, createTestDb } from "#/test/db";
+import { billedAs } from "./billed-as";
 import { contentsKey } from "./contents";
 import { addressKey, companionsOf, whyNotTogether } from "./dispatch";
 import { assignOrderPins } from "./pins";
@@ -14,6 +15,7 @@ import {
 	needsInsurance,
 	orderForShipping,
 	rankRates,
+	rebillsByCarrier,
 	shipmentPlan,
 	signatureRequired,
 } from "./quick-ship";
@@ -158,6 +160,66 @@ describe("rankRates", () => {
 			],
 		);
 		expect(ranked.map((r) => r.service)).toEqual(["contents", "box", "cheap"]);
+	});
+});
+
+describe("rebillsByCarrier", () => {
+	const box = (
+		l: number,
+		w: number,
+		h: number,
+		packageId: number | null = null,
+	) => ({ packageId, lengthMm: l, widthMm: w, heightMm: h });
+	const label = (
+		shipmentId: number,
+		carrier: string,
+		sides: ReturnType<typeof box>,
+		day: number,
+	) => ({
+		...sides,
+		shipmentId,
+		carrier,
+		weightGrams: 2000,
+		shippedAt: new Date(2026, 9, day),
+		amount: 10,
+		lines: [],
+	});
+	// UPS re-billed this 48" tube twice, FedEx a small saved box once.
+	const past = [
+		label(1, "UPS", box(1219, 102, 102), 1),
+		label(2, "UPS", box(1219, 102, 102), 9),
+		label(3, "FedEx", box(200, 150, 100, 7), 5),
+	];
+
+	test("matches the same sides however they're typed, newest first", () => {
+		const found = rebillsByCarrier([box(105, 1225, 100)], past);
+		expect(found.get("ups")?.map((r) => r.shipmentId)).toEqual([2, 1]);
+		expect(found.has("fedex")).toBe(false);
+	});
+
+	test("a saved box matches by itself, a different size doesn't", () => {
+		const saved = rebillsByCarrier([box(300, 300, 300, 7)], past);
+		expect(saved.get("fedex")?.length).toBe(1);
+		expect(rebillsByCarrier([box(1219, 102, 140)], past).size).toBe(0);
+	});
+
+	test("any box of several flags its carrier", () => {
+		const found = rebillsByCarrier(
+			[box(100, 100, 100), box(1219, 102, 102)],
+			past,
+		);
+		expect(found.get("ups")?.length).toBe(2);
+	});
+});
+
+describe("billedAs", () => {
+	test("reads what UPS measured", () => {
+		expect(
+			billedAs(
+				"Shipping Charge Correction Ground: Billed Weight (lb): 40.0 Declared Weight (oz): 74.0 Billed Dimensions (in): 49.0 x 5.0 x 5.0 Declared Dimensions (in): 47.99 x 4.02 x 4.02",
+			),
+		).toEqual({ inches: [49, 5, 5], pounds: 40 });
+		expect(billedAs("Addl. Handling longest side")).toBeNull();
 	});
 });
 

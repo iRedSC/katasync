@@ -8,7 +8,7 @@ import {
 	isPurchasingView,
 	purchasingFolderOf,
 } from "#/components/inbox/folders";
-import { InboxFrame, MarketFilter } from "#/components/inbox/frame";
+import { CheckNow, InboxFrame, MarketFilter } from "#/components/inbox/frame";
 import { MarketplaceBox } from "#/components/inbox/marketplace-box";
 import { PrecedentsEditor } from "#/components/inbox/precedents-editor";
 import { PurchasingBox } from "#/components/inbox/purchasing-box";
@@ -72,7 +72,7 @@ export const Route = createFileRoute("/inbox")({
 	},
 	loaderDeps: ({ search }) => ({
 		folder: search.folder ?? ("important" as const),
-		market: search.market ?? null,
+		market: search.folder === "voicemails" ? null : (search.market ?? null),
 		threads: search.threads ?? ("open" as const),
 	}),
 	loader: async ({ deps: { folder, market, threads } }) => {
@@ -123,12 +123,16 @@ function InboxPage() {
 			title="Inbox"
 			width="wide"
 			actions={
-				(d.kind === "marketplaces" || d.kind === "buyers") && (
-					<MarketFilter
-						folder={d.kind === "buyers" ? "buyers" : d.folder}
-						market={market ?? null}
-						check={d.kind === "buyers" ? undefined : d.page.check}
-					/>
+				d.kind === "marketplaces" && d.folder === "voicemails" ? (
+					<CheckNow check={d.page.check} />
+				) : (
+					(d.kind === "marketplaces" || d.kind === "buyers") && (
+						<MarketFilter
+							folder={d.kind === "buyers" ? "buyers" : d.folder}
+							market={market ?? null}
+							check={d.kind === "buyers" ? undefined : d.page.check}
+						/>
+					)
 				)
 			}
 		>
@@ -151,7 +155,7 @@ function InboxPage() {
 			) : d.kind === "marketplaces" ? (
 				<MarketplaceBox
 					view={d.folder}
-					market={market ?? null}
+					market={d.folder === "voicemails" ? null : (market ?? null)}
 					page={d.page}
 					counts={d.counts}
 				/>

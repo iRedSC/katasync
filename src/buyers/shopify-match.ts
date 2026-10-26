@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 // Which Shopify thread a buyer's email answers (./shopify-mail.ts files it).
 // Nothing here guesses: an email that could be about something else stays
@@ -11,47 +11,33 @@ export function inbox() {
 	return box && ADDRESS.test(box) ? box : null;
 }
 
-// A thread's reply address carries a signature of its ID, so one can't be
-// made up by counting: marketplaces+so12-<12 hex>@. Signed with CRON_SECRET
-// under its own label; changing that secret leaves older addresses
-// unrecognised, so their answers wait in the mailbox.
-function signature(threadId: number) {
-	const secret = process.env.CRON_SECRET;
-	if (!secret) return null;
-	return createHmac("sha256", secret)
-		.update(`shopify-thread:${threadId}`)
-		.digest("hex")
-		.slice(0, 12);
-}
+// A thread's reply address carries its random token (shopify_threads),
+// marketplaces+so<16 hex>@, so one can't be guessed or made up by counting.
+export const newReplyToken = () => randomBytes(8).toString("hex");
 
 // The address a thread's emails ask to be answered at.
-export function threadAddress(threadId: number) {
+export function threadAddress(replyToken: string) {
 	const box = inbox();
-	const sig = signature(threadId);
-	if (!box || !sig) return null;
+	if (!box) return null;
 	const [local, domain] = box.split("@");
-	return `${local}+so${threadId}-${sig}@${domain}`;
+	return `${local}+so${replyToken}@${domain}`;
 }
 
-// What an address is to us: not a thread address at all, one whose
-// signature holds, or one shaped like ours that doesn't.
+// What an address is to us: not a thread address at all, or one shaped like
+// ours with the token it carries (which may be no thread's).
 export function readThreadAddress(
 	address: string,
-):
-	| { kind: "other" }
-	| { kind: "thread"; threadId: number }
-	| { kind: "forged" } {
+): { kind: "other" } | { kind: "token"; token: string } {
 	const box = inbox();
 	if (!box) return { kind: "other" };
 	const [local, domain] = box.split("@");
 	const a = address.trim().toLowerCase();
 	if (!a.startsWith(`${local}+so`) || !a.endsWith(`@${domain}`))
 		return { kind: "other" };
-	const m = /^[^+]+\+so(\d{1,9})-([0-9a-f]{12})@/.exec(a);
-	const sig = m ? signature(Number(m[1])) : null;
-	if (!m || !sig) return { kind: "forged" };
-	const ok = timingSafeEqual(Buffer.from(m[2]), Buffer.from(sig));
-	return ok ? { kind: "thread", threadId: Number(m[1]) } : { kind: "forged" };
+	return {
+		kind: "token",
+		token: a.slice(local.length + 3, -domain.length - 1),
+	};
 }
 
 // What the buyer wrote, apart from the email they answered or passed on.
@@ -88,6 +74,8 @@ export function orderNames(text: string) {
 
 export type ShopifyThreadRef = {
 	id: number;
+	// Its reply address's token; null when it has none, so no address names it.
+	replyToken: string | null;
 	email: string;
 	orderName: string;
 	open: boolean;
@@ -137,7 +125,7 @@ function reference(
 }
 
 // Which thread a buyer's email answers. Only from a sender Microsoft
-// vouched for, after the thread started. Its one signed thread address,
+// vouched for, after the thread started. Its one known thread address,
 // else the one order of theirs it names, else their one open thread; and
 // an order it names must be that thread's. Anything less sure is unmatched.
 export function matchShopifyReply(
@@ -153,15 +141,20 @@ export function matchShopifyReply(
 	);
 	if (theirs.length === 0) return { threadId: null, why: "not a buyer's" };
 
-	const read = email.recipients.map(readThreadAddress);
-	if (read.some((r) => r.kind === "forged"))
+	// Each thread address by its token, against every thread: one no
+	// thread has was made up or mistyped.
+	const tokens = email.recipients
+		.map(readThreadAddress)
+		.flatMap((r) => (r.kind === "token" ? [r.token] : []));
+	const found = tokens.flatMap((token) =>
+		threads.filter((t) => t.replyToken === token).map((t) => t.id),
+	);
+	if (found.length < tokens.length)
 		return {
 			threadId: null,
 			why: "it's sent to a thread address we didn't give",
 		};
-	const named = [
-		...new Set(read.flatMap((r) => (r.kind === "thread" ? [r.threadId] : []))),
-	];
+	const named = [...new Set(found)];
 	if (named.length > 1)
 		return { threadId: null, why: "it's sent to more than one thread" };
 	const addressed = named[0];

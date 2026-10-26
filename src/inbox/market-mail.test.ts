@@ -110,6 +110,7 @@ describe("the mailbox", () => {
 		const page = await marketMailPage(db, "important", null);
 		// The sale arrives read (the default orders rule), so isn't counted.
 		expect(page.counts).toEqual({
+			voicemails: 0,
 			important: 1,
 			critical: 0,
 			violations: 1,
