@@ -11,6 +11,7 @@ import { assignOrderPins } from "./pins";
 import {
 	combineRates,
 	extraCosts,
+	grown,
 	lastPackedFor,
 	needsInsurance,
 	orderForShipping,
@@ -18,6 +19,7 @@ import {
 	rebillsByCarrier,
 	shipmentPlan,
 	signatureRequired,
+	surchargeJumps,
 } from "./quick-ship";
 import type { Rate } from "./shippo";
 
@@ -209,6 +211,36 @@ describe("rebillsByCarrier", () => {
 			past,
 		);
 		expect(found.get("ups")?.length).toBe(2);
+	});
+});
+
+describe("near a surcharge", () => {
+	test("grows the longest side by an inch and adds a pound", () => {
+		const box = { packageId: 3, lengthMm: 300, widthMm: 1219, heightMm: 100 };
+		expect(grown({ ...box, weightGrams: 2000 })).toEqual({
+			packageId: 3,
+			lengthMm: 300,
+			widthMm: 1244,
+			heightMm: 100,
+			weightGrams: 2454,
+		});
+	});
+
+	test("warns on a jump, not on the usual step up", () => {
+		const rate = (service: string, cost: number): Rate => ({
+			id: service,
+			carrier: "UPS",
+			service,
+			serviceName: service,
+			cost,
+			days: 3,
+		});
+		const jumps = surchargeJumps(
+			[rate("ground", 20), rate("air", 60), rate("cheap", 8)],
+			[rate("ground", 34.25), rate("air", 66), rate("cheap", 9.5)],
+		);
+		// air's $6 is under a fifth of its price; cheap's is under $5.
+		expect([...jumps]).toEqual([["UPS|ground", 14.25]]);
 	});
 });
 

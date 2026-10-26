@@ -235,6 +235,47 @@ export function extraCosts(
 	return costs;
 }
 
+const MM_PER_INCH = 25.4;
+const GRAMS_PER_POUND = 453.59237;
+
+// A box an inch longer on its longest side and a pound heavier: priced next
+// to the real one, it shows whether the box sits just under a carrier's
+// line (a length, a weight, a size class) where the price jumps.
+export function grown<B extends BoxSize & { weightGrams: number }>(box: B): B {
+	const sides = [box.lengthMm, box.widthMm, box.heightMm];
+	const longest = sides.indexOf(Math.max(...sides));
+	sides[longest] += Math.round(MM_PER_INCH);
+	return {
+		...box,
+		lengthMm: sides[0],
+		widthMm: sides[1],
+		heightMm: sides[2],
+		weightGrams: box.weightGrams + Math.round(GRAMS_PER_POUND),
+	};
+}
+
+// A pound more usually adds a dollar or two; past both of these it's a
+// surcharge or a size class, not the usual step.
+const SURCHARGE_AT = 5;
+const SURCHARGE_SHARE = 0.2;
+
+// What growing the box (see grown) adds to each service, keyed by carrier
+// and service, only where that's a jump worth warning about.
+export function surchargeJumps(
+	rates: Rate[],
+	grownRates: Rate[],
+): Map<string, number> {
+	const now = new Map(rates.map((r) => [`${r.carrier}|${r.service}`, r.cost]));
+	const jumps = new Map<string, number>();
+	for (const [key, jump] of extraCosts(grownRates, rates)) {
+		const cost = now.get(key) ?? 0;
+		if (jump >= SURCHARGE_AT && jump >= cost * SURCHARGE_SHARE) {
+			jumps.set(key, jump);
+		}
+	}
+	return jumps;
+}
+
 export function combineRates(perBox: Rate[][]): Rate[] {
 	if (perBox.length === 0) return [];
 	const keyOf = (r: Rate) => `${r.carrier}|${r.service}`;

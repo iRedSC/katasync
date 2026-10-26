@@ -250,6 +250,9 @@ export function RatesStep({
 										{r.rebills.length > 0 && (
 											<Badge tone="critical">Previously adjusted</Badge>
 										)}
+										{r.nearSurcharge !== null && (
+											<Badge tone="warning">Near a surcharge</Badge>
+										)}
 									</span>
 								</span>
 								<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">
