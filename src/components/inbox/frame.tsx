@@ -18,6 +18,7 @@ import {
 	PRECEDENTS,
 	PURCHASING_FOLDERS,
 	RULES,
+	VOICEMAILS,
 } from "./folders";
 import { tabClass } from "./mail-pane";
 
@@ -28,7 +29,7 @@ import { tabClass } from "./mail-pane";
 // Where a folder's link goes; the market filter stays as it is.
 export const folderSearch = (folder: InboxFolder, market: Market | null) => ({
 	...(folder === "important" ? {} : { folder }),
-	...(market ? { market } : {}),
+	...(market && folder !== "voicemails" ? { market } : {}),
 });
 
 const waiting = (folder: InboxFolder, c: InboxCounts): number | null =>
@@ -100,6 +101,7 @@ export function InboxFrame({
 			<div className="grid md:h-[calc(100svh-9.5rem)] md:min-h-[32rem] md:grid-cols-[12rem_minmax(0,1fr)]">
 				<nav className="flex gap-0.5 overflow-x-auto border-b p-2 md:flex-col md:overflow-visible md:border-r md:border-b-0">
 					{item(BUYERS)}
+					{item(VOICEMAILS)}
 					<Group>Marketplaces</Group>
 					{MARKET_FOLDERS.map(item)}
 					<Group>Purchasing</Group>
@@ -162,7 +164,7 @@ export function MarketFilter({
 }
 
 // Reads the mailbox now; the list reloads with anything new.
-function CheckNow({ check }: { check: MarketMailPage["check"] }) {
+export function CheckNow({ check }: { check: MarketMailPage["check"] }) {
 	const router = useRouter();
 	const [busy, setBusy] = useState(false);
 	return (
@@ -195,6 +197,11 @@ function CheckNow({ check }: { check: MarketMailPage["check"] }) {
 								description: r.skipped,
 							});
 						await router.invalidate();
+					} catch (error) {
+						toast.error("Couldn't check the inbox", {
+							description:
+								error instanceof Error ? error.message : String(error),
+						});
 					} finally {
 						setBusy(false);
 					}

@@ -31,6 +31,7 @@ export const Route = createFileRoute("/api/cron/inbox")({
 	server: {
 		handlers: {
 			GET: async ({ request }) => {
+				const voicemailDeadline = Date.now() + AI_BUDGET_MS;
 				if (!process.env.CRON_SECRET)
 					return new Response("Set CRON_SECRET to read the inbox", {
 						status: 500,
@@ -46,11 +47,16 @@ export const Route = createFileRoute("/api/cron/inbox")({
 					(async () => {
 						const { readMarketMail } = await import("#/inbox/market-mail");
 						const getDb = await db();
-						return readMarketMail({
+						const mail = await readMarketMail({
 							since: new Date(Date.now() - LOOK_BACK_MS),
 							sweep,
 							db: () => getDb,
 						});
+						const { triageVoicemails } = await import("#/inbox/voicemail");
+						const voicemails = await triageVoicemails(getDb, {
+							deadline: voicemailDeadline,
+						});
+						return { ...mail, voicemails };
 					})().catch((e: unknown) => ({
 						error: e instanceof Error ? e.message : String(e),
 					})),
