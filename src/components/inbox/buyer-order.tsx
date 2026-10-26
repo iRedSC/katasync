@@ -75,7 +75,7 @@ export function MailOrders({ emailId }: { emailId: number }) {
 }
 
 // Its status first, where a list of them is scanned.
-function OrderStrip({ order }: { order: Order }) {
+export function OrderStrip({ order }: { order: Order }) {
 	const [first] = order.lines;
 	return (
 		<div className="flex flex-wrap items-center gap-x-4 gap-y-2 animate-in fade-in-0">

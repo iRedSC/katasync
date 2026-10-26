@@ -23,6 +23,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type { Condition } from "#/inbox/rules";
+import type { VoicemailState } from "#/inbox/voicemail-model";
 import type { Standing } from "#/markets/standing";
 import type { Applied, Proposal } from "#/purchasing/inbox/ai-filing-shapes";
 
@@ -3005,6 +3006,7 @@ export const marketEmails = pgTable(
 		subject: text().notNull(),
 		// Plain text, as Outlook renders it.
 		body: text().notNull(),
+		voicemail: jsonb().$type<VoicemailState>(),
 		// The email as sent, as on po_emails.
 		bodyHtml: text(),
 		receivedAt: timestamp({ withTimezone: true }).notNull(),
@@ -3018,6 +3020,17 @@ export const marketEmails = pgTable(
 		check(
 			"market_emails_critical_is_important",
 			sql`not ${t.critical} or ${t.important}`,
+		),
+		check(
+			"market_emails_voicemail_state",
+			sql`${t.voicemail} is null or coalesce(
+			jsonb_typeof(${t.voicemail}) = 'object' and case ${t.voicemail}->>'state'
+				when 'pending' then true
+				when 'processing' then jsonb_typeof(${t.voicemail}->'token') = 'string' and jsonb_typeof(${t.voicemail}->'startedAt') = 'string'
+				when 'ready' then length(${t.voicemail}->>'title') > 0 and length(${t.voicemail}->>'summary') > 0 and ${t.voicemail}->>'level' in ('normal', 'important', 'critical') and jsonb_typeof(${t.voicemail}->'orderIds') = 'array' and jsonb_typeof(${t.voicemail}->'productIds') = 'array'
+				when 'review' then length(${t.voicemail}->>'reason') > 0
+				when 'dismissed' then length(${t.voicemail}->>'reason') > 0
+				else false end, false)`,
 		),
 	],
 );

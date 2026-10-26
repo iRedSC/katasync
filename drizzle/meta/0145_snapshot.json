@@ -1,5 +1,5 @@
 {
-  "id": "27ac7820-08de-4d79-8af6-7b5784dcd089",
+  "id": "e6860643-80ea-425b-834c-a784d85444b7",
   "prevId": "8aef192d-1999-45c7-b95c-faf5421acdfd",
   "version": "7",
   "dialect": "postgresql",
@@ -7017,13 +7017,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "sender_authenticated": {
-          "name": "sender_authenticated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "from_name": {
           "name": "from_name",
           "type": "text",
@@ -7047,6 +7040,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "voicemail": {
+          "name": "voicemail",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         },
         "body_html": {
           "name": "body_html",
@@ -7115,6 +7114,10 @@
         "market_emails_critical_is_important": {
           "name": "market_emails_critical_is_important",
           "value": "not \"market_emails\".\"critical\" or \"market_emails\".\"important\""
+        },
+        "market_emails_voicemail_state": {
+          "name": "market_emails_voicemail_state",
+          "value": "\"market_emails\".\"voicemail\" is null or coalesce(\n\t\t\tjsonb_typeof(\"market_emails\".\"voicemail\") = 'object' and case \"market_emails\".\"voicemail\"->>'state'\n\t\t\t\twhen 'pending' then true\n\t\t\t\twhen 'processing' then jsonb_typeof(\"market_emails\".\"voicemail\"->'token') = 'string' and jsonb_typeof(\"market_emails\".\"voicemail\"->'startedAt') = 'string'\n\t\t\t\twhen 'ready' then length(\"market_emails\".\"voicemail\"->>'title') > 0 and length(\"market_emails\".\"voicemail\"->>'summary') > 0 and \"market_emails\".\"voicemail\"->>'level' in ('normal', 'important', 'critical') and jsonb_typeof(\"market_emails\".\"voicemail\"->'orderIds') = 'array' and jsonb_typeof(\"market_emails\".\"voicemail\"->'productIds') = 'array'\n\t\t\t\twhen 'review' then length(\"market_emails\".\"voicemail\"->>'reason') > 0\n\t\t\t\twhen 'dismissed' then length(\"market_emails\".\"voicemail\"->>'reason') > 0\n\t\t\t\telse false end, false)"
         }
       },
       "isRLSEnabled": false
@@ -7716,52 +7719,6 @@
           "value": "\"oauth_tokens\".\"kind\" = 'refresh' or \"oauth_tokens\".\"used_at\" is null"
         }
       },
-      "isRLSEnabled": false
-    },
-    "public.order_buyer_contacts": {
-      "name": "order_buyer_contacts",
-      "schema": "",
-      "columns": {
-        "order_id": {
-          "name": "order_id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "order_buyer_contacts_order_id_orders_id_fk": {
-          "name": "order_buyer_contacts_order_id_orders_id_fk",
-          "tableFrom": "order_buyer_contacts",
-          "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.order_channel_tracking": {
@@ -13516,53 +13473,6 @@
           "nullsNotDistinct": false,
           "columns": [
             "external_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.shopify_threads": {
-      "name": "shopify_threads",
-      "schema": "",
-      "columns": {
-        "thread_id": {
-          "name": "thread_id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "reply_token": {
-          "name": "reply_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "shopify_threads_thread_id_buyer_threads_id_fk": {
-          "name": "shopify_threads_thread_id_buyer_threads_id_fk",
-          "tableFrom": "shopify_threads",
-          "tableTo": "buyer_threads",
-          "columnsFrom": [
-            "thread_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "shopify_threads_replyToken_unique": {
-          "name": "shopify_threads_replyToken_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "reply_token"
           ]
         }
       },
