@@ -12,6 +12,7 @@ import {
 	type SyntheticEvent,
 	useState,
 } from "react";
+import { OnPoChip } from "#/components/on-po-chip";
 import { AbcBadge, Badge, type Tone } from "#/components/page";
 import { ProductImage, ProductName, SetsChip } from "#/components/product";
 import { AddToCatalog } from "#/components/products-list/add-to-catalog";
@@ -41,6 +42,7 @@ export function ProductCell({ product: p }: { product: ProductRow }) {
 				<ProductName name={p.name} variantName={p.variantName} />
 				<div className="flex min-w-0 items-center gap-2 text-xs whitespace-nowrap text-muted-foreground">
 					<span className="truncate">{p.sku}</span>
+					<OnPoChip pos={p.openPos} />
 					<SetsChip sets={p.why?.sets ?? null} />
 					{p.kind === "bundle" && <span>Tool set</span>}
 					{p.kind === "kit" && <span>Kit</span>}

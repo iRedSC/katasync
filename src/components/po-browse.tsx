@@ -10,6 +10,7 @@ import {
 import { BulkChip } from "#/components/bulk-chip";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
+import { OnPoChip } from "#/components/on-po-chip";
 import { AbcBadge } from "#/components/page";
 import { ProductImage, ProductName, SetsChip } from "#/components/product";
 import { Button } from "#/components/ui/button";
@@ -369,6 +370,7 @@ function Table({
 												/>
 												<div className="flex items-center gap-2 text-xs text-muted-foreground">
 													<span>{row.sku}</span>
+													<OnPoChip pos={row.openPos} />
 													<SetsChip sets={row.why?.sets ?? null} />
 													{t && (
 														<BulkChip

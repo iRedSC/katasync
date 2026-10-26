@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
 import type { RefObject } from "react";
 import { BulkChip } from "#/components/bulk-chip";
+import { OnPoChip } from "#/components/on-po-chip";
 import { Badge } from "#/components/page";
 import { ProductImage, SetsChip } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
@@ -140,6 +141,7 @@ export function LineRow({
 									</span>
 								)}
 							</span>
+							<OnPoChip pos={l.otherPos} />
 							<SetsChip sets={l.why?.sets ?? null} />
 							{l.bulk && (
 								<BulkChip

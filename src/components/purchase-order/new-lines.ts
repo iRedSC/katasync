@@ -42,6 +42,7 @@ export function recommendedLine(
 		onHand: r.onHand,
 		stockRange: r.stockRange,
 		why: r.why,
+		otherPos: r.otherPos,
 		// The reload says what today's suggestion wants; until then, nothing.
 		wants: null,
 		locked: false,
@@ -97,6 +98,7 @@ export function browseLine(
 		onHand: row.onHand ?? 0,
 		stockRange: row.range,
 		why: row.why,
+		otherPos: row.openPos,
 		// The reload says what today's suggestion wants; until then, nothing.
 		wants: null,
 		locked: false,

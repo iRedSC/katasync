@@ -13,6 +13,7 @@ import { productSearch } from "#/lib/product-search";
 import { carried } from "#/products/archive";
 import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
 import { cheapestOffers } from "#/purchasing/catalogs";
+import { openPosOf } from "#/purchasing/open-pos";
 import {
 	addDraftLine,
 	addLine,
@@ -106,14 +107,19 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 			)
 			.where(inArray(products.id, ids));
 		const rows = ids.flatMap((id) => found.filter((r) => r.productId === id));
-		const onHand = await onHandOf(
-			db,
-			rows.map((r) => r.productId),
-		);
+		const productIds = rows.map((r) => r.productId);
+		const [onHand, openPos] = await Promise.all([
+			onHandOf(db, productIds),
+			openPosOf(db, productIds),
+		]);
 		return rows.map(({ sold, ...r }) => ({
 			...r,
 			onHand: onHand.get(r.productId) ?? 0,
 			fromThisSupplier: sold,
+			// Other drafts and sent POs it's on.
+			otherPos: (openPos.get(r.productId) ?? []).filter(
+				(p) => p.purchaseOrderId !== data.purchaseOrderId,
+			),
 		}));
 	});
 
@@ -170,7 +176,14 @@ export const browseForPurchaseOrder = createServerFn({ method: "GET" })
 					termsOf.has(p.id) ||
 					(p.kind === "bundle" && p.supplier?.id === po.supplierId),
 			)
-			.map((p) => ({ ...p, terms: termsOf.get(p.id) ?? null }));
+			.map((p) => ({
+				...p,
+				terms: termsOf.get(p.id) ?? null,
+				// The other drafts and sent POs it's on: never this one.
+				openPos: p.openPos.filter(
+					(o) => o.purchaseOrderId !== data.purchaseOrderId,
+				),
+			}));
 	});
 
 export type BrowseRow = Awaited<
