@@ -18,7 +18,11 @@ export async function ebayCaseGet(
 ): Promise<unknown> {
 	const remaining = deadline - Date.now();
 	if (remaining <= 0) throw new Error("eBay cases pass time budget reached");
-	const url = new URL(path, "https://api.ebay.com");
+	// Payment disputes live on apiz; Post-Order on api.
+	const url = new URL(
+		path,
+		disputeToken ? "https://apiz.ebay.com" : "https://api.ebay.com",
+	);
 	if (
 		url.protocol !== "https:" ||
 		!["api.ebay.com", "apiz.ebay.com"].includes(url.hostname)
@@ -80,7 +84,6 @@ export type EbayObligationDetail = z.infer<typeof obligationDetail>;
 export function ebayObligation(detail: EbayObligationDetail) {
 	const deadlines = [
 		detail.sellerResponseDue?.respondByDate,
-		detail.respondByDate,
 		detail.sellerMakeItRightByDate,
 		...(detail.evidenceRequests ?? []).map((request) => request.respondByDate),
 	].filter((value): value is Date => value !== undefined);
@@ -88,6 +91,8 @@ export function ebayObligation(detail: EbayObligationDetail) {
 		deadline: deadlines.length
 			? new Date(Math.min(...deadlines.map((value) => value.getTime())))
 			: null,
+		// eBay uses respondByDate for whichever party acts next, buyer or us.
+		eitherParty: detail.respondByDate ?? null,
 		actions: [
 			...(detail.availableChoices ?? []),
 			...(detail.sellerAvailableOptions ?? []).map(

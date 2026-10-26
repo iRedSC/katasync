@@ -70,11 +70,16 @@ export async function ebayCasesPass(
 				),
 			)
 			.orderBy(marketplaceCases.syncedAt);
+		// Half the budget at most, oldest first, so discovery always runs.
+		const recheckUntil = Date.now() + (deadline - Date.now()) / 2;
 		for (const row of open) {
+			if (Date.now() >= recheckUntil) break;
 			const kind = kinds.find((kind) => kind === row.kind);
 			if (!kind) continue;
 			const found = await fetchEbayCase(kind, row.externalId, deadline, token, {
 				creationDate: row.requestedAt,
+				// Search-only deadline: the detail call doesn't repeat it.
+				respondByDate: row.respondBy ?? undefined,
 				inquiryId: kind === "inquiry" ? row.externalId : undefined,
 				cancelId: kind === "cancellation" ? row.externalId : undefined,
 				caseId: kind === "escalation" ? row.externalId : undefined,
