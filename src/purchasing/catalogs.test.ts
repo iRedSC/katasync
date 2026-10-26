@@ -21,6 +21,7 @@ import {
 } from "./orders";
 import {
 	createPurchasingDb,
+	daysAgo,
 	now,
 	purchasingBuilders,
 } from "./purchasing.fixtures";
@@ -217,6 +218,9 @@ describe("a PO's own suggestion settings", () => {
 		await price(knife, canam, 1);
 		await sell(blade, 90);
 		await sell(knife, 90);
+		// The 90 above sold 10 days ago, inside 20 cover days. These 60 sold 40
+		// days ago, so only the 60-day window counts them.
+		await sell(blade, 60, { placedAt: daysAgo(40) });
 
 		const base = await suggestionFor(db, canam, DEFAULT_SETTINGS, now);
 		const longer = await suggestionFor(
@@ -320,6 +324,8 @@ test("undo leaves a line changed since applying alone", async () => {
 	const blade = await tool("BLADE");
 	await price(blade, canam, 1);
 	await sell(blade, 90);
+	// Only the 90-day window reaches these 60, sold 40 days ago.
+	await sell(blade, 60, { placedAt: daysAgo(40) });
 	const po = await draftFromSuggestions(db, canam, now);
 	const r = await applySettings(
 		db,

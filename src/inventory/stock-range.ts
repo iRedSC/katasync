@@ -1,12 +1,12 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { products, settings, supplierOffers, suppliers } from "#/db/schema";
+import { NO_FORECAST, recentSales } from "#/purchasing/forecast";
 import {
 	DEFAULT_COVER_DAYS,
 	forecastMax,
 	loadPlan,
 	type Plan,
-	planFor,
 } from "#/purchasing/reorder";
 
 export { forecastMax } from "#/purchasing/reorder";
@@ -70,7 +70,6 @@ export async function defaultRanges(
 			// Each product's cheapest supplier, the one reorder buys from.
 			.select({
 				productId: supplierOffers.productId,
-				supplierId: supplierOffers.supplierId,
 				coverDays: suppliers.coverDays,
 			})
 			.from(supplierOffers)
@@ -87,10 +86,11 @@ export async function defaultRanges(
 	return new Map(
 		productIds.map((id) => {
 			const s = supplier.get(id);
-			const max = forecastMax(min, {
-				...planFor(planned, id, s?.supplierId ?? null),
-				coverDays: s?.coverDays ?? DEFAULT_COVER_DAYS,
-			});
+			const { sold } = recentSales(
+				planned.forecasts.get(id) ?? NO_FORECAST,
+				s?.coverDays ?? DEFAULT_COVER_DAYS,
+			);
+			const max = forecastMax(min, sold);
 			return [id, { min, max }];
 		}),
 	);

@@ -3,23 +3,20 @@ import { explainReorder, reorderQuantity, velocityRanks } from "./reorder";
 
 describe("explainReorder", () => {
 	const base = {
+		recentSold: 30,
 		dailyDemand: 1,
 		onHand: 0,
 		onOrder: 0,
-		leadTimeDays: 10,
-		safetyStock: 4,
-		coverDays: 20,
+		coverDays: 30,
 		minStock: 0,
 		setFloor: 0,
 		minimumQuantity: 1,
 		packSize: 1,
-		supplierCount: 1,
 	};
 	const context = {
 		inStockDays: 90,
+		outDays: 0,
 		rank: 0.5,
-		leadTime: { days: 10, from: "supplier" as const, pos: 0 },
-		abc: "B" as const,
 		purchase: {
 			unit: "EACH",
 			packSize: 1,
@@ -29,22 +26,14 @@ describe("explainReorder", () => {
 		sets: { shelf: 0, sets: [] },
 	};
 
-	test("breaks the aim into parts that add up to it", () => {
-		const why = explainReorder({ ...base, dailyDemand: 0.73 }, context);
-		if (why.aim.kind !== "forecast") throw new Error("expected forecast");
-		const { restock, safetyStock, cover, total } = why.aim;
-		expect(restock + safetyStock + cover).toBe(total);
-		expect(why.orderBelow).toBe(restock + safetyStock);
+	test("aims at what sold, and says how long it sat sold out", () => {
+		const why = explainReorder(base, { ...context, outDays: 9 });
+		expect(why.aim).toEqual({ kind: "sales", total: 30 });
+		expect(why.recent).toEqual({ sold: 30, outDays: 9 });
 	});
 
 	test("orders what reorderQuantity orders, and says why it's rounded", () => {
-		const input = {
-			...base,
-			onHand: 5,
-			onOrder: 3,
-			packSize: 12,
-			supplierCount: 12,
-		};
+		const input = { ...base, onHand: 5, onOrder: 3, packSize: 12 };
 		const why = explainReorder(input, {
 			...context,
 			purchase: {
@@ -54,11 +43,11 @@ describe("explainReorder", () => {
 				minimumQuantity: 1,
 			},
 		});
-		// Aim 34, have 8: short 26, so 3 cases of 12.
+		// Aim 30, have 8: short 22, so 2 cases of 12.
 		expect(why.verdict).toEqual({
 			kind: "order",
 			quantity: reorderQuantity(input),
-			units: 36,
+			units: 24,
 			roundedUp: "pack",
 		});
 		expect(
@@ -66,13 +55,13 @@ describe("explainReorder", () => {
 		).toMatchObject({ quantity: 50, roundedUp: "minimum" });
 	});
 
-	test("waits, or does nothing, when stock covers the reorder point", () => {
-		expect(explainReorder({ ...base, onHand: 20 }, context).verdict).toEqual({
+	test("waits, or does nothing, when stock covers what sold", () => {
+		expect(explainReorder({ ...base, onHand: 36 }, context).verdict).toEqual({
 			kind: "later",
 			days: 6,
 		});
 		expect(
-			explainReorder({ ...base, dailyDemand: 0, safetyStock: 0 }, context)
+			explainReorder({ ...base, recentSold: 0, dailyDemand: 0 }, context)
 				.verdict,
 		).toEqual({ kind: "idle" });
 	});
@@ -83,28 +72,21 @@ describe("explainReorder", () => {
 			context,
 		);
 		expect(why).toMatchObject({
-			aim: { kind: "min", total: 50, forecast: 34 },
+			aim: { kind: "min", total: 50, sales: 30 },
 			minStock: 50,
 			minFrom: "sets",
-			orderBelow: 50,
 		});
 		expect(
 			explainReorder({ ...base, minStock: 50, setFloor: 50 }, context),
 		).toMatchObject({ minStock: 50, minFrom: "stock" });
-	});
-
-	test("lets min stock set the aim when it's more than sales call for", () => {
-		const why = explainReorder({ ...base, minStock: 50 }, context);
-		expect(why.aim).toEqual({ kind: "min", total: 50, forecast: 34 });
-		expect(why.orderBelow).toBe(50);
 	});
 });
 
 test("velocityRanks spreads selling products from 0 to 1, ties sharing", () => {
 	const f = (dailyDemand: number) => ({
 		dailyDemand,
-		dailySd: 0,
 		inStockDays: 90,
+		days: [],
 	});
 	const ranks = velocityRanks(
 		new Map([

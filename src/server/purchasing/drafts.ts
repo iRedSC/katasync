@@ -3,6 +3,7 @@ import { type } from "arktype";
 import { eq } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { purchaseOrders } from "#/db/schema";
+import { DEMAND_DAYS } from "#/purchasing/forecast";
 import {
 	addDraftLine,
 	addSetToOtherDrafts,
@@ -57,7 +58,7 @@ export const updateDraftFromSuggestions = createServerFn({ method: "POST" })
 	});
 
 const settings = type({
-	coverDays: "1 <= number.integer <= 365 | null",
+	coverDays: `1 <= number.integer <= ${DEMAND_DAYS} | null`,
 	excludedCatalogs: "(number.integer > 0)[]",
 	includePricier: "boolean",
 });

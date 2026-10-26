@@ -78,13 +78,13 @@ describe("a PO from draft to received", () => {
 			status: "sent",
 			expectedAt: new Date("2026-10-20T12:00:00Z"),
 		});
-		expect((await unitsOnOrder(db)).get(blade)).toBe(44);
+		expect((await unitsOnOrder(db)).get(blade)).toBe(110);
 		// On order now, so nothing more is suggested.
 		expect(await suggestPurchases(db, now)).toEqual([]);
 
 		const [bladeLine, knifeLine] = await linesOf(id);
 		await receive(db, { lineId: bladeLine.id, quantity: 10 });
-		expect((await unitsOnOrder(db)).get(blade)).toBe(34);
+		expect((await unitsOnOrder(db)).get(blade)).toBe(100);
 		const [product] = await db
 			.select()
 			.from(schema.products)
@@ -92,9 +92,9 @@ describe("a PO from draft to received", () => {
 		// 10 on the shelf at $4, 10 more at $5.
 		expect(product.unitCost).toBe(4.5);
 
-		const last = await receive(db, { lineId: bladeLine.id, quantity: 34 });
+		const last = await receive(db, { lineId: bladeLine.id, quantity: 100 });
 		expect(last.closed).toBe(false);
-		const knives = await receive(db, { lineId: knifeLine.id, quantity: 6 });
+		const knives = await receive(db, { lineId: knifeLine.id, quantity: 9 });
 		expect(knives.closed).toBe(true);
 		expect((await getPo(id)).status).toBe("closed");
 
@@ -121,7 +121,7 @@ describe("a PO from draft to received", () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
 		const [bladeLine, knifeLine] = await linesOf(id);
-		await receive(db, { lineId: knifeLine.id, quantity: 6 });
+		await receive(db, { lineId: knifeLine.id, quantity: 9 });
 		await expect(
 			setBackOrdered(db, { lineId: knifeLine.id, backOrdered: true }),
 		).rejects.toThrow(/All of it has come/);
@@ -131,10 +131,9 @@ describe("a PO from draft to received", () => {
 		).toEqual({ was: false });
 		const [marked] = await linesOf(id);
 		expect(marked.backOrderedAt).toBeInstanceOf(Date);
-		expect((await unitsOnOrder(db)).get(blade)).toBe(44);
-		expect(await suggestPurchases(db, now)).toMatchObject([
-			{ lines: [{ productId: blade, quantity: 44 }] },
-		]);
+		expect((await unitsOnOrder(db)).get(blade)).toBe(110);
+		// Still on order however late, so nothing more is suggested.
+		expect(await suggestPurchases(db, now)).toEqual([]);
 
 		expect(
 			await setBackOrdered(db, { lineId: bladeLine.id, backOrdered: true }),
@@ -142,7 +141,7 @@ describe("a PO from draft to received", () => {
 		expect((await linesOf(id))[0].backOrderedAt).toEqual(marked.backOrderedAt);
 
 		// The back order arriving closes the PO without unmarking it.
-		const rest = await receive(db, { lineId: bladeLine.id, quantity: 44 });
+		const rest = await receive(db, { lineId: bladeLine.id, quantity: 110 });
 		expect(rest.closed).toBe(true);
 		await expect(
 			setBackOrdered(db, { lineId: bladeLine.id, backOrdered: false }),

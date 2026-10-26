@@ -69,8 +69,8 @@ describe("a PO from draft to received", () => {
 		await receive(db, { lineId: bladeLine.id, quantity: 10, last: true });
 		await closeOrder(db, id);
 		const r = await orderAgain(db, id);
-		// The blade line was cut to the 10 that came; what was sent was 44.
-		expect((await linesOf(r.id)).map((l) => l.quantity)).toEqual([44, 6]);
+		// The blade line was cut to the 10 that came; what was sent was 110.
+		expect((await linesOf(r.id)).map((l) => l.quantity)).toEqual([110, 9]);
 		expect(await orderAgain(db, id)).toEqual({
 			id: r.id,
 			added: 0,
@@ -181,7 +181,7 @@ describe("a PO from draft to received", () => {
 		expect(await draftFromSuggestions(db, canam, now)).not.toBe(id);
 	});
 
-	// Draft from suggestions: 44 blades at $5, 6 knives at $2.
+	// Draft from suggestions: 110 blades at $5, 9 knives at $2.
 	async function sent() {
 		const id = await draftFromSuggestions(db, canam, now);
 		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
@@ -191,7 +191,7 @@ describe("a PO from draft to received", () => {
 
 	test("sending saves what was sent; changes after it never print", async () => {
 		const { id, bladeLine, knifeLine } = await sent();
-		expect(bladeLine).toMatchObject({ sentQuantity: 44, sentUnitCost: 5 });
+		expect(bladeLine).toMatchObject({ sentQuantity: 110, sentUnitCost: 5 });
 
 		await amendLine(db, { lineId: bladeLine.id, quantity: 47, unitCost: 6 });
 		await amendLine(db, { lineId: knifeLine.id, quantity: 0 });
@@ -206,8 +206,8 @@ describe("a PO from draft to received", () => {
 				l.unitCost,
 			]),
 		).toEqual([
-			["BLADE", 44, 5],
-			["KNIFE", 6, 2],
+			["BLADE", 110, 5],
+			["KNIFE", 9, 2],
 		]);
 		// A draft prints as it stands.
 		const draft = await openDraft(db, canam);
@@ -224,18 +224,18 @@ describe("a PO from draft to received", () => {
 
 	test("more than expected arrives: the line expects it, and undo puts it back", async () => {
 		const { id, bladeLine } = await sent();
-		const r = await receive(db, { lineId: bladeLine.id, quantity: 47 });
+		const r = await receive(db, { lineId: bladeLine.id, quantity: 111 });
 		expect((await linesOf(id))[0]).toMatchObject({
-			quantity: 47,
-			sentQuantity: 44,
+			quantity: 111,
+			sentQuantity: 110,
 		});
 		await undoReceipt(db, r.receiptId);
-		expect((await linesOf(id))[0].quantity).toBe(44);
+		expect((await linesOf(id))[0].quantity).toBe(110);
 	});
 
 	test("marking the last of a line expects only what came, and closes the PO", async () => {
 		const { id, bladeLine, knifeLine } = await sent();
-		await receive(db, { lineId: knifeLine.id, quantity: 6 });
+		await receive(db, { lineId: knifeLine.id, quantity: 9 });
 		await receive(db, { lineId: bladeLine.id, quantity: 20 });
 		const r = await receive(db, {
 			lineId: bladeLine.id,
@@ -246,7 +246,7 @@ describe("a PO from draft to received", () => {
 		expect((await linesOf(id))[0].quantity).toBe(30);
 		// Undoing it waits for the rest again.
 		await undoReceipt(db, r.receiptId);
-		expect((await linesOf(id))[0].quantity).toBe(44);
+		expect((await linesOf(id))[0].quantity).toBe(110);
 		expect((await getPo(id)).status).toBe("sent");
 	});
 
@@ -260,17 +260,17 @@ describe("a PO from draft to received", () => {
 
 	test("amending can't go under what arrived; settles the PO either way", async () => {
 		const { id, bladeLine, knifeLine } = await sent();
-		await receive(db, { lineId: bladeLine.id, quantity: 44 });
+		await receive(db, { lineId: bladeLine.id, quantity: 110 });
 		await receive(db, { lineId: knifeLine.id, quantity: 2 });
 		await expect(
 			amendLine(db, { lineId: knifeLine.id, quantity: 1 }),
 		).rejects.toThrow(/2 already arrived/);
 		// The supplier only had 2: that's everything, so it closes.
 		const r = await amendLine(db, { lineId: knifeLine.id, quantity: 2 });
-		expect(r.was).toEqual({ quantity: 6, unitCost: 2 });
+		expect(r.was).toEqual({ quantity: 9, unitCost: 2 });
 		expect((await getPo(id)).status).toBe("closed");
-		// Back to 6 waits for the rest again.
-		await amendLine(db, { lineId: knifeLine.id, quantity: 6 });
+		// Back to 9 waits for the rest again.
+		await amendLine(db, { lineId: knifeLine.id, quantity: 9 });
 		expect((await getPo(id)).status).toBe("sent");
 	});
 
@@ -288,13 +288,13 @@ describe("a PO from draft to received", () => {
 		expect(
 			(await amendLine(db, { lineId: knifeLine.id, quantity: 0 })).removed,
 		).toBe(false);
-		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([44, 0]);
+		expect((await linesOf(id)).map((l) => l.quantity)).toEqual([110, 0]);
 	});
 
 	test("something extra in the box is added and received, even on a closed PO", async () => {
 		const { id, bladeLine, knifeLine } = await sent();
-		await receive(db, { lineId: bladeLine.id, quantity: 44 });
-		await receive(db, { lineId: knifeLine.id, quantity: 6 });
+		await receive(db, { lineId: bladeLine.id, quantity: 110 });
+		await receive(db, { lineId: knifeLine.id, quantity: 9 });
 		expect((await getPo(id)).status).toBe("closed");
 
 		const gauge = await createProduct(db, "GAUGE", "simple");
@@ -319,7 +319,7 @@ describe("a PO from draft to received", () => {
 		const { id, bladeLine, knifeLine } = await sent();
 		await amendLine(db, { lineId: bladeLine.id, quantity: 47, unitCost: 6 });
 		// No change, no entry.
-		await amendLine(db, { lineId: knifeLine.id, quantity: 6 });
+		await amendLine(db, { lineId: knifeLine.id, quantity: 9 });
 		const gauge = await createProduct(db, "GAUGE", "simple");
 		const { line } = await addLine(db, {
 			purchaseOrderId: id,
@@ -356,7 +356,7 @@ describe("a PO from draft to received", () => {
 				a.unitCostAfter,
 			]),
 		).toEqual([
-			[id, "quantity", 44, 47, null, null],
+			[id, "quantity", 110, 47, null, null],
 			[id, "cost", null, null, 5, 6],
 			[id, "added", null, 3, null, null],
 			[id, "removed", 3, null, null, null],
@@ -384,7 +384,7 @@ describe("a PO from draft to received", () => {
 		});
 		expect(r).toMatchObject({
 			added: false,
-			line: { id: bladeLine.id, quantity: 44 },
+			line: { id: bladeLine.id, quantity: 110 },
 		});
 	});
 

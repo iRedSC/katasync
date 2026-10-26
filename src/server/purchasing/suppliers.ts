@@ -15,7 +15,7 @@ import {
 	bulkPricesOf,
 	setBulkPrices as saveBulkPrices,
 } from "#/purchasing/bulk-prices";
-import { type LeadTime, leadTimes } from "#/purchasing/forecast";
+import { DEMAND_DAYS, type LeadTime, leadTimes } from "#/purchasing/forecast";
 import { supplierRows } from "#/purchasing/load";
 import {
 	setSupplierTerms as setTerms,
@@ -64,7 +64,7 @@ export const updateSupplier = createServerFn({ method: "POST" })
 			notes: text,
 			poNotes: text,
 			leadTimeDays: "1 <= number.integer <= 365",
-			coverDays: "1 <= number.integer <= 365",
+			coverDays: `1 <= number.integer <= ${DEMAND_DAYS}`,
 			minimumOrder: "number >= 0",
 			criticalThreshold: "number.integer >= 1",
 		}),

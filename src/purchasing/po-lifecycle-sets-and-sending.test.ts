@@ -106,9 +106,10 @@ describe("a PO from draft to received", () => {
 			},
 		});
 		expect(await linesOf(id)).toMatchObject([
-			// 44 suggested plus 2 in each of 3 sets.
-			{ productId: blade, quantity: 50 },
-			{ productId: knife, quantity: 6 },
+			// 110 suggested (120 sold, 10 on the shelf) plus 2 in each of 3 sets.
+			{ productId: blade, quantity: 116 },
+			// 9 sold, over the supplier's minimum of 6.
+			{ productId: knife, quantity: 9 },
 			// Not on the draft before: a new line, with no price yet.
 			{ productId: handle, quantity: 3, unit: "EACH", unitCost: null },
 		]);
@@ -350,14 +351,14 @@ describe("a PO from draft to received", () => {
 			productId: set,
 			quantity: 4,
 		});
-		// 8 blades and 4 knives in the sets: 36 more blades (44 suggested), and
-		// 2 knives rounded up to the supplier's 6.
+		// 8 blades and 4 knives in the sets: 102 more blades (110 suggested),
+		// and 5 knives (9 suggested) rounded up to the supplier's 6.
 		expect(await updateFromSuggestions(db, id, now)).toEqual({
 			added: 2,
 			raised: 0,
 		});
 		expect(await linesOf(id)).toMatchObject([
-			{ productId: blade, quantity: 36 },
+			{ productId: blade, quantity: 102 },
 			{ productId: knife, quantity: 6 },
 			{ productId: set, quantity: 4 },
 		]);

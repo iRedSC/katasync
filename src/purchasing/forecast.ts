@@ -22,86 +22,68 @@ import {
 	purchaseOrders,
 	suppliers,
 } from "#/db/schema";
-import type { AbcClass } from "#/inventory/abc";
 import { isOurs } from "#/inventory/locations";
 import { soldByDay } from "#/inventory/sales";
 
 // What reorder knows about a product's demand, from the last DEMAND_DAYS.
 //
-// Days a product sat at zero sell nothing, which says nothing about demand,
-// so demand is units sold over the days it was in stock: a product out for
-// half the window isn't read as selling half as fast. The spread of daily
-// sales on those days sizes its safety stock.
+// Reorder tops stock up to what sold over the last cover days (see
+// recentSales). Velocity, the ranks and how soon a product will need
+// ordering read dailyDemand: days a product sat at zero sell nothing, which
+// says nothing about demand, so it is units sold over the days it was in
+// stock, and a product out for half the window isn't read as selling half
+// as fast.
 
-// Sales from this many days back set each product's demand.
+// Sales from this many days back set each product's demand. Also the most
+// days a PO can cover, since recentSales can't read further back.
 export const DEMAND_DAYS = 90;
 
 // Demand is never spread over fewer days than this, so a product in stock
 // for two days that sold once isn't read as selling every other day.
 export const MIN_DEMAND_DAYS = 14;
 
+export type ForecastDay = { units: number; inStock: boolean };
+
 export type Forecast = {
 	// Units a day while in stock.
 	dailyDemand: number;
-	// How much a day's sales swing around that (standard deviation).
-	dailySd: number;
 	// Days of the window it was in stock (or sold, or before the ledger began).
 	inStockDays: number;
+	// Each day of the window, oldest first, ending today.
+	days: ForecastDay[];
 };
 
 export const NO_FORECAST: Forecast = {
 	dailyDemand: 0,
-	dailySd: 0,
 	inStockDays: 0,
+	days: [],
 };
 
 // A product's forecast from its days, oldest first. A day counts when the
 // product was in stock or sold anyway (oversold), since either way a buyer
 // could order it.
-export function forecastOf(
-	days: { units: number; inStock: boolean }[],
-): Forecast {
-	const open = days.filter((d) => d.inStock || d.units > 0);
-	if (open.length === 0) return NO_FORECAST;
+export function forecastOf(days: ForecastDay[]): Forecast {
+	const open = days.filter(isOpen);
+	if (open.length === 0) return { ...NO_FORECAST, days };
 	const total = open.reduce((sum, d) => sum + d.units, 0);
-	const mean = total / open.length;
-	const variance =
-		open.length < 2
-			? 0
-			: open.reduce((sum, d) => sum + (d.units - mean) ** 2, 0) / open.length;
 	return {
 		dailyDemand: total / Math.max(open.length, MIN_DEMAND_DAYS),
-		dailySd: Math.sqrt(variance),
 		inStockDays: open.length,
+		days,
 	};
 }
 
-// How sure we want to be of not running out before the next delivery, by
-// class: A 98%, B 95%, C 90%. Unclassed products get C's. Each is the z score
-// for that share of a normal curve.
-export const SERVICE_LEVELS: Record<AbcClass, { share: number; z: number }> = {
-	A: { share: 0.98, z: 2.054 },
-	B: { share: 0.95, z: 1.645 },
-	C: { share: 0.9, z: 1.282 },
-};
+const isOpen = (d: ForecastDay) => d.inStock || d.units > 0;
 
-// Units held beyond what the lead time should use, so a busy stretch while
-// a PO is on its way doesn't empty the shelf: z times the daily swing, over
-// the lead time (swings partly cancel out, hence the square root). Never more
-// than the lead time's own demand: one contractor buying 30 at once shouldn't
-// have us stocking for a crowd of them.
-export function safetyStock(
-	f: Forecast,
-	abc: AbcClass | null,
-	leadTimeDays: number,
-) {
-	const { z } = SERVICE_LEVELS[abc ?? "C"];
-	return Math.ceil(
-		Math.min(
-			z * f.dailySd * Math.sqrt(leadTimeDays),
-			f.dailyDemand * leadTimeDays,
-		),
-	);
+// What sold over the last `days` days, today included, and how many of
+// those it sat sold out: sales then say nothing about demand, so `sold`
+// reads low. At most DEMAND_DAYS back.
+export function recentSales(f: Forecast, days: number) {
+	const recent = f.days.slice(-Math.min(Math.max(days, 1), DEMAND_DAYS));
+	return {
+		sold: recent.reduce((sum, d) => sum + d.units, 0),
+		outDays: recent.filter((d) => !isOpen(d)).length,
+	};
 }
 
 const DAY = 86_400_000;

@@ -165,17 +165,14 @@ test("days left at the sales rate", () => {
 	expect(daysLeft(null, 1)).toBeNull();
 });
 
-describe("default max from the forecast", () => {
-	const p = { leadTimeDays: 14, safetyStock: 0, coverDays: 30 };
-
+describe("default max from recent sales", () => {
 	test("is what a reorder tops up to", () => {
-		// 0.5 a day over 14 + 30 days.
-		expect(forecastMax(1, { ...p, dailyDemand: 0.5 })).toBe(22);
+		expect(forecastMax(1, 22)).toBe(22);
 	});
 
 	test("is at least 5 when little sells, and always above min", () => {
-		expect(forecastMax(1, { ...p, dailyDemand: 0 })).toBe(5);
-		expect(forecastMax(1, { ...p, dailyDemand: 0.05 })).toBe(5);
-		expect(forecastMax(8, { ...p, dailyDemand: 0 })).toBe(9);
+		expect(forecastMax(1, 0)).toBe(5);
+		expect(forecastMax(1, 2)).toBe(5);
+		expect(forecastMax(8, 0)).toBe(9);
 	});
 });

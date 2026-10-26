@@ -50,7 +50,7 @@ export function registerStockSettingsTools(server: McpServer, db: Db) {
 		"set_default_min_stock",
 		{
 			description:
-				"The min stock for products without their own range. Their max comes from their sales forecast.",
+				"The min stock for products without their own range. Their max is what they sold over their supplier's cover days.",
 			inputSchema: { min: z.number().int().min(0) },
 			annotations: { ...WRITE, idempotentHint: true },
 		},

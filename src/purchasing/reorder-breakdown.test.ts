@@ -119,32 +119,27 @@ describe("reorderBreakdown", () => {
 		const plan = await loadPlan(db, now);
 		plan.forecasts.set(blade, {
 			dailyDemand: 1,
-			dailySd: 0,
 			inStockDays: 90,
+			days: Array.from({ length: 90 }, () => ({ units: 1, inStock: true })),
 		});
 		const read = async () =>
 			(await reorderBreakdown(db, { now, plan, productIds: [blade] }))[0];
+		// 20 sold over the cover days; 5 on the shelf and 100 coming, however
+		// late, already cover it.
 		const late = await read();
-		expect(late.why.incoming).toEqual({
-			timely: 0,
-			aim: 0,
-			unknown: 0,
-			lateDue: 60,
-			schedule: [{ units: 100, dueDays: 60 }],
-		});
-		expect(late.line.quantity).toBe(25);
-		await db
-			.update(schema.purchaseOrders)
-			.set({ expectedAt: new Date(now.getTime() + 3 * 86_400_000) })
-			.where(eq(schema.purchaseOrders.id, po.id));
-		const timely = await read();
-		expect(timely.why.incoming.timely).toBe(100);
-		expect(timely.line.quantity).toBe(0);
+		expect(late.why.recent).toEqual({ sold: 20, outDays: 0 });
+		expect(late.line.quantity).toBe(0);
+		expect((await openArrivals(db, now, plan.leadTimes)).get(blade)).toEqual([
+			{ units: 100, arrivesAt: now.getTime() + 60 * 86_400_000 },
+		]);
 		await db
 			.update(schema.purchaseOrderLines)
 			.set({ backOrderedAt: now })
 			.where(eq(schema.purchaseOrderLines.id, line.id));
-		expect((await read()).why.incoming.unknown).toBe(100);
+		expect((await openArrivals(db, now, plan.leadTimes)).get(blade)).toEqual([
+			{ units: 100, arrivesAt: null },
+		]);
+		expect((await read()).line.quantity).toBe(0);
 		await db
 			.update(schema.purchaseOrderLines)
 			.set({ backOrderedAt: null })
@@ -169,13 +164,11 @@ describe("reorderBreakdown", () => {
 		const of = (id: number) => all.find((b) => b.line.productId === id);
 		expect(of(blade)?.why).toMatchObject({
 			purchase: { unit: "EACH", packSize: 1, supplierCount: 1 },
-			leadTime: { from: "supplier" },
 			verdict: { kind: "order" },
 		});
 		expect(of(loose)?.supplier).toBeNull();
 		expect(of(loose)?.why).toMatchObject({
 			purchase: null,
-			leadTime: { days: 14, from: "default" },
 			verdict: { kind: "order" },
 		});
 		const [s] = await suggestPurchases(db, now);
