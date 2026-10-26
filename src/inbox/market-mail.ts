@@ -17,9 +17,9 @@ import {
 } from "#/db/schema";
 import { groupBy } from "#/lib/group-by";
 import type { Market } from "#/markets/market";
-import type { InboxMessage, InlinePicture } from "#/purchasing/inbox/graph";
+import type { InboxMessage } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
-import { pointPictures } from "./html";
+import { backfillMarketHtml, keepHtml, readHtml } from "./market-mail/content";
 import { listRules, locked, lockRules, resort } from "./rule-store";
 import {
 	FOLDERS,
@@ -29,6 +29,15 @@ import {
 	type Rule,
 	sortEmail,
 } from "./rules";
+import { type Header, senderAuthenticated } from "./sender-auth";
+import { isVoicemail, voicemailState } from "./voicemail-model";
+
+export {
+	backfillMarketHtml,
+	marketAttachment,
+	marketEmailHtml,
+	readHtml,
+} from "./market-mail/content";
 
 // The marketplaces mailbox in katasync: each notice read in from Microsoft
 // 365, sorted by marketplace and by the rules into a folder, some marked
@@ -73,10 +82,13 @@ export function marketOfEmail(m: { fromAddress: string; subject: string }) {
 
 // Reads new emails in: skips ones already kept, keeps each with its files,
 // sorted. One that fails to read is reported and left for the next run.
+// Mail from no marketplace (a buyer answering) has its headers read too, for
+// whether its sender is who it says.
 export async function ingestMarketMail(
 	db: Db,
 	messages: InboxMessage[],
 	read: ReadContent,
+	readHeaders: (graphId: string) => Promise<Header[]> = async () => [],
 ) {
 	if (messages.length === 0) return { read: 0, problems: [] as string[] };
 	const kept = await db
@@ -96,7 +108,11 @@ export async function ingestMarketMail(
 		known.add(m.messageId);
 		try {
 			const content = await read(m.graphId);
+			const voicemail = isVoicemail({ ...m, body: content.body });
 			const market = marketOfEmail(m);
+			const authenticated =
+				market === null &&
+				senderAuthenticated(await readHeaders(m.graphId), m.fromAddress);
 			const inserted = await db.transaction(async (tx) => {
 				// Sorted under the lock, so a rule saved meanwhile isn't missed.
 				await lockRules(tx);
@@ -112,6 +128,7 @@ export async function ingestMarketMail(
 						market,
 						folder: sorted.folder,
 						...flagsOf(sorted.level),
+						senderAuthenticated: authenticated,
 						readAt: sorted.read ? new Date() : null,
 						doneAt: sorted.done ? new Date() : null,
 						fromAddress: m.fromAddress,
@@ -120,6 +137,17 @@ export async function ingestMarketMail(
 						subject: m.subject,
 						body: content.body,
 						receivedAt: m.receivedAt,
+						...(voicemail
+							? {
+									voicemail: { state: "pending" as const },
+									folder: "updates" as const,
+									relabelledAt: new Date(),
+									doneAt: null,
+									readAt: null,
+									important: false,
+									critical: false,
+								}
+							: {}),
 					})
 					// Another run read it first.
 					.onConflictDoNothing()
@@ -201,8 +229,13 @@ export async function newestMarketEmail(db: Db) {
 
 // A view of the page: the open emails that are important, or in one folder,
 // or those done.
-export type MarketView = "important" | Folder | "done";
-export const MARKET_VIEWS = ["important", ...FOLDERS, "done"] as const;
+export type MarketView = "important" | "voicemails" | Folder | "done";
+export const MARKET_VIEWS = [
+	"important",
+	"voicemails",
+	...FOLDERS,
+	"done",
+] as const;
 
 const summary = {
 	id: marketEmails.id,
@@ -218,6 +251,7 @@ const summary = {
 	fromName: marketEmails.fromName,
 	subject: marketEmails.subject,
 	body: marketEmails.body,
+	voicemail: marketEmails.voicemail,
 	receivedAt: marketEmails.receivedAt,
 };
 
@@ -262,6 +296,7 @@ export async function marketMailPage(
 	market: Market | null,
 	{ limit = 150, after }: { limit?: number; after?: MarketCursor } = {},
 ) {
+	const scopedMarket = view === "voicemails" ? null : market;
 	const sortAt =
 		view === "done" ? marketEmails.doneAt : marketEmails.receivedAt;
 	const where = and(
@@ -271,9 +306,14 @@ export async function marketMailPage(
 					isNull(marketEmails.doneAt),
 					view === "important"
 						? eq(marketEmails.important, true)
-						: eq(marketEmails.folder, view),
+						: view === "voicemails"
+							? isNotNull(marketEmails.voicemail)
+							: and(
+									eq(marketEmails.folder, view),
+									isNull(marketEmails.voicemail),
+								),
 				),
-		market ? eq(marketEmails.market, market) : undefined,
+		scopedMarket ? eq(marketEmails.market, scopedMarket) : undefined,
 		after
 			? or(
 					lt(sortAt, new Date(after.at)),
@@ -292,7 +332,8 @@ export async function marketMailPage(
 			.select({
 				folder: marketEmails.folder,
 				market: marketEmails.market,
-				n: sql<number>`count(*)::int`,
+				n: sql<number>`(count(*) filter (where ${marketEmails.voicemail} is null))::int`,
+				voicemails: sql<number>`(count(*) filter (where ${marketEmails.voicemail} is not null))::int`,
 				important: sql<number>`(count(*) filter (where ${marketEmails.important}))::int`,
 				critical: sql<number>`(count(*) filter (where ${marketEmails.critical}))::int`,
 			})
@@ -312,7 +353,9 @@ export async function marketMailPage(
 	const lastAt = view === "done" ? last?.doneAt : last?.receivedAt;
 	const next =
 		more && last && lastAt ? { at: lastAt.getTime(), id: last.id } : null;
-	const shown = counts.filter((c) => !market || c.market === market);
+	const shown = counts.filter(
+		(c) => !scopedMarket || c.market === scopedMarket,
+	);
 	const files =
 		rows.length === 0
 			? []
@@ -345,6 +388,7 @@ export async function marketMailPage(
 		// Unread open emails per folder, and important (critical among them),
 		// within the market shown.
 		counts: {
+			voicemails: counts.reduce((sum, row) => sum + row.voicemails, 0),
 			important: shown.reduce((s, c) => s + c.important, 0),
 			critical: shown.reduce((s, c) => s + c.critical, 0),
 			...(Object.fromEntries(
@@ -356,6 +400,8 @@ export async function marketMailPage(
 		},
 		emails: rows.map(({ relabelledAt, importanceSetAt, ...r }) => ({
 			...r,
+			voicemail:
+				r.voicemail === null ? null : voicemailState.parse(r.voicemail),
 			why: why(rules, { ...r, relabelledAt, importanceSetAt }),
 			attachments: (byEmail.get(r.id) ?? []).map(({ emailId: _, ...f }) => f),
 		})),
@@ -368,7 +414,14 @@ export type MarketMailPage = Awaited<ReturnType<typeof marketMailPage>>;
 export async function setDone(db: Db, id: number, done: boolean) {
 	const [row] = await db
 		.update(marketEmails)
-		.set({ doneAt: done ? new Date() : null })
+		.set({
+			doneAt: done ? new Date() : null,
+			...(!done
+				? {
+						voicemail: sql`case when ${marketEmails.voicemail}->>'state' = 'dismissed' then jsonb_build_object('state', 'review', 'reason', left('Restored: ' || (${marketEmails.voicemail}->>'reason'), 500)) else ${marketEmails.voicemail} end`,
+					}
+				: {}),
+		})
 		.where(eq(marketEmails.id, id))
 		.returning({ id: marketEmails.id });
 	if (!row) throw new Error(`There's no marketplace email ${id}`);
@@ -395,9 +448,12 @@ export async function moveTo(db: Db, id: number, folder: Folder | null) {
 			.set(
 				folder ? { folder, relabelledAt: new Date() } : { relabelledAt: null },
 			)
-			.where(eq(marketEmails.id, id))
+			.where(and(eq(marketEmails.id, id), isNull(marketEmails.voicemail)))
 			.returning({ id: marketEmails.id });
-		if (!row) throw new Error(`There's no marketplace email ${id}`);
+		if (!row)
+			throw new Error(
+				`Email ${id} cannot be moved. Voicemails stay in Voicemails; use Done or priority instead.`,
+			);
 		if (!folder) await resort(tx, [id]);
 		return row;
 	});
@@ -439,101 +495,6 @@ export async function countImportant(db: Db) {
 			),
 		);
 	return { important: row?.important ?? 0, critical: row?.critical ?? 0 };
-}
-
-export async function marketAttachment(db: Db, id: number) {
-	const [file] = await db
-		.select()
-		.from(marketEmailAttachments)
-		.where(eq(marketEmailAttachments.id, id));
-	return file ?? null;
-}
-
-// Keeps an email's HTML, with its pictures kept and pointed at.
-async function keepHtml(
-	db: Db,
-	emailId: number,
-	html: string,
-	inline: InlinePicture[],
-) {
-	const kept =
-		inline.length === 0
-			? []
-			: await db
-					.insert(marketEmailAttachments)
-					.values(
-						inline.map((p) => ({
-							emailId,
-							filename: p.filename,
-							contentType: p.contentType,
-							size: p.size,
-							data: p.data,
-							contentId: p.contentId,
-						})),
-					)
-					.returning({
-						id: marketEmailAttachments.id,
-						contentId: marketEmailAttachments.contentId,
-					});
-	await db
-		.update(marketEmails)
-		.set({
-			bodyHtml: pointPictures(
-				html,
-				kept.map((k) => ({
-					contentId: k.contentId ?? "",
-					url: `/api/market-email-attachments/${k.id}`,
-				})),
-			),
-		})
-		.where(eq(marketEmails.id, emailId));
-}
-
-// Fetches the HTML of emails kept before katasync kept it, a few a run. One
-// gone from the mailbox keeps its text only (empty HTML). The few are picked
-// at random, so one that keeps failing can't hold back the rest; they're
-// written newest first. Returns how many had their HTML saved; a failure isn't
-// counted.
-export async function backfillMarketHtml(
-	db: Db,
-	read: (
-		messageId: string,
-	) => Promise<{ html: string; inline: InlinePicture[] } | null>,
-	limit = 25,
-) {
-	const rows = (
-		await db
-			.select({
-				id: marketEmails.id,
-				messageId: marketEmails.messageId,
-				receivedAt: marketEmails.receivedAt,
-			})
-			.from(marketEmails)
-			.where(isNull(marketEmails.bodyHtml))
-			.orderBy(sql`random()`)
-			.limit(limit)
-	).sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
-	let saved = 0;
-	for (const r of rows) {
-		try {
-			const found = await read(r.messageId);
-			await db.transaction((tx) =>
-				keepHtml(tx, r.id, found?.html ?? "", found?.inline ?? []),
-			);
-			saved++;
-		} catch {
-			// A failure leaves it for the next run.
-		}
-	}
-	return saved;
-}
-
-export async function marketEmailHtml(db: Db, id: number) {
-	const [row] = await db
-		.select({ html: marketEmails.bodyHtml })
-		.from(marketEmails)
-		.where(eq(marketEmails.id, id));
-	return row?.html || null;
 }
 
 // Back this far on a sweep at least, and from a day before the last sweep
@@ -593,7 +554,9 @@ export async function readMarketMail(options: {
 		messages = await graph.messagesSince(
 			since,
 			"marketplaces",
-			isShopifyOrderNotice,
+			(message) =>
+				isShopifyOrderNotice(message) ||
+				/^(?:fw|fwd):.*\bnew voicemail\b/i.test(message.subject),
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -634,16 +597,4 @@ export async function readMarketMail(options: {
 		formatted,
 		...(outcome.state === "complete" ? {} : { error: outcome.error }),
 	};
-}
-
-// One kept email's HTML from the mailbox, or null when it's gone.
-export async function readHtml(
-	graph: typeof import("#/purchasing/inbox/graph"),
-	messageId: string,
-	box: "purchasing" | "marketplaces",
-) {
-	const id = await graph.findMessage(messageId, box);
-	if (!id) return null;
-	const { html, inline } = await graph.messageHtml(id, box);
-	return { html, inline };
 }

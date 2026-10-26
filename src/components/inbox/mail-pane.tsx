@@ -29,6 +29,8 @@ export function MailPane<E extends ReadableEmail>({
 	tagOf,
 	actionsOf,
 	aboutOf,
+	messageOf,
+	rowOf,
 	keysOf,
 	menuOf,
 	unreadOf,
@@ -44,6 +46,8 @@ export function MailPane<E extends ReadableEmail>({
 	actionsOf: (e: E) => ReactNode;
 	// Under the open email's header, e.g. the orders it names.
 	aboutOf?: (e: E) => ReactNode;
+	messageOf?: (e: E) => ReactNode;
+	rowOf?: (e: E) => E;
 	// Shortcuts for the open email, e.g. e for done.
 	keysOf?: (e: E) => Record<string, () => void>;
 	// The right-click menu's items for an email in the list.
@@ -109,7 +113,7 @@ export function MailPane<E extends ReadableEmail>({
 						{emails.map((e) => (
 							<EmailRow
 								key={e.id}
-								email={e}
+								email={rowOf?.(e) ?? e}
 								selected={e.id === selected.id}
 								onOpen={() => {
 									setSelectedId(e.id);
@@ -146,6 +150,7 @@ export function MailPane<E extends ReadableEmail>({
 					className="min-h-0 flex-1 animate-in fade-in-0 slide-in-from-right-2"
 					actions={actionsOf(selected)}
 					about={aboutOf?.(selected)}
+					message={messageOf?.(selected)}
 				/>
 			</div>
 		</div>

@@ -7,7 +7,7 @@ export const Route = createFileRoute(
 )({
 	server: {
 		handlers: {
-			GET: async ({ params }) => {
+			GET: async ({ params, request }) => {
 				const [{ marketAttachment }, { getDb }, { fileResponse }] =
 					await Promise.all([
 						import("#/inbox/market-mail"),
@@ -23,7 +23,10 @@ export const Route = createFileRoute(
 					return new Response("Too large to keep; open it in Outlook", {
 						status: 404,
 					});
-				return fileResponse({ ...file, data: file.data });
+				return fileResponse(
+					{ ...file, data: file.data },
+					request.headers.get("range"),
+				);
 			},
 		},
 	},

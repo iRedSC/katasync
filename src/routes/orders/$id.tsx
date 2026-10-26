@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
 import { MatchDialog } from "#/components/match-picker";
 import { DetailsCard } from "#/components/order-page/details-card";
+import { EmailBuyer } from "#/components/order-page/email-buyer";
 import { FromStoreBadge } from "#/components/order-page/from-store";
 import { Line } from "#/components/order-page/line";
 import { MailCard } from "#/components/order-page/mail-card";
@@ -507,6 +508,15 @@ function OrderPage() {
 							chatId={search.chat}
 							chat={loaded.buyerChat}
 						/>
+						{detail.emailBuyer && (
+							<EmailBuyer
+								orderId={order.id}
+								email={detail.emailBuyer}
+								started={detail.mail.threads.some(
+									(t) => t.market === "shopify",
+								)}
+							/>
+						)}
 						{buyerOrders.length > 0 && (
 							<div className="mt-3 border-t pt-3">
 								<p className="mb-1.5 flex justify-between text-xs text-muted-foreground">

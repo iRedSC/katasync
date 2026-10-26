@@ -1,5 +1,5 @@
 {
-  "id": "0405d89b-8e49-428c-a1e3-59c65bb88357",
+  "id": "e6860643-80ea-425b-834c-a784d85444b7",
   "prevId": "8aef192d-1999-45c7-b95c-faf5421acdfd",
   "version": "7",
   "dialect": "postgresql",
@@ -7041,6 +7041,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "voicemail": {
+          "name": "voicemail",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "body_html": {
           "name": "body_html",
           "type": "text",
@@ -7108,6 +7114,10 @@
         "market_emails_critical_is_important": {
           "name": "market_emails_critical_is_important",
           "value": "not \"market_emails\".\"critical\" or \"market_emails\".\"important\""
+        },
+        "market_emails_voicemail_state": {
+          "name": "market_emails_voicemail_state",
+          "value": "\"market_emails\".\"voicemail\" is null or coalesce(\n\t\t\tjsonb_typeof(\"market_emails\".\"voicemail\") = 'object' and case \"market_emails\".\"voicemail\"->>'state'\n\t\t\t\twhen 'pending' then true\n\t\t\t\twhen 'processing' then jsonb_typeof(\"market_emails\".\"voicemail\"->'token') = 'string' and jsonb_typeof(\"market_emails\".\"voicemail\"->'startedAt') = 'string'\n\t\t\t\twhen 'ready' then length(\"market_emails\".\"voicemail\"->>'title') > 0 and length(\"market_emails\".\"voicemail\"->>'summary') > 0 and \"market_emails\".\"voicemail\"->>'level' in ('normal', 'important', 'critical') and jsonb_typeof(\"market_emails\".\"voicemail\"->'orderIds') = 'array' and jsonb_typeof(\"market_emails\".\"voicemail\"->'productIds') = 'array'\n\t\t\t\twhen 'review' then length(\"market_emails\".\"voicemail\"->>'reason') > 0\n\t\t\t\twhen 'dismissed' then length(\"market_emails\".\"voicemail\"->>'reason') > 0\n\t\t\t\telse false end, false)"
         }
       },
       "isRLSEnabled": false
@@ -15195,8 +15205,6 @@
       "schema": "public",
       "values": [
         "requested",
-        "processing",
-        "unknown",
         "shipped",
         "delivered",
         "closed",

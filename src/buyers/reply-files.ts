@@ -85,10 +85,10 @@ export async function filesForReply(db: Db, market: Market, ids: number[]) {
 		kept.map((f) => ({ name: f.filename, type: f.contentType, size: f.size })),
 	);
 	if (why) throw new ReplyFileError(why);
-	const rules = market === "shopify" ? null : ATTACHMENT_RULES[market];
+	const rules = ATTACHMENT_RULES[market];
 	return kept.map(
 		(f): BuyerMedia => ({
-			kind: rules?.types[f.contentType] ?? "FILE",
+			kind: rules.types[f.contentType] ?? "FILE",
 			name: f.filename,
 			url: replyFileUrl(f.id),
 			fileId: f.id,

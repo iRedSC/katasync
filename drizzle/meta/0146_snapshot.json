@@ -1,6 +1,6 @@
 {
-  "id": "5ce20c4e-a65c-44ca-a67d-f65a9af66d2f",
-  "prevId": "0405d89b-8e49-428c-a1e3-59c65bb88357",
+  "id": "eef1a47c-94b8-46da-9b14-647ca10e4086",
+  "prevId": "e6860643-80ea-425b-834c-a784d85444b7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -7017,6 +7017,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "sender_authenticated": {
+          "name": "sender_authenticated",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "from_name": {
           "name": "from_name",
           "type": "text",
@@ -7040,6 +7047,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "voicemail": {
+          "name": "voicemail",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         },
         "body_html": {
           "name": "body_html",
@@ -7108,6 +7121,10 @@
         "market_emails_critical_is_important": {
           "name": "market_emails_critical_is_important",
           "value": "not \"market_emails\".\"critical\" or \"market_emails\".\"important\""
+        },
+        "market_emails_voicemail_state": {
+          "name": "market_emails_voicemail_state",
+          "value": "\"market_emails\".\"voicemail\" is null or coalesce(\n\t\t\tjsonb_typeof(\"market_emails\".\"voicemail\") = 'object' and case \"market_emails\".\"voicemail\"->>'state'\n\t\t\t\twhen 'pending' then true\n\t\t\t\twhen 'processing' then jsonb_typeof(\"market_emails\".\"voicemail\"->'token') = 'string' and jsonb_typeof(\"market_emails\".\"voicemail\"->'startedAt') = 'string'\n\t\t\t\twhen 'ready' then length(\"market_emails\".\"voicemail\"->>'title') > 0 and length(\"market_emails\".\"voicemail\"->>'summary') > 0 and \"market_emails\".\"voicemail\"->>'level' in ('normal', 'important', 'critical') and jsonb_typeof(\"market_emails\".\"voicemail\"->'orderIds') = 'array' and jsonb_typeof(\"market_emails\".\"voicemail\"->'productIds') = 'array'\n\t\t\t\twhen 'review' then length(\"market_emails\".\"voicemail\"->>'reason') > 0\n\t\t\t\twhen 'dismissed' then length(\"market_emails\".\"voicemail\"->>'reason') > 0\n\t\t\t\telse false end, false)"
         }
       },
       "isRLSEnabled": false
@@ -7709,6 +7726,52 @@
           "value": "\"oauth_tokens\".\"kind\" = 'refresh' or \"oauth_tokens\".\"used_at\" is null"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.order_buyer_contacts": {
+      "name": "order_buyer_contacts",
+      "schema": "",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "order_buyer_contacts_order_id_orders_id_fk": {
+          "name": "order_buyer_contacts_order_id_orders_id_fk",
+          "tableFrom": "order_buyer_contacts",
+          "tableTo": "orders",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.order_channel_tracking": {
@@ -12672,50 +12735,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "waiting_on": {
-          "name": "waiting_on",
-          "type": "case_waiting_on",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "respond_by": {
-          "name": "respond_by",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "next_action": {
-          "name": "next_action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "escalation": {
-          "name": "escalation",
-          "type": "case_escalation",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "case_ref": {
-          "name": "case_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "raw_status": {
           "name": "raw_status",
           "type": "text",
@@ -12826,19 +12845,7 @@
       "checkConstraints": {
         "return_requests_refund_never_ships": {
           "name": "return_requests_refund_never_ships",
-          "value": "\"return_requests\".\"kind\" = 'return' or \"return_requests\".\"status\"::text in ('requested', 'processing', 'unknown', 'closed', 'cancelled')"
-        },
-        "return_requests_resolved_owner": {
-          "name": "return_requests_resolved_owner",
-          "value": "(\"return_requests\".\"waiting_on\" = 'nobody') = (\"return_requests\".\"status\" in ('closed', 'cancelled'))"
-        },
-        "return_requests_deadline_owner": {
-          "name": "return_requests_deadline_owner",
-          "value": "\"return_requests\".\"respond_by\" is null or \"return_requests\".\"waiting_on\" = 'us'"
-        },
-        "return_requests_money_pair": {
-          "name": "return_requests_money_pair",
-          "value": "(\"return_requests\".\"amount\" is null) = (\"return_requests\".\"currency\" is null)"
+          "value": "\"return_requests\".\"kind\" = 'return' or \"return_requests\".\"status\" in ('requested', 'closed', 'cancelled')"
         }
       },
       "isRLSEnabled": false
@@ -13519,6 +13526,53 @@
           "nullsNotDistinct": false,
           "columns": [
             "external_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.shopify_threads": {
+      "name": "shopify_threads",
+      "schema": "",
+      "columns": {
+        "thread_id": {
+          "name": "thread_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "reply_token": {
+          "name": "reply_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "shopify_threads_thread_id_buyer_threads_id_fk": {
+          "name": "shopify_threads_thread_id_buyer_threads_id_fk",
+          "tableFrom": "shopify_threads",
+          "tableTo": "buyer_threads",
+          "columnsFrom": [
+            "thread_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "shopify_threads_replyToken_unique": {
+          "name": "shopify_threads_replyToken_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "reply_token"
           ]
         }
       },
@@ -14989,26 +15043,6 @@
         "unconfirmed"
       ]
     },
-    "public.case_escalation": {
-      "name": "case_escalation",
-      "schema": "public",
-      "values": [
-        "in_progress",
-        "buyer_won",
-        "seller_won",
-        "closed"
-      ]
-    },
-    "public.case_waiting_on": {
-      "name": "case_waiting_on",
-      "schema": "public",
-      "values": [
-        "us",
-        "buyer",
-        "marketplace",
-        "nobody"
-      ]
-    },
     "public.channel": {
       "name": "channel",
       "schema": "public",
@@ -15271,8 +15305,6 @@
       "schema": "public",
       "values": [
         "requested",
-        "processing",
-        "unknown",
         "shipped",
         "delivered",
         "closed",
@@ -15382,97 +15414,6 @@
         }
       },
       "name": "count_history",
-      "schema": "public",
-      "isExisting": true,
-      "materialized": false
-    },
-    "public.open_cases": {
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "orderId": {
-          "name": "orderId",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "billedBy": {
-          "name": "billedBy",
-          "type": "channel",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "externalId": {
-          "name": "externalId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "caseRef": {
-          "name": "caseRef",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "return_request_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "return_request_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "waitingOn": {
-          "name": "waitingOn",
-          "type": "case_waiting_on",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "respondBy": {
-          "name": "respondBy",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "nextAction": {
-          "name": "nextAction",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "amount": {
-          "name": "amount",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "escalation": {
-          "name": "escalation",
-          "type": "case_escalation",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "name": "open_cases",
       "schema": "public",
       "isExisting": true,
       "materialized": false

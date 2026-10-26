@@ -23,6 +23,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type { Condition } from "#/inbox/rules";
+import type { VoicemailState } from "#/inbox/voicemail-model";
 import type { Standing } from "#/markets/standing";
 import type { Applied, Proposal } from "#/purchasing/inbox/ai-filing-shapes";
 
@@ -679,6 +680,18 @@ export const orders = pgTable(
 		check("orders_pin_range", sql`${t.pin} between 1 and 999`),
 	],
 );
+
+// Where to email an order's buyer from katasync (src/buyers/shopify-mail.ts).
+// Shopify's own orders only: a relayed order's buyer is the marketplace's
+// to talk to, so it never has one. Apart from orders so the query tool
+// (katasync_mcp) can read orders but never buyers' addresses.
+export const orderBuyerContacts = pgTable("order_buyer_contacts", {
+	orderId: integer()
+		.primaryKey()
+		.references(() => orders.id),
+	email: text().notNull(),
+	updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 // The packages the channel says an order went out in, labels bought there
 // included (TikTok Shipping, Shopify's admin), read whole as the order is
@@ -3033,12 +3046,17 @@ export const marketEmails = pgTable(
 		// is unread.
 		readAt: timestamp({ withTimezone: true }),
 		fromAddress: text().notNull(),
+		// Microsoft vouched the sender owns fromAddress's domain (its
+		// Authentication-Results: compauth or aligned DMARC passed). Only
+		// asked of mail from no marketplace; false when not known.
+		senderAuthenticated: boolean().notNull().default(false),
 		fromName: text(),
 		// Every To and Cc address, lowercased.
 		recipients: text().array().notNull(),
 		subject: text().notNull(),
 		// Plain text, as Outlook renders it.
 		body: text().notNull(),
+		voicemail: jsonb().$type<VoicemailState>(),
 		// The email as sent, as on po_emails.
 		bodyHtml: text(),
 		receivedAt: timestamp({ withTimezone: true }).notNull(),
@@ -3052,6 +3070,17 @@ export const marketEmails = pgTable(
 		check(
 			"market_emails_critical_is_important",
 			sql`not ${t.critical} or ${t.important}`,
+		),
+		check(
+			"market_emails_voicemail_state",
+			sql`${t.voicemail} is null or coalesce(
+			jsonb_typeof(${t.voicemail}) = 'object' and case ${t.voicemail}->>'state'
+				when 'pending' then true
+				when 'processing' then jsonb_typeof(${t.voicemail}->'token') = 'string' and jsonb_typeof(${t.voicemail}->'startedAt') = 'string'
+				when 'ready' then length(${t.voicemail}->>'title') > 0 and length(${t.voicemail}->>'summary') > 0 and ${t.voicemail}->>'level' in ('normal', 'important', 'critical') and jsonb_typeof(${t.voicemail}->'orderIds') = 'array' and jsonb_typeof(${t.voicemail}->'productIds') = 'array'
+				when 'review' then length(${t.voicemail}->>'reason') > 0
+				when 'dismissed' then length(${t.voicemail}->>'reason') > 0
+				else false end, false)`,
 		),
 	],
 );
@@ -3305,6 +3334,17 @@ export const buyerMessages = pgTable(
 		),
 	],
 );
+
+// A Shopify buyer's thread's reply address, marketplaces+so<token>@
+// (src/buyers/shopify-match.ts): a random token made when the thread starts,
+// so an address can't be guessed or made up, and an answer to it is filed
+// by looking it up. Kept from the query tool, like buyers' addresses.
+export const shopifyThreads = pgTable("shopify_threads", {
+	threadId: integer()
+		.primaryKey()
+		.references(() => buyerThreads.id),
+	replyToken: text().notNull().unique(),
+});
 
 // How a first message to an eBay buyer stands. It's what starts their
 // conversation, and eBay has no request key, so each try is written down

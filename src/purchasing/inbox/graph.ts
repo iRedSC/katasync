@@ -422,6 +422,20 @@ export async function messageContent(
 	return { body: text.trim(), ...formatted };
 }
 
+// An email's headers as it arrived, for who vouched for its sender
+// (src/inbox/sender-auth.ts). Graph gives them only when asked by name.
+export async function messageHeaders(graphId: string, box: Mailbox) {
+	const base = `${mailbox(box)}/messages/${encodeURIComponent(graphId)}`;
+	const { internetMessageHeaders } = type({
+		"internetMessageHeaders?": type({ name: "string", value: "string" })
+			.array()
+			.or("null"),
+	}).assert(
+		await (await graph(`${base}?$select=internetMessageHeaders`)).json(),
+	);
+	return internetMessageHeaders ?? [];
+}
+
 async function bodyOf(base: string, as: "text" | "html") {
 	const { body } = type({ body: { content: "string" } }).assert(
 		await (

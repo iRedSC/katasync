@@ -19,11 +19,15 @@ import { labelPdf } from "#/shipping/label-file";
 import {
 	combineRates,
 	extraCosts,
+	grown,
 	orderForShipping,
+	pastRebills,
 	rankRates,
+	rebillsByCarrier,
 	serviceHistory,
 	shipmentPlan,
 	signatureRequired,
+	surchargeJumps,
 } from "#/shipping/quick-ship";
 import { followUpTracking, resendTrackingNow } from "#/shipping/retry";
 import { type Rate, shippoIsTest } from "#/shipping/shippo";
@@ -121,6 +125,8 @@ export const quickShipRates = createServerFn({ method: "POST" })
 		// those were asked for: what each adds is the difference.
 		let noInsurance: Rate[] | null = null;
 		let noSignature: Rate[] | null = null;
+		// The same quotes for a box an inch longer and a pound heavier.
+		let grownRates: Rate[] | null = null;
 		let notes: string[] = [];
 		let test = false;
 		if (labelSource(first) === "tiktok") {
@@ -130,13 +136,15 @@ export const quickShipRates = createServerFn({ method: "POST" })
 				);
 			}
 			// TikTok quotes one order at a time; a combined box is priced on the
-			// pin's order at the whole box's size, as buying does.
-			perBox = [
-				await tiktokRates(
-					tiktokOrderId(first.marketplaceOrderId),
-					data.boxes[0],
-				),
-			];
+			// pin's order at the whole box's size, as buying does. A grown box
+			// that fails to price only leaves the surcharge warning off.
+			const orderId = tiktokOrderId(first.marketplaceOrderId);
+			const [priced, bigger] = await Promise.all([
+				tiktokRates(orderId, data.boxes[0]),
+				tiktokRates(orderId, grown(data.boxes[0])).catch(() => null),
+			]);
+			perBox = [priced];
+			grownRates = bigger;
 		} else {
 			const where = await shipAddresses(db, data.orderIds[0]);
 			const members = await db
@@ -150,32 +158,37 @@ export const quickShipRates = createServerFn({ method: "POST" })
 				Promise.all(data.boxes.map((b) => quote(b, insure, sign)));
 			// A comparison that fails leaves only its amounts off; the services
 			// themselves still price.
-			const combined = (insure: boolean, sign: boolean) =>
-				quoteAll(insure, sign).then(
+			const combined = (insure: boolean, sign: boolean, grow = false) =>
+				Promise.all(
+					data.boxes.map((b) => quote(grow ? grown(b) : b, insure, sign)),
+				).then(
 					(quotes) => combineRates(quotes.map((p) => p.rates)),
 					() => null,
 				);
 			const insured = data.boxes.some((b) => b.insureAmount !== null);
 			// The selected quotes come first in line, ahead of the comparisons.
-			const [priced, bare, unsigned] = await Promise.all([
+			const [priced, bare, unsigned, bigger] = await Promise.all([
 				quoteAll(true, signature),
 				insured ? combined(false, signature) : null,
 				signature ? combined(true, false) : null,
+				combined(true, signature, true),
 			]);
 			noInsurance = bare;
 			noSignature = unsigned;
+			grownRates = bigger;
 			perBox = priced.map((p) => p.rates);
 			notes = [...new Set(priced.flatMap((p) => p.notes))];
 			test = shippoIsTest();
 		}
-		const history = await serviceHistory(
-			db,
-			data.contentsKey,
-			data.boxes[0].packageId,
-		);
+		const [history, rebills] = await Promise.all([
+			serviceHistory(db, data.contentsKey, data.boxes[0].packageId),
+			pastRebills(db),
+		]);
+		const rebilled = rebillsByCarrier(data.boxes, rebills);
 		const rates = combineRates(perBox);
 		const insuranceCosts = noInsurance && extraCosts(rates, noInsurance);
 		const signatureCosts = noSignature && extraCosts(rates, noSignature);
+		const jumps = grownRates && surchargeJumps(rates, grownRates);
 		const key = (r: Rate) => `${r.carrier}|${r.service}`;
 		return {
 			rates: rankRates(rates, history).map((r) => ({
@@ -183,6 +196,11 @@ export const quickShipRates = createServerFn({ method: "POST" })
 				// What insurance and a signature add to this service, when chosen.
 				insuranceCost: insuranceCosts?.get(key(r)) ?? null,
 				signatureCost: signatureCosts?.get(key(r)) ?? null,
+				// Labels this carrier billed more on after the fact, at this size.
+				rebills: rebilled.get(r.carrier.toLowerCase()) ?? [],
+				// What an inch longer and a pound heavier would add, when that's
+				// a surcharge rather than the usual step up.
+				nearSurcharge: jumps?.get(key(r)) ?? null,
 			})),
 			notes,
 			test,
