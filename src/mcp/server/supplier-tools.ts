@@ -3,6 +3,7 @@ import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
 import { products, supplierOffers } from "#/db/schema";
+import { setBulkPrices } from "#/purchasing/bulk-prices";
 import {
 	catalogsOf,
 	deleteCatalog,
@@ -224,6 +225,45 @@ export function registerSupplierTools(server: McpServer, db: Db) {
 				.from(supplierOffers)
 				.where(eq(supplierOffers.productId, product.id));
 			return json({ sku, offers });
+		},
+	);
+
+	server.registerTool(
+		"set_bulk_prices",
+		{
+			description:
+				"Replaces a supplier's bulk prices for a product it sells: from min_quantity units of its purchase unit on, each costs `cost`. An empty list removes them. Each must be for more than the minimum order and cost less than the price and every bulk price for fewer. Draft lines at the supplier's price follow them as their quantity changes; a price set by hand stays. Receiving a line at a bulk price updates that bulk price rather than the price. Changing the pack size converts them. Read them in product_bulk_prices; get_purchase_order shows them per line with the next cheaper one.",
+			inputSchema: {
+				sku: z.string(),
+				supplier: z.string().describe("Code or name"),
+				breaks: z
+					.array(
+						z.object({
+							min_quantity: z.number().int().min(2),
+							cost: z.number().min(0),
+						}),
+					)
+					.max(20),
+			},
+			annotations: { ...WRITE, idempotentHint: true },
+		},
+		async ({ sku, supplier, breaks }) => {
+			const product = await productBySku(db, sku);
+			const { id } = await supplierByRef(db, supplier);
+			const was = await setBulkPrices(db, {
+				productId: product.id,
+				supplierId: id,
+				breaks: breaks.map((b) => ({
+					minQuantity: b.min_quantity,
+					cost: b.cost,
+				})),
+			});
+			return json({
+				sku,
+				supplier,
+				bulkPrices: breaks,
+				was: was.map((b) => ({ min_quantity: b.minQuantity, cost: b.cost })),
+			});
 		},
 	);
 

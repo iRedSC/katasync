@@ -11,6 +11,7 @@ import {
 } from "#/db/schema";
 import { productSearch } from "#/lib/product-search";
 import { carried } from "#/products/archive";
+import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
 import { cheapestOffers } from "#/purchasing/catalogs";
 import {
 	addDraftLine,
@@ -149,7 +150,18 @@ export const browseForPurchaseOrder = createServerFn({ method: "GET" })
 				.from(supplierOffers)
 				.where(eq(supplierOffers.supplierId, po.supplierId)),
 		]);
-		const termsOf = new Map(terms.map(({ productId, ...t }) => [productId, t]));
+		const breaks = breaksByOffer(
+			await bulkPricesOf(
+				db,
+				terms.map((t) => t.productId),
+			),
+		);
+		const termsOf = new Map(
+			terms.map(({ productId, ...t }) => [
+				productId,
+				{ ...t, breaks: breaks.get(`${productId}:${po.supplierId}`) ?? [] },
+			]),
+		);
 		// A tool set's supplier is the one most of its parts come from, and it
 		// has no terms of its own.
 		return all

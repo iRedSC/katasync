@@ -100,6 +100,8 @@ export async function setDraftLine(
 				},
 			})
 			.returning({ id: purchaseOrderLines.id });
+		if (input.unitCost !== undefined)
+			await pinPrice(tx, line.id, input.unitCost);
 		if (input.discounts) {
 			for (const d of input.discounts) checkOff(d.off);
 			await tx
@@ -368,4 +370,19 @@ export async function removeAddedLine(
 // line below ones added after it.
 function addedAtOf(was: Date | undefined) {
 	return was !== undefined && was <= new Date() ? was : undefined;
+}
+
+// Sets a line's price as given, after a write the bulk price trigger may
+// have repriced (drizzle/0150): a price given by hand or put back from
+// before is what it says, not the supplier's list. Only a quantity change
+// sets the trigger off, so this write stands.
+export async function pinPrice(
+	tx: Db,
+	lineId: number,
+	unitCost: number | null,
+) {
+	await tx
+		.update(purchaseOrderLines)
+		.set({ unitCost })
+		.where(eq(purchaseOrderLines.id, lineId));
 }

@@ -130,6 +130,7 @@ export {
 	getProductSupplier,
 	listSuppliers,
 	type SupplierRow,
+	setBulkPrices,
 	setSupplierEmail,
 	setSupplierTerms,
 	updateSupplier,

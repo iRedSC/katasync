@@ -14,6 +14,7 @@ import {
 	suggestionFor,
 } from "#/purchasing/reorder";
 import { checkDiscounts } from "./discount-checks";
+import { pinPrice } from "./lines";
 import { lockForEdit, PurchaseOrderError } from "./lock";
 import { partsOfSets } from "./set-parts";
 import { lockSuggestions, onOtherDrafts, settingsOf } from "./suggestions";
@@ -391,6 +392,7 @@ export async function restoreSettings(
 				kept++;
 				continue;
 			}
+			await pinPrice(tx, back.id, line.unitCost);
 			if (discounts.length > 0)
 				await tx
 					.insert(purchaseOrderDiscounts)

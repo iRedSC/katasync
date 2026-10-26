@@ -1,6 +1,7 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	productBulkPrices,
 	productSuppliers,
 	products,
 	purchaseOrderDamages,
@@ -13,6 +14,7 @@ import { postReceipt, undoBatch } from "#/inventory/ledger";
 import { postArrival } from "#/inventory/valuation";
 import type { DiscountOff } from "#/purchasing/discount";
 import { discountRow, receiptUnitCost } from "#/purchasing/discount";
+import { perPack } from "#/purchasing/pack";
 import { closeIfComplete, reopen, shortLines } from "./closing";
 import { checkDiscounts, checkOff } from "./discount-checks";
 import { insertLine } from "./lines";
@@ -132,7 +134,16 @@ export async function receive(
 			purchaseOrderLineId: line.id,
 			note: poName(po.id),
 		});
-		if (line.unitCost !== null)
+		if (
+			line.unitCost !== null &&
+			!(await keepBulkPrice(tx, {
+				productId: line.productId,
+				supplierId: po.supplierId,
+				packSize: line.packSize,
+				quantity,
+				unitCost: line.unitCost,
+			}))
+		)
 			await keepSupplierPrice(tx, {
 				productId: line.productId,
 				supplierId: po.supplierId,
@@ -419,6 +430,50 @@ export async function damagedOf(tx: Db, lineId: number) {
 		.from(purchaseOrderDamages)
 		.where(eq(purchaseOrderDamages.lineId, lineId));
 	return row.items;
+}
+
+// A line big enough for one of the supplier's bulk prices paid that bulk
+// price: the last price paid goes there instead, so the price for smaller
+// orders stays. Counted in single items, so a line in an old pack size
+// still finds the bulk price it reached, and its price converts to the bulk
+// price's pack. Returns whether one took it.
+async function keepBulkPrice(
+	tx: Db,
+	p: {
+		productId: number;
+		supplierId: number;
+		packSize: number;
+		quantity: number;
+		unitCost: number;
+	},
+) {
+	const offer = and(
+		eq(productBulkPrices.productId, p.productId),
+		eq(productBulkPrices.supplierId, p.supplierId),
+	);
+	const [reached] = await tx
+		.select({
+			minQuantity: productBulkPrices.minQuantity,
+			packSize: productBulkPrices.packSize,
+		})
+		.from(productBulkPrices)
+		.where(
+			and(
+				offer,
+				lte(
+					sql`${productBulkPrices.minQuantity} * ${productBulkPrices.packSize}`,
+					p.quantity * p.packSize,
+				),
+			),
+		)
+		.orderBy(desc(productBulkPrices.minQuantity))
+		.limit(1);
+	if (!reached) return false;
+	await tx
+		.update(productBulkPrices)
+		.set({ cost: perPack(p.unitCost, p.packSize, reached.packSize) })
+		.where(and(offer, eq(productBulkPrices.minQuantity, reached.minQuantity)));
+	return true;
 }
 
 // The supplier's price becomes the last price paid before discounts, so a

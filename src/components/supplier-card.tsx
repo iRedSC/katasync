@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
+import { BulkChip } from "#/components/bulk-chip";
 import { CatalogSelect } from "#/components/catalog-picker";
 import { Badge, Card } from "#/components/page";
 import { InlineField } from "#/components/purchase-order/inline-fields";
@@ -218,6 +219,7 @@ function OfferRow({
 		>
 			<div className="flex min-w-0 items-center gap-1.5">
 				<span className="truncate font-medium">{o.supplierName}</span>
+				<BulkChip list={o} unit={o.unit} />
 				{o.cheapest && offers.length > 1 && (
 					<Tip content="Reorder buys from the lowest price per item">
 						<span className="inline-flex">

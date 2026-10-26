@@ -1,4 +1,5 @@
 import type { Db } from "#/db/client";
+import { nextBreak, type PriceList } from "#/purchasing/bulk";
 import { damagesOf } from "#/purchasing/damage";
 import {
 	coveredUnits,
@@ -168,6 +169,7 @@ export async function orderForClaude(db: Db, id: number) {
 				? { sent: { quantity: l.sentQuantity, unitCost: l.sentUnitCost } }
 				: {}),
 			...(l.locked ? { locked: true } : {}),
+			...(l.bulk ? bulkForClaude(l.bulk, l) : {}),
 			...(l.kind === "bundle"
 				? {
 						parts: parts
@@ -226,4 +228,27 @@ function discountsForClaude(l: {
 		off: values[i],
 		...(d.receiptId !== null ? { cameWithReceipt: d.receiptId } : {}),
 	}));
+}
+
+// A line's bulk prices, and the next cheaper one with what reaching it
+// takes, so Claude can say when a few more would cost less.
+function bulkForClaude(
+	list: PriceList,
+	l: { quantity: number; unitCost: number | null },
+) {
+	const next = nextBreak(list, l.quantity, l.unitCost);
+	return {
+		bulkPrices: list.breaks,
+		...(next
+			? {
+					nextBulkPrice: {
+						from: next.minQuantity,
+						cost: next.cost,
+						more: next.more,
+						extraInAll: next.extra,
+						close: next.close,
+					},
+				}
+			: {}),
+	};
 }

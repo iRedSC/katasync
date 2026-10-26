@@ -12,6 +12,7 @@ import {
 import { discountRow } from "#/purchasing/discount";
 import { checkDiscounts, lineDiscounts } from "./discount-checks";
 import { currentDraft } from "./drafts";
+import { pinPrice } from "./lines";
 import { lockOrder, PurchaseOrderError, poName } from "./lock";
 import { checkPrice } from "./price";
 import type { DeletedDraft } from "./types";
@@ -137,6 +138,7 @@ export async function restoreDraft(db: Db, draft: DeletedDraft) {
 				.insert(purchaseOrderLines)
 				.values({ ...l, purchaseOrderId: po.id })
 				.returning({ id: purchaseOrderLines.id });
+			await pinPrice(tx, line.id, l.unitCost);
 			if (discounts.length > 0)
 				await tx
 					.insert(purchaseOrderDiscounts)

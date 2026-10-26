@@ -33,6 +33,7 @@ export function recommendedLine(
 		defaultMinimum: r.minimumQuantity,
 		quantity: r.quantity,
 		unitCost: r.kind === "bundle" ? null : r.unitCost,
+		bulk: r.bulk,
 		sentQuantity: null,
 		sentUnitCost: null,
 		receivingNote: null,
@@ -87,6 +88,7 @@ export function browseLine(
 		quantity: minimumQuantity,
 		// The supplier's price, as newLine gives it: never our average cost.
 		unitCost: row.kind === "bundle" ? null : (t?.cost ?? null),
+		bulk: t && t.breaks.length > 0 ? { cost: t.cost, breaks: t.breaks } : null,
 		sentQuantity: null,
 		sentUnitCost: null,
 		receivingNote: null,

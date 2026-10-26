@@ -94,6 +94,41 @@ describe("over MCP", () => {
 		expect(line).toMatchObject({ productId: blade, quantity: 3, unitCost: 2 });
 	});
 
+	test("sets bulk prices that draft lines follow and point to", async () => {
+		const [{ id: canam }] = await db
+			.insert(schema.suppliers)
+			.values({ code: "CANAM", name: "CanAm" })
+			.returning();
+		await carry(db, blade, canam);
+		await db.insert(schema.productSuppliers).values({
+			productId: blade,
+			supplierId: canam,
+			supplierCount: 1,
+			cost: 10,
+		});
+		expect(
+			(
+				await tool("set_bulk_prices", {
+					sku: "BLADE",
+					supplier: "canam",
+					breaks: [{ min_quantity: 10, cost: 8 }],
+				})
+			).data,
+		).toMatchObject({ was: [] });
+		const { data } = await tool("set_draft_po_lines", {
+			quantity_in: "purchase_unit",
+			lines: [{ sku: "BLADE", quantity: 9 }],
+		});
+		const [line] = await db.select().from(schema.purchaseOrderLines);
+		expect(line.unitCost).toBe(10);
+		const po = await tool("get_purchase_order", { id: line.purchaseOrderId });
+		expect(po.data.lines[0]).toMatchObject({
+			bulkPrices: [{ minQuantity: 10, cost: 8 }],
+			nextBulkPrice: { from: 10, more: 1, extraInAll: -10, close: true },
+		});
+		expect(data.drafts).toHaveLength(1);
+	});
+
 	test("deletes a draft PO but never a sent one", async () => {
 		const [{ id: canam }] = await db
 			.insert(schema.suppliers)

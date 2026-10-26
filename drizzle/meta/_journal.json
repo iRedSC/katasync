@@ -1051,6 +1051,13 @@
       "when": 1793023322075,
       "tag": "0149_marketplace_cases",
       "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1793034146036,
+      "tag": "0150_bulk_prices",
+      "breakpoints": true
     }
   ]
 }

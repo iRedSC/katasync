@@ -13,6 +13,8 @@ import {
 } from "#/db/schema";
 import { isOurs } from "#/inventory/locations";
 import { stockRanges } from "#/inventory/stock-range";
+import { type PriceList, priceAt } from "#/purchasing/bulk";
+import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
 import { catalogsOf } from "#/purchasing/catalogs";
 import { damagesOf } from "#/purchasing/damage";
 import { emailConfigured } from "#/purchasing/email";
@@ -44,6 +46,27 @@ import { listUnits } from "#/purchasing/units";
 import { id } from "./id-input";
 import { onHandOf } from "./on-hand";
 import { leadTimeOf } from "./suppliers";
+
+// Recommendations with their supplier's bulk prices, which are in the terms
+// a recommendation is in (null when it has none), priced at the one their
+// quantity reaches.
+async function withBulk<
+	T extends { productId: number; quantity: number; unitCost: number | null },
+>(db: Db, supplierId: number, rows: T[]) {
+	const breaks = breaksByOffer(
+		await bulkPricesOf(
+			db,
+			rows.map((r) => r.productId),
+		),
+	);
+	return rows.map((r) => {
+		const list = breaks.get(`${r.productId}:${supplierId}`);
+		if (!list) return { ...r, bulk: null };
+		const bulk: PriceList = { cost: r.unitCost, breaks: list };
+		// Priced as the line adding it will be.
+		return { ...r, unitCost: priceAt(bulk, r.quantity), bulk };
+	});
+}
 
 // The receipts on a PO that can still be undone, newest first. All of them,
 // not a count for the whole PO: each line's undo steps back through its own
@@ -207,7 +230,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				stockRange: ranges.get(p.productId) ?? null,
 				why: whys.get(p.productId) ?? null,
 			})),
-			recommended,
+			recommended: await withBulk(db, po.supplier.id, recommended),
 			receipts,
 			amendments,
 			// What should change on it, waiting on someone to apply or dismiss.

@@ -10,6 +10,7 @@ import {
 	X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { BulkPrices } from "#/components/catalogs/bulk-prices";
 import {
 	type CatalogOffer,
 	type CatalogProduct,
@@ -344,6 +345,12 @@ function PriceCell({
 				{pack && (
 					<div className="px-1.5 text-xs text-muted-foreground">{pack}</div>
 				)}
+				<BulkPrices
+					catalogId={catalogId}
+					productId={p.id}
+					label={`${s.name}'s ${p.sku}`}
+					offer={o}
+				/>
 			</div>
 		</td>
 	);

@@ -1662,6 +1662,41 @@ export const productSuppliers = pgTable(
 			"product_suppliers_each_is_one",
 			sql`${t.unit} <> 'EACH' or (${t.packSize} = 1 and ${t.supplierCount} = 1)`,
 		),
+		// What a bulk price's pack size points at (productBulkPrices).
+		unique("product_suppliers_pack").on(t.productId, t.supplierId, t.packSize),
+	],
+);
+
+// A supplier's bulk prices for one product: ordering minQuantity or more of
+// its unit costs `cost` per unit instead. Each is pinned to the pack size it
+// was priced in, so changing the pack size can't leave one priced per the
+// old size: setPurchaseUnit converts them in the same transaction, and the
+// key refuses anything that doesn't. Draft lines follow them as their
+// quantity changes (the purchase_order_lines_bulk_price trigger, 0150).
+// Rules live in src/purchasing/bulk.ts.
+export const productBulkPrices = pgTable(
+	"product_bulk_prices",
+	{
+		productId: integer().notNull(),
+		supplierId: integer().notNull(),
+		packSize: integer().notNull(),
+		minQuantity: integer().notNull(),
+		cost: numeric({ precision: 12, scale: 4, mode: "number" }).notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.productId, t.supplierId, t.minQuantity] }),
+		foreignKey({
+			name: "product_bulk_prices_terms_fk",
+			columns: [t.productId, t.supplierId, t.packSize],
+			foreignColumns: [
+				productSuppliers.productId,
+				productSuppliers.supplierId,
+				productSuppliers.packSize,
+			],
+		}).onDelete("cascade"),
+		// 1 or fewer is every order: that's the price itself.
+		check("product_bulk_prices_min_above_one", sql`${t.minQuantity} > 1`),
+		check("product_bulk_prices_cost_not_negative", sql`${t.cost} >= 0`),
 	],
 );
 
