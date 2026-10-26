@@ -11,8 +11,13 @@ import {
 import { ProductError, updateProductDetails } from "#/products/details";
 import { setProductKind } from "#/products/kind";
 import { pushProductsNow } from "#/stock-push/on-change";
+import type { StorePush } from "#/stock-push/push";
 import { ourLocation, productBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
+
+// What channels refused when a parts or kind change was pushed to them.
+const pushProblems = (pushed: StorePush[]) =>
+	pushed.flatMap((p) => p.problems.map((problem) => `${p.store}: ${problem}`));
 
 export function registerProductTools(server: McpServer, db: Db) {
 	// Products and kits
@@ -62,7 +67,7 @@ export function registerProductTools(server: McpServer, db: Db) {
 		"set_components",
 		{
 			description:
-				"Replaces what a kit (pre-assembled) or tool set (bundle) is made of. Kits hold simple products; tool sets hold simple products or kits.",
+				"Replaces what a kit (pre-assembled) or tool set (bundle) is made of. Kits hold simple products; tool sets hold simple products or kits. Pushes the new stock to channels at once.",
 			inputSchema: {
 				sku: z.string(),
 				components: z
@@ -85,7 +90,11 @@ export function registerProductTools(server: McpServer, db: Db) {
 					quantity: c.quantity,
 				});
 			await setRecipe(db, parent.id, parts);
-			return json({ sku, components });
+			return json({
+				sku,
+				components,
+				pushProblems: pushProblems(await pushProductsNow(db, [parent.id])),
+			});
 		},
 	);
 
@@ -131,13 +140,10 @@ export function registerProductTools(server: McpServer, db: Db) {
 					components: parts,
 				});
 			}
-			const pushed = await pushProductsNow(db, [product.id]);
 			return json({
 				...result,
 				components: components ?? [],
-				pushProblems: pushed.flatMap((p) =>
-					p.problems.map((problem) => `${p.store}: ${problem}`),
-				),
+				pushProblems: pushProblems(await pushProductsNow(db, [product.id])),
 			});
 		},
 	);
