@@ -90,6 +90,15 @@ export async function pushRetailShelf(db: Db): Promise<StorePush[]> {
 	);
 }
 
+// Pushes these products and every set containing one, e.g. after a product
+// changes kind, which changes what it can sell though no stock moved.
+export async function pushProductsNow(
+	db: Db,
+	ids: number[],
+): Promise<StorePush[]> {
+	return pushProducts(db, await withSets(db, ids));
+}
+
 // Pushes these products to every store with push on, leaving out `except`'s
 // stores. Never throws; each store's failure comes back as its problem.
 async function pushProducts(

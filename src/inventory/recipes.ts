@@ -59,7 +59,14 @@ export async function setRecipe(
 			}
 		}
 
-		if (parent.kind === "kit" && !sameParts(recipe, components)) {
+		// A kit's first parts (e.g. one just converted from a simple product)
+		// say what the units already on the shelf are made of; only changing
+		// them rewrites history.
+		if (
+			parent.kind === "kit" &&
+			recipe.length > 0 &&
+			!sameParts(recipe, components)
+		) {
 			const [stocked] = await tx
 				.select({ productId: movements.productId })
 				.from(movements)
