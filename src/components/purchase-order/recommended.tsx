@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { BulkChip } from "#/components/bulk-chip";
 import { Badge, Card } from "#/components/page";
 import { ProductImage, SetsChip } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
@@ -7,6 +8,7 @@ import { Tip } from "#/components/ui/tooltip";
 import { VelocityGauge } from "#/components/velocity-gauge";
 import { formatCount, formatMoney } from "#/lib/format";
 import { ids } from "#/lib/optimism";
+import { priceAt } from "#/purchasing/bulk";
 import { orderedItems } from "#/purchasing/sets";
 import { addRecommended, type PurchaseOrderDetail } from "#/server/purchasing";
 import { AfterPo } from "./after-po";
@@ -127,6 +129,16 @@ export function Recommended({
 												<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
 													{r.sku}
 													<SetsChip sets={r.why.sets} />
+													{r.bulk && (
+														<BulkChip
+															list={r.bulk}
+															unit={r.unit}
+															order={{
+																quantity: r.quantity,
+																unitCost: priceAt(r.bulk, r.quantity),
+															}}
+														/>
+													)}
 													{r.critical && <Badge tone="info">Essential</Badge>}
 													{r.cheaperAt && <CheaperAt at={r.cheaperAt} />}
 												</div>

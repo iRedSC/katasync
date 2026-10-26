@@ -11,6 +11,8 @@ import {
 	supplierOffers,
 	suppliers,
 } from "#/db/schema";
+import type { PriceList } from "#/purchasing/bulk";
+import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
 import { discountOf } from "#/purchasing/discount";
 import { renderPurchaseOrder } from "#/purchasing/document";
 import { poAddress } from "#/purchasing/inbox/graph";
@@ -79,6 +81,7 @@ export async function loadOrder(db: Db, poId: number) {
 			defaultPackSize: supplierOffers.packSize,
 			defaultSupplierCount: supplierOffers.supplierCount,
 			defaultMinimum: supplierOffers.minimumQuantity,
+			defaultCost: supplierOffers.cost,
 			quantity: purchaseOrderLines.quantity,
 			unitCost: purchaseOrderLines.unitCost,
 			// What the supplier was sent; null on drafts and on lines added
@@ -135,12 +138,27 @@ export async function loadOrder(db: Db, poId: number) {
 					)
 					.orderBy(purchaseOrderDiscounts.id)
 	).map(discountOf);
+	const breaks = breaksByOffer(
+		await bulkPricesOf(
+			db,
+			lines.map((l) => l.productId),
+		),
+	);
 	return {
 		...po,
-		lines: lines.map((l) => {
+		lines: lines.map(({ defaultCost, ...l }) => {
 			const mine = discounts.filter((d) => d.lineId === l.id);
+			const bulk = breaks.get(`${l.productId}:${po.order.supplierId}`) ?? [];
 			return {
 				...l,
+				// The supplier's bulk prices, when it has some and the line is in
+				// the pack size they're priced in; else null.
+				bulk:
+					bulk.length > 0 &&
+					l.linkSupplierId !== null &&
+					l.packSize === l.defaultPackSize
+						? ({ cost: defaultCost, breaks: bulk } satisfies PriceList)
+						: null,
 				// In force now, oldest first.
 				discounts: mine
 					.filter((d) => d.removedAt === null)

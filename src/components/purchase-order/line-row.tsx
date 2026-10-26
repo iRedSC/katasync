@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
 import type { RefObject } from "react";
+import { BulkChip } from "#/components/bulk-chip";
 import { Badge } from "#/components/page";
 import { ProductImage, SetsChip } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
@@ -18,12 +19,14 @@ import {
 } from "#/server/purchasing";
 import { AfterPo } from "./after-po";
 import { PriceField, SupplierSkuField, WasSent } from "./inline-fields";
+import { refusedByDiscounts } from "./line-actions";
 import { AmountCell } from "./line-discounts";
 import { isUnsent, sinceSent } from "./po-data";
-import { LockToggle, QuantityField } from "./quantity-field";
+import { draftQuantity, LockToggle, QuantityField } from "./quantity-field";
 import { ReceiveField } from "./receive-field";
 import { AddSetButton } from "./set-parts";
 import type { Line, LineFocus, LineSet } from "./types";
+import { useAction } from "./use-action";
 
 export function LineRow({
 	detail: d,
@@ -56,6 +59,7 @@ export function LineRow({
 	const editable = d.order.status !== "cancelled";
 	const wasSent = d.order.sentAt !== null;
 	const since = sinceSent(l, wasSent);
+	const { save } = useAction();
 	return (
 		<tr
 			ref={
@@ -137,6 +141,21 @@ export function LineRow({
 								)}
 							</span>
 							<SetsChip sets={l.why?.sets ?? null} />
+							{l.bulk && (
+								<BulkChip
+									list={l.bulk}
+									unit={l.unit}
+									order={l}
+									onOrder={
+										draft && !previewing
+											? (quantity) => {
+													if (!refusedByDiscounts(l, { quantity }))
+														save(draftQuantity(l, d.order.id, quantity));
+												}
+											: undefined
+									}
+								/>
+							)}
 							{set && (
 								<AddSetButton
 									line={l}

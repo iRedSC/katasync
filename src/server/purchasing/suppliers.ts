@@ -10,6 +10,11 @@ import {
 	supplierOffers,
 	suppliers,
 } from "#/db/schema";
+import {
+	breaksByOffer,
+	bulkPricesOf,
+	setBulkPrices as saveBulkPrices,
+} from "#/purchasing/bulk-prices";
 import { type LeadTime, leadTimes } from "#/purchasing/forecast";
 import { supplierRows } from "#/purchasing/load";
 import {
@@ -146,7 +151,16 @@ export const getProductSupplier = createServerFn({ method: "GET" })
 						name: product.catalogName,
 						photoId: product.catalogPhotoId,
 					};
-		return { catalog, offers, open, units };
+		const breaks = breaksByOffer(await bulkPricesOf(db, [data.productId]));
+		return {
+			catalog,
+			offers: offers.map((o) => ({
+				...o,
+				breaks: breaks.get(`${data.productId}:${o.supplierId}`) ?? [],
+			})),
+			open,
+			units,
+		};
 	});
 
 // A supplier's part number or price for a product it sells.
@@ -160,3 +174,18 @@ export const setSupplierTerms = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) => setTerms(getDb(), data));
+
+// Replaces a supplier's bulk prices for a product; none removes them.
+// Returns the ones it had, for Undo.
+export const setBulkPrices = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			productId: "number.integer > 0",
+			supplierId: "number.integer > 0",
+			breaks: type({
+				minQuantity: "number.integer > 1",
+				cost: "number >= 0",
+			}).array(),
+		}),
+	)
+	.handler(async ({ data }) => saveBulkPrices(getDb(), data));

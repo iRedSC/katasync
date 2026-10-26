@@ -7,6 +7,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { BulkChip } from "#/components/bulk-chip";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
 import { AbcBadge } from "#/components/page";
@@ -369,6 +370,12 @@ function Table({
 												<div className="flex items-center gap-2 text-xs text-muted-foreground">
 													<span>{row.sku}</span>
 													<SetsChip sets={row.why?.sets ?? null} />
+													{t && (
+														<BulkChip
+															list={{ cost: t.cost, breaks: t.breaks }}
+															unit={t.unit}
+														/>
+													)}
 													{t?.supplierSku && (
 														<span>Their SKU {t.supplierSku}</span>
 													)}

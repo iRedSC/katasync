@@ -8,6 +8,7 @@ import {
 	purchaseUnits,
 	supplierOffers,
 } from "#/db/schema";
+import { holdBulkPrices } from "#/purchasing/bulk-prices";
 import { setOfferTerms } from "#/purchasing/catalogs";
 import {
 	convertDiscounts,
@@ -178,8 +179,8 @@ async function convertLine(
 	await convertDiscounts(db, line, t.packSize);
 }
 
-// Sets a supplier's default terms for a product, converting its price to
-// the new pack size.
+// Sets a supplier's default terms for a product, converting its price and
+// bulk prices to the new pack size.
 async function setDefaultTerms(
 	db: Db,
 	productId: number,
@@ -206,11 +207,21 @@ async function setDefaultTerms(
 			),
 		)
 		.for("update");
-	return setOfferTerms(db, productId, supplierId, {
+	// Bulk prices are pinned to the pack size, so they come off before it
+	// changes and go back on converted.
+	const putBack = await holdBulkPrices(
+		db,
+		productId,
+		supplierId,
+		link?.packSize ?? 1,
+	);
+	const was = await setOfferTerms(db, productId, supplierId, {
 		...t,
 		cost:
 			link?.cost == null ? null : perPack(link.cost, link.packSize, t.packSize),
 	});
+	await putBack(t.packSize, t.minimumQuantity);
+	return was;
 }
 
 // Changes what one draft PO orders a product in, and the minimum shown on

@@ -6,6 +6,7 @@ import { Tip } from "#/components/ui/tooltip";
 import { formatCount } from "#/lib/format";
 import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
+import { followPrice } from "#/purchasing/bulk";
 import { amendPurchaseLine, lockLine, setLine } from "#/server/purchasing";
 import { amended, refusedByDiscounts, takeOff } from "./line-actions";
 import { patchLines } from "./po-data";
@@ -139,19 +140,7 @@ export function QuantityField({
 			takeOff(line, purchaseOrderId);
 			return;
 		}
-		saveChange({
-			label: `${line.sku}'s quantity`,
-			patch: patchLines(
-				purchaseOrderId,
-				(l) => l.productId === line.productId,
-				(l) => ({ ...l, quantity }),
-				{ draftEdit: true },
-			),
-			send: () =>
-				setLine({
-					data: { purchaseOrderId, productId: line.productId, quantity },
-				}),
-		});
+		saveChange(draftQuantity(line, purchaseOrderId, quantity));
 	}
 
 	const scrub = useNumberLine({ value: line.quantity, onCommit: save });
@@ -240,4 +229,30 @@ export function QuantityField({
 			{scrub.line}
 		</>
 	);
+}
+
+// A draft line's new quantity, as a change for useAction's save. A line on
+// the supplier's bulk prices moves to the price for it, as the server will.
+export function draftQuantity(
+	line: Line,
+	purchaseOrderId: number,
+	quantity: number,
+) {
+	return {
+		label: `${line.sku}'s quantity`,
+		patch: patchLines(
+			purchaseOrderId,
+			(l) => l.productId === line.productId,
+			(l) => ({
+				...l,
+				quantity,
+				unitCost: followPrice(l.bulk, l, quantity),
+			}),
+			{ draftEdit: true },
+		),
+		send: () =>
+			setLine({
+				data: { purchaseOrderId, productId: line.productId, quantity },
+			}),
+	};
 }

@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import {
 	catalogs,
 	ownedStock,
+	productBulkPrices,
 	products,
 	salesUnits,
 	supplierCatalogs,
@@ -11,6 +12,8 @@ import {
 	supplierUnavailable,
 } from "#/db/schema";
 import { productSearch } from "#/lib/product-search";
+import type { PriceBreak } from "#/purchasing/bulk";
+import { breaksByOffer } from "#/purchasing/bulk-prices";
 import { PurchaseOrderError } from "#/purchasing/orders";
 
 // How far back a catalog's page counts sales.
@@ -42,7 +45,7 @@ export async function catalogDetail(db: Db, id: number) {
 		.where(gte(salesUnits.placedAt, since))
 		.groupBy(salesUnits.productId)
 		.as("sold");
-	const [carriers, rows, offers, unavailable] = await Promise.all([
+	const [carriers, rows, offers, unavailable, bulk] = await Promise.all([
 		db
 			.select({
 				id: suppliers.id,
@@ -80,6 +83,7 @@ export async function catalogDetail(db: Db, id: number) {
 				itemCost: supplierOffers.itemCost,
 				unit: supplierOffers.unit,
 				packSize: supplierOffers.packSize,
+				minimumQuantity: supplierOffers.minimumQuantity,
 				cheapest: supplierOffers.cheapest,
 			})
 			.from(supplierOffers)
@@ -92,10 +96,28 @@ export async function catalogDetail(db: Db, id: number) {
 			.from(supplierUnavailable)
 			.innerJoin(products, eq(products.id, supplierUnavailable.productId))
 			.where(eq(products.catalogId, id)),
+		db
+			.select({
+				productId: productBulkPrices.productId,
+				supplierId: productBulkPrices.supplierId,
+				minQuantity: productBulkPrices.minQuantity,
+				cost: productBulkPrices.cost,
+			})
+			.from(productBulkPrices)
+			.innerJoin(products, eq(products.id, productBulkPrices.productId))
+			.where(eq(products.catalogId, id))
+			.orderBy(asc(productBulkPrices.minQuantity)),
 	]);
-	const byProduct = new Map<number, typeof offers>();
+	const breaks = breaksByOffer(bulk);
+	const byProduct = new Map<
+		number,
+		((typeof offers)[number] & { breaks: PriceBreak[] })[]
+	>();
 	for (const o of offers)
-		byProduct.set(o.productId, [...(byProduct.get(o.productId) ?? []), o]);
+		byProduct.set(o.productId, [
+			...(byProduct.get(o.productId) ?? []),
+			{ ...o, breaks: breaks.get(`${o.productId}:${o.supplierId}`) ?? [] },
+		]);
 	return {
 		catalog,
 		soldDays: SOLD_DAYS,
