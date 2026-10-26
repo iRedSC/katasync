@@ -1,7 +1,8 @@
 import { type } from "arktype";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
 	retryLater,
+	searchPage,
 	shopCipher,
 	TiktokError,
 	tiktokApi,
@@ -30,13 +31,16 @@ import { ensureThread } from "./threads";
 // them. It needs the seller.customer_service scope (pnpm tiktok:authorize).
 // TikTok opens a conversation for every order and fills it with its own
 // notices (ROBOT and SYSTEM); only one a buyer wrote in becomes a thread,
-// and its notices are kept with it (marketplace-messages.ts).
+// and its notices are kept with it (marketplace-messages.ts). Conversations
+// only TikTok's assistant answered never reach Seller Center's inbox, so
+// what katasync keeps may be the only place to read one.
 
 const BASE = "/customer_service/202309/conversations";
 
 const sender = type({
 	role: "string",
 	"nickname?": "string",
+	"user_id?": "string",
 	"+": "ignore",
 });
 
@@ -133,6 +137,26 @@ export function orderOf(messages: Message[]) {
 	return null;
 }
 
+// The buyer's latest order, asked of TikTok: what the conversation is about
+// when no card in it says. TikTok's own order card mostly reaches the API as
+// OTHER, with no order ID, so most conversations need this; and it doesn't
+// depend on katasync having kept the buyer on the order.
+async function latestOrderOf(cipher: string, buyerUserId: string) {
+	const page = searchPage.assert(
+		await tiktokApi(
+			"/order/202309/orders/search",
+			{
+				shop_cipher: cipher,
+				page_size: "1",
+				sort_field: "create_time",
+				sort_order: "DESC",
+			},
+			{ buyer_user_id: buyerUserId },
+		),
+	);
+	return page.orders?.[0]?.id ?? null;
+}
+
 // One of TikTok's own, as the thread shows it; none when hidden or empty.
 // Its order and shipping cards carry only IDs, so the card is katasync's
 // own, from the order.
@@ -223,6 +247,8 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 			? from
 			: new Date(check.readThrough.getTime() - 15 * 60_000);
 	const problems: string[] = [];
+	// Why nothing could be read at all, apart from single conversations.
+	let failed: string | undefined;
 	let read = 0;
 	try {
 		const cipher = await shopCipher();
@@ -256,7 +282,8 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 					: "";
 		} while (token);
 	} catch (error) {
-		problems.unshift(error instanceof Error ? error.message : String(error));
+		failed = error instanceof Error ? error.message : String(error);
+		problems.unshift(failed);
 	}
 	const set =
 		problems.length === 0
@@ -271,7 +298,7 @@ export async function syncTiktokMessages(db: Db, { sweep = false } = {}) {
 		.insert(buyerMessageChecks)
 		.values({ market: "tiktok", ...set })
 		.onConflictDoUpdate({ target: buyerMessageChecks.market, set });
-	return { read, problems };
+	return { read, problems, failed };
 }
 
 // One conversation; false when nothing in it was new.
@@ -290,16 +317,34 @@ async function syncConversation(
 		.where(
 			and(eq(buyerThreads.market, "tiktok"), eq(buyerThreads.externalId, c.id)),
 		);
+	const buyer = c.participants?.find((p) => p.role === "BUYER");
+	// The buyer's latest order, onto a thread no card tied to one.
+	const fillOrder = async (threadId: number) => {
+		const order = buyer?.user_id
+			? await latestOrderOf(cipher, buyer.user_id)
+			: null;
+		if (order)
+			await db
+				.update(buyerThreads)
+				.set({ orderRef: order })
+				.where(
+					and(eq(buyerThreads.id, threadId), isNull(buyerThreads.orderRef)),
+				);
+	};
 	if (!sweep) {
-		// Unchanged since it was last read in full.
-		if (thread?.readLatestId === latest.id) return false;
+		// Unchanged since it was last read in full. One still waiting with no
+		// order asks TikTok again, in case the order wasn't findable yet.
+		if (thread?.readLatestId === latest.id) {
+			if (thread.orderRef === null && thread.doneAt === null)
+				await fillOrder(thread.id);
+			return false;
+		}
 		// Nothing since the last read, and no buyer had written in it then.
 		if (!thread && latest.create_time * 1000 < since.getTime()) return false;
 	}
 	const messages = await allMessages(cipher, c.id);
 	const people = messages.filter(fromPerson);
 	if (!thread && !people.some(fromBuyer)) return false;
-	const buyer = c.participants?.find((p) => p.role === "BUYER");
 	const kept =
 		thread ??
 		(await ensureThread(db, {
@@ -316,11 +361,71 @@ async function syncConversation(
 		messages.flatMap((m) => marketplaceMessage(m) ?? []),
 	);
 	const order = kept.orderRef ? null : orderOf(messages);
+	if (order)
+		await db
+			.update(buyerThreads)
+			.set({ orderRef: order })
+			.where(eq(buyerThreads.id, kept.id));
+	// Before it counts as read, so a failed ask is made again next run.
+	else if (!kept.orderRef) await fillOrder(kept.id);
 	await db
 		.update(buyerThreads)
-		.set({ readLatestId: latest.id, ...(order ? { orderRef: order } : {}) })
+		.set({ readLatestId: latest.id })
 		.where(eq(buyerThreads.id, kept.id));
 	return true;
+}
+
+const created = type({ conversation_id: "string", "+": "ignore" });
+
+// Opens the shop's conversation with a buyer (TikTok's user ID for them),
+// reopening the one they had if any; its ID back. Nothing is sent: TikTok
+// only allows it within its limits on the order, so a plain no is Refused.
+export async function openTiktokConversation(buyerUserId: string) {
+	try {
+		return created.assert(
+			await tiktokApi(
+				BASE,
+				{ shop_cipher: await shopCipher() },
+				{ buyer_user_id: buyerUserId },
+			),
+		).conversation_id;
+	} catch (error) {
+		const why = error instanceof Error ? error.message : String(error);
+		throw error instanceof TiktokError && !retryLater(error)
+			? new Refused(why)
+			: error;
+	}
+}
+
+// A conversation staff started, kept whole like one a buyer wrote in, so
+// the thread shows what TikTok already put in it.
+export async function readStartedTiktokThread(db: Db, threadId: number) {
+	const [thread] = await db
+		.select()
+		.from(buyerThreads)
+		.where(eq(buyerThreads.id, threadId));
+	if (!thread) return;
+	const messages = await allMessages(await shopCipher(), thread.externalId);
+	await keepConversation(
+		db,
+		thread.id,
+		messages.filter(fromPerson).map(listed),
+		{ apart: true },
+	);
+	await keepMarketplaceMessages(
+		db,
+		thread.id,
+		messages.flatMap((m) => marketplaceMessage(m) ?? []),
+	);
+	const latest = messages.reduce<Message | undefined>(
+		(a, m) => (!a || m.create_time >= a.create_time ? m : a),
+		undefined,
+	);
+	if (latest)
+		await db
+			.update(buyerThreads)
+			.set({ readLatestId: latest.id })
+			.where(eq(buyerThreads.id, thread.id));
 }
 
 // Reads one thread's conversation again, to settle a reply whose send

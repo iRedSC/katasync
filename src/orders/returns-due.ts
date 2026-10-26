@@ -13,6 +13,7 @@ import {
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import {
+	openCases,
 	orderLines,
 	orderProfit,
 	orderReturns,
@@ -27,12 +28,14 @@ import {
 } from "#/db/schema";
 import { onBench } from "#/repairs/bench-holds";
 import { returnPage } from "./admin-urls";
+import { openMarketplaceCaseRows } from "./marketplace-cases";
 import { committedStock, returnQuantity } from "./return-stock";
 import { type PackageAt, trackingFor } from "./return-tracking";
 import { isLabeled, returnBlocker } from "./status";
 
-// What the Returns tab shows: orders with something due back (rules in the
-// order_returns_due view), and what came back lately.
+// What the Returns & refunds tab shows: refunds waiting on our answer,
+// orders with something due back (rules in the order_returns_due view), and
+// what came back lately.
 
 export type ReturnOrder = {
 	id: number;
@@ -51,6 +54,11 @@ export type ReturnOrder = {
 	// Why its return can't be received here, if it can't.
 	blocker: string | null;
 	requests: {
+		waitingOn: (typeof returnRequests.$inferSelect)["waitingOn"];
+		respondBy: Date | null;
+		amount: string | null;
+		currency: string | null;
+		billedBy: (typeof returnRequests.$inferSelect)["billedBy"];
 		status: (typeof returnRequests.$inferSelect)["status"];
 		reason: string | null;
 		trackingNumber: string | null;
@@ -73,12 +81,12 @@ export type ReturnOrder = {
 	}[];
 };
 
-// A marketplace return still waiting on the buyer or on us.
-const openStatuses: (typeof returnRequests.$inferSelect)["status"][] = [
-	"requested",
-	"shipped",
-	"delivered",
-];
+// A marketplace return still waiting on the buyer or on us. A refund is
+// never due back: nothing's coming.
+const openReturn = and(
+	eq(returnRequests.kind, "return"),
+	inArray(returnRequests.status, ["requested", "shipped", "delivered"]),
+);
 
 const stateOrder: ReturnState[] = [
 	"on_its_way",
@@ -98,7 +106,18 @@ export async function listReturns(db: Db) {
 				stateOrder.indexOf(b.state ?? "maybe") ||
 			a.placedAt.getTime() - b.placedAt.getTime(),
 	);
-	return { due: found, received: await recentlyReceived(db) };
+	const [cases, received] = await Promise.all([
+		openCaseRows(db),
+		recentlyReceived(db),
+	]);
+	return {
+		cases,
+		refunds: cases.filter(
+			(request) => request.kind === "refund" && request.waitingOn === "us",
+		),
+		due: found,
+		received,
+	};
 }
 
 // Orders matching what's on the box (order number, buyer, city or postal
@@ -160,7 +179,7 @@ async function returnOrders(
 	expected: Map<number, number>,
 ): Promise<ReturnOrder[]> {
 	if (ids.length === 0) return [];
-	const open = inArray(returnRequests.status, openStatuses);
+	const open = openReturn;
 	const [found, lines, requests, unmatched] = await Promise.all([
 		db
 			.select({
@@ -202,6 +221,11 @@ async function returnOrders(
 			.select({
 				orderId: returnRequests.orderId,
 				status: returnRequests.status,
+				waitingOn: returnRequests.waitingOn,
+				respondBy: returnRequests.respondBy,
+				amount: returnRequests.amount,
+				currency: returnRequests.currency,
+				billedBy: returnRequests.billedBy,
 				reason: returnRequests.reason,
 				trackingNumber: returnRequests.trackingNumber,
 				carrier: returnRequests.carrier,
@@ -281,6 +305,91 @@ async function returnOrders(
 	);
 }
 
+export type CaseRequest = Awaited<ReturnType<typeof openCaseRows>>[number];
+
+// Obligations and incoming packages are separate queues: receiving a box
+// does not settle the marketplace's case.
+export async function openCaseRows(db: Db) {
+	const rows = await db
+		.select({
+			id: returnRequests.id,
+			kind: returnRequests.kind,
+			status: returnRequests.status,
+			rawStatus: returnRequests.rawStatus,
+			waitingOn: returnRequests.waitingOn,
+			respondBy: returnRequests.respondBy,
+			amount: returnRequests.amount,
+			currency: returnRequests.currency,
+			orderId: orders.id,
+			name: orders.name,
+			channel: stores.channel,
+			salesChannel: orders.salesChannel,
+			externalId: orders.externalId,
+			marketplaceOrderId: orders.marketplaceOrderId,
+			customerName: orders.customerName,
+			shipCity: orders.shipCity,
+			shipRegion: orders.shipRegion,
+			shipPostalCode: orders.shipPostalCode,
+			placedAt: orders.placedAt,
+			billedBy: returnRequests.billedBy,
+			reason: returnRequests.reason,
+			note: returnRequests.note,
+			requestedAt: returnRequests.requestedAt,
+		})
+		.from(openCases)
+		.innerJoin(
+			returnRequests,
+			and(eq(returnRequests.id, openCases.id), eq(openCases.source, "return")),
+		)
+		.innerJoin(orders, eq(orders.id, returnRequests.orderId))
+		.innerJoin(stores, eq(stores.id, orders.storeId))
+		.orderBy(sql`${openCases.respondBy} nulls last`, openCases.id);
+	const ids = rows.map((r) => r.id);
+	const lines =
+		ids.length > 0
+			? await db
+					.select({
+						requestId: returnRequestLines.requestId,
+						id: returnRequestLines.id,
+						title: sql<string>`coalesce(${orderLines.title}, ${returnRequestLines.sku}, 'An item')`,
+						sku: sql<
+							string | null
+						>`coalesce(${products.sku}, ${orderLines.sku}, ${returnRequestLines.sku})`,
+						imageUrl: products.imageUrl,
+						quantity: returnRequestLines.quantity,
+					})
+					.from(returnRequestLines)
+					.leftJoin(
+						orderLines,
+						eq(orderLines.id, returnRequestLines.orderLineId),
+					)
+					.leftJoin(products, eq(products.id, orderLines.productId))
+					.where(inArray(returnRequestLines.requestId, ids))
+					.orderBy(returnRequestLines.id)
+			: [];
+	const returns = rows.map(
+		({ externalId, marketplaceOrderId, billedBy, ...r }) => ({
+			...r,
+			source: "return" as const,
+			billedBy,
+			externalId,
+			marketplaceOrderId,
+			answerOn: returnPage(
+				{ channel: r.channel, externalId, marketplaceOrderId },
+				billedBy,
+			),
+			lines: lines
+				.filter((l) => l.requestId === r.id)
+				.map(({ requestId: _, ...l }) => l),
+		}),
+	);
+	return [...returns, ...(await openMarketplaceCaseRows(db))].sort(
+		(left, right) =>
+			(left.respondBy?.getTime() ?? Infinity) -
+				(right.respondBy?.getTime() ?? Infinity) || left.id - right.id,
+	);
+}
+
 const refurbs = alias(products, "refurbs");
 
 // Returns received in the last 30 days, newest first, one row per order and
@@ -336,12 +445,7 @@ async function recentlyReceived(db: Db) {
 						billedBy: returnRequests.billedBy,
 					})
 					.from(returnRequests)
-					.where(
-						and(
-							inArray(returnRequests.orderId, orderIds),
-							inArray(returnRequests.status, openStatuses),
-						),
-					)
+					.where(and(inArray(returnRequests.orderId, orderIds), openReturn))
 			: [];
 	return rows.map(({ externalId, marketplaceOrderId, ...r }) => {
 		const request = open.find((o) => o.orderId === r.orderId);

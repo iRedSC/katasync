@@ -191,7 +191,8 @@ function NavItem({
 const problem: Record<keyof NavCounts, boolean | ((c: NavCounts) => boolean)> =
 	{
 		toShip: false,
-		returnsDue: false,
+		returnsDue: (c) => c.refundsToAnswer > 0,
+		refundsToAnswer: true,
 		posReady: false,
 		inbox: (c) => c.criticalMail > 0,
 		criticalMail: true,

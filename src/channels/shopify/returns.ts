@@ -1,5 +1,6 @@
 import { type } from "arktype";
-import type { ChannelReturn } from "#/orders/return-requests";
+import type { ChannelReturn, Held } from "#/orders/return-requests";
+import { shopifyReturnStage } from "../marketplace-case-stage";
 import { tiktokOrderId } from "./channel-order";
 import { shopifyQuery } from "./client";
 
@@ -9,19 +10,25 @@ import { shopifyQuery } from "./client";
 // (tiktok-returns.ts) are the ones that keep moving.
 
 // Small pages: Shopify prices a query by the most it could return, and
-// refuses one over 1,000.
+// refuses one over 1,000. An order with more returns, or a return with more
+// items, than a page takes is said so by hasNextPage, and held rather than
+// read as complete.
 const RETURNS_QUERY = `query Returns($query: String!, $cursor: String) {
 	orders(first: 10, after: $cursor, query: $query, sortKey: UPDATED_AT) {
 		pageInfo { hasNextPage endCursor }
 		nodes {
 			id
+			name
 			tags
+			updatedAt
 			returns(first: 5) {
+				pageInfo { hasNextPage }
 				nodes {
 					id
 					status
 					createdAt
 					returnLineItems(first: 10) {
+						pageInfo { hasNextPage }
 						nodes {
 							... on ReturnLineItem {
 								quantity
@@ -56,6 +63,7 @@ const returnNode = type({
 	status: "string",
 	createdAt: "string.date.iso.parse",
 	returnLineItems: {
+		pageInfo: { hasNextPage: "boolean" },
 		nodes: type({
 			"quantity?": "number.integer",
 			"returnReasonNote?": "string | null",
@@ -90,8 +98,13 @@ const ordersPage = type({
 		pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
 		nodes: type({
 			id: "string",
+			name: "string",
 			tags: "string[]",
-			returns: { nodes: returnNode.array() },
+			updatedAt: "string.date.iso.parse",
+			returns: {
+				pageInfo: { hasNextPage: "boolean" },
+				nodes: returnNode.array(),
+			},
 		}).array(),
 	},
 });
@@ -102,9 +115,7 @@ export function shopifyReturnStatus(
 	status: string,
 	tracked: boolean,
 ): ChannelReturn["status"] {
-	if (status === "CANCELED" || status === "DECLINED") return "cancelled";
-	if (status === "CLOSED") return "closed";
-	return tracked ? "shipped" : "requested";
+	return shopifyReturnStage(status, tracked).status;
 }
 
 // The reason a buyer gave for one item. Shopify files a reason it has no
@@ -139,7 +150,11 @@ export function shopifyToReturn(
 	return {
 		externalId: r.id,
 		orderExternalId: orderId,
-		status: shopifyReturnStatus(r.status, Boolean(tracking)),
+		...shopifyReturnStage(r.status, Boolean(tracking)),
+		amount: null,
+		currency: null,
+		nextAction: null,
+		caseRef: null,
 		rawStatus: r.status,
 		// Each item has its own reason; a return of several keeps them all.
 		reason: joined(items.map(itemReason)),
@@ -156,14 +171,36 @@ export function shopifyToReturn(
 }
 
 // An order's returns, unless it's a TikTok order Shopify relayed: TikTok's
-// own copy of those is the one that keeps moving.
+// own copy of those is the one that keeps moving. A return with more items
+// than were read isn't saved, and neither it nor an order with more returns
+// than were read passes as complete: each is held at the order's update.
 export function orderReturns(o: {
 	id: string;
+	name: string;
+	updatedAt: Date;
 	tags: string[];
-	returns: { nodes: ShopifyReturn[] };
-}): ChannelReturn[] {
-	if (tiktokOrderId(o.tags)) return [];
-	return o.returns.nodes.map((r) => shopifyToReturn(o.id, r));
+	returns: { pageInfo: { hasNextPage: boolean }; nodes: ShopifyReturn[] };
+}): { returns: ChannelReturn[]; held: Held[] } {
+	if (tiktokOrderId(o.tags)) return { returns: [], held: [] };
+	const whole = o.returns.nodes.filter(
+		(r) => !r.returnLineItems.pageInfo.hasNextPage,
+	);
+	const truncated =
+		o.returns.pageInfo.hasNextPage || whole.length < o.returns.nodes.length;
+	return {
+		returns: whole.map((r) => ({
+			...shopifyToReturn(o.id, r),
+			updatedAt: o.updatedAt,
+		})),
+		held: truncated
+			? [
+					{
+						at: o.updatedAt,
+						detail: `Shopify order ${o.name} has more returns or returned items than one read takes`,
+					},
+				]
+			: [],
+	};
 }
 
 // Returns on orders that changed since `since`. A return being asked for or
@@ -177,15 +214,20 @@ export async function fetchShopifyReturns(since: Date, until?: Date) {
 		.filter(Boolean)
 		.join(" AND ");
 	const returns: ChannelReturn[] = [];
+	const held: Held[] = [];
 	let cursor: string | null = null;
 	do {
 		const page = ordersPage.assert(
 			await shopifyQuery(RETURNS_QUERY, { query, cursor }),
 		);
-		for (const o of page.orders.nodes) returns.push(...orderReturns(o));
+		for (const o of page.orders.nodes) {
+			const found = orderReturns(o);
+			returns.push(...found.returns);
+			held.push(...found.held);
+		}
 		cursor = page.orders.pageInfo.hasNextPage
 			? (page.orders.pageInfo.endCursor ?? null)
 			: null;
 	} while (cursor);
-	return returns;
+	return { returns, problems: [], held };
 }

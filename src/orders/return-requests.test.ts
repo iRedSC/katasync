@@ -4,7 +4,12 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { returnReasons } from "./return-reasons";
-import { type ChannelReturn, matchLine, saveReturns } from "./return-requests";
+import {
+	type ChannelReturn,
+	matchLine,
+	returnStage,
+	saveReturns,
+} from "./return-requests";
 
 describe("matchLine", () => {
 	const lines = [
@@ -23,6 +28,18 @@ describe("matchLine", () => {
 		// Two lines share the SKU: unclear, so none.
 		expect(matchLine(lines, item("Z", "HAWK"))).toBeNull();
 		expect(matchLine([lines[2]], item(null, null))).toBe(3);
+		expect(
+			matchLine(lines, {
+				...item("forward-line", "HAWK"),
+				alternateLineExternalId: "A",
+			}),
+		).toBe(1);
+		expect(
+			matchLine(lines, {
+				...item("B", "WRENCH"),
+				alternateLineExternalId: "A",
+			}),
+		).toBe(2);
 	});
 });
 
@@ -68,7 +85,11 @@ describe("saveReturns", () => {
 		externalId: "RMA1",
 		orderExternalId: "111-1",
 		rawStatus: status,
-		status,
+		...returnStage(status, "buyer"),
+		amount: null,
+		currency: null,
+		nextAction: null,
+		caseRef: null,
 		reason: "DEFECTIVE",
 		note: "Leaks from the bottom",
 		trackingNumber: null,
@@ -125,6 +146,7 @@ describe("saveReturns", () => {
 			saved: 1,
 			skipped: 0,
 			missing: [],
+			unsaved: [],
 		});
 		const [saved] = await db.select().from(schema.returnRequestLines);
 		expect(saved.orderLineId).toBe(line.id);
@@ -142,6 +164,8 @@ describe("saveReturns", () => {
 			saved: 1,
 			skipped: 1,
 			missing: ["999"],
+			// Handed back, so the pass holds its place there.
+			unsaved: [unknown],
 		});
 		await saveReturns(db, store, [amazonReturn("closed")]);
 
@@ -159,6 +183,45 @@ describe("saveReturns", () => {
 			.from(schema.returnRequestLines)
 			.where(eq(schema.returnRequestLines.requestId, requests[0].id));
 		expect(lines).toMatchObject([{ orderLineId: lineId, quantity: 1 }]);
+	});
+
+	test("a refund waits on us without being due back, and never ships", async () => {
+		// The order went out before the store's cutover, so it left our shelf
+		// and a return request would make it due.
+		await db
+			.update(schema.stores)
+			.set({ stockFrom: new Date(Date.now() + 86_400_000) })
+			.where(eq(schema.stores.id, store.id));
+		await saveReturns(db, store, [
+			{
+				...amazonReturn("requested"),
+				kind: "refund",
+				status: "requested",
+				waitingOn: "us",
+				respondBy: null,
+			},
+		]);
+		const [request] = await db.select().from(schema.returnRequests);
+		expect(request).toMatchObject({ kind: "refund", status: "requested" });
+		expect(await db.select().from(schema.orderReturnsDue)).toEqual([]);
+		// The same request as a return is due.
+		await db
+			.update(schema.returnRequests)
+			.set({ kind: "return" })
+			.where(eq(schema.returnRequests.id, request.id));
+		expect(await db.select().from(schema.orderReturnsDue)).toMatchObject([
+			{ lineId, state: "requested", expected: 1 },
+		]);
+		await db
+			.update(schema.returnRequests)
+			.set({ kind: "refund" })
+			.where(eq(schema.returnRequests.id, request.id));
+		await expect(
+			db
+				.update(schema.returnRequests)
+				.set({ status: "shipped" })
+				.where(eq(schema.returnRequests.id, request.id)),
+		).rejects.toThrow();
 	});
 });
 

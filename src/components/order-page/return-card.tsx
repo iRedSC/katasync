@@ -1,26 +1,23 @@
 import { Link } from "@tanstack/react-router";
 import { Ban, ExternalLink, Printer, Undo2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import {
-	CARRIER,
-	carrierPage,
-	type FollowedPackage,
-	PackageStatus,
-} from "#/components/package-status";
 import { Badge, Card, type Tone } from "#/components/page";
 import { ProductImage } from "#/components/product";
+import { CaseObligation } from "#/components/returns/case-obligation";
+import { MarketplaceCaseCard } from "#/components/returns/marketplace-case";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
 import { channelName, formatCount, formatOrderDate } from "#/lib/format";
 import { returnReason } from "#/orders/return-reasons";
 import { printPdf } from "#/printing/qz-client";
-import { followReturnNow, type OrderDetail } from "#/server/orders";
+import type { OrderDetail } from "#/server/orders";
+import { ReturnPackage } from "./return-package";
 
-// Where an order's return stands, all in one place: what's due back and
-// why, each request the buyer opened on a marketplace, and every return
-// received, each of which can be taken back. Shown only when something
-// about a return has happened.
+// Where an order's return or refund stands, all in one place: what's due
+// back and why, each request the buyer opened on a marketplace (a return,
+// or a refund with nothing coming back), and every return received, each of
+// which can be taken back. Shown only when something about a return or
+// refund has happened.
 
 export const RETURN_STATES: Record<
 	ReturnState,
@@ -37,6 +34,8 @@ const REQUEST_TONE: Record<
 	Tone | undefined
 > = {
 	requested: "info",
+	processing: undefined,
+	unknown: "warning",
 	shipped: "info",
 	delivered: "success",
 	closed: undefined,
@@ -48,11 +47,20 @@ export const conditionName = (handle: string) =>
 	handle.charAt(0).toUpperCase() + handle.slice(1).replace(/-/g, " ");
 
 type Received = OrderDetail["returnsReceived"][number];
+type Request = OrderDetail["returnRequests"][number];
+
+// A refund waiting on our answer stands out; one settled reads like any
+// request that's done.
+const requestTone = (r: Request) =>
+	r.waitingOn === "us" ? "warning" : REQUEST_TONE[r.status];
+
+const asking = (r: Request) => r.waitingOn === "us";
 
 export function hasReturn(d: OrderDetail) {
 	return (
 		d.returnState !== null ||
 		d.returnRequests.length > 0 ||
+		d.marketplaceCases.length > 0 ||
 		d.returnsReceived.length > 0 ||
 		d.lines.some((l) => l.onBench.length > 0) ||
 		d.order.noReturnAt !== null
@@ -77,12 +85,24 @@ export function ReturnCard({
 	const expected = d.expected.filter((e) => e.expected > 0);
 	// Back and on the repair board, to list as refurbs once fixed.
 	const benched = d.lines.filter((l) => l.onBench.length > 0);
+	const onlyRefunds =
+		d.returnRequests.length > 0 &&
+		d.returnRequests.every((r) => r.kind === "refund") &&
+		d.returnsReceived.length === 0;
 	return (
 		<Card
-			title="Return"
+			title={
+				d.marketplaceCases.length > 0
+					? "Returns & marketplace cases"
+					: onlyRefunds
+						? "Refund"
+						: "Return"
+			}
 			flush
 			aside={
-				state ? (
+				d.returnRequests.some(asking) ? (
+					<Badge tone="warning">Refund asked</Badge>
+				) : state ? (
 					<Badge tone={state.tone}>{state.label}</Badge>
 				) : d.order.noReturnAt ? (
 					<Badge>Nothing coming back</Badge>
@@ -142,12 +162,15 @@ export function ReturnCard({
 				</Section>
 			)}
 
+			{d.marketplaceCases.map((request) => (
+				<MarketplaceCaseCard key={request.id} request={request} />
+			))}
 			{d.returnRequests.map((r) => (
 				<Section
 					key={r.id}
 					title={
-						<span className="flex items-center gap-2">
-							<Badge tone={REQUEST_TONE[r.status]}>
+						<span className="flex flex-wrap items-center gap-2">
+							<Badge tone={requestTone(r)}>
 								{r.rawStatus.charAt(0).toUpperCase() +
 									r.rawStatus.slice(1).toLowerCase().replace(/_/g, " ")}
 							</Badge>
@@ -155,6 +178,7 @@ export function ReturnCard({
 								Opened {formatOrderDate(r.requestedAt)} on{" "}
 								{channelName(r.billedBy)}
 							</span>
+							<CaseObligation request={r} />
 							{r.page && (
 								<a
 									href={r.page.url}
@@ -162,7 +186,7 @@ export function ReturnCard({
 									rel="noreferrer"
 									className="ml-auto inline-flex items-center gap-1 font-normal text-link hover:underline"
 								>
-									Open on {r.page.name}
+									{asking(r) ? "Answer" : "Open"} on {r.page.name}
 									<ExternalLink className="size-3" />
 								</a>
 							)}
@@ -178,7 +202,9 @@ export function ReturnCard({
 						)}
 						{r.lines.length > 0 && (
 							<>
-								<dt className="text-muted-foreground">Sending</dt>
+								<dt className="text-muted-foreground">
+									{r.kind === "refund" ? "Refund for" : "Sending"}
+								</dt>
 								<dd>
 									{r.lines
 										.map(
@@ -199,7 +225,10 @@ export function ReturnCard({
 							id={r.id}
 							carrier={r.carrier}
 							number={r.trackingNumber}
+							page={r.trackingPage}
 							saved={r.tracking}
+							open={r.status !== "closed" && r.status !== "cancelled"}
+							unfollowed={r.unfollowedAt !== null}
 						/>
 					)}
 					{r.note && (
@@ -291,88 +320,6 @@ function Section({
 				{title}
 			</div>
 			{children}
-		</div>
-	);
-}
-
-type Followed =
-	| { state: "asking" }
-	| { state: "followed"; t: FollowedPackage }
-	// Its carrier isn't one Shippo follows, or Shippo couldn't be asked.
-	| { state: "unfollowed" };
-
-// The package coming back, followed on Shippo as a PO's are: asked the
-// first time its order opens, then every four hours until it arrives.
-function ReturnPackage({
-	id,
-	carrier,
-	number,
-	saved,
-}: {
-	id: number;
-	carrier: string | null;
-	number: string;
-	// What Shippo last said, kept; null until it's been asked.
-	saved: FollowedPackage | null;
-}) {
-	const [followed, setFollowed] = useState<Followed>(
-		saved ? { state: "followed", t: saved } : { state: "asking" },
-	);
-	useEffect(() => {
-		if (saved) {
-			setFollowed({ state: "followed", t: saved });
-			return;
-		}
-		let current = true;
-		setFollowed({ state: "asking" });
-		followReturnNow({ data: { id } }).then(
-			(t) =>
-				current &&
-				setFollowed(t ? { state: "followed", t } : { state: "unfollowed" }),
-			() => current && setFollowed({ state: "unfollowed" }),
-		);
-		return () => {
-			current = false;
-		};
-	}, [id, saved]);
-	const known = followed.state === "followed" ? followed.t : null;
-	const page = known ? carrierPage(known) : null;
-	const text =
-		`${known ? CARRIER[known.carrier as keyof typeof CARRIER] : (carrier ?? "")} ${known?.number ?? number}`.trim();
-	return (
-		<div className="mt-2">
-			{page ? (
-				<a
-					href={page}
-					target="_blank"
-					rel="noreferrer"
-					className="block truncate font-mono text-xs text-link hover:underline"
-				>
-					{text}
-				</a>
-			) : (
-				<span className="block truncate font-mono text-xs">{text}</span>
-			)}
-			{followed.state !== "unfollowed" && (
-				<PackageStatus
-					t={
-						known ?? {
-							carrier: carrier ?? "",
-							number,
-							status: null,
-							statusDetail: null,
-							statusAt: null,
-							eta: null,
-							originalEta: null,
-							service: null,
-							origin: null,
-							destination: null,
-							history: [],
-							checkedAt: null,
-						}
-					}
-				/>
-			)}
 		</div>
 	);
 }

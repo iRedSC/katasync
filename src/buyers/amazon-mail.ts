@@ -7,7 +7,8 @@ import {
 	marketEmailAttachments,
 	marketEmails,
 } from "#/db/schema";
-import { Refused, settleReply, Unsure, unsureStatus } from "./states";
+import { sendWithResend } from "./resend";
+import { Refused, settleReply } from "./states";
 import { ensureThread, isLogged, recordFromBuyer, recordOurs } from "./threads";
 
 // Amazon buyer messages, which reach us only as email: Amazon relays each
@@ -15,6 +16,9 @@ import { ensureThread, isLogged, recordFromBuyer, recordOurs } from "./threads";
 // marketplaces mailbox, and relays our answer back when it's sent to that
 // address from a sender approved in Seller Central. So the mailbox read
 // (src/inbox/market-mail.ts) is what brings them in, and Resend sends ours.
+// Anyone can write an Amazon From, so only mail Microsoft vouched came from
+// Amazon (market_emails.sender_authenticated) is filed; the rest stays in
+// the mailbox, marked unverified.
 
 const RELAY = /@marketplace\.amazon\.com$/i;
 const ORDER = /\b\d{3}-\d{7}-\d{7}\b/;
@@ -66,6 +70,7 @@ export async function threadAmazonMail(db: Db) {
 		.where(
 			and(
 				ilike(marketEmails.fromAddress, "%@marketplace.amazon.com"),
+				eq(marketEmails.senderAuthenticated, true),
 				isNull(buyerMessages.id),
 			),
 		)
@@ -101,7 +106,7 @@ export async function threadAmazonMail(db: Db) {
 
 // Files the emails came with, as kept with each (not their inline
 // pictures, which are Amazon's logos), by email.
-async function mediaOf(db: Db, emailIds: number[]) {
+export async function mediaOf(db: Db, emailIds: number[]) {
 	const files =
 		emailIds.length === 0
 			? []
@@ -167,6 +172,7 @@ export async function threadAmazonCopies(db: Db) {
 		.where(
 			and(
 				eq(marketEmails.market, "amazon"),
+				eq(marketEmails.senderAuthenticated, true),
 				ilike(marketEmails.subject, "your e%mail to%"),
 				gte(marketEmails.receivedAt, new Date(Date.now() - COPIES_SINCE_MS)),
 				isNull(buyerMessages.id),
@@ -278,6 +284,7 @@ export async function applyAmazonRefusals(db: Db) {
 		.where(
 			and(
 				eq(marketEmails.market, "amazon"),
+				eq(marketEmails.senderAuthenticated, true),
 				gte(marketEmails.receivedAt, since),
 				isNull(buyerMessages.id),
 			),
@@ -344,9 +351,7 @@ export function replyFrom() {
 	);
 }
 
-// Hands a reply to Resend. The request key makes a retry the same send, so
-// one unsure attempt can be tried again without the buyer getting two.
-// Resend's email ID back; throws Unsure when it may yet have gone.
+// Hands a reply to Resend, from an address Seller Central approves.
 export async function sendAmazonReply(r: {
 	to: string;
 	subject: string;
@@ -355,64 +360,14 @@ export async function sendAmazonReply(r: {
 	requestKey: string;
 	attachments?: { filename: string; content: string }[];
 }) {
-	const key = process.env.RESEND_API_KEY;
 	const from = replyFrom();
-	if (!key || !from)
+	if (!process.env.RESEND_API_KEY || !from)
 		throw new Refused(
 			"Replies aren't set up: add RESEND_API_KEY and MARKETPLACE_INBOX",
 		);
-	let res: Response;
-	let body: { id?: string; message?: string; name?: string } | null;
-	try {
-		res = await fetch("https://api.resend.com/emails", {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${key}`,
-				"Content-Type": "application/json",
-				"Idempotency-Key": r.requestKey,
-			},
-			body: JSON.stringify({
-				from,
-				to: [r.to],
-				subject: /^re:/i.test(r.subject) ? r.subject : `Re: ${r.subject}`,
-				text: r.text,
-				...(r.attachments?.length ? { attachments: r.attachments } : {}),
-				...(r.inReplyTo
-					? { headers: { "In-Reply-To": r.inReplyTo, References: r.inReplyTo } }
-					: {}),
-			}),
-		});
-		body = await res.json().catch(() => null);
-	} catch (error) {
-		throw new Unsure(error instanceof Error ? error.message : String(error));
-	}
-	if (res.ok && body?.id) return body.id;
-	const why = `Resend answered ${res.status}: ${body?.message ?? res.statusText}`;
-	// Taken without an ID to show, or not answered plainly: it may have gone.
-	throw res.ok || unsureStatus(res.status) ? new Unsure(why) : new Refused(why);
-}
-
-// Resend's events (resend.com/docs/dashboard/emails/introduction): which
-// mean Amazon's server has it, which mean it never got there, and which are
-// still on the way. One not listed is reported rather than guessed at.
-const ARRIVED = ["delivered", "opened", "clicked", "complained"];
-const NEVER = ["bounced", "failed", "suppressed", "canceled"];
-const GOING = ["queued", "scheduled", "sent", "delivery_delayed"];
-
-// What Resend last heard of a reply.
-export async function amazonReplyStatus(resendId: string) {
-	const res = await fetch(
-		`https://api.resend.com/emails/${encodeURIComponent(resendId)}`,
-		{ headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` } },
-	);
-	if (!res.ok)
-		throw new Error(`Resend answered ${res.status}: ${await res.text()}`);
-	const { last_event: last = "" } = (await res.json()) as {
-		last_event?: string;
-	};
-	if (ARRIVED.includes(last)) return { state: "delivered" as const };
-	if (NEVER.includes(last))
-		return { state: "failed" as const, error: `Resend says it ${last}` };
-	if (GOING.includes(last)) return { state: "going" as const };
-	throw new Error(`Resend says ${last || "nothing"} of reply ${resendId}`);
+	return sendWithResend({
+		...r,
+		from,
+		subject: /^re:/i.test(r.subject) ? r.subject : `Re: ${r.subject}`,
+	});
 }

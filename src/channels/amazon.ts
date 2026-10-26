@@ -4,7 +4,6 @@ import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
-import { importReturns } from "#/orders/return-requests";
 import type { OrderTax } from "#/orders/tax";
 import { MARKETPLACE_US, spApi } from "./amazon-api";
 import {
@@ -12,7 +11,6 @@ import {
 	fbaQuantities,
 	mirrorFbaStock,
 } from "./amazon-listings";
-import { recentAmazonReturns } from "./amazon-returns";
 import { markGoneListings, matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, stockLocations } from "./stores";
 
@@ -307,9 +305,6 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 			await advanceOrderCursor(db, store.id, new Date(window.until));
 		}
 	}
-	// Returns after orders, so a return on a new order finds it.
-	if (options.listings)
-		problems.push(...(await importReturns(db, store, recentAmazonReturns)));
 	return { store: store.name, listings, created, orders: count, problems };
 }
 

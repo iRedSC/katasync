@@ -4,9 +4,11 @@ import {
 	FileText,
 	Mail,
 	Paperclip,
+	Volume2,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Tip } from "#/components/ui/tooltip";
+import { isMp3 } from "#/inbox/voicemail-model";
 import { formatDateTime } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { AttachedEmail } from "./attached-email";
@@ -49,6 +51,7 @@ export function shownAs(a: Attachment) {
 		return "email";
 	if (a.contentType === "application/pdf") return "pdf";
 	if (/^image\/(png|jpeg|gif|webp)$/.test(a.contentType)) return "image";
+	if (isMp3(a)) return "audio";
 	return "download";
 }
 
@@ -117,6 +120,7 @@ export function EmailReader({
 	box = "purchasing",
 	fileUrl = attachmentUrl,
 	className,
+	message,
 }: {
 	email: ReadableEmail;
 	// Which mailbox it's from, for its formatted version.
@@ -131,6 +135,7 @@ export function EmailReader({
 	// orders it names.
 	about?: ReactNode;
 	className?: string;
+	message?: ReactNode;
 }) {
 	const [showing, setShowing] = useState<number | "message">("message");
 	const file = e.attachments.find((a) => a.id === showing);
@@ -185,6 +190,8 @@ export function EmailReader({
 			>
 				{file ? (
 					<FileView file={file} url={fileUrl(file)} />
+				) : message ? (
+					message
 				) : (
 					<EmailBody
 						box={box}
@@ -280,6 +287,8 @@ function FileTab({
 		<Tab active={active} onClick={onShow}>
 			{how === "email" ? (
 				<Mail className="size-3.5 shrink-0" />
+			) : how === "audio" ? (
+				<Volume2 className="size-3.5 shrink-0" />
 			) : (
 				<FileText className="size-3.5 shrink-0" />
 			)}
@@ -314,6 +323,8 @@ export function FileView({ file: a, url }: { file: Attachment; url: string }) {
 			</div>
 			{shownAs(a) === "email" ? (
 				<AttachedEmail url={url} />
+			) : shownAs(a) === "audio" ? (
+				<AudioRecording url={url} filename={a.filename} />
 			) : shownAs(a) === "pdf" ? (
 				<iframe
 					src={url}
@@ -326,6 +337,54 @@ export function FileView({ file: a, url }: { file: Attachment; url: string }) {
 					alt={a.filename}
 					className="mx-auto max-w-full object-contain p-3"
 				/>
+			)}
+		</div>
+	);
+}
+
+export function AudioRecording({
+	url,
+	filename,
+	transcript,
+}: {
+	url: string;
+	filename: string;
+	transcript?: string;
+}) {
+	const [failed, setFailed] = useState(false);
+	const captions = transcript
+		? `data:text/vtt;charset=utf-8,${encodeURIComponent(`WEBVTT\n\n00:00:00.000 --> 99:59:59.999\n${transcript.replace(/-->/g, "→")}\n`)}`
+		: undefined;
+	return (
+		<div
+			className={cn(
+				"space-y-2 px-5 py-3",
+				failed && "rounded-lg border border-critical-icon bg-critical-surface",
+			)}
+		>
+			<audio
+				controls
+				preload="none"
+				src={url}
+				aria-label={`Play ${filename}`}
+				className="h-10 w-full"
+				onError={() => setFailed(true)}
+				onCanPlay={() => setFailed(false)}
+			>
+				<track
+					kind="captions"
+					src={captions}
+					srcLang="und"
+					label="Transcript"
+				/>
+			</audio>
+			{failed && (
+				<p role="alert" className="text-sm text-critical-text">
+					Recording could not load.{" "}
+					<a href={url} download={filename} className="underline">
+						Download recording
+					</a>
+				</p>
 			)}
 		</div>
 	);

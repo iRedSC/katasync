@@ -7,6 +7,7 @@ import {
 	requestReport,
 	waitForReport,
 } from "./amazon-reports";
+import { amazonReturnStage } from "./marketplace-case-stage";
 
 // Returns buyers opened on orders we shipped ourselves, with Amazon's reason,
 // from its returns report (amazon-reports.ts). Needs the SP-API Inventory and
@@ -14,7 +15,6 @@ import {
 const REPORT = "GET_FLAT_FILE_RETURNS_DATA_BY_RETURN_DATE";
 // The most one report may cover.
 export const REPORT_DAYS = 60;
-const DAY = 24 * 60 * 60 * 1000;
 // A recent-returns report younger than this is current enough.
 const FRESH_MS = 25 * 60 * 1000;
 
@@ -39,12 +39,7 @@ export function returnStatus(row: {
 	delivered: boolean;
 	tracked: boolean;
 }): ChannelReturn["status"] {
-	const s = row.status.toLowerCase();
-	if (s.includes("cancel") || s.includes("reject")) return "cancelled";
-	if (s.includes("closed")) return "closed";
-	if (row.delivered) return "delivered";
-	if (row.tracked) return "shipped";
-	return "requested";
+	return amazonReturnStage(row).status;
 }
 
 // One row per item returned; a return of several items shares its RMA ID.
@@ -75,11 +70,15 @@ export function parseReturnsReport(text: string): {
 			externalId: rmaId,
 			orderExternalId: orderId,
 			rawStatus: row["Return request status"],
-			status: returnStatus({
+			...amazonReturnStage({
 				status: row["Return request status"],
 				delivered: row["Return delivery date"] !== "",
 				tracked: row["Tracking ID"] !== "",
 			}),
+			amount: null,
+			currency: null,
+			nextAction: null,
+			caseRef: null,
 			reason: row["Return Reason"] || null,
 			// Amazon's report has no buyer comments.
 			note: null,
@@ -113,18 +112,33 @@ export async function fetchAmazonReturns(
 	return readReport(found);
 }
 
-// Returns requested in the last 60 days, from a report a recent pass asked
-// for if there is one, so passes don't each ask for their own. Older reports
-// of this type (a history backfill's) cover other dates and are passed over.
-export async function recentAmazonReturns(now = Date.now()) {
+// Returns requested from `from` (no more than 60 days back) up to about
+// now, with the stretch the report really covers. A report a recent pass
+// asked for is read instead of asking again, but only when Amazon says it
+// covers that start, so passes don't each ask for their own and a reused
+// one never stands in for days it doesn't hold. Null while it's being built.
+export async function recentAmazonReturns(from: Date, now = Date.now()) {
 	const recent = (await listReports(REPORT, 10)).find(
 		(r) =>
 			now - r.createdTime.getTime() < FRESH_MS &&
+			r.dataStartTime !== undefined &&
+			r.dataStartTime <= from &&
 			r.dataEndTime !== undefined &&
 			r.createdTime.getTime() - r.dataEndTime.getTime() < 60 * 60 * 1000,
 	);
-	if (recent) return readReport(await waitForReport(recent.reportId));
-	return fetchAmazonReturns(new Date(now - REPORT_DAYS * DAY), new Date(now));
+	const found = recent
+		? await waitForReport(recent.reportId)
+		: await requestReport(REPORT, {
+				dataStartTime: from.toISOString(),
+				dataEndTime: new Date(now).toISOString(),
+			});
+	const read = await readReport(found);
+	if (!read) return null;
+	return {
+		...read,
+		from: found.dataStartTime ?? from,
+		until: found.dataEndTime ?? new Date(found.createdTime),
+	};
 }
 
 // A report Amazon had nothing for ends CANCELLED: no returns, not a failure.

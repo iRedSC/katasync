@@ -1,17 +1,9 @@
 import { type } from "arktype";
-import { and, eq, inArray, lt } from "drizzle-orm";
 import { XMLParser } from "fast-xml-parser";
 import type { Db } from "#/db/client";
-import { returnRequests } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
-import { importReturns } from "#/orders/return-requests";
 import type { OrderTax } from "#/orders/tax";
-import {
-	DISCOVERY_DAYS,
-	fetchEbayReturns,
-	fetchOlderOpenReturns,
-} from "./ebay-returns";
 import {
 	type ChannelListing,
 	markGoneListings,
@@ -41,6 +33,7 @@ const SCOPES = SYNC_SCOPES.join(" ");
 // (src/markets/ebay-standing.ts), and buyer messages.
 export const EBAY_CONSENT_SCOPES = [
 	...SYNC_SCOPES,
+	"https://api.ebay.com/oauth/api_scope/sell.payment.dispute",
 	"https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
 	"https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
 	// Buyer messages (src/buyers/ebay-messages.ts).
@@ -51,10 +44,20 @@ let cachedToken: { value: string; expiresAt: number } | undefined;
 
 // Trades the refresh token for a 2-hour access token. eBay's refresh token
 // doesn't change when used, so sharing it is safe.
-export async function accessToken() {
+export async function accessToken(scope = SCOPES) {
+	if (scope !== SCOPES) return (await refreshAccessToken(scope)).access_token;
 	if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
 		return cachedToken.value;
 	}
+	const token = await refreshAccessToken(scope);
+	cachedToken = {
+		value: token.access_token,
+		expiresAt: Date.now() + token.expires_in * 1000,
+	};
+	return token.access_token;
+}
+
+async function refreshAccessToken(scope: string) {
 	const { EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, EBAY_REFRESH_TOKEN } =
 		process.env;
 	if (!EBAY_CLIENT_ID || !EBAY_CLIENT_SECRET || !EBAY_REFRESH_TOKEN) {
@@ -64,6 +67,7 @@ export async function accessToken() {
 	}
 	const response = await fetch(`${API}/identity/v1/oauth2/token`, {
 		method: "POST",
+		signal: AbortSignal.timeout(15_000),
 		headers: {
 			Authorization: `Basic ${Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString("base64")}`,
 			"Content-Type": "application/x-www-form-urlencoded",
@@ -71,7 +75,7 @@ export async function accessToken() {
 		body: new URLSearchParams({
 			grant_type: "refresh_token",
 			refresh_token: EBAY_REFRESH_TOKEN,
-			scope: SCOPES,
+			scope,
 		}),
 	});
 	if (!response.ok) {
@@ -83,11 +87,7 @@ export async function accessToken() {
 	const body = type({ access_token: "string", expires_in: "number" }).assert(
 		await response.json(),
 	);
-	cachedToken = {
-		value: body.access_token,
-		expiresAt: Date.now() + body.expires_in * 1000,
-	};
-	return cachedToken.value;
+	return body;
 }
 
 const money = type({ value: "string.numeric.parse" });
@@ -329,28 +329,6 @@ async function activeListings(): Promise<ChannelListing[]> {
 }
 
 const FIRST_SYNC_DAYS = 60;
-const DAY = 24 * 60 * 60 * 1000;
-
-// eBay returns still open that discovery no longer reads by creation date.
-function openOlderReturns(db: Db, now: Date) {
-	return db
-		.select({
-			externalId: returnRequests.externalId,
-			requestedAt: returnRequests.requestedAt,
-		})
-		.from(returnRequests)
-		.where(
-			and(
-				eq(returnRequests.billedBy, "ebay"),
-				inArray(returnRequests.status, ["requested", "shipped", "delivered"]),
-				lt(
-					returnRequests.requestedAt,
-					new Date(now.getTime() - DISCOVERY_DAYS * DAY),
-				),
-			),
-		);
-}
-
 export async function syncEbay(db: Db, options: { listings: boolean }) {
 	const store = await ensureStore(db, "ebay", {
 		id: "ebay-us",
@@ -411,25 +389,6 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
-	// Returns after orders, so a return on a new order finds it. Every
-	// listings pass rereads recent returns, and each open older one from its
-	// own window, so a closure after discovery's reach comes through.
-	if (options.listings)
-		problems.push(
-			...(await importReturns(db, store, async () => {
-				const now = new Date();
-				return [
-					...(await fetchEbayReturns(
-						new Date(now.getTime() - DISCOVERY_DAYS * DAY),
-						now,
-					)),
-					...(await fetchOlderOpenReturns(
-						await openOlderReturns(db, now),
-						now,
-					)),
-				];
-			})),
-		);
 	return { store: store.name, listings, created, orders: count, problems };
 }
 

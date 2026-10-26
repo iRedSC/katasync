@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
+import { feedOnChannels } from "#/diagnostics/feed-record";
 import { refurbishOptions, refurbishReturn } from "#/orders/refurbish";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import {
@@ -58,9 +59,24 @@ export const refurbishOrderReturn = createServerFn({ method: "POST" })
 	)
 	.handler(({ data }) => refurbishReturn(getDb(), data));
 
-// The Returns tab: what's due back, and what came back lately.
-export const getReturns = createServerFn({ method: "GET" }).handler(() =>
-	listReturns(getDb()),
+// The Returns tab: what's due back, what came back lately, and when each
+// marketplace's returns were last read.
+export const getReturns = createServerFn({ method: "GET" }).handler(
+	async () => {
+		const [list, returnsChecked, casesChecked, disputesChecked] =
+			await Promise.all([
+				listReturns(getDb()),
+				feedOnChannels(getDb(), "returns"),
+				feedOnChannels(getDb(), "cases"),
+				feedOnChannels(getDb(), "disputes"),
+			]);
+		const checked = [
+			...returnsChecked,
+			...casesChecked,
+			...disputesChecked,
+		].filter((check) => check.state !== "unsupported");
+		return { ...list, checked };
+	},
 );
 
 export const searchReturnable = createServerFn({ method: "GET" })

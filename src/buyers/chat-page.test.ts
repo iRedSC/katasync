@@ -6,6 +6,13 @@ test("each conversation opens where it's answered", () => {
 		chatPage({ market: "tiktok", orderRef: "577", buyerName: "drywaller7" }),
 	).toEqual({
 		name: "TikTok",
+		url: "https://seller-us.tiktok.com/order/detail?order_no=577",
+		copy: null,
+	});
+	expect(
+		chatPage({ market: "tiktok", orderRef: null, buyerName: "drywaller7" }),
+	).toEqual({
+		name: "TikTok",
 		url: "https://seller-us.tiktok.com/chat/inbox/current",
 		copy: "drywaller7",
 	});

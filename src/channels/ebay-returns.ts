@@ -1,6 +1,13 @@
 import { type } from "arktype";
+import { z } from "zod";
 import type { ChannelReturn } from "#/orders/return-requests";
-import { accessToken } from "./ebay";
+import {
+	type EbayObligationDetail,
+	ebayCaseGet,
+	ebayObligation,
+	obligationDetail,
+} from "./ebay-case-api";
+import { ebayReturnStage } from "./marketplace-case-stage";
 
 // Returns buyers opened on eBay, with eBay's reason and what the buyer
 // wrote, from the Post-Order API. It takes the same user token as the rest
@@ -11,7 +18,8 @@ const SEARCH = "https://api.ebay.com/post-order/v2/return/search";
 const PAGE = 200;
 const DAY = 24 * 60 * 60 * 1000;
 export const HISTORY_DAYS = 540;
-// Regular passes read this far back by creation date. Older windows are as wide.
+// A first pass reads this far back by creation date; each window the open
+// returns are read again in is as wide.
 export const DISCOVERY_DAYS = 60;
 const WINDOW = DISCOVERY_DAYS * DAY;
 
@@ -38,21 +46,36 @@ const page = type({
 
 // eBay's states, as a stage.
 export function ebayReturnStatus(state: string): ChannelReturn["status"] {
-	if (state.includes("CANCEL")) return "cancelled";
-	if (state.includes("CLOSED")) return "closed";
-	if (state === "ITEM_DELIVERED") return "delivered";
-	if (state === "ITEM_SHIPPED") return "shipped";
-	return "requested";
+	return ebayReturnStage(state).status;
 }
 
 // An eBay return is one item. Its transaction id is the line's id
 // (Fulfillment's lineItemId), which order_lines keeps.
-export function ebayToReturn(m: EbayReturn): ChannelReturn {
+export function ebayToReturn(
+	m: EbayReturn,
+	detail?: EbayObligationDetail,
+): ChannelReturn {
 	const item = m.creationInfo.item;
+	const stage = ebayReturnStage(m.state);
+	const supplied = detail ? ebayObligation(detail) : null;
+	const owned =
+		stage.waitingOn !== "nobody" &&
+		stage.waitingOn !== "buyer" &&
+		supplied &&
+		(supplied.deadline || supplied.actions.length)
+			? { ...stage, waitingOn: "us" as const, respondBy: supplied.deadline }
+			: stage;
 	return {
 		externalId: m.returnId,
 		orderExternalId: m.orderId,
-		status: ebayReturnStatus(m.state),
+		...owned,
+		amount: null,
+		currency: null,
+		nextAction:
+			stage.waitingOn === "nobody"
+				? null
+				: supplied?.actions.join(", ") || null,
+		caseRef: null,
 		rawStatus: m.state,
 		reason: m.creationInfo.reason ?? null,
 		note: m.creationInfo.comments?.content?.trim() || null,
@@ -71,7 +94,11 @@ export function ebayToReturn(m: EbayReturn): ChannelReturn {
 
 // Returns opened between from and until. eBay's offset is a page number,
 // counting from 1 (0 reads as 1, so counting from 0 repeats the first page).
-export async function fetchEbayReturns(from: Date, until: Date) {
+export async function fetchEbayReturns(
+	from: Date,
+	until: Date,
+	deadline = Date.now() + 150_000,
+) {
 	const returns: ChannelReturn[] = [];
 	for (let offset = 1; ; offset++) {
 		const params = new URLSearchParams({
@@ -81,20 +108,26 @@ export async function fetchEbayReturns(from: Date, until: Date) {
 			limit: String(PAGE),
 			offset: String(offset),
 		});
-		const response = await fetch(`${SEARCH}?${params}`, {
-			headers: {
-				Authorization: `IAF ${await accessToken()}`,
-				"X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-				"Content-Type": "application/json",
-			},
-		});
-		if (!response.ok)
-			throw new Error(
-				`eBay answered ${response.status} on returns: ${await response.text()}`,
-			);
-		const found = page.assert(await response.json());
+		const found = page.assert(
+			await ebayCaseGet(`${SEARCH}?${params}`, deadline),
+		);
 		const members = found.members ?? [];
-		returns.push(...members.map(ebayToReturn));
+		for (const member of members) {
+			const detail = z
+				.object({ summary: obligationDetail.extend({ state: z.string() }) })
+				.parse(
+					await ebayCaseGet(
+						`/post-order/v2/return/${encodeURIComponent(member.returnId)}?fieldgroups=FULL`,
+						deadline,
+					),
+				);
+			returns.push(
+				ebayToReturn(
+					{ ...member, state: detail.summary.state },
+					detail.summary,
+				),
+			);
+		}
 		if (
 			members.length < PAGE ||
 			offset >= (found.paginationOutput?.totalPages ?? offset)
@@ -103,25 +136,26 @@ export async function fetchEbayReturns(from: Date, until: Date) {
 	}
 }
 
-// Open returns older than discovery reaches. eBay searches by creation date,
-// so each older window that holds one is read again, keeping only the returns
-// still open here: a closure eBay made since then comes through.
-export async function fetchOlderOpenReturns(
+// Returns still open here, read again. eBay searches by creation date, so
+// each window that holds one is read again, keeping only those: a change
+// eBay made since (shipped, closed) comes through.
+export async function fetchOpenReturns(
 	open: { externalId: string; requestedAt: Date }[],
 	now: Date,
+	deadline?: number,
 ): Promise<ChannelReturn[]> {
 	const wanted = new Set(open.map((o) => o.externalId));
 	const windows = new Set<number>();
 	for (const o of open) {
 		const age = now.getTime() - o.requestedAt.getTime();
 		const back = Math.floor(age / WINDOW);
-		if (back >= 1 && age < HISTORY_DAYS * DAY) windows.add(back);
+		if (age < HISTORY_DAYS * DAY) windows.add(back);
 	}
 	const returns: ChannelReturn[] = [];
 	for (const back of windows) {
 		const until = new Date(now.getTime() - back * WINDOW);
 		const from = new Date(until.getTime() - WINDOW);
-		const found = await fetchEbayReturns(from, until);
+		const found = await fetchEbayReturns(from, until, deadline);
 		returns.push(...found.filter((r) => wanted.has(r.externalId)));
 	}
 	return returns;

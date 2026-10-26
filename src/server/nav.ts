@@ -43,7 +43,10 @@ export const getNavCounts = createServerFn({ method: "GET" }).handler(
 		]);
 		return {
 			toShip,
-			returnsDue,
+			returnsDue: returnsDue.due + returnsDue.refunds,
+			// Refunds waiting on our answer, which turn the count red: the
+			// marketplace refunds or closes them on its own clock.
+			refundsToAnswer: returnsDue.refunds,
 			posReady,
 			// Buyers waiting on a reply, important marketplace notices, and
 			// supplier emails to file.

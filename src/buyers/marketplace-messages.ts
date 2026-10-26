@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { reader } from "#/ai/agents";
 import { runAgent } from "#/ai/harness";
 import type { Db } from "#/db/client";
@@ -80,6 +80,12 @@ export async function marketplaceMessagesOf(db: Db, threadIds: number[]) {
 	const refs = [
 		...new Set(rows.flatMap((r) => (r.orderRef ? [r.orderRef] : []))),
 	];
+	// A TikTok sale Shopify relayed keeps Shopify's ID, and TikTok's here.
+	const keys = [
+		...new Set(
+			rows.flatMap((r) => (r.orderRef ? [`${r.market}:${r.orderRef}`] : [])),
+		),
+	];
 	const found =
 		refs.length === 0
 			? []
@@ -90,6 +96,7 @@ export async function marketplaceMessagesOf(db: Db, threadIds: number[]) {
 						total: orders.total,
 						channel: stores.channel,
 						externalId: orders.externalId,
+						marketplaceOrderId: orders.marketplaceOrderId,
 						title: orderLines.title,
 						quantity: orderLines.quantity,
 						imageUrl: products.imageUrl,
@@ -98,11 +105,18 @@ export async function marketplaceMessagesOf(db: Db, threadIds: number[]) {
 					.innerJoin(stores, eq(stores.id, orders.storeId))
 					.leftJoin(orderLines, eq(orderLines.orderId, orders.id))
 					.leftJoin(products, eq(products.id, orderLines.productId))
-					.where(inArray(orders.externalId, refs))
+					.where(
+						or(
+							inArray(orders.externalId, refs),
+							inArray(orders.marketplaceOrderId, keys),
+						),
+					)
 					.orderBy(asc(orderLines.id));
 	const orderOf = (market: string, ref: string) => {
 		const lines = found.filter(
-			(o) => o.channel === market && o.externalId === ref,
+			(o) =>
+				(o.channel === market && o.externalId === ref) ||
+				o.marketplaceOrderId === `${market}:${ref}`,
 		);
 		const first = lines[0];
 		return first

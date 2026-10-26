@@ -2,6 +2,7 @@ import { useRouter } from "@tanstack/react-router";
 import { ArrowDown, RefreshCw, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { draftFits } from "#/buyers/chat-way";
 import type { BuyerThread } from "#/buyers/threads";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
@@ -22,10 +23,14 @@ const BY: Record<Draft["by"], string> = {
 
 export function Suggestion({
 	thread: t,
+	orderRef,
 	ai,
 	onEdit,
 }: {
 	thread: BuyerThread;
+	// The order in view: a suggestion about another isn't offered, only
+	// drafting one about this.
+	orderRef: string | null;
 	// Without the AI, a suggestion Claude or staff saved still shows, with
 	// nothing to draft it again.
 	ai: boolean;
@@ -33,10 +38,23 @@ export function Suggestion({
 }) {
 	const router = useRouter();
 	const [redrafting, setRedrafting] = useState(false);
-	const d = t.draft;
+	const d = t.draft && draftFits(t.draft, orderRef) ? t.draft : null;
+	// About another of the buyer's orders, so drafting is for this one.
+	const elsewhere = t.draft !== null && d === null;
 	// The version pulled into the box, which then leaves until a new one.
 	const version = d?.updatedAt.toString() ?? "";
 	const [pulled, setPulled] = useState<string | null>(null);
+	if (elsewhere && ai && t.waiting)
+		return redrafting ? (
+			<Drafting />
+		) : (
+			<div className="mb-2 flex justify-end">
+				<Button type="button" size="sm" variant="ghost" onClick={redraft}>
+					<Sparkles />
+					Suggest a reply about this order
+				</Button>
+			</div>
+		);
 	if (!t.waiting || !d || pulled === version) return null;
 	// Drafting and failing are the agent's; without it, only a saved one shows.
 	if (!ai && d.state !== "ready") return null;
@@ -44,7 +62,7 @@ export function Suggestion({
 	async function redraft() {
 		setRedrafting(true);
 		try {
-			const d = await draftReplyNow({ data: { threadId: t.id } });
+			const d = await draftReplyNow({ data: { threadId: t.id, orderRef } });
 			if (!d) toast("It's being drafted already");
 			await router.invalidate();
 		} catch (error) {
@@ -56,13 +74,7 @@ export function Suggestion({
 		}
 	}
 
-	if (d.state === "drafting" || redrafting)
-		return (
-			<div className="mb-2 flex items-center gap-2 rounded-xl border border-dashed px-3 py-3 text-sm text-muted-foreground">
-				<Sparkles className="size-4 animate-pulse" />
-				<span className="h-3 flex-1 animate-pulse rounded bg-surface-strong" />
-			</div>
-		);
+	if (d.state === "drafting" || redrafting) return <Drafting />;
 
 	if (d.state === "failed")
 		return (
@@ -140,6 +152,15 @@ export function Suggestion({
 					{d.note && <span className="text-warning-text">{d.note}</span>}
 				</div>
 			)}
+		</div>
+	);
+}
+
+function Drafting() {
+	return (
+		<div className="mb-2 flex items-center gap-2 rounded-xl border border-dashed px-3 py-3 text-sm text-muted-foreground">
+			<Sparkles className="size-4 animate-pulse" />
+			<span className="h-3 flex-1 animate-pulse rounded bg-surface-strong" />
 		</div>
 	);
 }

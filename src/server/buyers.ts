@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { aiConfigured } from "#/ai/harness";
-import { buyerOrder } from "#/buyers/order";
+import { buyerOrder, orderSummary } from "#/buyers/order";
 import { runBuyerMessages } from "#/buyers/run";
 import { reply } from "#/buyers/send";
 import {
@@ -74,10 +74,17 @@ export const unlogBuyerReply = createServerFn({ method: "POST" })
 	.validator(type({ requestKey: "string.uuid" }))
 	.handler(async ({ data }) => unlogOurs(getDb(), data.requestKey));
 
-// The thread's order and its packages, asked of the carriers as it opens.
+// The thread's order and its packages, asked of the carriers as it opens:
+// the one its chat was opened from, when that's given.
 export const getBuyerOrder = createServerFn({ method: "GET" })
-	.validator(type({ threadId: "number.integer > 0" }))
-	.handler(async ({ data }) => buyerOrder(getDb(), data.threadId));
+	.validator(
+		type({ threadId: "number.integer > 0", "orderId?": "number.integer > 0" }),
+	)
+	.handler(async ({ data }) =>
+		data.orderId
+			? orderSummary(getDb(), data.orderId)
+			: buyerOrder(getDb(), data.threadId),
+	);
 
 export const setBuyerThreadDone = createServerFn({ method: "POST" })
 	.validator(type({ id: "number.integer > 0", done: "boolean" }))

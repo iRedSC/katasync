@@ -24,6 +24,7 @@ import {
 import type { Market } from "#/markets/market";
 import { marketplaceMessagesOf } from "./marketplace-messages";
 import { answers, type ReplyStatus } from "./states";
+import { isThreadOrder } from "./thread-order";
 
 // Conversations with buyers, as katasync keeps them: read in from each
 // marketplace (./amazon-mail.ts, ./ebay-messages.ts,
@@ -258,10 +259,11 @@ export function waitingOn(
 
 // The threads of a view, those waiting first, soonest due first; then the
 // rest, latest first. Each with its messages, oldest first. Every open one,
-// so none waiting is ever cut off; done ones, the latest done.
+// so none waiting is ever cut off; done ones, the latest done. Or just one,
+// open or done.
 export async function threadsPage(
 	db: Db,
-	view: "open" | "done",
+	view: "open" | "done" | { id: number },
 	market: Market | null,
 	limit = 200,
 ) {
@@ -285,18 +287,14 @@ export async function threadsPage(
 				isNotNull(buyerThreads.orderRef),
 			),
 		)
-		.leftJoin(
-			orders,
-			and(
-				eq(orders.storeId, stores.id),
-				eq(orders.externalId, buyerThreads.orderRef),
-			),
-		)
+		.leftJoin(orders, isThreadOrder(buyerThreads.market, buyerThreads.orderRef))
 		.where(
 			and(
-				view === "done"
-					? isNotNull(buyerThreads.doneAt)
-					: isNull(buyerThreads.doneAt),
+				typeof view === "object"
+					? eq(buyerThreads.id, view.id)
+					: view === "done"
+						? isNotNull(buyerThreads.doneAt)
+						: isNull(buyerThreads.doneAt),
 				market ? eq(buyerThreads.market, market) : undefined,
 			),
 		)
@@ -383,6 +381,8 @@ export async function threadsPage(
 						by: d.by,
 						error: d.error,
 						updatedAt: d.updatedAt,
+						// The order it was written about (null: none).
+						forOrder: d.orderRef ?? t.orderRef,
 						// Written before the buyer's latest message.
 						stale:
 							latestTheirs !== undefined &&

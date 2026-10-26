@@ -10,6 +10,7 @@ import {
 	ShoppingCart,
 	Star,
 	Undo2,
+	Voicemail,
 	Wand2,
 } from "lucide-react";
 import { FOLDER_NAMES, FOLDERS, type Folder } from "#/inbox/rules";
@@ -18,7 +19,7 @@ import { FOLDER_NAMES, FOLDERS, type Folder } from "#/inbox/rules";
 // buyers' messages, the marketplaces mailbox's (Important first: a state, shown as a folder), the
 // purchasing mailbox's, and the rules that sort the first.
 
-export type MarketView = "important" | Folder | "done";
+export type MarketView = "important" | "voicemails" | Folder | "done";
 export type PurchasingView = "unfiled" | "filed";
 export type InboxFolder =
 	| "buyers"
@@ -60,6 +61,12 @@ export const BUYERS: Entry = {
 	icon: MessagesSquare,
 };
 
+export const VOICEMAILS: Entry = {
+	folder: "voicemails",
+	name: "Voicemails",
+	icon: Voicemail,
+};
+
 // What the reply agent follows.
 export const PRECEDENTS: Entry = {
 	folder: "precedents",
@@ -73,12 +80,13 @@ export const folderIcon = (f: Folder) => folderIcons[f];
 export const isFolder = (v: unknown): v is Folder =>
 	FOLDERS.includes(v as Folder);
 export const isMarketView = (f: InboxFolder): f is MarketView =>
-	MARKET_FOLDERS.some((e) => e.folder === f);
+	f === "voicemails" || MARKET_FOLDERS.some((e) => e.folder === f);
 export const isPurchasingView = (f: InboxFolder): f is PurchasingView =>
 	PURCHASING_FOLDERS.some((e) => e.folder === f);
 
 const ALL = [
 	BUYERS,
+	VOICEMAILS,
 	PRECEDENTS,
 	...MARKET_FOLDERS,
 	...PURCHASING_FOLDERS,

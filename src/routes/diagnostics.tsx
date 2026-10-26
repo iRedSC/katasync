@@ -4,6 +4,7 @@ import { AgentChanges } from "#/components/diagnostics/agent-changes";
 import { Sheet } from "#/components/diagnostics/connection-sheet";
 import { Connections } from "#/components/diagnostics/connection-tiles";
 import { diagnosticsData } from "#/components/diagnostics/diagnostics-data";
+import { FeedGrid } from "#/components/diagnostics/feed-grid";
 import { Problems } from "#/components/diagnostics/problem-list";
 import { SyncStopped } from "#/components/diagnostics/sync-stopped";
 import { WebhookBacklog } from "#/components/diagnostics/webhook-backlog";
@@ -41,6 +42,7 @@ function DiagnosticsPage() {
 			}
 		>
 			<Connections d={d} open={setSheet} />
+			<FeedGrid d={d} open={setSheet} />
 			<WebhookBacklog backlog={d.webhooks} />
 			<Problems d={d} open={setSheet} />
 			<AgentChanges calls={d.claude} />

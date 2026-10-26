@@ -8,7 +8,7 @@ import {
 	isPurchasingView,
 	purchasingFolderOf,
 } from "#/components/inbox/folders";
-import { InboxFrame, MarketFilter } from "#/components/inbox/frame";
+import { CheckNow, InboxFrame, MarketFilter } from "#/components/inbox/frame";
 import { MarketplaceBox } from "#/components/inbox/marketplace-box";
 import { PrecedentsEditor } from "#/components/inbox/precedents-editor";
 import { PurchasingBox } from "#/components/inbox/purchasing-box";
@@ -31,8 +31,9 @@ import { listPoEmails } from "#/server/purchasing";
 type Search = {
 	folder?: Exclude<InboxFolder, "important">;
 	market?: Market;
-	// Buyers: the threads done with rather than open.
+	// Buyers: the threads done with rather than open, and the one to open.
 	threads?: "done";
+	thread?: number;
 	// Rules: the one open, or a new one started from an email's sender.
 	rule?: number;
 	sender?: string;
@@ -57,6 +58,9 @@ export const Route = createFileRoute("/inbox")({
 			...(folder === "buyers" && s.threads === "done"
 				? { threads: "done" as const }
 				: {}),
+			...(folder === "buyers" && typeof s.thread === "number"
+				? { thread: s.thread }
+				: {}),
 			...(folder === "rules" && typeof s.rule === "number"
 				? { rule: s.rule }
 				: {}),
@@ -68,7 +72,7 @@ export const Route = createFileRoute("/inbox")({
 	},
 	loaderDeps: ({ search }) => ({
 		folder: search.folder ?? ("important" as const),
-		market: search.market ?? null,
+		market: search.folder === "voicemails" ? null : (search.market ?? null),
 		threads: search.threads ?? ("open" as const),
 	}),
 	loader: async ({ deps: { folder, market, threads } }) => {
@@ -113,18 +117,22 @@ export const Route = createFileRoute("/inbox")({
 
 function InboxPage() {
 	const d = Route.useLoaderData();
-	const { market, rule, sender, to } = Route.useSearch();
+	const { market, rule, sender, to, thread } = Route.useSearch();
 	return (
 		<Page
 			title="Inbox"
 			width="wide"
 			actions={
-				(d.kind === "marketplaces" || d.kind === "buyers") && (
-					<MarketFilter
-						folder={d.kind === "buyers" ? "buyers" : d.folder}
-						market={market ?? null}
-						check={d.kind === "buyers" ? undefined : d.page.check}
-					/>
+				d.kind === "marketplaces" && d.folder === "voicemails" ? (
+					<CheckNow check={d.page.check} />
+				) : (
+					(d.kind === "marketplaces" || d.kind === "buyers") && (
+						<MarketFilter
+							folder={d.kind === "buyers" ? "buyers" : d.folder}
+							market={market ?? null}
+							check={d.kind === "buyers" ? undefined : d.page.check}
+						/>
+					)
 				)
 			}
 		>
@@ -134,6 +142,7 @@ function InboxPage() {
 					market={market ?? null}
 					page={d.page}
 					counts={d.counts}
+					open={thread ?? null}
 				/>
 			) : d.kind === "precedents" ? (
 				<InboxFrame
@@ -146,7 +155,7 @@ function InboxPage() {
 			) : d.kind === "marketplaces" ? (
 				<MarketplaceBox
 					view={d.folder}
-					market={market ?? null}
+					market={d.folder === "voicemails" ? null : (market ?? null)}
 					page={d.page}
 					counts={d.counts}
 				/>

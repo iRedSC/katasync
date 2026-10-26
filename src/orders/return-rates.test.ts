@@ -130,6 +130,7 @@ describe("order_line_returns", () => {
 				billedBy: "shopify",
 				externalId: "R1",
 				status: "requested",
+				waitingOn: "buyer",
 				rawStatus: "requested",
 				reason: "DEFECTIVE",
 				requestedAt: new Date(),

@@ -1,9 +1,11 @@
 import type { Market } from "#/markets/market";
 
 // Where a conversation is answered on the marketplace's own site. None of
-// them links to one chat, so this is the nearest page: TikTok's chat inbox,
-// searched by the buyer's name (copied for pasting), or the order's page,
-// whose contact button opens the chat with that buyer.
+// them links to one chat, so this is the nearest page: the order's page,
+// whose contact button opens the chat with that buyer, or without an order
+// TikTok's chat inbox, searched by the buyer's name (copied for pasting).
+// TikTok's inbox leaves out chats only its assistant answered, so its
+// order page comes first.
 
 export type ChatPage = { name: string; url: string; copy: string | null };
 
@@ -14,10 +16,13 @@ const NAMES: Record<Market, string> = {
 	amazon: "Amazon",
 };
 
-// Shopify has no buyer chats: none.
+// Shopify buyers are emailed from katasync, with no chat page: none.
 const pages: Record<Market, (orderRef: string | null) => string | null> = {
 	shopify: () => null,
-	tiktok: () => "https://seller-us.tiktok.com/chat/inbox/current",
+	tiktok: (o) =>
+		o
+			? `https://seller-us.tiktok.com/order/detail?order_no=${encodeURIComponent(o)}`
+			: "https://seller-us.tiktok.com/chat/inbox/current",
 	ebay: (o) =>
 		o
 			? `https://www.ebay.com/mesh/ord/details?orderid=${encodeURIComponent(o)}`
@@ -38,6 +43,6 @@ export function chatPage(t: {
 	return {
 		name: NAMES[t.market],
 		url,
-		copy: t.market === "tiktok" ? t.buyerName : null,
+		copy: t.market === "tiktok" && !t.orderRef ? t.buyerName : null,
 	};
 }

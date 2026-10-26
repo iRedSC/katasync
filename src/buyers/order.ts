@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	buyerThreads,
@@ -10,40 +10,28 @@ import {
 	stores,
 } from "#/db/schema";
 import { carrierOf, channelPackages } from "#/orders/channel-tracking";
+import { readTracking } from "#/orders/package-tracking";
 import { returnStages } from "#/orders/return-stage";
 import { orderStatus } from "#/orders/status";
 import { financialStatus, labelToVoid } from "#/orders/to-ship";
-import {
-	type Carrier,
-	normalTracking,
-} from "#/purchasing/inbox/tracking-numbers";
-import { askShippo } from "#/purchasing/tracking";
+import { carrierPage, type TrackingRead } from "#/orders/tracking-read";
+import { normalTracking } from "#/purchasing/inbox/tracking-numbers";
+import { isThreadOrder } from "./thread-order";
 
 // What a buyer's order is and where its packages are, for the top of their
 // conversation and the order page: the products, and each package (ours,
 // and those the channel says it shipped on labels bought there) with every
-// scan the carrier has given (through Shippo). A carrier that can't be asked leaves what
-// katasync knows. Server only.
-
-// The carrier's own tracking page, for labels without one (TikTok's).
-const pageOf = (carrier: Carrier, number: string) =>
-	carrier === "ups"
-		? `https://www.ups.com/track?tracknum=${number}`
-		: carrier === "usps"
-			? `https://tools.usps.com/go/TrackConfirmAction?tLabels=${number}`
-			: `https://www.fedex.com/fedextrack/?trknbr=${number}`;
+// scan the carrier has given (through Shippo). A carrier that can't be
+// asked leaves the last scans known, marked stale. Server only.
 
 export async function buyerOrder(db: Db, threadId: number) {
 	const [found] = await db
 		.select({ id: orders.id })
 		.from(buyerThreads)
-		.innerJoin(stores, eq(stores.channel, buyerThreads.market))
+		.leftJoin(stores, eq(stores.channel, buyerThreads.market))
 		.innerJoin(
 			orders,
-			and(
-				eq(orders.storeId, stores.id),
-				eq(orders.externalId, buyerThreads.orderRef),
-			),
+			isThreadOrder(buyerThreads.market, buyerThreads.orderRef),
 		)
 		.where(eq(buyerThreads.id, threadId))
 		.limit(1);
@@ -110,7 +98,8 @@ export async function orderSummary(db: Db, orderId: number) {
 	const ours = new Set(
 		sent.flatMap((p) => (p.number ? [normalTracking(p.number)] : [])),
 	);
-	const theirs = (await channelPackages(db, order)).filter(
+	const channel = await channelPackages(db, order);
+	const theirs = (channel.state === "failed" ? [] : channel.packages).filter(
 		(p) => !ours.has(normalTracking(p.number)),
 	);
 	const known = [
@@ -136,35 +125,23 @@ export async function orderSummary(db: Db, orderId: number) {
 	const packages = await Promise.all(
 		known.map(async (p) => {
 			const carrier = p.number ? carrierOf(p.carrier, p.number) : null;
-			const base = {
+			const tracking: TrackingRead = !p.number
+				? { state: "untracked" }
+				: !carrier
+					? { state: "unsupported" }
+					: await readTracking(db, carrier, p.number);
+			return {
 				...p,
-				url: p.url ?? (carrier && p.number ? pageOf(carrier, p.number) : null),
-				status: null,
-				statusDetail: null,
-				eta: null,
-				deliveredAt: null,
-				// Every scan, for the timeline; null when Shippo wasn't asked.
-				tracking: null,
+				// Shippo's carrier token, to ask again; null when it follows none.
+				followedAs: carrier,
+				// The carrier's own page for labels without one (TikTok's).
+				url:
+					p.url ??
+					(carrier && p.number
+						? carrierPage({ carrier, number: p.number })
+						: null),
+				tracking,
 			};
-			if (!carrier || !p.number || !process.env.SHIPPO_API_KEY) return base;
-			try {
-				const t = await askShippo(carrier, p.number);
-				return {
-					...base,
-					status: t.status,
-					statusDetail: t.statusDetail,
-					eta: t.eta,
-					deliveredAt: t.status === "DELIVERED" ? t.statusAt : null,
-					tracking: {
-						...t,
-						carrier,
-						number: p.number,
-						checkedAt: new Date(),
-					},
-				};
-			} catch {
-				return base;
-			}
 		}),
 	);
 	return {
@@ -176,6 +153,11 @@ export async function orderSummary(db: Db, orderId: number) {
 		}),
 		lines,
 		packages,
+		// Whether the channel's own package list could be read.
+		channel:
+			channel.state === "read"
+				? { state: "read" as const }
+				: { state: channel.state, why: channel.why, name: order.channel },
 	};
 }
 

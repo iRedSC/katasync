@@ -79,6 +79,6 @@ describe("parseReturnsReport", () => {
 		expect(s("Rejected", true)).toBe("cancelled");
 		expect(s("Closed", true)).toBe("closed");
 		expect(s("Approved", true, true)).toBe("delivered");
-		expect(s("Pending")).toBe("requested");
+		expect(s("Pending")).toBe("unknown");
 	});
 });

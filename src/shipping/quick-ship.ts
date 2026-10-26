@@ -16,6 +16,7 @@ import {
 	orders,
 	packages,
 	products,
+	shipmentAdjustments,
 	shipments,
 	stores,
 } from "#/db/schema";
@@ -234,6 +235,47 @@ export function extraCosts(
 	return costs;
 }
 
+const MM_PER_INCH = 25.4;
+const GRAMS_PER_POUND = 453.59237;
+
+// A box an inch longer on its longest side and a pound heavier: priced next
+// to the real one, it shows whether the box sits just under a carrier's
+// line (a length, a weight, a size class) where the price jumps.
+export function grown<B extends BoxSize & { weightGrams: number }>(box: B): B {
+	const sides = [box.lengthMm, box.widthMm, box.heightMm];
+	const longest = sides.indexOf(Math.max(...sides));
+	sides[longest] += Math.round(MM_PER_INCH);
+	return {
+		...box,
+		lengthMm: sides[0],
+		widthMm: sides[1],
+		heightMm: sides[2],
+		weightGrams: box.weightGrams + Math.round(GRAMS_PER_POUND),
+	};
+}
+
+// A pound more usually adds a dollar or two; past both of these it's a
+// surcharge or a size class, not the usual step.
+const SURCHARGE_AT = 5;
+const SURCHARGE_SHARE = 0.2;
+
+// What growing the box (see grown) adds to each service, keyed by carrier
+// and service, only where that's a jump worth warning about.
+export function surchargeJumps(
+	rates: Rate[],
+	grownRates: Rate[],
+): Map<string, number> {
+	const now = new Map(rates.map((r) => [`${r.carrier}|${r.service}`, r.cost]));
+	const jumps = new Map<string, number>();
+	for (const [key, jump] of extraCosts(grownRates, rates)) {
+		const cost = now.get(key) ?? 0;
+		if (jump >= SURCHARGE_AT && jump >= cost * SURCHARGE_SHARE) {
+			jumps.set(key, jump);
+		}
+	}
+	return jumps;
+}
+
 export function combineRates(perBox: Rate[][]): Rate[] {
 	if (perBox.length === 0) return [];
 	const keyOf = (r: Rate) => `${r.carrier}|${r.service}`;
@@ -285,6 +327,83 @@ export function rankRates<R extends { service: string; cost: number }>(
 			(score.get(b.service) ?? 0) - (score.get(a.service) ?? 0) ||
 			a.cost - b.cost,
 	);
+}
+
+// A box as sized for a label: a saved box, or just its measurements.
+export type BoxSize = {
+	packageId: number | null;
+	lengthMm: number;
+	widthMm: number;
+	heightMm: number;
+};
+
+// A label the carrier billed more on after it shipped: its box as declared,
+// and each line of what was billed since.
+export type PastRebill = BoxSize & {
+	shipmentId: number;
+	carrier: string;
+	weightGrams: number;
+	shippedAt: Date;
+	amount: number;
+	lines: { description: string; amount: number }[];
+};
+
+// Measuring rounds: a side within half an inch is the same side.
+const SAME_SIDE_MM = 13;
+
+// The same saved box, or the same sides whichever way round they were typed.
+export function sameSize(a: BoxSize, b: BoxSize) {
+	if (a.packageId !== null && a.packageId === b.packageId) return true;
+	const sides = (x: BoxSize) =>
+		[x.lengthMm, x.widthMm, x.heightMm].sort((m, n) => m - n);
+	const [x, y] = [sides(a), sides(b)];
+	return x.every((side, i) => Math.abs(side - y[i]) <= SAME_SIDE_MM);
+}
+
+// Each carrier's past re-billed labels on a box the size of any of these,
+// newest first, keyed by lower-case carrier name (TikTok and Shippo spell
+// them their own way).
+export function rebillsByCarrier(
+	boxes: BoxSize[],
+	past: PastRebill[],
+): Map<string, PastRebill[]> {
+	const found = new Map<string, PastRebill[]>();
+	const newest = [...past].sort(
+		(a, b) => b.shippedAt.getTime() - a.shippedAt.getTime(),
+	);
+	for (const label of newest) {
+		if (!boxes.some((b) => sameSize(b, label))) continue;
+		const key = label.carrier.toLowerCase();
+		found.set(key, [...(found.get(key) ?? []), label]);
+	}
+	return found;
+}
+
+// Every real label its provider billed more on than it was bought for, from
+// any provider that records its re-bills in shipment_adjustments. Credits
+// that net a label to nothing or less aren't a warning.
+export async function pastRebills(db: Db): Promise<PastRebill[]> {
+	return db
+		.select({
+			shipmentId: shipments.id,
+			carrier: shipments.carrier,
+			packageId: shipments.packageId,
+			lengthMm: shipments.lengthMm,
+			widthMm: shipments.widthMm,
+			heightMm: shipments.heightMm,
+			weightGrams: shipments.weightGrams,
+			shippedAt: shipments.createdAt,
+			amount: sql<number>`sum(${shipmentAdjustments.amount})::float8`,
+			lines: sql<PastRebill["lines"]>`json_agg(json_build_object(
+				'description', ${shipmentAdjustments.description},
+				'amount', ${shipmentAdjustments.amount}::float8
+			) order by ${shipmentAdjustments.amount} desc)`,
+		})
+		.from(shipmentAdjustments)
+		.innerJoin(shipments, eq(shipments.id, shipmentAdjustments.shipmentId))
+		.where(eq(shipments.test, false))
+		.groupBy(shipments.id)
+		.having(sql`sum(${shipmentAdjustments.amount}) > 0`);
 }
 
 // Only shipments with these contents, or in this box, are counted: the rest

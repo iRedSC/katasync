@@ -8,7 +8,7 @@ import {
 } from "./shopify/returns";
 import {
 	isSampleRefund,
-	tiktokReturnStatus,
+	tiktokReturnStage,
 	tiktokToReturn,
 } from "./tiktok-returns";
 
@@ -33,7 +33,10 @@ describe("shopifyToReturn", () => {
 		id: "gid://shopify/Return/9",
 		status: "OPEN",
 		createdAt: new Date("2026-10-14T01:29:18Z"),
-		returnLineItems: { nodes: [item("Missing parts", null)] },
+		returnLineItems: {
+			pageInfo: { hasNextPage: false },
+			nodes: [item("Missing parts", null)],
+		},
 		reverseFulfillmentOrders: { nodes: [] },
 	};
 
@@ -42,6 +45,7 @@ describe("shopifyToReturn", () => {
 			shopifyToReturn("gid://shopify/Order/5", {
 				...base,
 				returnLineItems: {
+					pageInfo: { hasNextPage: false },
 					nodes: [
 						item("Missing parts", "No handle in the box"),
 						item("Missing parts", null, "gid://shopify/LineItem/2"),
@@ -94,11 +98,50 @@ describe("shopifyToReturn", () => {
 	test("a TikTok order Shopify relayed is left to TikTok's own returns", () => {
 		const order = (tags: string[]) => ({
 			id: "o",
+			name: "#1001",
+			updatedAt: new Date("2026-10-14T02:00:00Z"),
 			tags,
-			returns: { nodes: [base] },
+			returns: { pageInfo: { hasNextPage: false }, nodes: [base] },
 		});
-		expect(orderReturns(order(["TikTokOrderID:5776"]))).toEqual([]);
-		expect(orderReturns(order(["wholesale"]))).toHaveLength(1);
+		expect(orderReturns(order(["TikTokOrderID:5776"])).returns).toEqual([]);
+		expect(orderReturns(order(["wholesale"]))).toMatchObject({
+			returns: [{ updatedAt: new Date("2026-10-14T02:00:00Z") }],
+			held: [],
+		});
+	});
+
+	test("more returns or items than one read takes is held, not complete", () => {
+		const updatedAt = new Date("2026-10-14T02:00:00Z");
+		const order = {
+			id: "o",
+			name: "#1002",
+			updatedAt,
+			tags: [],
+			returns: { pageInfo: { hasNextPage: true }, nodes: [base] },
+		};
+		const many = orderReturns(order);
+		expect(many.returns).toHaveLength(1);
+		expect(many.held).toEqual([
+			{ at: updatedAt, detail: expect.stringContaining("#1002") },
+		]);
+		// A return with items left unread isn't saved at all.
+		const long = orderReturns({
+			...order,
+			returns: {
+				pageInfo: { hasNextPage: false },
+				nodes: [
+					{
+						...base,
+						returnLineItems: {
+							...base.returnLineItems,
+							pageInfo: { hasNextPage: true },
+						},
+					},
+				],
+			},
+		});
+		expect(long.returns).toEqual([]);
+		expect(long.held).toHaveLength(1);
 	});
 
 	test("open with a return label's tracking is on its way", () => {
@@ -162,8 +205,9 @@ describe("ebayToReturn", () => {
 	test("states", () => {
 		expect(ebayReturnStatus("ITEM_SHIPPED")).toBe("shipped");
 		expect(ebayReturnStatus("ITEM_DELIVERED")).toBe("delivered");
-		expect(ebayReturnStatus("RETURN_REQUEST_CANCELLED")).toBe("cancelled");
-		expect(ebayReturnStatus("RETURN_STARTED")).toBe("requested");
+		expect(ebayReturnStatus("RETURN_REJECTED")).toBe("cancelled");
+		expect(ebayReturnStatus("RETURN_REQUESTED")).toBe("requested");
+		expect(ebayReturnStatus("RETURN_STARTED")).toBe("unknown");
 	});
 });
 
@@ -217,14 +261,32 @@ describe("tiktokToReturn", () => {
 		).toBe(false);
 	});
 
-	test("statuses, and a refund with nothing coming back isn't due", () => {
+	test("statuses, and a refund with nothing coming back waits on us, then settles", () => {
 		const s = (return_status: string, return_type?: string) =>
-			tiktokReturnStatus({ return_status, return_type });
-		expect(s("BUYER_SHIPPED_ITEM")).toBe("shipped");
-		expect(s("RETURN_OR_REFUND_REQUEST_COMPLETE")).toBe("closed");
-		expect(s("RETURN_OR_REFUND_REQUEST_CANCEL")).toBe("cancelled");
-		expect(s("REFUND_OR_RETURN_REQUEST_REJECT")).toBe("cancelled");
-		expect(s("RETURN_OR_REFUND_REQUEST_PENDING", "REFUND")).toBe("closed");
-		expect(s("RETURN_OR_REFUND_REQUEST_PENDING")).toBe("requested");
+			tiktokReturnStage({ return_status, return_type });
+		const ret = (status: string) => ({ kind: "return", status });
+		const refund = (status: string) => ({ kind: "refund", status });
+		expect(s("BUYER_SHIPPED_ITEM")).toMatchObject(ret("shipped"));
+		expect(s("RETURN_OR_REFUND_REQUEST_COMPLETE")).toMatchObject(ret("closed"));
+		expect(s("RETURN_OR_REFUND_REQUEST_CANCEL")).toMatchObject(
+			ret("cancelled"),
+		);
+		expect(s("REFUND_OR_RETURN_REQUEST_REJECT")).toMatchObject(
+			ret("cancelled"),
+		);
+		expect(s("RETURN_OR_REFUND_REQUEST_PENDING")).toMatchObject(
+			ret("requested"),
+		);
+		expect(s("RETURN_OR_REFUND_REQUEST_PENDING", "REFUND")).toMatchObject(
+			refund("requested"),
+		);
+		expect(s("RETURN_OR_REFUND_REQUEST_COMPLETE", "REFUND")).toMatchObject(
+			refund("closed"),
+		);
+		expect(s("REFUND_OR_RETURN_REQUEST_REJECT", "REFUND")).toMatchObject(
+			refund("cancelled"),
+		);
+		// A refund never ships, whatever TikTok's status says.
+		expect(s("BUYER_SHIPPED_ITEM", "REFUND")).toMatchObject(refund("unknown"));
 	});
 });

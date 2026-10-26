@@ -44,6 +44,7 @@ import { folderIcon, type MarketView } from "./folders";
 import { InboxFrame } from "./frame";
 import { MailPane } from "./mail-pane";
 import { MoveMenu, WhyChip } from "./sorted-by";
+import { VoicemailMessage, voicemailRow } from "./voicemail";
 
 // The marketplaces mailbox on the Inbox page: what Amazon, eBay, TikTok Shop,
 // and Shopify email, sorted by the rules into folders, the ones needing
@@ -71,7 +72,17 @@ type Undo =
 
 const after = (e: Email, change: Change): Email =>
 	"done" in change
-		? { ...e, doneAt: change.done ? new Date() : null }
+		? {
+				...e,
+				doneAt: change.done ? new Date() : null,
+				voicemail:
+					!change.done && e.voicemail?.state === "dismissed"
+						? {
+								state: "review",
+								reason: `Restored: ${e.voicemail.reason}`.slice(0, 500),
+							}
+						: e.voicemail,
+			}
 		: "to" in change
 			? { ...e, folder: change.to, why: { ...e.why, folder: "by-hand" } }
 			: "level" in change
@@ -87,7 +98,11 @@ const belongs = (view: MarketView, e: Email) =>
 	view === "done"
 		? e.doneAt !== null
 		: e.doneAt === null &&
-			(view === "important" ? e.important : e.folder === view);
+			(view === "important"
+				? e.important
+				: view === "voicemails"
+					? e.voicemail !== null
+					: e.voicemail === null && e.folder === view);
 
 // Moves the email's counts (unread open emails per folder, and important),
 // and takes it off the list shown when it no longer belongs there.
@@ -97,7 +112,8 @@ function changed(key: string, view: MarketView, email: Email, change: Change) {
 		const c = { ...d.counts };
 		const tally = (e: Email, by: 1 | -1) => {
 			if (e.doneAt !== null || e.readAt !== null) return;
-			c[e.folder] += by;
+			if (e.voicemail) c.voicemails += by;
+			else c[e.folder] += by;
 			if (e.important) c.important += by;
 			if (e.critical) c.critical += by;
 		};
@@ -205,7 +221,9 @@ function Listing({ view, market, page, counts }: BoxProps) {
 		make(
 			e,
 			{ done: isDone },
-			isDone ? "Done" : `Back in ${FOLDER_NAMES[e.folder]}`,
+			isDone
+				? "Done"
+				: `Back in ${e.voicemail ? "Voicemails" : FOLDER_NAMES[e.folder]}`,
 			{
 				change: { done: !isDone },
 				said: "Put back",
@@ -271,7 +289,13 @@ function Listing({ view, market, page, counts }: BoxProps) {
 						onRead={() => read(e, e.readAt === null)}
 					/>
 				)}
-				aboutOf={(e) => <MailOrders emailId={e.id} />}
+				aboutOf={(e) =>
+					e.voicemail ? undefined : <MailOrders emailId={e.id} />
+				}
+				messageOf={(e) =>
+					e.voicemail ? <VoicemailMessage email={e} /> : undefined
+				}
+				rowOf={voicemailRow}
 				keysOf={(e) => ({
 					e: () => done(e, e.doneAt === null),
 					i: () => star(e),
@@ -285,7 +309,9 @@ function Listing({ view, market, page, counts }: BoxProps) {
 							onSelect={() => done(e, e.doneAt === null)}
 						>
 							{e.doneAt === null ? <Archive /> : <Undo2 />}
-							{e.doneAt === null ? "Done" : `Back to ${FOLDER_NAMES[e.folder]}`}
+							{e.doneAt === null
+								? "Done"
+								: `Back to ${e.voicemail ? "Voicemails" : FOLDER_NAMES[e.folder]}`}
 						</ContextMenuItem>
 						<ContextMenuItem
 							shortcut="U"
@@ -309,15 +335,16 @@ function Listing({ view, market, page, counts }: BoxProps) {
 							{e.critical ? "Not critical" : "Critical"}
 						</ContextMenuItem>
 						<ContextMenuSeparator />
-						{FOLDERS.filter((f) => f !== e.folder).map((f) => {
-							const Icon = folderIcon(f);
-							return (
-								<ContextMenuItem key={f} onSelect={() => move(e, f)}>
-									<Icon />
-									Move to {FOLDER_NAMES[f]}
-								</ContextMenuItem>
-							);
-						})}
+						{!e.voicemail &&
+							FOLDERS.filter((f) => f !== e.folder).map((f) => {
+								const Icon = folderIcon(f);
+								return (
+									<ContextMenuItem key={f} onSelect={() => move(e, f)}>
+										<Icon />
+										Move to {FOLDER_NAMES[f]}
+									</ContextMenuItem>
+								);
+							})}
 					</>
 				)}
 				empty={<Empty view={view} connected={d.connected} />}
@@ -339,7 +366,8 @@ function Listing({ view, market, page, counts }: BoxProps) {
 	);
 }
 
-// In a row: a star when important (a red octagon when critical), the folder
+// In a row: a star when important (a red octagon when critical), an Amazon
+// buyer message left off its thread for an unverified sender, the folder
 // where the list mixes them, and the marketplace where it isn't filtered to
 // one.
 function Tags({
@@ -364,8 +392,9 @@ function Tags({
 					<Star className="size-3.5 fill-warning-fill text-warning-text" />
 				)
 			)}
+			{e.unverified && <Badge tone="warning">Sender unverified</Badge>}
 			{(view === "important" || view === "done") && (
-				<Badge>{FOLDER_NAMES[e.folder]}</Badge>
+				<Badge>{e.voicemail ? "Voicemail" : FOLDER_NAMES[e.folder]}</Badge>
 			)}
 			{market === null && e.market && (
 				<ChannelBadge channel={e.market} salesChannel={null} compact />
@@ -398,7 +427,12 @@ function Actions({
 				{e.market && market === null && (
 					<ChannelBadge channel={e.market} salesChannel={null} />
 				)}
-				<WhyChip email={e} />
+				{e.voicemail ? <Badge>Voicemail</Badge> : <WhyChip email={e} />}
+				{e.unverified && (
+					<Tip content={e.unverified}>
+						<Badge tone="warning">Sender unverified</Badge>
+					</Tip>
+				)}
 			</span>
 			<Tip content={e.readAt === null ? "Mark read (U)" : "Mark unread (U)"}>
 				<Button
@@ -448,7 +482,7 @@ function Actions({
 					/>
 				</Button>
 			</Tip>
-			<MoveMenu from={e.folder} onMove={onMove} />
+			{!e.voicemail && <MoveMenu from={e.folder} onMove={onMove} />}
 			{e.doneAt === null ? (
 				<Tip content="E">
 					<Button size="sm" variant="secondary" onClick={() => onDone(true)}>
@@ -459,7 +493,7 @@ function Actions({
 			) : (
 				<Button size="sm" variant="secondary" onClick={() => onDone(false)}>
 					<Undo2 />
-					Back to {FOLDER_NAMES[e.folder]}
+					Back to {e.voicemail ? "Voicemails" : FOLDER_NAMES[e.folder]}
 				</Button>
 			)}
 		</>
@@ -481,7 +515,9 @@ function Empty({ view, connected }: { view: MarketView; connected: boolean }) {
 					? "Nothing important"
 					: view === "done"
 						? "Nothing done yet"
-						: `Nothing in ${FOLDER_NAMES[view]}`
+						: view === "voicemails"
+							? "No voicemails waiting"
+							: `Nothing in ${FOLDER_NAMES[view]}`
 			}
 		/>
 	);

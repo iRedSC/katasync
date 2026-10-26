@@ -1,25 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-	Ban,
-	ExternalLink,
-	PackageOpen,
-	Printer,
-	Search,
-	SearchX,
-	Undo2,
-} from "lucide-react";
+import { ExternalLink, Printer, Search, SearchX, Undo2 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ChannelBadge } from "#/components/channel-badge";
 import { FilterBar, useSearchRows } from "#/components/filter-bar";
 import { conditionName } from "#/components/order-page/return-card";
 import { OrderTabs, ReturnsViews } from "#/components/order-tabs";
-import { OrderProducts } from "#/components/orders-list/order-products";
-import { PackageWhere } from "#/components/package-status";
-import { Badge, Card, EmptyState, Page, type Tone } from "#/components/page";
+import { Badge, Card, EmptyState, Page } from "#/components/page";
 import { type Received, ReturnDialog } from "#/components/return-dialog";
+import { CaseGroups } from "#/components/returns/case-groups";
+import {
+	ICON_BUTTON,
+	ReturnRow,
+	states,
+} from "#/components/returns/return-row";
+import {
+	NothingDue,
+	ReturnsChecked,
+} from "#/components/returns/returns-checked";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
-import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
 import { type Chip, defineSearch } from "#/lib/facet-search";
@@ -28,7 +26,6 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { useRowLink } from "#/lib/row-link";
 import { offerUndo } from "#/lib/undo";
-import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
 import { marketplaceOf } from "#/orders/search";
 import { printPdf } from "#/printing/qz-client";
@@ -53,24 +50,6 @@ export const Route = createFileRoute("/orders/returns")({
 });
 
 const returnsData = optimistic<ReturnsData>("returns");
-
-const states: Record<
-	ReturnState,
-	{ label: string; tone?: Tone; heading: string }
-> = {
-	on_its_way: { label: "On its way", tone: "info", heading: "On its way" },
-	requested: {
-		label: "Requested",
-		tone: "info",
-		heading: "Requested, not sent yet",
-	},
-	refunded: {
-		label: "Refunded, not back",
-		tone: "warning",
-		heading: "Refunded, not back yet",
-	},
-	maybe: { label: "Maybe", heading: "Refunded in part, maybe coming back" },
-};
 
 // Receiving takes what came back off what's expected; an order with nothing
 // left expected (or a maybe, once anything is back) leaves the list. Undo
@@ -164,7 +143,7 @@ type OtherSearch =
 
 function Returns() {
 	const loaded = Route.useLoaderData();
-	const { due, received } = returnsData.useData("all", loaded);
+	const { cases, due, received, checked } = returnsData.useData("all", loaded);
 	const { link } = useRowLink();
 	const input = useRef<HTMLInputElement>(null);
 	const [query, setQuery] = useState("");
@@ -304,6 +283,8 @@ function Returns() {
 			link={link}
 		/>
 	);
+	// Case obligations stay separate from the boxes being received.
+	const asking = !query.trim() && chips.length === 0 ? cases : [];
 	const groups = (Object.keys(states) as ReturnState[])
 		.map((s) => ({ state: s, orders: shown.filter((o) => o.state === s) }))
 		.filter((g) => g.orders.length > 0);
@@ -313,8 +294,20 @@ function Returns() {
 			<Card flush className="overflow-visible">
 				<OrderTabs
 					active="returns"
-					count={due.length}
-					aside={<ReturnsViews active="due" />}
+					count={
+						new Set([
+							...cases.map(
+								(request) => request.orderId ?? `case:${request.id}`,
+							),
+							...due.map((order) => order.id),
+						]).size
+					}
+					aside={
+						<>
+							<ReturnsChecked checks={checked} />
+							<ReturnsViews active="due" />
+						</>
+					}
 				/>
 				<FilterBar
 					search={returnSearch}
@@ -333,7 +326,7 @@ function Returns() {
 					<EmptyState icon={Search} title="Search didn't finish">
 						Type to search again.
 					</EmptyState>
-				) : rows.length === 0 ? (
+				) : rows.length === 0 && asking.length === 0 ? (
 					query.trim() || chips.length ? (
 						<EmptyState icon={SearchX} title="No order matches">
 							{chips.length
@@ -343,7 +336,7 @@ function Returns() {
 									: "Try the buyer's name, a SKU, or the zip on the label."}
 						</EmptyState>
 					) : (
-						<EmptyState icon={PackageOpen} title="Nothing due back" />
+						<NothingDue checks={checked} />
 					)
 				) : (
 					<table className="w-full whitespace-nowrap">
@@ -355,7 +348,7 @@ function Returns() {
 								</th>
 								<th className="px-4 py-2 font-medium">Customer</th>
 								<th className="hidden px-4 py-2 font-medium md:table-cell">
-									Coming back
+									Items
 								</th>
 								<th className="hidden px-4 py-2 font-medium lg:table-cell">
 									Why
@@ -368,6 +361,7 @@ function Returns() {
 							</tr>
 						</thead>
 						<tbody>
+							<CaseGroups cases={asking} link={link} />
 							{groups.map((g) => (
 								<Fragment key={g.state}>
 									<GroupHeading>
@@ -513,8 +507,6 @@ function Returns() {
 }
 
 const COLUMNS = 8;
-const ICON_BUTTON =
-	"inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground";
 
 function GroupHeading({ children }: { children: React.ReactNode }) {
 	return (
@@ -524,126 +516,6 @@ function GroupHeading({ children }: { children: React.ReactNode }) {
 				className="border-y bg-subtle px-4 py-1.5 text-xs font-medium text-muted-foreground"
 			>
 				{children}
-			</td>
-		</tr>
-	);
-}
-
-// One order with something coming back, laid out as the orders list lays
-// out an order. A click opens the order, where its whole return is; its
-// Receive opens the box.
-function ReturnRow({
-	order: o,
-	onReceive,
-	onNothing,
-	link,
-}: {
-	order: ReturnOrder;
-	onReceive: () => void;
-	onNothing?: () => void;
-	link: ReturnType<typeof useRowLink>["link"];
-}) {
-	const state = o.state ? states[o.state] : null;
-	const request = o.requests[0];
-	const expected = o.lines.filter((l) => l.expected > 0);
-	const coming = (expected.length > 0 ? expected : o.lines).map((l) => ({
-		id: l.id,
-		title: l.title,
-		sku: l.sku,
-		quantity: l.expected || l.left,
-		productSku: null,
-		productName: null,
-		imageUrl: l.imageUrl,
-		fromStore: [],
-	}));
-	return (
-		<tr
-			{...link({ to: "/orders/$id", params: { id: String(o.id) } })}
-			className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
-		>
-			<td className="px-4 py-2.5 font-semibold">{o.name}</td>
-			<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
-				{formatOrderDate(o.placedAt)}
-			</td>
-			<td className="w-2/5 max-w-0 px-4 py-2.5">
-				<div className="truncate">{o.customerName ?? "No name"}</div>
-				<div className="truncate text-xs text-muted-foreground">
-					{[o.shipCity, o.shipRegion].filter(Boolean).join(", ")}
-					{o.shipPostalCode && ` ${o.shipPostalCode}`}
-				</div>
-			</td>
-			<td className="hidden w-3/5 max-w-0 px-4 py-2 md:table-cell">
-				<OrderProducts lines={coming} />
-			</td>
-			<td className="hidden max-w-56 px-4 py-2.5 lg:table-cell">
-				{request?.reason && (
-					<div className="truncate text-muted-foreground">
-						{returnReason(request.reason)}
-					</div>
-				)}
-				{request?.tracking ? (
-					<div className="truncate text-xs">
-						<PackageWhere t={request.tracking} />
-					</div>
-				) : (
-					request?.trackingNumber && (
-						<div className="truncate font-mono text-xs text-muted-foreground">
-							{request.carrier && `${request.carrier} `}
-							{request.trackingNumber}
-						</div>
-					)
-				)}
-				{o.unmatched.map((u, i) => (
-					<div
-						// biome-ignore lint/suspicious/noArrayIndexKey: two requests can name the same SKU
-						key={i}
-						className="truncate text-xs text-warning-text"
-					>
-						{formatCount(u.quantity)} × {u.sku ?? "an item"}, line unclear
-					</div>
-				))}
-			</td>
-			<td className="hidden px-4 py-2.5 lg:table-cell">
-				<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
-			</td>
-			<td className="px-4 py-2.5">
-				<div className="flex gap-1.5">
-					{state ? (
-						<Badge tone={state.tone}>{state.label}</Badge>
-					) : (
-						<Badge>Not expected</Badge>
-					)}
-					{o.blocker && (
-						<Tip content={o.blocker}>
-							<span>
-								<Badge tone="warning">Can't receive here</Badge>
-							</span>
-						</Tip>
-					)}
-				</div>
-			</td>
-			<td className="py-1.5 pr-2">
-				<div className="flex items-center justify-end gap-1">
-					{!o.blocker && (
-						<Button size="sm" variant="outline" onClick={onReceive}>
-							Receive
-						</Button>
-					)}
-					{onNothing ? (
-						<Tip content="Nothing coming back">
-							<button
-								type="button"
-								aria-label="Nothing coming back"
-								onClick={onNothing}
-								className={ICON_BUTTON}
-							>
-								<Ban className="size-4" />
-							</button>
-						</Tip>
-					) : (
-						<span className="size-7" />
-					)}
-				</div>
 			</td>
 		</tr>
 	);

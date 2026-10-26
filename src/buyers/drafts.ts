@@ -13,8 +13,11 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
-import { buyerOrder } from "./order";
+import { knownOf } from "#/orders/tracking-read";
+import { draftFits } from "./chat-way";
+import { orderSummary } from "./order";
 import { basePrompt, listPrecedents } from "./precedents";
+import { isThreadOrder } from "./thread-order";
 import { threadsPage } from "./threads";
 
 // The suggested reply on each thread waiting on us, and buyers' words in
@@ -90,6 +93,7 @@ async function claim(
 	db: Db,
 	threadId: number,
 	forMessageId: number,
+	orderRef: string | null,
 	force: boolean,
 ) {
 	const now = new Date();
@@ -100,11 +104,12 @@ async function claim(
 			state: "drafting",
 			by: "ai",
 			forMessageId,
+			orderRef,
 			updatedAt: now,
 		})
 		.onConflictDoUpdate({
 			target: replyDrafts.threadId,
-			set: { state: "drafting", error: null, updatedAt: now },
+			set: { state: "drafting", error: null, orderRef, updatedAt: now },
 			setWhere: or(
 				lt(replyDrafts.updatedAt, new Date(now.getTime() - CLAIM_STALE_MS)),
 				and(
@@ -114,6 +119,8 @@ async function claim(
 						: or(
 								isNull(replyDrafts.forMessageId),
 								lt(replyDrafts.forMessageId, forMessageId),
+								// Written about another of the buyer's orders.
+								sql`${replyDrafts.orderRef} is distinct from ${orderRef}`,
 								and(
 									eq(replyDrafts.state, "failed"),
 									lt(
@@ -129,14 +136,15 @@ async function claim(
 	return row ?? null;
 }
 
-// Everything the agent goes on: the order, the conversation, the
-// precedents.
-async function brief(db: Db, threadId: number) {
-	const [thread] = await db
+// Everything the agent goes on: the order (the thread's, or the one it was
+// opened from), the conversation, the precedents.
+async function brief(db: Db, threadId: number, about: string | null) {
+	const [found] = await db
 		.select()
 		.from(buyerThreads)
 		.where(eq(buyerThreads.id, threadId));
-	if (!thread) throw new Error(`There's no buyer thread ${threadId}`);
+	if (!found) throw new Error(`There's no buyer thread ${threadId}`);
+	const thread = { ...found, orderRef: about ?? found.orderRef };
 	const [order] = thread.orderRef
 		? await db
 				.select({
@@ -148,13 +156,8 @@ async function brief(db: Db, threadId: number) {
 					region: orders.shipRegion,
 				})
 				.from(orders)
-				.innerJoin(stores, eq(stores.id, orders.storeId))
-				.where(
-					and(
-						eq(stores.channel, thread.market),
-						eq(orders.externalId, thread.orderRef),
-					),
-				)
+				.leftJoin(stores, eq(stores.channel, thread.market))
+				.where(isThreadOrder(thread.market, thread.orderRef))
 				.limit(1)
 		: [];
 	const [lines, sent, messages, precedents, language, theirs] =
@@ -221,15 +224,24 @@ async function brief(db: Db, threadId: number) {
 						items: lines,
 						// Where each package is now, by the carrier.
 						packages:
-							(await buyerOrder(db, threadId))?.packages.map((p) => ({
-								carrier: p.carrier,
-								tracking: p.number,
-								shipped: p.shippedAt,
-								status: p.status,
-								detail: p.statusDetail,
-								arrives: p.eta,
-								delivered: p.deliveredAt,
-							})) ?? sent,
+							(await orderSummary(db, order.id)).packages.map((p) => {
+								const t = knownOf(p.tracking);
+								return {
+									carrier: p.carrier,
+									tracking: p.number,
+									shipped: p.shippedAt,
+									status: t?.status ?? null,
+									detail: t?.statusDetail ?? null,
+									arrives: t?.eta ?? null,
+									delivered: t?.status === "DELIVERED" ? t.statusAt : null,
+									// Scans from before a failed refresh are only as of then.
+									as_of: t?.checkedAt ?? null,
+									...(p.tracking.state === "stale" ||
+									p.tracking.state === "failed"
+										? { tracking_unavailable: p.tracking.why }
+										: {}),
+								};
+							}) ?? sent,
 					}
 				: thread.orderRef
 					? { number: thread.orderRef, note: "not in our records yet" }
@@ -263,13 +275,30 @@ async function brief(db: Db, threadId: number) {
 	);
 }
 
+// The order a draft is about, as kept: null when it's the thread's own.
+async function aboutOrder(db: Db, threadId: number, orderRef: string | null) {
+	if (orderRef === null) return null;
+	const [t] = await db
+		.select({ orderRef: buyerThreads.orderRef })
+		.from(buyerThreads)
+		.where(eq(buyerThreads.id, threadId));
+	return t?.orderRef === orderRef ? null : orderRef;
+}
+
 // Drafts one thread's reply now, unless another run is drafting it or it's
-// current (force drafts it again anyway). What it wrote, or null.
+// current (force drafts it again anyway). orderRef: about another of the
+// buyer's orders than the thread's (the one its chat was opened from).
+// What it wrote, or null.
 export async function draftThread(
 	db: Db,
 	threadId: number,
-	{ force = false, run = runAgent }: { force?: boolean; run?: Run } = {},
+	{
+		force = false,
+		run = runAgent,
+		orderRef: asked = null,
+	}: { force?: boolean; run?: Run; orderRef?: string | null } = {},
 ) {
+	const orderRef = await aboutOrder(db, threadId, asked);
 	const [latest] = await db
 		.select({ id: buyerMessages.id })
 		.from(buyerMessages)
@@ -282,7 +311,7 @@ export async function draftThread(
 		.orderBy(desc(buyerMessages.at), desc(buyerMessages.id))
 		.limit(1);
 	if (!latest) return null;
-	const claimed = await claim(db, threadId, latest.id, force);
+	const claimed = await claim(db, threadId, latest.id, orderRef, force);
 	if (!claimed) return null;
 	const mine = and(
 		eq(replyDrafts.threadId, threadId),
@@ -292,7 +321,10 @@ export async function draftThread(
 	let draft: Draft;
 	try {
 		const base = await basePrompt(db);
-		draft = await run(replierWith(base.prompt), await brief(db, threadId));
+		draft = await run(
+			replierWith(base.prompt),
+			await brief(db, threadId, orderRef),
+		);
 	} catch (error) {
 		// Out of time is no failure: the claim is left as if long gone, so
 		// the next run takes it over.
@@ -323,6 +355,7 @@ export async function draftThread(
 			note: draft.note?.trim() || null,
 			precedentIds: draft.precedents.filter((id) => known.has(id)),
 			forMessageId: latest.id,
+			orderRef,
 			by: "ai",
 			error: null,
 			updatedAt: new Date(),
@@ -355,6 +388,8 @@ export async function draftWaiting(db: Db, limit = 4, run: Run = runAgent) {
 			d &&
 			latest &&
 			!d.stale &&
+			// About the thread's own order, not one its chat was opened from.
+			draftFits(d, t.orderRef) &&
 			(d.state === "ready" ||
 				(d.state === "drafting" && age < CLAIM_STALE_MS) ||
 				(d.state === "failed" && age < RETRY_FAILED_MS))
@@ -376,8 +411,11 @@ export async function setDraft(
 	threadId: number,
 	draft: { body: string; english?: string | null },
 	by: "staff" | "claude",
+	// About another of the buyer's orders than the thread's.
+	asked: string | null = null,
 ) {
 	const body = draft.body.trim();
+	const orderRef = await aboutOrder(db, threadId, asked);
 	if (!body) throw new Error("A suggested reply needs words");
 	const [latest] = await db
 		.select({ id: buyerMessages.id })
@@ -398,6 +436,7 @@ export async function setDraft(
 		by,
 		error: null,
 		forMessageId: latest?.id ?? null,
+		orderRef,
 		updatedAt: new Date(),
 	};
 	const [row] = await db
