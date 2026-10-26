@@ -1,16 +1,16 @@
 import { AlertTriangle, PackageOpen } from "lucide-react";
 import { ago } from "#/components/diagnostics/status";
-import { FeedDot, feedWhy } from "#/components/feed-dot";
+import { FEED_NAMES, FeedDot, feedWhy } from "#/components/feed-dot";
 import { EmptyState } from "#/components/page";
 import { Tip } from "#/components/ui/tooltip";
-import type { FeedStatus } from "#/diagnostics/feed-health";
+import type { Feed, FeedStatus } from "#/diagnostics/feed-health";
 import { channelName } from "#/lib/format";
 
 // When each marketplace's returns were last read, on the Returns tab: a dot
 // per marketplace and how long ago the stalest of them read everything. An
 // empty list is only "nothing due" when every one of them was read.
 
-export type ReturnsCheck = { channel: string } & FeedStatus;
+export type ReturnsCheck = { channel: string; feed?: Feed } & FeedStatus;
 
 // Read in full up to lately, with nothing held or left unread. A feed with
 // problems, catching up, or missing history isn't proof nothing's due.
@@ -31,8 +31,8 @@ export function ReturnsChecked({ checks }: { checks: ReturnsCheck[] }) {
 		<span className="mr-2 flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
 			{shown.map((c) => (
 				<Tip
-					key={c.channel}
-					content={`${channelName(c.channel)}: ${feedWhy(c)}`}
+					key={`${c.channel}:${c.feed ?? "returns"}`}
+					content={`${channelName(c.channel)} ${FEED_NAMES[c.feed ?? "returns"]}: ${feedWhy(c)}`}
 					contentClassName="max-w-sm"
 				>
 					<span className="flex size-3 items-center justify-center">
@@ -58,7 +58,7 @@ export function NothingDue({ checks }: { checks: ReturnsCheck[] }) {
 	return (
 		<EmptyState
 			icon={AlertTriangle}
-			title={`Couldn't fully check ${unread.map((c) => channelName(c.channel)).join(", ")}`}
+			title={`Couldn't fully check ${[...new Set(unread.map((c) => channelName(c.channel)))].join(", ")}`}
 		>
 			<span className="flex justify-center">
 				<ReturnsChecked checks={checks} />

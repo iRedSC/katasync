@@ -61,7 +61,10 @@ function openEbayReturns(db: Db) {
 		);
 }
 
-export function returnsReaders(db: Db): Record<SyncedChannel, ReturnsReader> {
+export function returnsReaders(
+	db: Db,
+	deadline?: number,
+): Record<SyncedChannel, ReturnsReader> {
 	return {
 		// A return changes its order, so orders changed in the window carry it.
 		shopify: {
@@ -91,10 +94,12 @@ export function returnsReaders(db: Db): Record<SyncedChannel, ReturnsReader> {
 			firstDays: DISCOVERY_DAYS,
 			chunkDays: 30,
 			rereadsGaps: true,
-			read: async (w) => ({ found: await fetchEbayReturns(w.from, w.until) }),
+			read: async (w) => ({
+				found: await fetchEbayReturns(w.from, w.until, deadline),
+			}),
 			after: async (now) =>
 				ebayRechecksOpen(now)
-					? await fetchOpenReturns(await openEbayReturns(db), now)
+					? await fetchOpenReturns(await openEbayReturns(db), now, deadline)
 					: [],
 		},
 		// One report of the last 60 days every pass, so a change to a return

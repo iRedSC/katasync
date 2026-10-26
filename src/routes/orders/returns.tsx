@@ -296,7 +296,9 @@ function Returns() {
 					active="returns"
 					count={
 						new Set([
-							...cases.map((request) => request.orderId),
+							...cases.map(
+								(request) => request.orderId ?? `case:${request.id}`,
+							),
 							...due.map((order) => order.id),
 						]).size
 					}

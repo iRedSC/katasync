@@ -28,6 +28,7 @@ import {
 } from "#/db/schema";
 import { onBench } from "#/repairs/bench-holds";
 import { returnPage } from "./admin-urls";
+import { openMarketplaceCaseRows } from "./marketplace-cases";
 import { committedStock, returnQuantity } from "./return-stock";
 import { type PackageAt, trackingFor } from "./return-tracking";
 import { isLabeled, returnBlocker } from "./status";
@@ -308,7 +309,7 @@ export type CaseRequest = Awaited<ReturnType<typeof openCaseRows>>[number];
 
 // Obligations and incoming packages are separate queues: receiving a box
 // does not settle the marketplace's case.
-async function openCaseRows(db: Db) {
+export async function openCaseRows(db: Db) {
 	const rows = await db
 		.select({
 			id: returnRequests.id,
@@ -336,7 +337,10 @@ async function openCaseRows(db: Db) {
 			requestedAt: returnRequests.requestedAt,
 		})
 		.from(openCases)
-		.innerJoin(returnRequests, eq(returnRequests.id, openCases.id))
+		.innerJoin(
+			returnRequests,
+			and(eq(returnRequests.id, openCases.id), eq(openCases.source, "return")),
+		)
 		.innerJoin(orders, eq(orders.id, returnRequests.orderId))
 		.innerJoin(stores, eq(stores.id, orders.storeId))
 		.orderBy(sql`${openCases.respondBy} nulls last`, openCases.id);
@@ -363,19 +367,27 @@ async function openCaseRows(db: Db) {
 					.where(inArray(returnRequestLines.requestId, ids))
 					.orderBy(returnRequestLines.id)
 			: [];
-	return rows.map(({ externalId, marketplaceOrderId, billedBy, ...r }) => ({
-		...r,
-		billedBy,
-		externalId,
-		marketplaceOrderId,
-		answerOn: returnPage(
-			{ channel: r.channel, externalId, marketplaceOrderId },
+	const returns = rows.map(
+		({ externalId, marketplaceOrderId, billedBy, ...r }) => ({
+			...r,
+			source: "return" as const,
 			billedBy,
-		),
-		lines: lines
-			.filter((l) => l.requestId === r.id)
-			.map(({ requestId: _, ...l }) => l),
-	}));
+			externalId,
+			marketplaceOrderId,
+			answerOn: returnPage(
+				{ channel: r.channel, externalId, marketplaceOrderId },
+				billedBy,
+			),
+			lines: lines
+				.filter((l) => l.requestId === r.id)
+				.map(({ requestId: _, ...l }) => l),
+		}),
+	);
+	return [...returns, ...(await openMarketplaceCaseRows(db))].sort(
+		(left, right) =>
+			(left.respondBy?.getTime() ?? Infinity) -
+				(right.respondBy?.getTime() ?? Infinity) || left.id - right.id,
+	);
 }
 
 const refurbs = alias(products, "refurbs");

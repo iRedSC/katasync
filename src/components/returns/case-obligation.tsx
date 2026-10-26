@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Badge } from "#/components/page";
 import { Tip } from "#/components/ui/tooltip";
-import type { returnRequests } from "#/db/schema";
+import type { openCases } from "#/db/schema";
 import { channelName } from "#/lib/format";
 
 export type CaseObligationData = Pick<
-	typeof returnRequests.$inferSelect,
+	typeof openCases.$inferSelect,
 	"status" | "waitingOn" | "respondBy" | "amount" | "currency" | "billedBy"
 >;
 
@@ -40,6 +40,13 @@ export function CaseObligation({ request }: { request: CaseObligationData }) {
 	const chip = deadline ? deadlineChip(deadline, now) : null;
 	return (
 		<span className="inline-flex flex-wrap items-center gap-1.5">
+			{request.waitingOn === "us" && (
+				<span
+					role="img"
+					className="size-1.5 rounded-full bg-amber-500"
+					aria-label="Waiting on us"
+				/>
+			)}
 			{request.status === "unknown" && (
 				<Badge tone="warning">Unknown status</Badge>
 			)}

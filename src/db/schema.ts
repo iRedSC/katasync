@@ -911,14 +911,84 @@ export const returnRequests = pgTable(
 	],
 );
 
+export const marketplaceCaseKind = pgEnum("marketplace_case_kind", [
+	"inquiry",
+	"cancellation",
+	"dispute",
+	"claim",
+	"escalation",
+]);
+export const marketplaceCaseStatus = pgEnum("marketplace_case_status", [
+	"open",
+	"processing",
+	"closed",
+	"cancelled",
+	"unknown",
+]);
+export const marketplaceCases = pgTable(
+	"marketplace_cases",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		billedBy: channel().notNull(),
+		kind: marketplaceCaseKind().notNull(),
+		externalId: text().notNull(),
+		orderId: integer().references(() => orders.id),
+		orderExternalId: text(),
+		relatedReturnRequestId: integer().references(() => returnRequests.id),
+		rawStatus: text().notNull(),
+		status: marketplaceCaseStatus().notNull(),
+		waitingOn: caseWaitingOn().notNull(),
+		respondBy: timestamp({ withTimezone: true }),
+		nextAction: text(),
+		amount: numeric(),
+		currency: text(),
+		escalation: caseEscalation(),
+		caseRef: text(),
+		actionUrl: text(),
+		requestedAt: timestamp({ withTimezone: true }).notNull(),
+		syncedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique("marketplace_cases_channel_kind_external").on(
+			t.billedBy,
+			t.kind,
+			t.externalId,
+		),
+		index("marketplace_cases_order_idx").on(t.orderId),
+		check(
+			"marketplace_cases_resolved_owner",
+			sql`(${t.waitingOn} = 'nobody') = (${t.status} in ('closed', 'cancelled'))`,
+		),
+		check(
+			"marketplace_cases_deadline_owner",
+			sql`${t.respondBy} is null or ${t.waitingOn} = 'us'`,
+		),
+		check(
+			"marketplace_cases_money_pair",
+			sql`(${t.amount} is null) = (${t.currency} is null)`,
+		),
+	],
+);
+
 export const openCases = pgView("open_cases", {
+	source: text().$type<"return" | "marketplace">().notNull(),
 	id: integer().notNull(),
-	orderId: integer().notNull(),
+	orderId: integer(),
 	billedBy: channel().notNull(),
 	externalId: text().notNull(),
 	caseRef: text(),
-	kind: returnRequestKind().notNull(),
-	status: returnRequestStatus().notNull(),
+	kind: text()
+		.$type<
+			| (typeof returnRequestKind.enumValues)[number]
+			| (typeof marketplaceCaseKind.enumValues)[number]
+		>()
+		.notNull(),
+	status: text()
+		.$type<
+			| (typeof returnRequestStatus.enumValues)[number]
+			| (typeof marketplaceCaseStatus.enumValues)[number]
+		>()
+		.notNull(),
 	waitingOn: caseWaitingOn().notNull(),
 	respondBy: timestamp({ withTimezone: true }),
 	nextAction: text(),
@@ -3446,6 +3516,8 @@ export const syncFeed = pgEnum("sync_feed", [
 	"messages",
 	"charges",
 	"tracking",
+	"cases",
+	"disputes",
 ]);
 
 // How a feed's latest counted attempt went. ok: all of it was read, up to

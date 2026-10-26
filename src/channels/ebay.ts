@@ -33,6 +33,7 @@ const SCOPES = SYNC_SCOPES.join(" ");
 // (src/markets/ebay-standing.ts), and buyer messages.
 export const EBAY_CONSENT_SCOPES = [
 	...SYNC_SCOPES,
+	"https://api.ebay.com/oauth/api_scope/sell.payment.dispute",
 	"https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
 	"https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
 	// Buyer messages (src/buyers/ebay-messages.ts).
@@ -43,10 +44,20 @@ let cachedToken: { value: string; expiresAt: number } | undefined;
 
 // Trades the refresh token for a 2-hour access token. eBay's refresh token
 // doesn't change when used, so sharing it is safe.
-export async function accessToken() {
+export async function accessToken(scope = SCOPES) {
+	if (scope !== SCOPES) return (await refreshAccessToken(scope)).access_token;
 	if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
 		return cachedToken.value;
 	}
+	const token = await refreshAccessToken(scope);
+	cachedToken = {
+		value: token.access_token,
+		expiresAt: Date.now() + token.expires_in * 1000,
+	};
+	return token.access_token;
+}
+
+async function refreshAccessToken(scope: string) {
 	const { EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, EBAY_REFRESH_TOKEN } =
 		process.env;
 	if (!EBAY_CLIENT_ID || !EBAY_CLIENT_SECRET || !EBAY_REFRESH_TOKEN) {
@@ -56,6 +67,7 @@ export async function accessToken() {
 	}
 	const response = await fetch(`${API}/identity/v1/oauth2/token`, {
 		method: "POST",
+		signal: AbortSignal.timeout(15_000),
 		headers: {
 			Authorization: `Basic ${Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString("base64")}`,
 			"Content-Type": "application/x-www-form-urlencoded",
@@ -63,7 +75,7 @@ export async function accessToken() {
 		body: new URLSearchParams({
 			grant_type: "refresh_token",
 			refresh_token: EBAY_REFRESH_TOKEN,
-			scope: SCOPES,
+			scope,
 		}),
 	});
 	if (!response.ok) {
@@ -75,11 +87,7 @@ export async function accessToken() {
 	const body = type({ access_token: "string", expires_in: "number" }).assert(
 		await response.json(),
 	);
-	cachedToken = {
-		value: body.access_token,
-		expiresAt: Date.now() + body.expires_in * 1000,
-	};
-	return cachedToken.value;
+	return body;
 }
 
 const money = type({ value: "string.numeric.parse" });

@@ -63,10 +63,18 @@ export const refurbishOrderReturn = createServerFn({ method: "POST" })
 // marketplace's returns were last read.
 export const getReturns = createServerFn({ method: "GET" }).handler(
 	async () => {
-		const [list, checked] = await Promise.all([
-			listReturns(getDb()),
-			feedOnChannels(getDb(), "returns"),
-		]);
+		const [list, returnsChecked, casesChecked, disputesChecked] =
+			await Promise.all([
+				listReturns(getDb()),
+				feedOnChannels(getDb(), "returns"),
+				feedOnChannels(getDb(), "cases"),
+				feedOnChannels(getDb(), "disputes"),
+			]);
+		const checked = [
+			...returnsChecked,
+			...casesChecked,
+			...disputesChecked,
+		].filter((check) => check.state !== "unsupported");
 		return { ...list, checked };
 	},
 );

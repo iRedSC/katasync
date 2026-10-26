@@ -6,6 +6,7 @@ import type { FeedOutcome } from "#/diagnostics/feed-health";
 import { openGaps, recordFeed, settleGaps } from "#/diagnostics/feed-record";
 import { errorText } from "#/diagnostics/runs";
 import { type Held, importReturns } from "#/orders/return-requests";
+import { ebayCasesPass } from "./ebay-cases-pass";
 import {
 	type ReturnsReader,
 	type ReturnsWindow,
@@ -50,13 +51,49 @@ export async function returnsPass(
 	options: Options = {},
 ): Promise<FeedOutcome> {
 	const now = options.now ?? new Date();
-	const outcome = await readReturns(db, channel, now, options).catch(
+	const deadline = Date.now() + (options.budgetMs ?? BUDGET_MS);
+	const cases: FeedOutcome[] = [];
+	if (channel === "ebay" && !options.reader) {
+		cases.push(
+			await ebayCasesPass(
+				db,
+				"cases",
+				now,
+				Math.min(deadline, Date.now() + 65_000),
+			),
+		);
+		cases.push(
+			await ebayCasesPass(
+				db,
+				"disputes",
+				now,
+				Math.min(deadline, Date.now() + 25_000),
+			),
+		);
+	}
+	const outcome = await readReturns(db, channel, now, {
+		...options,
+		budgetMs: Math.max(0, deadline - Date.now()),
+	}).catch(
 		(error: unknown): FeedOutcome => ({
 			kind: "failed",
 			error: errorText(error),
 		}),
 	);
 	await recordFeed(db, channel, "returns", now, outcome);
+	const failed = cases.find((result) => result.kind === "failed");
+	if (failed) return failed;
+	if (
+		outcome.kind === "read" &&
+		cases.some((result) => result.kind !== "read" || result.problems.length)
+	)
+		return {
+			...outcome,
+			problems: [
+				...outcome.problems,
+				"eBay cases are not fully checked; see cases and disputes feeds",
+			],
+		};
 	return outcome;
 }
 
@@ -94,7 +131,7 @@ async function readReturns(
 ): Promise<FeedOutcome> {
 	const clock = options.clock ?? Date.now;
 	const deadline = clock() + (options.budgetMs ?? BUDGET_MS);
-	const reader = options.reader ?? returnsReaders(db)[channel];
+	const reader = options.reader ?? returnsReaders(db, deadline)[channel];
 	const [store] = await db
 		.select()
 		.from(stores)
