@@ -17,6 +17,7 @@ import { knownOf } from "#/orders/tracking-read";
 import { draftFits } from "./chat-way";
 import { orderSummary } from "./order";
 import { basePrompt, listPrecedents } from "./precedents";
+import { isThreadOrder } from "./thread-order";
 import { threadsPage } from "./threads";
 
 // The suggested reply on each thread waiting on us, and buyers' words in
@@ -155,13 +156,8 @@ async function brief(db: Db, threadId: number, about: string | null) {
 					region: orders.shipRegion,
 				})
 				.from(orders)
-				.innerJoin(stores, eq(stores.id, orders.storeId))
-				.where(
-					and(
-						eq(stores.channel, thread.market),
-						eq(orders.externalId, thread.orderRef),
-					),
-				)
+				.leftJoin(stores, eq(stores.channel, thread.market))
+				.where(isThreadOrder(thread.market, thread.orderRef))
 				.limit(1)
 		: [];
 	const [lines, sent, messages, precedents, language, theirs] =

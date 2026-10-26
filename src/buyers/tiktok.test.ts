@@ -5,6 +5,7 @@ vi.mock("#/channels/tiktok", async (actual) => {
 	return {
 		TiktokError: real.TiktokError,
 		retryLater: real.retryLater,
+		searchPage: real.searchPage,
 		shopCipher: async () => "cipher",
 		tiktokApi: vi.fn(),
 		tiktokUpload: vi.fn(async () => ({
@@ -17,8 +18,9 @@ vi.mock("#/channels/tiktok", async (actual) => {
 
 import { TiktokError, tiktokApi, tiktokUpload } from "#/channels/tiktok";
 import type { Db } from "#/db/client";
-import { buyerMessageChecks } from "#/db/schema";
+import { buyerMessageChecks, orders, stores } from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { buyerOrder } from "./order";
 import { addReplyFile } from "./reply-files";
 import { reply, settleReplies } from "./send";
 import { threadsPage } from "./threads";
@@ -38,6 +40,8 @@ type Msg = {
 
 let db: Db;
 let conversations: Record<string, Msg[]>;
+// Each buyer's orders on TikTok, latest first, by their user ID (u-<chat>).
+let buyerOrders: Record<string, string[]>;
 let sendAnswer: () => unknown;
 const sent: unknown[] = [];
 
@@ -75,6 +79,7 @@ beforeEach(async () => {
 		// overlap each run reads again, so it isn't.
 		c2: [text("r2", "ROBOT", "Your order shipped", -30)],
 	};
+	buyerOrders = {};
 	sent.length = 0;
 	sendAnswer = () => ({ message_id: "s1" });
 	vi.mocked(tiktokApi).mockReset();
@@ -85,12 +90,19 @@ beforeEach(async () => {
 					id,
 					participants: [
 						{ role: "SHOP", nickname: "ECDT" },
-						{ role: "BUYER", nickname: "drywaller7" },
+						{ role: "BUYER", nickname: "drywaller7", user_id: `u-${id}` },
 					],
 					latest_message: latestFirst(ms)[0],
 				})),
 				next_page_token: "",
 			};
+		if (path === "/order/202309/orders/search") {
+			const { buyer_user_id } = body as { buyer_user_id: string };
+			return {
+				orders: (buyerOrders[buyer_user_id] ?? []).map((id) => ({ id })),
+				next_page_token: "",
+			};
+		}
 		const one = /conversations\/([^/]+)\/messages$/.exec(path)?.[1];
 		if (one && body) {
 			sent.push(body);
@@ -128,6 +140,60 @@ describe("TikTok messages", () => {
 		expect(reads).toEqual([]);
 		const [check] = await db.select().from(buyerMessageChecks);
 		expect(check).toMatchObject({ market: "tiktok", error: null });
+	});
+
+	test("a chat whose card TikTok hides is about the buyer's latest order", async () => {
+		// TikTok's order card, as its API gives it: no order ID.
+		const hidden = card(
+			"o3",
+			"OTHER",
+			{ content: "[Other] Please check this message in seller center" },
+			-30,
+		);
+		conversations = {
+			c3: [hidden, text("b3", "BUYER", "When will it arrive?", -10)],
+		};
+		// Not findable on TikTok yet: the thread waits without one.
+		expect(await syncTiktokMessages(db)).toEqual({ read: 1, problems: [] });
+		expect((await threadsPage(db, "open", null))[0]?.orderRef).toBeNull();
+		// Nothing new in the chat, but a waiting thread asks again.
+		buyerOrders = { "u-c3": ["5770009", "5770002"] };
+		expect(await syncTiktokMessages(db)).toEqual({ read: 0, problems: [] });
+		expect((await threadsPage(db, "open", null))[0]?.orderRef).toBe("5770009");
+		// Once tied, TikTok isn't asked again.
+		vi.mocked(tiktokApi).mockClear();
+		await syncTiktokMessages(db);
+		expect(
+			vi.mocked(tiktokApi).mock.calls.filter(([p]) => p.includes("/order/")),
+		).toEqual([]);
+	});
+
+	test("an order Shopify relayed and never handed over is still the thread's", async () => {
+		const [shop] = await db
+			.insert(stores)
+			.values({ channel: "shopify", name: "ECDT" })
+			.returning();
+		await db.insert(orders).values({
+			storeId: shop?.id ?? 0,
+			externalId: "gid-1",
+			name: "#1001",
+			marketplaceOrderId: "tiktok:5770001",
+			placedAt: new Date(),
+			fulfillmentStatus: "FULFILLED",
+			total: 40,
+			sourceUpdatedAt: new Date(),
+		});
+		await syncTiktokMessages(db);
+		const [thread] = await threadsPage(db, "open", null);
+		expect(thread).toMatchObject({ orderRef: "5770001", orderName: "#1001" });
+		expect((await buyerOrder(db, thread?.id ?? 0))?.name).toBe("#1001");
+	});
+
+	test("a chat with an order card never asks TikTok for the buyer's orders", async () => {
+		await syncTiktokMessages(db);
+		expect(
+			vi.mocked(tiktokApi).mock.calls.filter(([p]) => p.includes("/order/")),
+		).toEqual([]);
 	});
 
 	test("TikTok's own messages are kept with the thread, and never answer the buyer", async () => {

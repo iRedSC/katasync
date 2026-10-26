@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	buyerThreads,
@@ -16,6 +16,7 @@ import { orderStatus } from "#/orders/status";
 import { financialStatus, labelToVoid } from "#/orders/to-ship";
 import { carrierPage, type TrackingRead } from "#/orders/tracking-read";
 import { normalTracking } from "#/purchasing/inbox/tracking-numbers";
+import { isThreadOrder } from "./thread-order";
 
 // What a buyer's order is and where its packages are, for the top of their
 // conversation and the order page: the products, and each package (ours,
@@ -27,13 +28,10 @@ export async function buyerOrder(db: Db, threadId: number) {
 	const [found] = await db
 		.select({ id: orders.id })
 		.from(buyerThreads)
-		.innerJoin(stores, eq(stores.channel, buyerThreads.market))
+		.leftJoin(stores, eq(stores.channel, buyerThreads.market))
 		.innerJoin(
 			orders,
-			and(
-				eq(orders.storeId, stores.id),
-				eq(orders.externalId, buyerThreads.orderRef),
-			),
+			isThreadOrder(buyerThreads.market, buyerThreads.orderRef),
 		)
 		.where(eq(buyerThreads.id, threadId))
 		.limit(1);
