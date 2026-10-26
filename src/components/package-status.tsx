@@ -190,7 +190,9 @@ export function PackageDetails({ t }: { t: Tracking }) {
 				</div>
 			)}
 			{scans.length > 0 ? (
-				<ol className="-mr-2 max-h-64 overflow-y-auto pr-2">
+				// Bled out by the newest dot's ring so the scroll box doesn't
+				// clip it.
+				<ol className="-mt-1 -mr-2 -ml-1 max-h-64 overflow-y-auto pt-1 pr-2 pl-1">
 					{scans.map((e, i) => (
 						<li
 							key={`${e.at}-${e.status}-${e.detail}`}
