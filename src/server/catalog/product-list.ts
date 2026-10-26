@@ -20,6 +20,7 @@ import { isOurs } from "#/inventory/locations";
 import { onlineStock } from "#/inventory/online-stock";
 import { stockRanges } from "#/inventory/stock-range";
 import { carriedOrStocked } from "#/products/archive";
+import { openPosOf } from "#/purchasing/open-pos";
 import {
 	draftLines,
 	loadPlan,
@@ -87,6 +88,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 			planned,
 			components,
 			setSupplier,
+			openPos,
 		] = await Promise.all([
 			onlineStock(db).then((from) => getAvailability(db, ids, from)),
 			db
@@ -140,6 +142,7 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 				})
 				.from(productComponents),
 			setSuppliers(db),
+			openPosOf(db),
 		]);
 		const counted = new Map(shelves.map((s) => [s.productId, s]));
 		const onHand = new Map(onHandRows.map((r) => [r.productId, r.onHand]));
@@ -186,6 +189,8 @@ export const listProducts = createServerFn({ method: "GET" }).handler(
 					onOrder: onOrder.get(r.id) ?? 0,
 					// Its line on the supplier's open draft, in the line's unit.
 					draft: drafts.get(r.id) ?? null,
+					// Every draft and sent PO it's on, for OnPoChip.
+					openPos: openPos.get(r.id) ?? [],
 					// What to order today, in the supplier's unit. Null when stock
 					// and what's on order last until a PO sent now would arrive.
 					reorder: n

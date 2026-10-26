@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { BulkChip } from "#/components/bulk-chip";
+import { OnPoChip } from "#/components/on-po-chip";
 import { Badge, Card } from "#/components/page";
 import { ProductImage, SetsChip } from "#/components/product";
 import { PurchaseUnitCell } from "#/components/purchase-unit";
@@ -127,6 +128,7 @@ export function Recommended({
 												</Link>
 												<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
 													{r.sku}
+													<OnPoChip pos={r.otherPos} />
 													<SetsChip sets={r.why.sets} />
 													{r.bulk && (
 														<BulkChip list={r.bulk} unit={r.unit} order={r} />

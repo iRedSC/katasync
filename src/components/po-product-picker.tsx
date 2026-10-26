@@ -71,6 +71,14 @@ export function matchWarning(
 	if (m.kind === "bundle" && sent)
 		return { text: "Tool set: add the parts that came", blocks: true };
 	if (m.kind === "bundle") return null;
+	if (m.otherPos.length > 0)
+		return {
+			text:
+				m.otherPos.length === 1
+					? `On PO ${m.otherPos[0].purchaseOrderId}`
+					: `On ${m.otherPos.length} other POs`,
+			blocks: false,
+		};
 	if (!m.fromThisSupplier)
 		return {
 			text:

@@ -23,6 +23,7 @@ import { openFlagsOf } from "#/purchasing/flags";
 import { leadTimes } from "#/purchasing/forecast";
 import { emailsOf } from "#/purchasing/inbox/ingest";
 import { loadOrder, receivedByLine } from "#/purchasing/load";
+import { openPosOf } from "#/purchasing/open-pos";
 import {
 	draftChanges,
 	PurchaseOrderError,
@@ -205,7 +206,15 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 			chargesOf(db, data.id),
 			landedTerms(db, data.id),
 		]);
-		const flags = await openFlagsOf(db, data.id);
+		const [flags, openPos] = await Promise.all([
+			openFlagsOf(db, data.id),
+			// Other POs its products are on, so none is bought twice.
+			openPosOf(db, [...productIds, ...recommended.map((r) => r.productId)]),
+		]);
+		const elsewhere = (productId: number) =>
+			(openPos.get(productId) ?? []).filter(
+				(p) => p.purchaseOrderId !== data.id,
+			);
 		return {
 			leadTime: leadTimeOf(lead, po.supplier.id),
 			changes: { added: changes.added },
@@ -223,6 +232,7 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				stockRange: ranges.get(l.productId) ?? null,
 				// Null for tool sets: they're ordered as their parts.
 				why: whys.get(l.productId) ?? null,
+				otherPos: elsewhere(l.productId),
 			})),
 			setParts: setParts.map((p) => ({
 				...p,
@@ -230,7 +240,9 @@ export const getPurchaseOrder = createServerFn({ method: "GET" })
 				stockRange: ranges.get(p.productId) ?? null,
 				why: whys.get(p.productId) ?? null,
 			})),
-			recommended: await withBulk(db, po.supplier.id, recommended),
+			recommended: (await withBulk(db, po.supplier.id, recommended)).map(
+				(r) => ({ ...r, otherPos: elsewhere(r.productId) }),
+			),
 			receipts,
 			amendments,
 			// What should change on it, waiting on someone to apply or dismiss.
