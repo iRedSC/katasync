@@ -1,36 +1,19 @@
-import {
-	and,
-	desc,
-	eq,
-	inArray,
-	isNotNull,
-	isNull,
-	lt,
-	or,
-	sql,
-} from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { isRelayed } from "#/buyers/amazon-mail";
 import type { Db } from "#/db/client";
 import {
 	mailboxChecks,
 	marketEmailAttachments,
 	marketEmails,
 } from "#/db/schema";
-import { groupBy } from "#/lib/group-by";
 import type { Market } from "#/markets/market";
 import type { InboxMessage } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
 import { backfillMarketHtml, keepHtml, readHtml } from "./market-mail/content";
 import { listRules, locked, lockRules, resort } from "./rule-store";
-import {
-	FOLDERS,
-	type Folder,
-	flagsOf,
-	type Level,
-	type Rule,
-	sortEmail,
-} from "./rules";
+import { type Folder, flagsOf, type Level, sortEmail } from "./rules";
 import { type Header, senderAuthenticated } from "./sender-auth";
-import { isVoicemail, voicemailState } from "./voicemail-model";
+import { isVoicemail } from "./voicemail-model";
 
 export {
 	backfillMarketHtml,
@@ -38,11 +21,12 @@ export {
 	marketEmailHtml,
 	readHtml,
 } from "./market-mail/content";
+export * from "./market-mail/page";
 
 // The marketplaces mailbox in katasync: each notice read in from Microsoft
 // 365, sorted by marketplace and by the rules into a folder, some marked
 // important, and worked through like a mail app (done, moved, marked).
-// Server only.
+// Server only. The Inbox's page of it is ./market-mail/page.ts.
 
 // Which marketplace an address belongs to, by its domain.
 const SENDERS: [RegExp, Market][] = [
@@ -82,8 +66,9 @@ export function marketOfEmail(m: { fromAddress: string; subject: string }) {
 
 // Reads new emails in: skips ones already kept, keeps each with its files,
 // sorted. One that fails to read is reported and left for the next run.
-// Mail from no marketplace (a buyer answering) has its headers read too, for
-// whether its sender is who it says.
+// Mail from no marketplace (a buyer answering) or from Amazon (its buyer
+// relay, its copies and notices) has its headers read too, for whether its
+// sender is who it says: those become buyer threads.
 export async function ingestMarketMail(
 	db: Db,
 	messages: InboxMessage[],
@@ -111,8 +96,13 @@ export async function ingestMarketMail(
 			const voicemail = isVoicemail({ ...m, body: content.body });
 			const market = marketOfEmail(m);
 			const authenticated =
-				market === null &&
+				(market === null || market === "amazon") &&
 				senderAuthenticated(await readHeaders(m.graphId), m.fromAddress);
+			// The rules close Amazon's relayed buyer messages on arrival, since
+			// they're answered in Buyers. One that can't be filed there stays
+			// open and unread here instead, so it isn't missed.
+			const heldBack =
+				market === "amazon" && !authenticated && isRelayed(m.fromAddress);
 			const inserted = await db.transaction(async (tx) => {
 				// Sorted under the lock, so a rule saved meanwhile isn't missed.
 				await lockRules(tx);
@@ -129,8 +119,8 @@ export async function ingestMarketMail(
 						folder: sorted.folder,
 						...flagsOf(sorted.level),
 						senderAuthenticated: authenticated,
-						readAt: sorted.read ? new Date() : null,
-						doneAt: sorted.done ? new Date() : null,
+						readAt: sorted.read && !heldBack ? new Date() : null,
+						doneAt: sorted.done && !heldBack ? new Date() : null,
 						fromAddress: m.fromAddress,
 						fromName: m.fromName,
 						recipients: m.recipients,
@@ -226,189 +216,6 @@ export async function newestMarketEmail(db: Db) {
 		.from(marketEmails);
 	return row?.at ? new Date(row.at) : null;
 }
-
-// A view of the page: the open emails that are important, or in one folder,
-// or those done.
-export type MarketView = "important" | "voicemails" | Folder | "done";
-export const MARKET_VIEWS = [
-	"important",
-	"voicemails",
-	...FOLDERS,
-	"done",
-] as const;
-
-const summary = {
-	id: marketEmails.id,
-	market: marketEmails.market,
-	folder: marketEmails.folder,
-	important: marketEmails.important,
-	critical: marketEmails.critical,
-	relabelledAt: marketEmails.relabelledAt,
-	importanceSetAt: marketEmails.importanceSetAt,
-	doneAt: marketEmails.doneAt,
-	readAt: marketEmails.readAt,
-	fromAddress: marketEmails.fromAddress,
-	fromName: marketEmails.fromName,
-	subject: marketEmails.subject,
-	body: marketEmails.body,
-	voicemail: marketEmails.voicemail,
-	receivedAt: marketEmails.receivedAt,
-};
-
-// Why an email sits where it does: moved or marked by hand, or the rule that
-// put it there (null: no rule moved it, so Updates).
-export type Why = {
-	folder: "by-hand" | { rule: number; name: string } | null;
-	important: "by-hand" | { rule: number; name: string }[];
-};
-
-function why(
-	rules: Rule[],
-	e: Parameters<typeof sortEmail>[1] & {
-		relabelledAt: Date | null;
-		importanceSetAt: Date | null;
-	},
-): Why {
-	const s = sortEmail(rules, e);
-	const named = (id: number) => ({
-		rule: id,
-		name: rules.find((r) => r.id === id)?.name ?? "",
-	});
-	return {
-		folder:
-			e.relabelledAt !== null
-				? "by-hand"
-				: s.folderRule === null
-					? null
-					: named(s.folderRule),
-		important:
-			e.importanceSetAt !== null ? "by-hand" : s.importantRules.map(named),
-	};
-}
-
-// Where the next page of a view starts: the sort time and id of the page's last
-// email. The id tells apart emails at the same moment, so none is skipped.
-export type MarketCursor = { at: number; id: number };
-
-export async function marketMailPage(
-	db: Db,
-	view: MarketView,
-	market: Market | null,
-	{ limit = 150, after }: { limit?: number; after?: MarketCursor } = {},
-) {
-	const scopedMarket = view === "voicemails" ? null : market;
-	const sortAt =
-		view === "done" ? marketEmails.doneAt : marketEmails.receivedAt;
-	const where = and(
-		view === "done"
-			? isNotNull(marketEmails.doneAt)
-			: and(
-					isNull(marketEmails.doneAt),
-					view === "important"
-						? eq(marketEmails.important, true)
-						: view === "voicemails"
-							? isNotNull(marketEmails.voicemail)
-							: and(
-									eq(marketEmails.folder, view),
-									isNull(marketEmails.voicemail),
-								),
-				),
-		scopedMarket ? eq(marketEmails.market, scopedMarket) : undefined,
-		after
-			? or(
-					lt(sortAt, new Date(after.at)),
-					and(eq(sortAt, new Date(after.at)), lt(marketEmails.id, after.id)),
-				)
-			: undefined,
-	);
-	const [fetched, counts, [check], rules] = await Promise.all([
-		db
-			.select(summary)
-			.from(marketEmails)
-			.where(where)
-			.orderBy(desc(sortAt), desc(marketEmails.id))
-			.limit(limit + 1),
-		db
-			.select({
-				folder: marketEmails.folder,
-				market: marketEmails.market,
-				n: sql<number>`(count(*) filter (where ${marketEmails.voicemail} is null))::int`,
-				voicemails: sql<number>`(count(*) filter (where ${marketEmails.voicemail} is not null))::int`,
-				important: sql<number>`(count(*) filter (where ${marketEmails.important}))::int`,
-				critical: sql<number>`(count(*) filter (where ${marketEmails.critical}))::int`,
-			})
-			.from(marketEmails)
-			.where(and(isNull(marketEmails.doneAt), isNull(marketEmails.readAt)))
-			.groupBy(marketEmails.folder, marketEmails.market),
-		db
-			.select()
-			.from(mailboxChecks)
-			.where(eq(mailboxChecks.mailbox, "marketplaces")),
-		listRules(db),
-	]);
-	// One more than a page, to know whether there's a next one.
-	const more = fetched.length > limit;
-	const rows = more ? fetched.slice(0, limit) : fetched;
-	const last = rows.at(-1);
-	const lastAt = view === "done" ? last?.doneAt : last?.receivedAt;
-	const next =
-		more && last && lastAt ? { at: lastAt.getTime(), id: last.id } : null;
-	const shown = counts.filter(
-		(c) => !scopedMarket || c.market === scopedMarket,
-	);
-	const files =
-		rows.length === 0
-			? []
-			: await db
-					.select({
-						id: marketEmailAttachments.id,
-						emailId: marketEmailAttachments.emailId,
-						filename: marketEmailAttachments.filename,
-						contentType: marketEmailAttachments.contentType,
-						size: marketEmailAttachments.size,
-						kept: sql<boolean>`${marketEmailAttachments.data} is not null`,
-					})
-					.from(marketEmailAttachments)
-					.where(
-						and(
-							inArray(
-								marketEmailAttachments.emailId,
-								rows.map((r) => r.id),
-							),
-							isNull(marketEmailAttachments.contentId),
-						),
-					)
-					.orderBy(marketEmailAttachments.id);
-	const byEmail = groupBy(files, (f) => f.emailId);
-	return {
-		connected: Boolean(process.env.MARKETPLACE_INBOX?.trim()),
-		check: check ?? null,
-		// Where the page after this one starts; null when this is all of them.
-		next,
-		// Unread open emails per folder, and important (critical among them),
-		// within the market shown.
-		counts: {
-			voicemails: counts.reduce((sum, row) => sum + row.voicemails, 0),
-			important: shown.reduce((s, c) => s + c.important, 0),
-			critical: shown.reduce((s, c) => s + c.critical, 0),
-			...(Object.fromEntries(
-				FOLDERS.map((f) => [
-					f,
-					shown.filter((c) => c.folder === f).reduce((s, c) => s + c.n, 0),
-				]),
-			) as Record<Folder, number>),
-		},
-		emails: rows.map(({ relabelledAt, importanceSetAt, ...r }) => ({
-			...r,
-			voicemail:
-				r.voicemail === null ? null : voicemailState.parse(r.voicemail),
-			why: why(rules, { ...r, relabelledAt, importanceSetAt }),
-			attachments: (byEmail.get(r.id) ?? []).map(({ emailId: _, ...f }) => f),
-		})),
-	};
-}
-
-export type MarketMailPage = Awaited<ReturnType<typeof marketMailPage>>;
 
 // Done with it, or back to its folder.
 export async function setDone(db: Db, id: number, done: boolean) {
