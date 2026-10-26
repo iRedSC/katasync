@@ -5,7 +5,7 @@ import {
 	type PurchaseOrderMatch,
 	pickable,
 	usePurchaseOrderSearch,
-} from "#/components/po-product-picker";
+} from "#/components/po-search";
 
 // Something in the box that isn't on the PO: find it by name, SKU, barcode,
 // or the supplier's SKU (a scanner types into the field), then pick it to
