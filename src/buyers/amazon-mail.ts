@@ -16,6 +16,9 @@ import { ensureThread, isLogged, recordFromBuyer, recordOurs } from "./threads";
 // marketplaces mailbox, and relays our answer back when it's sent to that
 // address from a sender approved in Seller Central. So the mailbox read
 // (src/inbox/market-mail.ts) is what brings them in, and Resend sends ours.
+// Anyone can write an Amazon From, so only mail Microsoft vouched came from
+// Amazon (market_emails.sender_authenticated) is filed; the rest stays in
+// the mailbox, marked unverified.
 
 const RELAY = /@marketplace\.amazon\.com$/i;
 const ORDER = /\b\d{3}-\d{7}-\d{7}\b/;
@@ -67,6 +70,7 @@ export async function threadAmazonMail(db: Db) {
 		.where(
 			and(
 				ilike(marketEmails.fromAddress, "%@marketplace.amazon.com"),
+				eq(marketEmails.senderAuthenticated, true),
 				isNull(buyerMessages.id),
 			),
 		)
@@ -168,6 +172,7 @@ export async function threadAmazonCopies(db: Db) {
 		.where(
 			and(
 				eq(marketEmails.market, "amazon"),
+				eq(marketEmails.senderAuthenticated, true),
 				ilike(marketEmails.subject, "your e%mail to%"),
 				gte(marketEmails.receivedAt, new Date(Date.now() - COPIES_SINCE_MS)),
 				isNull(buyerMessages.id),
@@ -279,6 +284,7 @@ export async function applyAmazonRefusals(db: Db) {
 		.where(
 			and(
 				eq(marketEmails.market, "amazon"),
+				eq(marketEmails.senderAuthenticated, true),
 				gte(marketEmails.receivedAt, since),
 				isNull(buyerMessages.id),
 			),
