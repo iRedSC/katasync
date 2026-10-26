@@ -4,7 +4,7 @@ import * as schema from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { feedStatus } from "#/diagnostics/feed-health";
 import { loadFeedRecords, recordFeed } from "#/diagnostics/feed-record";
-import type { ChannelReturn } from "#/orders/return-requests";
+import { type ChannelReturn, returnStage } from "#/orders/return-requests";
 import { createTestDb } from "#/test/db";
 import { channelPass } from "./channel-pass";
 import { backfillReturns } from "./returns-history";
@@ -37,8 +37,11 @@ async function addOrder(externalId: string) {
 const aReturn = (id: string, order: string, at: Date): ChannelReturn => ({
 	externalId: id,
 	orderExternalId: order,
-	kind: "return",
-	status: "requested",
+	...returnStage("requested", "buyer"),
+	amount: null,
+	currency: null,
+	caseRef: null,
+	nextAction: null,
 	rawStatus: "OPEN",
 	reason: null,
 	trackingNumber: null,

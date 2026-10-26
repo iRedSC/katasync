@@ -10,6 +10,7 @@ import { formatCount, formatOrderDate } from "#/lib/format";
 import type { useRowLink } from "#/lib/row-link";
 import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
+import { CaseObligation } from "./case-obligation";
 
 export const states: Record<
 	ReturnState,
@@ -124,6 +125,7 @@ export function ReturnRow({
 						</Tip>
 					)}
 				</div>
+				{request && <CaseObligation request={request} />}
 			</td>
 			<td className="py-1.5 pr-2">
 				<div className="flex items-center justify-end gap-1">

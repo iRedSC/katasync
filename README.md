@@ -13,6 +13,8 @@ Stack: TanStack Start (React + Vite) on Vercel, Postgres on Neon via Drizzle, Ve
 3. `pnpm db:migrate`
 4. `pnpm dev` (http://127.0.0.1:3000). To reach it from other devices: `tailscale serve --bg --https=3000 http://127.0.0.1:3000`.
 
+Use `pnpm db:migrate`, not `drizzle-kit migrate`: it serializes deploys, refuses skipped or edited migrations, and commits each migration separately. Put enum additions in a separate migration before any migration that uses the new values.
+
 In production, Vercel Cron runs each channel's sync on the schedules in `vercel.json` (`src/routes/api/cron/sync.$channel.ts`); set `CRON_SECRET` in Vercel to a random string of 16+ characters. Locally, `pnpm sync --watch` pulls orders from every channel whose credentials are in `.env.local` (Shopify; TikTok Shop; Amazon; eBay). Once TikTok has synced, Shopify stops importing the TikTok orders its TikTok channel relays. Quote values that contain `#`, like eBay refresh tokens, or they get cut off.
 
 Shopify and TikTok also send order webhooks to `/api/webhooks/<channel>` (`src/channels/webhooks.ts`), so orders arrive in seconds; the crons stay as the safety net, and eBay and Amazon run on them alone. Set `SHOPIFY_WEBHOOK_SECRET` to the client secret of the Shopify app behind `SHOPIFY_ADMIN_TOKEN`, then run `pnpm webhooks https://<katasync address>` once with production credentials to subscribe. Run it bare to see where each channel sends now.

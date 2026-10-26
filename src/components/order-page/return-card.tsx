@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Ban, ExternalLink, Printer, Undo2 } from "lucide-react";
 import { Badge, Card, type Tone } from "#/components/page";
 import { ProductImage } from "#/components/product";
+import { CaseObligation } from "#/components/returns/case-obligation";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
@@ -32,6 +33,8 @@ const REQUEST_TONE: Record<
 	Tone | undefined
 > = {
 	requested: "info",
+	processing: undefined,
+	unknown: "warning",
 	shipped: "info",
 	delivered: "success",
 	closed: undefined,
@@ -48,11 +51,9 @@ type Request = OrderDetail["returnRequests"][number];
 // A refund waiting on our answer stands out; one settled reads like any
 // request that's done.
 const requestTone = (r: Request) =>
-	r.kind === "refund" && r.status === "requested"
-		? "warning"
-		: REQUEST_TONE[r.status];
+	r.waitingOn === "us" ? "warning" : REQUEST_TONE[r.status];
 
-const asking = (r: Request) => r.kind === "refund" && r.status === "requested";
+const asking = (r: Request) => r.waitingOn === "us";
 
 export function hasReturn(d: OrderDetail) {
 	return (
@@ -157,7 +158,7 @@ export function ReturnCard({
 				<Section
 					key={r.id}
 					title={
-						<span className="flex items-center gap-2">
+						<span className="flex flex-wrap items-center gap-2">
 							<Badge tone={requestTone(r)}>
 								{r.rawStatus.charAt(0).toUpperCase() +
 									r.rawStatus.slice(1).toLowerCase().replace(/_/g, " ")}
@@ -166,6 +167,7 @@ export function ReturnCard({
 								Opened {formatOrderDate(r.requestedAt)} on{" "}
 								{channelName(r.billedBy)}
 							</span>
+							<CaseObligation request={r} />
 							{r.page && (
 								<a
 									href={r.page.url}

@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { returnRequests } from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
@@ -56,7 +56,7 @@ function openEbayReturns(db: Db) {
 		.where(
 			and(
 				eq(returnRequests.billedBy, "ebay"),
-				inArray(returnRequests.status, ["requested", "shipped", "delivered"]),
+				ne(returnRequests.waitingOn, "nobody"),
 			),
 		);
 }

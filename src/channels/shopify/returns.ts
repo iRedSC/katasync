@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import type { ChannelReturn, Held } from "#/orders/return-requests";
+import { shopifyReturnStage } from "../marketplace-case-stage";
 import { tiktokOrderId } from "./channel-order";
 import { shopifyQuery } from "./client";
 
@@ -114,9 +115,7 @@ export function shopifyReturnStatus(
 	status: string,
 	tracked: boolean,
 ): ChannelReturn["status"] {
-	if (status === "CANCELED" || status === "DECLINED") return "cancelled";
-	if (status === "CLOSED") return "closed";
-	return tracked ? "shipped" : "requested";
+	return shopifyReturnStage(status, tracked).status;
 }
 
 // The reason a buyer gave for one item. Shopify files a reason it has no
@@ -151,8 +150,11 @@ export function shopifyToReturn(
 	return {
 		externalId: r.id,
 		orderExternalId: orderId,
-		kind: "return",
-		status: shopifyReturnStatus(r.status, Boolean(tracking)),
+		...shopifyReturnStage(r.status, Boolean(tracking)),
+		amount: null,
+		currency: null,
+		nextAction: null,
+		caseRef: null,
 		rawStatus: r.status,
 		// Each item has its own reason; a return of several keeps them all.
 		reason: joined(items.map(itemReason)),

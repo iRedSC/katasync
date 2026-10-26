@@ -37,6 +37,7 @@ beforeEach(async () => {
 			billedBy: "amazon",
 			externalId: "r1",
 			status: "shipped",
+			waitingOn: "marketplace",
 			rawStatus: "Approved",
 			trackingNumber: "1Z999AA10123456784",
 			carrier: "UPS",
@@ -109,7 +110,7 @@ const set = (values: Partial<typeof schema.returnRequests.$inferInsert>) =>
 		.where(eq(schema.returnRequests.id, request));
 
 test("a closed request isn't followed", async () => {
-	await set({ status: "closed" });
+	await set({ status: "closed", waitingOn: "nobody" });
 	expect(await refreshReturnTracking(db)).toEqual({
 		checked: 0,
 		unsupported: 0,

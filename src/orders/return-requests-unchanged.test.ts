@@ -44,6 +44,13 @@ describe("saveReturns skips returns that haven't changed", () => {
 		orderExternalId: "111-1",
 		kind: "return",
 		status: "requested",
+		waitingOn: "us",
+		respondBy: null,
+		escalation: null,
+		amount: null,
+		currency: null,
+		nextAction: null,
+		caseRef: null,
 		rawStatus: "requested",
 		reason: "DEFECTIVE",
 		note: "Leaks from the bottom",
@@ -59,7 +66,9 @@ describe("saveReturns skips returns that haven't changed", () => {
 		expect(transaction).toHaveBeenCalledTimes(1);
 		await saveReturns(db, store, [ret]);
 		expect(transaction).toHaveBeenCalledTimes(1);
-		await saveReturns(db, store, [{ ...ret, status: "closed" }]);
+		await saveReturns(db, store, [
+			{ ...ret, status: "closed", waitingOn: "nobody", respondBy: null },
+		]);
 		expect(transaction).toHaveBeenCalledTimes(2);
 	});
 

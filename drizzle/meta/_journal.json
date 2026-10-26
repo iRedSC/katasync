@@ -1030,6 +1030,20 @@
       "when": 1793019213481,
       "tag": "0146_order_buyer_contacts",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1793020032666,
+      "tag": "0147_case_status_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1793020032667,
+      "tag": "0148_case_obligations",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,11 @@
 import { type } from "arktype";
 import { errorText } from "#/diagnostics/runs";
-import type { ChannelReturn, RequestStage } from "#/orders/return-requests";
+import type { ChannelReturn } from "#/orders/return-requests";
 import { shopCipher, tiktokApi } from "./tiktok";
+import { tiktokReturnStage } from "./tiktok-case-stage";
+import { TiktokReturnPages } from "./tiktok-return-pages";
+
+export { tiktokReturnStage } from "./tiktok-case-stage";
 
 // Returns buyers opened on TikTok Shop, with TikTok's reason, and what the
 // buyer wrote from the return's records. Needs the Return & Refund Basic
@@ -9,7 +13,8 @@ import { shopCipher, tiktokApi } from "./tiktok";
 // the app. Orders Shopify relayed are TikTok's too, so they're found by
 // their TikTok order id wherever they live.
 
-const SEARCH = "/return_refund/202309/returns/search";
+const SEARCH = "/return_refund/202603/aftersales/search";
+const RMA_SEARCH = "/return_refund/202604/rma/search";
 const records = (id: string) => `/return_refund/202309/returns/${id}/records`;
 
 const returnOrder = type({
@@ -17,6 +22,12 @@ const returnOrder = type({
 	order_id: "string",
 	return_status: "string",
 	"return_type?": "string",
+	"arbitration_status?": "string",
+	"seller_next_action_response?": type({
+		action: "string",
+		"deadline?": "number.integer >= 0",
+	}).array(),
+	"refund_amount?": { currency: /^[A-Z]{3}$/, refund_total: "string.numeric" },
 	create_time: "number.integer",
 	"update_time?": "number.integer",
 	"return_reason?": "string",
@@ -26,11 +37,33 @@ const returnOrder = type({
 	"return_line_items?": type({
 		"sku_id?": "string",
 		"seller_sku?": "string",
+		"order_line_item_id?": "string",
 	}).array(),
 });
 export type TiktokReturn = typeof returnOrder.infer;
+const aftersales = type({
+	id: "string",
+	status: "string",
+	sku_return_requests: returnOrder.array(),
+});
 const searchPage = type({
-	"return_orders?": returnOrder.array(),
+	"aftersales_requests?": aftersales.array(),
+	"total_count?": "number.integer >= 0",
+	"next_page_token?": "string",
+});
+const rma = type({
+	id: "string",
+	aftersales_request_id: "string",
+	status: "string",
+	"seller_next_action_response?": type({
+		action: "string",
+		"deadline?": "number.integer >= 0",
+	}).array(),
+	sku_return_requests: returnOrder.array(),
+});
+const rmaPage = type({
+	"return_merchandise_authorizations?": rma.array(),
+	"total_count?": "number.integer >= 0",
 	"next_page_token?": "string",
 });
 const recordList = type({
@@ -45,39 +78,28 @@ const recordList = type({
 export const isSampleRefund = (r: { return_reason?: string }) =>
 	r.return_reason?.startsWith("system_refund_sample") ?? false;
 
-// TikTok's statuses, as a stage. A refund with nothing coming back (return
-// type REFUND) waits on our answer while it's pending, then is refunded
-// (closed) or turned down (cancelled); it never ships.
-export function tiktokReturnStage(r: {
-	return_status: string;
-	return_type?: string;
-}): RequestStage {
-	const s = r.return_status;
-	const ended = s.includes("CANCEL") || s.includes("REJECT");
-	const settled = s.includes("COMPLETE") || s.includes("SUCCESS");
-	if (r.return_type === "REFUND")
-		return {
-			kind: "refund",
-			status: ended ? "cancelled" : settled ? "closed" : "requested",
-		};
-	if (ended) return { kind: "return", status: "cancelled" };
-	if (settled) return { kind: "return", status: "closed" };
-	if (s === "BUYER_SHIPPED_ITEM") return { kind: "return", status: "shipped" };
-	return { kind: "return", status: "requested" };
-}
-
-// TikTok lists each unit as its own line; order_lines keeps one per SKU id,
-// so units of the same SKU add up.
+// Forward line IDs keep distinct lines apart. Older order imports still
+// use SKU IDs, so matching accepts that namespace too.
 export function tiktokToReturn(
 	r: TiktokReturn,
 	note?: string | null,
+	parent?: {
+		id: string;
+		status: string;
+		rmaStatus?: string;
+		packageReviewActions?: { action: string; deadline?: number }[];
+	},
 ): ChannelReturn {
-	const bySku = new Map<string, { sku: string | null; quantity: number }>();
-	for (const l of r.return_line_items ?? []) {
-		const key = l.sku_id ?? l.seller_sku ?? "";
-		const seen = bySku.get(key);
-		bySku.set(key, {
-			sku: l.seller_sku ?? null,
+	const byLine = new Map<
+		string,
+		{ sku: string | null; skuId: string | null; quantity: number }
+	>();
+	for (const line of r.return_line_items ?? []) {
+		const key = line.order_line_item_id ?? line.sku_id ?? line.seller_sku ?? "";
+		const seen = byLine.get(key);
+		byLine.set(key, {
+			sku: line.seller_sku ?? null,
+			skuId: line.sku_id ?? null,
 			quantity: (seen?.quantity ?? 0) + 1,
 		});
 	}
@@ -85,7 +107,19 @@ export function tiktokToReturn(
 		externalId: r.return_id,
 		orderExternalId: r.order_id,
 		marketplaceOrderId: `tiktok:${r.order_id}`,
-		...tiktokReturnStage(r),
+		...tiktokReturnStage({
+			...r,
+			afterSalesStatus: parent?.status,
+			rmaStatus: parent?.rmaStatus,
+			packageReviewActions: parent?.packageReviewActions,
+		}),
+		...(r.refund_amount
+			? {
+					amount: r.refund_amount.refund_total,
+					currency: r.refund_amount.currency,
+				}
+			: { amount: null, currency: null }),
+		caseRef: parent?.id ?? null,
 		rawStatus: r.return_status,
 		reason: r.return_reason_text || r.return_reason || null,
 		note,
@@ -93,10 +127,11 @@ export function tiktokToReturn(
 		carrier: r.return_provider_name || null,
 		requestedAt: new Date(r.create_time * 1000),
 		updatedAt: new Date((r.update_time ?? r.create_time) * 1000),
-		lines: [...bySku].map(([skuId, l]) => ({
-			lineExternalId: skuId || null,
-			sku: l.sku,
-			quantity: l.quantity,
+		lines: [...byLine].map(([lineId, line]) => ({
+			lineExternalId: lineId || null,
+			alternateLineExternalId: line.skuId,
+			sku: line.sku,
+			quantity: line.quantity,
 		})),
 	};
 }
@@ -172,7 +207,8 @@ export async function fetchTiktokReturns(
 ) {
 	const cipher = await shopCipher();
 	const seconds = (d: Date) => Math.floor(d.getTime() / 1000);
-	const found: TiktokReturn[] = [];
+	const found: (typeof aftersales.infer)[] = [];
+	const pages = new TiktokReturnPages("aftersales search");
 	let pageToken: string | undefined;
 	do {
 		const page = searchPage.assert(
@@ -180,18 +216,106 @@ export async function fetchTiktokReturns(
 				SEARCH,
 				{
 					shop_cipher: cipher,
-					page_size: "50",
-					...(pageToken ? { page_token: pageToken } : {}),
 				},
 				{
-					[`${by}_time_ge`]: seconds(from),
-					[`${by}_time_lt`]: seconds(until),
+					filters: {
+						time: {
+							[`${by}_time`]: {
+								min_unix_time_inclusive: seconds(from),
+								max_unix_time_exclusive: seconds(until),
+							},
+						},
+					},
+					pagination: {
+						page_size: 50,
+						...(pageToken ? { page_token: pageToken } : {}),
+					},
+					whitelisted_data_fields: ["LINE_ITEMS", "SKU_RETURN_REQUESTS"],
 				},
 			),
 		);
-		for (const r of page.return_orders ?? [])
-			if (!isSampleRefund(r)) found.push(r);
-		pageToken = page.next_page_token || undefined;
+		found.push(...(page.aftersales_requests ?? []));
+		pageToken = pages.read(page.aftersales_requests ?? [], page);
 	} while (pageToken);
-	return found.map((r) => tiktokToReturn(r));
+	const packages = new Map<string, typeof rma.infer>();
+	for (const parent of found) {
+		if (parent.sku_return_requests.length === 0)
+			throw new Error(`TikTok aftersales ${parent.id} has no SKU requests`);
+		const packagePages = new TiktokReturnPages(`RMA search for ${parent.id}`);
+		let token: string | undefined;
+		do {
+			const page = rmaPage.assert(
+				await tiktokApi(
+					RMA_SEARCH,
+					{ shop_cipher: cipher },
+					{
+						filters: { aftersales_request_ids: [parent.id] },
+						pagination: {
+							page_size: 50,
+							...(token ? { page_token: token } : {}),
+						},
+						whitelisted_data_fields: ["SKU_RETURN_REQUESTS"],
+					},
+				),
+			);
+			for (const pkg of page.return_merchandise_authorizations ?? []) {
+				if (pkg.aftersales_request_id !== parent.id)
+					throw new Error(
+						`TikTok RMA ${pkg.id} belongs to another aftersales request`,
+					);
+				if (pkg.sku_return_requests.length === 0)
+					throw new Error(`TikTok RMA ${pkg.id} has no SKU requests`);
+				for (const request of pkg.sku_return_requests ?? []) {
+					if (
+						!parent.sku_return_requests.some(
+							(sku) =>
+								sku.return_id === request.return_id &&
+								sku.order_id === request.order_id,
+						)
+					)
+						throw new Error(
+							`TikTok RMA ${pkg.id} has an unrelated SKU request`,
+						);
+					if (packages.has(request.return_id))
+						throw new Error(
+							`TikTok return ${request.return_id} has multiple RMAs`,
+						);
+					packages.set(request.return_id, pkg);
+				}
+			}
+			token = packagePages.read(
+				page.return_merchandise_authorizations ?? [],
+				page,
+			);
+		} while (token);
+	}
+	const requests = found.flatMap((parent) =>
+		parent.sku_return_requests
+			.filter((request) => !isSampleRefund(request))
+			.map((request) => ({ parent, request })),
+	);
+	return requests.map(({ parent, request }) => {
+		const pkg = packages.get(request.return_id);
+		const shipped = pkg?.sku_return_requests?.find(
+			(sku) => sku.return_id === request.return_id,
+		);
+		return tiktokToReturn(
+			{
+				...request,
+				return_tracking_number:
+					shipped?.return_tracking_number ?? request.return_tracking_number,
+				return_provider_name:
+					shipped?.return_provider_name ?? request.return_provider_name,
+			},
+			undefined,
+			{
+				...parent,
+				rmaStatus: pkg?.status,
+				packageReviewActions: [
+					...(pkg?.seller_next_action_response ?? []),
+					...(shipped?.seller_next_action_response ?? []),
+				],
+			},
+		);
+	});
 }

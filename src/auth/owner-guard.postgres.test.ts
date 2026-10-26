@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Client } from "pg";
 import {
 	afterAll,
@@ -11,6 +10,7 @@ import {
 	test,
 } from "vitest";
 import * as schema from "#/db/capability-schema";
+import { migrateDatabase } from "../../scripts/migrate-database";
 import { lockOwners } from "./authority";
 import { addPerson } from "./staff.fixtures";
 
@@ -41,7 +41,7 @@ describe.skipIf(!url)("last usable owner across PostgreSQL snapshots", () => {
 		secondPid = (
 			await second.query<{ pid: number }>("select pg_backend_pid() as pid")
 		).rows[0].pid;
-		await migrate(drizzle(first), { migrationsFolder: "drizzle" });
+		await migrateDatabase(first);
 		await first.query("set statement_timeout = '10s'");
 		await second.query("set statement_timeout = '10s'");
 	}, 60000);
