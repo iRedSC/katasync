@@ -1,15 +1,13 @@
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { buyerMessages, buyerThreads, marketEmails } from "#/db/schema";
-import {
-	amazonReplyStatus,
-	applyAmazonRefusals,
-	sendAmazonReply,
-} from "./amazon-mail";
+import { applyAmazonRefusals, sendAmazonReply } from "./amazon-mail";
 import { refuseWords } from "./attachments";
 import { clearDraft } from "./drafts";
 import { rereadEbayThread, sendEbayMessage } from "./ebay-messages";
 import { filesForReply, replyFileData, sharedFileUrl } from "./reply-files";
+import { resendStatus } from "./resend";
+import { sendShopifyEmail, shopifyRecipient } from "./shopify-mail";
 import { Refused, settleReply, unsettledReplies } from "./states";
 import { rereadTiktokThread, sendTiktokReply } from "./tiktok-messages";
 
@@ -18,9 +16,10 @@ import { rereadTiktokThread, sendTiktokReply } from "./tiktok-messages";
 // timeout, the browser losing the answer) leaves it sending, never lost;
 // settleReplies then finds out how it went. The browser names each reply
 // with its own key, so sending it again after a lost answer is the same
-// reply, not a second. An Amazon reply is tried again with that key, which
-// Resend sends once; an eBay or TikTok one is never sent twice, only looked
-// for in the conversation. When neither can tell, it's unconfirmed, never failed.
+// reply, not a second. An emailed one (Amazon's relay, a Shopify buyer) is
+// tried again with that key, which Resend sends once; an eBay or TikTok one
+// is never sent twice, only looked for in the conversation. When neither can
+// tell, it's unconfirmed, never failed.
 
 // Resend keeps a request key a day; past that a retry could send it twice.
 const RETRY_FOR_MS = 23 * 3_600_000;
@@ -45,8 +44,8 @@ export async function reply(
 		.from(buyerThreads)
 		.where(eq(buyerThreads.id, threadId));
 	if (!thread) throw new Error(`There's no buyer thread ${threadId}`);
-	if (thread.market === "shopify")
-		throw new Error(`katasync can't answer ${thread.market} buyers yet`);
+	// Refused before it's kept: there's no one to send it to.
+	if (thread.market === "shopify") await shopifyRecipient(db, thread.orderRef);
 	const tooLong = refuseWords(thread.market, body);
 	if (tooLong) throw new Error(tooLong);
 	// eBay sends no message without words.
@@ -66,7 +65,7 @@ export async function reply(
 			requestKey,
 			statusAt: now,
 			inReplyTo:
-				thread.market === "amazon"
+				thread.market === "amazon" || thread.market === "shopify"
 					? await lastBuyerEmailId(db, thread.id)
 					: null,
 		})
@@ -106,18 +105,8 @@ async function attempt(db: Db, thread: Thread, r: Reply) {
 		| null = null;
 	try {
 		outcome =
-			thread.market === "amazon"
-				? {
-						kind: "accepted",
-						externalId: await sendAmazonReply({
-							to: thread.externalId,
-							subject: thread.subject,
-							inReplyTo: r.inReplyTo,
-							text: r.body,
-							requestKey: r.requestKey ?? r.id.toString(),
-							attachments: await filesOf(db, r),
-						}),
-					}
+			thread.market === "amazon" || thread.market === "shopify"
+				? { kind: "accepted", externalId: await sendEmail(db, thread, r) }
 				: {
 						kind: "delivered",
 						externalId:
@@ -139,6 +128,24 @@ async function attempt(db: Db, thread: Thread, r: Reply) {
 			outcome = { kind: "failed", error: error.message };
 	}
 	if (outcome) await settleReply(db, r.id, outcome).catch(() => false);
+}
+
+// An emailed reply: through Amazon's relay, or to a Shopify buyer.
+async function sendEmail(db: Db, thread: Thread, r: Reply) {
+	const email = {
+		subject: thread.subject,
+		inReplyTo: r.inReplyTo,
+		text: r.body,
+		requestKey: r.requestKey ?? r.id.toString(),
+		attachments: await filesOf(db, r),
+	};
+	return thread.market === "shopify"
+		? sendShopifyEmail(db, {
+				...email,
+				threadId: thread.id,
+				to: await shopifyRecipient(db, thread.orderRef),
+			})
+		: sendAmazonReply({ ...email, to: thread.externalId });
 }
 
 // A reply's files for an email; failing to read them, nothing has gone.
@@ -203,7 +210,8 @@ export async function settleReplies(db: Db, now = Date.now()) {
 		}
 		const age = now - r.at.getTime();
 		try {
-			if (thread.market === "amazon") await settleAmazon(db, thread, r, age);
+			if (thread.market === "amazon" || thread.market === "shopify")
+				await settleEmailed(db, thread, r, age, thread.market);
 			else if (thread.market === "ebay" || thread.market === "tiktok") {
 				const { name, reread: lookFor } = LOOK_IN[thread.market];
 				if (!reread.has(thread.id)) {
@@ -234,18 +242,30 @@ const LOOK_IN = {
 	tiktok: { name: "TikTok", reread: rereadTiktokThread },
 };
 
-async function settleAmazon(db: Db, thread: Thread, r: Reply, age: number) {
+// Where to look before sending again one Resend never answered about.
+const CHECK_IN = {
+	amazon: "the messages in Seller Central",
+	shopify: "Resend's email log",
+};
+
+// A reply sent by email (Amazon's relay, a Shopify buyer).
+async function settleEmailed(
+	db: Db,
+	thread: Thread,
+	r: Reply,
+	age: number,
+	market: keyof typeof CHECK_IN,
+) {
 	if (r.status === "sending") {
 		if (age < RETRY_FOR_MS) return attempt(db, thread, r);
 		return settleReply(db, r.id, {
 			kind: "unconfirmed",
-			error:
-				"Resend never said whether it went. Check the messages in Seller Central before sending it again",
+			error: `Resend never said whether it went. Check ${CHECK_IN[market]} before sending it again`,
 		});
 	}
 	// Sent: ask Resend how far it got. Unconfirmed has nothing to ask about.
 	if (r.status !== "sent" || !r.externalId) return;
-	const s = await amazonReplyStatus(r.externalId);
+	const s = await resendStatus(r.externalId);
 	if (s.state === "delivered")
 		await settleReply(db, r.id, { kind: "delivered" });
 	if (s.state === "failed")

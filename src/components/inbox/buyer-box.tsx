@@ -33,17 +33,20 @@ export function BuyerBox({
 	market,
 	page,
 	counts,
+	open = null,
 }: {
 	view: "open" | "done";
 	market: Market | null;
 	page: BuyerThreadsPage;
 	counts: InboxCounts;
+	// The thread a link opened (an order's Email buyer).
+	open?: number | null;
 }) {
 	const router = useRouter();
 	const [hidden, setHidden] = useState<Set<number>>(new Set());
 	const threads = page.threads.filter((t) => !hidden.has(t.id));
-	const [selectedId, setSelectedId] = useState<number | null>(null);
-	const [reading, setReading] = useState(false);
+	const [selectedId, setSelectedId] = useState<number | null>(open);
+	const [reading, setReading] = useState(open !== null);
 	const selected =
 		threads.find((t) => t.id === selectedId) ?? threads[0] ?? null;
 

@@ -681,6 +681,18 @@ export const orders = pgTable(
 	],
 );
 
+// Where to email an order's buyer from katasync (src/buyers/shopify-mail.ts).
+// Shopify's own orders only: a relayed order's buyer is the marketplace's
+// to talk to, so it never has one. Apart from orders so the query tool
+// (katasync_mcp) can read orders but never buyers' addresses.
+export const orderBuyerContacts = pgTable("order_buyer_contacts", {
+	orderId: integer()
+		.primaryKey()
+		.references(() => orders.id),
+	email: text().notNull(),
+	updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 // The packages the channel says an order went out in, labels bought there
 // included (TikTok Shipping, Shopify's admin), read whole as the order is
 // looked at (src/orders/channel-tracking.ts). readFor is the order's
@@ -2984,6 +2996,10 @@ export const marketEmails = pgTable(
 		// is unread.
 		readAt: timestamp({ withTimezone: true }),
 		fromAddress: text().notNull(),
+		// Microsoft vouched the sender owns fromAddress's domain (its
+		// Authentication-Results: compauth or aligned DMARC passed). Only
+		// asked of mail from no marketplace; false when not known.
+		senderAuthenticated: boolean().notNull().default(false),
 		fromName: text(),
 		// Every To and Cc address, lowercased.
 		recipients: text().array().notNull(),
@@ -3268,6 +3284,17 @@ export const buyerMessages = pgTable(
 		),
 	],
 );
+
+// A Shopify buyer's thread's reply address, marketplaces+so<token>@
+// (src/buyers/shopify-match.ts): a random token made when the thread starts,
+// so an address can't be guessed or made up, and an answer to it is filed
+// by looking it up. Kept from the query tool, like buyers' addresses.
+export const shopifyThreads = pgTable("shopify_threads", {
+	threadId: integer()
+		.primaryKey()
+		.references(() => buyerThreads.id),
+	replyToken: text().notNull().unique(),
+});
 
 // How a first message to an eBay buyer stands. It's what starts their
 // conversation, and eBay has no request key, so each try is written down

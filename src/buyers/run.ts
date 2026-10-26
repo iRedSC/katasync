@@ -12,11 +12,13 @@ import { draftWaiting, readNewMessages } from "./drafts";
 import { syncEbayMessages } from "./ebay-messages";
 import { readMarketplaceMessages } from "./marketplace-messages";
 import { settleReplies } from "./send";
+import { threadShopifyMail } from "./shopify-mail";
 import { syncTiktokMessages } from "./tiktok-messages";
 
-// One run of buyer messages: Amazon's emails into threads, eBay's and
-// TikTok's conversations read, and every reply in flight settled. Each part records
-// how it went on its own, so one failing never hides or stops another.
+// One run of buyer messages: Amazon's and Shopify buyers' emails into
+// threads, eBay's and TikTok's conversations read, and every reply in flight
+// settled. Each part records how it went on its own, so one failing never
+// hides or stops another.
 export async function runBuyerMessages(db: Db, { sweep = false } = {}) {
 	const started = Date.now();
 	const amazon = await threadAmazonMail(db)
@@ -33,6 +35,10 @@ export async function runBuyerMessages(db: Db, { sweep = false } = {}) {
 		.insert(buyerMessageChecks)
 		.values({ market: "amazon", ...set })
 		.onConflictDoUpdate({ target: buyerMessageChecks.market, set });
+	// Shopify buyers' answers come through the same mailbox as Amazon's.
+	const shopify = await threadShopifyMail(db).catch((e: unknown) => ({
+		problems: [e instanceof Error ? e.message : String(e)],
+	}));
 	await recordMessages(
 		db,
 		"amazon",
@@ -76,7 +82,7 @@ export async function runBuyerMessages(db: Db, { sweep = false } = {}) {
 					problems: [e instanceof Error ? e.message : String(e)],
 				}))
 		: { skipped: "set AI_PROXY_URL and AI_PROXY_KEY" };
-	return { amazon, ebay, tiktok, ai };
+	return { amazon, shopify, ebay, tiktok, ai };
 }
 
 // One market's read on its messages feed (src/diagnostics/feed-health.ts).

@@ -14,7 +14,7 @@ const NAMES: Record<Market, string> = {
 	amazon: "Amazon",
 };
 
-// Shopify has no buyer chats: none.
+// Shopify buyers are emailed from katasync, with no chat page: none.
 const pages: Record<Market, (orderRef: string | null) => string | null> = {
 	shopify: () => null,
 	tiktok: () => "https://seller-us.tiktok.com/chat/inbox/current",

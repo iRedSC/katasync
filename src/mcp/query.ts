@@ -49,6 +49,10 @@ export const SECRET_TABLES = [
 	"po_file_uploads",
 	// Each row's share_token is a public link to the file.
 	"buyer_reply_files",
+	// Buyers' email addresses.
+	"order_buyer_contacts",
+	// What files an email on a Shopify buyer's thread.
+	"shopify_threads",
 ];
 
 // Functions that change the session, reach outside the database, or signal

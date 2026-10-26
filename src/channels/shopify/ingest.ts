@@ -13,6 +13,7 @@ import { shopifyToChannelOrder, tiktokOrderId } from "./channel-order";
 import { shopifyQuery } from "./client";
 import { remainingUnits, shippedUnits } from "./fulfillment-units";
 import { remainingLines } from "./line-items";
+import { keepShopifyEmails } from "./order-emails";
 import {
 	ORDER_FIELDS,
 	ORDERS_QUERY,
@@ -43,6 +44,9 @@ export async function ingestMatching(
 			problems.push(...result.problems);
 			count++;
 		}
+		// Once the orders are saved. Shopify not saying leaves them without;
+		// Diagnostics says why.
+		await keepShopifyEmails(db, store.id, page.orders.nodes);
 		cursor = page.orders.pageInfo.hasNextPage
 			? (page.orders.pageInfo.endCursor ?? null)
 			: null;
@@ -117,6 +121,7 @@ export async function ingestShopifyOrder(
 		await stockLocations(db),
 		await hasTiktokStore(db),
 	);
+	if (result) await keepShopifyEmails(db, store.id, [order]);
 	return result
 		? orderUpdate(result.problems)
 		: { kind: "ignored", reason: "tiktok_source" };

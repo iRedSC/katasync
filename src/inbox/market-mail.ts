@@ -29,6 +29,7 @@ import {
 	type Rule,
 	sortEmail,
 } from "./rules";
+import { type Header, senderAuthenticated } from "./sender-auth";
 import { isVoicemail, voicemailState } from "./voicemail-model";
 
 export {
@@ -81,10 +82,13 @@ export function marketOfEmail(m: { fromAddress: string; subject: string }) {
 
 // Reads new emails in: skips ones already kept, keeps each with its files,
 // sorted. One that fails to read is reported and left for the next run.
+// Mail from no marketplace (a buyer answering) has its headers read too, for
+// whether its sender is who it says.
 export async function ingestMarketMail(
 	db: Db,
 	messages: InboxMessage[],
 	read: ReadContent,
+	readHeaders: (graphId: string) => Promise<Header[]> = async () => [],
 ) {
 	if (messages.length === 0) return { read: 0, problems: [] as string[] };
 	const kept = await db
@@ -106,6 +110,9 @@ export async function ingestMarketMail(
 			const content = await read(m.graphId);
 			const voicemail = isVoicemail({ ...m, body: content.body });
 			const market = marketOfEmail(m);
+			const authenticated =
+				market === null &&
+				senderAuthenticated(await readHeaders(m.graphId), m.fromAddress);
 			const inserted = await db.transaction(async (tx) => {
 				// Sorted under the lock, so a rule saved meanwhile isn't missed.
 				await lockRules(tx);
@@ -121,6 +128,7 @@ export async function ingestMarketMail(
 						market,
 						folder: sorted.folder,
 						...flagsOf(sorted.level),
+						senderAuthenticated: authenticated,
 						readAt: sorted.read ? new Date() : null,
 						doneAt: sorted.done ? new Date() : null,
 						fromAddress: m.fromAddress,

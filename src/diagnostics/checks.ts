@@ -144,6 +144,17 @@ async function checkShopify(s: Steps) {
 			? `${order.name}, placed ${new Date(order.createdAt).toLocaleString()}`
 			: { warn: "The store returned no orders" };
 	});
+	// Order.email is protected customer data, granted apart from scopes.
+	await s.step("Buyer emails", async () => {
+		try {
+			await shopifyQuery("{ orders(first: 1) { nodes { id email } } }", {});
+		} catch (error) {
+			return {
+				warn: `Shopify won't share buyer emails, so Shopify buyers can't be emailed from katasync. Grant the app protected customer data access with the Email field in Shopify's app settings. Shopify said: ${error instanceof Error ? error.message : String(error)}`,
+			};
+		}
+		return "Readable";
+	});
 }
 
 async function checkEbay(s: Steps) {

@@ -8,7 +8,8 @@ import type { Market } from "#/markets/market";
 //   eBay: pictures, PDF, Word, text; five at most; 2,000 characters.
 //   TikTok: pictures (JPG, PNG, GIF, WEBP), each sent as its own message;
 //     2,000 characters.
-// Shopify has no buyer messages here.
+//   Shopify: our own email (Resend), held to Amazon's files to stay well
+//     inside what mail servers take.
 
 // What a request may carry to katasync on Vercel (4.5 MB), with room to
 // spare; pictures are shrunk below it before they go.
@@ -31,18 +32,21 @@ const IMAGES = {
 	"image/webp": "IMAGE",
 };
 
-export const ATTACHMENT_RULES: Record<Exclude<Market, "shopify">, Rules> = {
-	amazon: {
-		types: {
-			"application/pdf": "PDF",
-			"image/jpeg": "IMAGE",
-			"image/png": "IMAGE",
-		},
-		maxFiles: 5,
-		maxTotalBytes: 7_000_000,
-		maxChars: null,
-		takes: "PDF, JPG, PNG",
+const EMAILED: Rules = {
+	types: {
+		"application/pdf": "PDF",
+		"image/jpeg": "IMAGE",
+		"image/png": "IMAGE",
 	},
+	maxFiles: 5,
+	maxTotalBytes: 7_000_000,
+	maxChars: null,
+	takes: "PDF, JPG, PNG",
+};
+
+export const ATTACHMENT_RULES: Record<Market, Rules> = {
+	amazon: EMAILED,
+	shopify: EMAILED,
 	ebay: {
 		types: {
 			...IMAGES,
@@ -66,8 +70,8 @@ export const ATTACHMENT_RULES: Record<Exclude<Market, "shopify">, Rules> = {
 	},
 };
 
-export function rulesFor(market: Market) {
-	return market === "shopify" ? null : ATTACHMENT_RULES[market];
+export function rulesFor(market: Market): Rules | null {
+	return ATTACHMENT_RULES[market];
 }
 
 export type AttachmentFile = { name: string; type: string; size: number };
