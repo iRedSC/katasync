@@ -147,9 +147,11 @@ export function BankRows({
 export function PayoutsCard({
 	payouts,
 	currency,
+	cut,
 }: {
 	payouts: Overview["payouts"];
 	currency: string;
+	cut: Overview["payoutsCut"];
 }) {
 	if (payouts.length === 0) return null;
 	return (
@@ -193,6 +195,11 @@ export function PayoutsCard({
 					))}
 				</tbody>
 			</table>
+			{cut !== null && (
+				<p className="border-t px-4 py-2 text-xs text-muted-foreground">
+					Showing the newest {formatCount(cut)} payouts
+				</p>
+			)}
 		</Card>
 	);
 }

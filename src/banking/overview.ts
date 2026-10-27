@@ -22,7 +22,7 @@ import {
 	reviewingTargets,
 } from "./review";
 import { type Suggestions, suggest, usable, WINDOW_DAYS } from "./suggest";
-import { payoutTarget } from "./targets";
+import { NEAR_LIMIT, payoutTarget } from "./targets";
 
 export const ROW_LIMIT = 1000;
 
@@ -69,6 +69,9 @@ export type Overview = {
 	rows: BankRowView[];
 	truncated: boolean;
 	payouts: PayoutView[];
+	// How many payouts were read when more were near the rows; null when
+	// none were left out.
+	payoutsCut: number | null;
 	imports: ImportView[];
 };
 
@@ -149,6 +152,7 @@ async function readOverview(
 			rows: [],
 			truncated: false,
 			payouts: [],
+			payoutsCut: null,
 			imports: [],
 		};
 	const found = await db
@@ -195,15 +199,19 @@ async function readOverview(
 	const days = txns.map((t) => t.postedOn).sort();
 	const near =
 		days.length === 0
-			? []
-			: await payoutTarget.near(db, {
-					currency: account.currency,
-					from: shift(days[0], -WINDOW_DAYS.before),
-					to: shift(days[days.length - 1], WINDOW_DAYS.after),
-				});
+			? { observed: [], truncated: false }
+			: await payoutTarget.near(
+					db,
+					{
+						currency: account.currency,
+						from: shift(days[0], -WINDOW_DAYS.before),
+						to: shift(days[days.length - 1], WINDOW_DAYS.after),
+					},
+					"all",
+				);
 	const standing = await standingOf(
 		db,
-		near.map((p) => p.ref),
+		near.observed.map((p) => p.ref),
 		{ lock: false, excludeMatch: null },
 	);
 	for (const [key, t] of evidence.targets)
@@ -222,6 +230,7 @@ async function readOverview(
 		rows,
 		truncated,
 		payouts,
+		payoutsCut: near.truncated ? NEAR_LIMIT : null,
 		imports: await importsOf(db, account.id),
 	};
 }
@@ -258,16 +267,22 @@ export async function matchOptions(
 			),
 		);
 	if (!bank || !(await loadAccount(db, bank.accountId))) return null;
-	const near = await payoutTarget.near(db, {
-		currency: bank.currency,
-		from: shift(bank.postedOn, -WINDOW_DAYS.before),
-		to: shift(bank.postedOn, WINDOW_DAYS.after),
-	});
+	// Only payouts with some left to match: matched ones can't be picked, and
+	// mustn't push open ones past the limit.
+	const near = await payoutTarget.near(
+		db,
+		{
+			currency: bank.currency,
+			from: shift(bank.postedOn, -WINDOW_DAYS.before),
+			to: shift(bank.postedOn, WINDOW_DAYS.after),
+		},
+		"open",
+	);
 	const standing = [
 		...(
 			await standingOf(
 				db,
-				near.map((p) => p.ref),
+				near.observed.map((p) => p.ref),
 				{ lock: false, excludeMatch: null },
 			)
 		).values(),
