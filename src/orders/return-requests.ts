@@ -341,6 +341,20 @@ export async function saveReturns(
 			continue;
 		}
 		await db.transaction(async (tx) => {
+			// Read again under lock: an older snapshot (a page read before the
+			// case closed) would reopen it. The same version still saves, so its
+			// lines match order lines synced since.
+			const [locked] = await tx
+				.select({ sourceUpdatedAt: returnRequests.sourceUpdatedAt })
+				.from(returnRequests)
+				.where(
+					and(
+						eq(returnRequests.billedBy, store.channel),
+						eq(returnRequests.externalId, r.externalId),
+					),
+				)
+				.for("update");
+			if (locked && r.updatedAt && r.updatedAt < locked.sourceUpdatedAt) return;
 			const values = {
 				orderId,
 				billedBy: store.channel,
