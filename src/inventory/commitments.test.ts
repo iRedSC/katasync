@@ -1,8 +1,10 @@
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
+import { stockCommitmentEntries } from "#/db/quantity-schema";
 import * as schema from "#/db/schema";
 import { addDispatch, createProduct, createTestDb } from "#/test/db";
+import { undoUnownedBatch } from "./batch-owner";
 import { committedUnits, readQuantityMode } from "./commitments";
 import { activate, channelOrder, quantityWorld } from "./commitments.fixtures";
 import {
@@ -175,6 +177,42 @@ describe("consuming reservations at dispatch", () => {
 		expect(await world.onHand(wrench, world.warehouse)).toBe(5);
 		expect(await committed(wrench)).toBe(3);
 		await expect(consumeCommitments(db, shipped)).rejects.toThrow("was voided");
+	});
+
+	test("a dispatch's stock can't be undone by hand, only by voiding it", async () => {
+		await activate(db);
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await world.stock(wrench, world.warehouse, 5);
+		const { orderId } = await world.ingest(channelOrder());
+		const orderLineId = await world.lineId(orderId);
+		await consumeCommitments(db, {
+			orderId,
+			lines: [{ orderLineId, quantity: 2 }],
+			fulfillmentKey: "d1",
+		});
+		const [{ batchId }] = await db
+			.select({ batchId: sql<string>`${stockCommitmentEntries.batchId}` })
+			.from(stockCommitmentEntries)
+			.where(eq(stockCommitmentEntries.kind, "consume"));
+		await expect(undoUnownedBatch(db, batchId)).rejects.toThrow(
+			"Void that dispatch",
+		);
+		expect(await world.onHand(wrench, world.warehouse)).toBe(3);
+		expect(await committed(wrench)).toBe(1);
+
+		await restoreCommitments(db, { orderId, fulfillmentKey: "d1" });
+		expect(await world.onHand(wrench, world.warehouse)).toBe(5);
+		expect(await committed(wrench)).toBe(3);
+		const [undo] = await db
+			.select({ batchId: schema.movements.batchId })
+			.from(schema.movements)
+			.where(eq(schema.movements.reference, `undo:${batchId}`));
+		await expect(undoUnownedBatch(db, undo.batchId)).rejects.toThrow(
+			"Void that dispatch",
+		);
+		const found = await world.stock(wrench, world.warehouse, 1);
+		await undoUnownedBatch(db, found.batchId);
+		expect(await world.onHand(wrench, world.warehouse)).toBe(5);
 	});
 });
 
