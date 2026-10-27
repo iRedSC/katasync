@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { shopCipher, TiktokError, tiktokApi } from "#/channels/tiktok";
 import { shipsAerosols } from "./hazmat";
 import { LabelRefused, type Lookup } from "./label-attempt-state";
+import { overShown } from "./price-check";
 import type { Parcel, Rate } from "./shippo";
 import { combinedPackageFor, type TiktokOrderUnits } from "./tiktok-units";
 
@@ -189,7 +190,9 @@ const documentData = type({ doc_url: "string", "tracking_number?": "string" });
 
 // Buys the label for the chosen service, for exactly these units (checked
 // against the box by the caller, and saved with the attempt). The service is
-// quoted again, so what gets recorded is TikTok's price, not the browser's.
+// quoted again, so what gets recorded is TikTok's price, not the browser's,
+// and a quote above `shown` (the price on screen) is refused before the
+// package is created.
 // Several orders make one combined package (ship_type 3), every unit of each
 // order in it; TikTok checks they share a buyer, address, and warehouse, and
 // refuses the label if not. TikTok quotes one order at a time, so a combined
@@ -208,6 +211,7 @@ export async function tiktokBuyLabel(
 	parcel: Box,
 	serviceId: string,
 	unitIds: string[],
+	shown: number,
 ) {
 	const [lead] = orderIds;
 	if (!lead) throw new LabelRefused("No TikTok order to buy for");
@@ -223,6 +227,8 @@ export async function tiktokBuyLabel(
 		const rate = rates.find((r) => r.id === serviceId);
 		if (!rate)
 			throw new Error("TikTok no longer offers that service; price again");
+		const rose = overShown([rate.cost], shown);
+		if (rose) throw new Error(rose);
 		return { cipher, rate };
 	};
 	const { cipher, rate } = await before().catch((err: unknown) => {
