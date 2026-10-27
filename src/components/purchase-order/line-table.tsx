@@ -6,6 +6,7 @@ import { Tip } from "#/components/ui/tooltip";
 import { groupBy } from "#/lib/group-by";
 import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
+import { lineNumbers } from "#/purchasing/line-numbers";
 import {
 	orderedItems,
 	partState,
@@ -63,6 +64,9 @@ export function LineTable({
 		(l) => noteFor !== null && ids.same(l.id, noteFor),
 	);
 	const canNote = notable(d.order.status);
+	// Counted over the whole PO, as the PDF counts them, though this table may
+	// hold only some of its lines.
+	const numbers = lineNumbers(d.lines, d.order.sentAt !== null);
 	// Sets opened or closed by hand; the rest are open while they're missing
 	// a part.
 	const [opened, setOpened] = useState<ReadonlyMap<number, boolean>>(new Map());
@@ -189,6 +193,7 @@ export function LineTable({
 										<LineRow
 											detail={d}
 											line={l}
+											lineNo={numbers.get(l.id) ?? null}
 											set={set}
 											focus={focus}
 											focusedRow={focusedRow}

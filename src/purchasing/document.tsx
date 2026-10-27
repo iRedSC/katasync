@@ -31,6 +31,7 @@ export type PurchaseOrderDocument = {
 	};
 	notes: string[];
 	lines: {
+		lineNo: number;
 		sku: string;
 		supplierSku: string | null;
 		description: string;
@@ -85,6 +86,7 @@ const s = StyleSheet.create({
 		borderBottomColor: "#303030",
 		paddingBottom: 4,
 	},
+	lineNo: { width: 20, color: "#616161" },
 	sku: { width: 90 },
 	desc: { flex: 1, paddingRight: 8 },
 	num: { width: 40, textAlign: "right" },
@@ -152,6 +154,7 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 				</View>
 
 				<View style={s.headRow}>
+					<Text style={[s.lineNo, s.bold]}>#</Text>
 					{theirSkus && <Text style={[s.sku, s.bold]}>Supplier SKU</Text>}
 					<Text style={[s.desc, s.bold]}>Item</Text>
 					<Text style={[s.num, s.bold]}>Qty</Text>
@@ -165,6 +168,7 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 					return (
 						<View key={l.sku} wrap={false}>
 							<View style={s.row}>
+								<Text style={s.lineNo}>{l.lineNo}</Text>
 								{theirSkus && <Text style={s.sku}>{l.supplierSku ?? "—"}</Text>}
 								<Text style={s.desc}>{l.description}</Text>
 								<Text style={s.num}>{l.quantity}</Text>
@@ -183,6 +187,7 @@ export function renderPurchaseOrder(po: PurchaseOrderDocument) {
 								}))
 								.map(({ says, value }) => (
 									<View key={says} style={s.discountRow}>
+										<Text style={s.lineNo} />
 										{theirSkus && <Text style={s.sku} />}
 										<Text style={s.desc}>Discount: {says}</Text>
 										<Text style={s.money}>

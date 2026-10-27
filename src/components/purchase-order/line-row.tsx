@@ -32,6 +32,7 @@ import { useAction } from "./use-action";
 export function LineRow({
 	detail: d,
 	line: l,
+	lineNo,
 	set,
 	focus,
 	focusedRow,
@@ -44,6 +45,8 @@ export function LineRow({
 }: {
 	detail: PurchaseOrderDetail;
 	line: Line;
+	// Its number on the PDF; null when it isn't on the PDF.
+	lineNo: number | null;
 	set: LineSet | null;
 	focus: LineFocus | null;
 	focusedRow: RefObject<HTMLTableRowElement | null>;
@@ -95,6 +98,9 @@ export function LineRow({
 					</button>
 				)}
 				<div className={cn("flex items-center gap-3", draft && "min-w-72")}>
+					<span className="w-5 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+						{lineNo}
+					</span>
 					<ProductImage src={l.imageUrl} />
 					<div className="min-w-0">
 						<Link
