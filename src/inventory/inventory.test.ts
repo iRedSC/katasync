@@ -8,6 +8,7 @@ import {
 	getBundleBlockers,
 	getBundlesContaining,
 } from "./availability";
+import { requestProductCounts } from "./count-requests";
 import {
 	assembleKits,
 	cancelCountRequests,
@@ -475,6 +476,27 @@ describe("count requests", () => {
 		expect(await requested(wrench, warehouse)).toBe(again[0].requestedAt);
 		expect(await cancelCountRequests(db, again)).toBe(1);
 		expect(await requested(wrench, warehouse)).toBeNull();
+	});
+
+	test("a batch that can't all be asked for asks for none", async () => {
+		const wrench = await sku("WRENCH", "simple");
+		const old = await sku("OLD", "simple");
+		await receive(wrench, warehouse, 2);
+		await receive(old, warehouse, 1);
+		await receive(old, warehouse, -1);
+		await db
+			.update(schema.products)
+			.set({ archivedAt: new Date() })
+			.where(sql`${schema.products.id} = ${old}`);
+
+		await expect(requestProductCounts(db, [wrench, old])).rejects.toThrow(
+			/Archived/,
+		);
+		// Nothing went on the list, so there's no request undo could miss.
+		expect(await requested(wrench, warehouse)).toBeNull();
+
+		const asked = await requestProductCounts(db, [wrench]);
+		expect(asked).toMatchObject([{ productId: wrench, locationId: warehouse }]);
 	});
 
 	test("undo leaves the shelf a request created", async () => {
