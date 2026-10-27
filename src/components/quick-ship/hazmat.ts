@@ -12,3 +12,19 @@ export function startsHazmat(
 		return plan.last[index]?.hazmat ?? false;
 	return plan.lines.some((l) => l.aerosol);
 }
+
+// A box's aerosol flag set by hand on the box step, and the contents it was
+// set for. Other contents don't inherit it.
+export type HazmatChoice = { contents: string; hazmat: boolean };
+
+// Until the box step's choice is made, the contents decide (see startsHazmat).
+export function hazmatFor(
+	plan: Pick<ShipmentPlan, "lines" | "last" | "contentsKey"> | null,
+	index: number,
+	choice: HazmatChoice | null,
+) {
+	if (!plan) return false;
+	return choice?.contents === plan.contentsKey
+		? choice.hazmat
+		: startsHazmat(plan, index);
+}

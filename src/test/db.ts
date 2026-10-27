@@ -159,6 +159,8 @@ export async function addDispatch(
 		createdAt?: Date;
 		// False for a purchase that stopped part way.
 		bought?: boolean;
+		// False for a one-off box that left the default alone.
+		setsDefault?: boolean;
 		boxes?: Partial<typeof schema.shipments.$inferInsert>[];
 	},
 ) {
@@ -167,6 +169,7 @@ export async function addDispatch(
 		.values({
 			contentsKey: input.contentsKey ?? "WRENCH×2",
 			boughtAt: input.bought === false ? null : (input.createdAt ?? new Date()),
+			setsDefault: input.setsDefault ?? true,
 			...(input.createdAt ? { createdAt: input.createdAt } : {}),
 		})
 		.returning();

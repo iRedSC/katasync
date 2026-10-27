@@ -2,16 +2,25 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { MAX_BOXES } from "#/components/quick-ship/constants";
 import { DoneStep } from "#/components/quick-ship/done-step";
 import { ExternalStep } from "#/components/quick-ship/external-step";
-import { startsHazmat } from "#/components/quick-ship/hazmat";
+import { type HazmatChoice, hazmatFor } from "#/components/quick-ship/hazmat";
 import { InfoPanel } from "#/components/quick-ship/info-panel";
 import { splitInsurance } from "#/components/quick-ship/insurance";
 import { Key } from "#/components/quick-ship/key";
 import { Notice } from "#/components/quick-ship/notice";
 import { OrderSummary } from "#/components/quick-ship/order-summary";
 import { PackageStep } from "#/components/quick-ship/package-step";
-import { lastFor, startingGrams } from "#/components/quick-ship/packaging";
+import {
+	lastFor,
+	setsDefault,
+	startingGrams,
+} from "#/components/quick-ship/packaging";
 import { PinStep } from "#/components/quick-ship/pin-step";
 import { RatesStep } from "#/components/quick-ship/rates-step";
+import {
+	noExtras,
+	sameExtras,
+	startingExtras,
+} from "#/components/quick-ship/starting-extras";
 import { stepNotes } from "#/components/quick-ship/step-notes";
 import { StepStrip, stepsFor } from "#/components/quick-ship/step-strip";
 import type {
@@ -34,23 +43,6 @@ import { listPackages, quickShipBuy } from "#/server/shipping";
 import { PRICE_ROSE } from "#/shipping/price-check";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import type { Rate } from "#/shipping/shippo";
-
-const noExtras: Extras = { insure: null, signature: false };
-
-// A box's aerosol flag set by hand on the box step, and the contents it was
-// set for. Other contents don't inherit it.
-type HazmatChoice = { contents: string; hazmat: boolean };
-
-// Each plan starts uninsured (insurance is only recommended), with a
-// signature only when one is required. Going back to fix a box or weight
-// keeps whatever was changed on the service step.
-const startingExtras = (plan: ShipmentPlan): Extras => ({
-	insure: null,
-	signature: plan.signatureRequired !== null,
-});
-
-const sameExtras = (a: Extras, b: Extras) =>
-	a.insure === b.insure && a.signature === b.signature;
 
 // Opens quick ship already on this order, past the pin step (the order
 // page's Ship button).
@@ -79,12 +71,10 @@ export function QuickShip() {
 	const [box, setBox] = useState<Box | null>(null);
 	const [dims, setDims] = useState<Dims | null>(null);
 	const [hazmatChoice, setHazmatChoice] = useState<HazmatChoice | null>(null);
-	// Until the box step's choice is made, the contents decide (see startsHazmat).
-	const hazmat = plan
-		? hazmatChoice?.contents === plan.contentsKey
-			? hazmatChoice.hazmat
-			: startsHazmat(plan, packed.length)
-		: false;
+	const hazmat = hazmatFor(plan, packed.length, hazmatChoice);
+	// Ctrl+D on the box step: these boxes replace the default for these
+	// contents. Otherwise a box other than the default is a one-off.
+	const [newDefault, setNewDefault] = useState(false);
 	const [weightGrams, setWeightGrams] = useState<number | null>(null);
 	const [draftGrams, setDraftGrams] = useState<number | null>(null);
 	const [extras, setExtras] = useState<Extras>(noExtras);
@@ -116,6 +106,7 @@ export function QuickShip() {
 		setBox(null);
 		setDims(null);
 		setHazmatChoice(null);
+		setNewDefault(false);
 		setWeightGrams(null);
 		setDraftGrams(null);
 		setExtras(noExtras);
@@ -230,6 +221,12 @@ export function QuickShip() {
 		setHazmatChoice({ contents: plan.contentsKey, hazmat: !hazmat });
 	}
 
+	// Ctrl+D on the box step, when these contents have a default to replace.
+	function toggleNewDefault() {
+		if (!plan?.last || step !== "package" || busy) return;
+		setNewDefault(!newDefault);
+	}
+
 	async function choosePin(pin: number) {
 		const mine = session.current;
 		const result = await run(() => lookUp(pin));
@@ -277,6 +274,7 @@ export function QuickShip() {
 		setPlan(next);
 		// New contents, new default: a choice made for the old ones is dropped.
 		setHazmatChoice(null);
+		setNewDefault(false);
 		setExtras(startingExtras(next));
 		setRates(null);
 		latest.current++;
@@ -363,6 +361,7 @@ export function QuickShip() {
 							orderIds: plan.orderIds,
 							contentsKey: plan.contentsKey,
 							signature: extras.signature,
+							setsDefault: setsDefault(plan, list, newDefault),
 							boxes: list.map((p, i) => ({
 								packageId: p.box?.id ?? null,
 								...p.dims,
@@ -457,6 +456,10 @@ export function QuickShip() {
 						e.preventDefault();
 						toggleHazmat();
 					}
+					if (e.ctrlKey && e.key.toLowerCase() === "d" && step === "package") {
+						e.preventDefault();
+						toggleNewDefault();
+					}
 					if (
 						// Tab, not a letter: the box step types box names.
 						e.key === "Tab" &&
@@ -522,6 +525,10 @@ export function QuickShip() {
 									dims={dims}
 									hazmat={hazmat}
 									onHazmat={toggleHazmat}
+									defaultBox={plan?.last?.[packed.length] ?? null}
+									// Nothing to replace when these contents never shipped.
+									newDefault={plan?.last ? newDefault : null}
+									onNewDefault={toggleNewDefault}
 									// Through the ref: saving a custom box finishes later, and
 									// must reach the current choosePackage, not this render's.
 									onChoose={(next) => choosePackageRef.current(next)}

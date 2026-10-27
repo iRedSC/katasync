@@ -406,6 +406,25 @@ describe("with a database", () => {
 		expect(after?.liveDispatchId).toBeNull();
 	});
 
+	test("a one-off box leaves the default from before", async () => {
+		const order = await addOrder("#1");
+		await addLine(order, null);
+		const ship = (weightGrams: number, at: string, setsDefault: boolean) =>
+			addDispatch(db, {
+				orderIds: [order],
+				createdAt: new Date(at),
+				setsDefault,
+				boxes: [{ weightGrams }],
+			});
+		await ship(500, "2026-10-01T00:00:00Z", true);
+		await ship(900, "2026-10-05T00:00:00Z", false);
+
+		const plan = await shipmentPlan(db, [order]);
+		expect(plan.last?.map((b) => b.weightGrams)).toEqual([500]);
+		const invoice = await lastPackedFor(db, [plan.contentsKey]);
+		expect(invoice.get(plan.contentsKey)?.weightGrams).toBe(500);
+	});
+
 	const address = {
 		shipAddress1: "12 Oak St.",
 		shipCity: "Erie",

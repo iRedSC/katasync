@@ -1211,7 +1211,8 @@ export const packages = pgTable(
 // One send to one address: the boxes that went out together, for every
 // order packed into them. One order can be in at most one live dispatch (one
 // with a box not voided). contentsKey is everything in it, merged across
-// orders; quick ship reuses the last dispatch with the same contents.
+// orders; quick ship reuses the last dispatch with the same contents that
+// sets the default.
 // Rules live in src/shipping/dispatch.ts.
 //
 // contents says whether katasync knows what went in the box: packed ones
@@ -1231,6 +1232,9 @@ export const dispatches = pgTable(
 		// when a box failed part way: such a dispatch never sends tracking,
 		// it can only be voided.
 		boughtAt: timestamp({ withTimezone: true }),
+		// Whether its boxes are the default for these contents next time.
+		// False for a one-off box sent while an older default stands.
+		setsDefault: boolean().notNull().default(true),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [

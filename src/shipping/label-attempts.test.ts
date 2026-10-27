@@ -120,6 +120,7 @@ const buy = async (orderIds: number[], boxes: number, outside: BuyOutside) =>
 			boxes: Array.from({ length: boxes }, () => box),
 			choice: { carrier: "USPS", service: "ground", id: "r", total: 100 },
 			signature: false,
+			setsDefault: true,
 		},
 		outside,
 	);
@@ -215,6 +216,7 @@ describe("packed contents", () => {
 					boxes: [box],
 					choice: { carrier: "USPS", service: "ground", id: "r", total: 100 },
 					signature: false,
+					setsDefault: true,
 				},
 				outside,
 			),
