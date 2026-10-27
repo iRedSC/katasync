@@ -379,7 +379,14 @@ export async function readMarketMail(options: {
 	const rechecked = options.sweep
 		? await recheckSenders(db, async (messageId) => {
 				const id = await graph.findMessage(messageId, "marketplaces");
-				return id ? graph.messageHeaders(id, "marketplaces") : null;
+				if (!id) return null;
+				// A kept Graph id can outlive its email: gone, not a failure.
+				return graph
+					.messageHeaders(id, "marketplaces")
+					.catch((error: Error) => {
+						if (/answered 404/.test(error.message)) return null;
+						throw error;
+					});
 			})
 		: null;
 	// Buyers' messages among them go to their threads now; the messages cron

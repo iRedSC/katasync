@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { redactCapabilities } from "#/auth/capability-urls";
+import { CAPABILITY_PATTERN, redactCapabilities } from "#/auth/capability-urls";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { logCalls } from "./log";
@@ -185,6 +185,9 @@ describe("upload links, which are their own credential", () => {
 			`photos: https://k.test/api/uploads/damage/${token}`,
 			`https://k.test/api/shared-files/${token} and /setup?token=${token}`,
 			"nothing secret, /api/uploads/po-file/[redacted]",
+			`https://k.test/setup?from=mail&token=${token}`,
+			`https%3A%2F%2Fk.test%2Fapi%2Fuploads%2Fdamage%2F${token}`,
+			`https%3A%2F%2Fk.test%2Fsetup%3Ftoken%3D${token}`,
 		];
 		await db.insert(schema.mcpCalls).values(
 			texts.map((text) => ({
@@ -202,6 +205,7 @@ describe("upload links, which are their own credential", () => {
 			),
 			"utf8",
 		);
+		expect(migration).toContain(`'${CAPABILITY_PATTERN}'`);
 		for (const statement of migration.split("--> statement-breakpoint"))
 			await db.execute(sql.raw(statement));
 		const rows = await db

@@ -4,6 +4,7 @@ import type { Db } from "#/db/client";
 import { buyerMessages, marketEmails } from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { readMarketMail } from "./market-mail";
+import { recheckSenders } from "./market-mail/senders";
 
 // The cron's read of the mailbox asks Microsoft who vouched for each buyer
 // email's sender, so Amazon's relayed buyer messages reach their threads;
@@ -138,5 +139,30 @@ describe("reading the mailbox", () => {
 		expect(after).toMatchObject({ senderAuthenticated: false });
 		expect(after?.senderCheckedAt).toBeInstanceOf(Date);
 		expect(await db.select().from(buyerMessages)).toEqual([]);
+	});
+
+	test("one that keeps failing doesn't hold back newer ones", async () => {
+		const kept = (id: string, daysAgo: number) => ({
+			messageId: id,
+			market: "amazon" as const,
+			folder: "updates" as const,
+			fromAddress: RELAY,
+			recipients: [INBOX],
+			subject: SUBJECT,
+			body: "Message:\n\nHello\n\nView Message",
+			receivedAt: new Date(Date.now() - daysAgo * 86_400_000),
+		});
+		await db
+			.insert(marketEmails)
+			.values([kept("<stuck@amazon>", 5), kept("<new@amazon>", 1)]);
+		const ask = async (messageId: string) => {
+			if (messageId === "<stuck@amazon>") throw new Error("busy");
+			return [{ name: "Authentication-Results", value: PASSED }];
+		};
+		expect(await recheckSenders(db, ask, 1)).toBe(1);
+		const rows = await db.select().from(marketEmails);
+		const by = (id: string) => rows.find((r) => r.messageId === id);
+		expect(by("<new@amazon>")?.senderAuthenticated).toBe(true);
+		expect(by("<stuck@amazon>")?.senderCheckedAt).toBeNull();
 	});
 });

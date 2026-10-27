@@ -1,4 +1,4 @@
-import { and, eq, gte, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, or } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { marketEmails } from "#/db/schema";
 import type { Market } from "#/markets/market";
@@ -19,7 +19,8 @@ const LOOK_BACK_MS = 60 * 86_400_000;
 // every one was while the mailbox read skipped headers), a batch per sweep,
 // so the threading after it files the ones Microsoft vouched for. Null
 // headers is an email gone from the mailbox: asked, and not vouched for. A
-// failure leaves it for the next sweep.
+// failure leaves it for the next sweep. Newest first, so an email that keeps
+// failing can't hold back the ones after it; it ages out of the look-back.
 export async function recheckSenders(
 	db: Db,
 	readHeaders: (messageId: string) => Promise<Header[] | null>,
@@ -39,7 +40,7 @@ export async function recheckSenders(
 				gte(marketEmails.receivedAt, new Date(Date.now() - LOOK_BACK_MS)),
 			),
 		)
-		.orderBy(marketEmails.receivedAt)
+		.orderBy(desc(marketEmails.receivedAt))
 		.limit(limit);
 	let vouched = 0;
 	for (const r of rows) {

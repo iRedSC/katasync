@@ -25,6 +25,10 @@ describe("by sender", () => {
 		expect(marketOf("noreply@seller-us.tiktokshop.com")).toBe("tiktok");
 		expect(marketOf("mailer@shopify.com")).toBe("shopify");
 		expect(marketOf(" x@Amazon.CA ")).toBe("amazon");
+		// Every regional marketplace, not only North America's.
+		for (const d of ["amazon.in", "amazon.nl", "amazon.com.br", "amazon.ae"])
+			expect(marketOf(`donotreply@marketplace.${d}`)).toBe("amazon");
+		expect(marketOf("ebay@ebay.fr")).toBe("ebay");
 		// Lookalikes aren't the marketplace.
 		expect(marketOf("deals@notamazon.com")).toBeNull();
 		expect(marketOf("someone@gmail.com")).toBeNull();
