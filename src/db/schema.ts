@@ -1016,6 +1016,16 @@ export const returnRequestLines = pgTable(
 	],
 );
 
+// Where a cost report's label figures came from: the marketplace's own label
+// section (authoritative, even when it says $0), a stand-in until it reports
+// (fallback), or not recorded, for reports saved before this was kept and
+// whose figures can't tell (unknown).
+export const labelAuthority = pgEnum("label_authority", [
+	"unknown",
+	"fallback",
+	"authoritative",
+]);
+
 // What a marketplace charged on one order: its latest statement, from its
 // finance reports. billedBy is the marketplace that sent the bill, which isn't
 // always the order's store: a TikTok order relayed through Shopify is billed
@@ -1049,6 +1059,9 @@ export const orderCostReports = pgTable(
 		// Its label figures are a stand-in until it catches up (Shopify's
 		// timeline, before its labels report has the order).
 		labelsPending: boolean().notNull().default(false),
+		// A fallback never replaces authoritative label figures, a $0 one
+		// included (src/orders/charges.ts).
+		labelAuthority: labelAuthority().notNull().default("unknown"),
 		fetchedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
