@@ -215,6 +215,7 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 		type({
 			...send,
 			boxes: type(box).array().atLeastLength(1),
+			setsDefault: "boolean",
 			// Which service, not which rate: the server prices every box again,
 			// and buys only if that comes to no more than total, the price shown.
 			choice: {

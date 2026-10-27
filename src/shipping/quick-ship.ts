@@ -189,13 +189,20 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 
 export type ShipmentPlan = Awaited<ReturnType<typeof shipmentPlan>>;
 
-// Every box of the latest dispatch with these contents, first box first.
+// Every box of the latest dispatch with these contents that set the
+// default, first box first.
 async function lastBoxes(db: Db, key: string) {
 	const [latest] = await db
 		.select({ id: dispatches.id })
 		.from(dispatches)
 		// A purchase that stopped part way isn't a good example.
-		.where(and(eq(dispatches.contentsKey, key), isNotNull(dispatches.boughtAt)))
+		.where(
+			and(
+				eq(dispatches.contentsKey, key),
+				isNotNull(dispatches.boughtAt),
+				eq(dispatches.setsDefault, true),
+			),
+		)
 		.orderBy(desc(dispatches.createdAt), desc(dispatches.id))
 		.limit(1);
 	if (!latest) return null;
@@ -433,8 +440,8 @@ export async function serviceHistory(
 		.groupBy(shipments.service);
 }
 
-// The box and weight each set of contents shipped in last time, for
-// printing on invoices: the first box, and how many there were. Contents
+// The box and weight each set of contents shipped in by default (see
+// lastBoxes), for printing on invoices: the first box, and how many there were. Contents
 // never shipped before are left out.
 export async function lastPackedFor(db: Db, keys: string[]) {
 	if (keys.length === 0) return new Map<string, LastPacked>();
@@ -456,6 +463,7 @@ export async function lastPackedFor(db: Db, keys: string[]) {
 			and(
 				inArray(dispatches.contentsKey, keys),
 				isNotNull(dispatches.boughtAt),
+				eq(dispatches.setsDefault, true),
 			),
 		)
 		.orderBy(

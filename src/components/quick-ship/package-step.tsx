@@ -1,4 +1,4 @@
-import { SprayCan } from "lucide-react";
+import { Pin, SprayCan } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Truncate } from "#/components/truncate";
 import { optimism } from "#/lib/optimism";
@@ -39,13 +39,17 @@ const ROWS = 6;
 // Type the size off the box's label ("12 9 4") or a bit of its name; the
 // list narrows as you type. Enter on a partial entry fills in the highlighted
 // box's size; Enter on a whole one (or nothing) takes the row. A size no
-// saved box has can ship once or be saved as a box.
+// saved box has can ship once or be saved as a box. A box other than the
+// default for these contents ships once, unless it's made the new default.
 export function PackageStep({
 	boxes,
 	current,
 	dims,
 	hazmat,
 	onHazmat,
+	defaultBox,
+	newDefault,
+	onNewDefault,
 	onChoose,
 	onSaved,
 }: {
@@ -54,6 +58,11 @@ export function PackageStep({
 	dims: Dims | null;
 	hazmat: boolean;
 	onHazmat: () => void;
+	// This box's packaging the default time these contents shipped, if any.
+	defaultBox: { packageId: number | null } | null;
+	// Null when there's no default to replace.
+	newDefault: boolean | null;
+	onNewDefault: () => void;
 	onChoose: (choice: { box: Box | null; dims: Dims }) => void;
 	onSaved: (box: Box) => void;
 }) {
@@ -175,6 +184,31 @@ export function PackageStep({
 					<Key>Ctrl</Key> <Key>H</Key>
 				</span>
 			</button>
+			{newDefault !== null && (
+				<button
+					type="button"
+					role="switch"
+					aria-checked={newDefault}
+					tabIndex={-1}
+					// Clicking keeps the focus in the input.
+					onMouseDown={(e) => e.preventDefault()}
+					onClick={onNewDefault}
+					className={cn(
+						"flex h-10 items-center justify-between gap-3 rounded-xl border-2 px-4 text-lg",
+						newDefault
+							? "border-primary bg-primary/10 font-semibold text-primary"
+							: "border-border text-muted-foreground hover:bg-subtle",
+					)}
+				>
+					<span className="flex items-center gap-2">
+						<Pin className={cn("size-5", newDefault && "fill-current")} />
+						{newDefault ? "New default box" : "Keep default box"}
+					</span>
+					<span>
+						<Key>Ctrl</Key> <Key>D</Key>
+					</span>
+				</button>
+			)}
 			<BoxEntryInput
 				entry={entry}
 				disabled={saving}
@@ -226,7 +260,9 @@ export function PackageStep({
 						>
 							<OptionLabel
 								option={o}
-								lastTime={o.kind === "box" && o.box.id === current?.id}
+								isDefault={
+									o.kind === "box" && o.box.id === defaultBox?.packageId
+								}
 							/>
 						</button>
 					))}
@@ -238,10 +274,10 @@ export function PackageStep({
 
 function OptionLabel({
 	option,
-	lastTime,
+	isDefault,
 }: {
 	option: Option;
-	lastTime: boolean;
+	isDefault: boolean;
 }) {
 	if (option.kind !== "box")
 		return (
@@ -256,7 +292,7 @@ function OptionLabel({
 		);
 	const { box } = option;
 	const detail = [
-		lastTime && "last time",
+		isDefault && "default",
 		box.weightGrams > 0 && `${ounces(box.weightGrams)} oz empty`,
 	]
 		.filter(Boolean)

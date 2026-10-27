@@ -1,5 +1,5 @@
 import type { ShipmentPlan } from "#/shipping/quick-ship";
-import type { Box, Dims } from "./types";
+import type { Box, Dims, Packed } from "./types";
 
 // A gross weight belongs to the packaging it was weighed in: the same saved
 // box (none, for a custom one) at the same size. Any other packaging weighs
@@ -33,4 +33,19 @@ export function startingGrams(
 	if (last) return last.weightGrams;
 	if (index > 0 || plan.itemsWeightGrams === null) return null;
 	return plan.itemsWeightGrams + (box?.weightGrams ?? 0);
+}
+
+// Whether buying these boxes makes them the default for these contents:
+// always when there's none yet or they match it (a fresher weight), else
+// only when asked. A one-off box leaves the default alone.
+export function setsDefault(
+	plan: Pick<ShipmentPlan, "last">,
+	list: Packed[],
+	asked: boolean,
+) {
+	if (asked || !plan.last) return true;
+	return (
+		list.length === plan.last.length &&
+		list.every((p, i) => lastFor(plan, i, p.box, p.dims) !== null)
+	);
 }

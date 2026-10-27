@@ -1,0 +1,1 @@
+ALTER TABLE "dispatches" ADD COLUMN "sets_default" boolean DEFAULT true NOT NULL;

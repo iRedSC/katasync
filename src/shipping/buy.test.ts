@@ -137,6 +137,7 @@ const buy = async (
 			boxes,
 			choice: ground,
 			signature,
+			setsDefault: true,
 		},
 		outside,
 	);
@@ -284,6 +285,7 @@ describe("buyDispatch", () => {
 					boxes: [box()],
 					choice: { carrier: "UPS", service: "ground", id: "x", total: 100 },
 					signature: false,
+					setsDefault: true,
 				},
 				outside,
 			),
@@ -323,6 +325,7 @@ describe("buyDispatch", () => {
 					boxes: [box(), box()],
 					choice: { ...ground, total: 13 },
 					signature: false,
+					setsDefault: true,
 				},
 				outside,
 			),

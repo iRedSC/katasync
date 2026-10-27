@@ -130,6 +130,8 @@ export async function buyDispatch(
 		choice: ServiceChoice;
 		// Asked for in quick ship. Orders that need one get one regardless.
 		signature: boolean;
+		// Whether these boxes become the default for these contents.
+		setsDefault: boolean;
 	},
 	outside: BuyOutside = liveBuy,
 ): Promise<Bought> {
@@ -183,6 +185,7 @@ export async function buyDispatch(
 					contentsKey: input.contentsKey,
 					contents: "packed",
 					boxCount: boxes.length,
+					setsDefault: input.setsDefault,
 				})
 				.returning();
 			await tx

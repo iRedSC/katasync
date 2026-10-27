@@ -1058,6 +1058,13 @@
       "when": 1793034146036,
       "tag": "0150_bulk_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1793106245315,
+      "tag": "0151_dispatch_sets_default",
+      "breakpoints": true
     }
   ]
 }
