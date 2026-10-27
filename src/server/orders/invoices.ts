@@ -87,6 +87,10 @@ export const listInvoices = createServerFn({ method: "GET" })
 							string | null
 						>`coalesce(${products.sku}, ${orderLines.sku})`,
 						title: orderLines.title,
+						// What the invoice prints: the catalog's short name, not the
+						// channel's long listing title, which only lines not yet
+						// mapped to a product fall back to.
+						name: sql<string>`coalesce(${products.name}, ${orderLines.title})`,
 						quantity: orderLines.quantity,
 						unitPrice: orderLines.unitPrice,
 						// The size or option to pick, from the catalog: channel
