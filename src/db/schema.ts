@@ -224,6 +224,11 @@ export const productComponents = pgTable(
 	},
 	(t) => [
 		primaryKey({ columns: [t.parentProductId, t.componentProductId] }),
+		// The key leads with the parent; this finds every set a part is in.
+		index("product_components_component_parent_idx").on(
+			t.componentProductId,
+			t.parentProductId,
+		),
 		check("product_components_quantity_positive", sql`${t.quantity} > 0`),
 		check(
 			"product_components_not_self",
