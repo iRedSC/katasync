@@ -10,7 +10,7 @@ import { receiveReturn } from "#/orders/returns";
 import { createProduct, createTestDb } from "#/test/db";
 import { getAvailability } from "./availability";
 import { postMovements } from "./ledger";
-import { PosLocationError, setPosLocation } from "./locations";
+import { addRetailStore, PosLocationError, setPosLocation } from "./locations";
 import { onlineStock, setRetailReserve } from "./online-stock";
 import { setRecipe } from "./recipes";
 
@@ -159,6 +159,27 @@ describe("in-store sales", () => {
 		expect(await applyStoreSales(db)).toEqual({ lines: 0, problems: [] });
 		expect(await onHand(wrench, retail)).toBe(-2);
 		expect(await onHand(wrench, warehouse)).toBe(0);
+	});
+
+	test("caught up after adding the store, take the store's stock", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 10);
+		await ingestOrder(db, store(), posOrder(), await stockLocations(db));
+
+		const added = await addRetailStore(db, "Store");
+
+		expect(await applyStoreSales(db)).toEqual({ lines: 1, problems: [] });
+		expect(await onHand(wrench, added.locationId)).toBe(-2);
+		expect(await onHand(wrench, warehouse)).toBe(10);
+	});
+
+	test("adding the store takes POS over from the warehouse", async () => {
+		await setPosLocation(db, warehouse);
+		const added = await addRetailStore(db, "Store");
+		expect((await stockLocations(db)).pos).toBe(added.locationId);
+		await expect(addRetailStore(db, "Other")).rejects.toThrow(
+			"Store is already the retail store",
+		);
 	});
 
 	test("restock where they sold from", async () => {

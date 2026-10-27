@@ -57,6 +57,32 @@ export async function setPosLocation(db: Db, locationId: number) {
 	});
 }
 
+// Adds our retail store, already the shelf POS sales take from, in one
+// transaction: in-store sales caught up after it (applyStoreSales) take its
+// stock, never whichever shelf was POS before. Only one retail store, or POS
+// sales couldn't tell which shelf to take from.
+export async function addRetailStore(db: Db, name: string) {
+	return db.transaction(async (tx) => {
+		const [retail] = await tx
+			.select({ name: locations.name })
+			.from(locations)
+			.where(eq(locations.kind, "retail"));
+		if (retail)
+			throw new PosLocationError(`${retail.name} is already the retail store`);
+		const [taken] = await tx
+			.select({ id: locations.id })
+			.from(locations)
+			.where(eq(locations.name, name));
+		if (taken)
+			throw new PosLocationError(`There's already a location called ${name}`);
+		const [{ id }] = await tx
+			.insert(locations)
+			.values({ name, kind: "retail" })
+			.returning({ id: locations.id });
+		return setPosLocation(tx, id);
+	});
+}
+
 export const TRANSIT_LOCATION = "In transit";
 
 export async function transitLocation(db: Db): Promise<number> {
