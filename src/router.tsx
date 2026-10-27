@@ -1,8 +1,11 @@
-import { createRouter as createTanStackRouter } from "@tanstack/react-router";
+import {
+	type AnyRoute,
+	createRouter as createTanStackRouter,
+} from "@tanstack/react-router";
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
 import { Bone, ListSkeleton } from "./components/skeleton";
 import { getContext } from "./integrations/tanstack-query/root-provider";
-import { connectOptimism } from "./lib/optimism";
+import { connectOptimism, optimism } from "./lib/optimism";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {
@@ -31,12 +34,27 @@ export function getRouter() {
 	// Changes show at once; the page reloads once the server has them all.
 	// sync, so the reload resolves once the new data shows rather than while
 	// it still loads in the background; until then the patches stay up.
-	connectOptimism({
-		reload: () => router.invalidate({ sync: true }),
-		onLoadStart: (started) => router.subscribe("onBeforeLoad", started),
-	});
+	connectOptimism(() => router.invalidate({ sync: true }));
+	for (const route of Object.values(router.routesById)) throughOptimism(route);
 
 	return router;
+}
+
+// Every loader loads through the engine, so its data is marked with when it
+// was fetched rather than when it first shows: a page preloaded on hover
+// before a change, and opened after, still gets the change's patch. Routes
+// outlive a router on the server, so each is wrapped once.
+const wrapped = new WeakSet<object>();
+function throughOptimism(route: AnyRoute) {
+	const loader = route.options.loader;
+	if (wrapped.has(route) || !loader) return;
+	wrapped.add(route);
+	const through = (load: (ctx: unknown) => unknown) => (ctx: unknown) =>
+		optimism.load(() => load(ctx));
+	route.options.loader =
+		typeof loader === "function"
+			? through(loader)
+			: { ...loader, handler: through(loader.handler) };
 }
 
 declare module "@tanstack/react-router" {

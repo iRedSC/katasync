@@ -32,10 +32,12 @@ function setup() {
 	const committed: Count[] = [];
 	const engine = createOptimism({
 		reload: async () => {
-			const d = deferred();
-			reloads.push(d);
-			await d.promise;
-			page = { ...server };
+			page = await engine.load(async () => {
+				const d = deferred();
+				reloads.push(d);
+				await d.promise;
+				return { ...server };
+			});
 			committed.push(engine.over("count:1", page));
 		},
 		failed: (m) => failures.push(m),
@@ -249,9 +251,37 @@ describe("optimism", () => {
 		engine.change({ label: "Wait", patch: add(0), send: () => later.promise });
 		expect(shown()).toEqual({ n: 5 });
 		// Staff go elsewhere and back: the page loads what the server has.
-		engine.loadStarted();
-		const fresh = { ...server };
+		const fresh = await engine.load(async () => ({ ...server }));
 		expect(engine.over("count:1", fresh)).toEqual({ n: 5 });
+	});
+
+	it("lays a sent change over data loaded before it, however late that shows", async () => {
+		const { server, engine, reloads, shown } = setup();
+		// Preloaded on hover, and kept for the click.
+		const preloaded = await engine.load(async () => ({ ...server }));
+		await engine.change({
+			label: "Add",
+			patch: add(5),
+			send: async () => {
+				server.n += 5;
+			},
+		});
+		// The engine's reload has started; the preloaded page opens now.
+		expect(reloads).toHaveLength(1);
+		expect(engine.over("count:1", preloaded)).toEqual({ n: 5 });
+		reloads[0].reject(new Error("offline"));
+		await tick();
+		expect(engine.over("count:1", preloaded)).toEqual({ n: 5 });
+		expect(shown()).toEqual({ n: 5 });
+	});
+
+	it("marks what a load brings, down to its parts", async () => {
+		const { engine } = setup();
+		const later = deferred();
+		const loaded = await engine.load(async () => ({ count: { n: 0 } }));
+		await engine.change({ label: "Add", patch: add(5), send: async () => {} });
+		engine.change({ label: "Wait", patch: add(0), send: () => later.promise });
+		expect(engine.over("count:1", loaded.count)).toEqual({ n: 5 });
 	});
 
 	it("lays patches only over the data they were written for", () => {

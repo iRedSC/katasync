@@ -10,11 +10,13 @@ import { toast } from "sonner";
 // Once the queue is empty the page reloads once, and the patches it now
 // includes come off, so nothing flickers back to how it was. Nothing is sent
 // while that reload runs, so a reload has every sent change and no other.
-// A sent change's patch skips any data first seen after a later load started
-// (the engine's reload, or a page loading as staff move around), since that
-// data has it already; so a patch may safely add to a count (received + 5) as
-// well as set a value, even in the moment the reloaded data shows before the
-// engine lets go of the patch.
+// A sent change's patch skips any data whose load started after the server
+// answered it (the engine's reload, or a page loading or preloading as staff
+// move around), since that data has it already; so a patch may safely add to
+// a count (received + 5) as well as set a value, even in the moment the
+// reloaded data shows before the engine lets go of the patch. Data loaded
+// before then still gets it, however late it first shows, as when a page
+// preloaded on hover opens after the change.
 //
 // A change made as another change starts sending (a helper that makes its
 // own change, called from a send) goes to the server at once, as part of it,
@@ -63,8 +65,20 @@ export function createOptimism({
 	let loadsStarted = 0;
 	// True while a send is being started, so a change it makes joins it.
 	let starting = false;
-	// When each piece of data was first seen, counted in loads started.
+	// When each piece of data was loaded, counted in loads started: when its
+	// load started, or else when it first rendered.
 	const seen = new WeakMap<object, number>();
+	// Marks data, and every object and list within it, as from the load that
+	// started at `started`. Data seen before keeps its mark, as a load may hand
+	// back data it kept from an earlier one.
+	const stamp = (data: unknown, started: number) => {
+		if (typeof data !== "object" || data === null || seen.has(data)) return;
+		const proto = Object.getPrototypeOf(data);
+		if (!Array.isArray(data) && proto !== Object.prototype && proto !== null)
+			return;
+		seen.set(data, started);
+		for (const v of Object.values(data)) stamp(v, started);
+	};
 	const listeners = new Set<() => void>();
 
 	const set = (next: readonly Change[]) => {
@@ -200,8 +214,9 @@ export function createOptimism({
 			});
 		},
 		// The data with every patch it doesn't have yet laid over, in order.
-		// Data is first seen when it renders, and a page renders its data
-		// before anyone can change it.
+		// Data that didn't come through load(), such as a list put together on
+		// the page, counts as loaded when it first renders, and a page renders
+		// its data before anyone can change it.
 		over<T>(key: string, base: T): T {
 			let loadedAfter = loadsStarted;
 			if (typeof base === "object" && base !== null) {
@@ -217,10 +232,14 @@ export function createOptimism({
 			}
 			return data;
 		},
-		// A page started loading by itself, as when staff move to it. Data it
-		// brings has every change sent before now.
-		loadStarted() {
-			loadsStarted++;
+		// Loads data, as a page's loader does, marking it with when the load
+		// started: it has every change the server answered before then, and
+		// none answered after, however late it first shows.
+		async load<T>(fetch: () => T | Promise<T>): Promise<T> {
+			const started = ++loadsStarted;
+			const data = await fetch();
+			stamp(data, started);
+			return data;
 		},
 		// True while some change hasn't reached the server.
 		saving: () => changes.some((c) => c.state !== "sent"),
@@ -278,16 +297,8 @@ export const optimism = createOptimism({
 	failed: (message) => toast.error(message),
 });
 
-export function connectOptimism({
-	reload,
-	onLoadStart,
-}: {
-	reload: () => Promise<void>;
-	// Calls back whenever the router starts loading data, for any reason.
-	onLoadStart: (started: () => void) => void;
-}) {
+export function connectOptimism(reload: () => Promise<void>) {
 	reloadPage = reload;
-	onLoadStart(() => optimism.loadStarted());
 }
 
 // The same empty list each time, as React requires of a snapshot.
