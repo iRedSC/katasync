@@ -1,5 +1,5 @@
 import { Command as CommandPrimitive } from "cmdk";
-import { Plus, Search } from "lucide-react";
+import { Loader2, Plus, RotateCw, Search } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
@@ -14,10 +14,10 @@ import {
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
 import { optimism, type Patch } from "#/lib/optimism";
+import { type IndexedProduct, useProductIndex } from "#/lib/product-index";
 import { productSearch } from "#/lib/product-search";
 import {
 	createListingProduct,
-	listProductIndex,
 	listUnmatchedItems,
 	matchListing,
 } from "#/server/catalog";
@@ -25,7 +25,7 @@ import {
 export type UnmatchedItem = Awaited<
 	ReturnType<typeof listUnmatchedItems>
 >[number];
-type Product = Awaited<ReturnType<typeof listProductIndex>>[number];
+type Product = IndexedProduct;
 
 const REASON = {
 	"same-sku": "Same SKU",
@@ -34,17 +34,6 @@ const REASON = {
 	"same-name": "Same name",
 	"similar-name": null,
 } as const;
-
-// The whole catalog, fetched once per page load for typed searches.
-let catalog: Promise<Product[]> | null = null;
-function useCatalog() {
-	const [products, setProducts] = useState<Product[] | null>(null);
-	useEffect(() => {
-		catalog ??= listProductIndex();
-		catalog.then(setProducts);
-	}, []);
-	return products;
-}
 
 const search = (products: Product[], query: string) =>
 	productSearch(products, query, { limit: 30 });
@@ -129,27 +118,40 @@ function ProductRow({
 
 const CREATE = "__create";
 
+// What was typed into a new product that didn't save, to come back to.
+type Draft = { key: string; sku: string; name: string };
+const itemKey = (item: UnmatchedItem) => item.listingIds.join();
+
 const rowClass =
 	"flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 data-[selected=true]:bg-surface";
 
 // Decides one unmatched item: its likely products first, any product by
 // typing, or a new product. The same picker on the queue, an order, or
-// profit.
+// profit. `onResolve` says whether it went through; a new product that
+// didn't save stays filled in for another try.
 export function MatchPicker({
 	item,
 	onResolve,
 	actions,
 }: {
 	item: UnmatchedItem;
-	onResolve: (r: Resolution) => void;
+	onResolve: (r: Resolution) => Promise<boolean>;
 	// Extra buttons beside New, e.g. Skip on the queue.
 	actions?: ReactNode;
 }) {
-	const products = useCatalog();
+	const index = useProductIndex();
 	const [query, setQuery] = useState("");
 	const [creating, setCreating] = useState(false);
+	const key = itemKey(item);
+	// The item being sent, so the next item isn't held up while it is.
+	const [sending, setSending] = useState<string | null>(null);
+	const [draft, setDraft] = useState<Draft | null>(null);
+	const sendingThis = sending === key;
 	const q = query.trim();
-	const results = q.length >= 2 && products ? search(products, q) : null;
+	const results =
+		q.length >= 2 && index.status === "ready"
+			? search(index.products, q)
+			: null;
 	const rows = results?.map((p) => ({ ...p, reason: null })) ?? item.candidates;
 	// The highlighted row: the best guess until arrows move it.
 	const [highlight, setHighlight] = useState("");
@@ -162,9 +164,22 @@ export function MatchPicker({
 		setQuery("");
 		setCreating(false);
 		input.current?.focus();
-	}, [item.listingIds.join()]);
+	}, [key]);
+	// An item back after failing to save returns to its filled-in form.
+	useEffect(() => {
+		if (draft?.key === key) setCreating(true);
+	}, [draft, key]);
 	// New rows highlight their first.
 	useEffect(() => setHighlight(first), [first]);
+
+	async function resolve(r: Resolution) {
+		if (sendingThis) return;
+		setSending(key);
+		const ok = await onResolve(r);
+		setSending((s) => (s === key ? null : s));
+		if (r.kind !== "create") return;
+		setDraft(ok ? null : { key, sku: r.sku, name: r.name });
+	}
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -172,8 +187,13 @@ export function MatchPicker({
 			{creating ? (
 				<CreateForm
 					item={item}
-					onCancel={() => setCreating(false)}
-					onCreate={(sku, name) => onResolve({ kind: "create", sku, name })}
+					initial={draft?.key === key ? draft : null}
+					sending={sendingThis}
+					onCancel={() => {
+						setDraft(null);
+						setCreating(false);
+					}}
+					onCreate={(sku, name) => resolve({ kind: "create", sku, name })}
 				/>
 			) : (
 				<CommandPrimitive
@@ -190,13 +210,27 @@ export function MatchPicker({
 							autoFocus
 							value={query}
 							onValueChange={setQuery}
+							disabled={sendingThis}
 							placeholder="SKU or name"
 							className="h-10 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
 						/>
 					</div>
 					<CommandPrimitive.List className="max-h-80 overflow-y-auto p-1">
-						{results === null && q.length >= 2 && (
-							<p className="px-3 py-4 text-muted-foreground">Loading…</p>
+						{results === null &&
+							q.length >= 2 &&
+							index.status === "loading" && (
+								<p className="px-3 py-4 text-muted-foreground">Loading…</p>
+							)}
+						{results === null && q.length >= 2 && index.status === "failed" && (
+							<div className="flex items-center gap-2 px-3 py-2 text-critical-text">
+								<span className="min-w-0 flex-1 truncate">
+									Couldn't load products: {index.message}
+								</span>
+								<Button variant="ghost" size="sm" onClick={index.retry}>
+									<RotateCw />
+									Retry
+								</Button>
+							</div>
 						)}
 						{rows.map((p) => {
 							const reason = p.reason && REASON[p.reason];
@@ -204,7 +238,8 @@ export function MatchPicker({
 								<CommandPrimitive.Item
 									key={p.sku}
 									value={p.sku}
-									onSelect={() => onResolve({ kind: "match", sku: p.sku })}
+									disabled={sendingThis}
+									onSelect={() => resolve({ kind: "match", sku: p.sku })}
 									className={rowClass}
 								>
 									<ProductRow
@@ -219,6 +254,7 @@ export function MatchPicker({
 						)}
 						<CommandPrimitive.Item
 							value={CREATE}
+							disabled={sendingThis}
 							onSelect={() => setCreating(true)}
 							className={rowClass}
 						>
@@ -237,16 +273,21 @@ export function MatchPicker({
 
 function CreateForm({
 	item,
+	initial,
+	sending,
 	onCreate,
 	onCancel,
 }: {
 	item: UnmatchedItem;
+	// What was typed last time, when it didn't save.
+	initial: { sku: string; name: string } | null;
+	sending: boolean;
 	onCreate: (sku: string, name: string) => void;
 	onCancel: () => void;
 }) {
-	const [sku, setSku] = useState(item.sku ?? "");
-	const [name, setName] = useState(item.title);
-	const ready = sku.trim() !== "" && name.trim() !== "";
+	const [sku, setSku] = useState(initial?.sku ?? item.sku ?? "");
+	const [name, setName] = useState(initial?.name ?? item.title);
+	const ready = sku.trim() !== "" && name.trim() !== "" && !sending;
 	return (
 		<form
 			className="flex flex-col gap-3 rounded-xl border p-3"
@@ -287,6 +328,7 @@ function CreateForm({
 					Back
 				</Button>
 				<Button type="submit" size="sm" disabled={!ready}>
+					{sending && <Loader2 className="animate-spin" />}
 					Create
 				</Button>
 			</div>
@@ -334,6 +376,13 @@ export function MatchDialog({
 
 	const next = () =>
 		items && at + 1 < items.length ? setAt(at + 1) : onClose();
+	// Moves on only once it went through, so a failure keeps the item and
+	// whatever was typed.
+	async function resolve(item: UnmatchedItem, r: Resolution) {
+		const ok = await resolveItem(item, r);
+		if (ok) next();
+		return ok;
+	}
 
 	return (
 		<Dialog open={orderId !== null} onOpenChange={(o) => !o && onClose()}>
@@ -347,10 +396,7 @@ export function MatchDialog({
 				) : (
 					<MatchPicker
 						item={item}
-						onResolve={(r) => {
-							void resolveItem(item, r);
-							next();
-						}}
+						onResolve={(r) => resolve(item, r)}
 						actions={
 							items && items.length > 1 ? (
 								<>
