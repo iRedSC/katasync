@@ -18,7 +18,7 @@ import { draftFits } from "./chat-way";
 import { orderSummary } from "./order";
 import { basePrompt, listPrecedents } from "./precedents";
 import { isThreadOrder } from "./thread-order";
-import { threadsPage } from "./threads";
+import { waitingThreads } from "./threads";
 
 // The suggested reply on each thread waiting on us, and buyers' words in
 // English. The agent drafts once per buyer message: a newer message makes
@@ -374,30 +374,52 @@ export async function draftThread(
 	return saved ?? null;
 }
 
-// Drafts the threads waiting on us that need one, a few a run.
+// Drafts the threads waiting on us that need one, a few a run. Only what
+// says whether each needs one is read; drafting reads the rest.
 export async function draftWaiting(db: Db, limit = 4, run: Run = runAgent) {
-	const waiting = (await threadsPage(db, "open", null))
-		.filter((t) => t.waiting && t.market !== "shopify")
-		.sort(
-			(a, b) =>
-				(a.waiting?.due.getTime() ?? 0) - (b.waiting?.due.getTime() ?? 0),
-		);
+	const waiting = (await waitingThreads(db, null))
+		.filter((t) => t.market !== "shopify")
+		.sort((a, b) => a.due.getTime() - b.due.getTime());
+	const ids = waiting.map((t) => t.id);
+	const [drafts, latest] =
+		ids.length === 0
+			? [[], []]
+			: await Promise.all([
+					draftsFor(db, ids),
+					db
+						.selectDistinctOn([buyerMessages.threadId], {
+							threadId: buyerMessages.threadId,
+							id: buyerMessages.id,
+						})
+						.from(buyerMessages)
+						.where(
+							and(
+								inArray(buyerMessages.threadId, ids),
+								eq(buyerMessages.fromBuyer, true),
+							),
+						)
+						.orderBy(
+							buyerMessages.threadId,
+							desc(buyerMessages.at),
+							desc(buyerMessages.id),
+						),
+				]);
 	// Those already current cost a query, not a draft; the rest go at once,
 	// so a slow model holds the run up once, not once a thread.
 	const due = [];
 	for (const t of waiting) {
 		if (due.length >= limit) break;
-		const d = t.draft;
-		const latest = t.messages.filter((m) => m.fromBuyer).at(-1);
+		const d = drafts.find((x) => x.threadId === t.id);
+		const theirs = latest.find((x) => x.threadId === t.id);
 		// Current, or being drafted by a run still alive: nothing to do. A
 		// failed one is left to the claim, which waits before trying again.
 		const age = Date.now() - new Date(d?.updatedAt ?? 0).getTime();
 		if (
 			d &&
-			latest &&
-			!d.stale &&
+			theirs &&
+			(d.forMessageId ?? 0) >= theirs.id &&
 			// About the thread's own order, not one its chat was opened from.
-			draftFits(d, t.orderRef) &&
+			draftFits({ forOrder: d.orderRef ?? t.orderRef }, t.orderRef) &&
 			(d.state === "ready" ||
 				(d.state === "drafting" && age < CLAIM_STALE_MS) ||
 				(d.state === "failed" && age < RETRY_FAILED_MS))

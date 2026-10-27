@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
 	and,
 	asc,
+	count,
 	desc,
 	eq,
 	inArray,
@@ -23,7 +24,7 @@ import {
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
 import { marketplaceMessagesOf } from "./marketplace-messages";
-import { answers, type ReplyStatus } from "./states";
+import { ANSWERING, answers, type ReplyStatus } from "./states";
 import { isThreadOrder } from "./thread-order";
 
 // Conversations with buyers, as katasync keeps them: read in from each
@@ -428,10 +429,71 @@ export async function threadsPage(
 
 export type BuyerThread = Awaited<ReturnType<typeof threadsPage>>[number];
 
+// When an open thread began waiting on us, worked out in the database so
+// counting and drafting read no messages: waitingOn's rule, with messages in
+// the order threadsPage lists them (time, then ID). Null when it isn't.
+// Every column is named with its table: Drizzle leaves them bare in a query
+// of one table, where the inner ones would name themselves.
+function waitingSince() {
+	const of = (table: string, column: string) =>
+		sql`${sql.identifier(table)}.${sql.identifier(column)}`;
+	const m = (c: string) => of("waiting_theirs", c);
+	const o = (c: string) => of("waiting_ours", c);
+	const answering = sql.join(
+		ANSWERING.map((s) => sql`${s}`),
+		sql`, `,
+	);
+	return sql`(
+		select min(${m("at")}) from ${buyerMessages} as ${sql.identifier("waiting_theirs")}
+		where ${m("thread_id")} = ${of("buyer_threads", "id")} and ${m("from_buyer")}
+		and not exists (
+			select 1 from ${buyerMessages} as ${sql.identifier("waiting_ours")}
+			where ${o("thread_id")} = ${m("thread_id")} and not ${o("from_buyer")}
+			and ${o("status")} in (${answering})
+			and (${o("at")}, ${o("id")}) > (${m("at")}, ${m("id")})
+		)
+	)`.mapWith(buyerMessages.at);
+}
+
+const openIn = (market: Market | null) =>
+	and(
+		isNull(buyerThreads.doneAt),
+		market ? eq(buyerThreads.market, market) : undefined,
+	);
+
+// The open threads waiting on a reply, and when each is due; nothing else
+// read.
+export async function waitingThreads(db: Db, market: Market | null) {
+	const since = waitingSince();
+	const rows = await db
+		.select({
+			id: buyerThreads.id,
+			market: buyerThreads.market,
+			orderRef: buyerThreads.orderRef,
+			since,
+		})
+		.from(buyerThreads)
+		.where(and(openIn(market), sql`${since} is not null`));
+	return rows.flatMap((t) =>
+		t.since
+			? [
+					{
+						...t,
+						since: t.since,
+						due: new Date(t.since.getTime() + REPLY_WITHIN_MS[t.market]),
+					},
+				]
+			: [],
+	);
+}
+
 // Threads waiting on a reply, for the side list.
 export async function countWaiting(db: Db, market: Market | null) {
-	const open = await threadsPage(db, "open", market);
-	return open.filter((t) => t.waiting).length;
+	const [row] = await db
+		.select({ n: count() })
+		.from(buyerThreads)
+		.where(and(openIn(market), sql`${waitingSince()} is not null`));
+	return row?.n ?? 0;
 }
 
 // Behind when a source hasn't been read this long. The messages cron runs
