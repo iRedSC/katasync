@@ -14,6 +14,8 @@ import {
 } from "./commitments-activation";
 import { consumeCommitments } from "./commitments-consume";
 import { restoreCommitments } from "./commitments-restore";
+import { assembleKits, disassembleKits } from "./ledger";
+import { setRecipe } from "./recipes";
 
 let db: Db;
 let world: Awaited<ReturnType<typeof quantityWorld>>;
@@ -213,6 +215,50 @@ describe("consuming reservations at dispatch", () => {
 		const found = await world.stock(wrench, world.warehouse, 1);
 		await undoUnownedBatch(db, found.batchId);
 		expect(await world.onHand(wrench, world.warehouse)).toBe(5);
+	});
+});
+
+describe("kits and reservations", () => {
+	test("assembling can't use parts promised to orders", async () => {
+		await activate(db);
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const kit = await createProduct(db, "KIT", "kit");
+		await setRecipe(db, kit, [{ productId: wrench, quantity: 1 }]);
+		await world.stock(wrench, world.warehouse, 3);
+		await world.ingest(channelOrder());
+		expect(await committed(wrench)).toBe(3);
+
+		const build = {
+			kitProductId: kit,
+			quantity: 1,
+			locationId: world.warehouse,
+		};
+		await expect(assembleKits(db, build)).rejects.toThrow(
+			"WRENCH promised to orders",
+		);
+		expect(await world.onHand(wrench, world.warehouse)).toBe(3);
+		await world.stock(wrench, world.warehouse, 1);
+		await assembleKits(db, build);
+		expect(await world.onHand(kit, world.warehouse)).toBe(1);
+	});
+
+	test("disassembling can't break kits promised to orders", async () => {
+		await activate(db);
+		const blade = await createProduct(db, "BLADE", "simple");
+		const kit = await createProduct(db, "WRENCH", "kit");
+		await setRecipe(db, kit, [{ productId: blade, quantity: 2 }]);
+		await world.stock(kit, world.warehouse, 3);
+		await world.ingest(channelOrder());
+		expect(await committed(kit)).toBe(3);
+
+		await expect(
+			disassembleKits(db, {
+				kitProductId: kit,
+				quantity: 1,
+				locationId: world.warehouse,
+			}),
+		).rejects.toThrow("WRENCH promised to orders");
+		expect(await world.onHand(kit, world.warehouse)).toBe(3);
 	});
 });
 
