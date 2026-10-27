@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { relyingParty } from "#/auth/webauthn";
+import { capabilityUrl } from "#/auth/capability-urls";
 import type { Db } from "#/db/client";
 import { purchaseOrderLines } from "#/db/schema";
 import {
@@ -25,7 +25,7 @@ import { discountShape, json, offOf, WRITE } from "./tool-shapes";
 // The link Claude uploads a damage's photos to, and how.
 async function photoLink(db: Db, damageId: number) {
 	const { token, expiresAt } = await createPhotoUploadLink(db, damageId);
-	const url = `${relyingParty().origin}/api/uploads/damage/${token}`;
+	const url = capabilityUrl("/api/uploads/damage/", token);
 	return {
 		url,
 		expiresAt,

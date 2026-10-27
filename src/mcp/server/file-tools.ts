@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { relyingParty } from "#/auth/webauthn";
+import { capabilityUrl } from "#/auth/capability-urls";
 import type { Db } from "#/db/client";
 import { MAX_PO_FILE_BYTES } from "#/purchasing/file-limits";
 import {
@@ -105,7 +105,7 @@ export function registerFileTools(server: McpServer, db: Db) {
 		},
 		async ({ po }) => {
 			const { token, expiresAt } = await createFileUploadLink(db, po);
-			const url = `${relyingParty().origin}/api/uploads/po-file/${token}`;
+			const url = capabilityUrl("/api/uploads/po-file/", token);
 			return json({
 				url,
 				expiresAt,

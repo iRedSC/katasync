@@ -1072,6 +1072,13 @@
       "when": 1793139957852,
       "tag": "0152_market_email_sender_checked",
       "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1793140489617,
+      "tag": "0153_scrub_mcp_capability_urls",
+      "breakpoints": true
     }
   ]
 }
