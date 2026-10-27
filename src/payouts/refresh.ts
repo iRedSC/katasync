@@ -1,4 +1,5 @@
-import { sql } from "drizzle-orm";
+import { and, eq, min, sql } from "drizzle-orm";
+import { holdingChannel } from "#/channels/channel-lock";
 import type { Db } from "#/db/client";
 import { payoutChecks, payouts } from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
@@ -17,6 +18,10 @@ import type { FetchedPayout } from "./types";
 // didn't. The check is recorded either way, with the error if the ask or the
 // save failed, so the Reports tab can say why a marketplace's deposits are
 // missing.
+//
+// Each channel's refresh holds a lock of its own from the ask through the
+// save: an overlapping one would save what it heard earlier over what the
+// other heard later. The second skips instead (busy).
 
 const FETCHERS: Record<
 	SyncedChannel,
@@ -28,42 +33,81 @@ const FETCHERS: Record<
 	tiktok: fetchTiktokPayouts,
 };
 
-// A regular pass looks back far enough to see pending payouts land.
+// A regular pass looks back far enough to see pending payouts land. One
+// still pending from before that keeps the pass looking back to it, less
+// MARGIN (Amazon asks by when a group started, which comes before its
+// transfer date), up to LONGEST, so it isn't left pending forever.
 export const REFRESH_DAYS = 45;
+const MARGIN_DAYS = 30;
+const LONGEST_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export async function refreshSince(
+	db: Db,
+	channel: SyncedChannel,
+	now = new Date(),
+): Promise<Date> {
+	const [{ oldest }] = await db
+		.select({ oldest: min(payouts.depositedAt) })
+		.from(payouts)
+		.where(and(eq(payouts.channel, channel), eq(payouts.status, "pending")));
+	const regular = now.getTime() - REFRESH_DAYS * DAY_MS;
+	if (!oldest) return new Date(regular);
+	return new Date(
+		Math.max(
+			now.getTime() - LONGEST_DAYS * DAY_MS,
+			Math.min(regular, oldest.getTime() - MARGIN_DAYS * DAY_MS),
+		),
+	);
+}
+
+export type PayoutRefresh =
+	| { kind: "saved"; saved: number }
+	| { kind: "failed"; error: string }
+	| { kind: "busy" };
 
 export async function refreshPayouts(
 	db: Db,
 	channel: SyncedChannel,
-	since = new Date(Date.now() - REFRESH_DAYS * 24 * 60 * 60 * 1000),
-): Promise<{ saved: number; error: string | null }> {
+	since?: Date,
+): Promise<PayoutRefresh> {
 	try {
-		const found = await FETCHERS[channel](since);
-		await db.transaction(async (tx) => {
-			if (found.length > 0)
-				await tx
-					.insert(payouts)
-					.values(found.map((p) => ({ ...p, channel })))
-					.onConflictDoUpdate({
-						target: [payouts.channel, payouts.externalId],
-						set: {
-							status: sql`excluded.status`,
-							depositedAt: sql`excluded.deposited_at`,
-							amount: sql`excluded.amount`,
-							currency: sql`excluded.currency`,
-							bankTail: sql`excluded.bank_tail`,
-							reference: sql`excluded.reference`,
-							fetchedAt: sql`now()`,
-						},
-					});
-			await recordCheck(tx, channel, null);
-		});
-		return { saved: found.length, error: null };
+		const done = await holdingChannel(
+			channel,
+			{ purpose: "payout-refresh" },
+			async () => {
+				const found = await FETCHERS[channel](
+					since ?? (await refreshSince(db, channel)),
+				);
+				await db.transaction(async (tx) => {
+					if (found.length > 0)
+						await tx
+							.insert(payouts)
+							.values(found.map((p) => ({ ...p, channel })))
+							.onConflictDoUpdate({
+								target: [payouts.channel, payouts.externalId],
+								set: {
+									status: sql`excluded.status`,
+									depositedAt: sql`excluded.deposited_at`,
+									amount: sql`excluded.amount`,
+									currency: sql`excluded.currency`,
+									bankTail: sql`excluded.bank_tail`,
+									reference: sql`excluded.reference`,
+									fetchedAt: sql`now()`,
+								},
+							});
+					await recordCheck(tx, channel, null);
+				});
+				return { kind: "saved", saved: found.length } as const;
+			},
+		);
+		return done ?? { kind: "busy" };
 	} catch (e) {
 		const error = errorText(e);
 		// Best effort: if the database is what failed, this fails too, and the
 		// error is still returned to the caller.
 		await recordCheck(db, channel, error).catch(() => {});
-		return { saved: 0, error };
+		return { kind: "failed", error };
 	}
 }
 
