@@ -253,13 +253,10 @@ function Invoice({
 								<div className="flex break-after-avoid items-start gap-3">
 									<Photo src={l.imageUrl} className="size-[0.6in]" />
 									<div>
-										<p>{l.title}</p>
-										{l.variantName &&
-											!l.title
-												.toLowerCase()
-												.includes(l.variantName.toLowerCase()) && (
-												<p className="font-semibold">{l.variantName}</p>
-											)}
+										<p>{l.name}</p>
+										{l.variantName && (
+											<p className="font-semibold">{l.variantName}</p>
+										)}
 										{l.sku && (
 											<p className="text-[9pt] text-muted-foreground">
 												{l.sku}
