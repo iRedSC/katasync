@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { answer } from "./answer";
+import { answered } from "./intent";
 import { createOptimism, type Patch } from "./optimism";
 
 vi.mock("sonner", () => ({ toast: { error: () => {} } }));
@@ -190,6 +192,24 @@ describe("optimism", () => {
 		// Reloads anyway, since the page may have moved on without it.
 		await tick();
 		expect(reloads).toHaveLength(1);
+	});
+
+	it("passes a server's refusal back as its answer, apart from a send that threw", async () => {
+		const { engine, reloads, failures } = setup();
+		const refused = engine.change({
+			send: () => answer([Error], () => Promise.reject(new Error("Void"))),
+		});
+		await tick();
+		reloads[0].resolve();
+		expect(answered(await refused)).toEqual({
+			kind: "rejected",
+			problem: "Void",
+		});
+		expect(failures).toEqual([]);
+		const lost = await engine.change({
+			send: () => Promise.reject(new Error("Failed to fetch")),
+		});
+		expect(answered(lost)).toEqual({ kind: "uncertain" });
 	});
 
 	it("keeps a later change when an earlier one fails", async () => {
