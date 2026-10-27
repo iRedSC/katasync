@@ -25,7 +25,7 @@ import {
 	withdrawInvoiceHistory,
 } from "#/server/payables";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
-import { middayOf, today } from "./days";
+import { today } from "./days";
 
 type Invoice = OrderPayables["billing"]["invoices"][number];
 type PaymentInput = Parameters<typeof recordSupplierPayment>[0]["data"];
@@ -374,7 +374,7 @@ function Applied({
 		<div className="group flex items-center gap-2 pl-3 text-xs text-muted-foreground">
 			<span className="tabular-nums text-foreground">{usd(a.amountCents)}</span>
 			<span>
-				{methodLabel(p.method)} {formatDay(middayOf(p.paidOn))}
+				{methodLabel(p.method)} {formatDay(p.paidOn)}
 				{p.reference && <>, {p.reference}</>}
 			</span>
 			<Proof />
@@ -450,7 +450,7 @@ function PaymentRow({
 				{usd(p.amountCents)}
 			</span>
 			<span className="text-muted-foreground">
-				{methodLabel(p.method)} {formatDay(middayOf(p.paidOn))}
+				{methodLabel(p.method)} {formatDay(p.paidOn)}
 				{p.reference && <>, {p.reference}</>}
 			</span>
 			<Proof />

@@ -18,6 +18,10 @@ const dateOnly = new Intl.DateTimeFormat("en-US", {
 	dateStyle: "medium",
 	timeZone: SHOP_TIME_ZONE,
 });
+const dateOnlyUtc = new Intl.DateTimeFormat("en-US", {
+	dateStyle: "medium",
+	timeZone: "UTC",
+});
 
 export function formatMoney(value: number | null) {
 	return value === null ? "—" : usd.format(value);
@@ -31,9 +35,23 @@ export function formatDateTime(value: Date | string) {
 	return dateTime.format(new Date(value));
 }
 
+// A calendar day as Postgres `date` columns and date inputs give it. It names
+// a day, not an instant: read as UTC midnight and shown in the shop's zone it
+// would land on the day before, so the date formatters show it as written.
+const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// The instant to format and the zone to format it in. A calendar day is
+// formatted at UTC midnight in UTC, which is that day everywhere.
+function dayToShow(value: Date | string) {
+	return typeof value === "string" && CALENDAR_DAY.test(value)
+		? { date: new Date(`${value}T00:00:00Z`), utc: true }
+		: { date: new Date(value), utc: false };
+}
+
 // "Oct 20, 2026", for dates that may be from another year.
 export function formatDate(value: Date | string) {
-	return dateOnly.format(new Date(value));
+	const { date, utc } = dayToShow(value);
+	return (utc ? dateOnlyUtc : dateOnly).format(date);
 }
 
 export function formatDelta(delta: number) {
@@ -69,6 +87,11 @@ const monthDay = new Intl.DateTimeFormat("en-US", {
 	day: "numeric",
 	timeZone: SHOP_TIME_ZONE,
 });
+const monthDayUtc = new Intl.DateTimeFormat("en-US", {
+	month: "short",
+	day: "numeric",
+	timeZone: "UTC",
+});
 // The shop's calendar day as "2026-10-21", so days can be counted apart.
 const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: SHOP_TIME_ZONE });
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -103,7 +126,8 @@ export function formatTime(value: Date | string) {
 
 // "Oct 20", for dates where the time doesn't matter.
 export function formatDay(value: Date | string) {
-	return monthDay.format(new Date(value));
+	const { date, utc } = dayToShow(value);
+	return (utc ? monthDayUtc : monthDay).format(date);
 }
 
 // "Mechanicsburg, PA 17055", leaving out whatever is missing.

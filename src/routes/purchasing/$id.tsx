@@ -25,7 +25,6 @@ import {
 } from "#/components/po-product-picker";
 import { AddEmail } from "#/components/purchase-order/add-email";
 import { ChargesRow } from "#/components/purchase-order/charges-row";
-import { middayOf } from "#/components/purchase-order/days";
 import { DeliveryCard } from "#/components/purchase-order/delivery-card";
 import { FilesCard } from "#/components/purchase-order/files-card";
 import { FlagsCard } from "#/components/purchase-order/flags";
@@ -288,7 +287,7 @@ function PurchaseOrderPage() {
 			() => sendPurchaseOrder({ data: { id: po.id, email: false, sentOn } }),
 			() =>
 				sentOn
-					? `PO ${po.id} on order since ${formatDay(middayOf(sentOn))}`
+					? `PO ${po.id} on order since ${formatDay(sentOn)}`
 					: `PO ${po.id} is on order`,
 		);
 
