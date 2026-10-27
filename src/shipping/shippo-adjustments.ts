@@ -200,36 +200,40 @@ export async function saveShippoRebills(db: Db, rebills: ShippoRebill[]) {
 		];
 	});
 	const touched = [...new Set(rows.map((r) => r.shipmentId))];
-	const before = await rebilledOn(db, touched);
-	if (rows.length > 0)
-		await db
-			.insert(shipmentAdjustments)
-			.values(rows)
-			.onConflictDoUpdate({
-				target: shipmentAdjustments.externalId,
-				set: {
-					type: sql`excluded.type`,
-					description: sql`excluded.description`,
-					amount: sql`excluded.amount`,
-					postedAt: sql`excluded.posted_at`,
-				},
+	// One transaction with the alert: re-bills saved without it would read as
+	// already counted on the next run, and the label's alert never comes.
+	await db.transaction(async (tx) => {
+		const before = await rebilledOn(tx, touched);
+		if (rows.length > 0)
+			await tx
+				.insert(shipmentAdjustments)
+				.values(rows)
+				.onConflictDoUpdate({
+					target: shipmentAdjustments.externalId,
+					set: {
+						type: sql`excluded.type`,
+						description: sql`excluded.description`,
+						amount: sql`excluded.amount`,
+						postedAt: sql`excluded.posted_at`,
+					},
+				});
+		const after = await rebilledOn(tx, touched);
+		for (const id of touched) {
+			const now = after.get(id);
+			if (!now || !crossesLarge(before.get(id)?.amount ?? 0, now.amount))
+				continue;
+			await alertRebill(tx, {
+				key: `shipment:${id}`,
+				orderId: now.orderId,
+				orderName: now.orderName,
+				market: now.market,
+				marketplaceId: now.marketplaceOrderId?.split(":")[1] ?? null,
+				amount: now.amount,
+				label: now.label,
+				reasons: await reasonsFor(tx, id),
 			});
-	const after = await rebilledOn(db, touched);
-	for (const id of touched) {
-		const now = after.get(id);
-		if (!now || !crossesLarge(before.get(id)?.amount ?? 0, now.amount))
-			continue;
-		await alertRebill(db, {
-			key: `shipment:${id}`,
-			orderId: now.orderId,
-			orderName: now.orderName,
-			market: now.market,
-			marketplaceId: now.marketplaceOrderId?.split(":")[1] ?? null,
-			amount: now.amount,
-			label: now.label,
-			reasons: await reasonsFor(db, id),
-		});
-	}
+		}
+	});
 	return {
 		rebills: rebills.length,
 		saved: rows.length,
