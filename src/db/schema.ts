@@ -2441,6 +2441,28 @@ export const purchaseOrderReceipts = pgTable(
 	],
 );
 
+// One receiving request by the key its sender made for it, so sending it
+// again (a retry after a lost answer) answers what it did the first time
+// instead of receiving it twice. The same key with a different request is
+// refused. See src/purchasing/orders/receive-once.ts.
+export const purchaseReceiveRequests = pgTable(
+	"purchase_receive_requests",
+	{
+		key: text().primaryKey(),
+		kind: text({ enum: ["line", "extra", "all"] }).notNull(),
+		request: jsonb().notNull(),
+		result: jsonb().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			"purchase_receive_requests_kind",
+			sql`${t.kind} in ('line', 'extra', 'all')`,
+		),
+		check("purchase_receive_requests_key", sql`length(${t.key}) > 0`),
+	],
+);
+
 // A percent or dollars off some of a PO line's units, e.g. 10% off all of
 // them, $12 off the 4 that came dented, or 1 free. The amount is for those
 // units together. The line's total is its quantity × price less these.

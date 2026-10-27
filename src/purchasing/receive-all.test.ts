@@ -86,9 +86,16 @@ beforeEach(async () => {
 });
 
 test("receives the rest of every line but the back-ordered ones", async () => {
-	await receive(db, { lineId: eachLine, quantity: 2 });
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: eachLine,
+		quantity: 2,
+	});
 	await setBackOrdered(db, { lineId: lateLine, backOrdered: true });
-	const { receipts, closed } = await receiveAll(db, poId);
+	const { receipts, closed } = await receiveAll(db, {
+		key: crypto.randomUUID(),
+		purchaseOrderId: poId,
+	});
 	expect(receipts.map((r) => [r.lineId, r.quantity])).toEqual([
 		[caseLine, 2],
 		[eachLine, 3],
@@ -101,8 +108,15 @@ test("receives the rest of every line but the back-ordered ones", async () => {
 });
 
 test("closes the PO when that's everything, and undoes as one", async () => {
-	await receive(db, { lineId: eachLine, quantity: 2 });
-	const { receipts, closed } = await receiveAll(db, poId);
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: eachLine,
+		quantity: 2,
+	});
+	const { receipts, closed } = await receiveAll(db, {
+		key: crypto.randomUUID(),
+		purchaseOrderId: poId,
+	});
 	expect(closed).toBe(true);
 	expect(await status()).toBe("closed");
 	await undoReceipts(
@@ -116,6 +130,20 @@ test("closes the PO when that's everything, and undoes as one", async () => {
 });
 
 test("refuses when nothing is left to receive", async () => {
-	await receiveAll(db, poId);
-	await expect(receiveAll(db, poId)).rejects.toThrow();
+	await receiveAll(db, { key: crypto.randomUUID(), purchaseOrderId: poId });
+	await expect(
+		receiveAll(db, { key: crypto.randomUUID(), purchaseOrderId: poId }),
+	).rejects.toThrow();
+});
+
+test("a resent Receive all answers as before, even once the PO closed", async () => {
+	const once = { key: crypto.randomUUID(), purchaseOrderId: poId };
+	const first = await receiveAll(db, once);
+	expect(first.closed).toBe(true);
+	expect(await receiveAll(db, once)).toEqual(first);
+	expect(await onHand(blade)).toBe(24);
+	expect(await onHand(knife)).toBe(5);
+	await expect(
+		receive(db, { key: once.key, lineId: eachLine, quantity: 1 }),
+	).rejects.toThrow(/recorded for something else/);
 });

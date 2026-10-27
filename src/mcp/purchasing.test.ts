@@ -259,7 +259,12 @@ describe("over MCP", () => {
 			sku: "BLADE",
 		});
 		expect(nothing).toMatchObject({ isError: true });
-		await tool("receive_po_line", { po: po.id, sku: "BLADE", quantity: 4 });
+		await tool("receive_po_line", {
+			receipt_key: crypto.randomUUID(),
+			po: po.id,
+			sku: "BLADE",
+			quantity: 4,
+		});
 		const tooLow = await tool("adjust_sent_po_line", {
 			po: po.id,
 			sku: "BLADE",

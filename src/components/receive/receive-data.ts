@@ -155,6 +155,8 @@ export async function receiveAll(orderId: number, lines: ReceiveLine[]) {
 	const made = lines
 		.filter(takenByReceiveAll)
 		.map((l) => receiptFor(l, l.quantity - l.received, false));
+	// One per Receive all, so a resend can't receive it twice.
+	const key = crypto.randomUUID();
 	const r = await optimism.change({
 		label: "Receiving everything",
 		patch: receiveData.patch(orderId, (d) => {
@@ -170,7 +172,7 @@ export async function receiveAll(orderId: number, lines: ReceiveLine[]) {
 			};
 		}),
 		send: async () => {
-			const result = await receiveAllLines({ data: { id: orderId } });
+			const result = await receiveAllLines({ data: { key, id: orderId } });
 			for (const s of result.receipts) {
 				const mine = made.find((m) => ids.current(m.lineId) === s.lineId);
 				if (mine) ids.confirm(mine.id, s.receiptId);
