@@ -148,6 +148,26 @@ describe("suggested replies", () => {
 		expect(await draftWaiting(db, 4, run)).toBe(0);
 	});
 
+	test("a failure after a new message waits too, until the buyer writes again", async () => {
+		await draftThread(db, threadId, { run: fake(spanish) });
+		await buyerSays("¿Hola?");
+		let tries = 0;
+		const down = fake({
+			replier: () => {
+				tries++;
+				throw new Error("The AI proxy answered 502: down");
+			},
+		});
+		expect(await draftWaiting(db, 4, down)).toBe(0);
+		expect(tries).toBe(1);
+		// The next run leaves it for the retry delay.
+		expect(await draftWaiting(db, 4, down)).toBe(0);
+		expect(await draftThread(db, threadId, { run: down })).toBeNull();
+		expect(tries).toBe(1);
+		await buyerSays("¿Alguien?");
+		expect(await draftWaiting(db, 4, fake(spanish))).toBe(1);
+	});
+
 	test("sending a reply uses the suggestion up", async () => {
 		await setDraft(db, threadId, { body: "Sí" }, "staff");
 		vi.stubGlobal(

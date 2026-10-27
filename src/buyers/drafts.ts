@@ -88,7 +88,9 @@ async function languageOf(db: Db, threadId: number) {
 }
 
 // Takes the thread's draft for writing, as of the buyer's latest message;
-// null when another run has it or it's already current.
+// null when another run has it or it's already current. The claim records
+// that message, so a failure is for it and waits before trying again; only a
+// ready draft shows its words, and those are always written with theirs.
 async function claim(
 	db: Db,
 	threadId: number,
@@ -109,7 +111,13 @@ async function claim(
 		})
 		.onConflictDoUpdate({
 			target: replyDrafts.threadId,
-			set: { state: "drafting", error: null, orderRef, updatedAt: now },
+			set: {
+				state: "drafting",
+				error: null,
+				forMessageId,
+				orderRef,
+				updatedAt: now,
+			},
 			setWhere: or(
 				lt(replyDrafts.updatedAt, new Date(now.getTime() - CLAIM_STALE_MS)),
 				and(
