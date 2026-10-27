@@ -92,15 +92,29 @@ export async function ingestOrder(
 	return db.transaction(async (tx) => {
 		await readQuantityMode(tx);
 		const { lines, tax, ...fields } = order;
+		// Locked, so a snapshot read as older here stays older until this
+		// commits.
 		const [before] = await tx
-			.select({ cancelledAt: orders.cancelledAt })
+			.select({
+				id: orders.id,
+				cancelledAt: orders.cancelledAt,
+				sourceUpdatedAt: orders.sourceUpdatedAt,
+			})
 			.from(orders)
 			.where(
 				and(
 					eq(orders.storeId, store.id),
 					eq(orders.externalId, order.externalId),
 				),
-			);
+			)
+			.for("update");
+		// A snapshot older than the saved one (a slow webhook, a cron page read
+		// before a cancellation) changes nothing: saving it would undo what the
+		// channel said since, like resurrecting a cancelled order and taking its
+		// stock again. The same version still runs, so lines whose product
+		// appeared since are mapped.
+		if (before && order.sourceUpdatedAt < before.sourceUpdatedAt)
+			return { orderId: before.id, problems: [] };
 		const newlyCancelled =
 			order.cancelledAt !== null && before?.cancelledAt == null;
 		const [saved] = await tx
@@ -183,6 +197,12 @@ export async function ingestOrder(
 			if (!existing && line.quantity === 0) continue;
 			// A line mapped after it came in picks up its product now.
 			const productId = existing?.productId ?? productOf.get(line) ?? null;
+			// A line takes its product's cost when it first gets one, here or in
+			// remap.ts's catch-up; a mapped line keeps the cost it sold at.
+			const mapping =
+				productId !== null && existing?.productId == null
+					? { productId, unitCost: await costOfOnce(productId) }
+					: { productId };
 			const unchanged =
 				existing !== undefined &&
 				!handled.has(line.externalId) &&
@@ -202,7 +222,7 @@ export async function ingestOrder(
 						sku: line.sku,
 						quantity: line.quantity,
 						unitPrice: line.unitPrice,
-						productId,
+						...mapping,
 					})
 					.where(eq(orderLines.id, existing.id))
 					.returning();
@@ -213,8 +233,7 @@ export async function ingestOrder(
 					.values({
 						...line,
 						orderId: saved.id,
-						productId,
-						unitCost: productId === null ? null : await costOfOnce(productId),
+						...mapping,
 					})
 					.returning();
 				existingLines.set(line.externalId, row);
