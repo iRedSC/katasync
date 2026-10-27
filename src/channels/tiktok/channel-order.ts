@@ -73,6 +73,11 @@ function shown(value: string | undefined) {
 }
 
 const money = (value: string | undefined) => Number(value ?? 0) || 0;
+type Cents = { units: number; cents: number };
+const add = (sum: Cents, cents: number): Cents => ({
+	units: sum.units + 1,
+	cents: sum.cents + cents,
+});
 const fromUnix = (seconds: number) => new Date(seconds * 1000);
 
 // TikTok collects US sales tax and pays it itself. Whatever of its total the
@@ -114,32 +119,51 @@ export function tiktokToChannelOrder(
 	// like the other channels and stays stable if a unit is cancelled. A
 	// cancelled unit doesn't count, but its line stays (at 0 if all its units
 	// went) so ingestion can give back the stock it took. A cancelled order
-	// keeps the quantities it was placed with.
-	const bySku = new Map<string, ChannelOrder["lines"][number]>();
-	for (const item of order.line_items) {
-		const units =
-			item.display_status === "CANCELLED" && order.status !== "CANCELLED"
-				? 0
-				: 1;
-		const line = bySku.get(item.sku_id);
-		if (line) {
-			line.quantity += units;
-			continue;
+	// keeps the quantities it was placed with. Units of one SKU can sell at
+	// different prices (a discount on one), so the line's price is the average
+	// of the units that count, or of all of them when none does.
+	const bySku = new Map<
+		string,
+		{
+			line: Omit<ChannelOrder["lines"][number], "quantity" | "unitPrice">;
+			counted: Cents;
+			all: Cents;
 		}
-		bySku.set(item.sku_id, {
-			externalId: item.sku_id,
-			listingExternalId: item.sku_id,
-			sku: item.seller_sku || null,
-			title:
-				item.sku_name && item.sku_name !== "Default"
-					? `${item.product_name} - ${item.sku_name}`
-					: item.product_name,
-			quantity: units,
-			// What we're paid per unit: the buyer's price after every discount,
-			// plus the part of the discount TikTok funds.
-			unitPrice: money(item.sale_price) + money(item.platform_discount),
-		});
+	>();
+	for (const item of order.line_items) {
+		const counts =
+			item.display_status !== "CANCELLED" || order.status === "CANCELLED";
+		// What we're paid for the unit: the buyer's price after every discount,
+		// plus the part of the discount TikTok funds.
+		const cents = Math.round(
+			(money(item.sale_price) + money(item.platform_discount)) * 100,
+		);
+		const sku = bySku.get(item.sku_id) ?? {
+			line: {
+				externalId: item.sku_id,
+				listingExternalId: item.sku_id,
+				sku: item.seller_sku || null,
+				title:
+					item.sku_name && item.sku_name !== "Default"
+						? `${item.product_name} - ${item.sku_name}`
+						: item.product_name,
+			},
+			counted: { units: 0, cents: 0 },
+			all: { units: 0, cents: 0 },
+		};
+		sku.all = add(sku.all, cents);
+		if (counts) sku.counted = add(sku.counted, cents);
+		bySku.set(item.sku_id, sku);
 	}
+	const lines = [...bySku.values()].map(({ line, counted, all }) => {
+		const priced = counted.units > 0 ? counted : all;
+		return {
+			...line,
+			quantity: counted.units,
+			// Order lines keep cents, so the average is rounded to one.
+			unitPrice: Math.round(priced.cents / priced.units) / 100,
+		};
+	});
 	return {
 		externalId: order.id,
 		name: order.id,
@@ -172,6 +196,6 @@ export function tiktokToChannelOrder(
 		shippingCharged: money(order.payment?.shipping_fee),
 		tax: tiktokTax(order.payment),
 		sourceUpdatedAt: fromUnix(order.update_time),
-		lines: [...bySku.values()],
+		lines,
 	};
 }

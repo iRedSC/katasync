@@ -287,6 +287,38 @@ describe("tiktokToChannelOrder", () => {
 		]);
 	});
 
+	test("units of one SKU at different prices are priced at their average", () => {
+		const unit = (id: string, salePrice: string, extra = {}) => ({
+			id,
+			sku_id: "1729",
+			product_name: "Wrench",
+			sale_price: salePrice,
+			...extra,
+		});
+		const o = tiktokToChannelOrder(
+			order({
+				line_items: [
+					unit("a", "18.00"),
+					unit("b", "10.00"),
+					unit("c", "9.99"),
+					// A cancelled unit's price isn't revenue.
+					unit("d", "1.00", { display_status: "CANCELLED" }),
+				],
+			}),
+		);
+		expect(o.lines).toMatchObject([{ quantity: 3, unitPrice: 12.66 }]);
+		expect(o.lines[0].quantity * o.lines[0].unitPrice).toBeCloseTo(37.98);
+		const gone = tiktokToChannelOrder(
+			order({
+				line_items: [
+					unit("a", "4.00", { display_status: "CANCELLED" }),
+					unit("b", "6.00", { display_status: "CANCELLED" }),
+				],
+			}),
+		);
+		expect(gone.lines).toMatchObject([{ quantity: 0, unitPrice: 5 }]);
+	});
+
 	test("a TikTok-funded discount counts as revenue, ours doesn't", () => {
 		const o = tiktokToChannelOrder(
 			tiktokOrder.assert({
