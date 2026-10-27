@@ -20,6 +20,7 @@ import {
 	stockLocations,
 } from "./stores";
 import { tiktokOrder, tiktokToChannelOrder } from "./tiktok/channel-order";
+import { lockRelayedOrder } from "./tiktok/relay";
 
 export {
 	tiktokOrder,
@@ -465,6 +466,10 @@ export async function takeOver(
 	order: ChannelOrder,
 ): Promise<{ moved: boolean; problems: string[] }> {
 	return db.transaction(async (tx) => {
+		// Waits out a Shopify pass saving this order, which then finds TikTok
+		// syncing and leaves it (tiktok/relay.ts).
+		if (order.marketplaceOrderId)
+			await lockRelayedOrder(tx, order.marketplaceOrderId);
 		const [existing] = await tx
 			.select({ id: orders.id, name: orders.name })
 			.from(orders)

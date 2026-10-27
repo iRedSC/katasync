@@ -1,13 +1,12 @@
 import { type } from "arktype";
-import { eq } from "drizzle-orm";
 import { type OrderUpdate, orderUpdate } from "#/channels/order-update";
 import {
 	ensureStore,
 	type StockLocations,
 	stockLocations,
 } from "#/channels/stores";
+import { hasTiktokStore, ingestRelayed } from "#/channels/tiktok/relay";
 import type { Db } from "#/db/client";
-import { stores } from "#/db/schema";
 import { ingestOrder } from "#/orders/ingest";
 import { shopifyToChannelOrder, tiktokOrderId } from "./channel-order";
 import { shopifyQuery } from "./client";
@@ -64,7 +63,8 @@ async function ingestNode(
 	stock: StockLocations,
 	tiktokDirect: boolean,
 ) {
-	if (tiktokDirect && tiktokOrderId(o.tags)) return null;
+	const relayedId = tiktokOrderId(o.tags);
+	if (tiktokDirect && relayedId) return null;
 	// Big orders have more lines than fit in one page; fetch the rest.
 	const order = o.lineItems.pageInfo.hasNextPage
 		? {
@@ -86,12 +86,17 @@ async function ingestNode(
 			? await shippedUnits(o.id)
 			: null;
 	const remaining = shipped ? await remainingUnits(o.id) : null;
-	return ingestOrder(
-		db,
-		store,
-		shopifyToChannelOrder(order, shipped, remaining),
-		stock,
-	);
+	const channelOrder = shopifyToChannelOrder(order, shipped, remaining);
+	// Checked again under the lock TikTok's takeover holds: TikTok may have
+	// started syncing since tiktokDirect was read.
+	return relayedId
+		? ingestRelayed(
+				db,
+				store,
+				{ ...channelOrder, marketplaceOrderId: relayedId },
+				stock,
+			)
+		: ingestOrder(db, store, channelOrder, stock);
 }
 
 // One order by id, for a webhook. Read straight from the order rather than
@@ -125,14 +130,4 @@ export async function ingestShopifyOrder(
 	return result
 		? orderUpdate(result.problems)
 		: { kind: "ignored", reason: "tiktok_source" };
-}
-
-// The TikTok store exists once a direct TikTok sync has reached TikTok.
-async function hasTiktokStore(db: Db) {
-	const [row] = await db
-		.select({ id: stores.id })
-		.from(stores)
-		.where(eq(stores.channel, "tiktok"))
-		.limit(1);
-	return Boolean(row);
 }
