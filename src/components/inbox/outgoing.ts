@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import type { ReplyStatus } from "#/buyers/states";
 import type { BuyerMedia } from "#/db/schema";
 import { replyToBuyer } from "#/server/buyers";
@@ -31,9 +31,16 @@ export type Outgoing = {
 let items: Outgoing[] = [];
 const listeners = new Set<() => void>();
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
-// What undo took back, for its conversation's reply box.
-export type Returned = { body: string; media: BuyerMedia[] };
-const returned = new Map<number, Returned>();
+// What undo took back, for its conversation's reply box: kept, each under
+// its reply's key, until it's put in the box or let go, so a second undo
+// never replaces the first.
+export type Returned = {
+	key: string;
+	threadId: number;
+	body: string;
+	media: BuyerMedia[];
+};
+let returned: readonly Returned[] = [];
 let refresh: () => Promise<unknown> = async () => {};
 
 function emit() {
@@ -98,17 +105,48 @@ export function undo(key: string) {
 	clearTimeout(timers.get(key));
 	timers.delete(key);
 	items = items.filter((x) => x.key !== key);
-	returned.set(o.threadId, { body: o.body, media: o.media });
+	returned = [
+		...returned,
+		{ key, threadId: o.threadId, body: o.body, media: o.media },
+	];
 	emit();
 	return true;
 }
 
-// What undo took back for a conversation, once.
-export function takeReturned(threadId: number) {
-	const back = returned.get(threadId);
-	returned.delete(threadId);
+// What undo took back for a conversation, oldest first.
+export function useReturned(threadId: number) {
+	const all = useSyncExternalStore(
+		subscribe,
+		() => returned,
+		() => returned,
+	);
+	return useMemo(
+		() => all.filter((r) => r.threadId === threadId),
+		[all, threadId],
+	);
+}
+
+// Takes one back out of the kept ones, to put in the box or let go.
+export function takeReturned(key: string) {
+	const back = returned.find((r) => r.key === key);
+	if (!back) return undefined;
+	returned = returned.filter((r) => r !== back);
+	emit();
 	return back;
 }
+
+// Puts one back among the kept ones, as it was taken, when letting it go is
+// undone.
+export function keepReturned(back: Returned) {
+	if (returned.some((r) => r.key === back.key)) return;
+	returned = [...returned, back];
+	emit();
+}
+
+// Whether a box is empty: nothing typed and no files, so what undo took back
+// can go straight in without replacing anything.
+export const isEmptyBox = (box: { text: string; files: number }) =>
+	box.text.trim() === "" && box.files === 0;
 
 // Sends one whose answer never came, again under the same key.
 export function retry(key: string) {
