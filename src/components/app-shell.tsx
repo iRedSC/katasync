@@ -1,7 +1,8 @@
 import { Link, useLoaderData, useLocation } from "@tanstack/react-router";
 import { Menu, Search } from "lucide-react";
 import { type ReactNode, Suspense, use, useEffect, useState } from "react";
-import { openFind, pages } from "#/components/command-palette";
+import { openFind } from "#/components/command-palette";
+import { pages } from "#/components/pages";
 import { Saving } from "#/components/saving";
 import { Tip } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
