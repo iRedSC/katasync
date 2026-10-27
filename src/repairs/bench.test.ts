@@ -234,6 +234,23 @@ describe("bench jobs", () => {
 		expect(refurb.cost).toBe(450);
 	});
 
+	test("another of the same refurb is added to it, checked from its locked row", async () => {
+		await db.insert(schema.stores).values({ channel: "shopify", name: "Shop" });
+		const [first] = await startBench(db, { productId: taper });
+		const [second] = await startBench(db, { productId: taper });
+		const [other] = await startBench(db, { productId: blade });
+		const made = await listBench(db, first, listing);
+		const added = await listBench(db, second, {
+			kind: "add",
+			productId: made.productId,
+		});
+		expect(added).toMatchObject({ sku: made.sku, productId: made.productId });
+		expect(await onHand(made.productId)).toBe(2);
+		await expect(
+			listBench(db, other, { kind: "add", productId: made.productId }),
+		).rejects.toThrow(/isn't made from BLADE/);
+	});
+
 	test("a part not on the shelf stops the listing, leaving nothing made", async () => {
 		const [id] = await startBench(db, { productId: taper });
 		await setPart(db, id, blade, 5);

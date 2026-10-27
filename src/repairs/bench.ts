@@ -11,7 +11,9 @@ import {
 	stockLevels,
 } from "#/db/schema";
 import { committedUnits, readQuantityMode } from "#/inventory/commitments";
+import { returnSaleOf } from "#/inventory/commitments-consume";
 import { postMovements } from "#/inventory/ledger";
+import { batchProductIds, lockStockProducts } from "#/inventory/ledger/post";
 import { isOurs } from "#/inventory/locations";
 import {
 	makeRefurb,
@@ -157,10 +159,52 @@ export async function rehold(tx: Db, r: { returnLineId: number | null }) {
 		throw new RepairError(`${name} was received since; it can't go back`);
 }
 
+type Locked = Awaited<ReturnType<typeof lockStockProducts>>;
+
+// Locks everything listing a job writes before writing any of it: its
+// returned line's order first, as receiving a return and shipping do, then
+// every product it touches (its parts, the tool, what the line sold as, the
+// refurb it adds to) lowest id first, as stock writes do. Taken as each
+// write comes, they'd deadlock with those. Run holding the job, so its
+// parts can't change meanwhile.
+async function lockListing(
+	tx: Db,
+	r: { id: number; productId: number },
+	line: {
+		orderId: number;
+		lineId: number;
+		productId: number | null;
+		saleBatchId: string | null;
+	} | null,
+	into: number | null,
+) {
+	if (line)
+		await tx
+			.select({ id: orders.id })
+			.from(orders)
+			.where(eq(orders.id, line.orderId))
+			.for("update");
+	const parts = await tx
+		.select({ productId: repairParts.productId })
+		.from(repairParts)
+		.where(eq(repairParts.repairId, r.id));
+	const sale = line
+		? (line.saleBatchId ?? (await returnSaleOf(tx, line.lineId))?.batchId)
+		: null;
+	return lockStockProducts(tx, [
+		r.productId,
+		...parts.map((p) => p.productId),
+		...(sale ? await batchProductIds(tx, [sale]) : []),
+		...(line?.productId == null ? [] : [line.productId]),
+		...(into === null ? [] : [into]),
+	]);
+}
+
 // Takes a job's parts off the bench shelf, refusing what isn't there (or,
 // with stock committed, is promised to an order). Their cost is each one's
 // average now; null when any has none, so the refurb's stays unknown too.
-async function takeParts(tx: Db, repairId: number) {
+// Run holding the parts (lockListing).
+async function takeParts(tx: Db, repairId: number, locked: Locked) {
 	const parts = await tx
 		.select({
 			productId: repairParts.productId,
@@ -172,11 +216,6 @@ async function takeParts(tx: Db, repairId: number) {
 		.where(eq(repairParts.repairId, repairId));
 	if (parts.length === 0) return { batchId: null, cost: 0 };
 	const ids = parts.map((p) => p.productId);
-	const locked = await tx
-		.select({ id: products.id, kind: products.kind, cost: products.unitCost })
-		.from(products)
-		.where(inArray(products.id, ids))
-		.for("update");
 	const shelf = await benchShelf(tx);
 	const levels = await tx
 		.select({
@@ -195,7 +234,8 @@ async function takeParts(tx: Db, repairId: number) {
 	let cost: number | null = 0;
 	for (const p of parts) {
 		const product = locked.find((l) => l.id === p.productId);
-		if (product?.kind === "bundle")
+		if (!product) throw new RepairError(`${p.sku} changed; try again`);
+		if (product.kind === "bundle")
 			throw new RepairError(`${p.sku} is a set; put its parts on instead`);
 		const level = levels.find((l) => l.productId === p.productId);
 		const here = level?.here ?? 0;
@@ -205,9 +245,9 @@ async function takeParts(tx: Db, repairId: number) {
 		if (free < p.quantity)
 			throw new RepairError(`${p.sku} is promised to orders`);
 		cost =
-			cost === null || product?.cost == null
+			cost === null || product.unitCost == null
 				? null
-				: cost + product.cost * p.quantity;
+				: cost + product.unitCost * p.quantity;
 	}
 	const { batchId } = await postMovements(tx, {
 		lines: parts.map((p) => ({
@@ -240,11 +280,23 @@ export async function listBench(db: Db, id: number, as: ListAs) {
 		const original = await originalProduct(tx, r.productId);
 		const [line] = r.returnLineId
 			? await tx
-					.select({ orderId: orderLines.orderId, cost: orderLines.unitCost })
+					.select({
+						orderId: orderLines.orderId,
+						lineId: orderLines.id,
+						productId: orderLines.productId,
+						saleBatchId: orderLines.saleBatchId,
+						cost: orderLines.unitCost,
+					})
 					.from(orderLines)
 					.where(eq(orderLines.id, r.returnLineId))
 			: [null];
-		const parts = await takeParts(tx, id);
+		const locked = await lockListing(
+			tx,
+			{ id, productId: r.productId },
+			line,
+			as.kind === "add" ? as.productId : null,
+		);
+		const parts = await takeParts(tx, id, locked);
 		const base = (line ? line.cost : null) ?? original.product.unitCost;
 		const unitCost =
 			base === null || parts.cost === null ? null : round4(base + parts.cost);
@@ -304,16 +356,8 @@ export async function listBench(db: Db, id: number, as: ListAs) {
 				shopifyUrl: made.shopifyUrl,
 			};
 		}
-		const [into] = await tx
-			.select({
-				sku: products.sku,
-				from: products.refurbishedFromId,
-				archivedAt: products.archivedAt,
-			})
-			.from(products)
-			.where(eq(products.id, as.productId))
-			.for("share");
-		if (!into || into.from !== r.productId)
+		const into = locked.find((p) => p.id === as.productId);
+		if (!into || into.refurbishedFromId !== r.productId)
 			throw new RepairError(
 				`That refurb isn't made from ${original.product.sku}`,
 			);
