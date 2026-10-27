@@ -3389,6 +3389,10 @@ export const buyerMessages = pgTable(
 		// The Message-ID an Amazon reply answers, fixed when it's written so
 		// every try sends the same email under its request key.
 		inReplyTo: text(),
+		// The address a Shopify reply goes to, fixed when it's written so
+		// every try sends it to the same buyer, whatever the order says later.
+		// Null on one kept before it was: never sent again, only checked.
+		recipient: text(),
 		// Amazon's notice that it didn't pass this reply on; each notice
 		// fails one reply at most.
 		refusedBy: integer().references(() => marketEmails.id),
