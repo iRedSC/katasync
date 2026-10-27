@@ -58,7 +58,9 @@ const passes: Record<
 export const isSyncedChannel = (name: string): name is SyncedChannel =>
 	Object.hasOwn(passes, name);
 
-export async function syncPass(
+// Unlocked: callers outside this file go through syncPassAlone or
+// watchedPass, so two passes of a channel never import the same orders at once.
+async function syncPass(
 	db: Db,
 	channel: SyncedChannel,
 	options: { listings: boolean },
