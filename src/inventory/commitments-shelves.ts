@@ -59,9 +59,13 @@ export function allocate(
 	});
 }
 
-export async function shippingShelves(db: Db): Promise<Shelves> {
+// The shelves a shipped order takes stock from: the warehouse, then the
+// retail store above what it keeps. Online stock offers exactly these.
+export async function shipsFrom(
+	db: Db,
+): Promise<Shelves | { problem: string }> {
 	const shelf = saleLocation(await stockLocations(db), { soldInStore: false });
-	if ("problem" in shelf) throw new ConsumeError(shelf.problem);
+	if ("problem" in shelf) return shelf;
 	return {
 		main: shelf.locationId,
 		overflow:
@@ -69,6 +73,12 @@ export async function shippingShelves(db: Db): Promise<Shelves> {
 				? shelf.overflow
 				: null,
 	};
+}
+
+export async function shippingShelves(db: Db): Promise<Shelves> {
+	const shelves = await shipsFrom(db);
+	if ("problem" in shelves) throw new ConsumeError(shelves.problem);
+	return shelves;
 }
 
 export async function lockedHolds(
