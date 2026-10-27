@@ -20,6 +20,8 @@ import { TiktokError, tiktokApi, tiktokUpload } from "#/channels/tiktok";
 import type { Db } from "#/db/client";
 import { buyerMessageChecks, orders, stores } from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { draftFits } from "./chat-way";
+import { setDraft } from "./drafts";
 import { buyerOrder } from "./order";
 import { addReplyFile } from "./reply-files";
 import { reply, settleReplies } from "./send";
@@ -187,6 +189,22 @@ describe("TikTok messages", () => {
 		const [thread] = await threadsPage(db, "open", null);
 		expect(thread).toMatchObject({ orderRef: "5770001", orderName: "#1001" });
 		expect((await buyerOrder(db, thread?.id ?? 0))?.name).toBe("#1001");
+	});
+
+	test("a card about another order moves the thread, and its suggestion stays with the first", async () => {
+		await syncTiktokMessages(db);
+		const [first] = await threadsPage(db, "open", null);
+		await setDraft(db, first?.id ?? 0, { body: "It shipped" }, "staff");
+		conversations.c1?.push(
+			card("o2", "ORDER_CARD", { order_id: "5770002" }, -2),
+			text("b2", "BUYER", "And this one?", -1),
+		);
+		await syncTiktokMessages(db);
+		const [t] = await threadsPage(db, "open", null);
+		expect(t?.orderRef).toBe("5770002");
+		// Written about the first order: not offered for the new one.
+		expect(t?.draft?.forOrder).toBe("5770001");
+		expect(draftFits(t?.draft ?? { forOrder: null }, "5770002")).toBe(false);
 	});
 
 	test("a chat with an order card never asks TikTok for the buyer's orders", async () => {

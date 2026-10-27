@@ -91,6 +91,32 @@ export async function ensureThread(db: Db, t: ThreadKey) {
 	return filled ?? found;
 }
 
+// The thread is about another order now: a later card in its conversation
+// names it. A suggestion kept for the thread's own order stays with the one
+// it was written about, so it's drafted again for the new one; one written
+// about the new one is the thread's own now.
+export async function moveThreadOrder(db: Db, threadId: number, to: string) {
+	await db.transaction(async (tx) => {
+		const [t] = await tx
+			.select({ orderRef: buyerThreads.orderRef })
+			.from(buyerThreads)
+			.where(eq(buyerThreads.id, threadId))
+			.for("update");
+		if (!t || t.orderRef === to) return;
+		if (t.orderRef !== null)
+			await tx
+				.update(replyDrafts)
+				.set({
+					orderRef: sql`case when ${replyDrafts.orderRef} is null then ${t.orderRef}::text when ${replyDrafts.orderRef} = ${to} then null else ${replyDrafts.orderRef} end`,
+				})
+				.where(eq(replyDrafts.threadId, threadId));
+		await tx
+			.update(buyerThreads)
+			.set({ orderRef: to })
+			.where(eq(buyerThreads.id, threadId));
+	});
+}
+
 // A buyer's message; false when it was already kept. A new one opens a
 // thread someone was done with.
 export async function recordFromBuyer(
