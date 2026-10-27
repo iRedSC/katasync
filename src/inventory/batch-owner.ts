@@ -62,11 +62,7 @@ export async function batchOwner(
 	batchId: string,
 ): Promise<BatchOwner | null> {
 	// An undo's batch carries the batch it undid as its reference.
-	const { rows } = await db.execute<{
-		kind: BatchOwner["kind"];
-		id: number;
-		name: string | null;
-	}>(sql`
+	const { rows } = (await db.execute(sql`
 		with candidates as (
 			select ${batchId}::uuid as batch_id, 0 as depth
 			union all
@@ -79,18 +75,24 @@ export async function batchOwner(
 		from candidates undone
 		cross join lateral (${owners(sql`undone.batch_id`)}) o
 		order by undone.depth
-		limit 1`);
+		limit 1`)) as unknown as {
+		rows: { kind: BatchOwner["kind"]; id: number; name: string | null }[];
+	};
 	const row = rows[0];
 	if (!row) return null;
 	switch (row.kind) {
 		case "purchaseOrder":
 		case "transfer":
 		case "repair":
-			return { kind: row.kind, id: row.id };
+			return { kind: row.kind, id: Number(row.id) };
 		case "fulfillment":
 		case "return":
 		case "sale":
-			return { kind: row.kind, orderId: row.id, orderName: row.name ?? "" };
+			return {
+				kind: row.kind,
+				orderId: Number(row.id),
+				orderName: row.name ?? "",
+			};
 	}
 }
 
