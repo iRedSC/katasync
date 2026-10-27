@@ -10,7 +10,7 @@ import {
 	setPoFileRemoved,
 } from "#/purchasing/files";
 import { PurchaseOrderError } from "#/purchasing/orders";
-import { describeFile, fileContent } from "./email-files";
+import { describeFile, fileContent, untrustedJson } from "./email-files";
 import { json, READ, WRITE } from "./tool-shapes";
 
 // Files put on a PO itself (get_purchase_order lists them as files); its
@@ -33,7 +33,7 @@ export function registerFileReadTools(server: McpServer, db: Db) {
 				throw new PurchaseOrderError(`There's no PO file ${id}`);
 			return {
 				content: [
-					...json(
+					...untrustedJson(
 						describeFile(file, {
 							id: file.id,
 							po: file.purchaseOrderId,

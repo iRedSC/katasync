@@ -62,10 +62,16 @@ export async function callTool(
 		name,
 		arguments: args,
 	});
+	const text: string = result.content[0].text;
+	// An email tool's answer comes inside untrusted-content tags
+	// (src/mcp/server/email-files.ts).
+	const inner = /^<(untrusted-content-[0-9a-f]{16})>\n([\s\S]*)\n<\/\1>$/.exec(
+		text,
+	)?.[2];
+	const body = inner ?? text;
 	return {
 		isError: Boolean(result.isError),
-		data: result.isError
-			? result.content[0].text
-			: JSON.parse(result.content[0].text),
+		untrusted: inner !== undefined,
+		data: result.isError ? body : JSON.parse(body),
 	};
 }
