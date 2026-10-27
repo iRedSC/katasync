@@ -1566,18 +1566,24 @@ export const purchaseUnits = pgTable("purchase_units", {
 
 // A line of products sold together, e.g. "Columbia". A product is in one
 // catalog at most; suppliers carry whole catalogs (supplierCatalogs).
-export const catalogs = pgTable("catalogs", {
-	id: integer().primaryKey().generatedAlwaysAsIdentity(),
-	name: text().notNull().unique(),
-	// What's in it, in words a search would use, e.g. "Taping tools, banjos".
-	description: text(),
-	// Shown beside its name wherever it's picked or listed. Old photos stay,
-	// so swapping or removing one can be undone.
-	photoId: integer().references(() => catalogPhotos.id, {
-		onDelete: "set null",
-	}),
-	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+// Names are one catalog whatever their case, so "Blades" and "blades" can't
+// both be made, however close together.
+export const catalogs = pgTable(
+	"catalogs",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		name: text().notNull(),
+		// What's in it, in words a search would use, e.g. "Taping tools, banjos".
+		description: text(),
+		// Shown beside its name wherever it's picked or listed. Old photos stay,
+		// so swapping or removing one can be undone.
+		photoId: integer().references(() => catalogPhotos.id, {
+			onDelete: "set null",
+		}),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex("catalogs_name_lower").on(sql`lower(${t.name})`)],
+);
 
 // Catalog photos, as uploaded and shrunk: JPEG, PNG, or WebP, checked by
 // their bytes. Never change, so browsers keep them.
