@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Filing } from "#/ai/agents";
-import type { Agent, runAgent } from "#/ai/harness";
+import { type Agent, OutOfTimeError, type runAgent } from "#/ai/harness";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import {
@@ -322,6 +322,147 @@ describe("the AI filing emails", () => {
 		expect(await ai()).toMatchObject({ state: "undone", duplicateOf: first });
 		expect(await fileWithAi(db, { run })).toMatchObject({ set_aside: 0 });
 		await expect(undoSetAside(db, email)).rejects.toThrow(/nothing set aside/);
+	});
+
+	// Ages this run's claim past stale, so another run may take it over.
+	const goStale = () =>
+		db
+			.update(schema.poEmailAi)
+			.set({ updatedAt: new Date(Date.now() - 6 * 60_000) })
+			.where(eq(schema.poEmailAi.emailId, email));
+
+	test("a run whose claim another took over writes nothing", async () => {
+		const run = vi.fn(async () => {
+			await goStale();
+			expect(
+				await fileWithAi(db, { run: agent({ po, sure: false }).run }),
+			).toMatchObject({ suggested: 1 });
+			return { po, sure: true, reason: "x", tracking: [] };
+		}) as unknown as typeof runAgent;
+		expect(await fileWithAi(db, { run })).toMatchObject({
+			filed: 0,
+			problems: [`Email ${email}: Another run took it over`],
+		});
+		expect((await theEmail()).purchaseOrderId).toBeNull();
+		expect(await ai()).toMatchObject({
+			state: "suggested",
+			purchaseOrderId: po,
+		});
+	});
+
+	test("a run out of time leaves the claim another took over", async () => {
+		let release = () => {};
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		let started = () => {};
+		const second = new Promise<void>((r) => {
+			started = r;
+		});
+		const later = vi.fn(async () => {
+			started();
+			await gate;
+			return { po, sure: false, reason: "x", tracking: [] };
+		}) as unknown as typeof runAgent;
+		let taken: ReturnType<typeof fileWithAi> | undefined;
+		const run = vi.fn(async () => {
+			await goStale();
+			taken = fileWithAi(db, { run: later });
+			await second;
+			throw new OutOfTimeError("Out of time");
+		}) as unknown as typeof runAgent;
+		await fileWithAi(db, { run });
+		expect((await ai()).state).toBe("working");
+		release();
+		expect(await taken).toMatchObject({ suggested: 1 });
+		expect((await ai()).state).toBe("suggested");
+	});
+
+	test("a crash while filing leaves nothing half done, and it's tried again", async () => {
+		// The AI's record fails to save as filed, once, after the email,
+		// tracking, and flags are in.
+		let crashed = false;
+		const crashOnce = (target: Db) => {
+			const update = target.update.bind(target);
+			vi.spyOn(target, "update").mockImplementation(((table: never) => {
+				const builder = update(table);
+				if (table !== schema.poEmailAi) return builder;
+				const set = builder.set.bind(builder);
+				builder.set = ((values: { state?: string }) => {
+					if (values.state === "filed" && !crashed) {
+						crashed = true;
+						throw new Error("Crashed");
+					}
+					return set(values as never);
+				}) as never;
+				return builder;
+			}) as never);
+		};
+		crashOnce(db);
+		const transaction = db.transaction.bind(db);
+		vi.spyOn(db, "transaction").mockImplementation(((
+			fn: (tx: Db) => Promise<unknown>,
+		) =>
+			transaction(async (tx) => {
+				crashOnce(tx as unknown as Db);
+				return fn(tx as unknown as Db);
+			})) as never);
+		const { run } = agent(
+			{ po, tracking: [{ number: "1Z999AA10123456784" }] },
+			[{ po, kind: "back_order", sku: "KNIFE", note: "Knives back-ordered" }],
+		);
+		expect(await fileWithAi(db, { run })).toMatchObject({
+			filed: 0,
+			problems: [`Email ${email}: Crashed`],
+		});
+		expect((await theEmail()).purchaseOrderId).toBeNull();
+		expect(await flags()).toEqual([]);
+		expect(await db.select().from(schema.purchaseOrderTracking)).toEqual([]);
+		expect((await ai()).state).toBe("failed");
+		// Once the retry wait is over, it's filed whole.
+		await db
+			.update(schema.poEmailAi)
+			.set({ updatedAt: new Date(Date.now() - 31 * 60_000) })
+			.where(eq(schema.poEmailAi.emailId, email));
+		expect(await fileWithAi(db, { run })).toMatchObject({ filed: 1 });
+		expect(await theEmail()).toMatchObject({ purchaseOrderId: po });
+		expect(await flags()).toMatchObject([{ kind: "back_order" }]);
+	});
+
+	test("an email staff move while Shippo answers takes its tracking and flags with it", async () => {
+		const [{ id: other }] = await db
+			.insert(schema.purchaseOrders)
+			.values({ ...seeded, status: "sent", sentAt: new Date() })
+			.returning();
+		vi.stubEnv("SHIPPO_API_KEY", "test");
+		let moved = false;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => {
+				if (!moved) {
+					moved = true;
+					await fileEmail(db, {
+						emailId: email,
+						purchaseOrderId: other,
+						by: "staff",
+					});
+				}
+				return Response.json({ tracking_status: { status: "TRANSIT" } });
+			}),
+		);
+		const { run } = agent(
+			{ po, tracking: [{ number: "1Z999AA10123456784" }] },
+			[{ po, kind: "back_order", sku: "KNIFE", note: "Knives back-ordered" }],
+		);
+		await fileWithAi(db, { run });
+		vi.unstubAllGlobals();
+		expect((await theEmail()).purchaseOrderId).toBe(other);
+		expect(await flags()).toEqual([]);
+		expect(
+			(await db.select().from(schema.purchaseOrderTracking)).map(
+				(t) => t.purchaseOrderId,
+			),
+		).toEqual([other]);
 	});
 
 	test("files it as usual when the copy it names isn't an earlier email", async () => {

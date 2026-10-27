@@ -2125,6 +2125,9 @@ export const poEmailAi = pgTable(
 			onDelete: "cascade",
 		}),
 		error: text(),
+		// The run holding it, new each time one takes it: a run whose claim
+		// another took over (it ran past CLAIM_STALE_MS) can't write over it.
+		claim: uuid(),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
