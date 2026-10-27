@@ -20,6 +20,10 @@ export function createIntent<Payload>() {
 				listeners.delete(listener);
 			};
 		},
+		// Lets go of a retry the person no longer wants; a send in flight stays.
+		discard: () => {
+			if (state.kind === "retry") change({ kind: "idle" });
+		},
 		async run<Result>(
 			capture: () => Payload,
 			send: (payload: Payload) => Promise<Result | null>,
@@ -47,5 +51,10 @@ export function useIntent<Payload>() {
 		intent.getSnapshot,
 		intent.getSnapshot,
 	);
-	return { state, run: intent.run, getSnapshot: intent.getSnapshot };
+	return {
+		state,
+		run: intent.run,
+		discard: intent.discard,
+		getSnapshot: intent.getSnapshot,
+	};
 }

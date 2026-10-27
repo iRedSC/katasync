@@ -3,6 +3,7 @@ import { Card } from "#/components/page";
 import { ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatDateTime } from "#/lib/format";
+import { useIntent } from "#/lib/intent";
 import type { Result } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
 import type { getTransfer } from "#/server/transfers";
@@ -12,6 +13,11 @@ type Delivery = Extract<
 	Loaded["delivery"],
 	{ kind: "in_transit" | "received" }
 >;
+
+type Receipt = {
+	receiptKey: string;
+	counts: { productId: number; quantity: number }[];
+};
 
 export function Arrivals({
 	delivery,
@@ -23,14 +29,20 @@ export function Arrivals({
 	delivery: Delivery;
 	lines: Loaded["lines"];
 	to: string;
-	onReceive: (
-		counts: { productId: number; quantity: number }[],
-	) => Promise<Result<unknown>>;
+	onReceive: (receipt: Receipt) => Promise<Result<unknown>>;
 	onUndo: (receiptId: number) => Promise<Result<unknown>>;
 }) {
 	const open = delivery.lines.filter((l) => l.inTransit > 0);
 	const [counts, setCounts] = useState<Record<number, string>>({});
+	// One receipt at a time. Once sent it keeps its key and counts until the
+	// server confirms, so a click after an unclear answer can't count the same
+	// box twice.
+	const intent = useIntent<Receipt>();
+	const sending = intent.state.kind === "pending";
+	const retrying = intent.state.kind === "retry" ? intent.state.payload : null;
 	const countOf = (productId: number, inTransit: number) => {
+		const held = retrying?.counts.find((c) => c.productId === productId);
+		if (retrying) return held?.quantity ?? 0;
 		const text = counts[productId];
 		const n = text === undefined ? inTransit : Number(text);
 		return Number.isInteger(n) && n >= 0 && n <= inTransit ? n : null;
@@ -73,7 +85,12 @@ export function Arrivals({
 											<input
 												inputMode="numeric"
 												aria-label={`${p?.sku ?? l.productId} arrived`}
-												value={counts[l.productId] ?? String(l.inTransit)}
+												value={
+													retrying
+														? String(countOf(l.productId, l.inTransit))
+														: (counts[l.productId] ?? String(l.inTransit))
+												}
+												disabled={sending || retrying !== null}
 												onChange={(e) =>
 													setCounts({
 														...counts,
@@ -82,6 +99,7 @@ export function Arrivals({
 												}
 												className={cn(
 													"w-full rounded-lg bg-surface px-2 py-1 text-right tabular-nums outline-none",
+													"disabled:opacity-60",
 													bad && "ring-2 ring-critical",
 												)}
 											/>
@@ -91,21 +109,37 @@ export function Arrivals({
 							})}
 						</tbody>
 					</table>
-					<div className="flex justify-end border-t px-4 py-3">
+					<div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+						{retrying && !sending && (
+							<>
+								<span className="text-sm text-critical-text">
+									Not confirmed. Retry to be sure.
+								</span>
+								<Button variant="outline" onClick={() => intent.discard()}>
+									Change counts
+								</Button>
+							</>
+						)}
 						<Button
-							disabled={!valid || total === 0}
+							disabled={!valid || total === 0 || sending}
 							onClick={async () => {
-								const r = await onReceive(
-									parsed.flatMap((p) =>
-										p.quantity
-											? [{ productId: p.productId, quantity: p.quantity }]
-											: [],
-									),
+								const r = await intent.run(
+									() => ({
+										receiptKey: crypto.randomUUID(),
+										counts: parsed.flatMap((p) =>
+											p.quantity
+												? [{ productId: p.productId, quantity: p.quantity }]
+												: [],
+										),
+									}),
+									onReceive,
 								);
 								if (r) setCounts({});
 							}}
 						>
-							Receive {formatCount(total)} at {to}
+							{sending
+								? "Receiving…"
+								: `${retrying ? "Retry: receive" : "Receive"} ${formatCount(total)} at ${to}`}
 						</Button>
 					</div>
 				</>

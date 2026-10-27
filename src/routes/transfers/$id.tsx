@@ -78,8 +78,14 @@ function TransferPage() {
 		});
 	}
 
-	async function receive(counts: { productId: number; quantity: number }[]) {
-		const receiptKey = crypto.randomUUID();
+	// The key names this one delivery, so sending it again records nothing new.
+	async function receive({
+		receiptKey,
+		counts,
+	}: {
+		receiptKey: string;
+		counts: { productId: number; quantity: number }[];
+	}) {
 		const r = await change(() =>
 			receiveTransferNow({ data: { id: t.id, receiptKey, lines: counts } }),
 		);

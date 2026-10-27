@@ -65,3 +65,25 @@ test("a thrown transport error retains the intent for retry", async () => {
 		),
 	).toBe("original");
 });
+
+test("a discarded retry lets the next run capture afresh; a pending send stays", async () => {
+	const intent = createIntent<string>();
+	await intent.run(
+		() => "original",
+		async () => null,
+	);
+	intent.discard();
+	expect(intent.getSnapshot().kind).toBe("idle");
+	let finish: ((value: string) => void) | undefined;
+	const first = intent.run(
+		() => "edited",
+		() =>
+			new Promise<string>((resolve) => {
+				finish = resolve;
+			}),
+	);
+	intent.discard();
+	expect(intent.getSnapshot().kind).toBe("pending");
+	finish?.("saved");
+	await first;
+});
