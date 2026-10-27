@@ -13,6 +13,7 @@ import {
 	transferLines,
 	transfers,
 } from "#/db/schema";
+import { lockRecipes } from "#/inventory/ledger/post";
 import { setRecipe } from "#/inventory/recipes";
 import { ProductError } from "./details";
 
@@ -27,7 +28,9 @@ import { ProductError } from "./details";
 // kits hold no kits, so a part can't become either one its parents refuse.
 // Any kind change waits for open POs and draft transfers holding it, which
 // were made for the old kind. The product row stays locked throughout; stock
-// and recipe writes lock it too, so none can slip in after the checks.
+// and recipe writes lock it too, so none can slip in after the checks. It's
+// locked with its old and new parts, lowest id first, as every other recipe
+// and stock write locks them, so a part with a lower id can't deadlock it.
 
 export type Part = { productId: number; quantity: number };
 
@@ -43,11 +46,19 @@ export async function setProductKind(
 	change: KindChange,
 ) {
 	return db.transaction(async (tx) => {
-		const [product] = await tx
-			.select({ id: products.id, sku: products.sku, kind: products.kind })
+		const [known] = await tx
+			.select({ id: products.id })
 			.from(products)
-			.where(eq(products.id, productId))
-			.for("update");
+			.where(eq(products.id, productId));
+		if (!known) throw new ProductError(`Unknown product ${productId}`);
+		const { products: locked } = await lockRecipes(
+			tx,
+			[productId],
+			change.kind === "simple"
+				? []
+				: change.components.map((part) => part.productId),
+		);
+		const product = locked.find((row) => row.id === productId);
 		if (!product) throw new ProductError(`Unknown product ${productId}`);
 
 		if (product.kind !== change.kind) {
