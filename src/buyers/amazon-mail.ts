@@ -7,6 +7,7 @@ import {
 	marketEmailAttachments,
 	marketEmails,
 } from "#/db/schema";
+import { isAmazonAddress } from "#/inbox/sender-domains";
 import { sendWithResend } from "./resend";
 import { Refused, settleReply } from "./states";
 import { ensureThread, isLogged, recordFromBuyer, recordOurs } from "./threads";
@@ -18,7 +19,9 @@ import { ensureThread, isLogged, recordFromBuyer, recordOurs } from "./threads";
 // (src/inbox/market-mail.ts) is what brings them in, and Resend sends ours.
 // Anyone can write an Amazon From, so only mail Microsoft vouched came from
 // Amazon (market_emails.sender_authenticated) is filed; the rest stays in
-// the mailbox, marked unverified.
+// the mailbox, marked unverified. Microsoft vouches only that the sender
+// owns the From's domain, so Amazon's copies and notices must come from
+// one of Amazon's own domains too, whatever market was stored for them.
 
 const RELAY = /@marketplace\.amazon\.com$/i;
 const ORDER = /\b\d{3}-\d{7}-\d{7}\b/;
@@ -163,6 +166,7 @@ export async function threadAmazonCopies(db: Db) {
 		.select({
 			id: marketEmails.id,
 			messageId: marketEmails.messageId,
+			fromAddress: marketEmails.fromAddress,
 			subject: marketEmails.subject,
 			body: marketEmails.body,
 			receivedAt: marketEmails.receivedAt,
@@ -185,7 +189,7 @@ export async function threadAmazonCopies(db: Db) {
 	);
 	let filed = 0;
 	for (const e of pending) {
-		const copy = parseCopy(e);
+		const copy = isAmazonAddress(e.fromAddress) ? parseCopy(e) : null;
 		if (!copy) continue;
 		const threads = await db
 			.select({ id: buyerThreads.id })
@@ -275,6 +279,7 @@ export async function applyAmazonRefusals(db: Db) {
 	const notices = await db
 		.select({
 			id: marketEmails.id,
+			fromAddress: marketEmails.fromAddress,
 			subject: marketEmails.subject,
 			body: marketEmails.body,
 			receivedAt: marketEmails.receivedAt,
@@ -299,6 +304,7 @@ export async function applyAmazonRefusals(db: Db) {
 		.where(eq(buyerThreads.market, "amazon"));
 	let failed = 0;
 	for (const n of notices) {
+		if (!isAmazonAddress(n.fromAddress)) continue;
 		// About a message, not a package Amazon couldn't deliver.
 		if (!REFUSAL.test(n.subject) || !/message|e-?mail/i.test(n.subject))
 			continue;

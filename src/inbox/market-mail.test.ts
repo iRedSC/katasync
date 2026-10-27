@@ -24,9 +24,27 @@ describe("by sender", () => {
 		expect(marketOf("ebay@ebay.com")).toBe("ebay");
 		expect(marketOf("noreply@seller-us.tiktokshop.com")).toBe("tiktok");
 		expect(marketOf("mailer@shopify.com")).toBe("shopify");
+		expect(marketOf(" x@Amazon.CA ")).toBe("amazon");
 		// Lookalikes aren't the marketplace.
 		expect(marketOf("deals@notamazon.com")).toBeNull();
 		expect(marketOf("someone@gmail.com")).toBeNull();
+	});
+
+	test("a domain that only starts with a marketplace's is whoever owns it", () => {
+		for (const from of [
+			"donotreply@amazon.attacker.com",
+			"donotreply@amazon.com.attacker.com",
+			"x@marketplace.amazon.com.evil.test",
+			"ebay@ebay.attacker.com",
+			"ebay@ebay.com.attacker.com",
+			"tt@tiktokshop.attacker.com",
+			"tt@tiktok.com.attacker.com",
+			"mailer@shopify.attacker.com",
+			"mailer@shopify.com.attacker.com",
+			"amazon.com",
+			"x@",
+		])
+			expect(marketOf(from), from).toBeNull();
 	});
 });
 
@@ -95,17 +113,22 @@ const read = async () => ({
 		},
 	],
 });
+const unsigned = async () => [];
 
 describe("the mailbox", () => {
 	test("reads each email in once, sorted, with its files", async () => {
 		const warning = message("Policy warning on your listing");
 		const sold = message("Sold, ship now", "ebay@ebay.com");
-		expect(await ingestMarketMail(db, [warning, sold], read)).toEqual({
-			read: 2,
-			problems: [],
-		});
+		expect(await ingestMarketMail(db, [warning, sold], read, unsigned)).toEqual(
+			{
+				read: 2,
+				problems: [],
+			},
+		);
 		// The next run sees them again and keeps nothing twice.
-		expect((await ingestMarketMail(db, [warning], read)).read).toBe(0);
+		expect((await ingestMarketMail(db, [warning], read, unsigned)).read).toBe(
+			0,
+		);
 
 		const page = await marketMailPage(db, "important", null);
 		// The sale arrives read (the default orders rule), so isn't counted.
@@ -150,6 +173,7 @@ describe("the mailbox", () => {
 				message("Dispute opened", "tt@tiktokshop.com"),
 			],
 			read,
+			unsigned,
 		);
 		const [amazon, tiktok] = (
 			await marketMailPage(db, "important", null)
@@ -258,6 +282,7 @@ describe("by hand", () => {
 				message("Refund Initiated for Order 2"),
 			],
 			read,
+			unsigned,
 		);
 		const [first, second] = (await db.select().from(marketEmails)).sort(
 			(a, b) => a.id - b.id,

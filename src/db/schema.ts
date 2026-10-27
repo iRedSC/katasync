@@ -3157,8 +3157,11 @@ export const marketEmails = pgTable(
 		fromAddress: text().notNull(),
 		// Microsoft vouched the sender owns fromAddress's domain (its
 		// Authentication-Results: compauth or aligned DMARC passed). Only
-		// asked of mail from no marketplace; false when not known.
+		// asked of mail from no marketplace or Amazon; false when not known.
 		senderAuthenticated: boolean().notNull().default(false),
+		// When its headers were read for senderAuthenticated. Null is never
+		// asked, which a sweep goes back for (src/inbox/market-mail/senders.ts).
+		senderCheckedAt: timestamp({ withTimezone: true }),
 		fromName: text(),
 		// Every To and Cc address, lowercased.
 		recipients: text().array().notNull(),

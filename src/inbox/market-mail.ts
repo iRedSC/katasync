@@ -6,13 +6,14 @@ import {
 	marketEmailAttachments,
 	marketEmails,
 } from "#/db/schema";
-import type { Market } from "#/markets/market";
 import type { InboxMessage } from "#/purchasing/inbox/graph";
 import type { ReadContent } from "#/purchasing/inbox/ingest";
 import { backfillMarketHtml, keepHtml, readHtml } from "./market-mail/content";
+import { checksSender, recheckSenders } from "./market-mail/senders";
 import { listRules, locked, lockRules, resort } from "./rule-store";
 import { type Folder, flagsOf, type Level, sortEmail } from "./rules";
 import { type Header, senderAuthenticated } from "./sender-auth";
+import { marketOf } from "./sender-domains";
 import { isVoicemail } from "./voicemail-model";
 
 export {
@@ -22,24 +23,12 @@ export {
 	readHtml,
 } from "./market-mail/content";
 export * from "./market-mail/page";
+export { marketOf } from "./sender-domains";
 
 // The marketplaces mailbox in katasync: each notice read in from Microsoft
 // 365, sorted by marketplace and by the rules into a folder, some marked
 // important, and worked through like a mail app (done, moved, marked).
 // Server only. The Inbox's page of it is ./market-mail/page.ts.
-
-// Which marketplace an address belongs to, by its domain.
-const SENDERS: [RegExp, Market][] = [
-	[/(^|[.@])amazon\.[a-z.]+$/, "amazon"],
-	[/(^|[.@])ebay\.[a-z.]+$/, "ebay"],
-	[/(^|[.@])(tiktok|tiktokshop|tiktokglobalshop)\.[a-z.]+$/, "tiktok"],
-	[/(^|[.@])shopify\.[a-z.]+$/, "shopify"],
-];
-
-export function marketOf(fromAddress: string): Market | null {
-	const address = fromAddress.trim().toLowerCase();
-	return SENDERS.find(([pattern]) => pattern.test(address))?.[1] ?? null;
-}
 
 // Shopify's new-order email to staff, which it sends as the mailbox itself
 // ("[East Coast Drywall Tools] Order #5754 placed by ..."), so it would read
@@ -66,14 +55,14 @@ export function marketOfEmail(m: { fromAddress: string; subject: string }) {
 
 // Reads new emails in: skips ones already kept, keeps each with its files,
 // sorted. One that fails to read is reported and left for the next run.
-// Mail from no marketplace (a buyer answering) or from Amazon (its buyer
-// relay, its copies and notices) has its headers read too, for whether its
-// sender is who it says: those become buyer threads.
+// Mail whose sender is asked about (./market-mail/senders.ts) has its
+// headers read too, for whether its sender is who it says: those become
+// buyer threads. There's no reading without them, so it can't be skipped.
 export async function ingestMarketMail(
 	db: Db,
 	messages: InboxMessage[],
 	read: ReadContent,
-	readHeaders: (graphId: string) => Promise<Header[]> = async () => [],
+	readHeaders: (graphId: string) => Promise<Header[]>,
 ) {
 	if (messages.length === 0) return { read: 0, problems: [] as string[] };
 	const kept = await db
@@ -95,8 +84,9 @@ export async function ingestMarketMail(
 			const content = await read(m.graphId);
 			const voicemail = isVoicemail({ ...m, body: content.body });
 			const market = marketOfEmail(m);
+			const checked = checksSender(market);
 			const authenticated =
-				(market === null || market === "amazon") &&
+				checked &&
 				senderAuthenticated(await readHeaders(m.graphId), m.fromAddress);
 			// The rules close Amazon's relayed buyer messages on arrival, since
 			// they're answered in Buyers. One that can't be filed there stays
@@ -119,6 +109,7 @@ export async function ingestMarketMail(
 						folder: sorted.folder,
 						...flagsOf(sorted.level),
 						senderAuthenticated: authenticated,
+						senderCheckedAt: checked ? new Date() : null,
 						readAt: sorted.read && !heldBack ? new Date() : null,
 						doneAt: sorted.done && !heldBack ? new Date() : null,
 						fromAddress: m.fromAddress,
@@ -378,9 +369,19 @@ export async function readMarketMail(options: {
 	}
 	if (messages.length === 0 && !options.sweep) return { quiet: true };
 	const db = options.db();
-	const result = await ingestMarketMail(db, messages, (id) =>
-		graph.messageContent(id, "marketplaces"),
+	const result = await ingestMarketMail(
+		db,
+		messages,
+		(id) => graph.messageContent(id, "marketplaces"),
+		(id) => graph.messageHeaders(id, "marketplaces"),
 	);
+	// Kept without their sender asked: asked now, before threading.
+	const rechecked = options.sweep
+		? await recheckSenders(db, async (messageId) => {
+				const id = await graph.findMessage(messageId, "marketplaces");
+				return id ? graph.messageHeaders(id, "marketplaces") : null;
+			})
+		: null;
 	// Buyers' messages among them go to their threads now; the messages cron
 	// does it too, and says when it can't.
 	const threaded = await import("#/buyers/amazon-mail")
@@ -400,6 +401,7 @@ export async function readMarketMail(options: {
 	return {
 		...result,
 		threaded,
+		rechecked,
 		resorted,
 		formatted,
 		...(outcome.state === "complete" ? {} : { error: outcome.error }),
