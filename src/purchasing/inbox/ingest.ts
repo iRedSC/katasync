@@ -309,73 +309,8 @@ async function lockedEmail(tx: Db, id: number) {
 // only if the email is still where the caller last saw it (null: waiting to
 // be filed), checked under the email's lock, so the AI can't take an email
 // staff filed or set aside a moment before.
-export async function fileEmail(
-	db: Db,
-	input: {
-		emailId: number;
-		purchaseOrderId: number | null;
-		by: "staff" | "claude" | "ai";
-		onlyFrom?: number | null;
-	},
-) {
-	if (input.purchaseOrderId !== null) {
-		const [po] = await db
-			.select({ status: purchaseOrders.status })
-			.from(purchaseOrders)
-			.where(eq(purchaseOrders.id, input.purchaseOrderId));
-		if (!po)
-			throw new PurchaseOrderError(`There's no PO ${input.purchaseOrderId}`);
-		if (!(ON_ORDER as readonly string[]).includes(po.status))
-			throw new PurchaseOrderError(
-				`PO ${input.purchaseOrderId} hasn't been sent, so no email is about it yet`,
-			);
-	}
-	const email = await db.transaction(async (tx) => {
-		const before = await lockedEmail(tx, input.emailId);
-		if (
-			input.onlyFrom !== undefined &&
-			(before.purchaseOrderId !== input.onlyFrom ||
-				(input.onlyFrom === null && before.setAsideAt !== null))
-		)
-			throw new EmailMovedError(
-				before.purchaseOrderId === null
-					? "Someone set it aside first"
-					: `Someone put it on PO ${before.purchaseOrderId} first`,
-			);
-		await tx
-			.update(poEmails)
-			.set({
-				purchaseOrderId: input.purchaseOrderId,
-				matchedBy: input.purchaseOrderId === null ? null : input.by,
-				setAsideAt: null,
-			})
-			.where(eq(poEmails.id, input.emailId));
-		// Its packages go with it: the old PO stops following them. So do the
-		// flags read from it that nobody acted on.
-		if (
-			before.purchaseOrderId !== null &&
-			before.purchaseOrderId !== input.purchaseOrderId
-		) {
-			await tx
-				.delete(purchaseOrderTracking)
-				.where(
-					and(
-						eq(purchaseOrderTracking.emailId, before.id),
-						eq(purchaseOrderTracking.purchaseOrderId, before.purchaseOrderId),
-					),
-				);
-			await tx
-				.delete(poFlags)
-				.where(
-					and(
-						eq(poFlags.emailId, before.id),
-						eq(poFlags.purchaseOrderId, before.purchaseOrderId),
-						isNull(poFlags.resolvedAt),
-					),
-				);
-		}
-		return before;
-	});
+export async function fileEmail(db: Db, input: Move) {
+	const email = await db.transaction((tx) => moveEmail(tx, input));
 	const problems =
 		input.purchaseOrderId === null
 			? []
@@ -386,6 +321,77 @@ export async function fileEmail(
 		purchaseOrderId: input.purchaseOrderId,
 		problems,
 	};
+}
+
+type Move = {
+	emailId: number;
+	purchaseOrderId: number | null;
+	by: "staff" | "claude" | "ai";
+	onlyFrom?: number | null;
+};
+
+// fileEmail's move, in the caller's transaction, so what goes with filing
+// (the AI's flags, src/purchasing/inbox/ai-filing.ts) commits with it or not
+// at all. The email stays locked until that transaction ends. Returns the
+// email as it was; following its tracking (trackFrom) is the caller's, once
+// it commits.
+export async function moveEmail(tx: Db, input: Move) {
+	if (input.purchaseOrderId !== null) {
+		const [po] = await tx
+			.select({ status: purchaseOrders.status })
+			.from(purchaseOrders)
+			.where(eq(purchaseOrders.id, input.purchaseOrderId));
+		if (!po)
+			throw new PurchaseOrderError(`There's no PO ${input.purchaseOrderId}`);
+		if (!(ON_ORDER as readonly string[]).includes(po.status))
+			throw new PurchaseOrderError(
+				`PO ${input.purchaseOrderId} hasn't been sent, so no email is about it yet`,
+			);
+	}
+	const before = await lockedEmail(tx, input.emailId);
+	if (
+		input.onlyFrom !== undefined &&
+		(before.purchaseOrderId !== input.onlyFrom ||
+			(input.onlyFrom === null && before.setAsideAt !== null))
+	)
+		throw new EmailMovedError(
+			before.purchaseOrderId === null
+				? "Someone set it aside first"
+				: `Someone put it on PO ${before.purchaseOrderId} first`,
+		);
+	await tx
+		.update(poEmails)
+		.set({
+			purchaseOrderId: input.purchaseOrderId,
+			matchedBy: input.purchaseOrderId === null ? null : input.by,
+			setAsideAt: null,
+		})
+		.where(eq(poEmails.id, input.emailId));
+	// Its packages go with it: the old PO stops following them. So do the
+	// flags read from it that nobody acted on.
+	if (
+		before.purchaseOrderId !== null &&
+		before.purchaseOrderId !== input.purchaseOrderId
+	) {
+		await tx
+			.delete(purchaseOrderTracking)
+			.where(
+				and(
+					eq(purchaseOrderTracking.emailId, before.id),
+					eq(purchaseOrderTracking.purchaseOrderId, before.purchaseOrderId),
+				),
+			);
+		await tx
+			.delete(poFlags)
+			.where(
+				and(
+					eq(poFlags.emailId, before.id),
+					eq(poFlags.purchaseOrderId, before.purchaseOrderId),
+					isNull(poFlags.resolvedAt),
+				),
+			);
+	}
+	return before;
 }
 
 // About no PO (a newsletter, a quote request). Undone by setAside(…, false).
