@@ -1275,7 +1275,10 @@ export type HandoffHold =
 //
 // A refused send is tried again on its own (src/shipping/retry.ts) for ten
 // minutes from the first refusal: channelRetryAt is when the next try is due,
-// and null once it's sent or katasync has stopped trying.
+// and null once it's sent or katasync has stopped trying. A run trying it
+// leases it first: channelRetryLease is that run's token and channelRetryAt
+// the lease's end, so a run that dies mid-try leaves it due again. Recording
+// an outcome (sent, refused, held) clears the token.
 export const dispatchOrders = pgTable(
 	"dispatch_orders",
 	{
@@ -1291,6 +1294,7 @@ export const dispatchOrders = pgTable(
 		channelFirstFailedAt: timestamp({ withTimezone: true }),
 		channelAttempts: integer().notNull().default(0),
 		channelRetryAt: timestamp({ withTimezone: true }),
+		channelRetryLease: uuid(),
 		// Held instead of sent, and why. Never retried on its own; checking
 		// again sends it once the marketplace matches the box, or the
 		// dispatch is voided.
