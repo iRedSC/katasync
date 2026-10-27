@@ -6,6 +6,7 @@ import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query
 import { Bone, ListSkeleton } from "./components/skeleton";
 import { getContext } from "./integrations/tanstack-query/root-provider";
 import { connectOptimism, optimism } from "./lib/optimism";
+import { invalidateProductIndex } from "./lib/product-index";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {
@@ -36,6 +37,12 @@ export function getRouter() {
 	// it still loads in the background; until then the patches stay up.
 	connectOptimism(() => router.invalidate({ sync: true }));
 	for (const route of Object.values(router.routesById)) throughOptimism(route);
+
+	// Every load, whether after a change here, a sync, or moving around, may
+	// have changed products, so the product index reloads where it's showing.
+	router.subscribe("onBeforeLoad", () =>
+		invalidateProductIndex(context.queryClient),
+	);
 
 	return router;
 }

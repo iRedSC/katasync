@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
+import { Package, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { pageHotkeys, pages } from "#/components/pages";
 import {
@@ -17,25 +18,23 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { useHotkeys } from "#/lib/hotkeys";
+import { useProductIndex } from "#/lib/product-index";
 import { productSearch } from "#/lib/product-search";
 import { useRowLink } from "#/lib/row-link";
 import { matchText, textMatcher } from "#/lib/search-ranking";
-import { listProductIndex } from "#/server/catalog";
 
 // Opens the palette from anywhere, e.g. a button.
 export function openFind() {
 	window.dispatchEvent(new Event("open-find"));
 }
 
-type IndexEntry = Awaited<ReturnType<typeof listProductIndex>>[number];
-
 // ⌘K: jump to any page or product. Also owns the "g x" page shortcuts.
 export function CommandPalette() {
 	const navigate = useNavigate();
 	const { preload } = useRowLink();
 	const [open, setOpen] = useState(false);
-	const [index, setIndex] = useState<IndexEntry[] | null>(null);
 	const [query, setQuery] = useState("");
+	const index = useProductIndex(open);
 
 	useHotkeys(pageHotkeys(pages, (p) => navigate({ to: p.to })));
 
@@ -55,15 +54,13 @@ export function CommandPalette() {
 		};
 	}, []);
 
-	useEffect(() => {
-		if (open && index === null) listProductIndex().then(setIndex);
-	}, [open, index]);
-
 	// cmdk filters fine on its own, but rendering thousands of items is slow;
 	// only render matches once someone types.
 	const q = query.trim();
 	const matches =
-		q.length < 2 || !index ? [] : productSearch(index, q, { limit: 30 });
+		q.length < 2 || index.status !== "ready"
+			? []
+			: productSearch(index.products, q, { limit: 30 });
 	const pageMatches = textMatcher(q);
 
 	function go(to: () => void) {
@@ -100,6 +97,19 @@ export function CommandPalette() {
 					/>
 					<CommandList>
 						<CommandEmpty>Nothing matches.</CommandEmpty>
+						{index.status === "failed" && (
+							<CommandGroup heading="Products">
+								<CommandItem value="retry-products" onSelect={index.retry}>
+									<RotateCw />
+									<span className="truncate text-critical-text">
+										Couldn't load products: {index.message}
+									</span>
+									<CommandShortcut className="tracking-normal">
+										Retry
+									</CommandShortcut>
+								</CommandItem>
+							</CommandGroup>
+						)}
 						{matches.length > 0 && (
 							<CommandGroup heading="Products">
 								{matches.map((p) => (
