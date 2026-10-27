@@ -16,6 +16,7 @@ import { breaksByOffer, bulkPricesOf } from "#/purchasing/bulk-prices";
 import { discountOf } from "#/purchasing/discount";
 import { renderPurchaseOrder } from "#/purchasing/document";
 import { poAddress } from "#/purchasing/inbox/graph";
+import { lineNumbers } from "#/purchasing/line-numbers";
 import { PurchaseOrderError, poName } from "#/purchasing/orders";
 
 // Reading a PO and building its PDF. Server only: the PDF renderer can't run
@@ -185,7 +186,10 @@ export function printedLines(
 	lines: Awaited<ReturnType<typeof loadOrder>>["lines"],
 	sentAt: Date | null,
 ) {
+	const numbers = lineNumbers(lines, sentAt !== null);
 	return lines.flatMap((l) => {
+		const lineNo = numbers.get(l.id);
+		if (lineNo === undefined) return [];
 		const printed =
 			l.sentQuantity !== null
 				? {
@@ -193,16 +197,14 @@ export function printedLines(
 						unitCost: l.sentUnitCost,
 						discounts: l.sentDiscounts,
 					}
-				: sentAt === null
-					? {
-							quantity: l.quantity,
-							unitCost: l.unitCost,
-							discounts: l.discounts.map(({ units, off }) => ({ units, off })),
-						}
-					: null;
-		if (!printed) return [];
+				: {
+						quantity: l.quantity,
+						unitCost: l.unitCost,
+						discounts: l.discounts.map(({ units, off }) => ({ units, off })),
+					};
 		return [
 			{
+				lineNo,
 				sku: l.sku,
 				supplierSku: l.supplierSku,
 				description: l.variantName ? `${l.name} (${l.variantName})` : l.name,
