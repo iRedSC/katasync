@@ -18,12 +18,11 @@ import {
 	ContextMenuSeparator,
 } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
-import type { MarketCursor, MarketMailPage } from "#/inbox/market-mail";
+import type { MarketMailPage } from "#/inbox/market-mail";
 import {
 	FOLDER_NAMES,
 	FOLDERS,
 	type Folder,
-	flagsOf,
 	type Level,
 	levelOf,
 } from "#/inbox/rules";
@@ -43,6 +42,16 @@ import { MailOrders } from "./buyer-order";
 import { folderIcon, type MarketView } from "./folders";
 import { InboxFrame } from "./frame";
 import { MailPane } from "./mail-pane";
+import {
+	after,
+	belongs,
+	type Change,
+	type Email,
+	type Extra,
+	listed,
+	type Undo,
+	withEmail,
+} from "./market-changes";
 import { MoveMenu, WhyChip } from "./sorted-by";
 import { VoicemailMessage, voicemailRow } from "./voicemail";
 
@@ -51,58 +60,7 @@ import { VoicemailMessage, voicemailRow } from "./voicemail";
 // someone marked important. Done clears one off its list; one in the wrong
 // folder moves and stays moved, and says which rule put it there.
 
-type Email = MarketMailPage["emails"][number];
-
 const mail = optimistic<MarketMailPage>("market-emails");
-
-// What happens to an email: done, back from done, to another folder, marked
-// important, critical, or neither, or read or unread.
-type Change =
-	| { done: boolean }
-	| { to: Folder }
-	| { level: Level }
-	| { read: boolean };
-// What undoes one: null hands the folder or importance back to the rules,
-// when they had decided it.
-type Undo =
-	| { done: boolean }
-	| { to: Folder | null }
-	| { level: Level | null }
-	| { read: boolean };
-
-const after = (e: Email, change: Change): Email =>
-	"done" in change
-		? {
-				...e,
-				doneAt: change.done ? new Date() : null,
-				voicemail:
-					!change.done && e.voicemail?.state === "dismissed"
-						? {
-								state: "review",
-								reason: `Restored: ${e.voicemail.reason}`.slice(0, 500),
-							}
-						: e.voicemail,
-			}
-		: "to" in change
-			? { ...e, folder: change.to, why: { ...e.why, folder: "by-hand" } }
-			: "level" in change
-				? {
-						...e,
-						...flagsOf(change.level),
-						why: { ...e.why, important: "by-hand" },
-					}
-				: { ...e, readAt: change.read ? new Date() : null };
-
-// Where an email is listed.
-const belongs = (view: MarketView, e: Email) =>
-	view === "done"
-		? e.doneAt !== null
-		: e.doneAt === null &&
-			(view === "important"
-				? e.important
-				: view === "voicemails"
-					? e.voicemail !== null
-					: e.voicemail === null && e.folder === view);
 
 // Moves the email's counts (unread open emails per folder, and important),
 // and takes it off the list shown when it no longer belongs there.
@@ -142,32 +100,25 @@ export function MarketplaceBox(props: BoxProps) {
 	return <Listing key={`${props.view}|${props.market ?? "all"}`} {...props} />;
 }
 
-type Extra = { emails: Email[]; next: MarketCursor | null };
-
 function Listing({ view, market, page, counts }: BoxProps) {
 	const key = `${view}|${market ?? "all"}`;
 	// Pages past the first, from "Show more". A change reloads only the first
-	// page, so these stay until the list changes.
+	// page, so a change that saved is written into these too, and they stay
+	// until the list changes.
 	const [extra, setExtra] = useState<Extra | null>(null);
 	const [loading, setLoading] = useState(false);
-	const shown = useMemo(() => {
-		if (!extra) return page;
-		const first = new Set(page.emails.map((e) => e.id));
-		return {
-			...page,
-			emails: [...page.emails, ...extra.emails.filter((e) => !first.has(e.id))],
-			next: extra.next,
-		};
-	}, [page, extra]);
+	const shown = useMemo(() => listed(view, page, extra), [view, page, extra]);
 	const d = mail.useData(key, shown);
 
 	// Fetches the page after the last one shown, so none is skipped or repeated.
 	async function showMore() {
-		const after = shown.next;
-		if (!after) return;
+		const cursor = shown.next;
+		if (!cursor) return;
 		setLoading(true);
 		try {
-			const later = await listMarketMail({ data: { view, market, after } });
+			const later = await listMarketMail({
+				data: { view, market, after: cursor },
+			});
 			setExtra((prev) => ({
 				emails: [...(prev?.emails ?? []), ...later.emails],
 				next: later.next,
@@ -204,7 +155,9 @@ function Listing({ view, market, page, counts }: BoxProps) {
 			patch: changed(key, view, email, change),
 			send: () => send(change),
 		});
-		if (!r || !undo) return;
+		if (!r) return;
+		setExtra((x) => withEmail(x, email.id, (e) => after(e, change)));
+		if (!undo) return;
 		offerUndo(said, {
 			undo: async () => {
 				const back = await optimism.change({
@@ -212,7 +165,9 @@ function Listing({ view, market, page, counts }: BoxProps) {
 					patch: [],
 					send: () => send(undo.change),
 				});
-				return back ? undo.said : null;
+				if (!back) return null;
+				setExtra((x) => withEmail(x, email.id, () => email));
+				return undo.said;
 			},
 		});
 	}
