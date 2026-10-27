@@ -8,6 +8,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { AddressInput } from "#/components/address-input";
+import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { optimism, type Patch } from "#/lib/optimism";
@@ -78,8 +79,8 @@ function refusal(v: Supplier): string | null {
 
 // A supplier's details, in sections. `onDirty` hears whether anything
 // differs from what was saved, so whoever shows the form can keep a stray
-// click or link from losing the edits. `patch` shows the saved details at
-// once; without it, the form waits for the server.
+// click or link from losing the edits. `patch` shows the saved details on the
+// page behind at once; the form itself closes only once the server has them.
 export function SupplierForm({
 	s,
 	leadTime,
@@ -97,6 +98,8 @@ export function SupplierForm({
 	patch?: (saved: Supplier) => Patch;
 }) {
 	const [busy, setBusy] = useState(false);
+	// The last save didn't go through; the edits are still here.
+	const [failed, setFailed] = useState(false);
 	const form = useRef<HTMLFormElement>(null);
 	// Bumped by each edit to an address field.
 	const addressEdits = useRef(0);
@@ -192,23 +195,22 @@ export function SupplierForm({
 			toast.error(refused);
 			return;
 		}
+		// The form stays, as typed, until the server has it: closing it first
+		// would lose every edit if the save fails.
+		setFailed(false);
+		setBusy(true);
 		const send = () => updateSupplier({ data: { id: s.id, ...values } });
-		if (patch) {
-			// Shown at once, so the form closes now. A save that fails says why,
-			// and the page goes back to what it was.
-			onDone();
-			const r = await optimism.change({
-				label: `${s.name}'s details`,
-				patch: patch(saved),
-				send,
-			});
-			if (r) toast.success(`Saved ${saved.name}`);
+		const r = await optimism.change(
+			patch
+				? { label: `${s.name}'s details`, patch: patch(saved), send }
+				: { send },
+		);
+		setBusy(false);
+		if (!r) {
+			setFailed(true);
+			shake(form.current);
 			return;
 		}
-		setBusy(true);
-		const r = await optimism.change({ send });
-		setBusy(false);
-		if (!r) return;
 		toast.success(`Saved ${saved.name}`);
 		onDone();
 	}
@@ -379,16 +381,27 @@ export function SupplierForm({
 			</Section>
 
 			<div className="flex flex-col-reverse items-center gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-				{blocked && (
+				{failed && !busy && (
+					<span role="alert" className="mr-auto text-critical-text">
+						Not saved. Your edits are still here.
+					</span>
+				)}
+				{blocked && !failed && (
 					<span role="alert" className="mr-auto text-warning-text">
 						Unsaved changes. Save them, or Cancel to discard.
 					</span>
 				)}
-				<Button type="button" size="sm" variant="ghost" onClick={onDone}>
+				<Button
+					type="button"
+					size="sm"
+					variant="ghost"
+					disabled={busy}
+					onClick={onDone}
+				>
 					Cancel
 				</Button>
 				<Button type="submit" size="sm" disabled={busy}>
-					Save
+					{busy ? "Saving…" : "Save"}
 				</Button>
 			</div>
 		</form>
