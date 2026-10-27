@@ -1072,6 +1072,13 @@
       "when": 1793142084257,
       "tag": "0152_committed_from_shelf",
       "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1793142382133,
+      "tag": "0153_line_profit_cents",
+      "breakpoints": true
     }
   ]
 }
