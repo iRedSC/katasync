@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { pageHotkeys, pages } from "#/components/pages";
 import {
 	Command,
 	CommandEmpty,
@@ -15,7 +16,6 @@ import {
 	DialogDescription,
 	DialogTitle,
 } from "#/components/ui/dialog";
-import { pageHotkeys, pages } from "#/components/pages";
 import { useHotkeys } from "#/lib/hotkeys";
 import { productSearch } from "#/lib/product-search";
 import { useRowLink } from "#/lib/row-link";
