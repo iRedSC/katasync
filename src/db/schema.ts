@@ -1057,7 +1057,8 @@ export const orderCostReports = pgTable(
 // When katasync last asked a marketplace about an order's charges, whatever
 // came back, so the refresh can back off (src/orders/cost-refresh.ts). error
 // is why the last ask failed, for Diagnostics; null when it worked, even if
-// the marketplace had nothing yet.
+// the marketplace had nothing yet. answeredAt is the last ask that worked, so
+// a failed ask never passes for a refresh.
 export const orderCostChecks = pgTable(
 	"order_cost_checks",
 	{
@@ -1067,6 +1068,7 @@ export const orderCostChecks = pgTable(
 		billedBy: channel().notNull(),
 		checkedAt: timestamp({ withTimezone: true }).notNull(),
 		error: text(),
+		answeredAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
 );
