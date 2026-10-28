@@ -92,8 +92,13 @@ export async function ingestOrder(
 	return db.transaction(async (tx) => {
 		await readQuantityMode(tx);
 		const { lines, tax, ...fields } = order;
-		// Locked, so a snapshot read as older here stays older until this
-		// commits.
+		// Held to the end of this transaction, even for an order not saved yet,
+		// so a second snapshot of it waits here and then reads what this one
+		// saved. Without it, two snapshots of a new order both find nothing and
+		// the older one's upsert can land last.
+		await tx.execute(
+			sql`select pg_advisory_xact_lock(hashtext('ingest-order'), hashtext(${`${store.id}:${order.externalId}`}))`,
+		);
 		const [before] = await tx
 			.select({
 				id: orders.id,
