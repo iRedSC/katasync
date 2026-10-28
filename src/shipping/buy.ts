@@ -167,6 +167,8 @@ export async function buyDispatch(
 		await assertBoxesExist(db, boxes);
 		const signature =
 			!tiktok && (input.signature || signatureRequired(list) !== null);
+		// TikTok's one box is quoted again as it's bought, and refused there
+		// if above the shown total (tiktokBuyLabel).
 		const rates = tiktok
 			? []
 			: await quoteEach(db, lead.id, boxes, choice, signature, outside);
@@ -361,6 +363,7 @@ async function purchase(
 			ctx.plan,
 			ctx.choice.id,
 			attempt.unitIds,
+			ctx.choice.total,
 		);
 		label = {
 			externalId: bought.packageId,
