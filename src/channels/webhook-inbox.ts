@@ -7,7 +7,12 @@ import type { WebhookUpdate } from "./order-update";
 import type { WebhookChannel } from "./webhooks";
 
 export const CLAIM_LIMIT = 10;
+// An order's lease only has to outlast its own ingest: each is claimed right
+// before it's worked, never while others ahead of it in a batch run.
 const LEASE_SECONDS = 120;
+// A drain stops taking orders after this long, well inside Vercel's 300s for
+// the function (and its waitUntil); what's left waits for the next drain.
+export const DRAIN_MS = 2 * 60_000;
 const BUSY_RETRY = sql`interval '30 seconds'`;
 const MAX_BACKOFF = sql`interval '60 minutes'`;
 const ERROR_CHARS = 500;
@@ -166,11 +171,22 @@ async function attempt(claim: Claim, ingest: Ingest): Promise<Outcome> {
 	}
 }
 
-export async function drainDue(db: Db, ingest: Ingest, limit = CLAIM_LIMIT) {
+// Works up to `limit` due orders, claiming each one as it's reached, until
+// none is due or `forMs` has passed.
+export async function drainDue(
+	db: Db,
+	ingest: Ingest,
+	options: { limit?: number; forMs?: number } = {},
+) {
+	const limit = options.limit ?? CLAIM_LIMIT;
+	if (!Number.isInteger(limit) || limit < 1 || limit > CLAIM_LIMIT)
+		throw new Error(`Claim limit must be between 1 and ${CLAIM_LIMIT}`);
+	const until = Date.now() + (options.forMs ?? DRAIN_MS);
 	const report = { claimed: 0, done: 0, busy: 0, failed: 0, lost: 0 };
-	const claims = await claimDue(db, limit);
-	report.claimed = claims.length;
-	for (const claim of claims) {
+	while (report.claimed < limit && Date.now() < until) {
+		const [claim] = await claimDue(db, 1);
+		if (!claim) break;
+		report.claimed += 1;
 		const outcome = await attempt(claim, ingest);
 		report[outcome.kind] += 1;
 		if ((await settle(db, claim, outcome)) === "lost") report.lost += 1;
