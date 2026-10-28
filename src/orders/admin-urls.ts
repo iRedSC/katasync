@@ -46,10 +46,19 @@ export function adminUrls(order: {
 }
 
 // Where a return opened on billedBy is handled: that marketplace's page for
-// the order, or null when katasync can't link there.
+// the order, or null when katasync can't link there. Amazon's order page
+// doesn't show its returns, so its Manage Returns opens searched to the order,
+// over every date.
 export function returnPage(
 	order: Parameters<typeof adminUrls>[0],
 	billedBy: Channel,
 ): AdminPage | null {
+	if (billedBy === "amazon" && order.channel === "amazon") {
+		return {
+			channel: "amazon",
+			name: "Amazon",
+			url: `https://sellercentral.amazon.com/gp/returns/list/v2?searchString=${encodeURIComponent(order.externalId)}&orderBy=CreatedDateDesc`,
+		};
+	}
 	return adminUrls(order).find((p) => p.channel === billedBy) ?? null;
 }
