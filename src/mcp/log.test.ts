@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { CAPABILITY_PATTERN, redactCapabilities } from "#/auth/capability-urls";
@@ -211,13 +211,12 @@ describe("upload links, which are their own credential", () => {
 		);
 		expect(JSON.stringify(rows)).not.toContain(token);
 	}
-	const migration = readFileSync(
-		new URL(
-			"../../drizzle/0153_scrub_mcp_capability_urls.sql",
-			import.meta.url,
-		),
-		"utf8",
+	// Found by name, since its number moves when other branches merge first.
+	const drizzle = new URL("../../drizzle/", import.meta.url);
+	const file = readdirSync(drizzle).find((f) =>
+		f.endsWith("_scrub_mcp_capability_urls.sql"),
 	);
+	const migration = readFileSync(new URL(`${file}`, drizzle), "utf8");
 
 	test("the migration scrubs with the same pattern everywhere", () => {
 		const patterns = migration.match(/'\(\(\?:[^']*'/g) ?? [];
