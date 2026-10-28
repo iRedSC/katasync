@@ -160,9 +160,16 @@ export function Arrivals({
 												: [],
 										),
 									}),
-									onReceive,
+									// Receiving answers no refusals: a send that threw may
+									// have landed, so it's held for a retry with its key.
+									async (receipt) => {
+										const sent = await onReceive(receipt);
+										return sent
+											? { kind: "saved", value: sent.value }
+											: { kind: "uncertain" };
+									},
 								);
-								if (r) setCounts({});
+								if (r.kind === "saved") setCounts({});
 							}}
 						>
 							{sending

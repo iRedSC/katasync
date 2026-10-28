@@ -27,6 +27,7 @@ import {
 } from "#/server/payables";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { middayOf, today } from "./days";
+import { undone } from "./undone";
 
 type Invoice = OrderPayables["billing"]["invoices"][number];
 type PaymentInput = Parameters<typeof recordSupplierPayment>[0]["data"];
@@ -371,22 +372,28 @@ function Applied({
 		if (r.kind !== "saved") return;
 		const id = crypto.randomUUID();
 		offerUndo(`${usd(a.amountCents)} is unapplied credit now`, {
-			undo: async () =>
-				(await optimism.change({
-					label: `Applying ${usd(a.amountCents)} to ${inv.number}`,
-					patch: [],
-					send: () =>
-						applySupplierCredit({
-							data: {
-								id,
-								paymentId: p.paymentId,
-								invoiceId: inv.id,
-								amountCents: a.amountCents,
-							},
-						}),
-				}))
-					? `${usd(a.amountCents)} is on ${inv.number} again`
-					: null,
+			// Refused when the credit went elsewhere since, as to another invoice.
+			undo: async () => {
+				const back = answered(
+					await optimism.change({
+						label: `Applying ${usd(a.amountCents)} to ${inv.number}`,
+						patch: [],
+						send: () =>
+							applySupplierCredit({
+								data: {
+									id,
+									paymentId: p.paymentId,
+									invoiceId: inv.id,
+									amountCents: a.amountCents,
+								},
+							}),
+					}),
+				);
+				return undone(back, {
+					done: `${usd(a.amountCents)} is on ${inv.number} again`,
+					refusal: `${usd(a.amountCents)} isn't back on ${inv.number}`,
+				});
+			},
 		});
 	}
 	return (

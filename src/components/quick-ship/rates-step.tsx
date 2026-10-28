@@ -54,6 +54,7 @@ export function RatesStep({
 	extras,
 	onExtras,
 	onBuy,
+	onReprice,
 	onFocusRate,
 }: {
 	rates: Rates | null;
@@ -67,6 +68,9 @@ export function RatesStep({
 	extras: Extras;
 	onExtras: (next: Extras) => void;
 	onBuy: (quote: Rate) => void;
+	// Set while the prices shown were refused for having risen: Enter asks
+	// for fresh ones, as asking on its own may have failed.
+	onReprice?: () => void;
 	// The highlighted service, for the info panel beside the steps.
 	onFocusRate: (quote: Quote | null) => void;
 }) {
@@ -136,7 +140,11 @@ export function RatesStep({
 		// Off on this label: the reason is on screen under them.
 		if (offer.unavailable) {
 			if (e.key === "Tab") e.preventDefault();
-			if (e.key === "Enter" && ready && list[selected]) onBuy(list[selected]);
+			if (e.key === "Enter") {
+				if (onReprice) {
+					if (!busy) onReprice();
+				} else if (ready && list[selected]) onBuy(list[selected]);
+			}
 			return;
 		}
 		if (e.key === "Tab") {
@@ -151,7 +159,9 @@ export function RatesStep({
 		}
 		if (e.key === "Enter") {
 			if (unsettled) onExtras({ ...extras, insure: typed });
-			else if (ready && list[selected]) onBuy(list[selected]);
+			else if (onReprice) {
+				if (!busy) onReprice();
+			} else if (ready && list[selected]) onBuy(list[selected]);
 		}
 	}
 
@@ -167,7 +177,7 @@ export function RatesStep({
 			: "Buying label…"
 		: busy
 			? "Updating prices…"
-			: unsettled
+			: unsettled || onReprice
 				? "Enter updates prices"
 				: boxes > 1
 					? `Enter buys ${boxes} labels, one per box`

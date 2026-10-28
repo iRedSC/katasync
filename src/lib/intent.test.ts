@@ -111,7 +111,7 @@ test("a retry is let go only once the server says how it ended", async () => {
 	const hold = () =>
 		intent.run(
 			() => "original",
-			async () => null,
+			async () => ({ kind: "uncertain" }),
 		);
 	await hold();
 	// The answer was lost and the server can't be asked: still held.
@@ -131,16 +131,16 @@ test("a retry is let go only once the server says how it ended", async () => {
 	expect(
 		await intent.run(
 			() => "edited",
-			async (p) => p,
+			async (p) => ({ kind: "saved", value: p }),
 		),
-	).toBe("edited");
+	).toEqual({ kind: "saved", value: "edited" });
 });
 
 test("nothing sends while a retry is being checked", async () => {
 	const intent = createIntent<string>();
 	await intent.run(
 		() => "original",
-		async () => null,
+		async () => ({ kind: "uncertain" }),
 	);
 	let answer: ((recorded: boolean) => void) | undefined;
 	const checking = intent.release(
@@ -153,9 +153,9 @@ test("nothing sends while a retry is being checked", async () => {
 	expect(
 		await intent.run(
 			() => "edited",
-			async (p) => p,
+			async (p) => ({ kind: "saved", value: p }),
 		),
-	).toBeNull();
+	).toEqual({ kind: "busy" });
 	answer?.(false);
 	await checking;
 	expect(intent.getSnapshot().kind).toBe("idle");
@@ -166,10 +166,12 @@ test("a send in flight can't be released", async () => {
 	let finish: ((value: string) => void) | undefined;
 	const first = intent.run(
 		() => "edited",
-		() =>
-			new Promise<string>((resolve) => {
+		async () => ({
+			kind: "saved",
+			value: await new Promise<string>((resolve) => {
 				finish = resolve;
 			}),
+		}),
 	);
 	expect(await intent.release(async () => false)).toBeNull();
 	expect(intent.getSnapshot().kind).toBe("pending");

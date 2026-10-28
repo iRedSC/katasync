@@ -7,14 +7,20 @@ import { type HazmatChoice, hazmatFor } from "#/components/quick-ship/hazmat";
 import { InfoPanel } from "#/components/quick-ship/info-panel";
 import { Key } from "#/components/quick-ship/key";
 import { Notice } from "#/components/quick-ship/notice";
+import { useOpening } from "#/components/quick-ship/opening";
 import { OrderSummary } from "#/components/quick-ship/order-summary";
 import { PackageStep } from "#/components/quick-ship/package-step";
 import { lastFor, startingGrams } from "#/components/quick-ship/packaging";
 import { PinStep } from "#/components/quick-ship/pin-step";
 import { RatesStep } from "#/components/quick-ship/rates-step";
 import {
+	buyable,
+	quoted,
+	refuse,
+	type ShownRates,
+} from "#/components/quick-ship/shown-rates";
+import {
 	noExtras,
-	sameExtras,
 	startingExtras,
 } from "#/components/quick-ship/starting-extras";
 import { stepNotes } from "#/components/quick-ship/step-notes";
@@ -27,7 +33,6 @@ import type {
 	Found,
 	Packed,
 	Quote,
-	Rates,
 	Step,
 } from "#/components/quick-ship/types";
 import { useQuickShipCache } from "#/components/quick-ship/use-quick-ship-cache";
@@ -41,11 +46,7 @@ import { PRICE_ROSE } from "#/shipping/price-check";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import type { Rate } from "#/shipping/shippo";
 
-// Opens quick ship already on this order, past the pin step (the order
-// page's Ship button).
-export function openQuickShip(pin: number) {
-	window.dispatchEvent(new CustomEvent("quick-ship", { detail: pin }));
-}
+export { openQuickShip } from "#/components/quick-ship/opening";
 
 // Ctrl+Space anywhere: order pin, box, weight, service. Tab on the box step
 // adds other orders to the same address to this box; + on the weight step
@@ -79,8 +80,9 @@ export function QuickShip() {
 	const [weightGrams, setWeightGrams] = useState<number | null>(null);
 	const [draftGrams, setDraftGrams] = useState<number | null>(null);
 	const [extras, setExtras] = useState<Extras>(noExtras);
-	// The prices shown, and the extras they were quoted with.
-	const [rates, setRates] = useState<(Rates & { for: Extras }) | null>(null);
+	// The prices shown, the extras they were quoted with, and whether buying
+	// at them was refused.
+	const [rates, setRates] = useState<ShownRates | null>(null);
 	const [bought, setBought] = useState<Bought | null>(null);
 	// The service highlighted on the rates step.
 	const [focused, setFocused] = useState<Quote | null>(null);
@@ -114,31 +116,19 @@ export function QuickShip() {
 		clear();
 	}
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reset only calls state setters
-	useEffect(() => {
-		function onKeyDown(e: globalThis.KeyboardEvent) {
-			if (e.ctrlKey && e.code === "Space") {
-				e.preventDefault();
-				if (buying.current) return;
-				setOpen((o) => {
-					if (!o) reset();
-					return !o;
-				});
-			}
-		}
-		function onOpen(e: Event) {
-			if (buying.current) return;
+	useOpening({
+		buying,
+		toggle: () =>
+			setOpen((o) => {
+				if (!o) reset();
+				return !o;
+			}),
+		openOn: (pin) => {
 			reset();
 			setOpen(true);
-			choosePinRef.current((e as CustomEvent<number>).detail);
-		}
-		window.addEventListener("keydown", onKeyDown);
-		window.addEventListener("quick-ship", onOpen);
-		return () => {
-			window.removeEventListener("keydown", onKeyDown);
-			window.removeEventListener("quick-ship", onOpen);
-		};
-	}, []);
+			choosePinRef.current(pin);
+		},
+	});
 
 	useEffect(() => {
 		if (open) listPackages().then(setBoxes);
@@ -316,7 +306,7 @@ export function QuickShip() {
 		if (!keep) setRates(null);
 		const result = await run(() => pending);
 		if (result && mine === latest.current) {
-			setRates({ ...result, for: next });
+			setRates(quoted(result, next));
 			if (why) setError(why);
 		}
 	}
@@ -331,9 +321,9 @@ export function QuickShip() {
 	async function buy(quote: Rate) {
 		if (buying.current) return;
 		const list = allBoxes(weightGrams);
-		// Only at the price on screen: prices for the extras chosen.
-		if (!plan || list.length === 0 || busy || !rates) return;
-		if (!sameExtras(rates.for, extras)) return;
+		// Only at the price on screen: prices for the extras chosen, and none
+		// already refused.
+		if (!plan || list.length === 0 || busy || !buyable(rates, extras)) return;
 		// Buys a real label, so it stays bought-for until the reload shows it,
 		// and holds the session until then.
 		buying.current = true;
@@ -355,10 +345,11 @@ export function QuickShip() {
 			setPurchasing(false);
 		};
 		if (!r) {
-			// Nothing was bought. Its price rose since it was shown: ask again,
-			// and show the new one in place, so the next click is at a price
-			// that was on screen. Asked before letting go, so the old price is
-			// never buyable in between.
+			// Nothing was bought. Its price rose since it was shown: the old
+			// prices are refused, so they never buy again, and new ones are asked
+			// for and shown in place, so the next click is at a price that was
+			// on screen. If asking fails, Enter asks again.
+			if (repriced) setRates(refuse);
 			const again =
 				repriced &&
 				showRates(list, extras, { keep: true, why: repriced, fresh: true });
@@ -538,7 +529,16 @@ export function QuickShip() {
 						{step === "rates" && !(error && !rates) && (
 							<RatesStep
 								rates={rates}
-								stale={rates !== null && !sameExtras(rates.for, extras)}
+								stale={rates !== null && !buyable(rates, extras)}
+								onReprice={
+									rates?.refused
+										? () =>
+												showRates(allBoxes(weightGrams), extras, {
+													keep: true,
+													fresh: true,
+												})
+										: undefined
+								}
 								boxes={count}
 								busy={busy}
 								purchasing={purchasing}
