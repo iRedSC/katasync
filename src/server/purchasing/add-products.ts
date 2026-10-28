@@ -77,6 +77,8 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 				kind: products.kind,
+				// So the page ranks a scanned barcode as the server did.
+				barcode: products.barcode,
 				supplierSku: supplierOffers.supplierSku,
 				sold: sql<boolean>`${supplierOffers.productId} is not null`,
 				cheapest: sql<boolean>`coalesce(${supplierOffers.cheapest}, false)`,
@@ -129,8 +131,8 @@ export type PurchaseOrderMatch = Awaited<
 
 // Everything this PO's supplier sells, read as the product list reads it,
 // with what the supplier charges and how they sell it, and tool sets ordered
-// from it. Browse filters and
-// sorts these in the page, so it takes the whole list at once.
+// from it. The PO's Add more items card filters and sorts these in the page,
+// so it takes the whole list at once.
 export const browseForPurchaseOrder = createServerFn({ method: "GET" })
 	.validator(type({ purchaseOrderId: "number.integer > 0" }))
 	.handler(async ({ data }) => {
@@ -170,20 +172,36 @@ export const browseForPurchaseOrder = createServerFn({ method: "GET" })
 		);
 		// A tool set's supplier is the one most of its parts come from, and it
 		// has no terms of its own.
-		return all
-			.filter(
-				(p) =>
-					termsOf.has(p.id) ||
-					(p.kind === "bundle" && p.supplier?.id === po.supplierId),
-			)
-			.map((p) => ({
-				...p,
-				terms: termsOf.get(p.id) ?? null,
-				// The other drafts and sent POs it's on: never this one.
-				openPos: p.openPos.filter(
-					(o) => o.purchaseOrderId !== data.purchaseOrderId,
-				),
-			}));
+		const sold = all.filter(
+			(p) =>
+				termsOf.has(p.id) ||
+				(p.kind === "bundle" && p.supplier?.id === po.supplierId),
+		);
+		// Barcodes, so a scan finds its product in the page's own search.
+		const barcodes = new Map(
+			sold.length === 0
+				? []
+				: (
+						await db
+							.select({ id: products.id, barcode: products.barcode })
+							.from(products)
+							.where(
+								inArray(
+									products.id,
+									sold.map((p) => p.id),
+								),
+							)
+					).map((p) => [p.id, p.barcode]),
+		);
+		return sold.map((p) => ({
+			...p,
+			barcode: barcodes.get(p.id) ?? null,
+			terms: termsOf.get(p.id) ?? null,
+			// The other drafts and sent POs it's on: never this one.
+			openPos: p.openPos.filter(
+				(o) => o.purchaseOrderId !== data.purchaseOrderId,
+			),
+		}));
 	});
 
 export type BrowseRow = Awaited<

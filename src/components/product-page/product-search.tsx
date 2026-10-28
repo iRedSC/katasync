@@ -1,24 +1,12 @@
 import { Command as CommandPrimitive } from "cmdk";
-import { Loader2, Search } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Loader2, RotateCw, Search } from "lucide-react";
+import { useState } from "react";
 import { ProductImage, ProductName } from "#/components/product";
+import { Button } from "#/components/ui/button";
+import { type IndexedProduct, useProductIndex } from "#/lib/product-index";
 import { productSearch } from "#/lib/product-search";
-import { listProductIndex } from "#/server/catalog";
 
-export type IndexedProduct = Awaited<
-	ReturnType<typeof listProductIndex>
->[number];
-
-// Carried products, fetched once per page load for typed searches.
-let catalog: Promise<IndexedProduct[]> | null = null;
-function useCatalog() {
-	const [products, setProducts] = useState<IndexedProduct[] | null>(null);
-	useEffect(() => {
-		catalog ??= listProductIndex();
-		catalog.then(setProducts);
-	}, []);
-	return products;
-}
+export type { IndexedProduct };
 
 // Picks a carried product by SKU or name. `refuse` says why one can't be
 // picked here, which shows in its row and keeps it from being picked, so
@@ -41,7 +29,8 @@ export function ProductSearch({
 	onEscape?: () => void;
 	className?: string;
 }) {
-	const products = useCatalog();
+	const index = useProductIndex();
+	const products = index.status === "ready" ? index.products : null;
 	const [query, setQuery] = useState("");
 	const results = products ? productSearch(products, query, { limit: 20 }) : [];
 
@@ -69,10 +58,21 @@ export function ProductSearch({
 					placeholder={placeholder}
 					className="h-9 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
 				/>
-				{(busy || (query.trim() !== "" && !products)) && (
+				{(busy || (query.trim() !== "" && index.status === "loading")) && (
 					<Loader2 className="size-4 animate-spin text-muted-foreground" />
 				)}
 			</div>
+			{index.status === "failed" && (
+				<div className="flex items-center gap-2 border-t px-4 py-2 text-critical-text">
+					<span className="min-w-0 flex-1 truncate">
+						Couldn't load products: {index.message}
+					</span>
+					<Button variant="ghost" size="sm" onClick={index.retry}>
+						<RotateCw />
+						Retry
+					</Button>
+				</div>
+			)}
 			{query.trim() !== "" && products && !busy && (
 				<CommandPrimitive.List className="max-h-80 overflow-y-auto border-t p-1">
 					{results.length === 0 && (

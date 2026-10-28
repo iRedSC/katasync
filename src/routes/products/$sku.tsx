@@ -313,6 +313,7 @@ function ProductPage() {
 							/>
 							<div className="border-t px-4 py-3">
 								<StockRangeForm
+									key={p.id}
 									value={
 										p.minStock !== null && p.maxStock !== null
 											? { min: p.minStock, max: p.maxStock }

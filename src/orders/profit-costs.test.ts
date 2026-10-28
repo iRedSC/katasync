@@ -101,6 +101,45 @@ describe("order_profit", () => {
 		);
 	});
 
+	test("an order's items add up to its profit to the cent", async () => {
+		// Three $1 items: a cent of fee can't split evenly, and costs of a
+		// third of a cent round each way.
+		const { id } = await order("#14", [
+			{ unitPrice: 1, quantity: 1, unitCost: 0.3333 },
+			{ unitPrice: 1, quantity: 1, unitCost: 0.3333 },
+			{ unitPrice: 1, quantity: 1, unitCost: 0.3333 },
+		]);
+		await saveCostReport(db, {
+			orderId: id,
+			billedBy: "shopify",
+			settled: false,
+			charges: [
+				{ kind: "fee", description: "Processing fee", amount: 0.01 },
+				{ kind: "label", description: "Label", amount: 0.02 },
+			],
+		});
+		const total = await profit(id);
+		const items = await db
+			.select()
+			.from(schema.orderLineProfit)
+			.where(eq(schema.orderLineProfit.orderId, id));
+		const sum = (key: "profit" | "fees" | "labels" | "cost") =>
+			Math.round(items.reduce((n, i) => n + (i[key] ?? 0), 0) * 100) / 100;
+		expect({
+			profit: sum("profit"),
+			fees: sum("fees"),
+			labels: sum("labels"),
+			cost: sum("cost"),
+		}).toEqual({
+			profit: total.profit,
+			fees: total.fees,
+			labels: total.labels,
+			cost: total.cost,
+		});
+		// Each item is within a cent of its even share.
+		expect(items.map((i) => i.fees).sort()).toEqual([0, 0, 0.01]);
+	});
+
 	test("an order cancelled down to nothing keeps its lines, so its fee shows", async () => {
 		const { id } = await order("#13", [
 			{ unitPrice: 20, quantity: 0, unitCost: 5 },

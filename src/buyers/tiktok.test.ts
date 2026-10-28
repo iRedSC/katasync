@@ -20,6 +20,8 @@ import { TiktokError, tiktokApi, tiktokUpload } from "#/channels/tiktok";
 import type { Db } from "#/db/client";
 import { buyerMessageChecks, orders, stores } from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { draftFits } from "./chat-way";
+import { setDraft } from "./drafts";
 import { buyerOrder } from "./order";
 import { addReplyFile } from "./reply-files";
 import { reply, settleReplies } from "./send";
@@ -189,6 +191,22 @@ describe("TikTok messages", () => {
 		expect((await buyerOrder(db, thread?.id ?? 0))?.name).toBe("#1001");
 	});
 
+	test("a card about another order moves the thread, and its suggestion stays with the first", async () => {
+		await syncTiktokMessages(db);
+		const [first] = await threadsPage(db, "open", null);
+		await setDraft(db, first?.id ?? 0, { body: "It shipped" }, "staff");
+		conversations.c1?.push(
+			card("o2", "ORDER_CARD", { order_id: "5770002" }, -2),
+			text("b2", "BUYER", "And this one?", -1),
+		);
+		await syncTiktokMessages(db);
+		const [t] = await threadsPage(db, "open", null);
+		expect(t?.orderRef).toBe("5770002");
+		// Written about the first order: not offered for the new one.
+		expect(t?.draft?.forOrder).toBe("5770001");
+		expect(draftFits(t?.draft ?? { forOrder: null }, "5770002")).toBe(false);
+	});
+
 	test("a chat with an order card never asks TikTok for the buyer's orders", async () => {
 		await syncTiktokMessages(db);
 		expect(
@@ -333,7 +351,7 @@ describe("TikTok messages", () => {
 		]);
 	});
 
-	test("pictures without words are delivered only once every one is found", async () => {
+	test("pictures without words are delivered only once every one is found, by TikTok's address for it", async () => {
 		await syncTiktokMessages(db);
 		const [thread] = await threadsPage(db, "open", null);
 		const ids = [];
@@ -347,29 +365,42 @@ describe("TikTok messages", () => {
 					})
 				).id,
 			);
-		// The first goes and TikTok gives no ID: nothing more is sent.
-		sendAnswer = () => ({});
+		const image = (name: string) => ({
+			url: `https://p16.tiktok/${name}`,
+			width: 4,
+			height: 3,
+		});
+		vi.mocked(tiktokUpload)
+			.mockResolvedValueOnce(image("a.png"))
+			.mockResolvedValueOnce(image("b.png"));
+		// The first goes with an ID; the second without one.
+		const answers = [{ message_id: "s1" }, {}];
+		sendAnswer = () => answers.shift();
 		const r = await reply(db, thread?.id ?? 0, "", crypto.randomUUID(), ids);
 		expect(r.status).toBe("sending");
-		expect(sent).toHaveLength(1);
-		const image = { url: "https://p16.tiktok/up.png", width: 4, height: 3 };
-		const ours = (id: string) => ({
-			...card(id, "IMAGE", image, 0),
+		expect(sent).toHaveLength(2);
+		const ours = (id: string, name: string, minutes: number) => ({
+			...card(id, "IMAGE", image(name), minutes),
 			sender: { role: "SHOP", nickname: "ECDT" },
 		});
-		conversations.c1?.push(ours("p1"));
-		await settleReplies(db, Date.now() + 120_000);
 		const mine = async () =>
-			(await threadsPage(db, "open", null))[0]?.messages.filter(
-				(m) => !m.fromBuyer,
-			);
-		// One of two found: not delivered, and not a second reply either.
-		expect((await mine())?.map((m) => m.status)).toEqual(["sending"]);
+			(await threadsPage(db, "open", null))[0]?.messages
+				.filter((m) => !m.fromBuyer)
+				.map((m) => [m.status, m.media.map((f) => f.url)]);
+		// A picture of ours sent another way isn't the one missing: kept as its
+		// own, and the reply still isn't delivered.
+		conversations.c1?.push(ours("s1", "a.png", 0), ours("p9", "other.png", 1));
 		await settleReplies(db, Date.now() + 20 * 60_000);
-		expect((await mine())?.map((m) => m.status)).toEqual(["unconfirmed"]);
-		// Both found after all (sent from Seller Center, say): delivered.
-		conversations.c1?.push(ours("p2"));
+		expect(await mine()).toEqual([
+			["unconfirmed", [expect.any(String), expect.any(String)]],
+			["delivered", ["https://p16.tiktok/other.png"]],
+		]);
+		// The one missing turns up: delivered.
+		conversations.c1?.push(ours("p2", "b.png", 2));
 		await syncTiktokMessages(db, { sweep: true });
-		expect((await mine())?.map((m) => m.status)).toEqual(["delivered"]);
+		expect((await mine())?.map(([status]) => status)).toEqual([
+			"delivered",
+			"delivered",
+		]);
 	});
 });

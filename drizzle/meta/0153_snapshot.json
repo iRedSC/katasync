@@ -1,6 +1,6 @@
 {
-  "id": "b819d6ca-28bf-4bf7-82b1-a1ea126c0de8",
-  "prevId": "3c5e27aa-1c7f-4a6d-8e5e-e944eb664a46",
+  "id": "241cc3e4-b456-4e76-9d1a-752688f98659",
+  "prevId": "d5de39de-095b-478f-b8c8-686eab51708b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -5736,12 +5736,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "channel_retry_lease": {
-          "name": "channel_retry_lease",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "handoff_hold": {
           "name": "handoff_hold",
           "type": "jsonb",
@@ -8177,12 +8171,6 @@
         "error": {
           "name": "error",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "answered_at": {
-          "name": "answered_at",
-          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         }
@@ -11663,6 +11651,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "from_attachment_id": {
+          "name": "from_attachment_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11738,6 +11732,19 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "purchase_order_files_from_attachment_id_po_email_attachments_id_fk": {
+          "name": "purchase_order_files_from_attachment_id_po_email_attachments_id_fk",
+          "tableFrom": "purchase_order_files",
+          "tableTo": "po_email_attachments",
+          "columnsFrom": [
+            "from_attachment_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

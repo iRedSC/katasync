@@ -21,6 +21,14 @@ import type { InboxCounts } from "#/server/inbox";
 import { BuyerConversation } from "./buyer-thread";
 import { DueChip } from "./due-chip";
 import { folderSearch, InboxFrame } from "./frame";
+import {
+	type Hidden,
+	hide,
+	noneHidden,
+	retire,
+	unhide,
+	visible,
+} from "./hidden-threads";
 import { tabClass } from "./mail-pane";
 
 // The Buyers folder: every conversation with a buyer, those waiting on us
@@ -43,10 +51,24 @@ export function BuyerBox({
 	open?: number | null;
 }) {
 	const router = useRouter();
-	const [hidden, setHidden] = useState<Set<number>>(new Set());
-	const threads = page.threads.filter((t) => !hidden.has(t.id));
+	const [hidden, setHidden] = useState<Hidden>(noneHidden);
+	const threads = visible(page.threads, hidden, view);
+	// Once the server's list has moved a conversation, hiding it is done.
+	useEffect(() => {
+		setHidden((h) => retire(h, view, page.threads));
+	}, [view, page.threads]);
 	const [selectedId, setSelectedId] = useState<number | null>(open);
 	const [reading, setReading] = useState(open !== null);
+	// A link to another conversation (the URL's thread changing) opens it; the
+	// same link again leaves staff where they've moved to.
+	const [linked, setLinked] = useState(open);
+	if (open !== linked) {
+		setLinked(open);
+		if (open !== null) {
+			setSelectedId(open);
+			setReading(true);
+		}
+	}
 	const selected =
 		threads.find((t) => t.id === selectedId) ?? threads[0] ?? null;
 
@@ -61,14 +83,9 @@ export function BuyerBox({
 		return () => clearInterval(timer);
 	}, [inFlight, router]);
 
-	const show = (id: number) =>
-		setHidden((h) => {
-			const next = new Set(h);
-			next.delete(id);
-			return next;
-		});
+	const show = (id: number) => setHidden((h) => unhide(h, id));
 	async function done(t: BuyerThread, isDone: boolean) {
-		setHidden((h) => new Set(h).add(t.id));
+		setHidden((h) => hide(h, t.id, view));
 		try {
 			await setBuyerThreadDone({ data: { id: t.id, done: isDone } });
 		} catch (error) {
