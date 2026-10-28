@@ -1,10 +1,19 @@
 import { and, eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as shopify from "#/channels/shopify/refurbish";
+import { stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { repairParts, repairs } from "#/db/repair-schema";
 import * as schema from "#/db/schema";
+import { undoUnownedBatch } from "#/inventory/batch-owner";
+import {
+	activate,
+	channelOrder,
+	stockFrom,
+} from "#/inventory/commitments.fixtures";
 import { postMovements, recordSale } from "#/inventory/ledger";
+import { setRetailReserve } from "#/inventory/retail-reserve";
+import { ingestOrder } from "#/orders/ingest";
 import { receiveReturn } from "#/orders/returns";
 import { createProduct, createTestDb } from "#/test/db";
 import { listBench, startBench } from "./bench";
@@ -234,6 +243,26 @@ describe("bench jobs", () => {
 		expect(refurb.cost).toBe(450);
 	});
 
+	test("the listed unit and its parts can't be undone off the ledger", async () => {
+		await db.insert(schema.stores).values({ channel: "shopify", name: "Shop" });
+		const [bare] = await startBench(db, { productId: taper });
+		const [withParts] = await startBench(db, { productId: taper });
+		await setPart(db, withParts, blade, 1);
+		for (const id of [bare, withParts]) {
+			await listBench(db, id, listing);
+			const batches = await db
+				.selectDistinct({ batchId: schema.movements.batchId })
+				.from(schema.movements)
+				.where(eq(schema.movements.reference, `bench:${id}`));
+			expect(batches).toHaveLength(id === bare ? 1 : 2);
+			for (const { batchId } of batches)
+				await expect(undoUnownedBatch(db, batchId)).rejects.toThrow(
+					`repair ${id}`,
+				);
+		}
+		expect(await onHand(blade)).toBe(2);
+	});
+
 	test("a part not on the shelf stops the listing, leaving nothing made", async () => {
 		const [id] = await startBench(db, { productId: taper });
 		await setPart(db, id, blade, 5);
@@ -246,6 +275,42 @@ describe("bench jobs", () => {
 			.from(schema.products)
 			.where(eq(schema.products.refurbishedFromId, taper));
 		expect(refurbs).toHaveLength(0);
+	});
+
+	test("parts the store keeps back can't stand in for parts promised to orders", async () => {
+		await activate(db);
+		const [{ id: retail }] = await db
+			.insert(schema.locations)
+			.values({ name: "Retail", kind: "retail" })
+			.returning();
+		await setRetailReserve(db, 5);
+		await postMovements(db, {
+			lines: [
+				{ productId: blade, locationId: retail, delta: 10, reason: "receipt" },
+			],
+		});
+		const [store] = await db
+			.insert(schema.stores)
+			.values({ channel: "shopify", name: "Shop", stockFrom })
+			.returning();
+		const order = channelOrder();
+		await ingestOrder(
+			db,
+			{ id: store.id, stockFrom },
+			{ ...order, lines: [{ ...order.lines[0], sku: "BLADE", quantity: 5 }] },
+			await stockLocations(db),
+		);
+
+		// Shipping can reach 3 in the warehouse and 5 above the store's reserve.
+		const [id] = await startBench(db, { productId: taper });
+		await setPart(db, id, blade, 5);
+		await expect(listBench(db, id, listing)).rejects.toThrow(
+			"BLADE is promised to orders",
+		);
+		expect(await onHand(blade)).toBe(13);
+		await setPart(db, id, blade, 3);
+		await listBench(db, id, listing);
+		expect(await onHand(blade)).toBe(10);
 	});
 
 	test("cancelling lets the unit go; it can't come back once received", async () => {

@@ -7,7 +7,7 @@ import {
 	products,
 	supplierOffers,
 } from "#/db/schema";
-import { soldSince } from "#/inventory/sales";
+import { soldByLine } from "#/inventory/sales";
 import { carried } from "#/products/archive";
 
 // ABC analysis: which products earn the most. Value is margin over ABC_DAYS:
@@ -91,10 +91,14 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 	const unitCost = sql<
 		number | null
 	>`coalesce(${supplierOffers.itemCost}, ${products.unitCost})::float8`;
-	const [sold, stocked, [first], revenue, parts] = await Promise.all([
-		soldSince(db, since, { includeFba: true }),
+	const [took, costs, [first], revenue, parts] = await Promise.all([
+		soldByLine(db, since, { includeFba: true }),
 		db
-			.select({ id: products.id, cost: unitCost })
+			.select({
+				id: products.id,
+				cost: unitCost,
+				carried: sql<boolean>`${carried}`,
+			})
 			.from(products)
 			.leftJoin(
 				supplierOffers,
@@ -103,23 +107,23 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 					eq(supplierOffers.cheapest, true),
 				),
 			)
-			.where(and(ne(products.kind, "bundle"), carried)),
+			.where(ne(products.kind, "bundle")),
 		db.select({ at: sql<string | null>`min(${orders.placedAt})` }).from(orders),
-		// What each product sold for and how many, sets as sets, counted the
-		// way soldSince counts with FBA.
+		// What each line sold for, sets as sets, counted the way soldSince
+		// counts with FBA.
 		db
 			.select({
+				lineId: orderLines.id,
 				productId: orderLines.productId,
 				kind: products.kind,
-				units: sql<number>`sum(${orderLines.quantity})::int`,
-				revenue: sql<number>`sum(${orderLines.quantity} * ${orderLines.unitPrice})::float8`,
+				units: orderLines.quantity,
+				revenue: sql<number>`(${orderLines.quantity} * ${orderLines.unitPrice})::float8`,
 			})
 			.from(orderLines)
 			.innerJoin(orders, eq(orders.id, orderLines.orderId))
 			.innerJoin(products, eq(products.id, orderLines.productId))
-			.where(and(gte(orders.placedAt, since), isNull(orders.cancelledAt)))
-			.groupBy(orderLines.productId, products.kind),
-		// Each set's parts, with what one costs.
+			.where(and(gte(orders.placedAt, since), isNull(orders.cancelledAt))),
+		// Each set's parts as they stand, with what one costs, to rank sets.
 		db
 			.select({
 				setId: productComponents.parentProductId,
@@ -141,6 +145,15 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 			),
 	]);
 
+	const sold = new Map<number, number>();
+	const tookOn = new Map<number, typeof took>();
+	for (const t of took) {
+		sold.set(t.productId, (sold.get(t.productId) ?? 0) + t.units);
+		tookOn.set(t.orderLineId, [...(tookOn.get(t.orderLineId) ?? []), t]);
+	}
+	const costOf = new Map(costs.map((c) => [c.id, c.cost]));
+	const stocked = costs.filter((c) => c.carried);
+
 	// A set's cost, null when any part has none.
 	const partsOf = new Map<number, typeof parts>();
 	for (const p of parts)
@@ -152,38 +165,43 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 	};
 
 	// Revenue per stocked product: its own sales, plus its share of each set
-	// sale, split by cost. A set whose cost isn't known can't be split, so its
-	// sales leave its parts' margin on both sides: no revenue, and the units
-	// they took (in soldSince) aren't costed either.
+	// sale, split by the cost of the parts that sale took (soldByLine: what it
+	// was sold with, not today's recipe). A sale whose parts' cost isn't known
+	// can't be split, so it leaves their margin on both sides: no revenue, and
+	// the units it took aren't costed either.
 	const earned = new Map<number, number>();
 	const unvalued = new Map<number, number>();
 	const add = (id: number, amount: number) =>
 		earned.set(id, (earned.get(id) ?? 0) + amount);
-	const setSales: { setId: number; units: number; revenue: number }[] = [];
+	const setSales = new Map<number, { units: number; revenue: number }>();
 	for (const r of revenue) {
 		if (r.productId === null) continue;
 		if (r.kind !== "bundle") {
 			add(r.productId, r.revenue);
 			continue;
 		}
-		setSales.push({ setId: r.productId, units: r.units, revenue: r.revenue });
-		const cost = setCost(r.productId);
-		if (cost === null) {
-			for (const part of partsOf.get(r.productId) ?? [])
-				unvalued.set(
-					part.partId,
-					(unvalued.get(part.partId) ?? 0) + r.units * part.quantity,
-				);
+		const sale = setSales.get(r.productId) ?? { units: 0, revenue: 0 };
+		setSales.set(r.productId, {
+			units: sale.units + r.units,
+			revenue: sale.revenue + r.revenue,
+		});
+		const lineParts = (tookOn.get(r.lineId) ?? []).map((t) => ({
+			...t,
+			cost: costOf.get(t.productId) ?? null,
+		}));
+		if (lineParts.some((p) => p.cost === null)) {
+			for (const p of lineParts)
+				unvalued.set(p.productId, (unvalued.get(p.productId) ?? 0) + p.units);
 			continue;
 		}
-		// Split by each part's share of the set's cost. When every part is known
-		// to be free there's no cost to split by, so the parts share it by quantity.
-		const parts = partsOf.get(r.productId) ?? [];
-		const weight = (part: { quantity: number; cost: number | null }) =>
-			cost > 0 ? part.quantity * (part.cost ?? 0) : part.quantity;
-		const whole = parts.reduce((sum, part) => sum + weight(part), 0);
-		for (const part of parts)
-			add(part.partId, (r.revenue * weight(part)) / whole);
+		// Split by each part's share of the cost. When every part is known to be
+		// free there's no cost to split by, so the parts share it by units.
+		const cost = lineParts.reduce((sum, p) => sum + p.units * (p.cost ?? 0), 0);
+		const weight = (p: { units: number; cost: number | null }) =>
+			cost > 0 ? p.units * (p.cost ?? 0) : p.units;
+		const whole = lineParts.reduce((sum, p) => sum + weight(p), 0);
+		for (const p of lineParts)
+			add(p.productId, (r.revenue * weight(p)) / whole);
 	}
 
 	let unpriced = 0;
@@ -199,10 +217,9 @@ export async function abcClasses(db: Db, now = new Date()): Promise<AbcResult> {
 		rows.push({ productId: p.id, units, value: Math.max(0, margin) });
 	}
 
-	const setUnits = new Map(setSales.map((r) => [r.setId, r]));
 	const setRows: typeof rows = [];
 	for (const setId of partsOf.keys()) {
-		const sale = setUnits.get(setId);
+		const sale = setSales.get(setId);
 		const units = sale?.units ?? 0;
 		const cost = setCost(setId);
 		if (units > 0 && cost === null) {
