@@ -405,17 +405,21 @@ export async function setRead(db: Db, emailId: number, read: boolean) {
 	return { id: emailId, read };
 }
 
+// Checked under the email's lock, as fileEmail is, so an email filed a moment
+// before stays on its PO.
 export async function setAside(db: Db, emailId: number, aside = true) {
-	const email = await emailRow(db, emailId);
-	if (email.purchaseOrderId !== null)
-		throw new PurchaseOrderError(
-			`Email ${emailId} is on PO ${email.purchaseOrderId}; take it off first`,
-		);
-	await db
-		.update(poEmails)
-		.set({ setAsideAt: aside ? new Date() : null })
-		.where(eq(poEmails.id, emailId));
-	return { id: emailId, setAside: aside };
+	return db.transaction(async (tx) => {
+		const email = await lockedEmail(tx, emailId);
+		if (email.purchaseOrderId !== null)
+			throw new PurchaseOrderError(
+				`Email ${emailId} is on PO ${email.purchaseOrderId}; take it off first`,
+			);
+		await tx
+			.update(poEmails)
+			.set({ setAsideAt: aside ? new Date() : null })
+			.where(eq(poEmails.id, emailId));
+		return { id: emailId, setAside: aside };
+	});
 }
 
 // Reads one email from the mailbox into katasync, e.g. one from before the

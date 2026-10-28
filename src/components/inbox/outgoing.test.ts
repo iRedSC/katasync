@@ -31,13 +31,25 @@ test("held for the hold, then sent once under its key", async () => {
 });
 
 test("undo inside the hold sends nothing and gives the words and files back", async () => {
-	const photo = { kind: "IMAGE", name: "box.jpg", url: "/f/7", fileId: 7 };
+	const photo = {
+		kind: "IMAGE",
+		name: "box.jpg",
+		type: "image/jpeg",
+		size: 2_000_000,
+		url: "/f/7",
+		fileId: 7,
+	};
 	out.hold({ key: "k2", threadId: 2, body: "Oops", media: [photo] });
 	expect(out.undo("k2")).toBe(true);
 	await vi.advanceTimersByTimeAsync(out.HOLD_MS * 2);
 	expect(replyToBuyer).not.toHaveBeenCalled();
-	expect(out.takeReturned(2)).toEqual({ body: "Oops", media: [photo] });
-	expect(out.takeReturned(2)).toBeUndefined();
+	expect(out.takeReturned("k2")).toEqual({
+		key: "k2",
+		threadId: 2,
+		body: "Oops",
+		media: [photo],
+	});
+	expect(out.takeReturned("k2")).toBeUndefined();
 });
 
 test("send now doesn't wait, and the timer doesn't send it again", async () => {
@@ -45,4 +57,22 @@ test("send now doesn't wait, and the timer doesn't send it again", async () => {
 	out.sendNow("k3");
 	await vi.advanceTimersByTimeAsync(out.HOLD_MS * 2);
 	expect(replyToBuyer).toHaveBeenCalledTimes(1);
+});
+
+test("a second undo keeps the first one's words instead of replacing them", () => {
+	out.hold({ key: "r1", threadId: 8, body: "First", media: [] });
+	out.hold({ key: "r2", threadId: 8, body: "Second", media: [] });
+	out.hold({ key: "other", threadId: 9, body: "Elsewhere", media: [] });
+	out.undo("r1");
+	out.undo("r2");
+	out.undo("other");
+	expect(out.takeReturned("r1")?.body).toBe("First");
+	expect(out.takeReturned("r2")?.body).toBe("Second");
+	expect(out.takeReturned("other")?.body).toBe("Elsewhere");
+});
+
+test("only an empty box takes words straight back", () => {
+	expect(out.isEmptyBox({ text: "  \n", files: 0 })).toBe(true);
+	expect(out.isEmptyBox({ text: "Newer draft", files: 0 })).toBe(false);
+	expect(out.isEmptyBox({ text: "", files: 1 })).toBe(false);
 });

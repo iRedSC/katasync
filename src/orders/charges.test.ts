@@ -148,6 +148,69 @@ describe("saveCostReport", () => {
 		]);
 	});
 
+	test("a fallback keeps the authoritative label figures on file, $0 included", async () => {
+		const fallback = report({
+			fetchedAt: at(1),
+			labelsAuthoritative: false,
+			labelsPending: true,
+			charges: [
+				{ kind: "fee", description: "Referral fee", amount: 3 },
+				{ kind: "label", description: "Shipping fee", amount: 6.1 },
+			],
+		});
+		await saveCostReport(
+			db,
+			report({
+				charges: [
+					{ kind: "fee", description: "Referral fee", amount: 2.4 },
+					{ kind: "label", description: "Shipping fee", amount: 0 },
+				],
+			}),
+		);
+		expect(await saveCostReport(db, fallback)).toBe(true);
+		// Fees update; the authoritative $0 label stays.
+		expect(await charges(relayedOrder)).toEqual([
+			{
+				billedBy: "tiktok",
+				kind: "fee",
+				description: "Referral fee",
+				amount: 3,
+			},
+		]);
+		const [onFile] = await db
+			.select()
+			.from(schema.orderCostReports)
+			.where(eq(schema.orderCostReports.orderId, relayedOrder));
+		expect(onFile.labelAuthority).toBe("authoritative");
+		expect(onFile.labelsPending).toBe(false);
+
+		// Another fallback still can't replace it.
+		await saveCostReport(db, { ...fallback, fetchedAt: at(2) });
+		expect((await charges(relayedOrder)).map((c) => c.kind)).toEqual(["fee"]);
+	});
+
+	test("an authoritative report replaces a fallback's labels", async () => {
+		await saveCostReport(
+			db,
+			report({ labelsAuthoritative: false, labelsPending: true }),
+		);
+		await saveCostReport(
+			db,
+			report({
+				fetchedAt: at(1),
+				charges: [{ kind: "label", description: "Shipping fee", amount: 5 }],
+			}),
+		);
+		expect(await charges(relayedOrder)).toEqual([
+			{
+				billedBy: "tiktok",
+				kind: "label",
+				description: "Shipping fee",
+				amount: 5,
+			},
+		]);
+	});
+
 	test("refuses a marketplace that didn't sell the order", async () => {
 		await expect(
 			saveCostReport(db, report({ orderId: shopifyOrder, billedBy: "ebay" })),

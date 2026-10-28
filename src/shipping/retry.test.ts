@@ -6,7 +6,12 @@ import { createTestDb } from "#/test/db";
 import { memoryLocker } from "./dispatch";
 import { addPackedDispatch } from "./dispatch.fixtures";
 import type { Outside } from "./handoff";
-import { followUpTracking, resendTrackingNow, retryDueTracking } from "./retry";
+import {
+	followUpTracking,
+	LEASE_MS,
+	resendTrackingNow,
+	retryDueTracking,
+} from "./retry";
 import { nextRetry, RETRY_FOR_MS } from "./retry-window";
 
 let db: Db;
@@ -134,6 +139,74 @@ describe("retryDueTracking", () => {
 		expect(after.channelAttempts).toBe(7);
 		expect(after.channelRetryAt).toBeNull();
 		expect(after.channelError).toBe("eBay answered 503");
+	});
+
+	test("a run that fails before telling leaves the send due again after its lease", async () => {
+		await resendTrackingNow(db, dispatchId, refused());
+		const failing = {
+			...accepted(),
+			lock: vi.fn(async () => {
+				throw new Error("connection lost");
+			}),
+		};
+		expect(await retryDueTracking(db, later(31_000), failing)).toEqual({
+			tried: 1,
+			sent: 0,
+		});
+		const leased = await handoff();
+		expect(leased.channelRetryLease).not.toBeNull();
+		expect(leased.channelRetryAt?.getTime()).toBeGreaterThan(
+			later(31_000 + LEASE_MS - 5000).getTime(),
+		);
+
+		// Another run leaves it alone while it's leased.
+		const meanwhile = accepted();
+		expect((await retryDueTracking(db, later(60_000), meanwhile)).tried).toBe(
+			0,
+		);
+		expect(meanwhile.ebayShip).not.toHaveBeenCalled();
+
+		const after = accepted();
+		expect(
+			await retryDueTracking(db, later(31_000 + LEASE_MS + 1000), after),
+		).toEqual({ tried: 1, sent: 1 });
+		const sent = await handoff();
+		expect(sent.channelSentAt).not.toBeNull();
+		expect(sent.channelRetryAt).toBeNull();
+		expect(sent.channelRetryLease).toBeNull();
+	});
+
+	test("a send that can't go once the ten minutes are over stops", async () => {
+		await db
+			.update(schema.dispatchOrders)
+			.set({
+				channelError: "eBay answered 503",
+				channelFirstFailedAt: later(-RETRY_FOR_MS - 1000),
+				channelAttempts: 6,
+				channelRetryAt: later(-1000),
+			})
+			.where(eq(schema.dispatchOrders.dispatchId, dispatchId));
+		const failing = {
+			...accepted(),
+			lock: vi.fn(async () => {
+				throw new Error("This label was voided");
+			}),
+		};
+		await retryDueTracking(db, new Date(), failing);
+		const after = await handoff();
+		expect(after.channelRetryAt).toBeNull();
+		expect(after.channelRetryLease).toBeNull();
+	});
+
+	test("a refusal during a lease keeps its own next try", async () => {
+		await resendTrackingNow(db, dispatchId, refused());
+		await retryDueTracking(db, later(31_000), refused());
+		const after = await handoff();
+		expect(after.channelAttempts).toBe(2);
+		expect(after.channelRetryLease).toBeNull();
+		expect(after.channelRetryAt?.getTime()).toBeLessThan(
+			later(LEASE_MS).getTime(),
+		);
 	});
 
 	test("pressing Retry starts a fresh ten minutes", async () => {

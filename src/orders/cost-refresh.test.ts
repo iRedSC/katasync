@@ -109,6 +109,39 @@ describe("dueOrders", () => {
 		expect(await later(7 * 24 - 1)).not.toContain("#month");
 		expect(await later(7 * 24)).toContain("#month");
 	});
+	test("an old order changed since is asked until an ask works", async () => {
+		const old = await order("#old", 61 * 24);
+		await db.insert(schema.orderCostChecks).values({
+			orderId: old,
+			billedBy: "shopify",
+			checkedAt: ago(30 * 24),
+			answeredAt: ago(30 * 24),
+		});
+		await db
+			.update(schema.orders)
+			.set({ sourceUpdatedAt: ago(2) })
+			.where(eq(schema.orders.id, old));
+		expect(await names("shopify")).toEqual(["#old"]);
+		await refreshCosts(
+			db,
+			"shopify",
+			async (due) => due.map((o) => ({ orderId: o.orderId, error: "503" })),
+			{ now },
+		);
+		const later = (hours: number) =>
+			names("shopify", new Date(now.getTime() + hours * HOUR));
+		// Failed: asked again after a quarter of the time since the change,
+		// an hour at least, not taken as the revision's last ask.
+		expect(await later(0.5)).toEqual([]);
+		expect(await later(1)).toEqual(["#old"]);
+		await refreshCosts(
+			db,
+			"shopify",
+			async (due) => due.map((o) => ({ orderId: o.orderId, report: null })),
+			{ now: new Date(now.getTime() + HOUR) },
+		);
+		expect(await later(24 * 30)).toEqual([]);
+	});
 });
 
 describe("refreshCosts", () => {

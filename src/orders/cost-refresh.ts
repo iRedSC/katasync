@@ -158,12 +158,24 @@ export async function dueOrders(
 										>= greatest(${HOUR}, least(${LONGEST_WAIT}, ${age} / 4))`,
 								),
 							),
-							// Older than that, but changed since it was last asked: asked once
-							// more, whatever its age. Any ask after the change ends it, even a
-							// failed one, so each revision is asked for once.
+							// Older than that, but changed since an ask last worked: asked
+							// once more, whatever its age. Only an ask that works ends it; a
+							// failed one is asked again after a quarter of the time since the
+							// change, between an hour and a week.
 							and(
 								lt(orders.placedAt, finalFrom),
-								lt(orderCostChecks.checkedAt, orders.sourceUpdatedAt),
+								or(
+									isNull(orderCostChecks.answeredAt),
+									lt(orderCostChecks.answeredAt, orders.sourceUpdatedAt),
+								),
+								or(
+									lt(orderCostChecks.checkedAt, orders.sourceUpdatedAt),
+									and(
+										isNotNull(orderCostChecks.error),
+										sql`extract(epoch from (${now}::timestamptz - ${orderCostChecks.checkedAt})) * 1000
+											>= greatest(${HOUR}, least(${LONGEST_WAIT}, extract(epoch from (${now}::timestamptz - ${orders.sourceUpdatedAt})) * 1000 / 4))`,
+									),
+								),
 							),
 						),
 			),
@@ -373,10 +385,18 @@ async function askAbout(
 		if (error) problems.push(`${order.name}: ${error}`);
 		await db
 			.insert(orderCostChecks)
-			.values({ orderId: order.orderId, billedBy, checkedAt: now, error })
+			.values({
+				orderId: order.orderId,
+				billedBy,
+				checkedAt: now,
+				error,
+				answeredAt: error ? null : now,
+			})
 			.onConflictDoUpdate({
 				target: [orderCostChecks.orderId, orderCostChecks.billedBy],
-				set: { checkedAt: now, error },
+				set: error
+					? { checkedAt: now, error }
+					: { checkedAt: now, error, answeredAt: now },
 			});
 	}
 	return { checked: due.length, reported, problems };

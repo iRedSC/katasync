@@ -9,6 +9,7 @@ import {
 import type { FlagInput } from "#/purchasing/inbox/ai-filing-shapes";
 import {
 	amendLine,
+	lockOrder,
 	PurchaseOrderError,
 	setBackOrdered,
 } from "#/purchasing/orders";
@@ -262,6 +263,9 @@ export async function reopenFlag(db: Db, id: number) {
 		const flag = await lockedFlag(tx, id);
 		if (!flag.resolution) return flag;
 		if (flag.resolution === "applied" && flag.kind !== "note") {
+			// Locked before the line is read, so an edit can't land between
+			// the check below and setting it back.
+			await lockOrder(tx, flag.purchaseOrderId, [...FLAGGABLE]);
 			const line = await lineOfFlag(tx, flag);
 			const [now] = await tx
 				.select()

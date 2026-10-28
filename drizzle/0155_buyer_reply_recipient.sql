@@ -1,0 +1,1 @@
+ALTER TABLE "buyer_messages" ADD COLUMN "recipient" text;

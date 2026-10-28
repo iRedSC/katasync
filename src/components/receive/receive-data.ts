@@ -1,4 +1,4 @@
-import type { PurchaseOrderMatch } from "#/components/po-product-picker";
+import type { PurchaseOrderMatch } from "#/components/po-search";
 import type { ReceiveLine } from "#/components/receive/line-row";
 import type { ReceiptDiscount } from "#/components/receive/quantity-sheet";
 import { formatMoney } from "#/lib/format";

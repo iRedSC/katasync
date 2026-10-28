@@ -1,6 +1,6 @@
 // Reads every marketplace's payouts since a date, for months before payouts
 // were kept. Safe to run again; payouts already saved are updated. The cost
-// cron keeps the last 45 days current after this.
+// cron keeps the last 45 days, and older pending payouts, current after this.
 //
 //   pnpm payouts:backfill 2025-10-01
 import { actAsScript } from "#/audit/script";
@@ -32,9 +32,15 @@ for (const channel of Object.keys(channelEnv) as SyncedChannel[]) {
 		console.log(`${channel}: not connected`);
 		continue;
 	}
-	const { saved, error } = await refreshPayouts(db, channel, since);
-	if (error) failures++;
-	console.log(error ? `${channel}: ${error}` : `${channel}: ${saved} payouts`);
+	const result = await refreshPayouts(db, channel, since);
+	if (result.kind !== "saved") failures++;
+	console.log(
+		result.kind === "saved"
+			? `${channel}: ${result.saved} payouts`
+			: result.kind === "failed"
+				? `${channel}: ${result.error}`
+				: `${channel}: another payout refresh is running`,
+	);
 }
 // Every channel was still tried; the exit status says whether they all worked.
 process.exit(failures > 0 ? 1 : 0);

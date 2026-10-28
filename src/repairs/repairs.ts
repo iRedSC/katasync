@@ -13,7 +13,7 @@ import {
 	syncDraft,
 } from "./draft-sync";
 import { LABOR_STEP } from "./labor";
-import { lastIn, placeIn } from "./queue";
+import { holdQueue, lastIn, placeIn, type QueueHeld } from "./queue";
 import {
 	boardStatuses,
 	isOnBoard,
@@ -106,22 +106,39 @@ export async function createRepair(
 	return made.id;
 }
 
+type Options = { sync?: boolean; open?: boolean };
+
 // Runs `change` holding the repair, then writes its draft order. A draft
 // paid meanwhile moves the repair to Picked up and refuses the change.
+// With `queue`, it holds the board's order first, to move the repair.
+async function withRepair<T>(
+	db: Db,
+	id: number,
+	change: (tx: Db, r: Locked, queue: QueueHeld) => Promise<T>,
+	options: Options & { queue: true },
+): Promise<T>;
 async function withRepair<T>(
 	db: Db,
 	id: number,
 	change: (tx: Db, r: Locked) => Promise<T>,
-	{ sync = true, open = true }: { sync?: boolean; open?: boolean } = {},
+	options?: Options,
+): Promise<T>;
+async function withRepair<T>(
+	db: Db,
+	id: number,
+	change: (tx: Db, r: Locked, queue: QueueHeld) => Promise<T>,
+	{ sync = true, open = true, queue }: Options & { queue?: true } = {},
 ): Promise<T> {
 	try {
 		return await db.transaction(async (tx) => {
+			const held = queue ? await holdQueue(tx) : undefined;
 			const r = await lockRepair(tx, id);
 			if (open && !isOnBoard(r.status))
 				throw new RepairError(
 					`R${id} is ${r.status === "cancelled" ? "cancelled" : "picked up"}; move it back to the board to change it`,
 				);
-			const result = await change(tx, r);
+			// Without `queue`, the overloads give a change that takes none.
+			const result = await change(tx, r, held as QueueHeld);
 			if (sync && r.draftOrderId !== null)
 				await syncDraft(tx, await lockRepair(tx, id));
 			return result;
@@ -236,7 +253,7 @@ export async function moveRepair(
 	return withRepair(
 		db,
 		id,
-		async (tx, r) => {
+		async (tx, r, queue) => {
 			const why = refuseMove(
 				{
 					status: r.status,
@@ -248,7 +265,7 @@ export async function moveRepair(
 			);
 			if (why) throw new RepairError(why);
 			if (r.status === to) {
-				if (before !== undefined) await placeIn(tx, id, to, before);
+				if (before !== undefined) await placeIn(tx, queue, id, to, before);
 				return { from: r.status };
 			}
 			// Off the draft first: a closed repair can't hold one.
@@ -267,12 +284,12 @@ export async function moveRepair(
 				.returning({ id: repairs.id });
 			if (moved.length === 0)
 				throw new RepairError(`R${id} just changed; try again`);
-			if (before != null) await placeIn(tx, id, to, before);
+			if (before != null) await placeIn(tx, queue, id, to, before);
 			if (r.status === "cancelled" && r.kind === "customer")
 				await syncDraft(tx, { ...r, status: to });
 			return { from: r.status };
 		},
-		{ sync: false, open: false },
+		{ sync: false, open: false, queue: true },
 	);
 }
 
