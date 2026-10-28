@@ -5,6 +5,7 @@ import { Button } from "#/components/ui/button";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { formatMinutes, hourlyRate, LABOR_STEP } from "#/repairs/labor";
+import { useDraft } from "./draft";
 import type { Detail } from "./repair-data";
 
 // Time spent on the tool, typed in 15-minute steps. It all goes on the
@@ -57,6 +58,7 @@ export function LaborCard({
 							</span>
 						)}
 						<NoteField
+							id={`labor-${l.id}`}
 							value={l.note}
 							disabled={!editable}
 							onSave={(note) => onEdit(l.id, { note })}
@@ -179,26 +181,33 @@ function Stepper({
 	);
 }
 
-// Saves when it loses focus or Enter is pressed, if it changed.
+// Saves when it loses focus or Enter is pressed, if it was typed in and
+// differs. Untouched, it follows the value; `id` names the record, so another
+// one starts over.
 export function NoteField({
+	id,
 	value,
 	disabled,
 	onSave,
 	placeholder = "Note",
 }: {
+	id: string | number;
 	value: string;
 	disabled?: boolean;
 	onSave: (value: string) => void;
 	placeholder?: string;
 }) {
-	const [text, setText] = useState(value);
+	const note = useDraft(value, id);
 	return (
 		<input
-			value={text}
+			value={note.value}
 			disabled={disabled}
 			placeholder={disabled ? "" : placeholder}
-			onChange={(e) => setText(e.target.value)}
-			onBlur={() => text !== value && onSave(text)}
+			onChange={(e) => note.type(e.target.value)}
+			onBlur={() => {
+				const text = note.save();
+				if (text !== null) onSave(text);
+			}}
 			onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
 			className="h-8 min-w-0 flex-1 rounded-lg bg-transparent px-2 outline-none hover:bg-surface focus:bg-surface disabled:hover:bg-transparent"
 		/>
