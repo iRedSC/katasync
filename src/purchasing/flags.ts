@@ -24,6 +24,9 @@ type By = "ai" | "claude" | "staff";
 // POs a supplier can still write about. Cancelled ones take nothing.
 const FLAGGABLE = ["sent", "closed"] as const;
 
+// A flag's value column (numeric(12, 4)) holds less than this.
+const MAX_VALUE = 1e8;
+
 // The line of a PO with that SKU, or why there's none.
 export async function lineFor(db: Db, purchaseOrderId: number, sku: string) {
 	const [line] = await db
@@ -46,7 +49,9 @@ export async function lineFor(db: Db, purchaseOrderId: number, sku: string) {
 }
 
 // Raises a flag, or for a product that has an open one of its kind, replaces
-// it with this one.
+// it with this one. The PO is locked (shared) before the flag, the order
+// lockedFlag takes them in, so raising one while it's resolved can't
+// deadlock, and the PO can't be cancelled before this commits.
 export async function raiseFlag(
 	db: Db,
 	input: {
@@ -60,7 +65,8 @@ export async function raiseFlag(
 	const [po] = await db
 		.select({ status: purchaseOrders.status })
 		.from(purchaseOrders)
-		.where(eq(purchaseOrders.id, purchaseOrderId));
+		.where(eq(purchaseOrders.id, purchaseOrderId))
+		.for("share");
 	if (!po) throw new PurchaseOrderError(`There's no PO ${purchaseOrderId}`);
 	if (!(FLAGGABLE as readonly string[]).includes(po.status))
 		throw new PurchaseOrderError(
@@ -77,6 +83,8 @@ export async function raiseFlag(
 		throw new PurchaseOrderError(`A quantity can't be ${value}`);
 	if (flag.kind === "price" && !(value !== null && value >= 0))
 		throw new PurchaseOrderError(`A price can't be ${value}`);
+	if (value !== null && value >= MAX_VALUE)
+		throw new PurchaseOrderError(`A ${flag.kind} can't be ${value}`);
 	const line = flag.sku ? await lineFor(db, purchaseOrderId, flag.sku) : null;
 	const values = {
 		purchaseOrderId,
