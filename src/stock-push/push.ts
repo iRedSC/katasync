@@ -14,6 +14,7 @@ import { getAvailability } from "#/inventory/availability";
 import { UNLIMITED } from "#/inventory/not-counted";
 import { onlineStock } from "#/inventory/online-stock";
 import { chunks, type StockChannel, type StockWrite } from "./channel";
+import { unpushableFinding } from "./findings";
 
 // Stock push: sets each mapped listing's quantity on its channel to what
 // katasync can sell, for stores with push on. Runs at the end of every sync
@@ -46,6 +47,8 @@ export type StorePush = {
 	changes: Change[];
 	// Changes the channel refused (always 0 in preview).
 	failed: number;
+	// Listings skipped by design (src/stock-push/findings.ts): not problems.
+	excluded: number;
 	problems: string[];
 };
 
@@ -128,7 +131,13 @@ export async function pushStoreStock<T>(
 				.from(stores)
 				.where(eq(stores.id, store.id));
 			if (!held?.pushStock)
-				return { store: store.name, changes: [], failed: 0, problems: [] };
+				return {
+					store: store.name,
+					changes: [],
+					failed: 0,
+					excluded: 0,
+					problems: [],
+				};
 			return await pushHeld(tx, held, adapter, mode, now, only);
 		});
 	} catch (error) {
@@ -143,6 +152,7 @@ export async function pushStoreStock<T>(
 			store: store.name,
 			changes: [],
 			failed: 0,
+			excluded: 0,
 			problems: [`Stock push to ${store.name} stopped: ${message}`],
 		};
 	}
@@ -277,6 +287,7 @@ async function pushListings<T>(
 	);
 
 	const problems: string[] = [];
+	let excluded = 0;
 	const pending: {
 		row: (typeof rows)[number];
 		write: StockWrite<T>;
@@ -294,9 +305,9 @@ async function pushListings<T>(
 			continue;
 		}
 		if (sp.state === "unpushable") {
-			problems.push(
-				`${row.sku}: katasync can't set its ${adapter.name} stock: ${sp.reason}`,
-			);
+			const finding = unpushableFinding(row.sku, adapter.name, sp);
+			if (finding.kind === "excluded") excluded++;
+			else problems.push(finding.text);
 			continue;
 		}
 		const target = adapter.target(sp.target);
@@ -334,7 +345,7 @@ async function pushListings<T>(
 			problems.push(
 				`Stock push to ${store.name} is preview only here (not production): ${changes.length} ${changes.length === 1 ? "listing" : "listings"} would change`,
 			);
-		return { changes, failed: 0, problems };
+		return { changes, failed: 0, excluded, problems };
 	}
 
 	const failures =
@@ -355,7 +366,7 @@ async function pushListings<T>(
 		});
 	}
 	await saveStockPush(db, settled);
-	return { changes, failed: failures.size, problems };
+	return { changes, failed: failures.size, excluded, problems };
 }
 
 // Writes many listings' stock push state in a few statements.

@@ -539,6 +539,8 @@ export const stores = pgTable(
 //   ready:      where to write its quantity, what the channel shows (null
 //               when unknown), and the last write's error, if it failed.
 //   unpushable: the channel lists it but katasync can't set it, and why.
+//     byDesign: a standing fact about the listing, not something gone wrong
+//     (src/stock-push/findings.ts).
 //   unreported: the last read didn't list it at all.
 // Null until a stock read has looked for it, so a new listing gets read
 // right away instead of waiting out the read interval. `target` is the
@@ -550,7 +552,7 @@ export type ListingStockPush =
 			shows: number | null;
 			error: string | null;
 	  }
-	| { state: "unpushable"; reason: string }
+	| { state: "unpushable"; reason: string; byDesign?: true }
 	| { state: "unreported" };
 
 // `fba` listings are stocked and shipped by Amazon; we never push their quantity.
@@ -3551,6 +3553,8 @@ export const buyerMarketplaceMessages = pgTable(
 // returns failed. Which feeds a channel has: src/diagnostics/feed-health.ts.
 export const syncFeed = pgEnum("sync_feed", [
 	"orders",
+	"listings",
+	"stock",
 	"returns",
 	"messages",
 	"charges",
@@ -3593,6 +3597,9 @@ export const feedHealth = pgTable(
 		// any open gap (feed_gaps).
 		readThrough: timestamp({ withTimezone: true }),
 		problems: integer().notNull().default(0),
+		// Items the feed leaves out on purpose (a variant Shopify doesn't track
+		// stock for): counted apart from problems, so they never make it partial.
+		excluded: integer().notNull().default(0),
 		// Why it failed, or the first problem of a read with problems.
 		detail: text(),
 		// When the current run of failures began.

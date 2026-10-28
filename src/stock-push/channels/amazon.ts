@@ -63,6 +63,7 @@ export function amazonStockFound(
 		return {
 			state: "unpushable",
 			reason: "Amazon shows no offer we ship for it",
+			byDesign: true,
 		};
 	}
 	const entry = listing.attributes?.fulfillment_availability?.find(
