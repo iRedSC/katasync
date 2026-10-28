@@ -328,7 +328,11 @@ describe("received stock's cost", () => {
 			quantity: 23,
 		});
 		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 462 });
-		await receive(db, { lineId: bladeLine, quantity: 10 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
 		// Blades are $220 of the PO's $462: $5 of freight each.
 		expect(await costOf(blade)).toBeCloseTo((4 + 10) / 2, 6);
 		await amendLine(db, { lineId: line.id, quantity: 0 });
@@ -342,8 +346,16 @@ describe("received stock's cost", () => {
 	test("asking for a replacement spreads the freight over what's still coming", async () => {
 		const knifeLine = (await linesOf(po))[1].id;
 		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 232 });
-		await receive(db, { lineId: bladeLine, quantity: 10 });
-		await receive(db, { lineId: knifeLine, quantity: 6 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: knifeLine,
+			quantity: 6,
+		});
 		// Blades are $220 of the PO's $232: $5 of freight each.
 		expect(await costOf(blade)).toBeCloseTo((4 + 10) / 2, 6);
 		await recordDamage(db, { kind: "missing", lineId: knifeLine, quantity: 2 });

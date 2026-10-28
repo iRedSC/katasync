@@ -7,3 +7,6 @@ CREATE TABLE "purchase_receive_requests" (
 	CONSTRAINT "purchase_receive_requests_kind" CHECK ("purchase_receive_requests"."kind" in ('line', 'extra', 'all')),
 	CONSTRAINT "purchase_receive_requests_key" CHECK (length("purchase_receive_requests"."key") > 0)
 );
+--> statement-breakpoint
+-- Claude reads it like every other table (src/mcp/query.ts).
+GRANT SELECT ON "purchase_receive_requests" TO katasync_mcp;
