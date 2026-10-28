@@ -44,6 +44,7 @@ export function CaseRow({
 						...l,
 						productSku: null,
 						productName: null,
+						variantName: null,
 						fromStore: [],
 					}))}
 				/>
