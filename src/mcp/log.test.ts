@@ -178,18 +178,19 @@ describe("upload links, which are their own credential", () => {
 		expect(kept.match(/uploads\/damage\/\[redacted\]/g)).toHaveLength(2);
 	});
 
-	test("ones already logged are scrubbed the same way", async () => {
-		const token = "Zr4-x_9".repeat(6);
-		const texts = [
-			`{"url":"https://k.test/api/uploads/po-file/${token}","how":"curl -F file=@a.pdf https://k.test/api/uploads/po-file/${token}"}`,
-			`photos: https://k.test/api/uploads/damage/${token}`,
-			`https://k.test/api/shared-files/${token} and /setup?token=${token}`,
-			"nothing secret, /api/uploads/po-file/[redacted]",
-			`https://k.test/setup?from=mail&token=${token}`,
-			`https%3A%2F%2Fk.test%2Fapi%2Fuploads%2Fdamage%2F${token}`,
-			`https%3A%2F%2Fk.test%2Fsetup%3Ftoken%3D${token}`,
-		];
-		await db.insert(schema.mcpCalls).values(
+	// Logged by the application before this one, which kept links whole.
+	const token = "Zr4-x_9".repeat(6);
+	const texts = [
+		`{"url":"https://k.test/api/uploads/po-file/${token}","how":"curl -F file=@a.pdf https://k.test/api/uploads/po-file/${token}"}`,
+		`photos: https://k.test/api/uploads/damage/${token}`,
+		`https://k.test/api/shared-files/${token} and /setup?token=${token}`,
+		"nothing secret, /api/uploads/po-file/[redacted]",
+		`https://k.test/setup?from=mail&token=${token}`,
+		`https%3A%2F%2Fk.test%2Fapi%2Fuploads%2Fdamage%2F${token}`,
+		`https%3A%2F%2Fk.test%2Fsetup%3Ftoken%3D${token}`,
+	];
+	const logWhole = () =>
+		db.insert(schema.mcpCalls).values(
 			texts.map((text) => ({
 				tokenName: "Claude",
 				tool: "po_file_upload_link",
@@ -198,16 +199,7 @@ describe("upload links, which are their own credential", () => {
 				result: text,
 			})),
 		);
-		const migration = readFileSync(
-			new URL(
-				"../../drizzle/0153_scrub_mcp_capability_urls.sql",
-				import.meta.url,
-			),
-			"utf8",
-		);
-		expect(migration).toContain(`'${CAPABILITY_PATTERN}'`);
-		for (const statement of migration.split("--> statement-breakpoint"))
-			await db.execute(sql.raw(statement));
+	async function expectScrubbed() {
 		const rows = await db
 			.select()
 			.from(schema.mcpCalls)
@@ -218,5 +210,41 @@ describe("upload links, which are their own credential", () => {
 			expected.map((note) => ({ note })),
 		);
 		expect(JSON.stringify(rows)).not.toContain(token);
+	}
+	const migration = readFileSync(
+		new URL(
+			"../../drizzle/0153_scrub_mcp_capability_urls.sql",
+			import.meta.url,
+		),
+		"utf8",
+	);
+
+	test("the migration scrubs with the same pattern everywhere", () => {
+		const patterns = migration.match(/'\(\(\?:[^']*'/g) ?? [];
+		// Twice in the trigger, twice in each scrub.
+		expect(patterns).toHaveLength(6);
+		for (const p of patterns) expect(p).toBe(`'${CAPABILITY_PATTERN}'`);
+	});
+
+	test("ones already logged are scrubbed the same way", async () => {
+		// Kept before the migration, so before its trigger.
+		await db.execute(
+			sql`alter table mcp_calls disable trigger mcp_calls_redact_capabilities`,
+		);
+		try {
+			await logWhole();
+		} finally {
+			await db.execute(
+				sql`alter table mcp_calls enable trigger mcp_calls_redact_capabilities`,
+			);
+		}
+		for (const statement of migration.split("--> statement-breakpoint"))
+			await db.execute(sql.raw(statement));
+		await expectScrubbed();
+	});
+
+	test("ones the old application logs after the migration are kept scrubbed", async () => {
+		await logWhole();
+		await expectScrubbed();
 	});
 });
