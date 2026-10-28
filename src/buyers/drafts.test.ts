@@ -14,7 +14,12 @@ import {
 import { basePrompt, savePrecedent, setBasePrompt } from "./precedents";
 import { runBuyerMessages } from "./run";
 import { reply } from "./send";
-import { ensureThread, recordFromBuyer, threadsPage } from "./threads";
+import {
+	ensureThread,
+	moveThreadOrder,
+	recordFromBuyer,
+	threadsPage,
+} from "./threads";
 
 // The agents, answered by the test: each by name.
 type Answers = Record<string, (input: string) => unknown>;
@@ -132,6 +137,51 @@ describe("suggested replies", () => {
 		expect(await drafting).toBeNull();
 		const [t] = await threadsPage(db, "open", null);
 		expect(t?.draft).toMatchObject({ body: "From Claude", by: "claude" });
+	});
+
+	test("a draft written while the thread moves orders isn't saved as the new one's", async () => {
+		await ensureThread(db, {
+			market: "ebay",
+			externalId: "c1",
+			subject: "About your scraper",
+			orderRef: "A",
+		});
+		const about: (string | null)[] = [];
+		let release = () => {};
+		const slow = fake({
+			replier: (input) => {
+				about.push(JSON.parse(input).order?.number ?? null);
+				return new Promise((resolve) => {
+					release = () =>
+						resolve({
+							reply: "About A",
+							english: null,
+							precedents: [],
+							note: null,
+						});
+				});
+			},
+		});
+		const drafting = draftThread(db, threadId, { run: slow });
+		await vi.waitFor(() => expect(about).toEqual(["A"]));
+		await moveThreadOrder(db, threadId, "B");
+		release();
+		expect(await drafting).toBeNull();
+		const [d] = await db.select().from(replyDrafts);
+		expect(d?.state).toBe("drafting");
+		// Taken over at once, and drafted about B.
+		const run = fake({
+			replier: (input) => {
+				about.push(JSON.parse(input).order?.number ?? null);
+				return { reply: "About B", english: null, precedents: [], note: null };
+			},
+		});
+		expect(await draftThread(db, threadId, { run })).toMatchObject({
+			state: "ready",
+			body: "About B",
+			orderRef: null,
+		});
+		expect(about).toEqual(["A", "B"]);
 	});
 
 	test("a failure says why, and isn't retried at once", async () => {

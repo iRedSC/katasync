@@ -95,7 +95,9 @@ export async function ensureThread(db: Db, t: ThreadKey) {
 // The thread is about another order now: a later card in its conversation
 // names it. A suggestion kept for the thread's own order stays with the one
 // it was written about, so it's drafted again for the new one; one written
-// about the new one is the thread's own now.
+// about the new one is the thread's own now. One being drafted read the old
+// order: its claim is dropped, so what it writes is never saved as the new
+// one's, and the next run drafts it over at once.
 export async function moveThreadOrder(db: Db, threadId: number, to: string) {
 	await db.transaction(async (tx) => {
 		const [t] = await tx
@@ -104,13 +106,13 @@ export async function moveThreadOrder(db: Db, threadId: number, to: string) {
 			.where(eq(buyerThreads.id, threadId))
 			.for("update");
 		if (!t || t.orderRef === to) return;
-		if (t.orderRef !== null)
-			await tx
-				.update(replyDrafts)
-				.set({
-					orderRef: sql`case when ${replyDrafts.orderRef} is null then ${t.orderRef}::text when ${replyDrafts.orderRef} = ${to} then null else ${replyDrafts.orderRef} end`,
-				})
-				.where(eq(replyDrafts.threadId, threadId));
+		await tx
+			.update(replyDrafts)
+			.set({
+				orderRef: sql`case when ${replyDrafts.orderRef} is null then ${t.orderRef}::text when ${replyDrafts.orderRef} = ${to} then null else ${replyDrafts.orderRef} end`,
+				updatedAt: sql`case when ${replyDrafts.state} = 'drafting' then 'epoch'::timestamptz else ${replyDrafts.updatedAt} end`,
+			})
+			.where(eq(replyDrafts.threadId, threadId));
 		await tx
 			.update(buyerThreads)
 			.set({ orderRef: to })
