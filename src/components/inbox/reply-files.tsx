@@ -9,12 +9,12 @@ import { useEffect, useRef, useState } from "react";
 import {
 	type AttachmentFile,
 	MAX_FILE_BYTES,
+	type ReplyFile,
 	refuseFiles,
 	rulesFor,
 } from "#/buyers/attachments";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
-import type { BuyerMedia } from "#/db/schema";
 import { shrinkPhoto } from "#/lib/photo";
 import { cn } from "#/lib/utils";
 import type { Market } from "#/markets/market";
@@ -150,13 +150,15 @@ export function useReplyFiles(market: Market, onRefuse: (why: string) => void) {
 		},
 		busy: items.some((a) => a.state !== "ready"),
 		// What goes with the reply; only once every file is up.
-		media: (): BuyerMedia[] =>
+		media: (): ReplyFile[] =>
 			items.flatMap((a) =>
 				a.state === "ready"
 					? [
 							{
 								kind: a.kind,
 								name: a.name,
+								type: a.type,
+								size: a.size,
 								url: `/api/buyer-files/${a.fileId}`,
 								fileId: a.fileId,
 							},
@@ -165,27 +167,14 @@ export function useReplyFiles(market: Market, onRefuse: (why: string) => void) {
 			),
 		// Files a reply took back (undo), already up, added to any already
 		// here. Refused, like any addition, when they wouldn't all fit.
-		restore: (media: BuyerMedia[]) => {
-			const back = media.flatMap((m): Attached[] =>
-				m.fileId
-					? [
-							{
-								key: crypto.randomUUID(),
-								name: m.name,
-								// A type of its kind, so adding more checks out; the
-								// server checks the real one again.
-								type:
-									Object.entries(rules?.types ?? {}).find(
-										([, kind]) => kind === m.kind,
-									)?.[0] ?? "",
-								size: 0,
-								kind: m.kind,
-								preview: m.kind === "IMAGE" ? m.url : null,
-								state: "ready" as const,
-								fileId: m.fileId,
-							},
-						]
-					: [],
+		restore: (files: ReplyFile[]) => {
+			const back = files.map(
+				(f): Attached => ({
+					...f,
+					key: crypto.randomUUID(),
+					preview: f.kind === "IMAGE" ? f.url : null,
+					state: "ready",
+				}),
 			);
 			const why = refuseFiles(market, [...current.current, ...back]);
 			if (why) {

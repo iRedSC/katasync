@@ -5,6 +5,7 @@ import {
 	type Email,
 	type Extra,
 	listed,
+	putBack,
 	withEmail,
 } from "./market-changes";
 
@@ -41,6 +42,21 @@ test("putting it back restores the row where it was", () => {
 	expect(listed("orders", page([]), back).emails.map((e) => e.id)).toEqual([
 		9, 10, 11,
 	]);
+});
+
+test("undoing one change keeps a later one", () => {
+	const original = mail(10);
+	let extra: Extra | null = { emails: [original], next: null };
+	// Marked important, then read, then the importance undone.
+	extra = withEmail(extra, 10, (e) => after(e, { level: "important" }));
+	extra = withEmail(extra, 10, (e) => after(e, { read: true }));
+	extra = withEmail(extra, 10, (e) =>
+		putBack(e, original, { level: "important" }),
+	);
+	const [e] = extra?.emails ?? [];
+	expect(e?.important).toBe(false);
+	expect(e?.why.important).toBe("rule");
+	expect(e?.readAt).not.toBeNull();
 });
 
 test("a row also on the fresh first page comes from the first page", () => {

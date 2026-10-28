@@ -44,6 +44,26 @@ export const after = (e: Email, change: Change): Email =>
 					}
 				: { ...e, readAt: change.read ? new Date() : null };
 
+// What undoing a change leaves: the fields that change made, as they were
+// before it, and every later change (read since, moved since) kept.
+export const putBack = (now: Email, before: Email, change: Change): Email =>
+	"done" in change
+		? { ...now, doneAt: before.doneAt, voicemail: before.voicemail }
+		: "to" in change
+			? {
+					...now,
+					folder: before.folder,
+					why: { ...now.why, folder: before.why.folder },
+				}
+			: "level" in change
+				? {
+						...now,
+						important: before.important,
+						critical: before.critical,
+						why: { ...now.why, important: before.why.important },
+					}
+				: { ...now, readAt: before.readAt };
+
 // Where an email is listed.
 export const belongs = (view: MarketView, e: Email) =>
 	view === "done"

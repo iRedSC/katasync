@@ -1,6 +1,6 @@
 import { useMemo, useSyncExternalStore } from "react";
+import type { ReplyFile } from "#/buyers/attachments";
 import type { ReplyStatus } from "#/buyers/states";
-import type { BuyerMedia } from "#/db/schema";
 import { replyToBuyer } from "#/server/buyers";
 
 // Replies on their way out of this browser, kept outside any one
@@ -19,8 +19,8 @@ export type Outgoing = {
 	key: string;
 	threadId: number;
 	body: string;
-	// Files already uploaded, each with its fileId.
-	media: BuyerMedia[];
+	// Files already uploaded.
+	media: ReplyFile[];
 	at: Date;
 	status: OutStatus;
 	error: string | null;
@@ -38,7 +38,7 @@ export type Returned = {
 	key: string;
 	threadId: number;
 	body: string;
-	media: BuyerMedia[];
+	media: ReplyFile[];
 };
 let returned: readonly Returned[] = [];
 let refresh: () => Promise<unknown> = async () => {};
@@ -75,7 +75,7 @@ export function hold(o: {
 	key: string;
 	threadId: number;
 	body: string;
-	media: BuyerMedia[];
+	media: ReplyFile[];
 }) {
 	if (items.some((x) => x.key === o.key)) return false;
 	const sendAt = Date.now() + HOLD_MS;
@@ -166,7 +166,7 @@ async function deliver(key: string) {
 				threadId: o.threadId,
 				text: o.body,
 				requestKey: key,
-				fileIds: o.media.flatMap((m) => (m.fileId ? [m.fileId] : [])),
+				fileIds: o.media.map((m) => m.fileId),
 			},
 		});
 		update(key, { status: r.status ?? "sending" });

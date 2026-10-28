@@ -31,7 +31,14 @@ test("held for the hold, then sent once under its key", async () => {
 });
 
 test("undo inside the hold sends nothing and gives the words and files back", async () => {
-	const photo = { kind: "IMAGE", name: "box.jpg", url: "/f/7", fileId: 7 };
+	const photo = {
+		kind: "IMAGE",
+		name: "box.jpg",
+		type: "image/jpeg",
+		size: 2_000_000,
+		url: "/f/7",
+		fileId: 7,
+	};
 	out.hold({ key: "k2", threadId: 2, body: "Oops", media: [photo] });
 	expect(out.undo("k2")).toBe(true);
 	await vi.advanceTimersByTimeAsync(out.HOLD_MS * 2);

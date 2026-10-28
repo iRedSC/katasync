@@ -14,6 +14,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { ReplyFile } from "#/buyers/attachments";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { BuyerMedia } from "#/db/schema";
@@ -29,6 +30,8 @@ type Status = OutStatus;
 export type Shown = {
 	// Pictures and files sent with it.
 	media?: BuyerMedia[];
+	// The same, of ours uploaded, as sending it again sends them.
+	files?: ReplyFile[];
 	// Added by staff after sending it on the marketplace; katasync sent
 	// nothing.
 	logged?: boolean;

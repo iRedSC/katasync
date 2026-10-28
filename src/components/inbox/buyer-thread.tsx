@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { refuseWords, rulesFor } from "#/buyers/attachments";
+import { type ReplyFile, refuseWords, rulesFor } from "#/buyers/attachments";
 import { chatPage } from "#/buyers/chat-page";
 import type { BuyerThread } from "#/buyers/threads";
 import { shake } from "#/components/shake";
@@ -174,7 +174,7 @@ export function BuyerConversation({
 	// takes them back. A key given (a suggestion's) sends them once however
 	// many times it's clicked; media given (sending one again) goes instead
 	// of the box's files.
-	function send(body: string, key?: string, again?: Shown["media"]) {
+	function send(body: string, key?: string, again?: ReplyFile[]) {
 		const words = body.trim();
 		const media = again ?? files.media();
 		const problem =
@@ -238,7 +238,7 @@ export function BuyerConversation({
 	const again = (m: Shown) => {
 		// Unheard: the same reply again. Failed or unconfirmed: a new one.
 		if (m.status === "unheard") retry(m.key);
-		else send(m.body, undefined, m.media ?? []);
+		else send(m.body, undefined, m.files ?? []);
 	};
 
 	return (

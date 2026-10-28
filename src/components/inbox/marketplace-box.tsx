@@ -49,6 +49,7 @@ import {
 	type Email,
 	type Extra,
 	listed,
+	putBack,
 	type Undo,
 	withEmail,
 } from "./market-changes";
@@ -166,7 +167,9 @@ function Listing({ view, market, page, counts }: BoxProps) {
 					send: () => send(undo.change),
 				});
 				if (!back) return null;
-				setExtra((x) => withEmail(x, email.id, () => email));
+				setExtra((x) =>
+					withEmail(x, email.id, (e) => putBack(e, email, change)),
+				);
 				return undo.said;
 			},
 		});
