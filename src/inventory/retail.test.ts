@@ -11,7 +11,7 @@ import { createProduct, createTestDb } from "#/test/db";
 import { getAvailability } from "./availability";
 import { activate } from "./commitments.fixtures";
 import { postMovements } from "./ledger";
-import { PosLocationError, setPosLocation } from "./locations";
+import { addRetailStore, PosLocationError, setPosLocation } from "./locations";
 import { onlineStock } from "./online-stock";
 import { setRecipe } from "./recipes";
 import { setRetailReserve } from "./retail-reserve";
@@ -161,6 +161,46 @@ describe("in-store sales", () => {
 		expect(await applyStoreSales(db)).toEqual({ lines: 0, problems: [] });
 		expect(await onHand(wrench, retail)).toBe(-2);
 		expect(await onHand(wrench, warehouse)).toBe(0);
+	});
+
+	test("caught up after adding the store, take the store's stock", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 10);
+		await ingestOrder(db, store(), posOrder(), await stockLocations(db));
+
+		const added = await addRetailStore(db, "Store");
+
+		expect(await applyStoreSales(db)).toEqual({ lines: 1, problems: [] });
+		expect(await onHand(wrench, added.locationId)).toBe(-2);
+		expect(await onHand(wrench, warehouse)).toBe(10);
+	});
+
+	test("adding the store takes POS over from the warehouse", async () => {
+		await setPosLocation(db, warehouse);
+		const added = await addRetailStore(db, "Store");
+		expect((await stockLocations(db)).pos).toBe(added.locationId);
+		await expect(addRetailStore(db, "Other")).rejects.toThrow(
+			"Store is already the retail store",
+		);
+	});
+
+	test("two stores added at once leave one retail store", async () => {
+		const added = await Promise.allSettled([
+			addRetailStore(db, "Store"),
+			addRetailStore(db, "Other"),
+		]);
+		expect(added.map((a) => a.status).sort()).toEqual([
+			"fulfilled",
+			"rejected",
+		]);
+		await expect(
+			db.insert(schema.locations).values({ name: "Third", kind: "retail" }),
+		).rejects.toThrow();
+		const retail = await db
+			.select()
+			.from(schema.locations)
+			.where(eq(schema.locations.kind, "retail"));
+		expect(retail).toHaveLength(1);
 	});
 
 	test("restock where they sold from", async () => {

@@ -15,8 +15,8 @@ import { answered, createIntent } from "#/lib/intent";
 import { createTestDb } from "#/test/db";
 import { commitImport, previewImport } from "./imports";
 import { confirmMatch, undoMatch } from "./matching";
-import { loadOverview } from "./overview";
-import { payoutTarget } from "./targets";
+import { loadOverview, matchOptions } from "./overview";
+import { NEAR_LIMIT, payoutTarget } from "./targets";
 import {
 	account,
 	bankRows,
@@ -274,13 +274,91 @@ describe("banking integration boundaries", () => {
 		});
 		expect(
 			(
-				await payoutTarget.near(db, {
-					currency: "USD",
-					from: "2026-11-01",
-					to: "2026-11-01",
-				})
-			).map((row) => row.ref.id),
+				await payoutTarget.near(
+					db,
+					{ currency: "USD", from: "2026-11-01", to: "2026-11-01" },
+					{ kind: "all" },
+				)
+			).observed.map((row) => row.ref.id),
 		).toEqual([included]);
+	});
+
+	it("offers an open payout however many matched ones are near it", async () => {
+		const db = await createTestDb();
+		const made = await account(db);
+		// Ten deposits, each matched to twenty $1 payouts: NEAR_LIMIT matched.
+		const deposits = NEAR_LIMIT / 20;
+		await imported(
+			db,
+			made.id,
+			csv(
+				...Array.from(
+					{ length: deposits },
+					(_, i) => `2026-10-01,Deposit ${i},20`,
+				),
+				"2026-10-01,Open,5",
+			),
+		);
+		const rows = await bankRows(db, made.id);
+		for (let i = 0; i < deposits; i++) {
+			const parts = [];
+			for (let j = 0; j < 20; j++)
+				parts.push(part(await payout(db, `M${i}-${j}`, 1), 100));
+			expect(
+				await confirmMatch(
+					db,
+					{ transactionId: rows[i].id, parts, replaces: null },
+					actor,
+				),
+			).toMatchObject({ ok: true });
+		}
+		const open = await payout(db, "OPEN", 5, {
+			depositedAt: new Date("2026-10-01T16:00:00Z"),
+		});
+
+		const options = await matchOptions(db, rows[deposits].id);
+		expect(options?.candidates.map((c) => c.ref.id)).toEqual([open]);
+		// The overview reads every payout, so it says it left some out.
+		expect((await loadOverview(db, made.id)).payoutsCut).toBe(NEAR_LIMIT);
+	});
+
+	it("offers a deposit the payouts it can take, saying when some were cut", async () => {
+		const db = await createTestDb();
+		const made = await account(db);
+		await imported(db, made.id, csv("2026-10-01,Deposit,5"));
+		const [row] = await bankRows(db, made.id);
+		// Newer than the one it can take, but withdrawals: never offered.
+		await db.insert(payouts).values(
+			Array.from({ length: NEAR_LIMIT + 1 }, (_, i) => ({
+				channel: "shopify" as const,
+				externalId: `D${i}`,
+				status: "sent" as const,
+				depositedAt: new Date("2026-10-03T15:00:00Z"),
+				amount: -1,
+				currency: "USD",
+			})),
+		);
+		const older = await payout(db, "OLDER", 5, {
+			depositedAt: new Date("2026-09-25T15:00:00Z"),
+		});
+		expect(await matchOptions(db, row.id)).toMatchObject({
+			candidates: [{ ref: { id: older } }],
+			candidatesCut: null,
+		});
+
+		await db.insert(payouts).values(
+			Array.from({ length: NEAR_LIMIT }, (_, i) => ({
+				channel: "shopify" as const,
+				externalId: `C${i}`,
+				status: "sent" as const,
+				depositedAt: new Date("2026-10-02T15:00:00Z"),
+				amount: 1,
+				currency: "USD",
+			})),
+		);
+		const cut = await matchOptions(db, row.id);
+		expect(cut?.candidates).toHaveLength(NEAR_LIMIT);
+		expect(cut?.candidatesCut).toBe(NEAR_LIMIT);
 	});
 
 	it("records actor provenance and audit events without writing payouts", async () => {

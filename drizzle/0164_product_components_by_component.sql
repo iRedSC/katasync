@@ -1,0 +1,1 @@
+CREATE INDEX "product_components_component_parent_idx" ON "product_components" USING btree ("component_product_id","parent_product_id");

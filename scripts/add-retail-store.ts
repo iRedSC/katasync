@@ -1,7 +1,8 @@
-// Adds our retail store as a location. Shopify POS sales take stock from it,
-// and stock moves between it and the warehouse with Move stock. In-store
-// sales that came in before it existed (and so took no stock) take it now.
-// Without --write it only says what it would do.
+// Adds our retail store as a location and makes it the one Shopify POS sales
+// take stock from; stock moves between it and the warehouse with Move stock.
+// In-store sales that came in before it existed (and so took no stock) take
+// it now, and any that can't make the script exit nonzero. Without --write it
+// only says what it would do.
 //
 //   pnpm location:add-retail            # preview, named "Retail"
 //   pnpm location:add-retail --write
@@ -11,6 +12,7 @@ import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import { actAsScript } from "#/audit/script";
 import { getDb } from "#/db/client";
 import { locations, orderLines, orders } from "#/db/schema";
+import { addRetailStore, PosLocationError } from "#/inventory/locations";
 import { applyStoreSales } from "#/orders/remap";
 
 actAsScript("add-retail-store");
@@ -61,18 +63,26 @@ const [{ waiting }] = await db
 
 if (!write) {
 	console.log(
-		`Would add ${name} as the retail store, then take stock for in-store sales that haven't (up to ${waiting} lines, from the store's stock date on). Run again with --write.`,
+		`Would add ${name} as the retail store POS sales take from, then take stock for in-store sales that haven't (up to ${waiting} lines, from the store's stock date on). Run again with --write.`,
 	);
 	process.exit(0);
 }
 
-await db.insert(locations).values({ name, kind: "retail" });
+try {
+	await addRetailStore(db, name);
+} catch (error) {
+	// Someone added one since the checks above.
+	if (!(error instanceof PosLocationError)) throw error;
+	console.error(`${error.message}. Nothing added.`);
+	process.exit(1);
+}
 const caught = await applyStoreSales(db);
 console.log(
-	`Added ${name}. ${caught.lines} in-store sale lines took stock from it.`,
+	`Added ${name}; POS sales take from it. ${caught.lines} in-store sale lines took stock from it.`,
 );
-for (const p of caught.problems) console.log(`  ${p}`);
+for (const p of caught.problems) console.error(`  ${p}`);
 console.log(
 	`Its shelf starts empty: move stock to it from the product page, or count it there.`,
 );
-process.exit(0);
+if (caught.problems.length > 0) console.error("The sales above took no stock.");
+process.exit(caught.problems.length > 0 ? 1 : 0);

@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Db } from "#/db/client";
 import { locations, products } from "#/db/schema";
 import { undoUnownedBatch } from "#/inventory/batch-owner";
-import { requestProductCount } from "#/inventory/count-requests";
+import { requestProductCounts } from "#/inventory/count-requests";
 import {
 	cancelCountRequests,
 	recordCount,
@@ -78,8 +78,12 @@ export function registerStockTools(server: McpServer, db: Db) {
 					})),
 				);
 			} else {
-				for (const product of found)
-					added.push(...(await requestProductCount(db, product.id)));
+				added.push(
+					...(await requestProductCounts(
+						db,
+						found.map((p) => p.id),
+					)),
+				);
 			}
 			return json({ added: await namedRequests(db, added) });
 		},

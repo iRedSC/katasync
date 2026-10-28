@@ -75,9 +75,18 @@ const listingsAt = new Map<string, number>();
 // Returns, like their crons, every 15 minutes per channel.
 const RETURNS_EVERY = 15 * MINUTE;
 const returnsAt = new Map<string, number>();
+// A misspelled --only would otherwise select nothing and exit as a success.
+if (values.only && !channels.some((c) => c.name === values.only)) {
+	console.error(
+		`Unknown channel "${values.only}": use ${channels.map((c) => c.name).join(", ")}`,
+	);
+	process.exit(1);
+}
 const selected = channels.filter((c) => !values.only || c.name === values.only);
 
-// Each returns whether the pass worked, for the one-shot exit status. A
+// Each returns whether the pass worked, for the one-shot exit status. A cost
+// pass with any order it couldn't ask about didn't work; one still running
+// or orders with nothing reported yet aren't failures. A
 // one-shot run reads returns every time; --watch every RETURNS_EVERY.
 async function pass(channel: (typeof channels)[number]): Promise<boolean> {
 	const started = Date.now();
@@ -108,8 +117,8 @@ async function costPass(channel: (typeof channels)[number]): Promise<boolean> {
 		console.log(
 			`${new Date().toISOString()} ${channel.name} costs: ${result.reported} of ${result.checked} orders reported`,
 		);
-		for (const problem of result.problems) console.log(`  ${problem}`);
-		return true;
+		for (const problem of result.problems) console.error(`  ${problem}`);
+		return result.problems.length === 0;
 	} catch (error) {
 		console.error(
 			`${new Date().toISOString()} ${channel.name} costs failed:`,
@@ -120,12 +129,15 @@ async function costPass(channel: (typeof channels)[number]): Promise<boolean> {
 }
 
 if (values["costs-history"]) {
-	// Every channel at once, each in batches until none are left.
-	await Promise.all(
-		channels.map(async (channel) => {
-			if (channelEnv[channel.name].some((name) => !process.env[name])) return;
+	// Every channel at once, each in batches until none are left. A channel
+	// with any order it couldn't ask about fails the run once all are done.
+	const results = await Promise.all(
+		selected.map(async (channel) => {
+			if (channelEnv[channel.name].some((name) => !process.env[name]))
+				return true;
 			let checked = 0;
 			let reported = 0;
+			let ok = true;
 			for (;;) {
 				const result = await costPassAlone(getDb(), channel.name, {
 					history: true,
@@ -135,17 +147,18 @@ if (values["costs-history"]) {
 					await new Promise((resolve) => setTimeout(resolve, 30_000));
 					continue;
 				}
-				if (result.checked === 0) break;
+				if (result.checked === 0) return ok;
 				checked += result.checked;
 				reported += result.reported;
-				for (const problem of result.problems) console.log(`  ${problem}`);
+				for (const problem of result.problems) console.error(`  ${problem}`);
+				if (result.problems.length > 0) ok = false;
 				console.log(
 					`${channel.name}: ${reported} of ${checked} older orders reported`,
 				);
 			}
 		}),
 	);
-	process.exit(0);
+	process.exit(results.every(Boolean) ? 0 : 1);
 }
 
 if (values["orders-history"]) {

@@ -1149,6 +1149,20 @@
       "when": 1793217902476,
       "tag": "0163_scrub_mcp_capability_urls",
       "breakpoints": true
+    },
+    {
+      "idx": 164,
+      "version": "7",
+      "when": 1793218142586,
+      "tag": "0164_product_components_by_component",
+      "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "7",
+      "when": 1793218145121,
+      "tag": "0165_locations_one_retail",
+      "breakpoints": true
     }
   ]
 }

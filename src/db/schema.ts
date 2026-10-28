@@ -72,6 +72,10 @@ export const locations = pgTable(
 		uniqueIndex("locations_one_pos_primary")
 			.on(t.posPrimary)
 			.where(sql`${t.posPrimary}`),
+		// POS sales find their shelf as the one retail store.
+		uniqueIndex("locations_one_retail")
+			.on(t.kind)
+			.where(sql`${t.kind} = 'retail'`),
 		check(
 			"locations_pos_primary_ours",
 			sql`not ${t.posPrimary} or ${t.kind} in ('owned', 'retail')`,
@@ -224,6 +228,11 @@ export const productComponents = pgTable(
 	},
 	(t) => [
 		primaryKey({ columns: [t.parentProductId, t.componentProductId] }),
+		// The key leads with the parent; this finds every set a part is in.
+		index("product_components_component_parent_idx").on(
+			t.componentProductId,
+			t.parentProductId,
+		),
 		check("product_components_quantity_positive", sql`${t.quantity} > 0`),
 		check(
 			"product_components_not_self",

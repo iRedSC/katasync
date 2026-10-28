@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "locations_one_retail" ON "locations" USING btree ("kind") WHERE "locations"."kind" = 'retail';
