@@ -25,7 +25,7 @@ import { type SupplierRow, updateSupplier } from "#/server/purchasing";
 export type Supplier = SupplierRow["supplier"];
 
 const box =
-	"h-8 w-full rounded-lg border border-input bg-white px-2 outline-none transition-colors focus:border-ring aria-invalid:border-critical-text";
+	"h-8 w-full rounded-lg border border-input bg-white px-2 outline-none transition-colors focus:border-ring aria-invalid:border-critical-text disabled:opacity-60";
 
 // The fields a picked address fills in. Editing any of them makes a pick that's
 // still waiting on its details stale.
@@ -222,163 +222,167 @@ export function SupplierForm({
 			onInput={onInput}
 			className="flex flex-col gap-5"
 		>
-			<Section title="Contact">
-				<Field label="Name">
-					<input name="name" required defaultValue={s.name} className={box} />
-				</Field>
-				<Field label="Short name">
-					<input
-						name="code"
-						required
-						defaultValue={s.code}
-						autoComplete="off"
-						className={box}
-					/>
-				</Field>
-				<Field label="Contact person">
-					<input
-						name="contactName"
-						defaultValue={s.contactName ?? ""}
-						autoComplete="off"
-						className={box}
-					/>
-				</Field>
-				<Field label="Email POs to">
-					<EmailInput defaultValue={s.email ?? ""} />
-				</Field>
-				<Field label="Phone">
-					<PhoneInput defaultValue={s.phone ?? ""} />
-				</Field>
-			</Section>
+			{/* Held still while saving: the form closes on success with what was
+			    sent, so anything typed after would be lost. */}
+			<fieldset disabled={busy} className="flex flex-col gap-5">
+				<Section title="Contact">
+					<Field label="Name">
+						<input name="name" required defaultValue={s.name} className={box} />
+					</Field>
+					<Field label="Short name">
+						<input
+							name="code"
+							required
+							defaultValue={s.code}
+							autoComplete="off"
+							className={box}
+						/>
+					</Field>
+					<Field label="Contact person">
+						<input
+							name="contactName"
+							defaultValue={s.contactName ?? ""}
+							autoComplete="off"
+							className={box}
+						/>
+					</Field>
+					<Field label="Email POs to">
+						<EmailInput defaultValue={s.email ?? ""} />
+					</Field>
+					<Field label="Phone">
+						<PhoneInput defaultValue={s.phone ?? ""} />
+					</Field>
+				</Section>
 
-			<Section title="Address">
-				<Field label="Street" wide>
-					<AddressInput
-						name="address1"
-						defaultValue={s.address1 ?? ""}
-						onPick={pickAddress}
-						className={box}
-					/>
-				</Field>
-				<Field label="Suite, unit, building" wide>
-					<input
-						name="address2"
-						defaultValue={s.address2 ?? ""}
-						className={box}
-					/>
-				</Field>
-				<div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-3 md:col-span-2">
-					<Field label="City">
-						<input name="city" defaultValue={s.city ?? ""} className={box} />
-					</Field>
-					<Field label="State">
-						<input
-							name="region"
-							defaultValue={s.region ?? ""}
-							maxLength={3}
-							className={cn(box, "uppercase")}
+				<Section title="Address">
+					<Field label="Street" wide>
+						<AddressInput
+							name="address1"
+							defaultValue={s.address1 ?? ""}
+							onPick={pickAddress}
+							className={box}
 						/>
 					</Field>
-					<Field label="ZIP">
+					<Field label="Suite, unit, building" wide>
 						<input
-							name="postalCode"
-							defaultValue={s.postalCode ?? ""}
-							inputMode="numeric"
-							className={cn(box, "tabular-nums")}
+							name="address2"
+							defaultValue={s.address2 ?? ""}
+							className={box}
 						/>
 					</Field>
-					<Field label="Country">
-						<input
-							name="country"
-							defaultValue={s.country ?? ""}
-							placeholder="US"
-							maxLength={2}
-							className={cn(box, "uppercase")}
-						/>
-					</Field>
-				</div>
-			</Section>
+					<div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-3 md:col-span-2">
+						<Field label="City">
+							<input name="city" defaultValue={s.city ?? ""} className={box} />
+						</Field>
+						<Field label="State">
+							<input
+								name="region"
+								defaultValue={s.region ?? ""}
+								maxLength={3}
+								className={cn(box, "uppercase")}
+							/>
+						</Field>
+						<Field label="ZIP">
+							<input
+								name="postalCode"
+								defaultValue={s.postalCode ?? ""}
+								inputMode="numeric"
+								className={cn(box, "tabular-nums")}
+							/>
+						</Field>
+						<Field label="Country">
+							<input
+								name="country"
+								defaultValue={s.country ?? ""}
+								placeholder="US"
+								maxLength={2}
+								className={cn(box, "uppercase")}
+							/>
+						</Field>
+					</div>
+				</Section>
 
-			<Section
-				title="Reordering"
-				note="How reorder plans this supplier's POs"
-				cols={4}
-			>
-				<Field
-					label="Lead time"
-					hint={
-						leadTime.measured
-							? `Reorder uses ${leadTime.measured.days}, measured from the last ${leadTime.measured.pos} POs`
-							: `Used until ${MIN_MEASURED_POS} POs arrive, then measured`
-					}
+				<Section
+					title="Reordering"
+					note="How reorder plans this supplier's POs"
+					cols={4}
 				>
-					<Adorned after="days">
-						<input
-							name="leadTimeDays"
-							required
-							inputMode="numeric"
-							defaultValue={s.leadTimeDays}
-							className={cn(box, "pr-11 tabular-nums")}
-						/>
-					</Adorned>
-				</Field>
-				<Field label="Cover" hint="POs restock what sold over these days">
-					<Adorned after="days">
-						<input
-							name="coverDays"
-							required
-							inputMode="numeric"
-							defaultValue={s.coverDays}
-							className={cn(box, "pr-11 tabular-nums")}
-						/>
-					</Adorned>
-				</Field>
-				<Field label="Spend threshold" hint="A suggestion is ready at this">
-					<Adorned before="$">
-						<input
-							name="minimumOrder"
-							inputMode="decimal"
-							defaultValue={s.minimumOrder || ""}
-							placeholder="None"
-							className={cn(box, "pl-5 tabular-nums")}
-						/>
-					</Adorned>
-				</Field>
-				<Field label="Essential threshold">
-					<Tip content="Essentials needing order that suggest a PO whatever its total. Twice as many: Order soon">
-						<input
-							name="criticalThreshold"
-							required
-							inputMode="numeric"
-							defaultValue={s.criticalThreshold}
-							className={cn(box, "tabular-nums")}
-						/>
-					</Tip>
-				</Field>
-			</Section>
+					<Field
+						label="Lead time"
+						hint={
+							leadTime.measured
+								? `Reorder uses ${leadTime.measured.days}, measured from the last ${leadTime.measured.pos} POs`
+								: `Used until ${MIN_MEASURED_POS} POs arrive, then measured`
+						}
+					>
+						<Adorned after="days">
+							<input
+								name="leadTimeDays"
+								required
+								inputMode="numeric"
+								defaultValue={s.leadTimeDays}
+								className={cn(box, "pr-11 tabular-nums")}
+							/>
+						</Adorned>
+					</Field>
+					<Field label="Cover" hint="POs restock what sold over these days">
+						<Adorned after="days">
+							<input
+								name="coverDays"
+								required
+								inputMode="numeric"
+								defaultValue={s.coverDays}
+								className={cn(box, "pr-11 tabular-nums")}
+							/>
+						</Adorned>
+					</Field>
+					<Field label="Spend threshold" hint="A suggestion is ready at this">
+						<Adorned before="$">
+							<input
+								name="minimumOrder"
+								inputMode="decimal"
+								defaultValue={s.minimumOrder || ""}
+								placeholder="None"
+								className={cn(box, "pl-5 tabular-nums")}
+							/>
+						</Adorned>
+					</Field>
+					<Field label="Essential threshold">
+						<Tip content="Essentials needing order that suggest a PO whatever its total. Twice as many: Order soon">
+							<input
+								name="criticalThreshold"
+								required
+								inputMode="numeric"
+								defaultValue={s.criticalThreshold}
+								className={cn(box, "tabular-nums")}
+							/>
+						</Tip>
+					</Field>
+				</Section>
 
-			<Section title="Terms and notes">
-				<Field label="Payment terms">
-					<TermsInput defaultValue={s.paymentTerms ?? ""} />
-				</Field>
-				<Field label="Notes" hint="Only for us">
-					<textarea
-						name="notes"
-						rows={2}
-						defaultValue={s.notes ?? ""}
-						placeholder="e.g. Free shipping over $1,500"
-						className={cn(box, "h-auto min-h-8 resize-y py-1.5")}
-					/>
-				</Field>
-				<Field label="Printed on every PO" wide>
-					<textarea
-						name="poNotes"
-						rows={2}
-						defaultValue={s.poNotes ?? ""}
-						className={cn(box, "h-auto min-h-8 resize-y py-1.5")}
-					/>
-				</Field>
-			</Section>
+				<Section title="Terms and notes">
+					<Field label="Payment terms">
+						<TermsInput defaultValue={s.paymentTerms ?? ""} />
+					</Field>
+					<Field label="Notes" hint="Only for us">
+						<textarea
+							name="notes"
+							rows={2}
+							defaultValue={s.notes ?? ""}
+							placeholder="e.g. Free shipping over $1,500"
+							className={cn(box, "h-auto min-h-8 resize-y py-1.5")}
+						/>
+					</Field>
+					<Field label="Printed on every PO" wide>
+						<textarea
+							name="poNotes"
+							rows={2}
+							defaultValue={s.poNotes ?? ""}
+							className={cn(box, "h-auto min-h-8 resize-y py-1.5")}
+						/>
+					</Field>
+				</Section>
+			</fieldset>
 
 			<div className="flex flex-col-reverse items-center gap-2 border-t pt-4 sm:flex-row sm:justify-end">
 				{failed && !busy && (

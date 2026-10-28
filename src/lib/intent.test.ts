@@ -66,14 +66,63 @@ test("a thrown transport error retains the intent for retry", async () => {
 	).toBe("original");
 });
 
-test("a discarded retry lets the next run capture afresh; a pending send stays", async () => {
+test("a retry is let go only once the server says how it ended", async () => {
+	const intent = createIntent<string>();
+	const hold = () =>
+		intent.run(
+			() => "original",
+			async () => null,
+		);
+	await hold();
+	// The answer was lost and the server can't be asked: still held.
+	expect(await intent.release(async () => null)).toBeNull();
+	expect(intent.getSnapshot()).toEqual({ kind: "retry", payload: "original" });
+	await expect(
+		intent.release(async () => {
+			throw new Error("offline");
+		}),
+	).rejects.toThrow("offline");
+	expect(intent.getSnapshot().kind).toBe("retry");
+	// Recorded, or confirmed missing: the next run captures afresh.
+	expect(await intent.release(async () => true)).toBe(true);
+	expect(intent.getSnapshot().kind).toBe("idle");
+	await hold();
+	expect(await intent.release(async () => false)).toBe(false);
+	expect(
+		await intent.run(
+			() => "edited",
+			async (p) => p,
+		),
+	).toBe("edited");
+});
+
+test("nothing sends while a retry is being checked", async () => {
 	const intent = createIntent<string>();
 	await intent.run(
 		() => "original",
 		async () => null,
 	);
-	intent.discard();
+	let answer: ((recorded: boolean) => void) | undefined;
+	const checking = intent.release(
+		() =>
+			new Promise<boolean>((resolve) => {
+				answer = resolve;
+			}),
+	);
+	expect(intent.getSnapshot().kind).toBe("checking");
+	expect(
+		await intent.run(
+			() => "edited",
+			async (p) => p,
+		),
+	).toBeNull();
+	answer?.(false);
+	await checking;
 	expect(intent.getSnapshot().kind).toBe("idle");
+});
+
+test("a send in flight can't be released", async () => {
+	const intent = createIntent<string>();
 	let finish: ((value: string) => void) | undefined;
 	const first = intent.run(
 		() => "edited",
@@ -82,7 +131,7 @@ test("a discarded retry lets the next run capture afresh; a pending send stays",
 				finish = resolve;
 			}),
 	);
-	intent.discard();
+	expect(await intent.release(async () => false)).toBeNull();
 	expect(intent.getSnapshot().kind).toBe("pending");
 	finish?.("saved");
 	await first;

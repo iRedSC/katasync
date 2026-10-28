@@ -3,7 +3,13 @@ import { useMemo, useSyncExternalStore } from "react";
 type IntentState<Payload> =
 	| { kind: "idle" }
 	| { kind: "pending"; payload: Payload }
-	| { kind: "retry"; payload: Payload };
+	| { kind: "retry"; payload: Payload }
+	// Asking the server whether a retry's payload was recorded.
+	| { kind: "checking"; payload: Payload };
+
+// How a retry ended, as the server tells it: it was recorded, or it wasn't,
+// or the server couldn't be asked.
+export type Recorded = boolean | null;
 
 export function createIntent<Payload>() {
 	let state: IntentState<Payload> = { kind: "idle" };
@@ -20,15 +26,29 @@ export function createIntent<Payload>() {
 				listeners.delete(listener);
 			};
 		},
-		// Lets go of a retry the person no longer wants; a send in flight stays.
-		discard: () => {
-			if (state.kind === "retry") change({ kind: "idle" });
+		// Lets go of a retry once the server says whether its payload was
+		// recorded, so new details are never sent beside one that may have
+		// landed. While it can't tell, the retry stays, and resending it is
+		// still safe. A send in flight stays either way.
+		async release(check: (payload: Payload) => Promise<Recorded>) {
+			if (state.kind !== "retry") return null;
+			const { payload } = state;
+			change({ kind: "checking", payload });
+			let recorded: Recorded = null;
+			try {
+				recorded = await check(payload);
+			} finally {
+				change(
+					recorded === null ? { kind: "retry", payload } : { kind: "idle" },
+				);
+			}
+			return recorded;
 		},
 		async run<Result>(
 			capture: () => Payload,
 			send: (payload: Payload) => Promise<Result | null>,
 		): Promise<Result | null> {
-			if (state.kind === "pending") return null;
+			if (state.kind === "pending" || state.kind === "checking") return null;
 			const payload =
 				state.kind === "retry" ? state.payload : structuredClone(capture());
 			change({ kind: "pending", payload });
@@ -54,7 +74,7 @@ export function useIntent<Payload>() {
 	return {
 		state,
 		run: intent.run,
-		discard: intent.discard,
+		release: intent.release,
 		getSnapshot: intent.getSnapshot,
 	};
 }
