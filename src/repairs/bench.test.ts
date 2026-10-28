@@ -5,6 +5,7 @@ import { stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { repairParts, repairs } from "#/db/repair-schema";
 import * as schema from "#/db/schema";
+import { undoUnownedBatch } from "#/inventory/batch-owner";
 import {
 	activate,
 	channelOrder,
@@ -240,6 +241,26 @@ describe("bench jobs", () => {
 			.from(schema.products)
 			.where(eq(schema.products.id, made.productId));
 		expect(refurb.cost).toBe(450);
+	});
+
+	test("the listed unit and its parts can't be undone off the ledger", async () => {
+		await db.insert(schema.stores).values({ channel: "shopify", name: "Shop" });
+		const [bare] = await startBench(db, { productId: taper });
+		const [withParts] = await startBench(db, { productId: taper });
+		await setPart(db, withParts, blade, 1);
+		for (const id of [bare, withParts]) {
+			await listBench(db, id, listing);
+			const batches = await db
+				.selectDistinct({ batchId: schema.movements.batchId })
+				.from(schema.movements)
+				.where(eq(schema.movements.reference, `bench:${id}`));
+			expect(batches).toHaveLength(id === bare ? 1 : 2);
+			for (const { batchId } of batches)
+				await expect(undoUnownedBatch(db, batchId)).rejects.toThrow(
+					`repair ${id}`,
+				);
+		}
+		expect(await onHand(blade)).toBe(2);
 	});
 
 	test("a part not on the shelf stops the listing, leaving nothing made", async () => {

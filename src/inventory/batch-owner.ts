@@ -8,13 +8,18 @@ import { LedgerError } from "./ledger/post";
 // undone through that workflow, or its record would say one thing while
 // stock says another. Only batches nobody owns, such as counts and kit
 // conversions, can be undone on their own. An undo belongs to whoever owns
-// the batch it undid.
+// the batch it undid, through any chain of undos.
+//
+// A workflow's record can go away (undoing a return deletes it), so the
+// reference its movements were posted with also names the owner. References
+// never change, so ownership outlives the record.
 export type BatchOwner =
 	| { kind: "purchaseOrder"; id: number }
 	| { kind: "transfer"; id: number }
 	| { kind: "fulfillment"; orderId: number; orderName: string }
 	| { kind: "return"; orderId: number; orderName: string }
 	| { kind: "sale"; orderId: number; orderName: string }
+	| { kind: "order"; orderId: number; orderName: string }
 	| { kind: "repair"; id: number };
 
 const owners = (batchId: SQL) => sql`
@@ -57,24 +62,48 @@ const owners = (batchId: SQL) => sql`
 	union all
 	select 'repair', r.id, null from repairs r where r.parts_batch_id = ${batchId}`;
 
+// The owner named by the batch's reference, as posted by poName, transfers,
+// the bench, returns, and order stock.
+const referenced = (batchId: SQL) => sql`
+	select case
+			when m.reference ~ '^PO [0-9]+$' then 'purchaseOrder'
+			when m.reference ~ '^transfer:[0-9]+$' then 'transfer'
+			when m.reference ~ '^bench:[0-9]+$' then 'repair'
+			when m.reference ~ '^return:[0-9]+:[0-9]+$' then 'return'
+			when m.reference ~ '^order:[0-9]+:[0-9]+$' then 'order'
+		end as kind,
+		substring(m.reference from '^[a-zA-Z]+[ :]([0-9]+)')::int as id,
+		o.name
+	from (
+		select distinct reference from movements where batch_id = ${batchId}
+	) m
+	left join orders o
+		on m.reference ~ '^(return|order):'
+		and o.id = substring(m.reference from '^[a-z]+:([0-9]+)')::int
+	where m.reference ~ '^(PO [0-9]+|(transfer|bench):[0-9]+|(return|order):[0-9]+:[0-9]+)$'`;
+
 export async function batchOwner(
 	db: Db,
 	batchId: string,
 ): Promise<BatchOwner | null> {
 	// An undo's batch carries the batch it undid as its reference.
 	const { rows } = (await db.execute(sql`
-		with candidates as (
+		with recursive candidates as (
 			select ${batchId}::uuid as batch_id, 0 as depth
-			union all
-			select substring(m.reference from 6)::uuid, 1
-			from movements m
-			where m.batch_id = ${batchId}::uuid
-				and m.reference ~ '^undo:[0-9a-f-]{36}$'
+			union
+			select substring(m.reference from 6)::uuid, c.depth + 1
+			from candidates c
+			join movements m on m.batch_id = c.batch_id
+			where m.reference ~ '^undo:[0-9a-f-]{36}$'
 		)
 		select o.kind, o.id, o.name
 		from candidates undone
-		cross join lateral (${owners(sql`undone.batch_id`)}) o
-		order by undone.depth
+		cross join lateral (
+			select *, 0 as rank from (${owners(sql`undone.batch_id`)}) recorded
+			union all
+			select *, 1 from (${referenced(sql`undone.batch_id`)}) named
+		) o
+		order by undone.depth, o.rank
 		limit 1`)) as unknown as {
 		rows: { kind: BatchOwner["kind"]; id: number; name: string | null }[];
 	};
@@ -88,6 +117,7 @@ export async function batchOwner(
 		case "fulfillment":
 		case "return":
 		case "sale":
+		case "order":
 			return {
 				kind: row.kind,
 				orderId: Number(row.id),
@@ -105,9 +135,11 @@ export function ownerUndoMessage(owner: BatchOwner) {
 		case "fulfillment":
 			return `This shipped on ${owner.orderName}. Void that dispatch so its reservations come back with the stock.`;
 		case "return":
-			return `This came back on ${owner.orderName}. Undo the return on the order.`;
+			return `This is a return on ${owner.orderName}. Change it on the order.`;
 		case "sale":
 			return `This was sold on ${owner.orderName}. It comes back when the order is cancelled or returned.`;
+		case "order":
+			return `This was ${owner.orderName}'s stock. Change it on the order.`;
 		case "repair":
 			return `These parts went to repair ${owner.id}. Change its parts there.`;
 	}
