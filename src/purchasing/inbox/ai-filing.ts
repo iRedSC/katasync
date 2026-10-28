@@ -338,11 +338,12 @@ async function apply(
 			onlyFrom: null,
 		});
 		const applied: Applied = { tracking: [], skipped: [] };
-		const skip = (what: string, error: unknown) =>
-			applied.skipped.push({
-				what,
-				why: error instanceof Error ? error.message : String(error),
-			});
+		// Only what the PO refuses is skipped: anything else (a deadlock, a
+		// lost connection) fails the filing, so a later run tries it again.
+		const skip = (what: string, error: unknown) => {
+			if (!(error instanceof PurchaseOrderError)) throw error;
+			applied.skipped.push({ what, why: error.message });
+		};
 		// Each in its own savepoint, so one the PO won't take undoes only
 		// itself.
 		const added: Parameters<typeof checkTracking>[1][] = [];
