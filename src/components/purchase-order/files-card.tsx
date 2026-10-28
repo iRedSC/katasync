@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import {
 	Download,
 	ExternalLink,
@@ -6,6 +7,7 @@ import {
 	Image,
 	Loader2,
 	Mail,
+	MoveRight,
 	Paperclip,
 	Plus,
 	X,
@@ -21,6 +23,14 @@ import {
 import { Card } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
+import {
+	Command,
+	CommandEmpty,
+	CommandGroup,
+	CommandInput,
+	CommandItem,
+	CommandList,
+} from "#/components/ui/command";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -40,7 +50,13 @@ import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { MAX_PO_FILE_BYTES } from "#/purchasing/file-limits";
-import { type PurchaseOrderDetail, setPoFilesOff } from "#/server/purchasing";
+import {
+	movePoFilesTo,
+	type PurchaseOrderDetail,
+	posToMoveFilesTo,
+	setPoFilesOff,
+	unmovePoFilesTo,
+} from "#/server/purchasing";
 import { poData } from "./po-data";
 
 // Every file about the PO in one place: the ones put on it (dropped here or
@@ -75,8 +91,8 @@ function rowsOf(d: PurchaseOrderDetail): Row[] {
 		...f,
 		kept: true,
 		url: `/api/po-files/${f.id}`,
-		from: f.addedBy === "claude" ? "Added by Claude" : "Added",
-		at: new Date(f.createdAt),
+		from: f.sentBy ?? (f.addedBy === "claude" ? "Added by Claude" : "Added"),
+		at: new Date(f.sentAt ?? f.createdAt),
 		files: [f.id],
 		attachments: [],
 	}));
@@ -147,6 +163,7 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 	const [uploads, setUploads] = useState<Upload[]>([]);
 	const [dragging, setDragging] = useState(false);
 	const [viewing, setViewing] = useState<Row | null>(null);
+	const [moving, setMoving] = useState<Row | null>(null);
 	// The row a dropped file already is, lit for a moment.
 	const [found, setFound] = useState<string | null>(null);
 	const input = useRef<HTMLInputElement>(null);
@@ -200,22 +217,24 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 		}
 	}
 
+	// The row gone from this PO's files, as removing or moving it leaves them.
+	const without = (ids: { files: number[]; attachments: number[] }) =>
+		poData.patch(po.id, (data) => ({
+			...data,
+			files: data.files.filter((f) => !ids.files.includes(f.id)),
+			emails: data.emails.map((e) => ({
+				...e,
+				attachments: e.attachments.map((a) =>
+					ids.attachments.includes(a.id) ? { ...a, removedAt: new Date() } : a,
+				),
+			})),
+		}));
+
 	async function remove(row: Row) {
 		const ids = { files: row.files, attachments: row.attachments };
 		const r = await optimism.change({
 			label: `Removing ${row.filename}`,
-			patch: poData.patch(po.id, (data) => ({
-				...data,
-				files: data.files.filter((f) => !ids.files.includes(f.id)),
-				emails: data.emails.map((e) => ({
-					...e,
-					attachments: e.attachments.map((a) =>
-						ids.attachments.includes(a.id)
-							? { ...a, removedAt: new Date() }
-							: a,
-					),
-				})),
-			})),
+			patch: without(ids),
 			send: () => setPoFilesOff({ data: { ...ids, removed: true } }),
 		});
 		if (!r) return;
@@ -225,6 +244,34 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 					label: `Putting ${row.filename} back`,
 					patch: [],
 					send: () => setPoFilesOff({ data: { ...ids, removed: false } }),
+				});
+				return back ? `${row.filename} is back` : null;
+			},
+		});
+	}
+
+	// The email keeps the file; only which PO has it changes.
+	async function move(row: Row, to: number) {
+		const ids = { files: row.files, attachments: row.attachments };
+		const moved = await optimism.change({
+			label: `Moving ${row.filename} to PO ${to}`,
+			patch: without(ids),
+			send: () => movePoFilesTo({ data: { ...ids, from: po.id, to } }),
+		});
+		if (!moved) return;
+		offerUndo(`Moved ${row.filename} to PO ${to}`, {
+			undo: async () => {
+				const back = await optimism.change({
+					label: `Putting ${row.filename} back`,
+					patch: [],
+					send: () =>
+						unmovePoFilesTo({
+							data: {
+								added: moved.value.added,
+								files: moved.value.files,
+								attachments: moved.value.attachments,
+							},
+						}),
 				});
 				return back ? `${row.filename} is back` : null;
 			},
@@ -330,6 +377,7 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 								found={found === row.key}
 								onOpen={() => setViewing(row)}
 								onRemove={() => remove(row)}
+								onMove={() => setMoving(row)}
 							/>
 						))}
 					</ul>
@@ -353,6 +401,16 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 					)}
 				</DialogContent>
 			</Dialog>
+			<MoveDialog
+				row={moving}
+				from={po.id}
+				supplierId={d.supplier.id}
+				onClose={() => setMoving(null)}
+				onPick={(row, to) => {
+					setMoving(null);
+					void move(row, to);
+				}}
+			/>
 		</Card>
 	);
 }
@@ -370,12 +428,14 @@ function FileRow({
 	found,
 	onOpen,
 	onRemove,
+	onMove,
 }: {
 	ref: (el: HTMLLIElement | null) => void;
 	row: Row;
 	found: boolean;
 	onOpen: () => void;
 	onRemove: () => void;
+	onMove: () => void;
 }) {
 	const how = shownAs(row);
 	const Icon =
@@ -445,6 +505,12 @@ function FileRow({
 						Download
 					</ContextMenuItem>
 				)}
+				{how !== "missing" && (
+					<ContextMenuItem onSelect={onMove}>
+						<MoveRight />
+						Move to PO…
+					</ContextMenuItem>
+				)}
 				{how !== "missing" && <ContextMenuSeparator />}
 				<ContextMenuItem
 					onSelect={onRemove}
@@ -455,5 +521,80 @@ function FileRow({
 				</ContextMenuItem>
 			</ContextMenuContent>
 		</ContextMenu>
+	);
+}
+
+// Where a file goes when it's about another PO, as a supplier's email about
+// several orders is: the supplier's other POs first, then every recent one.
+function MoveDialog({
+	row,
+	from,
+	supplierId,
+	onClose,
+	onPick,
+}: {
+	row: Row | null;
+	from: number;
+	supplierId: number;
+	onClose: () => void;
+	onPick: (row: Row, to: number) => void;
+}) {
+	const pos = useQuery({
+		queryKey: ["pos-to-move-files-to"],
+		queryFn: () => posToMoveFilesTo(),
+		enabled: row !== null,
+		staleTime: 60_000,
+	});
+	const others = (pos.data ?? []).filter((p) => p.id !== from);
+	const theirs = others.filter((p) => p.supplierId === supplierId);
+	const rest = others.filter((p) => p.supplierId !== supplierId);
+	const item = (p: (typeof others)[number]) => (
+		<CommandItem
+			key={p.id}
+			value={`${p.id} ${p.supplier}`}
+			onSelect={() => row && onPick(row, p.id)}
+		>
+			<span className="font-medium tabular-nums">PO {p.id}</span>
+			<span className="truncate">{p.supplier}</span>
+			{p.sentAt && (
+				<span className="ml-auto shrink-0 text-xs text-muted-foreground">
+					{formatDate(p.sentAt)}
+				</span>
+			)}
+		</CommandItem>
+	);
+	return (
+		<Dialog open={row !== null} onOpenChange={(open) => !open && onClose()}>
+			<DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
+				<DialogTitle className="truncate border-b px-4 py-3 pr-12 text-base">
+					Move {row?.filename}
+				</DialogTitle>
+				<DialogDescription className="sr-only">
+					Pick the PO this file is about
+				</DialogDescription>
+				<Command>
+					<CommandInput placeholder="PO number or supplier" />
+					<CommandList>
+						{pos.isPending ? (
+							<div className="flex justify-center py-6 text-muted-foreground">
+								<Loader2 className="size-4 animate-spin" />
+							</div>
+						) : (
+							<>
+								<CommandEmpty>No sent PO matches</CommandEmpty>
+								{theirs.length > 0 && (
+									<CommandGroup heading="Same supplier">
+										{theirs.map(item)}
+									</CommandGroup>
+								)}
+								<CommandGroup heading="Sent in the last 6 months">
+									{rest.map(item)}
+								</CommandGroup>
+							</>
+						)}
+					</CommandList>
+				</Command>
+			</DialogContent>
+		</Dialog>
 	);
 }
