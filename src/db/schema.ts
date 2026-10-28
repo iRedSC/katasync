@@ -2252,6 +2252,11 @@ export const purchaseOrderFiles = pgTable(
 		// A PDF's text, read once when it was added, for Claude and SQL.
 		text: text(),
 		addedBy: poFileSource().notNull(),
+		// The email's file it was moved from, when it came from an email filed
+		// on another PO, so it still shows who sent it.
+		fromAttachmentId: integer().references(() => poEmailAttachments.id, {
+			onDelete: "set null",
+		}),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		removedAt: timestamp({ withTimezone: true }),
 		// The bytes' SHA-256: a PO has each file once.
@@ -2907,8 +2912,8 @@ export const orderProfit = pgView("order_profit", {
 
 // One row per item sold (order line with units; an order cancelled down to
 // nothing keeps its lines), with its share of its order's charges, defined
-// in drizzle/0051_order_line_profit.sql. Its lines add up to the order's
-// profit in order_profit.
+// in drizzle/0051_order_line_profit.sql (latest in 0153). Its lines add up
+// to the order's profit in order_profit to the cent, charge by charge.
 export const orderLineProfit = pgView("order_line_profit", {
 	lineId: integer().notNull(),
 	orderId: integer().notNull(),
@@ -3404,6 +3409,10 @@ export const buyerMessages = pgTable(
 		// The Message-ID an Amazon reply answers, fixed when it's written so
 		// every try sends the same email under its request key.
 		inReplyTo: text(),
+		// The address a Shopify reply goes to, fixed when it's written so
+		// every try sends it to the same buyer, whatever the order says later.
+		// Null on one kept before it was: never sent again, only checked.
+		recipient: text(),
 		// Amazon's notice that it didn't pass this reply on; each notice
 		// fails one reply at most.
 		refusedBy: integer().references(() => marketEmails.id),

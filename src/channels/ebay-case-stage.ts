@@ -47,6 +47,7 @@ export function ebayCaseStage(
 	raw: string,
 	supplied: {
 		deadline: Date | null;
+		eitherParty?: Date | null;
 		actions: string[];
 	},
 ): Stage & { nextAction: string | null; problems: string[] } {
@@ -92,7 +93,16 @@ export function ebayCaseStage(
 		nextAction: supplied.actions.join(", ") || null,
 		problems,
 	};
+	const respondBy = [supplied.deadline, supplied.eitherParty ?? null].filter(
+		(value): value is Date => value !== null,
+	);
 	return waitingOn === "us"
-		? { ...common, waitingOn, respondBy: supplied.deadline }
+		? {
+				...common,
+				waitingOn,
+				respondBy: respondBy.length
+					? new Date(Math.min(...respondBy.map((value) => value.getTime())))
+					: null,
+			}
 		: { ...common, waitingOn, respondBy: null };
 }

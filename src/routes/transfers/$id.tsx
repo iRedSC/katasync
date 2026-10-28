@@ -1,4 +1,8 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import {
+	createFileRoute,
+	useNavigate,
+	useRouter,
+} from "@tanstack/react-router";
 import { ArrowLeftRight } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -53,6 +57,7 @@ function TransferPage() {
 		delivery,
 	} = Route.useLoaderData();
 	const navigate = useNavigate();
+	const router = useRouter();
 	const draft = t.status === "draft";
 	const name = `T${t.id}`;
 	const units = lines.reduce((n, l) => n + l.quantity, 0);
@@ -78,8 +83,36 @@ function TransferPage() {
 		});
 	}
 
-	async function receive(counts: { productId: number; quantity: number }[]) {
-		const receiptKey = crypto.randomUUID();
+	// Whether a receipt sent without a clear answer went through, read afresh.
+	// When it did, the page reloads to show it.
+	async function received(receiptKey: string) {
+		try {
+			const fresh = await getTransfer({ data: { id: t.id } });
+			const recorded =
+				(fresh.delivery.kind === "in_transit" ||
+					fresh.delivery.kind === "received") &&
+				fresh.delivery.receipts.some((r) => r.receiptKey === receiptKey);
+			if (recorded) {
+				toast.success("That receipt went through");
+				await router.invalidate({ sync: true });
+			}
+			return recorded;
+		} catch (err) {
+			toast.error(
+				`Couldn't check the receipt: ${err instanceof Error ? err.message : String(err)}`,
+			);
+			return null;
+		}
+	}
+
+	// The key names this one delivery, so sending it again records nothing new.
+	async function receive({
+		receiptKey,
+		counts,
+	}: {
+		receiptKey: string;
+		counts: { productId: number; quantity: number }[];
+	}) {
 		const r = await change(() =>
 			receiveTransferNow({ data: { id: t.id, receiptKey, lines: counts } }),
 		);
@@ -238,6 +271,7 @@ function TransferPage() {
 					lines={lines}
 					to={t.to}
 					onReceive={receive}
+					onCheck={received}
 					onUndo={(receiptId) =>
 						change(() => undoTransferArrival({ data: { id: t.id, receiptId } }))
 					}

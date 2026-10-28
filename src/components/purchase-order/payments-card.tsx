@@ -1,12 +1,13 @@
 import { LoaderCircle, Plus, Undo2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Card } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
 import { DateInput } from "#/components/ui/calendar";
 import { Tip } from "#/components/ui/tooltip";
 import { formatDay, formatMoney } from "#/lib/format";
-import { useIntent } from "#/lib/intent";
+import { answered, type Outcome, useIntent } from "#/lib/intent";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
@@ -26,6 +27,7 @@ import {
 } from "#/server/payables";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
 import { middayOf, today } from "./days";
+import { undone } from "./undone";
 
 type Invoice = OrderPayables["billing"]["invoices"][number];
 type PaymentInput = Parameters<typeof recordSupplierPayment>[0]["data"];
@@ -47,6 +49,12 @@ const usd = (cents: number) => formatMoney(cents / 100);
 function centsFrom(s: string) {
 	const t = s.replace(/[$,\s]/g, "");
 	return /^\d+(\.\d{1,2})?$/.test(t) ? Math.round(Number(t) * 100) : null;
+}
+
+// A refusal comes back as an answer rather than an error, so the engine
+// doesn't say it; this does.
+function refused(what: string, outcome: Outcome<unknown> | { kind: "busy" }) {
+	if (outcome.kind === "rejected") toast.error(`${what}: ${outcome.problem}`);
 }
 
 const input =
@@ -100,19 +108,22 @@ export function PaymentsCard({
 						: [];
 				});
 			},
-			async (applications) => {
+			async (applications): Promise<Outcome<number>> => {
 				for (const data of applications) {
-					const result = await optimism.change({
-						label: `Applying ${usd(data.amountCents)} credit`,
-						patch: [],
-						send: () => applySupplierCredit({ data }),
-					});
-					if (!result) return null;
+					const outcome = answered(
+						await optimism.change({
+							label: `Applying ${usd(data.amountCents)} credit`,
+							patch: [],
+							send: () => applySupplierCredit({ data }),
+						}),
+					);
+					if (outcome.kind !== "saved") return outcome;
 				}
-				return applications[0]?.invoiceId ?? inv.id;
+				return { kind: "saved", value: applications[0]?.invoiceId ?? inv.id };
 			},
 		);
-		if (result !== null) setFresh(`invoice-${result}`);
+		if (result.kind === "saved") setFresh(`invoice-${result.value}`);
+		refused("Credit wasn't applied", result);
 	}
 
 	async function assertHistory(inv: Invoice, paidCents: number) {
@@ -122,21 +133,27 @@ export function PaymentsCard({
 				historyIntent.state.payload.paidCents !== paidCents)
 		)
 			return;
-		const r = await historyIntent.run(
+		const result = await historyIntent.run(
 			() => ({ invoiceId: inv.id, number: inv.number, paidCents }),
 			async (data) => {
-				const result = await optimism.change({
-					label: `Saving ${data.number}'s history`,
-					patch: [],
-					send: () =>
-						assertInvoiceHistory({
-							data: { invoiceId: data.invoiceId, paidCents: data.paidCents },
-						}),
-				});
-				return result ? data : null;
+				const outcome = answered(
+					await optimism.change({
+						label: `Saving ${data.number}'s history`,
+						patch: [],
+						send: () =>
+							assertInvoiceHistory({
+								data: { invoiceId: data.invoiceId, paidCents: data.paidCents },
+							}),
+					}),
+				);
+				return outcome.kind === "saved"
+					? { kind: "saved", value: data }
+					: outcome;
 			},
 		);
-		if (!r) return;
+		refused(`${inv.number}'s history wasn't saved`, result);
+		if (result.kind !== "saved") return;
+		const r = result.value;
 		setFresh(`invoice-${r.invoiceId}`);
 		offerUndo(
 			`${r.number} ${r.paidCents === 0 ? "was unpaid" : "was paid"} before`,
@@ -342,32 +359,41 @@ function Applied({
 	async function unapply() {
 		const r = await intent.run(
 			() => a.id,
-			(applicationId) =>
-				optimism.change({
-					label: `Taking ${usd(a.amountCents)} off ${inv.number}`,
-					patch: [],
-					send: () => unapplySupplierPayment({ data: { applicationId } }),
-				}),
+			async (applicationId) =>
+				answered(
+					await optimism.change({
+						label: `Taking ${usd(a.amountCents)} off ${inv.number}`,
+						patch: [],
+						send: () => unapplySupplierPayment({ data: { applicationId } }),
+					}),
+				),
 		);
-		if (!r) return;
+		refused(`${usd(a.amountCents)} wasn't taken off`, r);
+		if (r.kind !== "saved") return;
 		const id = crypto.randomUUID();
 		offerUndo(`${usd(a.amountCents)} is unapplied credit now`, {
-			undo: async () =>
-				(await optimism.change({
-					label: `Applying ${usd(a.amountCents)} to ${inv.number}`,
-					patch: [],
-					send: () =>
-						applySupplierCredit({
-							data: {
-								id,
-								paymentId: p.paymentId,
-								invoiceId: inv.id,
-								amountCents: a.amountCents,
-							},
-						}),
-				}))
-					? `${usd(a.amountCents)} is on ${inv.number} again`
-					: null,
+			// Refused when the credit went elsewhere since, as to another invoice.
+			undo: async () => {
+				const back = answered(
+					await optimism.change({
+						label: `Applying ${usd(a.amountCents)} to ${inv.number}`,
+						patch: [],
+						send: () =>
+							applySupplierCredit({
+								data: {
+									id,
+									paymentId: p.paymentId,
+									invoiceId: inv.id,
+									amountCents: a.amountCents,
+								},
+							}),
+					}),
+				);
+				return undone(back, {
+					done: `${usd(a.amountCents)} is on ${inv.number} again`,
+					refusal: `${usd(a.amountCents)} isn't back on ${inv.number}`,
+				});
+			},
 		});
 	}
 	return (
@@ -423,14 +449,19 @@ function PaymentRow({
 	async function reverse() {
 		if (!armed) return setArmed(true);
 		setArmed(false);
-		await intent.run(
-			() => p.paymentId,
-			(paymentId) =>
-				optimism.change({
-					label: `Reversing ${usd(p.amountCents)} payment`,
-					patch: [],
-					send: () => reverseSupplierPayment({ data: { paymentId } }),
-				}),
+		refused(
+			"The payment wasn't reversed",
+			await intent.run(
+				() => p.paymentId,
+				async (paymentId) =>
+					answered(
+						await optimism.change({
+							label: `Reversing ${usd(p.amountCents)} payment`,
+							patch: [],
+							send: () => reverseSupplierPayment({ data: { paymentId } }),
+						}),
+					),
+			),
 		);
 	}
 
@@ -505,6 +536,8 @@ function PaymentForm({
 	const [paidOn, setPaidOn] = useState(today);
 	const [method, setMethod] = useState<PaymentMethod>("ach");
 	const [reference, setReference] = useState("");
+	// Why the server said no to the last try, shown until it's tried again.
+	const [problem, setProblem] = useState<string | null>(null);
 	const saving = intent.state.kind === "pending";
 	const locked = intent.state.kind !== "idle";
 	const form = useRef<HTMLDivElement>(null);
@@ -514,6 +547,7 @@ function PaymentForm({
 	async function record() {
 		if (saving) return;
 		if (cents === null || cents <= 0) return shake(form.current);
+		setProblem(null);
 		const r = await intent.run(
 			() => ({
 				id: crypto.randomUUID(),
@@ -530,14 +564,18 @@ function PaymentForm({
 					},
 				],
 			}),
-			(data) =>
-				optimism.change({
-					label: `Recording ${usd(cents)} paid`,
-					patch: [],
-					send: () => recordSupplierPayment({ data }),
-				}),
+			async (data) =>
+				answered(
+					await optimism.change({
+						label: `Recording ${usd(cents)} paid`,
+						patch: [],
+						send: () => recordSupplierPayment({ data }),
+					}),
+				),
 		);
-		if (r) onRecorded(r.value.paymentId);
+		if (r.kind === "busy") return;
+		setProblem(r.kind === "rejected" ? r.problem : null);
+		if (r.kind === "saved") onRecorded(r.value.paymentId);
 		else shake(form.current);
 	}
 
@@ -600,10 +638,14 @@ function PaymentForm({
 			<Button size="sm" variant="ghost" disabled={locked} onClick={onClose}>
 				Cancel
 			</Button>
-			{extra > 0 && (
-				<span className="text-xs text-success-text tabular-nums">
-					{usd(extra)} becomes credit
-				</span>
+			{problem ? (
+				<span className="text-xs text-critical-text">{problem}</span>
+			) : (
+				extra > 0 && (
+					<span className="text-xs text-success-text tabular-nums">
+						{usd(extra)} becomes credit
+					</span>
+				)
 			)}
 		</div>
 	);

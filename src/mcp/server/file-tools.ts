@@ -6,8 +6,10 @@ import { MAX_PO_FILE_BYTES } from "#/purchasing/file-limits";
 import {
 	addPoFile,
 	createFileUploadLink,
+	movePoFiles,
 	poFile,
 	setPoFileRemoved,
+	setPoFilesRemoved,
 } from "#/purchasing/files";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { describeFile, fileContent } from "./email-files";
@@ -118,13 +120,59 @@ export function registerFileTools(server: McpServer, db: Db) {
 		"remove_po_file",
 		{
 			description:
-				"Takes a file off a PO (one put on it, not an email's), e.g. one attached to the wrong PO. Nothing is deleted: restore true puts it back.",
+				"Takes a file off a PO, e.g. one attached to the wrong PO: id for one put on it (get_purchase_order's files), or attachment for an email's (read_po_email), which the email keeps. Nothing is deleted: restore true puts it back.",
 			inputSchema: {
-				id: z.number().int().positive(),
+				id: z.number().int().positive().optional(),
+				attachment: z.number().int().positive().optional(),
 				restore: z.boolean().optional(),
 			},
 			annotations: WRITE,
 		},
-		async ({ id, restore }) => json(await setPoFileRemoved(db, id, !restore)),
+		async ({ id, attachment, restore }) => {
+			if ((id === undefined) === (attachment === undefined))
+				throw new PurchaseOrderError("Give id or attachment, not both");
+			if (id !== undefined)
+				return json(await setPoFileRemoved(db, id, !restore));
+			const changed = await setPoFilesRemoved(
+				db,
+				{ files: [], attachments: [attachment ?? 0] },
+				!restore,
+			);
+			if (changed.attachments === 0)
+				throw new PurchaseOrderError(
+					restore
+						? "That file is on its PO"
+						: "That file is already off the PO, or isn't an email's file",
+				);
+			return json({ attachment, removed: !restore });
+		},
+	);
+
+	server.registerTool(
+		"move_po_file",
+		{
+			description:
+				"Moves a file from one PO to another, e.g. one of several confirmations in an email about other POs too (the supplier's PO numbers in its text say which): id for one put on the PO, or attachment for an email's. The other PO gets it as its own file (answered as added, null when it had it already) and every copy of it comes off this one (answered as files and attachments); the emails stay where they are and keep theirs. Undo with remove_po_file on added, then remove_po_file restore on each that came off.",
+			inputSchema: {
+				from: z.number().int().positive(),
+				to: z.number().int().positive(),
+				id: z.number().int().positive().optional(),
+				attachment: z.number().int().positive().optional(),
+			},
+			annotations: WRITE,
+		},
+		async ({ from, to, id, attachment }) => {
+			if ((id === undefined) === (attachment === undefined))
+				throw new PurchaseOrderError("Give id or attachment, not both");
+			return json(
+				await movePoFiles(db, {
+					from,
+					to,
+					files: id === undefined ? [] : [id],
+					attachments: attachment === undefined ? [] : [attachment],
+					movedBy: "claude",
+				}),
+			);
+		},
 	);
 }

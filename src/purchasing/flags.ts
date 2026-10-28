@@ -9,6 +9,7 @@ import {
 import type { FlagInput } from "#/purchasing/inbox/ai-filing-shapes";
 import {
 	amendLine,
+	lockOrder,
 	PurchaseOrderError,
 	setBackOrdered,
 } from "#/purchasing/orders";
@@ -163,7 +164,19 @@ export async function flagsOfEmails(db: Db, emailIds: number[]) {
 		.orderBy(desc(poFlags.id));
 }
 
+// Locks the flag's PO before the flag, as raiseFlag does, so resolving a flag
+// while an email raises it again can't deadlock. A flag never changes PO.
 async function lockedFlag(tx: Db, id: number) {
+	const [of] = await tx
+		.select({ purchaseOrderId: poFlags.purchaseOrderId })
+		.from(poFlags)
+		.where(eq(poFlags.id, id));
+	if (!of) throw new PurchaseOrderError(`There's no flag ${id}`);
+	await tx
+		.select({ id: purchaseOrders.id })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, of.purchaseOrderId))
+		.for("update");
 	const [flag] = await tx
 		.select()
 		.from(poFlags)
@@ -242,6 +255,9 @@ export async function reopenFlag(db: Db, id: number) {
 		const flag = await lockedFlag(tx, id);
 		if (!flag.resolution) return flag;
 		if (flag.resolution === "applied" && flag.kind !== "note") {
+			// Locked before the line is read, so an edit can't land between
+			// the check below and setting it back.
+			await lockOrder(tx, flag.purchaseOrderId, [...FLAGGABLE]);
 			const line = await lineOfFlag(tx, flag);
 			const [now] = await tx
 				.select()

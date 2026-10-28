@@ -138,6 +138,32 @@ describe("matching a buyer's email to a thread", () => {
 		).toBeNull();
 	});
 
+	test("quoted history in another language doesn't veto its thread address", () => {
+		const quoted = [
+			"Sí, gracias.\n\nEl lun, 5 oct 2026 a las 9:00, ECDT (<x@y.com>) escribió:\nTu pedido #5537",
+			"Ja, danke.\n\nAm Mo., 5. Okt. 2026 um 09:00 Uhr schrieb ECDT <x@y.com>:\nIhre Bestellung #5537",
+			"Oui, merci.\n\nLe lun. 5 oct. 2026 à 09:00, ECDT <x@y.com> a écrit :\nVotre commande #5537",
+			"Oui.\n\n-----Message d'origine-----\nDe : ECDT\nVotre commande #5537",
+			"Sí.\n\nDe: ECDT <x@y.com>\nEnviado: lunes, 5 de octubre de 2026 9:00\nPara: Pat\nTu pedido #5537",
+			"Ja.\n\nVon meinem iPhone gesendet\n\nAm 05.10.2026 schrieb ECDT:\n#5537",
+			// Gmail wraps a long attribution line.
+			"Yes.\n\nOn Mon, Oct 5, 2026 at 9:00 AM East Coast Drywall Tools <\nx@y.com> wrote:\n#5537",
+			'<div>Yes</div><div class="gmail_quote">Your order #5537</div>',
+			"<p>Yes</p><blockquote>Your order #5537</blockquote>",
+		];
+		for (const body of quoted)
+			expect(match(mail({ recipients: [to(1)], body }))).toEqual({
+				threadId: 1,
+				by: "address",
+			});
+		// Their own words still name what they mean.
+		expect(
+			replyText(
+				"Ja, danke.\n\nAm Mo., 5. Okt. 2026 um 09:00 Uhr schrieb ECDT <x@y.com>:\n> Ihre Bestellung",
+			),
+		).toBe("Ja, danke.");
+	});
+
 	test("two orders named, or two open threads, is left unmatched", () => {
 		expect(match(mail({ body: "About #5536 and #5537" })).threadId).toBeNull();
 		expect(match(mail()).threadId).toBeNull();

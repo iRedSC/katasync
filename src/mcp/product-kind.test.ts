@@ -71,23 +71,12 @@ describe("set_product_kind", () => {
 		expect(level.onHand).toBe(4);
 	});
 
-	test("a kit becomes a tool set with new parts once it has no stock", async () => {
+	test("a kit becomes a tool set with new parts only if it never had stock", async () => {
 		await tool("set_product_kind", {
 			sku: "SET",
 			kind: "kit",
 			components: [{ sku: "BLADE", quantity: 1 }],
 		});
-		await tool("record_count", { sku: "SET", counted: 1 });
-		const refused = await tool("set_product_kind", {
-			sku: "SET",
-			kind: "bundle",
-			components: parts,
-		});
-		expect(refused.isError).toBe(true);
-		expect(refused.data).toMatch(/1 on hand at Warehouse/);
-		expect(await state("SET")).toEqual({ kind: "kit", parts: 1 });
-
-		await tool("record_count", { sku: "SET", counted: 0 });
 		const made = await tool("set_product_kind", {
 			sku: "SET",
 			kind: "bundle",
@@ -95,6 +84,24 @@ describe("set_product_kind", () => {
 		});
 		expect(made.isError).toBe(false);
 		expect(await state("SET")).toEqual({ kind: "bundle", parts: 2 });
+
+		// Counted to 0 it holds nothing, but its past stock still has to be
+		// reversible on its own shelf.
+		await createProduct(db, "KIT", "kit");
+		await tool("set_components", {
+			sku: "KIT",
+			components: [{ sku: "BLADE", quantity: 1 }],
+		});
+		await tool("record_count", { sku: "KIT", counted: 1 });
+		await tool("record_count", { sku: "KIT", counted: 0 });
+		const refused = await tool("set_product_kind", {
+			sku: "KIT",
+			kind: "bundle",
+			components: parts,
+		});
+		expect(refused.isError).toBe(true);
+		expect(refused.data).toMatch(/stock history/);
+		expect(await state("KIT")).toEqual({ kind: "kit", parts: 1 });
 	});
 
 	test("a part can't become what its parent can't hold", async () => {

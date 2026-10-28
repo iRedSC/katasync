@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { undoUnownedBatch } from "#/inventory/batch-owner";
 import { postMovements, recordSale } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
@@ -109,6 +110,26 @@ describe("receiveReturn", () => {
 		await undoReturns(db, ids);
 		expect(await onHand(wrench)).toBe(0);
 		expect(await db.select().from(schema.orderReturns)).toEqual([]);
+	});
+
+	test("an undone return's stock comes back only by receiving it again", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const lineId = await shippedOrder(wrench, 2);
+		const { ids } = await receiveReturn(db, {
+			orderId,
+			lines: [{ lineId, quantity: 2 }],
+			outcome: "restock",
+		});
+		const [{ batchId }] = await db.select().from(schema.orderReturns);
+		await undoReturns(db, ids);
+		const [undo] = await db
+			.select({ batchId: schema.movements.batchId })
+			.from(schema.movements)
+			.where(eq(schema.movements.reference, `undo:${batchId}`));
+		await expect(undoUnownedBatch(db, undo.batchId)).rejects.toThrow(
+			"return on #1001",
+		);
+		expect(await onHand(wrench)).toBe(0);
 	});
 
 	test("undoing a return twice fails rather than taking stock off again", async () => {
