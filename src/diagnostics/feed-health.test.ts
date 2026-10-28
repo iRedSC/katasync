@@ -55,6 +55,45 @@ describe("nextRecord", () => {
 		});
 	});
 
+	test("exclusions are counted without making a read partial", () => {
+		const r = nextRecord(null, now, {
+			kind: "read",
+			problems: [],
+			excluded: 3,
+		});
+		expect(r).toMatchObject({ state: "ok", excluded: 3 });
+		expect(
+			feedStatus({
+				channel: "shopify",
+				feed: "stock",
+				configured: true,
+				record: r,
+				now,
+			}),
+		).toMatchObject({
+			state: "ok",
+			excluded: 3,
+		});
+		const withProblem = nextRecord(null, now, {
+			kind: "read",
+			problems: ["A: refused"],
+			excluded: 3,
+		});
+		expect(
+			feedStatus({
+				channel: "shopify",
+				feed: "stock",
+				configured: true,
+				record: withProblem,
+				now,
+			}),
+		).toMatchObject({
+			state: "partial",
+			problems: 1,
+			excluded: 3,
+		});
+	});
+
 	test("an older or repeated attempt is no news", () => {
 		const latest = nextRecord(null, minutesAgo(10), failed("down"));
 		// A slow pass that started before it, finishing after.

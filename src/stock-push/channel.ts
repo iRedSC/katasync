@@ -7,7 +7,9 @@ import type { Type } from "arktype";
 // What a stock read found for one listing.
 export type Found<T> =
 	| { state: "ready"; target: T; shows: number | null }
-	| { state: "unpushable"; reason: string };
+	// byDesign: the channel never lets this listing's stock be set (a variant
+	// it doesn't track, an offer we don't ship), so it's skipped, not a problem.
+	| { state: "unpushable"; reason: string; byDesign?: true };
 
 export type StockWrite<T> = { externalId: string; target: T; quantity: number };
 

@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { and, eq, inArray } from "drizzle-orm";
+import type { FeedPhase } from "#/channels/pass-feeds";
 import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
@@ -227,19 +228,24 @@ export async function unchangedOrderIds(
 	return unchanged;
 }
 
-export async function syncAmazon(db: Db, options: { listings: boolean }) {
+export async function syncAmazon(
+	db: Db,
+	options: { listings: FeedPhase | null },
+) {
 	const store = await ensureStore(db, "amazon", {
 		id: "amazon-us",
 		name: "Amazon US",
 	});
 	const stock = await stockLocations(db);
 	const problems: string[] = [];
+	// Matching and mirroring listings, kept apart from the orders' problems.
+	const listingProblems: string[] = [];
 
 	// Listings first, so order lines can resolve to products; then FBA stock,
 	// which goes by the FBA listings' products.
 	let listings = 0;
 	let created = 0;
-	if (options.listings) {
+	await options.listings?.(async () => {
 		const listed = await amazonListings();
 		if (listed) {
 			listings = listed.length;
@@ -250,19 +256,19 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 				listed.map((l) => l.externalId),
 			);
 			if (unmapped.length > 0)
-				problems.push(
+				listingProblems.push(
 					`${unmapped.length} FBA listings were unmatched from tool sets; Amazon needs real units`,
 				);
 			const matched = await matchListings(db);
 			created = matched.created;
-			problems.push(...matched.skipped);
+			listingProblems.push(...matched.skipped);
 			// Orders that sold a newly matched listing pick up the product now.
 			const caughtUp = await applyListingsToOrders(db, matched.mapped, stock);
 			problems.push(...caughtUp.problems);
 		}
 		const fba = await mirrorFbaStock(db, store.id, await fbaQuantities());
-		problems.push(...fba.problems);
-	}
+		listingProblems.push(...fba.problems);
+	});
 
 	// Amazon refuses ranges that end less than two minutes ago.
 	const latest = Date.now() - 3 * 60 * 1000;
@@ -305,7 +311,14 @@ export async function syncAmazon(db: Db, options: { listings: boolean }) {
 			await advanceOrderCursor(db, store.id, new Date(window.until));
 		}
 	}
-	return { store: store.name, listings, created, orders: count, problems };
+	return {
+		store: store.name,
+		listings,
+		created,
+		orders: count,
+		listingProblems,
+		problems,
+	};
 }
 
 export async function orderItems(orderId: string) {

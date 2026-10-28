@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { FEED_NAMES, FeedDot, feedWhen, feedWhy } from "#/components/feed-dot";
 import { Card } from "#/components/page";
 import { Tip } from "#/components/ui/tooltip";
@@ -8,7 +9,8 @@ import type { Diagnostics } from "#/server/diagnostics";
 
 // Every channel's feeds side by side: when each last read everything, and
 // how it went. A failure stays until that same feed reads again, so a clean
-// orders pass can't hide a returns failure.
+// orders pass can't hide a returns failure. Stock skipped by design links to
+// the Markets tab, where each listing says why it can't be set.
 export function FeedGrid({
 	d,
 	open,
@@ -37,21 +39,34 @@ export function FeedGrid({
 							</td>
 							{c.feeds.map((f) => (
 								<td key={f.feed} className="px-3 py-1">
-									<Tip
-										content={
-											f.hint ? `${feedWhy(f)}\n${f.hint.title}` : feedWhy(f)
-										}
-										contentClassName="max-w-sm whitespace-pre-line"
-									>
-										<button
-											type="button"
-											onClick={() => open(c.channel)}
-											className="flex items-center gap-1.5 rounded-md px-1 py-1 text-xs text-muted-foreground tabular-nums hover:bg-subtle"
+									<div className="flex items-center gap-1">
+										<Tip
+											content={
+												f.hint ? `${feedWhy(f)}\n${f.hint.title}` : feedWhy(f)
+											}
+											contentClassName="max-w-sm whitespace-pre-line"
 										>
-											<FeedDot status={f} />
-											{feedWhen(f)}
-										</button>
-									</Tip>
+											<button
+												type="button"
+												onClick={() => open(c.channel)}
+												className="flex items-center gap-1.5 rounded-md px-1 py-1 text-xs text-muted-foreground tabular-nums hover:bg-subtle"
+											>
+												<FeedDot status={f} />
+												{feedWhen(f)}
+											</button>
+										</Tip>
+										{f.feed === "stock" &&
+											(f.state === "ok" || f.state === "partial") &&
+											f.excluded > 0 && (
+												<Link
+													to="/markets"
+													search={{ market: c.channel }}
+													className="text-xs text-faint underline-offset-2 hover:underline"
+												>
+													{f.excluded} skipped
+												</Link>
+											)}
+									</div>
 								</td>
 							))}
 						</tr>

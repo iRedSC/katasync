@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { type } from "arktype";
 import { and, eq, getTableColumns, isNull, like, ne, sql } from "drizzle-orm";
+import type { FeedPhase } from "#/channels/pass-feeds";
 import type { Db } from "#/db/client";
 import { orderLines, orders } from "#/db/schema";
 import {
@@ -301,22 +302,26 @@ export const detailPage = type({ "orders?": tiktokOrder.array() });
 const DAY = 24 * 60 * 60 * 1000;
 const FIRST_SYNC_DAYS = 60;
 
-export async function syncTiktok(db: Db, options: { listings: boolean }) {
+export async function syncTiktok(
+	db: Db,
+	options: { listings: FeedPhase | null },
+) {
 	const cipher = await shopCipher();
 	// Created only once TikTok answers, because its existence is what stops
 	// Shopify from importing TikTok orders.
 	const store = await ensureStore(db, "tiktok", STORE);
 	const stock = await stockLocations(db);
 	const problems: string[] = [];
+	const listingProblems: string[] = [];
 
 	let mapped: number[] = [];
 	let created = 0;
-	if (options.listings) {
+	await options.listings?.(async () => {
 		const matched = await syncTiktokListings(db, store.id, cipher);
 		mapped = matched.mapped;
 		created = matched.created;
-		problems.push(...matched.skipped);
-	}
+		listingProblems.push(...matched.skipped);
+	});
 	// Orders that sold a newly matched listing pick up the product now.
 	const caughtUp = await applyListingsToOrders(db, mapped, stock);
 	problems.push(...caughtUp.problems);
@@ -386,7 +391,13 @@ export async function syncTiktok(db: Db, options: { listings: boolean }) {
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
 	if (refreshWarning) problems.push(refreshWarning);
-	return { store: store.name, created, orders: count, problems };
+	return {
+		store: store.name,
+		created,
+		orders: count,
+		listingProblems,
+		problems,
+	};
 }
 
 export async function ingestDetail(

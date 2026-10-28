@@ -16,7 +16,9 @@ type Target = typeof target.infer;
 
 // A channel kept in memory: what it shows per listing, which listings it
 // refuses, and every write it was sent.
-function fakeChannel(shows: Record<string, number | null | "unpushable">) {
+function fakeChannel(
+	shows: Record<string, number | null | "unpushable" | "by design">,
+) {
 	const refuse = new Set<string>();
 	const writes: StockWrite<Target>[] = [];
 	let reads = 0;
@@ -31,7 +33,9 @@ function fakeChannel(shows: Record<string, number | null | "unpushable">) {
 					id,
 					q === "unpushable"
 						? { state: "unpushable", reason: "it can't hold stock" }
-						: { state: "ready", target: { slot: `slot-${id}` }, shows: q },
+						: q === "by design"
+							? { state: "unpushable", reason: "never tracked", byDesign: true }
+							: { state: "ready", target: { slot: `slot-${id}` }, shows: q },
 				);
 			return found;
 		},
@@ -279,6 +283,23 @@ describe("pushStoreStock", () => {
 			"A: Fake didn't report this listing's stock, so katasync isn't setting it",
 			"A: katasync can't set its Fake stock: it can't hold stock",
 		]);
+	});
+
+	test("listings skipped by design are counted, not problems", async () => {
+		const a = await createProduct(db, "A", "simple");
+		await stock(a, 5);
+		await list("fixed", a);
+		await list("odd", a);
+		await list("ok", a);
+		const fake = fakeChannel({ fixed: "by design", odd: "unpushable", ok: 5 });
+
+		const result = await pushStoreStock(db, store, fake.channel, "write");
+		expect(result.excluded).toBe(1);
+		expect(result.problems).toEqual([
+			"A: katasync can't set its Fake stock: it can't hold stock",
+		]);
+		// Only the real one is a problem; the excluded one has no message at all.
+		expect(result.problems.join()).not.toContain("never tracked");
 	});
 
 	test("a listing made since the last read is read and set in the same pass", async () => {

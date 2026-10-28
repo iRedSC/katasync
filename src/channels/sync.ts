@@ -24,6 +24,12 @@ import { fetchEbayCharges } from "./finance/ebay";
 import { fetchShopifyCharges } from "./finance/shopify";
 import { fetchTiktokCharges } from "./finance/tiktok";
 import type { OrderUpdate, WebhookUpdate } from "./order-update";
+import {
+	type FeedPhase,
+	type PassFeeds,
+	type PassPhases,
+	readingPassFeeds,
+} from "./pass-feeds";
 import { returnsPass } from "./returns-pass";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
 import { stockLocations } from "./stores";
@@ -32,7 +38,8 @@ import { ingestTiktokOrder, syncTiktok } from "./tiktok";
 // One sync pass of a channel: pull its orders (and, with `listings`, its
 // listings), catch up its lines that now have a product, set its stores'
 // listing quantities where stock push is on (src/stock-push), record the run
-// and the orders feed for Diagnostics, then pin any new orders to ship.
+// and its orders, listings, and stock feeds for Diagnostics (each gets only
+// its own problems), then pin any new orders to ship.
 // Returns have their own pass (returnsPassAlone).
 // Shared by `pnpm sync` (scripts/sync.ts) and the Vercel crons
 // (src/routes/api/cron/sync.$channel.ts). Server only.
@@ -41,12 +48,16 @@ const passes: Record<
 	SyncedChannel,
 	(
 		db: Db,
-		listings: boolean,
+		// Runs the listings part of the pass; null to skip it.
+		listings: FeedPhase | null,
 	) => Promise<{
 		store: string;
 		// Products made from the primary store's new SKUs (matchListings).
 		created: number;
 		orders: number;
+		// Matching and mirroring listings; none without `listings`.
+		listingProblems: string[];
+		// Reading and ingesting orders.
 		problems: string[];
 	}>
 > = {
@@ -66,12 +77,8 @@ async function syncPass(
 	channel: SyncedChannel,
 	options: { listings: boolean },
 ) {
-	const result = await readingFeed(
-		db,
-		channel,
-		"orders",
-		() => ordersPass(db, channel, options),
-		(r) => ({ kind: "read", problems: r.problems }),
+	const result = await readingPassFeeds(db, channel, options, (phases, at) =>
+		ordersPass(db, channel, phases, at),
 	);
 	const pinned = await assignOrderPins(db);
 	return { ...result, pinned };
@@ -80,35 +87,42 @@ async function syncPass(
 function ordersPass(
 	db: Db,
 	channel: SyncedChannel,
-	options: { listings: boolean },
+	phases: PassPhases,
+	started: Date,
 ) {
 	return recordSyncRun(db, channel, async () => {
-		const started = new Date();
-		const pass = await passes[channel](db, options.listings);
+		const pass = await passes[channel](db, phases.listings);
 		const caughtUp = await applySkusToOrders(
 			db,
 			{ channel },
 			await stockLocations(db),
 		);
-		const pushed = await pushChannelStock(
-			db,
-			channel,
-			stockChannels[channel],
-			pushMode(),
+		const pushed = await phases.stock(() =>
+			pushChannelStock(db, channel, stockChannels[channel], pushMode()),
 		);
 		// This channel's sales reach the others now, not at their own passes.
 		const elsewhere = await pushMoved(db, started, { except: channel });
-		// A refurb this pass sold out is archived, here and in Shopify.
+		// A refurb this pass sold out is archived, here and in Shopify. What
+		// fails is on Shopify's stock feed, whichever pass this is.
 		const retired = await retireRefurbs(db);
+		const feeds: PassFeeds = {
+			orders: [...pass.problems, ...caughtUp.problems],
+			listings: phases.listings ? pass.listingProblems : null,
+			stock: pushed.flatMap((p) => p.problems),
+			pushed,
+			retired: retired.problems,
+		};
 		return {
 			...pass,
+			feeds,
+			// The run keeps every problem; other channels' pushes show only here.
 			problems: [
 				...new Set([
-					...pass.problems,
-					...caughtUp.problems,
-					...pushed.flatMap((p) => p.problems),
+					...feeds.orders,
+					...(feeds.listings ?? []),
+					...feeds.stock,
+					...feeds.retired,
 					...elsewhere.flatMap((p) => p.problems),
-					...retired.problems,
 				]),
 			],
 		};
