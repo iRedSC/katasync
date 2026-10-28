@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, PackageCheck, PackagePlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { DamageKind } from "#/components/damage/damage";
-import type { PurchaseOrderMatch } from "#/components/po-product-picker";
+import type { PurchaseOrderMatch } from "#/components/po-search";
 import { DamageSheet } from "#/components/receive/damage-sheet";
 import { ExtraSheet } from "#/components/receive/extra-sheet";
 import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
