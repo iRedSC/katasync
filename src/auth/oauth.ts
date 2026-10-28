@@ -58,8 +58,7 @@ export function endpoints(origin: string) {
 	};
 }
 
-export const originOf = (request: Request) =>
-	process.env.AUTH_ORIGIN ?? new URL(request.url).origin;
+export { originOf } from "./origin";
 
 // Approval sends the browser back here with the code, so only an https
 // address, or one on this computer (how Claude Code listens, RFC 8252).

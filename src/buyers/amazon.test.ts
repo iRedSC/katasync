@@ -380,6 +380,14 @@ describe("answering", () => {
 			receivedAt: later,
 		});
 		expect(await applyAmazonRefusals(db)).toBe(0);
+		// Vouched for, but from a domain that only starts with Amazon's.
+		await email({
+			fromAddress: "seller-notification@amazon.com.attacker.com",
+			subject: "Your message could not be delivered",
+			body: `To ${RELAY}`,
+			receivedAt: later,
+		});
+		expect(await applyAmazonRefusals(db)).toBe(0);
 		await email({
 			fromAddress: "seller-notification@amazon.com",
 			subject: "Your message could not be delivered",

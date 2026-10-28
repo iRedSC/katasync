@@ -206,7 +206,7 @@ describe("whether Microsoft vouched for the sender", () => {
 	const results = (value: string) => [
 		{ name: "Authentication-Results", value },
 	];
-	test("compauth or DMARC aligned to the From domain passing", () => {
+	test("DMARC, or SPF or DKIM aligned to the From domain, passing", () => {
 		expect(
 			senderAuthenticated(
 				results(
@@ -218,6 +218,58 @@ describe("whether Microsoft vouched for the sender", () => {
 		expect(
 			senderAuthenticated(results("dmarc=pass header.from=example.com"), BUYER),
 		).toBe(true);
+	});
+
+	test("SPF or DKIM aligned to the From domain without DMARC", () => {
+		expect(
+			senderAuthenticated(
+				results(
+					"spf=pass smtp.mailfrom=bounce.example.com;dmarc=none;compauth=pass reason=109",
+				),
+				BUYER,
+			),
+		).toBe(true);
+		expect(
+			senderAuthenticated(
+				results("spf=none;dkim=pass header.d=example.com;dmarc=none"),
+				BUYER,
+			),
+		).toBe(true);
+	});
+
+	test("an implicit compauth pass without the From domain proven", () => {
+		expect(
+			senderAuthenticated(
+				results(
+					"spf=pass smtp.mailfrom=evil.test;dkim=none;dmarc=none;compauth=pass reason=103",
+				),
+				BUYER,
+			),
+		).toBe(false);
+		expect(
+			senderAuthenticated(
+				results(
+					"spf=fail smtp.mailfrom=example.com;dmarc=fail header.from=example.com;compauth=pass reason=104",
+				),
+				BUYER,
+			),
+		).toBe(false);
+		// Aligned SPF can't outvote the domain's own DMARC failing.
+		expect(
+			senderAuthenticated(
+				results(
+					"spf=pass smtp.mailfrom=example.com;dmarc=fail header.from=example.com",
+				),
+				BUYER,
+			),
+		).toBe(false);
+		// A lookalike isn't under the From domain.
+		expect(
+			senderAuthenticated(
+				results("dkim=pass header.d=notexample.com;dmarc=none"),
+				BUYER,
+			),
+		).toBe(false);
 	});
 
 	test("failing, another domain's DMARC, no header, or one under Microsoft's", () => {

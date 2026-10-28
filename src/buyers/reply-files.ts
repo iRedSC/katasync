@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
-import { relyingParty } from "#/auth/webauthn";
+import { capabilityUrl } from "#/auth/capability-urls";
 import type { Db } from "#/db/client";
 import { type BuyerMedia, buyerReplyFiles } from "#/db/schema";
 import type { Market } from "#/markets/market";
@@ -60,7 +60,7 @@ export async function sharedFile(db: Db, token: string) {
 }
 
 export const sharedFileUrl = (token: string) =>
-	`${relyingParty().origin}/api/shared-files/${token}`;
+	capabilityUrl("/api/shared-files/", token);
 
 // A reply's files, checked against the marketplace's rules, as the media
 // the reply is kept with. Throws when one is missing or the marketplace

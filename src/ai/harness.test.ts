@@ -120,4 +120,59 @@ describe("the harness", () => {
 		await runAgent(agent, "?", { fetchImpl });
 		expect(sent[0]?.url).toBe("https://ai.example.com/v1/chat/completions");
 	});
+
+	test("past its steps, a tool the model calls anyway isn't run, and it stops", async () => {
+		const run = vi.fn(async () => 1);
+		const limited: Agent<{ answer: number }> = {
+			...agent,
+			maxSteps: 1,
+			tools: (agent.tools ?? []).map((t) => ({ ...t, run })),
+		};
+		const call = (id: string) => ({
+			content: null,
+			tool_calls: [
+				{
+					id,
+					type: "function",
+					function: { name: "add", arguments: '{"a":1,"b":1}' },
+				},
+			],
+		});
+		// A model that never stops calling tools.
+		const { sent, fetchImpl } = proxy(
+			Array.from({ length: 50 }, (_, i) => call(`c${i}`)),
+		);
+		await expect(runAgent(limited, "?", { fetchImpl })).rejects.toThrow(
+			/adder didn't answer within 3 requests/,
+		);
+		expect(run).toHaveBeenCalledTimes(1);
+		expect(sent).toHaveLength(3);
+		expect(sent.map((r) => "tools" in r.body)).toEqual([true, false, false]);
+		expect(sent[2]?.body.messages).toContainEqual(
+			expect.objectContaining({
+				role: "tool",
+				tool_call_id: "c1",
+				content: expect.stringMatching(/^Not run/),
+			}),
+		);
+	});
+
+	test("an answer after its last step is still read", async () => {
+		const { fetchImpl } = proxy([
+			{
+				content: null,
+				tool_calls: [
+					{
+						id: "c1",
+						type: "function",
+						function: { name: "add", arguments: '{"a":2,"b":2}' },
+					},
+				],
+			},
+			{ content: '{"answer": 4}' },
+		]);
+		expect(
+			await runAgent({ ...agent, maxSteps: 1 }, "?", { fetchImpl }),
+		).toEqual({ answer: 4 });
+	});
 });

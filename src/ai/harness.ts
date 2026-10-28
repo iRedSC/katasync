@@ -149,25 +149,31 @@ export async function runAgent<Out>(
 		{ role: "user", content: input },
 	];
 	const maxSteps = agent.maxSteps ?? 4;
+	// Every request a run may make: a round of tools per step, then its
+	// answer, and once more when that doesn't fit. Past maxSteps no tool is
+	// offered, and one the model calls anyway isn't run.
+	const maxRequests = maxSteps + 2;
+	let steps = 0;
 	let retried = false;
-	for (let step = 0; ; step++) {
-		const reply = await complete(
-			messages,
-			step < maxSteps ? tools : [],
-			fetchImpl,
-			deadline,
-		);
+	for (let request = 0; request < maxRequests; request++) {
+		const offered = steps < maxSteps ? tools : [];
+		const reply = await complete(messages, offered, fetchImpl, deadline);
+		const calls = reply.tool_calls ?? [];
 		messages.push({
 			role: "assistant",
 			content: reply.content,
-			...(reply.tool_calls?.length ? { tool_calls: reply.tool_calls } : {}),
+			...(calls.length > 0 ? { tool_calls: calls } : {}),
 		});
-		if (reply.tool_calls?.length) {
-			for (const call of reply.tool_calls)
+		if (calls.length > 0) {
+			if (offered.length > 0) steps++;
+			for (const call of calls)
 				messages.push({
 					role: "tool",
 					tool_call_id: call.id,
-					content: await callTool(tools, call),
+					content:
+						offered.length > 0
+							? await callTool(tools, call)
+							: "Not run: there are no more tool calls. Answer now with the JSON only.",
 				});
 			continue;
 		}
@@ -187,6 +193,9 @@ export async function runAgent<Out>(
 			content: `That answer didn't fit: ${problem}. Answer again with the JSON only.`,
 		});
 	}
+	throw new Error(
+		`${agent.name} didn't answer within ${maxRequests} requests to the AI`,
+	);
 }
 
 // A tool's result for the model; its failure too, so the model can go on.

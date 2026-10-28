@@ -20,7 +20,12 @@ import {
 } from "#/purchasing/inbox/ingest";
 import { PurchaseOrderError } from "#/purchasing/orders";
 import { addTracking, removeTracking } from "#/purchasing/tracking";
-import { describeFile, fileContent, liveFiles } from "./email-files";
+import {
+	describeFile,
+	fileContent,
+	liveFiles,
+	untrustedJson,
+} from "./email-files";
 import { json, READ, WRITE } from "./tool-shapes";
 
 // The purchasing inbox: emails katasync filed on POs or is waiting to file,
@@ -49,7 +54,7 @@ export function registerInboxReadTools(server: McpServer, db: Db) {
 			const rows = po
 				? await emailsOf(db, po)
 				: await unfiledEmails(db, { setAside: include_set_aside, limit });
-			return json(
+			return untrustedJson(
 				rows.slice(0, limit ?? 200).map((e) => ({
 					id: e.id,
 					po: e.purchaseOrderId,
@@ -105,7 +110,7 @@ export function registerInboxReadTools(server: McpServer, db: Db) {
 					}),
 				),
 			};
-			if (attachment === undefined) return json(summary);
+			if (attachment === undefined) return untrustedJson(summary);
 			const file = await attachmentOf(db, id, attachment);
 			if (!file)
 				throw new PurchaseOrderError(
@@ -113,7 +118,7 @@ export function registerInboxReadTools(server: McpServer, db: Db) {
 				);
 			return {
 				content: [
-					...json({ ...summary, attachments: undefined }).content,
+					...untrustedJson({ ...summary, attachments: undefined }).content,
 					...fileContent(
 						`katasync://po-email-attachments/${file.id}/${encodeURIComponent(file.filename)}`,
 						file,
@@ -169,7 +174,7 @@ export function registerInboxReadTools(server: McpServer, db: Db) {
 								),
 							);
 			const byMessage = new Map(kept.map((k) => [k.messageId, k]));
-			return json(
+			return untrustedJson(
 				found.map((m) => {
 					const k = byMessage.get(m.messageId);
 					return {
@@ -223,7 +228,7 @@ export function registerInboxReadTools(server: McpServer, db: Db) {
 					}),
 				),
 			};
-			if (attachment === undefined) return json(summary);
+			if (attachment === undefined) return untrustedJson(summary);
 			const file = files[attachment];
 			if (!file)
 				throw new PurchaseOrderError(
@@ -231,7 +236,7 @@ export function registerInboxReadTools(server: McpServer, db: Db) {
 				);
 			return {
 				content: [
-					...json({ ...summary, attachments: undefined }).content,
+					...untrustedJson({ ...summary, attachments: undefined }).content,
 					...fileContent(
 						`katasync://inbox/${encodeURIComponent(graph_id)}/${attachment}`,
 						file,
