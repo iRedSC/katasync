@@ -1031,6 +1031,16 @@ export const returnRequestLines = pgTable(
 	],
 );
 
+// Where a cost report's label figures came from: the marketplace's own label
+// section (authoritative, even when it says $0), a stand-in until it reports
+// (fallback), or not recorded, for reports saved before this was kept and
+// whose figures can't tell (unknown).
+export const labelAuthority = pgEnum("label_authority", [
+	"unknown",
+	"fallback",
+	"authoritative",
+]);
+
 // What a marketplace charged on one order: its latest statement, from its
 // finance reports. billedBy is the marketplace that sent the bill, which isn't
 // always the order's store: a TikTok order relayed through Shopify is billed
@@ -1064,6 +1074,9 @@ export const orderCostReports = pgTable(
 		// Its label figures are a stand-in until it catches up (Shopify's
 		// timeline, before its labels report has the order).
 		labelsPending: boolean().notNull().default(false),
+		// A fallback never replaces authoritative label figures, a $0 one
+		// included (src/orders/charges.ts).
+		labelAuthority: labelAuthority().notNull().default("unknown"),
 		fetchedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
@@ -1072,7 +1085,8 @@ export const orderCostReports = pgTable(
 // When katasync last asked a marketplace about an order's charges, whatever
 // came back, so the refresh can back off (src/orders/cost-refresh.ts). error
 // is why the last ask failed, for Diagnostics; null when it worked, even if
-// the marketplace had nothing yet.
+// the marketplace had nothing yet. answeredAt is the last ask that worked, so
+// a failed ask never passes for a refresh.
 export const orderCostChecks = pgTable(
 	"order_cost_checks",
 	{
@@ -1082,6 +1096,7 @@ export const orderCostChecks = pgTable(
 		billedBy: channel().notNull(),
 		checkedAt: timestamp({ withTimezone: true }).notNull(),
 		error: text(),
+		answeredAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
 );
@@ -1290,7 +1305,10 @@ export type HandoffHold =
 //
 // A refused send is tried again on its own (src/shipping/retry.ts) for ten
 // minutes from the first refusal: channelRetryAt is when the next try is due,
-// and null once it's sent or katasync has stopped trying.
+// and null once it's sent or katasync has stopped trying. A run trying it
+// leases it first: channelRetryLease is that run's token and channelRetryAt
+// the lease's end, so a run that dies mid-try leaves it due again. Recording
+// an outcome (sent, refused, held) clears the token.
 export const dispatchOrders = pgTable(
 	"dispatch_orders",
 	{
@@ -1306,6 +1324,7 @@ export const dispatchOrders = pgTable(
 		channelFirstFailedAt: timestamp({ withTimezone: true }),
 		channelAttempts: integer().notNull().default(0),
 		channelRetryAt: timestamp({ withTimezone: true }),
+		channelRetryLease: uuid(),
 		// Held instead of sent, and why. Never retried on its own; checking
 		// again sends it once the marketplace matches the box, or the
 		// dispatch is voided.
