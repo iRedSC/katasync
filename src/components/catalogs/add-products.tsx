@@ -1,8 +1,9 @@
 import { Command as CommandPrimitive } from "cmdk";
-import { ArrowRight, Loader2, Plus, Search } from "lucide-react";
+import { ArrowRight, Loader2, Plus, RotateCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { CatalogMark } from "#/components/catalog-mark";
 import { ProductImage } from "#/components/product";
+import { Button } from "#/components/ui/button";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
@@ -11,12 +12,14 @@ import {
 	restoreProductCatalogs,
 	setProductCatalog,
 } from "#/server/purchasing";
+import { searchView } from "./search-answer";
 
 type Found = Awaited<ReturnType<typeof findProductsForCatalog>>[number];
 
 // Finds products by SKU or name to put in this catalog. One in another
 // catalog says so on its row, and Undo moves it back. Only the newest
-// search's answer is kept.
+// search's answer is kept, and only an answer to what's typed can be picked,
+// so Enter never adds a row from the query before.
 export function AddProducts({
 	catalog,
 }: {
@@ -25,9 +28,17 @@ export function AddProducts({
 	const [query, setQuery] = useState("");
 	const [found, setFound] = useState<{ q: string; rows: Found[] } | null>(null);
 	const [busy, setBusy] = useState(false);
+	// A search that didn't come back, for the query it was for.
+	const [failed, setFailed] = useState<{ q: string; message: string } | null>(
+		null,
+	);
+	// Bumped to search the same query again.
+	const [attempt, setAttempt] = useState(0);
 	const q = query.trim();
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: attempt re-runs the same query
 	useEffect(() => {
+		setFailed(null);
 		if (q === "") {
 			setFound(null);
 			return;
@@ -36,15 +47,22 @@ export function AddProducts({
 		const timer = setTimeout(() => {
 			findProductsForCatalog({ data: { query: q } }).then(
 				(rows) => current && setFound({ q, rows }),
+				(err) =>
+					current &&
+					setFailed({
+						q,
+						message: err instanceof Error ? err.message : String(err),
+					}),
 			);
 		}, 150);
 		return () => {
 			current = false;
 			clearTimeout(timer);
 		};
-	}, [q]);
+	}, [q, attempt]);
 
 	async function add(p: Found) {
+		if (found?.q !== q) return;
 		setBusy(true);
 		const r = await optimism.change({
 			send: () =>
@@ -71,12 +89,11 @@ export function AddProducts({
 		);
 	}
 
-	const rows = found?.q === q ? found.rows : (found?.rows ?? []);
-	const searching = q !== "" && found?.q !== q;
+	const view = searchView(found, q, failed?.q ?? null);
 	return (
 		<CommandPrimitive shouldFilter={false} className="relative" loop>
 			<div className="flex items-center gap-2 border-b px-4">
-				{busy || searching ? (
+				{busy || view.searching ? (
 					<Loader2 className="size-4 animate-spin text-muted-foreground" />
 				) : (
 					<Search className="size-4 text-muted-foreground" />
@@ -93,22 +110,37 @@ export function AddProducts({
 			</div>
 			{q !== "" && (
 				<CommandPrimitive.List className="absolute inset-x-2 top-12 z-20 max-h-80 overflow-y-auto rounded-xl bg-popover p-1 shadow-md ring-1 ring-black/5">
-					{!searching && rows.length === 0 && (
+					{view.failed && (
+						<div className="flex items-center gap-2 px-3 py-3 text-critical-text">
+							<span className="min-w-0 flex-1 truncate">
+								Couldn't search: {failed?.message}
+							</span>
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => setAttempt((n) => n + 1)}
+							>
+								<RotateCw />
+								Retry
+							</Button>
+						</div>
+					)}
+					{!view.searching && !view.failed && view.rows.length === 0 && (
 						<CommandPrimitive.Empty className="px-3 py-6 text-center text-muted-foreground">
 							No product matches “{q}”
 						</CommandPrimitive.Empty>
 					)}
-					{rows.map((p) => {
+					{view.rows.map((p) => {
 						const here = p.catalogId === catalog.id;
 						return (
 							<CommandPrimitive.Item
 								key={p.id}
 								value={String(p.id)}
-								disabled={here || busy}
+								disabled={here || busy || view.stale}
 								onSelect={() => add(p)}
 								className={cn(
 									"flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 data-[selected=true]:bg-surface",
-									searching && "opacity-60",
+									view.stale && "opacity-60",
 									here && "cursor-default opacity-50",
 								)}
 							>

@@ -101,13 +101,25 @@ export function BankRows({
 								>
 									{formatDate(r.postedOn)}
 								</td>
-								<td className={cn(td, "max-w-lg truncate")}>
-									{r.description}
-									{r.possibleRepeat && (
-										<span className="ml-2">
+								<td className={cn(td, "max-w-lg")}>
+									<span className="flex items-center gap-2">
+										{/* The row click is for the mouse; this is how the keyboard opens it. */}
+										<button
+											type="button"
+											onClick={(e) => {
+												// The row's own click would open it a second time.
+												e.stopPropagation();
+												onOpen(r);
+											}}
+											aria-label={`Open ${r.description}, ${formatCents(r.amountCents, currency)}`}
+											className="min-w-0 truncate rounded-sm text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+										>
+											{r.description}
+										</button>
+										{r.possibleRepeat && (
 											<Badge tone="warning">In another import too</Badge>
-										</span>
-									)}
+										)}
+									</span>
 								</td>
 								<td
 									className={cn(
