@@ -164,7 +164,19 @@ export async function flagsOfEmails(db: Db, emailIds: number[]) {
 		.orderBy(desc(poFlags.id));
 }
 
+// Locks the flag's PO before the flag, as raiseFlag does, so resolving a flag
+// while an email raises it again can't deadlock. A flag never changes PO.
 async function lockedFlag(tx: Db, id: number) {
+	const [of] = await tx
+		.select({ purchaseOrderId: poFlags.purchaseOrderId })
+		.from(poFlags)
+		.where(eq(poFlags.id, id));
+	if (!of) throw new PurchaseOrderError(`There's no flag ${id}`);
+	await tx
+		.select({ id: purchaseOrders.id })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, of.purchaseOrderId))
+		.for("update");
 	const [flag] = await tx
 		.select()
 		.from(poFlags)
