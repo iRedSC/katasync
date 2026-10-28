@@ -14,5 +14,4 @@ BEGIN
   END IF;
 END $$;
 --> statement-breakpoint
-CREATE UNIQUE INDEX "catalogs_name_lower" ON "catalogs" USING btree (lower("name"));--> statement-breakpoint
-ALTER TABLE "catalogs" DROP CONSTRAINT "catalogs_name_unique";
+CREATE UNIQUE INDEX "catalogs_name_lower" ON "catalogs" USING btree (lower("name"));

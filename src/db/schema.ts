@@ -1572,7 +1572,9 @@ export const catalogs = pgTable(
 	"catalogs",
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity(),
-		name: text().notNull(),
+		// Its exact-case unique stays beside catalogs_name_lower, since code
+		// still serving during a deploy inserts against it.
+		name: text().notNull().unique(),
 		// What's in it, in words a search would use, e.g. "Taping tools, banjos".
 		description: text(),
 		// Shown beside its name wherever it's picked or listed. Old photos stay,
