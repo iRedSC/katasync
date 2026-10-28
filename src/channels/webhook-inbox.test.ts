@@ -178,7 +178,12 @@ describe("drainDue", () => {
 	});
 	it("leases each order only once it's reached, not the whole batch up front", async () => {
 		for (let n = 1; n <= 3; n++)
-			await acceptWebhook(db, "shopify", `gid://shopify/Order/${n}`, body("1"));
+			await acceptWebhook(
+				db,
+				"shopify",
+				{ kind: "order", id: `gid://shopify/Order/${n}` },
+				body("1"),
+			);
 		const leasedWhileWorking: number[] = [];
 		const report = await drainDue(db, async () => {
 			const leased = (await rows()).filter((r) => r.leaseToken !== null);
@@ -191,7 +196,12 @@ describe("drainDue", () => {
 
 	it("stops taking orders once its time is up, leaving the rest unleased", async () => {
 		for (let n = 1; n <= 3; n++)
-			await acceptWebhook(db, "shopify", `gid://shopify/Order/${n}`, body("1"));
+			await acceptWebhook(
+				db,
+				"shopify",
+				{ kind: "order", id: `gid://shopify/Order/${n}` },
+				body("1"),
+			);
 		const slow: Ingest = async () => {
 			await new Promise((resolve) => setTimeout(resolve, 30));
 			return { kind: "applied" };
