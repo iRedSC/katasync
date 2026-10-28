@@ -6,11 +6,10 @@ import { Button } from "#/components/ui/button";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { Previewed } from "./import-step";
+import { grow, PAGE, windowRows } from "./rows-window";
 
 type Row = Previewed["rows"][number];
 type Filter = "all" | "repeats" | "duplicate" | "invalid";
-
-const SHOWN = 300;
 
 const isRepeat = (r: Row) => r.kind === "accepted" && r.repeatOf !== null;
 
@@ -38,9 +37,16 @@ export function ImportPreview({
 	onCorrect: () => void;
 }) {
 	const [keep, setKeep] = useState<ReadonlySet<number>>(new Set());
-	const [filter, setFilter] = useState<Filter>(() =>
+	const [filter, setFilterTo] = useState<Filter>(() =>
 		preview.rows.some((r) => r.kind === "invalid") ? "invalid" : "all",
 	);
+	// Rows shown grow on request; choices are by row number, so they hold
+	// whether a row is on screen or not.
+	const [limit, setLimit] = useState(PAGE);
+	const setFilter = (f: Filter) => {
+		setFilterTo(f);
+		setLimit(PAGE);
+	};
 	const accepted = preview.rows.filter((r) => r.kind === "accepted");
 	const repeats = accepted.filter(isRepeat);
 	const unchosen = repeats.filter(
@@ -55,6 +61,7 @@ export function ImportPreview({
 				? isRepeat(r)
 				: r.kind === filter,
 	);
+	const { shown: visible, hidden } = windowRows(shown, limit);
 	const adding = accepted.length - skip.size;
 	const allRepeatsSkipped =
 		repeats.length > 0 && repeats.every((r) => skip.has(r.rowNumber));
@@ -147,7 +154,7 @@ export function ImportPreview({
 			<div className="min-h-0 overflow-y-auto rounded-lg border">
 				<table className="w-full text-sm">
 					<tbody>
-						{shown.slice(0, SHOWN).map((r) => (
+						{visible.map((r) => (
 							<PreviewLine
 								key={r.rowNumber}
 								row={r}
@@ -160,10 +167,26 @@ export function ImportPreview({
 						))}
 					</tbody>
 				</table>
-				{shown.length > SHOWN && (
-					<p className="border-t px-3 py-2 text-xs text-muted-foreground">
-						and {formatCount(shown.length - SHOWN)} more
-					</p>
+				{hidden > 0 && (
+					<div className="flex items-center gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
+						<span className="tabular-nums">
+							{formatCount(visible.length)} of {formatCount(shown.length)}
+						</span>
+						<Button
+							variant="ghost"
+							size="xs"
+							onClick={() => setLimit(grow(limit, shown.length, false))}
+						>
+							Show {formatCount(Math.min(PAGE, hidden))} more
+						</Button>
+						<Button
+							variant="ghost"
+							size="xs"
+							onClick={() => setLimit(grow(limit, shown.length, true))}
+						>
+							Show all
+						</Button>
+					</div>
 				)}
 			</div>
 			<div className="flex items-center gap-3">

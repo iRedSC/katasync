@@ -1,3 +1,4 @@
+import { redactCapabilities } from "#/auth/capability-urls";
 import type { Db } from "#/db/client";
 import { mcpCalls } from "#/db/schema";
 import { READ_TOOLS } from "./server";
@@ -15,14 +16,19 @@ const MAX_DEPTH = 8;
 // any app approved read only can read this log back.
 const SECRET_KEY =
 	/api.?key|authori[sz]ation|token|passw|secret|credential|cookie|bearer/i;
-// Looks like one of our own tokens (see PREFIX in src/auth/oauth.ts).
+// Looks like one of our own tokens (see PREFIX in src/auth/oauth.ts). An
+// upload link is a token too (src/auth/capability-urls.ts), in a tool's
+// answer and the curl command it suggests.
 const API_TOKEN = /ks_[A-Za-z0-9_-]{16,}/g;
 const REDACTED = "[redacted]";
 
 function redact(value: unknown, depth = 0): unknown {
 	// jsonb can't hold a NUL, which would lose the whole log entry.
 	if (typeof value === "string")
-		return value.replace(API_TOKEN, REDACTED).replaceAll("\u0000", "");
+		return redactCapabilities(
+			value.replace(API_TOKEN, REDACTED),
+			REDACTED,
+		).replaceAll("\u0000", "");
 	if (value === null || typeof value !== "object") return value;
 	if (depth >= MAX_DEPTH) return "[too deep]";
 	if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));

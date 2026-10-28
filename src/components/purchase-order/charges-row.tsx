@@ -2,7 +2,7 @@ import { Plus, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { shake } from "#/components/shake";
 import { formatMoney } from "#/lib/format";
-import { optimism } from "#/lib/optimism";
+import { ids, optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import type { ChargeKind } from "#/purchasing/landed";
@@ -61,7 +61,7 @@ export function ChargesRow({ detail: d }: { detail: PurchaseOrderDetail }) {
 			return;
 		}
 		const temp: Charge = {
-			id: -Date.now(),
+			id: ids.provisional(),
 			purchaseOrderId: po.id,
 			kind,
 			amount: kind === "credit" ? -value : value,
@@ -75,10 +75,13 @@ export function ChargesRow({ detail: d }: { detail: PurchaseOrderDetail }) {
 				...data,
 				charges: [...data.charges, temp],
 			})),
-			send: () =>
-				addPurchaseOrderCharge({
+			send: async () => {
+				const saved = await addPurchaseOrderCharge({
 					data: { purchaseOrderId: po.id, kind, amount: value },
-				}),
+				});
+				ids.confirm(temp.id, saved.id);
+				return saved;
+			},
 		});
 	}
 
@@ -87,9 +90,11 @@ export function ChargesRow({ detail: d }: { detail: PurchaseOrderDetail }) {
 			label: `Removing ${labelOf(c.kind).toLowerCase()}`,
 			patch: poData.patch(po.id, (data) => ({
 				...data,
-				charges: data.charges.filter((x) => x.id !== c.id),
+				charges: data.charges.filter((x) => !ids.same(x.id, c.id)),
 			})),
-			send: () => removePurchaseOrderCharge({ data: { id: c.id } }),
+			// Sent after the change that adds it, so a new charge has the
+			// server's id by now.
+			send: () => removePurchaseOrderCharge({ data: { id: ids.server(c.id) } }),
 		});
 		if (!r) return;
 		offerUndo(

@@ -231,6 +231,35 @@ describe("emailing a Shopify buyer", () => {
 		expect(r.status).toBe("sending");
 	});
 
+	test("a retry goes to whom the reply was written for, even if the order's email changed", async () => {
+		const { o, threadId } = await started();
+		answers([json(500, { message: "down" })]);
+		const key = crypto.randomUUID();
+		expect((await reply(db, threadId, "Hi", key)).status).toBe("sending");
+		await db
+			.update(orderBuyerContacts)
+			.set({ email: "someone@else.com" })
+			.where(eq(orderBuyerContacts.orderId, o.id));
+		const calls = answers([json(200, { id: "re_2" })]);
+		await settleReplies(db, Date.now() + 120_000);
+		expect(calls[0]?.body).toMatchObject({ to: [BUYER] });
+	});
+
+	test("one kept before its address was isn't sent again, only checked", async () => {
+		const { threadId } = await started();
+		answers([json(500, { message: "down" })]);
+		await reply(db, threadId, "Hi", crypto.randomUUID());
+		await db.update(buyerMessages).set({ recipient: null });
+		const calls = answers([]);
+		await settleReplies(db, Date.now() + 120_000);
+		expect(calls).toEqual([]);
+		const [t] = await threadsPage(db, "open", "shopify");
+		expect(t?.messages.at(-1)).toMatchObject({
+			status: "unconfirmed",
+			error: expect.stringContaining("Resend's email log"),
+		});
+	});
+
 	test("their answer is filed on the thread and done in the mailbox", async () => {
 		const { threadId } = await started();
 		const answer = await email({

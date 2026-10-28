@@ -1,6 +1,6 @@
 import { waitUntil } from "@vercel/functions";
 import type { Db } from "#/db/client";
-import { setRetailReserve } from "#/inventory/online-stock";
+import { setRetailReserve } from "#/inventory/retail-reserve";
 import { pushRetailShelf } from "./on-change";
 
 // Sets how many the retail store keeps for walk-ins, then pushes what that

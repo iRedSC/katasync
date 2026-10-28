@@ -48,6 +48,7 @@ export function recentPos(db: Db) {
 		.select({
 			id: purchaseOrders.id,
 			sentAt: purchaseOrders.sentAt,
+			supplierId: suppliers.id,
 			supplier: suppliers.name,
 			supplierEmail: suppliers.email,
 		})

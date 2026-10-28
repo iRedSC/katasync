@@ -83,6 +83,7 @@ async function amazon(previous: Standing | null): Promise<Standing> {
 
 const disputedOrders = type({
 	orders: {
+		pageInfo: { hasNextPage: "boolean", "endCursor?": "string | null" },
 		nodes: type({
 			name: "string",
 			legacyResourceId: "string",
@@ -95,33 +96,55 @@ const disputedOrders = type({
 	},
 });
 
+type DisputedOrder = (typeof disputedOrders.infer)["orders"]["nodes"][number];
+
+// Orders read per page, and pages per search: more are only counted as far
+// as that, and said so.
+const SHOPIFY_PAGE = 50;
+export const SHOPIFY_DISPUTE_PAGES = 20;
+
+// Every order the search finds, newest change first, a page at a time;
+// `more` when there were more than SHOPIFY_DISPUTE_PAGES pages of them.
 async function shopifyOrders(search: string) {
-	return disputedOrders.assert(
-		await shopifyQuery(
-			`query ($search: String!) {
-				orders(first: 50, query: $search, sortKey: UPDATED_AT, reverse: true) {
-					nodes {
-						name legacyResourceId createdAt
-						totalPriceSet { shopMoney { amount currencyCode } }
-						disputes { status initiatedAs }
+	const orders: DisputedOrder[] = [];
+	let cursor: string | null = null;
+	for (let page = 0; page < SHOPIFY_DISPUTE_PAGES; page++) {
+		const page: typeof disputedOrders.infer = disputedOrders.assert(
+			await shopifyQuery(
+				`query ($search: String!, $cursor: String) {
+					orders(first: ${SHOPIFY_PAGE}, after: $cursor, query: $search, sortKey: UPDATED_AT, reverse: true) {
+						pageInfo { hasNextPage endCursor }
+						nodes {
+							name legacyResourceId createdAt
+							totalPriceSet { shopMoney { amount currencyCode } }
+							disputes { status initiatedAs }
+						}
 					}
-				}
-			}`,
-			{ search },
-		),
-	).orders.nodes;
+				}`,
+				{ search, cursor },
+			),
+		);
+		const { pageInfo, nodes } = page.orders;
+		orders.push(...nodes);
+		if (!pageInfo.hasNextPage) return { orders, more: false };
+		// More, but no way to ask for them: counted as cut short.
+		cursor = pageInfo.endCursor ?? null;
+		if (cursor === null) break;
+	}
+	return { orders, more: true };
 }
 
 async function shopify(): Promise<Standing> {
 	const since = new Date(Date.now() - 90 * 86_400_000)
 		.toISOString()
 		.slice(0, 10);
-	const [open, lost] = await Promise.all([
-		shopifyOrders(
-			"chargeback_status:needs_response OR chargeback_status:under_review",
-		),
-		shopifyOrders(`chargeback_status:lost updated_at:>=${since}`),
-	]);
+	const [{ orders: open, more: moreOpen }, { orders: lost, more: moreLost }] =
+		await Promise.all([
+			shopifyOrders(
+				"chargeback_status:needs_response OR chargeback_status:under_review",
+			),
+			shopifyOrders(`chargeback_status:lost updated_at:>=${since}`),
+		]);
 	const domain = process.env.SHOPIFY_STORE_DOMAIN;
 	const disputes: ShopifyDispute[] = open.flatMap((o) =>
 		o.disputes
@@ -135,7 +158,18 @@ async function shopify(): Promise<Standing> {
 				placedAt: o.createdAt,
 			})),
 	);
-	return shopifyStanding(disputes, lost.length);
+	// Past the last page read, the counts are only a floor; said so.
+	const cut: Problem[] = [
+		...(moreOpen ? ["open disputes"] : []),
+		...(moreLost ? ["chargebacks lost in 90 days"] : []),
+	].map((what) => ({
+		level: "watch",
+		text: `Over ${SHOPIFY_DISPUTE_PAGES * SHOPIFY_PAGE} ${what}; only those were read`,
+		href: null,
+		detail: "The real number is higher than shown.",
+		items: [],
+	}));
+	return withProblems(shopifyStanding(disputes, lost.length), cut);
 }
 
 // Each is given the standing saved last; Amazon keeps its verdict from it.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatDay, formatOrderDate, formatTime } from "./format";
+import { formatDate, formatDay, formatOrderDate, formatTime } from "./format";
 
 // The shop's day is America/New_York, so these instants fall on the 21st and
 // 22nd there even where the runtime's clock says otherwise.
@@ -40,5 +40,22 @@ describe("order dates", () => {
 	test("a date-only label is the same in any runtime zone", () => {
 		// 10:00 PM EDT on Oct 21 is 2:00 AM UTC on Oct 22.
 		expect(formatDay("2026-10-22T02:00:00Z")).toBe("Oct 21");
+	});
+});
+
+// Postgres `date` columns (bank postings, payouts, invoices) name a day, not an
+// instant. Read as UTC midnight they would land on the day before in New York.
+describe("calendar days", () => {
+	test("show the day they name", () => {
+		expect(formatDate("2026-10-23")).toBe("Oct 23, 2026");
+		expect(formatDay("2026-10-23")).toBe("Oct 23");
+	});
+
+	test("the first of a year stays in its year", () => {
+		expect(formatDate("2027-01-01")).toBe("Jan 1, 2027");
+	});
+
+	test("instants still show in the shop's zone", () => {
+		expect(formatDate("2026-10-24T02:00:00Z")).toBe("Oct 23, 2026");
 	});
 });

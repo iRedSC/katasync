@@ -1,6 +1,6 @@
 {
-  "id": "b303c75d-7fef-4e54-85e8-6206d9555eee",
-  "prevId": "0ae9dfdc-5fa3-4f8f-a405-0bfe3a4775c5",
+  "id": "241cc3e4-b456-4e76-9d1a-752688f98659",
+  "prevId": "63855b04-a71d-4caf-83b7-3d1397e9c6a4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -5134,23 +5134,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "catalogs_name_lower": {
-          "name": "catalogs_name_lower",
-          "columns": [
-            {
-              "expression": "lower(\"name\")",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "catalogs_photo_id_catalog_photos_id_fk": {
           "name": "catalogs_photo_id_catalog_photos_id_fk",
@@ -11667,6 +11651,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "from_attachment_id": {
+          "name": "from_attachment_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11742,6 +11732,19 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "purchase_order_files_from_attachment_id_po_email_attachments_id_fk": {
+          "name": "purchase_order_files_from_attachment_id_po_email_attachments_id_fk",
+          "tableFrom": "purchase_order_files",
+          "tableTo": "po_email_attachments",
+          "columnsFrom": [
+            "from_attachment_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -12593,59 +12596,6 @@
         "purchase_orders_cover_days_range": {
           "name": "purchase_orders_cover_days_range",
           "value": "\"purchase_orders\".\"cover_days\" between 1 and 365"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.purchase_receive_requests": {
-      "name": "purchase_receive_requests",
-      "schema": "",
-      "columns": {
-        "key": {
-          "name": "key",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "request": {
-          "name": "request",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "result": {
-          "name": "result",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "purchase_receive_requests_kind": {
-          "name": "purchase_receive_requests_kind",
-          "value": "\"purchase_receive_requests\".\"kind\" in ('line', 'extra', 'all')"
-        },
-        "purchase_receive_requests_key": {
-          "name": "purchase_receive_requests_key",
-          "value": "length(\"purchase_receive_requests\".\"key\") > 0"
         }
       },
       "isRLSEnabled": false

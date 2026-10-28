@@ -13,6 +13,7 @@ import { setRecipe } from "#/inventory/recipes";
 import { applyCost } from "#/inventory/valuation";
 import { profitTotals } from "#/orders/profit";
 import { createProduct } from "#/test/db";
+import { damagesOf, recordDamage, sendDamageReport } from "./damage";
 import { splitCharges } from "./landed";
 import {
 	addLine,
@@ -316,6 +317,47 @@ describe("received stock's cost", () => {
 		// $22 of it on the blades, 50¢ each, all 10 still here.
 		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 23.2 });
 		expect(await costOf(blade)).toBe(4.75);
+	});
+
+	test("taking off a line added after sending moves its freight onto what came", async () => {
+		const screw = await createProduct(db, "SCREW", "simple");
+		await supply(screw, 10);
+		const { line } = await addLine(db, {
+			purchaseOrderId: po,
+			productId: screw,
+			quantity: 23,
+		});
+		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 462 });
+		await receive(db, { lineId: bladeLine, quantity: 10 });
+		// Blades are $220 of the PO's $462: $5 of freight each.
+		expect(await costOf(blade)).toBeCloseTo((4 + 10) / 2, 6);
+		await amendLine(db, { lineId: line.id, quantity: 0 });
+		// Now $220 of $232.
+		expect(await costOf(blade)).toBeCloseTo(
+			(4 + 5 + (462 * 220) / 232 / 44) / 2,
+			3,
+		);
+	});
+
+	test("asking for a replacement spreads the freight over what's still coming", async () => {
+		const knifeLine = (await linesOf(po))[1].id;
+		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 232 });
+		await receive(db, { lineId: bladeLine, quantity: 10 });
+		await receive(db, { lineId: knifeLine, quantity: 6 });
+		// Blades are $220 of the PO's $232: $5 of freight each.
+		expect(await costOf(blade)).toBeCloseTo((4 + 10) / 2, 6);
+		await recordDamage(db, { kind: "missing", lineId: knifeLine, quantity: 2 });
+		const [damage] = await damagesOf(db, po);
+		await sendDamageReport(db, {
+			purchaseOrderId: po,
+			remedies: [{ damageId: damage.id, remedy: "replacement" }],
+			deliver: async () => "orders@canam.test",
+		});
+		// Two more knives coming: blades are $220 of $236.
+		expect(await costOf(blade)).toBeCloseTo(
+			(4 + 5 + (232 * 220) / 236 / 44) / 2,
+			3,
+		);
 	});
 
 	test("an unpriced line comes in at the average until it's priced", async () => {

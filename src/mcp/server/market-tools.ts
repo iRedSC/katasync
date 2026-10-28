@@ -11,7 +11,12 @@ import {
 	messageContent,
 	searchMailbox,
 } from "#/purchasing/inbox/graph";
-import { describeFile, fileContent, liveFiles } from "./email-files";
+import {
+	describeFile,
+	fileContent,
+	liveFiles,
+	untrustedJson,
+} from "./email-files";
 import { json, READ } from "./tool-shapes";
 
 // The Markets tab over MCP: each marketplace's standing, the queue of what
@@ -97,7 +102,7 @@ export function registerMarketTools(server: McpServer, db: Db) {
 				until: date(until, "until"),
 				limit: limit ?? 25,
 			});
-			return json(
+			return untrustedJson(
 				found.map((m) => ({
 					graph_id: m.graphId,
 					from: m.fromName ? `${m.fromName} <${m.fromAddress}>` : m.fromAddress,
@@ -137,7 +142,7 @@ export function registerMarketTools(server: McpServer, db: Db) {
 					describeFile(f, { index, ...(f.text ? { text: f.text } : {}) }),
 				),
 			};
-			if (attachment === undefined) return json(summary);
+			if (attachment === undefined) return untrustedJson(summary);
 			const file = files[attachment];
 			if (!file)
 				throw new Error(
@@ -145,7 +150,7 @@ export function registerMarketTools(server: McpServer, db: Db) {
 				);
 			return {
 				content: [
-					...json({ ...summary, attachments: undefined }).content,
+					...untrustedJson({ ...summary, attachments: undefined }).content,
 					...fileContent(
 						`katasync://marketplaces/${encodeURIComponent(graph_id)}/${attachment}`,
 						file,

@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { DamageKind } from "#/components/damage/damage";
 import { DamageRow } from "#/components/damage/damage-details";
+import { SortHeader } from "#/components/sort-header";
 import { ContextMenu, ContextMenuTrigger } from "#/components/ui/context-menu";
-import { Tip } from "#/components/ui/tooltip";
 import { groupBy } from "#/lib/group-by";
 import { ids } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
+import { NUMBER, type Sort, sortRows, TEXT } from "#/products/sort";
+import { lineCents } from "#/purchasing/discount";
 import { lineNumbers } from "#/purchasing/line-numbers";
 import {
 	orderedItems,
@@ -21,9 +23,40 @@ import { isUnsent } from "./po-data";
 import { SetPartRow } from "./set-parts";
 import type { Line, LineFocus, QuantityPreview } from "./types";
 
+// What a header click sorts lines by. Only how they show: the PO, its PDF,
+// and the email keep the order they were added in.
+const LINE_COLUMNS = {
+	name: { label: "Product", ...TEXT },
+	theirsku: { label: "Their SKU", ...TEXT },
+	minimum: { label: "MOQ / UOM", ...NUMBER },
+	requested: { label: "Qty requested", ...NUMBER },
+	qty: { label: "Qty", ...NUMBER },
+	onhand: { label: "On hand", ...NUMBER },
+	velocity: { label: "Velocity", ...NUMBER },
+	cost: { label: "Cost", ...NUMBER },
+	amount: { label: "Amount", ...NUMBER },
+	received: { label: "Received", ...NUMBER },
+} as const;
+export type LineSort = Sort<keyof typeof LINE_COLUMNS>;
+
+const lineValues = (l: Line) => ({
+	name: l.name,
+	theirsku: l.supplierSku,
+	minimum: l.minimumQuantity,
+	requested: l.sentQuantity,
+	qty: l.quantity,
+	onhand: l.onHand,
+	velocity: l.why?.dailyDemand ?? null,
+	cost: l.unitCost,
+	amount: lineCents(l, l.discounts),
+	received: l.received,
+});
+
 export function LineTable({
 	detail: d,
-	lines,
+	lines: unsorted,
+	sort,
+	onSort,
 	focus,
 	onEditQuantity,
 	onOpenDamage,
@@ -32,6 +65,9 @@ export function LineTable({
 }: {
 	detail: PurchaseOrderDetail;
 	lines: Line[];
+	// Shared by the Incoming and Received cards, so their columns agree.
+	sort: LineSort;
+	onSort: (sort: LineSort) => void;
 	focus: LineFocus | null;
 	onOpenDamage: (damageId: number) => void;
 	onReportDamage: (line: Line, kind: DamageKind) => void;
@@ -41,6 +77,10 @@ export function LineTable({
 	onQuantityDone: (enter: boolean) => void;
 }) {
 	const draft = isUnsent(d.order.status);
+	const lines = useMemo(
+		() => (sort.length === 0 ? unsorted : sortRows(unsorted, sort, lineValues)),
+		[unsorted, sort],
+	);
 	// Set parts and damages by line, grouped once per data version rather than
 	// filtered again for every row.
 	const partsByLine = useMemo(
@@ -110,6 +150,22 @@ export function LineTable({
 					),
 		};
 	};
+	const header = (
+		key: keyof typeof LINE_COLUMNS,
+		label: string,
+		className?: string,
+		tip?: string,
+	) => (
+		<SortHeader
+			column={key}
+			sort={sort}
+			onSort={onSort}
+			className={className}
+			tip={tip}
+		>
+			{label}
+		</SortHeader>
+	);
 	if (lines.length === 0)
 		return (
 			<p className="px-4 py-6 text-center text-muted-foreground">
@@ -141,44 +197,33 @@ export function LineTable({
 				)}
 				<thead>
 					<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
-						<th className="px-4 py-2 font-medium">Product</th>
-						<th className="px-3 py-2 font-medium whitespace-nowrap">
-							Their SKU
-						</th>
-						<th className="px-3 py-2 font-medium whitespace-nowrap">
-							MOQ / UOM
-						</th>
+						{header("name", "Product", "px-4")}
+						{header("theirsku", "Their SKU")}
+						{header("minimum", "MOQ / UOM")}
 						{draft ? (
-							<th className="px-3 py-2 text-right font-medium">Qty</th>
+							header("qty", "Qty", "text-right")
 						) : (
 							<>
-								<Tip content="As sent. The PDF still shows this.">
-									<th className="px-3 py-2 text-right font-medium">
-										Qty requested
-									</th>
-								</Tip>
-								<th className="px-3 py-2 text-right font-medium">
-									Qty expected
-								</th>
+								{header(
+									"requested",
+									"Qty requested",
+									"text-right",
+									"As sent. The PDF still shows this.",
+								)}
+								{header("qty", "Qty expected", "text-right")}
 							</>
 						)}
-						{draft && (
-							<th className="px-3 py-2 text-center font-medium whitespace-nowrap">
-								On hand → After PO
-							</th>
-						)}
-						{draft && (
-							<Tip content="Units sold a month">
-								<th className="px-3 py-2 text-center font-medium whitespace-nowrap">
-									Velocity
-								</th>
-							</Tip>
-						)}
-						<th className="px-3 py-2 text-right font-medium">Cost</th>
-						<th className="px-4 py-2 text-right font-medium">Amount</th>
-						{!draft && (
-							<th className="px-4 py-2 text-right font-medium">Received</th>
-						)}
+						{draft && header("onhand", "On hand → After PO", "text-center")}
+						{draft &&
+							header(
+								"velocity",
+								"Velocity",
+								"text-center",
+								"Units sold a month",
+							)}
+						{header("cost", "Cost", "text-right")}
+						{header("amount", "Amount", "px-4 text-right")}
+						{!draft && header("received", "Received", "px-4 text-right")}
 					</tr>
 				</thead>
 				{/* One menu for the whole table: it acts on the line that was

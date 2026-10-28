@@ -69,10 +69,12 @@ function runner(decision: VoicemailDecision) {
 }
 
 async function ingest(text = body, attachments = [audio]) {
-	await ingestMarketMail(db, [source], async () => ({
-		body: text,
-		attachments,
-	}));
+	await ingestMarketMail(
+		db,
+		[source],
+		async () => ({ body: text, attachments }),
+		async () => [],
+	);
 	const [email] = await db.select().from(marketEmails);
 	return email;
 }

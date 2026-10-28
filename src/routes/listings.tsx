@@ -90,16 +90,19 @@ function Queue() {
 						{item && (
 							<MatchPicker
 								item={item}
-								onResolve={(r) => {
+								onResolve={async (r) => {
 									const done = item;
 									skip();
-									void resolveItem(
+									const ok = await resolveItem(
 										done,
 										r,
 										queueData.patch("all", (list) =>
 											list.filter((i) => key(i) !== key(done)),
 										),
 									);
+									// A failed one is back on the queue; return to it.
+									if (!ok) setSelectedKey(key(done));
+									return ok;
 								}}
 								actions={
 									<Button variant="ghost" size="sm" onClick={skip}>
