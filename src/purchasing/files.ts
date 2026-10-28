@@ -9,6 +9,7 @@ import {
 	isNull,
 	ne,
 	notExists,
+	sql,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
@@ -24,6 +25,7 @@ import {
 	lockForEdit,
 	lockOrder,
 	PurchaseOrderError,
+	poName,
 } from "#/purchasing/orders";
 import { MAX_PO_FILE_BYTES } from "./file-limits";
 
@@ -206,6 +208,124 @@ export async function setPoFileRemoved(db: Db, id: number, removed = true) {
 	return row;
 }
 
+// Moves a file from one PO to another, as one row of the Files card: its own
+// copies and its emails' come off the PO it's on, and the other PO gets it as
+// its own (left as it is if it has it already). The emails keep theirs, so
+// an email about several POs can share its files out. Answers the file
+// added, or null, for Undo.
+export async function movePoFiles(
+	db: Db,
+	input: {
+		from: number;
+		to: number;
+		files: number[];
+		attachments: number[];
+		movedBy: PoFileSource;
+	},
+) {
+	if (input.from === input.to)
+		throw new PurchaseOrderError(`That file is on ${poName(input.to)} already`);
+	return db.transaction(async (tx) => {
+		const own =
+			input.files.length === 0
+				? []
+				: await tx
+						.select()
+						.from(purchaseOrderFiles)
+						.where(
+							and(
+								inArray(purchaseOrderFiles.id, input.files),
+								eq(purchaseOrderFiles.purchaseOrderId, input.from),
+								isNull(purchaseOrderFiles.removedAt),
+							),
+						);
+		const emailed =
+			input.attachments.length === 0
+				? []
+				: await tx
+						.select({ file: poEmailAttachments })
+						.from(poEmailAttachments)
+						.innerJoin(poEmails, eq(poEmails.id, poEmailAttachments.emailId))
+						.where(
+							and(
+								inArray(poEmailAttachments.id, input.attachments),
+								eq(poEmails.purchaseOrderId, input.from),
+								isNull(poEmailAttachments.removedAt),
+								isNull(poEmailAttachments.contentId),
+							),
+						)
+						.then((rows) => rows.map((r) => r.file));
+		if (
+			own.length !== new Set(input.files).size ||
+			emailed.length !== new Set(input.attachments).size
+		)
+			throw new PurchaseOrderError(
+				`That file isn't on ${poName(input.from)} any more`,
+			);
+		const source = [...own, ...emailed].find((f) => f.data !== null);
+		if (!source?.data)
+			throw new PurchaseOrderError(
+				"That file was too large to keep, so only Outlook has it",
+			);
+		if (source.size > MAX_PO_FILE_BYTES)
+			throw new PurchaseOrderError(
+				`${source.filename} is ${(source.size / 1e6).toFixed(1)} MB; a PO's files can be up to ${MAX_PO_FILE_BYTES / 1e6} MB`,
+			);
+		await lockForEdit(tx, input.to, [...ANY]);
+		const sha256 = createHash("sha256").update(source.data).digest("hex");
+		const added = (await sameFileOn(tx, input.to, sha256))
+			? null
+			: (
+					await tx
+						.insert(purchaseOrderFiles)
+						.values({
+							purchaseOrderId: input.to,
+							filename: source.filename,
+							contentType: source.contentType,
+							size: source.size,
+							data: source.data,
+							text: source.text,
+							addedBy: input.movedBy,
+							// Who sent it: the email's file, or the one this PO's
+							// own copy was moved from.
+							fromAttachmentId:
+								emailed[0]?.id ??
+								own.find((f) => f.fromAttachmentId !== null)
+									?.fromAttachmentId ??
+								null,
+						})
+						.returning({ id: purchaseOrderFiles.id })
+				)[0].id;
+		await setPoFilesRemoved(
+			tx,
+			{ files: input.files, attachments: input.attachments },
+			true,
+		);
+		return { filename: source.filename, to: input.to, added };
+	});
+}
+
+// Undoes movePoFiles: the file it added comes off, and the ones it took off
+// go back.
+export async function unmovePoFiles(
+	db: Db,
+	moved: { added: number | null; files: number[]; attachments: number[] },
+) {
+	return db.transaction(async (tx) => {
+		if (moved.added !== null)
+			await setPoFilesRemoved(
+				tx,
+				{ files: [moved.added], attachments: [] },
+				true,
+			);
+		return setPoFilesRemoved(
+			tx,
+			{ files: moved.files, attachments: moved.attachments },
+			false,
+		);
+	});
+}
+
 // A PO's files, newest first, without their bytes.
 export async function poFilesOf(db: Db, purchaseOrderId: number) {
 	return db
@@ -217,8 +337,18 @@ export async function poFilesOf(db: Db, purchaseOrderId: number) {
 			addedBy: purchaseOrderFiles.addedBy,
 			createdAt: purchaseOrderFiles.createdAt,
 			sha256: purchaseOrderFiles.sha256,
+			// The email it was moved from, when it was.
+			sentBy: sql<
+				string | null
+			>`coalesce(${poEmails.fromName}, ${poEmails.fromAddress})`,
+			sentAt: poEmails.receivedAt,
 		})
 		.from(purchaseOrderFiles)
+		.leftJoin(
+			poEmailAttachments,
+			eq(poEmailAttachments.id, purchaseOrderFiles.fromAttachmentId),
+		)
+		.leftJoin(poEmails, eq(poEmails.id, poEmailAttachments.emailId))
 		.where(
 			and(
 				eq(purchaseOrderFiles.purchaseOrderId, purchaseOrderId),

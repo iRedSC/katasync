@@ -2237,6 +2237,11 @@ export const purchaseOrderFiles = pgTable(
 		// A PDF's text, read once when it was added, for Claude and SQL.
 		text: text(),
 		addedBy: poFileSource().notNull(),
+		// The email's file it was moved from, when it came from an email filed
+		// on another PO, so it still shows who sent it.
+		fromAttachmentId: integer().references(() => poEmailAttachments.id, {
+			onDelete: "set null",
+		}),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		removedAt: timestamp({ withTimezone: true }),
 		// The bytes' SHA-256: a PO has each file once.

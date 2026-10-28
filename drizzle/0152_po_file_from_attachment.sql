@@ -1,0 +1,2 @@
+ALTER TABLE "purchase_order_files" ADD COLUMN "from_attachment_id" integer;--> statement-breakpoint
+ALTER TABLE "purchase_order_files" ADD CONSTRAINT "purchase_order_files_from_attachment_id_po_email_attachments_id_fk" FOREIGN KEY ("from_attachment_id") REFERENCES "public"."po_email_attachments"("id") ON DELETE set null ON UPDATE no action;
