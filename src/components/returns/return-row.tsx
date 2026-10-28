@@ -57,6 +57,7 @@ export function ReturnRow({
 		quantity: l.expected || l.left,
 		productSku: null,
 		productName: null,
+		variantName: null,
 		imageUrl: l.imageUrl,
 		fromStore: [],
 	}));

@@ -8,7 +8,11 @@ import type { OrderRow } from "#/server/orders";
 
 type Line = OrderRow["lines"][number];
 
-// What an order is, at a glance: one product's photo, title, and quantity, or
+// Katasync's name for what sold; the marketplace's long listing title only
+// until the line is mapped to a product.
+const nameOf = (l: Line) => l.productName ?? l.title;
+
+// What an order is, at a glance: one product's photo, name, and quantity, or
 // up to three photos, a +N square for the rest, and how many products.
 // Hovering lists every line. Clicking still opens the order, as anywhere else
 // on its row.
@@ -21,16 +25,20 @@ export function OrderProducts({ lines }: { lines: readonly Line[] }) {
 			<HoverCard.Trigger asChild>
 				<div className="@container flex min-w-0 items-center gap-2">
 					<Photos lines={lines} />
-					<span
-						className={cn(
-							"truncate",
-							lines.length > 1 && "text-muted-foreground",
-						)}
-					>
-						{lines.length === 1
-							? first.title
-							: `${formatCount(lines.length)} products`}
-					</span>
+					{lines.length === 1 ? (
+						<span className="min-w-0">
+							<span className="block truncate">{nameOf(first)}</span>
+							{first.variantName && (
+								<span className="block truncate text-xs text-muted-foreground">
+									{first.variantName}
+								</span>
+							)}
+						</span>
+					) : (
+						<span className="truncate text-muted-foreground">
+							{formatCount(lines.length)} products
+						</span>
+					)}
 					{lines.length === 1 && first.quantity > 1 && (
 						<span className="shrink-0 font-semibold tabular-nums">
 							× {formatCount(first.quantity)}
@@ -127,7 +135,10 @@ function LineRow({ line }: { line: Line }) {
 			<div
 				className={cn("min-w-0 flex-1", cancelled && "text-muted-foreground")}
 			>
-				<p className="line-clamp-2 font-medium">{line.title}</p>
+				<p className="line-clamp-2 font-medium">{nameOf(line)}</p>
+				{line.variantName && (
+					<p className="text-xs font-semibold">{line.variantName}</p>
+				)}
 				<p className="text-xs text-muted-foreground">
 					{line.sku ?? "No SKU"}
 					{line.productSku && line.sku !== line.productSku && (
