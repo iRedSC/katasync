@@ -73,11 +73,6 @@ function shown(value: string | undefined) {
 }
 
 const money = (value: string | undefined) => Number(value ?? 0) || 0;
-type Cents = { units: number; cents: number };
-const add = (sum: Cents, cents: number): Cents => ({
-	units: sum.units + 1,
-	cents: sum.cents + cents,
-});
 const fromUnix = (seconds: number) => new Date(seconds * 1000);
 
 // TikTok collects US sales tax and pays it itself. Whatever of its total the
@@ -115,22 +110,23 @@ export function tiktokToChannelOrder(
 		);
 		return shown(found?.iso_code || found?.address_name);
 	};
-	// TikTok lists every unit as its own line item; one line per SKU reads
-	// like the other channels and stays stable if a unit is cancelled. A
-	// cancelled unit doesn't count, but its line stays (at 0 if all its units
-	// went) so ingestion can give back the stock it took. A cancelled order
-	// keeps the quantities it was placed with. Units of one SKU can sell at
-	// different prices (a discount on one), so the line's price is the average
-	// of the units that count, or of all of them when none does.
-	const bySku = new Map<
-		string,
-		{
-			line: Omit<ChannelOrder["lines"][number], "quantity" | "unitPrice">;
-			counted: Cents;
-			all: Cents;
-		}
-	>();
-	for (const item of order.line_items) {
+	// TikTok lists every unit as its own line item; one line per SKU and
+	// price reads like the other channels and stays stable if a unit is
+	// cancelled. A cancelled unit doesn't count, but its line stays (at 0 if
+	// all its units went) so ingestion can give back the stock it took. A
+	// cancelled order keeps the quantities it was placed with. Units of one
+	// SKU can sell at different prices (a discount on one); each price gets a
+	// line of its own, so the lines add up to exactly what the units sold for.
+	// A unit's price is set when the order is placed, so the lines don't
+	// change between syncs. The price of the SKU's first unit (by TikTok's
+	// unit ID, whatever order they're listed in) keeps the bare SKU as its
+	// line's ID, which is the ID its one line had before prices were split.
+	const firstPrice = new Map<string, number>();
+	const byPrice = new Map<string, ChannelOrder["lines"][number]>();
+	const units = [...order.line_items].sort((a, b) =>
+		a.id.localeCompare(b.id, "en", { numeric: true }),
+	);
+	for (const item of units) {
 		const counts =
 			item.display_status !== "CANCELLED" || order.status === "CANCELLED";
 		// What we're paid for the unit: the buyer's price after every discount,
@@ -138,32 +134,25 @@ export function tiktokToChannelOrder(
 		const cents = Math.round(
 			(money(item.sale_price) + money(item.platform_discount)) * 100,
 		);
-		const sku = bySku.get(item.sku_id) ?? {
-			line: {
-				externalId: item.sku_id,
-				listingExternalId: item.sku_id,
-				sku: item.seller_sku || null,
-				title:
-					item.sku_name && item.sku_name !== "Default"
-						? `${item.product_name} - ${item.sku_name}`
-						: item.product_name,
-			},
-			counted: { units: 0, cents: 0 },
-			all: { units: 0, cents: 0 },
+		if (!firstPrice.has(item.sku_id)) firstPrice.set(item.sku_id, cents);
+		const externalId =
+			firstPrice.get(item.sku_id) === cents
+				? item.sku_id
+				: `${item.sku_id}:${cents}`;
+		const line = byPrice.get(externalId) ?? {
+			externalId,
+			listingExternalId: item.sku_id,
+			sku: item.seller_sku || null,
+			title:
+				item.sku_name && item.sku_name !== "Default"
+					? `${item.product_name} - ${item.sku_name}`
+					: item.product_name,
+			quantity: 0,
+			unitPrice: cents / 100,
 		};
-		sku.all = add(sku.all, cents);
-		if (counts) sku.counted = add(sku.counted, cents);
-		bySku.set(item.sku_id, sku);
+		if (counts) line.quantity += 1;
+		byPrice.set(externalId, line);
 	}
-	const lines = [...bySku.values()].map(({ line, counted, all }) => {
-		const priced = counted.units > 0 ? counted : all;
-		return {
-			...line,
-			quantity: counted.units,
-			// Order lines keep cents, so the average is rounded to one.
-			unitPrice: Math.round(priced.cents / priced.units) / 100,
-		};
-	});
 	return {
 		externalId: order.id,
 		name: order.id,
@@ -196,6 +185,6 @@ export function tiktokToChannelOrder(
 		shippingCharged: money(order.payment?.shipping_fee),
 		tax: tiktokTax(order.payment),
 		sourceUpdatedAt: fromUnix(order.update_time),
-		lines,
+		lines: [...byPrice.values()],
 	};
 }
