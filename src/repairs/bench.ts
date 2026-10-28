@@ -24,7 +24,7 @@ import { returnQuantity } from "#/orders/return-stock";
 import { receiveReturn } from "#/orders/returns";
 import { onBench } from "./bench-holds";
 import { lockRepair, RepairError } from "./draft-sync";
-import { lastIn } from "./queue";
+import { holdQueue, lastIn } from "./queue";
 import { isOnBoard, statusNames } from "./status";
 
 // Bench jobs: our own tools, fixed up at the bench to sell as refurbs. One
@@ -269,6 +269,10 @@ const round4 = (n: number) => Math.round(n * 10_000) / 10_000;
 // Shopify draft made for it is deleted again if anything after fails.
 export async function listBench(db: Db, id: number, as: ListAs) {
 	return db.transaction(async (tx) => {
+		// The queue before the repair, as moves take them: reopening another
+		// job on this order holds the queue and the order, then locks this
+		// job's column, so holding this job first would deadlock with it.
+		await holdQueue(tx);
 		await readQuantityMode(tx);
 		const r = await lockRepair(tx, id);
 		if (r.kind !== "bench" || r.productId === null)

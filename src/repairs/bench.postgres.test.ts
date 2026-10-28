@@ -6,7 +6,7 @@ import { postMovements, recordSale } from "#/inventory/ledger";
 import { receiveReturn } from "#/orders/returns";
 import { lockDatabase } from "#/test/locks";
 import { listBench, startBench } from "./bench";
-import { setPart } from "./repairs";
+import { moveRepair, setPart } from "./repairs";
 
 const url = process.env.TEST_POSTGRES_URL;
 if (process.env.CI && !url)
@@ -128,6 +128,31 @@ describe.skipIf(!url)("bench listing lock ordering", () => {
 		);
 		const [job] = await pg.db.select().from(repairs).where(eq(repairs.id, id));
 		expect(job.status).toBe("refurbished");
+	}, 20000);
+
+	test("listing one job waits for reopening another on its order", async () => {
+		const { original, refurb } = await tool();
+		const { orderId, lines } = await shipped([original.id, original.id]);
+		const [listed] = await startBench(pg.db, {
+			orderId,
+			lineId: lines[0],
+			quantity: 1,
+		});
+		const [reopened] = await startBench(pg.db, {
+			orderId,
+			lineId: lines[1],
+			quantity: 1,
+		});
+		await moveRepair(pg.db, reopened, "cancelled");
+		// Reopening holds the order, then locks the listed job's column.
+		await pg.race(
+			(text) => text.includes('from "repairs"') && text.endsWith("for update"),
+			(db) => listBench(db, listed, { kind: "add", productId: refurb.id }),
+			(db) => moveRepair(db, reopened, "received", listed),
+		);
+		const jobs = await pg.db.select().from(repairs);
+		expect(jobs.find((j) => j.id === listed)?.status).toBe("refurbished");
+		expect(jobs.find((j) => j.id === reopened)?.status).toBe("received");
 	}, 20000);
 
 	test("two jobs adding to one refurb take turns instead of both upgrading a share lock", async () => {
