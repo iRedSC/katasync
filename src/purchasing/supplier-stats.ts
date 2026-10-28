@@ -75,12 +75,15 @@ const monthLabel = new Intl.DateTimeFormat("en-US", {
 // month last, in the shop's time zone. Months with nothing bought are 0.
 export function monthlySpend(lines: OrderedLine[], now: Date, months = 12) {
 	const buckets: { key: string; label: string; cents: number }[] = [];
-	// Mid-month steps can't skip or repeat a month across time zones.
-	const start = new Date(now);
-	start.setUTCDate(15);
+	// This month is the shop's, which for a few hours a month isn't UTC's.
+	const parts = monthKey.formatToParts(now);
+	const part = (type: "year" | "month") =>
+		Number(parts.find((p) => p.type === type)?.value);
+	const year = part("year");
+	const month = part("month") - 1;
 	for (let i = months - 1; i >= 0; i--) {
-		const at = new Date(start);
-		at.setUTCMonth(start.getUTCMonth() - i);
+		// Mid-month is the same month in every time zone.
+		const at = new Date(Date.UTC(year, month - i, 15, 12));
 		buckets.push({
 			key: monthKey.format(at),
 			label: monthLabel.format(at),

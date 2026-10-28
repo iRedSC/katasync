@@ -28,7 +28,12 @@ async function holdMember(
 ): Promise<Told> {
 	await db
 		.update(dispatchOrders)
-		.set({ channelError: why, handoffHold: held, channelRetryAt: null })
+		.set({
+			channelError: why,
+			handoffHold: held,
+			channelRetryAt: null,
+			channelRetryLease: null,
+		})
 		.where(sameMember(member));
 	return done(false, `Not sent to ${name}: ${why}`);
 }
@@ -60,6 +65,7 @@ async function failMember(
 			channelFirstFailedAt: firstFailedAt,
 			channelAttempts: attempts,
 			channelRetryAt: retryAt,
+			channelRetryLease: null,
 			handoffHold: null,
 		})
 		.where(sameMember(member));
@@ -235,6 +241,7 @@ export async function tell(
 					channelFulfillmentId: delivered.fulfillmentId,
 					channelError: null,
 					channelRetryAt: null,
+					channelRetryLease: null,
 					handoffHold: null,
 				})
 				.where(sameMember(member));

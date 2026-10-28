@@ -27,6 +27,53 @@ export async function retireRefurbs(
 	only?: number[],
 ): Promise<{ problems: string[] }> {
 	if (only?.length === 0) return { problems: [] };
+	const problems: string[] = [];
+	for (const { id, sku } of await emptyRefurbs(db, only)) {
+		try {
+			await db.transaction(async (tx) => {
+				// Locked as every stock movement locks it (lockStockProducts), then
+				// checked again in a fresh read: stock that came back since (a
+				// return restocked) keeps it for sale. The lock holds through
+				// Shopify, so none can come back while it's retired.
+				await tx
+					.select({ id: products.id })
+					.from(products)
+					.where(eq(products.id, id))
+					.for("update");
+				const [refurb] = await emptyRefurbs(tx, [id]);
+				if (!refurb) return;
+				const live = await tx
+					.select({ id: listings.id, externalId: listings.externalId })
+					.from(listings)
+					.innerJoin(stores, eq(stores.id, listings.storeId))
+					.where(
+						and(
+							eq(listings.productId, refurb.id),
+							eq(stores.channel, "shopify"),
+							sql`not ${listingEnded}`,
+						),
+					);
+				for (const listing of live) {
+					if (refurb.sold) await archiveShopifyVariant(listing.externalId);
+					else await deleteShopifyVariant(listing.externalId);
+					await tx
+						.update(listings)
+						.set({ status: refurb.sold ? "ARCHIVED" : "DELETED" })
+						.where(eq(listings.id, listing.id));
+				}
+				await archiveProduct(tx, refurb.sku);
+			});
+		} catch (error) {
+			problems.push(
+				`Refurb ${sku} couldn't be retired: ${error instanceof Error ? error.message : error}`,
+			);
+		}
+	}
+	return { problems };
+}
+
+// Refurbs still carried with none on our shelves, and whether each ever sold.
+function emptyRefurbs(db: Db, only?: number[]) {
 	const onHand = db
 		.select({ one: sql`1` })
 		.from(stockLevels)
@@ -40,7 +87,7 @@ export async function retireRefurbs(
 				sql`${stockLevels.onHand} <> 0`,
 			),
 		);
-	const empty = await db
+	return db
 		.select({
 			id: products.id,
 			sku: products.sku,
@@ -55,34 +102,4 @@ export async function retireRefurbs(
 				only ? inArray(products.id, only) : undefined,
 			),
 		);
-	const problems: string[] = [];
-	for (const refurb of empty) {
-		try {
-			const live = await db
-				.select({ id: listings.id, externalId: listings.externalId })
-				.from(listings)
-				.innerJoin(stores, eq(stores.id, listings.storeId))
-				.where(
-					and(
-						eq(listings.productId, refurb.id),
-						eq(stores.channel, "shopify"),
-						sql`not ${listingEnded}`,
-					),
-				);
-			for (const listing of live) {
-				if (refurb.sold) await archiveShopifyVariant(listing.externalId);
-				else await deleteShopifyVariant(listing.externalId);
-				await db
-					.update(listings)
-					.set({ status: refurb.sold ? "ARCHIVED" : "DELETED" })
-					.where(eq(listings.id, listing.id));
-			}
-			await archiveProduct(db, refurb.sku);
-		} catch (error) {
-			problems.push(
-				`Refurb ${refurb.sku} couldn't be retired: ${error instanceof Error ? error.message : error}`,
-			);
-		}
-	}
-	return { problems };
 }

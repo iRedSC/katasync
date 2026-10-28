@@ -1,4 +1,4 @@
-import type { BrowseRow } from "#/components/po-browse";
+import type { BrowseRow } from "#/server/purchasing";
 import type { Line, Recommendation } from "./types";
 
 // The order the server lists lines in: when they were added, then id.
@@ -53,7 +53,7 @@ export function recommendedLine(
 	};
 }
 
-// A product from Browse as the line adding it makes: the supplier's fewest,
+// One of the supplier's products as the line adding it makes: the supplier's fewest,
 // on their terms and price, falling back to ours per unit; a tool set has no
 // price of its own. Nothing received or sent yet.
 export function browseLine(
@@ -74,8 +74,7 @@ export function browseLine(
 		name: row.name,
 		variantName: row.variantName,
 		imageUrl: row.imageUrl,
-		// Browse doesn't load barcodes; the reload brings it.
-		barcode: null,
+		barcode: row.barcode,
 		supplierSku: t?.supplierSku ?? null,
 		unit,
 		packSize,

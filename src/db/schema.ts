@@ -535,6 +535,21 @@ export const stores = pgTable(
 	],
 );
 
+// TikTok orders a sync asked for by ID that TikTok's answer left out. Each
+// pass asks for them again, whatever their update time, until TikTok answers
+// or MISSING_HOLD_DAYS pass since the first miss (src/channels/tiktok-missing.ts).
+export const tiktokMissingOrders = pgTable(
+	"tiktok_missing_orders",
+	{
+		storeId: integer()
+			.notNull()
+			.references(() => stores.id),
+		orderId: text().notNull(),
+		firstMissedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.storeId, t.orderId] })],
+);
+
 // What stock push knows about one listing, from the channel's last read:
 //   ready:      where to write its quantity, what the channel shows (null
 //               when unknown), and the last write's error, if it failed.
@@ -1016,6 +1031,16 @@ export const returnRequestLines = pgTable(
 	],
 );
 
+// Where a cost report's label figures came from: the marketplace's own label
+// section (authoritative, even when it says $0), a stand-in until it reports
+// (fallback), or not recorded, for reports saved before this was kept and
+// whose figures can't tell (unknown).
+export const labelAuthority = pgEnum("label_authority", [
+	"unknown",
+	"fallback",
+	"authoritative",
+]);
+
 // What a marketplace charged on one order: its latest statement, from its
 // finance reports. billedBy is the marketplace that sent the bill, which isn't
 // always the order's store: a TikTok order relayed through Shopify is billed
@@ -1049,6 +1074,9 @@ export const orderCostReports = pgTable(
 		// Its label figures are a stand-in until it catches up (Shopify's
 		// timeline, before its labels report has the order).
 		labelsPending: boolean().notNull().default(false),
+		// A fallback never replaces authoritative label figures, a $0 one
+		// included (src/orders/charges.ts).
+		labelAuthority: labelAuthority().notNull().default("unknown"),
 		fetchedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
@@ -1057,7 +1085,8 @@ export const orderCostReports = pgTable(
 // When katasync last asked a marketplace about an order's charges, whatever
 // came back, so the refresh can back off (src/orders/cost-refresh.ts). error
 // is why the last ask failed, for Diagnostics; null when it worked, even if
-// the marketplace had nothing yet.
+// the marketplace had nothing yet. answeredAt is the last ask that worked, so
+// a failed ask never passes for a refresh.
 export const orderCostChecks = pgTable(
 	"order_cost_checks",
 	{
@@ -1067,6 +1096,7 @@ export const orderCostChecks = pgTable(
 		billedBy: channel().notNull(),
 		checkedAt: timestamp({ withTimezone: true }).notNull(),
 		error: text(),
+		answeredAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [primaryKey({ columns: [t.orderId, t.billedBy] })],
 );
@@ -1275,7 +1305,10 @@ export type HandoffHold =
 //
 // A refused send is tried again on its own (src/shipping/retry.ts) for ten
 // minutes from the first refusal: channelRetryAt is when the next try is due,
-// and null once it's sent or katasync has stopped trying.
+// and null once it's sent or katasync has stopped trying. A run trying it
+// leases it first: channelRetryLease is that run's token and channelRetryAt
+// the lease's end, so a run that dies mid-try leaves it due again. Recording
+// an outcome (sent, refused, held) clears the token.
 export const dispatchOrders = pgTable(
 	"dispatch_orders",
 	{
@@ -1291,6 +1324,7 @@ export const dispatchOrders = pgTable(
 		channelFirstFailedAt: timestamp({ withTimezone: true }),
 		channelAttempts: integer().notNull().default(0),
 		channelRetryAt: timestamp({ withTimezone: true }),
+		channelRetryLease: uuid(),
 		// Held instead of sent, and why. Never retried on its own; checking
 		// again sends it once the marketplace matches the box, or the
 		// dispatch is voided.
@@ -2125,6 +2159,9 @@ export const poEmailAi = pgTable(
 			onDelete: "cascade",
 		}),
 		error: text(),
+		// The run holding it, new each time one takes it: a run whose claim
+		// another took over (it ran past CLAIM_STALE_MS) can't write over it.
+		claim: uuid(),
 		updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
@@ -2237,6 +2274,11 @@ export const purchaseOrderFiles = pgTable(
 		// A PDF's text, read once when it was added, for Claude and SQL.
 		text: text(),
 		addedBy: poFileSource().notNull(),
+		// The email's file it was moved from, when it came from an email filed
+		// on another PO, so it still shows who sent it.
+		fromAttachmentId: integer().references(() => poEmailAttachments.id, {
+			onDelete: "set null",
+		}),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		removedAt: timestamp({ withTimezone: true }),
 		// The bytes' SHA-256: a PO has each file once.
@@ -2892,8 +2934,8 @@ export const orderProfit = pgView("order_profit", {
 
 // One row per item sold (order line with units; an order cancelled down to
 // nothing keeps its lines), with its share of its order's charges, defined
-// in drizzle/0051_order_line_profit.sql. Its lines add up to the order's
-// profit in order_profit.
+// in drizzle/0051_order_line_profit.sql (latest in 0153). Its lines add up
+// to the order's profit in order_profit to the cent, charge by charge.
 export const orderLineProfit = pgView("order_line_profit", {
 	lineId: integer().notNull(),
 	orderId: integer().notNull(),
@@ -3392,6 +3434,10 @@ export const buyerMessages = pgTable(
 		// The Message-ID an Amazon reply answers, fixed when it's written so
 		// every try sends the same email under its request key.
 		inReplyTo: text(),
+		// The address a Shopify reply goes to, fixed when it's written so
+		// every try sends it to the same buyer, whatever the order says later.
+		// Null on one kept before it was: never sent again, only checked.
+		recipient: text(),
 		// Amazon's notice that it didn't pass this reply on; each notice
 		// fails one reply at most.
 		refusedBy: integer().references(() => marketEmails.id),

@@ -102,15 +102,8 @@ async function sellerUsername() {
 const ours = (m: Message, seller: string) =>
 	m.senderUsername?.toLowerCase() === seller;
 
-// Every message of one conversation, kept: the buyer's, ours sent on eBay,
-// and ours sent from katasync whose outcome wasn't known, now settled.
-async function readConversation(
-	db: Db,
-	t: string,
-	seller: string,
-	threadId: number,
-	conversationId: string,
-) {
+// Every message of one conversation, as eBay lists it, page by page.
+async function messagesOf(t: string, conversationId: string) {
 	const all: Message[] = [];
 	let url: string | undefined =
 		`/conversation/${encodeURIComponent(conversationId)}?conversation_type=FROM_MEMBERS&limit=50`;
@@ -119,10 +112,24 @@ async function readConversation(
 		all.push(...(page.messages ?? []));
 		url = page.next;
 	}
+	return all;
+}
+
+// Every message of one conversation, kept: the buyer's, ours sent on eBay,
+// and ours sent from katasync whose outcome wasn't known, now settled.
+async function readConversation(
+	db: Db,
+	t: string,
+	seller: string,
+	threadId: number,
+	conversationId: string,
+	all?: Message[],
+) {
+	const messages = all ?? (await messagesOf(t, conversationId));
 	await keepConversation(
 		db,
 		threadId,
-		all.map((m) => ({
+		messages.map((m) => ({
 			externalId: m.messageId,
 			body: m.messageBody ?? "",
 			at: m.createdDate,
@@ -266,27 +273,44 @@ export async function ebayOrderBuyer(orderId: string) {
 	};
 }
 
-// Our conversation with a member: the one holding the message given, or
-// else the latest about the listing, or else the latest. Null when there's
-// none. Kept as a thread about the order, with everything in it.
+// Our conversation with a member: the one holding the message given (null
+// when none does), or else the latest about the listing, or else the latest.
+// Null when there's none. Kept as a thread about the order, with everything
+// in it.
 export async function keepEbayConversationWith(
 	db: Db,
 	to: { username: string; itemId: string | null; orderRef: string },
 	messageId?: string,
 ) {
 	const t = await token();
-	const page = conversationsPage.assert(
-		await get(
-			t,
-			`/conversation?conversation_type=FROM_MEMBERS&other_party_username=${encodeURIComponent(to.username)}&limit=50`,
-		),
-	);
-	const all = page.conversations ?? [];
-	const found = messageId
-		? all.find((c) => c.latestMessage?.messageId === messageId)
-		: (all.find(
-				(c) => c.referenceType === "LISTING" && c.referenceId === to.itemId,
-			) ?? all[0]);
+	const all: (typeof conversation.infer)[] = [];
+	let url: string | undefined =
+		`/conversation?conversation_type=FROM_MEMBERS&other_party_username=${encodeURIComponent(to.username)}&limit=50`;
+	while (url) {
+		const page = conversationsPage.assert(await get(t, url));
+		all.push(...(page.conversations ?? []));
+		url = page.next;
+	}
+	const aboutItem = (c: typeof conversation.infer | undefined) =>
+		c?.referenceType === "LISTING" && c.referenceId === to.itemId;
+	let found: typeof conversation.infer | undefined;
+	let messages: Message[] | undefined;
+	if (messageId) {
+		found = all.find((c) => c.latestMessage?.messageId === messageId);
+		// Not the latest (the buyer answered already, say): looked for in each
+		// conversation, the listing's first.
+		if (!found)
+			for (const c of [...all].sort(
+				(a, b) => Number(aboutItem(b)) - Number(aboutItem(a)),
+			)) {
+				const m = await messagesOf(t, c.conversationId);
+				if (m.some((x) => x.messageId === messageId)) {
+					found = c;
+					messages = m;
+					break;
+				}
+			}
+	} else found = all.find(aboutItem) ?? all[0];
 	if (!found) return null;
 	const thread = await ensureThread(db, {
 		market: "ebay",
@@ -303,6 +327,7 @@ export async function keepEbayConversationWith(
 		await sellerUsername(),
 		thread.id,
 		found.conversationId,
+		messages,
 	);
 	return thread;
 }

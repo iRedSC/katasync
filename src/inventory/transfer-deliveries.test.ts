@@ -173,6 +173,10 @@ describe("transfers through transit", () => {
 		const again = await receiveTransfer(db, box);
 		expect(again).toMatchObject({ repeated: true, receiptId: first.receiptId });
 		expect(await onHand(wrench, retail)).toBe(3);
+		expect(await deliveryOf(db, id)).toMatchObject({
+			receipts: [{ id: first.receiptId }],
+			lines: [{ received: 3, inTransit: 2 }],
+		});
 		await expect(
 			receiveTransfer(db, {
 				...box,

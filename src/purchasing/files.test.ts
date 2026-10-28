@@ -8,11 +8,13 @@ import {
 	addPoFile,
 	createFileUploadLink,
 	fileUploadResponse,
+	movePoFiles,
 	poFile,
 	poFilesOf,
 	poForUploadLink,
 	setPoFileRemoved,
 	setPoFilesRemoved,
+	unmovePoFiles,
 } from "./files";
 import { deleteDraft } from "./orders";
 
@@ -198,6 +200,122 @@ describe("the same file twice", () => {
 			attachments: 1,
 		});
 		expect((await poFilesOf(db, id)).map((f) => f.id)).toEqual([again.id]);
+	});
+});
+
+describe("moving a file to another PO", () => {
+	const onPo = async (id: number) =>
+		(await poFilesOf(db, id)).map((f) => f.filename);
+	const emailedOn = async (id: number) =>
+		(
+			await db
+				.select({ removedAt: schema.poEmailAttachments.removedAt })
+				.from(schema.poEmailAttachments)
+				.where(eq(schema.poEmailAttachments.id, id))
+		)[0].removedAt === null;
+
+	test("an email's file goes over as the other PO's own, and back with Undo", async () => {
+		const from = await po("sent");
+		const to = await po("sent");
+		const attachment = await emailedFile(from, "backorder ack");
+		const moved = await movePoFiles(db, {
+			from,
+			to,
+			files: [],
+			attachments: [attachment],
+			movedBy: "staff",
+		});
+		expect(moved.added).not.toBeNull();
+		expect(await onPo(to)).toEqual(["Order Confirmation.pdf"]);
+		expect((await poFile(db, moved.added ?? 0))?.data.toString()).toBe(
+			"backorder ack",
+		);
+		expect(await emailedOn(attachment)).toBe(false);
+		const [there] = await poFilesOf(db, to);
+		expect(there.sentBy).toBe("orders@supplier.com");
+
+		await unmovePoFiles(db, moved);
+		expect(await onPo(to)).toEqual([]);
+		expect(await emailedOn(attachment)).toBe(true);
+	});
+
+	test("one the other PO has already is only taken off, and Undo leaves it", async () => {
+		const from = await po("sent");
+		const to = await po("sent");
+		const attachment = await emailedFile(from, "same bytes");
+		await add(to, "mine.pdf", "same bytes");
+		const moved = await movePoFiles(db, {
+			from,
+			to,
+			files: [],
+			attachments: [attachment],
+			movedBy: "claude",
+		});
+		expect(moved.added).toBeNull();
+		expect(await emailedOn(attachment)).toBe(false);
+		await unmovePoFiles(db, moved);
+		expect(await onPo(to)).toEqual(["mine.pdf"]);
+		expect(await emailedOn(attachment)).toBe(true);
+	});
+
+	test("its own files too, all copies at once", async () => {
+		const from = await po("sent");
+		const to = await po("draft");
+		const file = await add(from, "quote.pdf", "q");
+		const attachment = await emailedFile(from, "q");
+		await movePoFiles(db, {
+			from,
+			to,
+			files: [file.id],
+			attachments: [attachment],
+			movedBy: "staff",
+		});
+		expect(await onPo(from)).toEqual([]);
+		expect(await emailedOn(attachment)).toBe(false);
+		expect(await onPo(to)).toHaveLength(1);
+		// Moved on again, it still says who sent it.
+		const [copy] = await poFilesOf(db, to);
+		const next = await po("sent");
+		await movePoFiles(db, {
+			from: to,
+			to: next,
+			files: [copy.id],
+			attachments: [],
+			movedBy: "staff",
+		});
+		expect((await poFilesOf(db, next))[0].sentBy).toBe("orders@supplier.com");
+	});
+
+	test("takes every copy on the PO, not only the one named", async () => {
+		const from = await po("sent");
+		const to = await po("sent");
+		const first = await emailedFile(from, "forwarded");
+		const again = await emailedFile(from, "forwarded");
+		const moved = await movePoFiles(db, {
+			from,
+			to,
+			files: [],
+			attachments: [first],
+			movedBy: "claude",
+		});
+		expect(moved.attachments.sort()).toEqual([first, again].sort());
+		expect(await emailedOn(again)).toBe(false);
+		await unmovePoFiles(db, moved);
+		expect(await emailedOn(again)).toBe(true);
+	});
+
+	test("refuses a file not on the PO it says, or the PO it is on; a suggested one becomes a draft", async () => {
+		const from = await po("sent");
+		const other = await po("sent");
+		const attachment = await emailedFile(other, "x");
+		const move = (to: number, attachments = [attachment]) =>
+			movePoFiles(db, { from, to, files: [], attachments, movedBy: "staff" });
+		await expect(move(await po("sent"))).rejects.toThrow(/isn't on PO/);
+		await expect(move(from)).rejects.toThrow(/already/);
+		const mine = await emailedFile(from, "y");
+		const suggested = await po("suggested");
+		await move(suggested, [mine]);
+		expect(await statusOf(suggested)).toBe("draft");
 	});
 });
 

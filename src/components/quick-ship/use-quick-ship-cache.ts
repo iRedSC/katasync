@@ -46,7 +46,9 @@ export function useQuickShipCache(plan: ShipmentPlan | null) {
 		return pending;
 	}
 
-	function priceFor(list: Packed[], extras: Extras) {
+	// fresh: ask again, as when buying found the price had risen; the old
+	// answer would only be refused again.
+	function priceFor(list: Packed[], extras: Extras, fresh = false) {
 		if (!plan || list.length === 0) return null;
 		const parts = splitInsurance(extras.insure, list.length);
 		const data = {
@@ -62,6 +64,7 @@ export function useQuickShipCache(plan: ShipmentPlan | null) {
 			})),
 		};
 		const key = JSON.stringify(data);
+		if (fresh) priced.current.delete(key);
 		let pending = priced.current.get(key);
 		if (!pending) {
 			pending = quickShipRates({ data }).then((r) => ({

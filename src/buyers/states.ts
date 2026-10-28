@@ -48,8 +48,9 @@ const STATUS_OF: Record<ReplyEvent["kind"], ReplyStatus> = {
 
 // Whether a reply answers the buyer: one that failed doesn't, and one that
 // may not have gone isn't counted on.
+export const ANSWERING: ReplyStatus[] = ["sending", "sent", "delivered"];
 export const answers = (status: ReplyStatus | null) =>
-	status === "sending" || status === "sent" || status === "delivered";
+	status !== null && ANSWERING.includes(status);
 
 // Moves a reply on; false when it wasn't in a state the event follows, so
 // nothing changed.

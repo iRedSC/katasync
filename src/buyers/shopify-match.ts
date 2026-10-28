@@ -40,17 +40,36 @@ export function readThreadAddress(
 	};
 }
 
+// Where a quoted or forwarded email starts, in the languages buyers' mail
+// apps write it: the "On ... wrote:" line, its sender after the verb in
+// German (and Gmail wraps it onto a second line, the sender's address on it,
+// when it's long), a mail app's separator, Outlook's header block, a
+// phone's signature, or HTML's quote when the email kept it.
+const QUOTE_STARTS = [
+	// en, es, de, fr, pt, it, nl.
+	String.raw`(On|El|Am|Le|Em|Il|Op)\s[^\n]{4,200}(\n[^\n]{0,200}@[^\n]{0,200})?(wrote|escribió|schrieb|a écrit|escreveu|ha scritto|schreef)[^\n]{0,200}:\s*$`,
+	String.raw`-{2,}\s*(Original|Forwarded) Message\s*-{2,}`,
+	String.raw`-{2,}\s*(Mensaje original|Mensaje reenviado|Ursprüngliche Nachricht|Weitergeleitete Nachricht|Message d'origine|Message transféré|Mensagem original|Messaggio originale|Oorspronkelijk bericht)\s*-{2,}`,
+	String.raw`(Begin forwarded message|Inicio del mensaje reenviado|Anfang der weitergeleiteten Nachricht|Début du message réexpédié)\s?:`,
+	String.raw`_{10,}\s*$`,
+	String.raw`From:\s.+$`,
+	// Outlook's header block in another language: who, then when.
+	String.raw`(De|Von|Van|Da)\s?:\s.+\n(Enviado|Fecha|Gesendet|Datum|Envoyé|Date|Inviato|Verzonden)\s?:`,
+	"(Sent from my |Enviado desde mi |Von meinem |Envoyé de mon )",
+];
+// Anywhere on a line: HTML runs on.
+const HTML_QUOTE =
+	'<(blockquote|div[^>]*(class="?(gmail_quote|moz-cite-prefix)|id="?(divRplyFwdMsg|appendonsend)))';
+const QUOTE = new RegExp(`^(${QUOTE_STARTS.join("|")})|${HTML_QUOTE}`, "im");
+
 // What the buyer wrote, apart from the email they answered or passed on.
 // Their own is empty when the email starts with what it quotes.
 export function splitQuoted(body: string) {
 	const text = body.replace(/\r\n/g, "\n");
-	const quote =
-		/^(On .{4,200}wrote:\s*$|-{2,}\s*(Original|Forwarded) Message\s*-{2,}|Begin forwarded message:|_{10,}\s*$|From:\s.+$|Sent from my )/im.exec(
-			text,
-		);
+	const quote = QUOTE.exec(text);
 	const own = (quote ? text.slice(0, quote.index) : text)
 		.split("\n")
-		.filter((line) => !/^\s*>/.test(line))
+		.filter((line) => !/^\s*(>|&gt;)/.test(line))
 		.join("\n")
 		.trim();
 	return { own, whole: text.trim() };

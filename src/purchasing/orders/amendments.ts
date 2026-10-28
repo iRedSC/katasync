@@ -48,53 +48,60 @@ export async function amendLine(
 			throw new PurchaseOrderError(
 				`${received} already arrived; undo a receipt to go lower`,
 			);
-		if (quantity === 0 && line.sentQuantity === null) {
-			const [receipt] = await tx
-				.select({ id: purchaseOrderReceipts.id })
-				.from(purchaseOrderReceipts)
-				.where(eq(purchaseOrderReceipts.lineId, line.id))
-				.limit(1);
-			if (!receipt) {
-				await tx
-					.delete(purchaseOrderLines)
-					.where(eq(purchaseOrderLines.id, line.id));
-				await tx.insert(purchaseOrderAmendments).values({
-					purchaseOrderId: po.id,
-					productId: line.productId,
-					kind: "removed",
-					quantityBefore: line.quantity,
-				});
-				await settle(tx, po, null);
-				return { was, removed: true };
-			}
-		}
-		await tx
-			.update(purchaseOrderLines)
-			.set({
-				quantity,
-				...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
-			})
-			.where(eq(purchaseOrderLines.id, line.id));
-		await checkDiscounts(tx, line.id);
-		// Each change goes on the PO's timeline.
-		const base = { purchaseOrderId: po.id, productId: line.productId };
-		if (quantity !== line.quantity) {
+		const removed =
+			quantity === 0 &&
+			line.sentQuantity === null &&
+			!(await hasReceipt(tx, line.id));
+		if (removed) {
+			await tx
+				.delete(purchaseOrderLines)
+				.where(eq(purchaseOrderLines.id, line.id));
 			await tx.insert(purchaseOrderAmendments).values({
-				...base,
-				kind: "quantity",
+				purchaseOrderId: po.id,
+				productId: line.productId,
+				kind: "removed",
 				quantityBefore: line.quantity,
-				quantityAfter: quantity,
 			});
-			await settle(tx, po, quantity > received);
+			await settle(tx, po, null);
+		} else {
+			await tx
+				.update(purchaseOrderLines)
+				.set({
+					quantity,
+					...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
+				})
+				.where(eq(purchaseOrderLines.id, line.id));
+			await checkDiscounts(tx, line.id);
+			// Each change goes on the PO's timeline.
+			const base = { purchaseOrderId: po.id, productId: line.productId };
+			if (quantity !== line.quantity) {
+				await tx.insert(purchaseOrderAmendments).values({
+					...base,
+					kind: "quantity",
+					quantityBefore: line.quantity,
+					quantityAfter: quantity,
+				});
+				await settle(tx, po, quantity > received);
+			}
+			if (input.unitCost !== undefined && input.unitCost !== line.unitCost)
+				await tx.insert(purchaseOrderAmendments).values({
+					...base,
+					kind: "cost",
+					unitCostBefore: line.unitCost,
+					unitCostAfter: input.unitCost,
+				});
 		}
-		if (input.unitCost !== undefined && input.unitCost !== line.unitCost)
-			await tx.insert(purchaseOrderAmendments).values({
-				...base,
-				kind: "cost",
-				unitCostBefore: line.unitCost,
-				unitCostAfter: input.unitCost,
-			});
+		// Either way the PO's charges spread over different lines now.
 		await revaluePurchaseOrder(tx, po.id);
-		return { was, removed: false };
+		return { was, removed };
 	});
+}
+
+async function hasReceipt(tx: Db, lineId: number) {
+	const [receipt] = await tx
+		.select({ id: purchaseOrderReceipts.id })
+		.from(purchaseOrderReceipts)
+		.where(eq(purchaseOrderReceipts.lineId, lineId))
+		.limit(1);
+	return receipt !== undefined;
 }
