@@ -77,6 +77,8 @@ export const searchForPurchaseOrder = createServerFn({ method: "GET" })
 				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 				kind: products.kind,
+				// So the page ranks a scanned barcode as the server did.
+				barcode: products.barcode,
 				supplierSku: supplierOffers.supplierSku,
 				sold: sql<boolean>`${supplierOffers.productId} is not null`,
 				cheapest: sql<boolean>`coalesce(${supplierOffers.cheapest}, false)`,

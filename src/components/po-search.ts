@@ -20,12 +20,35 @@ export function pickable(search: SearchState, query: string) {
 		: null;
 }
 
+// What the search says about the text in the box now. Results and failures
+// for any other text are pending: nothing from them may show or be picked.
+export type Remote =
+	| { state: "off" }
+	| { state: "pending" }
+	| { state: "done"; results: PurchaseOrderMatch[] }
+	| { state: "failed"; message: string };
+
+export function remoteFor(search: SearchState, query: string): Remote {
+	const q = query.trim();
+	if (q === "") return { state: "off" };
+	if (search.state === "idle" || search.query !== q)
+		return { state: "pending" };
+	if (search.state === "done")
+		return { state: "done", results: search.results };
+	if (search.state === "failed")
+		return { state: "failed", message: search.message };
+	return { state: "pending" };
+}
+
 // Searches products to add to a PO as someone types. Waits for a pause, and
 // only the newest query's answer is kept, so a slow early reply can't
 // replace a later one. The last results stay up while the next search runs.
+// retry asks again for the same text, after a failure.
 export function usePurchaseOrderSearch(purchaseOrderId: number, query: string) {
 	const [search, setSearch] = useState<SearchState>({ state: "idle" });
+	const [attempt, setAttempt] = useState(0);
 	const q = query.trim();
+	// biome-ignore lint/correctness/useExhaustiveDependencies: attempt is retry
 	useEffect(() => {
 		if (q === "") {
 			setSearch({ state: "idle" });
@@ -53,8 +76,8 @@ export function usePurchaseOrderSearch(purchaseOrderId: number, query: string) {
 			current = false;
 			clearTimeout(timer);
 		};
-	}, [purchaseOrderId, q]);
-	return search;
+	}, [purchaseOrderId, q, attempt]);
+	return { search, retry: () => setAttempt((n) => n + 1) };
 }
 
 // Why a product might be the wrong one to add, or null when it's fine.

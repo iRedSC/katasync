@@ -4,20 +4,15 @@ import { toast } from "sonner";
 import { AddFilter, SortMenu } from "#/components/filter-menu";
 import { FilterSearch } from "#/components/filter-search";
 import { Card } from "#/components/page";
-import { pickable, usePurchaseOrderSearch } from "#/components/po-search";
+import { remoteFor, usePurchaseOrderSearch } from "#/components/po-search";
 import { SortHeader } from "#/components/sort-header";
 import { Button } from "#/components/ui/button";
 import { formatCount, formatMoney } from "#/lib/format";
 import { ids } from "#/lib/optimism";
 import { productLanguage } from "#/products/language";
 import { facetsOf, sortValuesOf, stateOf } from "#/products/rows";
-import {
-	compile,
-	type Filter,
-	facetCounts,
-	parseQuery,
-} from "#/products/search";
-import { isColumn, type Sort, sortRows, withTerm } from "#/products/sort";
+import { type Filter, facetCounts, parseQuery } from "#/products/search";
+import type { Sort } from "#/products/sort";
 import { orderedItems } from "#/purchasing/sets";
 import {
 	addProductToPurchaseOrder,
@@ -29,11 +24,11 @@ import {
 import {
 	type Candidate,
 	COLUMNS,
-	fromMatch,
-	fromRec,
-	fromRow,
+	candidateRows,
+	isSearching,
 	type Key,
 	type Prepared,
+	remoteWords,
 } from "./add-items/candidates";
 import { Row } from "./add-items/row";
 import { browseLine, recommendedLine } from "./new-lines";
@@ -77,7 +72,7 @@ export function AddItems({
 	// The off-list product whose add is on its way, so its button can say so.
 	const [adding, setAdding] = useState<number | null>(null);
 	const q = useMemo(() => parseQuery(query), [query]);
-	const searching = query.trim() !== "" || chips.length > 0;
+	const searching = isSearching(q, chips);
 
 	// This supplier's whole list, loaded the first time it's wanted.
 	const [load, setLoad] = useState<Load>({ state: "idle" });
@@ -105,9 +100,9 @@ export function AddItems({
 
 	// Anyone else's products only come up for words, never for filters,
 	// which only this supplier's list can answer.
-	const words = chips.length === 0 ? q.words.join(" ") : "";
-	const search = usePurchaseOrderSearch(d.order.id, words);
-	const settled = words === "" || pickable(search, words) !== null;
+	const words = remoteWords(q, chips);
+	const { search, retry } = usePurchaseOrderSearch(d.order.id, words);
+	const remote = useMemo(() => remoteFor(search, words), [search, words]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a new load is a new now
 	const now = useMemo(() => new Date(), [catalog]);
@@ -139,45 +134,10 @@ export function AddItems({
 	const language = useMemo(() => productLanguage(counts), [counts]);
 
 	const recs = draft ? d.recommended : [];
-	const rows = useMemo(() => {
-		const recIds = new Set(recs.map((r) => r.productId));
-		const candidates: Candidate[] = searching
-			? [
-					...recs.flatMap((r) => {
-						const p = prepared.get(r.productId);
-						return p ? [fromRec(r, p)] : [];
-					}),
-					...[...prepared.values()]
-						.filter((p) => !recIds.has(p.row.id))
-						.map((p) => fromRow(p, sent)),
-					...(search.state === "idle" || search.state === "failed"
-						? []
-						: search.results
-					)
-						.filter((m) => !prepared.has(m.productId))
-						.map((m) => fromMatch(m, sent)),
-				]
-			: recs.map((r) => fromRec(r, prepared.get(r.productId)));
-		const matcher = compile([...chips, ...q.filters], q.words);
-		const found = searching
-			? candidates.filter((c) =>
-					c.facets ? matcher.matches(c.facets) : c.source.kind === "match",
-				)
-			: candidates;
-		// A sort still being typed applies once it names a column exactly.
-		const by = q.sorts.reduce<Sort<Key>>(
-			(s, t) =>
-				isColumn(t.value, COLUMNS)
-					? withTerm(s, { key: t.value, desc: t.desc })
-					: s,
-			sort,
-		);
-		if (by.length > 0) return sortRows(found, by, (c) => c.values);
-		// Unsorted, a code typed or scanned whole leads, so Enter adds it.
-		const code = q.words.join(" ").toLowerCase();
-		const exact = (c: Candidate) => code !== "" && c.codes.includes(code);
-		return [...found.filter(exact), ...found.filter((c) => !exact(c))];
-	}, [recs, prepared, search, searching, chips, q, sort, sent]);
+	const rows = useMemo(
+		() => candidateRows({ recs, prepared, remote, chips, q, sort, sent }),
+		[recs, prepared, remote, chips, q, sort, sent],
+	);
 
 	const onPo = new Map(d.lines.map((l) => [l.productId, l.id]));
 	// What the PO already orders of each product, e.g. as a set's part, so
@@ -196,6 +156,10 @@ export function AddItems({
 	async function add(c: Candidate): Promise<number | null> {
 		const s = c.source;
 		if (s.kind === "match") {
+			// Only a match for the text in the box now: an earlier search's
+			// product may have nothing to do with it.
+			if (!(remote.state === "done" && remote.results.includes(s.match)))
+				return null;
 			setAdding(c.productId);
 			const r = await run(
 				() =>
@@ -254,8 +218,9 @@ export function AddItems({
 	// One already on the PO opens its line instead.
 	async function submit() {
 		const first = rows[0];
-		if (!searching || !first || busy || !settled || first.warning?.blocks)
-			return;
+		// While anyone else's products may still come, one could lead.
+		if (remote.state === "pending") return;
+		if (!searching || !first || busy || first.warning?.blocks) return;
 		const lineId = onPo.get(first.productId);
 		if (lineId !== undefined) {
 			toast(`${first.sku} is already on this PO`);
@@ -336,7 +301,7 @@ export function AddItems({
 					}}
 				/>
 				<SortMenu sort={sort} onSort={changeSort} columns={COLUMNS} />
-				{search.state === "searching" && (
+				{remote.state === "pending" && (
 					<Loader2 className="mt-2 size-4 shrink-0 animate-spin text-muted-foreground" />
 				)}
 			</div>
@@ -352,6 +317,18 @@ export function AddItems({
 					<Loader2 className="size-4 animate-spin" />
 					Loading
 				</p>
+			) : remote.state === "failed" && rows.length === 0 ? (
+				<div className="flex flex-col items-center gap-3 border-t px-4 py-10">
+					<p className="text-critical-text">{remote.message}</p>
+					<Button variant="outline" onClick={retry}>
+						Try again
+					</Button>
+				</div>
+			) : rows.length === 0 && remote.state === "pending" ? (
+				<p className="flex items-center justify-center gap-2 border-t px-4 py-10 text-muted-foreground">
+					<Loader2 className="size-4 animate-spin" />
+					Searching
+				</p>
 			) : rows.length === 0 ? (
 				// A sent PO has nothing to recommend; its box speaks for itself.
 				(searching || draft) && (
@@ -361,6 +338,17 @@ export function AddItems({
 				)
 			) : (
 				<div className="overflow-x-auto border-t">
+					{/* This supplier's rows still work; only anyone else's are missing. */}
+					{remote.state === "failed" && (
+						<div className="flex items-center justify-between gap-3 border-b bg-critical-surface px-4 py-2 text-sm">
+							<span className="text-critical-text">
+								Other suppliers' products: {remote.message}
+							</span>
+							<Button size="sm" variant="outline" onClick={retry}>
+								Try again
+							</Button>
+						</div>
+					)}
 					{/* Laid out like the draft's lines above, read-only until added. */}
 					<table className="w-full [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
 						<thead>

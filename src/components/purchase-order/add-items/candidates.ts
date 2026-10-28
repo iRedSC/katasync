@@ -1,15 +1,24 @@
 import type { ComponentProps } from "react";
 import type { BulkChip } from "#/components/bulk-chip";
 import type { OnPoChip } from "#/components/on-po-chip";
-import { matchWarning } from "#/components/po-search";
+import { matchWarning, type Remote } from "#/components/po-search";
 import type { PurchaseTerms } from "#/components/purchase-unit";
 import type { sortValuesOf } from "#/products/rows";
-import type { Facets } from "#/products/search";
 import {
+	compile,
+	type Facets,
+	type Filter,
+	type parseQuery,
+} from "#/products/search";
+import {
+	isColumn,
 	NUMBER,
+	type Sort,
 	type SortColumns,
 	type SortValue,
+	sortRows,
 	TEXT,
+	withTerm,
 } from "#/products/sort";
 import { PRODUCT_SORTS } from "#/products/views";
 import type { BrowseRow, PurchaseOrderMatch } from "#/server/purchasing";
@@ -202,10 +211,85 @@ export function fromMatch(m: PurchaseOrderMatch, sent: boolean): Candidate {
 			critical: false,
 			cheaperAt: null,
 			warning: matchWarning(m, sent),
-			codes: codesOf(m.sku, m.supplierSku),
+			codes: codesOf(m.sku, m.barcode, m.supplierSku),
 			facets: null,
 			source: { kind: "match", match: m },
 		},
 		null,
 	);
+}
+
+type Query = ReturnType<typeof parseQuery>;
+
+// What to ask the server about anyone else's products: the words, but only
+// with no filter typed or chipped, since only this supplier's list can
+// answer a filter.
+export function remoteWords(q: Query, chips: Filter[]) {
+	return chips.length === 0 && q.filters.length === 0 ? q.words.join(" ") : "";
+}
+
+// Anything typed or chipped, a sort included, searches this supplier's list.
+export function isSearching(q: Query, chips: Filter[]) {
+	return (
+		chips.length > 0 ||
+		q.words.length > 0 ||
+		q.filters.length > 0 ||
+		q.sorts.length > 0
+	);
+}
+
+// The rows to show, first row first, as Enter takes it. With nothing to
+// search, the recommendations. Searching, those and this supplier's products
+// the query matches, then the server's finished matches for this very query,
+// none of them when a filter is set. Unsorted, a code typed or scanned whole
+// leads.
+export function candidateRows({
+	recs,
+	prepared,
+	remote,
+	chips,
+	q,
+	sort,
+	sent,
+}: {
+	recs: Recommendation[];
+	prepared: ReadonlyMap<number, Prepared>;
+	remote: Remote;
+	chips: Filter[];
+	q: Query;
+	sort: Sort<Key>;
+	sent: boolean;
+}): Candidate[] {
+	if (!isSearching(q, chips))
+		return recs.map((r) => fromRec(r, prepared.get(r.productId)));
+	const recIds = new Set(recs.map((r) => r.productId));
+	const filtered = chips.length > 0 || q.filters.length > 0;
+	const matches = remote.state === "done" && !filtered ? remote.results : [];
+	const matcher = compile([...chips, ...q.filters], q.words);
+	const found = [
+		...recs.flatMap((r) => {
+			const p = prepared.get(r.productId);
+			return p ? [fromRec(r, p)] : [];
+		}),
+		...[...prepared.values()]
+			.filter((p) => !recIds.has(p.row.id))
+			.map((p) => fromRow(p, sent)),
+	].filter((c) => c.facets !== null && matcher.matches(c.facets));
+	found.push(
+		...matches
+			.filter((m) => !prepared.has(m.productId))
+			.map((m) => fromMatch(m, sent)),
+	);
+	// A sort still being typed applies once it names a column exactly.
+	const by = q.sorts.reduce<Sort<Key>>(
+		(s, t) =>
+			isColumn(t.value, COLUMNS)
+				? withTerm(s, { key: t.value, desc: t.desc })
+				: s,
+		sort,
+	);
+	if (by.length > 0) return sortRows(found, by, (c) => c.values);
+	const code = q.words.join(" ").toLowerCase();
+	const exact = (c: Candidate) => code !== "" && c.codes.includes(code);
+	return [...found.filter(exact), ...found.filter((c) => !exact(c))];
 }

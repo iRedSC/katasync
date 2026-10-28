@@ -20,7 +20,7 @@ export function ExtraSheet({
 	onClose: () => void;
 }) {
 	const [query, setQuery] = useState("");
-	const search = usePurchaseOrderSearch(purchaseOrderId, query);
+	const { search } = usePurchaseOrderSearch(purchaseOrderId, query);
 	const results =
 		search.state === "searching" || search.state === "done"
 			? search.results
