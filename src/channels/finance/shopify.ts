@@ -48,6 +48,9 @@ export function labelsFromEvents(
 }
 
 const money = type({ shopMoney: { amount: "string.numeric.parse" } });
+// Every connection says whether it holds more than was read, so an order
+// whose figures were cut short can't pass for a whole one.
+const page = { pageInfo: { hasNextPage: "boolean" } } as const;
 const order = type({
 	id: "string",
 	transactions: type({
@@ -61,6 +64,7 @@ const order = type({
 	}).array(),
 	refunds: type({
 		transactions: {
+			...page,
 			nodes: type({
 				kind: "string",
 				status: "string",
@@ -68,6 +72,7 @@ const order = type({
 			}).array(),
 		},
 		refundLineItems: {
+			...page,
 			nodes: type({
 				quantity: "number",
 				subtotalSet: money,
@@ -76,16 +81,20 @@ const order = type({
 			}).array(),
 		},
 		refundShippingLines: {
+			...page,
 			nodes: type({ taxAmountSet: money }).array(),
 		},
 	}).array(),
 	lineItems: {
+		...page,
 		nodes: type({ id: "string", nonFulfillableQuantity: "number" }).array(),
 	},
 	events: {
+		...page,
 		nodes: type({ "action?": "string", "message?": "string" }).array(),
 	},
 	fulfillmentOrders: {
+		...page,
 		nodes: type({
 			deliveryMethod: type({ methodType: "string" }).or("null"),
 		}).array(),
@@ -93,33 +102,58 @@ const order = type({
 });
 export type ShopifyFinanceOrder = typeof order.infer;
 
+// An order's transactions and refunds are plain lists with no next page to
+// ask for; one that fills its list may have more.
+const TRANSACTIONS = 50;
+const REFUNDS = 50;
 const ORDERS = `query($ids: [ID!]!) {
 	nodes(ids: $ids) {
 		... on Order {
 			id
-			transactions(first: 50) {
+			transactions(first: ${TRANSACTIONS}) {
 				kind status amountSet { shopMoney { amount } }
 				fees { type amount { amount } }
 			}
-			refunds(first: 50) {
-				transactions(first: 20) { nodes { kind status amountSet { shopMoney { amount } } } }
+			refunds(first: ${REFUNDS}) {
+				transactions(first: 20) { pageInfo { hasNextPage } nodes { kind status amountSet { shopMoney { amount } } } }
 				refundLineItems(first: 100) {
+					pageInfo { hasNextPage }
 					nodes {
 						quantity lineItem { id }
 						subtotalSet { shopMoney { amount } }
 						totalTaxSet { shopMoney { amount } }
 					}
 				}
-				refundShippingLines(first: 10) { nodes { taxAmountSet { shopMoney { amount } } } }
+				refundShippingLines(first: 10) { pageInfo { hasNextPage } nodes { taxAmountSet { shopMoney { amount } } } }
 			}
-			lineItems(first: 250) { nodes { id nonFulfillableQuantity } }
+			lineItems(first: 250) { pageInfo { hasNextPage } nodes { id nonFulfillableQuantity } }
 			events(first: 100, query: "action:shipping_label_created_success") {
+				pageInfo { hasNextPage }
 				nodes { ... on BasicEvent { action message } }
 			}
-			fulfillmentOrders(first: 20) { nodes { deliveryMethod { methodType } } }
+			fulfillmentOrders(first: 20) { pageInfo { hasNextPage } nodes { deliveryMethod { methodType } } }
 		}
 	}
 }`;
+
+// What Shopify had more of than one ask reads. Charges summed from part of
+// an order would replace whole ones as if complete, so such an order is
+// reported as an error instead and its saved charges stay as they were.
+export function cutShort(o: ShopifyFinanceOrder): string[] {
+	const parts: string[] = [];
+	if (o.transactions.length >= TRANSACTIONS) parts.push("transactions");
+	if (o.refunds.length >= REFUNDS) parts.push("refunds");
+	if (o.refunds.some((r) => r.transactions.pageInfo.hasNextPage))
+		parts.push("refund transactions");
+	if (o.refunds.some((r) => r.refundLineItems.pageInfo.hasNextPage))
+		parts.push("refunded lines");
+	if (o.refunds.some((r) => r.refundShippingLines.pageInfo.hasNextPage))
+		parts.push("refunded shipping");
+	if (o.lineItems.pageInfo.hasNextPage) parts.push("lines");
+	if (o.events.pageInfo.hasNextPage) parts.push("label purchases");
+	if (o.fulfillmentOrders.pageInfo.hasNextPage) parts.push("fulfillments");
+	return parts;
+}
 
 const SHOPIFYQL = `query($q: String!) {
 	shopifyqlQuery(query: $q) { tableData { rows } parseErrors }
@@ -268,6 +302,14 @@ export const fetchShopifyCharges: ChargeFetcher = async (due: DueOrder[]) => {
 			const parsed = order(node);
 			if (parsed instanceof type.errors) {
 				results.push({ orderId: o.orderId, error: parsed.summary });
+				continue;
+			}
+			const unread = cutShort(parsed);
+			if (unread.length > 0) {
+				results.push({
+					orderId: o.orderId,
+					error: `Shopify has more ${unread.join(", ")} on this order than katasync reads`,
+				});
 				continue;
 			}
 			results.push({

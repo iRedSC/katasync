@@ -535,6 +535,21 @@ export const stores = pgTable(
 	],
 );
 
+// TikTok orders a sync asked for by ID that TikTok's answer left out. Each
+// pass asks for them again, whatever their update time, until TikTok answers
+// or MISSING_HOLD_DAYS pass since the first miss (src/channels/tiktok-missing.ts).
+export const tiktokMissingOrders = pgTable(
+	"tiktok_missing_orders",
+	{
+		storeId: integer()
+			.notNull()
+			.references(() => stores.id),
+		orderId: text().notNull(),
+		firstMissedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [primaryKey({ columns: [t.storeId, t.orderId] })],
+);
+
 // What stock push knows about one listing, from the channel's last read:
 //   ready:      where to write its quantity, what the channel shows (null
 //               when unknown), and the last write's error, if it failed.
