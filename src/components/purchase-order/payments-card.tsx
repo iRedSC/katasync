@@ -26,7 +26,7 @@ import {
 	withdrawInvoiceHistory,
 } from "#/server/payables";
 import type { PurchaseOrderDetail } from "#/server/purchasing";
-import { middayOf, today } from "./days";
+import { today } from "./days";
 import { undone } from "./undone";
 
 type Invoice = OrderPayables["billing"]["invoices"][number];
