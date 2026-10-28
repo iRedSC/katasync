@@ -67,14 +67,7 @@ export async function setRecipe(
 			recipe.length > 0 &&
 			!sameParts(recipe, components)
 		) {
-			const [stocked] = await tx
-				.select({ productId: movements.productId })
-				.from(movements)
-				.where(
-					and(eq(movements.productId, parentProductId), ne(movements.delta, 0)),
-				)
-				.limit(1);
-			if (stocked)
+			if (await hasStockHistory(tx, parentProductId))
 				throw new LedgerError(
 					`${parent.sku} has inventory history; create a new SKU for different parts`,
 				);
@@ -91,6 +84,17 @@ export async function setRecipe(
 			})),
 		);
 	});
+}
+
+// Whether any stock of this product ever moved. What moved was this kind of
+// product made of these parts, so history pins both (src/products/kind.ts).
+export async function hasStockHistory(db: Db, productId: number) {
+	const [moved] = await db
+		.select({ productId: movements.productId })
+		.from(movements)
+		.where(and(eq(movements.productId, productId), ne(movements.delta, 0)))
+		.limit(1);
+	return moved !== undefined;
 }
 
 function sameParts(

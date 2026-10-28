@@ -3,7 +3,7 @@ import type { Db } from "#/db/client";
 import { locations, movements, stores } from "#/db/schema";
 import type { Overflow } from "#/inventory/ledger";
 import { posLocation } from "#/inventory/locations";
-import { retailReserve } from "#/inventory/online-stock";
+import { retailReserve } from "#/inventory/retail-reserve";
 
 // The store row for a channel account, created on first sync and found by
 // the channel's own account ID after that, so renaming the store on the

@@ -110,6 +110,8 @@ export async function orderForClaude(db: Db, id: number) {
 			bytes: f.size,
 			addedBy: f.addedBy,
 			addedAt: f.createdAt,
+			// Moved here from an email on another PO.
+			...(f.sentBy && { sentBy: f.sentBy, sentAt: f.sentAt }),
 		})),
 		tracking: tracking.map((t) => ({
 			id: t.id,

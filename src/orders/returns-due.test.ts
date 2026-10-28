@@ -4,6 +4,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { saveCostReport } from "./charges";
+import { committedOrder } from "./committed-order.fixtures";
 import {
 	findReturnable,
 	listReturns,
@@ -236,6 +237,23 @@ describe("order_returns_due", () => {
 		expect(await due()).toEqual([
 			{ name: "#13", state: "on_its_way", expected: 1 },
 			{ name: "#14", state: "refunded", expected: 2 },
+		]);
+	});
+
+	test("with committed stock, only units that shipped are due back", async () => {
+		// Two of three shipped; a third shipped and was put back.
+		const { orderId } = await committedOrder(db, { id: shopify, wrench }, 2);
+		await refund(orderId, 70);
+		expect(await due()).toEqual([
+			{ name: "#1001", state: "refunded", expected: 2 },
+		]);
+	});
+
+	test("with committed stock, a partial refund may bring back what shipped", async () => {
+		const { orderId } = await committedOrder(db, { id: shopify, wrench }, 2);
+		await refund(orderId, 20);
+		expect(await due()).toEqual([
+			{ name: "#1001", state: "maybe", expected: 2 },
 		]);
 	});
 

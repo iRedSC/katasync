@@ -9,12 +9,15 @@ import {
 	Undo2,
 	X,
 } from "lucide-react";
+import { memo } from "react";
 import { toast } from "sonner";
 import { BulkPrices } from "#/components/catalogs/bulk-prices";
 import {
 	type CatalogOffer,
 	type CatalogProduct,
+	type OfferTerms,
 	patchCatalog,
+	withTerms,
 } from "#/components/catalogs/data";
 import { EmptyState } from "#/components/page";
 import { ProductImage } from "#/components/product";
@@ -115,7 +118,9 @@ export function PriceTable({
 	);
 }
 
-function ProductLine({
+// Memoized: an edit patches one product and leaves the others' objects as
+// they were, so only the edited row renders again, not the whole grid.
+const ProductLine = memo(function ProductLine({
 	catalogId,
 	product: p,
 	carriers,
@@ -185,7 +190,7 @@ function ProductLine({
 			<LineMenu catalogId={catalogId} product={p} carriers={carriers} />
 		</ContextMenu>
 	);
-}
+});
 
 // A product row's right-click menu. Remove from supplier lists the carriers
 // that sell it; Add back to supplier the ones that have it unavailable.
@@ -356,8 +361,6 @@ function PriceCell({
 	);
 }
 
-type OfferTerms = { cost: number | null } | { supplierSku: string | null };
-
 // Changes one supplier's terms for a product, in place on the table.
 async function saveTerms(
 	catalogId: number,
@@ -368,28 +371,9 @@ async function saveTerms(
 ) {
 	const r = await optimism.change({
 		label,
-		patch: patchCatalog(catalogId, (d) => ({
-			...d,
-			products: d.products.map((x) =>
-				x.id !== productId
-					? x
-					: {
-							...x,
-							offers: x.offers.map((y) =>
-								y.supplierId !== supplierId
-									? y
-									: "cost" in terms
-										? {
-												...y,
-												cost: terms.cost,
-												itemCost:
-													terms.cost === null ? null : terms.cost / y.packSize,
-											}
-										: { ...y, supplierSku: terms.supplierSku },
-							),
-						},
-			),
-		})),
+		patch: patchCatalog(catalogId, (d) =>
+			withTerms(d, productId, supplierId, terms),
+		),
 		send: () => setSupplierTerms({ data: { productId, supplierId, ...terms } }),
 	});
 	return r !== null;
