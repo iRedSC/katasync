@@ -7,7 +7,11 @@ import { openGaps, recordFeed, settleGaps } from "#/diagnostics/feed-record";
 import { errorText } from "#/diagnostics/runs";
 import { saveMarketplaceCase } from "#/orders/marketplace-cases";
 import { accessToken } from "./ebay";
-import { DISPUTE_SCOPE, EbayReauthorization } from "./ebay-case-api";
+import {
+	DISPUTE_SCOPE,
+	EbayBudgetSpent,
+	EbayReauthorization,
+} from "./ebay-case-api";
 import { type EbayCaseKind, fetchEbayCase, fetchEbayCases } from "./ebay-cases";
 
 const DAY = 86_400_000;
@@ -73,19 +77,29 @@ export async function ebayCasesPass(
 		// Half the budget at most, oldest first, so discovery always runs.
 		const recheckUntil = Date.now() + (deadline - Date.now()) / 2;
 		for (const row of open) {
-			if (Date.now() >= recheckUntil) break;
 			const kind = kinds.find((kind) => kind === row.kind);
 			if (!kind) continue;
-			const found = await fetchEbayCase(kind, row.externalId, deadline, token, {
-				creationDate: row.requestedAt,
-				// Search-only deadline: the detail call doesn't repeat it.
-				respondByDate: row.respondBy ?? undefined,
-				inquiryId: kind === "inquiry" ? row.externalId : undefined,
-				cancelId: kind === "cancellation" ? row.externalId : undefined,
-				caseId: kind === "escalation" ? row.externalId : undefined,
-				paymentDisputeId: kind === "dispute" ? row.externalId : undefined,
-				orderId: row.orderExternalId ?? undefined,
-			});
+			let found: Awaited<ReturnType<typeof fetchEbayCase>>;
+			try {
+				found = await fetchEbayCase(
+					kind,
+					row.externalId,
+					recheckUntil,
+					token,
+					{
+						creationDate: row.requestedAt,
+						inquiryId: kind === "inquiry" ? row.externalId : undefined,
+						cancelId: kind === "cancellation" ? row.externalId : undefined,
+						caseId: kind === "escalation" ? row.externalId : undefined,
+						paymentDisputeId: kind === "dispute" ? row.externalId : undefined,
+						orderId: row.orderExternalId ?? undefined,
+					},
+					{ respondBy: row.respondBy },
+				);
+			} catch (error) {
+				if (error instanceof EbayBudgetSpent) break;
+				throw error;
+			}
 			await saveMarketplaceCase(db, "ebay", found);
 			problems.push(...found.problems);
 		}
