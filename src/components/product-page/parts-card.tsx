@@ -101,7 +101,9 @@ export function PartsCard({
 	}
 
 	// Waits for the reload rather than guessing the new part's stock, so it
-	// arrives with its real numbers.
+	// arrives with its real numbers. Until then the other recipe edits are
+	// held (`adding`), since each sends the whole list and would leave the
+	// new part out.
 	async function add(part: IndexedProduct) {
 		const before = parts;
 		setAdding(true);
@@ -185,6 +187,7 @@ export function PartsCard({
 										<QuantityInput
 											sku={c.sku}
 											value={c.quantity}
+											disabled={adding}
 											onSave={(quantity) =>
 												save(
 													parts.map((x) =>
@@ -215,6 +218,7 @@ export function PartsCard({
 									<td className="pr-2">
 										<RemoveButton
 											last={parts.length === 1}
+											pending={adding}
 											sku={c.sku}
 											onRemove={() =>
 												save(
@@ -253,10 +257,12 @@ export function PartsCard({
 // says so instead.
 function RemoveButton({
 	last,
+	pending,
 	sku,
 	onRemove,
 }: {
 	last: boolean;
+	pending: boolean;
 	sku: string;
 	onRemove: () => void;
 }) {
@@ -265,7 +271,7 @@ function RemoveButton({
 			variant="ghost"
 			size="icon-xs"
 			aria-label={`Take ${sku} out`}
-			disabled={last}
+			disabled={last || pending}
 			onClick={onRemove}
 			className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
 		>
@@ -286,10 +292,12 @@ function RemoveButton({
 function QuantityInput({
 	sku,
 	value,
+	disabled,
 	onSave,
 }: {
 	sku: string;
 	value: number;
+	disabled: boolean;
 	onSave: (quantity: number) => void;
 }) {
 	const [text, setText] = useState(String(value));
@@ -316,6 +324,7 @@ function QuantityInput({
 			inputMode="numeric"
 			value={text}
 			aria-label={`How many ${sku} in one`}
+			disabled={disabled}
 			onChange={(e) => setText(e.target.value.replace(/\D/g, ""))}
 			onKeyDown={(e) => {
 				if (e.key === "Enter") e.currentTarget.blur();
@@ -328,7 +337,7 @@ function QuantityInput({
 				}
 			}}
 			onBlur={commit}
-			className="h-7 w-14 rounded-md border border-transparent bg-transparent px-1.5 text-right tabular-nums outline-none hover:border-input focus:border-ring focus:ring-1 focus:ring-ring"
+			className="h-7 w-14 rounded-md border border-transparent bg-transparent px-1.5 text-right tabular-nums outline-none hover:border-input focus:border-ring focus:ring-1 focus:ring-ring disabled:opacity-60"
 		/>
 	);
 }
