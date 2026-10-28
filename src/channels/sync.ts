@@ -34,6 +34,8 @@ import { returnsPass } from "./returns-pass";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
 import { stockLocations } from "./stores";
 import { ingestTiktokOrder, syncTiktok } from "./tiktok";
+import { refreshTiktokCase } from "./tiktok-case-refresh";
+import type { CaseLookup } from "./tiktok-returns";
 
 // One sync pass of a channel: pull its orders (and, with `listings`, its
 // listings), catch up its lines that now have a product, set its stores'
@@ -335,4 +337,17 @@ export async function ingestWebhookOrder(
 	for (const p of await pushMoved(db, started))
 		for (const problem of p.problems) console.warn(problem);
 	return done;
+}
+
+// One TikTok case a webhook named (tiktok-case-refresh.ts), under the
+// returns pass's lock so the two never save the same case at once. Busy
+// stays in the inbox, as with orders.
+export async function ingestWebhookCase(
+	db: Db,
+	lookup: CaseLookup,
+): Promise<WebhookUpdate> {
+	const done = await holdingChannel("tiktok", { purpose: "returns-pass" }, () =>
+		refreshTiktokCase(db, lookup),
+	);
+	return done ?? { kind: "busy" };
 }

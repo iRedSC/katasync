@@ -144,7 +144,12 @@ async function onHand() {
 
 test("a blocked TikTok cancellation remains visible and retries after line repair", async () => {
 	expect(await onHand()).toBe(8);
-	await acceptWebhook(db, "tiktok", "577", JSON.stringify(raw));
+	await acceptWebhook(
+		db,
+		"tiktok",
+		{ kind: "order", id: "577" },
+		JSON.stringify(raw),
+	);
 	expect(await drainDue(db, ingestWith(db))).toMatchObject({
 		claimed: 1,
 		done: 0,

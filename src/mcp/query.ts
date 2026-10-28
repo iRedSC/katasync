@@ -53,6 +53,9 @@ export const SECRET_TABLES = [
 	"order_buyer_contacts",
 	// What files an email on a Shopify buyer's thread.
 	"shopify_threads",
+	// Signed TikTok links to buyers' photos and videos, and the photos.
+	// return_request_evidence is what's there without them.
+	"return_request_media",
 ];
 
 // Functions that change the session, reach outside the database, or signal

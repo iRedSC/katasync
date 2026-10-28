@@ -26,7 +26,7 @@ describe("readWebhook", () => {
 			"x-shopify-hmac-sha256": shopifySignature(body),
 		});
 		expect(readWebhook("shopify", headers, body, env)).toEqual({
-			orderId: "gid://shopify/Order/5536",
+			target: { kind: "order", id: "gid://shopify/Order/5536" },
 		});
 	});
 
@@ -74,7 +74,7 @@ describe("readWebhook", () => {
 		});
 		const headers = new Headers({ authorization: tiktokSignature(body) });
 		expect(readWebhook("tiktok", headers, body, env)).toEqual({
-			orderId: "576461413038785752",
+			target: { kind: "order", id: "576461413038785752" },
 		});
 	});
 
@@ -82,6 +82,54 @@ describe("readWebhook", () => {
 		const body = JSON.stringify({ type: 5, data: { product_id: "1" } });
 		const headers = new Headers({ authorization: tiktokSignature(body) });
 		expect(readWebhook("tiktok", headers, body, env)).toHaveProperty("ignored");
+	});
+
+	// Shapes from TikTok's webhook docs, one per case event.
+	it.each<[string, object, object]>([
+		[
+			"cancellation status change reads the order",
+			{
+				type: 11,
+				data: {
+					order_id: "576486316948490001",
+					cancel_id: "4035318504086604100",
+					cancel_status: "CANCELLATION_REQUEST_PENDING",
+				},
+			},
+			{ target: { kind: "order", id: "576486316948490001" } },
+		],
+		[
+			"return status change reads the order's returns",
+			{
+				type: 12,
+				data: {
+					order_id: "576486316948490001",
+					return_id: "4035318504086604100",
+					return_status: "RETURN_OR_REFUND_REQUEST_PENDING",
+					update_time: 1627587600,
+				},
+			},
+			{ target: { kind: "order_returns", id: "576486316948490001" } },
+		],
+		...[64, 65, 67].map((type): [string, object, object] => [
+			`event ${type} reads its aftersales case`,
+			{ type, data: { aftersales_request_id: "4035352489823474416" } },
+			{ target: { kind: "aftersales", id: "4035352489823474416" } },
+		]),
+		[
+			"an aftersales event without its case is ignored",
+			{ type: 64, data: { order_id: "1" } },
+			{ ignored: "aftersales event without its case" },
+		],
+		[
+			"a return event without its order is ignored",
+			{ type: 12, data: { return_id: "1" } },
+			{ ignored: "return event without its order" },
+		],
+	])("TikTok %s", (_, event, expected) => {
+		const body = JSON.stringify({ tts_notification_id: "1", ...event });
+		const headers = new Headers({ authorization: tiktokSignature(body) });
+		expect(readWebhook("tiktok", headers, body, env)).toEqual(expected);
 	});
 
 	it("refuses a TikTok webhook signed the way API requests are", () => {

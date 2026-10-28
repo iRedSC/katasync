@@ -4,7 +4,7 @@ import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { webhookInbox } from "#/db/webhook-schema";
 import type { WebhookUpdate } from "./order-update";
-import type { WebhookChannel } from "./webhooks";
+import type { WebhookChannel, WebhookTarget } from "./webhooks";
 
 export const CLAIM_LIMIT = 10;
 // An order's lease only has to outlast its own ingest: each is claimed right
@@ -19,13 +19,13 @@ const ERROR_CHARS = 500;
 
 export type Ingest = (
 	channel: WebhookChannel,
-	orderId: string,
+	target: WebhookTarget,
 ) => Promise<WebhookUpdate>;
 
 export type Claim = {
 	id: number;
 	channel: WebhookChannel;
-	orderId: string;
+	target: WebhookTarget;
 	generation: number;
 	leaseToken: string;
 };
@@ -37,6 +37,19 @@ type Outcome =
 
 export type Settled = "done" | "pending" | "lost";
 
+// A target as webhook_inbox keys it (its order_id column): an order by its
+// own id, as before targets, a case target by its kind and id. No order id
+// starts with a target's kind, so the two never meet.
+export const targetKey = (target: WebhookTarget) =>
+	target.kind === "order" ? target.id : `${target.kind}:${target.id}`;
+
+function targetOf(kind: WebhookTarget["kind"], key: string): WebhookTarget {
+	return {
+		kind,
+		id: kind === "order" ? key : key.slice(kind.length + 1),
+	} as WebhookTarget;
+}
+
 export function digestOf(body: string) {
 	return createHash("sha256").update(body).digest("hex");
 }
@@ -44,15 +57,20 @@ export function digestOf(body: string) {
 export async function acceptWebhook(
 	db: Db,
 	channel: WebhookChannel,
-	orderId: string,
+	target: WebhookTarget,
 	body: string,
 ) {
 	const eventDigest = digestOf(body);
 	await db
 		.insert(webhookInbox)
-		.values({ channel, orderId, eventDigest })
+		.values({
+			channel,
+			target: target.kind,
+			targetKey: targetKey(target),
+			eventDigest,
+		})
 		.onConflictDoUpdate({
-			target: [webhookInbox.channel, webhookInbox.orderId],
+			target: [webhookInbox.channel, webhookInbox.targetKey],
 			set: {
 				eventDigest,
 				generation: sql`${webhookInbox.generation} + 1`,
@@ -69,7 +87,8 @@ const claimedRows = type({
 	rows: type({
 		id: "number",
 		channel: "'shopify' | 'tiktok'",
-		orderId: "string",
+		target: "'order' | 'order_returns' | 'aftersales'",
+		targetKey: "string",
 		generation: "number",
 	}).array(),
 });
@@ -91,10 +110,14 @@ export async function claimDue(db: Db, limit: number): Promise<Claim[]> {
 			limit ${limit}
 			for update skip locked
 		)
-		returning id, channel, order_id as "orderId", generation
+		returning id, channel, target, order_id as "targetKey", generation
 	`),
 	);
-	return rows.map((row) => ({ ...row, leaseToken }));
+	return rows.map(({ target, targetKey, ...row }) => ({
+		...row,
+		target: targetOf(target, targetKey),
+		leaseToken,
+	}));
 }
 
 export async function settle(
@@ -147,15 +170,25 @@ export async function settle(
 }
 
 export function ingestWith(db: Db): Ingest {
-	return async (channel, orderId) => {
-		const { ingestWebhookOrder } = await import("#/channels/sync");
-		return ingestWebhookOrder(db, channel, orderId);
+	return async (channel, target) => {
+		const { ingestWebhookCase, ingestWebhookOrder } = await import(
+			"#/channels/sync"
+		);
+		switch (target.kind) {
+			case "order":
+				return ingestWebhookOrder(db, channel, target.id);
+			case "order_returns":
+			case "aftersales":
+				if (channel !== "tiktok")
+					return { kind: "retry", error: `${channel} sends no case events` };
+				return ingestWebhookCase(db, target);
+		}
 	};
 }
 
 async function attempt(claim: Claim, ingest: Ingest): Promise<Outcome> {
 	try {
-		const result = await ingest(claim.channel, claim.orderId);
+		const result = await ingest(claim.channel, claim.target);
 		switch (result.kind) {
 			case "applied":
 			case "ignored":

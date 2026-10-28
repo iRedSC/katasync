@@ -11,9 +11,9 @@ import {
 } from "./ebay-returns";
 import { fetchShopifyReturns } from "./shopify/returns";
 import {
-	retryUnreadNotes,
-	tiktokReturnsWithNotes,
-} from "./tiktok-return-notes";
+	retryUnreadRecords,
+	tiktokReturnsWithRecords,
+} from "./tiktok-return-history";
 import { fetchTiktokReturns } from "./tiktok-returns";
 
 // How each channel's returns are read for a returns pass (returns-pass.ts),
@@ -37,8 +37,9 @@ export type ReturnsReader = {
 	) => Promise<{ found: FoundReturns; covered?: ReturnsWindow } | null>;
 	// Whether a held record's moment can be read again on its own.
 	rereadsGaps: boolean;
-	// More to do once caught up, at its own pace.
-	after?: (now: Date) => Promise<FoundReturns>;
+	// More to do once caught up, at its own pace, starting nothing new
+	// after until (a Date.now()).
+	after?: (now: Date, until: number) => Promise<FoundReturns>;
 };
 
 // eBay's returns still open here, read again once an hour: a change to one
@@ -80,14 +81,14 @@ export function returnsReaders(
 			chunkDays: 30,
 			rereadsGaps: true,
 			read: async (w) => ({
-				found: await tiktokReturnsWithNotes(
+				found: await tiktokReturnsWithRecords(
 					db,
 					await fetchTiktokReturns(w.from, w.until),
 				),
 			}),
-			after: async () => ({
+			after: async (_, until) => ({
 				returns: [],
-				problems: await retryUnreadNotes(db),
+				problems: await retryUnreadRecords(db, undefined, until),
 			}),
 		},
 		ebay: {

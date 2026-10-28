@@ -905,9 +905,19 @@ export const returnRequests = pgTable(
 		// When the marketplace last changed it, as its search goes by, when
 		// it says; otherwise when katasync last saw it change.
 		sourceUpdatedAt: timestamp({ withTimezone: true }).notNull(),
-		// The buyer's note couldn't be read (TikTok asks one request per
-		// return); every returns pass tries again until it is.
+		// sourceUpdatedAt is the marketplace's own version of it. A read
+		// without one never replaces a saved one that has it.
+		sourceVersioned: boolean().notNull().default(false),
+		// Its history (the buyer's note and evidence) couldn't be read whole
+		// (TikTok asks one request per return, and its photos one each); every
+		// returns pass reads it again until it is.
+		recordsUnread: boolean().notNull().default(false),
+		// recordsUnread as the code before records names it, written with it
+		// until that code is gone. Drop once no deploy reads it.
 		noteUnread: boolean().notNull().default(false),
+		// When a pass last asked for its unread records, so a batch that keeps
+		// failing doesn't hold back the rest. Null until asked.
+		recordsAskedAt: timestamp({ withTimezone: true }),
 		syncedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		// When staff stopped following its package; null while it's followed.
 		// Never set by a sync, so the marketplace can't undo it.
@@ -1064,6 +1074,114 @@ export const returnRequestLines = pgTable(
 		index("return_request_lines_request_idx").on(t.requestId),
 	],
 );
+
+// A return's history as the marketplace keeps it (TikTok's return records):
+// who did what when, in their words, with the photos and videos attached.
+// Saved over by position each time it's read, in the marketplace's order.
+export const returnRequestRecords = pgTable(
+	"return_request_records",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		requestId: integer()
+			.notNull()
+			.references(() => returnRequests.id, { onDelete: "cascade" }),
+		position: integer().notNull(),
+		// BUYER, SELLER, OPERATOR, SYSTEM, as the marketplace names them.
+		role: text(),
+		event: text(),
+		description: text(),
+		reasonText: text(),
+		note: text(),
+		// Null when the marketplace didn't say.
+		createdAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		unique("return_request_records_position").on(t.requestId, t.position),
+	],
+);
+
+export const recordMediaKind = pgEnum("record_media_kind", ["image", "video"]);
+
+// Whether katasync has the picture: kept (data holds it), unfetched (its
+// download failed; the next read of the record tries again with a fresh
+// link), gone (404, or three fresh links refused), refused (its link isn't
+// on TikTok's media hosts, so it's never fetched), or none (a video
+// without a cover: nothing to keep).
+export const recordMediaCopy = pgEnum("record_media_copy", [
+	"kept",
+	"unfetched",
+	"gone",
+	"refused",
+	"none",
+]);
+
+// A photo or video on a return's records. The marketplace's links are
+// signed and may expire, so the picture is kept here: a photo itself, or a
+// video's cover. A video stays a link; it's too big to keep. It belongs to
+// the return, once per picture, so a later read that leaves it out (or
+// drops its record) never loses a copy: it stays, on no record.
+export const returnRequestMedia = pgTable(
+	"return_request_media",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		requestId: integer()
+			.notNull()
+			.references(() => returnRequests.id, { onDelete: "cascade" }),
+		// The record the last read showed it on, and where; null when that
+		// read didn't show it.
+		recordId: integer().references(() => returnRequestRecords.id, {
+			onDelete: "set null",
+		}),
+		position: integer(),
+		kind: recordMediaKind().notNull(),
+		// As the marketplace last gave it, the photo or the video; null when
+		// it isn't on TikTok's media hosts, so it's never opened from here.
+		url: text(),
+		// A video's cover picture, when it has one.
+		coverUrl: text(),
+		// The kept picture's link without its signature, the same each time
+		// it's read, so a picture kept once isn't downloaded again.
+		sourceKey: text().notNull(),
+		width: integer(),
+		height: integer(),
+		durationMs: integer(),
+		copy: recordMediaCopy().notNull(),
+		// Downloads that failed, on fresh links, since it was last kept.
+		failedFetches: integer().notNull().default(0),
+		contentType: text(),
+		data: bytea(),
+	},
+	(t) => [
+		unique("return_request_media_source").on(t.requestId, t.sourceKey),
+		unique("return_request_media_position").on(t.recordId, t.position),
+		check(
+			"return_request_media_placed",
+			sql`(${t.recordId} is null) = (${t.position} is null)`,
+		),
+		check(
+			"return_request_media_kept_has_data",
+			sql`(${t.copy} = 'kept') = (${t.data} is not null and ${t.contentType} is not null)`,
+		),
+		check(
+			"return_request_media_video_fields",
+			sql`${t.kind} = 'video' or (${t.durationMs} is null and ${t.coverUrl} is null and ${t.copy} <> 'none')`,
+		),
+	],
+);
+
+// return_request_media without its links and bytes, for the query tool
+// (drizzle/0156_tiktok_case_records_data.sql): the media table itself is secret.
+export const returnRequestEvidence = pgView("return_request_evidence", {
+	id: integer().notNull(),
+	requestId: integer().notNull(),
+	recordId: integer(),
+	position: integer(),
+	kind: recordMediaKind().notNull(),
+	copy: recordMediaCopy().notNull(),
+	width: integer(),
+	height: integer(),
+	durationMs: integer(),
+}).existing();
 
 // Where a cost report's label figures came from: the marketplace's own label
 // section (authoritative, even when it says $0), a stand-in until it reports

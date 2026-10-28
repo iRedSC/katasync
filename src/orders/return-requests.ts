@@ -14,6 +14,7 @@ import {
 	underAToZ,
 	withRead,
 } from "./return-evidence";
+import { type ReturnRecord, saveRecords } from "./return-records";
 
 // Returns buyers opened on a marketplace, as each channel's importer reads
 // them (amazon-returns.ts, shopify-returns.ts, ebay-returns.ts), saved one
@@ -86,10 +87,14 @@ export type ChannelReturn = RequestStage &
 		// What the buyer wrote, when they wrote anything. Left out when it wasn't
 		// asked for or couldn't be read: a note already saved stays as it is.
 		note?: string | null;
-		noteUnread?: boolean;
+		// Its history with the buyer's evidence, when it was read (TikTok's
+		// records). Left out keeps what's saved.
+		records?: ReturnRecord[];
+		recordsUnread?: boolean;
 		trackingNumber: string | null;
 		carrier: string | null;
 		requestedAt: Date;
+		// The marketplace's version of it, when it gives one (isNews).
 		updatedAt?: Date;
 		// Left out by marketplaces whose reads don't say any of it.
 		evidence?: EvidenceRead;
@@ -147,7 +152,7 @@ type Snapshot = RequestStage &
 		rawStatus: string;
 		reason: string | null;
 		note: string | null;
-		noteUnread: boolean;
+		recordsUnread: boolean;
 		trackingNumber: string | null;
 		carrier: string | null;
 		requestedAt: Date;
@@ -180,7 +185,7 @@ function canonical(s: Saved) {
 		s.rawStatus,
 		s.reason,
 		s.note,
-		s.noteUnread,
+		s.recordsUnread,
 		s.trackingNumber,
 		s.carrier,
 		s.requestedAt.getTime(),
@@ -219,11 +224,31 @@ function canonical(s: Saved) {
 	]);
 }
 
+// Whether a read is news over what's saved. One with the marketplace's
+// version (updatedAt) is, unless what's saved has a newer one; equal counts,
+// since reads of a channel take turns and a later one is at least as fresh.
+// One without a version never replaces one with.
+export function isNews(
+	saved: { sourceVersioned: boolean; sourceUpdatedAt: Date },
+	updatedAt: Date | undefined,
+) {
+	if (!saved.sourceVersioned) return true;
+	return updatedAt !== undefined && saved.sourceUpdatedAt <= updatedAt;
+}
+
+// isNews, on the saved row itself.
+const newsGuard = (updatedAt: Date | undefined) =>
+	updatedAt
+		? sql`(not ${returnRequests.sourceVersioned} or ${returnRequests.sourceUpdatedAt} <= ${updatedAt.toISOString()}::timestamptz)`
+		: sql`not ${returnRequests.sourceVersioned}`;
+
 // Saves each return against its order in this store, replacing what the
 // marketplace said before. A return for an order katasync doesn't have
 // (older than its history, or never synced) is skipped, and its order named
 // in missing and handed back in unsaved, so the pass can hold its place. A
-// return that hasn't changed since it was saved is left alone.
+// return that hasn't changed since it was saved is left alone, and one the
+// marketplace says changed before what's saved (a late or repeated read) is
+// older news and changes nothing.
 export async function saveReturns(
 	db: Db,
 	store: { id: number; channel: ChannelReturnChannel },
@@ -302,11 +327,12 @@ export async function saveReturns(
 			rawStatus: returnRequests.rawStatus,
 			reason: returnRequests.reason,
 			note: returnRequests.note,
-			noteUnread: returnRequests.noteUnread,
+			recordsUnread: returnRequests.recordsUnread,
 			trackingNumber: returnRequests.trackingNumber,
 			carrier: returnRequests.carrier,
 			requestedAt: returnRequests.requestedAt,
 			sourceUpdatedAt: returnRequests.sourceUpdatedAt,
+			sourceVersioned: returnRequests.sourceVersioned,
 			aToZClaim: returnRequests.aToZClaim,
 			safetClaim: returnRequests.safetClaim,
 			resolution: returnRequests.resolution,
@@ -373,6 +399,10 @@ export async function saveReturns(
 			continue;
 		}
 		const current = savedBy.get(r.externalId);
+		if (current && !isNews(current, r.updatedAt)) {
+			saved++;
+			continue;
+		}
 		const lines = linesOf.get(orderId) ?? [];
 		const evidence = withRead(current ?? NO_EVIDENCE, r.evidence ?? {});
 		const money: CaseMoney =
@@ -390,7 +420,7 @@ export async function saveReturns(
 			reason: r.reason,
 			// A note the marketplace didn't send keeps the one saved.
 			note: r.note === undefined ? (current?.note ?? null) : r.note,
-			noteUnread: r.noteUnread ?? current?.noteUnread ?? false,
+			recordsUnread: r.recordsUnread ?? current?.recordsUnread ?? false,
 			trackingNumber: r.trackingNumber,
 			carrier: r.carrier,
 			requestedAt: r.requestedAt,
@@ -404,6 +434,20 @@ export async function saveReturns(
 			})),
 		};
 		if (current && canonical(current) === canonical(next)) {
+			const records = r.records;
+			// Checked again on the row itself, locked, as the upsert below is:
+			// newer news may have been saved since this read looked.
+			if (records)
+				await db.transaction(async (tx) => {
+					const [still] = await tx
+						.update(returnRequests)
+						.set({ syncedAt: sql`now()` })
+						.where(
+							and(eq(returnRequests.id, current.id), newsGuard(r.updatedAt)),
+						)
+						.returning({ id: returnRequests.id });
+					if (still) await saveRecords(tx, current.id, records);
+				});
 			saved++;
 			continue;
 		}
@@ -424,7 +468,8 @@ export async function saveReturns(
 				rawStatus: next.rawStatus,
 				reason: next.reason,
 				note: next.note,
-				noteUnread: next.noteUnread,
+				recordsUnread: next.recordsUnread,
+				noteUnread: next.recordsUnread,
 				trackingNumber: next.trackingNumber,
 				carrier: next.carrier,
 				requestedAt: next.requestedAt,
@@ -437,6 +482,7 @@ export async function saveReturns(
 				deliveredAt: next.deliveredAt,
 				// Without the marketplace's time, when it changed here.
 				sourceUpdatedAt: r.updatedAt ?? new Date(),
+				sourceVersioned: r.updatedAt !== undefined,
 			};
 			const [request] = await tx
 				.insert(returnRequests)
@@ -446,12 +492,8 @@ export async function saveReturns(
 					set: { ...values, syncedAt: sql`now()` },
 					// An older snapshot (a page read before the case closed) would
 					// reopen it, so it changes nothing. Decided on the row the upsert
-					// locks, so it holds when two snapshots of a new case cross. The
-					// same version still saves, so its lines match order lines synced
-					// since.
-					setWhere: r.updatedAt
-						? sql`${returnRequests.sourceUpdatedAt} <= excluded.source_updated_at`
-						: undefined,
+					// locks, so it holds when two snapshots of a new case cross.
+					setWhere: newsGuard(r.updatedAt),
 				})
 				.returning({ id: returnRequests.id });
 			if (!request) return;
@@ -462,6 +504,7 @@ export async function saveReturns(
 				await tx
 					.insert(returnRequestLines)
 					.values(next.lines.map((l) => ({ requestId: request.id, ...l })));
+			if (r.records) await saveRecords(tx, request.id, r.records);
 		});
 		saved++;
 	}

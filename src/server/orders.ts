@@ -30,6 +30,7 @@ import { adminUrls, returnPage } from "#/orders/admin-urls";
 import { fromStore } from "#/orders/from-store";
 import { readTracking } from "#/orders/package-tracking";
 import { labelRebills } from "#/orders/postage-adjustments";
+import { orderRecords } from "#/orders/return-records";
 import { returnStages } from "#/orders/return-stage";
 import { committedStock, returnQuantity } from "#/orders/return-stock";
 import {
@@ -254,6 +255,7 @@ export const getOrder = createServerFn({ method: "GET" })
 			due,
 			requests,
 			requestLines,
+			records,
 			received,
 			stages,
 			mail,
@@ -355,6 +357,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				)
 				.where(eq(returnRequests.orderId, data.id))
 				.orderBy(returnRequestLines.id),
+			orderRecords(db, data.id),
 			// Each return received, and where its units went.
 			db
 				.select({
@@ -439,6 +442,10 @@ export const getOrder = createServerFn({ method: "GET" })
 				lines: requestLines
 					.filter((l) => l.requestId === r.id)
 					.map(({ requestId: _, ...l }) => l),
+				// Its history with the buyer's photos, oldest first, and the
+				// photos its last read no longer showed.
+				records: records.get(r.id)?.records ?? [],
+				unlistedMedia: records.get(r.id)?.unlisted ?? [],
 				// Where it's handled, to confirm it arrived or refund it.
 				page: returnPage(order, r.billedBy),
 			})),

@@ -1,10 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { type } from "arktype";
+import type { webhookTarget } from "#/db/webhook-schema";
 
-// Order webhooks from Shopify and TikTok Shop. They only say which order
-// changed; the order itself is then read from the channel's API, the same way
-// a sync pass reads it. The crons keep running, so a webhook that never
-// arrives costs a few minutes, not an order.
+// Webhooks from Shopify and TikTok Shop. They only say what changed: an
+// order, or on TikTok also a return or aftersales case. That is then read
+// from the channel's API, the same way a pass reads it. The crons keep
+// running, so a webhook that never arrives costs a few minutes, not an order.
 //
 // Shopify signs with SHOPIFY_WEBHOOK_SECRET, the client secret of the app
 // whose token is SHOPIFY_ADMIN_TOKEN. TikTok signs with the app secret.
@@ -45,17 +46,54 @@ export function tiktokSigned(
 	);
 }
 
+// What to read again. order_returns: the returns on a TikTok order, since
+// its return status change names the order and SKU return, and only the
+// order can be searched by. aftersales: one TikTok aftersales case.
+type TargetKind = (typeof webhookTarget.enumValues)[number];
+export type WebhookTarget = {
+	[K in TargetKind]: { kind: K; id: string };
+}[TargetKind];
+
 const shopifyOrder = type({ admin_graphql_api_id: "string" });
-// Order status changes, cancellations, address changes, and so on all carry
-// the order id. Other events (product, return) don't, and are ignored.
-const tiktokEvent = type({ "data?": { "order_id?": "string" } });
+const tiktokEvent = type({
+	"type?": "number.integer",
+	"data?": {
+		"order_id?": "string",
+		"aftersales_request_id?": "string",
+	},
+});
+
+// TikTok's event types about a case: 12 return status change, 64
+// aftersales request status update, 65 RMA status update, 67 refund
+// success. A cancellation (11), like order status changes, address changes
+// and so on, carries the order id and reads the order again. Other events
+// (product, message) don't, and are ignored.
+const RETURN_STATUS_CHANGE = 12;
+const AFTERSALES_EVENTS = new Set([64, 65, 67]);
+
+export function tiktokTarget(
+	event: typeof tiktokEvent.infer,
+): WebhookTarget | { ignored: string } {
+	const { order_id: orderId, aftersales_request_id: caseId } = event.data ?? {};
+	if (event.type === RETURN_STATUS_CHANGE)
+		return orderId
+			? { kind: "order_returns", id: orderId }
+			: { ignored: "return event without its order" };
+	if (event.type !== undefined && AFTERSALES_EVENTS.has(event.type))
+		return caseId
+			? { kind: "aftersales", id: caseId }
+			: { ignored: "aftersales event without its case" };
+	return orderId
+		? { kind: "order", id: orderId }
+		: { ignored: "not about an order" };
+}
 
 export type WebhookResult =
-	| { orderId: string }
+	| { target: WebhookTarget }
 	| { ignored: string }
 	| { refused: string; status: 401 | 400 };
 
-// Checks a webhook's signature and finds the order it's about.
+// Checks a webhook's signature and finds what it's about.
 export function readWebhook(
 	channel: WebhookChannel,
 	headers: Headers,
@@ -87,10 +125,10 @@ export function readWebhook(
 		const order = shopifyOrder(json);
 		if (order instanceof type.errors)
 			return { ignored: "not an order webhook" };
-		return { orderId: order.admin_graphql_api_id };
+		return { target: { kind: "order", id: order.admin_graphql_api_id } };
 	}
 	const event = tiktokEvent(json);
-	const orderId =
-		event instanceof type.errors ? undefined : event.data?.order_id;
-	return orderId ? { orderId } : { ignored: "not about an order" };
+	if (event instanceof type.errors) return { ignored: "not about an order" };
+	const target = tiktokTarget(event);
+	return "ignored" in target ? target : { target };
 }
