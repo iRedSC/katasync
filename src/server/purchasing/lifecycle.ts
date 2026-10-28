@@ -124,6 +124,8 @@ export const restoreDraftPurchaseOrder = createServerFn({ method: "POST" })
 			supplierId: positive,
 			locationId: positive,
 			notes: "string | null",
+			coverDays: "number.integer | null",
+			includePricier: "boolean",
 			createdAt: "Date",
 			lines: type({
 				productId: positive,
@@ -133,8 +135,16 @@ export const restoreDraftPurchaseOrder = createServerFn({ method: "POST" })
 				minimumQuantity: positive,
 				quantity: "number.integer >= 0",
 				unitCost: "number >= 0 | null",
+				locked: "boolean",
+				addedAt: "Date",
 				discounts: discount.array(),
 			}).array(),
+			charges: type({
+				kind: "'freight' | 'duty' | 'fee' | 'credit'",
+				amount: "number",
+				createdAt: "Date",
+			}).array(),
+			excludedCatalogIds: type(positive).array(),
 			skippedParts: type({
 				setProductId: positive,
 				partProductId: positive,

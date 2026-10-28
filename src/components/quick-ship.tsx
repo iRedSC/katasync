@@ -1,24 +1,26 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { buyRequest } from "#/components/quick-ship/buy-request";
 import { MAX_BOXES } from "#/components/quick-ship/constants";
 import { DoneStep } from "#/components/quick-ship/done-step";
 import { ExternalStep } from "#/components/quick-ship/external-step";
 import { type HazmatChoice, hazmatFor } from "#/components/quick-ship/hazmat";
 import { InfoPanel } from "#/components/quick-ship/info-panel";
-import { splitInsurance } from "#/components/quick-ship/insurance";
 import { Key } from "#/components/quick-ship/key";
 import { Notice } from "#/components/quick-ship/notice";
+import { useOpening } from "#/components/quick-ship/opening";
 import { OrderSummary } from "#/components/quick-ship/order-summary";
 import { PackageStep } from "#/components/quick-ship/package-step";
-import {
-	lastFor,
-	setsDefault,
-	startingGrams,
-} from "#/components/quick-ship/packaging";
+import { lastFor, startingGrams } from "#/components/quick-ship/packaging";
 import { PinStep } from "#/components/quick-ship/pin-step";
 import { RatesStep } from "#/components/quick-ship/rates-step";
 import {
+	buyable,
+	quoted,
+	refuse,
+	type ShownRates,
+} from "#/components/quick-ship/shown-rates";
+import {
 	noExtras,
-	sameExtras,
 	startingExtras,
 } from "#/components/quick-ship/starting-extras";
 import { stepNotes } from "#/components/quick-ship/step-notes";
@@ -31,10 +33,10 @@ import type {
 	Found,
 	Packed,
 	Quote,
-	Rates,
 	Step,
 } from "#/components/quick-ship/types";
 import { useQuickShipCache } from "#/components/quick-ship/use-quick-ship-cache";
+import { useRun } from "#/components/quick-ship/use-run";
 import { WeightStep } from "#/components/quick-ship/weight-step";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
 import { optimism } from "#/lib/optimism";
@@ -44,11 +46,7 @@ import { PRICE_ROSE } from "#/shipping/price-check";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import type { Rate } from "#/shipping/shippo";
 
-// Opens quick ship already on this order, past the pin step (the order
-// page's Ship button).
-export function openQuickShip(pin: number) {
-	window.dispatchEvent(new CustomEvent("quick-ship", { detail: pin }));
-}
+export { openQuickShip } from "#/components/quick-ship/opening";
 
 // Ctrl+Space anywhere: order pin, box, weight, service. Tab on the box step
 // adds other orders to the same address to this box; + on the weight step
@@ -60,7 +58,11 @@ export function QuickShip() {
 	const [open, setOpen] = useState(false);
 	const [step, setStep] = useState<Step>("pin");
 	const [error, setError] = useState<string | null>(null);
-	const [busy, setBusy] = useState(false);
+	const { busy, session, run, end } = useRun(setError);
+	// A label being bought: apart from busy, which prices and lookups hold,
+	// so nothing they finish can let go of it. buying is the same, set and
+	// read at once, so a second Enter in the same moment can't buy twice.
+	const [purchasing, setPurchasing] = useState(false);
 	const [boxes, setBoxes] = useState<Box[]>([]);
 
 	const [found, setFound] = useState<Found | null>(null);
@@ -78,8 +80,9 @@ export function QuickShip() {
 	const [weightGrams, setWeightGrams] = useState<number | null>(null);
 	const [draftGrams, setDraftGrams] = useState<number | null>(null);
 	const [extras, setExtras] = useState<Extras>(noExtras);
-	// The prices shown, and the extras they were quoted with.
-	const [rates, setRates] = useState<(Rates & { for: Extras }) | null>(null);
+	// The prices shown, the extras they were quoted with, and whether buying
+	// at them was refused.
+	const [rates, setRates] = useState<ShownRates | null>(null);
 	const [bought, setBought] = useState<Bought | null>(null);
 	// The service highlighted on the rates step.
 	const [focused, setFocused] = useState<Quote | null>(null);
@@ -89,15 +92,12 @@ export function QuickShip() {
 	const { clear, clearPrices, lookUp, planFor, priceFor } =
 		useQuickShipCache(plan);
 	const latest = useRef(0);
-	// Which opening of the dialog is on screen. A lookup, price, or purchase
-	// that answers after it has moved on is dropped. A purchase underway holds
-	// the session: it can't be taken back, so nothing may replace it.
-	const session = useRef(0);
+	// A purchase underway holds the session: it can't be taken back, so
+	// nothing may replace it.
 	const buying = useRef(false);
 
 	function reset() {
-		session.current++;
-		setBusy(false);
+		end();
 		setStep("pin");
 		setError(null);
 		setFound(null);
@@ -116,31 +116,19 @@ export function QuickShip() {
 		clear();
 	}
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reset only calls state setters
-	useEffect(() => {
-		function onKeyDown(e: globalThis.KeyboardEvent) {
-			if (e.ctrlKey && e.code === "Space") {
-				e.preventDefault();
-				if (buying.current) return;
-				setOpen((o) => {
-					if (!o) reset();
-					return !o;
-				});
-			}
-		}
-		function onOpen(e: Event) {
-			if (buying.current) return;
+	useOpening({
+		buying,
+		toggle: () =>
+			setOpen((o) => {
+				if (!o) reset();
+				return !o;
+			}),
+		openOn: (pin) => {
 			reset();
 			setOpen(true);
-			choosePinRef.current((e as CustomEvent<number>).detail);
-		}
-		window.addEventListener("keydown", onKeyDown);
-		window.addEventListener("quick-ship", onOpen);
-		return () => {
-			window.removeEventListener("keydown", onKeyDown);
-			window.removeEventListener("quick-ship", onOpen);
-		};
-	}, []);
+			choosePinRef.current(pin);
+		},
+	});
 
 	useEffect(() => {
 		if (open) listPackages().then(setBoxes);
@@ -162,26 +150,6 @@ export function QuickShip() {
 		}, 250);
 		return () => clearTimeout(timer);
 	}, [step, draftGrams, plan]);
-
-	// Resolves to undefined when it failed (and said so) or when its session
-	// has ended, in which case it says nothing and touches nothing.
-	async function run<T>(work: () => Promise<T>) {
-		const mine = session.current;
-		const current = () => mine === session.current;
-		if (current()) {
-			setBusy(true);
-			setError(null);
-		}
-		try {
-			const value = await work();
-			return current() ? value : undefined;
-		} catch (err) {
-			if (current()) setError(err instanceof Error ? err.message : String(err));
-			return undefined;
-		} finally {
-			if (current()) setBusy(false);
-		}
-	}
 
 	const back = () => {
 		if (buying.current) return;
@@ -253,7 +221,12 @@ export function QuickShip() {
 	// choosePin.
 	const choosePinRef = useRef(choosePin);
 	choosePinRef.current = choosePin;
-	const choosePackageRef = useRef((_: { box: Box | null; dims: Dims }) => {});
+	const choosePackageRef = useRef(
+		(_: { box: Box | null; dims: Dims }, _for: string) => {},
+	);
+	// Which box of which plan in which opening is being chosen. A custom box
+	// saved for one counts only while it's still that one.
+	const choosing = `${session.current}:${packed.length}:${plan?.orderIds.join(",")}`;
 
 	// Adds or removes another order to the same address from this box. Only
 	// while choosing the first box: the contents decide the boxes.
@@ -281,10 +254,10 @@ export function QuickShip() {
 		if (next.last) suggestBox(next, 0);
 	}
 
-	function choosePackage(next: { box: Box | null; dims: Dims }) {
-		// A box saved after leaving the step, or while new contents load,
-		// doesn't count.
-		if (!plan || busy || step !== "package") return;
+	function choosePackage(next: { box: Box | null; dims: Dims }, of: string) {
+		// A box saved after leaving the step or its box, or while new contents
+		// load, doesn't count.
+		if (!plan || busy || step !== "package" || of !== choosing) return;
 		setBox(next.box);
 		setDims(next.dims);
 		// Weight starts from this box's weight last time these contents shipped
@@ -320,76 +293,71 @@ export function QuickShip() {
 
 	// keep: leave the old prices up, dimmed, while new extras are priced.
 	// why: shown once the new prices are, to say why they changed.
+	// fresh: ask again rather than show prices already asked for.
 	async function showRates(
 		list: Packed[],
 		next: Extras,
-		keep = false,
-		why: string | null = null,
+		{ keep = false, why = null as string | null, fresh = false } = {},
 	) {
-		const pending = priceFor(list, next);
+		const pending = priceFor(list, next, fresh);
 		if (!pending) return;
 		const mine = ++latest.current;
 		setStep("rates");
 		if (!keep) setRates(null);
 		const result = await run(() => pending);
 		if (result && mine === latest.current) {
-			setRates({ ...result, for: next });
+			setRates(quoted(result, next));
 			if (why) setError(why);
 		}
 	}
 
 	function changeExtras(next: Extras) {
+		// The label being bought has the extras it was priced with.
+		if (buying.current) return;
 		setExtras(next);
-		showRates(allBoxes(weightGrams), next, true);
+		showRates(allBoxes(weightGrams), next, { keep: true });
 	}
 
 	async function buy(quote: Rate) {
+		if (buying.current) return;
 		const list = allBoxes(weightGrams);
-		// Only at the price on screen: prices for the extras chosen.
-		if (!plan || list.length === 0 || busy || !rates) return;
-		if (!sameExtras(rates.for, extras)) return;
-		const parts = splitInsurance(extras.insure, list.length);
-		// Buys a real label, so it stays busy until the reload shows it, and
-		// holds the session until then.
+		// Only at the price on screen: prices for the extras chosen, and none
+		// already refused.
+		if (!plan || list.length === 0 || busy || !buyable(rates, extras)) return;
+		// Buys a real label, so it stays bought-for until the reload shows it,
+		// and holds the session until then.
 		buying.current = true;
+		setPurchasing(true);
+		setError(null);
 		let repriced: string | null = null;
-		const r = await run(() =>
-			optimism.change({
-				send: () =>
-					quickShipBuy({
-						data: {
-							orderIds: plan.orderIds,
-							contentsKey: plan.contentsKey,
-							signature: extras.signature,
-							setsDefault: setsDefault(plan, list, newDefault),
-							boxes: list.map((p, i) => ({
-								packageId: p.box?.id ?? null,
-								...p.dims,
-								weightGrams: p.weightGrams,
-								insureAmount: parts[i],
-								hazmat: p.hazmat,
-							})),
-							choice: {
-								carrier: quote.carrier,
-								service: quote.service,
-								id: quote.id,
-								total: quote.cost,
-							},
-						},
-					}).catch((err: unknown) => {
-						const message = err instanceof Error ? err.message : "";
-						if (message.startsWith(PRICE_ROSE)) repriced = message;
-						throw err;
-					}),
-			}),
-		);
-		buying.current = false;
+		const r = await optimism.change({
+			send: () =>
+				quickShipBuy({
+					data: buyRequest(plan, list, extras, newDefault, quote),
+				}).catch((err: unknown) => {
+					const message = err instanceof Error ? err.message : "";
+					if (message.startsWith(PRICE_ROSE)) repriced = message;
+					throw err;
+				}),
+		});
+		const release = () => {
+			buying.current = false;
+			setPurchasing(false);
+		};
 		if (!r) {
-			// Nothing was bought. Its price rose since it was shown: show the new
-			// one in place, so the next click is at a price that was on screen.
-			if (repriced) await showRates(list, extras, true, repriced);
+			// Nothing was bought. Its price rose since it was shown: the old
+			// prices are refused, so they never buy again, and new ones are asked
+			// for and shown in place, so the next click is at a price that was
+			// on screen. If asking fails, Enter asks again.
+			if (repriced) setRates(refuse);
+			const again =
+				repriced &&
+				showRates(list, extras, { keep: true, why: repriced, fresh: true });
+			release();
+			await again;
 			return;
 		}
+		release();
 		const result = r.value;
 		if (result.failed) {
 			// A label still live, or one maybe charged, blocks buying again.
@@ -530,8 +498,9 @@ export function QuickShip() {
 									newDefault={plan?.last ? newDefault : null}
 									onNewDefault={toggleNewDefault}
 									// Through the ref: saving a custom box finishes later, and
-									// must reach the current choosePackage, not this render's.
-									onChoose={(next) => choosePackageRef.current(next)}
+									// must reach the current choosePackage, not this render's,
+									// which drops it unless this box is still being chosen.
+									onChoose={(next) => choosePackageRef.current(next, choosing)}
 									onSaved={(saved) => setBoxes((list) => [...list, saved])}
 								/>
 							)}
@@ -560,9 +529,19 @@ export function QuickShip() {
 						{step === "rates" && !(error && !rates) && (
 							<RatesStep
 								rates={rates}
-								stale={rates !== null && !sameExtras(rates.for, extras)}
+								stale={rates !== null && !buyable(rates, extras)}
+								onReprice={
+									rates?.refused
+										? () =>
+												showRates(allBoxes(weightGrams), extras, {
+													keep: true,
+													fresh: true,
+												})
+										: undefined
+								}
 								boxes={count}
 								busy={busy}
+								purchasing={purchasing}
 								offer={{
 									total: plan?.total ?? 0,
 									recommendInsurance: plan?.insure ?? false,

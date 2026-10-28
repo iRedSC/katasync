@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { postMovements, recordCount } from "#/inventory/ledger";
+import { postMovements, recordCount, recordSale } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { aItemsAtRisk } from "#/purchasing/reorder";
 import { createProduct, createTestDb } from "#/test/db";
@@ -67,14 +67,18 @@ describe("with a database", () => {
 				...extra,
 			})
 			.returning();
-		await db.insert(schema.orderLines).values({
-			orderId: order.id,
-			externalId: `l${n}`,
-			productId,
-			title: "x",
-			quantity,
-			unitPrice,
-		});
+		const [line] = await db
+			.insert(schema.orderLines)
+			.values({
+				orderId: order.id,
+				externalId: `l${n}`,
+				productId,
+				title: "x",
+				quantity,
+				unitPrice,
+			})
+			.returning();
+		return line.id;
 	}
 
 	async function product(sku: string, unitCost: number | null) {
@@ -120,6 +124,29 @@ describe("with a database", () => {
 		expect(classes.get(handle)?.abc).toBe("C");
 		expect(classes.has(set)).toBe(false);
 		expect(days).toBe(365);
+	});
+
+	test("a set's past sales earn for the parts they took, not today's recipe", async () => {
+		const blade = await product("BLADE", 10);
+		const handle = await product("HANDLE", 1);
+		const set = await createProduct(db, "SET", "bundle");
+		await setRecipe(db, set, [{ productId: blade, quantity: 2 }]);
+		const lineId = await sell(set, 5); // 10 blades, $500
+		const { batchId } = await recordSale(db, {
+			productId: set,
+			quantity: 5,
+			locationId: warehouse,
+			reference: `order:${lineId}`,
+		});
+		await db
+			.update(schema.orderLines)
+			.set({ saleBatchId: batchId })
+			.where(eq(schema.orderLines.id, lineId));
+		await setRecipe(db, set, [{ productId: handle, quantity: 1 }]);
+
+		const { classes } = await abcClasses(db, now);
+		expect(classes.get(blade)).toMatchObject({ units: 10, value: 400 });
+		expect(classes.get(handle)).toMatchObject({ units: 0, value: 0 });
 	});
 
 	test("a set that can't be costed leaves its parts' margin alone", async () => {

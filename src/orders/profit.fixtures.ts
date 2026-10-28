@@ -65,7 +65,7 @@ export async function profitFixture() {
 		return row;
 	}
 
-	return { db, amazon, wrench, order, profit };
+	return { db, shopify, amazon, wrench, order, profit };
 }
 
 export type ProfitFixture = Awaited<ReturnType<typeof profitFixture>>;

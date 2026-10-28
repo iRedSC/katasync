@@ -24,6 +24,7 @@ import {
 	receivedOf,
 	reopen,
 } from "#/purchasing/orders";
+import { revaluePurchaseOrder } from "#/purchasing/orders/revalue";
 
 // Damage found in a delivery, or items missing from it (a case of 12 holding
 // 10). Recording it takes the items off the shelf at once, since they can't
@@ -456,7 +457,12 @@ export async function sendDamageReport(
 				quantityAfter: line.quantity,
 			});
 		}
-		if (replacing.size > 0 && po.status === "closed") await reopen(tx, po.id);
+		if (replacing.size > 0) {
+			if (po.status === "closed") await reopen(tx, po.id);
+			// More coming on a line takes a bigger share of the PO's charges,
+			// so what already arrived is worth less.
+			await revaluePurchaseOrder(tx, po.id);
+		}
 		return { reportId: report.id, sentTo, items: pending.length };
 	});
 }

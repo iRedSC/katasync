@@ -13,7 +13,8 @@ import {
 	transferLines,
 	transfers,
 } from "#/db/schema";
-import { setRecipe } from "#/inventory/recipes";
+import { lockRecipes } from "#/inventory/ledger/post";
+import { hasStockHistory, setRecipe } from "#/inventory/recipes";
 import { ProductError } from "./details";
 
 // Changing what kind of product a SKU is: a simple product found to be a
@@ -22,12 +23,16 @@ import { ProductError } from "./details";
 // them; going back to simple drops the parts.
 //
 // A tool set has no stock of its own, so a product only becomes one with
-// nothing on any shelf, in transit, or reserved for orders, and no FBA
-// listing (Amazon stocks it, we can't build it). Nothing holds a tool set and
+// nothing on any shelf, in transit, or reserved for orders, no FBA listing
+// (Amazon stocks it, we can't build it), and no stock history: a past sale
+// or receipt reversed later must find the shelf it came from. A kit with
+// history stays a kit, since its history says what its units are made of. Nothing holds a tool set and
 // kits hold no kits, so a part can't become either one its parents refuse.
 // Any kind change waits for open POs and draft transfers holding it, which
 // were made for the old kind. The product row stays locked throughout; stock
-// and recipe writes lock it too, so none can slip in after the checks.
+// and recipe writes lock it too, so none can slip in after the checks. It's
+// locked with its old and new parts, lowest id first, as every other recipe
+// and stock write locks them, so a part with a lower id can't deadlock it.
 
 export type Part = { productId: number; quantity: number };
 
@@ -43,15 +48,28 @@ export async function setProductKind(
 	change: KindChange,
 ) {
 	return db.transaction(async (tx) => {
-		const [product] = await tx
-			.select({ id: products.id, sku: products.sku, kind: products.kind })
+		const [known] = await tx
+			.select({ id: products.id })
 			.from(products)
-			.where(eq(products.id, productId))
-			.for("update");
+			.where(eq(products.id, productId));
+		if (!known) throw new ProductError(`Unknown product ${productId}`);
+		const { products: locked } = await lockRecipes(
+			tx,
+			[productId],
+			change.kind === "simple"
+				? []
+				: change.components.map((part) => part.productId),
+		);
+		const product = locked.find((row) => row.id === productId);
 		if (!product) throw new ProductError(`Unknown product ${productId}`);
 
 		if (product.kind !== change.kind) {
-			const blockers = await blockersFor(tx, product.id, change.kind);
+			const blockers = await blockersFor(
+				tx,
+				product.id,
+				product.kind,
+				change.kind,
+			);
 			if (blockers.length > 0)
 				throw new ProductError(
 					`Can't make ${product.sku} a ${name[change.kind]}: ${blockers.join("; ")}`,
@@ -76,9 +94,16 @@ export async function setProductKind(
 async function blockersFor(
 	tx: Db,
 	id: number,
+	from: KindChange["kind"],
 	kind: KindChange["kind"],
 ): Promise<string[]> {
 	const blockers: string[] = [];
+	if ((from === "kit" || kind === "bundle") && (await hasStockHistory(tx, id)))
+		blockers.push(
+			from === "kit"
+				? "its stock history was built from its parts; make a new SKU instead"
+				: "it has stock history, and a tool set has no stock of its own; make a new SKU for the tool set",
+		);
 	const parents = await tx
 		.select({ sku: products.sku, kind: products.kind })
 		.from(productComponents)
