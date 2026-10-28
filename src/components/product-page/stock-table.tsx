@@ -2,6 +2,7 @@ import NumberFlow from "@number-flow/react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "#/components/page";
+import { useDraft } from "#/lib/draft";
 import { formatCount } from "#/lib/format";
 import { optimism } from "#/lib/optimism";
 import { cn } from "#/lib/utils";
@@ -106,19 +107,22 @@ function TargetInput({
 	value: number | null;
 }) {
 	const shown = value === null ? "" : String(value);
-	const [text, setText] = useState(shown);
-	const [was, setWas] = useState(shown);
-	if (was !== shown) {
-		setWas(shown);
-		setText(shown);
-	}
+	// What's typed stays until saved: a save coming back never overwrites text
+	// typed while it was on its way, and a failed one leaves the field marked.
+	const { draft: text, setDraft } = useDraft(shown);
+	const [failed, setFailed] = useState(false);
+	const setText = (next: string) => {
+		setFailed(false);
+		setDraft(next);
+	};
 	async function commit() {
 		if (text === shown) return;
 		const target = text === "" ? null : Number(text);
 		const r = await optimism.change({
 			send: () => saveShelfTarget({ data: { productId, locationId, target } }),
 		});
-		if (!r) return setText(shown);
+		if (!r) return setFailed(true);
+		setFailed(false);
 		toast.success(
 			target === null || target === 0
 				? `Refills leave this alone at ${store}`
@@ -131,12 +135,13 @@ function TargetInput({
 			inputMode="numeric"
 			placeholder="None"
 			aria-label={`Refill ${store} to`}
+			aria-invalid={failed || undefined}
 			onChange={(e) => setText(e.target.value.replace(/\D/g, ""))}
 			onBlur={commit}
 			onKeyDown={(e) => {
 				if (e.key === "Enter") e.currentTarget.blur();
 			}}
-			className="h-7 w-16 rounded-lg bg-surface px-2 text-right tabular-nums outline-none placeholder:text-faint focus:ring-2 focus:ring-ring"
+			className="h-7 w-16 rounded-lg bg-surface px-2 text-right tabular-nums outline-none placeholder:text-faint focus:ring-2 focus:ring-ring aria-invalid:ring-2 aria-invalid:ring-critical"
 		/>
 	);
 }

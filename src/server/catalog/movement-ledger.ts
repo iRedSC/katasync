@@ -3,9 +3,7 @@ import { type } from "arktype";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { movements, products } from "#/db/schema";
-import { undoBatch } from "#/inventory/ledger";
-import { transferName, transferOfBatch } from "#/inventory/transfers";
-import { purchaseOrderOfBatch } from "#/purchasing/orders";
+import { undoUnownedBatch } from "#/inventory/batch-owner";
 
 // The ledger, one row per operation: an import or an assembly reads as one
 // line instead of hundreds.
@@ -41,13 +39,5 @@ export const listMovementBatches = createServerFn({ method: "GET" }).handler(
 export const undoMovement = createServerFn({ method: "POST" })
 	.validator(type({ batchId: "string.uuid" }))
 	.handler(async ({ data }) => {
-		const db = getDb();
-		// A PO receipt undone here would leave the PO thinking it arrived.
-		const po = await purchaseOrderOfBatch(db, data.batchId);
-		if (po !== null) throw new Error(`Undo this on PO ${po}.`);
-		// Undone here, a transfer would still say it was sent.
-		const transfer = await transferOfBatch(db, data.batchId);
-		if (transfer !== null)
-			throw new Error(`Undo this on transfer ${transferName(transfer)}.`);
-		await undoBatch(db, data.batchId);
+		await undoUnownedBatch(getDb(), data.batchId);
 	});

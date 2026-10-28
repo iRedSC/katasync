@@ -196,18 +196,19 @@ function ReceivePurchaseOrder() {
 		});
 	}
 
+	// True once the server has it; the sheet stays open until then.
 	async function saveNote(line: ReceiveLine, note: string | null) {
-		setNoteLineId(null);
 		const name = productName(line);
 		const was = line.receivingNote;
 		const r = await changeNote(order.id, line, note, `Note on ${name}`);
-		if (!r) return;
+		if (!r) return false;
 		offerUndo(note === null ? `Removed the note on ${name}` : `Noted ${name}`, {
 			undo: async () => {
 				const u = await changeNote(order.id, line, was, `Note on ${name}`);
 				return u && `Put the note on ${name} back`;
 			},
 		});
+		return true;
 	}
 
 	async function backOrder(line: ReceiveLine, backOrdered: boolean) {

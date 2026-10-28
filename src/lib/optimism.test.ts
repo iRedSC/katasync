@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { answer } from "./answer";
+import { answered } from "./intent";
 import { createOptimism, type Patch } from "./optimism";
 
 vi.mock("sonner", () => ({ toast: { error: () => {} } }));
@@ -32,10 +34,12 @@ function setup() {
 	const committed: Count[] = [];
 	const engine = createOptimism({
 		reload: async () => {
-			const d = deferred();
-			reloads.push(d);
-			await d.promise;
-			page = { ...server };
+			page = await engine.load(async () => {
+				const d = deferred();
+				reloads.push(d);
+				await d.promise;
+				return { ...server };
+			});
 			committed.push(engine.over("count:1", page));
 		},
 		failed: (m) => failures.push(m),
@@ -190,6 +194,24 @@ describe("optimism", () => {
 		expect(reloads).toHaveLength(1);
 	});
 
+	it("passes a server's refusal back as its answer, apart from a send that threw", async () => {
+		const { engine, reloads, failures } = setup();
+		const refused = engine.change({
+			send: () => answer([Error], () => Promise.reject(new Error("Void"))),
+		});
+		await tick();
+		reloads[0].resolve();
+		expect(answered(await refused)).toEqual({
+			kind: "rejected",
+			problem: "Void",
+		});
+		expect(failures).toEqual([]);
+		const lost = await engine.change({
+			send: () => Promise.reject(new Error("Failed to fetch")),
+		});
+		expect(answered(lost)).toEqual({ kind: "uncertain" });
+	});
+
 	it("keeps a later change when an earlier one fails", async () => {
 		const { engine, shown } = setup();
 		engine.change({
@@ -249,9 +271,101 @@ describe("optimism", () => {
 		engine.change({ label: "Wait", patch: add(0), send: () => later.promise });
 		expect(shown()).toEqual({ n: 5 });
 		// Staff go elsewhere and back: the page loads what the server has.
-		engine.loadStarted();
-		const fresh = { ...server };
+		const fresh = await engine.load(async () => ({ ...server }));
 		expect(engine.over("count:1", fresh)).toEqual({ n: 5 });
+	});
+
+	it("lays a sent change over data loaded before it, however late that shows", async () => {
+		const { server, engine, reloads, shown } = setup();
+		// Preloaded on hover, and kept for the click.
+		const preloaded = await engine.load(async () => ({ ...server }));
+		await engine.change({
+			label: "Add",
+			patch: add(5),
+			send: async () => {
+				server.n += 5;
+			},
+		});
+		// The engine's reload has started; the preloaded page opens now.
+		expect(reloads).toHaveLength(1);
+		expect(engine.over("count:1", preloaded)).toEqual({ n: 5 });
+		reloads[0].reject(new Error("offline"));
+		await tick();
+		expect(engine.over("count:1", preloaded)).toEqual({ n: 5 });
+		expect(shown()).toEqual({ n: 5 });
+	});
+
+	it("marks what a load brings, down to its parts", async () => {
+		const { engine } = setup();
+		const later = deferred();
+		const loaded = await engine.load(async () => ({ count: { n: 0 } }));
+		await engine.change({ label: "Add", patch: add(5), send: async () => {} });
+		engine.change({ label: "Wait", patch: add(0), send: () => later.promise });
+		expect(engine.over("count:1", loaded.count)).toEqual({ n: 5 });
+	});
+
+	// A load started while the change was sending: it read the database either
+	// before the change committed or after, and nothing says which.
+	async function loadDuringSend(readAfterCommit: boolean) {
+		const t = setup();
+		const answer = deferred();
+		const commit = () => {
+			t.server.n += 5;
+		};
+		const done = t.engine.change({
+			label: "Add",
+			patch: add(5),
+			send: async () => {
+				await answer.promise;
+				if (!readAfterCommit) commit();
+			},
+		});
+		await tick();
+		const read = deferred();
+		const loading = t.engine.load(async () => {
+			await read.promise;
+			return { ...t.server };
+		});
+		if (readAfterCommit) commit();
+		read.resolve();
+		// The load finishes after the server answers.
+		answer.resolve();
+		await done;
+		const loaded = await loading;
+		expect(loaded).toEqual({ n: readAfterCommit ? 5 : 0 });
+		return { ...t, loaded };
+	}
+
+	for (const readAfterCommit of [false, true])
+		it(`reloads rather than trust data loaded during a send (${readAfterCommit ? "with" : "without"} the change)`, async () => {
+			const { engine, reloads, loaded, shown } =
+				await loadDuringSend(readAfterCommit);
+			// The engine's own reload settles it.
+			expect(reloads).toHaveLength(1);
+			reloads[0].reject(new Error("offline"));
+			await tick();
+			// It failed, so the overlapping data asks for another, once.
+			engine.over("count:1", loaded);
+			engine.over("count:1", loaded);
+			await tick();
+			expect(reloads).toHaveLength(2);
+			reloads[1].resolve();
+			await tick();
+			expect(engine.snapshot()).toHaveLength(0);
+			expect(shown()).toEqual({ n: 5 });
+		});
+
+	it("asks only once for a reload when data of unknown freshness shows", async () => {
+		const { engine, reloads, loaded } = await loadDuringSend(true);
+		reloads[0].reject(new Error("offline"));
+		await tick();
+		engine.over("count:1", loaded);
+		await tick();
+		reloads[1].reject(new Error("offline"));
+		await tick();
+		engine.over("count:1", loaded);
+		await tick();
+		expect(reloads).toHaveLength(2);
 	});
 
 	it("lays patches only over the data they were written for", () => {

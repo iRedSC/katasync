@@ -3,16 +3,13 @@ import { inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
 import { locations, products } from "#/db/schema";
-import { fulfillmentOfBatch } from "#/inventory/commitments-consume";
+import { undoUnownedBatch } from "#/inventory/batch-owner";
 import { requestProductCount } from "#/inventory/count-requests";
 import {
 	cancelCountRequests,
 	recordCount,
 	requestCounts,
-	undoBatch,
 } from "#/inventory/ledger";
-import { transferName, transferOfBatch } from "#/inventory/transfers";
-import { PurchaseOrderError, purchaseOrderOfBatch } from "#/purchasing/orders";
 import { ourLocation, productBySku, productsBySku } from "./lookups";
 import { json, WRITE } from "./tool-shapes";
 
@@ -122,26 +119,12 @@ export function registerStockTools(server: McpServer, db: Db) {
 		"undo_stock_change",
 		{
 			description:
-				"Reverses a stock change (a ledger batch, e.g. from record_count) by posting its opposite. Receipts on a PO must be undone in the app.",
+				"Reverses a stock change (a ledger batch, e.g. from record_count) by posting its opposite. Changes owned by a PO, transfer, order, return, or repair must be undone there.",
 			inputSchema: { batch_id: z.string().uuid() },
 			annotations: WRITE,
 		},
 		async ({ batch_id }) => {
-			if (await fulfillmentOfBatch(db, batch_id))
-				throw new PurchaseOrderError(
-					"This stock shipped on a dispatch. Void that dispatch in the app so its fulfillment and reservations are reversed together.",
-				);
-			const po = await purchaseOrderOfBatch(db, batch_id);
-			if (po !== null)
-				throw new PurchaseOrderError(
-					`This came in on PO ${po}. Undo it on the PO in the app.`,
-				);
-			const transfer = await transferOfBatch(db, batch_id);
-			if (transfer !== null)
-				throw new PurchaseOrderError(
-					`This was transfer ${transferName(transfer)}. Undo it with undo_transfer.`,
-				);
-			return json(await undoBatch(db, batch_id));
+			return json(await undoUnownedBatch(db, batch_id));
 		},
 	);
 }
