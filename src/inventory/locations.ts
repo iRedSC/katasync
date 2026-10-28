@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations } from "#/db/schema";
 
@@ -54,6 +54,37 @@ export async function setPosLocation(db: Db, locationId: number) {
 			.set({ posPrimary: true })
 			.where(and(eq(locations.id, locationId), isOurs));
 		return { locationId, name: target.name };
+	});
+}
+
+// Adds our retail store, already the shelf POS sales take from, in one
+// transaction: in-store sales caught up after it (applyStoreSales) take its
+// stock, never whichever shelf was POS before. Only one retail store, or POS
+// sales couldn't tell which shelf to take from: the locations_one_retail
+// index refuses a second, and the lock makes a second caller wait to see
+// the first instead of failing on it.
+export async function addRetailStore(db: Db, name: string) {
+	return db.transaction(async (tx) => {
+		await tx.execute(
+			sql`select pg_advisory_xact_lock(hashtext('katasync:retail-store'))`,
+		);
+		const [retail] = await tx
+			.select({ name: locations.name })
+			.from(locations)
+			.where(eq(locations.kind, "retail"));
+		if (retail)
+			throw new PosLocationError(`${retail.name} is already the retail store`);
+		const [taken] = await tx
+			.select({ id: locations.id })
+			.from(locations)
+			.where(eq(locations.name, name));
+		if (taken)
+			throw new PosLocationError(`There's already a location called ${name}`);
+		const [{ id }] = await tx
+			.insert(locations)
+			.values({ name, kind: "retail" })
+			.returning({ id: locations.id });
+		return setPosLocation(tx, id);
 	});
 }
 

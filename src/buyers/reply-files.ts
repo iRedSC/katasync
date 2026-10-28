@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
-import { relyingParty } from "#/auth/webauthn";
+import { capabilityUrl } from "#/auth/capability-urls";
 import type { Db } from "#/db/client";
 import { type BuyerMedia, buyerReplyFiles } from "#/db/schema";
 import type { Market } from "#/markets/market";
@@ -60,7 +60,7 @@ export async function sharedFile(db: Db, token: string) {
 }
 
 export const sharedFileUrl = (token: string) =>
-	`${relyingParty().origin}/api/shared-files/${token}`;
+	capabilityUrl("/api/shared-files/", token);
 
 // A reply's files, checked against the marketplace's rules, as the media
 // the reply is kept with. Throws when one is missing or the marketplace
@@ -94,6 +94,23 @@ export async function filesForReply(db: Db, market: Market, ids: number[]) {
 			fileId: f.id,
 		}),
 	);
+}
+
+// The real type and size of the files a reply sent, by fileId, so sending
+// it again or putting it back in a reply box checks them like any other.
+export async function replyFileSizes(db: Db, ids: number[]) {
+	const rows =
+		ids.length === 0
+			? []
+			: await db
+					.select({
+						id: buyerReplyFiles.id,
+						type: buyerReplyFiles.contentType,
+						size: buyerReplyFiles.size,
+					})
+					.from(buyerReplyFiles)
+					.where(inArray(buyerReplyFiles.id, [...new Set(ids)]));
+	return new Map(rows.map(({ id, ...f }) => [id, f]));
 }
 
 // The files whose bytes a send needs, in the reply's order.

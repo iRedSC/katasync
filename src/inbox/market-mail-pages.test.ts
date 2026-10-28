@@ -21,7 +21,7 @@ const read = async () => ({ body: "Details", attachments: [] });
 describe("paging the mailbox", () => {
 	test("emails at the same moment across a page boundary each show once, in order", async () => {
 		const db = await createTestDb();
-		await ingestMarketMail(db, [0, 1, 2].map(message), read);
+		await ingestMarketMail(db, [0, 1, 2].map(message), read, async () => []);
 		// Marked done and back rewrites the oldest's row, so the index no longer
 		// lists equal times in arrival order.
 		const oldest = eq(marketEmails.subject, "Listing note 0");
@@ -57,7 +57,12 @@ describe("paging the mailbox", () => {
 				},
 			],
 		});
-		const result = await ingestMarketMail(db, [message(0)], broken);
+		const result = await ingestMarketMail(
+			db,
+			[message(0)],
+			broken,
+			async () => [],
+		);
 		expect(result).toEqual({ read: 0, problems: [expect.any(String)] });
 		expect(await db.select().from(marketEmails)).toEqual([]);
 	});

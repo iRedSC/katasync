@@ -11,6 +11,7 @@ import { getDb } from "#/db/client";
 import { stockChannels } from "#/stock-push/channels";
 import {
 	applyStockPull,
+	COMMITTED_REFUSAL,
 	markLedgers,
 	planStockPull,
 	type StoreRead,
@@ -70,6 +71,10 @@ if (plan.unpulled.length > 0) {
 }
 if (write) {
 	const result = await applyStockPull(db, plan);
+	if (result.state === "committed") {
+		console.error(`\n${COMMITTED_REFUSAL} Nothing was posted.`);
+		process.exit(1);
+	}
 	if (result.state === "moved") {
 		console.error(
 			`\nStock moved while the stores were read, for ${result.skus.join(", ")}. Nothing was posted; run it again.`,

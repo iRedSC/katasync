@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
-import { buyerMessages, marketEmails } from "#/db/schema";
+import { buyerMessages, buyerThreads, marketEmails } from "#/db/schema";
 import { ingestMarketMail, marketMailPage } from "#/inbox/market-mail";
 import type { Header } from "#/inbox/sender-auth";
 import { createTestDb } from "#/test/db";
@@ -111,5 +111,41 @@ describe("Amazon's buyer relay", () => {
 		});
 		expect(await threadAmazonCopies(db)).toBe(0);
 		expect(await messages()).toEqual([]);
+	});
+
+	test("a vouched-for copy from a lookalike domain adds nothing", async () => {
+		await arrive(passed);
+		await threadAmazonMail(db);
+		expect(await db.select().from(buyerThreads)).toHaveLength(1);
+		const copy = {
+			subject: "Your e-mail to Rick",
+			body: "Order ID: 113-1228890-8225003\n----- Begin message -----\nRefund sent\n----- End message -----",
+		};
+		// Its owner passes DMARC for it; it's still not Amazon's.
+		for (const domain of ["amazon.attacker.com", "amazon.com.attacker.com"])
+			await arrive(
+				[
+					{
+						name: "Authentication-Results",
+						value: `spf=pass smtp.mailfrom=${domain}; dkim=pass header.d=${domain};dmarc=pass action=none header.from=${domain};compauth=pass reason=100`,
+					},
+				],
+				{ ...copy, from: `donotreply@${domain}` },
+			);
+		// Nor one kept as Amazon's before the domains were checked.
+		await db.insert(marketEmails).values({
+			messageId: "<legacy@attacker>",
+			market: "amazon",
+			folder: "updates",
+			senderAuthenticated: true,
+			fromAddress: "donotreply@amazon.attacker.com",
+			recipients: [INBOX],
+			receivedAt: new Date(),
+			...copy,
+		});
+		expect(await threadAmazonCopies(db)).toBe(0);
+		expect(
+			(await messages()).filter((m) => !m.fromBuyer).map((m) => m.body),
+		).toEqual([]);
 	});
 });

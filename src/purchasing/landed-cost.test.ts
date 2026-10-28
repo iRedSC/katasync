@@ -13,6 +13,7 @@ import { setRecipe } from "#/inventory/recipes";
 import { applyCost } from "#/inventory/valuation";
 import { profitTotals } from "#/orders/profit";
 import { createProduct } from "#/test/db";
+import { damagesOf, recordDamage, sendDamageReport } from "./damage";
 import { splitCharges } from "./landed";
 import {
 	addLine,
@@ -186,7 +187,11 @@ describe("received stock's cost", () => {
 	});
 
 	test("undoing a receipt puts the average back exactly", async () => {
-		const r = await receive(db, { lineId: bladeLine, quantity: 10 });
+		const r = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
 		expect(await costOf(blade)).toBe(4.5);
 		await undoReceipt(db, r.receiptId);
 		expect(await costOf(blade)).toBe(4);
@@ -198,17 +203,29 @@ describe("received stock's cost", () => {
 	});
 
 	test("fixing a received line's price revalues its stock", async () => {
-		await receive(db, { lineId: bladeLine, quantity: 10 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
 		await amendLine(db, { lineId: bladeLine, unitCost: 6 });
 		// 10 at $4 and 10 at $6.
 		expect(await costOf(blade)).toBe(5);
-		const r = await receive(db, { lineId: bladeLine, quantity: 2 });
+		const r = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 2,
+		});
 		await undoReceipt(db, r.receiptId);
 		expect(await costOf(blade)).toBe(5);
 	});
 
 	test("a discount after the delivery comes off its cost, and goes back", async () => {
-		await receive(db, { lineId: bladeLine, quantity: 10 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
 		const { id } = await saveDiscount(db, {
 			lineId: bladeLine,
 			discount: { units: "rest", off: { kind: "percent", percent: 20 } },
@@ -220,7 +237,11 @@ describe("received stock's cost", () => {
 	});
 
 	test("late freight lands on what's left, and the rest on what sold", async () => {
-		await receive(db, { lineId: bladeLine, quantity: 10 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
 		await sellNow(blade, 15);
 		// By value: blades are $220 of the PO's $232.
 		const charge = await addCharge(db, {
@@ -256,13 +277,21 @@ describe("received stock's cost", () => {
 			.set({ weightGrams: 1000 })
 			.where(eq(schema.products.id, knife));
 		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 104 });
-		await receive(db, { lineId: bladeLine, quantity: 10 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
 		// 4,400 g of blades and 6,000 g of knives share $104: $1 a blade.
 		expect(await costOf(blade)).toBe(5);
 	});
 
 	test("undoing a receipt after its price was fixed leaves nothing behind", async () => {
-		const r = await receive(db, { lineId: bladeLine, quantity: 10 });
+		const r = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
 		await amendLine(db, { lineId: bladeLine, unitCost: 6 });
 		await undoReceipt(db, r.receiptId);
 		expect(await costOf(blade)).toBe(4);
@@ -290,9 +319,66 @@ describe("received stock's cost", () => {
 		expect(await costOf(blade)).toBe(4.75);
 	});
 
+	test("taking off a line added after sending moves its freight onto what came", async () => {
+		const screw = await createProduct(db, "SCREW", "simple");
+		await supply(screw, 10);
+		const { line } = await addLine(db, {
+			purchaseOrderId: po,
+			productId: screw,
+			quantity: 23,
+		});
+		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 462 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
+		// Blades are $220 of the PO's $462: $5 of freight each.
+		expect(await costOf(blade)).toBeCloseTo((4 + 10) / 2, 6);
+		await amendLine(db, { lineId: line.id, quantity: 0 });
+		// Now $220 of $232.
+		expect(await costOf(blade)).toBeCloseTo(
+			(4 + 5 + (462 * 220) / 232 / 44) / 2,
+			3,
+		);
+	});
+
+	test("asking for a replacement spreads the freight over what's still coming", async () => {
+		const knifeLine = (await linesOf(po))[1].id;
+		await addCharge(db, { purchaseOrderId: po, kind: "freight", amount: 232 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: knifeLine,
+			quantity: 6,
+		});
+		// Blades are $220 of the PO's $232: $5 of freight each.
+		expect(await costOf(blade)).toBeCloseTo((4 + 10) / 2, 6);
+		await recordDamage(db, { kind: "missing", lineId: knifeLine, quantity: 2 });
+		const [damage] = await damagesOf(db, po);
+		await sendDamageReport(db, {
+			purchaseOrderId: po,
+			remedies: [{ damageId: damage.id, remedy: "replacement" }],
+			deliver: async () => "orders@canam.test",
+		});
+		// Two more knives coming: blades are $220 of $236.
+		expect(await costOf(blade)).toBeCloseTo(
+			(4 + 5 + (232 * 220) / 236 / 44) / 2,
+			3,
+		);
+	});
+
 	test("an unpriced line comes in at the average until it's priced", async () => {
 		await amendLine(db, { lineId: bladeLine, unitCost: null });
-		await receive(db, { lineId: bladeLine, quantity: 10 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine,
+			quantity: 10,
+		});
 		expect(await costOf(blade)).toBe(4);
 		await amendLine(db, { lineId: bladeLine, unitCost: 6 });
 		expect(await costOf(blade)).toBe(5);
@@ -310,7 +396,11 @@ describe("a product with no cost yet", () => {
 			quantity: 10,
 		});
 		await markSent(db, { purchaseOrderId: po, sentTo: null, now });
-		await receive(db, { lineId: line.id, quantity: 10 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: line.id,
+			quantity: 10,
+		});
 		await sell(pan, 10);
 		await sellNow(pan, 10);
 		await amendLine(db, { lineId: line.id, unitCost: 6 });

@@ -287,6 +287,41 @@ describe("tiktokToChannelOrder", () => {
 		]);
 	});
 
+	test("units of one SKU at different prices keep every cent they sold for", () => {
+		const unit = (id: string, salePrice: string, extra = {}) => ({
+			id,
+			sku_id: "1729",
+			product_name: "Wrench",
+			sale_price: salePrice,
+			...extra,
+		});
+		const items = [
+			unit("1", "18.00"),
+			unit("2", "10.00"),
+			unit("3", "9.99"),
+			unit("4", "10.00"),
+			// A cancelled unit's price isn't revenue, but its line stays.
+			unit("5", "1.00", { display_status: "CANCELLED" }),
+		];
+		const o = tiktokToChannelOrder(order({ line_items: items }));
+		expect(o.lines).toMatchObject([
+			{ externalId: "1729", quantity: 1, unitPrice: 18 },
+			{ externalId: "1729:1000", quantity: 2, unitPrice: 10 },
+			{ externalId: "1729:999", quantity: 1, unitPrice: 9.99 },
+			{ externalId: "1729:100", quantity: 0, unitPrice: 1 },
+		]);
+		const cents = o.lines.reduce(
+			(sum, l) => sum + l.quantity * Math.round(l.unitPrice * 100),
+			0,
+		);
+		expect(cents).toBe(1800 + 1000 + 999 + 1000);
+		// Listed in another order, the same units make the same lines.
+		const shuffled = tiktokToChannelOrder(
+			order({ line_items: [...items].reverse() }),
+		);
+		expect(shuffled.lines).toEqual(o.lines);
+	});
+
 	test("a TikTok-funded discount counts as revenue, ours doesn't", () => {
 		const o = tiktokToChannelOrder(
 			tiktokOrder.assert({

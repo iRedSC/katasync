@@ -47,8 +47,10 @@ export const Route = createFileRoute("/api/cron/costs/$channel")({
 				const result = await costPassAlone(getDb(), channel, {
 					keepGoingForMs: 3 * 60_000,
 				});
-				// A few calls, so it runs even when the cost pass was skipped. A
-				// failure is kept on payout_checks for the Reports tab.
+				// A few calls, so it runs even when the cost pass was skipped. It
+				// has a lock of its own, and skips (busy) while another refresh of
+				// this channel's payouts runs. A failure is kept on payout_checks
+				// for the Reports tab.
 				const deposits = await refreshPayouts(getDb(), channel);
 				if (!result)
 					return Response.json({

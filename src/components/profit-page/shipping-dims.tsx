@@ -31,6 +31,8 @@ export function ShippingDims({
 	const [saved, setSaved] = useState({ weightGrams, box });
 	const [editing, setEditing] = useState(false);
 	const [flash, setFlash] = useState(false);
+	// One save at a time; the form stays as typed until the server says.
+	const [saving, setSaving] = useState(false);
 	const form = useRef<HTMLFormElement>(null);
 
 	if (!editing) {
@@ -63,6 +65,7 @@ export function ShippingDims({
 	};
 
 	async function save(data: FormData) {
+		if (saving) return;
 		const n = (name: string) => Number(data.get(name) || 0);
 		const weightOz = n("lb") * 16 + n("oz");
 		const sides = [n("l"), n("w"), n("h")];
@@ -76,6 +79,7 @@ export function ShippingDims({
 				bad.includes(el.name) || (el.name === "oz" && bad.includes("lb")),
 			);
 		if (bad.length > 0) return shake();
+		setSaving(true);
 		try {
 			const next = await setProductShipping({
 				data: { productId, weightOz, box: sides as Box },
@@ -89,6 +93,8 @@ export function ShippingDims({
 			toast.error(`Couldn't save ${sku ?? "it"}`, {
 				description: e instanceof Error ? e.message : String(e),
 			});
+		} finally {
+			setSaving(false);
 		}
 	}
 
@@ -99,6 +105,7 @@ export function ShippingDims({
 			placeholder={label}
 			inputMode="decimal"
 			defaultValue={value ? String(Math.round(value * 10) / 10) : ""}
+			disabled={saving}
 			className={cn(input, "aria-invalid:border-critical-border")}
 		/>
 	);
@@ -113,7 +120,7 @@ export function ShippingDims({
 				save(new FormData(e.currentTarget));
 			}}
 			onKeyDown={(e) => {
-				if (e.key === "Escape") setEditing(false);
+				if (e.key === "Escape" && !saving) setEditing(false);
 			}}
 			className="mt-1 flex flex-wrap items-center gap-1 text-xs text-foreground"
 		>
@@ -123,9 +130,10 @@ export function ShippingDims({
 			{field("l", "L in", l)}×{field("w", "W in", w)}×{field("h", "H in", h)}
 			<button
 				type="submit"
-				className="ml-1 h-7 rounded-md bg-primary px-2.5 font-medium text-primary-foreground"
+				disabled={saving}
+				className="ml-1 h-7 rounded-md bg-primary px-2.5 font-medium text-primary-foreground disabled:opacity-60"
 			>
-				Save
+				{saving ? "Saving…" : "Save"}
 			</button>
 		</form>
 	);

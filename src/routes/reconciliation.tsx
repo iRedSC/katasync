@@ -34,7 +34,7 @@ export const Route = createFileRoute("/reconciliation")({
 });
 
 function Reconciliation() {
-	const { accounts, account, rows, truncated, payouts, imports } =
+	const { accounts, account, rows, truncated, payouts, payoutsCut, imports } =
 		Route.useLoaderData();
 	const [importing, setImporting] = useState(false);
 	const [openId, setOpenId] = useState<number | null>(null);
@@ -97,7 +97,13 @@ function Reconciliation() {
 					onOpen={(r) => setOpenId(r.id)}
 				/>
 			)}
-			{account && <PayoutsCard payouts={payouts} currency={account.currency} />}
+			{account && (
+				<PayoutsCard
+					payouts={payouts}
+					currency={account.currency}
+					cut={payoutsCut}
+				/>
+			)}
 			<ImportsCard imports={imports} />
 			{account && (
 				<>

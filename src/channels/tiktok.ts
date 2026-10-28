@@ -21,6 +21,12 @@ import {
 	stockLocations,
 } from "./stores";
 import { tiktokOrder, tiktokToChannelOrder } from "./tiktok/channel-order";
+import { lockRelayedOrder } from "./tiktok/relay";
+import {
+	MISSING_HOLD_DAYS,
+	missingToAsk,
+	settleMissing,
+} from "./tiktok-missing";
 
 export {
 	tiktokOrder,
@@ -295,7 +301,6 @@ export const detailPage = type({ "orders?": tiktokOrder.array() });
 
 const DAY = 24 * 60 * 60 * 1000;
 const FIRST_SYNC_DAYS = 60;
-const MISSING_HOLD_DAYS = 3;
 
 export async function syncTiktok(
 	db: Db,
@@ -330,6 +335,7 @@ export async function syncTiktok(
 	const ids = new Set([
 		...(await openRelayed(db, store.id)),
 		...(await openWithoutBuyer(db, store.id)),
+		...(await missingToAsk(db, store.id)),
 	]);
 	let pageToken: string | undefined;
 	do {
@@ -355,41 +361,35 @@ export async function syncTiktok(
 
 	let count = 0;
 	const all = [...ids];
-	// Asked for, but not in TikTok's answer.
-	const missing: string[] = [];
+	const answered = new Set<string>();
 	// TikTok returns at most 50 orders per detail call.
 	for (let i = 0; i < all.length; i += 50) {
-		const asked = all.slice(i, i + 50);
 		const details = detailPage.assert(
 			await tiktokApi("/order/202309/orders", {
 				shop_cipher: cipher,
-				ids: asked.join(","),
+				ids: all.slice(i, i + 50).join(","),
 			}),
 		);
-		const answered = new Set<string>();
 		for (const raw of details.orders ?? []) {
 			answered.add(raw.id);
 			const result = await ingestDetail(db, store, raw, stock);
 			problems.push(...result.problems);
 			if (result.ingested) count++;
 		}
-		missing.push(...asked.filter((id) => !answered.has(id)));
 	}
-	// Orders changed during this pass are picked up next time. With an order
-	// asked for but missing from the answer, the cursor stops MISSING_HOLD_DAYS
-	// short, so the next passes ask again; one TikTok never returns is given
-	// up on after that, rather than pinning the cursor and growing every pass.
+	// Orders asked for but missing from the answer are asked for again by ID
+	// (src/channels/tiktok-missing.ts), so the cursor needn't wait for them.
+	const { missing, gaveUp } = await settleMissing(db, store.id, all, answered);
 	if (missing.length > 0)
 		problems.push(
-			`TikTok didn't return ${missing.join(", ")}; syncs over the next ${MISSING_HOLD_DAYS} days ask again`,
+			`TikTok didn't return ${missing.join(", ")}; later syncs ask again`,
 		);
-	await advanceOrderCursor(
-		db,
-		store.id,
-		missing.length > 0
-			? new Date(startedAt.getTime() - MISSING_HOLD_DAYS * DAY)
-			: startedAt,
-	);
+	if (gaveUp.length > 0)
+		problems.push(
+			`TikTok hasn't returned ${gaveUp.join(", ")} in ${MISSING_HOLD_DAYS} days; no longer asking`,
+		);
+	// Orders changed during this pass are picked up next time.
+	await advanceOrderCursor(db, store.id, startedAt);
 	if (refreshWarning) problems.push(refreshWarning);
 	return {
 		store: store.name,
@@ -476,6 +476,10 @@ export async function takeOver(
 	order: ChannelOrder,
 ): Promise<{ moved: boolean; problems: string[] }> {
 	return db.transaction(async (tx) => {
+		// Waits out a Shopify pass saving this order, which then finds TikTok
+		// syncing and leaves it (tiktok/relay.ts).
+		if (order.marketplaceOrderId)
+			await lockRelayedOrder(tx, order.marketplaceOrderId);
 		const [existing] = await tx
 			.select({ id: orders.id, name: orders.name })
 			.from(orders)

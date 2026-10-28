@@ -1,7 +1,13 @@
 import { type } from "arktype";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
+import { stockCommitmentEntries, stockCommitments } from "#/db/quantity-schema";
 import * as schema from "#/db/schema";
+import {
+	activate,
+	channelOrder,
+	quantityWorld,
+} from "#/inventory/commitments.fixtures";
 import { postMovements } from "#/inventory/ledger";
 import { setRecipe } from "#/inventory/recipes";
 import { createProduct, createTestDb } from "#/test/db";
@@ -17,7 +23,7 @@ beforeEach(async () => {
 	db = await createTestDb();
 	[{ id: warehouse }] = await db
 		.insert(schema.locations)
-		.values({ name: "Warehouse", kind: "owned" })
+		.values({ name: "Main", kind: "owned" })
 		.returning();
 });
 
@@ -148,4 +154,52 @@ test("pushes a set whose parts changed, though no stock moved", async () => {
 	expect(shop.writes.map((w) => [w.externalId, w.quantity])).toEqual([
 		["s-set", 3],
 	]);
+});
+
+describe("once committed", () => {
+	let world: Awaited<ReturnType<typeof quantityWorld>>;
+
+	beforeEach(async () => {
+		world = await quantityWorld(db);
+		await activate(db);
+	});
+
+	test("a sale that only reserves reaches the other channels", async () => {
+		// Never stocked, so nothing but the order can have moved it.
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const tiktok = channel({});
+		await store("tiktok", [["t-wrench", wrench, 2]]);
+		const since = new Date();
+		expect(await movedSince(db, since)).toEqual([]);
+
+		await world.ingest(channelOrder());
+		expect(await movedSince(db, since)).toEqual([wrench]);
+		await pushMoved(db, since, {
+			except: "shopify",
+			mode: "write",
+			adapters: { tiktok: tiktok.adapter },
+		});
+		expect(tiktok.writes.map((w) => [w.externalId, w.quantity])).toEqual([
+			["t-wrench", 0],
+		]);
+	});
+
+	test("a released reservation counts as a move", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await world.ingest(channelOrder());
+		const later = new Date(Date.now() + 10 * 60 * 1000);
+		expect(await movedSince(db, later)).toEqual([]);
+
+		// A cancel well after the order, as if it came in ten minutes on.
+		const [commitment] = await db
+			.select({ id: stockCommitments.id })
+			.from(stockCommitments);
+		await db.insert(stockCommitmentEntries).values({
+			commitmentId: commitment.id,
+			kind: "release",
+			quantity: 3,
+			createdAt: later,
+		});
+		expect(await movedSince(db, later)).toEqual([wrench]);
+	});
 });

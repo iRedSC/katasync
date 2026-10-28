@@ -327,10 +327,12 @@ describe("keeping rules", () => {
 describe("read", () => {
 	test("a rule has mail arrive read, and never touches mail already in", async () => {
 		const add = (subject: string) =>
-			ingestMarketMail(db, [message(subject)], async () => ({
-				body: "",
-				attachments: [],
-			}));
+			ingestMarketMail(
+				db,
+				[message(subject)],
+				async () => ({ body: "", attachments: [] }),
+				async () => [],
+			);
 		await add("Your payout is on its way");
 		await createRule(
 			db,
@@ -361,10 +363,12 @@ describe("read", () => {
 describe("done", () => {
 	test("a rule has mail arrive done and read, even when another marks it important", async () => {
 		const add = (subject: string) =>
-			ingestMarketMail(db, [message(subject)], async () => ({
-				body: "",
-				attachments: [],
-			}));
+			ingestMarketMail(
+				db,
+				[message(subject)],
+				async () => ({ body: "", attachments: [] }),
+				async () => [],
+			);
 		await createRule(
 			db,
 			{

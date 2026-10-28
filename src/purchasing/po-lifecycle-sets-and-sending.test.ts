@@ -432,7 +432,11 @@ describe("a PO from draft to received", () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
 		const [line] = await linesOf(id);
-		const { receiptId } = await receive(db, { lineId: line.id, quantity: 1 });
+		const { receiptId } = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: line.id,
+			quantity: 1,
+		});
 		const [receipt] = await db
 			.select()
 			.from(schema.purchaseOrderReceipts)

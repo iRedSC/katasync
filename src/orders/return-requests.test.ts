@@ -185,6 +185,36 @@ describe("saveReturns", () => {
 		expect(lines).toMatchObject([{ orderLineId: lineId, quantity: 1 }]);
 	});
 
+	test("an older snapshot doesn't reopen a closed return", async () => {
+		const at = (iso: string) => new Date(iso);
+		const closed = {
+			...amazonReturn("closed"),
+			updatedAt: at("2026-10-20T12:00:00Z"),
+		};
+		await saveReturns(db, store, [closed]);
+		await saveReturns(db, store, [
+			{
+				...amazonReturn("requested"),
+				updatedAt: at("2026-10-19T12:00:00Z"),
+				lines: [{ lineExternalId: "OI-1", sku: "WRENCH", quantity: 2 }],
+			},
+		]);
+		const [request] = await db.select().from(schema.returnRequests);
+		expect(request).toMatchObject({
+			status: "closed",
+			sourceUpdatedAt: closed.updatedAt,
+		});
+		expect(await db.select().from(schema.returnRequestLines)).toMatchObject([
+			{ quantity: 1 },
+		]);
+		// The same version still saves, so a line that wasn't matched yet is.
+		await db.update(schema.returnRequestLines).set({ orderLineId: null });
+		await saveReturns(db, store, [closed]);
+		expect(await db.select().from(schema.returnRequestLines)).toMatchObject([
+			{ orderLineId: lineId },
+		]);
+	});
+
 	test("a refund waits on us without being due back, and never ships", async () => {
 		// The order went out before the store's cutover, so it left our shelf
 		// and a return request would make it due.

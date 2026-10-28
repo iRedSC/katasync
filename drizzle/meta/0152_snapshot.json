@@ -1,5 +1,5 @@
 {
-  "id": "8efe0a9b-b4b1-45a5-9735-db065a292217",
+  "id": "63855b04-a71d-4caf-83b7-3d1397e9c6a4",
   "prevId": "8ca742ea-e4f7-4957-b6e7-f064c5b7205a",
   "version": "7",
   "dialect": "postgresql",
@@ -6119,13 +6119,6 @@
           "notNull": true,
           "default": 0
         },
-        "excluded": {
-          "name": "excluded",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
         "detail": {
           "name": "detail",
           "type": "text",
@@ -11658,6 +11651,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "from_attachment_id": {
+          "name": "from_attachment_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11733,6 +11732,19 @@
             "id"
           ],
           "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "purchase_order_files_from_attachment_id_po_email_attachments_id_fk": {
+          "name": "purchase_order_files_from_attachment_id_po_email_attachments_id_fk",
+          "tableFrom": "purchase_order_files",
+          "tableTo": "po_email_attachments",
+          "columnsFrom": [
+            "from_attachment_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -15729,8 +15741,6 @@
       "schema": "public",
       "values": [
         "orders",
-        "listings",
-        "stock",
         "returns",
         "messages",
         "charges",

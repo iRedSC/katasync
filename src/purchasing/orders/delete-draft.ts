@@ -3,7 +3,9 @@ import type { Db } from "#/db/client";
 import {
 	poFileUploads,
 	purchaseOrderAmendments,
+	purchaseOrderCharges,
 	purchaseOrderDiscounts,
+	purchaseOrderExcludedCatalogs,
 	purchaseOrderFiles,
 	purchaseOrderLines,
 	purchaseOrderSkippedParts,
@@ -24,16 +26,7 @@ export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 	return db.transaction(async (tx) => {
 		const po = await lockOrder(tx, id, ["draft"]);
 		const rows = await tx
-			.select({
-				id: purchaseOrderLines.id,
-				productId: purchaseOrderLines.productId,
-				unit: purchaseOrderLines.unit,
-				packSize: purchaseOrderLines.packSize,
-				supplierCount: purchaseOrderLines.supplierCount,
-				minimumQuantity: purchaseOrderLines.minimumQuantity,
-				quantity: purchaseOrderLines.quantity,
-				unitCost: purchaseOrderLines.unitCost,
-			})
+			.select()
 			.from(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, id))
 			.orderBy(purchaseOrderLines.id);
@@ -41,12 +34,38 @@ export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 			tx,
 			rows.map((l) => l.id),
 		);
-		const lines = rows.map(({ id: lineId, ...l }) => ({
-			...l,
-			discounts: discounts
-				.filter((d) => d.lineId === lineId)
-				.map(({ units, off }) => ({ units, off })),
-		}));
+		// What only a sent line has stays behind.
+		const lines = rows.map(
+			({
+				id: lineId,
+				purchaseOrderId: _po,
+				sentQuantity: _sentQuantity,
+				sentUnitCost: _sentUnitCost,
+				receivingNote: _receivingNote,
+				backOrderedAt: _backOrderedAt,
+				...l
+			}) => ({
+				...l,
+				discounts: discounts
+					.filter((d) => d.lineId === lineId)
+					.map(({ units, off }) => ({ units, off })),
+			}),
+		);
+		const charges = await tx
+			.select({
+				kind: purchaseOrderCharges.kind,
+				amount: purchaseOrderCharges.amount,
+				createdAt: purchaseOrderCharges.createdAt,
+			})
+			.from(purchaseOrderCharges)
+			.where(eq(purchaseOrderCharges.purchaseOrderId, id))
+			.orderBy(purchaseOrderCharges.id);
+		const excludedCatalogIds = (
+			await tx
+				.select({ catalogId: purchaseOrderExcludedCatalogs.catalogId })
+				.from(purchaseOrderExcludedCatalogs)
+				.where(eq(purchaseOrderExcludedCatalogs.purchaseOrderId, id))
+		).map((e) => e.catalogId);
 		const skippedParts = await tx
 			.select({
 				setProductId: purchaseOrderSkippedParts.setProductId,
@@ -62,15 +81,15 @@ export async function deleteDraft(db: Db, id: number): Promise<DeletedDraft> {
 			.delete(purchaseOrderLines)
 			.where(eq(purchaseOrderLines.purchaseOrderId, id));
 		await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
-		return {
-			id,
-			supplierId: po.supplierId,
-			locationId: po.locationId,
-			notes: po.notes,
-			createdAt: po.createdAt,
-			lines,
-			skippedParts,
-		};
+		const {
+			status: _status,
+			sentAt: _sentAt,
+			sentTo: _sentTo,
+			expectedAt: _expectedAt,
+			closedAt: _closedAt,
+			...columns
+		} = po;
+		return { ...columns, lines, charges, excludedCatalogIds, skippedParts };
 	});
 }
 
@@ -103,6 +122,8 @@ async function dropFiles(tx: Db, id: number) {
 export async function restoreDraft(db: Db, draft: DeletedDraft) {
 	// Refused before anything is touched, the same as a new line's price.
 	for (const l of draft.lines) checkPrice(l.unitCost);
+	const { lines, charges, excludedCatalogIds, skippedParts, ...columns } =
+		draft;
 	return db.transaction(async (tx) => {
 		const [other] = await currentDraft(tx, draft.supplierId);
 		if (other?.status === "draft")
@@ -123,20 +144,21 @@ export async function restoreDraft(db: Db, draft: DeletedDraft) {
 			.insert(purchaseOrders)
 			.overridingSystemValue()
 			.values({
-				id: draft.id,
-				supplierId: draft.supplierId,
-				locationId: draft.locationId,
-				notes: draft.notes,
-				createdAt: new Date(draft.createdAt),
+				...columns,
+				createdAt: new Date(columns.createdAt),
 			})
 			.onConflictDoNothing()
 			.returning({ id: purchaseOrders.id });
 		if (!po)
 			throw new PurchaseOrderError(`${poName(draft.id)} is already back`);
-		for (const { discounts, ...l } of draft.lines) {
+		for (const { discounts, ...l } of lines) {
 			const [line] = await tx
 				.insert(purchaseOrderLines)
-				.values({ ...l, purchaseOrderId: po.id })
+				.values({
+					...l,
+					purchaseOrderId: po.id,
+					addedAt: new Date(l.addedAt),
+				})
 				.returning({ id: purchaseOrderLines.id });
 			await pinPrice(tx, line.id, l.unitCost);
 			if (discounts.length > 0)
@@ -147,11 +169,24 @@ export async function restoreDraft(db: Db, draft: DeletedDraft) {
 					);
 			await checkDiscounts(tx, line.id);
 		}
-		if (draft.skippedParts.length > 0)
+		if (charges.length > 0)
+			await tx.insert(purchaseOrderCharges).values(
+				charges.map((c) => ({
+					...c,
+					purchaseOrderId: po.id,
+					createdAt: new Date(c.createdAt),
+				})),
+			);
+		if (excludedCatalogIds.length > 0)
+			await tx.insert(purchaseOrderExcludedCatalogs).values(
+				excludedCatalogIds.map((catalogId) => ({
+					purchaseOrderId: po.id,
+					catalogId,
+				})),
+			);
+		if (skippedParts.length > 0)
 			await tx
 				.insert(purchaseOrderSkippedParts)
-				.values(
-					draft.skippedParts.map((s) => ({ ...s, purchaseOrderId: po.id })),
-				);
+				.values(skippedParts.map((s) => ({ ...s, purchaseOrderId: po.id })));
 	});
 }
