@@ -3,6 +3,7 @@ import { Loader2, Plus, RotateCw, Search } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
+import { matchDrafts, useMatchDraft } from "#/components/match-drafts";
 import { Badge } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import { Button } from "#/components/ui/button";
@@ -118,8 +119,6 @@ function ProductRow({
 
 const CREATE = "__create";
 
-// What was typed into a new product that didn't save, to come back to.
-type Draft = { key: string; sku: string; name: string };
 const itemKey = (item: UnmatchedItem) => item.listingIds.join();
 
 const rowClass =
@@ -141,11 +140,11 @@ export function MatchPicker({
 }) {
 	const index = useProductIndex();
 	const [query, setQuery] = useState("");
-	const [creating, setCreating] = useState(false);
 	const key = itemKey(item);
+	const draft = useMatchDraft(key);
+	const [creating, setCreating] = useState(draft !== null);
 	// The item being sent, so the next item isn't held up while it is.
 	const [sending, setSending] = useState<string | null>(null);
-	const [draft, setDraft] = useState<Draft | null>(null);
 	const sendingThis = sending === key;
 	const q = query.trim();
 	const results =
@@ -159,16 +158,15 @@ export function MatchPicker({
 	const input = useRef<HTMLInputElement>(null);
 
 	// A different item starts fresh, ready to type.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reset per item
 	useEffect(() => {
 		setQuery("");
-		setCreating(false);
+		setCreating(matchDrafts.get(key) !== null);
 		input.current?.focus();
 	}, [key]);
 	// An item back after failing to save returns to its filled-in form.
 	useEffect(() => {
-		if (draft?.key === key) setCreating(true);
-	}, [draft, key]);
+		if (draft) setCreating(true);
+	}, [draft]);
 	// New rows highlight their first.
 	useEffect(() => setHighlight(first), [first]);
 
@@ -178,7 +176,7 @@ export function MatchPicker({
 		const ok = await onResolve(r);
 		setSending((s) => (s === key ? null : s));
 		if (r.kind !== "create") return;
-		setDraft(ok ? null : { key, sku: r.sku, name: r.name });
+		matchDrafts.set(key, ok ? null : { sku: r.sku, name: r.name });
 	}
 
 	return (
@@ -186,11 +184,12 @@ export function MatchPicker({
 			<ItemHeader item={item} />
 			{creating ? (
 				<CreateForm
+					key={key}
 					item={item}
-					initial={draft?.key === key ? draft : null}
+					initial={draft}
 					sending={sendingThis}
 					onCancel={() => {
-						setDraft(null);
+						matchDrafts.set(key, null);
 						setCreating(false);
 					}}
 					onCreate={(sku, name) => resolve({ kind: "create", sku, name })}
@@ -367,6 +366,11 @@ export function MatchDialog({
 	}, [orderId, onClose]);
 
 	const item = items?.[at];
+	// The item showing now. A fresh load per order makes fresh items, so one
+	// sent before staff skipped on, or closed this order and opened another,
+	// finds it gone when it's answered.
+	const showing = useRef(item);
+	showing.current = item;
 	useEffect(() => {
 		if (items && items.length === 0) {
 			toast("Nothing left to match on this order");
@@ -377,10 +381,10 @@ export function MatchDialog({
 	const next = () =>
 		items && at + 1 < items.length ? setAt(at + 1) : onClose();
 	// Moves on only once it went through, so a failure keeps the item and
-	// whatever was typed.
+	// whatever was typed, and only if staff are still on it.
 	async function resolve(item: UnmatchedItem, r: Resolution) {
 		const ok = await resolveItem(item, r);
-		if (ok) next();
+		if (ok && showing.current === item) next();
 		return ok;
 	}
 
