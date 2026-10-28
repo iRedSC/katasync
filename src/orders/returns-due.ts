@@ -29,6 +29,7 @@ import {
 import { onBench } from "#/repairs/bench-holds";
 import { returnPage } from "./admin-urls";
 import { openMarketplaceCaseRows } from "./marketplace-cases";
+import type { EvidenceChips } from "./return-evidence";
 import { committedStock, returnQuantity } from "./return-stock";
 import { type PackageAt, trackingFor } from "./return-tracking";
 import { isLabeled, returnBlocker } from "./status";
@@ -53,7 +54,7 @@ export type ReturnOrder = {
 	state: ReturnState | null;
 	// Why its return can't be received here, if it can't.
 	blocker: string | null;
-	requests: {
+	requests: ({
 		waitingOn: (typeof returnRequests.$inferSelect)["waitingOn"];
 		respondBy: Date | null;
 		amount: string | null;
@@ -66,7 +67,7 @@ export type ReturnOrder = {
 		requestedAt: Date;
 		// Where its package is, as Shippo last said; null until asked.
 		tracking: PackageAt | null;
-	}[];
+	} & EvidenceChips)[];
 	// Items an open request names that no line matched, so which line
 	// they are is decided when the box is opened.
 	unmatched: { sku: string | null; quantity: number }[];
@@ -230,6 +231,10 @@ async function returnOrders(
 				trackingNumber: returnRequests.trackingNumber,
 				carrier: returnRequests.carrier,
 				requestedAt: returnRequests.requestedAt,
+				aToZClaim: returnRequests.aToZClaim,
+				safetClaim: returnRequests.safetClaim,
+				inPolicy: returnRequests.inPolicy,
+				deliveredAt: returnRequests.deliveredAt,
 				saved: {
 					number: returnTracking.number,
 					status: returnTracking.status,
@@ -335,6 +340,10 @@ export async function openCaseRows(db: Db) {
 			reason: returnRequests.reason,
 			note: returnRequests.note,
 			requestedAt: returnRequests.requestedAt,
+			aToZClaim: returnRequests.aToZClaim,
+			safetClaim: returnRequests.safetClaim,
+			inPolicy: returnRequests.inPolicy,
+			deliveredAt: returnRequests.deliveredAt,
 		})
 		.from(openCases)
 		.innerJoin(

@@ -314,6 +314,10 @@ export const getOrder = createServerFn({ method: "GET" })
 					carrier: returnRequests.carrier,
 					requestedAt: returnRequests.requestedAt,
 					unfollowedAt: returnRequests.unfollowedAt,
+					aToZClaim: returnRequests.aToZClaim,
+					safetClaim: returnRequests.safetClaim,
+					inPolicy: returnRequests.inPolicy,
+					deliveredAt: returnRequests.deliveredAt,
 					saved: {
 						carrier: returnTracking.carrier,
 						number: returnTracking.number,
@@ -342,6 +346,7 @@ export const getOrder = createServerFn({ method: "GET" })
 					orderLineId: returnRequestLines.orderLineId,
 					sku: returnRequestLines.sku,
 					quantity: returnRequestLines.quantity,
+					reason: returnRequestLines.reason,
 				})
 				.from(returnRequestLines)
 				.innerJoin(
