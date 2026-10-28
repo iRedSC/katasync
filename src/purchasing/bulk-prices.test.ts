@@ -154,7 +154,11 @@ describe("bulk prices", () => {
 		});
 		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
 		const [line] = await linesOf(id);
-		await receive(db, { lineId: line.id, quantity: 12 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: line.id,
+			quantity: 12,
+		});
 		expect(await breaks()).toEqual([
 			{ minQuantity: 10, cost: 7.5 },
 			{ minQuantity: 25, cost: 7 },
@@ -229,7 +233,11 @@ describe("bulk prices", () => {
 			minimumQuantity: 1,
 		});
 		const [line] = await linesOf(id);
-		await receive(db, { lineId: line.id, quantity: 12 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: line.id,
+			quantity: 12,
+		});
 		// 12 each reached from 2 cases; $8 each is $40 a case. The price stays.
 		expect(await breaks()).toEqual([
 			{ minQuantity: 2, cost: 40 },

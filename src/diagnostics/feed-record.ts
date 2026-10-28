@@ -21,12 +21,13 @@ export function recordOf(row: Row): FeedRecord {
 	const common = { attemptedAt: row.attemptedAt, readThrough: row.readThrough };
 	switch (row.state) {
 		case "ok":
-			return { ...common, state: "ok" };
+			return { ...common, state: "ok", excluded: row.excluded };
 		case "partial":
 			return {
 				...common,
 				state: "partial",
 				problems: row.problems,
+				excluded: row.excluded,
 				detail: row.detail ?? "",
 			};
 		case "catching_up":
@@ -35,6 +36,7 @@ export function recordOf(row: Row): FeedRecord {
 				attemptedAt: row.attemptedAt,
 				readThrough: row.readThrough ?? row.attemptedAt,
 				problems: row.problems,
+				excluded: row.excluded,
 				detail: row.detail,
 			};
 		case "failed":
@@ -56,18 +58,20 @@ function rowOf(r: FeedRecord) {
 		attemptedAt: r.attemptedAt,
 		readThrough: r.readThrough,
 		problems: 0,
+		excluded: 0,
 		detail: null as string | null,
 		failingSince: null as Date | null,
 	};
 	switch (r.state) {
 		case "ok":
-			return { ...base, succeededAt: r.attemptedAt };
+			return { ...base, succeededAt: r.attemptedAt, excluded: r.excluded };
 		case "partial":
 		case "catching_up":
 			return {
 				...base,
 				succeededAt: r.attemptedAt,
 				problems: r.problems,
+				excluded: r.excluded,
 				detail: r.detail,
 			};
 		case "failed":
@@ -117,6 +121,19 @@ export async function recordFeed(
 	});
 }
 
+// Counts an attempt; one that can't be written is logged, never thrown.
+export function recordQuietly(
+	db: Db,
+	channel: SyncedChannel,
+	feed: Feed,
+	startedAt: Date,
+	outcome: FeedOutcome,
+) {
+	return recordFeed(db, channel, feed, startedAt, outcome).catch((e: unknown) =>
+		console.error(`Couldn't record ${channel} ${feed} health:`, e),
+	);
+}
+
 // Runs one attempt at a feed and counts it: what it found, by outcomeOf, or
 // that it threw, which is thrown again so the caller still sees it. A record
 // that can't be written is logged, never thrown over the attempt's result.
@@ -129,9 +146,7 @@ export async function readingFeed<T>(
 ): Promise<T> {
 	const startedAt = new Date();
 	const record = (outcome: FeedOutcome) =>
-		recordFeed(db, channel, feed, startedAt, outcome).catch((e: unknown) =>
-			console.error(`Couldn't record ${channel} ${feed} health:`, e),
-		);
+		recordQuietly(db, channel, feed, startedAt, outcome);
 	let result: T;
 	try {
 		result = await work();

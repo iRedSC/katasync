@@ -9,6 +9,7 @@ import {
 import type { FlagInput } from "#/purchasing/inbox/ai-filing-shapes";
 import {
 	amendLine,
+	lockOrder,
 	PurchaseOrderError,
 	setBackOrdered,
 } from "#/purchasing/orders";
@@ -22,6 +23,9 @@ type By = "ai" | "claude" | "staff";
 
 // POs a supplier can still write about. Cancelled ones take nothing.
 const FLAGGABLE = ["sent", "closed"] as const;
+
+// A flag's value column (numeric(12, 4)) holds less than this.
+const MAX_VALUE = 1e8;
 
 // The line of a PO with that SKU, or why there's none.
 export async function lineFor(db: Db, purchaseOrderId: number, sku: string) {
@@ -45,7 +49,9 @@ export async function lineFor(db: Db, purchaseOrderId: number, sku: string) {
 }
 
 // Raises a flag, or for a product that has an open one of its kind, replaces
-// it with this one.
+// it with this one. The PO is locked (shared) before the flag, the order
+// lockedFlag takes them in, so raising one while it's resolved can't
+// deadlock, and the PO can't be cancelled before this commits.
 export async function raiseFlag(
 	db: Db,
 	input: {
@@ -59,7 +65,8 @@ export async function raiseFlag(
 	const [po] = await db
 		.select({ status: purchaseOrders.status })
 		.from(purchaseOrders)
-		.where(eq(purchaseOrders.id, purchaseOrderId));
+		.where(eq(purchaseOrders.id, purchaseOrderId))
+		.for("share");
 	if (!po) throw new PurchaseOrderError(`There's no PO ${purchaseOrderId}`);
 	if (!(FLAGGABLE as readonly string[]).includes(po.status))
 		throw new PurchaseOrderError(
@@ -76,6 +83,8 @@ export async function raiseFlag(
 		throw new PurchaseOrderError(`A quantity can't be ${value}`);
 	if (flag.kind === "price" && !(value !== null && value >= 0))
 		throw new PurchaseOrderError(`A price can't be ${value}`);
+	if (value !== null && value >= MAX_VALUE)
+		throw new PurchaseOrderError(`A ${flag.kind} can't be ${value}`);
 	const line = flag.sku ? await lineFor(db, purchaseOrderId, flag.sku) : null;
 	const values = {
 		purchaseOrderId,
@@ -163,7 +172,19 @@ export async function flagsOfEmails(db: Db, emailIds: number[]) {
 		.orderBy(desc(poFlags.id));
 }
 
+// Locks the flag's PO before the flag, as raiseFlag does, so resolving a flag
+// while an email raises it again can't deadlock. A flag never changes PO.
 async function lockedFlag(tx: Db, id: number) {
+	const [of] = await tx
+		.select({ purchaseOrderId: poFlags.purchaseOrderId })
+		.from(poFlags)
+		.where(eq(poFlags.id, id));
+	if (!of) throw new PurchaseOrderError(`There's no flag ${id}`);
+	await tx
+		.select({ id: purchaseOrders.id })
+		.from(purchaseOrders)
+		.where(eq(purchaseOrders.id, of.purchaseOrderId))
+		.for("update");
 	const [flag] = await tx
 		.select()
 		.from(poFlags)
@@ -242,6 +263,9 @@ export async function reopenFlag(db: Db, id: number) {
 		const flag = await lockedFlag(tx, id);
 		if (!flag.resolution) return flag;
 		if (flag.resolution === "applied" && flag.kind !== "note") {
+			// Locked before the line is read, so an edit can't land between
+			// the check below and setting it back.
+			await lockOrder(tx, flag.purchaseOrderId, [...FLAGGABLE]);
 			const line = await lineOfFlag(tx, flag);
 			const [now] = await tx
 				.select()

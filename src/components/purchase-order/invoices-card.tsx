@@ -12,7 +12,6 @@ import {
 	restoreSupplierInvoice,
 	voidSupplierInvoice,
 } from "#/server/purchasing/invoices";
-import { middayOf } from "./days";
 import { InvoiceForm } from "./invoice-form";
 import { poData } from "./po-data";
 
@@ -151,8 +150,8 @@ function InvoiceRow({
 					{inv.number}
 				</span>
 				<span className="text-muted-foreground">
-					{formatDay(middayOf(inv.invoicedOn))}
-					{inv.dueOn && <>, due {formatDay(middayOf(inv.dueOn))}</>}
+					{formatDay(inv.invoicedOn)}
+					{inv.dueOn && <>, due {formatDay(inv.dueOn)}</>}
 				</span>
 				<MatchChip match={inv.match} />
 				<span

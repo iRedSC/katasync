@@ -150,9 +150,9 @@ test("database conservation rejects overpayment even outside the domain API", as
 
 describe("receipt-matched invoices", () => {
 	test("two partial bills each match what had been received", async () => {
-		await receive(db, { lineId, quantity: 2 });
+		await receive(db, { key: crypto.randomUUID(), lineId, quantity: 2 });
 		expect((await bill("INV-1", 2)).match.kind).toBe("matched");
-		await receive(db, { lineId, quantity: 2 });
+		await receive(db, { key: crypto.randomUUID(), lineId, quantity: 2 });
 		expect((await bill("INV-2", 2)).match.kind).toBe("matched");
 		const lines = await db.select().from(supplierInvoiceLines);
 		expect(lines).toHaveLength(2);
@@ -167,8 +167,12 @@ describe("receipt-matched invoices", () => {
 	});
 
 	test("undoing a receipt turns the bill that relied on it into an exception", async () => {
-		await receive(db, { lineId, quantity: 2 });
-		const { receiptId } = await receive(db, { lineId, quantity: 2 });
+		await receive(db, { key: crypto.randomUUID(), lineId, quantity: 2 });
+		const { receiptId } = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId,
+			quantity: 2,
+		});
 		await bill("INV-1", 2);
 		await bill("INV-2", 2);
 		await undoReceipt(db, receiptId);
@@ -182,14 +186,14 @@ describe("receipt-matched invoices", () => {
 	});
 
 	test("billing more than arrived is kept as an exception, never matched", async () => {
-		await receive(db, { lineId, quantity: 1 });
+		await receive(db, { key: crypto.randomUUID(), lineId, quantity: 1 });
 		const saved = await bill("INV-1", 2);
 		expect(saved.match.kind).toBe("exception");
 		expect(await db.select().from(schema.supplierInvoices)).toHaveLength(1);
 	});
 
 	test("bills racing for the same units can't both match", async () => {
-		await receive(db, { lineId, quantity: 2 });
+		await receive(db, { key: crypto.randomUUID(), lineId, quantity: 2 });
 		await Promise.all([bill("INV-1", 2), bill("INV-2", 2)]);
 		const kinds = (await invoicesOf(db, poId)).map((i) => i.match.kind).sort();
 		expect(kinds).toEqual(["exception", "matched"]);
@@ -215,7 +219,7 @@ describe("receipt-matched invoices", () => {
 
 describe("void and restore", () => {
 	test("a number stays taken while void and comes back on the same invoice", async () => {
-		await receive(db, { lineId, quantity: 2 });
+		await receive(db, { key: crypto.randomUUID(), lineId, quantity: 2 });
 		const first = await bill("INV-1", 2);
 		await expect(bill(" inv-1 ", 2)).rejects.toThrow(/already recorded/);
 		await voidInvoice(db, { id: first.id }, testActor);
@@ -234,7 +238,7 @@ describe("void and restore", () => {
 
 describe("payment records", () => {
 	test("partial payments, unapplying, reversal, and credit conserve cents", async () => {
-		await receive(db, { lineId, quantity: 2 });
+		await receive(db, { key: crypto.randomUUID(), lineId, quantity: 2 });
 		const inv = await bill("INV-1", 2);
 		const first = {
 			id: uuid(1),

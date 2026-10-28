@@ -72,6 +72,7 @@ export const stockCommitments = pgTable(
 			sql`(${t.source} = 'activation') = (${t.legacySaleBatchId} is not null)`,
 		),
 		index("stock_commitments_order_idx").on(t.orderId),
+		index("stock_commitments_created_at_idx").on(t.createdAt),
 	],
 );
 
@@ -130,6 +131,7 @@ export const stockCommitmentEntries = pgTable(
 		),
 		index("stock_commitment_entries_commitment_idx").on(t.commitmentId),
 		index("stock_commitment_entries_key_idx").on(t.fulfillmentKey),
+		index("stock_commitment_entries_created_at_idx").on(t.createdAt),
 	],
 );
 

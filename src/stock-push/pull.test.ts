@@ -2,11 +2,13 @@ import { eq } from "drizzle-orm";
 import { beforeEach, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { activate } from "#/inventory/commitments.fixtures";
 import { postMovements } from "#/inventory/ledger";
 import { createProduct, createTestDb } from "#/test/db";
 import type { Found } from "./channel";
 import {
 	applyStockPull,
+	COMMITTED_REFUSAL,
 	markLedgers,
 	planStockPull,
 	type StoreRead,
@@ -231,4 +233,17 @@ test("the primary store is trusted first, so its zero beats another store's numb
 	expect(plan.pulls).toMatchObject([
 		{ sku: "A", quantity: 0, store: "TikTok" },
 	]);
+});
+
+test("refuses once quantities are committed, when channels show what's available", async () => {
+	const a = await createProduct(db, "A", "simple");
+	await list(shop, "s1", a);
+	const plan = await planStockPull(db, reads({ s1: ready(4) }));
+	await activate(db);
+	expect(await applyStockPull(db, plan)).toEqual({ state: "committed" });
+	expect(await onHand(a)).toBe(0);
+	await expect(markLedgers(db)).rejects.toThrow(COMMITTED_REFUSAL);
+	await expect(planStockPull(db, reads({ s1: ready(4) }))).rejects.toThrow(
+		COMMITTED_REFUSAL,
+	);
 });

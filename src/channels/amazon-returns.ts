@@ -7,6 +7,11 @@ import {
 	requestReport,
 	waitForReport,
 } from "./amazon-reports";
+import {
+	evidenceColumns,
+	requestEvidence,
+	rowEvidence,
+} from "./amazon-return-evidence";
 import { amazonReturnStage } from "./marketplace-case-stage";
 
 // Returns buyers opened on orders we shipped ourselves, with Amazon's reason,
@@ -42,15 +47,17 @@ export function returnStatus(row: {
 	return amazonReturnStage(row).status;
 }
 
-// One row per item returned; a return of several items shares its RMA ID.
-// Rows Amazon left without a usable date or quantity are skipped and named.
+// One row per item returned; a return of several items shares its RMA ID,
+// and each item keeps its own reason and status. Rows Amazon left without a
+// usable date or quantity are skipped and named.
 export function parseReturnsReport(text: string): {
 	returns: ChannelReturn[];
 	problems: string[];
 } {
-	const byRma = new Map<string, ChannelReturn>();
+	const byRma = new Map<string, Row[]>();
 	const problems: string[] = [];
-	for (const row of parseTsv(text, COLUMNS, "returns")) {
+	const rows = parseTsv(text, COLUMNS, "returns");
+	for (const row of rows) {
 		const orderId = row["Order ID"];
 		const requestedAt = new Date(row["Return request date"]);
 		const quantity = Number(row["Return quantity"]);
@@ -66,36 +73,58 @@ export function parseReturnsReport(text: string): {
 		const rmaId =
 			row["Amazon RMA ID"] ||
 			`${orderId}:${row["Order Item ID"]}:${row["Return request date"]}`;
-		const found = byRma.get(rmaId) ?? {
+		byRma.set(rmaId, [...(byRma.get(rmaId) ?? []), { row, quantity }]);
+	}
+	const { cells, missing } = evidenceColumns(Object.keys(rows[0] ?? {}));
+	if (rows.length > 0 && missing.length > 0)
+		problems.push(`Amazon's returns report has no ${missing.join(", ")}`);
+	const returns = [...byRma].map(([rmaId, items]): ChannelReturn => {
+		const [{ row }] = items;
+		const said = { of: `Amazon return ${rmaId}`, list: problems };
+		const { refunded, ...evidence } = requestEvidence(
+			items.map((i) =>
+				rowEvidence(cells(i.row), i.row["Return delivery date"], said),
+			),
+		);
+		const trackingNumber =
+			items.map((i) => i.row["Tracking ID"]).find(Boolean) ?? null;
+		return {
 			externalId: rmaId,
-			orderExternalId: orderId,
+			orderExternalId: row["Order ID"],
 			rawStatus: row["Return request status"],
 			...amazonReturnStage({
 				status: row["Return request status"],
-				delivered: row["Return delivery date"] !== "",
-				tracked: row["Tracking ID"] !== "",
+				delivered: items.some((i) => i.row["Return delivery date"] !== ""),
+				tracked: trackingNumber !== null,
+				aToZClaim: evidence.aToZClaim === true,
 			}),
-			amount: null,
-			currency: null,
+			// Only what Amazon says it refunded, never worked out here; left
+			// out when this report can't say.
+			...(refunded === undefined
+				? {}
+				: (refunded ?? { amount: null, currency: null })),
 			nextAction: null,
 			caseRef: null,
 			reason: row["Return Reason"] || null,
 			// Amazon's report has no buyer comments.
 			note: null,
-			trackingNumber: row["Tracking ID"] || null,
-			carrier: row["Return carrier"] || null,
-			requestedAt,
-			lines: [],
+			trackingNumber,
+			carrier: items.map((i) => i.row["Return carrier"]).find(Boolean) ?? null,
+			requestedAt: new Date(row["Return request date"]),
+			evidence,
+			lines: items.map((i) => ({
+				lineExternalId: i.row["Order Item ID"] || null,
+				sku: i.row["Merchant SKU"] || null,
+				quantity: i.quantity,
+				reason: i.row["Return Reason"] || null,
+				rawStatus: i.row["Return request status"] || null,
+			})),
 		};
-		found.lines.push({
-			lineExternalId: row["Order Item ID"] || null,
-			sku: row["Merchant SKU"] || null,
-			quantity,
-		});
-		byRma.set(rmaId, found);
-	}
-	return { returns: [...byRma.values()], problems };
+	});
+	return { returns, problems: [...new Set(problems)] };
 }
+
+type Row = { row: Record<string, string>; quantity: number };
 
 // One window's returns, by when they were requested. Waits up to waitMs for
 // Amazon to build the report; null if it isn't done by then.

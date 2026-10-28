@@ -23,9 +23,29 @@ import {
 import { orderForClaude } from "#/mcp/server/po-for-claude";
 import { flagsOfEmails, lineFor, raiseFlag } from "#/purchasing/flags";
 import { PurchaseOrderError } from "#/purchasing/orders";
-import { addTracking } from "#/purchasing/tracking";
+import {
+	CONCURRENCY,
+	checkTracking,
+	eachLimit,
+	putTracking,
+} from "#/purchasing/tracking";
+import {
+	ClaimLostError,
+	claim,
+	type Holder,
+	held,
+	lockHeld,
+	settle,
+	takeable,
+} from "./ai-filing-claims";
 import type { Applied, FlagInput, Proposal } from "./ai-filing-shapes";
-import { EmailMovedError, emailWithFiles, fileEmail } from "./ingest";
+import {
+	EmailMovedError,
+	emailWithFiles,
+	fileEmail,
+	moveEmail,
+} from "./ingest";
+import { findTracking } from "./tracking-numbers";
 import { likelihood, mentionedPos, recentPos } from "./views";
 
 // The AI's go at emails that nothing filed by itself (src/purchasing/inbox
@@ -40,10 +60,6 @@ import { likelihood, mentionedPos, recentPos } from "./views";
 // Older emails waiting to be filed are left to staff: by now someone has
 // read them, and the PO has likely moved on.
 const LOOK_BACK_MS = 14 * 86_400_000;
-// A claim this old is from a run that died; take it over.
-const CLAIM_STALE_MS = 5 * 60_000;
-// A failed email is tried again this long after.
-const RETRY_FAILED_MS = 30 * 60_000;
 // How much of an email the agent reads.
 const BODY_CHARS = 12_000;
 const FILE_CHARS = 8_000;
@@ -58,21 +74,6 @@ const EARLIER_BODY_CHARS = 1_500;
 
 type Run = typeof runAgent;
 export type Outcome = "filed" | "suggested" | "unmatched" | "set_aside";
-
-// Which claims a run may take: none yet, a failure old enough to try again,
-// or a dead run's.
-function takeable(now: Date) {
-	return or(
-		and(
-			eq(poEmailAi.state, "failed"),
-			lt(poEmailAi.updatedAt, new Date(now.getTime() - RETRY_FAILED_MS)),
-		),
-		and(
-			eq(poEmailAi.state, "working"),
-			lt(poEmailAi.updatedAt, new Date(now.getTime() - CLAIM_STALE_MS)),
-		),
-	);
-}
 
 async function waiting(db: Db, limit: number, now: Date) {
 	const rows = await db
@@ -90,32 +91,6 @@ async function waiting(db: Db, limit: number, now: Date) {
 		.orderBy(desc(poEmails.receivedAt))
 		.limit(limit);
 	return rows.map((r) => r.id);
-}
-
-// Takes the email for this run; false when another run has it.
-async function claim(db: Db, emailId: number, now: Date) {
-	const [row] = await db
-		.insert(poEmailAi)
-		.values({ emailId, state: "working", updatedAt: now })
-		.onConflictDoUpdate({
-			target: poEmailAi.emailId,
-			set: { state: "working", error: null, updatedAt: now },
-			setWhere: takeable(now),
-		})
-		.returning({ emailId: poEmailAi.emailId });
-	return row !== undefined;
-}
-
-// Ends this run's claim; a claim another run took over is left to it.
-async function settle(
-	db: Db,
-	emailId: number,
-	set: Partial<typeof poEmailAi.$inferInsert>,
-) {
-	await db
-		.update(poEmailAi)
-		.set({ ...set, updatedAt: new Date() })
-		.where(and(eq(poEmailAi.emailId, emailId), eq(poEmailAi.state, "working")));
 }
 
 // Emails before this one it may be a copy of: from the same sender in the
@@ -337,96 +312,143 @@ function filerFor(
 
 // Files the email on the PO, follows its tracking, and raises its flags. A
 // number or flag the PO won't take (a cancelled PO, a line taken off) is
-// kept as skipped, with why. Throws EmailMovedError, doing nothing, when the
-// email was filed or set aside meanwhile.
+// kept as skipped, with why. Filing, tracking, flags, and the AI's record
+// commit together, under the email's lock, so none lands on a PO the email
+// isn't on and a crash leaves nothing half done; only asking Shippo waits
+// until after. Throws EmailMovedError, doing nothing, when the email was
+// filed or set aside meanwhile, and ClaimLostError when another run took it.
 async function apply(
 	db: Db,
 	input: {
 		emailId: number;
 		purchaseOrderId: number;
 		proposal: Proposal;
-		by: "ai" | "staff";
+		holder: Holder;
+		// Why, from the run that was sure; staff keep the suggestion's.
+		reason?: string;
 	},
 ) {
 	const { emailId, purchaseOrderId: po, proposal } = input;
-	await fileEmail(db, {
-		emailId,
-		purchaseOrderId: po,
-		by: input.by,
-		onlyFrom: null,
-	});
-	const applied: Applied = { tracking: [], skipped: [] };
-	const skip = (what: string, error: unknown) =>
-		applied.skipped.push({
-			what,
-			why: error instanceof Error ? error.message : String(error),
-		});
-	for (const t of proposal.tracking) {
-		try {
-			await addTracking(db, { purchaseOrderId: po, ...t, emailId });
-		} catch (error) {
-			skip(t.number, error);
-		}
-	}
-	for (const flag of proposal.flags) {
-		try {
-			await raiseFlag(db, { purchaseOrderId: po, emailId, by: "ai", flag });
-		} catch (error) {
-			skip(flag.note, error);
-		}
-	}
-	applied.tracking = (
-		await db
-			.select({ number: purchaseOrderTracking.number })
-			.from(purchaseOrderTracking)
-			.where(
-				and(
-					eq(purchaseOrderTracking.emailId, emailId),
-					eq(purchaseOrderTracking.purchaseOrderId, po),
-				),
-			)
-	).map((t) => t.number);
-	await db
-		.update(poEmailAi)
-		.set({
-			state: "filed",
+	const { added, applied } = await db.transaction(async (tx) => {
+		await lockHeld(tx, emailId, input.holder);
+		const email = await moveEmail(tx, {
+			emailId,
 			purchaseOrderId: po,
-			proposal,
-			applied,
-			error: null,
-			updatedAt: new Date(),
-		})
-		.where(eq(poEmailAi.emailId, emailId));
+			by: input.holder.by,
+			onlyFrom: null,
+		});
+		const applied: Applied = { tracking: [], skipped: [] };
+		// Only what the PO refuses is skipped: anything else (a deadlock, a
+		// lost connection) fails the filing, so a later run tries it again.
+		const skip = (what: string, error: unknown) => {
+			if (!(error instanceof PurchaseOrderError)) throw error;
+			applied.skipped.push({ what, why: error.message });
+		};
+		// Each in its own savepoint, so one the PO won't take undoes only
+		// itself.
+		const added: Parameters<typeof checkTracking>[1][] = [];
+		const put = async (t: Proposal["tracking"][number]) => {
+			const p = await tx.transaction((sp) =>
+				putTracking(sp, { purchaseOrderId: po, ...t, emailId }),
+			);
+			if (p.added) added.push(p.row);
+		};
+		for (const t of proposal.tracking) {
+			try {
+				await put(t);
+			} catch (error) {
+				skip(t.number, error);
+			}
+		}
+		// What the email says itself, as filing it by hand follows.
+		for (const t of findTracking(`${email.subject}\n${email.body}`)) {
+			try {
+				await put(t);
+			} catch (error) {
+				if (!(error instanceof PurchaseOrderError)) throw error;
+			}
+		}
+		for (const flag of proposal.flags) {
+			try {
+				await tx.transaction((sp) =>
+					raiseFlag(sp, { purchaseOrderId: po, emailId, by: "ai", flag }),
+				);
+			} catch (error) {
+				skip(flag.note, error);
+			}
+		}
+		applied.tracking = (
+			await tx
+				.select({ number: purchaseOrderTracking.number })
+				.from(purchaseOrderTracking)
+				.where(
+					and(
+						eq(purchaseOrderTracking.emailId, emailId),
+						eq(purchaseOrderTracking.purchaseOrderId, po),
+					),
+				)
+		).map((t) => t.number);
+		await tx
+			.update(poEmailAi)
+			.set({
+				state: "filed",
+				purchaseOrderId: po,
+				proposal,
+				applied,
+				error: null,
+				...(input.reason !== undefined && { reason: input.reason }),
+				updatedAt: new Date(),
+			})
+			.where(eq(poEmailAi.emailId, emailId));
+		return { added, applied };
+	});
+	// A package taken off since (staff moved the email) stays off: Shippo's
+	// answer updates only its own row.
+	await eachLimit(added, CONCURRENCY, (row) => checkTracking(db, row));
 	return applied;
 }
 
-// Sets the email aside as a copy of an earlier one. Throws EmailMovedError,
-// doing nothing, when someone filed it meanwhile.
+// Sets the email aside as a copy of an earlier one, and settles the claim,
+// together. Throws EmailMovedError, doing nothing, when someone filed it
+// meanwhile, and ClaimLostError when another run took it.
 async function setAsideCopy(
 	db: Db,
-	input: { emailId: number; duplicateOf: number; reason: string },
+	input: {
+		emailId: number;
+		claim: string;
+		duplicateOf: number;
+		reason: string;
+	},
 ) {
-	const [moved] = await db
-		.update(poEmails)
-		.set({ setAsideAt: new Date() })
-		.where(
-			and(
-				eq(poEmails.id, input.emailId),
-				isNull(poEmails.purchaseOrderId),
-				isNull(poEmails.setAsideAt),
-			),
-		)
-		.returning({ id: poEmails.id });
-	if (!moved)
-		throw new EmailMovedError("Filed or set aside by someone meanwhile");
-	await settle(db, input.emailId, {
-		state: "set_aside",
-		duplicateOf: input.duplicateOf,
-		reason: input.reason,
+	await db.transaction(async (tx) => {
+		await lockHeld(tx, input.emailId, { by: "ai", claim: input.claim });
+		const [moved] = await tx
+			.update(poEmails)
+			.set({ setAsideAt: new Date() })
+			.where(
+				and(
+					eq(poEmails.id, input.emailId),
+					isNull(poEmails.purchaseOrderId),
+					isNull(poEmails.setAsideAt),
+				),
+			)
+			.returning({ id: poEmails.id });
+		if (!moved)
+			throw new EmailMovedError("Filed or set aside by someone meanwhile");
+		await settle(tx, input.emailId, input.claim, {
+			state: "set_aside",
+			duplicateOf: input.duplicateOf,
+			reason: input.reason,
+		});
 	});
 }
 
-async function fileOne(db: Db, emailId: number, run: Run): Promise<Outcome> {
+async function fileOne(
+	db: Db,
+	emailId: number,
+	token: string,
+	run: Run,
+): Promise<Outcome> {
 	const { input, candidates, earlier } = await brief(db, emailId);
 	const flagged: { po: number; flag: FlagInput }[] = [];
 	const answer = await run(filerFor(db, candidates, flagged), input);
@@ -434,12 +456,16 @@ async function fileOne(db: Db, emailId: number, run: Run): Promise<Outcome> {
 		try {
 			await setAsideCopy(db, {
 				emailId,
+				claim: token,
 				duplicateOf: answer.duplicateOf,
 				reason: answer.reason,
 			});
 		} catch (error) {
 			if (!(error instanceof EmailMovedError)) throw error;
-			await settle(db, emailId, { state: "unmatched", reason: error.message });
+			await settle(db, emailId, token, {
+				state: "unmatched",
+				reason: error.message,
+			});
 			return "unmatched";
 		}
 		return "set_aside";
@@ -449,7 +475,7 @@ async function fileOne(db: Db, emailId: number, run: Run): Promise<Outcome> {
 		flags: flagged.filter((f) => f.po === answer.po).map((f) => f.flag),
 	};
 	if (answer.po === null || !candidates.has(answer.po)) {
-		await settle(db, emailId, {
+		await settle(db, emailId, token, {
 			state: "unmatched",
 			reason:
 				answer.po === null
@@ -459,7 +485,7 @@ async function fileOne(db: Db, emailId: number, run: Run): Promise<Outcome> {
 		return "unmatched";
 	}
 	if (!answer.sure) {
-		await settle(db, emailId, {
+		await settle(db, emailId, token, {
 			state: "suggested",
 			purchaseOrderId: answer.po,
 			reason: answer.reason,
@@ -467,20 +493,20 @@ async function fileOne(db: Db, emailId: number, run: Run): Promise<Outcome> {
 		});
 		return "suggested";
 	}
-	await db
-		.update(poEmailAi)
-		.set({ reason: answer.reason })
-		.where(eq(poEmailAi.emailId, emailId));
 	try {
 		await apply(db, {
 			emailId,
 			purchaseOrderId: answer.po,
 			proposal,
-			by: "ai",
+			holder: { by: "ai", claim: token },
+			reason: answer.reason,
 		});
 	} catch (error) {
 		if (!(error instanceof EmailMovedError)) throw error;
-		await settle(db, emailId, { state: "unmatched", reason: error.message });
+		await settle(db, emailId, token, {
+			state: "unmatched",
+			reason: error.message,
+		});
 		return "unmatched";
 	}
 	return "filed";
@@ -488,7 +514,7 @@ async function fileOne(db: Db, emailId: number, run: Run): Promise<Outcome> {
 
 // Files up to limit emails waiting to be filed, newest first, at once. A
 // failure leaves the email for a later run; running out of time leaves it
-// for the next.
+// for the next. A run whose claim another took over leaves it to that one.
 export async function fileWithAi(
 	db: Db,
 	{ limit = 3, run = runAgent }: { limit?: number; run?: Run } = {},
@@ -504,23 +530,26 @@ export async function fileWithAi(
 	};
 	await Promise.all(
 		ids.map(async (id) => {
-			if (!(await claim(db, id, now))) return;
+			const token = await claim(db, id, now);
+			if (!token) return;
 			try {
-				done[await fileOne(db, id, run)]++;
+				done[await fileOne(db, id, token, run)]++;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				done.problems.push(`Email ${id}: ${message}`);
+				if (error instanceof ClaimLostError) return;
+				const mine = and(eq(poEmailAi.emailId, id), held(token));
 				if (error instanceof OutOfTimeError)
-					await db
-						.delete(poEmailAi)
-						.where(
-							and(eq(poEmailAi.emailId, id), eq(poEmailAi.state, "working")),
-						);
+					await db.delete(poEmailAi).where(mine);
 				else
-					await settle(db, id, {
-						state: "failed",
-						error: message.slice(0, 2000),
-					});
+					await db
+						.update(poEmailAi)
+						.set({
+							state: "failed",
+							error: message.slice(0, 2000),
+							updatedAt: new Date(),
+						})
+						.where(mine);
 			}
 		}),
 	);
@@ -543,7 +572,7 @@ export async function takeSuggestion(db: Db, emailId: number) {
 		emailId,
 		purchaseOrderId: row.purchaseOrderId,
 		proposal: row.proposal,
-		by: "staff",
+		holder: { by: "staff" },
 	});
 	return { purchaseOrderId: row.purchaseOrderId, applied };
 }

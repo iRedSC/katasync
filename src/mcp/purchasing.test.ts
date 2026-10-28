@@ -4,7 +4,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { carry } from "#/purchasing/purchasing.fixtures";
 import { createProduct } from "#/test/db";
-import { callTool, freshDb } from "./mcp.fixtures";
+import { callMcp, callTool, freshDb } from "./mcp.fixtures";
 
 let db: Db;
 let blade: number;
@@ -127,6 +127,15 @@ describe("over MCP", () => {
 			nextBulkPrice: { from: 10, more: 1, extraInAll: -10, close: true },
 		});
 		expect(data.drafts).toHaveLength(1);
+		// Its supplier emails come apart, inside the untrusted tags.
+		expect(po.data.emails).toBeUndefined();
+		const raw = await callMcp(db, canWrite, "tools/call", {
+			name: "get_purchase_order",
+			arguments: { id: line.purchaseOrderId },
+		});
+		expect(raw.content[1].text).toMatch(
+			/^<untrusted-content-[0-9a-f]{16}>\n\{\n "emails": \[\]/,
+		);
 	});
 
 	test("deletes a draft PO but never a sent one", async () => {
@@ -259,7 +268,12 @@ describe("over MCP", () => {
 			sku: "BLADE",
 		});
 		expect(nothing).toMatchObject({ isError: true });
-		await tool("receive_po_line", { po: po.id, sku: "BLADE", quantity: 4 });
+		await tool("receive_po_line", {
+			receipt_key: crypto.randomUUID(),
+			po: po.id,
+			sku: "BLADE",
+			quantity: 4,
+		});
 		const tooLow = await tool("adjust_sent_po_line", {
 			po: po.id,
 			sku: "BLADE",

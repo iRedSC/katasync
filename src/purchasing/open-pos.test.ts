@@ -49,7 +49,11 @@ test("lists drafts and what sent POs still owe, in single items", async () => {
 	const blade = await createProduct(db, "BLADE", "simple");
 	const draft = await po("draft", blade, 2, 12);
 	const sent = await po("sent", blade, 10);
-	await receive(db, { lineId: sent.lineId, quantity: 4 });
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: sent.lineId,
+		quantity: 4,
+	});
 	// One draft or suggested PO per supplier, so another supplier's.
 	const [{ id: other }] = await db
 		.insert(schema.suppliers)
@@ -59,7 +63,11 @@ test("lists drafts and what sent POs still owe, in single items", async () => {
 	await po("closed", blade, 5);
 	await po("cancelled", blade, 5);
 	const done = await po("sent", blade, 3);
-	await receive(db, { lineId: done.lineId, quantity: 3 });
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: done.lineId,
+		quantity: 3,
+	});
 
 	expect((await openPosOf(db, [blade])).get(blade)).toEqual([
 		{

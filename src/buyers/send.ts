@@ -44,8 +44,12 @@ export async function reply(
 		.from(buyerThreads)
 		.where(eq(buyerThreads.id, threadId));
 	if (!thread) throw new Error(`There's no buyer thread ${threadId}`);
-	// Refused before it's kept: there's no one to send it to.
-	if (thread.market === "shopify") await shopifyRecipient(db, thread.orderRef);
+	// Refused before it's kept: there's no one to send it to. Kept with the
+	// reply, so a retry goes to the same buyer.
+	const recipient =
+		thread.market === "shopify"
+			? await shopifyRecipient(db, thread.orderRef)
+			: null;
 	const tooLong = refuseWords(thread.market, body);
 	if (tooLong) throw new Error(tooLong);
 	// eBay sends no message without words.
@@ -64,6 +68,7 @@ export async function reply(
 			status: "sending",
 			requestKey,
 			statusAt: now,
+			recipient,
 			inReplyTo:
 				thread.market === "amazon" || thread.market === "shopify"
 					? await lastBuyerEmailId(db, thread.id)
@@ -130,6 +135,9 @@ async function attempt(db: Db, thread: Thread, r: Reply) {
 	if (outcome) await settleReply(db, r.id, outcome).catch(() => false);
 }
 
+const UNKNOWN_RECIPIENT =
+	"Kept before katasync noted who it goes to, so it isn't sent again. Check Resend's email log, then send it again if it never went";
+
 // An emailed reply: through Amazon's relay, or to a Shopify buyer.
 async function sendEmail(db: Db, thread: Thread, r: Reply) {
 	const email = {
@@ -139,13 +147,15 @@ async function sendEmail(db: Db, thread: Thread, r: Reply) {
 		requestKey: r.requestKey ?? r.id.toString(),
 		attachments: await filesOf(db, r),
 	};
-	return thread.market === "shopify"
-		? sendShopifyEmail(db, {
-				...email,
-				threadId: thread.id,
-				to: await shopifyRecipient(db, thread.orderRef),
-			})
-		: sendAmazonReply({ ...email, to: thread.externalId });
+	if (thread.market !== "shopify")
+		return sendAmazonReply({ ...email, to: thread.externalId });
+	// Never worked out again: the order's email may have changed since.
+	if (!r.recipient) throw new Error(UNKNOWN_RECIPIENT);
+	return sendShopifyEmail(db, {
+		...email,
+		threadId: thread.id,
+		to: r.recipient,
+	});
 }
 
 // A reply's files for an email; failing to read them, nothing has gone.
@@ -257,6 +267,13 @@ async function settleEmailed(
 	market: keyof typeof CHECK_IN,
 ) {
 	if (r.status === "sending") {
+		// Kept before its address was: who the first try went to isn't known,
+		// so it isn't tried again.
+		if (market === "shopify" && !r.recipient)
+			return settleReply(db, r.id, {
+				kind: "unconfirmed",
+				error: UNKNOWN_RECIPIENT,
+			});
 		if (age < RETRY_FOR_MS) return attempt(db, thread, r);
 		return settleReply(db, r.id, {
 			kind: "unconfirmed",

@@ -4,6 +4,7 @@ import { Badge, Card, type Tone } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { CaseObligation } from "#/components/returns/case-obligation";
 import { MarketplaceCaseCard } from "#/components/returns/marketplace-case";
+import { ReturnEvidence } from "#/components/returns/return-evidence";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import type { ReturnState } from "#/db/schema";
@@ -57,6 +58,10 @@ const requestTone = (r: Request) =>
 
 const asking = (r: Request) => r.waitingOn === "us";
 
+// Items of one request sent back for different reasons each show theirs.
+const perItem = (r: Request) =>
+	new Set(r.lines.map((l) => l.reason ?? r.reason)).size > 1;
+
 export function hasReturn(d: OrderDetail) {
 	return (
 		d.returnState !== null ||
@@ -86,6 +91,8 @@ export function ReturnCard({
 	const expected = d.expected.filter((e) => e.expected > 0);
 	// Back and on the repair board, to list as refurbs once fixed.
 	const benched = d.lines.filter((l) => l.onBench.length > 0);
+	const itemName = (l: Request["lines"][number]) =>
+		(l.orderLineId && lines.get(l.orderLineId)?.sku) ?? l.sku ?? "an item";
 	const onlyRefunds =
 		d.returnRequests.length > 0 &&
 		d.returnRequests.every((r) => r.kind === "refund") &&
@@ -184,6 +191,7 @@ export function ReturnCard({
 								{channelName(r.billedBy)}
 							</span>
 							<CaseObligation request={r} />
+							<ReturnEvidence evidence={r} />
 							{r.page && (
 								<a
 									href={r.page.url}
@@ -199,11 +207,25 @@ export function ReturnCard({
 					}
 				>
 					<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
-						{r.reason && (
+						{perItem(r) ? (
 							<>
-								<dt className="text-muted-foreground">Reason</dt>
-								<dd>{returnReason(r.reason)}</dd>
+								<dt className="text-muted-foreground">Reasons</dt>
+								<dd>
+									{r.lines
+										.map(
+											(l) =>
+												`${itemName(l)}: ${l.reason ? returnReason(l.reason) : "none given"}`,
+										)
+										.join(", ")}
+								</dd>
 							</>
+						) : (
+							r.reason && (
+								<>
+									<dt className="text-muted-foreground">Reason</dt>
+									<dd>{returnReason(r.reason)}</dd>
+								</>
+							)
 						)}
 						{r.lines.length > 0 && (
 							<>
@@ -214,11 +236,9 @@ export function ReturnCard({
 									{r.lines
 										.map(
 											(l) =>
-												`${formatCount(l.quantity)} × ${
-													(l.orderLineId && lines.get(l.orderLineId)?.sku) ??
-													l.sku ??
-													"an item"
-												}${l.orderLineId === null ? " (line unclear)" : ""}`,
+												`${formatCount(l.quantity)} × ${itemName(l)}${
+													l.orderLineId === null ? " (line unclear)" : ""
+												}`,
 										)
 										.join(", ")}
 								</dd>

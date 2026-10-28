@@ -6,6 +6,7 @@ import {
 } from "./amazon";
 import { type EbayTransaction, ebayCharges } from "./ebay";
 import {
+	cutShort,
 	labelsFromEvents,
 	numericOrderId,
 	refundedRevenue,
@@ -432,6 +433,7 @@ describe("TikTok", () => {
 
 describe("Shopify", () => {
 	const usd = (amount: number) => ({ shopMoney: { amount } });
+	const whole = { pageInfo: { hasNextPage: false } };
 	const order = (
 		overrides: Partial<ShopifyFinanceOrder> = {},
 	): ShopifyFinanceOrder => ({
@@ -451,8 +453,12 @@ describe("Shopify", () => {
 			},
 		],
 		refunds: [],
-		lineItems: { nodes: [{ id: "line-1", nonFulfillableQuantity: 0 }] },
+		lineItems: {
+			...whole,
+			nodes: [{ id: "line-1", nonFulfillableQuantity: 0 }],
+		},
 		events: {
+			...whole,
 			nodes: [
 				{
 					action: "shipping_label_created_success",
@@ -462,6 +468,7 @@ describe("Shopify", () => {
 			],
 		},
 		fulfillmentOrders: {
+			...whole,
 			nodes: [{ deliveryMethod: { methodType: "SHIPPING" } }],
 		},
 		...overrides,
@@ -479,9 +486,11 @@ describe("Shopify", () => {
 		refunds: [
 			{
 				transactions: {
+					...whole,
 					nodes: [{ kind: "REFUND", status, amountSet: usd(paid) }],
 				},
 				refundLineItems: {
+					...whole,
 					nodes: lines.map((l) => ({
 						quantity: l.quantity,
 						subtotalSet: usd(l.subtotal),
@@ -490,6 +499,7 @@ describe("Shopify", () => {
 					})),
 				},
 				refundShippingLines: {
+					...whole,
 					nodes: shippingTax ? [{ taxAmountSet: usd(shippingTax) }] : [],
 				},
 			},
@@ -516,7 +526,8 @@ describe("Shopify", () => {
 		expect(labelsPending).toBe(true);
 		// No label anywhere is nothing pending.
 		expect(
-			shopifyCharges(order({ events: { nodes: [] } }), undefined).labelsPending,
+			shopifyCharges(order({ events: { ...whole, nodes: [] } }), undefined)
+				.labelsPending,
 		).toBe(false);
 		expect(
 			labelsFromEvents([
@@ -554,26 +565,54 @@ describe("Shopify", () => {
 		// Two units refunded, one of which never shipped.
 		const refunded = order({
 			...refundOf(43.2, [{ quantity: 2, subtotal: 40, tax: 3.2 }]),
-			lineItems: { nodes: [{ id: "line-1", nonFulfillableQuantity: 1 }] },
+			lineItems: {
+				...whole,
+				nodes: [{ id: "line-1", nonFulfillableQuantity: 1 }],
+			},
 		});
 		expect(refundedRevenue(refunded)).toBe(20);
+	});
+
+	test("an order with more than one ask reads is cut short, not summed", () => {
+		expect(cutShort(order(refundOf(10, [])))).toEqual([]);
+		const more = { pageInfo: { hasNextPage: true } };
+		const [refund] = refundOf(10, []).refunds ?? [];
+		expect(
+			cutShort(
+				order({
+					refunds: [{ ...refund, refundLineItems: { ...more, nodes: [] } }],
+					events: { ...more, nodes: [] },
+				}),
+			),
+		).toEqual(["refunded lines", "label purchases"]);
+		const transaction = order().transactions[1];
+		expect(
+			cutShort(order({ transactions: Array(50).fill(transaction) })),
+		).toEqual(["transactions"]);
 	});
 
 	test("counter sales and pickups need no label, unknown methods might", () => {
 		const at = (methodType: string) =>
 			order({
-				fulfillmentOrders: { nodes: [{ deliveryMethod: { methodType } }] },
+				fulfillmentOrders: {
+					...whole,
+					nodes: [{ deliveryMethod: { methodType } }],
+				},
 			});
 		expect(shippedWithoutLabel(at("RETAIL"))).toBe(true);
 		expect(shippedWithoutLabel(at("PICK_UP"))).toBe(true);
 		expect(shippedWithoutLabel(at("SHIPPING"))).toBe(false);
 		expect(
 			shippedWithoutLabel(
-				order({ fulfillmentOrders: { nodes: [{ deliveryMethod: null }] } }),
+				order({
+					fulfillmentOrders: { ...whole, nodes: [{ deliveryMethod: null }] },
+				}),
 			),
 		).toBe(false);
 		expect(
-			shippedWithoutLabel(order({ fulfillmentOrders: { nodes: [] } })),
+			shippedWithoutLabel(
+				order({ fulfillmentOrders: { ...whole, nodes: [] } }),
+			),
 		).toBe(false);
 	});
 

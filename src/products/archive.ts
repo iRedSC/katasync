@@ -20,6 +20,11 @@ import {
 	stockLevels,
 	transferLines,
 } from "#/db/schema";
+import {
+	committedUnits,
+	type QuantityMode,
+	readQuantityMode,
+} from "#/inventory/commitments";
 import { isOurs } from "#/inventory/locations";
 import { ProductError } from "./details";
 
@@ -28,8 +33,10 @@ import { ProductError } from "./details";
 // stay. One with none (made by mistake) can be deleted outright.
 //
 // Only an inert product is archived, so hiding it can't hide anything still
-// happening: no live listing sells it, none is on our shelves, no active kit
-// or tool set holds it, and no open PO has it. Each refusal says what to
+// happening: no live listing sells it, none is on our shelves or promised to
+// open orders (a shortage reordering must still see, even when a tool set
+// sold with older parts promised it), no active kit or tool set holds it,
+// and no open PO has it. Each refusal says what to
 // settle first. The product row stays locked while archiving; writes that
 // would make it active again (a PO line, a part, a listing match) read it
 // with a share lock, so one can't slip in between the check and the archive.
@@ -64,7 +71,7 @@ const titles = (rows: { title: string }[]) =>
 		.join(", ") + (rows.length > 5 ? `, and ${rows.length - 5} more` : "");
 
 // What keeps a product from being archived, in words; empty when nothing.
-async function stillActive(tx: Db, id: number) {
+async function stillActive(tx: Db, id: number, mode: QuantityMode) {
 	const blockers: string[] = [];
 	const live = await tx
 		.select({ title: listings.title })
@@ -84,6 +91,12 @@ async function stillActive(tx: Db, id: number) {
 	if (shelves.length > 0)
 		blockers.push(
 			`${shelves.map((s) => `${s.onHand} on hand at ${s.name}`).join(", ")}; sell, adjust, or count it to 0 first`,
+		);
+	const promised =
+		mode === "committed" ? ((await committedUnits(tx, [id])).get(id) ?? 0) : 0;
+	if (promised > 0)
+		blockers.push(
+			`${promised} promised to open orders; ship or cancel them first`,
 		);
 	const parents = await tx
 		.select({ title: products.sku })
@@ -131,10 +144,11 @@ async function stillActive(tx: Db, id: number) {
 
 export async function archiveProduct(db: Db, sku: string) {
 	return db.transaction(async (tx) => {
+		const mode = await readQuantityMode(tx);
 		const product = await productNamed(tx, sku);
 		if (product.archivedAt)
 			return { sku: product.sku, archivedAt: product.archivedAt };
-		const blockers = await stillActive(tx, product.id);
+		const blockers = await stillActive(tx, product.id, mode);
 		if (blockers.length > 0)
 			throw new ProductError(
 				`Can't archive ${product.sku}: ${blockers.join("; ")}`,

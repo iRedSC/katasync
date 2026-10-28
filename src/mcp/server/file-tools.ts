@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { relyingParty } from "#/auth/webauthn";
+import { capabilityUrl } from "#/auth/capability-urls";
 import type { Db } from "#/db/client";
 import { MAX_PO_FILE_BYTES } from "#/purchasing/file-limits";
 import {
@@ -12,7 +12,7 @@ import {
 	setPoFilesRemoved,
 } from "#/purchasing/files";
 import { PurchaseOrderError } from "#/purchasing/orders";
-import { describeFile, fileContent } from "./email-files";
+import { describeFile, fileContent, untrustedJson } from "./email-files";
 import { json, READ, WRITE } from "./tool-shapes";
 
 // Files put on a PO itself (get_purchase_order lists them as files); its
@@ -35,7 +35,7 @@ export function registerFileReadTools(server: McpServer, db: Db) {
 				throw new PurchaseOrderError(`There's no PO file ${id}`);
 			return {
 				content: [
-					...json(
+					...untrustedJson(
 						describeFile(file, {
 							id: file.id,
 							po: file.purchaseOrderId,
@@ -107,7 +107,7 @@ export function registerFileTools(server: McpServer, db: Db) {
 		},
 		async ({ po }) => {
 			const { token, expiresAt } = await createFileUploadLink(db, po);
-			const url = `${relyingParty().origin}/api/uploads/po-file/${token}`;
+			const url = capabilityUrl("/api/uploads/po-file/", token);
 			return json({
 				url,
 				expiresAt,

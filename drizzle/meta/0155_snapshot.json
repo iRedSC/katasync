@@ -1,5 +1,5 @@
 {
-  "id": "cb464d48-d46a-406f-b900-e8425fcfe02e",
+  "id": "2cc6967f-3c96-4f2f-9be9-94dac3e49079",
   "prevId": "da590e4a-0b1c-4949-96e0-d2f10ba57bfe",
   "version": "7",
   "dialect": "postgresql",
@@ -4615,6 +4615,12 @@
         },
         "in_reply_to": {
           "name": "in_reply_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recipient": {
+          "name": "recipient",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -13005,281 +13011,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.return_request_media": {
-      "name": "return_request_media",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "return_request_media_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "request_id": {
-          "name": "request_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "record_id": {
-          "name": "record_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "position": {
-          "name": "position",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "record_media_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "url": {
-          "name": "url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "cover_url": {
-          "name": "cover_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source_key": {
-          "name": "source_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "width": {
-          "name": "width",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "height": {
-          "name": "height",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "duration_ms": {
-          "name": "duration_ms",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "copy": {
-          "name": "copy",
-          "type": "record_media_copy",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "failed_fetches": {
-          "name": "failed_fetches",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "content_type": {
-          "name": "content_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "data": {
-          "name": "data",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "return_request_media_request_id_return_requests_id_fk": {
-          "name": "return_request_media_request_id_return_requests_id_fk",
-          "tableFrom": "return_request_media",
-          "tableTo": "return_requests",
-          "columnsFrom": [
-            "request_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "return_request_media_record_id_return_request_records_id_fk": {
-          "name": "return_request_media_record_id_return_request_records_id_fk",
-          "tableFrom": "return_request_media",
-          "tableTo": "return_request_records",
-          "columnsFrom": [
-            "record_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "return_request_media_source": {
-          "name": "return_request_media_source",
-          "nullsNotDistinct": false,
-          "columns": [
-            "request_id",
-            "source_key"
-          ]
-        },
-        "return_request_media_position": {
-          "name": "return_request_media_position",
-          "nullsNotDistinct": false,
-          "columns": [
-            "record_id",
-            "position"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "return_request_media_placed": {
-          "name": "return_request_media_placed",
-          "value": "(\"return_request_media\".\"record_id\" is null) = (\"return_request_media\".\"position\" is null)"
-        },
-        "return_request_media_kept_has_data": {
-          "name": "return_request_media_kept_has_data",
-          "value": "(\"return_request_media\".\"copy\" = 'kept') = (\"return_request_media\".\"data\" is not null and \"return_request_media\".\"content_type\" is not null)"
-        },
-        "return_request_media_video_fields": {
-          "name": "return_request_media_video_fields",
-          "value": "\"return_request_media\".\"kind\" = 'video' or (\"return_request_media\".\"duration_ms\" is null and \"return_request_media\".\"cover_url\" is null and \"return_request_media\".\"copy\" <> 'none')"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.return_request_records": {
-      "name": "return_request_records",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "identity": {
-            "type": "always",
-            "name": "return_request_records_id_seq",
-            "schema": "public",
-            "increment": "1",
-            "startWith": "1",
-            "minValue": "1",
-            "maxValue": "2147483647",
-            "cache": "1",
-            "cycle": false
-          }
-        },
-        "request_id": {
-          "name": "request_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "position": {
-          "name": "position",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "event": {
-          "name": "event",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reason_text": {
-          "name": "reason_text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "return_request_records_request_id_return_requests_id_fk": {
-          "name": "return_request_records_request_id_return_requests_id_fk",
-          "tableFrom": "return_request_records",
-          "tableTo": "return_requests",
-          "columnsFrom": [
-            "request_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "return_request_records_position": {
-          "name": "return_request_records_position",
-          "nullsNotDistinct": false,
-          "columns": [
-            "request_id",
-            "position"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.return_requests": {
       "name": "return_requests",
       "schema": "",
@@ -13421,32 +13152,12 @@
           "primaryKey": false,
           "notNull": true
         },
-        "source_versioned": {
-          "name": "source_versioned",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "records_unread": {
-          "name": "records_unread",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "note_unread": {
           "name": "note_unread",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "records_asked_at": {
-          "name": "records_asked_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         },
         "synced_at": {
           "name": "synced_at",
@@ -15440,14 +15151,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "target": {
-          "name": "target",
-          "type": "webhook_target",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'order'"
-        },
         "order_id": {
           "name": "order_id",
           "type": "text",
@@ -15556,14 +15259,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "webhook_inbox_case_targets_tiktok": {
-          "name": "webhook_inbox_case_targets_tiktok",
-          "value": "\"webhook_inbox\".\"target\" = 'order' or \"webhook_inbox\".\"channel\" = 'tiktok'"
-        },
-        "webhook_inbox_case_key": {
-          "name": "webhook_inbox_case_key",
-          "value": "\"webhook_inbox\".\"target\" = 'order' or \"webhook_inbox\".\"order_id\" like \"webhook_inbox\".\"target\"::text || ':%'"
-        },
         "webhook_inbox_lease_pair": {
           "name": "webhook_inbox_lease_pair",
           "value": "(\"webhook_inbox\".\"lease_token\" is null) = (\"webhook_inbox\".\"lease_expires_at\" is null)"
@@ -16017,25 +15712,6 @@
         "cancelled"
       ]
     },
-    "public.record_media_copy": {
-      "name": "record_media_copy",
-      "schema": "public",
-      "values": [
-        "kept",
-        "unfetched",
-        "gone",
-        "refused",
-        "none"
-      ]
-    },
-    "public.record_media_kind": {
-      "name": "record_media_kind",
-      "schema": "public",
-      "values": [
-        "image",
-        "video"
-      ]
-    },
     "public.reply_draft_state": {
       "name": "reply_draft_state",
       "schema": "public",
@@ -16105,15 +15781,6 @@
       "values": [
         "draft",
         "sent"
-      ]
-    },
-    "public.webhook_target": {
-      "name": "webhook_target",
-      "schema": "public",
-      "values": [
-        "order",
-        "order_returns",
-        "aftersales"
       ]
     }
   },
@@ -16770,70 +16437,6 @@
         }
       },
       "name": "product_return_rates",
-      "schema": "public",
-      "isExisting": true,
-      "materialized": false
-    },
-    "public.return_request_evidence": {
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "requestId": {
-          "name": "requestId",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "recordId": {
-          "name": "recordId",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "position": {
-          "name": "position",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "record_media_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "copy": {
-          "name": "copy",
-          "type": "record_media_copy",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "width": {
-          "name": "width",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "height": {
-          "name": "height",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "durationMs": {
-          "name": "durationMs",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "name": "return_request_evidence",
       "schema": "public",
       "isExisting": true,
       "materialized": false

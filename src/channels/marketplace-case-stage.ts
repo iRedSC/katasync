@@ -1,3 +1,4 @@
+import { underAToZ } from "#/orders/return-evidence";
 import {
 	type RequestStage,
 	type ReturnStatus,
@@ -87,7 +88,19 @@ export function shopifyReturnStage(raw: string, tracked: boolean) {
 	return mapRawStage("Shopify", raw, SHOPIFY_CASE_STATES);
 }
 
+// Under an A-to-z claim it's escalated (underAToZ); one delivered back still
+// waits on us to receive it either way.
 export function amazonReturnStage(row: {
+	status: string;
+	delivered: boolean;
+	tracked: boolean;
+	aToZClaim?: boolean;
+}): RequestStage & { kind: "return"; problems?: string[] } {
+	const stage = amazonStage(row);
+	return row.aToZClaim ? underAToZ(stage) : stage;
+}
+
+function amazonStage(row: {
 	status: string;
 	delivered: boolean;
 	tracked: boolean;

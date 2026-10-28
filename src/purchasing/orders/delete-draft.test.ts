@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { createTestDb } from "#/test/db";
+import { createProduct, createTestDb } from "#/test/db";
 import { addPoFile, createFileUploadLink } from "../files";
 import { deleteDraft, restoreDraft } from "./delete-draft";
 
@@ -51,6 +51,89 @@ beforeEach(async () => {
 		.returning();
 	supplierId = supplier.id;
 	locationId = location.id;
+});
+
+// Everything stored for a PO, without the ids restoring renumbers.
+async function everythingOn(id: number) {
+	const [po] = await db
+		.select()
+		.from(schema.purchaseOrders)
+		.where(eq(schema.purchaseOrders.id, id));
+	const lines = (
+		await db
+			.select()
+			.from(schema.purchaseOrderLines)
+			.where(eq(schema.purchaseOrderLines.purchaseOrderId, id))
+			.orderBy(schema.purchaseOrderLines.id)
+	).map(({ id: _id, ...l }) => l);
+	const charges = (
+		await db
+			.select()
+			.from(schema.purchaseOrderCharges)
+			.where(eq(schema.purchaseOrderCharges.purchaseOrderId, id))
+			.orderBy(schema.purchaseOrderCharges.id)
+	).map(({ id: _id, ...c }) => c);
+	const excluded = await db
+		.select()
+		.from(schema.purchaseOrderExcludedCatalogs)
+		.where(eq(schema.purchaseOrderExcludedCatalogs.purchaseOrderId, id));
+	return { po, lines, charges, excluded };
+}
+
+test("a deleted draft comes back as it was, charges and settings too", async () => {
+	const blade = await createProduct(db, "BLADE", "simple");
+	const knife = await createProduct(db, "KNIFE", "simple");
+	const [catalog] = await db
+		.insert(schema.catalogs)
+		.values({ name: "Knives" })
+		.returning();
+	const [draft] = await db
+		.insert(schema.purchaseOrders)
+		.values({
+			supplierId,
+			locationId,
+			notes: "Ring the bell",
+			coverDays: 45,
+			includePricier: true,
+			createdAt: new Date("2026-10-01T12:00:00Z"),
+		})
+		.returning();
+	await db.insert(schema.purchaseOrderLines).values([
+		{
+			purchaseOrderId: draft.id,
+			productId: knife,
+			supplierCount: 1,
+			quantity: 3,
+			unitCost: 2.5,
+			locked: true,
+			addedAt: new Date("2026-10-02T12:00:00Z"),
+		},
+		{
+			purchaseOrderId: draft.id,
+			productId: blade,
+			unit: "CASE",
+			packSize: 12,
+			supplierCount: 12,
+			quantity: 1,
+			addedAt: new Date("2026-10-01T12:00:00Z"),
+		},
+	]);
+	await db.insert(schema.purchaseOrderCharges).values([
+		{
+			purchaseOrderId: draft.id,
+			kind: "freight",
+			amount: 12.5,
+			createdAt: new Date("2026-10-03T12:00:00Z"),
+		},
+		{ purchaseOrderId: draft.id, kind: "credit", amount: -4 },
+	]);
+	await db
+		.insert(schema.purchaseOrderExcludedCatalogs)
+		.values({ purchaseOrderId: draft.id, catalogId: catalog.id });
+	const before = await everythingOn(draft.id);
+
+	await restoreDraft(db, await deleteDraft(db, draft.id));
+	expect(await everythingOn(draft.id)).toEqual(before);
 });
 
 describe("restoring a draft over a suggestion", () => {
