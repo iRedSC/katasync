@@ -174,3 +174,19 @@ test("only marketplace-supplied browser pages become case links", () => {
 		).actionUrl,
 	).toBeNull();
 });
+
+test("an escalation date alone may be the buyer's, so it never makes the case ours", () => {
+	const due = new Date("2026-10-29T12:00:00Z");
+	const detail = obligationDetail.parse({
+		respondByDate: due.toISOString(),
+	});
+	expect(
+		ebayCaseStage("escalation", "ON_HOLD", ebayObligation(detail)),
+	).toMatchObject({ waitingOn: "marketplace", respondBy: null });
+	expect(
+		ebayCaseStage("escalation", "ON_HOLD", {
+			...ebayObligation(detail),
+			actions: ["PROVIDE_PROOF"],
+		}),
+	).toMatchObject({ waitingOn: "us", respondBy: due });
+});
