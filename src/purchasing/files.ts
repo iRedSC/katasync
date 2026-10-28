@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { SQL } from "drizzle-orm";
 import {
 	and,
 	desc,
@@ -24,6 +25,7 @@ import { isPdf, pdfText } from "#/purchasing/inbox/pdf-text";
 import {
 	lockForEdit,
 	lockOrder,
+	lockOrders,
 	PurchaseOrderError,
 	poName,
 } from "#/purchasing/orders";
@@ -208,11 +210,11 @@ export async function setPoFileRemoved(db: Db, id: number, removed = true) {
 	return row;
 }
 
-// Moves a file from one PO to another, as one row of the Files card: its own
-// copies and its emails' come off the PO it's on, and the other PO gets it as
-// its own (left as it is if it has it already). The emails keep theirs, so
-// an email about several POs can share its files out. Answers the file
-// added, or null, for Undo.
+// Moves a file from one PO to another, as one row of the Files card: every
+// copy of it on the PO it's on, its own and its emails', comes off, and the
+// other PO gets it as its own (left as it is if it has it already). The
+// emails keep theirs, so an email about several POs can share its files out.
+// Answers the file added, or null, and what came off, for Undo.
 export async function movePoFiles(
 	db: Db,
 	input: {
@@ -226,35 +228,42 @@ export async function movePoFiles(
 	if (input.from === input.to)
 		throw new PurchaseOrderError(`That file is on ${poName(input.to)} already`);
 	return db.transaction(async (tx) => {
+		// Both POs, so two moves of one file wait for each other.
+		await lockOrders(tx, [input.from, input.to], [...ANY, "suggested"]);
+		await lockForEdit(tx, input.to, [...ANY]);
+		const ownOn = (where: SQL | undefined) =>
+			tx
+				.select()
+				.from(purchaseOrderFiles)
+				.where(
+					and(
+						where,
+						eq(purchaseOrderFiles.purchaseOrderId, input.from),
+						isNull(purchaseOrderFiles.removedAt),
+					),
+				);
+		const emailedOn = (where: SQL | undefined) =>
+			tx
+				.select({ file: poEmailAttachments })
+				.from(poEmailAttachments)
+				.innerJoin(poEmails, eq(poEmails.id, poEmailAttachments.emailId))
+				.where(
+					and(
+						where,
+						eq(poEmails.purchaseOrderId, input.from),
+						isNull(poEmailAttachments.removedAt),
+						isNull(poEmailAttachments.contentId),
+					),
+				)
+				.then((rows) => rows.map((r) => r.file));
 		const own =
 			input.files.length === 0
 				? []
-				: await tx
-						.select()
-						.from(purchaseOrderFiles)
-						.where(
-							and(
-								inArray(purchaseOrderFiles.id, input.files),
-								eq(purchaseOrderFiles.purchaseOrderId, input.from),
-								isNull(purchaseOrderFiles.removedAt),
-							),
-						);
+				: await ownOn(inArray(purchaseOrderFiles.id, input.files));
 		const emailed =
 			input.attachments.length === 0
 				? []
-				: await tx
-						.select({ file: poEmailAttachments })
-						.from(poEmailAttachments)
-						.innerJoin(poEmails, eq(poEmails.id, poEmailAttachments.emailId))
-						.where(
-							and(
-								inArray(poEmailAttachments.id, input.attachments),
-								eq(poEmails.purchaseOrderId, input.from),
-								isNull(poEmailAttachments.removedAt),
-								isNull(poEmailAttachments.contentId),
-							),
-						)
-						.then((rows) => rows.map((r) => r.file));
+				: await emailedOn(inArray(poEmailAttachments.id, input.attachments));
 		if (
 			own.length !== new Set(input.files).size ||
 			emailed.length !== new Set(input.attachments).size
@@ -271,8 +280,16 @@ export async function movePoFiles(
 			throw new PurchaseOrderError(
 				`${source.filename} is ${(source.size / 1e6).toFixed(1)} MB; a PO's files can be up to ${MAX_PO_FILE_BYTES / 1e6} MB`,
 			);
-		await lockForEdit(tx, input.to, [...ANY]);
 		const sha256 = createHash("sha256").update(source.data).digest("hex");
+		// Every copy goes, not only those named, or the file stays here too.
+		const ownCopies = await ownOn(eq(purchaseOrderFiles.sha256, sha256));
+		const emailedCopies = await emailedOn(
+			eq(poEmailAttachments.sha256, sha256),
+		);
+		const files = [...new Set([...own, ...ownCopies].map((f) => f.id))];
+		const attachments = [
+			...new Set([...emailed, ...emailedCopies].map((f) => f.id)),
+		];
 		const added = (await sameFileOn(tx, input.to, sha256))
 			? null
 			: (
@@ -286,22 +303,29 @@ export async function movePoFiles(
 							data: source.data,
 							text: source.text,
 							addedBy: input.movedBy,
-							// Who sent it: the email's file, or the one this PO's
-							// own copy was moved from.
+							// Who sent it: an email's copy, or the one this PO's own
+							// copy was moved from.
 							fromAttachmentId:
-								emailed[0]?.id ??
-								own.find((f) => f.fromAttachmentId !== null)
+								[...emailed, ...emailedCopies][0]?.id ??
+								[...own, ...ownCopies].find((f) => f.fromAttachmentId)
 									?.fromAttachmentId ??
 								null,
 						})
 						.returning({ id: purchaseOrderFiles.id })
 				)[0].id;
-		await setPoFilesRemoved(
-			tx,
-			{ files: input.files, attachments: input.attachments },
-			true,
-		);
-		return { filename: source.filename, to: input.to, added };
+		const off = await setPoFilesRemoved(tx, { files, attachments }, true);
+		// One taken off meanwhile: this move would bring it back with Undo.
+		if (off.files !== files.length || off.attachments !== attachments.length)
+			throw new PurchaseOrderError(
+				`That file isn't on ${poName(input.from)} any more`,
+			);
+		return {
+			filename: source.filename,
+			to: input.to,
+			added,
+			files,
+			attachments,
+		};
 	});
 }
 

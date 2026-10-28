@@ -265,7 +265,13 @@ export function FilesCard({ detail: d }: { detail: PurchaseOrderDetail }) {
 					label: `Putting ${row.filename} back`,
 					patch: [],
 					send: () =>
-						unmovePoFilesTo({ data: { ...ids, added: moved.value.added } }),
+						unmovePoFilesTo({
+							data: {
+								added: moved.value.added,
+								files: moved.value.files,
+								attachments: moved.value.attachments,
+							},
+						}),
 				});
 				return back ? `${row.filename} is back` : null;
 			},

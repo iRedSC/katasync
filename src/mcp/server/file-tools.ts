@@ -152,7 +152,7 @@ export function registerFileTools(server: McpServer, db: Db) {
 		"move_po_file",
 		{
 			description:
-				"Moves a file from one PO to another, e.g. one of several confirmations in an email about other POs too (the supplier's PO numbers in its text say which): id for one put on the PO, or attachment for an email's. The other PO gets it as its own file (answered as added, null when it had it already) and it comes off this one; the email stays where it is and keeps the file. Undo with remove_po_file on added, then remove_po_file restore on what moved.",
+				"Moves a file from one PO to another, e.g. one of several confirmations in an email about other POs too (the supplier's PO numbers in its text say which): id for one put on the PO, or attachment for an email's. The other PO gets it as its own file (answered as added, null when it had it already) and every copy of it comes off this one (answered as files and attachments); the emails stay where they are and keep theirs. Undo with remove_po_file on added, then remove_po_file restore on each that came off.",
 			inputSchema: {
 				from: z.number().int().positive(),
 				to: z.number().int().positive(),

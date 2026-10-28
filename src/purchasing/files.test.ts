@@ -234,7 +234,7 @@ describe("moving a file to another PO", () => {
 		const [there] = await poFilesOf(db, to);
 		expect(there.sentBy).toBe("orders@supplier.com");
 
-		await unmovePoFiles(db, { ...moved, files: [], attachments: [attachment] });
+		await unmovePoFiles(db, moved);
 		expect(await onPo(to)).toEqual([]);
 		expect(await emailedOn(attachment)).toBe(true);
 	});
@@ -253,7 +253,7 @@ describe("moving a file to another PO", () => {
 		});
 		expect(moved.added).toBeNull();
 		expect(await emailedOn(attachment)).toBe(false);
-		await unmovePoFiles(db, { ...moved, files: [], attachments: [attachment] });
+		await unmovePoFiles(db, moved);
 		expect(await onPo(to)).toEqual(["mine.pdf"]);
 		expect(await emailedOn(attachment)).toBe(true);
 	});
@@ -284,6 +284,24 @@ describe("moving a file to another PO", () => {
 			movedBy: "staff",
 		});
 		expect((await poFilesOf(db, next))[0].sentBy).toBe("orders@supplier.com");
+	});
+
+	test("takes every copy on the PO, not only the one named", async () => {
+		const from = await po("sent");
+		const to = await po("sent");
+		const first = await emailedFile(from, "forwarded");
+		const again = await emailedFile(from, "forwarded");
+		const moved = await movePoFiles(db, {
+			from,
+			to,
+			files: [],
+			attachments: [first],
+			movedBy: "claude",
+		});
+		expect(moved.attachments.sort()).toEqual([first, again].sort());
+		expect(await emailedOn(again)).toBe(false);
+		await unmovePoFiles(db, moved);
+		expect(await emailedOn(again)).toBe(true);
 	});
 
 	test("refuses a file not on the PO it says, or the PO it is on; a suggested one becomes a draft", async () => {
