@@ -207,7 +207,7 @@ async function readOverview(
 						from: shift(days[0], -WINDOW_DAYS.before),
 						to: shift(days[days.length - 1], WINDOW_DAYS.after),
 					},
-					"all",
+					{ kind: "all" },
 				);
 	const standing = await standingOf(
 		db,
@@ -244,6 +244,9 @@ export type MatchOptions = {
 		description: string;
 	};
 	candidates: (Standing & { days: number; remainingCents: number })[];
+	// How many payouts were read when more could have matched; null when
+	// none were left out.
+	candidatesCut: number | null;
 } & Suggestions;
 
 export async function matchOptions(
@@ -267,8 +270,8 @@ export async function matchOptions(
 			),
 		);
 	if (!bank || !(await loadAccount(db, bank.accountId))) return null;
-	// Only payouts with some left to match: matched ones can't be picked, and
-	// mustn't push open ones past the limit.
+	// Only payouts this row could take: the rest can't be picked, and mustn't
+	// push the ones it can past the limit.
 	const near = await payoutTarget.near(
 		db,
 		{
@@ -276,7 +279,7 @@ export async function matchOptions(
 			from: shift(bank.postedOn, -WINDOW_DAYS.before),
 			to: shift(bank.postedOn, WINDOW_DAYS.after),
 		},
-		"open",
+		{ kind: "open", amountCents: bank.amountCents },
 	);
 	const standing = [
 		...(
@@ -302,5 +305,10 @@ export async function matchOptions(
 		postedOn: bank.postedOn,
 		description: bank.description,
 	};
-	return { bank: shown, candidates, ...suggest(bank, standing) };
+	return {
+		bank: shown,
+		candidates,
+		candidatesCut: near.truncated ? NEAR_LIMIT : null,
+		...suggest(bank, standing),
+	};
 }

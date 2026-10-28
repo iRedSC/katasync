@@ -276,7 +276,7 @@ describe("banking integration boundaries", () => {
 				await payoutTarget.near(
 					db,
 					{ currency: "USD", from: "2026-11-01", to: "2026-11-01" },
-					"all",
+					{ kind: "all" },
 				)
 			).observed.map((row) => row.ref.id),
 		).toEqual([included]);
@@ -319,6 +319,45 @@ describe("banking integration boundaries", () => {
 		expect(options?.candidates.map((c) => c.ref.id)).toEqual([open]);
 		// The overview reads every payout, so it says it left some out.
 		expect((await loadOverview(db, made.id)).payoutsCut).toBe(NEAR_LIMIT);
+	});
+
+	it("offers a deposit the payouts it can take, saying when some were cut", async () => {
+		const db = await createTestDb();
+		const made = await account(db);
+		await imported(db, made.id, csv("2026-10-01,Deposit,5"));
+		const [row] = await bankRows(db, made.id);
+		// Newer than the one it can take, but withdrawals: never offered.
+		await db.insert(payouts).values(
+			Array.from({ length: NEAR_LIMIT + 1 }, (_, i) => ({
+				channel: "shopify" as const,
+				externalId: `D${i}`,
+				status: "sent" as const,
+				depositedAt: new Date("2026-10-03T15:00:00Z"),
+				amount: -1,
+				currency: "USD",
+			})),
+		);
+		const older = await payout(db, "OLDER", 5, {
+			depositedAt: new Date("2026-09-25T15:00:00Z"),
+		});
+		expect(await matchOptions(db, row.id)).toMatchObject({
+			candidates: [{ ref: { id: older } }],
+			candidatesCut: null,
+		});
+
+		await db.insert(payouts).values(
+			Array.from({ length: NEAR_LIMIT }, (_, i) => ({
+				channel: "shopify" as const,
+				externalId: `C${i}`,
+				status: "sent" as const,
+				depositedAt: new Date("2026-10-02T15:00:00Z"),
+				amount: 1,
+				currency: "USD",
+			})),
+		);
+		const cut = await matchOptions(db, row.id);
+		expect(cut?.candidates).toHaveLength(NEAR_LIMIT);
+		expect(cut?.candidatesCut).toBe(NEAR_LIMIT);
 	});
 
 	it("records actor provenance and audit events without writing payouts", async () => {

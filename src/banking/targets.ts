@@ -27,10 +27,11 @@ export type Observed = BankTargetSnapshot & {
 
 export type Window = { currency: string; from: string; to: string };
 
-// Which targets near() gives: every one in the window, or only those with
-// some amount left to match. The limit applies after this, so matched ones
-// can't crowd out the ones still open.
-export type NearScope = "all" | "open";
+// Which targets near() gives: every one in the window, or only those a bank
+// row of `amountCents` could still take, with some left to match on its side
+// of zero. The limit applies after this, so ones it can't take can't crowd
+// out the ones it can.
+export type NearScope = { kind: "all" } | { kind: "open"; amountCents: number };
 
 export type Near = { observed: Observed[]; truncated: boolean };
 
@@ -135,8 +136,9 @@ export const payoutTarget: MatchTarget = {
 					ne(payouts.status, "failed"),
 					sql`${payouts.depositedAt} >= (${w.from}::date::timestamp at time zone 'America/New_York')`,
 					sql`${payouts.depositedAt} < ((${w.to}::date + 1)::timestamp at time zone 'America/New_York')`,
-					scope === "open"
-						? sql`round(${payouts.amount} * 100) <> ${allocated}`
+					scope.kind === "open"
+						? sql`sign(round(${payouts.amount} * 100) - ${allocated}) = sign(${scope.amountCents}::bigint)
+							and round(${payouts.amount} * 100) <> ${allocated}`
 						: undefined,
 				),
 			)

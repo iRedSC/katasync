@@ -182,6 +182,25 @@ describe("in-store sales", () => {
 		);
 	});
 
+	test("two stores added at once leave one retail store", async () => {
+		const added = await Promise.allSettled([
+			addRetailStore(db, "Store"),
+			addRetailStore(db, "Other"),
+		]);
+		expect(added.map((a) => a.status).sort()).toEqual([
+			"fulfilled",
+			"rejected",
+		]);
+		await expect(
+			db.insert(schema.locations).values({ name: "Third", kind: "retail" }),
+		).rejects.toThrow();
+		const retail = await db
+			.select()
+			.from(schema.locations)
+			.where(eq(schema.locations.kind, "retail"));
+		expect(retail).toHaveLength(1);
+	});
+
 	test("restock where they sold from", async () => {
 		const retail = await addRetail({ pos: true });
 		const wrench = await createProduct(db, "WRENCH", "simple");

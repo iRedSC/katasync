@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations } from "#/db/schema";
 
@@ -60,9 +60,14 @@ export async function setPosLocation(db: Db, locationId: number) {
 // Adds our retail store, already the shelf POS sales take from, in one
 // transaction: in-store sales caught up after it (applyStoreSales) take its
 // stock, never whichever shelf was POS before. Only one retail store, or POS
-// sales couldn't tell which shelf to take from.
+// sales couldn't tell which shelf to take from: the locations_one_retail
+// index refuses a second, and the lock makes a second caller wait to see
+// the first instead of failing on it.
 export async function addRetailStore(db: Db, name: string) {
 	return db.transaction(async (tx) => {
+		await tx.execute(
+			sql`select pg_advisory_xact_lock(hashtext('katasync:retail-store'))`,
+		);
 		const [retail] = await tx
 			.select({ name: locations.name })
 			.from(locations)

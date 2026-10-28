@@ -1072,6 +1072,20 @@
       "when": 1793210413795,
       "tag": "0152_po_file_from_attachment",
       "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1793215091441,
+      "tag": "0153_product_components_by_component",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1793215094161,
+      "tag": "0154_locations_one_retail",
+      "breakpoints": true
     }
   ]
 }

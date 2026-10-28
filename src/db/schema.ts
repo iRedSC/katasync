@@ -72,6 +72,10 @@ export const locations = pgTable(
 		uniqueIndex("locations_one_pos_primary")
 			.on(t.posPrimary)
 			.where(sql`${t.posPrimary}`),
+		// POS sales find their shelf as the one retail store.
+		uniqueIndex("locations_one_retail")
+			.on(t.kind)
+			.where(sql`${t.kind} = 'retail'`),
 		check(
 			"locations_pos_primary_ours",
 			sql`not ${t.posPrimary} or ${t.kind} in ('owned', 'retail')`,
