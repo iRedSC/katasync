@@ -75,39 +75,47 @@ export async function refreshPayouts(
 		const done = await holdingChannel(
 			channel,
 			{ purpose: "payout-refresh" },
-			async () => {
-				const found = await FETCHERS[channel](
-					since ?? (await refreshSince(db, channel)),
-				);
-				await db.transaction(async (tx) => {
-					if (found.length > 0)
-						await tx
-							.insert(payouts)
-							.values(found.map((p) => ({ ...p, channel })))
-							.onConflictDoUpdate({
-								target: [payouts.channel, payouts.externalId],
-								set: {
-									status: sql`excluded.status`,
-									depositedAt: sql`excluded.deposited_at`,
-									amount: sql`excluded.amount`,
-									currency: sql`excluded.currency`,
-									bankTail: sql`excluded.bank_tail`,
-									reference: sql`excluded.reference`,
-									fetchedAt: sql`now()`,
-								},
-							});
-					await recordCheck(tx, channel, null);
-				});
-				return { kind: "saved", saved: found.length } as const;
+			async (): Promise<PayoutRefresh> => {
+				try {
+					const found = await FETCHERS[channel](
+						since ?? (await refreshSince(db, channel)),
+					);
+					await db.transaction(async (tx) => {
+						if (found.length > 0)
+							await tx
+								.insert(payouts)
+								.values(found.map((p) => ({ ...p, channel })))
+								.onConflictDoUpdate({
+									target: [payouts.channel, payouts.externalId],
+									set: {
+										status: sql`excluded.status`,
+										depositedAt: sql`excluded.deposited_at`,
+										amount: sql`excluded.amount`,
+										currency: sql`excluded.currency`,
+										bankTail: sql`excluded.bank_tail`,
+										reference: sql`excluded.reference`,
+										fetchedAt: sql`now()`,
+									},
+								});
+						await recordCheck(tx, channel, null);
+					});
+					return { kind: "saved", saved: found.length };
+				} catch (e) {
+					const error = errorText(e);
+					// Still under the lock, so a refresh that starts after this one
+					// can't have its check written over. Best effort: if the
+					// database is what failed, this fails too, and the error is
+					// still returned to the caller.
+					await recordCheck(db, channel, error).catch(() => {});
+					return { kind: "failed", error };
+				}
 			},
 		);
 		return done ?? { kind: "busy" };
 	} catch (e) {
-		const error = errorText(e);
-		// Best effort: if the database is what failed, this fails too, and the
-		// error is still returned to the caller.
-		await recordCheck(db, channel, error).catch(() => {});
-		return { kind: "failed", error };
+		// Taking the lock failed. No check: without the lock, it could land
+		// over the one a refresh holding it just wrote.
+		return { kind: "failed", error: errorText(e) };
 	}
 }
 

@@ -1,15 +1,17 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
-import { payouts } from "#/db/schema";
+import { payoutChecks, payouts } from "#/db/schema";
 import { createTestDb } from "#/test/db";
 import { refreshPayouts, refreshSince } from "./refresh";
 import { fetchShopifyPayouts } from "./shopify";
 import type { FetchedPayout } from "./types";
 
 // The payout lock as Postgres would keep it: one holder at a time, let go
-// when its transaction ends.
+// when its transaction ends. `released` runs as it's let go, before the
+// holder's caller hears back.
 let held = false;
+let released: (() => Promise<unknown>) | undefined;
 vi.mock("#/db/client", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("#/db/client")>();
 	const lockDb = {
@@ -23,7 +25,12 @@ vi.mock("#/db/client", async (importOriginal) => {
 					},
 				} as unknown as Db);
 			} finally {
-				if (mine) held = false;
+				if (mine) {
+					held = false;
+					const next = released;
+					released = undefined;
+					await next?.();
+				}
 			}
 		},
 	} as unknown as Db;
@@ -50,6 +57,7 @@ let db: Db;
 beforeEach(async () => {
 	db = await createTestDb();
 	held = false;
+	released = undefined;
 	vi.mocked(fetchShopifyPayouts).mockReset();
 });
 
@@ -71,6 +79,25 @@ test("an overlapping refresh skips rather than saving older word over newer", as
 		.where(eq(payouts.externalId, "p1"));
 	expect(saved.status).toBe("sent");
 	expect(fetchShopifyPayouts).toHaveBeenCalledOnce();
+});
+
+test("a failed refresh never writes its check over a later one's", async () => {
+	vi.mocked(fetchShopifyPayouts)
+		.mockRejectedValueOnce(new Error("Shopify is down"))
+		.mockResolvedValueOnce([payout("sent")]);
+	// The next refresh takes the lock the moment the failed one lets it go.
+	let next: Promise<unknown> | undefined;
+	released = () => {
+		next = refreshPayouts(db, "shopify", now);
+		return next;
+	};
+	expect(await refreshPayouts(db, "shopify", now)).toEqual({
+		kind: "failed",
+		error: "Shopify is down",
+	});
+	expect(await next).toEqual({ kind: "saved", saved: 1 });
+	const [check] = await db.select().from(payoutChecks);
+	expect(check.error).toBeNull();
 });
 
 test("a payout pending from long ago keeps the refresh looking back to it", async () => {
