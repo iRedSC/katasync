@@ -67,6 +67,16 @@ describe("monthlySpend", () => {
 			["Oct", 200],
 		]);
 	});
+
+	it("this month is the shop's, not UTC's", () => {
+		// 9pm Oct 31 in New York.
+		const october = monthlySpend([], new Date("2026-11-01T01:00:00Z"), 2);
+		expect(october.map((m) => m.key)).toEqual(["2026-09", "2026-10"]);
+		// 8pm Dec 31 in New York, across the year.
+		const december = monthlySpend([], new Date("2027-01-01T01:00:00Z"), 13);
+		expect(december[0].key).toBe("2025-12");
+		expect(december.at(-1)?.key).toBe("2026-12");
+	});
 });
 
 describe("topBought and poCents", () => {

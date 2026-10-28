@@ -96,6 +96,23 @@ export async function filesForReply(db: Db, market: Market, ids: number[]) {
 	);
 }
 
+// The real type and size of the files a reply sent, by fileId, so sending
+// it again or putting it back in a reply box checks them like any other.
+export async function replyFileSizes(db: Db, ids: number[]) {
+	const rows =
+		ids.length === 0
+			? []
+			: await db
+					.select({
+						id: buyerReplyFiles.id,
+						type: buyerReplyFiles.contentType,
+						size: buyerReplyFiles.size,
+					})
+					.from(buyerReplyFiles)
+					.where(inArray(buyerReplyFiles.id, [...new Set(ids)]));
+	return new Map(rows.map(({ id, ...f }) => [id, f]));
+}
+
 // The files whose bytes a send needs, in the reply's order.
 export async function replyFileData(db: Db, media: BuyerMedia[]) {
 	const ids = media.flatMap((m) => (m.fileId ? [m.fileId] : []));

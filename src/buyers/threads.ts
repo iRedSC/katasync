@@ -23,7 +23,9 @@ import {
 	stores,
 } from "#/db/schema";
 import type { Market } from "#/markets/market";
+import type { ReplyFile } from "./attachments";
 import { marketplaceMessagesOf } from "./marketplace-messages";
+import { replyFileSizes } from "./reply-files";
 import { ANSWERING, answers, type ReplyStatus } from "./states";
 import { isThreadOrder } from "./thread-order";
 
@@ -358,9 +360,9 @@ export async function threadsPage(
 						),
 					)
 					.orderBy(asc(buyerMessages.at), asc(buyerMessages.id));
-	const [drafts, precedents, marketplace] =
+	const [drafts, precedents, marketplace, sizes] =
 		unique.length === 0
-			? [[], [], []]
+			? [[], [], [], new Map<number, { type: string; size: number }>()]
 			: await Promise.all([
 					db
 						.select()
@@ -378,6 +380,12 @@ export async function threadsPage(
 						db,
 						unique.map((t) => t.id),
 					),
+					replyFileSizes(
+						db,
+						messages.flatMap((m) =>
+							m.fromBuyer ? [] : m.media.flatMap((f) => f.fileId ?? []),
+						),
+					),
 				]);
 	const shaped = unique.map((t) => {
 		const own = messages
@@ -386,6 +394,21 @@ export async function threadsPage(
 				...m,
 				// Added by staff without katasync sending it.
 				logged: isLogged(externalId),
+				// Ours uploaded, as sending it again sends them.
+				files: m.media.flatMap((f): ReplyFile[] => {
+					const kept = f.fileId ? sizes.get(f.fileId) : undefined;
+					return f.fileId && kept
+						? [
+								{
+									name: f.name,
+									kind: f.kind,
+									url: f.url,
+									fileId: f.fileId,
+									...kept,
+								},
+							]
+						: [];
+				}),
 			}));
 		const last = own.at(-1);
 		const latestTheirs = own.filter((m) => m.fromBuyer).at(-1);
