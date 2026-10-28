@@ -9,6 +9,7 @@ import { returnReason } from "#/orders/return-reasons";
 import type { CaseRequest } from "#/orders/returns-due";
 import { CaseObligation } from "./case-obligation";
 import { caseKindLabel } from "./marketplace-case";
+import { ReturnEvidence } from "./return-evidence";
 
 export function CaseRow({
 	request: r,
@@ -73,6 +74,11 @@ export function CaseRow({
 						</Badge>
 					)}
 					<CaseObligation request={r} />
+					{r.source === "return" && (
+						<div className="flex flex-wrap gap-1">
+							<ReturnEvidence evidence={r} />
+						</div>
+					)}
 					{r.source === "marketplace" && (
 						<span className="text-xs text-muted-foreground">
 							{r.externalId}

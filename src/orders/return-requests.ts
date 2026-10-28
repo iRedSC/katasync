@@ -7,6 +7,13 @@ import {
 	returnRequests,
 } from "#/db/schema";
 import { errorText } from "#/diagnostics/runs";
+import {
+	type EvidenceRead,
+	NO_EVIDENCE,
+	type ReturnEvidence,
+	underAToZ,
+	withRead,
+} from "./return-evidence";
 
 // Returns buyers opened on a marketplace, as each channel's importer reads
 // them (amazon-returns.ts, shopify-returns.ts, ebay-returns.ts), saved one
@@ -59,7 +66,8 @@ export function returnStage(
 }
 
 export type ChannelReturn = RequestStage &
-	CaseMoney & {
+	// Money left out is money the read couldn't see: what's saved stays.
+	(CaseMoney | { amount?: undefined; currency?: undefined }) & {
 		nextAction: string | null;
 		caseRef: string | null;
 		problems?: string[];
@@ -83,12 +91,17 @@ export type ChannelReturn = RequestStage &
 		carrier: string | null;
 		requestedAt: Date;
 		updatedAt?: Date;
+		// Left out by marketplaces whose reads don't say any of it.
+		evidence?: EvidenceRead;
 		lines: {
 			// The line's id there, as order_lines.externalId stores it.
 			lineExternalId: string | null;
 			alternateLineExternalId?: string | null;
 			sku: string | null;
 			quantity: number;
+			// The item's own, when the marketplace gives each item one.
+			reason?: string | null;
+			rawStatus?: string | null;
 		}[];
 	};
 
@@ -117,23 +130,31 @@ export function matchLine(
 // makes the same snapshot as the saved one needs no write. Lines compare as a
 // set, since their order means nothing; a line that has since matched a
 // different order line changes its orderLineId, so the snapshot changes too.
-type Snapshot = RequestStage & {
-	amount: string | null;
-	currency: string | null;
-	nextAction: string | null;
-	caseRef: string | null;
-	orderId: number;
-	rawStatus: string;
+type SavedLine = {
+	orderLineId: number | null;
+	sku: string | null;
+	quantity: number;
 	reason: string | null;
-	note: string | null;
-	noteUnread: boolean;
-	trackingNumber: string | null;
-	carrier: string | null;
-	requestedAt: Date;
-	// Null when the marketplace never said and nothing is saved yet.
-	sourceUpdatedAt: Date | null;
-	lines: { orderLineId: number | null; sku: string | null; quantity: number }[];
+	rawStatus: string | null;
 };
+type Snapshot = RequestStage &
+	ReturnEvidence & {
+		amount: string | null;
+		currency: string | null;
+		nextAction: string | null;
+		caseRef: string | null;
+		orderId: number;
+		rawStatus: string;
+		reason: string | null;
+		note: string | null;
+		noteUnread: boolean;
+		trackingNumber: string | null;
+		carrier: string | null;
+		requestedAt: Date;
+		// Null when the marketplace never said and nothing is saved yet.
+		sourceUpdatedAt: Date | null;
+		lines: SavedLine[];
+	};
 
 // As read back from the database, where kind and status are two columns.
 type Saved = Omit<Snapshot, keyof RequestStage> & {
@@ -164,8 +185,36 @@ function canonical(s: Saved) {
 		s.carrier,
 		s.requestedAt.getTime(),
 		s.sourceUpdatedAt?.getTime() ?? null,
+		s.aToZClaim,
+		// Field by field: jsonb reads back with its keys in its own order.
+		s.safetClaim && [
+			s.safetClaim.id,
+			s.safetClaim.state,
+			s.safetClaim.reason,
+			s.safetClaim.reimbursement?.amount ?? null,
+			s.safetClaim.reimbursement?.currency ?? null,
+			s.safetClaim.createdAt,
+		],
+		s.resolution,
+		s.inPolicy,
+		s.returnType,
+		s.label && [
+			s.label.type,
+			s.label.cost?.amount ?? null,
+			s.label.cost?.currency ?? null,
+			s.label.paidBy,
+		],
+		s.deliveredAt?.getTime() ?? null,
 		s.lines
-			.map((l) => JSON.stringify([l.orderLineId, l.sku, l.quantity]))
+			.map((l) =>
+				JSON.stringify([
+					l.orderLineId,
+					l.sku,
+					l.quantity,
+					l.reason,
+					l.rawStatus,
+				]),
+			)
 			.sort(),
 	]);
 }
@@ -258,6 +307,13 @@ export async function saveReturns(
 			carrier: returnRequests.carrier,
 			requestedAt: returnRequests.requestedAt,
 			sourceUpdatedAt: returnRequests.sourceUpdatedAt,
+			aToZClaim: returnRequests.aToZClaim,
+			safetClaim: returnRequests.safetClaim,
+			resolution: returnRequests.resolution,
+			inPolicy: returnRequests.inPolicy,
+			returnType: returnRequests.returnType,
+			label: returnRequests.label,
+			deliveredAt: returnRequests.deliveredAt,
 		})
 		.from(returnRequests)
 		.where(
@@ -276,6 +332,8 @@ export async function saveReturns(
 						orderLineId: returnRequestLines.orderLineId,
 						sku: returnRequestLines.sku,
 						quantity: returnRequestLines.quantity,
+						reason: returnRequestLines.reason,
+						rawStatus: returnRequestLines.rawStatus,
 					})
 					.from(returnRequestLines)
 					.where(
@@ -285,12 +343,14 @@ export async function saveReturns(
 						),
 					)
 			: [];
-	const linesOfRequest = new Map<number, Snapshot["lines"]>();
+	const linesOfRequest = new Map<number, SavedLine[]>();
 	for (const l of requestLines) {
 		const line = {
 			orderLineId: l.orderLineId,
 			sku: l.sku,
 			quantity: l.quantity,
+			reason: l.reason,
+			rawStatus: l.rawStatus,
 		};
 		const bucket = linesOfRequest.get(l.requestId);
 		if (bucket) bucket.push(line);
@@ -314,11 +374,16 @@ export async function saveReturns(
 		}
 		const current = savedBy.get(r.externalId);
 		const lines = linesOf.get(orderId) ?? [];
+		const evidence = withRead(current ?? NO_EVIDENCE, r.evidence ?? {});
+		const money: CaseMoney =
+			r.amount !== undefined ? r : savedMoney(current ?? null);
 		const next: Snapshot = {
 			orderId,
-			...r,
-			amount: r.amount,
-			currency: r.currency,
+			// A claim saved before keeps it escalated through a read that
+			// couldn't see the claim.
+			...(evidence.aToZClaim ? underAToZ(r) : r),
+			...evidence,
+			...money,
 			nextAction: r.nextAction,
 			caseRef: r.caseRef,
 			rawStatus: r.rawStatus,
@@ -334,6 +399,8 @@ export async function saveReturns(
 				orderLineId: matchLine(lines, l),
 				sku: l.sku,
 				quantity: l.quantity,
+				reason: l.reason ?? null,
+				rawStatus: l.rawStatus ?? null,
 			})),
 		};
 		if (current && canonical(current) === canonical(next)) {
@@ -361,6 +428,13 @@ export async function saveReturns(
 				trackingNumber: next.trackingNumber,
 				carrier: next.carrier,
 				requestedAt: next.requestedAt,
+				aToZClaim: next.aToZClaim,
+				safetClaim: next.safetClaim,
+				resolution: next.resolution,
+				inPolicy: next.inPolicy,
+				returnType: next.returnType,
+				label: next.label,
+				deliveredAt: next.deliveredAt,
 				// Without the marketplace's time, when it changed here.
 				sourceUpdatedAt: r.updatedAt ?? new Date(),
 			};
@@ -397,6 +471,15 @@ export async function saveReturns(
 		missing: [...missing],
 		unsaved,
 	};
+}
+
+// What a return had saved as its money, as a pair.
+function savedMoney(
+	saved: { amount: string | null; currency: string | null } | null,
+): CaseMoney {
+	return saved?.amount != null && saved.currency != null
+		? { amount: saved.amount, currency: saved.currency }
+		: { amount: null, currency: null };
 }
 
 type ChannelReturnChannel = (typeof returnRequests.$inferInsert)["billedBy"];

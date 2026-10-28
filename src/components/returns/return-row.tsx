@@ -11,6 +11,7 @@ import type { useRowLink } from "#/lib/row-link";
 import { returnReason } from "#/orders/return-reasons";
 import type { ReturnOrder } from "#/orders/returns-due";
 import { CaseObligation } from "./case-obligation";
+import { ReturnEvidence } from "./return-evidence";
 
 export const states: Record<
 	ReturnState,
@@ -126,7 +127,12 @@ export function ReturnRow({
 						</Tip>
 					)}
 				</div>
-				{request && <CaseObligation request={request} />}
+				{request && (
+					<div className="mt-1 flex flex-wrap items-center gap-1">
+						<CaseObligation request={request} />
+						<ReturnEvidence evidence={request} />
+					</div>
+				)}
 			</td>
 			<td className="py-1.5 pr-2">
 				<div className="flex items-center justify-end gap-1">

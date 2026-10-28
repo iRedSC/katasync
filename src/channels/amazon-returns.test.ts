@@ -54,7 +54,11 @@ describe("parseReturnsReport", () => {
 				"",
 			].join("\n"),
 		);
-		expect(problems).toEqual(["Amazon return for 111-2 has no date"]);
+		// This header is an older report's, without the evidence columns.
+		expect(problems).toEqual([
+			"Amazon return for 111-2 has no date",
+			expect.stringMatching(/^Amazon's returns report has no A-to-Z Claim/),
+		]);
 		expect(returns).toHaveLength(1);
 		expect(returns[0]).toMatchObject({
 			externalId: "RMA1",

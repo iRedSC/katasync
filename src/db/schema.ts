@@ -25,6 +25,7 @@ import {
 import type { Condition } from "#/inbox/rules";
 import type { VoicemailState } from "#/inbox/voicemail-model";
 import type { Standing } from "#/markets/standing";
+import type { ReturnLabel, SafetClaim } from "#/orders/return-evidence";
 import type { Applied, Proposal } from "#/purchasing/inbox/ai-filing-shapes";
 
 // Raw bytes, for files kept in the database (label PDFs).
@@ -911,6 +912,16 @@ export const returnRequests = pgTable(
 		// When staff stopped following its package; null while it's followed.
 		// Never set by a sync, so the marketplace can't undo it.
 		unfollowedAt: timestamp({ withTimezone: true }),
+		// What the marketplace's report adds (#/orders/return-evidence). Null
+		// where it doesn't say; only Amazon's report has these so far.
+		aToZClaim: boolean(),
+		safetClaim: jsonb().$type<SafetClaim>(),
+		resolution: text(),
+		inPolicy: boolean(),
+		returnType: text(),
+		label: jsonb().$type<ReturnLabel>(),
+		// When the carrier delivered it back to us.
+		deliveredAt: timestamp({ withTimezone: true }),
 	},
 	(t) => [
 		unique("return_requests_billed_by_external_id").on(
@@ -933,6 +944,14 @@ export const returnRequests = pgTable(
 		check(
 			"return_requests_money_pair",
 			sql`(${t.amount} is null) = (${t.currency} is null)`,
+		),
+		check(
+			"return_requests_safet_claim_has_id",
+			sql`${t.safetClaim} is null or jsonb_typeof(${t.safetClaim}->'id') = 'string'`,
+		),
+		check(
+			"return_requests_label_object",
+			sql`${t.label} is null or jsonb_typeof(${t.label}) = 'object'`,
 		),
 	],
 );
@@ -1035,6 +1054,10 @@ export const returnRequestLines = pgTable(
 		orderLineId: integer().references(() => orderLines.id),
 		sku: text(),
 		quantity: integer().notNull(),
+		// This item's own reason and status, when the marketplace gives each
+		// item one (Amazon); otherwise the request's stand for it.
+		reason: text(),
+		rawStatus: text(),
 	},
 	(t) => [
 		check("return_request_lines_quantity_positive", sql`${t.quantity} > 0`),
@@ -3063,9 +3086,9 @@ export const countHistory = pgView("count_history", {
 }).existing();
 
 // How many of each line came back, by the best evidence there is (received,
-// requested, or refunded in full), defined in drizzle/0064_return_rates.sql.
-// Lines with a product, from orders not cancelled or shipped by the
-// marketplace.
+// requested, or refunded in full), last defined in
+// drizzle/0150_amazon_return_evidence.sql. Lines with a product, from orders
+// not cancelled or shipped by the marketplace.
 export const orderLineReturns = pgView("order_line_returns", {
 	lineId: integer().notNull(),
 	orderId: integer().notNull(),

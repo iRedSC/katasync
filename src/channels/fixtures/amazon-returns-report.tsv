@@ -1,0 +1,6 @@
+Order ID	Order date	Return request date	Return request status	Amazon RMA ID	Merchant RMA ID	Label type	Label cost	Currency code	Return carrier	Tracking ID	Label to be paid by	A-to-Z Claim	Is prime	ASIN	Merchant SKU	Item Name	Return quantity	Return Reason	In policy	Return type	Resolution	Invoice number	Return delivery date	Order Amount	Order quantity	SafeT Action reason	SafeT claim id	SafeT claim state	SafeT claim creation time	SafeT claim reimbursement amount	Refunded Amount	Order Item ID
+111-A	2026-09-20T10:00:00Z	2026-10-01T10:00:00Z	Approved	RMA-AZ		AmazonPrePaidLabel	8.50	USD	UPS	1ZAZ	Seller	Y	N		HAWK		1	NOT_AS_DESCRIBED	Y	C-Returns	StandardRefund		2026-10-08T15:30:00Z		1						42.00	OI-A
+111-S	2026-09-20T10:00:00Z	2026-10-01T10:00:00Z	Closed	RMA-ST				USD		1ZST		N	N		KNIFE		1	DEFECTIVE	N	C-Returns			2026-10-05		1	Item returned damaged	ST-77	Approved	2026-10-10T09:00:00Z	20.00	30.00	OI-S
+111-M	2026-09-20T10:00:00Z	2026-10-01T10:00:00Z	Approved	RMA-MULTI				USD				N	N		WRENCH		1	DEFECTIVE	Y	C-Returns					1						10.25	OI-M1
+111-M	2026-09-20T10:00:00Z	2026-10-01T10:00:00Z	Approved	RMA-MULTI				USD				N	N		PAN		2	UNWANTED_ITEM	Y	C-Returns					1						5.5	OI-M2
+111-U	2026-09-20T10:00:00Z	2026-10-01T10:00:00Z	Approved	RMA-NEW				USD				N	N		TROWEL		1	ORDERED_WRONG_ITEM	Y	Z-Mystery					1							OI-U
