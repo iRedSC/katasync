@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import { type BuyerMedia, buyerMessages } from "#/db/schema";
+import { type BuyerMedia, buyerMessages, buyerReplyFiles } from "#/db/schema";
 import { settleReply } from "./states";
 import { isLogged, recordFromBuyer, recordOurs } from "./threads";
 
@@ -24,9 +24,9 @@ const same = (a: string, b: string) =>
 	a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
 
 // apart: our pictures go as messages of their own, before the words
-// (TikTok). Each one found is written on the reply it belongs to, and the
-// reply is delivered only once all of it is found: its words, which go last,
-// or with none, every picture.
+// (TikTok). Each one found, at the address TikTok gave it on upload, is
+// written on the reply it belongs to, and the reply is delivered only once
+// all of it is found: its words, which go last, or with none, every picture.
 export async function keepConversation(
 	db: Db,
 	threadId: number,
@@ -61,6 +61,23 @@ export async function keepConversation(
 	);
 	// Sent no earlier than we wrote it (allowing for clocks). One added
 	// without sending was sent on the marketplace before it was added.
+	// Where TikTok keeps each picture of theirs it was given.
+	const fileIds = waiting.flatMap((w) =>
+		w.media.flatMap((f) => (f.fileId && !f.externalId ? [f.fileId] : [])),
+	);
+	const uploadedAt = new Map(
+		!apart || fileIds.length === 0
+			? []
+			: (
+					await db
+						.select({
+							id: buyerReplyFiles.id,
+							image: buyerReplyFiles.tiktokImage,
+						})
+						.from(buyerReplyFiles)
+						.where(inArray(buyerReplyFiles.id, fileIds))
+				).flatMap((f) => (f.image ? [[f.id, f.image.url] as const] : [])),
+	);
 	const after = (m: ListedMessage, w: (typeof waiting)[number]) =>
 		m.at.getTime() >=
 		w.at.getTime() -
@@ -73,15 +90,18 @@ export async function keepConversation(
 		}
 		if (claimed.has(m.externalId)) continue;
 		claimed.add(m.externalId);
-		// A picture alone: the first of a reply's not yet found.
+		// A picture alone: the reply's whose picture TikTok shows at the same
+		// address. A picture of ours that isn't is one sent another way.
 		if (apart && !m.body.trim() && m.media.length > 0) {
+			const urls = new Set(m.media.map((f) => f.url));
+			const isIt = (f: BuyerMedia) => {
+				const url = f.fileId ? uploadedAt.get(f.fileId) : undefined;
+				return !f.externalId && url !== undefined && urls.has(url);
+			};
 			const owner = waiting.find(
-				(w) =>
-					!isLogged(w.externalId) &&
-					after(m, w) &&
-					w.media.some((f) => f.fileId && !f.externalId),
+				(w) => !isLogged(w.externalId) && after(m, w) && w.media.some(isIt),
 			);
-			const at = owner?.media.findIndex((f) => f.fileId && !f.externalId);
+			const at = owner?.media.findIndex(isIt);
 			const part = at === undefined ? undefined : owner?.media[at];
 			if (owner && at !== undefined && part) {
 				owner.media[at] = { ...part, externalId: m.externalId };

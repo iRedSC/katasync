@@ -14,7 +14,12 @@ import {
 import { basePrompt, savePrecedent, setBasePrompt } from "./precedents";
 import { runBuyerMessages } from "./run";
 import { reply } from "./send";
-import { ensureThread, recordFromBuyer, threadsPage } from "./threads";
+import {
+	ensureThread,
+	moveThreadOrder,
+	recordFromBuyer,
+	threadsPage,
+} from "./threads";
 
 // The agents, answered by the test: each by name.
 type Answers = Record<string, (input: string) => unknown>;
@@ -134,6 +139,51 @@ describe("suggested replies", () => {
 		expect(t?.draft).toMatchObject({ body: "From Claude", by: "claude" });
 	});
 
+	test("a draft written while the thread moves orders isn't saved as the new one's", async () => {
+		await ensureThread(db, {
+			market: "ebay",
+			externalId: "c1",
+			subject: "About your scraper",
+			orderRef: "A",
+		});
+		const about: (string | null)[] = [];
+		let release = () => {};
+		const slow = fake({
+			replier: (input) => {
+				about.push(JSON.parse(input).order?.number ?? null);
+				return new Promise((resolve) => {
+					release = () =>
+						resolve({
+							reply: "About A",
+							english: null,
+							precedents: [],
+							note: null,
+						});
+				});
+			},
+		});
+		const drafting = draftThread(db, threadId, { run: slow });
+		await vi.waitFor(() => expect(about).toEqual(["A"]));
+		await moveThreadOrder(db, threadId, "B");
+		release();
+		expect(await drafting).toBeNull();
+		const [d] = await db.select().from(replyDrafts);
+		expect(d?.state).toBe("drafting");
+		// Taken over at once, and drafted about B.
+		const run = fake({
+			replier: (input) => {
+				about.push(JSON.parse(input).order?.number ?? null);
+				return { reply: "About B", english: null, precedents: [], note: null };
+			},
+		});
+		expect(await draftThread(db, threadId, { run })).toMatchObject({
+			state: "ready",
+			body: "About B",
+			orderRef: null,
+		});
+		expect(about).toEqual(["A", "B"]);
+	});
+
 	test("a failure says why, and isn't retried at once", async () => {
 		const run = fake({
 			replier: () => {
@@ -146,6 +196,26 @@ describe("suggested replies", () => {
 			error: "The AI proxy answered 502: down",
 		});
 		expect(await draftWaiting(db, 4, run)).toBe(0);
+	});
+
+	test("a failure after a new message waits too, until the buyer writes again", async () => {
+		await draftThread(db, threadId, { run: fake(spanish) });
+		await buyerSays("¿Hola?");
+		let tries = 0;
+		const down = fake({
+			replier: () => {
+				tries++;
+				throw new Error("The AI proxy answered 502: down");
+			},
+		});
+		expect(await draftWaiting(db, 4, down)).toBe(0);
+		expect(tries).toBe(1);
+		// The next run leaves it for the retry delay.
+		expect(await draftWaiting(db, 4, down)).toBe(0);
+		expect(await draftThread(db, threadId, { run: down })).toBeNull();
+		expect(tries).toBe(1);
+		await buyerSays("¿Alguien?");
+		expect(await draftWaiting(db, 4, fake(spanish))).toBe(1);
 	});
 
 	test("sending a reply uses the suggestion up", async () => {

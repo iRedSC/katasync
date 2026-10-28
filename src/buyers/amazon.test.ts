@@ -12,7 +12,16 @@ import { refuseFiles } from "./attachments";
 import { addReplyFile } from "./reply-files";
 import { reply, settleReplies } from "./send";
 import { settleReply } from "./states";
-import { logOurs, threadsPage, waitingOn } from "./threads";
+import {
+	countWaiting,
+	ensureThread,
+	logOurs,
+	recordFromBuyer,
+	setThreadDone,
+	threadsPage,
+	waitingOn,
+	waitingThreads,
+} from "./threads";
 
 const RELAY =
 	"p39fytvw2631s9q+f12f0666-7d6a-49b0-b2d2-a35f46ae7784@marketplace.amazon.com";
@@ -163,6 +172,81 @@ describe("answering", () => {
 				{ fromBuyer: false, status: "sending", at: at(2) },
 			]),
 		).toBeNull();
+	});
+
+	test("the side list and drafting see the same threads waiting as the page", async () => {
+		const at = (h: number) => new Date(Date.UTC(2026, 0, 1, h));
+		const statuses = [
+			null,
+			"failed",
+			"sending",
+			"sent",
+			"unconfirmed",
+			"delivered",
+		] as const;
+		// Each reply state, after the buyer and before them; and at the same
+		// moment as the buyer's, where the order they're kept in decides.
+		let k = 0;
+		for (const market of ["amazon", "ebay"] as const)
+			for (const status of statuses)
+				for (const ours of [2, 0, 1]) {
+					k++;
+					const t = await ensureThread(db, {
+						market,
+						externalId: `w${k}`,
+						subject: "Waiting?",
+					});
+					await recordFromBuyer(db, t.id, {
+						externalId: `w${k}-b`,
+						body: "Hi",
+						at: at(1),
+					});
+					if (status)
+						await db.insert(buyerMessages).values({
+							threadId: t.id,
+							fromBuyer: false,
+							body: "Hello",
+							externalId: `w${k}-o`,
+							at: at(ours || 1),
+							status,
+							requestKey: crypto.randomUUID(),
+							statusAt: at(1),
+							...(status === "failed" ? { error: "No" } : {}),
+							...(status === "unconfirmed" ? { error: "Unsure" } : {}),
+						});
+					if (ours === 0)
+						await recordFromBuyer(db, t.id, {
+							externalId: `w${k}-b2`,
+							body: "Hello?",
+							at: at(3),
+						});
+				}
+		const done = await ensureThread(db, {
+			market: "amazon",
+			externalId: "done",
+			subject: "Done",
+		});
+		await recordFromBuyer(db, done.id, {
+			externalId: "d",
+			body: "Hi",
+			at: at(1),
+		});
+		await setThreadDone(db, done.id, true);
+		for (const market of [null, "amazon", "ebay"] as const) {
+			const page = (await threadsPage(db, "open", market)).filter(
+				(t) => t.waiting,
+			);
+			expect(await countWaiting(db, market)).toBe(page.length);
+			const sql = await waitingThreads(db, market);
+			expect(
+				sql.map((t) => [t.id, t.due]).sort(([a], [b]) => Number(a) - Number(b)),
+			).toEqual(
+				page
+					.map((t) => [t.id, t.waiting?.due])
+					.sort(([a], [b]) => Number(a) - Number(b)),
+			);
+		}
+		expect(await countWaiting(db, null)).toBeGreaterThan(0);
 	});
 
 	test("a reply goes to the buyer's address, then settles delivered", async () => {
