@@ -14,9 +14,12 @@ import { toast } from "sonner";
 // answered it (the engine's reload, or a page loading or preloading as staff
 // move around), since that data has it already; so a patch may safely add to
 // a count (received + 5) as well as set a value, even in the moment the
-// reloaded data shows before the engine lets go of the patch. Data loaded
-// before then still gets it, however late it first shows, as when a page
-// preloaded on hover opens after the change.
+// reloaded data shows before the engine lets go of the patch. Data whose load
+// finished before the change was sent still gets it, however late it first
+// shows, as when a page preloaded on hover opens after the change. A load
+// that ran while the change was sending may or may not have it: the patch
+// stays over it as it was before the answer, and the engine reloads rather
+// than let that guess stand once its own reload has failed.
 //
 // A change made as another change starts sending (a helper that makes its
 // own change, called from a send) goes to the server at once, as part of it,
@@ -37,9 +40,14 @@ type Change = {
 	patches: readonly Patch[];
 	send: () => Promise<unknown>;
 	state: "waiting" | "sending" | "sent";
-	// Loads started before it was sent; data first seen after more had
-	// started has it.
-	sentAfter?: number;
+	// On the engine's clock: when it began sending, and when the server
+	// answered. Data loaded wholly before `sendingAt` lacks it; data whose
+	// load started after `sentAt` has it; any other may have it or not.
+	sendingAt?: number;
+	sentAt?: number;
+	// A reload was asked for because data of unknown freshness showed while
+	// it was sent; asked once, so a server that stays down isn't hammered.
+	rechecked?: true;
 	settle: (result: { value: unknown } | null) => void;
 	// What the server answered, kept for an unpatched change until the reload
 	// shows it.
@@ -47,6 +55,18 @@ type Change = {
 };
 
 export type Result<T> = { value: T } | null;
+
+// When a load ran, on the engine's clock.
+type Loaded = { started: number; finished: number };
+
+// Whether loaded data has a sent change. A load that overlapped the send may
+// have read the database before the change committed or after, and nothing
+// here can tell which.
+function includes(loaded: Loaded, c: Change): "yes" | "no" | "unknown" {
+	if (loaded.started > (c.sentAt ?? Infinity)) return "yes";
+	if (loaded.finished < (c.sendingAt ?? -Infinity)) return "no";
+	return "unknown";
+}
 
 export function createOptimism({
 	reload,
@@ -62,22 +82,24 @@ export function createOptimism({
 	// A change failed, so the page differs from what was shown; reload even if
 	// nothing was sent.
 	let stale = false;
-	let loadsStarted = 0;
+	// Ticks at every load start and end, send start, and answer, so they can
+	// be ordered against each other.
+	let clock = 0;
+	let lastLoadStart = 0;
 	// True while a send is being started, so a change it makes joins it.
 	let starting = false;
-	// When each piece of data was loaded, counted in loads started: when its
-	// load started, or else when it first rendered.
-	const seen = new WeakMap<object, number>();
-	// Marks data, and every object and list within it, as from the load that
-	// started at `started`. Data seen before keeps its mark, as a load may hand
-	// back data it kept from an earlier one.
-	const stamp = (data: unknown, started: number) => {
+	// When each piece of data was loaded, on the clock.
+	const seen = new WeakMap<object, Loaded>();
+	// Marks data, and every object and list within it, as from one load. Data
+	// seen before keeps its mark, as a load may hand back data it kept from an
+	// earlier one.
+	const stamp = (data: unknown, loaded: Loaded) => {
 		if (typeof data !== "object" || data === null || seen.has(data)) return;
 		const proto = Object.getPrototypeOf(data);
 		if (!Array.isArray(data) && proto !== Object.prototype && proto !== null)
 			return;
-		seen.set(data, started);
-		for (const v of Object.values(data)) stamp(v, started);
+		seen.set(data, loaded);
+		for (const v of Object.values(data)) stamp(v, loaded);
 	};
 	const listeners = new Set<() => void>();
 
@@ -85,12 +107,25 @@ export function createOptimism({
 		changes = next;
 		for (const l of listeners) l();
 	};
-	const mark = (id: number, state: Change["state"], value?: unknown) =>
+	const mark = (id: number, state: Change["state"], value?: unknown) => {
+		const at = ++clock;
 		set(
 			changes.map((c) =>
-				c.id === id ? { ...c, state, value, sentAfter: loadsStarted } : c,
+				c.id !== id
+					? c
+					: state === "sent"
+						? { ...c, state, value, sentAt: at }
+						: { ...c, state, sendingAt: at },
 			),
 		);
+	};
+	// Data that may or may not have a sent change showed after the engine's
+	// reload failed; reload once more so the guess doesn't stand.
+	const recheck = (c: Change) => {
+		if (c.rechecked) return;
+		c.rechecked = true;
+		queueMicrotask(() => void pump());
+	};
 	// An unpatched change shows nothing until the reload, so it settles then,
 	// and whoever waits on it sees it done; a patched one settles once sent.
 	const settleShown = (sent: readonly Change[]) => {
@@ -138,7 +173,7 @@ export function createOptimism({
 				const sent = changes.filter((c) => c.state === "sent");
 				if (sent.length === 0 && !stale) return;
 				try {
-					loadsStarted++;
+					lastLoadStart = ++clock;
 					await reload();
 				} catch (err) {
 					// The patches stay, so the page still shows what was saved.
@@ -196,6 +231,7 @@ export function createOptimism({
 					patches: patch === undefined ? [] : [patch].flat(),
 					send,
 					state: starting ? "sending" : "waiting",
+					sendingAt: starting ? ++clock : undefined,
 					settle: resolve as Change["settle"],
 				};
 				if (!starting) {
@@ -215,30 +251,36 @@ export function createOptimism({
 		},
 		// The data with every patch it doesn't have yet laid over, in order.
 		// Data that didn't come through load(), such as a list put together on
-		// the page, counts as loaded when it first renders, and a page renders
-		// its data before anyone can change it.
+		// the page, counts as from the latest load to start before it first
+		// rendered, and a page renders its data before anyone can change it.
 		over<T>(key: string, base: T): T {
-			let loadedAfter = loadsStarted;
+			let loaded: Loaded = { started: lastLoadStart, finished: clock };
 			if (typeof base === "object" && base !== null) {
 				const first = seen.get(base);
-				if (first === undefined) seen.set(base, loadsStarted);
-				else loadedAfter = first;
+				if (first === undefined) seen.set(base, loaded);
+				else loaded = first;
 			}
 			let data = base;
 			for (const c of changes) {
-				if (c.state === "sent" && loadedAfter > (c.sentAfter ?? 0)) continue;
+				if (!c.patches.some((p) => p.key === key)) continue;
+				if (c.state === "sent") {
+					const has = includes(loaded, c);
+					if (has === "yes") continue;
+					if (has === "unknown" && !pumping) recheck(c);
+				}
 				for (const p of c.patches)
 					if (p.key === key) data = (p.apply as (d: T) => T)(data);
 			}
 			return data;
 		},
 		// Loads data, as a page's loader does, marking it with when the load
-		// started: it has every change the server answered before then, and
-		// none answered after, however late it first shows.
+		// started and finished: it has every change the server answered before
+		// it started, and none sent after it finished, however late it shows.
 		async load<T>(fetch: () => T | Promise<T>): Promise<T> {
-			const started = ++loadsStarted;
+			const started = ++clock;
+			lastLoadStart = started;
 			const data = await fetch();
-			stamp(data, started);
+			stamp(data, { started, finished: ++clock });
 			return data;
 		},
 		// True while some change hasn't reached the server.
