@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { products, purchaseOrderLines, supplierOffers } from "#/db/schema";
 import { openDraft } from "./drafts";
-import { lockOrder, PurchaseOrderError, poName } from "./lock";
+import { lockOrder, lockOrders, PurchaseOrderError, poName } from "./lock";
 import { addItemsBatch } from "./set-parts";
 
 // Puts a finished PO's products on its supplier's draft again, in what was
@@ -13,8 +13,10 @@ import { addItemsBatch } from "./set-parts";
 // nothing is ordered twice or from the wrong place.
 // Archived products are left off too.
 export async function orderAgain(db: Db, sourceId: number) {
-	const reorderable = async (tx: Db) => {
-		const from = await lockOrder(tx, sourceId, ["closed", "cancelled"]);
+	const reorderable = async (
+		tx: Db,
+		from: { id: number; supplierId: number },
+	) => {
 		const lines = await tx
 			.select({
 				productId: purchaseOrderLines.productId,
@@ -33,19 +35,36 @@ export async function orderAgain(db: Db, sourceId: number) {
 			)
 			.where(eq(purchaseOrderLines.purchaseOrderId, from.id))
 			.orderBy(purchaseOrderLines.id);
-		return { from, lines: lines.filter((l) => l.items > 0) };
+		return lines.filter((l) => l.items > 0);
 	};
 	// Checked before opening the draft, so a PO with nothing left to order
 	// doesn't leave an empty draft behind.
-	const first = await db.transaction(reorderable);
+	const first = await db.transaction(async (tx) => {
+		const from = await lockOrder(tx, sourceId, ["closed", "cancelled"]);
+		return { from, lines: await reorderable(tx, from) };
+	});
 	if (!first.lines.some((l) => l.sold && !l.archived))
 		throw new PurchaseOrderError(
 			`Nothing on ${poName(sourceId)} is still sold by this supplier`,
 		);
 	const draftId = await openDraft(db, first.from.supplierId);
 	return db.transaction(async (tx) => {
-		const { lines } = await reorderable(tx);
-		await lockOrder(tx, draftId, ["draft"]);
+		// Both POs are locked together before any product, the order every
+		// draft edit takes (draft, then its products), so this can't deadlock
+		// against someone editing the draft. The source is read again under
+		// that lock.
+		const locked = await lockOrders(
+			tx,
+			[sourceId, draftId],
+			["closed", "cancelled", "draft"],
+		);
+		const from = locked.find((po) => po.id === sourceId);
+		const draft = locked.find((po) => po.id === draftId);
+		if (from?.status !== "closed" && from?.status !== "cancelled")
+			throw new PurchaseOrderError(`${poName(sourceId)} is ${from?.status}`);
+		if (draft?.status !== "draft")
+			throw new PurchaseOrderError(`${poName(draftId)} is ${draft?.status}`);
+		const lines = await reorderable(tx, from);
 		const onDraft = new Set(
 			(
 				await tx

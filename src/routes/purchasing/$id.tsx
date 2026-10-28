@@ -18,12 +18,8 @@ import {
 } from "#/components/damage/damage-dialog";
 import { DamageReportDialog } from "#/components/damage/report-dialog";
 import { Badge, Card, Page, useBack } from "#/components/page";
-import { BrowseProducts, type BrowseRow } from "#/components/po-browse";
-import {
-	ProductPicker,
-	type PurchaseOrderMatch,
-} from "#/components/po-product-picker";
 import { AddEmail } from "#/components/purchase-order/add-email";
+import { AddItems } from "#/components/purchase-order/add-items";
 import { ChargesRow } from "#/components/purchase-order/charges-row";
 import { DeliveryCard } from "#/components/purchase-order/delivery-card";
 import { FilesCard } from "#/components/purchase-order/files-card";
@@ -31,8 +27,10 @@ import { FlagsCard } from "#/components/purchase-order/flags";
 import { InvoicesCard } from "#/components/purchase-order/invoices-card";
 import { receiveAllWithUndo } from "#/components/purchase-order/line-actions";
 import { damageable, lineName } from "#/components/purchase-order/line-damage";
-import { LineTable } from "#/components/purchase-order/line-table";
-import { browseLine } from "#/components/purchase-order/new-lines";
+import {
+	type LineSort,
+	LineTable,
+} from "#/components/purchase-order/line-table";
 import { NotesCard } from "#/components/purchase-order/notes-card";
 import { OtherActions } from "#/components/purchase-order/other-actions";
 import { PaymentsCard } from "#/components/purchase-order/payments-card";
@@ -42,7 +40,6 @@ import {
 	poData,
 	sinceSent,
 } from "#/components/purchase-order/po-data";
-import { Recommended } from "#/components/purchase-order/recommended";
 import { ReorderBar } from "#/components/purchase-order/reorder-bar";
 import { SendDialog } from "#/components/purchase-order/send-dialog";
 import { SupplierPanel } from "#/components/purchase-order/supplier-panel";
@@ -55,14 +52,9 @@ import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
 import { formatCount, formatDay, formatMoney } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
-import { ids } from "#/lib/optimism";
 import { lineCents } from "#/purchasing/discount";
 import { purchaseOrderStatus, takenByReceiveAll } from "#/purchasing/status";
-import {
-	addProductToPurchaseOrder,
-	getPurchaseOrder,
-	sendPurchaseOrder,
-} from "#/server/purchasing";
+import { getPurchaseOrder, sendPurchaseOrder } from "#/server/purchasing";
 
 export const Route = createFileRoute("/purchasing/$id")({
 	loader: ({ params }) => getPurchaseOrder({ data: { id: Number(params.id) } }),
@@ -74,7 +66,7 @@ function PurchaseOrderPage() {
 	const loaded = Route.useLoaderData();
 	const d = poData.useData(loaded.order.id, loaded);
 	const goBack = useBack({ to: "/purchasing" });
-	const { busy, run, save } = useAction();
+	const { busy, run } = useAction();
 	const po = d.order;
 	// A suggested PO works like a draft; its first change makes it one.
 	const draft = isUnsent(po.status);
@@ -90,10 +82,10 @@ function PurchaseOrderPage() {
 	const openDamage = d.damages.find((x) => x.id === openDamageId);
 	const unreported = d.damages.filter((x) => x.reportedAt === null);
 	const picker = useRef<HTMLInputElement>(null);
-	const [browsing, setBrowsing] = useState(false);
 	// The line just added or picked, so it scrolls into view with its
 	// quantity open. The nonce reopens it when picked again.
 	const [focus, setFocus] = useState<LineFocus | null>(null);
+	const [lineSort, setLineSort] = useState<LineSort>([]);
 	// Counted in the product itself, so 2 cases of 12 are 24.
 	const ordered = d.lines.reduce((n, l) => n + l.quantity * l.packSize, 0);
 	const received = d.lines.reduce(
@@ -158,6 +150,8 @@ function PurchaseOrderPage() {
 		<LineTable
 			detail={d}
 			lines={lines}
+			sort={lineSort}
+			onSort={setLineSort}
 			focus={focus}
 			onEditQuantity={(lineId) => setFocus({ lineId, nonce: Date.now() })}
 			onOpenDamage={setOpenDamageId}
@@ -179,16 +173,6 @@ function PurchaseOrderPage() {
 	);
 	const totals = (
 		<>
-			{editable && (
-				<ProductPicker
-					ref={picker}
-					purchaseOrderId={po.id}
-					sent={!draft}
-					busy={busy}
-					onPick={pick}
-					onBrowse={() => setBrowsing(true)}
-				/>
-			)}
 			<ChargesRow detail={d} />
 			<div className="flex items-center justify-end gap-6 border-t px-4 py-3">
 				<span className="text-muted-foreground">
@@ -203,6 +187,15 @@ function PurchaseOrderPage() {
 				<span className="font-semibold tabular-nums">{formatMoney(total)}</span>
 			</div>
 		</>
+	);
+
+	const addItems = editable && (
+		<AddItems
+			detail={d}
+			total={total}
+			inputRef={picker}
+			onFocusLine={(lineId) => setFocus({ lineId, nonce: Date.now() })}
+		/>
 	);
 
 	// Says so when a change turns the suggestion into a draft.
@@ -221,65 +214,6 @@ function PurchaseOrderPage() {
 			picker.current?.focus();
 		},
 	});
-
-	async function pick(m: PurchaseOrderMatch) {
-		if (m.lineId !== null) {
-			toast(`${m.sku} is already on this PO`);
-			setFocus({ lineId: m.lineId, nonce: Date.now() });
-			return true;
-		}
-		const r = await run(
-			() =>
-				addProductToPurchaseOrder({
-					data: { purchaseOrderId: po.id, productId: m.productId },
-				}),
-			(r) =>
-				!r.added
-					? `${m.sku} is already on this PO`
-					: draft
-						? `Added ${m.sku}`
-						: `Added ${m.sku}`,
-		);
-		if (!r) return false;
-		setFocus({ lineId: r.value.lineId, nonce: Date.now() });
-		return true;
-	}
-
-	// From Browse, which stays open to add more, so no line opens behind it.
-	// The line shows at once, as the server will make it, under an id of its
-	// own until the server's comes back; Browse's row flips with it.
-	function addFromBrowse(row: BrowseRow) {
-		const id = ids.provisional();
-		const line = browseLine(row, id, d.supplier.id);
-		return save({
-			label: `Adding ${row.sku}`,
-			patch: poData.patch(po.id, (data) => ({
-				...data,
-				// A suggested PO's first change saves it as a draft.
-				order:
-					data.order.status === "suggested"
-						? { ...data.order, status: "draft" }
-						: data.order,
-				lines: data.lines.some((l) => l.productId === row.id)
-					? data.lines
-					: [...data.lines, line],
-				recommended: data.recommended.filter((x) => x.productId !== row.id),
-			})),
-			send: async () => {
-				const res = await addProductToPurchaseOrder({
-					data: { purchaseOrderId: po.id, productId: row.id },
-				});
-				ids.confirm(id, res.lineId);
-				return res;
-			},
-			success: (r) =>
-				!r.added
-					? `${row.sku} is already on this PO`
-					: draft
-						? `Added ${row.sku}`
-						: `Added ${row.sku}`,
-		});
-	}
 
 	// Ordered some other way: on order, no email. sentOn backdates it.
 	const markSent = (sentOn?: string) =>
@@ -394,7 +328,7 @@ function PurchaseOrderPage() {
 								{lineTable(d.lines)}
 								{totals}
 							</Card>
-							<Recommended detail={d} total={total} />
+							{addItems}
 						</>
 					) : (
 						<>
@@ -439,6 +373,7 @@ function PurchaseOrderPage() {
 									{totals}
 								</Card>
 							)}
+							{addItems}
 							<InvoicesCard detail={d} />
 							<PaymentsCard detail={d} payables={d.payables} />
 							<Timeline detail={d} />
@@ -450,17 +385,6 @@ function PurchaseOrderPage() {
 					<SupplierPanel detail={d} />
 					<TrackingCard detail={d} />
 					<FilesCard detail={d} />
-					<BrowseProducts
-						purchaseOrderId={po.id}
-						supplierName={d.supplier.name}
-						sent={!draft}
-						open={browsing && editable}
-						onOpenChange={setBrowsing}
-						onPo={new Map(d.lines.map((l) => [l.productId, l.id]))}
-						busy={busy}
-						onAdd={addFromBrowse}
-						onGoToLine={(lineId) => setFocus({ lineId, nonce: Date.now() })}
-					/>
 					{damageTarget && (
 						<DamageDialog
 							target={damageTarget}

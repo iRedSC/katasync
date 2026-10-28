@@ -183,6 +183,24 @@ export async function addTracking(
 		emailId?: number | null;
 	},
 ) {
+	const put = await putTracking(db, input);
+	if (!put.added) return put;
+	const { row, ...added } = put;
+	return { ...added, id: row.id, problem: await checkTracking(db, row) };
+}
+
+// Puts a number on a PO (once) without asking Shippo, so it can go in a
+// transaction; checkTracking asks once that commits. A number nobody asks
+// about is still asked by the sweep (refreshTracking).
+export async function putTracking(
+	db: Db,
+	input: {
+		purchaseOrderId: number;
+		number: string;
+		carrier?: Carrier;
+		emailId?: number | null;
+	},
+) {
 	const number = normalTracking(input.number);
 	const carrier = input.carrier ?? guessCarrier(number);
 	if (!carrier)
@@ -212,9 +230,12 @@ export async function addTracking(
 		.onConflictDoNothing()
 		.returning();
 	if (!row) return { added: false as const, number, carrier };
-	const problem = await check(db, row);
-	return { added: true as const, id: row.id, number, carrier, problem };
+	return { added: true as const, row, number, carrier };
 }
+
+// Asks Shippo about a number putTracking added. A number taken off since
+// (its email moved to another PO) is left gone: only its own row is updated.
+export const checkTracking = check;
 
 export async function removeTracking(db: Db, id: number) {
 	const [row] = await db

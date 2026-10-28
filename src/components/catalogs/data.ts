@@ -17,3 +17,40 @@ export const patchCatalog = (
 export function cheapestItemCost(p: CatalogProduct) {
 	return p.offers.find((o) => o.cheapest)?.itemCost ?? null;
 }
+
+export type OfferTerms =
+	| { cost: number | null }
+	| { supplierSku: string | null };
+
+// The catalog with one supplier's terms for a product changed. Every other
+// product, and every other offer, is the same object as before, so rows that
+// didn't change don't render again.
+export function withTerms(
+	d: CatalogDetail,
+	productId: number,
+	supplierId: number,
+	terms: OfferTerms,
+): CatalogDetail {
+	return {
+		...d,
+		products: d.products.map((x) =>
+			x.id !== productId
+				? x
+				: {
+						...x,
+						offers: x.offers.map((y) =>
+							y.supplierId !== supplierId
+								? y
+								: "cost" in terms
+									? {
+											...y,
+											cost: terms.cost,
+											itemCost:
+												terms.cost === null ? null : terms.cost / y.packSize,
+										}
+									: { ...y, supplierSku: terms.supplierSku },
+						),
+					},
+		),
+	};
+}

@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import {
 	type channel,
 	type chargeKind,
+	type labelAuthority,
 	orderCharges,
 	orderCostReports,
 	orders,
@@ -15,6 +16,7 @@ export class ChargeError extends Error {
 }
 
 type Channel = (typeof channel.enumValues)[number];
+type LabelAuthority = (typeof labelAuthority.enumValues)[number];
 
 export type ReportedCharge = {
 	kind: (typeof chargeKind.enumValues)[number];
@@ -34,7 +36,7 @@ export type CostReport = {
 	// timeline, before its labels report has the order).
 	labelsPending?: boolean;
 	// False when the label figures are only a fallback, with no authoritative
-	// label section behind them. Authoritative label charges already on file are
+	// label section behind them. Authoritative label figures already on file are
 	// kept instead; fees and refunds still update. Defaults to true.
 	labelsAuthoritative?: boolean;
 	charges: ReportedCharge[];
@@ -86,11 +88,15 @@ export async function saveCostReport(
 			);
 		}
 
-		// A fallback doesn't replace the authoritative label charges on file.
-		const keepLabels =
-			report.labelsAuthoritative === false &&
-			(await hasAuthoritativeLabels(tx, report.orderId, report.billedBy));
-		const labelsPending = !keepLabels && (report.labelsPending ?? false);
+		// A fallback doesn't replace the authoritative label figures on file,
+		// even $0 ones, which have no charge rows. The upsert decides that from
+		// the row it locks, so an authoritative report committing meanwhile
+		// can't be overwritten by a fallback that read the row before it.
+		const fallback = report.labelsAuthoritative === false;
+		const labelsPending = report.labelsPending ?? false;
+		const authority: LabelAuthority =
+			!fallback && !labelsPending ? "authoritative" : "fallback";
+		const onFileWins = sql`${fallback} and ${orderCostReports.labelAuthority} = 'authoritative'`;
 
 		const saved = await tx
 			.insert(orderCostReports)
@@ -100,6 +106,7 @@ export async function saveCostReport(
 				settled: report.settled,
 				noLabel: report.noLabel ?? false,
 				labelsPending,
+				labelAuthority: authority,
 				fetchedAt,
 			})
 			.onConflictDoUpdate({
@@ -107,14 +114,17 @@ export async function saveCostReport(
 				set: {
 					settled: report.settled,
 					noLabel: report.noLabel ?? false,
-					labelsPending,
+					labelsPending: sql`case when ${onFileWins} then false else ${labelsPending} end`,
+					labelAuthority: sql`case when ${onFileWins} then 'authoritative'::label_authority else ${authority}::label_authority end`,
 					fetchedAt,
 				},
 				setWhere: sql`${orderCostReports.fetchedAt} <= excluded.fetched_at
 					and (not ${orderCostReports.settled} or excluded.settled)`,
 			})
-			.returning({ orderId: orderCostReports.orderId });
+			.returning({ labelAuthority: orderCostReports.labelAuthority });
 		if (saved.length === 0) return false;
+		// Labels on file stayed authoritative through a fallback.
+		const keepLabels = fallback && saved[0].labelAuthority === "authoritative";
 
 		const rebilledBefore = await postageSum(
 			tx,
@@ -173,34 +183,4 @@ async function postageSum(db: Db, orderId: number, billedBy: Channel) {
 			),
 		);
 	return row ?? { label: 0, adjusted: 0 };
-}
-
-// Whether the report on file has label charges from an authoritative label
-// section, one saved with labelsPending false. An authoritative zero has no
-// rows to show it, so a fallback still replaces it.
-async function hasAuthoritativeLabels(
-	db: Db,
-	orderId: number,
-	billedBy: Channel,
-) {
-	const [found] = await db
-		.select({ id: orderCharges.id })
-		.from(orderCharges)
-		.innerJoin(
-			orderCostReports,
-			and(
-				eq(orderCostReports.orderId, orderCharges.orderId),
-				eq(orderCostReports.billedBy, orderCharges.billedBy),
-			),
-		)
-		.where(
-			and(
-				eq(orderCharges.orderId, orderId),
-				eq(orderCharges.billedBy, billedBy),
-				eq(orderCharges.kind, "label"),
-				eq(orderCostReports.labelsPending, false),
-			),
-		)
-		.limit(1);
-	return found !== undefined;
 }

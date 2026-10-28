@@ -3,14 +3,17 @@ import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { saveCostReport } from "./charges";
+import { committedOrder } from "./committed-order.fixtures";
 import { type ProfitFixture, profitFixture } from "./profit.fixtures";
 
 let db: Db;
 let order: ProfitFixture["order"];
 let profit: ProfitFixture["profit"];
+let shopify: number;
+let wrench: number;
 
 beforeEach(async () => {
-	({ db, order, profit } = await profitFixture());
+	({ db, order, profit, shopify, wrench } = await profitFixture());
 });
 
 describe("order_profit", () => {
@@ -142,6 +145,42 @@ describe("order_profit", () => {
 				awaitingReturn: false,
 			});
 		}
+	});
+
+	test("with committed stock, a full refund awaits only the units that shipped", async () => {
+		// Two of three shipped; a third shipped and was put back.
+		const { orderId } = await committedOrder(db, { id: shopify, wrench }, 2);
+		await saveCostReport(db, {
+			orderId,
+			billedBy: "shopify",
+			settled: false,
+			noLabel: true,
+			charges: [{ kind: "refund", description: "Refund", amount: 70 }],
+		});
+		expect(await profit(orderId)).toMatchObject({
+			cost: 8,
+			awaitingReturn: true,
+		});
+		const [line] = await db
+			.select()
+			.from(schema.orderLineProfit)
+			.where(eq(schema.orderLineProfit.orderId, orderId));
+		expect(line).toMatchObject({ returning: 2, cost: 8 });
+	});
+
+	test("with committed stock, a refund awaits nothing when nothing shipped", async () => {
+		const { orderId } = await committedOrder(db, { id: shopify, wrench }, 0);
+		await saveCostReport(db, {
+			orderId,
+			billedBy: "shopify",
+			settled: false,
+			noLabel: true,
+			charges: [{ kind: "refund", description: "Refund", amount: 70 }],
+		});
+		expect(await profit(orderId)).toMatchObject({
+			cost: 24,
+			awaitingReturn: false,
+		});
 	});
 
 	test("a relayed order's refund counts once, from where it sold", async () => {

@@ -9,10 +9,12 @@ import { applyStoreSales } from "#/orders/remap";
 import { receiveReturn } from "#/orders/returns";
 import { createProduct, createTestDb } from "#/test/db";
 import { getAvailability } from "./availability";
+import { activate } from "./commitments.fixtures";
 import { postMovements } from "./ledger";
 import { addRetailStore, PosLocationError, setPosLocation } from "./locations";
-import { onlineStock, setRetailReserve } from "./online-stock";
+import { onlineStock } from "./online-stock";
 import { setRecipe } from "./recipes";
+import { setRetailReserve } from "./retail-reserve";
 
 let db: Db;
 let warehouse: number;
@@ -441,6 +443,41 @@ describe("overflow", () => {
 		expect(
 			(await getAvailability(db, [wrench], await onlineStock(db))).get(wrench),
 		).toBe(0);
+	});
+
+	test.each([
+		"legacy",
+		"committed",
+	] as const)("online offers nothing a shipped order couldn't take (%s)", async (mode) => {
+		if (mode === "committed") await activate(db);
+		const retail = await addRetail();
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const offered = async () =>
+			(await getAvailability(db, [wrench], await onlineStock(db))).get(wrench);
+		const ownWarehouse = (kind: "owned" | "fba") =>
+			db
+				.update(schema.locations)
+				.set({ kind })
+				.where(eq(schema.locations.id, warehouse));
+
+		// No warehouse: the store's overflow has nothing to overflow from.
+		await ownWarehouse("fba");
+		await stock(wrench, retail, 3);
+		expect((await stockLocations(db)).shipping).toBeNull();
+		expect(await offered()).toBe(0);
+
+		await ownWarehouse("owned");
+		await stock(wrench, warehouse, 4);
+		expect(await offered()).toBe(7);
+
+		// Two warehouses: orders can't tell which to take from.
+		const [second] = await db
+			.insert(schema.locations)
+			.values({ name: "Second", kind: "owned" })
+			.returning();
+		await stock(wrench, second.id, 5);
+		expect((await stockLocations(db)).shipping).toBeNull();
+		expect(await offered()).toBe(0);
 	});
 
 	test("an in-store sale never takes the warehouse's stock", async () => {

@@ -76,6 +76,14 @@ export function rulesFor(market: Market): Rules | null {
 
 export type AttachmentFile = { name: string; type: string; size: number };
 
+// One of ours, already uploaded: what a reply sends, and what undo puts
+// back in a reply box, checked again by its real type and size.
+export type ReplyFile = AttachmentFile & {
+	kind: string;
+	url: string;
+	fileId: number;
+};
+
 // Why these files can't go with a reply on this marketplace, or null when
 // they can.
 export function refuseFiles(

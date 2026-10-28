@@ -11,6 +11,7 @@ import { type InvoiceLine, matchInvoice } from "#/purchasing/invoices";
 import { suggestPurchases } from "#/purchasing/reorder";
 import { supplierByRef } from "#/purchasing/suppliers";
 import { listUnits } from "#/purchasing/units";
+import { untrusted } from "./email-files";
 import { ourLocation } from "./lookups";
 import { orderForClaude } from "./po-for-claude";
 import { json, READ } from "./tool-shapes";
@@ -238,7 +239,17 @@ export function registerReadTools(server: McpServer, db: Db) {
 			inputSchema: { id: z.number().int().positive() },
 			annotations: READ,
 		},
-		async ({ id }) => json(await orderForClaude(db, id)),
+		async ({ id }) => {
+			// The supplier's emails (their subjects and names) are what a
+			// sender wrote, so they come inside the untrusted tags.
+			const { emails, ...po } = await orderForClaude(db, id);
+			return {
+				content: [
+					...json(po).content,
+					untrusted(JSON.stringify({ emails }, null, 1)),
+				],
+			};
+		},
 	);
 
 	server.registerTool(

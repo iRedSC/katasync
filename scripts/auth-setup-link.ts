@@ -7,6 +7,7 @@
 
 import { audited } from "#/audit/audited-db";
 import { runAs } from "#/audit/context";
+import { appOrigin } from "#/auth/origin";
 import { recoverOwner } from "#/auth/staff";
 import { getDb } from "#/db/client";
 
@@ -16,9 +17,7 @@ try {
 	// No .env.local; rely on the real environment.
 }
 
-const origin = process.env.AUTH_ORIGIN;
-if (!origin)
-	throw new Error("Set AUTH_ORIGIN, e.g. https://katasync.example.com");
+const origin = appOrigin();
 const name = process.argv.slice(2).join(" ");
 if (!name.trim())
 	throw new Error('Give the owner\'s name: pnpm auth:setup-link "Sam Rivera"');

@@ -11,7 +11,7 @@ import {
 } from "#/db/banking-schema";
 import { auditEvents } from "#/db/identity-schema";
 import { payouts } from "#/db/schema";
-import { createIntent } from "#/lib/intent";
+import { answered, createIntent } from "#/lib/intent";
 import { createTestDb } from "#/test/db";
 import { commitImport, previewImport } from "./imports";
 import { confirmMatch, undoMatch } from "./matching";
@@ -43,17 +43,18 @@ describe("banking integration boundaries", () => {
 		const intent = createIntent<typeof input>();
 		await intent.run(
 			() => input,
-			async () => null,
+			async () => ({ kind: "uncertain" }),
 		);
 		expect(intent.getSnapshot().kind).toBe("retry");
 		const other = await commitImport(db, { ...input, skipRows: [1] }, actor);
 		if (!other.ok) throw new Error(other.problem);
 		const refused = await intent.run(
 			() => ({ ...input, skipRows: [1] }),
-			(payload) => commitImport(db, payload, actor),
+			async (payload) =>
+				answered({ value: await commitImport(db, payload, actor) }),
 		);
 		expect(refused).toMatchObject({
-			ok: false,
+			kind: "rejected",
 			problem: expect.stringContaining("Correct import"),
 		});
 		expect(intent.getSnapshot().kind).toBe("idle");

@@ -13,7 +13,16 @@ let db: Db;
 let ebayOrder: number;
 let tiktokOrder: number;
 let sendAnswer: () => Response;
-let listed: { conversationId: string; latestMessage: object }[];
+type Listed = {
+	conversationId: string;
+	latestMessage: object;
+	referenceType?: string;
+	referenceId?: string;
+};
+let listed: Listed[];
+// A second page of conversations, and each conversation's messages.
+let listedNext: Listed[];
+let history: Record<string, object[]>;
 const sends: unknown[] = [];
 const fetchMock = vi.fn(ebay);
 
@@ -38,9 +47,14 @@ async function ebay(url: string, init?: RequestInit) {
 		return sendAnswer();
 	}
 	if (u.pathname === "/commerce/message/v1/conversation")
-		return json(200, { conversations: listed });
-	if (/\/conversation\/[^/]+$/.test(u.pathname))
-		return json(200, { messages: [] });
+		return u.searchParams.has("offset")
+			? json(200, { conversations: listedNext })
+			: json(200, {
+					conversations: listed,
+					...(listedNext.length ? { next: `${url}&offset=50` } : {}),
+				});
+	const one = /\/conversation\/([^/]+)$/.exec(u.pathname)?.[1];
+	if (one) return json(200, { messages: history[one] ?? [] });
 	throw new Error(`Unexpected ${url}`);
 }
 
@@ -71,6 +85,8 @@ beforeEach(async () => {
 	vi.stubEnv("EBAY_REFRESH_TOKEN", "refresh");
 	sends.length = 0;
 	listed = [];
+	listedNext = [];
+	history = {};
 	sendAnswer = () => {
 		listed = [
 			{
@@ -104,6 +120,65 @@ test("two requests with one key at once send once", async () => {
 	expect([a.kind, b.kind].sort()).toEqual(["sending", "sent"]);
 	const [thread] = await db.select().from(buyerThreads);
 	expect(thread).toMatchObject({ externalId: "c9", orderRef: "12-1" });
+});
+
+test("the message is found deeper in a conversation on a later page", async () => {
+	const at = (minutes: number) =>
+		new Date(Date.now() + minutes * 60_000).toISOString();
+	sendAnswer = () => {
+		listed = [
+			{
+				conversationId: "c1",
+				latestMessage: { messageId: "x1", createdDate: at(0) },
+			},
+		];
+		// The buyer answered at once: ours isn't the latest.
+		listedNext = [
+			{
+				conversationId: "c9",
+				latestMessage: { messageId: "m2", createdDate: at(1) },
+			},
+		];
+		history = {
+			c1: [{ messageId: "x1", createdDate: at(0) }],
+			c9: [
+				{
+					messageId: "m1",
+					messageBody: "Hi",
+					senderUsername: "ECDrywall",
+					createdDate: at(0),
+				},
+				{
+					messageId: "m2",
+					messageBody: "Thanks",
+					senderUsername: "buyer1",
+					createdDate: at(1),
+				},
+			],
+		};
+		return json(201, { messageId: "m1" });
+	};
+	const r = await firstEbayMessage(db, ebayOrder, "Hi", key);
+	expect(r.kind).toBe("sent");
+	const [thread] = await db.select().from(buyerThreads);
+	expect(thread).toMatchObject({ externalId: "c9", orderRef: "12-1" });
+});
+
+test("opening the chat finds the listing's conversation on a later page", async () => {
+	const latest = { messageId: "x", createdDate: new Date().toISOString() };
+	listed = [{ conversationId: "c1", latestMessage: latest }];
+	listedNext = [
+		{
+			conversationId: "c7",
+			latestMessage: latest,
+			referenceType: "LISTING",
+			referenceId: "item-1",
+		},
+	];
+	const opened = await openChat(db, ebayOrder);
+	const [thread] = await db.select().from(buyerThreads);
+	expect(thread).toMatchObject({ externalId: "c7", itemRef: "item-1" });
+	expect(opened).toEqual({ kind: "opened", threadId: thread?.id });
 });
 
 test("asking again after a lost answer reads the try back", async () => {

@@ -1,5 +1,5 @@
 {
-  "id": "ced514a9-74e3-4860-ba04-14b72fb7f7e5",
+  "id": "241cc3e4-b456-4e76-9d1a-752688f98659",
   "prevId": "63855b04-a71d-4caf-83b7-3d1397e9c6a4",
   "version": "7",
   "dialect": "postgresql",
@@ -10161,29 +10161,7 @@
           "notNull": true
         }
       },
-      "indexes": {
-        "product_components_component_parent_idx": {
-          "name": "product_components_component_parent_idx",
-          "columns": [
-            {
-              "expression": "component_product_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "parent_product_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "product_components_parent_product_id_products_id_fk": {
           "name": "product_components_parent_product_id_products_id_fk",

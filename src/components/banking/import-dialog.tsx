@@ -11,7 +11,7 @@ import {
 	DialogTitle,
 } from "#/components/ui/dialog";
 import { formatCount } from "#/lib/format";
-import { useIntent } from "#/lib/intent";
+import { answered, useIntent } from "#/lib/intent";
 import { optimism } from "#/lib/optimism";
 import {
 	importBankFile,
@@ -123,18 +123,21 @@ export function ImportDialog({
 				skipRows: [...skip],
 				keepRows: [...keep],
 			}),
-			(data) => optimism.change({ send: () => importBankFile({ data }) }),
+			async (data) =>
+				answered(
+					await optimism.change({ send: () => importBankFile({ data }) }),
+				),
 		);
 		committing.current = false;
-		if (mine !== run.current) return;
-		if (!r)
+		if (mine !== run.current || r.kind === "busy") return;
+		if (r.kind === "uncertain")
 			return refuse({
 				...back,
 				kind: "retry",
 				problem: "Result not received. Retry this import.",
 			});
-		if (!r.value.ok) {
-			const problem = r.value.problem;
+		if (r.kind === "rejected") {
+			const problem = r.problem;
 			await preview(draft);
 			setStep((current) =>
 				current.kind === "preview" || current.kind === "mapping"
@@ -144,7 +147,7 @@ export function ImportDialog({
 			shake(body.current);
 			return;
 		}
-		const done = r.value.value;
+		const done = r.value;
 		close(false);
 		if (done.kind === "already") {
 			toast("This file was already imported", {
