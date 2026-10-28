@@ -319,4 +319,37 @@ describe("retiring refurbs", () => {
 		await retireRefurbs(db);
 		expect(shopify.archiveShopifyVariant).not.toHaveBeenCalled();
 	});
+
+	test("stock back after the sweep found it empty keeps it for sale", async () => {
+		const o = await shippedOrder();
+		const made = await refurbish(o);
+		await recordSale(db, {
+			productId: made.productId,
+			quantity: 1,
+			locationId: warehouse,
+			reference: "sale:refurb",
+		});
+		// The unit comes back as the sweep starts retiring it.
+		const run = db.transaction.bind(db);
+		vi.spyOn(db, "transaction").mockImplementationOnce(async (retire) => {
+			await postMovements(db, {
+				lines: [
+					{
+						productId: made.productId,
+						locationId: warehouse,
+						delta: 1,
+						reason: "return",
+					},
+				],
+			});
+			return run(retire);
+		});
+		expect(await retireRefurbs(db)).toEqual({ problems: [] });
+		expect(shopify.archiveShopifyVariant).not.toHaveBeenCalled();
+		const [refurb] = await db
+			.select()
+			.from(schema.products)
+			.where(eq(schema.products.id, made.productId));
+		expect(refurb.archivedAt).toBeNull();
+	});
 });

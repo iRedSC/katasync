@@ -84,7 +84,11 @@ beforeEach(async () => {
 });
 
 test("takes damaged items off the shelf, never more than arrived", async () => {
-	await receive(db, { lineId: caseLine, quantity: 1 });
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: caseLine,
+		quantity: 1,
+	});
 	await recordDamage(db, {
 		kind: "damaged",
 		lineId: caseLine,
@@ -125,7 +129,11 @@ test("takes damaged items off the shelf, never more than arrived", async () => {
 });
 
 test("a receipt can't be undone from under its damage, until the damage is taken back", async () => {
-	const { receiptId } = await receive(db, { lineId: caseLine, quantity: 1 });
+	const { receiptId } = await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: caseLine,
+		quantity: 1,
+	});
 	const { damageId } = await recordDamage(db, {
 		kind: "damaged",
 		lineId: caseLine,
@@ -144,7 +152,11 @@ test("a receipt can't be undone from under its damage, until the damage is taken
 test("knows photos by their bytes, not what they claim", async () => {
 	expect(imageType(jpeg)).toBe("image/jpeg");
 	expect(imageType(new TextEncoder().encode("<svg></svg>"))).toBeNull();
-	await receive(db, { lineId: eachLine, quantity: 1 });
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: eachLine,
+		quantity: 1,
+	});
 	const { damageId } = await recordDamage(db, {
 		kind: "damaged",
 		lineId: eachLine,
@@ -157,7 +169,11 @@ test("knows photos by their bytes, not what they claim", async () => {
 });
 
 test("upload links work until they expire", async () => {
-	await receive(db, { lineId: eachLine, quantity: 1 });
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: eachLine,
+		quantity: 1,
+	});
 	const { damageId } = await recordDamage(db, {
 		kind: "damaged",
 		lineId: eachLine,
@@ -174,8 +190,16 @@ test("upload links work until they expire", async () => {
 });
 
 test("sends every unreported damage once; a replacement makes the line wait again", async () => {
-	await receive(db, { lineId: caseLine, quantity: 1 });
-	await receive(db, { lineId: eachLine, quantity: 3 });
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: caseLine,
+		quantity: 1,
+	});
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: eachLine,
+		quantity: 3,
+	});
 	expect(await status()).toBe("closed");
 	const whole = await recordDamage(db, {
 		kind: "damaged",
@@ -259,7 +283,11 @@ test("sends every unreported damage once; a replacement makes the line wait agai
 });
 
 test("missing items come off the shelf without saying what's wrong, and the report says they're missing", async () => {
-	await receive(db, { lineId: caseLine, quantity: 1 });
+	await receive(db, {
+		key: crypto.randomUUID(),
+		lineId: caseLine,
+		quantity: 1,
+	});
 	await recordDamage(db, { lineId: caseLine, quantity: 2, kind: "missing" });
 	expect(await onHand(blade)).toBe(10);
 	await expect(

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { type } from "arktype";
 import { requireActor } from "#/audit/context";
+import { originOf } from "#/auth/origin";
 import {
 	addStaff,
 	claimOwnership,
@@ -16,7 +17,7 @@ import { getDb } from "#/db/client";
 // that whoever asks is an owner right now (src/auth/authority.ts).
 
 const linkUrl = (token: string) =>
-	`${process.env.AUTH_ORIGIN ?? new URL(getRequest().url).origin}/setup?token=${token}`;
+	`${originOf(getRequest())}/setup?token=${token}`;
 
 const role = "'owner' | 'operator'";
 

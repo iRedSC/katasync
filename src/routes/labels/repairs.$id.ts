@@ -16,7 +16,8 @@ export const Route = createFileRoute("/labels/repairs/$id")({
 					: null;
 				if (!ticket)
 					return new Response("No repair with that number", { status: 404 });
-				const origin = process.env.AUTH_ORIGIN ?? new URL(request.url).origin;
+				const { originOf } = await import("#/auth/origin");
+				const origin = originOf(request);
 				const pdf = await renderRepairTicket(ticket, origin);
 				return new Response(new Uint8Array(pdf), {
 					headers: {

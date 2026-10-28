@@ -37,6 +37,7 @@ describe("over MCP", () => {
 			quantity: 2,
 		});
 		const got = await tool("receive_po_line", {
+			receipt_key: crypto.randomUUID(),
 			po: po.id,
 			sku: "BLADE",
 			quantity: 1,
@@ -66,7 +67,12 @@ describe("over MCP", () => {
 			supplierCount: 1,
 			quantity: 2,
 		});
-		await tool("receive_po_line", { po: po.id, sku: "BLADE", quantity: 2 });
+		await tool("receive_po_line", {
+			receipt_key: crypto.randomUUID(),
+			po: po.id,
+			sku: "BLADE",
+			quantity: 2,
+		});
 		const got = await tool("report_damage", {
 			po: po.id,
 			sku: "BLADE",

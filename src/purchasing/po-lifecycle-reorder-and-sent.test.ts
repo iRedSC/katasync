@@ -66,7 +66,12 @@ describe("a PO from draft to received", () => {
 
 	test("ordering again copies what was sent onto the draft, never twice", async () => {
 		const { id, bladeLine } = await sent();
-		await receive(db, { lineId: bladeLine.id, quantity: 10, last: true });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 10,
+			last: true,
+		});
 		await closeOrder(db, id);
 		const r = await orderAgain(db, id);
 		// The blade line was cut to the 10 that came; what was sent was 110.
@@ -172,9 +177,9 @@ describe("a PO from draft to received", () => {
 	test("can't receive a draft; deleting a draft removes it and frees the slot", async () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		const [line] = await linesOf(id);
-		await expect(receive(db, { lineId: line.id, quantity: 1 })).rejects.toThrow(
-			/is draft/,
-		);
+		await expect(
+			receive(db, { key: crypto.randomUUID(), lineId: line.id, quantity: 1 }),
+		).rejects.toThrow(/is draft/);
 		await deleteDraft(db, id);
 		expect(await linesOf(id)).toEqual([]);
 		expect(await getPo(id)).toBeUndefined();
@@ -224,7 +229,11 @@ describe("a PO from draft to received", () => {
 
 	test("more than expected arrives: the line expects it, and undo puts it back", async () => {
 		const { id, bladeLine } = await sent();
-		const r = await receive(db, { lineId: bladeLine.id, quantity: 111 });
+		const r = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 111,
+		});
 		expect((await linesOf(id))[0]).toMatchObject({
 			quantity: 111,
 			sentQuantity: 110,
@@ -235,9 +244,18 @@ describe("a PO from draft to received", () => {
 
 	test("marking the last of a line expects only what came, and closes the PO", async () => {
 		const { id, bladeLine, knifeLine } = await sent();
-		await receive(db, { lineId: knifeLine.id, quantity: 9 });
-		await receive(db, { lineId: bladeLine.id, quantity: 20 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: knifeLine.id,
+			quantity: 9,
+		});
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 20,
+		});
 		const r = await receive(db, {
+			key: crypto.randomUUID(),
 			lineId: bladeLine.id,
 			quantity: 10,
 			last: true,
@@ -252,7 +270,11 @@ describe("a PO from draft to received", () => {
 
 	test("undo leaves a quantity someone changed since", async () => {
 		const { id, bladeLine } = await sent();
-		const r = await receive(db, { lineId: bladeLine.id, quantity: 47 });
+		const r = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 47,
+		});
 		await amendLine(db, { lineId: bladeLine.id, quantity: 52 });
 		await undoReceipt(db, r.receiptId);
 		expect((await linesOf(id))[0].quantity).toBe(52);
@@ -260,8 +282,16 @@ describe("a PO from draft to received", () => {
 
 	test("amending can't go under what arrived; settles the PO either way", async () => {
 		const { id, bladeLine, knifeLine } = await sent();
-		await receive(db, { lineId: bladeLine.id, quantity: 110 });
-		await receive(db, { lineId: knifeLine.id, quantity: 2 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 110,
+		});
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: knifeLine.id,
+			quantity: 2,
+		});
 		await expect(
 			amendLine(db, { lineId: knifeLine.id, quantity: 1 }),
 		).rejects.toThrow(/2 already arrived/);
@@ -293,12 +323,21 @@ describe("a PO from draft to received", () => {
 
 	test("something extra in the box is added and received, even on a closed PO", async () => {
 		const { id, bladeLine, knifeLine } = await sent();
-		await receive(db, { lineId: bladeLine.id, quantity: 110 });
-		await receive(db, { lineId: knifeLine.id, quantity: 9 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 110,
+		});
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: knifeLine.id,
+			quantity: 9,
+		});
 		expect((await getPo(id)).status).toBe("closed");
 
 		const gauge = await createProduct(db, "GAUGE", "simple");
 		const r = await receiveExtra(db, {
+			key: crypto.randomUUID(),
 			purchaseOrderId: id,
 			productId: gauge,
 			quantity: 4,
@@ -330,6 +369,7 @@ describe("a PO from draft to received", () => {
 		// Extra in the box is on its receipt, not here.
 		const nut = await createProduct(db, "NUT", "simple");
 		await receiveExtra(db, {
+			key: crypto.randomUUID(),
 			purchaseOrderId: id,
 			productId: nut,
 			quantity: 2,

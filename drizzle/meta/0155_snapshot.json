@@ -1,5 +1,5 @@
 {
-  "id": "142c1d28-3ad0-470c-aa28-2ecd7de06b99",
+  "id": "2cc6967f-3c96-4f2f-9be9-94dac3e49079",
   "prevId": "da590e4a-0b1c-4949-96e0-d2f10ba57bfe",
   "version": "7",
   "dialect": "postgresql",
@@ -4615,6 +4615,12 @@
         },
         "in_reply_to": {
           "name": "in_reply_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recipient": {
+          "name": "recipient",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -12947,18 +12953,6 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "raw_status": {
-          "name": "raw_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -13177,48 +13171,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "a_to_z_claim": {
-          "name": "a_to_z_claim",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "safet_claim": {
-          "name": "safet_claim",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "resolution": {
-          "name": "resolution",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "in_policy": {
-          "name": "in_policy",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "return_type": {
-          "name": "return_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "label": {
-          "name": "label",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "delivered_at": {
-          "name": "delivered_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -13281,14 +13233,6 @@
         "return_requests_money_pair": {
           "name": "return_requests_money_pair",
           "value": "(\"return_requests\".\"amount\" is null) = (\"return_requests\".\"currency\" is null)"
-        },
-        "return_requests_safet_claim_has_id": {
-          "name": "return_requests_safet_claim_has_id",
-          "value": "\"return_requests\".\"safet_claim\" is null or jsonb_typeof(\"return_requests\".\"safet_claim\"->'id') = 'string'"
-        },
-        "return_requests_label_object": {
-          "name": "return_requests_label_object",
-          "value": "\"return_requests\".\"label\" is null or jsonb_typeof(\"return_requests\".\"label\") = 'object'"
         }
       },
       "isRLSEnabled": false

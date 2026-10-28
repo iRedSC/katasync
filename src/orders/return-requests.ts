@@ -444,8 +444,17 @@ export async function saveReturns(
 				.onConflictDoUpdate({
 					target: [returnRequests.billedBy, returnRequests.externalId],
 					set: { ...values, syncedAt: sql`now()` },
+					// An older snapshot (a page read before the case closed) would
+					// reopen it, so it changes nothing. Decided on the row the upsert
+					// locks, so it holds when two snapshots of a new case cross. The
+					// same version still saves, so its lines match order lines synced
+					// since.
+					setWhere: r.updatedAt
+						? sql`${returnRequests.sourceUpdatedAt} <= excluded.source_updated_at`
+						: undefined,
 				})
 				.returning({ id: returnRequests.id });
+			if (!request) return;
 			await tx
 				.delete(returnRequestLines)
 				.where(eq(returnRequestLines.requestId, request.id));

@@ -1,4 +1,5 @@
 import { gzipSync } from "node:zlib";
+import { sql } from "drizzle-orm";
 import { beforeEach, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
@@ -153,6 +154,39 @@ test("saves re-bills on katasync's labels, shared across the label's orders, aga
 				sharedWith: 1,
 			},
 		]);
+});
+
+test("a large re-bill whose alert fails is saved with it next time, alert and all", async () => {
+	const o = await order("#1", [{ unitPrice: 10, quantity: 1, unitCost: 2 }]);
+	const [box] = (
+		await addDispatch(db, {
+			orderIds: [o.id],
+			boxes: [{ cost: 8, externalId: "tx-1" }],
+		})
+	).boxIds;
+	const rebills = [
+		{
+			externalId: "a1",
+			type: "LABEL_PAYMENT_ADJUSTMENT",
+			description: "Weight",
+			amount: 25,
+			postedAt: new Date(),
+			transactionId: "tx-1",
+		},
+	];
+	// The inbox refuses the alert.
+	await db.execute(
+		sql`alter table market_emails add constraint no_alerts check (false) not valid`,
+	);
+	await expect(saveShippoRebills(db, rebills)).rejects.toThrow();
+	expect(await db.select().from(schema.shipmentAdjustments)).toEqual([]);
+
+	await db.execute(sql`alter table market_emails drop constraint no_alerts`);
+	await saveShippoRebills(db, rebills);
+	expect(await db.select().from(schema.shipmentAdjustments)).toHaveLength(1);
+	expect(await db.select().from(schema.marketEmails)).toMatchObject([
+		{ messageId: `katasync:rebill:shipment:${box}` },
+	]);
 });
 
 // Shippo's reporting API as a script: each call takes the next answer.

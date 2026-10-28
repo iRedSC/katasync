@@ -78,26 +78,32 @@ function catalogName(raw: string) {
 	return name;
 }
 
+// One catalog per name whatever its case, as the database's index has it.
+const named = (name: string) => sql`lower(${catalogs.name}) = lower(${name})`;
+
 // A catalog by name, ignoring case, made if there isn't one. Returns its id.
 export async function ensureCatalog(db: Db, raw: string) {
 	const name = catalogName(raw);
-	const [found] = await db
-		.select({ id: catalogs.id })
-		.from(catalogs)
-		.where(sql`lower(${catalogs.name}) = lower(${name})`);
-	if (found) return found.id;
+	const find = async () => {
+		const [found] = await db
+			.select({ id: catalogs.id })
+			.from(catalogs)
+			.where(named(name));
+		return found?.id;
+	};
+	const found = await find();
+	if (found !== undefined) return found;
 	const [made] = await db
 		.insert(catalogs)
 		.values({ name })
 		.onConflictDoNothing()
 		.returning({ id: catalogs.id });
 	if (made) return made.id;
-	// Made meanwhile under exactly this name.
-	const [again] = await db
-		.select({ id: catalogs.id })
-		.from(catalogs)
-		.where(eq(catalogs.name, name));
-	return again.id;
+	// Made meanwhile, in some case.
+	const again = await find();
+	if (again === undefined)
+		throw new PurchaseOrderError(`Couldn't make the catalog "${name}"`);
+	return again;
 }
 
 // A new catalog. Unlike ensureCatalog, a name already taken is refused:
@@ -107,18 +113,14 @@ export async function createCatalog(
 	input: { name: string; description: string | null },
 ) {
 	const name = catalogName(input.name);
-	const taken = new PurchaseOrderError(`There's already a catalog "${name}"`);
-	const [clash] = await db
-		.select({ id: catalogs.id })
-		.from(catalogs)
-		.where(sql`lower(${catalogs.name}) = lower(${name})`);
-	if (clash) throw taken;
+	// Any case of a name taken conflicts on the index, so nothing to check first.
 	const [made] = await db
 		.insert(catalogs)
 		.values({ name, description: description(input.description) })
 		.onConflictDoNothing()
 		.returning({ id: catalogs.id });
-	if (!made) throw taken;
+	if (!made)
+		throw new PurchaseOrderError(`There's already a catalog "${name}"`);
 	return made.id;
 }
 
@@ -194,12 +196,7 @@ export async function renameCatalog(db: Db, id: number, raw: string) {
 	const [clash] = await db
 		.select({ id: catalogs.id })
 		.from(catalogs)
-		.where(
-			and(
-				sql`lower(${catalogs.name}) = lower(${name})`,
-				sql`${catalogs.id} <> ${id}`,
-			),
-		);
+		.where(and(named(name), sql`${catalogs.id} <> ${id}`));
 	if (clash)
 		throw new PurchaseOrderError(`There's already a catalog "${name}"`);
 	const done = await db

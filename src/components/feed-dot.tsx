@@ -10,6 +10,8 @@ import { cn } from "#/lib/utils";
 
 export const FEED_NAMES: Record<Feed, string> = {
 	orders: "Orders",
+	listings: "Listings",
+	stock: "Stock",
 	returns: "Returns",
 	cases: "Marketplace cases",
 	disputes: "Payment disputes",
@@ -60,13 +62,15 @@ export function feedWhen(s: FeedStatus): string {
 	}
 }
 
+const skipped = (n: number) => (n > 0 ? `\n${n} skipped by design` : "");
+
 // The why the color can't show, for a tooltip.
 export function feedWhy(s: FeedStatus): string {
 	switch (s.state) {
 		case "ok":
-			return `All read ${ago(s.checkedAt)}`;
+			return `All read ${ago(s.checkedAt)}${skipped(s.excluded)}`;
 		case "partial":
-			return `${s.problems} ${s.problems === 1 ? "problem" : "problems"}: ${s.detail}`;
+			return `${s.problems} ${s.problems === 1 ? "problem" : "problems"}: ${s.detail}${skipped(s.excluded)}`;
 		case "catching_up":
 			return `Catching up: read through ${formatDay(s.coveredThrough)}`;
 		case "needs_history":

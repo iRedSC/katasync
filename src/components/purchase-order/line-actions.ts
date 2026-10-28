@@ -125,11 +125,13 @@ export async function receiveWithUndo(
 	quantity: number,
 	purchaseOrderId: number,
 ) {
+	// One per receipt, so a resend can't receive it twice.
+	const key = crypto.randomUUID();
 	const r = await optimism.change({
 		label: `Receiving ${line.sku}`,
 		patch: receivedPatch(purchaseOrderId, line, quantity),
 		send: () =>
-			receiveLine({ data: { lineId: ids.server(line.id), quantity } }),
+			receiveLine({ data: { key, lineId: ids.server(line.id), quantity } }),
 	});
 	if (!r) return null;
 	// What the receipt made the line expect, if it raised it.
@@ -169,6 +171,7 @@ export async function receiveAllWithUndo(
 	purchaseOrderId: number,
 ) {
 	const taking = lines.filter(takenByReceiveAll);
+	const key = crypto.randomUUID();
 	const r = await optimism.change({
 		label: "Receiving everything",
 		patch: patchLines(
@@ -176,7 +179,7 @@ export async function receiveAllWithUndo(
 			(l) => taking.some((t) => ids.same(t.id, l.id)),
 			(l) => ({ ...l, received: Math.max(l.received, l.quantity) }),
 		),
-		send: () => receiveAllLines({ data: { id: purchaseOrderId } }),
+		send: () => receiveAllLines({ data: { key, id: purchaseOrderId } }),
 	});
 	if (!r) return;
 	// Undone as the server received them, which may differ from what this

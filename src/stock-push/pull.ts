@@ -1,6 +1,7 @@
 import { and, asc, count, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { listings, locations, movements, products, stores } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
 import { postMovements } from "#/inventory/ledger";
 import { lockStockProducts } from "#/inventory/ledger/post";
 import type { Found } from "./channel";
@@ -12,6 +13,10 @@ import type { Found } from "./channel";
 // channel's number is the only record there is (and already has those sales
 // taken off), so pushing it back changes nothing until someone counts. A
 // product katasync tracks is never touched: its ledger is the truth.
+
+// Only in legacy mode, where a channel's number is what's on the shelf. Once
+// committed it's what's left after reservations, so pulling it as stock would
+// lose every unit open orders hold.
 
 // A channel quantity this high is someone's stand-in for "plenty", not stock,
 // so it isn't pulled.
@@ -55,7 +60,18 @@ export type PullResult =
 	| { state: "posted"; posted: number }
 	// Something posted to these products after the stores were read, so the
 	// numbers may be stale. Nothing was posted; read the stores again.
-	| { state: "moved"; skus: string[] };
+	| { state: "moved"; skus: string[] }
+	// Quantities went committed after the plan was made. Nothing was posted.
+	| { state: "committed" };
+
+export const COMMITTED_REFUSAL =
+	"Quantities are committed, so channels show what's available, not what's on the shelf. Count stock instead of pulling it.";
+
+// Refuses up front once committed, before any store is read.
+async function legacyOnly(db: Db) {
+	if ((await readQuantityMode(db, "none")) === "committed")
+		throw new Error(COMMITTED_REFUSAL);
+}
 
 const untracked = sql`not exists (select 1 from ${movements} where ${movements.productId} = ${products.id} and ${movements.reason} not in ('sale', 'return'))`;
 
@@ -115,6 +131,7 @@ async function movementCounts(
 // Marks the ledgers of the stockless products. Take it before reading the
 // stores: anything that posts after this is caught when the plan is applied.
 export async function markLedgers(db: Db): Promise<LedgerMark> {
+	await legacyOnly(db);
 	return movementCounts(
 		db,
 		(await stockless(db)).map((p) => p.productId),
@@ -130,6 +147,7 @@ export async function planStockPull(
 	reads: StoreRead[],
 	mark?: LedgerMark,
 ): Promise<PullPlan> {
+	await legacyOnly(db);
 	const marked = mark ?? (await markLedgers(db));
 	const pulls: Pull[] = [];
 	const unpulled: Unpulled[] = [];
@@ -193,6 +211,9 @@ export async function applyStockPull(
 	const wanted = plan.pulls;
 	if (wanted.length === 0) return { state: "posted", posted: 0 };
 	return db.transaction(async (tx): Promise<PullResult> => {
+		// Held to the end, so activation can't land before this posts.
+		if ((await readQuantityMode(tx)) === "committed")
+			return { state: "committed" };
 		const [shelf] = await tx
 			.select({ id: locations.id })
 			.from(locations)

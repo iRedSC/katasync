@@ -1,6 +1,11 @@
 import { and, eq, gte, inArray, ne } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
+	stockCommitmentEntries,
+	stockCommitmentParts,
+	stockCommitments,
+} from "#/db/quantity-schema";
+import {
 	locations,
 	movements,
 	productComponents,
@@ -31,15 +36,39 @@ import {
 const SLACK_MS = 2 * 60 * 1000;
 
 // The products whose stock moved since `since`, and every set containing one.
+// Once committed, an order reserves its parts and a cancel releases them
+// without a movement, and either changes what a channel can sell, so a
+// commitment made, consumed, released or restored since counts as a move.
 export async function movedSince(db: Db, since: Date): Promise<number[]> {
-	const moved = await db
-		.selectDistinct({ id: movements.productId })
-		.from(movements)
-		.where(gte(movements.createdAt, new Date(since.getTime() - SLACK_MS)));
-	return withSets(
-		db,
-		moved.map((m) => m.id),
-	);
+	const from = new Date(since.getTime() - SLACK_MS);
+	const [moved, reserved, settled] = await Promise.all([
+		db
+			.selectDistinct({ id: movements.productId })
+			.from(movements)
+			.where(gte(movements.createdAt, from)),
+		db
+			.selectDistinct({ id: stockCommitmentParts.productId })
+			.from(stockCommitmentParts)
+			.innerJoin(
+				stockCommitments,
+				eq(stockCommitments.id, stockCommitmentParts.commitmentId),
+			)
+			.where(gte(stockCommitments.createdAt, from)),
+		db
+			.selectDistinct({ id: stockCommitmentParts.productId })
+			.from(stockCommitmentParts)
+			.innerJoin(
+				stockCommitmentEntries,
+				eq(
+					stockCommitmentEntries.commitmentId,
+					stockCommitmentParts.commitmentId,
+				),
+			)
+			.where(gte(stockCommitmentEntries.createdAt, from)),
+	]);
+	return withSets(db, [
+		...new Set([...moved, ...reserved, ...settled].map((m) => m.id)),
+	]);
 }
 
 // The products, and every set containing one.

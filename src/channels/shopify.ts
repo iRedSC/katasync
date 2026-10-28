@@ -6,6 +6,7 @@ import {
 	matchListings,
 	syncListings,
 } from "#/channels/listings";
+import type { FeedPhase } from "#/channels/pass-feeds";
 import { shopifyQuery } from "#/channels/shopify/client";
 import { ingestMatching } from "#/channels/shopify/ingest";
 import { syncShipFrom } from "#/channels/shopify/ship-from";
@@ -74,7 +75,7 @@ const FIRST_SYNC_DAYS = 60;
 
 export async function syncShopify(
 	db: Db,
-	options: { listings: boolean } = { listings: true },
+	options: { listings: FeedPhase | null },
 ) {
 	const { shop } = shopInfo.assert(
 		await shopifyQuery("{ shop { id name } }", {}),
@@ -87,7 +88,7 @@ export async function syncShopify(
 	// The variant's own photo, else its product's main one.
 	const images: { externalId: string; imageUrl: string }[] = [];
 	const reported: string[] = [];
-	if (options.listings)
+	const listed = await options.listings?.(async () => {
 		do {
 			const page = variantsPage.assert(
 				await shopifyQuery(VARIANTS_QUERY, { cursor }),
@@ -117,14 +118,12 @@ export async function syncShopify(
 				? (page.productVariants.pageInfo.endCursor ?? null)
 				: null;
 		} while (cursor);
-	if (options.listings) {
 		await markGoneListings(db, store.id, reported);
 		await syncShipFrom(db);
-	}
+		return matchListings(db);
+	});
+	const matched = listed ?? { mapped: [], created: 0, skipped: [] };
 	const stock = await stockLocations(db);
-	const matched = options.listings
-		? await matchListings(db)
-		: { mapped: [], created: 0, skipped: [] };
 	const photographed = await fillProductImages(db, store.id, images);
 	// Orders that sold a newly matched listing pick up the product now.
 	const caughtUp = await applyListingsToOrders(db, matched.mapped, stock);
@@ -146,7 +145,8 @@ export async function syncShopify(
 		created: matched.created,
 		photographed,
 		orders: result.count,
-		problems: [...matched.skipped, ...caughtUp.problems, ...result.problems],
+		listingProblems: matched.skipped,
+		problems: [...caughtUp.problems, ...result.problems],
 	};
 }
 

@@ -326,4 +326,59 @@ describe("ingestOrder", () => {
 		expect(problems).toEqual([]);
 		expect(await onHand(wrench)).toBe(10);
 	});
+
+	test("an older snapshot after a newer cancellation changes nothing", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, 10);
+		const from = { shipping: warehouse, store: null, pos: null, storeKeeps: 0 };
+		const live = order();
+		await ingestOrder(db, store(), live, from);
+		await ingestOrder(
+			db,
+			store(),
+			order({
+				cancelledAt: new Date("2026-10-06T00:00:00Z"),
+				sourceUpdatedAt: new Date("2026-10-06T00:00:00Z"),
+				lines: [{ ...live.lines[0], quantity: 0 }],
+			}),
+			from,
+		);
+		// The live snapshot arrives late, read before the cancellation.
+		await ingestOrder(db, store(), order({ total: 99 }), from);
+
+		const [saved] = await db.select().from(schema.orders);
+		expect(saved.cancelledAt).not.toBeNull();
+		expect(saved.total).toBe(50);
+		const [line] = await db.select().from(schema.orderLines);
+		expect(line.quantity).toBe(0);
+		expect(await onHand(wrench)).toBe(10);
+	});
+
+	test("a line whose product appears later picks up its cost with it", async () => {
+		const from = { shipping: warehouse, store: null, pos: null, storeKeeps: 0 };
+		await ingestOrder(db, store(), order(), from);
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await db
+			.update(schema.products)
+			.set({ unitCost: 7.5 })
+			.where(eq(schema.products.id, wrench));
+		// The same version again: what's new is the product, not the order.
+		await ingestOrder(db, store(), order(), from);
+		const [line] = await db.select().from(schema.orderLines);
+		expect(line).toMatchObject({ productId: wrench, unitCost: 7.5 });
+
+		// A mapped line keeps the cost it sold at.
+		await db
+			.update(schema.products)
+			.set({ unitCost: 9 })
+			.where(eq(schema.products.id, wrench));
+		await ingestOrder(
+			db,
+			store(),
+			order({ lines: [{ ...order().lines[0], quantity: 3 }] }),
+			from,
+		);
+		const [resized] = await db.select().from(schema.orderLines);
+		expect(resized.unitCost).toBe(7.5);
+	});
 });

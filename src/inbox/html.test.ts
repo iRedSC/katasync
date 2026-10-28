@@ -58,7 +58,12 @@ test("pictures point at what katasync kept", () => {
 
 describe("keeping an email as sent", () => {
 	test("marketplace: its pictures kept and shown, not listed as files", async () => {
-		await ingestMarketMail(db, [message("Sold, ship now")], read);
+		await ingestMarketMail(
+			db,
+			[message("Sold, ship now")],
+			read,
+			async () => [],
+		);
 		const [email] = (await marketMailPage(db, "orders", null)).emails;
 		expect(email.attachments.map((a) => a.filename)).toEqual(["label.png"]);
 		expect(await marketEmailHtml(db, email.id)).toMatch(
@@ -82,7 +87,12 @@ describe("keeping an email as sent", () => {
 			message("Gone"),
 			message("Failing"),
 		];
-		await ingestMarketMail(db, [found, gone, failing], textOnly);
+		await ingestMarketMail(
+			db,
+			[found, gone, failing],
+			textOnly,
+			async () => [],
+		);
 		const ids = (await marketMailPage(db, "updates", null)).emails;
 		const byName = (s: string) => ids.find((e) => e.subject === s)?.id ?? 0;
 		expect(await marketEmailHtml(db, byName("Found"))).toBeNull();

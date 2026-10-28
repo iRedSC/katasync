@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { XMLParser } from "fast-xml-parser";
+import type { FeedPhase } from "#/channels/pass-feeds";
 import type { Db } from "#/db/client";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { applyListingsToOrders } from "#/orders/remap";
@@ -329,7 +330,10 @@ async function activeListings(): Promise<ChannelListing[]> {
 }
 
 const FIRST_SYNC_DAYS = 60;
-export async function syncEbay(db: Db, options: { listings: boolean }) {
+export async function syncEbay(
+	db: Db,
+	options: { listings: FeedPhase | null },
+) {
 	const store = await ensureStore(db, "ebay", {
 		id: "ebay-us",
 		name: "eBay US",
@@ -338,9 +342,10 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 
 	// Listings first, so order lines can resolve to products.
 	const problems: string[] = [];
+	const listingProblems: string[] = [];
 	let listings = 0;
 	let created = 0;
-	if (options.listings) {
+	await options.listings?.(async () => {
 		const active = await activeListings();
 		listings = active.length;
 		await syncListings(db, store.id, active);
@@ -351,11 +356,11 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 		);
 		const matched = await matchListings(db);
 		created = matched.created;
-		problems.push(...matched.skipped);
+		listingProblems.push(...matched.skipped);
 		// Orders that sold a newly matched listing pick up the product now.
 		const caughtUp = await applyListingsToOrders(db, matched.mapped, stock);
 		problems.push(...caughtUp.problems);
-	}
+	});
 
 	const since =
 		store.ordersSyncedThrough ??
@@ -389,7 +394,14 @@ export async function syncEbay(db: Db, options: { listings: boolean }) {
 	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
-	return { store: store.name, listings, created, orders: count, problems };
+	return {
+		store: store.name,
+		listings,
+		created,
+		orders: count,
+		listingProblems,
+		problems,
+	};
 }
 
 // eBay's carrier codes for the carriers Shippo sells; anything else is sent

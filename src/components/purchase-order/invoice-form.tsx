@@ -27,10 +27,17 @@ import {
 	recordSupplierInvoice,
 } from "#/server/purchasing/invoices";
 import { today } from "./days";
+import {
+	count,
+	type HeaderField,
+	isBlank,
+	itemKey,
+	money,
+	type Row,
+	type RowField,
+	readInvoice,
+} from "./invoice-draft";
 import { poData } from "./po-data";
-
-// One line as typed or pasted off the invoice.
-type Row = { key: number; item: string; quantity: string; unitCost: string };
 
 let nextKey = 0;
 const blank = (): Row => ({
@@ -39,18 +46,6 @@ const blank = (): Row => ({
 	quantity: "",
 	unitCost: "",
 });
-const isBlank = (r: Row) => !r.item.trim() && !r.quantity && !r.unitCost;
-
-// "$1,234.50" reads as 1234.5; anything else that isn't a number is null.
-function money(s: string) {
-	const t = s.replace(/[$,\s]/g, "");
-	return /^\d*\.?\d+$/.test(t) ? Number(t) : null;
-}
-const count = (s: string) =>
-	/^\d+$/.test(s.replace(/,/g, "").trim()) ? Number(s.replace(/,/g, "")) : null;
-
-// Letters and digits only, as the server compares item numbers.
-const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // Always one empty row at the end to type the next line into. Rows emptied
 // above it stay, so clearing one while typing doesn't take it away.
@@ -105,39 +100,29 @@ export function InvoiceForm({
 	const [savingSkus, setSavingSkus] = useState(false);
 	const form = useRef<HTMLDivElement>(null);
 
-	// Our SKUs on the PO; an item typed as one of them matches by SKU, any
-	// other by the supplier's item number.
-	const ourSkus = new Set(d.lines.map((l) => key(l.sku)));
-	const complete = rows.flatMap((r, i) => {
-		const item = r.item.trim();
-		const quantity = count(r.quantity);
-		const unitCost = money(r.unitCost);
-		if (!item || quantity === null || unitCost === null) return [];
-		return [
-			{
-				line: i + 1,
-				...(ourSkus.has(key(item)) ? { sku: item } : { supplierSku: item }),
-				quantity,
-				unitCost,
-			},
-		];
-	});
-	const totalValue = total ? money(total) : undefined;
-	const freightValue = freight ? money(freight) : undefined;
-	const taxValue = tax ? money(tax) : undefined;
-	const creditsValue = credits ? money(credits) : undefined;
-	const request =
-		complete.length === 0
-			? null
-			: JSON.stringify({
-					purchaseOrderId: po.id,
-					...(number.trim() ? { number: number.trim() } : {}),
-					...(totalValue != null ? { total: totalValue } : {}),
-					...(freightValue != null ? { freight: freightValue } : {}),
-					...(taxValue != null ? { tax: taxValue } : {}),
-					...(creditsValue ? { credits: creditsValue } : {}),
-					lines: complete,
-				});
+	const reading = readInvoice(
+		{
+			purchaseOrderId: po.id,
+			number,
+			invoicedOn,
+			dueOn,
+			total,
+			freight,
+			tax,
+			credits,
+			rows,
+		},
+		new Set(d.lines.map((l) => itemKey(l.sku))),
+	);
+	const request = reading.check ? JSON.stringify(reading.check) : null;
+	// What's in the way shows once Record is pressed, so a row isn't flagged
+	// while it's still being typed.
+	const [tried, setTried] = useState(false);
+	const problems =
+		tried && reading.record.kind === "invalid" ? reading.record.problems : null;
+	const wrong = (f: HeaderField) => problems?.header.has(f) ?? false;
+	const wrongIn = (r: Row, f: RowField) =>
+		problems?.rows.get(r.key)?.has(f) ?? false;
 
 	// Checked a moment after typing stops. A result is only shown against
 	// what it was checked for; until the next one lands, the last one fades.
@@ -183,13 +168,6 @@ export function InvoiceForm({
 	const alreadyRecorded =
 		!stale && result?.alreadyRecorded ? result.alreadyRecorded : null;
 	const dueValid = !dueOn || dueOn >= invoicedOn;
-	const canRecord =
-		number.trim() !== "" &&
-		invoicedOn !== "" &&
-		totalValue != null &&
-		dueValid &&
-		!alreadyRecorded &&
-		!recording;
 
 	function edit(i: number, change: Partial<Row>) {
 		setRows((rs) =>
@@ -208,26 +186,18 @@ export function InvoiceForm({
 	}
 
 	async function record() {
-		if (inFlight.current || !canRecord || totalValue == null) return;
+		if (inFlight.current || recording || alreadyRecorded) return;
+		if (reading.record.kind === "invalid") {
+			setTried(true);
+			return shake(form.current);
+		}
+		const data = reading.record.data;
 		inFlight.current = true;
 		setRecording(true);
 		const r = await optimism.change({
-			label: `Recording invoice ${number.trim()}`,
+			label: `Recording invoice ${data.number}`,
 			patch: [],
-			send: () =>
-				recordSupplierInvoice({
-					data: {
-						purchaseOrderId: po.id,
-						number: number.trim(),
-						invoicedOn,
-						dueOn: dueOn || null,
-						total: totalValue,
-						...(freightValue != null ? { freight: freightValue } : {}),
-						...(taxValue != null ? { tax: taxValue } : {}),
-						...(creditsValue ? { credits: creditsValue } : {}),
-						lines: complete,
-					},
-				}),
+			send: () => recordSupplierInvoice({ data }),
 		});
 		setRecording(false);
 		inFlight.current = false;
@@ -279,13 +249,18 @@ export function InvoiceForm({
 						value={number}
 						onChange={(e) => setNumber(e.target.value)}
 						onKeyDown={(e) => e.key === "Escape" && onClose()}
-						className={cn(input, "font-mono", alreadyRecorded && bad)}
+						className={cn(
+							input,
+							"font-mono",
+							(alreadyRecorded || wrong("number")) && bad,
+						)}
 					/>
 				</Field>
 				<Field label="Dated">
 					<DateInput
 						value={invoicedOn}
 						onChange={setInvoicedOn}
+						invalid={wrong("invoicedOn")}
 						className="w-full"
 					/>
 				</Field>
@@ -295,18 +270,26 @@ export function InvoiceForm({
 						min={invoicedOn}
 						clearable
 						onChange={setDueOn}
-						invalid={!dueValid}
+						invalid={!dueValid || wrong("dueOn")}
 						className="w-full"
 					/>
 				</Field>
 				<Field label="Freight">
-					<MoneyInput value={freight} onChange={setFreight} />
+					<MoneyInput
+						value={freight}
+						invalid={wrong("freight")}
+						onChange={setFreight}
+					/>
 				</Field>
 				<Field label="Tax">
-					<MoneyInput value={tax} onChange={setTax} />
+					<MoneyInput value={tax} invalid={wrong("tax")} onChange={setTax} />
 				</Field>
 				<Field label="Discounts">
-					<MoneyInput value={credits} onChange={setCredits} />
+					<MoneyInput
+						value={credits}
+						invalid={wrong("credits")}
+						onChange={setCredits}
+					/>
 				</Field>
 			</div>
 
@@ -337,7 +320,11 @@ export function InvoiceForm({
 										placeholder={i === 0 ? "Paste rows from the invoice" : ""}
 										onChange={(e) => edit(i, { item: e.target.value })}
 										onPaste={(e) => paste(i, e)}
-										className={cn(input, "font-mono text-xs")}
+										className={cn(
+											input,
+											"font-mono text-xs",
+											wrongIn(r, "item") && bad,
+										)}
 									/>
 								</td>
 								<td className="py-0.5 pr-1">
@@ -348,7 +335,8 @@ export function InvoiceForm({
 										className={cn(
 											input,
 											"text-right tabular-nums",
-											r.quantity && q === null && bad,
+											((r.quantity && q === null) || wrongIn(r, "quantity")) &&
+												bad,
 										)}
 									/>
 								</td>
@@ -360,7 +348,8 @@ export function InvoiceForm({
 										className={cn(
 											input,
 											"text-right tabular-nums",
-											r.unitCost && p === null && bad,
+											((r.unitCost && p === null) || wrongIn(r, "unitCost")) &&
+												bad,
 										)}
 									/>
 								</td>
@@ -399,14 +388,18 @@ export function InvoiceForm({
 					</span>
 				)}
 				<Field label="Total due">
-					<MoneyInput value={total} onChange={setTotal} />
+					<MoneyInput
+						value={total}
+						invalid={wrong("total")}
+						onChange={setTotal}
+					/>
 				</Field>
 				<Button size="sm" variant="ghost" onClick={onClose}>
 					Cancel
 				</Button>
 				<Button
 					size="sm"
-					disabled={!canRecord}
+					disabled={recording || alreadyRecorded !== null}
 					onClick={record}
 					className={cn(
 						cumulative?.kind === "exception" &&
@@ -442,9 +435,11 @@ function Field({
 
 function MoneyInput({
 	value,
+	invalid = false,
 	onChange,
 }: {
 	value: string;
+	invalid?: boolean;
 	onChange: (v: string) => void;
 }) {
 	return (
@@ -455,7 +450,7 @@ function MoneyInput({
 			className={cn(
 				input,
 				"w-28 text-right tabular-nums",
-				value && money(value) === null && bad,
+				(invalid || (value && money(value) === null)) && bad,
 			)}
 		/>
 	);

@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, PackageCheck, PackagePlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { DamageKind } from "#/components/damage/damage";
-import type { PurchaseOrderMatch } from "#/components/po-product-picker";
+import type { PurchaseOrderMatch } from "#/components/po-search";
 import { DamageSheet } from "#/components/receive/damage-sheet";
 import { ExtraSheet } from "#/components/receive/extra-sheet";
 import { LineRow, type ReceiveLine } from "#/components/receive/line-row";
@@ -118,12 +118,14 @@ function ReceivePurchaseOrder() {
 		setSheetLineId(null);
 		const name = productName(line);
 		const receipt = receiptFor(line, quantity, last);
+		// One per receipt, so a resend can't receive it twice.
+		const key = crypto.randomUUID();
 		const r = await optimism.change({
 			label: `Receiving ${name}`,
 			patch: receivePatch(order.id, line.id, receipt, last),
 			send: async () => {
 				const result = await receiveLine({
-					data: { lineId: ids.server(line.id), quantity, last, discount },
+					data: { key, lineId: ids.server(line.id), quantity, last, discount },
 				});
 				ids.confirm(receipt.id, result.receiptId);
 				return result;
@@ -196,18 +198,19 @@ function ReceivePurchaseOrder() {
 		});
 	}
 
+	// True once the server has it; the sheet stays open until then.
 	async function saveNote(line: ReceiveLine, note: string | null) {
-		setNoteLineId(null);
 		const name = productName(line);
 		const was = line.receivingNote;
 		const r = await changeNote(order.id, line, note, `Note on ${name}`);
-		if (!r) return;
+		if (!r) return false;
 		offerUndo(note === null ? `Removed the note on ${name}` : `Noted ${name}`, {
 			undo: async () => {
 				const u = await changeNote(order.id, line, was, `Note on ${name}`);
 				return u && `Put the note on ${name} back`;
 			},
 		});
+		return true;
 	}
 
 	async function backOrder(line: ReceiveLine, backOrdered: boolean) {
@@ -252,12 +255,14 @@ function ReceivePurchaseOrder() {
 			lines.find((l) => l.productId === match.productId) ??
 			blankLine(match, ids.provisional());
 		const receipt = receiptFor(line, quantity, false);
+		const key = crypto.randomUUID();
 		const r = await optimism.change({
 			label: `Receiving ${name}`,
 			patch: extraPatch(order.id, match, receipt),
 			send: async () => {
 				const result = await receiveExtraLine({
 					data: {
+						key,
 						purchaseOrderId: order.id,
 						productId: match.productId,
 						quantity,

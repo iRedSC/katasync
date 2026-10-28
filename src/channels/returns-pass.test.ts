@@ -299,7 +299,7 @@ describe("pnpm sync", () => {
 			"ebay",
 			{ listings: false, returns: true },
 			{
-				syncPass: async () => {
+				syncPassAlone: async () => {
 					ran.push("orders");
 					throw new Error("eBay answered 500");
 				},
@@ -312,5 +312,21 @@ describe("pnpm sync", () => {
 		expect(ran).toEqual(["orders", "returns"]);
 		expect(result.ok).toBe(false);
 		expect(result.lines.at(-1)).toBe("ebay returns: read");
+	});
+
+	test("skips orders a pass or webhook is already writing, through the channel lock", async () => {
+		const result = await channelPass(
+			{} as Db,
+			"shopify",
+			{ listings: false, returns: false },
+			{
+				syncPassAlone: async () => null,
+				returnsPassAlone: async () => null,
+			},
+		);
+		expect(result.ok).toBe(true);
+		expect(result.lines).toEqual([
+			expect.stringMatching(/shopify: another pass or a webhook is running/),
+		]);
 	});
 });

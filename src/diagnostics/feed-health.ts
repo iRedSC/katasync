@@ -9,13 +9,26 @@ import { STALE_AFTER_MINUTES } from "./health";
 export type Feed = (typeof syncFeed.enumValues)[number];
 export type FeedState = (typeof feedState.enumValues)[number];
 
-// The feeds each channel has, in the order Diagnostics lists them. Shopify
-// has no buyer messages here; Amazon's tracking goes back by hand.
+// The feeds each channel has, in the order Diagnostics lists them. Orders
+// are only the orders read; listings (matching them to products) and stock
+// (setting quantities) are their own, so a stock complaint can't keep orders
+// from being green. Shopify has no buyer messages here; Amazon's tracking
+// goes back by hand.
 export const FEEDS = {
-	shopify: ["orders", "returns", "charges", "tracking"],
-	tiktok: ["orders", "returns", "messages", "charges", "tracking"],
+	shopify: ["orders", "listings", "stock", "returns", "charges", "tracking"],
+	tiktok: [
+		"orders",
+		"listings",
+		"stock",
+		"returns",
+		"messages",
+		"charges",
+		"tracking",
+	],
 	ebay: [
 		"orders",
+		"listings",
+		"stock",
 		"returns",
 		"cases",
 		"disputes",
@@ -23,11 +36,13 @@ export const FEEDS = {
 		"charges",
 		"tracking",
 	],
-	amazon: ["orders", "returns", "messages", "charges"],
+	amazon: ["orders", "listings", "stock", "returns", "messages", "charges"],
 } as const satisfies Record<SyncedChannel, readonly Feed[]>;
 
 export const ALL_FEEDS: readonly Feed[] = [
 	"orders",
+	"listings",
+	"stock",
 	"returns",
 	"messages",
 	"charges",
@@ -44,6 +59,8 @@ export const hasFeed = (channel: SyncedChannel, feed: Feed) =>
 // the rest every four hours.
 export const STALE_AFTER: Record<Feed, number> = {
 	orders: STALE_AFTER_MINUTES,
+	listings: STALE_AFTER_MINUTES,
+	stock: STALE_AFTER_MINUTES,
 	returns: 50,
 	cases: 50,
 	disputes: 50,
@@ -55,10 +72,17 @@ export const STALE_AFTER: Record<Feed, number> = {
 // What one attempt found. A read with problems still read everything
 // else. readThrough is where reading got to, in the marketplace's own time,
 // where the feed has such a mark; catching_up read fine but stopped short
-// of now, so it's never ok.
+// of now, so it's never ok. excluded counts items left out on purpose (stock
+// of a variant Shopify doesn't track): known, so they never make a read
+// partial the way a problem does.
 export type FeedOutcome =
-	| { kind: "read"; problems: string[]; readThrough?: Date }
-	| { kind: "catching_up"; problems: string[]; readThrough: Date }
+	| { kind: "read"; problems: string[]; excluded?: number; readThrough?: Date }
+	| {
+			kind: "catching_up";
+			problems: string[];
+			excluded?: number;
+			readThrough: Date;
+	  }
 	| { kind: "failed"; error: string }
 	// The marketplace has nothing to read yet (a report still being built).
 	| { kind: "pending" };
@@ -68,13 +92,19 @@ type Common = { attemptedAt: Date; readThrough: Date | null };
 // A stored record, one shape per state, so a state can't carry another's
 // fields. An ok, partial, or catching_up record succeeded at its attempt.
 export type FeedRecord =
-	| (Common & { state: "ok" })
-	| (Common & { state: "partial"; problems: number; detail: string })
+	| (Common & { state: "ok"; excluded: number })
+	| (Common & {
+			state: "partial";
+			problems: number;
+			excluded: number;
+			detail: string;
+	  })
 	| {
 			state: "catching_up";
 			attemptedAt: Date;
 			readThrough: Date;
 			problems: number;
+			excluded: number;
 			detail: string | null;
 	  }
 	| (Common & {
@@ -109,6 +139,7 @@ export function nextRecord(
 			const common = {
 				attemptedAt: startedAt,
 				readThrough: later(readThrough, outcome.readThrough),
+				excluded: outcome.excluded ?? 0,
 			};
 			return outcome.problems.length === 0
 				? { ...common, state: "ok" }
@@ -129,6 +160,7 @@ export function nextRecord(
 				attemptedAt: startedAt,
 				readThrough: through,
 				problems: outcome.problems.length,
+				excluded: outcome.excluded ?? 0,
 				detail: outcome.problems[0] ?? null,
 			};
 		}
@@ -170,12 +202,13 @@ export type FeedStatus =
 	| { state: "unsupported" }
 	| { state: "not_connected" }
 	| { state: "never" }
-	| { state: "ok"; checkedAt: Date }
+	| { state: "ok"; checkedAt: Date; excluded: number }
 	| {
 			state: "partial";
 			checkedAt: Date;
 			coveredThrough: Date | null;
 			problems: number;
+			excluded: number;
 			detail: string;
 	  }
 	| {
@@ -263,11 +296,12 @@ export function feedStatus(input: {
 				? coveredThrough(record.readThrough, gaps)
 				: null,
 			problems: record.state === "partial" ? record.problems : unsaved.length,
+			excluded: record.state === "partial" ? record.excluded : 0,
 			detail: record.state === "partial" ? record.detail : unsaved[0].detail,
 		};
 	if (record.state === "pending")
 		return { state: "pending", checkedAt, since: record.attemptedAt };
-	return { state: "ok", checkedAt };
+	return { state: "ok", checkedAt, excluded: record.excluded };
 }
 
 // Verified up to here: where reading got to, or the oldest open gap.

@@ -6,6 +6,7 @@ import { postMovements } from "#/inventory/ledger";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
 import { createProduct, createTestDb } from "#/test/db";
 import { takeOver, tiktokOrder, tiktokToChannelOrder } from "./tiktok";
+import { ingestRelayed } from "./tiktok/relay";
 
 let db: Db;
 let warehouse: number;
@@ -163,6 +164,29 @@ describe("takeOver", () => {
 			{ shipping: warehouse, store: null, pos: null, storeKeeps: 0 },
 		);
 		expect(await onHand()).toBe(10);
+	});
+
+	test("a Shopify pass that read before TikTok synced can't bring a moved order back", async () => {
+		await takeOver(db, tiktok.id, direct());
+		const stock = {
+			shipping: warehouse,
+			store: null,
+			pos: null,
+			storeKeeps: 0,
+		};
+		await ingestOrder(db, tiktok, direct(), stock);
+		// As a Shopify pass whose tiktokDirect was read before the TikTok store
+		// existed would save it next.
+		expect(
+			await ingestRelayed(
+				db,
+				shopify,
+				{ ...relayed, marketplaceOrderId: "tiktok:577" },
+				stock,
+			),
+		).toBeNull();
+		expect(await db.select().from(schema.orders)).toHaveLength(1);
+		expect(await onHand()).toBe(8);
 	});
 
 	test("does nothing to an order only TikTok has", async () => {

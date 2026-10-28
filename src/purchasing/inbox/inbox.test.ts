@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { callTool, freshDb } from "#/mcp/mcp.fixtures";
+import { callMcp, callTool, freshDb } from "#/mcp/mcp.fixtures";
 import { poAddress, poOfAddress } from "./graph";
 import {
 	countUnfiled,
@@ -358,8 +358,12 @@ describe("reading the inbox", () => {
 			id: first.id,
 			matchedBy: "claude",
 		});
-		const po = await tool("get_purchase_order", { id: sent });
-		expect(po.data.emails[0]).toMatchObject({ id: first.id });
+		// A PO's emails come inside the untrusted tags, apart from its data.
+		const po = await callMcp(db, true, "tools/call", {
+			name: "get_purchase_order",
+			arguments: { id: sent },
+		});
+		expect(po.content[1].text).toContain(`"id": ${first.id}`);
 
 		await tool("set_aside_po_email", { id: second.id, undo: true });
 		expect((await tool("po_emails", { unfiled: true })).data).toHaveLength(1);

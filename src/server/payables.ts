@@ -3,6 +3,9 @@ import { type } from "arktype";
 import { requireActor } from "#/audit/context";
 import { getDb } from "#/db/client";
 import { paymentMethods } from "#/db/payables-schema";
+import { answer } from "#/lib/answer";
+import { MoneyError } from "#/purchasing/invoice-matching";
+import { PurchaseOrderError } from "#/purchasing/orders";
 import {
 	applyCredit,
 	assertOpeningHistory,
@@ -12,6 +15,10 @@ import {
 	unapplyPayment,
 	withdrawOpeningHistory,
 } from "#/purchasing/payables";
+
+// What the payables rules say no with; staff fix what they typed and try
+// again, rather than resending the same.
+const refusals = [PurchaseOrderError, MoneyError];
 
 const uuid = "string.uuid";
 const cents = "number.integer > 0";
@@ -37,7 +44,9 @@ export const recordSupplierPayment = createServerFn({ method: "POST" })
 			}).array(),
 		}),
 	)
-	.handler(async ({ data }) => recordPayment(getDb(), data, requireActor()));
+	.handler(async ({ data }) =>
+		answer(refusals, () => recordPayment(getDb(), data, requireActor())),
+	);
 
 export const applySupplierCredit = createServerFn({ method: "POST" })
 	.validator(
@@ -48,15 +57,21 @@ export const applySupplierCredit = createServerFn({ method: "POST" })
 			amountCents: cents,
 		}),
 	)
-	.handler(async ({ data }) => applyCredit(getDb(), data, requireActor()));
+	.handler(async ({ data }) =>
+		answer(refusals, () => applyCredit(getDb(), data, requireActor())),
+	);
 
 export const unapplySupplierPayment = createServerFn({ method: "POST" })
 	.validator(type({ applicationId: uuid }))
-	.handler(async ({ data }) => unapplyPayment(getDb(), data, requireActor()));
+	.handler(async ({ data }) =>
+		answer(refusals, () => unapplyPayment(getDb(), data, requireActor())),
+	);
 
 export const reverseSupplierPayment = createServerFn({ method: "POST" })
 	.validator(type({ paymentId: uuid, "reason?": "string | null" }))
-	.handler(async ({ data }) => reversePayment(getDb(), data, requireActor()));
+	.handler(async ({ data }) =>
+		answer(refusals, () => reversePayment(getDb(), data, requireActor())),
+	);
 
 export const assertInvoiceHistory = createServerFn({ method: "POST" })
 	.validator(
@@ -67,7 +82,7 @@ export const assertInvoiceHistory = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }) =>
-		assertOpeningHistory(getDb(), data, requireActor()),
+		answer(refusals, () => assertOpeningHistory(getDb(), data, requireActor())),
 	);
 
 export const withdrawInvoiceHistory = createServerFn({ method: "POST" })

@@ -23,7 +23,7 @@ import {
 } from "./marketplace-messages";
 import { replyFileData } from "./reply-files";
 import { Refused, Unsure } from "./states";
-import { ensureThread } from "./threads";
+import { ensureThread, moveThreadOrder } from "./threads";
 
 // TikTok Shop buyer chats through its Customer Service API (202309): every
 // conversation with something new since a little before the last full read,
@@ -360,12 +360,10 @@ async function syncConversation(
 		kept.id,
 		messages.flatMap((m) => marketplaceMessage(m) ?? []),
 	);
-	const order = kept.orderRef ? null : orderOf(messages);
-	if (order)
-		await db
-			.update(buyerThreads)
-			.set({ orderRef: order })
-			.where(eq(buyerThreads.id, kept.id));
+	// TikTok keeps one conversation a buyer: a later card about another of
+	// their orders moves the thread to it.
+	const order = orderOf(messages);
+	if (order) await moveThreadOrder(db, kept.id, order);
 	// Before it counts as read, so a failed ask is made again next run.
 	else if (!kept.orderRef) await fillOrder(kept.id);
 	await db

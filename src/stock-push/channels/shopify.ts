@@ -60,6 +60,7 @@ export function shopifyStockFound(
 		return {
 			state: "unpushable",
 			reason: "Shopify doesn't track this variant's inventory",
+			byDesign: true,
 		};
 	if (!item.inventoryLevel)
 		return {

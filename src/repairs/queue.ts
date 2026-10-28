@@ -14,6 +14,20 @@ const columnOf = (status: RepairStatus): RepairStatus[] =>
 		? ["picked_up", "refurbished"]
 		: [status];
 
+// The board's order, held until the transaction ends. Placing a repair
+// locks its whole column, so a move takes this before locking the repair
+// it moves: otherwise two moves in one column each hold a card the other's
+// column lock waits for. Only holdQueue makes one, and placeIn needs one.
+declare const queueHeld: unique symbol;
+export type QueueHeld = { readonly [queueHeld]: true };
+
+export async function holdQueue(tx: Db): Promise<QueueHeld> {
+	await tx.execute(
+		sql`select pg_advisory_xact_lock(hashtext('katasync:repair-queue'))`,
+	);
+	return {} as QueueHeld;
+}
+
 // Too close to halve again without the two coming out equal.
 const FINEST = 1e-6;
 
@@ -32,9 +46,11 @@ export async function lastIn(tx: Db, status: RepairStatus, except: number) {
 }
 
 // Puts a repair just above `before` in its column, or last when null (or
-// when `before` is no longer in that column). Run holding the repair.
+// when `before` is no longer in that column). Run holding the queue, then
+// the repair.
 export async function placeIn(
 	tx: Db,
+	_queue: QueueHeld,
 	id: number,
 	status: RepairStatus,
 	before: number | null,

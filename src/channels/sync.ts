@@ -1,5 +1,5 @@
-import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
-import { type Db, withOwnConnection } from "#/db/client";
+import { and, desc, eq, gte, isNotNull } from "drizzle-orm";
+import type { Db } from "#/db/client";
 import { syncRuns } from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import type { FeedOutcome } from "#/diagnostics/feed-health";
@@ -17,12 +17,19 @@ import { stockChannels } from "#/stock-push/channels";
 import { pushMoved } from "#/stock-push/on-change";
 import { pushChannelStock, pushMode } from "#/stock-push/push";
 import { syncAmazon } from "./amazon";
+import { holdingChannel } from "./channel-lock";
 import { syncEbay } from "./ebay";
 import { amazonPostedSince, fetchAmazonCharges } from "./finance/amazon";
 import { fetchEbayCharges } from "./finance/ebay";
 import { fetchShopifyCharges } from "./finance/shopify";
 import { fetchTiktokCharges } from "./finance/tiktok";
 import type { OrderUpdate, WebhookUpdate } from "./order-update";
+import {
+	type FeedPhase,
+	type PassFeeds,
+	type PassPhases,
+	readingPassFeeds,
+} from "./pass-feeds";
 import { returnsPass } from "./returns-pass";
 import { ingestShopifyOrder, syncShopify } from "./shopify";
 import { stockLocations } from "./stores";
@@ -31,7 +38,8 @@ import { ingestTiktokOrder, syncTiktok } from "./tiktok";
 // One sync pass of a channel: pull its orders (and, with `listings`, its
 // listings), catch up its lines that now have a product, set its stores'
 // listing quantities where stock push is on (src/stock-push), record the run
-// and the orders feed for Diagnostics, then pin any new orders to ship.
+// and its orders, listings, and stock feeds for Diagnostics (each gets only
+// its own problems), then pin any new orders to ship.
 // Returns have their own pass (returnsPassAlone).
 // Shared by `pnpm sync` (scripts/sync.ts) and the Vercel crons
 // (src/routes/api/cron/sync.$channel.ts). Server only.
@@ -40,12 +48,16 @@ const passes: Record<
 	SyncedChannel,
 	(
 		db: Db,
-		listings: boolean,
+		// Runs the listings part of the pass; null to skip it.
+		listings: FeedPhase | null,
 	) => Promise<{
 		store: string;
 		// Products made from the primary store's new SKUs (matchListings).
 		created: number;
 		orders: number;
+		// Matching and mirroring listings; none without `listings`.
+		listingProblems: string[];
+		// Reading and ingesting orders.
 		problems: string[];
 	}>
 > = {
@@ -58,17 +70,15 @@ const passes: Record<
 export const isSyncedChannel = (name: string): name is SyncedChannel =>
 	Object.hasOwn(passes, name);
 
-export async function syncPass(
+// Unlocked: callers outside this file go through syncPassAlone or
+// watchedPass, so two passes of a channel never import the same orders at once.
+async function syncPass(
 	db: Db,
 	channel: SyncedChannel,
 	options: { listings: boolean },
 ) {
-	const result = await readingFeed(
-		db,
-		channel,
-		"orders",
-		() => ordersPass(db, channel, options),
-		(r) => ({ kind: "read", problems: r.problems }),
+	const result = await readingPassFeeds(db, channel, options, (phases, at) =>
+		ordersPass(db, channel, phases, at),
 	);
 	const pinned = await assignOrderPins(db);
 	return { ...result, pinned };
@@ -77,35 +87,42 @@ export async function syncPass(
 function ordersPass(
 	db: Db,
 	channel: SyncedChannel,
-	options: { listings: boolean },
+	phases: PassPhases,
+	started: Date,
 ) {
 	return recordSyncRun(db, channel, async () => {
-		const started = new Date();
-		const pass = await passes[channel](db, options.listings);
+		const pass = await passes[channel](db, phases.listings);
 		const caughtUp = await applySkusToOrders(
 			db,
 			{ channel },
 			await stockLocations(db),
 		);
-		const pushed = await pushChannelStock(
-			db,
-			channel,
-			stockChannels[channel],
-			pushMode(),
+		const pushed = await phases.stock(() =>
+			pushChannelStock(db, channel, stockChannels[channel], pushMode()),
 		);
 		// This channel's sales reach the others now, not at their own passes.
 		const elsewhere = await pushMoved(db, started, { except: channel });
-		// A refurb this pass sold out is archived, here and in Shopify.
+		// A refurb this pass sold out is archived, here and in Shopify. What
+		// fails is on Shopify's stock feed, whichever pass this is.
 		const retired = await retireRefurbs(db);
+		const feeds: PassFeeds = {
+			orders: [...pass.problems, ...caughtUp.problems],
+			listings: phases.listings ? pass.listingProblems : null,
+			stock: pushed.flatMap((p) => p.problems),
+			pushed,
+			retired: retired.problems,
+		};
 		return {
 			...pass,
+			feeds,
+			// The run keeps every problem; other channels' pushes show only here.
 			problems: [
 				...new Set([
-					...pass.problems,
-					...caughtUp.problems,
-					...pushed.flatMap((p) => p.problems),
+					...feeds.orders,
+					...(feeds.listings ?? []),
+					...feeds.stock,
+					...feeds.retired,
 					...elsewhere.flatMap((p) => p.problems),
-					...retired.problems,
 				]),
 			],
 		};
@@ -318,57 +335,4 @@ export async function ingestWebhookOrder(
 	for (const p of await pushMoved(db, started))
 		for (const problem of p.problems) console.warn(problem);
 	return done;
-}
-
-// Runs `work` while holding this channel's lock for `purpose`, so only one
-// thing writes a channel's orders (sync-pass) or charges (cost-pass) at a
-// time. Returns null if the lock is taken, or with
-// `waitFor`, still taken after that long. The lock is held by a transaction on
-// a connection of its own and released when that transaction ends, however
-// the work ends. Not a session lock: DATABASE_URL goes through Neon's pooler,
-// which keeps the server connection, and a session lock with it, after the
-// client closes.
-async function holdingChannel<T>(
-	channel: SyncedChannel,
-	options: {
-		purpose: "sync-pass" | "cost-pass" | "cost-history" | "returns-pass";
-		waitFor?: string;
-	},
-	work: () => Promise<T>,
-): Promise<T | null> {
-	return withOwnConnection((lockDb) =>
-		lockDb.transaction(async (tx) => {
-			// The transaction sits idle for the whole pass. Neon ends idle ones
-			// after 5 minutes; a Vercel function can't outlive 15.
-			await tx.execute(
-				sql`set local idle_in_transaction_session_timeout = '15min'`,
-			);
-			const key = sql`hashtext(${options.purpose}), hashtext(${channel})`;
-			if (options.waitFor) {
-				await tx.execute(
-					sql`select set_config('lock_timeout', ${options.waitFor}, true)`,
-				);
-				try {
-					await tx.execute(sql`select pg_advisory_xact_lock(${key})`);
-				} catch (error) {
-					if (!lockTimedOut(error)) throw error;
-					// The transaction is aborted; committing it just rolls back.
-					return null;
-				}
-			} else {
-				const result = (await tx.execute(
-					sql`select pg_try_advisory_xact_lock(${key}) as locked`,
-				)) as unknown as { rows: { locked: boolean }[] };
-				if (!result.rows[0].locked) return null;
-			}
-			return work();
-		}),
-	);
-}
-
-// Postgres's lock_not_available, bare or under drizzle's DrizzleQueryError.
-function lockTimedOut(error: unknown): boolean {
-	if (typeof error !== "object" || error === null) return false;
-	if ("code" in error && error.code === "55P03") return true;
-	return "cause" in error && lockTimedOut(error.cause);
 }

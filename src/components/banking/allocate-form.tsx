@@ -4,7 +4,7 @@ import { formatCents, parseCents } from "#/banking/money";
 import { Badge } from "#/components/page";
 import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
-import { formatDate } from "#/lib/format";
+import { formatCount, formatDate } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { type BankMatchOptions, getMatchOptions } from "#/server/banking";
 import { MARKET_STATUS } from "./states";
@@ -59,7 +59,8 @@ export function AllocateForm({
 		);
 	if (load.kind === "failed")
 		return <p className="text-critical-text">{load.problem}</p>;
-	const { bank, candidates, suggestions, ambiguous } = load.options;
+	const { bank, candidates, candidatesCut, suggestions, ambiguous } =
+		load.options;
 	const money = (c: number) => formatCents(c, bank.currency);
 	const parts = [...picked].map(([id, text]) => ({
 		id,
@@ -201,6 +202,12 @@ export function AllocateForm({
 						);
 					})}
 				</ul>
+			)}
+			{candidatesCut !== null && (
+				<p className="text-xs text-muted-foreground">
+					Showing the newest {formatCount(candidatesCut)}; older payouts near
+					this date are left out
+				</p>
 			)}
 			<div className="flex items-center gap-3">
 				<span

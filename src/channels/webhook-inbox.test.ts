@@ -141,6 +141,34 @@ describe("drainDue", () => {
 		expect(first).toMatchObject({ claimed: 10, done: 10 });
 		expect(await rows()).toHaveLength(2);
 	});
+	it("leases each order only once it's reached, not the whole batch up front", async () => {
+		for (let n = 1; n <= 3; n++)
+			await acceptWebhook(db, "shopify", `gid://shopify/Order/${n}`, body("1"));
+		const leasedWhileWorking: number[] = [];
+		const report = await drainDue(db, async () => {
+			const leased = (await rows()).filter((r) => r.leaseToken !== null);
+			leasedWhileWorking.push(leased.length);
+			return { kind: "applied" };
+		});
+		expect(report).toMatchObject({ claimed: 3, done: 3 });
+		expect(leasedWhileWorking).toEqual([1, 1, 1]);
+	});
+
+	it("stops taking orders once its time is up, leaving the rest unleased", async () => {
+		for (let n = 1; n <= 3; n++)
+			await acceptWebhook(db, "shopify", `gid://shopify/Order/${n}`, body("1"));
+		const slow: Ingest = async () => {
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			return { kind: "applied" };
+		};
+		expect(await drainDue(db, slow, { forMs: 10 })).toMatchObject({
+			claimed: 1,
+			done: 1,
+		});
+		const left = await rows();
+		expect(left).toHaveLength(2);
+		expect(left.every((r) => r.leaseToken === null)).toBe(true);
+	});
 });
 
 describe("claims and leases", () => {

@@ -294,3 +294,103 @@ test("a malformed successful detail response cannot silently clear obligations",
 	});
 	expect(await db.select().from(marketplaceCases)).toEqual([]);
 });
+
+test("a recheck takes eBay's extended deadline over the one saved last", async () => {
+	await recordFeed(db, "ebay", "disputes", new Date(now.getTime() - 1000), {
+		kind: "read",
+		problems: [],
+		readThrough: now,
+	});
+	let listed = true;
+	let due: string | null = "2026-10-28T12:00:00Z";
+	const dispute = {
+		paymentDisputeId: "D1",
+		paymentDisputeStatus: "ACTION_NEEDED",
+		openDate: date.value,
+	};
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: URL) =>
+			Response.json(
+				input.pathname.endsWith("/payment_dispute_summary")
+					? { paymentDisputeSummaries: listed ? [dispute] : [] }
+					: {
+							...dispute,
+							availableChoices: ["CONTEST"],
+							evidenceRequests: [
+								{
+									evidenceType: "PROOF_OF_DELIVERY",
+									...(due ? { respondByDate: due } : {}),
+								},
+							],
+						},
+			),
+		),
+	);
+	const pass = (seconds: number) =>
+		ebayCasesPass(
+			db,
+			"disputes",
+			new Date(now.getTime() + seconds * 1000),
+			Date.now() + 10_000,
+		);
+	await pass(0);
+	// Out of search's window now, so only the recheck sees it.
+	listed = false;
+	due = "2026-11-04T12:00:00Z";
+	await pass(1);
+	const respondBy = async () =>
+		(await db.select().from(marketplaceCases)).map((row) => row.respondBy);
+	expect(await respondBy()).toEqual([new Date("2026-11-04T12:00:00Z")]);
+	// With no deadline from eBay this time, the saved one stands.
+	due = null;
+	await pass(2);
+	expect(await respondBy()).toEqual([new Date("2026-11-04T12:00:00Z")]);
+});
+
+test("a slow recheck gives up at half the budget and discovery still runs", async () => {
+	await recordFeed(db, "ebay", "cases", new Date(now.getTime() - 1000), {
+		kind: "read",
+		problems: [],
+		readThrough: now,
+	});
+	let hang = false;
+	const searched = vi.fn();
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: URL, options: RequestInit) => {
+			if (input.pathname.endsWith("/search")) {
+				searched();
+				return Response.json({
+					members: hang
+						? []
+						: [{ inquiryId: 1, inquiryStatusEnum: "OPEN", creationDate: date }],
+					paginationOutput: { totalPages: hang ? 0 : 1 },
+				});
+			}
+			if (!hang)
+				return Response.json({
+					status: "WAITING_SELLER_RESPONSE",
+					sellerMakeItRightByDate: { value: "2026-10-28T12:00:00Z" },
+				});
+			// eBay never answers; only the request's own timeout ends it.
+			return new Promise<Response>((_, reject) =>
+				options.signal?.addEventListener("abort", () =>
+					reject(options.signal?.reason),
+				),
+			);
+		}),
+	);
+	await ebayCasesPass(db, "cases", now, Date.now() + 10_000);
+	hang = true;
+	searched.mockClear();
+	expect(
+		await ebayCasesPass(
+			db,
+			"cases",
+			new Date(now.getTime() + 1000),
+			Date.now() + 4_000,
+		),
+	).toMatchObject({ kind: "read" });
+	expect(searched).toHaveBeenCalled();
+});

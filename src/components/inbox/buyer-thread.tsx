@@ -1,23 +1,15 @@
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	Archive,
-	Check,
-	CheckCheck,
-	CircleAlert,
-	CircleHelp,
-	Clock,
 	ExternalLink,
 	Languages,
-	LoaderCircle,
 	NotebookPen,
-	Paperclip,
-	RotateCw,
 	SendHorizontal,
 	Undo2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { refuseWords, rulesFor } from "#/buyers/attachments";
+import { type ReplyFile, refuseWords, rulesFor } from "#/buyers/attachments";
 import { chatPage } from "#/buyers/chat-page";
 import type { BuyerThread } from "#/buyers/threads";
 import { shake } from "#/components/shake";
@@ -29,25 +21,26 @@ import {
 	ContextMenuTrigger,
 } from "#/components/ui/context-menu";
 import { Tip } from "#/components/ui/tooltip";
-import type { BuyerMedia } from "#/db/schema";
-import { formatDateTime } from "#/lib/format";
 import { offerUndo } from "#/lib/undo";
 import { cn } from "#/lib/utils";
 import { translateReply } from "#/server/buyer-drafts";
 import { logBuyerReply, unlogBuyerReply } from "#/server/buyers";
+import { Bubble, KeptReply, type Shown } from "./buyer-bubble";
 import { BuyerOrder } from "./buyer-order";
 import { DueChip } from "./due-chip";
 import { groupMarketplace, MarketplaceBubble } from "./marketplace-bubble";
 import {
 	HOLD_MS,
 	hold,
-	type OutStatus,
+	isEmptyBox,
+	keepReturned,
+	type Returned,
 	retry,
-	sendNow,
 	setRefresh,
 	takeReturned,
 	undo,
 	useOutgoing,
+	useReturned,
 } from "./outgoing";
 import { AttachButton, AttachedFiles, useReplyFiles } from "./reply-files";
 import { Suggestion } from "./suggestion";
@@ -61,26 +54,6 @@ const languageName = (code: string | null) =>
 // each of ours marked with how far it got, the marketplace's own among them,
 // and a reply box under them.
 // A reply shows at once as sending, then moves on as the server learns.
-
-type Status = OutStatus;
-
-type Shown = {
-	// Pictures and files sent with it.
-	media?: BuyerMedia[];
-	// Added by staff after sending it on the marketplace; katasync sent
-	// nothing.
-	logged?: boolean;
-	// When a held reply goes.
-	sendAt?: number;
-	key: string;
-	fromBuyer: boolean;
-	body: string;
-	at: Date;
-	status: Status | null;
-	error: string | null;
-	// The buyer's words in English, when they wrote in another language.
-	english?: string | null;
-};
 
 export function BuyerConversation({
 	thread: t,
@@ -106,17 +79,43 @@ export function BuyerConversation({
 	});
 	const [text, setText] = useState("");
 	const [dragging, setDragging] = useState(false);
-	// Undo puts the words and files back in the box, also while this thread
-	// is open.
 	useEffect(() => {
 		setRefresh(() => router.invalidate());
-		const back = takeReturned(t.id);
-		if (back !== undefined) {
-			setText(back.body);
-			files.restore(back.media);
+	});
+	// Undo gives a reply's words and files back, also while this thread is
+	// open. An empty box takes it at once; a box with something newer in it is
+	// left alone, and the reply waits above it to be added when staff want it.
+	const returnedReplies = useReturned(t.id);
+	const offered = useRef(new Set<string>());
+	useEffect(() => {
+		for (const r of returnedReplies) {
+			if (offered.current.has(r.key)) continue;
+			offered.current.add(r.key);
+			if (!isEmptyBox({ text, files: files.items.length })) continue;
+			if (!files.restore(r.media)) continue;
+			takeReturned(r.key);
+			setText(r.body);
 			box.current?.focus();
+			// The box is no longer empty; the rest wait.
+			break;
 		}
 	});
+	// Adds a kept reply to the box after what's there.
+	function addReturned(r: Returned) {
+		if (!files.restore(r.media)) return shake(box.current);
+		takeReturned(r.key);
+		setText((now) => (now.trim() ? `${now.trimEnd()}\n\n${r.body}` : r.body));
+		box.current?.focus();
+	}
+	function dropReturned(r: Returned) {
+		takeReturned(r.key);
+		offerUndo("Reply let go", {
+			undo: async () => {
+				keepReturned(r);
+				return "Kept";
+			},
+		});
+	}
 	// The English the box's words say, kept with the exact words it's for:
 	// any change to them hides it, since it no longer says what they do.
 	const [gloss, setGloss] = useState<{ english: string; for: string } | null>(
@@ -175,7 +174,7 @@ export function BuyerConversation({
 	// takes them back. A key given (a suggestion's) sends them once however
 	// many times it's clicked; media given (sending one again) goes instead
 	// of the box's files.
-	function send(body: string, key?: string, again?: Shown["media"]) {
+	function send(body: string, key?: string, again?: ReplyFile[]) {
 		const words = body.trim();
 		const media = again ?? files.media();
 		const problem =
@@ -239,7 +238,7 @@ export function BuyerConversation({
 	const again = (m: Shown) => {
 		// Unheard: the same reply again. Failed or unconfirmed: a new one.
 		if (m.status === "unheard") retry(m.key);
-		else send(m.body, undefined, m.media ?? []);
+		else send(m.body, undefined, m.files ?? []);
 	};
 
 	return (
@@ -327,6 +326,14 @@ export function BuyerConversation({
 						box.current?.focus();
 					}}
 				/>
+				{returnedReplies.map((r) => (
+					<KeptReply
+						key={r.key}
+						reply={r}
+						onAdd={() => addReturned(r)}
+						onDrop={() => dropReturned(r)}
+					/>
+				))}
 				<form
 					onSubmit={(e) => {
 						e.preventDefault();
@@ -438,209 +445,6 @@ export function BuyerConversation({
 					)}
 				</form>
 			</div>
-		</div>
-	);
-}
-
-// A held reply's seconds left, ticking.
-function Countdown({ at }: { at: number }) {
-	const [, tick] = useState(0);
-	useEffect(() => {
-		const timer = setInterval(() => tick((n) => n + 1), 250);
-		return () => clearInterval(timer);
-	}, []);
-	return <>{Math.max(0, Math.ceil((at - Date.now()) / 1000))}s</>;
-}
-
-// What came with a message: pictures as thumbnails, files as links, each
-// opening full size in a new tab.
-function Media({ items }: { items: BuyerMedia[] }) {
-	if (items.length === 0) return null;
-	const pictures = items.filter((i) => i.kind === "IMAGE");
-	const files = items.filter((i) => i.kind !== "IMAGE");
-	return (
-		<span className="mt-1 flex flex-wrap gap-1.5 first:mt-0">
-			{pictures.map((p) => (
-				<a
-					key={p.url}
-					href={p.url}
-					target="_blank"
-					rel="noreferrer"
-					className="block overflow-hidden rounded-lg ring-1 ring-black/10 transition-opacity hover:opacity-90"
-				>
-					<img
-						src={p.url}
-						alt={p.name || "Photo"}
-						loading="lazy"
-						className="h-36 w-auto max-w-56 object-cover"
-					/>
-				</a>
-			))}
-			{files.map((f) => (
-				<a
-					key={f.url}
-					href={f.url}
-					target="_blank"
-					rel="noreferrer"
-					className="inline-flex items-center gap-1 rounded-md bg-background/60 px-2 py-1 text-sm underline-offset-2 hover:underline"
-				>
-					<Paperclip className="size-3.5" />
-					{f.name || f.kind}
-				</a>
-			))}
-		</span>
-	);
-}
-
-const STATUS: Record<
-	Status,
-	{ icon: typeof Check; label: string; className?: string }
-> = {
-	held: { icon: Clock, label: "Not sent yet" },
-	sending: {
-		icon: LoaderCircle,
-		label: "Sending",
-		className: "animate-spin",
-	},
-	sent: { icon: Check, label: "Sent, waiting for the marketplace" },
-	delivered: { icon: CheckCheck, label: "Delivered" },
-	failed: {
-		icon: CircleAlert,
-		label: "Didn't send",
-		className: "text-critical-text",
-	},
-	unconfirmed: {
-		icon: CircleHelp,
-		label: "May not have sent",
-		className: "text-warning-text",
-	},
-	unheard: {
-		icon: CircleHelp,
-		label: "No answer from katasync",
-		className: "text-warning-text",
-	},
-};
-
-// A Shopify buyer is emailed: delivered is only as far as their mail
-// server, and whether they read it is never known.
-const EMAILED: Partial<typeof STATUS> = {
-	sent: { icon: Check, label: "Sent, on its way to their mail server" },
-	delivered: { icon: CheckCheck, label: "Sent: their mail server took it" },
-};
-
-const LOGGED = {
-	icon: NotebookPen,
-	label: "Added without sending: sent on the marketplace",
-	className: undefined,
-};
-
-// What a reply that isn't through offers: the same send again, or a new one.
-const AGAIN: Partial<Record<Status, string>> = {
-	failed: "Send again",
-	unconfirmed: "Send anyway",
-	unheard: "Try again",
-};
-
-function Bubble({
-	message: m,
-	emailed = false,
-	onAgain,
-}: {
-	message: Shown;
-	emailed?: boolean;
-	onAgain: () => void;
-}) {
-	const s = m.logged
-		? LOGGED
-		: m.status
-			? ((emailed ? EMAILED[m.status] : undefined) ?? STATUS[m.status])
-			: null;
-	const [original, setOriginal] = useState(false);
-	const translated = Boolean(m.english) && !original;
-	return (
-		<div
-			className={cn(
-				"flex flex-col gap-1 animate-in fade-in-0 slide-in-from-bottom-1",
-				m.fromBuyer ? "items-start" : "items-end",
-			)}
-		>
-			<div
-				className={cn(
-					"max-w-[85%] rounded-2xl px-3.5 py-2 whitespace-pre-wrap break-words",
-					m.fromBuyer
-						? "rounded-bl-md bg-surface-strong"
-						: "rounded-br-md bg-primary text-primary-foreground",
-					m.status === "failed" &&
-						"bg-critical-surface text-critical-text ring-1 ring-critical-text",
-					(m.status === "unconfirmed" || m.status === "unheard") &&
-						"bg-warning-surface text-warning-text ring-1 ring-warning-text",
-					// Not gone yet: dashed and faded until the hold runs out.
-					m.status === "held" &&
-						"bg-primary/60 outline-2 outline-primary outline-dashed outline-offset-2",
-				)}
-			>
-				{(translated ? m.english : m.body) || null}
-				<Media items={m.media ?? []} />
-			</div>
-			<span className="flex items-center gap-1 text-xs text-muted-foreground">
-				{formatDateTime(m.at)}
-				{m.english && (
-					<button
-						type="button"
-						onClick={() => setOriginal((o) => !o)}
-						className="inline-flex items-center gap-1 rounded px-1 hover:bg-surface hover:text-foreground"
-					>
-						<Languages className="size-3" />
-						{translated ? "Original" : "English"}
-					</button>
-				)}
-				{s && (
-					<Tip content={m.error ?? s.label}>
-						<s.icon
-							key={m.status}
-							aria-label={s.label}
-							className={cn("size-3.5 animate-in zoom-in-75", s.className)}
-						/>
-					</Tip>
-				)}
-			</span>
-			{m.status === "held" && m.sendAt !== undefined && (
-				<span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
-					Sends in <Countdown at={m.sendAt} />
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						onClick={() => undo(m.key)}
-					>
-						<Undo2 />
-						Undo
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						onClick={() => sendNow(m.key)}
-					>
-						<SendHorizontal />
-						Send now
-					</Button>
-				</span>
-			)}
-			{m.status && AGAIN[m.status] && (
-				<span
-					className={cn(
-						"flex max-w-[85%] items-center gap-2 text-right text-xs",
-						m.status === "failed" ? "text-critical-text" : "text-warning-text",
-					)}
-				>
-					{m.error}
-					<Button type="button" size="sm" variant="ghost" onClick={onAgain}>
-						<RotateCw />
-						{AGAIN[m.status]}
-					</Button>
-				</span>
-			)}
 		</div>
 	);
 }

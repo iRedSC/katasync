@@ -1,5 +1,6 @@
-import { NotebookPen, Trash2 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { LoaderCircle, NotebookPen, Trash2 } from "lucide-react";
+import { type FormEvent, useRef, useState } from "react";
+import { shake } from "#/components/shake";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -11,6 +12,7 @@ import {
 } from "#/components/ui/dialog";
 import { ids, optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
+import { cn } from "#/lib/utils";
 import {
 	type PurchaseOrderDetail,
 	setLineReceivingNote,
@@ -69,7 +71,8 @@ export function NoteRow({
 }
 
 // Writes, changes, or takes off a line's receiving note. Blank saves as no
-// note. Closing with changes unsaved asks first.
+// note. Closing with changes unsaved asks first. Stays open until the server
+// has the note, so one that doesn't save is still here to try again.
 export function NoteDialog({
 	line,
 	purchaseOrderId,
@@ -82,27 +85,37 @@ export function NoteDialog({
 	const note = line.receivingNote;
 	const [text, setText] = useState(note ?? "");
 	const next = text.trim() || null;
-	const changed = next !== note;
+	const [saving, setSaving] = useState(false);
+	const [failed, setFailed] = useState(false);
+	const form = useRef<HTMLFormElement>(null);
+	// While it saves, the line already shows the new note.
+	const changed = next !== note || saving;
 
 	function close() {
+		if (saving) return shake(form.current);
 		if (changed && !confirm("Throw away this note?")) return;
 		onClose();
 	}
 
-	function save(value: string | null) {
-		onClose();
-		void saveNote(line, value, purchaseOrderId);
+	async function save(value: string | null) {
+		if (saving) return;
+		setSaving(true);
+		setFailed(false);
+		if (await saveNote(line, value, purchaseOrderId)) return onClose();
+		setSaving(false);
+		setFailed(true);
+		shake(form.current);
 	}
 
 	function submit(e: FormEvent) {
 		e.preventDefault();
-		if (changed) save(next);
+		if (changed) void save(next);
 	}
 
 	return (
 		<Dialog open onOpenChange={(open) => !open && close()}>
 			<DialogContent className="sm:max-w-lg">
-				<form onSubmit={submit} className="flex flex-col gap-5">
+				<form ref={form} onSubmit={submit} className="flex flex-col gap-5">
 					<DialogHeader>
 						<DialogTitle>{note === null ? "Add a note" : "Note"}</DialogTitle>
 						<DialogDescription>
@@ -119,7 +132,11 @@ export function NoteDialog({
 							)
 						}
 						value={text}
-						onChange={(e) => setText(e.target.value)}
+						onChange={(e) => {
+							setText(e.target.value);
+							setFailed(false);
+						}}
+						readOnly={saving}
 						onKeyDown={(e) => {
 							// Enter adds a line; Ctrl or Cmd with it saves.
 							if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
@@ -128,10 +145,13 @@ export function NoteDialog({
 						rows={4}
 						placeholder="e.g. 2 crushed, kept"
 						aria-label={`Note for ${lineName(line)}`}
-						className="w-full resize-none rounded-md border bg-transparent p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						className={cn(
+							"w-full resize-none rounded-md border bg-transparent p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+							failed && "border-critical-border ring-2 ring-critical-border/40",
+						)}
 					/>
 					<DialogFooter>
-						{note !== null && next !== null && (
+						{note !== null && next !== null && !saving && (
 							<Button
 								type="button"
 								variant="ghost"
@@ -142,15 +162,24 @@ export function NoteDialog({
 								Remove note
 							</Button>
 						)}
-						<Button type="button" variant="outline" onClick={close}>
+						<Button
+							type="button"
+							variant="outline"
+							disabled={saving}
+							onClick={close}
+						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={!changed}>
-							{!changed
-								? "No changes"
-								: next === null
-									? "Remove note"
-									: "Save note"}
+						<Button type="submit" disabled={!changed || saving}>
+							{saving ? (
+								<LoaderCircle className="animate-spin" />
+							) : !changed ? (
+								"No changes"
+							) : next === null ? (
+								"Remove note"
+							) : (
+								"Save note"
+							)}
 						</Button>
 					</DialogFooter>
 				</form>
@@ -159,12 +188,12 @@ export function NoteDialog({
 	);
 }
 
-// Sets the note at once, with Undo once the server has it.
+// Sets the note at once, with Undo once the server has it. True once it has.
 async function saveNote(
 	line: Line,
 	note: string | null,
 	purchaseOrderId: number,
-) {
+): Promise<boolean> {
 	const was = line.receivingNote;
 	const change = (value: string | null) =>
 		optimism.change({
@@ -180,7 +209,7 @@ async function saveNote(
 				}),
 		});
 	const r = await change(note);
-	if (!r) return;
+	if (!r) return false;
 	offerUndo(
 		note === null ? `Removed the note on ${line.sku}` : `Noted ${line.sku}`,
 		{
@@ -190,4 +219,5 @@ async function saveNote(
 			},
 		},
 	);
+	return true;
 }
