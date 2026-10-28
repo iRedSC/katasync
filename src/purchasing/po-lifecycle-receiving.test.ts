@@ -83,7 +83,11 @@ describe("a PO from draft to received", () => {
 		expect(await suggestPurchases(db, now)).toEqual([]);
 
 		const [bladeLine, knifeLine] = await linesOf(id);
-		await receive(db, { lineId: bladeLine.id, quantity: 10 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 10,
+		});
 		expect((await unitsOnOrder(db)).get(blade)).toBe(100);
 		const [product] = await db
 			.select()
@@ -92,9 +96,17 @@ describe("a PO from draft to received", () => {
 		// 10 on the shelf at $4, 10 more at $5.
 		expect(product.unitCost).toBe(4.5);
 
-		const last = await receive(db, { lineId: bladeLine.id, quantity: 100 });
+		const last = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 100,
+		});
 		expect(last.closed).toBe(false);
-		const knives = await receive(db, { lineId: knifeLine.id, quantity: 9 });
+		const knives = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: knifeLine.id,
+			quantity: 9,
+		});
 		expect(knives.closed).toBe(true);
 		expect((await getPo(id)).status).toBe("closed");
 
@@ -113,7 +125,11 @@ describe("a PO from draft to received", () => {
 		await closeOrder(db, id);
 		expect((await getPo(id)).status).toBe("closed");
 		await expect(
-			receive(db, { lineId: knifeLine.id, quantity: 1 }),
+			receive(db, {
+				key: crypto.randomUUID(),
+				lineId: knifeLine.id,
+				quantity: 1,
+			}),
 		).rejects.toThrow(/is closed/);
 	});
 
@@ -121,7 +137,11 @@ describe("a PO from draft to received", () => {
 		const id = await draftFromSuggestions(db, canam, now);
 		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
 		const [bladeLine, knifeLine] = await linesOf(id);
-		await receive(db, { lineId: knifeLine.id, quantity: 9 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: knifeLine.id,
+			quantity: 9,
+		});
 		await expect(
 			setBackOrdered(db, { lineId: knifeLine.id, backOrdered: true }),
 		).rejects.toThrow(/All of it has come/);
@@ -141,7 +161,11 @@ describe("a PO from draft to received", () => {
 		expect((await linesOf(id))[0].backOrderedAt).toEqual(marked.backOrderedAt);
 
 		// The back order arriving closes the PO without unmarking it.
-		const rest = await receive(db, { lineId: bladeLine.id, quantity: 110 });
+		const rest = await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: bladeLine.id,
+			quantity: 110,
+		});
 		expect(rest.closed).toBe(true);
 		await expect(
 			setBackOrdered(db, { lineId: bladeLine.id, backOrdered: false }),
@@ -167,6 +191,7 @@ describe("a PO from draft to received", () => {
 			)[0].onHand;
 
 		const { receiptId } = await receive(db, {
+			key: crypto.randomUUID(),
 			lineId: knifeLine.id,
 			quantity: 6,
 		});
@@ -179,6 +204,27 @@ describe("a PO from draft to received", () => {
 
 		await undoReceipt(db, receiptId);
 		expect(await shelf()).toBe(-4);
+	});
+
+	test("a resent receipt answers as before and receives nothing more", async () => {
+		const id = await draftFromSuggestions(db, canam, now);
+		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
+		const knifeLine = (await linesOf(id))[1];
+		const once = { key: crypto.randomUUID(), lineId: knifeLine.id };
+		const first = await receive(db, { ...once, quantity: 4 });
+		expect(await receive(db, { ...once, quantity: 4 })).toEqual(first);
+		const shelf = await db
+			.select({ onHand: schema.stockLevels.onHand })
+			.from(schema.stockLevels)
+			.where(eq(schema.stockLevels.productId, knife));
+		expect(shelf).toEqual([{ onHand: 4 }]);
+
+		// Even once undone.
+		await undoReceipt(db, first.receiptId);
+		expect(await receive(db, { ...once, quantity: 4 })).toEqual(first);
+		await expect(receive(db, { ...once, quantity: 5 })).rejects.toThrow(
+			/recorded for something else/,
+		);
 	});
 
 	test("drafts are deleted, not cancelled; sent POs are cancelled, not deleted", async () => {

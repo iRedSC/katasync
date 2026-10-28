@@ -123,7 +123,11 @@ describe("buying in packs", () => {
 		expect((await unitsOnOrder(db)).get(blade)).toBe(36);
 
 		const [line] = await linesOf(id);
-		await receive(db, { lineId: line.id, quantity: 1 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: line.id,
+			quantity: 1,
+		});
 		const [level] = await db
 			.select()
 			.from(schema.stockLevels)
@@ -394,7 +398,11 @@ describe("buying in packs", () => {
 		const [line] = await linesOf(id);
 
 		const { logging, queries } = logged();
-		await receive(logging, { lineId: line.id, quantity: 1 });
+		await receive(logging, {
+			key: crypto.randomUUID(),
+			lineId: line.id,
+			quantity: 1,
+		});
 
 		expect(
 			queries.filter((q) => /^select .* from "product_suppliers"/.test(q)),
@@ -469,7 +477,11 @@ describe("buying in packs", () => {
 		await markSent(db, { purchaseOrderId: id, sentTo: null, now });
 		expect((await unitsOnOrder(db)).get(blade)).toBe(3);
 		const [line] = await linesOf(id);
-		await receive(db, { lineId: line.id, quantity: 1 });
+		await receive(db, {
+			key: crypto.randomUUID(),
+			lineId: line.id,
+			quantity: 1,
+		});
 		const [level] = await db
 			.select()
 			.from(schema.stockLevels)

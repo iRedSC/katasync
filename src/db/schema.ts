@@ -1609,18 +1609,26 @@ export const purchaseUnits = pgTable("purchase_units", {
 
 // A line of products sold together, e.g. "Columbia". A product is in one
 // catalog at most; suppliers carry whole catalogs (supplierCatalogs).
-export const catalogs = pgTable("catalogs", {
-	id: integer().primaryKey().generatedAlwaysAsIdentity(),
-	name: text().notNull().unique(),
-	// What's in it, in words a search would use, e.g. "Taping tools, banjos".
-	description: text(),
-	// Shown beside its name wherever it's picked or listed. Old photos stay,
-	// so swapping or removing one can be undone.
-	photoId: integer().references(() => catalogPhotos.id, {
-		onDelete: "set null",
-	}),
-	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+// Names are one catalog whatever their case, so "Blades" and "blades" can't
+// both be made, however close together.
+export const catalogs = pgTable(
+	"catalogs",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		// Its exact-case unique stays beside catalogs_name_lower, since code
+		// still serving during a deploy inserts against it.
+		name: text().notNull().unique(),
+		// What's in it, in words a search would use, e.g. "Taping tools, banjos".
+		description: text(),
+		// Shown beside its name wherever it's picked or listed. Old photos stay,
+		// so swapping or removing one can be undone.
+		photoId: integer().references(() => catalogPhotos.id, {
+			onDelete: "set null",
+		}),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex("catalogs_name_lower").on(sql`lower(${t.name})`)],
+);
 
 // Catalog photos, as uploaded and shrunk: JPEG, PNG, or WebP, checked by
 // their bytes. Never change, so browsers keep them.
@@ -2489,6 +2497,28 @@ export const purchaseOrderReceipts = pgTable(
 		),
 		// For discounts that came with a receipt, so theirs is on the same line.
 		unique("purchase_order_receipts_id_line").on(t.id, t.lineId),
+	],
+);
+
+// One receiving request by the key its sender made for it, so sending it
+// again (a retry after a lost answer) answers what it did the first time
+// instead of receiving it twice. The same key with a different request is
+// refused. See src/purchasing/orders/receive-once.ts.
+export const purchaseReceiveRequests = pgTable(
+	"purchase_receive_requests",
+	{
+		key: text().primaryKey(),
+		kind: text({ enum: ["line", "extra", "all"] }).notNull(),
+		request: jsonb().notNull(),
+		result: jsonb().notNull(),
+		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			"purchase_receive_requests_kind",
+			sql`${t.kind} in ('line', 'extra', 'all')`,
+		),
+		check("purchase_receive_requests_key", sql`length(${t.key}) > 0`),
 	],
 );
 

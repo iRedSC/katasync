@@ -118,12 +118,14 @@ function ReceivePurchaseOrder() {
 		setSheetLineId(null);
 		const name = productName(line);
 		const receipt = receiptFor(line, quantity, last);
+		// One per receipt, so a resend can't receive it twice.
+		const key = crypto.randomUUID();
 		const r = await optimism.change({
 			label: `Receiving ${name}`,
 			patch: receivePatch(order.id, line.id, receipt, last),
 			send: async () => {
 				const result = await receiveLine({
-					data: { lineId: ids.server(line.id), quantity, last, discount },
+					data: { key, lineId: ids.server(line.id), quantity, last, discount },
 				});
 				ids.confirm(receipt.id, result.receiptId);
 				return result;
@@ -253,12 +255,14 @@ function ReceivePurchaseOrder() {
 			lines.find((l) => l.productId === match.productId) ??
 			blankLine(match, ids.provisional());
 		const receipt = receiptFor(line, quantity, false);
+		const key = crypto.randomUUID();
 		const r = await optimism.change({
 			label: `Receiving ${name}`,
 			patch: extraPatch(order.id, match, receipt),
 			send: async () => {
 				const result = await receiveExtraLine({
 					data: {
+						key,
 						purchaseOrderId: order.id,
 						productId: match.productId,
 						quantity,

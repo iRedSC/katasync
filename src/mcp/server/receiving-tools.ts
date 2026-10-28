@@ -40,8 +40,9 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 		"receive_po_line",
 		{
 			description:
-				"Records what arrived for one product on a sent PO, in the line's unit (2 cases of 12 puts 24 on the shelf). Updates the product's average cost and closes the PO once everything has arrived. With discount, part or all of what arrived came free or discounted (e.g. 1 free, or $12 off the 4 that are dented): it goes on the line with this receipt, the stock's cost reflects it, and undoing the receipt takes it off. Returns a receipt_id for undo_po_receipt.",
+				"Records what arrived for one product on a sent PO, in the line's unit (2 cases of 12 puts 24 on the shelf). Updates the product's average cost and closes the PO once everything has arrived. With discount, part or all of what arrived came free or discounted (e.g. 1 free, or $12 off the 4 that are dented): it goes on the line with this receipt, the stock's cost reflects it, and undoing the receipt takes it off. Returns a receipt_id for undo_po_receipt. receipt_key names this receipt: make a new one for each, and send the same one again when retrying, so a retry receives nothing more.",
 			inputSchema: {
+				receipt_key: z.string().min(1),
 				po: z.number().int().positive(),
 				sku: z.string(),
 				quantity: z.number().int().positive(),
@@ -61,7 +62,7 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 			},
 			annotations: WRITE,
 		},
-		async ({ po, sku, quantity, discount }) => {
+		async ({ receipt_key, po, sku, quantity, discount }) => {
 			const product = await productBySku(db, sku);
 			const [line] = await db
 				.select({ id: purchaseOrderLines.id })
@@ -74,6 +75,7 @@ export function registerReceivingTools(server: McpServer, db: Db) {
 				);
 			if (!line) throw new PurchaseOrderError(`${sku} isn't on PO ${po}`);
 			const result = await receive(db, {
+				key: receipt_key,
 				lineId: line.id,
 				quantity,
 				discount: discount && {

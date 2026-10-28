@@ -1163,6 +1163,20 @@
       "when": 1793218145121,
       "tag": "0165_locations_one_retail",
       "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "7",
+      "when": 1793218428147,
+      "tag": "0166_purchase_receive_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "7",
+      "when": 1793218430573,
+      "tag": "0167_catalogs_name_lower",
+      "breakpoints": true
     }
   ]
 }

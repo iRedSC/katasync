@@ -165,7 +165,7 @@ describe("upload links, which are their own credential", () => {
 		});
 		await callMcp(db, true, "tools/call", {
 			name: "receive_po_line",
-			arguments: { po, sku: "BLADE", quantity: 2 },
+			arguments: { receipt_key: "damage", po, sku: "BLADE", quantity: 2 },
 		});
 		const { sent, kept } = await logged("report_damage", {
 			po,

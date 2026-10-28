@@ -27,9 +27,11 @@ export const setLineBackOrdered = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => setBackOrdered(getDb(), data));
 
 // `last`: nothing more of it is coming, so the line expects only what came.
+// `key`: made once per receipt, so a retry receives nothing more.
 export const receiveLine = createServerFn({ method: "POST" })
 	.validator(
 		type({
+			key: "string > 0",
 			lineId: "number.integer > 0",
 			quantity: "number.integer > 0",
 			"last?": "boolean",
@@ -42,6 +44,7 @@ export const receiveLine = createServerFn({ method: "POST" })
 export const receiveExtraLine = createServerFn({ method: "POST" })
 	.validator(
 		type({
+			key: "string > 0",
 			purchaseOrderId: "number.integer > 0",
 			productId: "number.integer > 0",
 			quantity: "number.integer > 0",
@@ -56,8 +59,10 @@ export const undoPurchaseReceipt = createServerFn({ method: "POST" })
 
 // Everything still expected came, except back-ordered lines.
 export const receiveAllLines = createServerFn({ method: "POST" })
-	.validator(id)
-	.handler(async ({ data }) => receiveAll(getDb(), data.id));
+	.validator(type({ key: "string > 0", id: "number.integer > 0" }))
+	.handler(async ({ data }) =>
+		receiveAll(getDb(), { key: data.key, purchaseOrderId: data.id }),
+	);
 
 // Undoes what Receive all received, all together.
 export const undoPurchaseReceipts = createServerFn({ method: "POST" })
