@@ -89,16 +89,14 @@ export async function saveCostReport(
 		}
 
 		// A fallback doesn't replace the authoritative label figures on file,
-		// even $0 ones, which have no charge rows.
-		const keepLabels =
-			report.labelsAuthoritative === false &&
-			(await labelAuthorityOnFile(tx, report.orderId, report.billedBy)) ===
-				"authoritative";
-		const labelsPending = !keepLabels && (report.labelsPending ?? false);
+		// even $0 ones, which have no charge rows. The upsert decides that from
+		// the row it locks, so an authoritative report committing meanwhile
+		// can't be overwritten by a fallback that read the row before it.
+		const fallback = report.labelsAuthoritative === false;
+		const labelsPending = report.labelsPending ?? false;
 		const authority: LabelAuthority =
-			keepLabels || (report.labelsAuthoritative !== false && !labelsPending)
-				? "authoritative"
-				: "fallback";
+			!fallback && !labelsPending ? "authoritative" : "fallback";
+		const onFileWins = sql`${fallback} and ${orderCostReports.labelAuthority} = 'authoritative'`;
 
 		const saved = await tx
 			.insert(orderCostReports)
@@ -116,15 +114,17 @@ export async function saveCostReport(
 				set: {
 					settled: report.settled,
 					noLabel: report.noLabel ?? false,
-					labelsPending,
-					labelAuthority: authority,
+					labelsPending: sql`case when ${onFileWins} then false else ${labelsPending} end`,
+					labelAuthority: sql`case when ${onFileWins} then 'authoritative'::label_authority else ${authority}::label_authority end`,
 					fetchedAt,
 				},
 				setWhere: sql`${orderCostReports.fetchedAt} <= excluded.fetched_at
 					and (not ${orderCostReports.settled} or excluded.settled)`,
 			})
-			.returning({ orderId: orderCostReports.orderId });
+			.returning({ labelAuthority: orderCostReports.labelAuthority });
 		if (saved.length === 0) return false;
+		// Labels on file stayed authoritative through a fallback.
+		const keepLabels = fallback && saved[0].labelAuthority === "authoritative";
 
 		const rebilledBefore = await postageSum(
 			tx,
@@ -183,22 +183,4 @@ async function postageSum(db: Db, orderId: number, billedBy: Channel) {
 			),
 		);
 	return row ?? { label: 0, adjusted: 0 };
-}
-
-// Where the label figures of the report on file came from, if there is one.
-async function labelAuthorityOnFile(
-	db: Db,
-	orderId: number,
-	billedBy: Channel,
-): Promise<LabelAuthority | undefined> {
-	const [found] = await db
-		.select({ authority: orderCostReports.labelAuthority })
-		.from(orderCostReports)
-		.where(
-			and(
-				eq(orderCostReports.orderId, orderId),
-				eq(orderCostReports.billedBy, billedBy),
-			),
-		);
-	return found?.authority;
 }
