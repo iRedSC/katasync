@@ -1,7 +1,8 @@
-import { and, asc, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, inArray, ne, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import {
 	type BankTargetSnapshot,
+	bankMatches,
 	bankMatchParts,
 	bankPayoutGuards,
 	bankTargetChanges,
@@ -26,6 +27,16 @@ export type Observed = BankTargetSnapshot & {
 
 export type Window = { currency: string; from: string; to: string };
 
+// Which targets near() gives: every one in the window, or only those a bank
+// row of `amountCents` could still take, with some left to match on its side
+// of zero. The limit applies after this, so ones it can't take can't crowd
+// out the ones it can.
+export type NearScope = { kind: "all" } | { kind: "open"; amountCents: number };
+
+export type Near = { observed: Observed[]; truncated: boolean };
+
+export const NEAR_LIMIT = 200;
+
 type Reader = Pick<Db, "select">;
 
 export type MatchTarget = {
@@ -34,7 +45,7 @@ export type MatchTarget = {
 	changeColumn: PgColumn;
 	lock(tx: Db, ids: number[]): Promise<Observed[]>;
 	read(db: Reader, ids: number[]): Promise<Observed[]>;
-	near(db: Reader, window: Window): Promise<Observed[]>;
+	near(db: Reader, window: Window, scope: NearScope): Promise<Near>;
 	progresses(from: string, to: string): boolean;
 };
 
@@ -106,7 +117,16 @@ export const payoutTarget: MatchTarget = {
 			.where(inArray(payouts.id, ids(wanted)));
 		return rows.map(observePayout);
 	},
-	async near(db, w) {
+	async near(db, w, scope) {
+		// What live matches have taken of the payout, as standingOf counts it.
+		const allocated = sql`coalesce((
+			select sum(${bankMatchParts.amountCents})
+			from ${bankMatchParts}
+			join ${bankMatches} on ${bankMatches.id} = ${bankMatchParts.matchId}
+			where ${bankMatchParts.payoutId} = ${payouts.id}
+				and ${bankMatchParts.targetKind} = 'payout'
+				and ${bankMatches.undoneAt} is null
+		), 0)`;
 		const rows = await db
 			.select(payoutFields)
 			.from(payouts)
@@ -116,11 +136,19 @@ export const payoutTarget: MatchTarget = {
 					ne(payouts.status, "failed"),
 					sql`${payouts.depositedAt} >= (${w.from}::date::timestamp at time zone 'America/New_York')`,
 					sql`${payouts.depositedAt} < ((${w.to}::date + 1)::timestamp at time zone 'America/New_York')`,
+					scope.kind === "open"
+						? sql`sign(round(${payouts.amount} * 100) - ${allocated}) = sign(${scope.amountCents}::bigint)
+							and round(${payouts.amount} * 100) <> ${allocated}`
+						: undefined,
 				),
 			)
-			.orderBy(asc(payouts.depositedAt))
-			.limit(200);
-		return rows.map(observePayout);
+			// Newest first, so a cut drops the oldest.
+			.orderBy(desc(payouts.depositedAt), desc(payouts.id))
+			.limit(NEAR_LIMIT + 1);
+		return {
+			observed: rows.slice(0, NEAR_LIMIT).map(observePayout),
+			truncated: rows.length > NEAR_LIMIT,
+		};
 	},
 	progresses: (from, to) => from === "pending" && to === "sent",
 };

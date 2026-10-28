@@ -19,6 +19,7 @@ import { closeIfComplete, reopen, shortLines } from "./closing";
 import { checkDiscounts, checkOff } from "./discount-checks";
 import { insertLine } from "./lines";
 import { lockOrder, lockOrders, PurchaseOrderError, poName } from "./lock";
+import { receiveOnce } from "./receive-once";
 import { landedTerms, receiptWorth, revaluePurchaseOrder } from "./revalue";
 
 // What arrived for one line, in the line's unit: 2 cases of 30 puts 60 on the
@@ -30,16 +31,34 @@ import { landedTerms, receiptWorth, revaluePurchaseOrder } from "./revalue";
 // so undoing it puts the line back. Neither reaches the supplier.
 // `discount` is one that came with this delivery, e.g. 1 free in the box, on
 // some of what arrived (all of it when units is left out). The supplier's
-// price stays the price before discounts.
-export async function receive(
-	db: Db,
-	input: {
-		lineId: number;
-		quantity: number;
-		last?: boolean;
-		discount?: { units?: number; off: DiscountOff };
-	},
-) {
+// price stays the price before discounts. `key` is made by the sender, once
+// per receipt: sending it again receives nothing more (receive-once.ts).
+export async function receive(db: Db, input: ReceiveInput & { key: string }) {
+	const { key, ...rest } = input;
+	return receiveOnce(
+		db,
+		{
+			key,
+			kind: "line",
+			request: {
+				lineId: rest.lineId,
+				quantity: rest.quantity,
+				last: rest.last ?? false,
+				discount: rest.discount ?? null,
+			},
+		},
+		(tx) => receiveOn(tx, rest),
+	);
+}
+
+type ReceiveInput = {
+	lineId: number;
+	quantity: number;
+	last?: boolean;
+	discount?: { units?: number; off: DiscountOff };
+};
+
+async function receiveOn(db: Db, input: ReceiveInput) {
 	if (!Number.isInteger(input.quantity) || input.quantity <= 0)
 		throw new PurchaseOrderError(
 			`Quantity must be a positive whole number, got ${input.quantity}`,
@@ -160,7 +179,19 @@ export async function receive(
 // the supplier said those aren't in this delivery; receive them on their own
 // if they came. What's left is worked out under the lock, so a line someone
 // else just received isn't received twice. Undo with undoReceipts.
-export async function receiveAll(db: Db, purchaseOrderId: number) {
+export async function receiveAll(
+	db: Db,
+	input: { key: string; purchaseOrderId: number },
+) {
+	const { purchaseOrderId } = input;
+	return receiveOnce(
+		db,
+		{ key: input.key, kind: "all", request: { purchaseOrderId } },
+		(tx) => receiveAllOn(tx, purchaseOrderId),
+	);
+}
+
+async function receiveAllOn(db: Db, purchaseOrderId: number) {
 	return db.transaction(async (tx) => {
 		await lockOrder(tx, purchaseOrderId, ["sent"]);
 		const lines = await tx
@@ -182,7 +213,7 @@ export async function receiveAll(db: Db, purchaseOrderId: number) {
 		for (const line of lines) {
 			const remaining = line.quantity - (await receivedOf(tx, line.id));
 			if (remaining <= 0) continue;
-			const r = await receive(tx, { lineId: line.id, quantity: remaining });
+			const r = await receiveOn(tx, { lineId: line.id, quantity: remaining });
 			receipts.push({
 				lineId: line.id,
 				receiptId: r.receiptId,
@@ -319,6 +350,28 @@ export async function undoReceipt(db: Db, receiptId: number) {
 export async function receiveExtra(
 	db: Db,
 	input: {
+		key: string;
+		purchaseOrderId: number;
+		productId: number;
+		quantity: number;
+		discount?: { units?: number; off: DiscountOff };
+	},
+) {
+	const { key, ...rest } = input;
+	return receiveOnce(
+		db,
+		{
+			key,
+			kind: "extra",
+			request: { ...rest, discount: rest.discount ?? null },
+		},
+		(tx) => receiveExtraOn(tx, rest),
+	);
+}
+
+async function receiveExtraOn(
+	db: Db,
+	input: {
 		purchaseOrderId: number;
 		productId: number;
 		quantity: number;
@@ -337,7 +390,7 @@ export async function receiveExtra(
 			quantity: 0,
 		});
 		if (po.status === "closed") await reopen(tx, po.id);
-		const result = await receive(tx, {
+		const result = await receiveOn(tx, {
 			lineId: line.id,
 			quantity: input.quantity,
 			discount: input.discount,

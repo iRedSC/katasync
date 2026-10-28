@@ -9,6 +9,3 @@ export const today = () =>
 // The day something happened in UTC, as the server dates a PO.
 export const utcDay = (at: Date | string) =>
 	new Date(at).toISOString().slice(0, 10);
-
-// Midday, so the date doesn't slip a day in any US timezone.
-export const middayOf = (day: string) => new Date(`${day}T12:00:00`);

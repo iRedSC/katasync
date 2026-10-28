@@ -210,11 +210,12 @@ describe("discounts on a PO", () => {
 			discount: { units: "rest", off: pct(10) },
 		});
 		await markSent(db, { purchaseOrderId: po, sentTo: null });
-		await receive(db, { lineId, quantity: 10 });
+		await receive(db, { key: crypto.randomUUID(), lineId, quantity: 10 });
 		expect(await productCost()).toBe(4.5);
 
 		// All 10 closed it; one more turns up in the box.
 		const free = await receiveExtra(db, {
+			key: crypto.randomUUID(),
 			purchaseOrderId: po,
 			productId: blade,
 			quantity: 1,
@@ -239,6 +240,7 @@ describe("discounts on a PO", () => {
 	test("putting back a delivery's discount keeps it with the delivery", async () => {
 		await markSent(db, { purchaseOrderId: po, sentTo: null });
 		const { receiptId } = await receive(db, {
+			key: crypto.randomUUID(),
 			lineId,
 			quantity: 2,
 			discount: { units: 1, off: pct(100) },
@@ -309,6 +311,7 @@ describe("discounts on a PO", () => {
 		await markSent(db, { purchaseOrderId: po, sentTo: null });
 		await expect(
 			receive(db, {
+				key: crypto.randomUUID(),
 				lineId,
 				quantity: 2,
 				discount: { units: 3, off: pct(50) },
@@ -316,6 +319,7 @@ describe("discounts on a PO", () => {
 		).rejects.toThrow(/1 to 2/);
 		const knife = await createProduct(db, "KNIFE", "simple");
 		await receiveExtra(db, {
+			key: crypto.randomUUID(),
 			purchaseOrderId: po,
 			productId: knife,
 			quantity: 2,

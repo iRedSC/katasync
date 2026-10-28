@@ -8,6 +8,8 @@ import {
 	stockCounts,
 	stockLevels,
 } from "#/db/schema";
+import { readQuantityMode } from "#/inventory/commitments";
+import { brokenPromises } from "#/inventory/commitments-shelves";
 import { type CostLine, lockCost, reversalOf } from "#/inventory/valuation";
 import { carriedOrStocked } from "#/products/archive";
 import {
@@ -32,7 +34,7 @@ export { transferStock } from "./ledger/transfers";
 
 // Builds kits from components at one location. Fails without changing anything
 // if any component would go below zero, since you can't build from parts you
-// don't have.
+// don't have, or, with stock committed, would take parts promised to orders.
 export async function assembleKits(
 	db: Db,
 	input: {
@@ -70,10 +72,28 @@ async function convertKits(
 ) {
 	assertPositiveInteger(input.quantity);
 	return db.transaction(async (tx) => {
+		const mode = await readQuantityMode(tx);
 		const { parent: kit, recipe } = await lockRecipe(tx, input.kitProductId);
 		if (kit.kind !== "kit") throw new LedgerError(`${kit.sku} is not a kit`);
 		if (recipe.length === 0)
 			throw new LedgerError(`Kit ${kit.sku} has no components`);
+
+		const taken =
+			direction === "assemble"
+				? recipe.map((c) => ({
+						productId: c.productId,
+						quantity: c.quantity * input.quantity,
+					}))
+				: [{ productId: kit.id, quantity: input.quantity }];
+		const promised = await brokenPromises(
+			tx,
+			mode,
+			taken.map((t) => ({ ...t, locationId: input.locationId })),
+		);
+		if (promised.length > 0)
+			throw new LedgerError(
+				`Can't ${direction} ${input.quantity} × ${kit.sku}: ${(await skusOf(tx, promised)).join(", ")} promised to orders`,
+			);
 
 		const sign = direction === "assemble" ? 1 : -1;
 		const result = await postMovements(tx, {
@@ -101,28 +121,29 @@ async function convertKits(
 
 		// Only what this operation consumed can be short. A kit that was already
 		// oversold shouldn't block building more of it.
-		const consumed = new Set(
-			direction === "assemble" ? recipe.map((c) => c.productId) : [kit.id],
-		);
+		const consumed = new Set(taken.map((t) => t.productId));
 		const short = result.levels.filter(
 			(l) => consumed.has(l.productId) && l.onHand < 0,
 		);
-		if (short.length > 0) {
-			const shortProducts = await tx
-				.select({ sku: products.sku })
-				.from(products)
-				.where(
-					inArray(
-						products.id,
-						short.map((l) => l.productId),
-					),
-				);
+		if (short.length > 0)
 			throw new LedgerError(
-				`Not enough stock to ${direction} ${input.quantity} × ${kit.sku}: ${shortProducts.map((s) => s.sku).join(", ")}`,
+				`Not enough stock to ${direction} ${input.quantity} × ${kit.sku}: ${(
+					await skusOf(
+						tx,
+						short.map((l) => l.productId),
+					)
+				).join(", ")}`,
 			);
-		}
 		return result;
 	});
+}
+
+async function skusOf(tx: Db, ids: number[]) {
+	const rows = await tx
+		.select({ sku: products.sku })
+		.from(products)
+		.where(inArray(products.id, ids));
+	return rows.map((r) => r.sku);
 }
 
 // Building conserves value: a kit costs what its parts did, and breaking one

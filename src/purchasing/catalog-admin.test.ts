@@ -1,5 +1,6 @@
 import { beforeEach, expect, test } from "vitest";
 import type { Db } from "#/db/client";
+import * as schema from "#/db/schema";
 import { createProduct } from "#/test/db";
 import { catalogDetail, findForCatalog } from "./catalog-detail";
 import {
@@ -7,6 +8,7 @@ import {
 	createCatalog,
 	deleteCatalog,
 	describeCatalog,
+	ensureCatalog,
 	listCatalogs,
 	restoreCatalog,
 	setCarried,
@@ -38,6 +40,18 @@ test("a new catalog refuses a name taken in any case, and keeps its description"
 		description: "Banjos, boxes",
 		photoId: null,
 	});
+});
+
+test("one catalog per name in any case, even made at the same moment", async () => {
+	const [a, b] = await Promise.all([
+		ensureCatalog(db, "Blades"),
+		ensureCatalog(db, "blades"),
+	]);
+	expect(b).toBe(a);
+	expect((await listCatalogs(db)).map((c) => c.name)).toEqual(["Blades"]);
+	await expect(
+		db.insert(schema.catalogs).values({ name: "BLADES" }),
+	).rejects.toThrow();
 });
 
 test("describing returns the description before, and blank clears it", async () => {

@@ -9,12 +9,12 @@ import { useEffect, useRef, useState } from "react";
 import {
 	type AttachmentFile,
 	MAX_FILE_BYTES,
+	type ReplyFile,
 	refuseFiles,
 	rulesFor,
 } from "#/buyers/attachments";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
-import type { BuyerMedia } from "#/db/schema";
 import { shrinkPhoto } from "#/lib/photo";
 import { cn } from "#/lib/utils";
 import type { Market } from "#/markets/market";
@@ -68,8 +68,24 @@ async function fitted(file: File) {
 export function useReplyFiles(market: Market, onRefuse: (why: string) => void) {
 	const [items, setItems] = useState<Attached[]>([]);
 	const rules = rulesFor(market);
+	// The files as they are right now. Every change goes through `change`, so
+	// an addition that waited on a photo being shrunk checks against what's
+	// there when it lands, not what was on screen when it began.
+	const current = useRef<Attached[]>(items);
+	// The picture URLs made here, to release; a restored file's is the
+	// server's, which is never ours to revoke.
+	const made = useRef(new Set<string>());
+	const change = (fn: (all: Attached[]) => Attached[]) => {
+		current.current = fn(current.current);
+		setItems(current.current);
+	};
+	const release = (gone: Attached[]) => {
+		for (const a of gone)
+			if (a.preview && made.current.delete(a.preview))
+				URL.revokeObjectURL(a.preview);
+	};
 	const patch = (key: string, next: Partial<Attached>) =>
-		setItems((all) =>
+		change((all) =>
 			all.map((a) => (a.key === key ? ({ ...a, ...next } as Attached) : a)),
 		);
 	const start = (a: Attached & { blob: Blob }) =>
@@ -82,32 +98,38 @@ export function useReplyFiles(market: Market, onRefuse: (why: string) => void) {
 				}),
 		);
 	// Previews are released when the box is.
-	const all = useRef(items);
-	all.current = items;
-	useEffect(
-		() => () => {
-			for (const a of all.current)
-				if (a.preview?.startsWith("blob:")) URL.revokeObjectURL(a.preview);
-		},
-		[],
-	);
+	useEffect(() => {
+		const owned = made.current;
+		return () => {
+			for (const url of owned) URL.revokeObjectURL(url);
+			owned.clear();
+		};
+	}, []);
 
 	async function add(files: File[]) {
 		if (files.length === 0) return;
 		const ready = await Promise.all(files.map(fitted));
-		const why = refuseFiles(market, [...items, ...ready]);
+		// Checked and added with nothing awaited between, against the files
+		// there now, so two additions at once can't both fit the last place.
+		const why = refuseFiles(market, [...current.current, ...ready]);
 		if (why) return onRefuse(why);
-		const added = ready.map((f): Attached & { blob: Blob } => ({
-			key: crypto.randomUUID(),
-			name: f.name || "file",
-			type: f.type,
-			size: f.size,
-			kind: rules?.types[f.type] ?? "FILE",
-			preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
-			state: "uploading",
-			blob: f,
-		}));
-		setItems((all) => [...all, ...added]);
+		const added = ready.map((f): Attached & { blob: Blob } => {
+			const preview = f.type.startsWith("image/")
+				? URL.createObjectURL(f)
+				: null;
+			if (preview) made.current.add(preview);
+			return {
+				key: crypto.randomUUID(),
+				name: f.name || "file",
+				type: f.type,
+				size: f.size,
+				kind: rules?.types[f.type] ?? "FILE",
+				preview,
+				state: "uploading",
+				blob: f,
+			};
+		});
+		change((all) => [...all, ...added]);
 		for (const a of added) void start(a);
 	}
 
@@ -116,55 +138,56 @@ export function useReplyFiles(market: Market, onRefuse: (why: string) => void) {
 		accept: Object.keys(rules?.types ?? {}).join(","),
 		takesFiles: rules !== null,
 		add,
-		remove: (key: string) =>
-			setItems((all) => all.filter((a) => a.key !== key)),
+		remove: (key: string) => {
+			release(current.current.filter((a) => a.key === key));
+			change((all) => all.filter((a) => a.key !== key));
+		},
 		retry: (key: string) => {
-			const a = items.find((x) => x.key === key);
+			const a = current.current.find((x) => x.key === key);
 			if (a?.state !== "failed") return;
 			patch(key, { state: "uploading" });
 			void start({ ...a, state: "uploading" });
 		},
 		busy: items.some((a) => a.state !== "ready"),
 		// What goes with the reply; only once every file is up.
-		media: (): BuyerMedia[] =>
+		media: (): ReplyFile[] =>
 			items.flatMap((a) =>
 				a.state === "ready"
 					? [
 							{
 								kind: a.kind,
 								name: a.name,
+								type: a.type,
+								size: a.size,
 								url: `/api/buyer-files/${a.fileId}`,
 								fileId: a.fileId,
 							},
 						]
 					: [],
 			),
-		// Files a reply took back (undo), already up.
-		restore: (media: BuyerMedia[]) =>
-			setItems(
-				media.flatMap((m) =>
-					m.fileId
-						? [
-								{
-									key: crypto.randomUUID(),
-									name: m.name,
-									// A type of its kind, so adding more checks out; the
-									// server checks the real one again.
-									type:
-										Object.entries(rules?.types ?? {}).find(
-											([, kind]) => kind === m.kind,
-										)?.[0] ?? "",
-									size: 0,
-									kind: m.kind,
-									preview: m.kind === "IMAGE" ? m.url : null,
-									state: "ready" as const,
-									fileId: m.fileId,
-								},
-							]
-						: [],
-				),
-			),
-		clear: () => setItems([]),
+		// Files a reply took back (undo), already up, added to any already
+		// here. Refused, like any addition, when they wouldn't all fit.
+		restore: (files: ReplyFile[]) => {
+			const back = files.map(
+				(f): Attached => ({
+					...f,
+					key: crypto.randomUUID(),
+					preview: f.kind === "IMAGE" ? f.url : null,
+					state: "ready",
+				}),
+			);
+			const why = refuseFiles(market, [...current.current, ...back]);
+			if (why) {
+				onRefuse(why);
+				return false;
+			}
+			change((all) => [...all, ...back]);
+			return true;
+		},
+		clear: () => {
+			release(current.current);
+			change(() => []);
+		},
 	};
 }
 

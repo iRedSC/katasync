@@ -61,6 +61,7 @@ export function ebayToMarketplaceCase(
 	kind: EbayCaseKind,
 	summary: Record,
 	detail: Record,
+	saved: { respondBy: Date | null } = { respondBy: null },
 ): MarketplaceCase {
 	const source = { ...summary, ...detail };
 	const externalId =
@@ -83,6 +84,11 @@ export function ebayToMarketplaceCase(
 	const supplied = ebayObligation(source);
 	if (source.sellerResponseDueDate)
 		supplied.deadline = source.sellerResponseDueDate;
+	// A recheck's detail never repeats search's respondByDate, so the deadline
+	// saved last stands in for it, but only when eBay gave none now: a fresh
+	// one wins even when it's later (eBay extended it).
+	if (!supplied.deadline && !supplied.eitherParty)
+		supplied.eitherParty = saved.respondBy;
 	const amount =
 		source.claimAmount ?? source.requestRefundAmount ?? source.amount;
 	return {
@@ -108,6 +114,7 @@ export async function fetchEbayCase(
 	deadline: number,
 	token?: string,
 	summary?: Record,
+	saved?: { respondBy: Date | null },
 ) {
 	const path =
 		kind === "dispute"
@@ -137,7 +144,7 @@ export async function fetchEbayCase(
 		inquiryStatusEnum: detail.status,
 		caseStatusEnum: detail.status,
 	};
-	return ebayToMarketplaceCase(kind, original, detail);
+	return ebayToMarketplaceCase(kind, original, detail, saved);
 }
 
 export async function* fetchEbayCases(

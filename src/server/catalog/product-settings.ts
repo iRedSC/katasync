@@ -3,7 +3,7 @@ import { type } from "arktype";
 import { eq } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { products } from "#/db/schema";
-import { retailReserve } from "#/inventory/online-stock";
+import { retailReserve } from "#/inventory/retail-reserve";
 import {
 	defaultMinStock,
 	defaultRanges,
