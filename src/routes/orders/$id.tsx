@@ -371,10 +371,15 @@ function OrderPage() {
 												params={{ sku: l.productSku }}
 												className="block truncate font-medium hover:underline"
 											>
-												{l.title}
+												{l.productName ?? l.title}
 											</Link>
 										) : (
 											<div className="truncate font-medium">{l.title}</div>
+										)}
+										{l.variantName && (
+											<div className="truncate text-xs font-semibold">
+												{l.variantName}
+											</div>
 										)}
 										<div className="flex gap-2 text-xs text-muted-foreground">
 											<span>

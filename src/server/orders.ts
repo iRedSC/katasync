@@ -107,8 +107,9 @@ export const listOrders = createServerFn({ method: "GET" })
 			.where(scope)
 			.orderBy(desc(orders.placedAt))
 			.limit(data.view === "ship" ? 500 : 200);
-		// Each order's lines, for its products column and the search. The title
-		// is the marketplace's, as on the order page; the photo is katasync's.
+		// Each order's lines, for its products column and the search. Mapped
+		// lines show katasync's name, variant, and photo; the marketplace's
+		// title is only for lines not mapped yet, and for the search.
 		const lines = await getDb()
 			.select({
 				orderId: orderLines.orderId,
@@ -118,6 +119,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				quantity: orderLines.quantity,
 				productSku: products.sku,
 				productName: products.name,
+				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 				fromStore,
 			})
@@ -227,6 +229,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				restocked: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and (${orderReturns.restocked} or ${orderReturns.refurbProductId} is not null or ${orderReturns.preCutover})), 0)::int`,
 				productSku: products.sku,
 				productName: products.name,
+				variantName: products.variantName,
 				imageUrl: products.imageUrl,
 				// Its listing has no product yet. Custom items have no listing.
 				awaitsMatch: lineAwaitsMatch({

@@ -124,7 +124,9 @@ export function ReturnCard({
 								<li key={e.lineId} className="flex items-center gap-3">
 									<ProductImage src={l?.imageUrl ?? null} className="size-8" />
 									<span className="min-w-0 flex-1 truncate">
-										{l?.title ?? "A line no longer on the order"}
+										{l
+											? (l.productName ?? l.title)
+											: "A line no longer on the order"}
 									</span>
 									<span className="shrink-0 font-semibold tabular-nums">
 										{d.returnState === "maybe" ? "up to " : ""}×{" "}
@@ -143,7 +145,9 @@ export function ReturnCard({
 						{benched.map((l) => (
 							<li key={l.id} className="flex items-center gap-3">
 								<ProductImage src={l.imageUrl} className="size-8" />
-								<span className="min-w-0 flex-1 truncate">{l.title}</span>
+								<span className="min-w-0 flex-1 truncate">
+									{l.productName ?? l.title}
+								</span>
 								<span className="flex shrink-0 gap-2 font-semibold">
 									{l.onBench.map((id) => (
 										<Link
