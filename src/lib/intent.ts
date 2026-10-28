@@ -1,4 +1,24 @@
 import { useMemo, useSyncExternalStore } from "react";
+import type { Answer } from "./answer";
+import type { Result } from "./optimism";
+
+// How a send ended. Saved and rejected are both final: a rejection saved
+// nothing, so what's sent next is captured afresh from what staff fix. Only
+// uncertain (the answer never came, so it may have saved) sends the same
+// payload again.
+export type Outcome<R> =
+	| { kind: "saved"; value: R }
+	| { kind: "rejected"; problem: string }
+	| { kind: "uncertain" };
+
+// A change sent through the optimism engine to a server function that
+// answers refusals: null is a send that threw, so its fate is unknown.
+export const answered = <T>(result: Result<Answer<T>>): Outcome<T> =>
+	result === null
+		? { kind: "uncertain" }
+		: result.value.ok
+			? { kind: "saved", value: result.value.value }
+			: { kind: "rejected", problem: result.value.problem };
 
 type IntentState<Payload> =
 	| { kind: "idle" }
@@ -44,18 +64,24 @@ export function createIntent<Payload>() {
 			}
 			return recorded;
 		},
+		// Busy when one is already being sent or checked, and nothing is sent.
 		async run<Result>(
 			capture: () => Payload,
-			send: (payload: Payload) => Promise<Result | null>,
-		): Promise<Result | null> {
-			if (state.kind === "pending" || state.kind === "checking") return null;
+			send: (payload: Payload) => Promise<Outcome<Result>>,
+		): Promise<Outcome<Result> | { kind: "busy" }> {
+			if (state.kind === "pending" || state.kind === "checking")
+				return { kind: "busy" };
 			const payload =
 				state.kind === "retry" ? state.payload : structuredClone(capture());
 			change({ kind: "pending", payload });
 			try {
-				const result = await send(payload);
-				change(result === null ? { kind: "retry", payload } : { kind: "idle" });
-				return result;
+				const outcome = await send(payload);
+				change(
+					outcome.kind === "uncertain"
+						? { kind: "retry", payload }
+						: { kind: "idle" },
+				);
+				return outcome;
 			} catch (error) {
 				change({ kind: "retry", payload });
 				throw error;

@@ -49,10 +49,12 @@ export function RatesStep({
 	stale,
 	boxes,
 	busy,
+	purchasing,
 	offer,
 	extras,
 	onExtras,
 	onBuy,
+	onReprice,
 	onFocusRate,
 }: {
 	rates: Rates | null;
@@ -60,10 +62,15 @@ export function RatesStep({
 	stale: boolean;
 	boxes: number;
 	busy: boolean;
+	// A label is being bought: everything here stays as it was bought.
+	purchasing: boolean;
 	offer: ExtrasOffer;
 	extras: Extras;
 	onExtras: (next: Extras) => void;
 	onBuy: (quote: Rate) => void;
+	// Set while the prices shown were refused for having risen: Enter asks
+	// for fresh ones, as asking on its own may have failed.
+	onReprice?: () => void;
 	// The highlighted service, for the info panel beside the steps.
 	onFocusRate: (quote: Quote | null) => void;
 }) {
@@ -72,7 +79,8 @@ export function RatesStep({
 	const typed = parseInsurance(draft);
 	// Typed but not priced yet: Enter prices it first.
 	const unsettled = typed !== extras.insure;
-	const ready = rates !== null && !stale && !unsettled && !busy;
+	const ready = rates !== null && !stale && !unsettled && !busy && !purchasing;
+	const frozen = offer.unavailable !== null || purchasing;
 
 	const root = useRef<HTMLDivElement>(null);
 	const input = useRef<HTMLInputElement>(null);
@@ -92,13 +100,23 @@ export function RatesStep({
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: prices the typed amount once typing stops
 	useEffect(() => {
-		if (!unsettled) return;
+		if (!unsettled || purchasing) return;
 		const timer = setTimeout(
 			() => onExtras({ ...extras, insure: typed }),
 			SETTLE_MS,
 		);
 		return () => clearTimeout(timer);
 	}, [draft]);
+
+	// The fields are off while a label is bought, which takes their focus;
+	// it comes back after, so Enter works again if the buy didn't.
+	const wasPurchasing = useRef(false);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: once a purchase ends
+	useEffect(() => {
+		if (wasPurchasing.current && !purchasing)
+			(offer.unavailable ? root.current : input.current)?.focus();
+		wasPurchasing.current = purchasing;
+	}, [purchasing]);
 
 	function moveTo(i: number) {
 		setSelected(i);
@@ -110,6 +128,10 @@ export function RatesStep({
 
 	function onKeyDown(e: KeyboardEvent) {
 		const list = rates?.list ?? [];
+		if (purchasing) {
+			if (e.key === "Tab") e.preventDefault();
+			return;
+		}
 		if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 			e.preventDefault();
 			const step = e.key === "ArrowDown" ? 1 : -1;
@@ -118,7 +140,11 @@ export function RatesStep({
 		// Off on this label: the reason is on screen under them.
 		if (offer.unavailable) {
 			if (e.key === "Tab") e.preventDefault();
-			if (e.key === "Enter" && ready && list[selected]) onBuy(list[selected]);
+			if (e.key === "Enter") {
+				if (onReprice) {
+					if (!busy) onReprice();
+				} else if (ready && list[selected]) onBuy(list[selected]);
+			}
 			return;
 		}
 		if (e.key === "Tab") {
@@ -133,27 +159,29 @@ export function RatesStep({
 		}
 		if (e.key === "Enter") {
 			if (unsettled) onExtras({ ...extras, insure: typed });
-			else if (ready && list[selected]) onBuy(list[selected]);
+			else if (onReprice) {
+				if (!busy) onReprice();
+			} else if (ready && list[selected]) onBuy(list[selected]);
 		}
 	}
 
 	function toggleSignature() {
 		// Locked on: the reason is on screen under the toggle.
-		if (offer.signatureRequired || offer.unavailable) return;
+		if (offer.signatureRequired || frozen) return;
 		onExtras({ insure: typed, signature: !extras.signature });
 	}
 
-	const heading = busy
-		? stale || unsettled || !rates
+	const heading = purchasing
+		? boxes > 1
+			? `Buying ${boxes} labels…`
+			: "Buying label…"
+		: busy
 			? "Updating prices…"
-			: boxes > 1
-				? `Buying ${boxes} labels…`
-				: "Buying label…"
-		: unsettled
-			? "Enter updates prices"
-			: boxes > 1
-				? `Enter buys ${boxes} labels, one per box`
-				: "Enter buys the label";
+			: unsettled || onReprice
+				? "Enter updates prices"
+				: boxes > 1
+					? `Enter buys ${boxes} labels, one per box`
+					: "Enter buys the label";
 
 	return (
 		<div
@@ -170,14 +198,14 @@ export function RatesStep({
 					total={offer.total}
 					boxes={boxes}
 					recommended={offer.recommendInsurance}
-					disabled={offer.unavailable !== null}
+					disabled={frozen}
 					input={input}
 					onText={(t) => setDraft(typeInsurance(t))}
 				/>
 				<SignatureToggle
 					on={extras.signature}
 					locked={offer.signatureRequired !== null}
-					disabled={offer.unavailable !== null}
+					disabled={frozen}
 					onToggle={toggleSignature}
 				/>
 			</div>
@@ -204,7 +232,7 @@ export function RatesStep({
 				<>
 					<div className="flex items-baseline justify-between">
 						<p className="flex items-center gap-2 text-xl font-semibold">
-							{busy && (stale || unsettled) && <Spinner />}
+							{busy && !purchasing && <Spinner />}
 							{heading}
 						</p>
 						{rates.test && <Badge tone="info">Test labels</Badge>}
@@ -229,7 +257,7 @@ export function RatesStep({
 									i === selected
 										? "border-primary bg-primary text-primary-foreground"
 										: "border-border hover:bg-subtle",
-									busy && !stale && i !== selected && "opacity-40",
+									purchasing && i !== selected && "opacity-40",
 								)}
 							>
 								<span className="min-w-0">
@@ -256,9 +284,7 @@ export function RatesStep({
 									</span>
 								</span>
 								<span className="flex items-center gap-3 text-3xl font-bold tabular-nums">
-									{busy && !stale && !unsettled && i === selected && (
-										<Spinner />
-									)}
+									{purchasing && i === selected && <Spinner />}
 									{formatMoney(r.cost)}
 								</span>
 							</button>
