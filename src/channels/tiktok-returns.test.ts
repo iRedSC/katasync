@@ -6,7 +6,8 @@ vi.mock("./tiktok", () => ({
 }));
 
 import { tiktokApi } from "./tiktok";
-import { fetchTiktokReturns, withBuyerNotes } from "./tiktok-returns";
+import { withRecords } from "./tiktok-return-history";
+import { fetchTiktokReturns } from "./tiktok-returns";
 
 const from = new Date("2026-10-18T00:00:00Z");
 const until = new Date("2026-10-25T00:00:00Z");
@@ -57,9 +58,9 @@ test("new aftersales pagination preserves legacy ids, forward lines, total and r
 		});
 	const raw = await fetchTiktokReturns(from, until);
 	expect(api).toHaveBeenCalledTimes(3);
-	const { returns: found } = await withBuyerNotes(
+	const { returns: found } = await withRecords(
 		raw,
-		new Set(raw.map((row) => row.externalId)),
+		new Map(raw.map((row) => [row.externalId, new Map()])),
 	);
 	expect(api.mock.calls[0]).toEqual([
 		"/return_refund/202603/aftersales/search",
@@ -192,7 +193,7 @@ test.each([
 	]);
 });
 
-test("failed notes do not erase a saved note and unknown statuses remain reportable", async () => {
+test("failed records do not erase a saved note and unknown statuses remain reportable", async () => {
 	api
 		.mockResolvedValueOnce({
 			aftersales_requests: [
@@ -211,21 +212,22 @@ test("failed notes do not erase a saved note and unknown statuses remain reporta
 		.mockResolvedValueOnce({})
 		.mockRejectedValueOnce(new Error("unavailable"));
 	const raw = await fetchTiktokReturns(from, until);
-	const result = await withBuyerNotes(
+	const result = await withRecords(
 		raw,
-		new Set(raw.map((row) => row.externalId)),
+		new Map(raw.map((row) => [row.externalId, new Map()])),
 	);
 	expect(result.returns).toMatchObject([
 		{
 			status: "unknown",
 			waitingOn: "marketplace",
 			note: undefined,
-			noteUnread: true,
+			recordsUnread: true,
 			problems: ["Unknown TikTok return status: FUTURE_STATUS"],
 		},
 	]);
+	expect(result.returns[0]).not.toHaveProperty("records");
 	expect(result.problems).toEqual([
-		`TikTok return ${sku.return_id} note: unavailable; asked again next pass`,
+		`TikTok return ${sku.return_id} records: unavailable; asked again next pass`,
 	]);
 });
 

@@ -101,12 +101,43 @@ test(
 				status: "processing",
 				waitingOn: "marketplace",
 				note: "Keep this note",
-				noteUnread: true,
+				recordsUnread: true,
 				sourceUpdatedAt: new Date("2026-10-20T00:00:00Z"),
 			},
 		]);
 		expect(await db.select().from(feedHealth)).toMatchObject([
 			{ state: "pending", readThrough: new Date("2026-10-24T00:00:00Z") },
+		]);
+	},
+	UPGRADE_TIMEOUT_MS,
+);
+
+test(
+	"upgrade to kept records asks again for every TikTok case's records, and versions its saves",
+	async () => {
+		const db = await createTestDb({
+			beforeMigration: 151,
+			seed: async (pg) => {
+				await pg.query(
+					"INSERT INTO stores (channel, name) VALUES ('tiktok', 'TikTok'), ('ebay', 'eBay')",
+				);
+				await pg.query(`INSERT INTO orders (store_id, external_id, name, placed_at, fulfillment_status, total, source_updated_at)
+				SELECT id, channel::text, channel::text, now(), 'FULFILLED', 0, now() FROM stores`);
+				await pg.query(`INSERT INTO return_requests
+				(order_id, billed_by, external_id, kind, status, waiting_on, raw_status, note, note_unread, requested_at, source_updated_at)
+				SELECT o.id, s.channel, 'R-' || s.channel::text, 'return', 'requested', 'us', 'OPEN', 'Kept', false, '2026-10-01', '2026-10-20'
+				FROM orders o JOIN stores s ON s.id = o.store_id`);
+			},
+		});
+		const rows = await db
+			.select()
+			.from(returnRequests)
+			.orderBy(returnRequests.billedBy);
+		expect(
+			rows.map((r) => [r.billedBy, r.recordsUnread, r.sourceVersioned, r.note]),
+		).toEqual([
+			["ebay", false, false, "Kept"],
+			["tiktok", true, true, "Kept"],
 		]);
 	},
 	UPGRADE_TIMEOUT_MS,

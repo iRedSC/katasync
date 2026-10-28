@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { waitUntil } from "@vercel/functions";
 
-// Order webhooks (src/channels/webhooks.ts) at /api/webhooks/shopify and
-// /api/webhooks/tiktok. Stores the verified order in the inbox
-// (src/channels/webhook-inbox.ts) before answering, so an answer means it
-// survives; a failed store answers 503 and the sender retries. Then reads the
-// order in the background. Whatever that misses, the retry cron drains.
+// Webhooks (src/channels/webhooks.ts) at /api/webhooks/shopify and
+// /api/webhooks/tiktok. Stores what changed (an order, or a TikTok case) in
+// the inbox (src/channels/webhook-inbox.ts) before answering, so an answer
+// means it survives; a failed store answers 503 and the sender retries. Then
+// reads it in the background. Whatever that misses, the retry cron drains.
 
 export const Route = createFileRoute("/api/webhooks/$channel")({
 	server: {
@@ -39,9 +39,12 @@ export const Route = createFileRoute("/api/webhooks/$channel")({
 					]);
 				const db = getDb();
 				try {
-					await acceptWebhook(db, channel, result.orderId, body);
+					await acceptWebhook(db, channel, result.target, body);
 				} catch (error) {
-					console.error(`${channel} webhook for ${result.orderId}:`, error);
+					console.error(
+						`${channel} webhook for ${result.target.kind} ${result.target.id}:`,
+						error,
+					);
 					return new Response("Not saved, send again", { status: 503 });
 				}
 				waitUntil(
@@ -57,7 +60,7 @@ export const Route = createFileRoute("/api/webhooks/$channel")({
 							.then(({ refreshDrafts }) => refreshDrafts(db))
 							.catch((error) => console.error("repair drafts:", error)),
 					);
-				return Response.json({ accepted: result.orderId });
+				return Response.json({ accepted: result.target });
 			},
 		},
 	},

@@ -221,7 +221,9 @@ async function readReturns(
 			);
 		if (reader.after && clock() < deadline) {
 			const after = reader.after;
-			const extra = await importReturns(db, store, () => after(now));
+			// The rest of the budget, on the wall clock.
+			const until = Date.now() + (deadline - clock());
+			const extra = await importReturns(db, store, () => after(now, until));
 			if (extra.kind === "failed") problems.push(extra.error);
 			if (extra.kind === "read") {
 				problems.push(...extra.problems);

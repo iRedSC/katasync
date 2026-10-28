@@ -83,14 +83,14 @@ test("aftersales cases retain selective note retries, partial feedback and verif
 		waitingOn: "us",
 		amount: "27.87",
 		respondBy: new Date(1793164840000),
-		noteUnread: true,
+		recordsUnread: true,
 		sourceUpdatedAt: new Date(1792800000000),
 	});
 	expect(await health()).toMatchObject({ state: "partial", readThrough: now });
 	notesOnline = true;
 	await run(1);
 	expect(await saved()).toMatchObject({
-		noteUnread: false,
+		recordsUnread: false,
 		note: "Missing item",
 	});
 	expect(await health()).toMatchObject({ state: "ok" });

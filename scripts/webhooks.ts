@@ -1,12 +1,14 @@
-// Points Shopify's and TikTok's order webhooks at katasync, so new and
-// changed orders arrive in seconds instead of on the next cron.
+// Points Shopify's order webhooks and TikTok's order, cancellation and
+// return webhooks at katasync, so new and changed orders and cases arrive in
+// seconds instead of on the next cron.
 //
 //   pnpm webhooks https://katasync.example.com
 //                       subscribe both channels (safe to repeat)
 //   pnpm webhooks       show what each channel sends where
 //
-// A shop has one TikTok order-status URL per app. If it already points somewhere else, this stops
-// and says where; add --replace to take it over.
+// A shop has one TikTok URL per event per app. If one already points
+// somewhere else, this leaves it and says where; add --replace to take it
+// over.
 import { parseArgs } from "node:util";
 import { type } from "arktype";
 import { shopifyQuery } from "#/channels/shopify";
@@ -76,7 +78,21 @@ async function shopify() {
 	}
 }
 
-const ORDER_STATUS = "ORDER_STATUS_CHANGE";
+// What TikTok's Update Shop Webhook takes. Cancellations read the order
+// again; return status changes read the order's cases.
+const TIKTOK_EVENTS = [
+	"ORDER_STATUS_CHANGE",
+	"CANCELLATION_STATUS_CHANGE",
+	"RETURN_STATUS_CHANGE",
+];
+// The newer aftersales events (64 aftersales request, 65 RMA, 67 refund
+// success) aren't among that API's event types; they're turned on in
+// Partner Center, at the same address.
+const PARTNER_CENTER_EVENTS = [
+	"(64) Aftersales Request Status Update",
+	"(65) RMA Status Update",
+	"(67) Refund Success",
+];
 
 async function tiktok() {
 	const cipher = await shopCipher();
@@ -87,21 +103,26 @@ async function tiktok() {
 		console.log(`tiktok ${w.event_type} -> ${w.address}`);
 	if (!base) return;
 	const url = `${base}/api/webhooks/tiktok`;
-	const current = webhooks?.find((w) => w.event_type === ORDER_STATUS);
-	if (current?.address === url) return;
-	if (current && !values.replace) {
-		console.log(
-			`tiktok ${ORDER_STATUS} already goes to ${current.address}; rerun with --replace to point it at katasync instead`,
+	for (const event of TIKTOK_EVENTS) {
+		const current = webhooks?.find((w) => w.event_type === event);
+		if (current?.address === url) continue;
+		if (current && !values.replace) {
+			console.log(
+				`tiktok ${event} already goes to ${current.address}; rerun with --replace to point it at katasync instead`,
+			);
+			continue;
+		}
+		await tiktokApi(
+			"/event/202309/webhooks",
+			{ shop_cipher: cipher },
+			{ address: url, event_type: event },
+			"PUT",
 		);
-		return;
+		console.log(`tiktok ${event} -> ${url} (set)`);
 	}
-	await tiktokApi(
-		"/event/202309/webhooks",
-		{ shop_cipher: cipher },
-		{ address: url, event_type: ORDER_STATUS },
-		"PUT",
+	console.log(
+		`In TikTok Partner Center, under the app's webhooks, send these to ${url} too: ${PARTNER_CENTER_EVENTS.join(", ")}`,
 	);
-	console.log(`tiktok ${ORDER_STATUS} -> ${url} (set)`);
 }
 
 await shopify();

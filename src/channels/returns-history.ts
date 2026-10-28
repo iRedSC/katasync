@@ -6,7 +6,8 @@ import { type ChannelReturn, saveReturns } from "#/orders/return-requests";
 import { fetchAmazonReturns, REPORT_DAYS } from "./amazon-returns";
 import { fetchEbayReturns, HISTORY_DAYS } from "./ebay-returns";
 import { fetchShopifyReturns } from "./shopify/returns";
-import { fetchTiktokReturns, withBuyerNotes } from "./tiktok-returns";
+import { withRecords } from "./tiktok-return-history";
+import { fetchTiktokReturns } from "./tiktok-returns";
 
 // One-time import of older returns, for `pnpm sync --returns-history`.
 // Regular passes only reread the last week or two months.
@@ -47,7 +48,11 @@ const windows: Record<
 		days: 90,
 		fetch: async (from, until) => {
 			const found = await fetchTiktokReturns(from, until, "create");
-			return withBuyerNotes(found, new Set(found.map((r) => r.externalId)));
+			// Every record read again; pictures kept before download again.
+			return withRecords(
+				found,
+				new Map(found.map((r) => [r.externalId, new Map()])),
+			);
 		},
 	},
 	ebay: {

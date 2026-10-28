@@ -65,6 +65,7 @@ import { Route as ApiOauthSplatRouteImport } from './routes/api/oauth/$'
 import { Route as ApiPoEmailAttachmentsAttachmentIdRouteImport } from './routes/api/po-email-attachments/$attachmentId'
 import { Route as ApiPoFileUploadsPurchaseOrderIdRouteImport } from './routes/api/po-file-uploads/$purchaseOrderId'
 import { Route as ApiPoFilesFileIdRouteImport } from './routes/api/po-files/$fileId'
+import { Route as ApiReturnMediaMediaIdRouteImport } from './routes/api/return-media/$mediaId'
 import { Route as ApiSharedFilesTokenRouteImport } from './routes/api/shared-files/$token'
 import { Route as ApiWebhooksChannelRouteImport } from './routes/api/webhooks/$channel'
 import { Route as LabelsBenchIdRouteImport } from './routes/labels/bench.$id'
@@ -370,6 +371,11 @@ const ApiPoFilesFileIdRoute = ApiPoFilesFileIdRouteImport.update({
   path: '/api/po-files/$fileId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiReturnMediaMediaIdRoute = ApiReturnMediaMediaIdRouteImport.update({
+  id: '/api/return-media/$mediaId',
+  path: '/api/return-media/$mediaId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSharedFilesTokenRoute = ApiSharedFilesTokenRouteImport.update({
   id: '/api/shared-files/$token',
   path: '/api/shared-files/$token',
@@ -535,6 +541,7 @@ export interface FileRoutesByFullPath {
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
+  '/api/return-media/$mediaId': typeof ApiReturnMediaMediaIdRoute
   '/api/shared-files/$token': typeof ApiSharedFilesTokenRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/bench/$id': typeof LabelsBenchIdRoute
@@ -614,6 +621,7 @@ export interface FileRoutesByTo {
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
+  '/api/return-media/$mediaId': typeof ApiReturnMediaMediaIdRoute
   '/api/shared-files/$token': typeof ApiSharedFilesTokenRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/bench/$id': typeof LabelsBenchIdRoute
@@ -694,6 +702,7 @@ export interface FileRoutesById {
   '/api/po-email-attachments/$attachmentId': typeof ApiPoEmailAttachmentsAttachmentIdRoute
   '/api/po-file-uploads/$purchaseOrderId': typeof ApiPoFileUploadsPurchaseOrderIdRoute
   '/api/po-files/$fileId': typeof ApiPoFilesFileIdRoute
+  '/api/return-media/$mediaId': typeof ApiReturnMediaMediaIdRoute
   '/api/shared-files/$token': typeof ApiSharedFilesTokenRoute
   '/api/webhooks/$channel': typeof ApiWebhooksChannelRoute
   '/labels/bench/$id': typeof LabelsBenchIdRoute
@@ -775,6 +784,7 @@ export interface FileRouteTypes {
     | '/api/po-email-attachments/$attachmentId'
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
+    | '/api/return-media/$mediaId'
     | '/api/shared-files/$token'
     | '/api/webhooks/$channel'
     | '/labels/bench/$id'
@@ -854,6 +864,7 @@ export interface FileRouteTypes {
     | '/api/po-email-attachments/$attachmentId'
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
+    | '/api/return-media/$mediaId'
     | '/api/shared-files/$token'
     | '/api/webhooks/$channel'
     | '/labels/bench/$id'
@@ -933,6 +944,7 @@ export interface FileRouteTypes {
     | '/api/po-email-attachments/$attachmentId'
     | '/api/po-file-uploads/$purchaseOrderId'
     | '/api/po-files/$fileId'
+    | '/api/return-media/$mediaId'
     | '/api/shared-files/$token'
     | '/api/webhooks/$channel'
     | '/labels/bench/$id'
@@ -1013,6 +1025,7 @@ export interface RootRouteChildren {
   ApiPoEmailAttachmentsAttachmentIdRoute: typeof ApiPoEmailAttachmentsAttachmentIdRoute
   ApiPoFileUploadsPurchaseOrderIdRoute: typeof ApiPoFileUploadsPurchaseOrderIdRoute
   ApiPoFilesFileIdRoute: typeof ApiPoFilesFileIdRoute
+  ApiReturnMediaMediaIdRoute: typeof ApiReturnMediaMediaIdRoute
   ApiSharedFilesTokenRoute: typeof ApiSharedFilesTokenRoute
   ApiWebhooksChannelRoute: typeof ApiWebhooksChannelRoute
   LabelsBenchIdRoute: typeof LabelsBenchIdRoute
@@ -1431,6 +1444,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPoFilesFileIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/return-media/$mediaId': {
+      id: '/api/return-media/$mediaId'
+      path: '/api/return-media/$mediaId'
+      fullPath: '/api/return-media/$mediaId'
+      preLoaderRoute: typeof ApiReturnMediaMediaIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/shared-files/$token': {
       id: '/api/shared-files/$token'
       path: '/api/shared-files/$token'
@@ -1639,6 +1659,7 @@ const rootRouteChildren: RootRouteChildren = {
     ApiPoEmailAttachmentsAttachmentIdRoute,
   ApiPoFileUploadsPurchaseOrderIdRoute: ApiPoFileUploadsPurchaseOrderIdRoute,
   ApiPoFilesFileIdRoute: ApiPoFilesFileIdRoute,
+  ApiReturnMediaMediaIdRoute: ApiReturnMediaMediaIdRoute,
   ApiSharedFilesTokenRoute: ApiSharedFilesTokenRoute,
   ApiWebhooksChannelRoute: ApiWebhooksChannelRoute,
   LabelsBenchIdRoute: LabelsBenchIdRoute,

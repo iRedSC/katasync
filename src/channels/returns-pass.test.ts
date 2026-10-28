@@ -4,6 +4,7 @@ import * as schema from "#/db/schema";
 import type { SyncedChannel } from "#/diagnostics/checks";
 import { feedStatus } from "#/diagnostics/feed-health";
 import { loadFeedRecords, recordFeed } from "#/diagnostics/feed-record";
+import type { ReturnRecord } from "#/orders/return-records";
 import { type ChannelReturn, returnStage } from "#/orders/return-requests";
 import { createTestDb } from "#/test/db";
 import { channelPass } from "./channel-pass";
@@ -11,9 +12,10 @@ import { backfillReturns } from "./returns-history";
 import { returnsPass } from "./returns-pass";
 import type { ReturnsReader, ReturnsWindow } from "./returns-readers";
 import {
-	retryUnreadNotes,
-	tiktokReturnsWithNotes,
-} from "./tiktok-return-notes";
+	retryUnreadRecords,
+	tiktokReturnsWithRecords,
+} from "./tiktok-return-history";
+import type { ReadRecords } from "./tiktok-return-records";
 
 const DAY = 86_400_000;
 const now = new Date("2026-10-10T12:00:00Z");
@@ -230,64 +232,78 @@ describe("Amazon's unreachable days", () => {
 	});
 });
 
-describe("TikTok's buyer notes", () => {
+describe("TikTok's return records", () => {
 	beforeEach(async () => {
 		await setUp("tiktok");
 		await addOrder("T-1");
 		await addOrder("T-2");
 	});
 
-	test("a note that fails is a problem, saved unread, and asked again", async () => {
+	const said = (note: string): ReturnRecord[] => [
+		{
+			role: "BUYER",
+			event: "ORDER_REFUND",
+			description: null,
+			reasonText: null,
+			note,
+			createdAt: null,
+			media: [],
+		},
+	];
+
+	test("records that fail are a problem, saved unread, and asked again", async () => {
 		const found = [
 			aReturn("A", "T-1", daysAgo(1)),
 			aReturn("B", "T-2", daysAgo(1)),
 		];
-		const read = async (ids: string[]) => ({
-			notes: new Map(
-				ids.filter((id) => id === "A").map((id) => [id, "Broken"]),
+		const read: ReadRecords = async (wanted) => ({
+			read: new Map(
+				wanted.filter((w) => w.id === "A").map((w) => [w.id, said("Broken")]),
 			),
-			failed: ids
-				.filter((id) => id === "B")
-				.map((id) => ({ id, error: "500" })),
+			failed: wanted
+				.filter((w) => w.id === "B")
+				.map((w) => ({ id: w.id, error: "500" })),
 		});
 		const { saveReturns } = await import("#/orders/return-requests");
 		const store = { id: storeId, channel: "tiktok" as const, name: "TikTok" };
-		const first = await tiktokReturnsWithNotes(db, found, read);
+		const first = await tiktokReturnsWithRecords(db, found, read);
 		expect(Array.isArray(first) ? [] : first.problems).toEqual([
-			expect.stringContaining("B note: 500"),
+			expect.stringContaining("B records: 500"),
 		]);
 		await saveReturns(db, store, Array.isArray(first) ? first : first.returns);
 		const saved = async () =>
 			Object.fromEntries(
 				(await db.select().from(schema.returnRequests)).map((r) => [
 					r.externalId,
-					{ note: r.note, noteUnread: r.noteUnread },
+					{ note: r.note, recordsUnread: r.recordsUnread },
 				]),
 			);
 		expect(await saved()).toEqual({
-			A: { note: "Broken", noteUnread: false },
-			B: { note: null, noteUnread: true },
+			A: { note: "Broken", recordsUnread: false },
+			B: { note: null, recordsUnread: true },
 		});
+		expect(await db.select().from(schema.returnRequestRecords)).toHaveLength(1);
 
 		// Unchanged since saved: only the unread one is asked for again.
 		const asked: string[][] = [];
-		await tiktokReturnsWithNotes(db, found, async (ids) => {
-			asked.push(ids);
-			return { notes: new Map(), failed: [] };
+		await tiktokReturnsWithRecords(db, found, async (wanted) => {
+			asked.push(wanted.map((w) => w.id));
+			return { read: new Map(), failed: [] };
 		});
 		expect(asked).toEqual([["B"]]);
 
 		// And a pass asks for it whatever window it reads.
 		expect(
-			await retryUnreadNotes(db, async (ids) => ({
-				notes: new Map(ids.map((id) => [id, "Never came"])),
+			await retryUnreadRecords(db, async (wanted) => ({
+				read: new Map(wanted.map((w) => [w.id, said("Never came")])),
 				failed: [],
 			})),
 		).toEqual([]);
 		expect((await saved()).B).toEqual({
 			note: "Never came",
-			noteUnread: false,
+			recordsUnread: false,
 		});
+		expect(await db.select().from(schema.returnRequestRecords)).toHaveLength(2);
 	});
 });
 

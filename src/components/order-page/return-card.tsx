@@ -11,6 +11,7 @@ import { channelName, formatCount, formatOrderDate } from "#/lib/format";
 import { returnReason } from "#/orders/return-reasons";
 import { printPdf } from "#/printing/qz-client";
 import type { OrderDetail } from "#/server/orders";
+import { ReturnHistory } from "./return-history";
 import { ReturnPackage } from "./return-package";
 
 // Where an order's return or refund stands, all in one place: what's due
@@ -235,10 +236,14 @@ export function ReturnCard({
 							unfollowed={r.unfollowedAt !== null}
 						/>
 					)}
-					{r.note && (
-						<blockquote className="mt-2 border-l-2 pl-3 text-muted-foreground">
-							{r.note}
-						</blockquote>
+					{r.records.length > 0 || r.unlistedMedia.length > 0 ? (
+						<ReturnHistory records={r.records} unlisted={r.unlistedMedia} />
+					) : (
+						r.note && (
+							<blockquote className="mt-2 border-l-2 pl-3 text-muted-foreground">
+								{r.note}
+							</blockquote>
+						)
 					)}
 				</Section>
 			))}

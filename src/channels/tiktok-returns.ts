@@ -1,5 +1,4 @@
 import { type } from "arktype";
-import { errorText } from "#/diagnostics/runs";
 import type { ChannelReturn } from "#/orders/return-requests";
 import { shopCipher, tiktokApi } from "./tiktok";
 import { tiktokReturnStage } from "./tiktok-case-stage";
@@ -7,15 +6,14 @@ import { TiktokReturnPages } from "./tiktok-return-pages";
 
 export { tiktokReturnStage } from "./tiktok-case-stage";
 
-// Returns buyers opened on TikTok Shop, with TikTok's reason, and what the
-// buyer wrote from the return's records. Needs the Return & Refund Basic
+// Returns buyers opened on TikTok Shop, with TikTok's reason. What the
+// buyer wrote and showed is in the return's records (tiktok-return-records.ts). Needs the Return & Refund Basic
 // permission (seller.return_refund.basic), granted when the shop authorizes
 // the app. Orders Shopify relayed are TikTok's too, so they're found by
 // their TikTok order id wherever they live.
 
 const SEARCH = "/return_refund/202603/aftersales/search";
 const RMA_SEARCH = "/return_refund/202604/rma/search";
-const records = (id: string) => `/return_refund/202309/returns/${id}/records`;
 
 const returnOrder = type({
 	return_id: "string",
@@ -66,13 +64,6 @@ const rmaPage = type({
 	"total_count?": "number.integer >= 0",
 	"next_page_token?": "string",
 });
-const recordList = type({
-	"records?": type({
-		"role?": "string",
-		"note?": "string",
-	}).array(),
-});
-
 // TikTok refunds a creator's free sample ("buy now, refund later") through
 // returns too, with nothing wrong and nothing coming back. Not a return.
 export const isSampleRefund = (r: { return_reason?: string }) =>
@@ -126,7 +117,11 @@ export function tiktokToReturn(
 		trackingNumber: r.return_tracking_number || null,
 		carrier: r.return_provider_name || null,
 		requestedAt: new Date(r.create_time * 1000),
-		updatedAt: new Date((r.update_time ?? r.create_time) * 1000),
+		// TikTok's version of it; without one it's unversioned, never the
+		// time it was opened, so it can't pass for news.
+		...(r.update_time === undefined
+			? {}
+			: { updatedAt: new Date(r.update_time * 1000) }),
 		lines: [...byLine].map(([lineId, line]) => ({
 			lineExternalId: lineId || null,
 			alternateLineExternalId: line.skuId,
@@ -136,77 +131,44 @@ export function tiktokToReturn(
 	};
 }
 
-// What the buyer wrote when asking: the first note of theirs in the
-// return's history.
-async function buyerNote(cipher: string, returnId: string) {
-	const found = recordList.assert(
-		await tiktokApi(records(returnId), { shop_cipher: cipher }),
-	);
-	const note = found.records?.find(
-		(r) => r.role === "BUYER" && r.note?.trim(),
-	)?.note;
-	return note?.trim() || null;
-}
-
-// One history request per return, a few at a time. A note that fails to
-// load is named in failed, so its return saves with noteUnread and a later
-// pass asks again; the note already saved stays as it is.
-const NOTE_REQUESTS_AT_ONCE = 4;
-
-export async function readBuyerNotes(returnIds: string[]) {
-	const notes = new Map<string, string | null>();
-	const failed: { id: string; error: string }[] = [];
-	if (returnIds.length === 0) return { notes, failed };
-	const cipher = await shopCipher();
-	const queue = [...returnIds];
-	const worker = async () => {
-		for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
-			try {
-				notes.set(id, await buyerNote(cipher, id));
-			} catch (error) {
-				failed.push({ id, error: errorText(error) });
-			}
-		}
-	};
-	await Promise.all(Array.from({ length: NOTE_REQUESTS_AT_ONCE }, worker));
-	return { notes, failed };
-}
-
-// The returns with the notes of those in wanted read. Those whose note
-// couldn't be read are marked noteUnread and named as a problem.
-export async function withBuyerNotes(
-	returns: ChannelReturn[],
-	wanted: Set<string>,
-	read = readBuyerNotes,
-) {
-	const { notes, failed } = await read(
-		returns.map((r) => r.externalId).filter((id) => wanted.has(id)),
-	);
-	const unread = new Set(failed.map((f) => f.id));
-	return {
-		returns: returns.map((r) =>
-			notes.has(r.externalId)
-				? { ...r, note: notes.get(r.externalId), noteUnread: false }
-				: unread.has(r.externalId)
-					? { ...r, noteUnread: true }
-					: r,
-		),
-		problems: failed.map(
-			(f) => `TikTok return ${f.id} note: ${f.error}; asked again next pass`,
-		),
-	};
-}
-
 // Returns that changed between from and until (by: "update"), or were
-// opened then (by: "create", for history), without their notes: those cost
-// a request each (withBuyerNotes).
+// opened then (by: "create", for history), without their records: those
+// cost a request each (tiktok-return-records.ts).
 export async function fetchTiktokReturns(
 	from: Date,
 	until: Date,
 	by: "create" | "update" = "update",
 ) {
-	const cipher = await shopCipher();
 	const seconds = (d: Date) => Math.floor(d.getTime() / 1000);
+	const { returns } = await readCases({
+		time: {
+			[`${by}_time`]: {
+				min_unix_time_inclusive: seconds(from),
+				max_unix_time_exclusive: seconds(until),
+			},
+		},
+	});
+	return returns;
+}
+
+// What a webhook names, read again by id: one aftersales case, or every
+// case on an order. found counts the cases TikTok had, so a case it doesn't
+// show yet isn't mistaken for one with nothing to save.
+export type CaseLookup =
+	| { kind: "aftersales"; id: string }
+	| { kind: "order_returns"; id: string };
+
+export function fetchTiktokCases(lookup: CaseLookup) {
+	switch (lookup.kind) {
+		case "aftersales":
+			return readCases({ aftersales_request_ids: [lookup.id] });
+		case "order_returns":
+			return readCases({ main_order_ids: [lookup.id] });
+	}
+}
+
+async function readCases(filters: Record<string, unknown>) {
+	const cipher = await shopCipher();
 	const found: (typeof aftersales.infer)[] = [];
 	const pages = new TiktokReturnPages("aftersales search");
 	let pageToken: string | undefined;
@@ -218,14 +180,7 @@ export async function fetchTiktokReturns(
 					shop_cipher: cipher,
 				},
 				{
-					filters: {
-						time: {
-							[`${by}_time`]: {
-								min_unix_time_inclusive: seconds(from),
-								max_unix_time_exclusive: seconds(until),
-							},
-						},
-					},
+					filters,
 					pagination: {
 						page_size: 50,
 						...(pageToken ? { page_token: pageToken } : {}),
@@ -294,7 +249,7 @@ export async function fetchTiktokReturns(
 			.filter((request) => !isSampleRefund(request))
 			.map((request) => ({ parent, request })),
 	);
-	return requests.map(({ parent, request }) => {
+	const returns = requests.map(({ parent, request }) => {
 		const pkg = packages.get(request.return_id);
 		const shipped = pkg?.sku_return_requests?.find(
 			(sku) => sku.return_id === request.return_id,
@@ -318,4 +273,5 @@ export async function fetchTiktokReturns(
 			},
 		);
 	});
+	return { returns, found: found.length };
 }
