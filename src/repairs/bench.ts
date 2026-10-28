@@ -3,18 +3,17 @@ import { stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import { people, repairParts, repairs } from "#/db/repair-schema";
 import {
-	locations,
 	orderLines,
 	orderReturns,
 	orders,
 	products,
 	stockLevels,
 } from "#/db/schema";
-import { committedUnits, readQuantityMode } from "#/inventory/commitments";
+import { readQuantityMode } from "#/inventory/commitments";
 import { returnSaleOf } from "#/inventory/commitments-consume";
+import { brokenPromises } from "#/inventory/commitments-shelves";
 import { postMovements } from "#/inventory/ledger";
 import { batchProductIds, lockStockProducts } from "#/inventory/ledger/post";
-import { isOurs } from "#/inventory/locations";
 import {
 	makeRefurb,
 	originalProduct,
@@ -216,33 +215,32 @@ async function takeParts(tx: Db, repairId: number, locked: Locked) {
 		.where(eq(repairParts.repairId, repairId));
 	if (parts.length === 0) return { batchId: null, cost: 0 };
 	const ids = parts.map((p) => p.productId);
+	const mode = await readQuantityMode(tx);
 	const shelf = await benchShelf(tx);
 	const levels = await tx
-		.select({
-			productId: stockLevels.productId,
-			here: sql<number>`coalesce(sum(${stockLevels.onHand}) filter (where ${stockLevels.locationId} = ${shelf}), 0)::int`,
-			owned: sql<number>`coalesce(sum(${stockLevels.onHand}) filter (where ${isOurs}), 0)::int`,
-		})
+		.select({ productId: stockLevels.productId, here: stockLevels.onHand })
 		.from(stockLevels)
-		.innerJoin(locations, eq(locations.id, stockLevels.locationId))
-		.where(inArray(stockLevels.productId, ids))
-		.groupBy(stockLevels.productId);
-	const committed =
-		(await readQuantityMode(tx)) === "committed"
-			? await committedUnits(tx, ids)
-			: new Map<number, number>();
+		.where(
+			and(
+				inArray(stockLevels.productId, ids),
+				eq(stockLevels.locationId, shelf),
+			),
+		);
+	const promised = await brokenPromises(
+		tx,
+		mode,
+		parts.map((p) => ({ ...p, locationId: shelf })),
+	);
 	let cost: number | null = 0;
 	for (const p of parts) {
 		const product = locked.find((l) => l.id === p.productId);
 		if (!product) throw new RepairError(`${p.sku} changed; try again`);
 		if (product.kind === "bundle")
 			throw new RepairError(`${p.sku} is a set; put its parts on instead`);
-		const level = levels.find((l) => l.productId === p.productId);
-		const here = level?.here ?? 0;
-		const free = (level?.owned ?? 0) - (committed.get(p.productId) ?? 0);
+		const here = levels.find((l) => l.productId === p.productId)?.here ?? 0;
 		if (here < p.quantity)
 			throw new RepairError(`Only ${here} of ${p.sku} on the bench's shelf`);
-		if (free < p.quantity)
+		if (promised.includes(p.productId))
 			throw new RepairError(`${p.sku} is promised to orders`);
 		cost =
 			cost === null || product.unitCost == null

@@ -1,11 +1,12 @@
-import { ExternalLink, Mail, Pencil } from "lucide-react";
-import { useState } from "react";
+import { ExternalLink, LoaderCircle, Mail, Pencil } from "lucide-react";
+import { useRef, useState } from "react";
 import { Card } from "#/components/page";
 import type { IndexedProduct } from "#/components/transfers/add-product";
 import { Button } from "#/components/ui/button";
 import { formatMoney, formatPhone } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { CustomerPicker, type FoundCustomer } from "./customer-picker";
+import { useDraft } from "./draft";
 import { NoteField } from "./labor-card";
 import type { Detail } from "./repair-data";
 import { TechPicker } from "./tech-picker";
@@ -87,10 +88,14 @@ export function ToolCard({
 }) {
 	const r = d.repair;
 	const bench = r.kind === "bench";
-	const [problem, setProblem] = useState(r.problem);
-	const [tool, setTool] = useState(r.tool);
+	const problem = useDraft(r.problem, `problem-${r.id}`);
 	// A bench job stays the product it came in as; its name is a label.
-	const [productId, setProductId] = useState(r.productId);
+	const named = useDraft(
+		{ tool: r.tool, productId: r.productId },
+		`tool-${r.id}`,
+		(a, b) => a.tool === b.tool && a.productId === b.productId,
+	);
+	const { tool, productId } = named.value;
 	return (
 		<Card title="Tool">
 			<div className="flex flex-col gap-1">
@@ -100,16 +105,14 @@ export function ToolCard({
 						productId={productId}
 						products={products}
 						disabled={!editable}
-						onChange={(text, id) => {
-							setTool(text);
-							if (!bench) setProductId(id);
-						}}
+						onChange={(text, id) =>
+							named.type({ tool: text, productId: bench ? productId : id })
+						}
 						onDone={(t, id) => {
 							// A tool can't be blank; clearing it puts the old one back.
-							if (!t.trim()) {
-								setTool(r.tool);
-								setProductId(r.productId);
-							} else if (bench) {
+							if (!t.trim()) return named.revert();
+							// Untouched, it already is what's there, so nothing is written.
+							if (bench) {
 								if (t !== r.tool) onSave({ tool: t });
 							} else if (t !== r.tool || id !== r.productId)
 								onSave({ tool: t, productId: id });
@@ -122,6 +125,7 @@ export function ToolCard({
 				</div>
 				<div className="-mx-2 text-muted-foreground">
 					<NoteField
+						id={`serial-${r.id}`}
 						value={r.serial ?? ""}
 						disabled={!editable}
 						placeholder="Serial"
@@ -129,10 +133,13 @@ export function ToolCard({
 					/>
 				</div>
 				<textarea
-					value={problem}
+					value={problem.value}
 					disabled={!editable}
-					onChange={(e) => setProblem(e.target.value)}
-					onBlur={() => problem !== r.problem && onSave({ problem })}
+					onChange={(e) => problem.type(e.target.value)}
+					onBlur={() => {
+						const text = problem.save();
+						if (text !== null) onSave({ problem: text });
+					}}
 					placeholder="What's wrong with it"
 					rows={3}
 					className="-mx-2 resize-none rounded-lg bg-transparent px-2 py-1 outline-none hover:bg-surface focus:bg-surface disabled:hover:bg-transparent"
@@ -151,7 +158,7 @@ export function PeopleCard({
 	onTechnician: (id: number | null) => void;
 	onNotes: (notes: string) => void;
 }) {
-	const [notes, setNotes] = useState(d.repair.notes);
+	const notes = useDraft(d.repair.notes, `notes-${d.repair.id}`);
 	return (
 		<Card title="Technician">
 			<TechPicker
@@ -160,9 +167,12 @@ export function PeopleCard({
 				onChange={onTechnician}
 			/>
 			<textarea
-				value={notes}
-				onChange={(e) => setNotes(e.target.value)}
-				onBlur={() => notes !== d.repair.notes && onNotes(notes)}
+				value={notes.value}
+				onChange={(e) => notes.type(e.target.value)}
+				onBlur={() => {
+					const text = notes.save();
+					if (text !== null) onNotes(text);
+				}}
 				placeholder="Shop notes (not on the order)"
 				rows={2}
 				className="mt-3 w-full resize-none rounded-lg bg-surface px-3 py-2 outline-none"
@@ -171,7 +181,14 @@ export function PeopleCard({
 	);
 }
 
-export function BillCard({ d, onEmail }: { d: Detail; onEmail: () => void }) {
+export function BillCard({
+	d,
+	onEmail,
+}: {
+	d: Detail;
+	// Resolves once the invoice has gone, or failed and said why.
+	onEmail: () => Promise<void>;
+}) {
 	const draft = d.draft;
 	const r = d.repair;
 	if (r.orderName)
@@ -229,19 +246,62 @@ export function BillCard({ d, onEmail }: { d: Detail; onEmail: () => void }) {
 				{row("Tax", draft.tax)}
 				{row("Total", draft.total, true)}
 			</div>
-			<Button
-				variant="outline"
-				className="mt-3 w-full"
-				disabled={!r.customerEmail}
-				onClick={onEmail}
-			>
-				{r.customerEmail ? <Mail /> : <Pencil />}
-				{r.customerEmail
-					? draft.invoiceSentAt
+			<InvoiceButton
+				email={r.customerEmail}
+				sentBefore={Boolean(draft.invoiceSentAt)}
+				onEmail={onEmail}
+			/>
+		</Card>
+	);
+}
+
+// Emails the customer the invoice. One goes out per click: while it sends
+// the button is busy and further clicks do nothing, and once it has gone, a
+// click is a deliberate resend.
+function InvoiceButton({
+	email,
+	sentBefore,
+	onEmail,
+}: {
+	email: string | null;
+	sentBefore: boolean;
+	onEmail: () => Promise<void>;
+}) {
+	const [sending, setSending] = useState(false);
+	// Set at once, where state would only show on the next render.
+	const busy = useRef(false);
+	async function send() {
+		if (busy.current) return;
+		busy.current = true;
+		setSending(true);
+		try {
+			await onEmail();
+		} finally {
+			busy.current = false;
+			setSending(false);
+		}
+	}
+	return (
+		<Button
+			variant="outline"
+			className="mt-3 w-full"
+			disabled={!email || sending}
+			onClick={send}
+		>
+			{sending ? (
+				<LoaderCircle className="animate-spin" />
+			) : email ? (
+				<Mail />
+			) : (
+				<Pencil />
+			)}
+			{sending
+				? "Sending"
+				: email
+					? sentBefore
 						? "Email the invoice again"
 						: "Email the invoice"
 					: "No email for the invoice"}
-			</Button>
-		</Card>
+		</Button>
 	);
 }

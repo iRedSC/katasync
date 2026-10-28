@@ -8,6 +8,7 @@ import {
 	parseRelayed,
 	threadAmazonMail,
 } from "./amazon-mail";
+import { refuseFiles } from "./attachments";
 import { addReplyFile } from "./reply-files";
 import { reply, settleReplies } from "./send";
 import { settleReply } from "./states";
@@ -229,6 +230,27 @@ describe("answering", () => {
 				fileId: pdf.id,
 			},
 		]);
+		// Sending it again, or undo putting it back in a box, counts its real
+		// size: with one there already, the two can be too much together.
+		const files = after?.messages.at(-1)?.files ?? [];
+		expect(files).toEqual([
+			{
+				kind: "PDF",
+				name: "label.pdf",
+				type: "application/pdf",
+				size: 6,
+				url: `/api/buyer-files/${pdf.id}`,
+				fileId: pdf.id,
+			},
+		]);
+		const inBox = [3_500_000, 3_499_995].map((size, i) => ({
+			name: `${i}.pdf`,
+			type: "application/pdf",
+			size,
+		}));
+		expect(refuseFiles("amazon", [...inBox, ...files])).toBe(
+			"7 MB of files at most",
+		);
 	});
 
 	test("an unsure send is tried again with the same key; a refused one fails", async () => {

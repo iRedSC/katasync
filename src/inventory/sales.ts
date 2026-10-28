@@ -57,6 +57,25 @@ export async function soldByDay(db: Db, since: Date) {
 		.groupBy(sold.productId, sql`2`);
 }
 
+// soldSince per order line: the stocked products each line's units took,
+// counted the same way, so a tool set's line splits into the parts it was
+// sold with rather than the recipe as it stands.
+export async function soldByLine(
+	db: Db,
+	since: Date,
+	{ includeFba }: { includeFba: boolean },
+) {
+	const sold = soldUnits(db, since, { includeFba });
+	return db
+		.select({
+			orderLineId: sold.orderLineId,
+			productId: sold.productId,
+			units: sql<number>`sum(${sold.units})::int`,
+		})
+		.from(sold)
+		.groupBy(sold.orderLineId, sold.productId);
+}
+
 function soldUnits(
 	db: Db,
 	since: Date,
@@ -69,6 +88,7 @@ function soldUnits(
 	);
 	const recorded = db
 		.select({
+			orderLineId: orderLines.id,
 			productId: movements.productId,
 			placedAt: orders.placedAt,
 			units: sql<number>`-${movements.delta}`.as("units"),
@@ -85,6 +105,7 @@ function soldUnits(
 		);
 	const byRecipe = db
 		.select({
+			orderLineId: orderLines.id,
 			productId:
 				sql<number>`coalesce(${productComponents.componentProductId}, ${orderLines.productId})`.as(
 					"productId",
@@ -117,6 +138,7 @@ function soldUnits(
 		);
 	const committed = db
 		.select({
+			orderLineId: stockCommitments.orderLineId,
 			productId: stockCommitmentParts.productId,
 			placedAt: orders.placedAt,
 			units:

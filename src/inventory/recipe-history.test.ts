@@ -2,8 +2,9 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { setProductKind } from "#/products/kind";
 import { createProduct, createTestDb } from "#/test/db";
-import { postMovements, recordSale, undoBatch } from "./ledger";
+import { assembleKits, postMovements, recordSale, undoBatch } from "./ledger";
 import { setRecipe } from "./recipes";
 import { soldByDay, soldSince } from "./sales";
 
@@ -226,5 +227,51 @@ describe("setRecipe on a kit with stock", () => {
 		await setRecipe(db, kit, [{ productId: bit, quantity: 1 }]);
 		expect(await partsOf(bitKit)).toHaveLength(2);
 		expect(await partsOf(kit)).toEqual([{ productId: bit, quantity: 1 }]);
+	});
+});
+
+describe("kind changes and stock history", () => {
+	test("a SKU that ever had stock can't become a tool set, so its sales stay reversible", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		const bit = await createProduct(db, "BIT", "simple");
+		await receive(wrench, 2);
+		const sale = await sell(wrench, 2);
+
+		await expect(
+			setProductKind(db, wrench, {
+				kind: "bundle",
+				components: [{ productId: bit, quantity: 1 }],
+			}),
+		).rejects.toThrow(/stock history/);
+		if (sale) await undoBatch(db, sale);
+		expect(await partsOf(wrench)).toEqual([]);
+	});
+
+	test("a kit with history keeps its kind, so its parts can't change through simple", async () => {
+		const bit = await createProduct(db, "BIT", "simple");
+		const bolt = await createProduct(db, "BOLT", "simple");
+		const kit = await createProduct(db, "BIT-KIT", "kit");
+		await setRecipe(db, kit, [{ productId: bit, quantity: 1 }]);
+		await receive(bit, 1);
+		await assembleKits(db, {
+			kitProductId: kit,
+			quantity: 1,
+			locationId: warehouse,
+		});
+
+		await expect(setProductKind(db, kit, { kind: "simple" })).rejects.toThrow(
+			/stock history/,
+		);
+		expect(await partsOf(kit)).toEqual([{ productId: bit, quantity: 1 }]);
+
+		// Without history the round trip is just a correction.
+		const unused = await createProduct(db, "BOLT-KIT", "kit");
+		await setRecipe(db, unused, [{ productId: bit, quantity: 1 }]);
+		await setProductKind(db, unused, { kind: "simple" });
+		await setProductKind(db, unused, {
+			kind: "kit",
+			components: [{ productId: bolt, quantity: 1 }],
+		});
+		expect(await partsOf(unused)).toEqual([{ productId: bolt, quantity: 1 }]);
 	});
 });

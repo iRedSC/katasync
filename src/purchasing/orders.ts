@@ -22,6 +22,7 @@ export {
 export {
 	lockForEdit,
 	lockOrder,
+	lockOrders,
 	PurchaseOrderError,
 	poName,
 } from "#/purchasing/orders/lock";

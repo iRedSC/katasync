@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
 import type { StockRange } from "#/inventory/stock-range";
+import { useDraft } from "#/lib/draft";
 import { optimism, type Patch } from "#/lib/optimism";
 
 const box =
@@ -22,12 +23,12 @@ export function StockRangeForm({
 	onSave: (range: StockRange | null) => Promise<unknown>;
 	patch?: (range: StockRange | null) => { label: string; patch: Patch };
 }) {
-	const [min, setMin] = useState(value ? String(value.min) : "");
-	const [max, setMax] = useState(value ? String(value.max) : "");
+	const lowest = useDraft(value ? String(value.min) : "");
+	const highest = useDraft(value ? String(value.max) : "");
+	const { draft: min, setDraft: setMin } = lowest;
+	const { draft: max, setDraft: setMax } = highest;
 	const [saving, setSaving] = useState(false);
-	const dirty =
-		min !== (value ? String(value.min) : "") ||
-		max !== (value ? String(value.max) : "");
+	const dirty = lowest.edited || highest.edited;
 
 	async function save() {
 		const empty = min.trim() === "" && max.trim() === "";
