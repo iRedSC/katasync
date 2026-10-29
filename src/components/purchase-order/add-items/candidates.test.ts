@@ -7,6 +7,7 @@ import {
 	parseQuery,
 } from "#/products/search";
 import type { BrowseRow, PurchaseOrderMatch } from "#/server/purchasing";
+import type { Recommendation } from "../types";
 import { candidateRows, type Prepared, remoteWords } from "./candidates";
 
 const facets = (text: string[], status: string[] = []): Facets => ({
@@ -83,7 +84,46 @@ function rows(text: string, remote: Remote, chips: Filter[] = []) {
 	}).map((c) => c.productId);
 }
 
+// Recommendations as the empty box lists them, cheapest last.
+const rec = (productId: number, unitCost: number) =>
+	({
+		productId,
+		sku: `R-${productId}`,
+		name: `Rec ${productId}`,
+		variantName: null,
+		imageUrl: null,
+		kind: "simple",
+		supplierSku: null,
+		unitCost,
+		quantity: 1,
+		packSize: 1,
+		due: null,
+		onHand: 0,
+		stockRange: null,
+		why: null,
+		otherPos: [],
+		bulk: null,
+		critical: false,
+		cheaperAt: null,
+	}) as unknown as Recommendation;
+
 describe("candidateRows", () => {
+	test("a header sort reorders the recommendations in an empty box", () => {
+		const recs = [rec(10, 5), rec(11, 1)];
+		const sorted = (desc: boolean) =>
+			candidateRows({
+				recs,
+				prepared: new Map(),
+				remote: { state: "off" },
+				chips: [],
+				q: parseQuery(""),
+				sort: [{ key: "cost", desc }],
+				sent: false,
+			}).map((c) => c.productId);
+		expect(sorted(false)).toEqual([11, 10]);
+		expect(sorted(true)).toEqual([10, 11]);
+	});
+
 	test("an off-supplier exact barcode leads a supplier partial match", () => {
 		const remote = remoteFor(
 			{ state: "done", query: "0123456789", results: [b] },

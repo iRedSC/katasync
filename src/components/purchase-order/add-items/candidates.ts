@@ -238,11 +238,9 @@ export function isSearching(q: Query, chips: Filter[]) {
 	);
 }
 
-// The rows to show, first row first, as Enter takes it. With nothing to
-// search, the recommendations. Searching, those and this supplier's products
-// the query matches, then the server's finished matches for this very query,
-// none of them when a filter is set. Unsorted, a code typed or scanned whole
-// leads.
+// The rows to show, first row first, as Enter takes it: those below, in the
+// header's or the box's sort when there is one. Unsorted, a code typed or
+// scanned whole leads.
 export function candidateRows({
 	recs,
 	prepared,
@@ -260,8 +258,41 @@ export function candidateRows({
 	sort: Sort<Key>;
 	sent: boolean;
 }): Candidate[] {
-	if (!isSearching(q, chips))
-		return recs.map((r) => fromRec(r, prepared.get(r.productId)));
+	const found = isSearching(q, chips)
+		? searched({ recs, prepared, remote, chips, q, sent })
+		: recs.map((r) => fromRec(r, prepared.get(r.productId)));
+	// A sort still being typed applies once it names a column exactly.
+	const by = q.sorts.reduce<Sort<Key>>(
+		(s, t) =>
+			isColumn(t.value, COLUMNS)
+				? withTerm(s, { key: t.value, desc: t.desc })
+				: s,
+		sort,
+	);
+	if (by.length > 0) return sortRows(found, by, (c) => c.values);
+	const code = q.words.join(" ").toLowerCase();
+	const exact = (c: Candidate) => code !== "" && c.codes.includes(code);
+	return [...found.filter(exact), ...found.filter((c) => !exact(c))];
+}
+
+// The recommendations and this supplier's products the query matches, then
+// the server's finished matches for this very query, none of them when a
+// filter is set.
+function searched({
+	recs,
+	prepared,
+	remote,
+	chips,
+	q,
+	sent,
+}: {
+	recs: Recommendation[];
+	prepared: ReadonlyMap<number, Prepared>;
+	remote: Remote;
+	chips: Filter[];
+	q: Query;
+	sent: boolean;
+}): Candidate[] {
 	const recIds = new Set(recs.map((r) => r.productId));
 	const filtered = chips.length > 0 || q.filters.length > 0;
 	const matches = remote.state === "done" && !filtered ? remote.results : [];
@@ -280,16 +311,5 @@ export function candidateRows({
 			.filter((m) => !prepared.has(m.productId))
 			.map((m) => fromMatch(m, sent)),
 	);
-	// A sort still being typed applies once it names a column exactly.
-	const by = q.sorts.reduce<Sort<Key>>(
-		(s, t) =>
-			isColumn(t.value, COLUMNS)
-				? withTerm(s, { key: t.value, desc: t.desc })
-				: s,
-		sort,
-	);
-	if (by.length > 0) return sortRows(found, by, (c) => c.values);
-	const code = q.words.join(" ").toLowerCase();
-	const exact = (c: Candidate) => code !== "" && c.codes.includes(code);
-	return [...found.filter(exact), ...found.filter((c) => !exact(c))];
+	return found;
 }
