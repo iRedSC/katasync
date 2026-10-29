@@ -204,7 +204,9 @@ function CustomerDialog({
 										className="flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-subtle"
 									>
 										<span className="font-mono font-semibold">R{r.id}</span>
-										<span className="min-w-0 flex-1 truncate">{r.tool}</span>
+										<span className="min-w-0 flex-1 truncate">
+											{r.tools.map((t) => t.tool).join(", ")}
+										</span>
 										<span className="text-muted-foreground">
 											{statusNames[r.status]}
 										</span>

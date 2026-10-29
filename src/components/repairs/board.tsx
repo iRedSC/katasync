@@ -300,17 +300,27 @@ function Card({
 			) : (
 				<div className="mt-1.5 truncate font-semibold">{c.customerName}</div>
 			)}
-			<div className="mt-0.5 flex items-center gap-2">
-				{c.imageUrl && (
-					<ProductImage src={c.imageUrl} className="size-7 shrink-0" />
-				)}
-				<span className="truncate">{c.tool}</span>
-			</div>
-			{c.problem && (
-				<div className="line-clamp-2 text-xs text-muted-foreground">
-					{c.problem}
+			{c.tools.map((t) => (
+				<div key={t.id} className="mt-0.5">
+					<div className="flex items-center gap-2">
+						{t.imageUrl && (
+							<ProductImage src={t.imageUrl} className="size-7 shrink-0" />
+						)}
+						<span className="truncate">{t.tool}</span>
+					</div>
+					{t.problem && (
+						<div
+							className={cn(
+								"text-xs text-muted-foreground",
+								// Several tools: a line each, so the card stays short.
+								c.tools.length > 1 ? "line-clamp-1" : "line-clamp-2",
+							)}
+						>
+							{t.problem}
+						</div>
+					)}
 				</div>
-			)}
+			))}
 			<div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
 				{c.status === "ready" && c.customerPhone && (
 					<a

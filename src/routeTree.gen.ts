@@ -73,6 +73,7 @@ import { Route as LabelsRefurbsReturnIdRouteImport } from './routes/labels/refur
 import { Route as LabelsRepairsIdRouteImport } from './routes/labels/repairs.$id'
 import { Route as OrdersReturnsInsightsRouteImport } from './routes/orders/returns_.insights'
 import { Route as OrdersReturnsRefundsRouteImport } from './routes/orders/returns_.refunds'
+import { Route as PrintRepairsIdRouteImport } from './routes/print/repairs.$id'
 import { Route as PurchasingCatalogPhotoIdRouteImport } from './routes/purchasing/catalog-photo.$id'
 import { Route as PurchasingCatalogsIndexRouteImport } from './routes/purchasing/catalogs/index'
 import { Route as PurchasingCatalogsIdRouteImport } from './routes/purchasing/catalogs/$id'
@@ -412,6 +413,11 @@ const OrdersReturnsRefundsRoute = OrdersReturnsRefundsRouteImport.update({
   path: '/orders/returns/refunds',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PrintRepairsIdRoute = PrintRepairsIdRouteImport.update({
+  id: '/print/repairs/$id',
+  path: '/print/repairs/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PurchasingCatalogPhotoIdRoute =
   PurchasingCatalogPhotoIdRouteImport.update({
     id: '/purchasing/catalog-photo/$id',
@@ -555,6 +561,7 @@ export interface FileRoutesByFullPath {
   '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/orders/returns/refunds': typeof OrdersReturnsRefundsRoute
+  '/print/repairs/$id': typeof PrintRepairsIdRoute
   '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
   '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
@@ -636,6 +643,7 @@ export interface FileRoutesByTo {
   '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns/insights': typeof OrdersReturnsInsightsRoute
   '/orders/returns/refunds': typeof OrdersReturnsRefundsRoute
+  '/print/repairs/$id': typeof PrintRepairsIdRoute
   '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
   '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
@@ -718,6 +726,7 @@ export interface FileRoutesById {
   '/labels/repairs/$id': typeof LabelsRepairsIdRoute
   '/orders/returns_/insights': typeof OrdersReturnsInsightsRoute
   '/orders/returns_/refunds': typeof OrdersReturnsRefundsRoute
+  '/print/repairs/$id': typeof PrintRepairsIdRoute
   '/purchasing/catalog-photo/$id': typeof PurchasingCatalogPhotoIdRoute
   '/purchasing/catalogs/$id': typeof PurchasingCatalogsIdRoute
   '/purchasing/damage-photo/$id': typeof PurchasingDamagePhotoIdRoute
@@ -801,6 +810,7 @@ export interface FileRouteTypes {
     | '/labels/repairs/$id'
     | '/orders/returns/insights'
     | '/orders/returns/refunds'
+    | '/print/repairs/$id'
     | '/purchasing/catalog-photo/$id'
     | '/purchasing/catalogs/$id'
     | '/purchasing/damage-photo/$id'
@@ -882,6 +892,7 @@ export interface FileRouteTypes {
     | '/labels/repairs/$id'
     | '/orders/returns/insights'
     | '/orders/returns/refunds'
+    | '/print/repairs/$id'
     | '/purchasing/catalog-photo/$id'
     | '/purchasing/catalogs/$id'
     | '/purchasing/damage-photo/$id'
@@ -963,6 +974,7 @@ export interface FileRouteTypes {
     | '/labels/repairs/$id'
     | '/orders/returns_/insights'
     | '/orders/returns_/refunds'
+    | '/print/repairs/$id'
     | '/purchasing/catalog-photo/$id'
     | '/purchasing/catalogs/$id'
     | '/purchasing/damage-photo/$id'
@@ -1045,6 +1057,7 @@ export interface RootRouteChildren {
   LabelsRepairsIdRoute: typeof LabelsRepairsIdRoute
   OrdersReturnsInsightsRoute: typeof OrdersReturnsInsightsRoute
   OrdersReturnsRefundsRoute: typeof OrdersReturnsRefundsRoute
+  PrintRepairsIdRoute: typeof PrintRepairsIdRoute
   PurchasingCatalogPhotoIdRoute: typeof PurchasingCatalogPhotoIdRoute
   PurchasingCatalogsIdRoute: typeof PurchasingCatalogsIdRoute
   PurchasingDamagePhotoIdRoute: typeof PurchasingDamagePhotoIdRoute
@@ -1513,6 +1526,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrdersReturnsRefundsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/print/repairs/$id': {
+      id: '/print/repairs/$id'
+      path: '/print/repairs/$id'
+      fullPath: '/print/repairs/$id'
+      preLoaderRoute: typeof PrintRepairsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/purchasing/catalog-photo/$id': {
       id: '/purchasing/catalog-photo/$id'
       path: '/purchasing/catalog-photo/$id'
@@ -1687,6 +1707,7 @@ const rootRouteChildren: RootRouteChildren = {
   LabelsRepairsIdRoute: LabelsRepairsIdRoute,
   OrdersReturnsInsightsRoute: OrdersReturnsInsightsRoute,
   OrdersReturnsRefundsRoute: OrdersReturnsRefundsRoute,
+  PrintRepairsIdRoute: PrintRepairsIdRoute,
   PurchasingCatalogPhotoIdRoute: PurchasingCatalogPhotoIdRoute,
   PurchasingCatalogsIdRoute: PurchasingCatalogsIdRoute,
   PurchasingDamagePhotoIdRoute: PurchasingDamagePhotoIdRoute,

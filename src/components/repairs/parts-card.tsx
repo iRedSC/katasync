@@ -1,5 +1,4 @@
 import { Minus, Plus, Trash2 } from "lucide-react";
-import { Card } from "#/components/page";
 import { ProductImage, ProductName } from "#/components/product";
 import {
 	AddProduct,
@@ -10,11 +9,10 @@ import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type { Detail } from "./repair-data";
 
-// Parts put into the tool, charged at their Shopify price; their stock
-// comes off when the paid order syncs in. A bench job's cost its refurb
-// their average cost instead, and come off the shelf when it's listed.
-// Each shows what it comes to and how many we have. Below them, what was
-// added to the draft order in Shopify, which katasync leaves alone.
+// Parts put into one tool, or onto the order as a whole, charged at their
+// Shopify price; their stock comes off when the paid order syncs in. A
+// bench job's cost its refurb their average cost instead, and come off the
+// shelf when it's listed. Each shows what it comes to and how many we have.
 
 type Part = Detail["parts"][number];
 
@@ -41,29 +39,29 @@ function PartPrice({ part: p, bench }: { part: Part; bench: boolean }) {
 	);
 }
 
-export function PartsCard({
-	d,
+export function PartsList({
+	parts,
 	index,
+	bench,
 	editable,
 	onSet,
 }: {
-	d: Detail;
+	parts: Part[];
 	index: IndexedProduct[];
+	bench: boolean;
 	editable: boolean;
 	onSet: (
 		part: Pick<Part, "productId" | "sku" | "name" | "variantName" | "imageUrl">,
 		quantity: number,
 	) => void;
 }) {
-	const others = d.draft.kind === "open" ? d.draft.others : [];
-	const bench = d.repair.kind === "bench";
 	return (
-		<Card title="Parts" flush>
+		<>
 			<ul>
-				{d.parts.map((p) => (
+				{parts.map((p) => (
 					<li
 						key={p.productId}
-						className="flex items-center gap-3 border-t px-4 py-2"
+						className="flex items-center gap-3 border-t px-4 py-2 animate-in fade-in"
 					>
 						<ProductImage src={p.imageUrl} className="size-8" />
 						<div className="min-w-0 flex-1">
@@ -131,7 +129,7 @@ export function PartsCard({
 					<AddProduct
 						products={index}
 						parts
-						exclude={new Set(d.parts.map((p) => p.productId))}
+						exclude={new Set(parts.map((p) => p.productId))}
 						onAdd={(p) =>
 							onSet(
 								{
@@ -147,26 +145,32 @@ export function PartsCard({
 					/>
 				</div>
 			)}
-			{others.length > 0 && (
-				<>
-					<h3 className="border-t px-4 pt-3 pb-1 text-xs font-semibold text-muted-foreground">
-						Added in Shopify
-					</h3>
-					<ul>
-						{others.map((o) => (
-							<li key={o.uuid} className="flex items-center gap-3 px-4 py-1.5">
-								<span className="min-w-0 flex-1 truncate">{o.title}</span>
-								<span className="tabular-nums text-muted-foreground">
-									× {o.quantity}
-								</span>
-								<span className="w-20 text-right tabular-nums">
-									{formatMoney(o.total)}
-								</span>
-							</li>
-						))}
-					</ul>
-				</>
-			)}
-		</Card>
+		</>
+	);
+}
+
+// What was added to the draft order in Shopify, which katasync leaves alone.
+export function AddedInShopify({ d }: { d: Detail }) {
+	const others = d.draft.kind === "open" ? d.draft.others : [];
+	if (others.length === 0) return null;
+	return (
+		<>
+			<h3 className="border-t px-4 pt-3 pb-1 text-xs font-semibold text-muted-foreground">
+				Added in Shopify
+			</h3>
+			<ul>
+				{others.map((o) => (
+					<li key={o.uuid} className="flex items-center gap-3 px-4 py-1.5">
+						<span className="min-w-0 flex-1 truncate">{o.title}</span>
+						<span className="tabular-nums text-muted-foreground">
+							× {o.quantity}
+						</span>
+						<span className="w-20 text-right tabular-nums">
+							{formatMoney(o.total)}
+						</span>
+					</li>
+				))}
+			</ul>
+		</>
 	);
 }

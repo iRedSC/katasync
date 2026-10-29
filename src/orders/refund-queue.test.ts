@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
-import { repairs } from "#/db/repair-schema";
+import { repairs, repairTools } from "#/db/repair-schema";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { saveCostReport } from "./charges";
@@ -129,14 +129,21 @@ describe("listRefundQueue", () => {
 			.update(schema.products)
 			.set({ refurbishedFromId: wrench, condition: "good" })
 			.where(eq(schema.products.id, refurb));
-		await db.insert(repairs).values({
-			kind: "bench",
-			status: "received",
+		const [job] = await db
+			.insert(repairs)
+			.values({
+				kind: "bench",
+				status: "received",
+				productId: wrench,
+				returnLineId: o.lineId,
+				createdAt: benchedAt,
+			})
+			.returning({ id: repairs.id });
+		await db.insert(repairTools).values({
+			repairId: job.id,
 			tool: "Wrench",
 			productId: wrench,
-			returnLineId: o.lineId,
 			problem: "Wrong item",
-			createdAt: benchedAt,
 		});
 		await decideRefund(db, {
 			orderId: o.id,

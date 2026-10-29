@@ -37,8 +37,10 @@ const draftShape = type({
 	order: type({ id: "string", name: "string" }).or("null"),
 	subtotalPriceSet: { shopMoney: money },
 	totalTaxSet: { shopMoney: money },
+	totalShippingPriceSet: { shopMoney: money },
 	totalPriceSet: { shopMoney: money },
-	lineItems: { nodes: draftLine.array() },
+	// More lines than one page holds: reading it again would drop the rest.
+	lineItems: { pageInfo: { hasNextPage: "boolean" }, nodes: draftLine.array() },
 });
 export type Draft = typeof draftShape.infer;
 
@@ -47,8 +49,9 @@ const DRAFT_FIELDS = `
 	order { id name }
 	subtotalPriceSet { shopMoney { amount } }
 	totalTaxSet { shopMoney { amount } }
+	totalShippingPriceSet { shopMoney { amount } }
 	totalPriceSet { shopMoney { amount } }
-	lineItems(first: 250) { nodes {
+	lineItems(first: 250) { pageInfo { hasNextPage } nodes {
 		uuid title quantity custom sku taxable requiresShipping
 		variant { id }
 		originalUnitPriceSet { shopMoney { amount } }
@@ -185,4 +188,55 @@ export function shopifyAdminDraftUrl(id: string): string | null {
 	const numeric = id.split("/").pop();
 	if (!handle || !numeric) return null;
 	return `https://admin.shopify.com/store/${handle}/draft_orders/${encodeURIComponent(numeric)}`;
+}
+
+// What a paid repair's order charged, line by line, with the properties
+// its draft's lines carried over.
+export async function readOrderBill(id: string) {
+	const data = type({
+		order: type({
+			name: "string",
+			createdAt: "string",
+			subtotalPriceSet: { shopMoney: money },
+			totalTaxSet: { shopMoney: money },
+			totalShippingPriceSet: { shopMoney: money },
+			totalPriceSet: { shopMoney: money },
+			totalOutstandingSet: { shopMoney: money },
+			totalRefundedSet: { shopMoney: money },
+			lineItems: {
+				pageInfo: { hasNextPage: "boolean" },
+				nodes: type({
+					title: "string",
+					quantity: "number",
+					variant: type({ id: "string" }).or("null"),
+					customAttributes: type({
+						key: "string",
+						value: "string | null",
+					}).array(),
+					discountedTotalSet: { shopMoney: money },
+				}).array(),
+			},
+		}).or("null"),
+	}).assert(
+		await shopifyQuery(
+			`query($id: ID!) { order(id: $id) {
+				name createdAt
+				subtotalPriceSet { shopMoney { amount } }
+				totalTaxSet { shopMoney { amount } }
+				totalShippingPriceSet { shopMoney { amount } }
+				totalPriceSet { shopMoney { amount } }
+				totalOutstandingSet { shopMoney { amount } }
+				totalRefundedSet { shopMoney { amount } }
+				lineItems(first: 250) {
+					pageInfo { hasNextPage }
+					nodes {
+						title quantity variant { id } customAttributes { key value }
+						discountedTotalSet(withCodeDiscounts: true) { shopMoney { amount } }
+					}
+				}
+			} }`,
+			{ id },
+		),
+	);
+	return data.order;
 }

@@ -1,7 +1,13 @@
 import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { readDraft } from "#/channels/shopify/draft-orders";
 import type { Db } from "#/db/client";
-import { people, repairLabor, repairParts, repairs } from "#/db/repair-schema";
+import {
+	people,
+	repairLabor,
+	repairParts,
+	repairs,
+	repairTools,
+} from "#/db/repair-schema";
 import {
 	locations,
 	orderLines,
@@ -10,7 +16,7 @@ import {
 	stockLevels,
 } from "#/db/schema";
 import { isOurs as isOurLocation } from "#/inventory/locations";
-import { isOurs } from "./draft-lines";
+import { isOurs, lineTool, toolKey } from "./draft-lines";
 import { markPaid } from "./draft-sync";
 import { boardStatuses } from "./status";
 import { laborVariants, shopifyVariants } from "./variants";
@@ -18,14 +24,28 @@ import { laborVariants, shopifyVariants } from "./variants";
 // Reading repairs: the board, and one repair with its draft order as
 // Shopify has it now.
 
+export type CardTool = {
+	id: number;
+	tool: string;
+	serial: string | null;
+	problem: string;
+	imageUrl: string | null;
+};
+
 const card = {
 	id: repairs.id,
 	status: repairs.status,
 	kind: repairs.kind,
 	productId: repairs.productId,
-	imageUrl: sql<
-		string | null
-	>`(select p.image_url from ${products} p where p.id = ${repairs.productId})`,
+	// What came in, in the order it did.
+	tools: sql<CardTool[]>`coalesce((
+		select json_agg(json_build_object(
+			'id', t.id, 'tool', t.tool, 'serial', t.serial, 'problem', t.problem,
+			'imageUrl', p.image_url
+		) order by t.id)
+		from ${repairTools} t left join ${products} p on p.id = t.product_id
+		where t.repair_id = ${repairs.id}
+	), '[]'::json)`,
 	// A bench job's: the order its unit came back from, and its refurb once
 	// listed.
 	returnOrderId: sql<
@@ -41,9 +61,6 @@ const card = {
 	customerId: repairs.customerId,
 	customerName: repairs.customerName,
 	customerPhone: repairs.customerPhone,
-	tool: repairs.tool,
-	serial: repairs.serial,
-	problem: repairs.problem,
 	technicianId: repairs.technicianId,
 	technician: people.name,
 	draftOrderName: repairs.draftOrderName,
@@ -140,8 +157,21 @@ export async function getRepair(db: Db, id: number) {
 		.leftJoin(people, eq(people.id, repairs.technicianId))
 		.where(eq(repairs.id, id));
 	if (!row) return null;
+	const tools = await db
+		.select({
+			id: repairTools.id,
+			tool: repairTools.tool,
+			productId: repairTools.productId,
+			serial: repairTools.serial,
+			problem: repairTools.problem,
+			imageUrl: products.imageUrl,
+		})
+		.from(repairTools)
+		.leftJoin(products, eq(products.id, repairTools.productId))
+		.where(eq(repairTools.repairId, id))
+		.orderBy(asc(repairTools.id));
 	let draft: DraftView = { kind: "none" };
-	// What Shopify charges for each of our part lines, by variant.
+	// What Shopify charges for each of our part lines, by tool and variant.
 	const charged = new Map<string, { each: number; total: number }>();
 	if (row.draftOrderId) {
 		try {
@@ -157,7 +187,7 @@ export async function getRepair(db: Db, id: number) {
 					Number(l.discountedTotalSet.shopMoney.amount);
 				for (const l of lines)
 					if (isOurs(l) && l.variant)
-						charged.set(l.variant.id, {
+						charged.set(`${lineTool(l, tools[0]?.id)}:${l.variant.id}`, {
 							each: Number(l.originalUnitPriceSet.shopMoney.amount),
 							total: total(l),
 						});
@@ -190,6 +220,7 @@ export async function getRepair(db: Db, id: number) {
 	const labor = await db
 		.select({
 			id: repairLabor.id,
+			toolId: repairLabor.toolId,
 			minutes: repairLabor.minutes,
 			note: repairLabor.note,
 			createdAt: repairLabor.createdAt,
@@ -199,6 +230,7 @@ export async function getRepair(db: Db, id: number) {
 		.orderBy(asc(repairLabor.id));
 	const parts = await db
 		.select({
+			toolId: repairParts.toolId,
 			productId: repairParts.productId,
 			quantity: repairParts.quantity,
 			sku: products.sku,
@@ -224,6 +256,7 @@ export async function getRepair(db: Db, id: number) {
 		row.kind === "bench" ? null : await laborVariants().catch(() => null);
 	return {
 		repair: row,
+		tools,
 		labor,
 		parts: parts.map((p) => {
 			const variant = onShopify.get(p.productId);
@@ -231,7 +264,10 @@ export async function getRepair(db: Db, id: number) {
 				...p,
 				onShopify: variant !== undefined,
 				// Null until the draft has it, or when Shopify can't be read.
-				charged: variant === undefined ? null : (charged.get(variant) ?? null),
+				charged:
+					variant === undefined
+						? null
+						: (charged.get(`${toolKey(p.toolId)}:${variant}`) ?? null),
 			};
 		}),
 		draft,

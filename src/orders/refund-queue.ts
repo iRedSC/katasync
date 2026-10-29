@@ -70,8 +70,12 @@ const refurbs = alias(products, "refurbs");
 // A unit refurbished off the bench is received when it's listed, long after
 // it was checked in: it counts as checked in when it went on the bench, with
 // what was noted then, so listing it doesn't reopen its decision.
+// A bench job's one tool's problem.
+const firstProblem = (repairId: string) =>
+	`(select t.problem from repair_tools t where t.repair_id = ${repairId} order by t.id limit 1)`;
+
 const benchedAs = (field: "created_at" | "problem") =>
-	sql.raw(`(select ${field === "problem" ? "nullif(btrim(b.problem), '')" : "b.created_at"}
+	sql.raw(`(select ${field === "problem" ? `nullif(btrim(${firstProblem("b.id")}), '')` : "b.created_at"}
 		from repairs b
 		where b.kind = 'bench' and b.status = 'refurbished'
 			and b.return_line_id = "order_returns"."order_line_id"
@@ -113,7 +117,7 @@ export async function listRefundQueue(db: Db): Promise<RefundRow[]> {
 				sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 				imageUrl: products.imageUrl,
 				unitPrice: orderLines.unitPrice,
-				note: repairs.problem,
+				note: sql<string>`${sql.raw(firstProblem('"repairs"."id"'))}`,
 				at: repairs.createdAt,
 			})
 			.from(repairs)

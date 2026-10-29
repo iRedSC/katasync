@@ -117,7 +117,7 @@ describe.skipIf(!url)("bench listing lock ordering", () => {
 			lineId: lines[0],
 			quantity: 1,
 		});
-		await setPart(pg.db, id, part.id, 1);
+		await setPart(pg.db, id, { toolId: null, productId: part.id, quantity: 1 });
 		// Receiving the part's line holds the order, then wants the part.
 		await pg.race(
 			productLock,

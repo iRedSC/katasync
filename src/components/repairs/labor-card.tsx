@@ -1,52 +1,47 @@
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import { formatMoney } from "#/lib/format";
 import { cn } from "#/lib/utils";
-import { formatMinutes, hourlyRate, LABOR_STEP } from "#/repairs/labor";
+import { formatMinutes, LABOR_STEP } from "#/repairs/labor";
 import { useDraft } from "./draft";
 import type { Detail } from "./repair-data";
 
-// Time spent on the tool, typed in 15-minute steps. It all goes on the
-// draft order as Shopify's labor variants, at Shopify's price.
+// Time spent on one tool, or on the order as a whole, typed in 15-minute
+// steps. It goes on the draft order as Shopify's labor variants, at
+// Shopify's price.
 
 const quick = [15, 30, 60, 120];
 
-export function LaborCard({
-	d,
+type Labor = Detail["labor"][number];
+
+export function LaborList({
+	labor,
+	rate,
+	bench,
 	editable,
 	onAdd,
 	onEdit,
 	onRemove,
 }: {
-	d: Detail;
+	labor: Labor[];
+	// The hourly rate, or null when there's no price (a bench job's time).
+	rate: number | null;
+	bench: boolean;
 	editable: boolean;
 	onAdd: (minutes: number, note: string) => void;
 	onEdit: (laborId: number, edit: { minutes?: number; note?: string }) => void;
 	onRemove: (laborId: number) => void;
 }) {
-	// A bench job's time isn't charged to anyone, so it has no price.
-	const bench = d.repair.kind === "bench";
-	const rate = d.laborVariants && !bench ? hourlyRate(d.laborVariants) : null;
-	const total = d.labor.reduce((n, l) => n + l.minutes, 0);
 	const price = (m: number) => (rate === null ? null : (rate * m) / 60);
 	return (
-		<Card
-			title="Labor"
-			flush
-			aside={
-				total > 0 && (
-					<span className="tabular-nums">
-						{formatMinutes(total)}
-						{rate !== null && `, ${formatMoney(price(total))}`}
-					</span>
-				)
-			}
-		>
+		<>
 			<ul>
-				{d.labor.map((l) => (
-					<li key={l.id} className="flex items-center gap-3 border-t px-4 py-2">
+				{labor.map((l) => (
+					<li
+						key={l.id}
+						className="flex items-center gap-3 border-t px-4 py-2 animate-in fade-in"
+					>
 						{editable ? (
 							<Stepper
 								value={l.minutes}
@@ -82,12 +77,7 @@ export function LaborCard({
 				))}
 			</ul>
 			{editable && <AddLabor onAdd={onAdd} rate={rate} />}
-			{!d.laborVariants && !bench && (
-				<p className="border-t px-4 py-2 text-warning-text">
-					Couldn't read the labor product from Shopify
-				</p>
-			)}
-		</Card>
+		</>
 	);
 }
 
@@ -108,7 +98,7 @@ function AddLabor({
 	};
 	return (
 		<form
-			className="flex flex-wrap items-center gap-2 border-t bg-surface px-4 py-3"
+			className="flex flex-wrap items-center gap-2 border-t bg-surface px-4 py-2"
 			onSubmit={(e) => {
 				e.preventDefault();
 				add();

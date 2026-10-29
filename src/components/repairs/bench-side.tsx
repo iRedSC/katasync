@@ -118,7 +118,7 @@ export function ListBenchCard({
 							load={() => getBenchListing({ data: { id: r.id } })}
 							loadKey={`bench:${r.id}`}
 							quantity={1}
-							name={r.tool}
+							name={d.tools[0]?.tool ?? ""}
 							onBack={() => setOpen(false)}
 							onChoose={list}
 						/>

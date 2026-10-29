@@ -1,10 +1,11 @@
 import { asc, eq, inArray } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
-import { repairs } from "#/db/repair-schema";
+import { repairs, repairTools } from "#/db/repair-schema";
 import { createProduct, createTestDb } from "#/test/db";
-import { createRepair, editRepair, moveRepair } from "./repairs";
+import { createRepair, moveRepair } from "./repairs";
 import type { RepairStatus } from "./status";
+import { editTool } from "./tools";
 
 let db: Db;
 const customer = {
@@ -14,7 +15,7 @@ const customer = {
 	email: null,
 };
 
-const make = () => createRepair(db, { customer, tool: "Taper" });
+const make = () => createRepair(db, { customer, tools: [{ tool: "Taper" }] });
 
 // A column's repairs, top first.
 async function column(status: RepairStatus) {
@@ -74,18 +75,22 @@ describe("the tool's product", () => {
 		const taper = await createProduct(db, "TAPER", "simple");
 		const id = await createRepair(db, {
 			customer,
-			tool: "Taper",
-			productId: taper,
+			tools: [{ tool: "Taper", productId: taper }],
 		});
+		const [{ id: toolId }] = await db
+			.select({ id: repairTools.id })
+			.from(repairTools)
+			.where(eq(repairTools.repairId, id));
 		const productOf = async () =>
-			(await db.select().from(repairs).where(eq(repairs.id, id)))[0].productId;
+			(await db.select().from(repairTools).where(eq(repairTools.id, toolId)))[0]
+				.productId;
 		expect(await productOf()).toBe(taper);
-		await editRepair(db, id, { serial: "S1" });
+		await editTool(db, id, toolId, { serial: "S1" });
 		expect(await productOf()).toBe(taper);
-		await editRepair(db, id, { tool: "Some other taper" });
+		await editTool(db, id, toolId, { tool: "Some other taper" });
 		expect(await productOf()).toBeNull();
-		await expect(editRepair(db, id, { productId: taper })).rejects.toThrow(
-			/along with/,
-		);
+		await expect(
+			editTool(db, id, toolId, { productId: taper }),
+		).rejects.toThrow(/along with/);
 	});
 });

@@ -2,7 +2,8 @@ import { vi } from "vitest";
 import { formatMinutes } from "./labor";
 
 // A Shopify that keeps draft orders in memory, enough for src/repairs: the
-// labor product, draft orders made, changed, read, paid, and deleted.
+// labor product, draft orders made, changed, read, paid, and deleted, and
+// the orders paid ones became.
 
 export const LABOR = [15, 30, 45, 60, 75, 90, 105, 120].map((m) => ({
 	id: `gid://shopify/ProductVariant/L${m}`,
@@ -81,8 +82,9 @@ const show = (d: FakeDraft) => {
 		order: d.order,
 		subtotalPriceSet: { shopMoney: { amount: subtotal.toFixed(2) } },
 		totalTaxSet: { shopMoney: { amount: "0.00" } },
+		totalShippingPriceSet: { shopMoney: { amount: "0.00" } },
 		totalPriceSet: { shopMoney: { amount: subtotal.toFixed(2) } },
-		lineItems: { nodes: d.lines },
+		lineItems: { pageInfo: { hasNextPage: false }, nodes: d.lines },
 	};
 };
 
@@ -137,6 +139,33 @@ export function fakeShopify() {
 			calls.push("delete");
 			drafts.delete(v.id);
 			return ok({ draftOrderDelete: { deletedId: v.id, userErrors: [] } });
+		}
+		if (query.includes("order(id")) {
+			const d = [...drafts.values()].find((x) => x.order?.id === v.id);
+			if (!d?.order) return ok({ order: null });
+			const shown = show(d);
+			return ok({
+				order: {
+					name: d.order.name,
+					createdAt: new Date().toISOString(),
+					subtotalPriceSet: shown.subtotalPriceSet,
+					totalTaxSet: shown.totalTaxSet,
+					totalShippingPriceSet: shown.totalShippingPriceSet,
+					totalPriceSet: shown.totalPriceSet,
+					totalOutstandingSet: { shopMoney: { amount: "0.00" } },
+					totalRefundedSet: { shopMoney: { amount: "0.00" } },
+					lineItems: {
+						pageInfo: { hasNextPage: false },
+						nodes: d.lines.map((l) => ({
+							title: l.title,
+							quantity: l.quantity,
+							variant: l.variant,
+							customAttributes: l.customAttributes,
+							discountedTotalSet: l.discountedTotalSet,
+						})),
+					},
+				},
+			});
 		}
 		if (query.includes("draftOrder(id")) {
 			const d = drafts.get(v.id);

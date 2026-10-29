@@ -7,17 +7,18 @@ import {
 	Text,
 	View,
 } from "@react-pdf/renderer";
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import QRCode from "qrcode";
 import type { Db } from "#/db/client";
-import { people, repairs } from "#/db/repair-schema";
+import { people, repairs, repairTools } from "#/db/repair-schema";
 import { orderLines, orders } from "#/db/schema";
 import { formatPhone } from "#/lib/format";
 
-// The 4x6 ticket tied to a tool left for repair: its number and whose it
-// is, big enough to read across the shop, and a QR code that opens the
-// repair in katasync (a phone's camera, or the scanner into the board's
-// search). A bench job's says it's ours, and the order it came back on.
+// The 4x6 tickets tied to the tools left for repair, one each: the
+// repair's number and whose it is, big enough to read across the shop,
+// which of its tools this is, and a QR code that opens the repair in
+// katasync (a phone's camera, or the scanner into the board's search). A
+// bench job's says it's ours, and the order it came back on.
 
 export type RepairTicket = {
 	id: number;
@@ -26,16 +27,23 @@ export type RepairTicket = {
 	bench: boolean;
 	returnOrder: string | null;
 	customerPhone: string | null;
-	tool: string;
-	serial: string | null;
-	problem: string;
+	// Which of how many each is: one ticket printed alone still says.
+	tools: {
+		place: number;
+		of: number;
+		tool: string;
+		serial: string | null;
+		problem: string;
+	}[];
 	technician: string | null;
 	createdAt: Date;
 };
 
+// All the repair's tickets, or just one tool's.
 export async function repairTicket(
 	db: Db,
 	id: number,
+	toolId?: number,
 ): Promise<RepairTicket | null> {
 	const [row] = await db
 		.select({
@@ -46,16 +54,36 @@ export async function repairTicket(
 				string | null
 			>`(select o.name from ${orderLines} l join ${orders} o on o.id = l.order_id where l.id = ${repairs.returnLineId})`,
 			customerPhone: repairs.customerPhone,
-			tool: repairs.tool,
-			serial: repairs.serial,
-			problem: repairs.problem,
 			technician: people.name,
 			createdAt: repairs.createdAt,
 		})
 		.from(repairs)
 		.leftJoin(people, eq(people.id, repairs.technicianId))
 		.where(eq(repairs.id, id));
-	return row ?? null;
+	if (!row) return null;
+	const tools = await db
+		.select({
+			id: repairTools.id,
+			tool: repairTools.tool,
+			serial: repairTools.serial,
+			problem: repairTools.problem,
+		})
+		.from(repairTools)
+		.where(eq(repairTools.repairId, id))
+		.orderBy(asc(repairTools.id));
+	const placed = tools.map(({ id: toolId, ...t }, i) => ({
+		...t,
+		toolId,
+		place: i + 1,
+		of: tools.length,
+	}));
+	const printed =
+		toolId === undefined ? placed : placed.filter((t) => t.toolId === toolId);
+	if (printed.length === 0) return null;
+	return {
+		...row,
+		tools: printed.map(({ toolId: _, ...t }) => t),
+	};
 }
 
 export async function renderRepairTicket(ticket: RepairTicket, origin: string) {
@@ -65,35 +93,42 @@ export async function renderRepairTicket(ticket: RepairTicket, origin: string) {
 	});
 	return renderToBuffer(
 		<Document title={`R${ticket.id} repair ticket`} author="katasync">
-			<Page size={[288, 432]} style={s.page}>
-				<View style={s.top}>
-					<Text style={s.number}>R{ticket.id}</Text>
-					<Image src={qr} style={s.qr} />
-				</View>
-				<Text style={s.customer}>
-					{ticket.bench ? "IN-HOUSE REFURB" : ticket.customerName}
-				</Text>
-				{ticket.returnOrder && (
-					<Text style={s.phone}>Return {ticket.returnOrder}</Text>
-				)}
-				{ticket.customerPhone && (
-					<Text style={s.phone}>{formatPhone(ticket.customerPhone)}</Text>
-				)}
-				<View style={s.rule} />
-				<Text style={s.tool}>{ticket.tool}</Text>
-				{ticket.serial && <Text style={s.detail}>Serial {ticket.serial}</Text>}
-				{ticket.problem && <Text style={s.problem}>{ticket.problem}</Text>}
-				<View style={s.footer}>
-					<Text>
-						In{" "}
-						{ticket.createdAt.toLocaleDateString("en-US", {
-							dateStyle: "medium",
-							timeZone: "America/New_York",
-						})}
+			{ticket.tools.map((t) => (
+				<Page key={t.place} size={[288, 432]} style={s.page}>
+					<View style={s.top}>
+						<Text style={s.number}>R{ticket.id}</Text>
+						<Image src={qr} style={s.qr} />
+					</View>
+					<Text style={s.customer}>
+						{ticket.bench ? "IN-HOUSE REFURB" : ticket.customerName}
 					</Text>
-					{ticket.technician && <Text>{ticket.technician}</Text>}
-				</View>
-			</Page>
+					{ticket.returnOrder && (
+						<Text style={s.phone}>Return {ticket.returnOrder}</Text>
+					)}
+					{ticket.customerPhone && (
+						<Text style={s.phone}>{formatPhone(ticket.customerPhone)}</Text>
+					)}
+					<View style={s.rule} />
+					{t.of > 1 && (
+						<Text style={s.detail}>
+							Tool {t.place} of {t.of}
+						</Text>
+					)}
+					<Text style={s.tool}>{t.tool}</Text>
+					{t.serial && <Text style={s.detail}>Serial {t.serial}</Text>}
+					{t.problem && <Text style={s.problem}>{t.problem}</Text>}
+					<View style={s.footer}>
+						<Text>
+							In{" "}
+							{ticket.createdAt.toLocaleDateString("en-US", {
+								dateStyle: "medium",
+								timeZone: "America/New_York",
+							})}
+						</Text>
+						{ticket.technician && <Text>{ticket.technician}</Text>}
+					</View>
+				</Page>
+			))}
 		</Document>,
 	);
 }

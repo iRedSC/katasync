@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
 	createDraft,
 	type Draft,
@@ -8,9 +8,14 @@ import {
 	updateDraft,
 } from "#/channels/shopify/draft-orders";
 import type { Db } from "#/db/client";
-import { repairLabor, repairParts, repairs } from "#/db/repair-schema";
+import {
+	repairLabor,
+	repairParts,
+	repairs,
+	repairTools,
+} from "#/db/repair-schema";
 import { products } from "#/db/schema";
-import { draftLines, ourLines } from "./draft-lines";
+import { type ChargeGroup, draftLines, ourLines } from "./draft-lines";
 import { lastIn } from "./queue";
 import { boardStatuses } from "./status";
 import { laborVariants, shopifyVariants } from "./variants";
@@ -41,10 +46,25 @@ export async function lockRepair(tx: Db, id: number): Promise<Locked> {
 	return row;
 }
 
-const draftNote = (r: Locked) =>
-	[`Repair R${r.id}: ${r.tool}`, r.serial && `Serial ${r.serial}`, r.problem]
-		.filter(Boolean)
-		.join("\n");
+type Tool = { id: number; tool: string; serial: string | null };
+
+const toolLabel = (t: Tool) =>
+	t.serial ? `${t.tool} (serial ${t.serial})` : t.tool;
+
+const draftNote = (r: Locked, tools: Tool[]) =>
+	[`Repair R${r.id}`, ...tools.map(toolLabel)].join("\n");
+
+// The repair's tools, in the order they came in.
+export const toolsOf = (tx: Db, id: number) =>
+	tx
+		.select({
+			id: repairTools.id,
+			tool: repairTools.tool,
+			serial: repairTools.serial,
+		})
+		.from(repairTools)
+		.where(eq(repairTools.repairId, id))
+		.orderBy(asc(repairTools.id));
 
 // The draft as it is now, or null when there isn't one. Throws
 // PaidInShopify once it's been paid.
@@ -53,6 +73,11 @@ async function currentDraft(r: Locked): Promise<Draft | null> {
 	const draft = await readDraft(r.draftOrderId);
 	if (draft?.status === "COMPLETED" && draft.order)
 		throw new PaidInShopify(draft.order);
+	// Rewriting it from one page of lines would drop the others.
+	if (draft?.lineItems.pageInfo.hasNextPage)
+		throw new RepairError(
+			`${draft.name} has more lines than can be read; change it in Shopify`,
+		);
 	return draft;
 }
 
@@ -66,21 +91,22 @@ export async function syncDraft(
 ) {
 	if (r.kind === "bench")
 		throw new RepairError(`R${r.id} is ours; it has no draft order`);
-	const [labor] = await tx
-		.select({
-			minutes: sql<number>`coalesce(sum(${repairLabor.minutes}), 0)::int`,
-		})
+	const tools = await toolsOf(tx, r.id);
+	const labor = await tx
+		.select({ toolId: repairLabor.toolId, minutes: repairLabor.minutes })
 		.from(repairLabor)
 		.where(eq(repairLabor.repairId, r.id));
 	const parts = await tx
 		.select({
+			toolId: repairParts.toolId,
 			productId: repairParts.productId,
 			quantity: repairParts.quantity,
 			sku: products.sku,
 		})
 		.from(repairParts)
 		.innerJoin(products, eq(products.id, repairParts.productId))
-		.where(eq(repairParts.repairId, r.id));
+		.where(eq(repairParts.repairId, r.id))
+		.orderBy(asc(repairParts.id));
 	const variantOf = await shopifyVariants(
 		tx,
 		parts.map((p) => p.productId),
@@ -90,25 +116,33 @@ export async function syncDraft(
 		throw new RepairError(
 			`Not sold on Shopify, so it can't be charged: ${missing.map((p) => p.sku).join(", ")}`,
 		);
-	const minutes = charges ? labor.minutes : 0;
+	// Each tool, then the order's own.
+	const groups: ChargeGroup[] = charges
+		? [
+				...tools.map((t) => ({ toolId: t.id, label: toolLabel(t) })),
+				{ toolId: null, label: null },
+			].map((g) => ({
+				...g,
+				laborMinutes: labor
+					.filter((l) => l.toolId === g.toolId)
+					.reduce((n, l) => n + l.minutes, 0),
+				parts: parts.flatMap((p) => {
+					const variantId = variantOf.get(p.productId);
+					return p.toolId === g.toolId && variantId
+						? [{ variantId, quantity: p.quantity }]
+						: [];
+				}),
+			}))
+		: [];
 	const ours = ourLines(
-		{
-			repairId: r.id,
-			laborMinutes: minutes,
-			parts: charges
-				? parts.flatMap((p) => {
-						const variantId = variantOf.get(p.productId);
-						return variantId ? [{ variantId, quantity: p.quantity }] : [];
-					})
-				: [],
-		},
-		minutes > 0 ? await laborVariants() : [],
+		{ repairId: r.id, groups },
+		groups.some((g) => g.laborMinutes > 0) ? await laborVariants() : [],
 	);
 	const draft = await currentDraft(r);
 	const lineItems = draftLines(draft?.lineItems.nodes ?? [], ours);
 	const input = {
 		customerId: r.customerId ?? undefined,
-		note: draftNote(r),
+		note: draftNote(r, tools),
 		lineItems,
 	};
 	let next: { id: string; name: string } | null;

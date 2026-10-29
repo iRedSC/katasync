@@ -9,6 +9,7 @@ import {
 import { shopifyAdminDraftUrl } from "#/channels/shopify/draft-orders";
 import { getDb } from "#/db/client";
 import { refreshDrafts } from "#/repairs/draft-sync";
+import { repairInvoice } from "#/repairs/invoice";
 import { listPeople } from "#/repairs/people";
 import {
 	boardRepairs,
@@ -28,6 +29,7 @@ import {
 	removeLabor,
 	setPart,
 } from "#/repairs/repairs";
+import { addTool, editTool, removeTool, restoreTool } from "#/repairs/tools";
 
 // The Repairs tab (src/routes/repairs). Rules live in src/repairs.
 
@@ -40,6 +42,14 @@ const customerRef = type({
 	phone: "string | null",
 	email: "string | null",
 });
+const toolFields = type({
+	tool: "string <= 200",
+	"productId?": "number.integer > 0 | null",
+	"serial?": "string <= 100 | null",
+	"problem?": "string <= 2000",
+});
+// One of the repair's tools, or null for the order as a whole.
+const on = "number.integer > 0 | null";
 const customerFields = type({
 	firstName: "string",
 	lastName: "string",
@@ -80,25 +90,37 @@ export const getRepairDetail = createServerFn({ method: "GET" })
 		return { ...detail, people, draftUrl };
 	});
 
+// The printed invoice, priced as Shopify has it now.
+export const getRepairInvoice = createServerFn({ method: "GET" })
+	.validator(id)
+	.handler(async ({ data }) => {
+		const invoice = await repairInvoice(getDb(), data.id);
+		if (!invoice) throw new RepairError(`No repair R${data.id}`);
+		return invoice;
+	});
+
 // A new repair, for a customer found in Shopify or added to it now.
 export const startRepair = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			customer: customerRef.or({ new: customerFields }),
-			tool: "string",
-			"productId?": "number.integer > 0 | null",
-			serial: "string | null",
-			problem: "string",
+			tools: toolFields.array().atLeastLength(1),
 			technicianId: "number | null",
 		}),
 	)
 	.handler(async ({ data }) => {
-		if (!data.tool.trim()) throw new RepairError("Say what the tool is");
+		const [first, ...rest] = data.tools;
+		if (!first || data.tools.some((t) => !t.tool.trim()))
+			throw new RepairError("Say what each tool is");
 		const customer =
 			"new" in data.customer
 				? await newCustomer(data.customer.new)
 				: data.customer;
-		const repairId = await createRepair(getDb(), { ...data, customer });
+		const repairId = await createRepair(getDb(), {
+			customer,
+			tools: [first, ...rest],
+			technicianId: data.technicianId,
+		});
 		return { id: repairId };
 	});
 
@@ -113,10 +135,6 @@ export const changeRepair = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			id: "number.integer > 0",
-			"tool?": "string",
-			"productId?": "number.integer > 0 | null",
-			"serial?": "string | null",
-			"problem?": "string",
 			"notes?": "string",
 			"technicianId?": "number | null",
 			"customer?": customerRef,
@@ -125,6 +143,52 @@ export const changeRepair = createServerFn({ method: "POST" })
 	.handler(async ({ data: { id: repairId, ...edit } }) =>
 		editRepair(getDb(), repairId, edit),
 	);
+
+export const addRepairTool = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", fields: toolFields }))
+	.handler(async ({ data }) => ({
+		toolId: await addTool(getDb(), data.id, data.fields),
+	}));
+
+export const changeRepairTool = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			id: "number.integer > 0",
+			toolId: "number.integer > 0",
+			"tool?": "string <= 200",
+			"productId?": "number.integer > 0 | null",
+			"serial?": "string <= 100 | null",
+			"problem?": "string <= 2000",
+		}),
+	)
+	.handler(async ({ data: { id: repairId, toolId, ...edit } }) =>
+		editTool(getDb(), repairId, toolId, edit),
+	);
+
+export const removeRepairTool = createServerFn({ method: "POST" })
+	.validator(type({ id: "number.integer > 0", toolId: "number.integer > 0" }))
+	.handler(async ({ data }) => removeTool(getDb(), data.id, data.toolId));
+
+export const restoreRepairTool = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			id: "number.integer > 0",
+			removed: {
+				tool: "string <= 200",
+				productId: "number.integer > 0 | null",
+				serial: "string <= 100 | null",
+				problem: "string <= 2000",
+				labor: type({ minutes: "number.integer > 0", note: "string" }).array(),
+				parts: type({
+					productId: "number.integer > 0",
+					quantity: "1 <= number.integer <= 999",
+				}).array(),
+			},
+		}),
+	)
+	.handler(async ({ data }) => ({
+		toolId: await restoreTool(getDb(), data.id, data.removed),
+	}));
 
 export const moveRepairTo = createServerFn({ method: "POST" })
 	.validator(
@@ -142,12 +206,13 @@ export const addRepairLabor = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			id: "number.integer > 0",
+			toolId: on,
 			minutes: "number.integer",
 			note: "string",
 		}),
 	)
-	.handler(async ({ data }) => ({
-		laborId: await addLabor(getDb(), data.id, data.minutes, data.note),
+	.handler(async ({ data: { id: repairId, ...labor } }) => ({
+		laborId: await addLabor(getDb(), repairId, labor),
 	}));
 
 export const changeRepairLabor = createServerFn({ method: "POST" })
@@ -157,6 +222,7 @@ export const changeRepairLabor = createServerFn({ method: "POST" })
 			laborId: "number.integer > 0",
 			"minutes?": "number.integer",
 			"note?": "string",
+			"toolId?": on,
 		}),
 	)
 	.handler(async ({ data: { id: repairId, laborId, ...edit } }) =>
@@ -171,12 +237,13 @@ export const setRepairPart = createServerFn({ method: "POST" })
 	.validator(
 		type({
 			id: "number.integer > 0",
+			toolId: on,
 			productId: "number.integer > 0",
 			quantity: "number.integer >= 0",
 		}),
 	)
-	.handler(async ({ data }) =>
-		setPart(getDb(), data.id, data.productId, data.quantity),
+	.handler(async ({ data: { id: repairId, ...part } }) =>
+		setPart(getDb(), repairId, part),
 	);
 
 export const emailRepairInvoice = createServerFn({ method: "POST" })
