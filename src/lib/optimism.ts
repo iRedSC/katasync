@@ -302,6 +302,8 @@ export type Optimism = ReturnType<typeof createOptimism>;
 // later change sends, the one that made its id has been answered.
 let provisionals = 0;
 const confirmed = new Map<number, number>();
+// Each server id made here, back to the id it had first.
+const madeAs = new Map<number, number>();
 
 export const ids = {
 	// A new id for something not made yet.
@@ -312,7 +314,11 @@ export const ids = {
 	// The server made it, as `real`.
 	confirm(provisional: number, real: number) {
 		confirmed.set(provisional, real);
+		madeAs.set(real, provisional);
 	},
+	// The same for a thing before and after the server made it, as a React
+	// key, so what's shown for it (and typed into it) outlives the reload.
+	key: (id: number) => madeAs.get(id) ?? id,
 	// The server's id, when it's known; else the one made here.
 	current: (id: number) => confirmed.get(id) ?? id,
 	// The id to send. Throws when what it names was never made, because the

@@ -139,11 +139,13 @@ export function ToolCard({
 	const bench = r.kind === "bench";
 	const several = d.tools.length > 1;
 	const c = chargesOf(d, t.id);
-	const problem = useDraft(t.problem, `problem-${t.id}`);
+	// Its id changes once the server makes it; its drafts mustn't.
+	const k = ids.key(t.id);
+	const problem = useDraft(t.problem, `problem-${k}`);
 	// A bench job stays the product it came in as; its name is a label.
 	const named = useDraft(
 		{ tool: t.tool, productId: t.productId },
-		`tool-${t.id}`,
+		`tool-${k}`,
 		(a, b) => a.tool === b.tool && a.productId === b.productId,
 	);
 	const { tool, productId } = named.value;
@@ -220,7 +222,7 @@ export function ToolCard({
 				</div>
 				<div className="-mx-2 text-muted-foreground">
 					<NoteField
-						id={`serial-${t.id}`}
+						id={`serial-${k}`}
 						value={t.serial ?? ""}
 						disabled={!editable}
 						placeholder="Serial"

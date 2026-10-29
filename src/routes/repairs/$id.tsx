@@ -13,7 +13,7 @@ import { StatusBar } from "#/components/repairs/status-bar";
 import { AddTool, OtherCard, ToolCard } from "#/components/repairs/tool-card";
 import { DetailSkeleton, ListCard } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
-import { optimism } from "#/lib/optimism";
+import { ids, optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { printPdf } from "#/printing/qz-client";
 import { isOnBoard, type MoveTarget, statusNames } from "#/repairs/status";
@@ -112,7 +112,7 @@ function RepairPage() {
 				<div className="flex flex-col gap-4">
 					{d.tools.map((t, i) => (
 						<ToolCard
-							key={t.id}
+							key={ids.key(t.id)}
 							d={d}
 							act={act}
 							tool={t}

@@ -12,7 +12,7 @@ import {
 } from "./draft-lines";
 import { refreshDrafts } from "./draft-sync";
 import { fakeShopify } from "./fake-shopify.fixtures";
-import { repairInvoice, share } from "./invoice";
+import { breakdown, repairInvoice, share } from "./invoice";
 import { formatMinutes, splitLabor, variantMinutes } from "./labor";
 import { repairNumber } from "./number";
 import { addPerson, removePerson } from "./people";
@@ -49,6 +49,42 @@ describe("labor", () => {
 		]);
 		expect(splitLabor(10, variants)).toBeNull();
 		expect(splitLabor(0, variants)).toBeNull();
+	});
+
+	test("an invoice lists every line of ours, whatever Shopify lost", () => {
+		const line = (key: string, variantId: string | null, total: number) => ({
+			title: key,
+			quantity: 1,
+			variantId,
+			customAttributes: [
+				{ key: REPAIR_KEY, value: "R1" },
+				{ key: TOOL_KEY, value: key },
+			],
+			total,
+		});
+		const { groups } = breakdown({
+			tools: [{ id: 1, tool: "Taper", serial: null, problem: "" }],
+			labor: [{ toolId: 1, minutes: 60, note: "" }],
+			parts: [],
+			variantOf: new Map(),
+			laborVariants: new Set(),
+			bill: {
+				name: "#1",
+				ordered: true,
+				subtotal: 65,
+				shipping: 0,
+				tax: 0,
+				total: 65,
+				due: 0,
+				refunded: 0,
+				// Its labor variant deleted since; a line for a tool taken off.
+				lines: [line(LABOR_KEY, null, 55), line("99", "gid://x/1", 10)],
+			},
+		});
+		expect(groups.map((g) => [g.tool?.tool ?? null, g.subtotal])).toEqual([
+			["Taper", 55],
+			[null, 10],
+		]);
 	});
 
 	test("shares a charge by minutes in cents that add back up", () => {

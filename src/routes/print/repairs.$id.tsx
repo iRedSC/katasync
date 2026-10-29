@@ -257,6 +257,12 @@ function Totals({
 			)}
 			<dt>Subtotal</dt>
 			<dd className="text-right">{formatMoney(bill.subtotal)}</dd>
+			{bill.shipping > 0 && (
+				<>
+					<dt>Shipping</dt>
+					<dd className="text-right">{formatMoney(bill.shipping)}</dd>
+				</>
+			)}
 			<dt>Tax</dt>
 			<dd className="text-right">{formatMoney(bill.tax)}</dd>
 			<dt className="border-t-2 border-black pt-1 font-bold">Total</dt>

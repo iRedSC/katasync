@@ -10,7 +10,7 @@ import {
 } from "#/db/repair-schema";
 import { locations, products } from "#/db/schema";
 import { cityLine } from "#/lib/format";
-import { isOurs, lineTool, toolKey } from "./draft-lines";
+import { isOurs, LABOR, lineTool, TOOL_KEY, toolKey } from "./draft-lines";
 import { laborVariants, shopifyVariants } from "./variants";
 
 // A repair's printed invoice (src/routes/print/repairs.$id.tsx): each tool
@@ -36,6 +36,7 @@ export type Bill = {
 	// Ordered, so paid for at least in part.
 	ordered: boolean;
 	subtotal: number;
+	shipping: number;
 	tax: number;
 	total: number;
 	// What's still owed, and what was given back, as Shopify says.
@@ -113,8 +114,12 @@ export function breakdown(input: {
 	const first = tools[0]?.id;
 	const ours = bill?.lines.filter(isOurs) ?? [];
 	const sum = (lines: BillLine[]) => lines.reduce((n, l) => n + l.total, 0);
+	// Marked as the repair's time, or, on drafts from before it was, one of
+	// the labor product's variants. The mark holds even once Shopify has
+	// lost the variant.
 	const isLabor = (l: BillLine) =>
-		l.variantId !== null && laborVariants.has(l.variantId);
+		l.customAttributes.some((a) => a.key === TOOL_KEY && a.value === LABOR) ||
+		(l.variantId !== null && laborVariants.has(l.variantId));
 	const slots = [
 		...tools.map((t) => ({ tool: t, toolId: t.id })),
 		{ tool: null, toolId: null },
@@ -129,11 +134,17 @@ export function breakdown(input: {
 		sum(laborLines),
 		slots.map((s) => minutesOf(s.time)),
 	);
+	// Ours, but for no tool still on the repair: shown as the order's.
+	const keys = new Set(slots.map((s) => toolKey(s.toolId)));
+	const strays = ours.filter(
+		(l) => !isLabor(l) && !keys.has(lineTool(l, first)),
+	);
 	const groups: InvoiceGroup[] = slots.flatMap(({ tool, toolId, time }, i) => {
 		const key = toolKey(toolId);
 		const used = parts.filter((p) => p.toolId === toolId);
 		const lines = [
 			...ours.filter((l) => !isLabor(l) && lineTool(l, first) === key),
+			...(tool ? [] : strays),
 			...(!tool && !timed ? laborLines : []),
 		];
 		if (!tool && time.length + used.length + lines.length === 0) return [];
@@ -210,6 +221,7 @@ async function readBill(r: {
 					name: o.name,
 					ordered: true,
 					subtotal: Number(o.subtotalPriceSet.shopMoney.amount),
+					shipping: Number(o.totalShippingPriceSet.shopMoney.amount),
 					tax: Number(o.totalTaxSet.shopMoney.amount),
 					total: Number(o.totalPriceSet.shopMoney.amount),
 					due: Number(o.totalOutstandingSet.shopMoney.amount),
@@ -230,6 +242,11 @@ async function readBill(r: {
 		// Ordered since the board last looked: what the order says.
 		if (d.status === "COMPLETED" && d.order)
 			return readBill({ orderId: d.order.id, draftOrderId: null });
+		if (d.lineItems.pageInfo.hasNextPage)
+			return {
+				kind: "unreadable",
+				error: `${d.name} has more lines than can be listed`,
+			};
 		const total = Number(d.totalPriceSet.shopMoney.amount);
 		return {
 			kind: "read",
@@ -237,6 +254,7 @@ async function readBill(r: {
 				name: d.name,
 				ordered: false,
 				subtotal: Number(d.subtotalPriceSet.shopMoney.amount),
+				shipping: Number(d.totalShippingPriceSet.shopMoney.amount),
 				tax: Number(d.totalTaxSet.shopMoney.amount),
 				total,
 				due: total,
@@ -354,6 +372,7 @@ export async function repairInvoice(db: Db, id: number) {
 			name: bill.name,
 			ordered: bill.ordered,
 			subtotal: bill.subtotal,
+			shipping: bill.shipping,
 			tax: bill.tax,
 			total: bill.total,
 			due: bill.due,

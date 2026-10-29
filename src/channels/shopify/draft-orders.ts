@@ -37,8 +37,10 @@ const draftShape = type({
 	order: type({ id: "string", name: "string" }).or("null"),
 	subtotalPriceSet: { shopMoney: money },
 	totalTaxSet: { shopMoney: money },
+	totalShippingPriceSet: { shopMoney: money },
 	totalPriceSet: { shopMoney: money },
-	lineItems: { nodes: draftLine.array() },
+	// More lines than one page holds: reading it again would drop the rest.
+	lineItems: { pageInfo: { hasNextPage: "boolean" }, nodes: draftLine.array() },
 });
 export type Draft = typeof draftShape.infer;
 
@@ -47,8 +49,9 @@ const DRAFT_FIELDS = `
 	order { id name }
 	subtotalPriceSet { shopMoney { amount } }
 	totalTaxSet { shopMoney { amount } }
+	totalShippingPriceSet { shopMoney { amount } }
 	totalPriceSet { shopMoney { amount } }
-	lineItems(first: 250) { nodes {
+	lineItems(first: 250) { pageInfo { hasNextPage } nodes {
 		uuid title quantity custom sku taxable requiresShipping
 		variant { id }
 		originalUnitPriceSet { shopMoney { amount } }
@@ -196,6 +199,7 @@ export async function readOrderBill(id: string) {
 			createdAt: "string",
 			subtotalPriceSet: { shopMoney: money },
 			totalTaxSet: { shopMoney: money },
+			totalShippingPriceSet: { shopMoney: money },
 			totalPriceSet: { shopMoney: money },
 			totalOutstandingSet: { shopMoney: money },
 			totalRefundedSet: { shopMoney: money },
@@ -219,6 +223,7 @@ export async function readOrderBill(id: string) {
 				name createdAt
 				subtotalPriceSet { shopMoney { amount } }
 				totalTaxSet { shopMoney { amount } }
+				totalShippingPriceSet { shopMoney { amount } }
 				totalPriceSet { shopMoney { amount } }
 				totalOutstandingSet { shopMoney { amount } }
 				totalRefundedSet { shopMoney { amount } }

@@ -82,8 +82,9 @@ const show = (d: FakeDraft) => {
 		order: d.order,
 		subtotalPriceSet: { shopMoney: { amount: subtotal.toFixed(2) } },
 		totalTaxSet: { shopMoney: { amount: "0.00" } },
+		totalShippingPriceSet: { shopMoney: { amount: "0.00" } },
 		totalPriceSet: { shopMoney: { amount: subtotal.toFixed(2) } },
-		lineItems: { nodes: d.lines },
+		lineItems: { pageInfo: { hasNextPage: false }, nodes: d.lines },
 	};
 };
 
@@ -149,6 +150,7 @@ export function fakeShopify() {
 					createdAt: new Date().toISOString(),
 					subtotalPriceSet: shown.subtotalPriceSet,
 					totalTaxSet: shown.totalTaxSet,
+					totalShippingPriceSet: shown.totalShippingPriceSet,
 					totalPriceSet: shown.totalPriceSet,
 					totalOutstandingSet: { shopMoney: { amount: "0.00" } },
 					totalRefundedSet: { shopMoney: { amount: "0.00" } },

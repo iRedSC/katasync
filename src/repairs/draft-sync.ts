@@ -73,6 +73,11 @@ async function currentDraft(r: Locked): Promise<Draft | null> {
 	const draft = await readDraft(r.draftOrderId);
 	if (draft?.status === "COMPLETED" && draft.order)
 		throw new PaidInShopify(draft.order);
+	// Rewriting it from one page of lines would drop the others.
+	if (draft?.lineItems.pageInfo.hasNextPage)
+		throw new RepairError(
+			`${draft.name} has more lines than can be read; change it in Shopify`,
+		);
 	return draft;
 }
 
