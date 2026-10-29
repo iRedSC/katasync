@@ -2,6 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "tanstack-start",
   "buildCommand": "sh scripts/vercel-build.sh",
+  "ignoreCommand": "sh scripts/vercel-ignore.sh",
   "crons": [
     { "path": "/api/cron/sync/shopify?listings=1", "schedule": "7 */4 * * *" },
     { "path": "/api/cron/sync/tiktok?listings=1", "schedule": "7 */4 * * *" },
