@@ -1,22 +1,28 @@
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	Check,
+	ChevronDown,
 	Download,
 	GitCompare,
 	Loader2,
 	Printer,
-	Save,
 	Send,
 } from "lucide-react";
 import { useState } from "react";
 import { Badge, Card } from "#/components/page";
 import { Button } from "#/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogTitle,
+} from "#/components/ui/dialog";
 import { Tip } from "#/components/ui/tooltip";
 import { formatDateTime } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { type Change, reportChanges } from "#/reports/diff";
 import type { ReportData } from "#/reports/snapshot";
-import type { LiveState, RevisionView, SaveResult } from "#/reports/store";
+import type { LiveState, RevisionView } from "#/reports/store";
 import {
 	getReportArtifact,
 	handOffRevision,
@@ -24,15 +30,18 @@ import {
 } from "#/server/reports";
 import { downloadText } from "./download";
 
-type SaveState =
-	| { kind: "idle" }
-	| { kind: "saving" }
-	| { kind: "done"; result: SaveResult }
-	| { kind: "failed"; message: string };
-
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function Revisions({
+type PrintState =
+	| { kind: "idle" }
+	| { kind: "choosing" }
+	| { kind: "saving" }
+	| { kind: "failed"; message: string };
+
+// Printing always prints a saved revision. Unchanged figures reprint the
+// latest one; new figures save a revision first; when both exist, the
+// dialog asks which.
+export function PrintButton({
 	period,
 	revisions,
 	live,
@@ -44,72 +53,136 @@ export function Revisions({
 	liveState: LiveState;
 }) {
 	const router = useRouter();
-	const [save, setSave] = useState<SaveState>({ kind: "idle" });
+	const [state, setState] = useState<PrintState>({ kind: "idle" });
+	const [latest] = revisions;
+	const href = (snapshot: number) =>
+		router.buildLocation({ to: "/print/report", search: { snapshot } }).href;
+
+	function printSaved(snapshot: number) {
+		setState({ kind: "idle" });
+		window.open(href(snapshot), "_blank");
+	}
+
+	async function printNew() {
+		if (state.kind === "saving") return;
+		// Opened now, while the click still counts, or the browser blocks it.
+		const tab = window.open("about:blank", "_blank");
+		setState({ kind: "saving" });
+		try {
+			const result = await saveReportRevision({ data: { period } });
+			if (tab) tab.location.href = href(result.id);
+			else window.location.assign(href(result.id));
+			setState({ kind: "idle" });
+			await router.invalidate();
+		} catch (e) {
+			tab?.close();
+			setState({ kind: "failed", message: messageOf(e) });
+		}
+	}
+
+	function onClick() {
+		if (liveState.kind === "saved" && latest) printSaved(latest.id);
+		else if (liveState.kind === "changed") setState({ kind: "choosing" });
+		else printNew();
+	}
+
+	return (
+		<>
+			{state.kind === "failed" && (
+				<span className="text-xs text-critical-text animate-in fade-in">
+					{state.message}
+				</span>
+			)}
+			<Button onClick={onClick} disabled={state.kind === "saving"}>
+				{state.kind === "saving" ? (
+					<Loader2 className="animate-spin" />
+				) : (
+					<Printer />
+				)}
+				Print
+			</Button>
+			{latest && (
+				<Dialog
+					open={state.kind === "choosing"}
+					onOpenChange={(open) => !open && setState({ kind: "idle" })}
+				>
+					<DialogContent className="sm:max-w-xl">
+						<DialogTitle>Print which?</DialogTitle>
+						<DialogDescription className="sr-only">
+							The figures changed since revision {latest.revision} was printed
+						</DialogDescription>
+						<div className="grid grid-cols-2 gap-2">
+							<button
+								type="button"
+								onClick={() => printSaved(latest.id)}
+								className="flex flex-col items-start gap-0.5 rounded-lg border p-3 text-left hover:bg-surface"
+							>
+								<span className="font-semibold">
+									Revision {latest.revision}
+								</span>
+								<span className="text-xs text-muted-foreground tabular-nums">
+									{formatDateTime(latest.asOf)}
+								</span>
+							</button>
+							<button
+								type="button"
+								onClick={printNew}
+								className="flex flex-col items-start gap-0.5 rounded-lg border border-primary bg-primary/5 p-3 text-left hover:bg-primary/10"
+							>
+								<span className="font-semibold">
+									Revision {latest.revision + 1}
+								</span>
+								<span className="text-xs text-muted-foreground">Now</span>
+							</button>
+						</div>
+						<div className="max-h-72 overflow-y-auto">
+							<Changes changes={reportChanges(latest.data, live)} />
+						</div>
+					</DialogContent>
+				</Dialog>
+			)}
+		</>
+	);
+}
+
+// Every revision printed for the month, newest first, folded away until
+// asked for.
+export function History({
+	revisions,
+	live,
+	liveState,
+}: {
+	revisions: RevisionView[];
+	live: ReportData;
+	liveState: LiveState;
+}) {
+	const [open, setOpen] = useState(false);
+	if (revisions.length === 0) return null;
 	const lastRecipient = revisions
 		.flatMap((r) => r.handoffs)
 		.sort((a, b) => +b.handedAt - +a.handedAt)[0]?.recipient;
 
-	async function onSave() {
-		if (save.kind === "saving") return;
-		setSave({ kind: "saving" });
-		try {
-			const result = await saveReportRevision({ data: { period } });
-			await router.invalidate();
-			setSave({ kind: "done", result });
-		} catch (e) {
-			setSave({ kind: "failed", message: messageOf(e) });
-		}
-	}
-
-	const flashed = save.kind === "done" ? save.result : null;
-
 	return (
 		<Card
-			title="Saved revisions"
-			tone={
-				liveState.kind === "changed"
-					? liveState.handedOff
-						? "critical"
-						: "warning"
-					: undefined
-			}
+			title="History"
 			aside={
-				<div className="flex items-center gap-2">
-					<LiveChip state={liveState} />
-					{flashed?.kind === "unchanged" && (
-						<span className="text-xs text-muted-foreground animate-in fade-in">
-							No changes
-						</span>
-					)}
-					{save.kind === "failed" && (
-						<span className="text-xs text-critical-text">{save.message}</span>
-					)}
-					<Button
-						size="xs"
-						variant={liveState.kind === "saved" ? "ghost" : "default"}
-						onClick={onSave}
-						disabled={save.kind === "saving"}
-					>
-						{save.kind === "saving" ? (
-							<Loader2 className="animate-spin" />
-						) : (
-							<Save />
-						)}
-						Save revision
-					</Button>
-				</div>
+				<Button size="xs" variant="ghost" onClick={() => setOpen(!open)}>
+					{revisions.length} printed
+					<ChevronDown
+						className={cn("transition-transform", open && "rotate-180")}
+					/>
+				</Button>
 			}
 			flush
 		>
-			{revisions.length === 0 ? null : (
-				<ul className="flex flex-col">
+			{open && (
+				<ul className="flex flex-col animate-in fade-in">
 					{revisions.map((r, i) => (
 						<RevisionRow
 							key={r.id}
 							revision={r}
 							previous={revisions[i + 1]?.data ?? null}
 							live={i === 0 && liveState.kind === "changed" ? live : null}
-							flash={flashed?.id === r.id ? flashed.kind : null}
 							lastRecipient={lastRecipient}
 						/>
 					))}
@@ -117,22 +190,6 @@ export function Revisions({
 			)}
 		</Card>
 	);
-}
-
-function LiveChip({ state }: { state: LiveState }) {
-	switch (state.kind) {
-		case "unsaved":
-			return <Badge>Not saved</Badge>;
-		case "saved":
-			return <Badge tone="success">Matches revision {state.revision}</Badge>;
-		case "changed":
-			return (
-				<Badge tone={state.handedOff ? "critical" : "warning"}>
-					Changed since revision {state.since}
-					{state.handedOff ? ", after handoff" : ""}
-				</Badge>
-			);
-	}
 }
 
 type Handoff =
@@ -144,13 +201,11 @@ function RevisionRow({
 	revision: r,
 	previous,
 	live,
-	flash,
 	lastRecipient,
 }: {
 	revision: RevisionView;
 	previous: ReportData | null;
 	live: ReportData | null;
-	flash: SaveResult["kind"] | null;
 	lastRecipient: string | undefined;
 }) {
 	const router = useRouter();
@@ -211,8 +266,6 @@ function RevisionRow({
 		<li
 			className={cn(
 				"flex flex-col gap-2 border-t px-4 py-3",
-				flash === "saved" && "bg-success-fill/40 animate-in fade-in",
-				flash === "unchanged" && "bg-info-fill/40",
 				superseded && "text-muted-foreground",
 			)}
 		>
@@ -284,7 +337,7 @@ function RevisionRow({
 						onClick={() => setDiff(diff === "live" ? "none" : "live")}
 					>
 						<GitCompare />
-						Since saved
+						Since printed
 					</Button>
 				)}
 				{handoff.kind === "closed" && (
