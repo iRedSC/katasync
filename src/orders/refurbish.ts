@@ -340,7 +340,12 @@ export async function makeRefurb<T>(
 // cost when it sold.
 export async function refurbishReturn(
 	db: Db,
-	input: { orderId: number; lineId: number; quantity: number } & RefurbDetails,
+	input: {
+		orderId: number;
+		lineId: number;
+		quantity: number;
+		returnNote?: string | null;
+	} & RefurbDetails,
 ) {
 	await checkedCondition(input);
 	const original = await originalOf(db, input.orderId, input.lineId);
@@ -360,6 +365,7 @@ export async function refurbishReturn(
 					orderId: input.orderId,
 					lines: [{ lineId: input.lineId, quantity: input.quantity }],
 					outcome: { refurbishInto: refurbId },
+					note: input.returnNote,
 				}),
 		);
 		const { received, ...rest } = made;

@@ -538,6 +538,7 @@ export {
 	type ReturnsData,
 	receiveOrderReturn,
 	refurbishOrderReturn,
+	scanReturnLabel,
 	searchReturnable,
 	undoOrderNoReturn,
 	undoOrderReturn,

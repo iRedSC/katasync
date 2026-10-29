@@ -25,21 +25,24 @@ export function CaseRow({
 				: link({ to: "/orders/$id", params: { id: String(r.orderId) } }))}
 			className="border-t first:border-t-0 hover:bg-subtle"
 		>
-			<td className="px-4 py-2.5 font-semibold">
-				{r.name}
+			<td className="px-4 py-2.5">
+				<div className="flex items-center gap-1.5 font-semibold">
+					{r.name}
+					<ChannelBadge channel={r.channel} salesChannel={r.salesChannel} />
+				</div>
+				<div className="text-xs text-muted-foreground">
+					{formatOrderDate(r.requestedAt)}
+				</div>
 				{r.orderId === null && <Badge tone="warning">Order not imported</Badge>}
 			</td>
-			<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
-				{formatOrderDate(r.requestedAt)}
-			</td>
-			<td className="w-2/5 max-w-0 px-4 py-2.5">
+			<td className="hidden w-1/5 max-w-0 px-4 py-2.5 md:table-cell">
 				<div className="truncate">{r.customerName ?? "No name"}</div>
 				<div className="truncate text-xs text-muted-foreground">
 					{[r.shipCity, r.shipRegion].filter(Boolean).join(", ")}
 					{r.shipPostalCode && ` ${r.shipPostalCode}`}
 				</div>
 			</td>
-			<td className="hidden w-3/5 max-w-0 px-4 py-2 md:table-cell">
+			<td className="w-2/5 max-w-0 px-4 py-2">
 				<OrderProducts
 					lines={r.lines.map((l) => ({
 						...l,
@@ -49,10 +52,8 @@ export function CaseRow({
 						fromStore: [],
 					}))}
 				/>
-			</td>
-			<td className="hidden max-w-56 px-4 py-2.5 lg:table-cell">
 				{r.reason && (
-					<div className="truncate text-muted-foreground">
+					<div className="truncate text-xs text-muted-foreground">
 						{returnReason(r.reason)}
 					</div>
 				)}
@@ -62,20 +63,13 @@ export function CaseRow({
 					</Tip>
 				)}
 			</td>
-			<td className="hidden px-4 py-2.5 lg:table-cell">
-				<ChannelBadge channel={r.channel} salesChannel={r.salesChannel} />
-			</td>
 			<td className="px-4 py-2.5">
 				<div className="flex flex-col items-start gap-1">
-					{(r.source === "marketplace" ||
-						(r.status !== "unknown" && r.waitingOn === "us")) && (
-						<Badge tone={r.waitingOn === "us" ? "warning" : undefined}>
-							{caseKindLabel(r.kind)}
-						</Badge>
-					)}
-					<CaseObligation request={r} />
+					<Badge tone={r.waitingOn === "us" ? "warning" : undefined}>
+						{caseKindLabel(r.kind)}
+					</Badge>
 					{r.source === "return" && (
-						<div className="flex flex-wrap gap-1">
+						<div className="flex flex-wrap gap-1 empty:hidden">
 							<ReturnEvidence evidence={r} />
 						</div>
 					)}
@@ -86,8 +80,17 @@ export function CaseRow({
 					)}
 				</div>
 			</td>
+			<td className="hidden px-4 py-2.5 text-sm font-medium tabular-nums sm:table-cell">
+				{r.amount !== null &&
+					r.currency !== null &&
+					new Intl.NumberFormat(undefined, {
+						style: "currency",
+						currency: r.currency,
+					}).format(Number(r.amount))}
+			</td>
 			<td className="py-1.5 pr-2">
-				<div className="flex items-center justify-end">
+				<div className="flex items-center justify-end gap-1">
+					<CaseObligation request={{ ...r, amount: null, currency: null }} />
 					{r.answerOn && (
 						<a
 							href={r.answerOn.url}

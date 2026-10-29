@@ -58,9 +58,14 @@ export function OrderTabs({
 
 // Returns' two views, at the far end of its tab bar: what's open (refunds
 // to answer, what's due back), and insights into why things come back.
-export function ReturnsViews({ active }: { active: "due" | "insights" }) {
+export function ReturnsViews({
+	active,
+}: {
+	active: "due" | "refunds" | "insights";
+}) {
 	const views = [
-		{ key: "due", label: "Open", to: "/orders/returns" },
+		{ key: "due", label: "Triage", to: "/orders/returns" },
+		{ key: "refunds", label: "Refunds", to: "/orders/returns/refunds" },
 		{ key: "insights", label: "Insights", to: "/orders/returns/insights" },
 	] as const;
 	return (

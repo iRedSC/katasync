@@ -818,10 +818,16 @@ export const orderReturns = pgTable(
 		refurbProductId: integer().references(() => products.id),
 		preCutover: boolean().notNull().default(false),
 		batchId: uuid(),
+		// What whoever checked it in saw, for whoever decides the refund.
+		note: text(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		check("order_returns_quantity_positive", sql`${t.quantity} > 0`),
+		check(
+			"order_returns_note_given",
+			sql`${t.note} is null or btrim(${t.note}) <> ''`,
+		),
 		check(
 			"order_returns_pre_cutover_alone",
 			sql`not (${t.preCutover} and (${t.restocked} or ${t.refurbProductId} is not null))`,
@@ -835,6 +841,59 @@ export const orderReturns = pgTable(
 			sql`not (${t.restocked} and ${t.refurbProductId} is not null)`,
 		),
 		index("order_returns_line_idx").on(t.orderLineId),
+	],
+);
+
+// What to do about the buyer's money once their return is checked in
+// (src/orders/refund-step.ts): refund it all, refund part, refuse, or
+// something else first. katasync records it and the refund itself is made
+// on the marketplace; a refund decision is done once the marketplace's
+// charges show more refunded than refundedBefore, or someone says it's
+// refunded (settledAt). The newest decision for an order is the one that
+// counts, and only for what was checked in before it.
+export const refundDecision = pgEnum("refund_decision", [
+	"full",
+	"partial",
+	"none",
+	"other",
+]);
+
+export const returnRefunds = pgTable(
+	"return_refunds",
+	{
+		id: integer().primaryKey().generatedAlwaysAsIdentity(),
+		orderId: integer()
+			.notNull()
+			.references(() => orders.id),
+		decision: refundDecision().notNull(),
+		// What to refund, for a partial refund only.
+		amount: numeric({ precision: 12, scale: 2, mode: "number" }),
+		// Why: what else needs doing, for other; optional for the rest.
+		note: text(),
+		// What the order's marketplace had refunded when it was decided.
+		refundedBefore: numeric({
+			precision: 12,
+			scale: 2,
+			mode: "number",
+		}).notNull(),
+		decidedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		// Said by hand to be refunded, or for other, resolved.
+		settledAt: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		index("return_refunds_order_idx").on(t.orderId, t.decidedAt),
+		check(
+			"return_refunds_amount_for_partial",
+			sql`(${t.decision} = 'partial') = (${t.amount} is not null) and (${t.amount} is null or ${t.amount} > 0)`,
+		),
+		check(
+			"return_refunds_other_says_what",
+			sql`${t.decision} <> 'other' or btrim(coalesce(${t.note}, '')) <> ''`,
+		),
+		check(
+			"return_refunds_refused_unsettled",
+			sql`${t.decision} <> 'none' or ${t.settledAt} is null`,
+		),
 	],
 );
 

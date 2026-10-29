@@ -137,7 +137,11 @@ test("open_cases and the Returns queue retain processing, sort deadlines, and ex
 		"us",
 		"marketplace",
 	]);
-	expect(listed.refunds).toHaveLength(2);
+	expect(
+		listed.cases.filter(
+			(row) => row.kind === "refund" && row.waitingOn === "us",
+		),
+	).toHaveLength(2);
 	const [saved] = await db
 		.select()
 		.from(returnRequests)

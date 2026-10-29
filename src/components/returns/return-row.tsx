@@ -1,55 +1,53 @@
-import { Ban } from "lucide-react";
+import { Ban, ExternalLink } from "lucide-react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { OrderProducts } from "#/components/orders-list/order-products";
-import { PackageWhere } from "#/components/package-status";
-import { Badge, type Tone } from "#/components/page";
+import { Badge } from "#/components/page";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
-import type { ReturnState } from "#/db/schema";
 import { formatCount, formatOrderDate } from "#/lib/format";
 import type { useRowLink } from "#/lib/row-link";
+import { cn } from "#/lib/utils";
+import type { AdminPage } from "#/orders/admin-urls";
 import { returnReason } from "#/orders/return-reasons";
+import type { Situation } from "#/orders/return-situation";
 import type { ReturnOrder } from "#/orders/returns-due";
 import { CaseObligation } from "./case-obligation";
+import { ItemCell, RefundCell } from "./return-cells";
 import { ReturnEvidence } from "./return-evidence";
-
-export const states: Record<
-	ReturnState,
-	{ label: string; tone?: Tone; heading: string }
-> = {
-	on_its_way: { label: "On its way", tone: "info", heading: "On its way" },
-	requested: {
-		label: "Requested",
-		tone: "info",
-		heading: "Requested, not sent yet",
-	},
-	refunded: {
-		label: "Refunded, not back",
-		tone: "warning",
-		heading: "Refunded, not back yet",
-	},
-	maybe: { label: "Maybe", heading: "Refunded in part, maybe coming back" },
-};
 
 export const ICON_BUTTON =
 	"inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-strong hover:text-foreground";
 
-// One order with something coming back, laid out as the orders list lays
-// out an order. A click opens the order, where its whole return is; its
-// Receive opens the box.
+const LINK =
+	"inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-link hover:bg-surface-strong";
+
+function Outside({ page, verb }: { page: AdminPage | null; verb: string }) {
+	if (!page) return null;
+	return (
+		<a href={page.url} target="_blank" rel="noreferrer" className={LINK}>
+			{verb} on {page.name}
+			<ExternalLink className="size-3.5" />
+		</a>
+	);
+}
+
+// One order's return: what's coming, where it is, the refund, and the one
+// thing to do next. A click opens the order, where its whole return is.
 export function ReturnRow({
 	order: o,
+	situation: s,
 	onReceive,
 	onNothing,
 	link,
 }: {
 	order: ReturnOrder;
+	situation: Situation;
 	onReceive: () => void;
 	onNothing?: () => void;
 	link: ReturnType<typeof useRowLink>["link"];
 }) {
-	const state = o.state ? states[o.state] : null;
 	const request = o.requests[0];
+	const deadline = o.requests.find((r) => r.waitingOn === "us" && r.respondBy);
 	const expected = o.lines.filter((l) => l.expected > 0);
 	const coming = (expected.length > 0 ? expected : o.lines).map((l) => ({
 		id: l.id,
@@ -62,42 +60,39 @@ export function ReturnRow({
 		imageUrl: l.imageUrl,
 		fromStore: [],
 	}));
+	const n = s.next.kind;
+	const canReceive = !o.blocker && o.lines.length > 0;
 	return (
 		<tr
 			{...link({ to: "/orders/$id", params: { id: String(o.id) } })}
-			className="cursor-pointer border-t first:border-t-0 hover:bg-subtle"
+			className={cn(
+				"cursor-pointer border-t first:border-t-0 hover:bg-subtle",
+				n === "check_in" &&
+					"bg-warning-fill/40 shadow-[inset_3px_0_0_var(--color-amber-500)]",
+			)}
 		>
-			<td className="px-4 py-2.5 font-semibold">{o.name}</td>
-			<td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">
-				{formatOrderDate(o.placedAt)}
+			<td className="px-4 py-2.5">
+				<div className="flex items-center gap-1.5 font-semibold">
+					{o.name}
+					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
+				</div>
+				<div className="text-xs text-muted-foreground">
+					{formatOrderDate(o.placedAt)}
+				</div>
 			</td>
-			<td className="w-2/5 max-w-0 px-4 py-2.5">
+			<td className="hidden w-1/5 max-w-0 px-4 py-2.5 md:table-cell">
 				<div className="truncate">{o.customerName ?? "No name"}</div>
 				<div className="truncate text-xs text-muted-foreground">
 					{[o.shipCity, o.shipRegion].filter(Boolean).join(", ")}
 					{o.shipPostalCode && ` ${o.shipPostalCode}`}
 				</div>
 			</td>
-			<td className="hidden w-3/5 max-w-0 px-4 py-2 md:table-cell">
+			<td className="w-2/5 max-w-0 px-4 py-2">
 				<OrderProducts lines={coming} />
-			</td>
-			<td className="hidden max-w-56 px-4 py-2.5 lg:table-cell">
 				{request?.reason && (
-					<div className="truncate text-muted-foreground">
+					<div className="truncate text-xs text-muted-foreground">
 						{returnReason(request.reason)}
 					</div>
-				)}
-				{request?.tracking ? (
-					<div className="truncate text-xs">
-						<PackageWhere t={request.tracking} />
-					</div>
-				) : (
-					request?.trackingNumber && (
-						<div className="truncate font-mono text-xs text-muted-foreground">
-							{request.carrier && `${request.carrier} `}
-							{request.trackingNumber}
-						</div>
-					)
 				)}
 				{o.unmatched.map((u, i) => (
 					<div
@@ -109,16 +104,10 @@ export function ReturnRow({
 					</div>
 				))}
 			</td>
-			<td className="hidden px-4 py-2.5 lg:table-cell">
-				<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
-			</td>
-			<td className="px-4 py-2.5">
-				<div className="flex gap-1.5">
-					{state ? (
-						<Badge tone={state.tone}>{state.label}</Badge>
-					) : (
-						<Badge>Not expected</Badge>
-					)}
+			<td className="max-w-48 px-4 py-2.5">
+				<ItemCell item={s.item} order={o} />
+				<div className="mt-1 flex flex-wrap gap-1 empty:hidden">
+					{request && <ReturnEvidence evidence={request} />}
 					{o.blocker && (
 						<Tip content={o.blocker}>
 							<span>
@@ -127,20 +116,37 @@ export function ReturnRow({
 						</Tip>
 					)}
 				</div>
-				{request && (
-					<div className="mt-1 flex flex-wrap items-center gap-1">
-						<CaseObligation request={request} />
-						<ReturnEvidence evidence={request} />
-					</div>
-				)}
+			</td>
+			<td className="hidden max-w-40 px-4 py-2.5 sm:table-cell">
+				<RefundCell refund={s.refund} due={n === "refund"} />
 			</td>
 			<td className="py-1.5 pr-2">
 				<div className="flex items-center justify-end gap-1">
-					{!o.blocker && (
-						<Button size="sm" variant="outline" onClick={onReceive}>
-							Receive
+					{deadline && (
+						<CaseObligation
+							request={{ ...deadline, amount: null, currency: null }}
+						/>
+					)}
+					{n === "check_in" && canReceive && (
+						<Button size="sm" onClick={onReceive}>
+							Check in
 						</Button>
 					)}
+					{s.next.kind === "answer" && (
+						<Outside page={s.next.on} verb="Answer" />
+					)}
+					{s.next.kind === "refund" && (
+						<Outside page={s.next.on} verb="Refund" />
+					)}
+					{s.next.kind === "close" && <Outside page={s.next.on} verb="Close" />}
+					{n !== "check_in" &&
+						n !== "close" &&
+						n !== "refund" &&
+						canReceive && (
+							<Button size="sm" variant="outline" onClick={onReceive}>
+								Receive
+							</Button>
+						)}
 					{onNothing ? (
 						<Tip content="Nothing coming back">
 							<button
