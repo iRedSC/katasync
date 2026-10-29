@@ -1,6 +1,7 @@
 import { createMiddleware, createStart } from "@tanstack/react-start";
 import { waitUntil } from "@vercel/functions";
 import { requestOperation } from "#/audit/request-operation";
+import { dropUndefined } from "#/lib/drop-undefined";
 
 // Everything needs a signed-in device except the sign-in pages (see
 // src/auth/guard.ts). The dev server skips this: passkeys are tied to the
@@ -73,6 +74,12 @@ const pushesStock = createMiddleware().server(async ({ request, next }) => {
 	return result;
 });
 
+// Runs before every server function's own validator (src/lib/drop-undefined.ts).
+const dropsUndefined = createMiddleware({ type: "function" }).validator(
+	dropUndefined,
+);
+
 export const startInstance = createStart(() => ({
 	requestMiddleware: [signedIn, pushesStock],
+	functionMiddleware: [dropsUndefined],
 }));
