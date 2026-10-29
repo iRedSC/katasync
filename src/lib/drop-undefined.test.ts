@@ -26,4 +26,25 @@ describe("dropUndefined", () => {
 		expect(out.when).toBe(when);
 		expect(dropUndefined(undefined)).toBeUndefined();
 	});
+
+	test("copies a shared object once and survives cycles", () => {
+		let shared: Record<string, unknown> = { x: 1, gone: undefined };
+		for (let i = 0; i < 40; i++) shared = { a: shared, b: shared };
+		const out = dropUndefined(shared) as { a: unknown; b: unknown };
+		expect(out.a).toBe(out.b);
+
+		const loop: Record<string, unknown> = { gone: undefined };
+		loop.self = loop;
+		const copy = dropUndefined(loop) as Record<string, unknown>;
+		expect(copy.self).toBe(copy);
+		expect("gone" in copy).toBe(false);
+	});
+
+	test("keeps an own __proto__ key as a key", () => {
+		const input = JSON.parse('{"__proto__": {"new": 1}, "id": "c"}');
+		const out = dropUndefined(input) as Record<string, unknown>;
+		expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+		expect("new" in out).toBe(false);
+		expect(Object.hasOwn(out, "__proto__")).toBe(true);
+	});
 });

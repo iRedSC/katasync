@@ -5,12 +5,34 @@
 // keys before any validator runs makes the two agree for every server
 // function.
 export function dropUndefined(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(dropUndefined);
-	if (!isPlainObject(value)) return value;
-	const kept: Record<string, unknown> = {};
-	for (const [key, v] of Object.entries(value))
-		if (v !== undefined) kept[key] = dropUndefined(v);
-	return kept;
+	// The serializer keeps shared and cyclic references, so each object is
+	// copied once and every reference to it gets that copy.
+	const copies = new WeakMap<object, unknown>();
+	const visit = (v: unknown): unknown => {
+		if (!Array.isArray(v) && !isPlainObject(v)) return v;
+		const seen = copies.get(v);
+		if (seen) return seen;
+		if (Array.isArray(v)) {
+			const copy: unknown[] = [];
+			copies.set(v, copy);
+			for (const item of v) copy.push(visit(item));
+			return copy;
+		}
+		const copy: Record<string, unknown> = {};
+		copies.set(v, copy);
+		for (const [key, item] of Object.entries(v))
+			if (item !== undefined)
+				// Defined, not assigned: an own `__proto__` key stays a key
+				// instead of swapping the copy's prototype.
+				Object.defineProperty(copy, key, {
+					value: visit(item),
+					enumerable: true,
+					writable: true,
+					configurable: true,
+				});
+		return copy;
+	};
+	return visit(value);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
