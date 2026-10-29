@@ -86,6 +86,11 @@ const receivedPatch = (
 				return {
 					...l,
 					left: l.left - n,
+					// What's left first, as receiving takes them.
+					counted: Math.max(
+						0,
+						l.counted - Math.max(0, n - (l.left - l.counted)),
+					),
 					expected: Math.max(0, l.expected - n),
 				};
 			});

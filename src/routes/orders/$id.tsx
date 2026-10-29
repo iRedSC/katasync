@@ -84,7 +84,9 @@ const orderData = optimistic<OrderDetail>("order");
 
 // Receiving a return counts it against each line, and against the line's
 // restocked count when it went back on a shelf (its own or a refurb's).
-// Undo takes it off again.
+// Units counted back at cutover are taken last, as receiving takes them,
+// and were already counted (and restocked, costing nothing). Undo takes it
+// off again; one that took cutover units waits for the reload instead.
 const returnedPatch =
 	(orderId: number, sign: 1 | -1) =>
 	(received: Received[], outcome: Outcome): Patch =>
@@ -93,14 +95,19 @@ const returnedPatch =
 			lines: d.lines.map((l) => {
 				const got = received.find((r) => r.lineId === l.id);
 				if (!got) return l;
+				const left = l.returnQuantity - l.returned - l.onBench.length;
+				const fromCutover = sign === 1 ? Math.max(0, got.quantity - left) : 0;
 				const n = sign * got.quantity;
+				const shelved = outcome === "write_off" ? 0 : n;
 				return {
 					...l,
-					returned: l.returned + n,
-					restocked: outcome === "write_off" ? l.restocked : l.restocked + n,
+					returned: l.returned + n - fromCutover,
+					counted: l.counted - fromCutover,
+					restocked: l.restocked + shelved - fromCutover,
 				};
 			}),
 		}));
+const reloadOnly = (orderId: number) => orderData.patch(orderId, (d) => d);
 
 // Taking a received return back: it leaves the Return card, and its units
 // leave the line's returned (and restocked) counts.
@@ -116,11 +123,13 @@ const takenBackPatch = (
 				? l
 				: {
 						...l,
-						returned: l.returned - r.quantity,
+						// Units it took off the cutover count are counted back.
+						returned: l.returned - r.quantity + (r.cutoverQuantity ?? 0),
+						counted: l.counted + (r.cutoverQuantity ?? 0),
 						restocked:
-							r.restocked || r.refurb || r.preCutover
+							(r.restocked || r.refurb || r.preCutover
 								? l.restocked - r.quantity
-								: l.restocked,
+								: l.restocked) + (r.cutoverQuantity ?? 0),
 					},
 		),
 	}));
@@ -161,7 +170,7 @@ function OrderPage() {
 	const returnable = lines
 		.map((l) => ({
 			...l,
-			left: l.returnQuantity - l.returned - l.onBench.length,
+			left: l.returnQuantity - l.returned - l.onBench.length + l.counted,
 		}))
 		.filter((l) => l.left > 0);
 	const canReturn =
@@ -347,7 +356,9 @@ function OrderPage() {
 					lines={returnable}
 					patches={{
 						receive: returnedPatch(order.id, 1),
-						undo: returnedPatch(order.id, -1),
+						undo: returnable.some((l) => l.counted > 0)
+							? () => reloadOnly(order.id)
+							: returnedPatch(order.id, -1),
 					}}
 				/>
 			)}

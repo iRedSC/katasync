@@ -15,6 +15,11 @@ import { brokenPromises } from "#/inventory/commitments-shelves";
 import { postMovements } from "#/inventory/ledger";
 import { batchProductIds, lockStockProducts } from "#/inventory/ledger/post";
 import {
+	claimCutover,
+	countedAtCutover,
+	restoreCutover,
+} from "#/orders/cutover";
+import {
 	makeRefurb,
 	originalProduct,
 	type RefurbDetails,
@@ -48,8 +53,10 @@ async function benchShelf(db: Db) {
 	return shelf;
 }
 
-// How many of a returned line's units can still go on the bench. Run
-// holding the order, as receiving does, so the two can't both take a unit.
+// How many of a returned line's units can still go on the bench, and how
+// many more were only counted back at cutover (src/orders/cutover.ts),
+// which can too. Run holding the order, as receiving does, so the two
+// can't both take a unit.
 async function roomOnLine(tx: Db, orderId: number, lineId: number) {
 	const [order] = await tx
 		.select({ fbc: orders.fulfilledByChannel, name: orders.name })
@@ -67,6 +74,7 @@ async function roomOnLine(tx: Db, orderId: number, lineId: number) {
 				select sum(r.quantity) from ${orderReturns} r
 				where r.order_line_id = "order_lines"."id"
 			), 0) - ${onBench()})::int`,
+			counted: countedAtCutover,
 		})
 		.from(orderLines)
 		.where(and(eq(orderLines.id, lineId), eq(orderLines.orderId, orderId)));
@@ -92,6 +100,8 @@ export async function startBench(
 		let productId: number;
 		let count = 1;
 		let returnLineId: number | null = null;
+		let fromCutover = 0;
+		let cutoverAt: Date | null = null;
 		if ("lineId" in input) {
 			const line = await roomOnLine(tx, input.orderId, input.lineId);
 			if (line.productId === null)
@@ -100,15 +110,19 @@ export async function startBench(
 				);
 			if (!Number.isInteger(input.quantity) || input.quantity < 1)
 				throw new RepairError("Put at least one on the bench");
-			if (input.quantity > line.room)
+			if (input.quantity > line.room + line.counted)
 				throw new RepairError(
-					line.room === 0
+					line.room + line.counted === 0
 						? `${line.name} is already back`
-						: `Only ${line.room} of ${line.name} can still come back`,
+						: `Only ${line.room + line.counted} of ${line.name} can still come back`,
 				);
 			productId = line.productId;
 			count = input.quantity;
 			returnLineId = input.lineId;
+			// What's left first; the rest was only counted back at cutover.
+			fromCutover = Math.max(0, input.quantity - line.room);
+			if (fromCutover > 0)
+				cutoverAt = await claimCutover(tx, input.lineId, fromCutover);
 		} else productId = input.productId;
 		const [product] = await tx
 			.select({ name: products.name, kind: products.kind })
@@ -129,10 +143,11 @@ export async function startBench(
 		const made = await tx
 			.insert(repairs)
 			.values(
-				Array.from({ length: count }, () => ({
+				Array.from({ length: count }, (_, i) => ({
 					kind: "bench" as const,
 					productId,
 					returnLineId,
+					cutoverAt: i >= count - fromCutover ? cutoverAt : null,
 					technicianId: input.technicianId ?? null,
 				})),
 			)
@@ -152,16 +167,50 @@ export async function startBench(
 }
 
 // A cancelled bench job coming back to the board takes its unit back, if
-// it's still to come in: run by moveRepair holding the job.
-export async function rehold(tx: Db, r: { returnLineId: number | null }) {
+// it's still to come in, or still counted back at cutover if that's where
+// it came from: run by moveRepair holding the job.
+export async function rehold(
+	tx: Db,
+	r: { id: number; returnLineId: number | null; cutoverAt: Date | null },
+) {
 	if (r.returnLineId === null) return;
 	const [line] = await tx
 		.select({ orderId: orderLines.orderId })
 		.from(orderLines)
 		.where(eq(orderLines.id, r.returnLineId));
-	const { room, name } = await roomOnLine(tx, line.orderId, r.returnLineId);
+	const { room, counted, name } = await roomOnLine(
+		tx,
+		line.orderId,
+		r.returnLineId,
+	);
+	if (r.cutoverAt && counted > 0) {
+		await claimCutover(tx, r.returnLineId, 1);
+		return;
+	}
 	if (room < 1)
 		throw new RepairError(`${name} was received since; it can't go back`);
+	if (r.cutoverAt)
+		await tx
+			.update(repairs)
+			.set({ cutoverAt: null })
+			.where(eq(repairs.id, r.id));
+}
+
+// A bench job cancelled before it's listed lets its unit go: one counted
+// back at cutover until it was benched is counted back again. Run by
+// moveRepair holding the job.
+export async function unhold(
+	tx: Db,
+	r: { returnLineId: number | null; cutoverAt: Date | null },
+) {
+	if (r.returnLineId === null || r.cutoverAt === null) return;
+	const [line] = await tx
+		.select({ orderId: orderLines.orderId })
+		.from(orderLines)
+		.where(eq(orderLines.id, r.returnLineId));
+	// Holding the order, as receiving does.
+	await roomOnLine(tx, line.orderId, r.returnLineId);
+	await restoreCutover(tx, r.returnLineId, 1, r.cutoverAt);
 }
 
 type Locked = Awaited<ReturnType<typeof lockStockProducts>>;
@@ -320,7 +369,7 @@ export async function listBench(db: Db, id: number, as: ListAs) {
 						lines: [{ lineId: r.returnLineId, quantity: 1 }],
 						outcome: { refurbishInto: refurbId },
 					},
-					{ repairId: id, unitCost },
+					{ repairId: id, unitCost, cutoverAt: r.cutoverAt },
 				);
 			} else {
 				await postMovements(tx, {

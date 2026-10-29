@@ -28,6 +28,7 @@ import {
 } from "#/db/schema";
 import { onBench } from "#/repairs/bench-holds";
 import { type AdminPage, returnPage } from "./admin-urls";
+import { countedAtCutover } from "./cutover";
 import { openMarketplaceCaseRows } from "./marketplace-cases";
 import type { EvidenceChips } from "./return-evidence";
 import type { BackOutcome, SituationInput } from "./return-situation";
@@ -83,8 +84,11 @@ export type ReturnOrder = {
 		title: string;
 		sku: string | null;
 		imageUrl: string | null;
-		// Sold minus already received.
+		// Sold minus already received, counting units only counted back at
+		// cutover as still to check in (src/orders/cutover.ts).
 		left: number;
+		// Of those, the ones counted back at cutover.
+		counted: number;
 		expected: number;
 	}[];
 };
@@ -245,7 +249,8 @@ async function returnOrders(
 				title: orderLines.title,
 				sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 				imageUrl: products.imageUrl,
-				left: sql<number>`${returnQuantity} - coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int - ${onBench()}`,
+				left: sql<number>`${returnQuantity} - coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id} and not ${orderReturns.preCutover}), 0)::int - ${onBench()}`,
+				counted: countedAtCutover,
 			})
 			.from(orderLines)
 			.leftJoin(products, eq(products.id, orderLines.productId))

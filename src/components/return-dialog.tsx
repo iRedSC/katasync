@@ -2,6 +2,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { ExternalLink, Minus, Plus } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
+import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { type RefurbChoice, RefurbishForm } from "#/components/refurbish-form";
 import { Button } from "#/components/ui/button";
@@ -33,6 +34,8 @@ type ReturnLine = {
 	imageUrl: string | null;
 	// What can still come back: sold minus already returned.
 	left: number;
+	// Of those, the ones only counted back at cutover.
+	counted?: number;
 	// What the counts start at, when not everything left is expected.
 	start?: number;
 };
@@ -281,8 +284,9 @@ export function ReturnDialog({
 										<ProductImage src={l.imageUrl} className="size-10" />
 										<div className="min-w-0 flex-1">
 											<div className="truncate font-medium">{l.title}</div>
-											<div className="text-xs text-muted-foreground">
+											<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
 												{l.sku ?? "No SKU"}
+												{!!l.counted && <Badge>Before katasync</Badge>}
 											</div>
 										</div>
 										<div className="flex items-center gap-1">

@@ -88,6 +88,9 @@ export const repairs = pgTable(
 		// was listed as; and the movement that took its parts off the shelf
 		// then.
 		returnLineId: integer().references(() => orderLines.id),
+		// When its unit was counted back at cutover until it was benched:
+		// cancelling the job counts it back again (src/orders/cutover.ts).
+		cutoverAt: timestamp({ withTimezone: true }),
 		refurbProductId: integer().references(() => products.id),
 		partsBatchId: uuid(),
 		statusChangedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -145,6 +148,10 @@ export const repairs = pgTable(
 		check(
 			"repairs_no_draft_when_closed",
 			sql`${t.draftOrderId} is null or ${t.status} not in ('picked_up', 'cancelled')`,
+		),
+		check(
+			"repairs_cutover_returned",
+			sql`${t.cutoverAt} is null or ${t.returnLineId} is not null`,
 		),
 	],
 );

@@ -16,6 +16,7 @@ import { recordReturn, undoBatch } from "#/inventory/ledger";
 import { lockBatchProducts } from "#/inventory/ledger/post";
 import { isOurs } from "#/inventory/locations";
 import { onBench } from "#/repairs/bench-holds";
+import { claimCutover, countedAtCutover, restoreCutover } from "./cutover";
 import { retireRefurbs } from "./refurb-retire";
 import { returnQuantity } from "./return-stock";
 import { isLabeled, returnBlocker } from "./status";
@@ -35,12 +36,15 @@ export type ReturnOutcome = "restock" | "write_off" | { refurbishInto: number };
 // of it came from the store; refurbished ones go to the same shelf as their
 // refurb. Written-off ones (damaged) are only recorded. A refurb takes one
 // line's units, from the product it was made from.
-// A line can't take back more than it sold, counting earlier returns.
+// A line can't take back more than it sold, counting earlier returns;
+// units only counted back at cutover can be, taking them off that count
+// (src/orders/cutover.ts).
 // Returns are received here whatever the channel says: katasync owns stock,
 // so a restock clicked in Shopify would only be overwritten.
 // Units on the bench can't be received here, except by listing their job:
-// `bench` names it, so its own unit can come in, and gives the refurb's cost
-// (the unit's plus its parts). Only src/repairs/bench.ts passes it.
+// `bench` names it, so its own unit can come in, gives the refurb's cost
+// (the unit's plus its parts), and when the unit was counted at cutover.
+// Only src/repairs/bench.ts passes it.
 export async function receiveReturn(
 	db: Db,
 	input: {
@@ -50,7 +54,11 @@ export async function receiveReturn(
 		// What whoever checked it in saw, for the refund decision.
 		note?: string | null;
 	},
-	bench: { repairId: number; unitCost: number | null } | null = null,
+	bench: {
+		repairId: number;
+		unitCost: number | null;
+		cutoverAt: Date | null;
+	} | null = null,
 ): Promise<{ ids: number[] }> {
 	const wanted = input.lines.filter((l) => l.quantity > 0);
 	if (wanted.length === 0) throw new ReturnError("Nothing to return");
@@ -106,6 +114,7 @@ export async function receiveReturn(
 					where r.order_line_id = "order_lines"."id"
 				), 0)::int`,
 				onBench: onBench(bench?.repairId ?? null),
+				counted: countedAtCutover,
 			})
 			.from(orderLines)
 			.where(
@@ -151,15 +160,29 @@ export async function receiveReturn(
 				throw new ReturnError(`No line ${want.lineId} on ${order.name}`);
 			const name = line.sku ?? line.title;
 			const left = line.returnQuantity - line.returned - line.onBench;
-			if (!Number.isInteger(want.quantity) || want.quantity > left) {
+			if (
+				!Number.isInteger(want.quantity) ||
+				want.quantity > left + line.counted
+			) {
 				throw new ReturnError(
-					left === 0
+					left + line.counted === 0
 						? line.onBench > 0
 							? `${name} is on the bench; list it from its repair`
 							: `${name} was already returned`
-						: `Only ${left} of ${name} can still come back`,
+						: `Only ${left + line.counted} of ${name} can still come back`,
 				);
 			}
+			// What's left first; the rest was only counted back at cutover.
+			const fromCutover = Math.max(0, want.quantity - left);
+			const cutover =
+				fromCutover > 0
+					? {
+							cutoverQuantity: fromCutover,
+							cutoverAt: await claimCutover(tx, line.id, fromCutover),
+						}
+					: bench?.cutoverAt
+						? { cutoverQuantity: want.quantity, cutoverAt: bench.cutoverAt }
+						: {};
 			let batchId: string | null = null;
 			if (restockAt !== null && line.productId === null) {
 				throw new ReturnError(
@@ -207,10 +230,13 @@ export async function receiveReturn(
 					refurbProductId: refurb,
 					batchId,
 					note: input.note?.trim() || null,
+					benchId: bench?.repairId ?? null,
+					...cutover,
 				})
 				.returning({ id: orderReturns.id });
 			ids.push(row.id);
-			line.returned += want.quantity;
+			line.returned += want.quantity - fromCutover;
+			line.counted -= fromCutover;
 		}
 		return { ids };
 	});
@@ -221,6 +247,7 @@ export async function receiveReturn(
 // click, or another tab) fails the lot rather than half undoing it. A
 // refurb's units can only come off while it still has them; one left empty
 // that never sold is deleted from Shopify and archived, as if never made.
+// One that took units off the cutover count counts them back.
 // What went wrong cleaning one up comes back as problems; the undo stands.
 export async function undoReturns(
 	db: Db,
@@ -262,6 +289,13 @@ export async function undoReturns(
 					);
 			}
 			if (row.batchId) await undoBatch(tx, row.batchId);
+			if (row.cutoverQuantity && row.cutoverAt)
+				await restoreCutover(
+					tx,
+					row.orderLineId,
+					row.cutoverQuantity,
+					row.cutoverAt,
+				);
 		}
 		return [...new Set(rows.flatMap((r) => r.refurbProductId ?? []))];
 	});
