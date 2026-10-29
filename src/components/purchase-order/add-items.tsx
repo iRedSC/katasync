@@ -74,10 +74,12 @@ export function AddItems({
 	const q = useMemo(() => parseQuery(query), [query]);
 	const searching = isSearching(q, chips);
 
-	// This supplier's whole list, loaded the first time it's wanted.
+	// This supplier's whole list, loaded the first time it's wanted. A sort
+	// wants it too: only the list knows the recommendations' class, status,
+	// and the rest of the product columns.
 	const [load, setLoad] = useState<Load>({ state: "idle" });
 	const [attempt, setAttempt] = useState(0);
-	const wanted = searching || load.state !== "idle";
+	const wanted = searching || sort.length > 0 || load.state !== "idle";
 	// biome-ignore lint/correctness/useExhaustiveDependencies: attempt is Try again
 	useEffect(() => {
 		if (!wanted) return;
