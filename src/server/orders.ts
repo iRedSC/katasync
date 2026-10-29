@@ -27,6 +27,7 @@ import {
 } from "#/db/schema";
 import { orderMail } from "#/inbox/order-mail";
 import { adminUrls, returnPage } from "#/orders/admin-urls";
+import { countedAtCutover } from "#/orders/cutover";
 import { fromStore } from "#/orders/from-store";
 import { readTracking } from "#/orders/package-tracking";
 import { labelRebills } from "#/orders/postage-adjustments";
@@ -222,6 +223,9 @@ export const getOrder = createServerFn({ method: "GET" })
 				fromStore,
 				// Units received back, and how many of those went on the shelf.
 				returned: sql<number>`coalesce((select sum(${orderReturns.quantity}) from ${orderReturns} where ${orderReturns.orderLineId} = ${orderLines.id}), 0)::int`,
+				// Of those, the ones only counted back at cutover, which can
+				// still be checked in (src/orders/cutover.ts).
+				counted: countedAtCutover,
 				// Back and on the bench, not received yet: their repairs.
 				onBench: sql<
 					number[]
@@ -366,6 +370,7 @@ export const getOrder = createServerFn({ method: "GET" })
 					quantity: orderReturns.quantity,
 					restocked: orderReturns.restocked,
 					preCutover: orderReturns.preCutover,
+					cutoverQuantity: orderReturns.cutoverQuantity,
 					refurbId: refurbs.id,
 					refurbSku: refurbs.sku,
 					refurbCondition: refurbs.condition,

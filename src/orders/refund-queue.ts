@@ -69,7 +69,8 @@ const refurbs = alias(products, "refurbs");
 
 // A unit refurbished off the bench is received when it's listed, long after
 // it was checked in: it counts as checked in when it went on the bench, with
-// what was noted then, so listing it doesn't reopen its decision.
+// what was noted then, so listing it doesn't reopen its decision. Only the
+// return its listing made: one checked in again after that's undone is new.
 // A bench job's one tool's problem.
 const firstProblem = (repairId: string) =>
 	`(select t.problem from repair_tools t where t.repair_id = ${repairId} order by t.id limit 1)`;
@@ -77,10 +78,7 @@ const firstProblem = (repairId: string) =>
 const benchedAs = (field: "created_at" | "problem") =>
 	sql.raw(`(select ${field === "problem" ? `nullif(btrim(${firstProblem("b.id")}), '')` : "b.created_at"}
 		from repairs b
-		where b.kind = 'bench' and b.status = 'refurbished'
-			and b.return_line_id = "order_returns"."order_line_id"
-			and b.refurb_product_id = "order_returns"."refurb_product_id"
-		order by b.created_at limit 1)`);
+		where b.id = "order_returns"."bench_id")`);
 
 export async function listRefundQueue(db: Db): Promise<RefundRow[]> {
 	const [back, benched] = await Promise.all([

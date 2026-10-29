@@ -9,12 +9,17 @@ import {
 	repairTools,
 } from "#/db/repair-schema";
 import { products } from "#/db/schema";
-import { rehold } from "./bench";
+import { rehold, unhold } from "./bench";
 import { RepairError, syncDraft } from "./draft-sync";
 import { withCharges, withRepair } from "./hold";
 import { LABOR_STEP } from "./labor";
 import { lastIn, placeIn } from "./queue";
-import { boardStatuses, type RepairStatus, refuseMove } from "./status";
+import {
+	boardStatuses,
+	isOnBoard,
+	type RepairStatus,
+	refuseMove,
+} from "./status";
 import { checkTool, type ToolFields, toolValues } from "./tools";
 
 // What staff do to a repair. Each change to a customer's that touches what
@@ -155,8 +160,11 @@ export async function moveRepair(
 			// Off the draft first: a closed repair can't hold one.
 			if (to === "cancelled" && r.kind === "customer")
 				await syncDraft(tx, r, { charges: false });
-			// Back from cancelled, a bench job takes its returned unit again.
+			// Back from cancelled, a bench job takes its returned unit again;
+			// cancelled off the board, it lets it go.
 			if (r.status === "cancelled" && r.kind === "bench") await rehold(tx, r);
+			if (to === "cancelled" && r.kind === "bench" && isOnBoard(r.status))
+				await unhold(tx, r);
 			const moved = await tx
 				.update(repairs)
 				.set({

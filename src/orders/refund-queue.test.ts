@@ -156,18 +156,32 @@ describe("listRefundQueue", () => {
 		await db
 			.update(repairs)
 			.set({ status: "refurbished", refurbProductId: refurb });
-		await db.insert(schema.orderReturns).values({
+		const listed = {
 			orderLineId: o.lineId,
 			quantity: 1,
 			restocked: false,
 			refurbProductId: refurb,
-			batchId: crypto.randomUUID(),
-		});
+		};
+		const [back] = await db
+			.insert(schema.orderReturns)
+			.values({ ...listed, batchId: crypto.randomUUID(), benchId: job.id })
+			.returning();
 		const [row] = await listRefundQueue(db);
 		expect(row.items).toMatchObject([
 			{ outcome: "refurbished", note: "Wrong item", at: benchedAt },
 		]);
 		expect(refundStep(row).kind).toBe("done");
+
+		// Undone and checked in again into the same refurb: a new check-in.
+		await db
+			.delete(schema.orderReturns)
+			.where(eq(schema.orderReturns.id, back.id));
+		await db
+			.insert(schema.orderReturns)
+			.values({ ...listed, batchId: crypto.randomUUID() });
+		const [again] = await listRefundQueue(db);
+		expect(again.items).toMatchObject([{ note: null }]);
+		expect(refundStep(again).kind).toBe("decide");
 	});
 
 	test("pre-cutover returns never ask", async () => {

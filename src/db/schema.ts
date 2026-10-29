@@ -802,7 +802,11 @@ export const orderTaxes = pgTable(
 //   refurbished:  on the shelf as refurbProductId, a refurbished one-off
 //   written off:  damaged, moving nothing
 //   preCutover:   came back before katasync counted stock, so the count
-//                 at cutover already has them; costs nothing, moves nothing
+//                 at cutover already has them; costs nothing, moves nothing.
+//                 Only assumed, until the box is opened: checking one in
+//                 (or benching it) takes it off, and the check-in keeps
+//                 cutoverQuantity and cutoverAt so undoing it puts it back
+//                 (src/orders/cutover.ts)
 // The first two moved stock through the movement in batchId. Undoing a
 // return reverses its batch and deletes the row. Rules live in
 // src/orders/returns.ts.
@@ -820,10 +824,21 @@ export const orderReturns = pgTable(
 		batchId: uuid(),
 		// What whoever checked it in saw, for whoever decides the refund.
 		note: text(),
+		cutoverQuantity: integer(),
+		cutoverAt: timestamp({ withTimezone: true }),
+		// The bench job listed as this refurb, when it came off the bench
+		// (repairs.id; no foreign key, as repairs is defined after this).
+		benchId: integer(),
 		createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		check("order_returns_quantity_positive", sql`${t.quantity} > 0`),
+		check(
+			"order_returns_cutover_replaced",
+			sql`(${t.cutoverQuantity} is null) = (${t.cutoverAt} is null)
+				and (${t.cutoverQuantity} is null or (not ${t.preCutover}
+					and ${t.cutoverQuantity} between 1 and ${t.quantity}))`,
+		),
 		check(
 			"order_returns_note_given",
 			sql`${t.note} is null or btrim(${t.note}) <> ''`,
