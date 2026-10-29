@@ -54,7 +54,10 @@ describe.skipIf(!url)("bench listing lock ordering", () => {
 	// A tool and a refurb of it, with stock.
 	async function tool() {
 		const original = await product();
-		const refurb = await product({ refurbishedFromId: original.id });
+		const refurb = await product({
+			refurbishedFromId: original.id,
+			condition: "good",
+		});
 		return { original, refurb };
 	}
 
