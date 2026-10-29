@@ -23,7 +23,8 @@ describe.skipIf(!url)("repair queue lock ordering", () => {
 	};
 
 	test("two drops in one column take turns instead of deadlocking", async () => {
-		const make = () => createRepair(pg.db, { customer, tool: "Taper" });
+		const make = () =>
+			createRepair(pg.db, { customer, tools: [{ tool: "Taper" }] });
 		const [a, b, c] = [await make(), await make(), await make()];
 		// The first move pauses holding its repair; the second, holding
 		// another, would wait on it to lock the column, and the first on it.

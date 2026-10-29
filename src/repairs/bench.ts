@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
-import { people, repairParts, repairs } from "#/db/repair-schema";
+import { people, repairParts, repairs, repairTools } from "#/db/repair-schema";
 import {
 	orderLines,
 	orderReturns,
@@ -126,7 +126,6 @@ export async function startBench(
 				);
 			if (!p) throw new RepairError("That person isn't in Settings any more");
 		}
-		const tool = input.tool?.trim() || product.name;
 		const made = await tx
 			.insert(repairs)
 			.values(
@@ -134,13 +133,20 @@ export async function startBench(
 					kind: "bench" as const,
 					productId,
 					returnLineId,
-					tool,
-					serial: input.serial?.trim() || null,
-					problem: input.problem?.trim() ?? "",
 					technicianId: input.technicianId ?? null,
 				})),
 			)
 			.returning({ id: repairs.id });
+		// Each is its one unit.
+		await tx.insert(repairTools).values(
+			made.map((m) => ({
+				repairId: m.id,
+				tool: input.tool?.trim() || product.name,
+				productId,
+				serial: input.serial?.trim() || null,
+				problem: input.problem?.trim() ?? "",
+			})),
+		);
 		return made.map((m) => m.id);
 	});
 }
@@ -204,15 +210,17 @@ async function lockListing(
 // average now; null when any has none, so the refurb's stays unknown too.
 // Run holding the parts (lockListing).
 async function takeParts(tx: Db, repairId: number, locked: Locked) {
+	// One line per part, though it may be on the tool and the order both.
 	const parts = await tx
 		.select({
 			productId: repairParts.productId,
-			quantity: repairParts.quantity,
+			quantity: sql<number>`sum(${repairParts.quantity})::int`,
 			sku: products.sku,
 		})
 		.from(repairParts)
 		.innerJoin(products, eq(products.id, repairParts.productId))
-		.where(eq(repairParts.repairId, repairId));
+		.where(eq(repairParts.repairId, repairId))
+		.groupBy(repairParts.productId, products.sku);
 	if (parts.length === 0) return { batchId: null, cost: 0 };
 	const ids = parts.map((p) => p.productId);
 	const mode = await readQuantityMode(tx);

@@ -186,3 +186,52 @@ export function shopifyAdminDraftUrl(id: string): string | null {
 	if (!handle || !numeric) return null;
 	return `https://admin.shopify.com/store/${handle}/draft_orders/${encodeURIComponent(numeric)}`;
 }
+
+// What a paid repair's order charged, line by line, with the properties
+// its draft's lines carried over.
+export async function readOrderBill(id: string) {
+	const data = type({
+		order: type({
+			name: "string",
+			createdAt: "string",
+			subtotalPriceSet: { shopMoney: money },
+			totalTaxSet: { shopMoney: money },
+			totalPriceSet: { shopMoney: money },
+			totalOutstandingSet: { shopMoney: money },
+			totalRefundedSet: { shopMoney: money },
+			lineItems: {
+				pageInfo: { hasNextPage: "boolean" },
+				nodes: type({
+					title: "string",
+					quantity: "number",
+					variant: type({ id: "string" }).or("null"),
+					customAttributes: type({
+						key: "string",
+						value: "string | null",
+					}).array(),
+					discountedTotalSet: { shopMoney: money },
+				}).array(),
+			},
+		}).or("null"),
+	}).assert(
+		await shopifyQuery(
+			`query($id: ID!) { order(id: $id) {
+				name createdAt
+				subtotalPriceSet { shopMoney { amount } }
+				totalTaxSet { shopMoney { amount } }
+				totalPriceSet { shopMoney { amount } }
+				totalOutstandingSet { shopMoney { amount } }
+				totalRefundedSet { shopMoney { amount } }
+				lineItems(first: 250) {
+					pageInfo { hasNextPage }
+					nodes {
+						title quantity variant { id } customAttributes { key value }
+						discountedTotalSet(withCodeDiscounts: true) { shopMoney { amount } }
+					}
+				}
+			} }`,
+			{ id },
+		),
+	);
+	return data.order;
+}

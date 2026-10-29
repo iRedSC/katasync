@@ -1,18 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Printer } from "lucide-react";
+import { FileText, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { Page } from "#/components/page";
 import { ListBenchCard, SourceCard } from "#/components/repairs/bench-side";
-import { LaborCard } from "#/components/repairs/labor-card";
-import { PartsCard } from "#/components/repairs/parts-card";
 import { repairActions, repairData } from "#/components/repairs/repair-data";
 import {
 	BillCard,
 	CustomerCard,
 	PeopleCard,
-	ToolCard,
 } from "#/components/repairs/repair-side";
 import { StatusBar } from "#/components/repairs/status-bar";
+import { AddTool, OtherCard, ToolCard } from "#/components/repairs/tool-card";
 import { DetailSkeleton, ListCard } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import { optimism } from "#/lib/optimism";
@@ -38,7 +36,7 @@ export const Route = createFileRoute("/repairs/$id")({
 	pendingComponent: () => (
 		<DetailSkeleton
 			back={{ to: "/repairs" }}
-			main={<ListCard title="Labor" rows={2} />}
+			main={<ListCard title="Tool" rows={3} />}
 			side={null}
 		/>
 	),
@@ -77,49 +75,58 @@ function RepairPage() {
 				<span className="flex items-baseline gap-3">
 					R{r.id}
 					<span className="truncate text-base font-medium text-muted-foreground">
-						{r.kind === "bench" ? r.tool : `${r.customerName}, ${r.tool}`}
+						{r.kind === "bench"
+							? d.tools[0]?.tool
+							: [r.customerName, toolSummary(d.tools)].join(", ")}
 					</span>
 				</span>
 			}
 			actions={
-				<Button
-					variant="outline"
-					onClick={() => printPdf(`/labels/repairs/${r.id}`, `R${r.id} ticket`)}
-				>
-					<Printer />
-					Ticket
-				</Button>
+				<>
+					{r.kind === "customer" && (
+						<Button variant="outline" asChild>
+							<a
+								href={`/print/repairs/${r.id}`}
+								target="_blank"
+								rel="noreferrer"
+							>
+								<FileText />
+								Invoice
+							</a>
+						</Button>
+					)}
+					<Button
+						variant="outline"
+						onClick={() =>
+							printPdf(`/labels/repairs/${r.id}`, `R${r.id} tickets`)
+						}
+					>
+						<Printer />
+						{d.tools.length > 1 ? `${d.tools.length} tickets` : "Ticket"}
+					</Button>
+				</>
 			}
 		>
 			<StatusBar d={d} onMove={move} />
 			<div className="grid items-start gap-4 lg:grid-cols-[2fr_1fr]">
 				<div className="flex flex-col gap-4">
-					<LaborCard
-						d={d}
-						editable={editable}
-						onAdd={(minutes, note) => act.addLabor(minutes, note)}
-						onEdit={(laborId, edit) => act.editLabor(laborId, edit)}
-						onRemove={(laborId) => {
-							const gone = d.labor.find((l) => l.id === laborId);
-							void act.removeLabor(laborId).then(
-								(done) =>
-									done &&
-									gone &&
-									offerUndo("Time taken off", {
-										undo: async () =>
-											(await act.addLabor(gone.minutes, gone.note))
-												? "Time put back"
-												: null,
-									}),
-							);
-						}}
-					/>
-					<PartsCard
-						d={d}
-						index={index}
-						editable={editable}
-						onSet={(part, quantity) => act.setPart(part, quantity)}
-					/>
+					{d.tools.map((t, i) => (
+						<ToolCard
+							key={t.id}
+							d={d}
+							act={act}
+							tool={t}
+							place={i + 1}
+							index={index}
+							editable={editable}
+						/>
+					))}
+					{r.kind === "customer" && (
+						<>
+							<OtherCard d={d} act={act} index={index} editable={editable} />
+							{editable && <AddTool act={act} index={index} />}
+						</>
+					)}
 				</div>
 				<div className="flex flex-col gap-4">
 					{r.kind === "bench" ? (
@@ -149,12 +156,6 @@ function RepairPage() {
 							}
 						/>
 					)}
-					<ToolCard
-						d={d}
-						products={index}
-						editable={editable}
-						onSave={(edit) => act.edit("The tool", edit, edit)}
-					/>
 					<PeopleCard
 						d={d}
 						onTechnician={(technicianId) =>
@@ -187,4 +188,11 @@ function RepairPage() {
 			</div>
 		</Page>
 	);
+}
+
+// The tools, for the title: the first, and how many more.
+function toolSummary(tools: { tool: string }[]) {
+	const [first, ...rest] = tools;
+	if (!first) return "";
+	return rest.length > 0 ? `${first.tool} +${rest.length}` : first.tool;
 }

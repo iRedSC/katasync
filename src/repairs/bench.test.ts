@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as shopify from "#/channels/shopify/refurbish";
 import { stockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
-import { repairParts, repairs } from "#/db/repair-schema";
+import { repairParts, repairs, repairTools } from "#/db/repair-schema";
 import * as schema from "#/db/schema";
 import { undoUnownedBatch } from "#/inventory/batch-owner";
 import {
@@ -181,9 +181,15 @@ describe("bench jobs", () => {
 			kind: "bench",
 			productId: taper,
 			returnLineId: o.lineId,
-			tool: "TAPER",
 			customerId: null,
 		});
+		// Its one tool is the unit.
+		expect(
+			await db
+				.select({ tool: repairTools.tool, productId: repairTools.productId })
+				.from(repairTools)
+				.where(eq(repairTools.repairId, id)),
+		).toEqual([{ tool: "TAPER", productId: taper }]);
 		expect(await due(o.lineId)).toBe(1);
 		await expect(
 			receiveReturn(db, {
@@ -200,7 +206,7 @@ describe("bench jobs", () => {
 	test("listing it makes the refurb from the return, costing the unit plus its parts", async () => {
 		const o = await returnedOrder();
 		const [id] = await startBench(db, { ...o, quantity: 1 });
-		await setPart(db, id, blade, 1);
+		await setPart(db, id, { toolId: null, productId: blade, quantity: 1 });
 		const made = await listBench(db, id, listing);
 		expect(made.sku).toBe("TAPER-RFB1");
 		expect(shopify.createRefurbDraft).toHaveBeenCalledWith(
@@ -264,7 +270,11 @@ describe("bench jobs", () => {
 		await db.insert(schema.stores).values({ channel: "shopify", name: "Shop" });
 		const [bare] = await startBench(db, { productId: taper });
 		const [withParts] = await startBench(db, { productId: taper });
-		await setPart(db, withParts, blade, 1);
+		await setPart(db, withParts, {
+			toolId: null,
+			productId: blade,
+			quantity: 1,
+		});
 		for (const id of [bare, withParts]) {
 			await listBench(db, id, listing);
 			const batches = await db
@@ -282,7 +292,7 @@ describe("bench jobs", () => {
 
 	test("a part not on the shelf stops the listing, leaving nothing made", async () => {
 		const [id] = await startBench(db, { productId: taper });
-		await setPart(db, id, blade, 5);
+		await setPart(db, id, { toolId: null, productId: blade, quantity: 5 });
 		await expect(listBench(db, id, listing)).rejects.toThrow(/Only 3 of BLADE/);
 		expect(shopify.createRefurbDraft).not.toHaveBeenCalled();
 		expect(await onHand(blade)).toBe(3);
@@ -320,12 +330,12 @@ describe("bench jobs", () => {
 
 		// Shipping can reach 3 in the warehouse and 5 above the store's reserve.
 		const [id] = await startBench(db, { productId: taper });
-		await setPart(db, id, blade, 5);
+		await setPart(db, id, { toolId: null, productId: blade, quantity: 5 });
 		await expect(listBench(db, id, listing)).rejects.toThrow(
 			"BLADE is promised to orders",
 		);
 		expect(await onHand(blade)).toBe(13);
-		await setPart(db, id, blade, 3);
+		await setPart(db, id, { toolId: null, productId: blade, quantity: 3 });
 		await listBench(db, id, listing);
 		expect(await onHand(blade)).toBe(10);
 	});
@@ -359,7 +369,7 @@ describe("bench jobs", () => {
 			refuseMove({ ...state, bench: false, status: "ready" }, "refurbished"),
 		).toMatch(/our own/);
 		// No draft order is ever made for it.
-		await setPart(db, id, blade, 1);
+		await setPart(db, id, { toolId: null, productId: blade, quantity: 1 });
 		const parts = await db
 			.select()
 			.from(repairParts)

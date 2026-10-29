@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import type { IndexedProduct } from "#/components/transfers/add-product";
 import { Button } from "#/components/ui/button";
@@ -25,12 +25,30 @@ import {
 import { TechPicker } from "./tech-picker";
 import { ToolInput } from "./tool-input";
 
-// Taking a tool in at the counter: whose it is, what it is, what's wrong,
-// and who'll fix it. Saving prints the ticket to tie on it.
+// Taking tools in at the counter: whose they are, what each is and what's
+// wrong with it, and who'll fix them. Saving prints a ticket for each to tie
+// on it. Ours, to refurbish, is one tool.
 
 type Who =
 	| { kind: "found"; customer: FoundCustomer }
 	| { kind: "new"; fields: NewCustomer };
+
+type Row = {
+	key: number;
+	tool: string;
+	picked: IndexedProduct | null;
+	serial: string;
+	problem: string;
+};
+
+let rows = 0;
+const blank = (): Row => ({
+	key: ++rows,
+	tool: "",
+	picked: null,
+	serial: "",
+	problem: "",
+});
 
 export function NewRepairDialog({
 	open,
@@ -49,10 +67,7 @@ export function NewRepairDialog({
 	// Ours, to refurbish: no customer, and a catalog product to make the
 	// refurb from (src/repairs/bench.ts).
 	const [bench, setBench] = useState(false);
-	const [picked, setPicked] = useState<IndexedProduct | null>(null);
-	const [tool, setTool] = useState("");
-	const [serial, setSerial] = useState("");
-	const [problem, setProblem] = useState("");
+	const [tools, setTools] = useState<Row[]>(() => [blank()]);
 	const [technicianId, setTechnicianId] = useState<number | null>(null);
 	const [busy, setBusy] = useState(false);
 
@@ -60,15 +75,17 @@ export function NewRepairDialog({
 		who?.kind === "found" ||
 		(who?.kind === "new" &&
 			(who.fields.firstName.trim() || who.fields.lastName.trim()));
+	const [first] = tools;
 	const ready =
-		(bench ? picked !== null : named && tool.trim() !== "") && !busy;
+		(bench
+			? first.picked !== null
+			: named && tools.every((t) => t.tool.trim() !== "")) && !busy;
+	const change = (key: number, row: Partial<Row>) =>
+		setTools((ts) => ts.map((t) => (t.key === key ? { ...t, ...row } : t)));
 
 	function reset() {
 		setWho(null);
-		setPicked(null);
-		setTool("");
-		setSerial("");
-		setProblem("");
+		setTools([blank()]);
 		setTechnicianId(null);
 	}
 
@@ -76,6 +93,7 @@ export function NewRepairDialog({
 		e.preventDefault();
 		if (!ready) return;
 		if (bench) {
+			const { picked } = first;
 			if (!picked) return;
 			setBusy(true);
 			const made = await optimism.change({
@@ -83,9 +101,9 @@ export function NewRepairDialog({
 					startBenchJob({
 						data: {
 							productId: picked.id,
-							tool,
-							serial: serial.trim() || null,
-							problem,
+							tool: first.tool,
+							serial: first.serial.trim() || null,
+							problem: first.problem,
 							technicianId,
 						},
 					}),
@@ -119,10 +137,12 @@ export function NewRepairDialog({
 				startRepair({
 					data: {
 						customer,
-						tool,
-						productId: picked?.id ?? null,
-						serial: serial.trim() || null,
-						problem,
+						tools: tools.map((t) => ({
+							tool: t.tool,
+							productId: t.picked?.id ?? null,
+							serial: t.serial.trim() || null,
+							problem: t.problem,
+						})),
 						technicianId,
 					},
 				}),
@@ -153,7 +173,11 @@ export function NewRepairDialog({
 							<button
 								key={o.label}
 								type="button"
-								onClick={() => setBench(o.value)}
+								onClick={() => {
+									setBench(o.value);
+									// Ours is one tool.
+									if (o.value) setTools((ts) => ts.slice(0, 1));
+								}}
 								className={cn(
 									"flex-1 rounded-md py-1.5 text-muted-foreground",
 									bench === o.value && "bg-card text-foreground shadow-card",
@@ -207,47 +231,85 @@ export function NewRepairDialog({
 						</div>
 					)}
 
-					<div className="grid grid-cols-[2fr_1fr] gap-2">
-						<ToolInput
-							value={tool}
-							productId={picked?.id ?? null}
-							products={products}
-							onChange={(text, id) => {
-								setTool(text);
-								setPicked(
-									id === null
-										? null
-										: (products.find((p) => p.id === id) ?? null),
-								);
-							}}
-							placeholder={
-								bench
-									? "Pick the tool from the catalog"
-									: "Tool, e.g. TapeTech 88TTE taper"
-							}
+					{tools.map((t, i) => (
+						<div
+							key={t.key}
 							className={cn(
-								"h-9 rounded-lg border border-input bg-white px-3 focus-within:border-ring",
-								// Ours needs a catalog product to make its refurb from.
-								bench &&
-									tool.trim() !== "" &&
-									!picked &&
-									"border-warning-border focus-within:border-warning-border",
+								"flex flex-col gap-2",
+								tools.length > 1 &&
+									"rounded-lg border border-border p-2 animate-in fade-in slide-in-from-top-1",
 							)}
-						/>
-						<input
-							value={serial}
-							onChange={(e) => setSerial(e.target.value)}
-							placeholder="Serial"
-							className="h-9 rounded-lg border border-input bg-white px-3 outline-none focus:border-ring"
-						/>
-					</div>
-					<textarea
-						value={problem}
-						onChange={(e) => setProblem(e.target.value)}
-						placeholder="What's wrong with it"
-						rows={3}
-						className="resize-none rounded-lg border border-input bg-white px-3 py-2 outline-none focus:border-ring"
-					/>
+						>
+							<div className="flex items-center gap-2">
+								<div className="grid flex-1 grid-cols-[2fr_1fr] gap-2">
+									<ToolInput
+										value={t.tool}
+										productId={t.picked?.id ?? null}
+										products={products}
+										onChange={(text, id) =>
+											change(t.key, {
+												tool: text,
+												picked:
+													id === null
+														? null
+														: (products.find((p) => p.id === id) ?? null),
+											})
+										}
+										placeholder={
+											bench
+												? "Pick the tool from the catalog"
+												: i === 0
+													? "Tool, e.g. TapeTech 88TTE taper"
+													: "Another tool"
+										}
+										className={cn(
+											"h-9 rounded-lg border border-input bg-white px-3 focus-within:border-ring",
+											// Ours needs a catalog product to make its refurb from.
+											bench &&
+												t.tool.trim() !== "" &&
+												!t.picked &&
+												"border-warning-border focus-within:border-warning-border",
+										)}
+									/>
+									<input
+										value={t.serial}
+										onChange={(e) => change(t.key, { serial: e.target.value })}
+										placeholder="Serial"
+										className="h-9 rounded-lg border border-input bg-white px-3 outline-none focus:border-ring"
+									/>
+								</div>
+								{tools.length > 1 && (
+									<button
+										type="button"
+										aria-label="Not this tool"
+										onClick={() =>
+											setTools((ts) => ts.filter((x) => x.key !== t.key))
+										}
+										className="rounded-md p-1 hover:bg-surface-strong"
+									>
+										<X className="size-4" />
+									</button>
+								)}
+							</div>
+							<textarea
+								value={t.problem}
+								onChange={(e) => change(t.key, { problem: e.target.value })}
+								placeholder="What's wrong with it"
+								rows={tools.length > 1 ? 2 : 3}
+								className="resize-none rounded-lg border border-input bg-white px-3 py-2 outline-none focus:border-ring"
+							/>
+						</div>
+					))}
+					{!bench && (
+						<button
+							type="button"
+							onClick={() => setTools((ts) => [...ts, blank()])}
+							className="-mt-2 flex items-center gap-1.5 self-start rounded-md px-1 text-sm font-medium text-link"
+						>
+							<Plus className="size-4" />
+							Another tool
+						</button>
+					)}
 					<TechPicker
 						people={people}
 						value={technicianId}
@@ -261,7 +323,11 @@ export function NewRepairDialog({
 							className="w-full"
 							disabled={!ready}
 						>
-							{busy ? "Saving…" : "Take in and print ticket"}
+							{busy
+								? "Saving…"
+								: tools.length > 1
+									? `Take in and print ${tools.length} tickets`
+									: "Take in and print ticket"}
 						</Button>
 					</DialogFooter>
 				</form>

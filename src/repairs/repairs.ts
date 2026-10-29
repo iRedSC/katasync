@@ -1,29 +1,26 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { sendDraftInvoice } from "#/channels/shopify/draft-orders";
 import type { Db } from "#/db/client";
-import { people, repairLabor, repairParts, repairs } from "#/db/repair-schema";
+import {
+	people,
+	repairLabor,
+	repairParts,
+	repairs,
+	repairTools,
+} from "#/db/repair-schema";
 import { products } from "#/db/schema";
 import { rehold } from "./bench";
-import {
-	type Locked,
-	lockRepair,
-	markPaid,
-	PaidInShopify,
-	RepairError,
-	syncDraft,
-} from "./draft-sync";
+import { RepairError, syncDraft } from "./draft-sync";
+import { withCharges, withRepair } from "./hold";
 import { LABOR_STEP } from "./labor";
-import { holdQueue, lastIn, placeIn, type QueueHeld } from "./queue";
-import {
-	boardStatuses,
-	isOnBoard,
-	type RepairStatus,
-	refuseMove,
-} from "./status";
+import { lastIn, placeIn } from "./queue";
+import { boardStatuses, type RepairStatus, refuseMove } from "./status";
+import { checkTool, type ToolFields, toolValues } from "./tools";
 
 // What staff do to a repair. Each change to a customer's that touches what
 // it charges writes the draft order too (src/repairs/draft-sync.ts); a
-// bench job (src/repairs/bench.ts) has none.
+// bench job (src/repairs/bench.ts) has none. Its tools are added and
+// changed in src/repairs/tools.ts.
 
 export { RepairError };
 
@@ -34,8 +31,6 @@ export type CustomerRef = {
 	email: string | null;
 };
 
-const clean = (s: string | null | undefined) => s?.trim() || null;
-
 async function technician(db: Db, id: number | null) {
 	if (id === null) return null;
 	const [p] = await db
@@ -43,17 +38,6 @@ async function technician(db: Db, id: number | null) {
 		.from(people)
 		.where(and(eq(people.id, id), isNull(people.archivedAt)));
 	if (!p) throw new RepairError("That person isn't in Settings any more");
-	return p.id;
-}
-
-// The catalog product a tool is, checked to be one.
-async function toolProduct(db: Db, id: number | null) {
-	if (id === null) return null;
-	const [p] = await db
-		.select({ id: products.id })
-		.from(products)
-		.where(eq(products.id, id));
-	if (!p) throw new RepairError("That product isn't in the catalog");
 	return p.id;
 }
 
@@ -79,149 +63,49 @@ export async function createRepair(
 	db: Db,
 	input: {
 		customer: CustomerRef;
-		tool: string;
-		// The catalog product it is, when picked as one.
-		productId?: number | null;
-		serial?: string | null;
-		problem?: string;
+		// What came in, at least one.
+		tools: [ToolFields, ...ToolFields[]];
 		technicianId?: number | null;
 	},
 ) {
-	const tool = input.tool.trim();
-	if (!tool) throw new RepairError("Say what the tool is");
-	const [made] = await db
-		.insert(repairs)
-		.values({
-			customerId: input.customer.id,
-			customerName: input.customer.name,
-			customerPhone: input.customer.phone,
-			customerEmail: input.customer.email,
-			tool,
-			productId: await toolProduct(db, input.productId ?? null),
-			serial: clean(input.serial),
-			problem: input.problem?.trim() ?? "",
-			technicianId: await technician(db, input.technicianId ?? null),
-		})
-		.returning({ id: repairs.id });
-	return made.id;
-}
-
-type Options = { sync?: boolean; open?: boolean };
-
-// Runs `change` holding the repair, then writes its draft order. A draft
-// paid meanwhile moves the repair to Picked up and refuses the change.
-// With `queue`, it holds the board's order first, to move the repair.
-async function withRepair<T>(
-	db: Db,
-	id: number,
-	change: (tx: Db, r: Locked, queue: QueueHeld) => Promise<T>,
-	options: Options & { queue: true },
-): Promise<T>;
-async function withRepair<T>(
-	db: Db,
-	id: number,
-	change: (tx: Db, r: Locked) => Promise<T>,
-	options?: Options,
-): Promise<T>;
-async function withRepair<T>(
-	db: Db,
-	id: number,
-	change: (tx: Db, r: Locked, queue: QueueHeld) => Promise<T>,
-	{ sync = true, open = true, queue }: Options & { queue?: true } = {},
-): Promise<T> {
-	try {
-		return await db.transaction(async (tx) => {
-			const held = queue ? await holdQueue(tx) : undefined;
-			const r = await lockRepair(tx, id);
-			if (open && !isOnBoard(r.status))
-				throw new RepairError(
-					`R${id} is ${r.status === "cancelled" ? "cancelled" : "picked up"}; move it back to the board to change it`,
-				);
-			// Without `queue`, the overloads give a change that takes none.
-			const result = await change(tx, r, held as QueueHeld);
-			if (sync && r.draftOrderId !== null)
-				await syncDraft(tx, await lockRepair(tx, id));
-			return result;
-		});
-	} catch (error) {
-		if (error instanceof PaidInShopify) {
-			await markPaid(db, id, error.order);
-			throw new RepairError(
-				`R${id} was already paid in Shopify as ${error.order.name}`,
-			);
-		}
-		throw error;
-	}
-}
-
-// Writes the draft even when the repair has none yet: its charges changed.
-async function withCharges<T>(
-	db: Db,
-	id: number,
-	change: (tx: Db, r: Locked) => Promise<T>,
-) {
-	return withRepair(
-		db,
-		id,
-		async (tx, r) => {
-			const result = await change(tx, r);
-			if (r.kind === "customer") await syncDraft(tx, await lockRepair(tx, id));
-			return result;
-		},
-		{ sync: false },
-	);
+	return db.transaction(async (tx) => {
+		const tools = [];
+		for (const t of input.tools) tools.push(await toolValues(tx, t));
+		const [made] = await tx
+			.insert(repairs)
+			.values({
+				customerId: input.customer.id,
+				customerName: input.customer.name,
+				customerPhone: input.customer.phone,
+				customerEmail: input.customer.email,
+				technicianId: await technician(tx, input.technicianId ?? null),
+			})
+			.returning({ id: repairs.id });
+		await tx
+			.insert(repairTools)
+			.values(tools.map((t) => ({ ...t, repairId: made.id })));
+		return made.id;
+	});
 }
 
 export type RepairEdit = {
-	tool?: string;
-	// The catalog product the tool is, or null for one typed out. Goes with
-	// the tool: naming it anew without one makes it typed out.
-	productId?: number | null;
-	serial?: string | null;
-	problem?: string;
 	notes?: string;
 	technicianId?: number | null;
 	customer?: CustomerRef;
 };
 
 export async function editRepair(db: Db, id: number, edit: RepairEdit) {
-	const tool = edit.tool?.trim();
-	if (edit.tool !== undefined && !tool)
-		throw new RepairError("Say what the tool is");
 	// Notes and who has it don't show on the draft.
-	const onDraft =
-		edit.tool !== undefined ||
-		edit.serial !== undefined ||
-		edit.problem !== undefined ||
-		edit.customer !== undefined;
+	const onDraft = edit.customer !== undefined;
 	await withRepair(
 		db,
 		id,
 		async (tx, r) => {
 			if (edit.customer && r.kind === "bench")
 				throw new RepairError(`R${id} is ours; it has no customer`);
-			if (edit.productId !== undefined && tool === undefined)
-				throw new RepairError("Name the tool along with its product");
-			// A bench job is always the product it came in as.
-			if (
-				r.kind === "bench" &&
-				edit.productId !== undefined &&
-				edit.productId !== r.productId
-			)
-				throw new RepairError(
-					`R${id} is ours; it stays the tool it came in as`,
-				);
-			const productId =
-				r.kind === "customer" && tool !== undefined
-					? await toolProduct(tx, edit.productId ?? null)
-					: undefined;
 			await tx
 				.update(repairs)
 				.set({
-					...(tool !== undefined && { tool }),
-					...(productId !== undefined && { productId }),
-					...(edit.serial !== undefined && { serial: clean(edit.serial) }),
-					...(edit.problem !== undefined && { problem: edit.problem.trim() }),
 					...(edit.notes !== undefined && { notes: edit.notes }),
 					...(edit.technicianId !== undefined && {
 						technicianId: await technician(tx, edit.technicianId),
@@ -293,12 +177,23 @@ export async function moveRepair(
 	);
 }
 
-export async function addLabor(db: Db, id: number, minutes: number, note = "") {
-	checkMinutes(minutes);
+// Time on one of the repair's tools, or on the order as a whole (null).
+export async function addLabor(
+	db: Db,
+	id: number,
+	labor: { toolId: number | null; minutes: number; note?: string },
+) {
+	checkMinutes(labor.minutes);
 	return withCharges(db, id, async (tx) => {
+		await checkTool(tx, id, labor.toolId);
 		const [row] = await tx
 			.insert(repairLabor)
-			.values({ repairId: id, minutes, note: note.trim() })
+			.values({
+				repairId: id,
+				toolId: labor.toolId,
+				minutes: labor.minutes,
+				note: labor.note?.trim() ?? "",
+			})
 			.returning({ id: repairLabor.id });
 		return row.id;
 	});
@@ -308,15 +203,17 @@ export async function editLabor(
 	db: Db,
 	id: number,
 	laborId: number,
-	edit: { minutes?: number; note?: string },
+	edit: { minutes?: number; note?: string; toolId?: number | null },
 ) {
 	if (edit.minutes !== undefined) checkMinutes(edit.minutes);
 	return withCharges(db, id, async (tx) => {
+		if (edit.toolId !== undefined) await checkTool(tx, id, edit.toolId);
 		const done = await tx
 			.update(repairLabor)
 			.set({
 				...(edit.minutes !== undefined && { minutes: edit.minutes }),
 				...(edit.note !== undefined && { note: edit.note.trim() }),
+				...(edit.toolId !== undefined && { toolId: edit.toolId }),
 			})
 			.where(and(eq(repairLabor.id, laborId), eq(repairLabor.repairId, id)))
 			.returning({ id: repairLabor.id });
@@ -330,7 +227,11 @@ export async function removeLabor(db: Db, id: number, laborId: number) {
 		const [gone] = await tx
 			.delete(repairLabor)
 			.where(and(eq(repairLabor.id, laborId), eq(repairLabor.repairId, id)))
-			.returning({ minutes: repairLabor.minutes, note: repairLabor.note });
+			.returning({
+				toolId: repairLabor.toolId,
+				minutes: repairLabor.minutes,
+				note: repairLabor.note,
+			});
 		if (!gone) throw new RepairError("That time isn't on this repair");
 		return gone;
 	});
@@ -346,37 +247,43 @@ function checkMinutes(minutes: number) {
 		throw new RepairError(`Time goes in ${LABOR_STEP}-minute steps`);
 }
 
-// Sets how many of a part went into the tool; 0 takes it off.
+// Sets how many of a part went into one of the repair's tools, or onto the
+// order as a whole (null); 0 takes it off.
 export async function setPart(
 	db: Db,
 	id: number,
-	productId: number,
-	quantity: number,
+	part: { toolId: number | null; productId: number; quantity: number },
 ) {
+	const { toolId, productId, quantity } = part;
 	if (!Number.isInteger(quantity) || quantity < 0 || quantity > 999)
 		throw new RepairError("Quantity must be 0 to 999");
 	return withCharges(db, id, async (tx) => {
+		await checkTool(tx, id, toolId);
 		const [product] = await tx
 			.select({ kind: products.kind })
 			.from(products)
 			.where(eq(products.id, productId));
 		if (!product) throw new RepairError("No such product");
+		const here = and(
+			eq(repairParts.repairId, id),
+			toolId === null
+				? isNull(repairParts.toolId)
+				: eq(repairParts.toolId, toolId),
+			eq(repairParts.productId, productId),
+		);
 		if (quantity === 0) {
-			await tx
-				.delete(repairParts)
-				.where(
-					and(
-						eq(repairParts.repairId, id),
-						eq(repairParts.productId, productId),
-					),
-				);
+			await tx.delete(repairParts).where(here);
 			return;
 		}
 		await tx
 			.insert(repairParts)
-			.values({ repairId: id, productId, quantity })
+			.values({ repairId: id, toolId, productId, quantity })
 			.onConflictDoUpdate({
-				target: [repairParts.repairId, repairParts.productId],
+				target: [
+					repairParts.repairId,
+					repairParts.toolId,
+					repairParts.productId,
+				],
 				set: { quantity },
 			});
 	});
