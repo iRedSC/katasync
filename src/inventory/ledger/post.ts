@@ -190,18 +190,11 @@ export async function lockRecipes(
 		...before.map((part) => part.productId),
 		...additionalProductIds,
 	]);
+	// A recipe that changed while this waited is fine as long as every part it
+	// names is locked: the parents are locked now, so it can't change again.
 	const current = await recipesOf(db, ids);
-	if (
-		before.length !== current.length ||
-		before.some((part, index) => {
-			const next = current[index];
-			return (
-				part.parentProductId !== next.parentProductId ||
-				part.productId !== next.productId ||
-				part.quantity !== next.quantity
-			);
-		})
-	)
+	const lockedIds = new Set(locked.map((product) => product.id));
+	if (current.some((part) => !lockedIds.has(part.productId)))
 		throw new LedgerError("The recipe changed; try again");
 	const recipes = new Map<number, { productId: number; quantity: number }[]>();
 	for (const part of current) {
