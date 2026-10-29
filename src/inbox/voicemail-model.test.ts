@@ -56,11 +56,11 @@ describe("Ooma source detection", () => {
 test("extracts the screenshot's fields without including Ooma's footer", () => {
 	expect(
 		voicemailContent(
-			"Account: East Coast Dry Wall\r\nNew Voicemail Received\r\nCaller Name\tEast Coast COMO EN CAS\r\nCaller Number\t(956) 515-5660\r\nDuration\t00:00:04\r\nVoicemail Preview:\r\nYou\r\n\r\nTo listen to this voicemail, click on the attachment in this email.",
+			"Account: East Coast Dry Wall\r\nNew Voicemail Received\r\nCaller Name\tWIRELESS CALLER\r\nCaller Number\t(555) 010-0199\r\nDuration\t00:00:04\r\nVoicemail Preview:\r\nYou\r\n\r\nTo listen to this voicemail, click on the attachment in this email.",
 		),
 	).toEqual({
-		callerName: "East Coast COMO EN CAS",
-		callerNumber: "(956) 515-5660",
+		callerName: "WIRELESS CALLER",
+		callerNumber: "(555) 010-0199",
 		duration: "00:00:04",
 		transcript: "You",
 	});

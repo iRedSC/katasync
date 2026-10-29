@@ -3,7 +3,9 @@ node_modules
 dist
 dist-ssr
 *.local
-.env
+# Any env file, backups like .env.local.bak-* included; only the example is shared.
+.env*
+!.env.example
 .nitro
 .tanstack
 .wrangler
