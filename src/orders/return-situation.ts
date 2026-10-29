@@ -127,7 +127,10 @@ function refund(o: SituationInput): Refund {
 			amount: { amount: o.refunded, currency: STORE_CURRENCY },
 		};
 	const sum = (rows: SituationRequest[]): Money | null => {
-		const priced = rows.filter((r) => r.amount !== null && r.currency);
+		// A zero says nothing was refunded (or asked).
+		const priced = rows.filter(
+			(r) => r.amount !== null && Number(r.amount) > 0 && r.currency,
+		);
 		if (priced.length === 0) return null;
 		return {
 			amount: priced.reduce((n, r) => n + Number(r.amount), 0),

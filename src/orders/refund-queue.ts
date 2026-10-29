@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, ne, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "#/db/client";
 import { repairs } from "#/db/repair-schema";
@@ -24,9 +24,8 @@ import {
 // the buyer said, what's refunded, and the newest decision about the rest.
 // Server only; where each stands is refundStep's.
 
-// How far back a checked-in return still asks for a decision.
-const WINDOW_DAYS = 120;
-// How long a settled one stays listed, to undo.
+// How long a settled one stays listed, to undo. Nothing still open ages
+// out.
 const DONE_DAYS = 14;
 
 export type TriagedItem = {
@@ -68,8 +67,18 @@ export type RefundRow = {
 
 const refurbs = alias(products, "refurbs");
 
+// A unit refurbished off the bench is received when it's listed, long after
+// it was checked in: it counts as checked in when it went on the bench, with
+// what was noted then, so listing it doesn't reopen its decision.
+const benchedAs = (field: "created_at" | "problem") =>
+	sql.raw(`(select ${field === "problem" ? "nullif(btrim(b.problem), '')" : "b.created_at"}
+		from repairs b
+		where b.kind = 'bench' and b.status = 'refurbished'
+			and b.return_line_id = "order_returns"."order_line_id"
+			and b.refurb_product_id = "order_returns"."refurb_product_id"
+		order by b.created_at limit 1)`);
+
 export async function listRefundQueue(db: Db): Promise<RefundRow[]> {
-	const since = sql`now() - make_interval(days => ${WINDOW_DAYS})`;
 	const [back, benched] = await Promise.all([
 		db
 			.select({
@@ -82,19 +91,18 @@ export async function listRefundQueue(db: Db): Promise<RefundRow[]> {
 				quantity: orderReturns.quantity,
 				restocked: orderReturns.restocked,
 				refurbSku: refurbs.sku,
-				note: orderReturns.note,
-				at: orderReturns.createdAt,
+				note: sql<
+					string | null
+				>`coalesce(${orderReturns.note}, ${benchedAs("problem")})`,
+				at: sql<Date>`coalesce(${benchedAs("created_at")}, ${orderReturns.createdAt})`.mapWith(
+					orderReturns.createdAt,
+				),
 			})
 			.from(orderReturns)
 			.innerJoin(orderLines, eq(orderLines.id, orderReturns.orderLineId))
 			.leftJoin(products, eq(products.id, orderLines.productId))
 			.leftJoin(refurbs, eq(refurbs.id, orderReturns.refurbProductId))
-			.where(
-				and(
-					eq(orderReturns.preCutover, false),
-					gte(orderReturns.createdAt, since),
-				),
-			),
+			.where(eq(orderReturns.preCutover, false)),
 		// A bench job's unit is listed as a refurb when it's done, and is
 		// then one of the returns above.
 		db
@@ -115,7 +123,6 @@ export async function listRefundQueue(db: Db): Promise<RefundRow[]> {
 				and(
 					eq(repairs.kind, "bench"),
 					notInArray(repairs.status, ["cancelled", "refurbished"]),
-					gte(repairs.createdAt, since),
 				),
 			),
 	]);

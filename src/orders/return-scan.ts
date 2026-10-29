@@ -15,6 +15,9 @@ const MIN_TRACKING = 10;
 export async function scanReturn(db: Db, scanned: string) {
 	const code = normalTracking(scanned.trim()).replace(/^#/, "");
 	if (!code) return [];
+	// Order numbers compared the same way: Amazon's have dashes.
+	const same = (column: AnyColumn) =>
+		sql`upper(regexp_replace(${column}, '[\s-]', '', 'g'))`;
 	const number = (column: AnyColumn) =>
 		sql`upper(regexp_replace(${column}, '[\\s-]', '', 'g'))`;
 	const endsScan = (column: AnyColumn) =>
@@ -41,9 +44,9 @@ export async function scanReturn(db: Db, scanned: string) {
 			.from(orders)
 			.where(
 				or(
-					sql`upper(${orders.name}) in (${code}, ${`#${code}`})`,
-					sql`upper(${orders.externalId}) = ${code}`,
-					sql`upper(${orders.marketplaceOrderId}) = ${code}`,
+					sql`${same(orders.name)} in (${code}, ${`#${code}`})`,
+					sql`${same(orders.externalId)} = ${code}`,
+					sql`${same(orders.marketplaceOrderId)} = ${code}`,
 				),
 			)
 			.limit(5),

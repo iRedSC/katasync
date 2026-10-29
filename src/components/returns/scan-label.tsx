@@ -67,7 +67,11 @@ export function ScanLabel({
 		<Dialog
 			open={open}
 			onOpenChange={(o) => {
-				if (!o) setScan({ kind: "ready" });
+				if (!o) {
+					// A lookup still out answers nobody once it's closed.
+					latest.current++;
+					setScan({ kind: "ready" });
+				}
 				onOpenChange(o);
 			}}
 		>

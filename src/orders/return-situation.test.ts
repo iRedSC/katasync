@@ -143,6 +143,17 @@ describe("returnSituation", () => {
 		).toEqual({ kind: "asked", amount: { amount: 22.84, currency: "USD" } });
 	});
 
+	test("Amazon saying it refunded zero isn't a refund", () => {
+		const s = situation({
+			requests: [
+				request({ status: "delivered", amount: "0.00", currency: "USD" }),
+			],
+			back: { quantity: 1, at, outcome: "restocked" },
+		});
+		expect(s.refund).toEqual({ kind: "none" });
+		expect(s.next.kind).toBe("refund");
+	});
+
 	test("refunded but not back, or maybe coming, is ours to decide", () => {
 		expect(situation({ state: "refunded" }).next.kind).toBe("decide");
 		expect(situation({ state: "maybe", refunded: 5 }).next.kind).toBe("decide");

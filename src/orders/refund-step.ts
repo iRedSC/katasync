@@ -25,6 +25,9 @@ export type RefundStepInput = {
 	decision: Decision | null;
 	// What its marketplace's charges say is refunded now.
 	refundedNow: number;
+	// What the items checked in sold for: a full refund already made
+	// covers at least this.
+	itemValue: number;
 };
 
 export type RefundStep =
@@ -59,7 +62,7 @@ export function refundStep(o: RefundStepInput): RefundStep {
 				return { kind: "done", decision: d, how: "seen" };
 			const covered =
 				d.decision === "full"
-					? d.refundedBefore > 0
+					? d.refundedBefore >= o.itemValue
 					: d.refundedBefore >= (d.amount ?? Infinity);
 			return covered
 				? { kind: "done", decision: d, how: "already" }

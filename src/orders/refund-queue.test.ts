@@ -1,5 +1,7 @@
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import type { Db } from "#/db/client";
+import { repairs } from "#/db/repair-schema";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { saveCostReport } from "./charges";
@@ -108,6 +110,59 @@ describe("listRefundQueue", () => {
 		expect(await steps()).toEqual([{ name: "#2", step: "done" }]);
 	});
 
+	test("an undecided return never ages out", async () => {
+		const o = await order("#7");
+		await db.insert(schema.orderReturns).values({
+			orderLineId: o.lineId,
+			quantity: 1,
+			restocked: false,
+			createdAt: new Date(Date.now() - 400 * 86_400_000),
+		});
+		expect(await steps()).toEqual([{ name: "#7", step: "decide" }]);
+	});
+
+	test("listing a benched unit as a refurb keeps its decision and note", async () => {
+		const o = await order("#8");
+		const benchedAt = new Date(Date.now() - 3 * 86_400_000);
+		const refurb = await createProduct(db, "WRENCH-R1", "simple");
+		await db
+			.update(schema.products)
+			.set({ refurbishedFromId: wrench, condition: "good" })
+			.where(eq(schema.products.id, refurb));
+		await db.insert(repairs).values({
+			kind: "bench",
+			status: "received",
+			tool: "Wrench",
+			productId: wrench,
+			returnLineId: o.lineId,
+			problem: "Wrong item",
+			createdAt: benchedAt,
+		});
+		await decideRefund(db, {
+			orderId: o.id,
+			decision: "none",
+			amount: null,
+			note: null,
+			after: null,
+		});
+		// Listed later: the job is refurbished and its unit received.
+		await db
+			.update(repairs)
+			.set({ status: "refurbished", refurbProductId: refurb });
+		await db.insert(schema.orderReturns).values({
+			orderLineId: o.lineId,
+			quantity: 1,
+			restocked: false,
+			refurbProductId: refurb,
+			batchId: crypto.randomUUID(),
+		});
+		const [row] = await listRefundQueue(db);
+		expect(row.items).toMatchObject([
+			{ outcome: "refurbished", note: "Wrong item", at: benchedAt },
+		]);
+		expect(refundStep(row).kind).toBe("done");
+	});
+
 	test("pre-cutover returns never ask", async () => {
 		const o = await order("#3");
 		await db.insert(schema.orderReturns).values({
@@ -182,5 +237,12 @@ describe("scanReturn", () => {
 		expect((await scanReturn(db, usps)).map((r) => r.name)).toEqual(["#6"]);
 		expect((await scanReturn(db, "#6")).map((r) => r.name)).toEqual(["#6"]);
 		expect(await scanReturn(db, "1Z999AA10123456784")).toEqual([]);
+	});
+
+	test("an Amazon order number scans with its dashes", async () => {
+		await order("112-8353513-8788247");
+		expect(
+			(await scanReturn(db, "112-8353513-8788247")).map((r) => r.name),
+		).toEqual(["112-8353513-8788247"]);
 	});
 });
