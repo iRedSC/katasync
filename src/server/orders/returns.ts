@@ -3,6 +3,7 @@ import { type } from "arktype";
 import { getDb } from "#/db/client";
 import { feedOnChannels } from "#/diagnostics/feed-record";
 import { refurbishOptions, refurbishReturn } from "#/orders/refurbish";
+import { scanReturn } from "#/orders/return-scan";
 import { receiveReturn, undoReturns } from "#/orders/returns";
 import {
 	findReturnable,
@@ -25,6 +26,7 @@ export const receiveOrderReturn = createServerFn({ method: "POST" })
 			outcome: type("'restock' | 'write_off'").or({
 				refurbishInto: "number.integer > 0",
 			}),
+			"note?": "string <= 1000",
 		}),
 	)
 	.handler(({ data }) => receiveReturn(getDb(), data));
@@ -55,6 +57,7 @@ export const refurbishOrderReturn = createServerFn({ method: "POST" })
 			productType: "string",
 			tags: "string[]",
 			notes: "string",
+			"returnNote?": "string <= 1000",
 		}),
 	)
 	.handler(({ data }) => refurbishReturn(getDb(), data));
@@ -92,3 +95,8 @@ export const undoOrderNoReturn = createServerFn({ method: "POST" })
 	.handler(({ data }) => restoreNoReturn(getDb(), data.orderId, data.previous));
 
 export type ReturnsData = Awaited<ReturnType<typeof getReturns>>;
+
+// The order a scanned return label (or packing slip) is for.
+export const scanReturnLabel = createServerFn({ method: "GET" })
+	.validator(type({ code: "0 < string <= 200" }))
+	.handler(({ data }) => scanReturn(getDb(), data.code));

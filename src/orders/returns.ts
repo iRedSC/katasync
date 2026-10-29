@@ -47,6 +47,8 @@ export async function receiveReturn(
 		orderId: number;
 		lines: { lineId: number; quantity: number }[];
 		outcome: ReturnOutcome;
+		// What whoever checked it in saw, for the refund decision.
+		note?: string | null;
 	},
 	bench: { repairId: number; unitCost: number | null } | null = null,
 ): Promise<{ ids: number[] }> {
@@ -204,6 +206,7 @@ export async function receiveReturn(
 					restocked: input.outcome === "restock",
 					refurbProductId: refurb,
 					batchId,
+					note: input.note?.trim() || null,
 				})
 				.returning({ id: orderReturns.id });
 			ids.push(row.id);

@@ -110,12 +110,14 @@ async function request(
 }
 
 async function due() {
-	const { due } = await listReturns(db);
-	return due.map((o) => ({
-		name: o.name,
-		state: o.state,
-		expected: o.lines.reduce((n, l) => n + l.expected, 0),
-	}));
+	const { returns } = await listReturns(db);
+	return returns
+		.filter((o) => o.state !== null)
+		.map((o) => ({
+			name: o.name,
+			state: o.state,
+			expected: o.lines.reduce((n, l) => n + l.expected, 0),
+		}));
 }
 
 describe("order_returns_due", () => {
@@ -181,7 +183,7 @@ describe("order_returns_due", () => {
 			.set({ orderLineId: null, sku: "MYSTERY" })
 			.where(eq(schema.returnRequestLines.requestId, id));
 		const {
-			due: [found],
+			returns: [found],
 		} = await listReturns(db);
 		expect(found).toMatchObject({
 			name: "#8",
@@ -262,8 +264,28 @@ describe("order_returns_due", () => {
 			extra: { fulfillmentStatus: "PARTIALLY_FULFILLED" },
 		});
 		await request(o, "requested");
-		const { due } = await listReturns(db);
-		expect(due[0].blocker).toMatch(/remaining items ship/);
+		const { returns } = await listReturns(db);
+		expect(returns[0].blocker).toMatch(/remaining items ship/);
+	});
+
+	test("back here but open on its marketplace stays, with how and its refund", async () => {
+		const o = await order("#14");
+		await request(o, "delivered");
+		await db
+			.insert(schema.orderReturns)
+			.values({ orderLineId: o.lineId, quantity: 1, restocked: false });
+		await refund(o.id, 20);
+		const { returns, cases } = await listReturns(db);
+		expect(cases).toEqual([]);
+		expect(returns).toMatchObject([
+			{
+				name: "#14",
+				state: null,
+				refunded: 20,
+				back: { quantity: 1, outcome: "written_off" },
+				requests: [{ status: "delivered" }],
+			},
+		]);
 	});
 
 	test("received lately lists what came back", async () => {

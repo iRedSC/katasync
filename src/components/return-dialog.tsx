@@ -45,9 +45,11 @@ export type Outcome = "restock" | "refurbish" | "write_off";
 // What came back in the box, line by line. Starts at everything still
 // returnable (or what's expected), since most returns are the whole order; Enter puts it all
 // back on the shelf. Refurbish (one line at a time) turns to choosing the
-// refurb; Bench puts them on the repair board to fix first, a job and a
-// ticket each, and lists them from there (src/repairs/bench.ts). It closes at once: the page shows the return before the server
-// has it, and a failure says why in a toast.
+// refurb; Repair puts them on the repair board to fix first, a bench job
+// and a ticket each, and lists them from there (src/repairs/bench.ts). The
+// note goes with it to whoever decides the refund. It closes at once: the
+// page shows the return before the server has it, and a failure says why
+// in a toast.
 export function ReturnDialog({
 	open,
 	onOpenChange,
@@ -69,6 +71,8 @@ export function ReturnDialog({
 	};
 }) {
 	const [refurbishing, setRefurbishing] = useState(false);
+	const [note, setNote] = useState("");
+	const said = note.trim() || undefined;
 	const router = useRouter();
 	const [counts, setCounts] = useState(
 		() =>
@@ -95,7 +99,10 @@ export function ReturnDialog({
 		record(
 			received,
 			outcome,
-			() => receiveOrderReturn({ data: { orderId, lines: received, outcome } }),
+			() =>
+				receiveOrderReturn({
+					data: { orderId, lines: received, outcome, note: said },
+				}),
 			() => ({
 				message: restock
 					? `${formatCount(count)} back on the shelf`
@@ -118,6 +125,7 @@ export function ReturnDialog({
 							orderId,
 							lines: [single],
 							outcome: { refurbishInto: choice.productId },
+							note: said,
 						},
 					}),
 				() => ({ message: `${n} added to ${choice.sku}` }),
@@ -135,6 +143,7 @@ export function ReturnDialog({
 							orderId,
 							lineId: single.lineId,
 							quantity: single.quantity,
+							returnNote: said,
 						},
 					}),
 				(r) => ({
@@ -166,6 +175,7 @@ export function ReturnDialog({
 						orderId,
 						lineId: single.lineId,
 						quantity: single.quantity,
+						problem: said,
 					},
 				}),
 		});
@@ -309,6 +319,22 @@ export function ReturnDialog({
 							})}
 						</ul>
 
+						<textarea
+							value={note}
+							onChange={(e) => setNote(e.target.value)}
+							onKeyDown={(e) => {
+								// Enter still puts it back on the shelf; Shift+Enter is a new line.
+								if (e.key === "Enter" && !e.shiftKey) {
+									e.preventDefault();
+									e.currentTarget.form?.requestSubmit();
+								}
+							}}
+							rows={2}
+							maxLength={1000}
+							placeholder="Note for refunds (optional): missing parts, wrong item, damage"
+							className="w-full resize-none rounded-lg border border-input bg-white px-2 py-1.5 text-sm outline-none focus:border-ring"
+						/>
+
 						<DialogFooter className="flex-wrap gap-2 sm:justify-between">
 							<div className="flex gap-2">
 								<Button
@@ -333,7 +359,7 @@ export function ReturnDialog({
 									disabled={!single}
 									onClick={bench}
 								>
-									Bench
+									Repair
 								</Button>
 							</div>
 							<Button type="submit" disabled={total === 0}>

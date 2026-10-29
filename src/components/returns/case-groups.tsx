@@ -45,7 +45,7 @@ export function CaseGroups({
 			<Fragment key={group.label}>
 				<tr className="border-t bg-subtle">
 					<td
-						colSpan={8}
+						colSpan={6}
 						className="px-4 py-2 text-xs font-medium text-muted-foreground"
 					>
 						{group.label}

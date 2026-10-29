@@ -1,31 +1,42 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ExternalLink, Printer, Search, SearchX, Undo2 } from "lucide-react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import {
+	ChevronRight,
+	ExternalLink,
+	Printer,
+	ScanBarcode,
+	Search,
+	SearchX,
+	Undo2,
+} from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FilterBar, useSearchRows } from "#/components/filter-bar";
 import { conditionName } from "#/components/order-page/return-card";
 import { OrderTabs, ReturnsViews } from "#/components/order-tabs";
 import { Badge, Card, EmptyState, Page } from "#/components/page";
-import { type Received, ReturnDialog } from "#/components/return-dialog";
-import { CaseGroups } from "#/components/returns/case-groups";
 import {
-	ICON_BUTTON,
-	ReturnRow,
-	states,
-} from "#/components/returns/return-row";
+	type Outcome,
+	type Received,
+	ReturnDialog,
+} from "#/components/return-dialog";
+import { CaseGroups } from "#/components/returns/case-groups";
+import { GROUPS } from "#/components/returns/return-cells";
+import { ICON_BUTTON, ReturnRow } from "#/components/returns/return-row";
 import {
 	NothingDue,
 	ReturnsChecked,
 } from "#/components/returns/returns-checked";
+import { ScanLabel } from "#/components/returns/scan-label";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
+import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
-import type { ReturnState } from "#/db/schema";
 import { type Chip, defineSearch } from "#/lib/facet-search";
 import { formatCount, formatOrderDate } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { useRowLink } from "#/lib/row-link";
 import { offerUndo } from "#/lib/undo";
+import { NEXT_ORDER, ours, returnSituation } from "#/orders/return-situation";
 import type { ReturnOrder } from "#/orders/returns-due";
 import { marketplaceOf } from "#/orders/search";
 import { printPdf } from "#/printing/qz-client";
@@ -51,15 +62,25 @@ export const Route = createFileRoute("/orders/returns")({
 
 const returnsData = optimistic<ReturnsData>("returns");
 
-// Receiving takes what came back off what's expected; an order with nothing
-// left expected (or a maybe, once anything is back) leaves the list. Undo
-// shows it again when the page reloads.
-const receivedPatch = (orderId: number, received: Received[]): Patch =>
+const OUTCOME = {
+	restock: "restocked",
+	refurbish: "refurbished",
+	write_off: "written_off",
+} as const;
+
+// Receiving takes what came back off what's expected and counts it back
+// here; with nothing left expected (or a maybe, once anything is back) its
+// situation moves on: to refund or close while its marketplace has it open,
+// or off the list. Undo shows it again when the page reloads.
+const receivedPatch = (
+	orderId: number,
+	received: Received[],
+	outcome: Outcome,
+): Patch =>
 	returnsData.patch("all", (d) => ({
 		...d,
-		due: d.due.flatMap((o) => {
-			if (o.id !== orderId) return [o];
-			if (o.state === "maybe") return [];
+		returns: d.returns.map((o) => {
+			if (o.id !== orderId) return o;
 			const lines = o.lines.map((l) => {
 				const n = received.find((r) => r.lineId === l.id)?.quantity ?? 0;
 				return {
@@ -68,14 +89,29 @@ const receivedPatch = (orderId: number, received: Received[]): Patch =>
 					expected: Math.max(0, l.expected - n),
 				};
 			});
-			return lines.some((l) => l.expected > 0) ? [{ ...o, lines }] : [];
+			const got = received.reduce((n, r) => n + r.quantity, 0);
+			return {
+				...o,
+				lines,
+				state:
+					o.state === "maybe" || !lines.some((l) => l.expected > 0)
+						? null
+						: o.state,
+				back: {
+					quantity: (o.back?.quantity ?? 0) + got,
+					at: new Date(),
+					outcome: OUTCOME[outcome],
+				},
+			};
 		}),
 	}));
 
 const dismissedPatch = (orderId: number): Patch =>
 	returnsData.patch("all", (d) => ({
 		...d,
-		due: d.due.filter((o) => o.id !== orderId),
+		returns: d.returns.map((o) =>
+			o.id === orderId ? { ...o, state: null, noReturnAt: new Date() } : o,
+		),
 	}));
 
 type ReceivedRow = ReturnsData["received"][number];
@@ -102,8 +138,11 @@ const returnSearch = defineSearch<
 			label: "status",
 			menu: "Status",
 			words: ["status"],
-			of: (o) => (o.state ? states[o.state].label.toLowerCase() : null),
-			known: Object.values(states).map((s) => s.label.toLowerCase()),
+			of: (o) => {
+				const next = returnSituation(o).next.kind;
+				return next === "done" ? null : GROUPS[next].label;
+			},
+			known: Object.values(GROUPS).map((g) => g.label),
 			closed: true,
 		},
 		marketplace: {
@@ -143,7 +182,11 @@ type OtherSearch =
 
 function Returns() {
 	const loaded = Route.useLoaderData();
-	const { cases, due, received, checked } = returnsData.useData("all", loaded);
+	const { cases, returns, received, checked } = returnsData.useData(
+		"all",
+		loaded,
+	);
+	const [closeOpen, setCloseOpen] = useState(false);
 	const { link } = useRowLink();
 	const input = useRef<HTMLInputElement>(null);
 	const [query, setQuery] = useState("");
@@ -152,8 +195,15 @@ function Returns() {
 	>([]);
 	const [others, setOthers] = useState<OtherSearch | null>(null);
 	const [receiving, setReceiving] = useState<ReturnOrder | null>(null);
+	// Scanning box after box: the scanner opens again once each is checked in.
+	const [scanning, setScanning] = useState<"off" | "on" | "paused">("off");
 
-	const { idx, shown, words } = useSearchRows(returnSearch, due, chips, query);
+	const { idx, shown, words } = useSearchRows(
+		returnSearch,
+		returns,
+		chips,
+		query,
+	);
 	// Orders that can take a return but aren't expected to, for a box that
 	// turns up first, found by the words typed. Asked for once typing pauses.
 	// Chips narrow what's due, which these aren't.
@@ -181,7 +231,9 @@ function Returns() {
 	}, [wordsTyped]);
 	const found =
 		wordsTyped.length >= 3 && others?.q === wordsTyped ? others : null;
-	const extra = found?.state === "done" ? found.rows : [];
+	const listed = new Set(returns.map((o) => o.id));
+	const extra =
+		found?.state === "done" ? found.rows.filter((o) => !listed.has(o.id)) : [];
 	const extraFailed = found?.state === "failed";
 	const rows = [...shown, ...extra];
 
@@ -191,16 +243,27 @@ function Returns() {
 	const only = rows.length === 1 ? rows[0] : undefined;
 
 	function receive(o: ReturnOrder | undefined) {
-		if (!o) return;
+		if (!o) return false;
 		if (o.blocker) {
 			toast.error(`Can't receive ${o.name} here`, { description: o.blocker });
-			return;
+			return false;
+		}
+		if (o.lines.length === 0) {
+			toast.error(`${o.name} is all back already`);
+			return false;
 		}
 		setReceiving(o);
+		return true;
+	}
+
+	function scanned(o: ReturnOrder) {
+		// The list's copy knows what's expected; a scan's may be older.
+		if (receive(returns.find((r) => r.id === o.id) ?? o)) setScanning("paused");
 	}
 
 	async function nothingComing(o: ReturnOrder | undefined) {
 		if (!o?.state) return;
+		const wasRefunded = o.state === "refunded";
 		const r = await optimism.change({
 			label: `Nothing coming back on ${o.name}`,
 			patch: dismissedPatch(o.id),
@@ -208,10 +271,9 @@ function Returns() {
 		});
 		if (!r) return;
 		offerUndo(`Nothing coming back on ${o.name}`, {
-			description:
-				o.state === "refunded"
-					? "Its items count as a cost now"
-					: "It's off the list",
+			description: wasRefunded
+				? "Its items count as a cost now"
+				: "It's off the list",
 			undo: async () => {
 				const undone = await optimism.change({
 					label: `Undoing on ${o.name}`,
@@ -274,34 +336,55 @@ function Returns() {
 		},
 	});
 
+	const situations = useMemo(
+		() => new Map(returns.map((o) => [o.id, returnSituation(o)])),
+		[returns],
+	);
+	const situationOf = (o: ReturnOrder) =>
+		situations.get(o.id) ?? returnSituation(o);
 	const row = (o: ReturnOrder) => (
 		<ReturnRow
 			key={o.id}
 			order={o}
+			situation={situationOf(o)}
 			onReceive={() => receive(o)}
 			onNothing={o.state ? () => nothingComing(o) : undefined}
 			link={link}
 		/>
 	);
-	// Case obligations stay separate from the boxes being received.
+	// Refunds with nothing coming back and marketplace cases are answered
+	// on their own, above the returns.
 	const asking = !query.trim() && chips.length === 0 ? cases : [];
-	const groups = (Object.keys(states) as ReturnState[])
-		.map((s) => ({ state: s, orders: shown.filter((o) => o.state === s) }))
-		.filter((g) => g.orders.length > 0);
+	// Back here and not refunded is the Refunds view's.
+	const groups = NEXT_ORDER.flatMap((next) =>
+		next === "done" || next === "refund"
+			? []
+			: [
+					{
+						next,
+						orders: shown.filter((o) => situationOf(o).next.kind === next),
+					},
+				],
+	).filter((g) => g.orders.length > 0);
+	// What's ours to do: the tab's count.
+	const toDo =
+		new Set(
+			cases
+				.filter((c) => c.waitingOn === "us")
+				.map((c) => c.orderId ?? `case:${c.id}`),
+		).size +
+		returns.filter((o) => {
+			const next = situationOf(o).next;
+			return ours(next) && next.kind !== "refund";
+		}).length;
+	const listedRows = groups.reduce((n, g) => n + g.orders.length, 0);
 
 	return (
 		<Page title="Orders" width="wide">
 			<Card flush className="overflow-visible">
 				<OrderTabs
 					active="returns"
-					count={
-						new Set([
-							...cases.map(
-								(request) => request.orderId ?? `case:${request.id}`,
-							),
-							...due.map((order) => order.id),
-						]).size
-					}
+					count={toDo}
 					aside={
 						<>
 							<ReturnsChecked checks={checked} />
@@ -309,24 +392,30 @@ function Returns() {
 						</>
 					}
 				/>
-				<FilterBar
-					search={returnSearch}
-					idx={idx}
-					inputRef={input}
-					text={query}
-					onText={setQuery}
-					chips={chips}
-					onChips={setChips}
-					onSubmit={() => receive(only)}
-					placeholder="What's on the box: order number, name, zip, SKU, tracking, or %refunded"
-					className="border-b p-2"
-				/>
+				<div className="flex items-center gap-2 border-b p-2">
+					<Button onClick={() => setScanning("on")} className="shrink-0">
+						<ScanBarcode />
+						Scan label
+					</Button>
+					<FilterBar
+						search={returnSearch}
+						idx={idx}
+						inputRef={input}
+						text={query}
+						onText={setQuery}
+						chips={chips}
+						onChips={setChips}
+						onSubmit={() => receive(only)}
+						placeholder="What's on the box: order number, name, zip, SKU, tracking, or %arrived"
+						className="min-w-0 flex-1"
+					/>
+				</div>
 
-				{extraFailed && rows.length === 0 ? (
+				{extraFailed && listedRows + extra.length === 0 ? (
 					<EmptyState icon={Search} title="Search didn't finish">
 						Type to search again.
 					</EmptyState>
-				) : rows.length === 0 && asking.length === 0 ? (
+				) : listedRows + extra.length === 0 && asking.length === 0 ? (
 					query.trim() || chips.length ? (
 						<EmptyState icon={SearchX} title="No order matches">
 							{chips.length
@@ -344,35 +433,40 @@ function Returns() {
 							<tr className="border-b bg-subtle text-left text-xs text-muted-foreground">
 								<th className="px-4 py-2 font-medium">Order</th>
 								<th className="hidden px-4 py-2 font-medium md:table-cell">
-									Date
+									Customer
 								</th>
-								<th className="px-4 py-2 font-medium">Customer</th>
-								<th className="hidden px-4 py-2 font-medium md:table-cell">
-									Items
+								<th className="px-4 py-2 font-medium">Items</th>
+								<th className="px-4 py-2 font-medium">Item</th>
+								<th className="hidden px-4 py-2 font-medium sm:table-cell">
+									Refund
 								</th>
-								<th className="hidden px-4 py-2 font-medium lg:table-cell">
-									Why
-								</th>
-								<th className="hidden px-4 py-2 font-medium lg:table-cell">
-									Channel
-								</th>
-								<th className="px-4 py-2 font-medium">Status</th>
 								<th className="w-0 px-2 py-2" />
 							</tr>
 						</thead>
 						<tbody>
 							<CaseGroups cases={asking} link={link} />
-							{groups.map((g) => (
-								<Fragment key={g.state}>
-									<GroupHeading>
-										{states[g.state].heading}
-										<span className="ml-1.5 tabular-nums">
-											{formatCount(g.orders.length)}
-										</span>
-									</GroupHeading>
-									{g.orders.map(row)}
-								</Fragment>
-							))}
+							{groups.map((g) => {
+								// Close folds away: the marketplace closes most on its own.
+								const folds = g.next === "close" && !query.trim();
+								const open = !folds || closeOpen;
+								return (
+									<Fragment key={g.next}>
+										<GroupHeading
+											dot={GROUPS[g.next].dot}
+											onToggle={
+												folds ? () => setCloseOpen((o) => !o) : undefined
+											}
+											open={open}
+										>
+											{GROUPS[g.next].heading}
+											<span className="ml-1.5 tabular-nums">
+												{formatCount(g.orders.length)}
+											</span>
+										</GroupHeading>
+										{open && g.orders.map(row)}
+									</Fragment>
+								);
+							})}
 							{extraFailed && (
 								<tr>
 									<td
@@ -476,11 +570,21 @@ function Returns() {
 				</Card>
 			)}
 
+			<ScanLabel
+				open={scanning === "on"}
+				onOpenChange={(open) => setScanning(open ? "on" : "off")}
+				onFound={scanned}
+			/>
+
 			{receiving && (
 				<ReturnDialog
 					key={receiving.id}
 					open
-					onOpenChange={(open) => !open && setReceiving(null)}
+					onOpenChange={(open) => {
+						if (open) return;
+						setReceiving(null);
+						if (scanning === "paused") setScanning("on");
+					}}
 					orderId={receiving.id}
 					orderName={receiving.name}
 					lines={receiving.lines.map((l) => ({
@@ -493,10 +597,10 @@ function Returns() {
 					}))}
 					patches={{
 						// The box is done: the search clears for the next one.
-						receive: (got) => {
+						receive: (got, outcome) => {
 							setQuery("");
 							setOthers(null);
-							return receivedPatch(receiving.id, got);
+							return receivedPatch(receiving.id, got, outcome);
 						},
 						undo: () => reloadOnly,
 					}}
@@ -506,16 +610,37 @@ function Returns() {
 	);
 }
 
-const COLUMNS = 8;
+const COLUMNS = 6;
 
-function GroupHeading({ children }: { children: React.ReactNode }) {
+function GroupHeading({
+	children,
+	dot,
+	onToggle,
+	open = true,
+}: {
+	children: React.ReactNode;
+	dot?: string;
+	onToggle?: () => void;
+	open?: boolean;
+}) {
 	return (
-		<tr>
+		<tr
+			onClick={onToggle}
+			className={onToggle ? "cursor-pointer select-none" : undefined}
+		>
 			<td
 				colSpan={COLUMNS}
 				className="border-y bg-subtle px-4 py-1.5 text-xs font-medium text-muted-foreground"
 			>
-				{children}
+				<span className="flex items-center gap-2">
+					{onToggle && (
+						<ChevronRight
+							className={`size-3.5 transition-transform ${open ? "rotate-90" : ""}`}
+						/>
+					)}
+					{dot && <span className={`size-2 rounded-full ${dot}`} />}
+					<span>{children}</span>
+				</span>
 			</td>
 		</tr>
 	);

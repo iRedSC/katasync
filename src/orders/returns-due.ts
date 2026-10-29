@@ -27,16 +27,19 @@ import {
 	stores,
 } from "#/db/schema";
 import { onBench } from "#/repairs/bench-holds";
-import { returnPage } from "./admin-urls";
+import { type AdminPage, returnPage } from "./admin-urls";
 import { openMarketplaceCaseRows } from "./marketplace-cases";
 import type { EvidenceChips } from "./return-evidence";
+import type { BackOutcome, SituationInput } from "./return-situation";
 import { committedStock, returnQuantity } from "./return-stock";
 import { type PackageAt, trackingFor } from "./return-tracking";
 import { isLabeled, returnBlocker } from "./status";
 
-// What the Returns & refunds tab shows: refunds waiting on our answer,
-// orders with something due back (rules in the order_returns_due view), and
-// what came back lately.
+// What the Returns & refunds tab shows: marketplace cases and refunds
+// waiting on our answer, every order with something due back (rules in the
+// order_returns_due view) or a return still open on its marketplace, and
+// what came back lately. Where each order's return stands is worked out
+// from these by returnSituation.
 
 export type ReturnOrder = {
 	id: number;
@@ -50,8 +53,11 @@ export type ReturnOrder = {
 	shipRegion: string | null;
 	shipPostalCode: string | null;
 	placedAt: Date;
-	// Null for an order found by search with nothing expected.
+	// Null when nothing more is expected back.
 	state: ReturnState | null;
+	noReturnAt: Date | null;
+	back: SituationInput["back"];
+	refunded: number;
 	// Why its return can't be received here, if it can't.
 	blocker: string | null;
 	requests: ({
@@ -67,6 +73,7 @@ export type ReturnOrder = {
 		requestedAt: Date;
 		// Where its package is, as Shippo last said; null until asked.
 		tracking: PackageAt | null;
+		answerOn: AdminPage | null;
 	} & EvidenceChips)[];
 	// Items an open request names that no line matched, so which line
 	// they are is decided when the box is opened.
@@ -97,10 +104,20 @@ const stateOrder: ReturnState[] = [
 ];
 
 export async function listReturns(db: Db) {
-	const due = await db.select().from(orderReturnsDue);
+	const [due, open] = await Promise.all([
+		db.select().from(orderReturnsDue),
+		// A return still open on its marketplace with nothing due here: back
+		// already, or nothing coming, but not settled there.
+		db
+			.selectDistinct({ orderId: returnRequests.orderId })
+			.from(returnRequests)
+			.innerJoin(orders, eq(orders.id, returnRequests.orderId))
+			.where(and(openReturn, eq(orders.fulfilledByChannel, false))),
+	]);
 	const expected = new Map(due.map((d) => [d.lineId, d.expected]));
 	const states = new Map(due.map((d) => [d.orderId, d.state]));
-	const found = await returnOrders(db, [...states.keys()], states, expected);
+	const ids = [...new Set([...states.keys(), ...open.map((o) => o.orderId)])];
+	const found = await returnOrders(db, ids, states, expected);
 	found.sort(
 		(a, b) =>
 			stateOrder.indexOf(a.state ?? "maybe") -
@@ -112,11 +129,10 @@ export async function listReturns(db: Db) {
 		recentlyReceived(db),
 	]);
 	return {
-		cases,
-		refunds: cases.filter(
-			(request) => request.kind === "refund" && request.waitingOn === "us",
-		),
-		due: found,
+		// A return request shows with its order's return; the rest (refunds
+		// with nothing coming back, marketplace cases) are answered alone.
+		cases: cases.filter((c) => !(c.source === "return" && c.kind === "return")),
+		returns: found,
 		received,
 	};
 }
@@ -173,6 +189,21 @@ export async function findReturnable(db: Db, query: string) {
 		.slice(0, 10);
 }
 
+// Orders by id as Returns lays them out, with what's due back on each.
+export async function returnOrdersById(db: Db, ids: number[]) {
+	if (ids.length === 0) return [];
+	const due = await db
+		.select()
+		.from(orderReturnsDue)
+		.where(inArray(orderReturnsDue.orderId, ids));
+	return returnOrders(
+		db,
+		ids,
+		new Map(due.map((d) => [d.orderId, d.state])),
+		new Map(due.map((d) => [d.lineId, d.expected])),
+	);
+}
+
 async function returnOrders(
 	db: Db,
 	ids: number[],
@@ -181,7 +212,7 @@ async function returnOrders(
 ): Promise<ReturnOrder[]> {
 	if (ids.length === 0) return [];
 	const open = openReturn;
-	const [found, lines, requests, unmatched] = await Promise.all([
+	const [found, lines, requests, unmatched, back] = await Promise.all([
 		db
 			.select({
 				id: orders.id,
@@ -195,6 +226,8 @@ async function returnOrders(
 				shipRegion: orders.shipRegion,
 				shipPostalCode: orders.shipPostalCode,
 				placedAt: orders.placedAt,
+				noReturnAt: orders.noReturnAt,
+				refunded: sql<number>`coalesce(${orderProfit.refunds}, 0)::float8`,
 				cancelledAt: orders.cancelledAt,
 				fulfilledByChannel: orders.fulfilledByChannel,
 				fulfillmentStatus: orders.fulfillmentStatus,
@@ -268,6 +301,25 @@ async function returnOrders(
 				),
 			)
 			.orderBy(returnRequestLines.id),
+		// What came back here, and how it was checked in: refurbished or
+		// restocked if any of it was, counted at cutover if all of it was.
+		db
+			.select({
+				orderId: orderLines.orderId,
+				quantity: sql<number>`sum(${orderReturns.quantity})::int`,
+				at: sql<Date>`max(${orderReturns.createdAt})`.mapWith(
+					orderReturns.createdAt,
+				),
+				outcome: sql<BackOutcome>`case
+					when bool_or(${orderReturns.refurbProductId} is not null) then 'refurbished'
+					when bool_or(${orderReturns.restocked}) then 'restocked'
+					when bool_and(${orderReturns.preCutover}) then 'counted'
+					else 'written_off' end`,
+			})
+			.from(orderReturns)
+			.innerJoin(orderLines, eq(orderLines.id, orderReturns.orderLineId))
+			.where(inArray(orderLines.orderId, ids))
+			.groupBy(orderLines.orderId),
 	]);
 	return found.map(
 		({ cancelledAt, fulfilledByChannel, labelsStatus, ...o }) => ({
@@ -290,6 +342,7 @@ async function returnOrders(
 					const t = trackingFor(r.trackingNumber, saved);
 					return {
 						...r,
+						answerOn: returnPage(o, r.billedBy),
 						tracking: t && {
 							status: t.status,
 							statusAt: t.statusAt,
@@ -297,6 +350,10 @@ async function returnOrders(
 						},
 					};
 				}),
+			back:
+				back
+					.filter((b) => b.orderId === o.id)
+					.map(({ orderId: _, ...b }) => b)[0] ?? null,
 			unmatched: unmatched
 				.filter((u) => u.orderId === o.id)
 				.map(({ orderId: _, ...u }) => u),
