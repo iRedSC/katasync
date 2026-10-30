@@ -11,6 +11,13 @@ export type OurKind = (typeof ourKinds)[number];
 
 export const isOurs = inArray(locations.kind, [...ourKinds]);
 
+// Where a transfer can go: one of ours, or Amazon's FBA when we send it stock.
+// FBA is never a transfer's source: its stock is Amazon's to send.
+export const transferDestinationKinds = [...ourKinds, "fba"] as const;
+export const isTransferDestination = inArray(locations.kind, [
+	...transferDestinationKinds,
+]);
+
 export class PosLocationError extends Error {
 	name = "PosLocationError";
 }

@@ -51,6 +51,7 @@ export const Route = createFileRoute("/transfers/$id")({
 function TransferPage() {
 	const {
 		transfer: t,
+		destinations,
 		lines,
 		suggestions,
 		index,
@@ -61,6 +62,8 @@ function TransferPage() {
 	const draft = t.status === "draft";
 	const name = `T${t.id}`;
 	const units = lines.reduce((n, l) => n + l.quantity, 0);
+	// Amazon checks these in on its own; FBA shows them once it reports them.
+	const toAmazon = t.toKind === "fba";
 	const [note, setNote] = useState(t.note ?? "");
 
 	// Every change goes to the server, then the page reloads what it says.
@@ -72,15 +75,20 @@ function TransferPage() {
 	async function send() {
 		const r = await change(() => sendTransferNow({ data: { id: t.id } }));
 		if (!r) return;
-		offerUndo(`${name} sent: ${formatCount(units)} on the way to ${t.to}`, {
-			tone: "success",
-			undo: async () => {
-				const undone = await change(() =>
-					undoTransferSend({ data: { id: t.id } }),
-				);
-				return undone && `${name} is a draft again`;
+		offerUndo(
+			toAmazon
+				? `${name} sent: ${formatCount(units)} off ${t.from}, for Amazon to check in`
+				: `${name} sent: ${formatCount(units)} on the way to ${t.to}`,
+			{
+				tone: "success",
+				undo: async () => {
+					const undone = await change(() =>
+						undoTransferSend({ data: { id: t.id } }),
+					);
+					return undone && `${name} is a draft again`;
+				},
 			},
-		});
+		);
 	}
 
 	// Whether a receipt sent without a clear answer went through, read afresh.
@@ -137,7 +145,9 @@ function TransferPage() {
 			? { tone: "info" as const, label: "Draft" }
 			: delivery.kind === "in_transit"
 				? { tone: "warning" as const, label: "In transit" }
-				: { tone: "success" as const, label: "Arrived" };
+				: toAmazon
+					? { tone: "success" as const, label: "Sent to Amazon" }
+					: { tone: "success" as const, label: "Arrived" };
 
 	async function fill() {
 		const r = await change(() => fillTransfer({ data: { id: t.id } }));
@@ -194,7 +204,7 @@ function TransferPage() {
 			<Card>
 				<div className="flex flex-wrap items-center gap-3">
 					<span className="font-semibold">{t.from}</span>
-					{draft ? (
+					{draft && !toAmazon ? (
 						<button
 							type="button"
 							aria-label="Swap direction"
@@ -208,7 +218,28 @@ function TransferPage() {
 					) : (
 						<span>→</span>
 					)}
-					<span className="font-semibold">{t.to}</span>
+					{draft && destinations.length > 1 ? (
+						<select
+							value={t.toLocationId}
+							onChange={(e) =>
+								change(() =>
+									editTransfer({
+										data: { id: t.id, toLocationId: Number(e.target.value) },
+									}),
+								)
+							}
+							aria-label="Destination"
+							className="h-8 rounded-lg border border-input bg-white px-2 font-semibold"
+						>
+							{destinations.map((d) => (
+								<option key={d.id} value={d.id}>
+									{d.name}
+								</option>
+							))}
+						</select>
+					) : (
+						<span className="font-semibold">{t.to}</span>
+					)}
 					<span className="ml-auto text-muted-foreground">
 						{t.sentAt
 							? `Sent ${formatDateTime(t.sentAt)}`

@@ -3,6 +3,7 @@ import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "#/db/client";
 import { locations, products, transferLines, transfers } from "#/db/schema";
+import { isTransferDestination } from "#/inventory/locations";
 import {
 	fillFromSuggestions,
 	refillSuggestions,
@@ -43,6 +44,21 @@ async function retailStore(db: Db) {
 	if (found.length !== 1)
 		throw new TransferError("Name the location; there isn't one retail store");
 	return found[0].id;
+}
+
+// A location a transfer can go to by name: one of ours, or Amazon FBA.
+async function destination(db: Db, name: string) {
+	const places = await db
+		.select({ id: locations.id, name: locations.name })
+		.from(locations)
+		.where(isTransferDestination)
+		.orderBy(locations.name);
+	const found = places.find((l) => l.name === name);
+	if (!found)
+		throw new TransferError(
+			`No location called ${name} to send to; there's ${places.map((l) => l.name).join(", ")}`,
+		);
+	return found.id;
 }
 
 async function warehouse(db: Db) {
@@ -87,6 +103,10 @@ async function describeTransfer(db: Db, id: number) {
 		.where(eq(transferLines.transferId, id))
 		.orderBy(products.sku);
 	const delivery = await deliveryOf(db, id);
+	const [to] = await db
+		.select({ kind: locations.kind })
+		.from(locations)
+		.where(eq(locations.id, t.toLocationId));
 	const sentIds =
 		"lines" in delivery ? delivery.lines.map((l) => l.productId) : [];
 	const skuOf = new Map(
@@ -119,7 +139,13 @@ async function describeTransfer(db: Db, id: number) {
 							units: r.lines.reduce((n, l) => n + l.quantity, 0),
 						})),
 					}
-				: { kind: delivery.kind },
+				: // Sent to FBA, it left our shelf; Amazon reports it once checked in.
+					{
+						kind:
+							delivery.kind === "completed" && to?.kind === "fba"
+								? "sent_to_amazon"
+								: delivery.kind,
+					},
 	};
 }
 
@@ -163,7 +189,7 @@ export function registerTransferTools(server: McpServer, db: Db) {
 		"transfer_stock",
 		{
 			description:
-				"Moves units of one product between our own locations right now, as a sent one-line transfer. Refused when the location it leaves doesn't hold that many; ask for a count there instead. Undo with undo_transfer.",
+				"Moves units of one product between our own locations, or from one to Amazon FBA, right now, as a sent one-line transfer. Units sent to FBA leave the source and appear at FBA only once Amazon reports them checked in. Refused when the location it leaves doesn't hold that many; ask for a count there instead. Undo with undo_transfer.",
 			inputSchema: {
 				sku: z.string(),
 				quantity: z.number().int().positive(),
@@ -178,7 +204,7 @@ export function registerTransferTools(server: McpServer, db: Db) {
 			const { transferId: id } = await moveNow(db, {
 				productId: product.id,
 				fromLocationId: await ourLocation(db, from),
-				toLocationId: await ourLocation(db, to),
+				toLocationId: await destination(db, to),
 				quantity,
 				note: [note?.trim(), "via Claude"].filter(Boolean).join(": "),
 			});
@@ -190,7 +216,7 @@ export function registerTransferTools(server: McpServer, db: Db) {
 		"create_transfer",
 		{
 			description:
-				"Starts a draft transfer between two of our locations (by default warehouse to retail store). Give lines, or refill: true to fill it with what tops the destination up to its targets. Nothing moves until send_transfer.",
+				"Starts a draft transfer between two of our locations, or from one to Amazon FBA (by default warehouse to retail store). Give lines, or refill: true to fill it with what tops the destination up to its targets. Nothing moves until send_transfer.",
 			inputSchema: {
 				from: z.string().optional(),
 				to: z.string().optional(),
@@ -215,7 +241,7 @@ export function registerTransferTools(server: McpServer, db: Db) {
 					fromLocationId: from
 						? await ourLocation(db, from)
 						: await warehouse(db),
-					toLocationId: to ? await ourLocation(db, to) : await retailStore(db),
+					toLocationId: to ? await destination(db, to) : await retailStore(db),
 					note,
 					lines: lines ? await linesBySku(db, lines) : undefined,
 				},
@@ -253,16 +279,21 @@ export function registerTransferTools(server: McpServer, db: Db) {
 		"edit_transfer",
 		{
 			description:
-				"Changes a draft transfer's note, or swaps its direction (swap: true).",
+				"Changes a draft transfer's note, its destination (to, a location name), or swaps its direction (swap: true). A transfer to Amazon FBA can't be swapped.",
 			inputSchema: {
 				transfer: transferId,
 				note: z.string().nullable().optional(),
+				to: z.string().optional(),
 				swap: z.boolean().optional(),
 			},
 			annotations: WRITE,
 		},
-		async ({ transfer, note, swap }) => {
-			await updateTransfer(db, transfer, { note, swap });
+		async ({ transfer, note, to, swap }) => {
+			await updateTransfer(db, transfer, {
+				note,
+				toLocationId: to ? await destination(db, to) : undefined,
+				swap,
+			});
 			return json(await describeTransfer(db, transfer));
 		},
 	);
@@ -271,7 +302,7 @@ export function registerTransferTools(server: McpServer, db: Db) {
 		"send_transfer",
 		{
 			description:
-				"Sends a draft transfer: every line leaves the source at once and is in transit (not sellable anywhere) until receive_transfer puts it on the destination's shelf. Refused, moving nothing, if the source is short of any line. Undo with undo_transfer.",
+				"Sends a draft transfer: every line leaves the source at once and is in transit (not sellable anywhere) until receive_transfer puts it on the destination's shelf. Sent to Amazon FBA, it leaves the source with nothing to receive; FBA shows it once Amazon reports it checked in. Refused, moving nothing, if the source is short of any line. Undo with undo_transfer.",
 			inputSchema: { transfer: transferId },
 			annotations: WRITE,
 		},
