@@ -11,7 +11,7 @@ import {
 	transferLines,
 	transfers,
 } from "#/db/schema";
-import { isOurs } from "#/inventory/locations";
+import { isOurs, isTransferDestination } from "#/inventory/locations";
 import {
 	fillFromSuggestions,
 	refillSuggestions,
@@ -140,6 +140,7 @@ export const getTransfer = createServerFn({ method: "GET" })
 				toLocationId: transfers.toLocationId,
 				from: fromPlace.name,
 				to: toPlace.name,
+				toKind: toPlace.kind,
 				note: transfers.note,
 				createdAt: transfers.createdAt,
 				sentAt: transfers.sentAt,
@@ -163,35 +164,43 @@ export const getTransfer = createServerFn({ method: "GET" })
 			.where(eq(transferLines.transferId, t.id))
 			.orderBy(products.sku);
 		const ids = lines.map((l) => l.productId);
-		const [levels, targets, suggestions, deliveries] = await Promise.all([
-			ids.length === 0
-				? []
-				: db
-						.select()
-						.from(stockLevels)
-						.where(
-							and(
-								inArray(stockLevels.productId, ids),
-								inArray(stockLevels.locationId, [
-									t.fromLocationId,
-									t.toLocationId,
-								]),
+		const [levels, targets, suggestions, deliveries, places] =
+			await Promise.all([
+				ids.length === 0
+					? []
+					: db
+							.select()
+							.from(stockLevels)
+							.where(
+								and(
+									inArray(stockLevels.productId, ids),
+									inArray(stockLevels.locationId, [
+										t.fromLocationId,
+										t.toLocationId,
+									]),
+								),
 							),
-						),
-			ids.length === 0
-				? []
-				: db
-						.select()
-						.from(shelfTargets)
-						.where(
-							and(
-								inArray(shelfTargets.productId, ids),
-								eq(shelfTargets.locationId, t.toLocationId),
+				ids.length === 0
+					? []
+					: db
+							.select()
+							.from(shelfTargets)
+							.where(
+								and(
+									inArray(shelfTargets.productId, ids),
+									eq(shelfTargets.locationId, t.toLocationId),
+								),
 							),
-						),
-			t.status === "draft" ? refillSuggestions(db, t) : [],
-			deliveriesOf(db, [t.id]),
-		]);
+				t.status === "draft" ? refillSuggestions(db, t) : [],
+				deliveriesOf(db, [t.id]),
+				t.status === "draft"
+					? db
+							.select({ id: locations.id, name: locations.name })
+							.from(locations)
+							.where(isTransferDestination)
+							.orderBy(locations.kind, locations.name)
+					: [],
+			]);
 		const at = (productId: number, locationId: number) =>
 			levels.find(
 				(l) => l.productId === productId && l.locationId === locationId,
@@ -199,6 +208,8 @@ export const getTransfer = createServerFn({ method: "GET" })
 		return {
 			delivery: deliveries.get(t.id) ?? { kind: "completed" as const },
 			transfer: t,
+			// Where a draft could go instead, from where it leaves.
+			destinations: places.filter((p) => p.id !== t.fromLocationId),
 			lines: lines.map((l) => ({
 				...l,
 				atSource: at(l.productId, t.fromLocationId),
@@ -258,6 +269,7 @@ export const editTransfer = createServerFn({ method: "POST" })
 		type({
 			id: "number.integer > 0",
 			"note?": "string | null",
+			"toLocationId?": "number.integer > 0",
 			"swap?": "boolean",
 		}),
 	)

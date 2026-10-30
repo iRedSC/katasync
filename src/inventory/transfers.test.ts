@@ -116,8 +116,91 @@ describe("transferStock", () => {
 				toLocationId,
 				lines: [{ productId: wrench, quantity: 1 }],
 			});
-		await expect(move(fba)).rejects.toThrow("only between our own locations");
+		await expect(
+			transferStock(db, {
+				fromLocationId: fba,
+				toLocationId: warehouse,
+				lines: [{ productId: wrench, quantity: 1 }],
+			}),
+		).rejects.toThrow("or from one to Amazon FBA");
 		await expect(move(warehouse)).rejects.toThrow("two different locations");
+	});
+
+	test("to Amazon FBA only leaves: FBA holds what Amazon reports", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 10);
+		await stock(wrench, fba, 2);
+
+		const { batchId } = await transferStock(db, {
+			fromLocationId: warehouse,
+			toLocationId: fba,
+			lines: [{ productId: wrench, quantity: 4 }],
+		});
+		expect(await onHand(wrench, warehouse)).toBe(6);
+		expect(await onHand(wrench, fba)).toBe(2);
+
+		await undoBatch(db, batchId);
+		expect(await onHand(wrench, warehouse)).toBe(10);
+		expect(await onHand(wrench, fba)).toBe(2);
+	});
+});
+
+describe("transfers to Amazon FBA", () => {
+	test("send at once with nothing to receive, and undo back to a draft", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, warehouse, 10);
+		const id = await createTransfer(db, {
+			fromLocationId: warehouse,
+			toLocationId: fba,
+		});
+		await setTransferLines(db, id, [{ productId: wrench, quantity: 3 }]);
+
+		await sendTransfer(db, id);
+		expect(await statusOf(id)).toBe("sent");
+		expect(await onHand(wrench, warehouse)).toBe(7);
+		expect(await onHand(wrench, fba)).toBe(0);
+		await expect(
+			receiveTransfer(db, { transferId: id, receiptKey: "k" }),
+		).rejects.toThrow("arrived when it was sent");
+
+		await unsendTransfer(db, id);
+		expect(await statusOf(id)).toBe("draft");
+		expect(await onHand(wrench, warehouse)).toBe(10);
+	});
+
+	test("a draft can be pointed at FBA, but FBA is never a source", async () => {
+		const id = await createTransfer(db, {
+			fromLocationId: warehouse,
+			toLocationId: retail,
+		});
+		await updateTransfer(db, id, { toLocationId: fba });
+		const [t] = await db
+			.select()
+			.from(schema.transfers)
+			.where(eq(schema.transfers.id, id));
+		expect(t.toLocationId).toBe(fba);
+		await expect(updateTransfer(db, id, { swap: true })).rejects.toThrow(
+			"Amazon's to send",
+		);
+		await expect(
+			createTransfer(db, { fromLocationId: fba, toLocationId: warehouse }),
+		).rejects.toThrow("Amazon's to send");
+		await expect(
+			updateTransfer(db, id, { toLocationId: warehouse }),
+		).rejects.toThrow("two different locations");
+	});
+
+	test("move now sends one product straight off the shelf", async () => {
+		const wrench = await createProduct(db, "WRENCH", "simple");
+		await stock(wrench, retail, 5);
+		await moveNow(db, {
+			productId: wrench,
+			fromLocationId: retail,
+			toLocationId: fba,
+			quantity: 2,
+		});
+		expect(await onHand(wrench, retail)).toBe(3);
+		expect(await onHand(wrench, fba)).toBe(0);
 	});
 });
 

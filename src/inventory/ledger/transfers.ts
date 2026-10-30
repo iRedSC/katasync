@@ -1,7 +1,7 @@
 import { inArray } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { locations, products } from "#/db/schema";
-import { ourKinds } from "#/inventory/locations";
+import { ourKinds, transferDestinationKinds } from "#/inventory/locations";
 import { assertPositiveInteger, LedgerError, postMovements } from "./post";
 
 // Moves stock from one of our shelves to another, e.g. restocking the retail
@@ -9,6 +9,11 @@ import { assertPositiveInteger, LedgerError, postMovements } from "./post";
 // stock back. Refused, changing nothing, when the shelf it leaves doesn't
 // hold that many of any line: a shelf that's off should be counted, not
 // carried below zero.
+//
+// Stock sent to Amazon's FBA only leaves: FBA holds what Amazon reports it can
+// sell (mirrorFbaStock), so the units show up there once Amazon checks them
+// in. Putting them on FBA now would count them twice until the next mirror
+// took them off again.
 export async function transferStock(
 	db: Db,
 	input: {
@@ -30,9 +35,16 @@ export async function transferStock(
 			.where(inArray(locations.id, [input.fromLocationId, input.toLocationId]));
 		const from = ends.find((l) => l.id === input.fromLocationId);
 		const to = ends.find((l) => l.id === input.toLocationId);
-		for (const end of [from, to])
-			if (!end || !(ourKinds as readonly string[]).includes(end.kind))
-				throw new LedgerError("Stock moves only between our own locations");
+		if (
+			!from ||
+			!to ||
+			!(ourKinds as readonly string[]).includes(from.kind) ||
+			!(transferDestinationKinds as readonly string[]).includes(to.kind)
+		)
+			throw new LedgerError(
+				"Stock moves only between our own locations, or from one to Amazon FBA",
+			);
+		const arrives = to.kind !== "fba";
 		const result = await postMovements(tx, {
 			reference: input.reference ?? "transfer",
 			note: input.note?.trim() || undefined,
@@ -43,12 +55,16 @@ export async function transferStock(
 					delta: -line.quantity,
 					reason: "transfer_out" as const,
 				},
-				{
-					productId: line.productId,
-					locationId: input.toLocationId,
-					delta: line.quantity,
-					reason: "transfer_in" as const,
-				},
+				...(arrives
+					? [
+							{
+								productId: line.productId,
+								locationId: input.toLocationId,
+								delta: line.quantity,
+								reason: "transfer_in" as const,
+							},
+						]
+					: []),
 			]),
 		});
 		const short = input.lines.flatMap((line) => {

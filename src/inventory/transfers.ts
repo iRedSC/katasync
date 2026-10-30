@@ -3,7 +3,7 @@ import type { Db } from "#/db/client";
 import { locations, products, transferLines, transfers } from "#/db/schema";
 import { transferStock, undoBatch } from "#/inventory/ledger";
 import { lockStockProducts } from "#/inventory/ledger/post";
-import { ourKinds } from "#/inventory/locations";
+import { ourKinds, transferDestinationKinds } from "#/inventory/locations";
 import {
 	deliveryOf,
 	dispatchTransfer,
@@ -12,7 +12,9 @@ import {
 
 // A transfer is a draft until it's sent; sending moves every line at once.
 // Undoing a send moves it all back and makes it a draft again, so it can be
-// fixed and sent again. Shown as "T12".
+// fixed and sent again. Shown as "T12". A transfer to Amazon's FBA leaves
+// its source when sent and arrives nowhere we track: Amazon reports it once
+// checked in (see transferStock).
 
 export class TransferError extends Error {
 	name = "TransferError";
@@ -23,25 +25,38 @@ export const transferName = (id: number) => `T${id}`;
 // Lines written per statement, under Postgres's limit on parameters.
 const BATCH = 500;
 
-async function assertOurs(db: Db, ids: number[]) {
+// Checks a route and returns its destination's kind.
+async function assertRoute(
+	db: Db,
+	route: { fromLocationId: number; toLocationId: number },
+) {
+	if (route.fromLocationId === route.toLocationId)
+		throw new TransferError("Pick two different locations");
 	const found = await db
 		.select({ id: locations.id, kind: locations.kind })
 		.from(locations)
-		.where(inArray(locations.id, ids));
-	for (const id of ids) {
-		const l = found.find((f) => f.id === id);
-		if (!l || !(ourKinds as readonly string[]).includes(l.kind))
-			throw new TransferError("Transfers go only between our own locations");
-	}
+		.where(inArray(locations.id, [route.fromLocationId, route.toLocationId]));
+	const from = found.find((f) => f.id === route.fromLocationId);
+	const to = found.find((f) => f.id === route.toLocationId);
+	if (from?.kind === "fba")
+		throw new TransferError("Amazon FBA's stock is Amazon's to send");
+	if (
+		!from ||
+		!to ||
+		!(ourKinds as readonly string[]).includes(from.kind) ||
+		!(transferDestinationKinds as readonly string[]).includes(to.kind)
+	)
+		throw new TransferError(
+			"Transfers go between our own locations, or from one to Amazon FBA",
+		);
+	return to.kind;
 }
 
 export async function createTransfer(
 	db: Db,
 	input: { fromLocationId: number; toLocationId: number; note?: string },
 ) {
-	if (input.fromLocationId === input.toLocationId)
-		throw new TransferError("Pick two different locations");
-	await assertOurs(db, [input.fromLocationId, input.toLocationId]);
+	await assertRoute(db, input);
 	const [made] = await db
 		.insert(transfers)
 		.values({
@@ -143,23 +158,28 @@ export async function createDraftWith<T>(
 	});
 }
 
-// Changes a draft's note or direction. Swapping keeps the lines.
+// Changes a draft's note, destination, or direction. Both keep the lines; a
+// new destination applies before a swap.
 export async function updateTransfer(
 	db: Db,
 	id: number,
-	input: { note?: string | null; swap?: boolean },
+	input: { note?: string | null; toLocationId?: number; swap?: boolean },
 ) {
 	return db.transaction(async (tx) => {
 		const t = await lockDraft(tx, id);
+		const toLocationId = input.toLocationId ?? t.toLocationId;
+		const route = input.swap
+			? { fromLocationId: toLocationId, toLocationId: t.fromLocationId }
+			: { fromLocationId: t.fromLocationId, toLocationId };
+		if (input.toLocationId !== undefined || input.swap)
+			await assertRoute(tx, route);
 		await tx
 			.update(transfers)
 			.set({
 				...(input.note !== undefined
 					? { note: input.note?.trim() || null }
 					: {}),
-				...(input.swap
-					? { fromLocationId: t.toLocationId, toLocationId: t.fromLocationId }
-					: {}),
+				...route,
 			})
 			.where(eq(transfers.id, id));
 	});
@@ -185,9 +205,12 @@ async function draftLines(tx: Db, id: number) {
 	return lines;
 }
 
+// Our own stock goes into transit until it's received. Stock for Amazon
+// leaves at once, with nothing to receive.
 export async function sendTransfer(db: Db, id: number) {
 	return db.transaction(async (tx) => {
 		const t = await lockDraft(tx, id);
+		if ((await assertRoute(tx, t)) === "fba") return sendDirect(tx, id);
 		return dispatchTransfer(tx, t, await draftLines(tx, id));
 	});
 }
