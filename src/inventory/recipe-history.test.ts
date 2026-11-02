@@ -149,6 +149,34 @@ describe("sales history", () => {
 		expect(sold.get(wrench)).toBe(6);
 	});
 
+	test("a product sold before it became a tool set counts as its parts", async () => {
+		const pack = await createProduct(db, "PACK", "simple");
+		const single = await createProduct(db, "SINGLE", "simple");
+		await receive(pack, 2);
+		await sell(pack, 2);
+		// What setProductKind does once it allows history (#300).
+		await db
+			.update(schema.products)
+			.set({ kind: "bundle" })
+			.where(eq(schema.products.id, pack));
+		await setRecipe(db, pack, [{ productId: single, quantity: 24 }]);
+
+		const sold = await soldSince(db, since, { includeFba: true });
+		expect(sold.get(single)).toBe(48);
+		expect(sold.has(pack)).toBe(false);
+		expect(await soldByDay(db, since)).toEqual([
+			{ productId: single, day: "2026-10-05", units: 48 },
+		]);
+		expect(
+			await db
+				.select({
+					productId: schema.salesUnits.productId,
+					units: schema.salesUnits.units,
+				})
+				.from(schema.salesUnits),
+		).toEqual([{ productId: single, units: 48 }]);
+	});
+
 	test("Amazon's own shipments count only where FBA is included, by the recipe", async () => {
 		const bit = await createProduct(db, "BIT", "simple");
 		const set = await createProduct(db, "SET", "bundle");
