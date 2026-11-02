@@ -22,7 +22,8 @@ import {
 import { lineHasCommitment } from "./commitments";
 
 // Units sold per stocked product since a date. Tool sets count as their parts,
-// since that's what leaves the shelf. A sale the ledger recorded counts the
+// since that's what leaves the shelf, as do sales of a product before it
+// became one. A sale the ledger recorded counts the
 // movements it took, so a recipe edited later doesn't rewrite it. Other lines
 // (before the ledger, or whose sale was undone) count the recipe as it stands.
 // Amazon's own (FBA) shipments never take our stock, so reorder leaves them
@@ -153,7 +154,31 @@ function soldUnits(
 		)
 		.innerJoin(orders, eq(orders.id, stockCommitments.orderId))
 		.where(counted);
-	return unionAll(recorded, byRecipe, committed).as("sold");
+	// A product that became a tool set after it sold has recorded sales
+	// naming itself; a unit of it means its parts now. Other rows already
+	// name stocked products, which are never tool sets, so pass as they are.
+	const sold = unionAll(recorded, byRecipe, committed).as("sold_rows");
+	const part = alias(productComponents, "part");
+	const kind = alias(products, "sold_kind");
+	return db
+		.select({
+			orderLineId: sold.orderLineId,
+			productId:
+				sql<number>`coalesce(${part.componentProductId}, ${sold.productId})`.as(
+					"productId",
+				),
+			placedAt: sold.placedAt,
+			units: sql<number>`${sold.units} * coalesce(${part.quantity}, 1)`.as(
+				"units",
+			),
+		})
+		.from(sold)
+		.innerJoin(kind, eq(kind.id, sold.productId))
+		.leftJoin(
+			part,
+			and(eq(part.parentProductId, sold.productId), eq(kind.kind, "bundle")),
+		)
+		.as("sold");
 }
 
 function wasUndone(db: Db, batchId: SQLWrapper) {
