@@ -23,10 +23,12 @@ import { ProductError } from "./details";
 // them; going back to simple drops the parts.
 //
 // A tool set has no stock of its own, so a product only becomes one with
-// nothing on any shelf, in transit, or reserved for orders, no FBA listing
-// (Amazon stocks it, we can't build it), and no stock history: a past sale
-// or receipt reversed later must find the shelf it came from. A kit with
-// history stays a kit, since its history says what its units are made of. Nothing holds a tool set and
+// nothing on any shelf, in transit, or reserved for orders, and no FBA
+// listing (Amazon stocks it, we can't build it). Its stock history stays:
+// a past sale, count or move taken back later lands on its parts, since a
+// unit of it means them now (asStocked, src/inventory/ledger/post.ts). A kit
+// with history stays a kit, since its history says what its units are made
+// of. Nothing holds a tool set and
 // kits hold no kits, so a part can't become either one its parents refuse.
 // Any kind change waits for open POs and draft transfers holding it, which
 // were made for the old kind. The product row stays locked throughout; stock
@@ -98,11 +100,9 @@ async function blockersFor(
 	kind: KindChange["kind"],
 ): Promise<string[]> {
 	const blockers: string[] = [];
-	if ((from === "kit" || kind === "bundle") && (await hasStockHistory(tx, id)))
+	if (from === "kit" && (await hasStockHistory(tx, id)))
 		blockers.push(
-			from === "kit"
-				? "its stock history was built from its parts; make a new SKU instead"
-				: "it has stock history, and a tool set has no stock of its own; make a new SKU for the tool set",
+			"its stock history was built from its parts; make a new SKU instead",
 		);
 	const parents = await tx
 		.select({ sku: products.sku, kind: products.kind })

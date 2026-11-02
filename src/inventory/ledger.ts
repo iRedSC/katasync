@@ -13,11 +13,13 @@ import { brokenPromises } from "#/inventory/commitments-shelves";
 import { type CostLine, lockCost, reversalOf } from "#/inventory/valuation";
 import { carriedOrStocked } from "#/products/archive";
 import {
+	asStocked,
 	assertPositiveInteger,
+	batchProductIds,
 	getProduct,
 	LedgerError,
-	lockBatchProducts,
 	lockRecipe,
+	lockRecipes,
 	lockStockProducts,
 	postMovements,
 	type StockLevel,
@@ -461,9 +463,11 @@ export async function undoBatch(
 	options: { costs?: CostLine[] } = {},
 ) {
 	return db.transaction(async (tx) => {
-		await lockBatchProducts(
+		// A tool set's parts too, in the same id order every stock write uses:
+		// what it moved before it became one comes back as them (asStocked).
+		await lockRecipes(
 			tx,
-			[batchId],
+			await batchProductIds(tx, [batchId]),
 			(options.costs ?? []).map((cost) => cost.productId),
 		);
 		// Held to the end of this transaction, so an undo of the same batch waits
@@ -477,16 +481,20 @@ export async function undoBatch(
 			.where(eq(movements.batchId, batchId));
 		if (original.length === 0) throw new LedgerError("Nothing to undo");
 		if (await isUndone(tx, batchId)) throw new LedgerError("Already undone");
-		const result = await postMovements(tx, {
-			reference: undoReference(batchId),
-			note: original[0].note ? `Undo: ${original[0].note}` : "Undo",
-			lines: original.map((m) => ({
+		const reversal = await asStocked(
+			tx,
+			original.map((m) => ({
 				productId: m.productId,
 				locationId: m.locationId,
 				delta: -m.delta,
 				reason: m.reason,
 			})),
-			costs: options.costs ?? (await reversalOf(tx, batchId)),
+			options.costs ?? (await reversalOf(tx, batchId)),
+		);
+		const result = await postMovements(tx, {
+			reference: undoReference(batchId),
+			note: original[0].note ? `Undo: ${original[0].note}` : "Undo",
+			...reversal,
 		});
 		await restoreCountDate(tx, batchId);
 		return result;
