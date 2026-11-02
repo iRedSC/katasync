@@ -12,4 +12,21 @@ describe("returnPage", () => {
 			"https://sellercentral.amazon.com/gp/returns/list/v2?searchString=114-1-2&orderBy=CreatedDateDesc",
 		);
 	});
+
+	it("opens TikTok's Manage Returns searched to the order, on Shopify or not", () => {
+		for (const channel of ["shopify", "tiktok"] as const) {
+			expect(
+				returnPage(
+					{
+						channel,
+						externalId: "gid://shopify/Order/9",
+						marketplaceOrderId: "tiktok:5770",
+					},
+					"tiktok",
+				)?.url,
+			).toBe(
+				"https://seller-us.tiktok.com/order/return?search_numbers=5770&tab=100",
+			);
+		}
+	});
 });

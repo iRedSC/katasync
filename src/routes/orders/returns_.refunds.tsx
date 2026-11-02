@@ -53,7 +53,7 @@ const GROUPS: { kind: RefundStep["kind"]; heading: string; dot: string }[] = [
 ];
 
 const SAID: Record<Choice["decision"], string> = {
-	full: "Full refund",
+	full: "Refund",
 	partial: "Partial refund",
 	none: "No refund",
 	other: "Flagged",

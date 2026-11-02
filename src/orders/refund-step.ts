@@ -43,11 +43,17 @@ export type RefundStep =
 			// seen: in the charges; already: refunded before it was decided;
 			// confirmed: said by hand; refused: no refund; resolved: other.
 			how: "seen" | "already" | "confirmed" | "refused" | "resolved";
-	  };
+	  }
+	// The marketplace refunded all of it before anyone decided: nothing
+	// left to decide, and no decision to undo.
+	| { kind: "done"; decision: null; how: "unasked" };
 
 export function refundStep(o: RefundStepInput): RefundStep {
 	const d = o.decision;
-	if (!d || d.decidedAt < o.triagedAt) return { kind: "decide" };
+	if (!d || d.decidedAt < o.triagedAt)
+		return o.refundedNow > 0 && o.refundedNow >= o.itemValue
+			? { kind: "done", decision: null, how: "unasked" }
+			: { kind: "decide" };
 	switch (d.decision) {
 		case "none":
 			return { kind: "done", decision: d, how: "refused" };

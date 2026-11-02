@@ -32,9 +32,7 @@ export function adminUrls(order: {
 			url: `https://sellercentral.amazon.com/orders-v3/order/${encodeURIComponent(order.externalId)}`,
 		});
 	}
-	const tiktok = order.marketplaceOrderId?.startsWith("tiktok:")
-		? order.marketplaceOrderId.slice("tiktok:".length)
-		: null;
+	const tiktok = tiktokOrderNo(order.marketplaceOrderId);
 	if (tiktok) {
 		urls.push({
 			channel: "tiktok",
@@ -48,7 +46,7 @@ export function adminUrls(order: {
 // Where a return opened on billedBy is handled: that marketplace's page for
 // the order, or null when katasync can't link there. Amazon's order page
 // doesn't show its returns, so its Manage Returns opens searched to the order,
-// over every date.
+// over every date. TikTok's Manage Returns opens the same way, on All.
 export function returnPage(
 	order: Parameters<typeof adminUrls>[0],
 	billedBy: Channel,
@@ -60,5 +58,16 @@ export function returnPage(
 			url: `https://sellercentral.amazon.com/gp/returns/list/v2?searchString=${encodeURIComponent(order.externalId)}&orderBy=CreatedDateDesc`,
 		};
 	}
+	const tiktok = tiktokOrderNo(order.marketplaceOrderId);
+	if (billedBy === "tiktok" && tiktok) {
+		return {
+			channel: "tiktok",
+			name: "TikTok",
+			url: `https://seller-us.tiktok.com/order/return?search_numbers=${encodeURIComponent(tiktok)}&tab=100`,
+		};
+	}
 	return adminUrls(order).find((p) => p.channel === billedBy) ?? null;
 }
+
+const tiktokOrderNo = (id: string | null) =>
+	id?.startsWith("tiktok:") ? id.slice("tiktok:".length) : null;
