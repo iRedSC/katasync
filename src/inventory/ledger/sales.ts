@@ -3,6 +3,7 @@ import type { Db } from "#/db/client";
 import { movements, stockLevels } from "#/db/schema";
 import type { CostLine } from "#/inventory/valuation";
 import {
+	asStocked,
 	assertPositiveInteger,
 	getProduct,
 	LedgerError,
@@ -159,16 +160,22 @@ export async function recordReturn(
 				line.productId,
 				(perProduct.get(line.productId) ?? 0) - line.delta,
 			);
-		return postMovements(db, {
-			reference: input.reference,
-			costs: costs.filter((c) => perProduct.has(c.productId)),
-			lines: [...perProduct].map(([productId, units]) => ({
-				productId,
-				locationId: input.locationId,
-				delta: (units * input.quantity) / sale.quantity,
-				reason: "return",
-			})),
-		});
+		// Sold before it became a tool set, it comes back as its parts.
+		return db.transaction(async (tx) =>
+			postMovements(tx, {
+				reference: input.reference,
+				...(await asStocked(
+					tx,
+					[...perProduct].map(([productId, units]) => ({
+						productId,
+						locationId: input.locationId,
+						delta: (units * input.quantity) / sale.quantity,
+						reason: "return" as const,
+					})),
+					costs.filter((c) => perProduct.has(c.productId)),
+				)),
+			}),
+		);
 	}
 	if (product.kind === "bundle") {
 		throw new LedgerError(

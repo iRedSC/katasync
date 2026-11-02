@@ -157,6 +157,52 @@ export async function lockBatchProducts(
 	]);
 }
 
+// Takes back stock moves made before a product became a tool set
+// (src/products/kind.ts): it has no shelf of its own now, so a unit of it
+// means its parts. Lines naming one become its parts, merged with any for
+// the same shelf, and its value stays behind, so the parts come and go at
+// their averages. Locks the lines' products and parts first, so the recipe
+// it reads can't change before the caller posts.
+export async function asStocked(
+	db: Db,
+	lines: MovementLine[],
+	costs: CostLine[] = [],
+) {
+	const { products: locked, recipes } = await lockRecipes(
+		db,
+		lines.map((line) => line.productId),
+		costs.map((cost) => cost.productId),
+	);
+	const sets = new Set(
+		locked.filter((p) => p.kind === "bundle").map((p) => p.id),
+	);
+	if (sets.size === 0) return { lines, costs };
+	const merged = new Map<string, MovementLine>();
+	for (const line of lines) {
+		const units = sets.has(line.productId)
+			? (recipes.get(line.productId) ?? []).map((part) => ({
+					...line,
+					productId: part.productId,
+					delta: line.delta * part.quantity,
+				}))
+			: [line];
+		for (const unit of units) {
+			const key = `${unit.productId}:${unit.locationId}:${unit.reason}`;
+			const seen = merged.get(key);
+			merged.set(
+				key,
+				seen ? { ...seen, delta: seen.delta + unit.delta } : unit,
+			);
+		}
+	}
+	return {
+		lines: [...merged.values()].filter(
+			(line) => line.delta !== 0 || line.reason === "opening_balance",
+		),
+		costs: costs.filter((cost) => !sets.has(cost.productId)),
+	};
+}
+
 export async function lockRecipe(
 	db: Db,
 	parentProductId: number,

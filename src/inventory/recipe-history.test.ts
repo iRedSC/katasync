@@ -4,7 +4,13 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { setProductKind } from "#/products/kind";
 import { createProduct, createTestDb } from "#/test/db";
-import { assembleKits, postMovements, recordSale, undoBatch } from "./ledger";
+import {
+	assembleKits,
+	postMovements,
+	recordReturn,
+	recordSale,
+	undoBatch,
+} from "./ledger";
 import { setRecipe } from "./recipes";
 import { soldByDay, soldSince } from "./sales";
 
@@ -231,20 +237,76 @@ describe("setRecipe on a kit with stock", () => {
 });
 
 describe("kind changes and stock history", () => {
-	test("a SKU that ever had stock can't become a tool set, so its sales stay reversible", async () => {
-		const wrench = await createProduct(db, "WRENCH", "simple");
-		const bit = await createProduct(db, "BIT", "simple");
-		await receive(wrench, 2);
-		const sale = await sell(wrench, 2);
+	test("a SKU with history becomes a tool set; taking back its past lands on the parts", async () => {
+		const pack = await createProduct(db, "PACK", "simple");
+		const single = await createProduct(db, "SINGLE", "simple");
+		await receive(pack, 3);
+		const cancelled = await sell(pack, 2);
+		const returned = await sell(pack, 1);
+		if (!cancelled || !returned)
+			throw new Error("the sales should be recorded");
 
-		await expect(
-			setProductKind(db, wrench, {
-				kind: "bundle",
-				components: [{ productId: bit, quantity: 1 }],
-			}),
-		).rejects.toThrow(/stock history/);
-		if (sale) await undoBatch(db, sale);
-		expect(await partsOf(wrench)).toEqual([]);
+		await setProductKind(db, pack, {
+			kind: "bundle",
+			components: [{ productId: single, quantity: 24 }],
+		});
+		await undoBatch(db, cancelled);
+		await recordReturn(db, {
+			productId: pack,
+			quantity: 1,
+			locationId: warehouse,
+			reference: "return:1",
+			sale: { batchId: returned, quantity: 1 },
+		});
+
+		const levels = await db
+			.select({
+				productId: schema.stockLevels.productId,
+				onHand: schema.stockLevels.onHand,
+			})
+			.from(schema.stockLevels);
+		expect(levels).toEqual(
+			expect.arrayContaining([
+				{ productId: pack, onHand: 0 },
+				{ productId: single, onHand: 72 },
+			]),
+		);
+	});
+
+	test("a pack and its single in one batch come back as one line", async () => {
+		const pack = await createProduct(db, "PACK", "simple");
+		const single = await createProduct(db, "SINGLE", "simple");
+		const { batchId } = await postMovements(db, {
+			lines: [
+				{ productId: pack, locationId: warehouse, delta: 1, reason: "receipt" },
+				{
+					productId: single,
+					locationId: warehouse,
+					delta: 2,
+					reason: "receipt",
+				},
+			],
+		});
+		await postMovements(db, {
+			lines: [
+				{
+					productId: pack,
+					locationId: warehouse,
+					delta: -1,
+					reason: "adjustment",
+				},
+			],
+		});
+		await setProductKind(db, pack, {
+			kind: "bundle",
+			components: [{ productId: single, quantity: 24 }],
+		});
+		await undoBatch(db, batchId);
+		const [level] = await db
+			.select({ onHand: schema.stockLevels.onHand })
+			.from(schema.stockLevels)
+			.where(eq(schema.stockLevels.productId, single));
+		expect(level.onHand).toBe(2 - 2 - 24);
 	});
 
 	test("a kit with history keeps its kind, so its parts can't change through simple", async () => {
