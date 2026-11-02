@@ -239,7 +239,9 @@ export async function listRefundQueue(db: Db): Promise<RefundRow[]> {
 		.filter((r) => {
 			const step = refundStep(r);
 			if (step.kind !== "done") return true;
-			const at = step.decision.settledAt ?? step.decision.decidedAt;
+			const at = step.decision
+				? (step.decision.settledAt ?? step.decision.decidedAt)
+				: r.triagedAt;
 			return at.getTime() >= done;
 		})
 		.sort((a, b) => a.triagedAt.getTime() - b.triagedAt.getTime());

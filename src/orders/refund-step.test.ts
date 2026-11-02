@@ -24,6 +24,26 @@ describe("refundStep", () => {
 		});
 	});
 
+	test("refunded in full on the marketplace before deciding is done", () => {
+		expect(
+			refundStep({ triagedAt, decision: null, refundedNow: 20, itemValue: 20 }),
+		).toEqual({ kind: "done", decision: null, how: "unasked" });
+	});
+
+	test("refunded in part before deciding still asks", () => {
+		expect(
+			refundStep({ triagedAt, decision: null, refundedNow: 5, itemValue: 20 })
+				.kind,
+		).toBe("decide");
+	});
+
+	test("nothing sold and nothing refunded still asks", () => {
+		expect(
+			refundStep({ triagedAt, decision: null, refundedNow: 0, itemValue: 0 })
+				.kind,
+		).toBe("decide");
+	});
+
 	test("another box checked in after the decision asks again", () => {
 		const d = decision({ decidedAt: new Date("2026-10-27T00:00:00Z") });
 		expect(

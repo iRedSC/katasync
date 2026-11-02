@@ -1,4 +1,4 @@
-import { CircleCheck, ExternalLink, Undo2 } from "lucide-react";
+import { ArrowRight, CircleCheck, ExternalLink, Undo2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Badge, type Tone } from "#/components/page";
@@ -36,6 +36,7 @@ const DONE: Record<Extract<RefundStep, { kind: "done" }>["how"], string> = {
 	confirmed: "Refunded",
 	refused: "No refund",
 	resolved: "Resolved",
+	unasked: "Refunded",
 };
 
 const LINK =
@@ -158,7 +159,7 @@ function Decide({
 	onSettle: () => void;
 	onUndo: () => void;
 }) {
-	const [asking, setAsking] = useState<"partial" | "other" | null>(null);
+	const [asking, setAsking] = useState(false);
 	const [text, setText] = useState("");
 	const page = r.page;
 	const out = page && (
@@ -183,69 +184,51 @@ function Decide({
 	switch (step.kind) {
 		case "decide": {
 			if (asking) {
-				const amount = Number(text);
-				const ok =
-					asking === "partial"
-						? Number.isFinite(amount) && amount > 0
-						: text.trim() !== "";
+				const note = text.trim();
 				const submit = (e: FormEvent) => {
 					e.preventDefault();
-					if (!ok) return;
-					onDecide(
-						asking === "partial"
-							? { decision: "partial", amount, note: null }
-							: { decision: "other", amount: null, note: text.trim() },
-					);
-					setAsking(null);
+					if (!note) return;
+					onDecide({ decision: "other", amount: null, note });
+					setAsking(false);
 					setText("");
 				};
 				return (
 					<form onSubmit={submit} className="flex items-center gap-1">
 						<input
-							// biome-ignore lint/a11y/noAutofocus: opened to type the amount or what's next
+							// biome-ignore lint/a11y/noAutofocus: opened to type what's next
 							autoFocus
 							value={text}
 							onChange={(e) => setText(e.target.value)}
-							onKeyDown={(e) => e.key === "Escape" && setAsking(null)}
-							inputMode={asking === "partial" ? "decimal" : undefined}
-							placeholder={
-								asking === "partial" ? "Amount" : "What needs doing?"
-							}
-							className={cn(
-								"h-7 rounded-lg border border-input bg-white px-2 text-sm outline-none focus:border-ring",
-								asking === "partial" ? "w-24 tabular-nums" : "w-56",
-							)}
+							onKeyDown={(e) => e.key === "Escape" && setAsking(false)}
+							placeholder="What needs doing?"
+							className="h-7 w-56 rounded-lg border border-input bg-white px-2 text-sm outline-none focus:border-ring"
 						/>
-						<Button size="sm" type="submit" disabled={!ok}>
-							{asking === "partial" ? "Refund" : "Flag"}
+						<Button size="sm" type="submit" disabled={!note}>
+							Flag
 						</Button>
 						<Button
 							size="sm"
 							type="button"
 							variant="ghost"
-							onClick={() => setAsking(null)}
+							onClick={() => setAsking(false)}
 						>
 							Cancel
 						</Button>
 					</form>
 				);
 			}
+			// Full or part, the marketplace's charges show how much once it's
+			// made there.
 			return (
-				<div className="flex items-center justify-end gap-1">
+				<div className="flex items-center justify-end gap-1 whitespace-nowrap">
 					<Button
 						size="sm"
 						onClick={() =>
 							onDecide({ decision: "full", amount: null, note: null })
 						}
 					>
-						Full refund
-					</Button>
-					<Button
-						size="sm"
-						variant="outline"
-						onClick={() => setAsking("partial")}
-					>
-						Partial
+						Refund
+						{page && <ArrowRight className="size-3.5" />}
 					</Button>
 					<Button
 						size="sm"
@@ -255,12 +238,9 @@ function Decide({
 						}
 					>
 						No refund
+						{page && <ArrowRight className="size-3.5" />}
 					</Button>
-					<Button
-						size="sm"
-						variant="outline"
-						onClick={() => setAsking("other")}
-					>
+					<Button size="sm" variant="outline" onClick={() => setAsking(true)}>
 						Something else
 					</Button>
 				</div>
@@ -270,9 +250,9 @@ function Decide({
 			return (
 				<div className="flex items-center justify-end gap-1 whitespace-nowrap">
 					<span className="text-xs text-muted-foreground">
-						{step.decision.decision === "partial" && step.decision.amount
-							? `${formatMoney(step.decision.amount)} decided`
-							: "Full refund decided"}
+						{step.decision.decision === "partial" &&
+							step.decision.amount &&
+							`${formatMoney(step.decision.amount)} decided`}
 					</span>
 					{out}
 					<Button size="sm" variant="outline" onClick={onSettle}>
@@ -299,7 +279,7 @@ function Decide({
 					<Badge tone={step.how === "refused" ? undefined : "success"}>
 						{DONE[step.how]}
 					</Badge>
-					{undo}
+					{step.decision && undo}
 				</div>
 			);
 	}
