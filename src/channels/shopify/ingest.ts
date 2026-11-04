@@ -28,7 +28,10 @@ import {
 	ordersPage,
 } from "./order-shapes";
 
-// Ingests every order matching a Shopify search, page by page.
+// Ingests every order matching a Shopify search, page by page. retryFrom is
+// the earliest change time of an order whose fulfillments failed to read (an
+// error, which may pass, not too many to read, which won't): the sync cursor
+// stops there so the next pass reads it again.
 export async function ingestMatching(
 	db: Db,
 	store: Awaited<ReturnType<typeof ensureStore>>,
@@ -36,6 +39,7 @@ export async function ingestMatching(
 	stock: StockLocations,
 ) {
 	let newest: Date | null = null;
+	let retryFrom: Date | null = null;
 	let count = 0;
 	const problems: string[] = [];
 	let cursor: string | null = null;
@@ -48,6 +52,8 @@ export async function ingestMatching(
 			if (!newest || o.updatedAt > newest) newest = o.updatedAt;
 			const result = await ingestNode(db, store, o, stock, tiktokDirect);
 			if (result.kind === "tiktok") continue;
+			if (result.readFailed && (!retryFrom || o.updatedAt < retryFrom))
+				retryFrom = o.updatedAt;
 			problems.push(...result.problems);
 			if (result.kind === "saved") count++;
 		}
@@ -58,17 +64,18 @@ export async function ingestMatching(
 			? (page.orders.pageInfo.endCursor ?? null)
 			: null;
 	} while (cursor);
-	return { count, newest, problems };
+	return { count, newest, retryFrom, problems };
 }
 
 // What became of one order. tiktok: once katasync syncs TikTok itself,
 // TikTok orders come from there, and the TikTok sync takes over the ones
 // Shopify relayed earlier. unread: left as last saved, with why, so the
-// rest of the pass still runs.
+// rest of the pass still runs. readFailed: Shopify erred reading its
+// fulfillments, so it's worth reading again.
 type Ingested =
 	| { kind: "tiktok" }
-	| { kind: "unread"; problems: [string] }
-	| { kind: "saved"; problems: string[] };
+	| { kind: "unread"; problems: [string]; readFailed: boolean }
+	| { kind: "saved"; problems: string[]; readFailed: boolean };
 
 // One order as Shopify sent it.
 async function ingestNode(
@@ -105,12 +112,14 @@ async function ingestNode(
 			? await readFulfillments(o.id, refunded)
 			: null;
 	const problems: string[] = [];
+	const readFailed = read?.kind === "failed";
 	if (read && read.kind !== "read") {
 		// A refund can't be counted without every fulfillment, and a guess
 		// would move stock, so the order waits as it was.
 		if (refunded)
 			return {
 				kind: "unread",
+				readFailed,
 				problems: [
 					`${order.name}: ${unreadWhy(read)}, so its refunds weren't synced. Check its stock by hand.`,
 				],
@@ -135,7 +144,7 @@ async function ingestNode(
 			)
 		: await ingestOrder(db, store, channelOrder, stock);
 	return saved
-		? { kind: "saved", problems: [...problems, ...saved.problems] }
+		? { kind: "saved", readFailed, problems: [...problems, ...saved.problems] }
 		: { kind: "tiktok" };
 }
 

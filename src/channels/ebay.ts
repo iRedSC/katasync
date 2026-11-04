@@ -12,6 +12,7 @@ import {
 	syncListings,
 } from "./listings";
 import { advanceOrderCursor, ensureStore, stockLocations } from "./stores";
+import { rereadUnknownShipped } from "./unknown-shipped";
 
 // eBay US through the Sell Fulfillment API, and its listings through the
 // Trading API, which (unlike the Inventory API) sees listings made in Seller
@@ -438,6 +439,27 @@ export async function syncEbay(
 	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
+	problems.push(
+		...(await rereadUnknownShipped(db, store.id, startedAt, async (o) => {
+			const response = await fetch(
+				`${API}/sell/fulfillment/v1/order/${encodeURIComponent(o.externalId)}`,
+				{ headers: { Authorization: `Bearer ${await accessToken()}` } },
+			);
+			if (!response.ok)
+				throw new Error(
+					`eBay answered ${response.status}: ${await response.text()}`,
+				);
+			const order = ebayOrder.assert(await response.json());
+			return (
+				await ingestOrder(
+					db,
+					store,
+					ebayToChannelOrder(order, await ebayShippedOf(order)),
+					stock,
+				)
+			).problems;
+		})),
+	);
 	return {
 		store: store.name,
 		listings,

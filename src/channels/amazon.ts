@@ -15,6 +15,7 @@ import {
 } from "./amazon-listings";
 import { markGoneListings, matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, stockLocations } from "./stores";
+import { rereadUnknownShipped } from "./unknown-shipped";
 
 // Amazon US orders through the Selling Partner API (Orders v0).
 
@@ -58,6 +59,8 @@ export const ordersPage = type({
 		"NextToken?": "string",
 	},
 });
+
+const amazonOrderById = type({ payload: amazonOrder });
 
 const itemsPage = type({
 	payload: { OrderItems: amazonItem.array(), "NextToken?": "string" },
@@ -278,6 +281,7 @@ export async function syncAmazon(
 		listingProblems.push(...fba.problems);
 	});
 
+	const startedAt = new Date();
 	// Amazon refuses ranges that end less than two minutes ago.
 	const latest = Date.now() - 3 * 60 * 1000;
 	const cursor =
@@ -319,6 +323,19 @@ export async function syncAmazon(
 			await advanceOrderCursor(db, store.id, new Date(window.until));
 		}
 	}
+	// Read whole, past the unchanged-revision shortcut: what shipped may have
+	// been unread, not unchanged.
+	problems.push(
+		...(await rereadUnknownShipped(db, store.id, startedAt, async (o) => {
+			const order = amazonOrderById.assert(
+				await spApi(`/orders/v0/orders/${encodeURIComponent(o.externalId)}`),
+			).payload;
+			const items = await orderItems(order.AmazonOrderId);
+			return (
+				await ingestOrder(db, store, amazonToChannelOrder(order, items), stock)
+			).problems;
+		})),
+	);
 	return {
 		store: store.name,
 		listings,
