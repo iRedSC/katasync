@@ -1,11 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, asc, eq, gt, inArray, isNull, type SQL, sql } from "drizzle-orm";
+import { asc, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
 	locations,
-	orderLines,
 	orders,
 	productComponents,
 	products,
@@ -14,12 +13,11 @@ import {
 import { cityLine } from "#/lib/format";
 import { groupBy } from "#/lib/group-by";
 import { sharingOrders } from "#/orders/invoice-index";
-import { toPrint } from "#/orders/remaining";
+import { slipsOf } from "#/orders/slip";
 import {
 	financialStatus,
 	needsPacking,
 	remainingUnknown,
-	unitsUnsent,
 } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
@@ -86,48 +84,12 @@ export const listInvoices = createServerFn({ method: "GET" })
 				? inArray(orders.id, data.ids)
 				: sql`${needsPacking} and ${isNull(orders.invoicePrintedAt)}`,
 		);
-		const lines = toShip.length
-			? await db
-					.select({
-						orderId: orderLines.orderId,
-						productId: orderLines.productId,
-						sku: sql<
-							string | null
-						>`coalesce(${products.sku}, ${orderLines.sku})`,
-						title: orderLines.title,
-						// What the invoice prints: the catalog's short name, not the
-						// channel's long listing title, which only lines not yet
-						// mapped to a product fall back to.
-						name: sql<string>`coalesce(${products.name}, ${orderLines.title})`,
-						quantity: orderLines.quantity,
-						shippedQuantity: orderLines.shippedQuantity,
-						// What a label not yet handed off holds, so a reprint
-						// prints that box (toPrint).
-						unsent: unitsUnsent,
-						unitPrice: orderLines.unitPrice,
-						// The size or option to pick, from the catalog: channel
-						// titles don't always carry it.
-						variantName: products.variantName,
-						weightGrams: products.weightGrams,
-						imageUrl: products.imageUrl,
-					})
-					.from(orderLines)
-					.leftJoin(products, eq(products.id, orderLines.productId))
-					.where(
-						and(
-							inArray(
-								orderLines.orderId,
-								toShip.map((o) => o.id),
-							),
-							gt(orderLines.quantity, 0),
-						),
-					)
-					.orderBy(orderLines.id)
-			: [];
+		const slips = await slipsOf(db, toShip);
+		const items = [...slips.values()].flatMap((slip) => slip.items);
 		// What's inside each set sold (kit or bundle), one level down, so the
 		// invoice lists the pieces under it.
 		const setIds = [
-			...new Set(lines.flatMap((l) => (l.productId ? [l.productId] : []))),
+			...new Set(items.flatMap((l) => (l.productId ? [l.productId] : []))),
 		];
 		const parts = setIds.length
 			? await db
@@ -150,15 +112,11 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const partsBy = groupBy(parts, (p) => p.setId);
 		const partsOf = (productId: number | null) =>
 			productId === null ? [] : (partsBy.get(productId) ?? []);
-		const linesBy = groupBy(lines, (l) => l.orderId);
-		const linesOf = (o: {
-			id: number;
-			needsPacking: boolean;
-			fulfillmentStatus: string;
-		}) => toPrint(linesBy.get(o.id) ?? [], o);
-		// What goes in the box, at what's left of each line.
-		const packing = (o: Parameters<typeof linesOf>[0]) =>
-			linesOf(o).flatMap((l) =>
+		const slipOf = (o: { id: number }) =>
+			slips.get(o.id) ?? { items: [], subtotal: 0 };
+		// What goes in the box.
+		const packing = (o: { id: number }) =>
+			slipOf(o).items.flatMap((l) =>
 				l.toPack > 0 ? [{ ...l, quantity: l.toPack }] : [],
 			);
 		const keys = new Map(toShip.map((o) => [o.id, contentsKey(packing(o))]));
@@ -187,12 +145,13 @@ export const listInvoices = createServerFn({ method: "GET" })
 					}
 				: null,
 			invoices: toShip.map((o) => {
-				const own = linesOf(o);
+				const { items: own, subtotal } = slipOf(o);
 				const packed = packing(o);
 				const last = lastPacked.get(keys.get(o.id) ?? "");
 				return {
 					...o,
 					lines: own.map((l) => ({ ...l, parts: partsOf(l.productId) })),
+					subtotal,
 					shipsWith: sharing.get(o.id) ?? [],
 					// What quick ship will suggest: the box and weight these exact
 					// contents went out in last time, else the items' own weight.

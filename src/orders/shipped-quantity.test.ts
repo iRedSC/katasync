@@ -47,11 +47,7 @@ describe("what's left to ship", () => {
 		).toEqual([{ id: 1, quantity: 3, shippedQuantity: 2 }]);
 	});
 
-	// On a packing slip, with what a label not yet handed off holds.
-	const slip = (quantity: number, shipped: number | null, unsent = 0) => ({
-		...line(quantity, shipped),
-		unsent,
-	});
+	const slip = line;
 
 	test("the packing slip prints what's left only while the order still needs packing", () => {
 		const lines = [slip(5, 2), slip(1, 1)];
@@ -70,19 +66,6 @@ describe("what's left to ship", () => {
 		expect(
 			toPrint([slip(5, null)], { needsPacking: true }).map((l) => l.toPack),
 		).toEqual([5]);
-	});
-
-	test("a reprint while a label waits to be handed off prints that box", () => {
-		// All 3 bought, handoff pending or failed: the box holds 3.
-		const all = toPrint([slip(3, 0, 3)], { needsPacking: true });
-		expect(all.map((l) => [l.toPack, l.quantity])).toEqual([[3, 3]]);
-		// Part of the order in the box: what's in it, not what's left after.
-		const part = toPrint([slip(5, 0, 2), slip(2, 0)], { needsPacking: true });
-		expect(part.map((l) => l.toPack)).toEqual([2, 0]);
-		// Even once the order no longer needs packing, the box is the box.
-		expect(
-			toPrint([slip(3, 0, 3)], { needsPacking: false }).map((l) => l.toPack),
-		).toEqual([3]);
 	});
 
 	test("partly shipped means some went and some didn't, as far as is known", () => {

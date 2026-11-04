@@ -166,10 +166,7 @@ function Invoice({
 	from: Data["from"];
 	invoice: Data["invoices"][number];
 }) {
-	const subtotal = o.lines.reduce(
-		(sum, l) => sum + l.unitPrice * l.quantity,
-		0,
-	);
+	const { subtotal } = o;
 	// Whatever the total holds beyond items and shipping: tax, or a discount
 	// when negative.
 	const rest = o.total - subtotal - o.shippingCharged;
@@ -248,11 +245,11 @@ function Invoice({
 						>
 							<td className="py-2 text-[13pt] font-bold tabular-nums">
 								{/* What goes in the box; what was sold beside it when some
-								already went out (toPrint). */}
+								already went out (slipsOf). */}
 								{l.toPack}
-								{l.toPack !== l.quantity && (
+								{l.sold && l.toPack !== l.sold.quantity && (
 									<span className="block text-[9pt] font-normal text-muted-foreground">
-										of {l.quantity}
+										of {l.sold.quantity}
 									</span>
 								)}
 							</td>
@@ -300,10 +297,10 @@ function Invoice({
 							{!slip && (
 								<>
 									<td className="py-2 text-right tabular-nums">
-										{formatMoney(l.unitPrice)}
+										{l.sold && formatMoney(l.sold.unitPrice)}
 									</td>
 									<td className="py-2 text-right tabular-nums">
-										{formatMoney(l.unitPrice * l.quantity)}
+										{l.sold && formatMoney(l.sold.unitPrice * l.sold.quantity)}
 									</td>
 								</>
 							)}

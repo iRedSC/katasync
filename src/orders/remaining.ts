@@ -63,19 +63,15 @@ export function toPack<L extends Line>(lines: L[]) {
 		.map(({ toShip, ...line }) => ({ ...line, quantity: toShip }));
 }
 
-// What a packing slip says to put in the box per line. An order with a live
-// label not handed off yet prints that box's contents (unsent: its dispatch
-// lines; one such dispatch at most, and every order in it has a line), so a
-// reprint shows what's in the box. Otherwise what's left, for an order still
-// to pack whose marketplace has said what shipped; anything else (finished,
-// cancelled, or unknown) prints what was sold. quantity stays what was sold
-// either way, for the money.
-export function toPrint<L extends Line & { unsent: number }>(
+// What a packing slip says to put in the box per line, for an order without
+// a label waiting to be handed off (that one prints its box: slipsOf): what's
+// left, for an order still to pack whose marketplace has said what shipped.
+// Anything else (finished, cancelled, or unknown) prints what was sold.
+// quantity stays what was sold either way, for the money.
+export function toPrint<L extends Line>(
 	lines: L[],
 	order: { needsPacking: boolean },
 ): (L & { toPack: number })[] {
-	if (lines.some((l) => l.unsent > 0))
-		return lines.map((l) => ({ ...l, toPack: l.unsent }));
 	const known = order.needsPacking && remainingOf(lines).kind === "known";
 	return lines.map((l) => ({
 		...l,
