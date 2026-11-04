@@ -192,15 +192,20 @@ export function ebayShipped(fulfillments: EbayFulfillment[]) {
 
 // What a partly shipped order's lines shipped, read from eBay; null when
 // the read fails, so one order eBay won't answer for can't stop the sync.
-// Other orders say it by their status (ebayToChannelOrder) and cost no call.
+// A failure goes in the pass's problems, so Diagnostics says why the order
+// can't be packed. Other orders say it by their status (ebayToChannelOrder)
+// and cost no call.
 export async function ebayShippedOf(
 	order: Pick<typeof ebayOrder.infer, "orderId" | "orderFulfillmentStatus">,
+	problems: string[],
 ) {
 	if (order.orderFulfillmentStatus !== "IN_PROGRESS") return null;
 	try {
 		return ebayShipped(await ebayShippingFulfillments(order.orderId));
 	} catch (err) {
-		console.warn(`eBay ${order.orderId}: shipped units unread`, err);
+		problems.push(
+			`eBay ${order.orderId}: couldn't read what shipped (${err instanceof Error ? err.message : String(err)})`,
+		);
 		return null;
 	}
 }
@@ -429,7 +434,7 @@ export async function syncEbay(
 			const result = await ingestOrder(
 				db,
 				store,
-				ebayToChannelOrder(order, await ebayShippedOf(order)),
+				ebayToChannelOrder(order, await ebayShippedOf(order, problems)),
 				stock,
 			);
 			problems.push(...result.problems);
@@ -450,14 +455,15 @@ export async function syncEbay(
 					`eBay answered ${response.status}: ${await response.text()}`,
 				);
 			const order = ebayOrder.assert(await response.json());
-			return (
-				await ingestOrder(
-					db,
-					store,
-					ebayToChannelOrder(order, await ebayShippedOf(order)),
-					stock,
-				)
-			).problems;
+			const unread: string[] = [];
+			const shipped = await ebayShippedOf(order, unread);
+			const saved = await ingestOrder(
+				db,
+				store,
+				ebayToChannelOrder(order, shipped),
+				stock,
+			);
+			return [...unread, ...saved.problems];
 		})),
 	);
 	return {

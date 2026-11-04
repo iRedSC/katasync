@@ -149,7 +149,7 @@ async function ebayWindow({ db, store, stock, from, until }: Window) {
 			const result = await ingestOrder(
 				db,
 				store,
-				ebayToChannelOrder(order, await ebayShippedOf(order)),
+				ebayToChannelOrder(order, await ebayShippedOf(order, problems)),
 				stock,
 			);
 			problems.push(...result.problems);

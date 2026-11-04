@@ -299,17 +299,20 @@ describe("eBay", () => {
 						}),
 					),
 			);
-			expect(await ebayShippedOf(order("NOT_STARTED"))).toBeNull();
+			expect(await ebayShippedOf(order("NOT_STARTED"), [])).toBeNull();
 			expect(urls).toEqual([]);
-			expect(await ebayShippedOf(order("IN_PROGRESS"))).toEqual(
+			expect(await ebayShippedOf(order("IN_PROGRESS"), [])).toEqual(
 				new Map([["L1", 2]]),
 			);
 		});
 
-		test("eBay failing leaves the order unknown rather than stopping the sync", async () => {
-			vi.spyOn(console, "warn").mockImplementation(() => {});
+		test("eBay failing leaves the order unknown and says so, rather than stopping the sync", async () => {
 			ebay(() => new Response("down", { status: 503 }));
-			expect(await ebayShippedOf(order("IN_PROGRESS"))).toBeNull();
+			const problems: string[] = [];
+			expect(await ebayShippedOf(order("IN_PROGRESS"), problems)).toBeNull();
+			expect(problems).toEqual([
+				expect.stringContaining("couldn't read what shipped"),
+			]);
 		});
 	});
 });
