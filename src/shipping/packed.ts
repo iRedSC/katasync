@@ -20,7 +20,7 @@ import { contentsKey } from "./contents";
 
 export type PackedLine = Omit<
 	typeof dispatchLines.$inferSelect,
-	"dispatchId" | "orderLineId" | "shippedBefore"
+	"dispatchId" | "orderLineId" | "shippedBefore" | "handedOffBefore"
 > & { orderLineId?: number | null };
 
 // What katasync knows a dispatch held. unknown: bought before contents were

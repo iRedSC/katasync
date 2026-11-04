@@ -5834,6 +5834,12 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
+        },
+        "handed_off_before": {
+          "name": "handed_off_before",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {

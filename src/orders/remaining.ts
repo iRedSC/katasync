@@ -30,7 +30,8 @@ type Line = { quantity: number; shippedQuantity: number | null };
 // (src/orders/to-ship.ts reads both): what the marketplace's shipped count
 // must reach to cover katasync's handoffs (drizzle/0182's
 // order_line_shipped_needed: the count when the newest handoff was bought,
-// plus its units), and units in live dispatches not handed off yet.
+// plus its units, less earlier handoffs that count included and a void has
+// since taken back), and units in live dispatches not handed off yet.
 export type Dispatched = { shippedNeeded: number; unsent: number };
 
 type PackLine = Line & Dispatched;

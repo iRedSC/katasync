@@ -1660,6 +1660,10 @@ export const dispatchLines = pgTable(
 		// shipment knows what the count must reach. Null on rows from before
 		// it was kept.
 		shippedBefore: integer(),
+		// Units of the line already handed off and not reversed when this
+		// was bought, so all counted in shippedBefore. Set beside it, by the
+		// database; lets a later void of those lower the fence (drizzle/0182).
+		handedOffBefore: integer(),
 	},
 	(t) => [
 		primaryKey({ columns: [t.dispatchId, t.orderId, t.lineExternalId] }),
