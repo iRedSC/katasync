@@ -538,6 +538,29 @@ describe("voidDispatch", () => {
 		);
 	});
 
+	test("putting an order back puts it back in Print all", async () => {
+		const printed = () =>
+			db
+				.update(schema.orders)
+				.set({ invoicePrintedAt: new Date() })
+				.where(eq(schema.orders.id, orderId));
+		const refusing = fakes({
+			shopifyCancel: vi.fn(async () => {
+				throw new Error("nope");
+			}),
+		});
+		const id = await ship();
+		await sendTracking(db, id, refusing);
+		await printed();
+		// Still shipped on Shopify: nothing to pack, so it stays printed.
+		await voidDispatch(db, id, refusing);
+		expect((await orderRow()).invoicePrintedAt).not.toBeNull();
+
+		await voidDispatch(db, id, fakes());
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect((await orderRow()).invoicePrintedAt).toBeNull();
+	});
+
 	test("if Shopify won't cancel, the order isn't put back", async () => {
 		const outside = fakes({
 			shopifyCancel: vi.fn(async () => {
