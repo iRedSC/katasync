@@ -245,12 +245,24 @@ function Invoice({
 						>
 							<td className="py-2 text-[13pt] font-bold tabular-nums">
 								{/* What goes in the box; what was sold beside it when some
-								already went out (slipsOf). */}
-								{l.toPack}
-								{l.sold && l.toPack !== l.sold.quantity && (
-									<span className="block text-[9pt] font-normal text-muted-foreground">
-										of {l.sold.quantity}
-									</span>
+								already went out, or a dash for a line sold but going in
+								another box (slipsOf). */}
+								{l.toPack === null ? (
+									<>
+										<span className="text-muted-foreground">–</span>
+										<span className="block text-[9pt] leading-tight font-normal text-muted-foreground">
+											Not in this box
+										</span>
+									</>
+								) : (
+									<>
+										{l.toPack}
+										{l.sold && l.toPack !== l.sold.quantity && (
+											<span className="block text-[9pt] font-normal text-muted-foreground">
+												of {l.sold.quantity}
+											</span>
+										)}
+									</>
 								)}
 							</td>
 							<td className="py-2">
@@ -268,7 +280,7 @@ function Invoice({
 										)}
 									</div>
 								</div>
-								{l.parts.length > 0 && (
+								{l.toPack !== null && l.parts.length > 0 && (
 									<ul className="mt-2 ml-[calc(0.6in+0.75rem)] flex flex-col gap-1.5 border-l-2 border-border pl-3">
 										{l.parts.map((p) => (
 											<li
@@ -277,7 +289,7 @@ function Invoice({
 											>
 												<Photo src={p.imageUrl} className="size-[0.35in]" />
 												<span className="w-8 font-bold tabular-nums">
-													{p.perSet * l.toPack}
+													{p.perSet * (l.toPack ?? 0)}
 												</span>
 												<span className="min-w-0">
 													<span>

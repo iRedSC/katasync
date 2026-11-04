@@ -117,7 +117,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 		// What goes in the box.
 		const packing = (o: { id: number }) =>
 			slipOf(o).items.flatMap((l) =>
-				l.toPack > 0 ? [{ ...l, quantity: l.toPack }] : [],
+				l.toPack ? [{ ...l, quantity: l.toPack }] : [],
 			);
 		const keys = new Map(toShip.map((o) => [o.id, contentsKey(packing(o))]));
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);

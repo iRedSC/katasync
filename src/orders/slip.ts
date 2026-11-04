@@ -22,8 +22,9 @@ export type SlipItem = {
 	variantName: string | null;
 	imageUrl: string | null;
 	weightGrams: number | null;
-	// What goes in the box.
-	toPack: number;
+	// What goes in the box, or null for a line sold but left out of the
+	// bought box (another shipment's).
+	toPack: number | null;
 	// What the order sold of this line, for the price columns; null when the
 	// order no longer sells it (edited away since its label was bought).
 	sold: { quantity: number; unitPrice: number } | null;
@@ -35,11 +36,14 @@ export type Slip = {
 	subtotal: number;
 };
 
-// Each order's slip. An order with a label bought and not yet handed off
-// lists that box exactly as it was bought (dispatch_lines): its titles,
-// SKUs, products and counts, whatever the order's lines say since, so a
-// reprint matches what's in the box. Otherwise its current lines at what's
-// left to pack (toPrint).
+// Each order's slip: every line the order sells now, priced, so the rows add
+// up to the subtotal, and what of each goes in the box. An order with a
+// label bought and not yet handed off packs that box exactly as it was
+// bought (dispatch_lines): its titles, SKUs, products and counts, whatever
+// the order's lines say since, so a reprint matches what's in the box; a
+// line it sells that isn't in that box is marked so, and a boxed line it no
+// longer sells stays, unpriced. Otherwise its lines at what's left to pack
+// (toPrint).
 export async function slipsOf(
 	db: Db,
 	orders: { id: number; needsPacking: boolean }[],
@@ -110,30 +114,66 @@ export async function slipsOf(
 			const lines = currentBy.get(o.id) ?? [];
 			const subtotal = lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0);
 			const box = frozenBy.get(o.id);
-			const sold = (l: { quantity: number; unitPrice: number }) => ({
-				quantity: l.quantity,
-				unitPrice: l.unitPrice,
-			});
-			const items: SlipItem[] = box
-				? box.map(({ orderId, externalId, quantity, ...item }) => {
-						const line = lines.find((l) => l.externalId === externalId);
-						return {
-							...item,
-							toPack: quantity,
-							sold: line ? sold(line) : null,
-						};
-					})
-				: toPrint(lines, o).map(
-						({
-							orderId,
-							externalId,
-							quantity,
-							shippedQuantity,
-							unitPrice,
-							...item
-						}) => ({ ...item, sold: sold({ quantity, unitPrice }) }),
-					);
+			const items: SlipItem[] = box ? boxed(lines, box) : unboxed(lines, o);
 			return [o.id, { items, subtotal }];
 		}),
 	);
 }
+
+type Current = {
+	externalId: string;
+	productId: number | null;
+	sku: string | null;
+	title: string;
+	name: string;
+	quantity: number;
+	shippedQuantity: number | null;
+	unitPrice: number;
+	variantName: string | null;
+	weightGrams: number | null;
+	imageUrl: string | null;
+};
+type Frozen = Omit<Current, "shippedQuantity" | "unitPrice">;
+
+const sold = (l: Current) => ({ quantity: l.quantity, unitPrice: l.unitPrice });
+
+// The bought box against the order as it is now: each line it sells, at the
+// box's count of it (its frozen item, else null: not in this box), then what's in the box that it
+// no longer sells.
+function boxed(lines: Current[], box: Frozen[]): SlipItem[] {
+	const left = [...box];
+	const take = (externalId: string) => {
+		const i = left.findIndex((f) => f.externalId === externalId);
+		return i < 0 ? null : left.splice(i, 1)[0];
+	};
+	const priced = lines.map((line): SlipItem => {
+		const frozen = take(line.externalId);
+		return {
+			...pick(frozen ?? line),
+			toPack: frozen ? frozen.quantity : null,
+			sold: sold(line),
+		};
+	});
+	const gone = left.map(({ quantity, ...item }) => ({
+		...pick(item),
+		toPack: quantity,
+		sold: null,
+	}));
+	return [...priced, ...gone];
+}
+
+function unboxed(lines: Current[], order: { needsPacking: boolean }) {
+	return toPrint(lines, order).map(
+		(l): SlipItem => ({ ...pick(l), toPack: l.toPack, sold: sold(l) }),
+	);
+}
+
+const pick = (l: Omit<Frozen, "quantity">) => ({
+	productId: l.productId,
+	sku: l.sku,
+	title: l.title,
+	name: l.name,
+	variantName: l.variantName,
+	imageUrl: l.imageUrl,
+	weightGrams: l.weightGrams,
+});

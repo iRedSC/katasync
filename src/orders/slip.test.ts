@@ -7,6 +7,7 @@ import {
 	freshOrder,
 	handOff,
 	lineId,
+	marketplace,
 	orderId,
 } from "#/shipping/several-shipments.fixtures";
 import { slipsOf } from "./slip";
@@ -37,6 +38,12 @@ describe("slipsOf", () => {
 
 		const printed = await slip();
 		expect(printed?.items).toEqual([
+			// The knife is sold but wasn't bought into this box.
+			expect.objectContaining({
+				sku: "KNIFE",
+				toPack: null,
+				sold: { quantity: 1, unitPrice: 5 },
+			}),
 			expect.objectContaining({
 				sku: "WRENCH",
 				name: "Wrench",
@@ -46,6 +53,46 @@ describe("slipsOf", () => {
 		]);
 		// The money is the order's as it is now.
 		expect(printed?.subtotal).toBe(5);
+	});
+
+	test("a box holding part of the order still prices every line", async () => {
+		await db
+			.update(schema.orderLines)
+			.set({ quantity: 1 })
+			.where(eq(schema.orderLines.id, lineId));
+		marketplace.open.set("line-1", 1);
+		await db.insert(schema.orderLines).values({
+			orderId,
+			externalId: "line-b",
+			sku: "BLADE",
+			title: "Blade",
+			quantity: 1,
+			shippedQuantity: 0,
+			unitPrice: 20,
+		});
+		marketplace.open.set("line-b", 1);
+		const bought = await buy([{ orderLineId: lineId, quantity: 0 }]);
+		expect(bought.failed).toBeNull();
+
+		const printed = await slip();
+		expect(printed?.items).toEqual([
+			expect.objectContaining({
+				sku: "WRENCH",
+				toPack: null,
+				sold: { quantity: 1, unitPrice: 10 },
+			}),
+			expect.objectContaining({
+				sku: "BLADE",
+				toPack: 1,
+				sold: { quantity: 1, unitPrice: 20 },
+			}),
+		]);
+		const priced = (printed?.items ?? []).reduce(
+			(s, l) => s + (l.sold ? l.sold.quantity * l.sold.unitPrice : 0),
+			0,
+		);
+		expect(priced).toBe(printed?.subtotal);
+		expect(priced).toBe(30);
 	});
 
 	test("once handed off, the slip goes back to what's left on the order", async () => {
