@@ -60,6 +60,7 @@ export async function markDropShip(
 					dropShipAt: orders.dropShipAt,
 					fulfilledByChannel: orders.fulfilledByChannel,
 					soldInStore: orders.soldInStore,
+					fulfillmentStatus: orders.fulfillmentStatus,
 					needsPacking,
 				})
 				.from(orders)
@@ -70,6 +71,12 @@ export async function markDropShip(
 				throw new Error(`${order.name} is already a drop-ship`);
 			if (order.fulfilledByChannel || order.soldInStore || !order.needsPacking)
 				throw new Error(`${order.name} isn't waiting to be packed`);
+			// Part of it went out already, from our shelf: giving the whole
+			// sale back would count that part twice.
+			if (order.fulfillmentStatus === "PARTIALLY_FULFILLED")
+				throw new Error(
+					`${order.name} is partly shipped, so only all of it can be a drop-ship`,
+				);
 			if ((await liveDispatches(tx, [orderId])).length > 0)
 				throw new Error(
 					`${order.name} has a label. Void it on the order page first.`,
@@ -268,8 +275,29 @@ export async function sendDropShipTracking(
 		);
 		if (packed.size === 0) throw new Error(`${order.name} has nothing to ship`);
 
-		const delivered =
-			target.channel === "shopify"
+		const channel = target.channel;
+		// Claimed before the marketplace hears, so once it may have, nothing
+		// can put the order back to be packed (unmarkDropShip refuses a sent
+		// one). A refusal lets go of the claim. A request lost on the network
+		// (fetch's TypeError, an abort) may have got through, so it keeps the
+		// claim: the safe side, settled by the next sync.
+		await db
+			.update(orders)
+			.set({ dropShipSentAt: new Date() })
+			.where(eq(orders.id, orderId));
+		const delivered = await tellMarketplace().catch(async (error: unknown) => {
+			const lost =
+				error instanceof TypeError ||
+				(error instanceof Error && error.name === "AbortError");
+			if (!lost)
+				await db
+					.update(orders)
+					.set({ dropShipSentAt: null })
+					.where(eq(orders.id, orderId));
+			throw error;
+		});
+		async function tellMarketplace() {
+			return channel === "shopify"
 				? await outside.shopifyFulfill(
 						order.externalId,
 						tracking && number
@@ -292,10 +320,10 @@ export async function sendDropShipTracking(
 								}
 							: { carrier: null, trackingNumber: null, shippedAt: new Date() },
 					);
+		}
 		await db
 			.update(orders)
 			.set({
-				dropShipSentAt: new Date(),
 				dropShipCarrier: tracking && number ? tracking.carrier : null,
 				dropShipTracking: number,
 				fulfillmentStatus:

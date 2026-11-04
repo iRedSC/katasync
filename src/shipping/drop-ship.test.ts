@@ -158,6 +158,14 @@ describe("markDropShip", () => {
 		await expect(addDispatch(db, { orderIds: [id] })).rejects.toThrow();
 	});
 
+	test("is refused for a partly shipped order", async () => {
+		const id = await sold({ fulfillmentStatus: "PARTIALLY_FULFILLED" });
+		await expect(markDropShip(db, id, fakes())).rejects.toThrow(
+			"partly shipped",
+		);
+		expect(await onHand()).toBe(8);
+	});
+
 	test("is refused once the order isn't waiting to be packed", async () => {
 		const id = await sold({ cancelledAt: new Date("2026-10-06T00:00:00Z") });
 		await expect(markDropShip(db, id, fakes())).rejects.toThrow(
@@ -211,6 +219,30 @@ describe("unmarkDropShip", () => {
 });
 
 describe("sendDropShipTracking", () => {
+	test("a refusal leaves it waiting; a lost answer keeps it from going back to pack", async () => {
+		const id = await sold();
+		const outside = fakes();
+		await markDropShip(db, id, outside);
+		outside.shopifyFulfill = vi.fn(async () => {
+			throw new Error("Shopify refused: no");
+		});
+		await expect(sendDropShipTracking(db, id, null, outside)).rejects.toThrow(
+			"refused",
+		);
+		expect((await orderRow(id)).dropShipSentAt).toBeNull();
+
+		outside.shopifyFulfill = vi.fn(async () => {
+			throw new TypeError("fetch failed");
+		});
+		await expect(sendDropShipTracking(db, id, null, outside)).rejects.toThrow(
+			"fetch failed",
+		);
+		await expect(unmarkDropShip(db, id, outside)).rejects.toThrow(
+			"already shipped",
+		);
+		expect(await onHand()).toBe(10);
+	});
+
 	test("tells Shopify every line shipped with the supplier's tracking", async () => {
 		const id = await sold();
 		const outside = fakes();
