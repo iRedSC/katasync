@@ -243,7 +243,8 @@ export function QuickShip() {
 			setExtras(startingExtras(next));
 			setRates(null);
 			latest.current++;
-			// The box step follows unless the packer chose there already.
+			// Set in the same update as the plan, so the box step remounts
+			// (its key holds the contents) starting from this suggestion.
 			suggestBox(next, 0);
 		},
 	});
@@ -481,8 +482,10 @@ export function QuickShip() {
 							found.liveDispatchId === null && (
 								<PackageStep
 									// A fresh step for each box, and again when orders join or
-									// leave the box, starting from that box's suggestion.
-									key={`${packed.length}:${plan?.orderIds.join(",")}`}
+									// leave the box or the counts change, starting from that
+									// contents' suggestion: a box picked for other contents
+									// no longer fits what's going in.
+									key={`${packed.length}:${plan?.orderIds.join(",")}:${plan?.contentsKey}`}
 									boxes={boxes}
 									current={box}
 									dims={dims}

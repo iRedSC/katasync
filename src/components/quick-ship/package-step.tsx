@@ -94,20 +94,6 @@ export function PackageStep({
 	// The box from last time stays highlighted until something else is typed
 	// or picked.
 	const [picked, setPicked] = useState<string | null>(start.picked);
-	// A new suggestion (the contents changed, so their default did) replaces
-	// the start, until the packer types or picks a box themselves.
-	const touched = useRef(false);
-	const touch = () => {
-		touched.current = true;
-	};
-	const suggestion = `${start.picked}|${entryQuery(start.entry)}`;
-	const shown = useRef(suggestion);
-	useEffect(() => {
-		if (shown.current === suggestion || touched.current) return;
-		shown.current = suggestion;
-		setEntry(start.entry);
-		setPicked(start.picked);
-	});
 	const index = Math.max(
 		0,
 		options.findIndex((o) => keyOf(o) === picked),
@@ -150,7 +136,6 @@ export function PackageStep({
 	// size, keeping it highlighted; the next Enter takes it.
 	function enter(option: Option) {
 		if (option.kind === "box" && isPartial(entry)) {
-			touch();
 			setEntry(sizeEntry(sidesOf(option.box)));
 			return setPicked(keyOf(option));
 		}
@@ -160,7 +145,6 @@ export function PackageStep({
 	function move(by: number) {
 		if (options.length === 0) return;
 		const next = (index + by + options.length) % options.length;
-		touch();
 		setPicked(keyOf(options[next]));
 	}
 
@@ -227,7 +211,6 @@ export function PackageStep({
 				entry={entry}
 				disabled={saving}
 				onEntry={(next) => {
-					touch();
 					setEntry(next);
 					setPicked(null);
 				}}
