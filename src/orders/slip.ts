@@ -15,6 +15,8 @@ import { toPrint } from "./remaining";
 export type SlipItem = {
 	productId: number | null;
 	sku: string | null;
+	// The channel's title, which keys contents when there's no SKU.
+	title: string;
 	// The catalog's short name, else the channel's title.
 	name: string;
 	variantName: string | null;
@@ -51,6 +53,7 @@ export async function slipsOf(
 				externalId: orderLines.externalId,
 				productId: orderLines.productId,
 				sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
+				title: orderLines.title,
 				name: sql<string>`coalesce(${products.name}, ${orderLines.title})`,
 				quantity: orderLines.quantity,
 				shippedQuantity: orderLines.shippedQuantity,
@@ -70,6 +73,7 @@ export async function slipsOf(
 				orderId: dispatchLines.orderId,
 				externalId: dispatchLines.lineExternalId,
 				productId: dispatchLines.productId,
+				title: dispatchLines.title,
 				sku: sql<
 					string | null
 				>`coalesce(${products.sku}, ${dispatchLines.sku})`,
