@@ -14,7 +14,7 @@ import {
 import { cityLine } from "#/lib/format";
 import { groupBy } from "#/lib/group-by";
 import { sharingOrders } from "#/orders/invoice-index";
-import { financialStatus, needsShipping } from "#/orders/to-ship";
+import { financialStatus, needsPacking } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
 import { liveDispatches } from "#/shipping/dispatch";
@@ -65,7 +65,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					externalId: orders.externalId,
 					storeId: orders.storeId,
 					buyerId: orders.buyerId,
-					needsShipping,
+					needsPacking,
 				})
 				.from(orders)
 				.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -76,7 +76,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const toShip = await select(
 			data.ids
 				? inArray(orders.id, data.ids)
-				: sql`${needsShipping} and ${isNull(orders.invoicePrintedAt)}`,
+				: sql`${needsPacking} and ${isNull(orders.invoicePrintedAt)}`,
 		);
 		const lines = toShip.length
 			? await db
@@ -144,7 +144,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
 		// Any order still to ship can share the box, printed or not, so a
 		// packer printing a few still hears about the rest.
-		const pool = data.ids ? await select(needsShipping) : toShip;
+		const pool = data.ids ? await select(needsPacking) : toShip;
 		// Orders already holding a label can't join another box.
 		const live = await liveDispatches(db, [
 			...new Set([...toShip, ...pool].map((o) => o.id)),

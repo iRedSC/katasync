@@ -660,6 +660,15 @@ export const orders = pgTable(
 		// The marketplace ships it from its own stock (Amazon FBA); it never
 		// takes ours.
 		fulfilledByChannel: boolean().notNull().default(false),
+		// A supplier ships it straight to the buyer (src/shipping/drop-ship.ts):
+		// it never takes our stock, never gets a pin or a label, and waits on
+		// To ship for the supplier's tracking. dropShipSentAt is when the
+		// marketplace was told it shipped, with dropShipTracking (null when it
+		// went without any). Only katasync sets these; a sync never does.
+		dropShipAt: timestamp({ withTimezone: true }),
+		dropShipSentAt: timestamp({ withTimezone: true }),
+		dropShipCarrier: text(),
+		dropShipTracking: text(),
 		// Rung up at our retail store (Shopify POS): its stock comes off the
 		// store's shelf rather than the warehouse's.
 		soldInStore: boolean().notNull().default(false),
@@ -705,6 +714,18 @@ export const orders = pgTable(
 			.where(sql`${t.buyerId} is not null`),
 		uniqueIndex("orders_pin_unique").on(t.pin).where(sql`${t.pin} is not null`),
 		check("orders_pin_range", sql`${t.pin} between 1 and 999`),
+		check(
+			"orders_drop_ship_sent",
+			sql`${t.dropShipSentAt} is null or ${t.dropShipAt} is not null`,
+		),
+		check(
+			"orders_drop_ship_tracking",
+			sql`(${t.dropShipTracking} is null or ${t.dropShipSentAt} is not null) and (${t.dropShipTracking} is null) = (${t.dropShipCarrier} is null)`,
+		),
+		check(
+			"orders_drop_ship_no_pin",
+			sql`${t.dropShipAt} is null or ${t.pin} is null`,
+		),
 	],
 );
 

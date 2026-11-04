@@ -16,10 +16,11 @@ const base = {
 	shipCountry: "US",
 	labelToVoid: false,
 	fulfilledByChannel: false,
+	dropShipAt: null,
 	returnStage: null,
 } as const;
 const keyOf = (over: Partial<Parameters<typeof orderStatus>[0]>) =>
-	orderStatus({ ...base, ...over }).key;
+	orderStatus({ ...base, dropShipAt: null, ...over }).key;
 
 describe("orderStatus", () => {
 	test("to ship here is yellow; to ship on the marketplace links there", () => {

@@ -1,6 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import { type RefObject, useEffect, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
+import { DropShipTracking } from "#/components/drop-ship";
 import { OrderStatusBadge } from "#/components/order-status";
 import { Badge } from "#/components/page";
 import { TickCell } from "#/components/tick-cell";
@@ -164,8 +165,11 @@ export function OrderTable({
 										{formatMoney(o.total)}
 									</td>
 									<td className="px-4 py-2.5">
-										<div className="flex gap-1.5">
+										<div className="flex items-center gap-1.5">
 											<OrderStatusBadge status={status} />
+											{status.key === "dropship" && (
+												<DropShipTracking order={o} />
+											)}
 											{o.unmatched > 0 && (
 												<Badge tone="critical">Unknown product</Badge>
 											)}

@@ -25,8 +25,9 @@ import {
 // Lines that should have taken stock and haven't: mapped to a product, no sale
 // batch yet, and on an order that takes stock. The rules are orderTakesStock's
 // (ingest.ts), which decides this when a line is first saved. Needs orders and
-// stores joined. Diagnostics reads the same lines, so what it shows is what
-// reconcileStock still owes.
+// stores joined. A drop-ship never takes ours (src/shipping/drop-ship.ts).
+// Diagnostics reads the same lines, so what it shows is what reconcileStock
+// still owes.
 export const unsettledStock = and(
 	isNotNull(orderLines.productId),
 	or(
@@ -38,6 +39,7 @@ export const unsettledStock = and(
 		),
 	),
 	eq(orders.fulfilledByChannel, false),
+	isNull(orders.dropShipAt),
 	isNotNull(stores.stockFrom),
 	gte(orders.placedAt, stores.stockFrom),
 );

@@ -1,10 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ExternalLink, Printer, Truck, Undo2 } from "lucide-react";
+import { ExternalLink, PackageOpen, Printer, Truck, Undo2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ChannelBadge } from "#/components/channel-badge";
+import { dropShip, packHere } from "#/components/drop-ship";
 import { MatchDialog } from "#/components/match-picker";
 import { DetailsCard } from "#/components/order-page/details-card";
+import { DropShipCard } from "#/components/order-page/drop-ship-card";
 import { EmailBuyer } from "#/components/order-page/email-buyer";
 import { FromStoreBadge } from "#/components/order-page/from-store";
 import { Line } from "#/components/order-page/line";
@@ -160,6 +162,9 @@ function OrderPage() {
 	const liveSend = sends.find((d) => d.live);
 	const liveBoxes = liveSend?.boxes.filter((b) => b.voidedAt === null) ?? [];
 	const canShip = pin !== null && !external && !liveSend;
+	// A supplier can ship anything still to pack with no label of its own.
+	const canDropShip = pin !== null && !liveSend && !order.labelToVoid;
+	const waitingOnSupplier = status.key === "dropship";
 	// Cancelled or refunded with a live label: that box mustn't go out.
 	const toVoid =
 		order.labelToVoid && liveSend && liveBoxes.length > 0
@@ -315,6 +320,18 @@ function OrderPage() {
 							<Undo2 />
 							Receive return
 							<kbd className="ml-1 rounded bg-black/5 px-1 text-xs">R</kbd>
+						</Button>
+					)}
+					{canDropShip && (
+						<Button size="sm" variant="outline" onClick={() => dropShip(order)}>
+							<Truck />
+							Drop-ship
+						</Button>
+					)}
+					{waitingOnSupplier && (
+						<Button size="sm" variant="outline" onClick={() => packHere(order)}>
+							<PackageOpen />
+							Pack it here
 						</Button>
 					)}
 					{canShip && (
@@ -503,6 +520,7 @@ function OrderPage() {
 							</ul>
 						</Card>
 					)}
+					{order.dropShipAt && <DropShipCard order={order} />}
 					<TrackingCard orderId={order.id} />
 					{profit && (
 						<ProfitCard

@@ -1,7 +1,7 @@
 import { and, eq, isNotNull, isNull, not, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
-import { needsShipping } from "#/orders/to-ship";
+import { needsPacking } from "#/orders/to-ship";
 
 // Gives every order still to ship a pin and frees the pins of orders that no
 // longer need shipping. Pins are as short as possible (1-9 first, then
@@ -20,12 +20,12 @@ async function assignInLock(db: Db) {
 	await db
 		.update(orders)
 		.set({ pin: null })
-		.where(and(isNotNull(orders.pin), not(needsShipping)));
+		.where(and(isNotNull(orders.pin), not(needsPacking)));
 
 	const waiting = await db
 		.select({ id: orders.id })
 		.from(orders)
-		.where(and(isNull(orders.pin), needsShipping));
+		.where(and(isNull(orders.pin), needsPacking));
 	if (waiting.length === 0) return 0;
 
 	const used = new Set(

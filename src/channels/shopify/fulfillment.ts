@@ -71,16 +71,20 @@ const DONE = new Set(["CANCELLED", "CLOSED"]);
 // (an earlier try got through) is returned instead of a second one, but
 // only if it shipped exactly what was packed. Anything Shopify shows that
 // katasync can't be sure of is held for a person rather than guessed at.
+//
+// tracking null ships it with no tracking at all (a drop-ship whose supplier
+// never sent one). Nothing then tells a repeat from a first try, so a repeat
+// finds nothing left open and throws instead of shipping twice.
 export async function shopifyFulfill(
 	orderId: string,
 	tracking: {
 		company: string;
 		boxes: { number: string; url: string | null }[];
-	},
+	} | null,
 	packed: Map<string, number>,
 ): Promise<{ fulfillmentId: string; remaining: number }> {
-	if (tracking.boxes.length === 0) throw new Error("No tracking to send");
-	const numbers = tracking.boxes.map((b) => b.number);
+	if (tracking?.boxes.length === 0) throw new Error("No tracking to send");
+	const numbers = tracking?.boxes.map((b) => b.number) ?? [];
 	const { order } = openFulfillmentOrders.assert(
 		await shopifyQuery(OPEN_QUERY, { id: orderId }),
 	);
@@ -146,15 +150,19 @@ export async function shopifyFulfill(
 			{
 				fulfillment: {
 					lineItemsByFulfillmentOrder: items,
-					trackingInfo: {
-						company: tracking.company,
-						numbers,
-						// Shopify pairs urls with numbers by position, so every box
-						// needs one or none do.
-						...(tracking.boxes.every((b) => b.url)
-							? { urls: tracking.boxes.map((b) => b.url) }
-							: {}),
-					},
+					...(tracking
+						? {
+								trackingInfo: {
+									company: tracking.company,
+									numbers,
+									// Shopify pairs urls with numbers by position, so every
+									// box needs one or none do.
+									...(tracking.boxes.every((b) => b.url)
+										? { urls: tracking.boxes.map((b) => b.url) }
+										: {}),
+								},
+							}
+						: {}),
 					notifyCustomer: true,
 				},
 			},

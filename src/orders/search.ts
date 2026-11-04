@@ -36,6 +36,7 @@ export type SearchableOrder = {
 	financialStatus: string | null;
 	labelToVoid: boolean;
 	fulfilledByChannel: boolean;
+	dropShipAt: Date | null;
 	returnStage: ReturnStage;
 	total: number;
 	items: number;

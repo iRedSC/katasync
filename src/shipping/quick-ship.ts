@@ -87,7 +87,7 @@ export async function orderForShipping(db: Db, pin: number) {
 	const companions =
 		external || live
 			? []
-			: await companionsOf(db, { ...order, needsShipping: true });
+			: await companionsOf(db, { ...order, needsPacking: true });
 	const items = companions.length
 		? await db
 				.select({

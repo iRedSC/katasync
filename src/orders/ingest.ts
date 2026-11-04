@@ -104,6 +104,7 @@ export async function ingestOrder(
 				id: orders.id,
 				cancelledAt: orders.cancelledAt,
 				sourceUpdatedAt: orders.sourceUpdatedAt,
+				dropShipAt: orders.dropShipAt,
 			})
 			.from(orders)
 			.where(
@@ -142,10 +143,14 @@ export async function ingestOrder(
 			.select({ stockFrom: stores.stockFrom })
 			.from(stores)
 			.where(eq(stores.id, store.id));
-		const takesStock = orderTakesStock(
-			{ ...store, stockFrom: current?.stockFrom ?? null },
-			order,
-		);
+		// A drop-ship goes from a supplier's stock, never ours. The mark is
+		// katasync's own, so it's read from the saved order, not the channel.
+		const takesStock =
+			!before?.dropShipAt &&
+			orderTakesStock(
+				{ ...store, stockFrom: current?.stockFrom ?? null },
+				order,
+			);
 
 		// The lines this order already has, read once for the pass.
 		const savedLines = await tx

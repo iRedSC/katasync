@@ -56,6 +56,7 @@ export async function orderSummary(db: Db, orderId: number) {
 				sourceUpdatedAt: orders.sourceUpdatedAt,
 				shipCountry: orders.shipCountry,
 				fulfilledByChannel: orders.fulfilledByChannel,
+				dropShipAt: orders.dropShipAt,
 				labelToVoid,
 			})
 			.from(orders)
