@@ -1,5 +1,5 @@
 -- An order can go out in several shipments over time, staff choosing which
--- units ship now (src/orders/remaining.ts). Two rules keep that from
+-- units ship now (src/orders/remaining.ts). These rules keep that from
 -- packing a unit twice, here so no code path can get around them:
 --
 -- 1. An order has at most one live dispatch not yet handed off to its
@@ -8,9 +8,18 @@
 --    its quantity, less what the marketplace says shipped (unknown means
 --    nothing is packable), less what live dispatches not yet handed off
 --    already hold. Units katasync handed off count only through the
---    marketplace's own count, which must already cover them; a count
---    lower than that is a snapshot from before the handoff, so nothing is
---    packable until the next sync brings it up to date.
+--    marketplace's own count, which must already cover them (the fence,
+--    order_line_shipped_needed); a count lower than that is a snapshot from
+--    before the handoff, so nothing is packable until the next sync brings
+--    it up to date.
+-- 3. Every order in a packed dispatch has at least one of its lines in it,
+--    so no handoff tells a marketplace about an empty box.
+--
+-- Each dispatch line keeps the line's shipped count as it was bought
+-- (shipped_before), set here, not by the app. Buying needs that count fresh
+-- (rule 2), and only one dispatch is unsent at a time (rule 1), so it
+-- already counts every earlier handoff, and units shipped outside katasync
+-- too. The fence is then that count plus the newest handoff's units.
 --
 -- Each check locks the row it counts against (the order, the order line),
 -- so two purchases at once take turns and the second sees the first. A
@@ -18,6 +27,8 @@
 -- (dispatch_is_live), so buyDispatch saves the first purchase in the same
 -- transaction as the dispatch.
 
+ALTER TABLE "dispatch_lines" ADD COLUMN "shipped_before" integer;
+--> statement-breakpoint
 CREATE FUNCTION dispatch_is_live(p_dispatch integer) RETURNS boolean
   LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
@@ -36,6 +47,24 @@ CREATE FUNCTION order_line_handed_off(p_order integer, p_line text) RETURNS inte
   JOIN dispatch_orders o ON o.dispatch_id = l.dispatch_id AND o.order_id = l.order_id
   WHERE l.order_id = p_order AND l.line_external_id = p_line
     AND o.channel_sent_at IS NOT NULL AND o.reversed_at IS NULL
+$$;
+--> statement-breakpoint
+-- What the marketplace's shipped count must reach to cover katasync's own
+-- handoffs of an order line: the count when its newest handed-off, unreversed
+-- dispatch was bought, plus that dispatch's units. One bought before
+-- shipped_before was kept has nothing older under it (an order had one
+-- dispatch then), so all units handed off stand in.
+CREATE FUNCTION order_line_shipped_needed(p_order integer, p_line text) RETURNS integer
+  LANGUAGE sql STABLE AS $$
+  SELECT coalesce(
+    (SELECT l.shipped_before + l.quantity
+     FROM dispatch_lines l
+     JOIN dispatch_orders o ON o.dispatch_id = l.dispatch_id AND o.order_id = l.order_id
+     WHERE l.order_id = p_order AND l.line_external_id = p_line
+       AND o.channel_sent_at IS NOT NULL AND o.reversed_at IS NULL
+     ORDER BY l.dispatch_id DESC LIMIT 1),
+    order_line_handed_off(p_order, p_line)
+  )
 $$;
 --> statement-breakpoint
 -- Units of an order line in this order's live dispatches not yet handed
@@ -70,7 +99,7 @@ CREATE TRIGGER dispatch_orders_one_unsent BEFORE INSERT ON dispatch_orders
 CREATE FUNCTION dispatch_lines_packable() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   line record;
-  handed integer;
+  needed integer;
 BEGIN
   SELECT quantity, shipped_quantity INTO line FROM order_lines
   WHERE order_id = NEW.order_id AND external_id = NEW.line_external_id
@@ -78,18 +107,37 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'order % has no line %', NEW.order_id, NEW.line_external_id;
   END IF;
-  handed := order_line_handed_off(NEW.order_id, NEW.line_external_id);
-  IF line.shipped_quantity < handed THEN
-    RAISE EXCEPTION 'line % of order %: the marketplace says % shipped, but % were handed off; wait for the next sync',
-      NEW.line_external_id, NEW.order_id, line.shipped_quantity, handed;
+  needed := order_line_shipped_needed(NEW.order_id, NEW.line_external_id);
+  IF line.shipped_quantity < needed THEN
+    RAISE EXCEPTION 'line % of order %: the marketplace says % shipped, but katasync''s handoffs make %; wait for the next sync',
+      NEW.line_external_id, NEW.order_id, line.shipped_quantity, needed;
   END IF;
   IF order_line_unsent(NEW.order_id, NEW.line_external_id) + NEW.quantity
     > line.quantity - coalesce(least(line.shipped_quantity, line.quantity), line.quantity) THEN
     RAISE EXCEPTION 'line % of order % has fewer than % units left to pack',
       NEW.line_external_id, NEW.order_id, NEW.quantity;
   END IF;
+  NEW.shipped_before := line.shipped_quantity;
   RETURN NEW;
 END $$;
 --> statement-breakpoint
 CREATE TRIGGER dispatch_lines_packable BEFORE INSERT ON dispatch_lines
   FOR EACH ROW EXECUTE FUNCTION dispatch_lines_packable();
+--> statement-breakpoint
+CREATE FUNCTION dispatch_orders_packed_has_lines() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM dispatches d WHERE d.id = NEW.dispatch_id AND d.contents = 'packed'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM dispatch_lines l
+    WHERE l.dispatch_id = NEW.dispatch_id AND l.order_id = NEW.order_id
+  ) THEN
+    RAISE EXCEPTION 'order % is in packed dispatch % with none of its lines', NEW.order_id, NEW.dispatch_id;
+  END IF;
+  RETURN NULL;
+END $$;
+--> statement-breakpoint
+CREATE CONSTRAINT TRIGGER dispatch_orders_packed_has_lines
+  AFTER INSERT ON dispatch_orders
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION dispatch_orders_packed_has_lines();

@@ -27,17 +27,19 @@ export function shippedByStatus(fulfillmentStatus: string, quantity: number) {
 type Line = { quantity: number; shippedQuantity: number | null };
 
 // What katasync itself holds of a line, from its dispatches
-// (src/orders/to-ship.ts reads both): units handed off to the marketplace
-// and not taken back, and units in live dispatches not handed off yet.
-export type Dispatched = { handedOff: number; unsent: number };
+// (src/orders/to-ship.ts reads both): what the marketplace's shipped count
+// must reach to cover katasync's handoffs (drizzle/0182's
+// order_line_shipped_needed: the count when the newest handoff was bought,
+// plus its units), and units in live dispatches not handed off yet.
+export type Dispatched = { shippedNeeded: number; unsent: number };
 
 type PackLine = Line & Dispatched;
 
 // Units of a line that can go in a new box: what the marketplace says is
 // left, less what a live dispatch already holds. Unknown when the
 // marketplace hasn't said; behind when its count doesn't yet cover what
-// katasync handed off, so it predates that handoff and the next sync (seconds
-// for webhooks) brings it up to date. Shipped is clamped to the line's
+// katasync handed off on top of what had shipped before, so it predates that
+// handoff and the next sync (seconds for webhooks) brings it up to date. Shipped is clamped to the line's
 // quantity: a channel reporting more shipped than ordered means nothing is
 // left, not a negative.
 export type Packable =
@@ -47,7 +49,7 @@ export type Packable =
 
 export function packableOf(line: PackLine): Packable {
 	if (line.shippedQuantity === null) return { kind: "unknown" };
-	if (line.shippedQuantity < line.handedOff) return { kind: "behind" };
+	if (line.shippedQuantity < line.shippedNeeded) return { kind: "behind" };
 	const left = line.quantity - Math.min(line.shippedQuantity, line.quantity);
 	return { kind: "known", units: Math.max(0, left - line.unsent) };
 }
@@ -95,18 +97,33 @@ export function toPack<L extends PackLine>(
 	};
 }
 
-// Why an order's lines can't be packed yet, for a person.
-export const whyNotPackable = (kind: "unknown" | "behind") =>
-	kind === "unknown" ? UNKNOWN_REMAINING : BEHIND_REMAINING;
+// Why an order can't be packed yet (to-ship.ts's packBlock): the
+// marketplace hasn't said what shipped; its count is behind katasync's last
+// handoff; or it still is after a sync since then, so it's likely not lag
+// (a fulfillment cancelled on the marketplace, say).
+export type PackBlock = "unknown" | "behind" | "short";
 
-// What a packing slip says to put in the box per line: what can be packed,
-// for an order still to pack whose count is known. Anything else (finished,
-// cancelled, a reprint, or unknown) prints what was sold. quantity stays
-// what was sold either way, for the money.
+// Why an order's lines can't be packed yet, for a person.
+export const whyNotPackable = (kind: PackBlock) =>
+	kind === "unknown"
+		? UNKNOWN_REMAINING
+		: kind === "behind"
+			? BEHIND_REMAINING
+			: SHORT_REMAINING;
+
+// What a packing slip says to put in the box per line. An order with a live
+// label not handed off yet prints that box's contents (its dispatch lines,
+// which are unsent: one such dispatch at most, and every order in it has a
+// line), so a reprint shows what's in the box. Otherwise what can be packed,
+// for an order still to pack whose count is known; anything else (finished,
+// cancelled, or unknown) prints what was sold. quantity stays what was sold
+// either way, for the money.
 export function toPrint<L extends PackLine>(
 	lines: L[],
 	order: { needsPacking: boolean },
 ): (L & { toPack: number })[] {
+	if (lines.some((l) => l.unsent > 0))
+		return lines.map((l) => ({ ...l, toPack: l.unsent }));
 	const known = order.needsPacking && remainingOf(lines).kind === "known";
 	return lines.map((l) => {
 		const packable = packableOf(l);
@@ -142,3 +159,6 @@ export const UNKNOWN_REMAINING =
 
 export const BEHIND_REMAINING =
 	"waiting for the marketplace to catch up with the last shipment. Try again in a moment";
+
+export const SHORT_REMAINING =
+	"the marketplace shows fewer shipped than katasync sent. Void that shipment's label here, or check the marketplace";

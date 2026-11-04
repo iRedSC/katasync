@@ -11,7 +11,7 @@ import {
 } from "#/db/schema";
 import { groupBy } from "#/lib/group-by";
 import { toPack, whyNotPackable } from "#/orders/remaining";
-import { unitsHandedOff, unitsUnsent } from "#/orders/to-ship";
+import { unitsShippedNeeded, unitsUnsent } from "#/orders/to-ship";
 import { contentsKey } from "./contents";
 
 // What went in a dispatch's boxes, kept when its labels are bought
@@ -20,7 +20,7 @@ import { contentsKey } from "./contents";
 
 export type PackedLine = Omit<
 	typeof dispatchLines.$inferSelect,
-	"dispatchId" | "orderLineId"
+	"dispatchId" | "orderLineId" | "shippedBefore"
 > & { orderLineId?: number | null };
 
 // What katasync knows a dispatch held. unknown: bought before contents were
@@ -41,7 +41,8 @@ export type Lowered = { orderLineId: number; quantity: number }[];
 // The lines with their chosen counts, without the ones set to 0, and the
 // orders sending less than all that's packable (TikTok refuses those).
 // Throws for a count that isn't a whole number from 0 to what's packable,
-// or a line that has nothing packable here.
+// a line that has nothing packable here, or an order left with nothing in
+// the box (it's taken out by un-combining it instead).
 export function choose<
 	L extends { orderId: number; orderLineId?: number | null; quantity: number },
 >(packable: L[], lowered: Lowered): { lines: L[]; partial: number[] } {
@@ -66,7 +67,23 @@ export function choose<
 		if (quantity < l.quantity) partial.add(l.orderId);
 		return quantity > 0 ? [{ ...l, quantity }] : [];
 	});
+	if (packable.some((p) => !lines.some((l) => l.orderId === p.orderId)))
+		throw new Error(EMPTY_ORDER);
 	return { lines, partial: [...partial] };
+}
+
+export const EMPTY_ORDER =
+	"Each order in the box needs at least one item. Untick an order to leave it out";
+
+// Throws unless every order going in the box has a line in it: an order
+// with none would tell its marketplace an empty box shipped, and stay stuck
+// on a label never handed off. drizzle/0182 refuses it too.
+export function assertEveryOrderPacked(
+	orders: { id: number; name: string }[],
+	lines: { orderId: number }[],
+) {
+	const empty = orders.find((o) => !lines.some((l) => l.orderId === o.id));
+	if (empty) throw new Error(`${empty.name}: nothing of it is in the box`);
 }
 
 // Every line of these orders with something packable, at what's packable
@@ -88,7 +105,7 @@ export async function packableLines(
 			title: orderLines.title,
 			quantity: orderLines.quantity,
 			shippedQuantity: orderLines.shippedQuantity,
-			handedOff: unitsHandedOff,
+			shippedNeeded: unitsShippedNeeded,
 			unsent: unitsUnsent,
 			orderName: orders.name,
 		})
@@ -104,7 +121,7 @@ export async function packableLines(
 		if (packing.kind !== "known")
 			throw new Error(`${lines[0].orderName}: ${whyNotPackable(packing.kind)}`);
 		return packing.lines.map(
-			({ shippedQuantity, handedOff, unsent, orderName, ...line }) => line,
+			({ shippedQuantity, shippedNeeded, unsent, orderName, ...line }) => line,
 		);
 	});
 }

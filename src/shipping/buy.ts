@@ -21,6 +21,7 @@ import { type Label, LabelRefused, outcomeOf } from "./label-attempt-state";
 import { beginAttempt, recordBought, settleWithout } from "./label-attempts";
 import {
 	assertAsPacked,
+	assertEveryOrderPacked,
 	byLine,
 	choose,
 	type LineToPack,
@@ -176,6 +177,7 @@ export async function buyDispatch(
 			);
 		}
 		assertAsPacked(lines, input.contentsKey);
+		assertEveryOrderPacked(list, lines);
 		const unitIds = await assertMarketplacesAsPacked(
 			list,
 			lines,

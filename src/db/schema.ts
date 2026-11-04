@@ -1638,8 +1638,9 @@ export const dispatchOrders = pgTable(
 // What a packed dispatch holds: each order line's units packed in it (all
 // that was left of the line, or fewer staff chose to send now), its SKU as
 // the channel named it, and the product it was mapped to then. A row never
-// takes more than the line has packable (drizzle/0182). Written with the dispatch and never changed (drizzle/0115),
-// so it stays the evidence of what went out whatever happens to the order
+// takes more than the line has packable, and every order in the dispatch
+// has a row (drizzle/0182). Written with the dispatch and never changed
+// (drizzle/0115), so it stays the evidence of what went out whatever happens to the order
 // afterwards. Only the dispatch membership is a foreign key: the line id and
 // product id are values as they were, so later changes to the order's lines
 // or products can neither rewrite nor block this history.
@@ -1654,6 +1655,11 @@ export const dispatchLines = pgTable(
 		sku: text(),
 		title: text().notNull(),
 		quantity: integer().notNull(),
+		// The line's shipped count as the marketplace had it when this was
+		// bought, set by drizzle/0182 (whatever is passed), so the next
+		// shipment knows what the count must reach. Null on rows from before
+		// it was kept.
+		shippedBefore: integer(),
 	},
 	(t) => [
 		primaryKey({ columns: [t.dispatchId, t.orderId, t.lineExternalId] }),

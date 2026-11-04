@@ -7,6 +7,7 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import type { PackBlock } from "./remaining";
 
 // The order's payment status, counting a refund of every line and its
 // shipping as REFUNDED. Amazon reports a refunded order as paid forever, and
@@ -45,37 +46,45 @@ export const needsShipping = sql<boolean>`(
 // so it stays on To ship but is never packed here.
 export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null)`;
 
-// Units of an order line katasync itself holds, from its dispatches: handed
-// off to the marketplace and not taken back, and in live dispatches not
-// handed off yet. For a select from order_lines; remaining.ts turns them
-// into what's packable, and drizzle/0182 defines both functions, which its
-// triggers use too.
-export const unitsHandedOff = sql<number>`order_line_handed_off(${orderLines.orderId}, ${orderLines.externalId})`;
+// What katasync itself holds of an order line, from its dispatches: what
+// the marketplace's shipped count must reach to cover katasync's handoffs,
+// and units in live dispatches not handed off yet. For a select from
+// order_lines; remaining.ts turns them into what's packable, and
+// drizzle/0182 defines both functions, which its triggers use too.
+export const unitsShippedNeeded = sql<number>`order_line_shipped_needed(${orderLines.orderId}, ${orderLines.externalId})`;
 export const unitsUnsent = sql<number>`order_line_unsent(${orderLines.orderId}, ${orderLines.externalId})`;
 
-// A line whose marketplace count is lower than what katasync handed off:
+// A line whose marketplace count doesn't cover what katasync handed off:
 // a snapshot from before that handoff, so the next sync will correct it.
-const behindLine = sql`l.shipped_quantity < order_line_handed_off(l.order_id, l.external_id)`;
+const behindLine = sql`l.shipped_quantity < order_line_shipped_needed(l.order_id, l.external_id)`;
+
+// Why an order's packable units aren't known, or null when they are
+// (remaining.ts's PackBlock). Behind clears on the next sync. Short is behind even though the order
+// synced after katasync's latest handoff (both clocks are ours), so it's
+// likely not lag but a fulfillment taken back on the marketplace.
+export const packBlock = sql<PackBlock | null>`(case
+	when exists (
+		select 1 from ${orderLines} l
+		where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
+	) then 'unknown'
+	when exists (
+		select 1 from ${orderLines} l
+		where l.order_id = "orders"."id" and l.quantity > 0 and ${behindLine}
+	) then case
+		when "orders"."synced_at" > (
+			select max(d.channel_sent_at) from ${dispatchOrders} d
+			where d.order_id = "orders"."id" and d.reversed_at is null
+		) then 'short'
+		else 'behind'
+	end
+end)`;
 
 // What's packable isn't known: a line with units and no shipped count,
 // whatever the order's status (katasync rewrites that one locally, on a
-// void), or a count still behind katasync's own handoff. Such an order
+// void), or a count still behind katasync's own handoffs. Such an order
 // can't be packed (whyNotTogether), and the sync reads it again
 // (unknown-shipped.ts); remaining.ts is the same rule.
-export const remainingUnknown = sql<boolean>`exists (
-	select 1 from ${orderLines} l
-	where l.order_id = "orders"."id" and l.quantity > 0
-		and (l.shipped_quantity is null or ${behindLine})
-)`;
-
-// Only behind, not unknown: the next sync clears it on its own.
-export const remainingBehind = sql<boolean>`(not exists (
-	select 1 from ${orderLines} l
-	where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
-) and exists (
-	select 1 from ${orderLines} l
-	where l.order_id = "orders"."id" and l.quantity > 0 and ${behindLine}
-))`;
+export const remainingUnknown = sql<boolean>`(${packBlock} is not null)`;
 
 // Waiting on a supplier's tracking: on To ship, but only for typing it in.
 export const awaitsDropShip = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is not null)`;

@@ -1,4 +1,5 @@
 import { ChannelBadge } from "#/components/channel-badge";
+import { PackBlockBadge } from "#/components/pack-block-badge";
 import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Truncate } from "#/components/truncate";
@@ -23,7 +24,10 @@ export function OrderSummary({
 	const o = found.order;
 	// Counts are chosen with the box's contents, while choosing the first box.
 	const chooses = canCombine && plan.choosable;
-	const going = plan.choices.reduce((n, c) => n + c.quantity, 0);
+	// Units going, by order.
+	const going = new Map<number, number>();
+	for (const c of plan.choices)
+		going.set(c.orderId, (going.get(c.orderId) ?? 0) + c.quantity);
 	const combined = plan.orderIds.length > 1;
 	// TikTok hides the address, so its orders match on the buyer.
 	const toSame =
@@ -46,16 +50,9 @@ export function OrderSummary({
 					{found.liveDispatchId !== null && (
 						<Badge tone="warning">Already has a label</Badge>
 					)}
-					{/* The marketplace hasn't said what already shipped: nothing
-					to pack until it does, and buying says why. */}
-					{o.remainingUnknown &&
-						(o.remainingBehind ? (
-							// The marketplace's count predates our own last shipment;
-							// the next sync catches it up.
-							<Badge tone="info">Syncing</Badge>
-						) : (
-							<Badge tone="critical">? shipped</Badge>
-						))}
+					{/* Nothing to pack until the marketplace's count is known;
+					buying says why too. */}
+					{o.packBlock && <PackBlockBadge block={o.packBlock} />}
 					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
 				</div>
 			</div>
@@ -73,8 +70,9 @@ export function OrderSummary({
 						{chooses ? (
 							<UnitCount
 								line={l}
-								// The last unit going can't be taken out.
-								canLower={going - 1 > 0}
+								// An order's last unit can't be taken out: untick the
+								// order to leave it out of the box.
+								canLower={(going.get(l.orderId) ?? 0) > 1}
 								onCount={(n) => onCount(l.orderLineId, n)}
 							/>
 						) : (

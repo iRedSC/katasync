@@ -8,12 +8,8 @@ import {
 	stores,
 } from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
-import { whyNotPackable } from "#/orders/remaining";
-import {
-	needsPacking,
-	remainingBehind,
-	remainingUnknown,
-} from "#/orders/to-ship";
+import { type PackBlock, whyNotPackable } from "#/orders/remaining";
+import { needsPacking, packBlock, remainingUnknown } from "#/orders/to-ship";
 
 // The rules for what can go out together. A dispatch is one send to one
 // address: one or more boxes, for one or more orders (see schema.ts).
@@ -199,7 +195,7 @@ const candidateFields = {
 	total: orders.total,
 	needsPacking,
 	remainingUnknown,
-	remainingBehind,
+	packBlock,
 	shipAddress1: orders.shipAddress1,
 	shipAddress2: orders.shipAddress2,
 	shipPostalCode: orders.shipPostalCode,
@@ -216,8 +212,8 @@ type Candidate = {
 	externalId: string;
 	needsPacking: boolean;
 	remainingUnknown: boolean;
-	// Of remainingUnknown, only waiting on the next sync; just the message.
-	remainingBehind?: boolean;
+	// Why remainingUnknown, for the message; unknown when not given.
+	packBlock?: PackBlock | null;
 } & BoxFields;
 
 // Why these orders can't go out together in one dispatch, or null if they
@@ -245,7 +241,7 @@ export function whyNotTogether(
 		const external = externalFulfillment(o);
 		if (external) return `${o.name} ships on ${external.name}'s own label`;
 		if (o.remainingUnknown)
-			return `${o.name}: ${whyNotPackable(o.remainingBehind ? "behind" : "unknown")}`;
+			return `${o.name}: ${whyNotPackable(o.packBlock ?? "unknown")}`;
 	}
 	if (list.length > 1) {
 		const tiktok = list.filter((o) => labelSource(o) === "tiktok").length;

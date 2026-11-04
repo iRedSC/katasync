@@ -24,9 +24,9 @@ import { groupBy } from "#/lib/group-by";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { toPack } from "#/orders/remaining";
 import {
-	remainingBehind,
+	packBlock,
 	remainingUnknown,
-	unitsHandedOff,
+	unitsShippedNeeded,
 	unitsUnsent,
 } from "#/orders/to-ship";
 import { contentsKey } from "./contents";
@@ -86,7 +86,7 @@ export async function orderForShipping(db: Db, pin: number) {
 			storeId: orders.storeId,
 			buyerId: orders.buyerId,
 			remainingUnknown,
-			remainingBehind,
+			packBlock,
 		})
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -229,7 +229,7 @@ async function plannedLines(db: Db, orderIds: number[]) {
 			quantity: orderLines.quantity,
 			unitPrice: orderLines.unitPrice,
 			shippedQuantity: orderLines.shippedQuantity,
-			handedOff: unitsHandedOff,
+			shippedNeeded: unitsShippedNeeded,
 			unsent: unitsUnsent,
 			imageUrl: products.imageUrl,
 			weightGrams: products.weightGrams,
@@ -249,7 +249,7 @@ async function plannedLines(db: Db, orderIds: number[]) {
 			const packing = toPack(lines);
 			return packing.kind === "known"
 				? packing.lines.map(
-						({ shippedQuantity, handedOff, unsent, ...line }) => line,
+						({ shippedQuantity, shippedNeeded, unsent, ...line }) => line,
 					)
 				: [];
 		},

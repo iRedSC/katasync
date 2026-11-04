@@ -18,9 +18,9 @@ import { toPrint } from "#/orders/remaining";
 import {
 	financialStatus,
 	needsPacking,
-	remainingBehind,
+	packBlock,
 	remainingUnknown,
-	unitsHandedOff,
+	unitsShippedNeeded,
 	unitsUnsent,
 } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
@@ -75,7 +75,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					buyerId: orders.buyerId,
 					needsPacking,
 					remainingUnknown,
-					remainingBehind,
+					packBlock,
 					fulfillmentStatus: orders.fulfillmentStatus,
 				})
 				.from(orders)
@@ -106,7 +106,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 						shippedQuantity: orderLines.shippedQuantity,
 						// What katasync's own shipments hold, so the slip prints
 						// only what's packable now.
-						handedOff: unitsHandedOff,
+						shippedNeeded: unitsShippedNeeded,
 						unsent: unitsUnsent,
 						unitPrice: orderLines.unitPrice,
 						// The size or option to pick, from the catalog: channel

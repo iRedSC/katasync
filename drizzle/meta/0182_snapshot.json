@@ -5828,6 +5828,12 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "shipped_before": {
+          "name": "shipped_before",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
