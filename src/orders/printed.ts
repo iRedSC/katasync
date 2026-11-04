@@ -7,8 +7,9 @@ import { orders } from "#/db/schema";
 export type PrintedInvoice = { orderId: number; version: number };
 
 // Marks these invoices printed, each only if its order's picking work is
-// still the version that was printed: a box bought, handed off or voided
-// since (or its printed mark cleared) bumps the version, and that newer work
+// still the version that was printed: a box bought, handed off, voided or
+// refused since, a sync changing its lines, or its printed mark cleared bumps
+// the version (drizzle/0183), and that newer work
 // stays unprinted so Print all picks it up. Returns how many weren't
 // recorded because they changed since printing.
 export async function recordPrinted(
