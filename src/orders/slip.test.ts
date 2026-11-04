@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, test, vi } from "vitest";
 import * as schema from "#/db/schema";
+import { voidDispatch } from "#/shipping/handoff";
 import {
 	buy,
 	db,
@@ -10,6 +11,8 @@ import {
 	marketplace,
 	openReads,
 	orderId,
+	shipOutside,
+	shopify,
 	sync,
 } from "#/shipping/several-shipments.fixtures";
 import { slipsOf } from "./slip";
@@ -125,6 +128,29 @@ describe("slipsOf", () => {
 			}),
 		]);
 		expect(printed?.subtotal).toBe(30);
+	});
+
+	test("after a handoff is voided, the slip packs what's open again, not the synced count", async () => {
+		await buy([{ orderLineId: lineId, quantity: 1 }]);
+		const [{ id }] = await db.select().from(schema.dispatches);
+		await handOff(id);
+		await sync(1);
+		await voidDispatch(db, id, shopify());
+		// Shopify shows all 3 open again; the synced count still says 1 shipped.
+		expect((await slip())?.items.map((l) => l.toPack)).toEqual([3]);
+		marketplace.failing = true;
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		expect((await slip())?.items.map((l) => l.toPack)).toEqual(["unknown"]);
+	});
+
+	test("an order whose only box was voided unsent is read live", async () => {
+		await buy([{ orderLineId: lineId, quantity: 1 }]);
+		const [{ id }] = await db.select().from(schema.dispatches);
+		await voidDispatch(db, id, shopify());
+		// Shipped from Shopify's admin since; the sync hasn't caught up.
+		shipOutside(1);
+		expect((await slip())?.items.map((l) => l.toPack)).toEqual([2]);
+		expect(marketplace.reads).toBeGreaterThan(0);
 	});
 
 	test("an order katasync hasn't handed any of off isn't read live", async () => {

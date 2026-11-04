@@ -6,6 +6,7 @@ import {
 	inArray,
 	isNotNull,
 	isNull,
+	or,
 	sql,
 } from "drizzle-orm";
 import type { Db } from "#/db/client";
@@ -55,10 +56,11 @@ export type Slip = {
 // bought (dispatch_lines): its titles, SKUs, products and counts, whatever
 // the order's lines say since, so a reprint matches what's in the box; a
 // line it sells that isn't in that box is marked so, and a boxed line it no
-// longer sells stays, unpriced. An order still to pack that katasync has
-// handed part of off packs what the marketplace says is open now, read live
-// as a purchase does: the synced count can predate that handoff. Unknown
-// when it can't be read. Otherwise its lines at what's left to pack
+// longer sells stays, unpriced. An order still to pack with no box waiting
+// that has had any katasync dispatch (handed off, reversed, or voided unsent)
+// packs what the marketplace says is open now, read live as a purchase does:
+// the synced count can predate that handoff or its void. Unknown when it
+// can't be read, never the synced count. Otherwise its lines at what's left to pack
 // (toPrint).
 export async function slipsOf(
 	db: Db,
@@ -67,7 +69,7 @@ export async function slipsOf(
 ): Promise<Map<number, Slip>> {
 	const ids = orders.map((o) => o.id);
 	if (ids.length === 0) return new Map();
-	const [current, frozen, partly] = await Promise.all([
+	const [current, frozen, dispatched] = await Promise.all([
 		db
 			.select({
 				orderId: orderLines.orderId,
@@ -123,7 +125,7 @@ export async function slipsOf(
 				),
 			)
 			.orderBy(dispatchLines.orderLineId, dispatchLines.lineExternalId),
-		partlyHandedOff(
+		hadDispatch(
 			db,
 			orders.filter((o) => o.needsPacking).map((o) => o.id),
 		),
@@ -133,7 +135,7 @@ export async function slipsOf(
 	// Only orders without a box waiting are read; one with a box prints it.
 	const open = new Map(
 		await Promise.all(
-			partly
+			dispatched
 				.filter((o) => !frozenBy.has(o.id))
 				.map(async (o) => [o.id, await openOrUnknown(o, reads)] as const),
 		),
@@ -154,9 +156,11 @@ export async function slipsOf(
 	);
 }
 
-// Of these orders, the ones katasync has handed some of off (a dispatch
-// sent to the marketplace and not voided), with what reading them live needs.
-function partlyHandedOff(db: Db, ids: number[]) {
+// Of these orders, the ones katasync has handed some of off or taken a
+// dispatch back from (handed off, reversed, or voided before it was sent),
+// with what reading them live needs. Any of these can leave the synced count
+// stale: a sync after a handoff that's later voided still says shipped.
+function hadDispatch(db: Db, ids: number[]) {
 	if (ids.length === 0) return Promise.resolve([]);
 	return db
 		.select({
@@ -180,8 +184,10 @@ function partlyHandedOff(db: Db, ids: number[]) {
 						.where(
 							and(
 								eq(dispatchOrders.orderId, ordersTable.id),
-								isNotNull(dispatchOrders.channelSentAt),
-								isNull(dispatchOrders.reversedAt),
+								or(
+									isNotNull(dispatchOrders.channelSentAt),
+									isNotNull(dispatchOrders.reversedAt),
+								),
 							),
 						),
 				),
