@@ -114,12 +114,22 @@ export const listInvoices = createServerFn({ method: "GET" })
 			productId === null ? [] : (partsBy.get(productId) ?? []);
 		const slipOf = (o: { id: number }) =>
 			slips.get(o.id) ?? { items: [], subtotal: 0 };
-		// What goes in the box.
-		const packing = (o: { id: number }) =>
-			slipOf(o).items.flatMap((l) =>
-				l.toPack ? [{ ...l, quantity: l.toPack }] : [],
+		// What goes in the box, or null when part of it is unknown.
+		const packing = (o: { id: number }) => {
+			const items = slipOf(o).items;
+			if (items.some((l) => l.toPack === "unknown")) return null;
+			return items.flatMap((l) =>
+				typeof l.toPack === "number" && l.toPack > 0
+					? [{ ...l, quantity: l.toPack }]
+					: [],
 			);
-		const keys = new Map(toShip.map((o) => [o.id, contentsKey(packing(o))]));
+		};
+		const keys = new Map(
+			toShip.flatMap((o) => {
+				const packed = packing(o);
+				return packed ? [[o.id, contentsKey(packed)] as const] : [];
+			}),
+		);
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
 		// Any order still to ship can share the box, printed or not, so a
 		// packer printing a few still hears about the rest.
@@ -147,7 +157,8 @@ export const listInvoices = createServerFn({ method: "GET" })
 			invoices: toShip.map((o) => {
 				const { items: own, subtotal } = slipOf(o);
 				const packed = packing(o);
-				const last = lastPacked.get(keys.get(o.id) ?? "");
+				const key = keys.get(o.id);
+				const last = key === undefined ? undefined : lastPacked.get(key);
 				return {
 					...o,
 					lines: own.map((l) => ({ ...l, parts: partsOf(l.productId) })),
@@ -162,7 +173,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					boxes: last?.boxes ?? 1,
 					weightGrams:
 						last?.weightGrams ??
-						(packed.every((l) => l.weightGrams !== null)
+						(packed?.every((l) => l.weightGrams !== null)
 							? packed.reduce(
 									(g, l) => g + (l.weightGrams ?? 0) * l.quantity,
 									0,

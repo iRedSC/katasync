@@ -247,7 +247,9 @@ function Invoice({
 								{/* What goes in the box; what was sold beside it when some
 								already went out, or a dash for a line sold but going in
 								another box (slipsOf). */}
-								{l.toPack === null ? (
+								{l.toPack === "unknown" ? (
+									<span className="text-muted-foreground">?</span>
+								) : l.toPack === null ? (
 									<>
 										<span className="text-muted-foreground">–</span>
 										<span className="block text-[9pt] leading-tight font-normal text-muted-foreground">
@@ -289,7 +291,9 @@ function Invoice({
 											>
 												<Photo src={p.imageUrl} className="size-[0.35in]" />
 												<span className="w-8 font-bold tabular-nums">
-													{p.perSet * (l.toPack ?? 0)}
+													{typeof l.toPack === "number"
+														? p.perSet * l.toPack
+														: "?"}
 												</span>
 												<span className="min-w-0">
 													<span>

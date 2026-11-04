@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import * as schema from "#/db/schema";
 import {
 	buy,
@@ -8,14 +8,18 @@ import {
 	handOff,
 	lineId,
 	marketplace,
+	openReads,
 	orderId,
+	sync,
 } from "#/shipping/several-shipments.fixtures";
 import { slipsOf } from "./slip";
 
 freshOrder();
 
 const slip = async () =>
-	(await slipsOf(db, [{ id: orderId, needsPacking: true }])).get(orderId);
+	(await slipsOf(db, [{ id: orderId, needsPacking: true }], openReads)).get(
+		orderId,
+	);
 
 describe("slipsOf", () => {
 	test("a reprint lists the box as bought, whatever a sync changes since", async () => {
@@ -95,16 +99,42 @@ describe("slipsOf", () => {
 		expect(priced).toBe(30);
 	});
 
-	test("once handed off, the slip goes back to what's left on the order", async () => {
+	test("once part is handed off, the slip packs what the marketplace has open", async () => {
 		await buy([{ orderLineId: lineId, quantity: 2 }]);
 		expect((await slip())?.items.map((l) => l.toPack)).toEqual([2]);
 		await handOff((await db.select().from(schema.dispatches))[0].id);
-		// The synced count still says none shipped, so all 3 print.
+		// The synced count still says none shipped; Shopify says 1 is open.
 		expect((await slip())?.items).toEqual([
 			expect.objectContaining({
-				toPack: 3,
+				toPack: 1,
 				sold: { quantity: 3, unitPrice: 10 },
 			}),
 		]);
+	});
+
+	test("a part handed off whose marketplace can't be read packs an unknown count", async () => {
+		await buy([{ orderLineId: lineId, quantity: 2 }]);
+		await handOff((await db.select().from(schema.dispatches))[0].id);
+		marketplace.failing = true;
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const printed = await slip();
+		expect(printed?.items).toEqual([
+			expect.objectContaining({
+				toPack: "unknown",
+				sold: { quantity: 3, unitPrice: 10 },
+			}),
+		]);
+		expect(printed?.subtotal).toBe(30);
+	});
+
+	test("an order katasync hasn't handed any of off isn't read live", async () => {
+		await sync(1);
+		expect((await slip())?.items.map((l) => l.toPack)).toEqual([2]);
+		expect(marketplace.reads).toBe(0);
+		// A box bought but not handed off prints as bought, unread too.
+		await buy([{ orderLineId: lineId, quantity: 1 }]);
+		const reads = marketplace.reads;
+		expect((await slip())?.items.map((l) => l.toPack)).toEqual([1]);
+		expect(marketplace.reads).toBe(reads);
 	});
 });

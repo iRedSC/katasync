@@ -1,12 +1,24 @@
-import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import {
+	and,
+	eq,
+	exists,
+	gt,
+	inArray,
+	isNotNull,
+	isNull,
+	sql,
+} from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	dispatchLines,
 	dispatchOrders,
 	orderLines,
+	orders as ordersTable,
 	products,
+	stores,
 } from "#/db/schema";
 import { groupBy } from "#/lib/group-by";
+import { liveOpenReads, type OpenReads, readOpen } from "#/shipping/live-open";
 import { toPrint } from "./remaining";
 
 // What a packing slip lists per order: one item per thing in the box, and
@@ -22,9 +34,10 @@ export type SlipItem = {
 	variantName: string | null;
 	imageUrl: string | null;
 	weightGrams: number | null;
-	// What goes in the box, or null for a line sold but left out of the
-	// bought box (another shipment's).
-	toPack: number | null;
+	// What goes in the box; null for a line sold but left out of the bought
+	// box (another shipment's); "unknown" when katasync shipped part of the
+	// order and the marketplace couldn't be asked what's left.
+	toPack: number | null | "unknown";
 	// What the order sold of this line, for the price columns; null when the
 	// order no longer sells it (edited away since its label was bought).
 	sold: { quantity: number; unitPrice: number } | null;
@@ -42,15 +55,19 @@ export type Slip = {
 // bought (dispatch_lines): its titles, SKUs, products and counts, whatever
 // the order's lines say since, so a reprint matches what's in the box; a
 // line it sells that isn't in that box is marked so, and a boxed line it no
-// longer sells stays, unpriced. Otherwise its lines at what's left to pack
+// longer sells stays, unpriced. An order still to pack that katasync has
+// handed part of off packs what the marketplace says is open now, read live
+// as a purchase does: the synced count can predate that handoff. Unknown
+// when it can't be read. Otherwise its lines at what's left to pack
 // (toPrint).
 export async function slipsOf(
 	db: Db,
 	orders: { id: number; needsPacking: boolean }[],
+	reads: OpenReads = liveOpenReads,
 ): Promise<Map<number, Slip>> {
 	const ids = orders.map((o) => o.id);
 	if (ids.length === 0) return new Map();
-	const [current, frozen] = await Promise.all([
+	const [current, frozen, partly] = await Promise.all([
 		db
 			.select({
 				orderId: orderLines.orderId,
@@ -106,18 +123,84 @@ export async function slipsOf(
 				),
 			)
 			.orderBy(dispatchLines.orderLineId, dispatchLines.lineExternalId),
+		partlyHandedOff(
+			db,
+			orders.filter((o) => o.needsPacking).map((o) => o.id),
+		),
 	]);
 	const currentBy = groupBy(current, (l) => l.orderId);
 	const frozenBy = groupBy(frozen, (l) => l.orderId);
+	// Only orders without a box waiting are read; one with a box prints it.
+	const open = new Map(
+		await Promise.all(
+			partly
+				.filter((o) => !frozenBy.has(o.id))
+				.map(async (o) => [o.id, await openOrUnknown(o, reads)] as const),
+		),
+	);
 	return new Map(
 		orders.map((o) => {
 			const lines = currentBy.get(o.id) ?? [];
 			const subtotal = lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0);
 			const box = frozenBy.get(o.id);
-			const items: SlipItem[] = box ? boxed(lines, box) : unboxed(lines, o);
+			const live = open.get(o.id);
+			const items: SlipItem[] = box
+				? boxed(lines, box)
+				: live !== undefined
+					? fromLive(lines, live)
+					: unboxed(lines, o);
 			return [o.id, { items, subtotal }];
 		}),
 	);
+}
+
+// Of these orders, the ones katasync has handed some of off (a dispatch
+// sent to the marketplace and not voided), with what reading them live needs.
+function partlyHandedOff(db: Db, ids: number[]) {
+	if (ids.length === 0) return Promise.resolve([]);
+	return db
+		.select({
+			id: ordersTable.id,
+			name: ordersTable.name,
+			channel: stores.channel,
+			salesChannel: ordersTable.salesChannel,
+			shipCountry: ordersTable.shipCountry,
+			marketplaceOrderId: ordersTable.marketplaceOrderId,
+			externalId: ordersTable.externalId,
+		})
+		.from(ordersTable)
+		.innerJoin(stores, eq(stores.id, ordersTable.storeId))
+		.where(
+			and(
+				inArray(ordersTable.id, ids),
+				exists(
+					db
+						.select({ one: sql`1` })
+						.from(dispatchOrders)
+						.where(
+							and(
+								eq(dispatchOrders.orderId, ordersTable.id),
+								isNotNull(dispatchOrders.channelSentAt),
+								isNull(dispatchOrders.reversedAt),
+							),
+						),
+				),
+			),
+		);
+}
+
+// Each line's open units, or "unknown" when the order isn't read live or
+// the read fails: never a guess from the synced count.
+async function openOrUnknown(
+	order: Parameters<typeof readOpen>[0],
+	reads: OpenReads,
+): Promise<Map<string, number> | "unknown"> {
+	try {
+		return (await readOpen(order, reads))?.open ?? "unknown";
+	} catch (err) {
+		console.error(`Reading what ${order.name} has open for its slip`, err);
+		return "unknown";
+	}
 }
 
 type Current = {
@@ -160,6 +243,21 @@ function boxed(lines: Current[], box: Frozen[]): SlipItem[] {
 		sold: null,
 	}));
 	return [...priced, ...gone];
+}
+
+// Each line at what the marketplace has open of it, never more than sold.
+function fromLive(
+	lines: Current[],
+	open: Map<string, number> | "unknown",
+): SlipItem[] {
+	return lines.map((l) => ({
+		...pick(l),
+		toPack:
+			open === "unknown"
+				? "unknown"
+				: Math.max(0, Math.min(open.get(l.externalId) ?? 0, l.quantity)),
+		sold: sold(l),
+	}));
 }
 
 function unboxed(lines: Current[], order: { needsPacking: boolean }) {
