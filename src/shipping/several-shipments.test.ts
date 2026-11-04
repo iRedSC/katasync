@@ -139,6 +139,17 @@ describe("choosing which units ship now", () => {
 
 describe("several shipments of one order", () => {
 	test("the rest goes in a new shipment once the first is handed off, with no sync", async () => {
+		const printed = async () =>
+			(
+				await db
+					.select({ at: schema.orders.invoicePrintedAt })
+					.from(schema.orders)
+					.where(eq(schema.orders.id, orderId))
+			)[0].at;
+		await db
+			.update(schema.orders)
+			.set({ invoicePrintedAt: new Date() })
+			.where(eq(schema.orders.id, orderId));
 		const first = await buy([{ orderLineId: lineId, quantity: 1 }]);
 		expect(await packedIn(first.dispatchId)).toEqual([1]);
 		// While it's not handed off, it's the order's one open shipment.
@@ -146,6 +157,8 @@ describe("several shipments of one order", () => {
 
 		await handOff(first.dispatchId);
 		expect(await statusOf()).toBe("PARTIALLY_FULFILLED");
+		// What's left is new picking work, so Print all takes it again.
+		expect(await printed()).toBeNull();
 		// The synced count still says none shipped; Shopify says 2 are open.
 		const plan = await planOf();
 		expect(plan.choices).toMatchObject([{ packable: 2, quantity: 2 }]);

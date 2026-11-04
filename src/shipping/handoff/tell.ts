@@ -246,13 +246,19 @@ export async function tell(
 				})
 				.where(sameMember(member));
 			// Shipped now, not on the next sync: off To ship unless the
-			// marketplace still has more of it to ship.
+			// marketplace still has more of it to ship. What's left is new
+			// picking work, so its invoice counts as unprinted again and
+			// Print all picks it up.
 			await tx
 				.update(orders)
-				.set({
-					fulfillmentStatus:
-						delivered.remaining > 0 ? "PARTIALLY_FULFILLED" : "FULFILLED",
-				})
+				.set(
+					delivered.remaining > 0
+						? {
+								fulfillmentStatus: "PARTIALLY_FULFILLED",
+								invoicePrintedAt: null,
+							}
+						: { fulfillmentStatus: "FULFILLED" },
+				)
 				.where(eq(orders.id, order.id));
 		});
 	} catch (err) {
