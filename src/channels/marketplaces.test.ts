@@ -60,6 +60,7 @@ describe("amazonToChannelOrder", () => {
 				sku: "WRENCH",
 				title: "Wrench",
 				quantity: 2,
+				shipped: 0,
 				unitPrice: 18,
 			},
 			// Kept at 0 so ingestion gives back what it took.
@@ -69,6 +70,7 @@ describe("amazonToChannelOrder", () => {
 				sku: null,
 				title: "Removed",
 				quantity: 0,
+				shipped: 0,
 				unitPrice: 0,
 			},
 		]);
@@ -155,7 +157,7 @@ describe("ebayToChannelOrder", () => {
 		});
 
 	test("maps an open eBay order", () => {
-		const o = ebayToChannelOrder(order());
+		const o = ebayToChannelOrder(order(), null);
 		expect(o).toMatchObject({
 			name: "12-34567-89012",
 			salesChannel: "eBay",
@@ -178,6 +180,7 @@ describe("ebayToChannelOrder", () => {
 				cancelStatus: { cancelState: "CANCELED" },
 				orderPaymentStatus: "FULLY_REFUNDED",
 			}),
+			null,
 		);
 		expect(o.cancelledAt).toEqual(new Date("2026-10-08T13:00:00Z"));
 		expect(o.financialStatus).toBe("REFUNDED");
@@ -273,6 +276,7 @@ describe("tiktokToChannelOrder", () => {
 				sku: "WRENCH",
 				title: "Wrench",
 				quantity: 2,
+				shipped: 0,
 				unitPrice: 18,
 			},
 			// Kept at 0, so a line that already took stock gives it back.
@@ -282,6 +286,7 @@ describe("tiktokToChannelOrder", () => {
 				sku: null,
 				title: "Blade - Large",
 				quantity: 0,
+				shipped: 0,
 				unitPrice: 9,
 			},
 		]);
@@ -408,48 +413,40 @@ describe("shopifyLineQuantity", () => {
 		currentQuantity,
 	});
 	const shipped = (units: number) => new Map([["L1", units]]);
+	const sent = (units: number) => ({
+		sent: shipped(units),
+		succeeded: shipped(units),
+	});
 
 	test("a line nobody touched counts in full", () => {
 		expect(shopifyLineQuantity(open, line(2, 2), null, null)).toBe(2);
 	});
 
 	test("a unit removed before shipping no longer leaves stock", () => {
-		expect(shopifyLineQuantity(open, line(2, 1), shipped(0), shipped(1))).toBe(
-			1,
-		);
+		expect(shopifyLineQuantity(open, line(2, 1), sent(0), shipped(1))).toBe(1);
 	});
 
 	test("a unit refunded after shipping still left stock", () => {
-		expect(shopifyLineQuantity(open, line(2, 1), shipped(2), shipped(0))).toBe(
-			2,
-		);
-		expect(shopifyLineQuantity(open, line(2, 0), shipped(2), shipped(0))).toBe(
-			2,
-		);
+		expect(shopifyLineQuantity(open, line(2, 1), sent(2), shipped(0))).toBe(2);
+		expect(shopifyLineQuantity(open, line(2, 0), sent(2), shipped(0))).toBe(2);
 	});
 
 	test("the unshipped rest of a partly shipped line can be cancelled", () => {
-		expect(shopifyLineQuantity(open, line(3, 1), shipped(1), shipped(0))).toBe(
-			1,
-		);
+		expect(shopifyLineQuantity(open, line(3, 1), sent(1), shipped(0))).toBe(1);
 	});
 
 	test("a cancelled order keeps what it was placed with", () => {
 		const cancelled = { cancelledAt: new Date("2026-10-08T13:00:00Z") };
 		expect(
-			shopifyLineQuantity(cancelled, line(2, 0), shipped(0), shipped(0)),
+			shopifyLineQuantity(cancelled, line(2, 0), sent(0), shipped(0)),
 		).toBe(2);
 	});
 
 	test("refunding a shipped unit keeps the unshipped rest reserved", () => {
-		expect(shopifyLineQuantity(open, line(3, 2), shipped(1), shipped(2))).toBe(
-			3,
-		);
+		expect(shopifyLineQuantity(open, line(3, 2), sent(1), shipped(2))).toBe(3);
 	});
 
 	test("cancelling an unshipped unit restores only that unit", () => {
-		expect(shopifyLineQuantity(open, line(3, 2), shipped(1), shipped(1))).toBe(
-			2,
-		);
+		expect(shopifyLineQuantity(open, line(3, 2), sent(1), shipped(1))).toBe(2);
 	});
 });

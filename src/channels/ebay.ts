@@ -12,6 +12,7 @@ import {
 	syncListings,
 } from "./listings";
 import { advanceOrderCursor, ensureStore, stockLocations } from "./stores";
+import { rereadUnknownShipped } from "./unknown-shipped";
 
 // eBay US through the Sell Fulfillment API, and its listings through the
 // Trading API, which (unlike the Inventory API) sees listings made in Seller
@@ -174,9 +175,57 @@ export function ebayTax(
 	};
 }
 
+// Units of each line eBay shows shipped, by its fulfillments, or null when
+// one doesn't list its lines. A fulfillment listed twice counts once.
+export function ebayShipped(fulfillments: EbayFulfillment[]) {
+	const shipped = new Map<string, number>();
+	const seen = new Set<string>();
+	for (const f of fulfillments) {
+		if (seen.has(f.fulfillmentId)) continue;
+		seen.add(f.fulfillmentId);
+		if (!f.lineItems) return null;
+		for (const l of f.lineItems)
+			shipped.set(l.lineItemId, (shipped.get(l.lineItemId) ?? 0) + l.quantity);
+	}
+	return shipped;
+}
+
+// What a partly shipped order's lines shipped, read from eBay; null when
+// the read fails, so one order eBay won't answer for can't stop the sync.
+// A failure goes in the pass's problems, so Diagnostics says why the order
+// can't be packed. Other orders say it by their status (ebayToChannelOrder)
+// and cost no call.
+export async function ebayShippedOf(
+	order: Pick<typeof ebayOrder.infer, "orderId" | "orderFulfillmentStatus">,
+	problems: string[],
+) {
+	if (order.orderFulfillmentStatus !== "IN_PROGRESS") return null;
+	try {
+		return ebayShipped(await ebayShippingFulfillments(order.orderId));
+	} catch (err) {
+		problems.push(
+			`eBay ${order.orderId}: couldn't read what shipped (${err instanceof Error ? err.message : String(err)})`,
+		);
+		return null;
+	}
+}
+
+// shipped is ebayShippedOf's answer: used only while the order is partly
+// shipped, and unknown there without it.
 export function ebayToChannelOrder(
 	order: typeof ebayOrder.infer,
+	shipped: Map<string, number> | null,
 ): ChannelOrder {
+	const shippedOf = (line: { lineItemId: string; quantity: number }) => {
+		switch (order.orderFulfillmentStatus) {
+			case "NOT_STARTED":
+				return 0;
+			case "FULFILLED":
+				return line.quantity;
+			default:
+				return shipped ? (shipped.get(line.lineItemId) ?? 0) : null;
+		}
+	};
 	const shipTo = order.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo;
 	return {
 		externalId: order.orderId,
@@ -218,6 +267,7 @@ export function ebayToChannelOrder(
 				sku: l.sku ?? null,
 				title: l.title,
 				quantity: l.quantity,
+				shipped: shippedOf(l),
 				// lineItemCost covers every unit; promotions come off separately.
 				unitPrice: (l.lineItemCost.value - discount) / l.quantity,
 			};
@@ -384,7 +434,7 @@ export async function syncEbay(
 			const result = await ingestOrder(
 				db,
 				store,
-				ebayToChannelOrder(order),
+				ebayToChannelOrder(order, await ebayShippedOf(order, problems)),
 				stock,
 			);
 			problems.push(...result.problems);
@@ -394,6 +444,28 @@ export async function syncEbay(
 	}
 	// Orders changed during this pass are picked up next time.
 	await advanceOrderCursor(db, store.id, startedAt);
+	problems.push(
+		...(await rereadUnknownShipped(db, store.id, startedAt, async (o) => {
+			const response = await fetch(
+				`${API}/sell/fulfillment/v1/order/${encodeURIComponent(o.externalId)}`,
+				{ headers: { Authorization: `Bearer ${await accessToken()}` } },
+			);
+			if (!response.ok)
+				throw new Error(
+					`eBay answered ${response.status}: ${await response.text()}`,
+				);
+			const order = ebayOrder.assert(await response.json());
+			const unread: string[] = [];
+			const shipped = await ebayShippedOf(order, unread);
+			const saved = await ingestOrder(
+				db,
+				store,
+				ebayToChannelOrder(order, shipped),
+				stock,
+			);
+			return [...unread, ...saved.problems];
+		})),
+	);
 	return {
 		store: store.name,
 		listings,
@@ -421,8 +493,35 @@ const shippingFulfillments = type({
 	"fulfillments?": type({
 		fulfillmentId: "string",
 		"shipmentTrackingNumber?": "string",
+		"lineItems?": type({
+			lineItemId: "string",
+			quantity: "number.integer >= 0",
+		}).array(),
 	}).array(),
 });
+
+export type EbayFulfillment = NonNullable<
+	(typeof shippingFulfillments.infer)["fulfillments"]
+>[number];
+
+const fulfillmentsUrl = (orderId: string) =>
+	`${API}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}/shipping_fulfillment`;
+
+// Every shipping fulfillment eBay has for an order. Throws when eBay doesn't
+// answer.
+export async function ebayShippingFulfillments(
+	orderId: string,
+): Promise<EbayFulfillment[]> {
+	const response = await fetch(fulfillmentsUrl(orderId), {
+		headers: { Authorization: `Bearer ${await accessToken()}` },
+	});
+	if (!response.ok) {
+		throw new Error(
+			`eBay answered ${response.status}: ${await response.text()}`,
+		);
+	}
+	return shippingFulfillments.assert(await response.json()).fulfillments ?? [];
+}
 
 // Marks these line items shipped with this tracking; eBay tells the buyer.
 // Returns eBay's id for the shipping fulfillment. Safe to repeat: tracking
@@ -437,20 +536,10 @@ export async function ebayFulfill(
 		shippedAt: Date;
 	},
 ) {
-	const url = `${API}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}/shipping_fulfillment`;
-	const existing = await fetch(url, {
-		headers: { Authorization: `Bearer ${await accessToken()}` },
-	});
-	if (!existing.ok) {
-		throw new Error(
-			`eBay answered ${existing.status}: ${await existing.text()}`,
-		);
-	}
-	const already = shippingFulfillments
-		.assert(await existing.json())
-		.fulfillments?.find(
-			(f) => f.shipmentTrackingNumber === shipment.trackingNumber,
-		);
+	const url = fulfillmentsUrl(orderId);
+	const already = (await ebayShippingFulfillments(orderId)).find(
+		(f) => f.shipmentTrackingNumber === shipment.trackingNumber,
+	);
 	if (already) return already.fulfillmentId;
 
 	const response = await fetch(url, {

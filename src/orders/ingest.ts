@@ -62,6 +62,11 @@ export type ChannelOrder = {
 		sku: string | null;
 		title: string;
 		quantity: number;
+		// Units the marketplace says already went out, from its own admin or
+		// a katasync handoff (order_lines.shipped_quantity), written only
+		// here. Null when it
+		// can't say, never for none: such an order can't be packed.
+		shipped: number | null;
 		unitPrice: number;
 	}[];
 };
@@ -69,7 +74,8 @@ export type ChannelOrder = {
 export type IngestStore = { id: number; stockFrom: Date | null };
 
 type OrderLine = typeof orderLines.$inferSelect;
-type ChannelLine = ChannelOrder["lines"][number];
+// What a line is matched to a product by.
+type LineKey = Pick<ChannelOrder["lines"][number], "listingExternalId" | "sku">;
 
 // Saves an order and keeps stock in step with it, safely re-runnable:
 // - Lines on orders placed at or after the store's stockFrom take stock once,
@@ -219,8 +225,14 @@ export async function ingestOrder(
 				existing.title === line.title &&
 				existing.sku === line.sku &&
 				existing.quantity === line.quantity &&
+				existing.shippedQuantity === line.shipped &&
 				existing.unitPrice === line.unitPrice &&
 				existing.productId === productId;
+			// Units shipped from the marketplace's own admin left our shelf, and
+			// legacy stock took them with the sale. Committed stock would have
+			// to consume their commitments here once it's live; until then
+			// only katasync's handoff does (handoff/tell.ts).
+			const { shipped, ...written } = line;
 			let row: OrderLine;
 			if (unchanged) {
 				row = existing;
@@ -231,6 +243,7 @@ export async function ingestOrder(
 						title: line.title,
 						sku: line.sku,
 						quantity: line.quantity,
+						shippedQuantity: line.shipped,
 						unitPrice: line.unitPrice,
 						...mapping,
 					})
@@ -241,7 +254,8 @@ export async function ingestOrder(
 				[row] = await tx
 					.insert(orderLines)
 					.values({
-						...line,
+						...written,
+						shippedQuantity: shipped,
 						orderId: saved.id,
 						...mapping,
 					})
@@ -332,7 +346,7 @@ export async function takeStock(
 export async function resolveProduct(
 	db: Db,
 	storeId: number,
-	line: ChannelOrder["lines"][number],
+	line: LineKey,
 ): Promise<number | null> {
 	const found = await resolveProducts(db, storeId, [line]);
 	return found.get(line) ?? null;
@@ -341,7 +355,11 @@ export async function resolveProduct(
 // resolveProduct for many lines at once: one query each for the listing
 // mappings, SKUs, and aliases, instead of up to four per line. A line its
 // listing matches never needs its SKU looked up.
-async function resolveProducts(db: Db, storeId: number, lines: ChannelLine[]) {
+async function resolveProducts<L extends LineKey>(
+	db: Db,
+	storeId: number,
+	lines: L[],
+) {
 	const listingIds = [
 		...new Set(
 			lines.flatMap((l) => (l.listingExternalId ? [l.listingExternalId] : [])),
@@ -388,7 +406,7 @@ async function resolveProducts(db: Db, storeId: number, lines: ChannelLine[]) {
 			.where(inArray(productAliases.alias, skus));
 		for (const row of aliasRows) byAlias.set(row.alias, row.id);
 	}
-	const found = new Map<ChannelLine, number | null>();
+	const found = new Map<L, number | null>();
 	for (const line of lines) {
 		const listed = line.listingExternalId
 			? byListing.get(line.listingExternalId)

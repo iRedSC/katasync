@@ -4,6 +4,7 @@ import type { FeedPhase } from "#/channels/pass-feeds";
 import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
+import { shippedByStatus } from "#/orders/remaining";
 import { applyListingsToOrders } from "#/orders/remap";
 import type { OrderTax } from "#/orders/tax";
 import { MARKETPLACE_US, spApi } from "./amazon-api";
@@ -14,6 +15,7 @@ import {
 } from "./amazon-listings";
 import { markGoneListings, matchListings, syncListings } from "./listings";
 import { advanceOrderCursor, ensureStore, stockLocations } from "./stores";
+import { rereadUnknownShipped } from "./unknown-shipped";
 
 // Amazon US orders through the Selling Partner API (Orders v0).
 
@@ -38,6 +40,9 @@ export const amazonItem = type({
 	"SellerSKU?": "string",
 	Title: "string",
 	QuantityOrdered: "number.integer",
+	// Units Amazon says went out. Optional in its API; when missing, the
+	// order's status says it where it can.
+	"QuantityShipped?": "number.integer >= 0",
 	"ItemPrice?": money,
 	"PromotionDiscount?": money,
 	"ShippingPrice?": money,
@@ -54,6 +59,8 @@ export const ordersPage = type({
 		"NextToken?": "string",
 	},
 });
+
+const amazonOrderById = type({ payload: amazonOrder });
 
 const itemsPage = type({
 	payload: { OrderItems: amazonItem.array(), "NextToken?": "string" },
@@ -97,6 +104,14 @@ export function amazonToChannelOrder(
 	items: (typeof amazonItem.infer)[],
 ): ChannelOrder {
 	const fba = order.FulfillmentChannel === "AFN";
+	// Pending is Amazon not yet confirming the sale, FBA or not: it has no
+	// price yet and nothing has shipped.
+	const fulfillmentStatus =
+		order.OrderStatus === "Pending"
+			? "AWAITING_PAYMENT"
+			: fba
+				? "FULFILLMENT_NOT_REQUIRED"
+				: (fulfillment[order.OrderStatus] ?? "UNFULFILLED");
 	return {
 		externalId: order.AmazonOrderId,
 		name: order.AmazonOrderId,
@@ -106,14 +121,7 @@ export function amazonToChannelOrder(
 		// Amazon doesn't say when an order was cancelled; its last update is
 		// the closest honest answer.
 		cancelledAt: order.OrderStatus === "Canceled" ? order.LastUpdateDate : null,
-		// Pending is Amazon not yet confirming the sale, FBA or not: it has
-		// no price yet and nothing has shipped.
-		fulfillmentStatus:
-			order.OrderStatus === "Pending"
-				? "AWAITING_PAYMENT"
-				: fba
-					? "FULFILLMENT_NOT_REQUIRED"
-					: (fulfillment[order.OrderStatus] ?? "UNFULFILLED"),
+		fulfillmentStatus,
 		fulfilledByChannel: fba,
 		soldInStore: false,
 		// Pending means Amazon hasn't confirmed payment yet.
@@ -145,6 +153,9 @@ export function amazonToChannelOrder(
 			sku: i.SellerSKU ?? null,
 			title: i.Title,
 			quantity: i.QuantityOrdered,
+			shipped:
+				i.QuantityShipped ??
+				shippedByStatus(fulfillmentStatus, i.QuantityOrdered),
 			// ItemPrice covers every unit; promotions come off separately.
 			unitPrice:
 				i.QuantityOrdered > 0
@@ -270,6 +281,7 @@ export async function syncAmazon(
 		listingProblems.push(...fba.problems);
 	});
 
+	const startedAt = new Date();
 	// Amazon refuses ranges that end less than two minutes ago.
 	const latest = Date.now() - 3 * 60 * 1000;
 	const cursor =
@@ -311,6 +323,19 @@ export async function syncAmazon(
 			await advanceOrderCursor(db, store.id, new Date(window.until));
 		}
 	}
+	// Read whole, past the unchanged-revision shortcut: what shipped may have
+	// been unread, not unchanged.
+	problems.push(
+		...(await rereadUnknownShipped(db, store.id, startedAt, async (o) => {
+			const order = amazonOrderById.assert(
+				await spApi(`/orders/v0/orders/${encodeURIComponent(o.externalId)}`),
+			).payload;
+			const items = await orderItems(order.AmazonOrderId);
+			return (
+				await ingestOrder(db, store, amazonToChannelOrder(order, items), stock)
+			).problems;
+		})),
+	);
 	return {
 		store: store.name,
 		listings,

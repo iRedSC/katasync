@@ -50,6 +50,7 @@ const order = (extra: Partial<ChannelOrder> = {}): ChannelOrder => ({
 			sku: "NEW-SKU",
 			title: "New thing",
 			quantity: 2,
+			shipped: 0,
 			unitPrice: 5,
 		},
 	],

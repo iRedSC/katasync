@@ -27,6 +27,7 @@ import {
 	missingToAsk,
 	settleMissing,
 } from "./tiktok-missing";
+import { unknownShippedOrders } from "./unknown-shipped";
 
 export {
 	tiktokOrder,
@@ -331,11 +332,15 @@ export async function syncTiktok(
 	const startedAt = new Date();
 	// Orders changed since the last pass, plus relayed orders still open, so
 	// those move over even if TikTok hasn't touched them lately, and open ones
-	// saved before katasync kept the buyer.
+	// saved before katasync kept the buyer, and a few whose shipped count is
+	// still unknown (src/channels/unknown-shipped.ts).
 	const ids = new Set([
 		...(await openRelayed(db, store.id)),
 		...(await openWithoutBuyer(db, store.id)),
 		...(await missingToAsk(db, store.id)),
+		...(await unknownShippedOrders(db, store.id, startedAt)).map(
+			(o) => o.externalId,
+		),
 	]);
 	let pageToken: string | undefined;
 	do {

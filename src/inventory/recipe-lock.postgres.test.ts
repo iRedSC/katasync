@@ -139,6 +139,7 @@ describe.skipIf(!url)("inventory product lock ordering", () => {
 				sku,
 				title: sku,
 				quantity: 1,
+				shipped: 0,
 				unitPrice: 1,
 			})),
 		};

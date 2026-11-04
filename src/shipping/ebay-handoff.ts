@@ -1,5 +1,11 @@
 import { type } from "arktype";
-import { API, accessToken, ebayCarrierCode } from "#/channels/ebay";
+import {
+	API,
+	accessToken,
+	type EbayFulfillment,
+	ebayCarrierCode,
+	ebayShippingFulfillments,
+} from "#/channels/ebay";
 import { assertUnchanged, driftOf, unmappable } from "./packed";
 
 // eBay's own word on an order before katasync buys for it or tells eBay it
@@ -18,20 +24,9 @@ const order = type({
 	}).array(),
 });
 
-const fulfillmentList = type({
-	"fulfillments?": type({
-		fulfillmentId: "string",
-		"shipmentTrackingNumber?": "string",
-		"lineItems?": type({
-			lineItemId: "string",
-			quantity: "number.integer >= 0",
-		}).array(),
-	}).array(),
-});
-
 export type EbayRead = {
 	order: typeof order.infer;
-	fulfillments: NonNullable<(typeof fulfillmentList.infer)["fulfillments"]>;
+	fulfillments: EbayFulfillment[];
 };
 
 async function get(url: string) {
@@ -50,14 +45,11 @@ const orderUrl = (orderId: string) =>
 	`${API}/sell/fulfillment/v1/order/${encodeURIComponent(orderId)}`;
 
 export async function ebayRead(orderId: string): Promise<EbayRead> {
-	const [o, f] = await Promise.all([
+	const [o, fulfillments] = await Promise.all([
 		get(orderUrl(orderId)),
-		get(`${orderUrl(orderId)}/shipping_fulfillment`),
+		ebayShippingFulfillments(orderId),
 	]);
-	return {
-		order: order.assert(o),
-		fulfillments: fulfillmentList.assert(f).fulfillments ?? [],
-	};
+	return { order: order.assert(o), fulfillments };
 }
 
 // What eBay still has to ship, by line: each line's quantity less what its

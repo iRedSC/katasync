@@ -45,6 +45,15 @@ export const needsShipping = sql<boolean>`(
 // so it stays on To ship but is never packed here.
 export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null)`;
 
+// The marketplace hasn't said which units shipped: a line with units and no
+// shipped count, whatever the order's status (katasync rewrites that one
+// locally, on a void). Such an order can't be packed (whyNotTogether);
+// remaining.ts is the same rule.
+export const remainingUnknown = sql<boolean>`exists (
+	select 1 from ${orderLines} l
+	where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
+)`;
+
 // Waiting on a supplier's tracking: on To ship, but only for typing it in.
 export const awaitsDropShip = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is not null)`;
 

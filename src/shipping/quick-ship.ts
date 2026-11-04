@@ -20,7 +20,10 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
+import { groupBy } from "#/lib/group-by";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
+import { toPack } from "#/orders/remaining";
+import { remainingUnknown } from "#/orders/to-ship";
 import { contentsKey } from "./contents";
 import { companionsOf, liveDispatches } from "./dispatch";
 import type { Rate } from "./shippo";
@@ -76,6 +79,7 @@ export async function orderForShipping(db: Db, pin: number) {
 			shipPhone: orders.shipPhone,
 			storeId: orders.storeId,
 			buyerId: orders.buyerId,
+			remainingUnknown,
 		})
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -88,21 +92,19 @@ export async function orderForShipping(db: Db, pin: number) {
 		external || live
 			? []
 			: await companionsOf(db, { ...order, needsPacking: true });
-	const items = companions.length
-		? await db
-				.select({
-					orderId: orderLines.orderId,
-					items: sql<number>`sum(${orderLines.quantity})::int`,
-				})
-				.from(orderLines)
-				.where(
-					inArray(
-						orderLines.orderId,
-						companions.map((c) => c.id),
-					),
-				)
-				.groupBy(orderLines.orderId)
+	// What's left to pack of each, the way the plan counts it.
+	const companionLines = companions.length
+		? await plannedLines(
+				db,
+				companions.map((c) => c.id),
+			)
 		: [];
+	const items = [...groupBy(companionLines, (l) => l.orderId)].map(
+		([orderId, lines]) => ({
+			orderId,
+			items: lines.reduce((sum, l) => sum + l.quantity, 0),
+		}),
+	);
 
 	return {
 		order,
@@ -140,24 +142,7 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 	if (members.length !== new Set(orderIds).size) {
 		throw new Error("One of these orders no longer exists");
 	}
-	const lines = await db
-		.select({
-			orderId: orderLines.orderId,
-			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
-			title: orderLines.title,
-			quantity: orderLines.quantity,
-			imageUrl: products.imageUrl,
-			weightGrams: products.weightGrams,
-			insureWhenShipped: sql<boolean>`coalesce(${products.insureWhenShipped}, false)`,
-			aerosol: sql<boolean>`coalesce(${products.aerosol}, false)`,
-		})
-		.from(orderLines)
-		.leftJoin(products, eq(products.id, orderLines.productId))
-		// A cancelled line stays at 0; there's nothing of it to pack.
-		.where(
-			and(inArray(orderLines.orderId, orderIds), gt(orderLines.quantity, 0)),
-		)
-		.orderBy(orderLines.orderId, orderLines.id);
+	const lines = await plannedLines(db, orderIds);
 
 	const key = contentsKey(lines);
 	const total = members.reduce((sum, o) => sum + o.total, 0);
@@ -188,6 +173,35 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 }
 
 export type ShipmentPlan = Awaited<ReturnType<typeof shipmentPlan>>;
+
+// The lines to pack for these orders, each at what's left to ship of it
+// (src/orders/remaining.ts), the same as linesToPack keeps at purchase. An
+// order whose remaining is unknown has none: whyNotTogether refuses it.
+async function plannedLines(db: Db, orderIds: number[]) {
+	const rows = await db
+		.select({
+			orderId: orderLines.orderId,
+			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
+			title: orderLines.title,
+			quantity: orderLines.quantity,
+			shippedQuantity: orderLines.shippedQuantity,
+			imageUrl: products.imageUrl,
+			weightGrams: products.weightGrams,
+			insureWhenShipped: sql<boolean>`coalesce(${products.insureWhenShipped}, false)`,
+			aerosol: sql<boolean>`coalesce(${products.aerosol}, false)`,
+		})
+		.from(orderLines)
+		.innerJoin(orders, eq(orders.id, orderLines.orderId))
+		.leftJoin(products, eq(products.id, orderLines.productId))
+		// A cancelled line stays at 0; there's nothing of it to pack.
+		.where(
+			and(inArray(orderLines.orderId, orderIds), gt(orderLines.quantity, 0)),
+		)
+		.orderBy(orderLines.orderId, orderLines.id);
+	return [...groupBy(rows, (r) => r.orderId).values()].flatMap(
+		(lines) => toPack(lines)?.map(({ shippedQuantity, ...line }) => line) ?? [],
+	);
+}
 
 // Every box of the latest dispatch with these contents that set the
 // default, first box first.

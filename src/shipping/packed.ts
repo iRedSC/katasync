@@ -6,8 +6,11 @@ import {
 	dispatchLines,
 	type HandoffHold,
 	orderLines,
+	orders,
 	products,
 } from "#/db/schema";
+import { groupBy } from "#/lib/group-by";
+import { toPack, UNKNOWN_REMAINING } from "#/orders/remaining";
 import { contentsKey } from "./contents";
 
 // What went in a dispatch's boxes, kept when its labels are bought
@@ -29,13 +32,15 @@ export type Contents =
 // product's, else the channel's) beside the channel's own, which is kept.
 export type LineToPack = PackedLine & { keySku: string | null };
 
-// Every line of these orders with something to pack, as quick ship showed
-// it (shipmentPlan).
+// Every line of these orders with something still to pack, at what's left
+// of it after anything the marketplace already shipped, as quick ship showed
+// it (shipmentPlan). Throws for an order whose remaining is unknown, which
+// whyNotTogether refuses first.
 export async function linesToPack(
 	db: Db,
 	orderIds: number[],
 ): Promise<LineToPack[]> {
-	return db
+	const rows = await db
 		.select({
 			orderId: orderLines.orderId,
 			orderLineId: orderLines.id,
@@ -45,13 +50,22 @@ export async function linesToPack(
 			keySku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 			title: orderLines.title,
 			quantity: orderLines.quantity,
+			shippedQuantity: orderLines.shippedQuantity,
+			orderName: orders.name,
 		})
 		.from(orderLines)
+		.innerJoin(orders, eq(orders.id, orderLines.orderId))
 		.leftJoin(products, eq(products.id, orderLines.productId))
 		.where(
 			and(inArray(orderLines.orderId, orderIds), gt(orderLines.quantity, 0)),
 		)
 		.orderBy(orderLines.orderId, orderLines.id);
+	return [...groupBy(rows, (r) => r.orderId).values()].flatMap((lines) => {
+		const packing = toPack(lines);
+		if (!packing)
+			throw new Error(`${lines[0].orderName}: ${UNKNOWN_REMAINING}`);
+		return packing.map(({ shippedQuantity, orderName, ...line }) => line);
+	});
 }
 
 // Stops a purchase when the orders no longer hold what was on screen when

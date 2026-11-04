@@ -14,7 +14,12 @@ import {
 import { cityLine } from "#/lib/format";
 import { groupBy } from "#/lib/group-by";
 import { sharingOrders } from "#/orders/invoice-index";
-import { financialStatus, needsPacking } from "#/orders/to-ship";
+import { toPrint } from "#/orders/remaining";
+import {
+	financialStatus,
+	needsPacking,
+	remainingUnknown,
+} from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
 import { contentsKey } from "#/shipping/contents";
 import { liveDispatches } from "#/shipping/dispatch";
@@ -66,6 +71,8 @@ export const listInvoices = createServerFn({ method: "GET" })
 					storeId: orders.storeId,
 					buyerId: orders.buyerId,
 					needsPacking,
+					remainingUnknown,
+					fulfillmentStatus: orders.fulfillmentStatus,
 				})
 				.from(orders)
 				.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -92,6 +99,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 						// mapped to a product fall back to.
 						name: sql<string>`coalesce(${products.name}, ${orderLines.title})`,
 						quantity: orderLines.quantity,
+						shippedQuantity: orderLines.shippedQuantity,
 						unitPrice: orderLines.unitPrice,
 						// The size or option to pick, from the catalog: channel
 						// titles don't always carry it.
@@ -139,8 +147,17 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const partsOf = (productId: number | null) =>
 			productId === null ? [] : (partsBy.get(productId) ?? []);
 		const linesBy = groupBy(lines, (l) => l.orderId);
-		const linesOf = (id: number) => linesBy.get(id) ?? [];
-		const keys = new Map(toShip.map((o) => [o.id, contentsKey(linesOf(o.id))]));
+		const linesOf = (o: {
+			id: number;
+			needsPacking: boolean;
+			fulfillmentStatus: string;
+		}) => toPrint(linesBy.get(o.id) ?? [], o);
+		// What goes in the box, at what's left of each line.
+		const packing = (o: Parameters<typeof linesOf>[0]) =>
+			linesOf(o).flatMap((l) =>
+				l.toPack > 0 ? [{ ...l, quantity: l.toPack }] : [],
+			);
+		const keys = new Map(toShip.map((o) => [o.id, contentsKey(packing(o))]));
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
 		// Any order still to ship can share the box, printed or not, so a
 		// packer printing a few still hears about the rest.
@@ -166,7 +183,8 @@ export const listInvoices = createServerFn({ method: "GET" })
 					}
 				: null,
 			invoices: toShip.map((o) => {
-				const own = linesOf(o.id);
+				const own = linesOf(o);
+				const packed = packing(o);
 				const last = lastPacked.get(keys.get(o.id) ?? "");
 				return {
 					...o,
@@ -181,8 +199,11 @@ export const listInvoices = createServerFn({ method: "GET" })
 					boxes: last?.boxes ?? 1,
 					weightGrams:
 						last?.weightGrams ??
-						(own.every((l) => l.weightGrams !== null)
-							? own.reduce((g, l) => g + (l.weightGrams ?? 0) * l.quantity, 0)
+						(packed.every((l) => l.weightGrams !== null)
+							? packed.reduce(
+									(g, l) => g + (l.weightGrams ?? 0) * l.quantity,
+									0,
+								)
 							: null),
 				};
 			}),

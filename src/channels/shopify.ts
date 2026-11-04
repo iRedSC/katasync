@@ -8,13 +8,14 @@ import {
 } from "#/channels/listings";
 import type { FeedPhase } from "#/channels/pass-feeds";
 import { shopifyQuery } from "#/channels/shopify/client";
-import { ingestMatching } from "#/channels/shopify/ingest";
+import { ingestMatching, ingestShopifyOrder } from "#/channels/shopify/ingest";
 import { syncShipFrom } from "#/channels/shopify/ship-from";
 import {
 	advanceOrderCursor,
 	ensureStore,
 	stockLocations,
 } from "#/channels/stores";
+import { rereadUnknownShipped } from "#/channels/unknown-shipped";
 import type { Db } from "#/db/client";
 import { applyListingsToOrders } from "#/orders/remap";
 
@@ -128,6 +129,7 @@ export async function syncShopify(
 	// Orders that sold a newly matched listing pick up the product now.
 	const caughtUp = await applyListingsToOrders(db, matched.mapped, stock);
 
+	const startedAt = new Date();
 	const since =
 		store.ordersSyncedThrough ??
 		new Date(Date.now() - FIRST_SYNC_DAYS * 24 * 60 * 60 * 1000);
@@ -137,7 +139,20 @@ export async function syncShopify(
 		`updated_at:>='${since.toISOString()}'`,
 		stock,
 	);
-	await advanceOrderCursor(db, store.id, result.newest ?? since);
+	// The search is inclusive (>=), so stopping at an order that failed to
+	// read has the next pass read it again.
+	const through = result.newest ?? since;
+	await advanceOrderCursor(
+		db,
+		store.id,
+		result.retryFrom && result.retryFrom < through ? result.retryFrom : through,
+	);
+	// The webhook's read: its problems name the order already.
+	const reread = await rereadUnknownShipped(db, store.id, startedAt, (o) =>
+		ingestShopifyOrder(db, o.externalId).then((u) =>
+			u.kind === "retry" ? [u.error] : [],
+		),
+	);
 	return {
 		store: store.name,
 		variants,
@@ -146,7 +161,7 @@ export async function syncShopify(
 		photographed,
 		orders: result.count,
 		listingProblems: matched.skipped,
-		problems: [...caughtUp.problems, ...result.problems],
+		problems: [...caughtUp.problems, ...result.problems, ...reread],
 	};
 }
 

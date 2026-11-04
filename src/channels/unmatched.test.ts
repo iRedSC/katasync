@@ -94,6 +94,7 @@ const sell = (listingExternalId: string | null, sku: string | null) =>
 					sku,
 					title: "Rock Splicer",
 					quantity: 3,
+					shipped: 0,
 					unitPrice: 5,
 				},
 			],

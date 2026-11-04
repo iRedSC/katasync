@@ -37,6 +37,7 @@ async function addOrder(name: string, quantity = 2) {
 		sku: "WRENCH",
 		title: "Wrench",
 		quantity,
+		shippedQuantity: 0,
 		unitPrice: 15,
 	});
 	return row.id;

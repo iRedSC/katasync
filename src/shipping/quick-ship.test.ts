@@ -370,6 +370,7 @@ describe("with a database", () => {
 			sku: "WRENCH",
 			title: "Wrench",
 			quantity,
+			shippedQuantity: 0,
 			unitPrice: 20,
 		});
 
@@ -437,7 +438,7 @@ describe("with a database", () => {
 			.select()
 			.from(schema.orders)
 			.where(eq(schema.orders.id, id));
-		return { ...o, channel, needsPacking: true };
+		return { ...o, channel, needsPacking: true, remainingUnknown: false };
 	};
 
 	test("postal codes match however they're written", async () => {
@@ -499,6 +500,7 @@ describe("addressKey and whyNotTogether", () => {
 		marketplaceOrderId: null,
 		externalId: `gid://shopify/Order/${id}`,
 		needsPacking: true,
+		remainingUnknown: false,
 		shipAddress1: "12 Oak St.",
 		shipAddress2: null,
 		shipPostalCode: "16501",

@@ -37,6 +37,7 @@ export type SearchableOrder = {
 	labelToVoid: boolean;
 	fulfilledByChannel: boolean;
 	dropShipAt: Date | null;
+	remainingUnknown: boolean;
 	returnStage: ReturnStage;
 	total: number;
 	items: number;

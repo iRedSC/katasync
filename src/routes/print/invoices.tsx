@@ -247,7 +247,14 @@ function Invoice({
 							className={`border-b border-border align-top ${l.parts.length > 0 ? "" : "break-inside-avoid"}`}
 						>
 							<td className="py-2 text-[13pt] font-bold tabular-nums">
-								{l.quantity}
+								{/* What goes in the box; what was sold beside it when some
+								already went out (toPrint). */}
+								{l.toPack}
+								{l.toPack !== l.quantity && (
+									<span className="block text-[9pt] font-normal text-muted-foreground">
+										of {l.quantity}
+									</span>
+								)}
 							</td>
 							<td className="py-2">
 								<div className="flex break-after-avoid items-start gap-3">
@@ -273,7 +280,7 @@ function Invoice({
 											>
 												<Photo src={p.imageUrl} className="size-[0.35in]" />
 												<span className="w-8 font-bold tabular-nums">
-													{p.perSet * l.quantity}
+													{p.perSet * l.toPack}
 												</span>
 												<span className="min-w-0">
 													<span>

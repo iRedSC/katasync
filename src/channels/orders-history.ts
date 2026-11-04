@@ -13,6 +13,7 @@ import {
 	accessToken,
 	API as EBAY_API,
 	ordersPage as ebayPage,
+	ebayShippedOf,
 	ebayToChannelOrder,
 } from "./ebay";
 import { backfillShopify } from "./shopify";
@@ -148,7 +149,7 @@ async function ebayWindow({ db, store, stock, from, until }: Window) {
 			const result = await ingestOrder(
 				db,
 				store,
-				ebayToChannelOrder(order),
+				ebayToChannelOrder(order, await ebayShippedOf(order, problems)),
 				stock,
 			);
 			problems.push(...result.problems);

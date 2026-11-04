@@ -6,6 +6,7 @@ const shippedPage = type({
 		fulfillments: type({
 			status: "string",
 			fulfillmentLineItems: {
+				pageInfo: { hasNextPage: "boolean" },
 				nodes: type({
 					quantity: "number.integer",
 					lineItem: { id: "string" },
@@ -15,12 +16,16 @@ const shippedPage = type({
 	},
 });
 
+// Order.fulfillments is a plain list, not a page: asking for this many and
+// getting them all back means there may be more.
+const MOST_FULFILLMENTS = 50;
+
 const SHIPPED_QUERY = `
 query Shipped($id: ID!) {
 	order(id: $id) {
-		fulfillments(first: 10) {
+		fulfillments(first: ${MOST_FULFILLMENTS}) {
 			status
-			fulfillmentLineItems(first: 50) { nodes { quantity lineItem { id } } }
+			fulfillmentLineItems(first: 250) { pageInfo { hasNextPage } nodes { quantity lineItem { id } } }
 		}
 	}
 }`;
@@ -28,20 +33,41 @@ query Shipped($id: ID!) {
 // Fulfillments that never went out.
 const notShipped = new Set(["CANCELLED", "ERROR", "FAILURE"]);
 
-// Units of each line that have shipped, by line ID.
-export async function shippedUnits(orderId: string) {
+export type ShippedUnits = {
+	// Units of each line in any fulfillment that didn't fail, by line ID:
+	// what line quantities count as gone (shopifyLineQuantity).
+	sent: Map<string, number>;
+	// Only those in successful fulfillments: what the order shows shipped.
+	succeeded: Map<string, number>;
+};
+
+// Units of each line that have shipped, or null when the order has more
+// fulfillments or lines than one read returns, so a short count is never
+// taken for the whole.
+export async function shippedUnits(
+	orderId: string,
+): Promise<ShippedUnits | null> {
 	const page = shippedPage.assert(
 		await shopifyQuery(SHIPPED_QUERY, { id: orderId }),
 	);
-	const shipped = new Map<string, number>();
-	for (const f of page.order.fulfillments) {
+	const { fulfillments } = page.order;
+	if (
+		fulfillments.length >= MOST_FULFILLMENTS ||
+		fulfillments.some((f) => f.fulfillmentLineItems.pageInfo.hasNextPage)
+	)
+		return null;
+	const units: ShippedUnits = { sent: new Map(), succeeded: new Map() };
+	const add = (to: Map<string, number>, id: string, n: number) =>
+		to.set(id, (to.get(id) ?? 0) + n);
+	for (const f of fulfillments) {
 		if (notShipped.has(f.status)) continue;
 		for (const item of f.fulfillmentLineItems.nodes) {
-			const id = item.lineItem.id;
-			shipped.set(id, (shipped.get(id) ?? 0) + item.quantity);
+			add(units.sent, item.lineItem.id, item.quantity);
+			if (f.status === "SUCCESS")
+				add(units.succeeded, item.lineItem.id, item.quantity);
 		}
 	}
-	return shipped;
+	return units;
 }
 
 const remainingOrdersPage = type({

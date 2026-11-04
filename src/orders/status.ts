@@ -6,6 +6,8 @@ import { externalFulfillment } from "./fulfillment";
 export const ORDER_STATUSES = {
 	void: "Cancelled or refunded, void label",
 	unfulfilled: "Unfulfilled",
+	// Some went out from the marketplace's own admin; the rest is ours.
+	partly: "Partly shipped",
 	// Unfulfilled too, but shipped from the marketplace's own page.
 	external: "Unfulfilled",
 	// A supplier ships it; it waits on their tracking (drop-ship.ts).
@@ -50,6 +52,8 @@ export function orderStatus(order: {
 	shipCountry: string | null;
 	fulfilledByChannel: boolean;
 	dropShipAt: Date | null;
+	// Partly shipped and the marketplace hasn't said what (to-ship.ts).
+	remainingUnknown: boolean;
 	// Cancelled or refunded with a label still live (see to-ship.ts).
 	labelToVoid: boolean;
 	returnStage: ReturnStage;
@@ -93,7 +97,10 @@ export function orderStatus(order: {
 						url: external.url,
 						on: external.name,
 					}
-				: is("unfulfilled", "warning");
+				: order.fulfillmentStatus === "PARTIALLY_FULFILLED" &&
+						!order.remainingUnknown
+					? is("partly", "warning")
+					: is("unfulfilled", "warning");
 		}
 	}
 }

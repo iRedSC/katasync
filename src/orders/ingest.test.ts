@@ -44,6 +44,7 @@ function order(extra: Partial<ChannelOrder> = {}): ChannelOrder {
 				sku: "WRENCH",
 				title: "Wrench",
 				quantity: 2,
+				shipped: 0,
 				unitPrice: 20,
 			},
 		],
