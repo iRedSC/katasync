@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import * as schema from "#/db/schema";
+import { inPrintAll } from "#/orders/to-ship";
 import { buyDispatch } from "./buy";
 import { addPackedDispatch } from "./dispatch.fixtures";
 import { voidDispatch } from "./handoff";
@@ -139,13 +140,13 @@ describe("choosing which units ship now", () => {
 
 describe("several shipments of one order", () => {
 	test("the rest goes in a new shipment once the first is handed off, with no sync", async () => {
-		const printed = async () =>
+		const toPrint = async () =>
 			(
 				await db
-					.select({ at: schema.orders.invoicePrintedAt })
+					.select({ is: inPrintAll })
 					.from(schema.orders)
 					.where(eq(schema.orders.id, orderId))
-			)[0].at;
+			)[0].is;
 		await db
 			.update(schema.orders)
 			.set({ invoicePrintedAt: new Date() })
@@ -158,7 +159,7 @@ describe("several shipments of one order", () => {
 		await handOff(first.dispatchId);
 		expect(await statusOf()).toBe("PARTIALLY_FULFILLED");
 		// What's left is new picking work, so Print all takes it again.
-		expect(await printed()).toBeNull();
+		expect(await toPrint()).toBe(true);
 		// The synced count still says none shipped; Shopify says 2 are open.
 		const plan = await planOf();
 		expect(plan.choices).toMatchObject([{ packable: 2, quantity: 2 }]);

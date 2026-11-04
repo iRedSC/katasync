@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { labelToVoid } from "#/orders/to-ship";
+import { labelToVoid, inPrintAll as toPrintAll } from "#/orders/to-ship";
 import { addDispatch, createTestDb } from "#/test/db";
 import { memoryLocker } from "./dispatch";
 import { addPackedDispatch } from "./dispatch.fixtures";
@@ -539,11 +539,13 @@ describe("voidDispatch", () => {
 	});
 
 	test("putting an order back puts it back in Print all", async () => {
-		const printed = () =>
-			db
-				.update(schema.orders)
-				.set({ invoicePrintedAt: new Date() })
-				.where(eq(schema.orders.id, orderId));
+		const inPrintAll = async () =>
+			(
+				await db
+					.select({ is: toPrintAll })
+					.from(schema.orders)
+					.where(eq(schema.orders.id, orderId))
+			)[0].is;
 		const refusing = fakes({
 			shopifyCancel: vi.fn(async () => {
 				throw new Error("nope");
@@ -551,14 +553,18 @@ describe("voidDispatch", () => {
 		});
 		const id = await ship();
 		await sendTracking(db, id, refusing);
-		await printed();
-		// Still shipped on Shopify: nothing to pack, so it stays printed.
+		await db
+			.update(schema.orders)
+			.set({ invoicePrintedAt: new Date() })
+			.where(eq(schema.orders.id, orderId));
+		// Still shipped on Shopify: nothing to pack.
 		await voidDispatch(db, id, refusing);
-		expect((await orderRow()).invoicePrintedAt).not.toBeNull();
+		expect(await inPrintAll()).toBe(false);
 
+		// Back to pack, and with a dispatch behind it, never printed.
 		await voidDispatch(db, id, fakes());
 		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
-		expect((await orderRow()).invoicePrintedAt).toBeNull();
+		expect(await inPrintAll()).toBe(true);
 	});
 
 	test("if Shopify won't cancel, the order isn't put back", async () => {

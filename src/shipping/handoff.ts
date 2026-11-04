@@ -12,7 +12,6 @@ import {
 	assertFulfillmentRestorable,
 	restoreCommitments,
 } from "#/inventory/commitments-restore";
-import { needsPacking } from "#/orders/to-ship";
 import { lockOnOwnConnection, type OrderLocker, ordersOf } from "./dispatch";
 import { ebayShip } from "./ebay-handoff";
 import {
@@ -268,13 +267,6 @@ export async function voidDispatch(
 								.where(eq(orders.id, order.id));
 						}
 					}
-					// Sent or not, what's to pick changed (its box is gone, or its
-					// units are open again), so an order still to pack counts as
-					// unprinted and Print all prints it again.
-					await tx
-						.update(orders)
-						.set({ invoicePrintedAt: null })
-						.where(and(eq(orders.id, order.id), needsPacking));
 					await tx
 						.update(dispatchOrders)
 						.set({ reversedAt: new Date() })

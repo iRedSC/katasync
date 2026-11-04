@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { asc, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
+import { asc, eq, inArray, type SQL } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
@@ -17,7 +17,9 @@ import { recordPrinted } from "#/orders/printed";
 import { slipsOf } from "#/orders/slip";
 import {
 	financialStatus,
+	inPrintAll,
 	needsPacking,
+	plain,
 	remainingUnknown,
 } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
@@ -29,9 +31,9 @@ import { lastPackedFor } from "#/shipping/quick-ship";
 // the stack matches what packers type. `ids` picks the orders instead,
 // whether or not they still need shipping.
 // Called by the invoices page once the print dialog closes, with the
-// orders it held and the picking version each was printed at, so the next
-// Print all skips them. One whose picking work changed since stays
-// unprinted; the count of those comes back.
+// plain orders it held and the picking version each was printed at, so the
+// next Print all skips them. One whose lines changed since stays unprinted;
+// the count of those comes back.
 export const markInvoicesPrinted = createServerFn({ method: "POST" })
 	.validator(
 		type({
@@ -83,17 +85,17 @@ export const listInvoices = createServerFn({ method: "GET" })
 					// slip is read makes the print's acknowledgement stale, not
 					// the other way round.
 					pickingVersion: orders.pickingVersion,
+					// Only a plain order's print is recorded (to-ship.ts); the
+					// page doesn't send the rest, so Print all keeps them.
+					plain,
 				})
 				.from(orders)
 				.innerJoin(stores, eq(stores.id, orders.storeId))
 				.where(where)
 				.orderBy(asc(orders.pin), asc(orders.placedAt));
-		// The orders picked, printed before or not, or every order still to
-		// ship that hasn't been printed.
+		// The orders picked, printed before or not, or Print all's.
 		const toShip = await select(
-			data.ids
-				? inArray(orders.id, data.ids)
-				: sql`${needsPacking} and ${isNull(orders.invoicePrintedAt)}`,
+			data.ids ? inArray(orders.id, data.ids) : inPrintAll,
 		);
 		const slips = await slipsOf(db, toShip);
 		const items = [...slips.values()].flatMap((slip) => slip.items);

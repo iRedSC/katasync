@@ -184,9 +184,7 @@ export function OrderTable({
 											)}
 											{o.sameBuyer.length > 0 && <SameBuyerChip order={o} />}
 											{/* Print all skips it, so the list says why. */}
-											{view === "ship" && o.invoicePrintedAt && (
-												<Badge>Printed</Badge>
-											)}
+											{view === "ship" && o.printed && <Badge>Printed</Badge>}
 										</div>
 									</td>
 								</tr>

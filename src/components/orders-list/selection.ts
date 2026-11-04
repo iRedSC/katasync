@@ -5,7 +5,8 @@
 // of the print, and clearing the filter brings it back ticked. What looks
 // ticked is always exactly what prints.
 
-type Row = { id: number; labelToVoid: boolean; invoicePrintedAt: Date | null };
+// printed is to-ship.ts's: never true for an order that isn't plain.
+type Row = { id: number; labelToVoid: boolean; printed: boolean };
 
 export type Ticks = ReadonlySet<number>;
 
@@ -99,7 +100,7 @@ export function printPlan({
 	}
 	if (view !== "ship" || shown.length === 0) return null;
 	const printable = shown.filter((o) => !o.labelToVoid);
-	const fresh = printable.filter((o) => o.invoicePrintedAt === null);
+	const fresh = printable.filter((o) => !o.printed);
 	const skipped = printable.length - fresh.length;
 	if (printable.length === 0) return null;
 	if (fresh.length === 0) return { kind: "done" };

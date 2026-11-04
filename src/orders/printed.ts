@@ -1,17 +1,17 @@
 import { and, eq, or } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
+import { plain } from "./to-ship";
 
 // One invoice the print page showed: the order, at the picking version its
 // slip was read at (orders.picking_version).
 export type PrintedInvoice = { orderId: number; version: number };
 
-// Marks these invoices printed, each only if its order's picking work is
-// still the version that was printed: a box bought, handed off, voided or
-// refused since, a sync changing its lines, or its printed mark cleared bumps
-// the version (drizzle/0183), and that newer work
-// stays unprinted so Print all picks it up. Returns how many weren't
-// recorded because they changed since printing.
+// Marks these invoices printed, each only if its order is still plain
+// (to-ship.ts) and its lines are still the version that was printed: a sync
+// changing them bumps the version (drizzle/0183), and that newer work stays
+// unprinted so Print all picks it up. An order no longer plain never counts
+// as printed, so it isn't marked. Returns how many weren't recorded.
 export async function recordPrinted(
 	db: Db,
 	printed: PrintedInvoice[],
@@ -21,9 +21,12 @@ export async function recordPrinted(
 		.update(orders)
 		.set({ invoicePrintedAt: new Date() })
 		.where(
-			or(
-				...printed.map((p) =>
-					and(eq(orders.id, p.orderId), eq(orders.pickingVersion, p.version)),
+			and(
+				plain,
+				or(
+					...printed.map((p) =>
+						and(eq(orders.id, p.orderId), eq(orders.pickingVersion, p.version)),
+					),
 				),
 			),
 		)

@@ -40,6 +40,7 @@ import {
 	financialStatus,
 	labelToVoid,
 	needsShipping,
+	printed,
 	remainingUnknown,
 } from "#/orders/to-ship";
 import { type SameBuyer, sameBuyerOrders } from "#/shipping/same-buyer";
@@ -102,7 +103,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				fulfilledByChannel: orders.fulfilledByChannel,
 				dropShipAt: orders.dropShipAt,
 				remainingUnknown,
-				invoicePrintedAt: orders.invoicePrintedAt,
+				printed,
 			})
 			.from(orders)
 			.innerJoin(stores, eq(stores.id, orders.storeId))

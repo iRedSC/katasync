@@ -13,85 +13,211 @@ import {
 	handOff,
 	lineId,
 	orderId,
+	shipOutside,
 	shopify,
 	storeId,
+	sync,
 } from "#/shipping/several-shipments.fixtures";
 import { type ChannelOrder, ingestOrder } from "./ingest";
 import { recordPrinted } from "./printed";
-import { needsPacking } from "./to-ship";
+import { inPrintAll, plain, printed } from "./to-ship";
 
 freshOrder();
 
+// The order as Print all and To ship read it.
 const order = async () =>
 	(
 		await db
 			.select({
 				printedAt: schema.orders.invoicePrintedAt,
 				version: schema.orders.pickingVersion,
-				needsPacking,
+				plain,
+				printed,
+				inPrintAll,
 			})
 			.from(schema.orders)
 			.where(eq(schema.orders.id, orderId))
 	)[0];
 
-// What Print all would pick up: still to pack and not printed.
-const inPrintAll = async () => {
-	const o = await order();
-	return o.needsPacking && o.printedAt === null;
-};
-
+// Prints the order now and acknowledges it, as the print page does.
 const print = async () => {
 	const { version } = await order();
 	return recordPrinted(db, [{ orderId, version }]);
 };
 
-describe("recording a print", () => {
-	test("marks the order printed at the version its invoice showed", async () => {
+// Never shown as printed, and Print all takes it, however often it prints.
+const alwaysPrintsAgain = async () => {
+	const o = await order();
+	expect(o.printed).toBe(false);
+	expect(o.inPrintAll).toBe(true);
+};
+
+describe("a plain order", () => {
+	test("printed leaves Print all and shows as printed", async () => {
+		expect((await order()).plain).toBe(true);
 		expect(await print()).toEqual({ changed: 0 });
-		expect(await inPrintAll()).toBe(false);
+		expect(await order()).toMatchObject({ printed: true, inPrintAll: false });
 	});
 
-	test("a late acknowledgement from before a partial handoff leaves the order unprinted", async () => {
-		const printedAt = (await order()).version;
-		await buy([{ orderLineId: lineId, quantity: 1 }]);
-		const [{ id }] = await db.select().from(schema.dispatches);
-		await handOff(id);
-		const late = await recordPrinted(db, [{ orderId, version: printedAt }]);
-		expect(late).toEqual({ changed: 1 });
-		expect(await inPrintAll()).toBe(true);
+	test("a line change between the slip and a late acknowledgement leaves it unprinted", async () => {
+		const shown = (await order()).version;
+		await ingest({ quantity: 4 });
+		expect(await recordPrinted(db, [{ orderId, version: shown }])).toEqual({
+			changed: 1,
+		});
+		await alwaysPrintsAgain();
 		// The invoice printed now, at the current version, is recorded.
 		expect(await print()).toEqual({ changed: 0 });
-		expect(await inPrintAll()).toBe(false);
+		expect((await order()).inPrintAll).toBe(false);
 	});
 
-	test("a box bought bumps the version, so the slip that now shows it prints again", async () => {
+	test("a line change after printing puts it back in Print all", async () => {
+		await print();
+		await ingest({ quantity: 4 });
+		await alwaysPrintsAgain();
+	});
+
+	test("an identical re-sync keeps the print", async () => {
+		await ingest();
+		await print();
 		const before = (await order()).version;
-		await buy([{ orderLineId: lineId, quantity: 1 }]);
-		expect((await order()).version).toBeGreaterThan(before);
+		await ingest();
+		expect(await order()).toMatchObject({
+			printed: true,
+			inPrintAll: false,
+			version: before,
+		});
 	});
 });
 
-describe("voiding an unsent box", () => {
-	test("puts a printed order back in Print all", async () => {
+describe("an order that isn't plain", () => {
+	test("with shipped units, no dispatch: never printed", async () => {
+		await sync(1);
+		expect((await order()).plain).toBe(false);
+		expect(await print()).toEqual({ changed: 1 });
+		await alwaysPrintsAgain();
+	});
+
+	test("printed while plain, then a box bought: back in Print all", async () => {
+		await print();
+		expect((await order()).inPrintAll).toBe(false);
 		await buy([{ orderLineId: lineId, quantity: 1 }]);
-		const [{ id }] = await db.select().from(schema.dispatches);
+		// The waiting box isn't to pack, but the rest is: still on To ship.
+		await alwaysPrintsAgain();
+		expect(await print()).toEqual({ changed: 1 });
+		await alwaysPrintsAgain();
+	});
+
+	test("partly handed off: a late acknowledgement leaves it in Print all", async () => {
+		const shown = (await order()).version;
+		const { dispatchId } = await buy([{ orderLineId: lineId, quantity: 1 }]);
+		await handOff(dispatchId);
+		expect(await recordPrinted(db, [{ orderId, version: shown }])).toEqual({
+			changed: 1,
+		});
+		await alwaysPrintsAgain();
+		// Even acknowledged at the current version.
+		expect(await print()).toEqual({ changed: 1 });
+		await alwaysPrintsAgain();
+	});
+});
+
+// The five ways a print went stale that triggers kept missing. Each order
+// has a dispatch or shipped units, so its print never counts.
+describe("what earlier reviews found", () => {
+	test("a refunded label changing whether its box is live", async () => {
+		const { dispatchId } = await buy([{ orderLineId: lineId, quantity: 1 }]);
+		await print();
+		await voidDispatch(db, dispatchId, shopify());
+		await alwaysPrintsAgain();
+		expect(await print()).toEqual({ changed: 1 });
+		await alwaysPrintsAgain();
+	});
+
+	test("a refused purchase found after no answer", async () => {
+		vi.mocked(buying.buyLabel).mockImplementationOnce(async () => {
+			throw new Error("fetch failed: socket hang up");
+		});
+		const bought = await buy([{ orderLineId: lineId, quantity: 1 }]);
+		await print();
+		await alwaysPrintsAgain();
+		await checkLabelAttempt(db, bought.unsure as string, {
+			lock: memoryLocker(),
+			findShippo: vi.fn(async () => ({
+				kind: "refused" as const,
+				why: "Shippo: invalid address",
+			})),
+			findTiktok: vi.fn(),
+		});
+		await alwaysPrintsAgain();
+	});
+
+	test("a refused purchase, printed while buying", async () => {
+		vi.mocked(buying.buyLabel).mockImplementationOnce(async () => {
+			await print();
+			throw new LabelRefused("bad address");
+		});
+		await expect(buy([{ orderLineId: lineId, quantity: 1 }])).rejects.toThrow(
+			"bad address",
+		);
+		await alwaysPrintsAgain();
+	});
+
+	test("a new box after an old print", async () => {
+		const first = await buy([{ orderLineId: lineId, quantity: 1 }]);
+		await handOff(first.dispatchId);
+		await print();
+		await buy([{ orderLineId: lineId, quantity: 1 }]);
+		await alwaysPrintsAgain();
+	});
+
+	test("the marketplace's open count changing between slip and acknowledgement", async () => {
+		const { dispatchId } = await buy([{ orderLineId: lineId, quantity: 1 }]);
+		await handOff(dispatchId);
+		const shown = (await order()).version;
+		shipOutside(1);
+		expect(await recordPrinted(db, [{ orderId, version: shown }])).toEqual({
+			changed: 1,
+		});
+		await alwaysPrintsAgain();
+	});
+
+	test("a ? slip is never marked printed", async () => {
+		await db
+			.update(schema.orderLines)
+			.set({ shippedQuantity: null })
+			.where(eq(schema.orderLines.id, lineId));
+		expect(await print()).toEqual({ changed: 1 });
+		expect((await order()).printedAt).toBeNull();
+		await alwaysPrintsAgain();
+	});
+
+	test("routing or eligibility changing after the print", async () => {
+		const { dispatchId } = await buy([{ orderLineId: lineId, quantity: 1 }]);
+		await voidDispatch(db, dispatchId, shopify());
+		await print();
+		const [moved] = await db
+			.insert(schema.stores)
+			.values({ channel: "shopify", name: "Shopify 2" })
+			.returning();
+		await db
+			.update(schema.orders)
+			.set({ storeId: moved.id, fulfillmentStatus: "PARTIALLY_FULFILLED" })
+			.where(eq(schema.orders.id, orderId));
+		await alwaysPrintsAgain();
+	});
+
+	test("a send that failed, then a void of the unsent box", async () => {
+		const { dispatchId } = await buy([{ orderLineId: lineId, quantity: 1 }]);
 		const failing = shopify();
 		failing.shopifyFulfill = vi.fn(async () => {
 			throw new Error("Shopify answered 503");
 		});
 		vi.spyOn(console, "error").mockImplementation(() => {});
-		await sendTracking(db, id, failing).catch(() => {});
-		const [member] = await db
-			.select({ sentAt: schema.dispatchOrders.channelSentAt })
-			.from(schema.dispatchOrders);
-		expect(member.sentAt).toBeNull();
+		await sendTracking(db, dispatchId, failing).catch(() => {});
 		await print();
-		expect(await inPrintAll()).toBe(false);
-		const printedAt = (await order()).version;
-
-		await voidDispatch(db, id, shopify());
-		expect(await inPrintAll()).toBe(true);
-		expect((await order()).version).toBeGreaterThan(printedAt);
+		await voidDispatch(db, dispatchId, shopify());
+		await alwaysPrintsAgain();
 	});
 });
 
@@ -143,75 +269,3 @@ async function ingest(line: Partial<ChannelOrder["lines"][number]> = {}) {
 		storeKeeps: 0,
 	});
 }
-
-describe("a sync", () => {
-	test("that changes the lines between the slip and its acknowledgement leaves the order unprinted", async () => {
-		const shown = (await order()).version;
-		await ingest({ quantity: 4 });
-		expect(await recordPrinted(db, [{ orderId, version: shown }])).toEqual({
-			changed: 1,
-		});
-		expect(await inPrintAll()).toBe(true);
-	});
-
-	test("that changes what's to pick puts a printed order back in Print all", async () => {
-		await print();
-		await ingest({ shipped: 1 });
-		expect(await inPrintAll()).toBe(true);
-	});
-
-	test("that says nothing new keeps the print", async () => {
-		await ingest();
-		await print();
-		const printed = (await order()).version;
-		await ingest();
-		expect(await inPrintAll()).toBe(false);
-		expect((await order()).version).toBe(printed);
-	});
-});
-
-describe("a refused purchase", () => {
-	// A print made while the box was waiting to be bought: its slip showed
-	// the box, not the whole order.
-	const printWhileBuying = async () => {
-		await print();
-		return (await order()).version;
-	};
-
-	test("refused outright puts the whole order back in Print all", async () => {
-		let shown = -1;
-		vi.mocked(buying.buyLabel).mockImplementationOnce(async () => {
-			shown = await printWhileBuying();
-			throw new LabelRefused("bad address");
-		});
-		await expect(buy([{ orderLineId: lineId, quantity: 1 }])).rejects.toThrow(
-			"bad address",
-		);
-		expect(await inPrintAll()).toBe(true);
-		expect(await recordPrinted(db, [{ orderId, version: shown }])).toEqual({
-			changed: 1,
-		});
-	});
-
-	test("found refused after no answer puts the whole order back in Print all", async () => {
-		vi.mocked(buying.buyLabel).mockImplementationOnce(async () => {
-			throw new Error("fetch failed: socket hang up");
-		});
-		const bought = await buy([{ orderLineId: lineId, quantity: 1 }]);
-		const shown = await printWhileBuying();
-		expect(await inPrintAll()).toBe(false);
-
-		await checkLabelAttempt(db, bought.unsure as string, {
-			lock: memoryLocker(),
-			findShippo: vi.fn(async () => ({
-				kind: "refused" as const,
-				why: "Shippo: invalid address",
-			})),
-			findTiktok: vi.fn(),
-		});
-		expect(await inPrintAll()).toBe(true);
-		expect(await recordPrinted(db, [{ orderId, version: shown }])).toEqual({
-			changed: 1,
-		});
-	});
-});

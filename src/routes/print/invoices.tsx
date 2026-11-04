@@ -51,7 +51,7 @@ type Printed = { orderId: number; version: number }[];
 
 // Whether the printed invoices were recorded as printed. A failed record keeps
 // what it sent, so retrying it never prints anything again. Saved says how
-// many weren't recorded because their picking work changed since printing;
+// many weren't recorded because their lines changed since printing;
 // Print all prints those again.
 type Marking =
 	| { state: "idle" }
@@ -110,12 +110,14 @@ function Invoices() {
 
 	// The browser doesn't say whether the dialog printed or was cancelled,
 	// so closing it counts as printed. A cancelled order can be ticked and
-	// printed again from the list.
-	const printedKey = invoices.map((o) => `${o.id}@${o.pickingVersion}`).join();
+	// printed again from the list. Only plain orders are recorded; the rest
+	// stay in Print all (to-ship.ts's plain).
+	const recorded = invoices.filter((o) => o.plain);
+	const printedKey = recorded.map((o) => `${o.id}@${o.pickingVersion}`).join();
 	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the ids and versions, not each load's copy of the list
 	useEffect(() => {
-		if (invoices.length === 0) return;
-		const printed = invoices.map((o) => ({
+		if (recorded.length === 0) return;
+		const printed = recorded.map((o) => ({
 			orderId: o.id,
 			version: o.pickingVersion,
 		}));
