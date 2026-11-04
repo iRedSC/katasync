@@ -18,6 +18,7 @@ import {
 	toggleAll,
 } from "#/components/orders-list/selection";
 import { Card, EmptyState, Page } from "#/components/page";
+import { SendPackage } from "#/components/send-package";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
@@ -215,6 +216,7 @@ function Orders() {
 			actions={
 				<>
 					<LiveSync repeat />
+					<SendPackage />
 					{plan && (
 						<PrintButton plan={plan} onOpen={() => setPrintOpened(true)} />
 					)}

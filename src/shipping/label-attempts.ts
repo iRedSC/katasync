@@ -120,7 +120,7 @@ export async function recordBought(
 	});
 }
 
-// Marks a packed dispatch bought once every box it planned has its label.
+// Marks a packed or addressed dispatch bought once every box it planned has its label.
 // Returns whether this call did it; safe to call any number of times.
 export async function completeIfAllBought(db: Db, dispatchId: number) {
 	const bought = db
@@ -139,7 +139,7 @@ export async function completeIfAllBought(db: Db, dispatchId: number) {
 			and(
 				eq(dispatches.id, dispatchId),
 				isNull(dispatches.boughtAt),
-				eq(dispatches.contents, "packed"),
+				inArray(dispatches.contents, ["packed", "addressed"]),
 				sql`${dispatches.boxCount} = (${bought})`,
 			),
 		)
