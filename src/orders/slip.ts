@@ -1,14 +1,4 @@
-import {
-	and,
-	eq,
-	exists,
-	gt,
-	inArray,
-	isNotNull,
-	isNull,
-	or,
-	sql,
-} from "drizzle-orm";
+import { and, eq, exists, gt, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import {
 	dispatchLines,
@@ -57,7 +47,8 @@ export type Slip = {
 // the order's lines say since, so a reprint matches what's in the box; a
 // line it sells that isn't in that box is marked so, and a boxed line it no
 // longer sells stays, unpriced. An order still to pack with no box waiting
-// that has had any katasync dispatch (handed off, reversed, or voided unsent)
+// that has had any katasync dispatch (handed off, reversed, voided unsent,
+// or a purchase refused)
 // packs what the marketplace says is open now, read live as a purchase does:
 // the synced count can predate that handoff or its void. Unknown when it
 // can't be read, never the synced count. Otherwise its lines at what's left to pack
@@ -156,10 +147,11 @@ export async function slipsOf(
 	);
 }
 
-// Of these orders, the ones katasync has handed some of off or taken a
-// dispatch back from (handed off, reversed, or voided before it was sent),
+// Of these orders, the ones katasync has ever started a dispatch for
+// (handed off, reversed, voided, or a purchase refused before any label),
 // with what reading them live needs. Any of these can leave the synced count
-// stale: a sync after a handoff that's later voided still says shipped.
+// stale: a sync after a handoff that's later voided still says shipped. A
+// box still waiting prints from its frozen lines instead (slipsOf).
 function hadDispatch(db: Db, ids: number[]) {
 	if (ids.length === 0) return Promise.resolve([]);
 	return db
@@ -181,15 +173,7 @@ function hadDispatch(db: Db, ids: number[]) {
 					db
 						.select({ one: sql`1` })
 						.from(dispatchOrders)
-						.where(
-							and(
-								eq(dispatchOrders.orderId, ordersTable.id),
-								or(
-									isNotNull(dispatchOrders.channelSentAt),
-									isNotNull(dispatchOrders.reversedAt),
-								),
-							),
-						),
+						.where(eq(dispatchOrders.orderId, ordersTable.id)),
 				),
 			),
 		);

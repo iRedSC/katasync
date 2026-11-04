@@ -2,8 +2,10 @@ import { eq } from "drizzle-orm";
 import { describe, expect, test, vi } from "vitest";
 import * as schema from "#/db/schema";
 import { voidDispatch } from "#/shipping/handoff";
+import { LabelRefused } from "#/shipping/label-attempt-state";
 import {
 	buy,
+	buying,
 	db,
 	freshOrder,
 	handOff,
@@ -151,6 +153,21 @@ describe("slipsOf", () => {
 		shipOutside(1);
 		expect((await slip())?.items.map((l) => l.toPack)).toEqual([2]);
 		expect(marketplace.reads).toBeGreaterThan(0);
+	});
+
+	test("an order whose first purchase was refused is read live", async () => {
+		vi.mocked(buying.buyLabel).mockImplementationOnce(async () => {
+			throw new LabelRefused("bad address");
+		});
+		await expect(buy([{ orderLineId: lineId, quantity: 1 }])).rejects.toThrow(
+			"bad address",
+		);
+		// Shipped from Shopify's admin since; the sync hasn't caught up.
+		shipOutside(1);
+		expect((await slip())?.items.map((l) => l.toPack)).toEqual([2]);
+		marketplace.failing = true;
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		expect((await slip())?.items.map((l) => l.toPack)).toEqual(["unknown"]);
 	});
 
 	test("an order katasync hasn't handed any of off isn't read live", async () => {
