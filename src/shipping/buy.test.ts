@@ -7,6 +7,7 @@ import { syncedOpen } from "#/test/open-reads";
 import { type BoxPlan, type BuyOutside, buyDispatch } from "./buy";
 import { memoryLocker } from "./dispatch";
 import { LabelRefused } from "./label-attempt-state";
+import { WHOLE_LINE } from "./packed";
 import { shipmentPlan } from "./quick-ship";
 
 let db: Db;
@@ -264,6 +265,74 @@ describe("buyDispatch", () => {
 			.mock.calls.map(([input]) => input.signature);
 		expect(asked).toEqual([false, true, true]);
 		expect((await boxesOf(bigBuy.dispatchId))[0].signature).toBe(true);
+	});
+
+	test("sends an eBay line whole or leaves it for later, never part of it", async () => {
+		const [ebay] = await db
+			.insert(schema.stores)
+			.values({ channel: "ebay", name: "eBay" })
+			.returning();
+		const a = await addOrder("#1", { storeId: ebay.id });
+		const lines = await db
+			.insert(schema.orderLines)
+			.values({
+				orderId: a,
+				externalId: "#1-knife",
+				sku: "KNIFE",
+				title: "Knife",
+				quantity: 3,
+				shippedQuantity: 0,
+				unitPrice: 10,
+			})
+			.returning();
+		const knife = lines[0].id;
+		const withLowered = async (
+			lowered: { orderLineId: number; quantity: number }[],
+			outside: BuyOutside,
+		) =>
+			buyDispatch(
+				db,
+				{
+					orderIds: [a],
+					contentsKey: (await shipmentPlan(db, [a], lowered, syncedOpen(db)))
+						.contentsKey,
+					boxes: [box()],
+					choice: ground,
+					signature: false,
+					setsDefault: true,
+					lowered,
+				},
+				outside,
+			);
+		const refused = fakes();
+		await expect(
+			buyDispatch(
+				db,
+				{
+					orderIds: [a],
+					contentsKey: await keyOf([a]),
+					boxes: [box()],
+					choice: ground,
+					signature: false,
+					setsDefault: true,
+					lowered: [{ orderLineId: knife, quantity: 2 }],
+				},
+				refused,
+			),
+		).rejects.toThrow(WHOLE_LINE);
+		expect(refused.buyLabel).not.toHaveBeenCalled();
+
+		const outside = fakes();
+		const bought = await withLowered(
+			[{ orderLineId: knife, quantity: 0 }],
+			outside,
+		);
+		expect(bought.failed).toBeNull();
+		const packed = await db
+			.select()
+			.from(schema.dispatchLines)
+			.where(eq(schema.dispatchLines.dispatchId, bought.dispatchId));
+		expect(packed.map((l) => [l.sku, l.quantity])).toEqual([["WRENCH", 1]]);
 	});
 
 	test("won't combine orders to different addresses", async () => {

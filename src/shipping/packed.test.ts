@@ -5,7 +5,9 @@ import {
 	ContentsChanged,
 	choose,
 	driftOf,
+	EMPTY_ORDER,
 	shortOf,
+	WHOLE_LINE,
 } from "./packed";
 
 const titles = new Map([
@@ -84,42 +86,84 @@ describe("choosing how many of each line go now", () => {
 		{ orderId: 1, orderLineId: 11, quantity: 1 },
 		{ orderId: 2, orderLineId: 20, quantity: 2 },
 	];
+	const never = () => false;
 
 	test("every packable unit goes unless lowered", () => {
-		expect(choose(lines, [])).toEqual({ lines, partial: [] });
+		expect(choose(lines, [], never)).toEqual({ lines, partial: [] });
 	});
 
 	test("a lowered line goes at its count, and 0 leaves it out", () => {
 		expect(
-			choose(lines, [
-				{ orderLineId: 10, quantity: 1 },
-				{ orderLineId: 11, quantity: 0 },
-			]),
+			choose(
+				lines,
+				[
+					{ orderLineId: 10, quantity: 1 },
+					{ orderLineId: 11, quantity: 0 },
+				],
+				never,
+			),
 		).toEqual({
 			lines: [{ ...lines[0], quantity: 1 }, lines[2]],
 			partial: [1],
 		});
 		// Lowered to all of it is no lowering.
-		expect(choose(lines, [{ orderLineId: 20, quantity: 2 }]).partial).toEqual(
-			[],
-		);
+		expect(
+			choose(lines, [{ orderLineId: 20, quantity: 2 }], never).partial,
+		).toEqual([]);
 	});
 
 	test("refuses counts that aren't packable", () => {
-		expect(() => choose(lines, [{ orderLineId: 10, quantity: 4 }])).toThrow(
-			"Only 3",
-		);
-		expect(() => choose(lines, [{ orderLineId: 10, quantity: -1 }])).toThrow();
-		expect(() => choose(lines, [{ orderLineId: 10, quantity: 1.5 }])).toThrow();
-		expect(() => choose(lines, [{ orderLineId: 99, quantity: 1 }])).toThrow(
-			"nothing left",
-		);
 		expect(() =>
-			choose(lines, [
-				{ orderLineId: 10, quantity: 1 },
-				{ orderLineId: 10, quantity: 2 },
-			]),
+			choose(lines, [{ orderLineId: 10, quantity: 4 }], never),
+		).toThrow("Only 3");
+		expect(() =>
+			choose(lines, [{ orderLineId: 10, quantity: -1 }], never),
+		).toThrow();
+		expect(() =>
+			choose(lines, [{ orderLineId: 10, quantity: 1.5 }], never),
+		).toThrow();
+		expect(() =>
+			choose(lines, [{ orderLineId: 99, quantity: 1 }], never),
+		).toThrow("nothing left");
+		expect(() =>
+			choose(
+				lines,
+				[
+					{ orderLineId: 10, quantity: 1 },
+					{ orderLineId: 10, quantity: 2 },
+				],
+				never,
+			),
 		).toThrow("twice");
+	});
+
+	test("an eBay line goes whole or not at all", () => {
+		const ebay = (id: number) => id === 1;
+		expect(() =>
+			choose(lines, [{ orderLineId: 10, quantity: 2 }], ebay),
+		).toThrow(WHOLE_LINE);
+		// All of it, or none while the order keeps another line, is fine.
+		expect(
+			choose(lines, [{ orderLineId: 10, quantity: 0 }], ebay).lines,
+		).toEqual([lines[1], lines[2]]);
+		expect(
+			choose(lines, [{ orderLineId: 10, quantity: 3 }], ebay).partial,
+		).toEqual([]);
+		// The order's other lines still can't all be left out.
+		expect(() =>
+			choose(
+				lines,
+				[
+					{ orderLineId: 10, quantity: 0 },
+					{ orderLineId: 11, quantity: 0 },
+				],
+				ebay,
+			),
+		).toThrow(EMPTY_ORDER);
+		// Another order's lines still step.
+		expect(
+			choose(lines, [{ orderLineId: 20, quantity: 1 }], ebay).partial,
+		).toEqual([2]);
 	});
 });
 

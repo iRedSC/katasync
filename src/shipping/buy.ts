@@ -28,6 +28,7 @@ import {
 	Held,
 	type LineToPack,
 	type Lowered,
+	linesShipWhole,
 	packableLines,
 	packedOf,
 	unmappable,
@@ -341,7 +342,9 @@ async function packedNow(
 	outside: BuyOutside,
 ) {
 	const packable = await packableLines(db, list, outside.open);
-	const { lines, partial } = choose(packable.lines, input.lowered ?? []);
+	const { lines, partial } = choose(packable.lines, input.lowered ?? [], (id) =>
+		list.some((o) => o.id === id && linesShipWhole(o)),
+	);
 	// TikTok's label is for every unit it still waits on (unitsToBuy).
 	if (tiktok && partial.length > 0) {
 		throw new Error(

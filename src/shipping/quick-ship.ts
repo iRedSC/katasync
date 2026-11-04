@@ -32,7 +32,7 @@ import {
 	openSource,
 	withPackable,
 } from "./live-open";
-import { choose, type Lowered } from "./packed";
+import { choose, type Lowered, linesShipWhole } from "./packed";
 import type { Rate } from "./shippo";
 
 // Orders worth more than this get the insurance step even if no item asks
@@ -160,20 +160,24 @@ export async function shipmentPlan(
 	const planned = await plannedLines(db, members, reads);
 	const shippo = members.every((o) => labelSource(o) === "shippo");
 	// TikTok's label is for the whole order, so its counts aren't chosen.
-	const { lines } = choose(planned.choices, shippo ? lowered : []);
+	const whole = (id: number) =>
+		members.some((o) => o.id === id && linesShipWhole(o));
+	const { lines } = choose(planned.choices, shippo ? lowered : [], whole);
 	const chosen = new Map(lines.map((l) => [l.orderLineId, l.quantity]));
 	const choices = planned.choices.map((l) => ({
 		...l,
 		packable: l.quantity,
 		quantity: chosen.get(l.orderLineId) ?? 0,
+		// All of it or none (eBay): its control toggles instead of stepping.
+		whole: whole(l.orderId),
 	}));
 
 	const key = contentsKey(lines);
 	// What's in the box is worth the orders' totals when it's all of them;
 	// part of an order, what those units sold for.
-	const whole =
+	const everything =
 		planned.whole && choices.every((c) => c.quantity === c.packable);
-	const total = whole
+	const total = everything
 		? members.reduce((sum, o) => sum + o.total, 0)
 		: Math.round(
 				lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0) * 100,
@@ -193,9 +197,11 @@ export async function shipmentPlan(
 				? [{ orderLineId: c.orderLineId, quantity: c.quantity }]
 				: [],
 		),
-		// Whether there's anything to choose: more than one unit, on a label
-		// that can carry part of an order.
-		choosable: shippo && choices.reduce((n, c) => n + c.packable, 0) > 1,
+		// Whether there's anything to choose: more than one unit (a line
+		// that ships whole counts once), on a label that can carry part of an
+		// order.
+		choosable:
+			shippo && choices.reduce((n, c) => n + (c.whole ? 1 : c.packable), 0) > 1,
 		contentsKey: key,
 		total,
 		// Shippo labels take insurance and a signature; TikTok's come with

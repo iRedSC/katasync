@@ -36,14 +36,28 @@ export type LineToPack = PackedLine & { keySku: string | null };
 // out, for a later shipment.
 export type Lowered = { orderLineId: number; quantity: number }[];
 
+// Whether an order's lines each ship whole: all of a line's packable units
+// in this box or none of them. eBay takes one tracking number per line
+// item, so a line's units can't be split across packages.
+export const linesShipWhole = (order: { channel: string }) =>
+	order.channel === "ebay";
+
+export const WHOLE_LINE =
+	"eBay ships each item in one box: send all of it or none";
+
 // The lines with their chosen counts, without the ones set to 0, and the
 // orders sending less than all that's packable (TikTok refuses those).
 // Throws for a count that isn't a whole number from 0 to what's packable,
-// a line that has nothing packable here, or an order left with nothing in
-// the box (it's taken out by un-combining it instead).
+// part of a line on an order whose lines ship whole (wholeOrder), a line
+// that has nothing packable here, or an order left with nothing in the box
+// (it's taken out by un-combining it instead).
 export function choose<
 	L extends { orderId: number; orderLineId?: number | null; quantity: number },
->(packable: L[], lowered: Lowered): { lines: L[]; partial: number[] } {
+>(
+	packable: L[],
+	lowered: Lowered,
+	wholeOrder: (orderId: number) => boolean,
+): { lines: L[]; partial: number[] } {
 	const counts = new Map<number, number>();
 	for (const l of lowered) {
 		if (counts.has(l.orderLineId)) throw new Error("A line was chosen twice");
@@ -55,6 +69,12 @@ export function choose<
 			l.quantity > line.quantity
 		)
 			throw new Error(`Only ${line.quantity} of a line can be packed`);
+		if (
+			l.quantity > 0 &&
+			l.quantity < line.quantity &&
+			wholeOrder(line.orderId)
+		)
+			throw new Error(WHOLE_LINE);
 		counts.set(l.orderLineId, l.quantity);
 	}
 	const partial = new Set<number>();

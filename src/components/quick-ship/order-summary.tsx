@@ -6,6 +6,7 @@ import { cn } from "#/lib/utils";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import { Key } from "./key";
 import type { Found } from "./types";
+import { countSteps } from "./unit-count";
 
 export function OrderSummary({
 	found,
@@ -23,10 +24,6 @@ export function OrderSummary({
 	const o = found.order;
 	// Counts are chosen with the box's contents, while choosing the first box.
 	const chooses = canCombine && plan.choosable;
-	// Units going, by order.
-	const going = new Map<number, number>();
-	for (const c of plan.choices)
-		going.set(c.orderId, (going.get(c.orderId) ?? 0) + c.quantity);
 	const combined = plan.orderIds.length > 1;
 	// TikTok hides the address, so its orders match on the buyer.
 	const toSame =
@@ -75,9 +72,7 @@ export function OrderSummary({
 						{chooses ? (
 							<UnitCount
 								line={l}
-								// An order's last unit can't be taken out: untick the
-								// order to leave it out of the box.
-								canLower={(going.get(l.orderId) ?? 0) > 1}
+								steps={countSteps(l, plan.choices)}
 								onCount={(n) => onCount(l.orderLineId, n)}
 							/>
 						) : (
@@ -144,14 +139,15 @@ export function OrderSummary({
 }
 
 // How many of a line go in this box, from 0 to all that's packable. When
-// fewer, the rest shows beside it: it stays on To ship.
+// fewer, the rest shows beside it: it stays on To ship. A line that ships
+// whole (eBay) goes from all to 0 and back.
 function UnitCount({
 	line,
-	canLower,
+	steps,
 	onCount,
 }: {
 	line: ShipmentPlan["choices"][number];
-	canLower: boolean;
+	steps: ReturnType<typeof countSteps>;
 	onCount: (quantity: number) => void;
 }) {
 	const step =
@@ -168,9 +164,9 @@ function UnitCount({
 				type="button"
 				{...keepFocus}
 				className={step}
-				aria-label={`Send one fewer ${line.title}`}
-				disabled={line.quantity === 0 || !canLower}
-				onClick={() => onCount(line.quantity - 1)}
+				aria-label={`Send ${line.whole ? "none of" : "one fewer"} ${line.title}`}
+				disabled={steps.lower === null}
+				onClick={() => steps.lower !== null && onCount(steps.lower)}
 			>
 				−
 			</button>
@@ -181,9 +177,9 @@ function UnitCount({
 				type="button"
 				{...keepFocus}
 				className={step}
-				aria-label={`Send one more ${line.title}`}
-				disabled={line.quantity === line.packable}
-				onClick={() => onCount(line.quantity + 1)}
+				aria-label={`Send ${line.whole ? "all of" : "one more"} ${line.title}`}
+				disabled={steps.raise === null}
+				onClick={() => steps.raise !== null && onCount(steps.raise)}
 			>
 				+
 			</button>
