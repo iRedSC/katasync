@@ -61,11 +61,13 @@ CREATE TRIGGER order_lines_changed_bumps_picking
 -- Only the printed columns: the bump's own update of picking_version and
 -- invoice_printed_at never fires it again.
 CREATE TRIGGER orders_printed_changed_bumps_picking
-  AFTER UPDATE OF name, pin, customer_name, ship_address1, ship_address2, ship_city, ship_region, ship_postal_code, ship_country, total, shipping_charged, financial_status ON orders
+  AFTER UPDATE OF name, pin, sales_channel, placed_at, customer_name, ship_address1, ship_address2, ship_city, ship_region, ship_postal_code, ship_country, total, shipping_charged, financial_status ON orders
   FOR EACH ROW
   WHEN (
     OLD.name IS DISTINCT FROM NEW.name
     OR OLD.pin IS DISTINCT FROM NEW.pin
+    OR OLD.sales_channel IS DISTINCT FROM NEW.sales_channel
+    OR OLD.placed_at IS DISTINCT FROM NEW.placed_at
     OR OLD.customer_name IS DISTINCT FROM NEW.customer_name
     OR OLD.ship_address1 IS DISTINCT FROM NEW.ship_address1
     OR OLD.ship_address2 IS DISTINCT FROM NEW.ship_address2

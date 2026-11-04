@@ -97,6 +97,8 @@ describe("a plain order's printed details", () => {
 		["a price", { unitPrice: 12 }, {}],
 		["an address", {}, { shipAddress2: "Apt 4" }],
 		["a buyer", {}, { customerName: "Pat Smith" }],
+		["a sales channel", {}, { salesChannel: "Draft Orders" }],
+		["an order date", {}, { placedAt: new Date("2026-10-02T12:00:00Z") }],
 	] as const)("%s change after printing puts it back in Print all", async (_, line, changed) => {
 		await ingest();
 		const shown = (await order()).version;
@@ -254,7 +256,8 @@ async function ingest(
 		name: "1",
 		salesChannel: "Online Store",
 		marketplaceOrderId: null,
-		placedAt: new Date(),
+		// Fixed, so an identical re-sync is identical: the date prints.
+		placedAt: new Date("2026-10-01T12:00:00Z"),
 		cancelledAt: null,
 		fulfillmentStatus: "UNFULFILLED",
 		fulfilledByChannel: false,
