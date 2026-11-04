@@ -103,13 +103,19 @@ describe("Shopify", () => {
 		succeeded: new Map([["L1", 2]]),
 	};
 
-	test("the status says it, except partly shipped, which counts successful fulfillments", () => {
+	test("only unfulfilled and finished say it; every other status counts successful fulfillments", () => {
 		const of = (status: string, read: typeof units | null = units) =>
 			shopifyShipped({ displayFulfillmentStatus: status }, "L1", 5, read);
 		expect(of("UNFULFILLED")).toBe(0);
 		expect(of("FULFILLED")).toBe(5);
+		expect(of("FULFILLMENT_NOT_REQUIRED")).toBe(5);
 		expect(of("PARTIALLY_FULFILLED")).toBe(2);
 		expect(of("PARTIALLY_FULFILLED", null)).toBeNull();
+		// Shopify's hold or schedule is on what's left: some may have shipped.
+		for (const held of ["ON_HOLD", "SCHEDULED", "IN_PROGRESS"]) {
+			expect(of(held)).toBe(2);
+			expect(of(held, null)).toBeNull();
+		}
 		expect(
 			shopifyShipped(
 				{ displayFulfillmentStatus: "PARTIALLY_FULFILLED" },

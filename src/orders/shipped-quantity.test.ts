@@ -24,6 +24,8 @@ describe("what's left to ship", () => {
 		expect(unitsToShip(line(2, null), "UNFULFILLED")).toBe(2);
 		expect(unitsToShip(line(2, null), "AWAITING_PAYMENT")).toBe(2);
 		expect(unitsToShip(line(2, null), "PARTIALLY_FULFILLED")).toBeNull();
+		// Shopify's hold is on what's left; the rest may have shipped.
+		expect(unitsToShip(line(2, null), "ON_HOLD")).toBeNull();
 		expect(
 			remainingOf([line(2, 1), line(1, null)], "PARTIALLY_FULFILLED").kind,
 		).toBe("unknown");
@@ -125,6 +127,81 @@ describe("ingestOrder", () => {
 		expect((await lineOf()).shippedQuantity).toBeNull();
 	});
 
+	describe("after katasync's handoff", () => {
+		const read = new Date("2026-10-05T12:00:00Z");
+		const sentAt = new Date("2026-10-05T13:00:00Z");
+		const savedOrder = async () => (await db.select().from(schema.orders))[0];
+		// A sync read 2 shipped at `read`; then a handoff shipped the last one.
+		const handOff = async (orderId: number, how: "dispatch" | "dropShip") => {
+			if (how === "dispatch") {
+				const [dispatch] = await db
+					.insert(schema.dispatches)
+					.values({ contentsKey: "WRENCH" })
+					.returning();
+				await db
+					.insert(schema.dispatchOrders)
+					.values({ dispatchId: dispatch.id, orderId, channelSentAt: sentAt });
+			} else {
+				await db
+					.update(schema.orders)
+					.set({ dropShipAt: read, dropShipSentAt: sentAt })
+					.where(eq(schema.orders.id, orderId));
+			}
+			await db
+				.update(schema.orders)
+				.set({ fulfillmentStatus: "FULFILLED" })
+				.where(eq(schema.orders.id, orderId));
+			await db
+				.update(schema.orderLines)
+				.set({ shippedQuantity: 3 })
+				.where(eq(schema.orderLines.orderId, orderId));
+		};
+
+		test.each([
+			"dispatch",
+			"dropShip",
+		] as const)("a snapshot read before it (%s) keeps what shipped, and updates the rest", async (how) => {
+			const { orderId } = await ingestOrder(db, store, order(2), from);
+			await handOff(orderId, how);
+			await ingestOrder(
+				db,
+				store,
+				order(2, { customerName: "Ana", sourceUpdatedAt: read }),
+				from,
+			);
+			expect((await lineOf()).shippedQuantity).toBe(3);
+			expect(await savedOrder()).toMatchObject({
+				fulfillmentStatus: "FULFILLED",
+				customerName: "Ana",
+			});
+		});
+
+		test("a snapshot read after it applies, even lowering what shipped", async () => {
+			const { orderId } = await ingestOrder(db, store, order(2), from);
+			await handOff(orderId, "dispatch");
+			await ingestOrder(
+				db,
+				store,
+				order(1, {
+					sourceUpdatedAt: new Date("2026-10-05T14:00:00Z"),
+				}),
+				from,
+			);
+			expect((await lineOf()).shippedQuantity).toBe(1);
+			expect((await savedOrder()).fulfillmentStatus).toBe(
+				"PARTIALLY_FULFILLED",
+			);
+		});
+
+		test("a voided handoff no longer holds back an older snapshot", async () => {
+			const { orderId } = await ingestOrder(db, store, order(2), from);
+			await handOff(orderId, "dispatch");
+			await db.update(schema.dispatchOrders).set({ reversedAt: new Date() });
+			await ingestOrder(db, store, order(2), from);
+			expect((await lineOf()).shippedQuantity).toBe(2);
+		});
+	});
+
 	test("the database refuses a negative count", async () => {
 		const { orderId } = await ingestOrder(db, store, order(0), from);
 		await expect(
@@ -137,7 +214,7 @@ describe("ingestOrder", () => {
 });
 
 // drizzle/0180_order_line_shipped.sql, on orders saved before it.
-test("upgrading counts open and finished orders, leaving partly shipped ones unknown", async () => {
+test("upgrading counts unshipped and finished orders, leaving any that may hide shipped units unknown", async () => {
 	const db = await createTestDb({
 		beforeMigration: 180,
 		seed: async (pg) => {
@@ -151,6 +228,7 @@ test("upgrading counts open and finished orders, leaving partly shipped ones unk
 				"FULFILLED",
 				"FULFILLMENT_NOT_REQUIRED",
 				"PARTIALLY_FULFILLED",
+				"SCHEDULED",
 			];
 			for (const status of statuses) {
 				await pg.query(
@@ -176,10 +254,11 @@ test("upgrading counts open and finished orders, leaving partly shipped ones unk
 		.orderBy(schema.orders.id);
 	expect(rows.map((r) => [r.status, r.shipped])).toEqual([
 		["UNFULFILLED", 0],
-		["ON_HOLD", 0],
+		["ON_HOLD", null],
 		["AWAITING_PAYMENT", 0],
 		["FULFILLED", 3],
 		["FULFILLMENT_NOT_REQUIRED", 3],
 		["PARTIALLY_FULFILLED", null],
+		["SCHEDULED", null],
 	]);
 }, 20000);

@@ -8,7 +8,11 @@ import {
 import { hasTiktokStore, ingestRelayed } from "#/channels/tiktok/relay";
 import type { Db } from "#/db/client";
 import { ingestOrder } from "#/orders/ingest";
-import { shopifyToChannelOrder, tiktokOrderId } from "./channel-order";
+import {
+	shopifyStatusSaysShipped,
+	shopifyToChannelOrder,
+	tiktokOrderId,
+} from "./channel-order";
 import { shopifyQuery } from "./client";
 import { remainingUnits, shippedUnits } from "./fulfillment-units";
 import { remainingLines } from "./line-items";
@@ -39,9 +43,9 @@ export async function ingestMatching(
 		for (const o of page.orders.nodes) {
 			if (!newest || o.updatedAt > newest) newest = o.updatedAt;
 			const result = await ingestNode(db, store, o, stock, tiktokDirect);
-			if (!result) continue;
+			if (result.kind === "tiktok") continue;
 			problems.push(...result.problems);
-			count++;
+			if (result.kind === "saved") count++;
 		}
 		// Once the orders are saved. Shopify not saying leaves them without;
 		// Diagnostics says why.
@@ -53,18 +57,25 @@ export async function ingestMatching(
 	return { count, newest, problems };
 }
 
-// One order as Shopify sent it. Null when it's a TikTok order: once
-// katasync syncs TikTok itself, TikTok orders come from there, and the TikTok
-// sync takes over the ones Shopify relayed earlier.
+// What became of one order. tiktok: once katasync syncs TikTok itself,
+// TikTok orders come from there, and the TikTok sync takes over the ones
+// Shopify relayed earlier. unread: left as last saved, with why, so the
+// rest of the pass still runs.
+type Ingested =
+	| { kind: "tiktok" }
+	| { kind: "unread"; problems: [string] }
+	| { kind: "saved"; problems: string[] };
+
+// One order as Shopify sent it.
 async function ingestNode(
 	db: Db,
 	store: Awaited<ReturnType<typeof ensureStore>>,
 	o: typeof orderNode.infer,
 	stock: StockLocations,
 	tiktokDirect: boolean,
-) {
+): Promise<Ingested> {
 	const relayedId = tiktokOrderId(o.tags);
-	if (tiktokDirect && relayedId) return null;
+	if (tiktokDirect && relayedId) return { kind: "tiktok" };
 	// Big orders have more lines than fit in one page; fetch the rest.
 	const order = o.lineItems.pageInfo.hasNextPage
 		? {
@@ -79,28 +90,40 @@ async function ingestNode(
 			}
 		: o;
 	// Units refunded or removed only matter once we know whether they
-	// shipped, and a partly shipped order needs to say which units went, so
-	// only those orders cost the extra calls. Every other status says it
-	// outright (shopifyShipped).
+	// shipped, and an order whose status can't say what shipped needs its
+	// fulfillments read, so only those orders cost the extra calls
+	// (shopifyShipped).
 	const refunded =
 		!order.cancelledAt &&
 		order.lineItems.nodes.some((l) => l.currentQuantity < l.quantity);
 	const shipped =
-		refunded || order.displayFulfillmentStatus === "PARTIALLY_FULFILLED"
+		refunded || !shopifyStatusSaysShipped(order.displayFulfillmentStatus)
 			? await shippedUnits(o.id)
 			: null;
+	// A refund can't be counted without every fulfillment, and a guess would
+	// move stock, so the order waits as it was.
+	if (refunded && !shipped)
+		return {
+			kind: "unread",
+			problems: [
+				`${order.name}: has more Shopify fulfillments than one read holds, so its refunds weren't synced. Check its stock by hand.`,
+			],
+		};
 	const remaining = refunded && shipped ? await remainingUnits(o.id) : null;
 	const channelOrder = shopifyToChannelOrder(order, shipped, remaining);
 	// Checked again under the lock TikTok's takeover holds: TikTok may have
 	// started syncing since tiktokDirect was read.
-	return relayedId
-		? ingestRelayed(
+	const saved = relayedId
+		? await ingestRelayed(
 				db,
 				store,
 				{ ...channelOrder, marketplaceOrderId: relayedId },
 				stock,
 			)
-		: ingestOrder(db, store, channelOrder, stock);
+		: await ingestOrder(db, store, channelOrder, stock);
+	return saved
+		? { kind: "saved", problems: saved.problems }
+		: { kind: "tiktok" };
 }
 
 // One order by id, for a webhook. Read straight from the order rather than
@@ -130,8 +153,8 @@ export async function ingestShopifyOrder(
 		await stockLocations(db),
 		await hasTiktokStore(db),
 	);
-	if (result) await keepShopifyEmails(db, store.id, [order]);
-	return result
-		? orderUpdate(result.problems)
-		: { kind: "ignored", reason: "tiktok_source" };
+	if (result.kind === "tiktok")
+		return { kind: "ignored", reason: "tiktok_source" };
+	if (result.kind === "saved") await keepShopifyEmails(db, store.id, [order]);
+	return orderUpdate(result.problems);
 }

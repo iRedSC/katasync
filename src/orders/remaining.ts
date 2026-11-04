@@ -2,12 +2,14 @@
 // from its own admin. One rule for packing, the order page, To ship, and the
 // packing slip. Pure, so the browser can use it too.
 
-// Statuses that say nothing has gone out yet, so a line the channel hasn't
-// counted still has all of it to ship. Any other status with an uncounted
-// line means some units may be gone and we can't say which.
+// Statuses that guarantee nothing has gone out yet, so a line the channel
+// hasn't counted still has all of it to ship. AWAITING_PAYMENT is only ever
+// a sale not yet paid for (Amazon's Pending, TikTok's UNPAID), which can't
+// ship. ON_HOLD isn't one: Shopify's describes the items not yet shipped, so
+// an order can hold some and have shipped the rest. Any other status with
+// an uncounted line means some units may be gone and we can't say which.
 export const NOTHING_SHIPPED_STATUSES = [
 	"UNFULFILLED",
-	"ON_HOLD",
 	"AWAITING_PAYMENT",
 ] as const;
 
@@ -15,7 +17,7 @@ const nothingShipped = (status: string) =>
 	(NOTHING_SHIPPED_STATUSES as readonly string[]).includes(status);
 
 // What an order's status alone says shipped of a line: all of it once
-// fulfilled, none before anything ships, and unknown in between. For
+// fulfilled, none when nothing can have shipped, and unknown otherwise. For
 // channels whose own per-line count can be missing.
 export function shippedByStatus(fulfillmentStatus: string, quantity: number) {
 	if (

@@ -80,8 +80,8 @@ export function shopifyTax(
 }
 
 // `shipped` is units shipped per line ID, read when any line has refunded
-// or removed units (see shopifyLineQuantity) or the order is partly shipped
-// (shopifyShipped); null when not read, or more than one read returns.
+// or removed units (see shopifyLineQuantity) or the status can't say what
+// shipped (shopifyShipped); null when not read, or more than one read returns.
 export function shopifyToChannelOrder(
 	o: ShopifyOrder,
 	shipped: ShippedUnits | null,
@@ -126,9 +126,16 @@ export function shopifyToChannelOrder(
 	};
 }
 
-// Units of a line Shopify shows shipped. The order's status says it for all
-// but a partly shipped order, whose successful fulfillments are counted;
-// unknown when they couldn't all be read.
+// Units of a line Shopify shows shipped. Only UNFULFILLED says none went and
+// only a finished order says all did. Every other status (partly shipped,
+// on hold, scheduled, in progress) describes the items still to go, so some
+// may already have shipped: its successful fulfillments are counted, and
+// it's unknown when they couldn't all be read.
+export const shopifyStatusSaysShipped = (status: string) =>
+	status === "UNFULFILLED" ||
+	status === "FULFILLED" ||
+	status === "FULFILLMENT_NOT_REQUIRED";
+
 export function shopifyShipped(
 	o: Pick<ShopifyOrder, "displayFulfillmentStatus">,
 	lineId: string,
@@ -139,10 +146,10 @@ export function shopifyShipped(
 		case "FULFILLED":
 		case "FULFILLMENT_NOT_REQUIRED":
 			return quantity;
-		case "PARTIALLY_FULFILLED":
-			return shipped ? (shipped.succeeded.get(lineId) ?? 0) : null;
-		default:
+		case "UNFULFILLED":
 			return 0;
+		default:
+			return shipped ? (shipped.succeeded.get(lineId) ?? 0) : null;
 	}
 }
 

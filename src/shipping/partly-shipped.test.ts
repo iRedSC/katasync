@@ -6,7 +6,7 @@ import { createTestDb } from "#/test/db";
 import { type BuyOutside, buyDispatch } from "./buy";
 import { contentsKey } from "./contents";
 import { memoryLocker, whyNotTogether } from "./dispatch";
-import { type Outside, sendTracking } from "./handoff";
+import { type Outside, sendTracking, voidDispatch } from "./handoff";
 import { contentsOf, linesToPack } from "./packed";
 import { shipmentPlan } from "./quick-ship";
 
@@ -205,6 +205,46 @@ describe("a partly shipped order", () => {
 			.from(schema.orders)
 			.where(eq(schema.orders.id, orderId));
 		expect(order.fulfillmentStatus).toBe("FULFILLED");
+	});
+
+	test("voiding the label takes back what it shipped, once, keeping what shipped elsewhere", async () => {
+		const plan = await shipmentPlan(db, [orderId]);
+		const bought = await buy(plan.contentsKey);
+		const outside = handoffOutside(0);
+		await sendTracking(db, bought.dispatchId, outside);
+		expect(await shippedOf()).toEqual([
+			["BLADE", 5],
+			["KNIFE", 1],
+			["TAPE", 3],
+		]);
+
+		await voidDispatch(db, bought.dispatchId, outside);
+		expect(outside.shopifyCancel).toHaveBeenCalledWith("f1");
+		expect(await shippedOf()).toEqual([
+			["BLADE", 2],
+			["KNIFE", 1],
+			["TAPE", 3],
+		]);
+		const [order] = await db
+			.select()
+			.from(schema.orders)
+			.where(eq(schema.orders.id, orderId));
+		expect(order.fulfillmentStatus).toBe("PARTIALLY_FULFILLED");
+		expect(
+			(await shipmentPlan(db, [orderId])).lines.map((l) => [l.sku, l.quantity]),
+		).toEqual([["BLADE", 3]]);
+
+		await expect(voidDispatch(db, bought.dispatchId, outside)).rejects.toThrow(
+			"already voided",
+		);
+		expect((await shippedOf())[0]).toEqual(["BLADE", 2]);
+	});
+
+	test("voiding a label never sent leaves what shipped alone", async () => {
+		const plan = await shipmentPlan(db, [orderId]);
+		const bought = await buy(plan.contentsKey);
+		await voidDispatch(db, bought.dispatchId, handoffOutside(0));
+		expect((await shippedOf())[0]).toEqual(["BLADE", 2]);
 	});
 });
 
