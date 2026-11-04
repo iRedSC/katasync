@@ -1268,6 +1268,13 @@
       "when": 1793808477318,
       "tag": "0180_order_line_shipped",
       "breakpoints": true
+    },
+    {
+      "idx": 181,
+      "version": "7",
+      "when": 1793816215632,
+      "tag": "0181_shipped_checked",
+      "breakpoints": true
     }
   ]
 }

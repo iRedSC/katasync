@@ -691,6 +691,11 @@ export const orders = pgTable(
 		// A short number (1 to 999) to find the order while packing. Only orders
 		// still to ship have one, so pins are reused once an order ships.
 		pin: smallint(),
+		// When a sync last asked the marketplace again for what shipped,
+		// because a line's count was unknown (src/channels/unknown-shipped.ts).
+		// Set on every attempt, read or not, so orders that keep failing take
+		// their turn behind the rest instead of holding the queue.
+		shippedCheckedAt: timestamp({ withTimezone: true }),
 		// The last time its invoice went to the printer. Print all skips
 		// orders that have one; ticking an order prints it again.
 		invoicePrintedAt: timestamp({ withTimezone: true }),

@@ -1,4 +1,4 @@
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
 import { needsShipping, remainingUnknown } from "#/orders/to-ship";
@@ -6,20 +6,24 @@ import { needsShipping, remainingUnknown } from "#/orders/to-ship";
 // Orders still to ship whose marketplace hasn't said what shipped can't be
 // packed, and a sync pass reads only what changed, so one the marketplace
 // never touches again would stay stuck. Each pass reads a few of them again
-// by id, least recently synced first, so every one comes round.
+// by id, the longest unasked first. Every attempt is stamped as it's taken,
+// whether the read works or not, so ones that keep failing go to the back
+// and every one comes round.
 const PER_PASS = 10;
 
 export type UnknownShipped = { externalId: string; name: string };
 
-// The store's orders to read again: synced before this pass began, so the
-// ones it just read aren't read twice.
-export function unknownShippedOrders(
+// The store's orders to read again, claimed for this pass: synced before it
+// began, so the ones it just read aren't read twice. Claimed by stamping
+// them in the same statement that picks them, skipping rows another pass
+// holds, so two passes at once don't ask for the same orders.
+export async function unknownShippedOrders(
 	db: Db,
 	storeId: number,
 	before: Date,
 ): Promise<UnknownShipped[]> {
-	return db
-		.select({ externalId: orders.externalId, name: orders.name })
+	const picked = db
+		.select({ id: orders.id })
 		.from(orders)
 		.where(
 			and(
@@ -29,8 +33,18 @@ export function unknownShippedOrders(
 				lt(orders.syncedAt, before),
 			),
 		)
-		.orderBy(orders.syncedAt, orders.id)
-		.limit(PER_PASS);
+		.orderBy(
+			sql`${orders.shippedCheckedAt} asc nulls first`,
+			orders.syncedAt,
+			orders.id,
+		)
+		.limit(PER_PASS)
+		.for("update", { skipLocked: true });
+	return db
+		.update(orders)
+		.set({ shippedCheckedAt: new Date() })
+		.where(inArray(orders.id, picked))
+		.returning({ externalId: orders.externalId, name: orders.name });
 }
 
 // Reads each one again with the channel's own one-order read, which ingests
