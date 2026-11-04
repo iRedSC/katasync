@@ -699,6 +699,11 @@ export const orders = pgTable(
 		// The last time its invoice went to the printer. Print all skips
 		// orders that have one; ticking an order prints it again.
 		invoicePrintedAt: timestamp({ withTimezone: true }),
+		// Goes up whenever what's to pick for the order changes through
+		// katasync (a box bought, handed off or voided) or its invoice counts
+		// as unprinted again; triggers keep it (drizzle/0183). A print is only
+		// recorded at the version the printed invoice showed.
+		pickingVersion: integer().notNull().default(0),
 		total: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		shippingCharged: numeric({ precision: 12, scale: 2, mode: "number" })
 			.notNull()

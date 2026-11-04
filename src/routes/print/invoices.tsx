@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertCircle, Check, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Loader2, RefreshCw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { cityLine, formatMoney, formatPhone } from "#/lib/format";
 import { listInvoices, markInvoicesPrinted } from "#/server/orders";
@@ -47,27 +47,43 @@ function payment(status: string | null): Payment {
 
 type Data = Awaited<ReturnType<typeof listInvoices>>;
 
+type Printed = { orderId: number; version: number }[];
+
 // Whether the printed invoices were recorded as printed. A failed record keeps
-// its ids, so retrying it never prints anything again.
+// what it sent, so retrying it never prints anything again. Saved says how
+// many weren't recorded because their picking work changed since printing;
+// Print all prints those again.
 type Marking =
 	| { state: "idle" }
 	| { state: "saving" }
-	| { state: "saved" }
-	| { state: "failed"; ids: number[] };
+	| { state: "saved"; changed: number }
+	| { state: "failed"; printed: Printed };
+
+// How long the "changed since printing" note stays.
+const CHANGED_NOTE_MS = 8000;
 
 function Invoices() {
 	const { from, invoices } = Route.useLoaderData();
 	const { ids } = Route.useSearch();
 	const [marking, setMarking] = useState<Marking>({ state: "idle" });
-	const markPrinted = useCallback(async (printed: number[]) => {
+	const markPrinted = useCallback(async (printed: Printed) => {
 		setMarking({ state: "saving" });
 		try {
-			await markInvoicesPrinted({ data: { ids: printed } });
-			setMarking({ state: "saved" });
+			const { changed } = await markInvoicesPrinted({ data: { printed } });
+			setMarking({ state: "saved", changed });
 		} catch {
-			setMarking({ state: "failed", ids: printed });
+			setMarking({ state: "failed", printed });
 		}
 	}, []);
+	const changed = marking.state === "saved" ? marking.changed : 0;
+	useEffect(() => {
+		if (changed === 0) return;
+		const t = setTimeout(
+			() => setMarking({ state: "saved", changed: 0 }),
+			CHANGED_NOTE_MS,
+		);
+		return () => clearTimeout(t);
+	}, [changed]);
 
 	// Item photos load from the stores' CDNs; printing before they arrive
 	// prints empty boxes. Waits for each to load or fail, at most a few
@@ -95,15 +111,18 @@ function Invoices() {
 	// The browser doesn't say whether the dialog printed or was cancelled,
 	// so closing it counts as printed. A cancelled order can be ticked and
 	// printed again from the list.
-	const printedIds = invoices.map((o) => o.id).join();
-	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the ids, not each load's copy of the list
+	const printedKey = invoices.map((o) => `${o.id}@${o.pickingVersion}`).join();
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the ids and versions, not each load's copy of the list
 	useEffect(() => {
 		if (invoices.length === 0) return;
-		const ids = invoices.map((o) => o.id);
-		const mark = () => void markPrinted(ids);
+		const printed = invoices.map((o) => ({
+			orderId: o.id,
+			version: o.pickingVersion,
+		}));
+		const mark = () => void markPrinted(printed);
 		window.addEventListener("afterprint", mark);
 		return () => window.removeEventListener("afterprint", mark);
-	}, [printedIds, markPrinted]);
+	}, [printedKey, markPrinted]);
 
 	return (
 		<div className="min-h-svh bg-surface py-6 print:bg-white print:py-0">
@@ -119,11 +138,17 @@ function Invoices() {
 							className="size-4 animate-spin text-muted-foreground"
 						/>
 					)}
-					{marking.state === "saved" && (
+					{marking.state === "saved" && marking.changed === 0 && (
 						<Check
 							aria-label="Recorded as printed"
 							className="size-4 text-success-icon"
 						/>
+					)}
+					{marking.state === "saved" && marking.changed > 0 && (
+						<span className="flex animate-in items-center gap-1.5 text-warning-text fade-in">
+							<RefreshCw className="size-4" />
+							{marking.changed} changed since printing
+						</span>
 					)}
 					{marking.state === "failed" && (
 						<>
@@ -131,7 +156,7 @@ function Invoices() {
 							<span className="text-critical-text">Not marked printed</span>
 							<button
 								type="button"
-								onClick={() => void markPrinted(marking.ids)}
+								onClick={() => void markPrinted(marking.printed)}
 								className="h-8 px-2 font-semibold text-primary hover:underline"
 							>
 								Retry

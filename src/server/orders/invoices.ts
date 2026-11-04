@@ -13,6 +13,7 @@ import {
 import { cityLine } from "#/lib/format";
 import { groupBy } from "#/lib/group-by";
 import { sharingOrders } from "#/orders/invoice-index";
+import { recordPrinted } from "#/orders/printed";
 import { slipsOf } from "#/orders/slip";
 import {
 	financialStatus,
@@ -28,15 +29,21 @@ import { lastPackedFor } from "#/shipping/quick-ship";
 // the stack matches what packers type. `ids` picks the orders instead,
 // whether or not they still need shipping.
 // Called by the invoices page once the print dialog closes, with the
-// orders it held, so the next Print all skips them.
+// orders it held and the picking version each was printed at, so the next
+// Print all skips them. One whose picking work changed since stays
+// unprinted; the count of those comes back.
 export const markInvoicesPrinted = createServerFn({ method: "POST" })
-	.validator(type({ ids: "(number.integer > 0)[] > 0" }))
-	.handler(async ({ data }) => {
-		await getDb()
-			.update(orders)
-			.set({ invoicePrintedAt: new Date() })
-			.where(inArray(orders.id, data.ids));
-	});
+	.validator(
+		type({
+			printed: type({
+				orderId: "number.integer > 0",
+				version: "number.integer >= 0",
+			})
+				.array()
+				.atLeastLength(1),
+		}),
+	)
+	.handler(({ data }) => recordPrinted(getDb(), data.printed));
 
 export const listInvoices = createServerFn({ method: "GET" })
 	.validator(type({ "ids?": "(number.integer > 0)[]" }))
@@ -72,6 +79,10 @@ export const listInvoices = createServerFn({ method: "GET" })
 					needsPacking,
 					remainingUnknown,
 					fulfillmentStatus: orders.fulfillmentStatus,
+					// Read with the order, before its slip, so a change while the
+					// slip is read makes the print's acknowledgement stale, not
+					// the other way round.
+					pickingVersion: orders.pickingVersion,
 				})
 				.from(orders)
 				.innerJoin(stores, eq(stores.id, orders.storeId))
