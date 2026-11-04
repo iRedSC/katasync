@@ -4,7 +4,13 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { type ChannelOrder, ingestOrder } from "./ingest";
-import { partlyShipped, remainingOf, toPack, unitsToShip } from "./remaining";
+import {
+	partlyShipped,
+	remainingOf,
+	toPack,
+	toPrint,
+	unitsToShip,
+} from "./remaining";
 
 // order_lines.shipped_quantity: what the marketplace says already went out
 // of each line. Null is unknown, never none.
@@ -45,6 +51,31 @@ describe("what's left to ship", () => {
 				"PARTIALLY_FULFILLED",
 			),
 		).toEqual([{ id: 1, quantity: 3, shippedQuantity: 2 }]);
+	});
+
+	test("the packing slip prints what's left only while the order still needs packing", () => {
+		const lines = [line(5, 2), line(1, 1)];
+		const printed = (needsPacking: boolean, fulfillmentStatus: string) =>
+			toPrint(lines, { needsPacking, fulfillmentStatus }).map((l) => [
+				l.toPack,
+				l.quantity,
+			]);
+		expect(printed(true, "PARTIALLY_FULFILLED")).toEqual([
+			[3, 5],
+			[0, 1],
+		]);
+		// A reprint of a finished order shows what was sold, as it went out.
+		expect(printed(false, "FULFILLED")).toEqual([
+			[5, 5],
+			[1, 1],
+		]);
+		// Unknown prints what was sold too; quick ship refuses packing it.
+		expect(
+			toPrint([line(5, null)], {
+				needsPacking: true,
+				fulfillmentStatus: "PARTIALLY_FULFILLED",
+			}).map((l) => l.toPack),
+		).toEqual([5]);
 	});
 
 	test("partly shipped means some went and some didn't", () => {
@@ -125,81 +156,6 @@ describe("ingestOrder", () => {
 		await ingestOrder(db, store, order(2), from);
 		await ingestOrder(db, store, order(null), from);
 		expect((await lineOf()).shippedQuantity).toBeNull();
-	});
-
-	describe("after katasync's handoff", () => {
-		const read = new Date("2026-10-05T12:00:00Z");
-		const sentAt = new Date("2026-10-05T13:00:00Z");
-		const savedOrder = async () => (await db.select().from(schema.orders))[0];
-		// A sync read 2 shipped at `read`; then a handoff shipped the last one.
-		const handOff = async (orderId: number, how: "dispatch" | "dropShip") => {
-			if (how === "dispatch") {
-				const [dispatch] = await db
-					.insert(schema.dispatches)
-					.values({ contentsKey: "WRENCH" })
-					.returning();
-				await db
-					.insert(schema.dispatchOrders)
-					.values({ dispatchId: dispatch.id, orderId, channelSentAt: sentAt });
-			} else {
-				await db
-					.update(schema.orders)
-					.set({ dropShipAt: read, dropShipSentAt: sentAt })
-					.where(eq(schema.orders.id, orderId));
-			}
-			await db
-				.update(schema.orders)
-				.set({ fulfillmentStatus: "FULFILLED" })
-				.where(eq(schema.orders.id, orderId));
-			await db
-				.update(schema.orderLines)
-				.set({ shippedQuantity: 3 })
-				.where(eq(schema.orderLines.orderId, orderId));
-		};
-
-		test.each([
-			"dispatch",
-			"dropShip",
-		] as const)("a snapshot read before it (%s) keeps what shipped, and updates the rest", async (how) => {
-			const { orderId } = await ingestOrder(db, store, order(2), from);
-			await handOff(orderId, how);
-			await ingestOrder(
-				db,
-				store,
-				order(2, { customerName: "Ana", sourceUpdatedAt: read }),
-				from,
-			);
-			expect((await lineOf()).shippedQuantity).toBe(3);
-			expect(await savedOrder()).toMatchObject({
-				fulfillmentStatus: "FULFILLED",
-				customerName: "Ana",
-			});
-		});
-
-		test("a snapshot read after it applies, even lowering what shipped", async () => {
-			const { orderId } = await ingestOrder(db, store, order(2), from);
-			await handOff(orderId, "dispatch");
-			await ingestOrder(
-				db,
-				store,
-				order(1, {
-					sourceUpdatedAt: new Date("2026-10-05T14:00:00Z"),
-				}),
-				from,
-			);
-			expect((await lineOf()).shippedQuantity).toBe(1);
-			expect((await savedOrder()).fulfillmentStatus).toBe(
-				"PARTIALLY_FULFILLED",
-			);
-		});
-
-		test("a voided handoff no longer holds back an older snapshot", async () => {
-			const { orderId } = await ingestOrder(db, store, order(2), from);
-			await handOff(orderId, "dispatch");
-			await db.update(schema.dispatchOrders).set({ reversedAt: new Date() });
-			await ingestOrder(db, store, order(2), from);
-			expect((await lineOf()).shippedQuantity).toBe(2);
-		});
 	});
 
 	test("the database refuses a negative count", async () => {

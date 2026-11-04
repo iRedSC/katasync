@@ -248,9 +248,8 @@ function Invoice({
 						>
 							<td className="py-2 text-[13pt] font-bold tabular-nums">
 								{/* What goes in the box; what was sold beside it when some
-								already went out. Unknown can't be packed (quick ship
-								refuses it). */}
-								{l.toPack ?? "?"}
+								already went out (toPrint). */}
+								{l.toPack}
 								{l.toPack !== l.quantity && (
 									<span className="block text-[9pt] font-normal text-muted-foreground">
 										of {l.quantity}
@@ -281,7 +280,7 @@ function Invoice({
 											>
 												<Photo src={p.imageUrl} className="size-[0.35in]" />
 												<span className="w-8 font-bold tabular-nums">
-													{l.toPack === null ? "?" : p.perSet * l.toPack}
+													{p.perSet * l.toPack}
 												</span>
 												<span className="min-w-0">
 													<span>

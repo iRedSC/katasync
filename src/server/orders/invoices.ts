@@ -14,7 +14,7 @@ import {
 import { cityLine } from "#/lib/format";
 import { groupBy } from "#/lib/group-by";
 import { sharingOrders } from "#/orders/invoice-index";
-import { remainingOf, unitsToShip } from "#/orders/remaining";
+import { toPrint } from "#/orders/remaining";
 import {
 	financialStatus,
 	needsPacking,
@@ -147,19 +147,15 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const partsOf = (productId: number | null) =>
 			productId === null ? [] : (partsBy.get(productId) ?? []);
 		const linesBy = groupBy(lines, (l) => l.orderId);
-		// Each line with what's left to pack (null when the marketplace hasn't
-		// said); quantity stays what was sold, for the money.
-		const linesOf = (o: { id: number; fulfillmentStatus: string }) => {
-			const own = linesBy.get(o.id) ?? [];
-			const known = remainingOf(own, o.fulfillmentStatus).kind === "known";
-			return own.map((l) => ({
-				...l,
-				toPack: known ? unitsToShip(l, o.fulfillmentStatus) : null,
-			}));
-		};
-		const packing = (o: { id: number; fulfillmentStatus: string }) =>
+		const linesOf = (o: {
+			id: number;
+			needsPacking: boolean;
+			fulfillmentStatus: string;
+		}) => toPrint(linesBy.get(o.id) ?? [], o);
+		// What goes in the box, at what's left of each line.
+		const packing = (o: Parameters<typeof linesOf>[0]) =>
 			linesOf(o).flatMap((l) =>
-				l.toPack ? [{ ...l, quantity: l.toPack }] : [],
+				l.toPack > 0 ? [{ ...l, quantity: l.toPack }] : [],
 			);
 		const keys = new Map(toShip.map((o) => [o.id, contentsKey(packing(o))]));
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);

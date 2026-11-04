@@ -14,7 +14,11 @@ import {
 	tiktokOrderId,
 } from "./channel-order";
 import { shopifyQuery } from "./client";
-import { remainingUnits, shippedUnits } from "./fulfillment-units";
+import {
+	remainingUnits,
+	type ShippedUnits,
+	shippedUnits,
+} from "./fulfillment-units";
 import { remainingLines } from "./line-items";
 import { keepShopifyEmails } from "./order-emails";
 import {
@@ -96,20 +100,29 @@ async function ingestNode(
 	const refunded =
 		!order.cancelledAt &&
 		order.lineItems.nodes.some((l) => l.currentQuantity < l.quantity);
-	const shipped =
+	const read =
 		refunded || !shopifyStatusSaysShipped(order.displayFulfillmentStatus)
-			? await shippedUnits(o.id)
+			? await readFulfillments(o.id, refunded)
 			: null;
-	// A refund can't be counted without every fulfillment, and a guess would
-	// move stock, so the order waits as it was.
-	if (refunded && !shipped)
-		return {
-			kind: "unread",
-			problems: [
-				`${order.name}: has more Shopify fulfillments than one read holds, so its refunds weren't synced. Check its stock by hand.`,
-			],
-		};
-	const remaining = refunded && shipped ? await remainingUnits(o.id) : null;
+	const problems: string[] = [];
+	if (read && read.kind !== "read") {
+		// A refund can't be counted without every fulfillment, and a guess
+		// would move stock, so the order waits as it was.
+		if (refunded)
+			return {
+				kind: "unread",
+				problems: [
+					`${order.name}: ${unreadWhy(read)}, so its refunds weren't synced. Check its stock by hand.`,
+				],
+			};
+		// Anything else saves with what shipped unknown, which keeps it from
+		// being packed; the problem says why.
+		problems.push(
+			`${order.name}: ${unreadWhy(read)}, so what's left to ship is unknown. Ship it from Shopify.`,
+		);
+	}
+	const shipped = read?.kind === "read" ? read.shipped : null;
+	const remaining = read?.kind === "read" ? read.remaining : null;
 	const channelOrder = shopifyToChannelOrder(order, shipped, remaining);
 	// Checked again under the lock TikTok's takeover holds: TikTok may have
 	// started syncing since tiktokDirect was read.
@@ -122,9 +135,43 @@ async function ingestNode(
 			)
 		: await ingestOrder(db, store, channelOrder, stock);
 	return saved
-		? { kind: "saved", problems: saved.problems }
+		? { kind: "saved", problems: [...problems, ...saved.problems] }
 		: { kind: "tiktok" };
 }
+
+// An order's fulfillments, and for a refunded one what's left of each line.
+// Shopify failing to answer is about this order alone, so it comes back as
+// a result rather than stopping the pass.
+type Fulfillments =
+	| {
+			kind: "read";
+			shipped: ShippedUnits;
+			remaining: Map<string, number> | null;
+	  }
+	| { kind: "truncated" }
+	| { kind: "failed"; error: string };
+
+async function readFulfillments(
+	orderId: string,
+	refunded: boolean,
+): Promise<Fulfillments> {
+	try {
+		const shipped = await shippedUnits(orderId);
+		if (!shipped) return { kind: "truncated" };
+		const remaining = refunded ? await remainingUnits(orderId) : null;
+		return { kind: "read", shipped, remaining };
+	} catch (err) {
+		return {
+			kind: "failed",
+			error: err instanceof Error ? err.message : String(err),
+		};
+	}
+}
+
+const unreadWhy = (read: Exclude<Fulfillments, { kind: "read" }>) =>
+	read.kind === "truncated"
+		? "has more Shopify fulfillments than one read holds"
+		: `Shopify's fulfillments couldn't be read (${read.error})`;
 
 // One order by id, for a webhook. Read straight from the order rather than
 // through search, which lags a few seconds behind new orders. It doesn't

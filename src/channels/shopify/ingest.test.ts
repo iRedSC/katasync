@@ -55,56 +55,56 @@ const fulfillment = (lineId: string, quantity: number) => ({
 	},
 });
 
-// Order 1 is refunded with more fulfillments than one read holds; order 2
-// is on hold for what's left after one of its three units shipped.
+// Order 1 is refunded and order 3 isn't, both with more fulfillments than
+// one read holds; order 2 is on hold for what's left after one of its three
+// units shipped.
 const REFUNDED = "gid://shopify/Order/1";
 const HELD = "gid://shopify/Order/2";
+const PARTLY = "gid://shopify/Order/3";
 
-function fakeShopify() {
+const orders = [
+	node(REFUNDED, "PARTIALLY_FULFILLED", { quantity: 3, currentQuantity: 2 }),
+	node(HELD, "ON_HOLD", { quantity: 3, currentQuantity: 3 }),
+	node(PARTLY, "PARTIALLY_FULFILLED", { quantity: 3, currentQuantity: 3 }),
+];
+
+const json = (data: unknown) => new Response(JSON.stringify({ data }));
+
+// Shopify's answer to each order's fulfillment read, by order id.
+function fakeShopify(shipped: (id: string) => Response) {
 	vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
 		const { query, variables } = JSON.parse(String(init.body));
-		const data = query.includes("query Orders")
-			? {
-					orders: {
-						pageInfo: { hasNextPage: false, endCursor: null },
-						nodes: [
-							node(REFUNDED, "PARTIALLY_FULFILLED", {
-								quantity: 3,
-								currentQuantity: 2,
-							}),
-							node(HELD, "ON_HOLD", { quantity: 3, currentQuantity: 3 }),
-						],
-					},
-				}
-			: query.includes("query Shipped")
-				? {
-						order: {
-							fulfillments:
-								variables.id === REFUNDED
-									? Array.from({ length: 50 }, () =>
-											fulfillment(`${REFUNDED}/L`, 1),
-										)
-									: [fulfillment(`${HELD}/L`, 1)],
-						},
-					}
-				: { nodes: [] };
-		return new Response(JSON.stringify({ data }));
+		if (query.includes("query Orders"))
+			return json({
+				orders: {
+					pageInfo: { hasNextPage: false, endCursor: null },
+					nodes: orders,
+				},
+			});
+		if (query.includes("query Shipped")) return shipped(variables.id);
+		return json({ nodes: [] });
 	});
 }
+
+const tooMany = (id: string) =>
+	json({
+		order: {
+			fulfillments: Array.from({ length: 50 }, () => fulfillment(`${id}/L`, 1)),
+		},
+	});
 
 let db: Db;
 beforeEach(async () => {
 	vi.stubEnv("SHOPIFY_STORE_DOMAIN", "shop.example.com");
 	vi.stubEnv("SHOPIFY_ADMIN_TOKEN", "token");
 	db = await createTestDb();
-	fakeShopify();
 });
 afterEach(() => {
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
 });
 
-test("an order whose fulfillments can't all be read is reported, and the pass goes on", async () => {
+async function sync() {
 	const store = await ensureStore(db, "shopify", {
 		id: "gid://shopify/Shop/1",
 		name: "Shop",
@@ -115,17 +115,61 @@ test("an order whose fulfillments can't all be read is reported, and the pass go
 		pos: null,
 		storeKeeps: 0,
 	});
-	expect(result.count).toBe(1);
-	expect(result.problems).toEqual([
-		expect.stringMatching(/^#1: .*refunds weren't synced/),
-	]);
 	const saved = await db
 		.select({
 			order: schema.orders.externalId,
 			shipped: schema.orderLines.shippedQuantity,
 		})
 		.from(schema.orderLines)
-		.innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId));
+		.innerJoin(schema.orders, eq(schema.orders.id, schema.orderLines.orderId))
+		.orderBy(schema.orders.externalId);
+	return { ...result, saved };
+}
+
+test("an order whose fulfillments can't all be read is reported, and the pass goes on", async () => {
+	fakeShopify((id) =>
+		id === HELD
+			? json({ order: { fulfillments: [fulfillment(`${HELD}/L`, 1)] } })
+			: tooMany(id),
+	);
+	const { count, problems, saved } = await sync();
+	expect(count).toBe(2);
+	expect(problems).toEqual([
+		expect.stringMatching(/^#1: has more .*refunds weren't synced/),
+		expect.stringMatching(/^#3: has more .*left to ship is unknown/),
+	]);
 	// Shopify's hold is on what's left: the unit that shipped still counts.
-	expect(saved).toEqual([{ order: HELD, shipped: 1 }]);
+	// The refunded order waits as it was; the other saves, shipped unknown.
+	expect(saved).toEqual([
+		{ order: HELD, shipped: 1 },
+		{ order: PARTLY, shipped: null },
+	]);
+});
+
+test.each([
+	["HTTP", () => new Response("down", { status: 502 })],
+	[
+		"GraphQL",
+		() => new Response(JSON.stringify({ errors: [{ message: "Throttled" }] })),
+	],
+	["an unexpected shape", () => json({ order: { fulfillments: "nope" } })],
+])("a read failing with %s skips a refunded order, saves the rest unknown, and the pass goes on", async (_, reply) => {
+	fakeShopify(reply);
+	const { count, problems, saved } = await sync();
+	expect(count).toBe(2);
+	expect(problems).toEqual([
+		expect.stringMatching(
+			/^#1: Shopify's fulfillments couldn't be read .*refunds weren't synced/s,
+		),
+		expect.stringMatching(
+			/^#2: Shopify's fulfillments couldn't be read .*left to ship is unknown/s,
+		),
+		expect.stringMatching(
+			/^#3: Shopify's fulfillments couldn't be read .*left to ship is unknown/s,
+		),
+	]);
+	expect(saved).toEqual([
+		{ order: HELD, shipped: null },
+		{ order: PARTLY, shipped: null },
+	]);
 });

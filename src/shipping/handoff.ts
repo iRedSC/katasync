@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import {
 	shopifyCancelFulfillment,
 	shopifyFulfill,
@@ -6,13 +6,7 @@ import {
 	shopifySaveShippoTracking,
 } from "#/channels/shopify";
 import type { Db } from "#/db/client";
-import {
-	dispatchLines,
-	dispatchOrders,
-	orderLines,
-	orders,
-	shipments,
-} from "#/db/schema";
+import { dispatchOrders, orders, shipments } from "#/db/schema";
 import { readQuantityMode } from "#/inventory/commitments";
 import {
 	assertFulfillmentRestorable,
@@ -238,7 +232,7 @@ export async function voidDispatch(
 				}
 				if (!backToShip) continue;
 				let putBack = false;
-				// One live dispatch per order, so voiding it takes back all it
+				// One live dispatch per order, so voiding it means nothing has
 				// shipped. Recorded together with the order going back.
 				await db.transaction(async (tx) => {
 					await readQuantityMode(tx);
@@ -258,56 +252,21 @@ export async function voidDispatch(
 						handoff.channelSentAt !== null &&
 						!newer &&
 						order.fulfillmentStatus === "FULFILLED";
+					if (putBack) {
+						await tx
+							.update(orders)
+							.set({ fulfillmentStatus: "UNFULFILLED" })
+							.where(eq(orders.id, order.id));
+					}
 					if (handoff.channelSentAt !== null && !newer)
 						await restoreCommitments(tx, {
 							orderId: order.id,
 							fulfillmentKey: `dispatch:${dispatchId}:order:${order.id}`,
 						});
-					const reversed = await tx
+					await tx
 						.update(dispatchOrders)
 						.set({ reversedAt: new Date() })
-						.where(and(sameMember(member), isNull(dispatchOrders.reversedAt)))
-						.returning({ orderId: dispatchOrders.orderId });
-					// What the handoff counted shipped (tell.ts) didn't go after all.
-					// Once, as this member's reversal lands; anything else counted
-					// shipped, like units sent from the marketplace's admin, stays.
-					if (reversed.length > 0 && handoff.channelSentAt !== null)
-						await tx
-							.update(orderLines)
-							.set({
-								shippedQuantity: sql`greatest(${orderLines.shippedQuantity} - ${dispatchLines.quantity}, 0)`,
-							})
-							.from(dispatchLines)
-							.where(
-								and(
-									eq(dispatchLines.dispatchId, dispatchId),
-									eq(dispatchLines.orderId, order.id),
-									eq(orderLines.orderId, order.id),
-									eq(orderLines.externalId, dispatchLines.lineExternalId),
-								),
-							);
-					// Back to what the marketplace shows once its fulfillment is
-					// cancelled: partly shipped if units sent from elsewhere remain.
-					if (putBack) {
-						const [elsewhere] = await tx
-							.select({ id: orderLines.id })
-							.from(orderLines)
-							.where(
-								and(
-									eq(orderLines.orderId, order.id),
-									gt(orderLines.shippedQuantity, 0),
-								),
-							)
-							.limit(1);
-						await tx
-							.update(orders)
-							.set({
-								fulfillmentStatus: elsewhere
-									? "PARTIALLY_FULFILLED"
-									: "UNFULFILLED",
-							})
-							.where(eq(orders.id, order.id));
-					}
+						.where(sameMember(member));
 				});
 				if (putBack) {
 					notes.push(`${label}The order is back on To ship`);

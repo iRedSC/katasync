@@ -2,7 +2,6 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { StockLocations } from "#/channels/stores";
 import type { Db } from "#/db/client";
 import {
-	dispatchOrders,
 	listings,
 	movements,
 	orderLines,
@@ -64,7 +63,8 @@ export type ChannelOrder = {
 		title: string;
 		quantity: number;
 		// Units the marketplace says already went out, from its own admin or
-		// a katasync handoff (order_lines.shipped_quantity). Null when it
+		// a katasync handoff (order_lines.shipped_quantity), written only
+		// here. Null when it
 		// can't say, never for none: such an order can't be packed.
 		shipped: number | null;
 		unitPrice: number;
@@ -129,23 +129,12 @@ export async function ingestOrder(
 			return { orderId: before.id, problems: [] };
 		const newlyCancelled =
 			order.cancelledAt !== null && before?.cancelledAt == null;
-		// A snapshot read before katasync last told the marketplace something
-		// shipped can't know it did: what's shipped stays as the handoff saved
-		// it, and the next snapshot after it says what's true, cancellations
-		// included. Everything else in it is still the newest we have.
-		const predatesHandoff =
-			before !== undefined &&
-			(await predatesLastHandoff(tx, before.id, order.sourceUpdatedAt));
-		const { fulfillmentStatus, ...unshipped } = fields;
 		const [saved] = await tx
 			.insert(orders)
 			.values({ ...fields, storeId: store.id })
 			.onConflictDoUpdate({
 				target: [orders.storeId, orders.externalId],
-				set: {
-					...(predatesHandoff ? unshipped : fields),
-					syncedAt: new Date(),
-				},
+				set: { ...fields, syncedAt: new Date() },
 			})
 			.returning({ id: orders.id });
 		await saveTax(tx, saved.id, tax);
@@ -230,15 +219,13 @@ export async function ingestOrder(
 				productId !== null && existing?.productId == null
 					? { productId, unitCost: await costOfOnce(productId) }
 					: { productId };
-			const shippedQuantity =
-				predatesHandoff && existing ? existing.shippedQuantity : line.shipped;
 			const unchanged =
 				existing !== undefined &&
 				!handled.has(line.externalId) &&
 				existing.title === line.title &&
 				existing.sku === line.sku &&
 				existing.quantity === line.quantity &&
-				existing.shippedQuantity === shippedQuantity &&
+				existing.shippedQuantity === line.shipped &&
 				existing.unitPrice === line.unitPrice &&
 				existing.productId === productId;
 			// Units shipped from the marketplace's own admin left our shelf, and
@@ -246,7 +233,6 @@ export async function ingestOrder(
 			// to consume their commitments here once it's live; until then
 			// only katasync's handoff does (handoff/tell.ts).
 			const { shipped, ...written } = line;
-			const lineFields = { ...written, shippedQuantity };
 			let row: OrderLine;
 			if (unchanged) {
 				row = existing;
@@ -257,7 +243,7 @@ export async function ingestOrder(
 						title: line.title,
 						sku: line.sku,
 						quantity: line.quantity,
-						shippedQuantity,
+						shippedQuantity: line.shipped,
 						unitPrice: line.unitPrice,
 						...mapping,
 					})
@@ -268,7 +254,8 @@ export async function ingestOrder(
 				[row] = await tx
 					.insert(orderLines)
 					.values({
-						...lineFields,
+						...written,
+						shippedQuantity: shipped,
 						orderId: saved.id,
 						...mapping,
 					})
@@ -325,27 +312,6 @@ export async function ingestOrder(
 		}
 		return { orderId: saved.id, problems };
 	});
-}
-
-// Whether a snapshot from the marketplace at sourceUpdatedAt was read before
-// katasync's newest handoff of the order still standing: a dispatch's
-// tracking sent and not voided, or a drop-ship's.
-async function predatesLastHandoff(
-	db: Db,
-	orderId: number,
-	sourceUpdatedAt: Date,
-) {
-	const [row] = await db
-		.select({
-			at: sql<string | null>`greatest(
-				(select max(${dispatchOrders.channelSentAt}) from ${dispatchOrders}
-					where ${dispatchOrders.orderId} = ${orders.id} and ${dispatchOrders.reversedAt} is null),
-				${orders.dropShipSentAt}
-			)`,
-		})
-		.from(orders)
-		.where(eq(orders.id, orderId));
-	return row?.at != null && sourceUpdatedAt < new Date(row.at);
 }
 
 // Whether an order's lines take stock: placed after the store started

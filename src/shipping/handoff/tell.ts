@@ -1,11 +1,6 @@
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "#/db/client";
-import {
-	dispatchOrders,
-	type HandoffHold,
-	orderLines,
-	orders,
-} from "#/db/schema";
+import { dispatchOrders, type HandoffHold, orders } from "#/db/schema";
 import { readQuantityMode } from "#/inventory/commitments";
 import { consumeCommitments } from "#/inventory/commitments-consume";
 import { assertTiktokShippable, deliver } from "../deliver";
@@ -259,22 +254,6 @@ export async function tell(
 						delivered.remaining > 0 ? "PARTIALLY_FULFILLED" : "FULFILLED",
 				})
 				.where(eq(orders.id, order.id));
-			// And what went, so what's left shows and packs without waiting for
-			// the sync to read it back. Matched by the channel's line id, which
-			// every packed line has, even from before orderLineId was kept.
-			for (const line of packed) {
-				await tx
-					.update(orderLines)
-					.set({
-						shippedQuantity: sql`coalesce(${orderLines.shippedQuantity}, 0) + ${line.quantity}`,
-					})
-					.where(
-						and(
-							eq(orderLines.orderId, order.id),
-							eq(orderLines.externalId, line.lineExternalId),
-						),
-					);
-			}
 		});
 	} catch (err) {
 		return failMember(db, member, name, phase, err);

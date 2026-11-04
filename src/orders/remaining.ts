@@ -71,6 +71,23 @@ export function toPack<L extends Line>(lines: L[], fulfillmentStatus: string) {
 		.map(({ toShip, ...line }) => ({ ...line, quantity: toShip }));
 }
 
+// What a packing slip says to put in the box per line: what's left, for an
+// order still to pack whose marketplace has said what shipped. Anything
+// else (finished, cancelled, a reprint, or unknown) prints what was sold.
+// quantity stays what was sold either way, for the money.
+export function toPrint<L extends Line>(
+	lines: L[],
+	order: { needsPacking: boolean; fulfillmentStatus: string },
+): (L & { toPack: number })[] {
+	const status = order.fulfillmentStatus;
+	const known =
+		order.needsPacking && remainingOf(lines, status).kind === "known";
+	return lines.map((l) => ({
+		...l,
+		toPack: known ? (unitsToShip(l, status) ?? l.quantity) : l.quantity,
+	}));
+}
+
 // Units of a line known to have gone out, at most its quantity.
 export const shippedOf = (line: Line) =>
 	Math.min(line.shippedQuantity ?? 0, line.quantity);
