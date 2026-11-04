@@ -8,8 +8,9 @@ import {
 	stores,
 } from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
-import { type PackBlock, whyNotPackable } from "#/orders/remaining";
-import { needsPacking, packBlock, remainingUnknown } from "#/orders/to-ship";
+import { UNKNOWN_REMAINING } from "#/orders/remaining";
+import { needsPacking, remainingUnknown } from "#/orders/to-ship";
+import { openSource } from "./live-open";
 
 // The rules for what can go out together. A dispatch is one send to one
 // address: one or more boxes, for one or more orders (see schema.ts).
@@ -195,7 +196,6 @@ const candidateFields = {
 	total: orders.total,
 	needsPacking,
 	remainingUnknown,
-	packBlock,
 	shipAddress1: orders.shipAddress1,
 	shipAddress2: orders.shipAddress2,
 	shipPostalCode: orders.shipPostalCode,
@@ -212,16 +212,15 @@ type Candidate = {
 	externalId: string;
 	needsPacking: boolean;
 	remainingUnknown: boolean;
-	// Why remainingUnknown, for the message; unknown when not given.
-	packBlock?: PackBlock | null;
 } & BoxFields;
 
 // Why these orders can't go out together in one dispatch, or null if they
 // can. Every order must still need shipping, have no live dispatch not yet
 // handed off (ones already sent are earlier shipments of it), take a label
-// katasync buys itself, know what's left to pack, share one label seller,
-// and (with more than one) share a boxKey. live with no sent counts as
-// unsent, the safe side.
+// katasync buys itself, know what's left to pack (Shopify and eBay are read
+// live, so only an unknown synced count elsewhere stops it), share one
+// label seller, and (with more than one) share a boxKey. live with no sent
+// counts as unsent, the safe side.
 export function whyNotTogether(
 	list: Candidate[],
 	all: { orderId: number; unsure?: boolean; sent?: boolean }[],
@@ -240,8 +239,8 @@ export function whyNotTogether(
 		}
 		const external = externalFulfillment(o);
 		if (external) return `${o.name} ships on ${external.name}'s own label`;
-		if (o.remainingUnknown)
-			return `${o.name}: ${whyNotPackable(o.packBlock ?? "unknown")}`;
+		if (o.remainingUnknown && !openSource(o))
+			return `${o.name}: ${UNKNOWN_REMAINING}`;
 	}
 	if (list.length > 1) {
 		const tiktok = list.filter((o) => labelSource(o) === "tiktok").length;

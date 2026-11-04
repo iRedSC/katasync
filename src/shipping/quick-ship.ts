@@ -20,17 +20,18 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
-import { groupBy } from "#/lib/group-by";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
-import { toPack } from "#/orders/remaining";
-import {
-	packBlock,
-	remainingUnknown,
-	unitsShippedNeeded,
-	unitsUnsent,
-} from "#/orders/to-ship";
+import { unitsToShip } from "#/orders/remaining";
+import { remainingUnknown, unitsUnsent } from "#/orders/to-ship";
 import { contentsKey } from "./contents";
 import { companionsOf, liveDispatches, unsentOf } from "./dispatch";
+import {
+	liveOpenReads,
+	type OpenReads,
+	OpenUnread,
+	openSource,
+	withPackable,
+} from "./live-open";
 import { choose, type Lowered } from "./packed";
 import type { Rate } from "./shippo";
 
@@ -64,8 +65,12 @@ export function signatureRequired(
 
 // Everything quick ship shows after a pin: the order, other orders that
 // could share the box (same address, or for TikTok the same buyer), and the plan for shipping it alone.
-export async function orderForShipping(db: Db, pin: number) {
-	const [order] = await db
+export async function orderForShipping(
+	db: Db,
+	pin: number,
+	reads: OpenReads = liveOpenReads,
+) {
+	const [found] = await db
 		.select({
 			id: orders.id,
 			name: orders.name,
@@ -86,12 +91,16 @@ export async function orderForShipping(db: Db, pin: number) {
 			storeId: orders.storeId,
 			buyerId: orders.buyerId,
 			remainingUnknown,
-			packBlock,
 		})
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
 		.where(eq(orders.pin, pin));
-	if (!order) return null;
+	if (!found) return null;
+	// An unknown synced count only stops packing an order not read live.
+	const order = {
+		...found,
+		remainingUnknown: found.remainingUnknown && !openSource(found),
+	};
 
 	const external = externalFulfillment(order);
 	// Earlier shipments already handed off don't stop another.
@@ -100,20 +109,9 @@ export async function orderForShipping(db: Db, pin: number) {
 		external || live
 			? []
 			: await companionsOf(db, { ...order, needsPacking: true });
-	// What's packable of each, the way the plan counts it.
-	const companionLines = companions.length
-		? (
-				await plannedLines(
-					db,
-					companions.map((c) => c.id),
-				)
-			).choices
-		: [];
-	const items = [...groupBy(companionLines, (l) => l.orderId)].map(
-		([orderId, lines]) => ({
-			orderId,
-			items: lines.reduce((sum, l) => sum + l.quantity, 0),
-		}),
+	const items = await itemsLeft(
+		db,
+		companions.map((c) => c.id),
 	);
 
 	return {
@@ -127,9 +125,9 @@ export async function orderForShipping(db: Db, pin: number) {
 			name: c.name,
 			pin: c.pin,
 			customerName: c.customerName,
-			items: items.find((i) => i.orderId === c.id)?.items ?? 0,
+			items: items.get(c.id) ?? 0,
 		})),
-		plan: await shipmentPlan(db, [order.id]),
+		plan: await shipmentPlan(db, [order.id], [], reads),
 	};
 }
 
@@ -140,6 +138,7 @@ export async function shipmentPlan(
 	db: Db,
 	orderIds: number[],
 	lowered: Lowered = [],
+	reads: OpenReads = liveOpenReads,
 ) {
 	const members = await db
 		.select({
@@ -149,6 +148,8 @@ export async function shipmentPlan(
 			channel: stores.channel,
 			salesChannel: orders.salesChannel,
 			shipCountry: orders.shipCountry,
+			marketplaceOrderId: orders.marketplaceOrderId,
+			externalId: orders.externalId,
 		})
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -156,7 +157,7 @@ export async function shipmentPlan(
 	if (members.length !== new Set(orderIds).size) {
 		throw new Error("One of these orders no longer exists");
 	}
-	const planned = await plannedLines(db, orderIds);
+	const planned = await plannedLines(db, members, reads);
 	const shippo = members.every((o) => labelSource(o) === "shippo");
 	// TikTok's label is for the whole order, so its counts aren't chosen.
 	const { lines } = choose(planned.choices, shippo ? lowered : []);
@@ -180,6 +181,8 @@ export async function shipmentPlan(
 	return {
 		// In the order quick ship was given them: the pin's order first.
 		orderIds,
+		// Why nothing can be packed: a marketplace didn't say what's open.
+		unread: planned.unread,
 		orderNames: orderIds.map((id) => members.find((o) => o.id === id)?.name),
 		lines,
 		// Every packable line with how many go now (0 leaves it for later),
@@ -216,20 +219,24 @@ export async function shipmentPlan(
 export type ShipmentPlan = Awaited<ReturnType<typeof shipmentPlan>>;
 
 // The lines to pack for these orders, each at what's packable of it
-// (src/orders/remaining.ts), the same as packableLines keeps at purchase.
-// An order whose remaining isn't known has none: whyNotTogether refuses it.
-// whole: every unit of every line is packable, none shipped or held.
-async function plannedLines(db: Db, orderIds: number[]) {
+// (live-open.ts), the same as packableLines keeps at purchase. None, and
+// why, when a marketplace read live didn't answer. whole: every unit of
+// every line is packable, none shipped or held.
+async function plannedLines(
+	db: Db,
+	members: Parameters<typeof withPackable>[0],
+	reads: OpenReads,
+) {
 	const rows = await db
 		.select({
 			orderId: orderLines.orderId,
 			orderLineId: orderLines.id,
+			externalId: orderLines.externalId,
 			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 			title: orderLines.title,
 			quantity: orderLines.quantity,
 			unitPrice: orderLines.unitPrice,
 			shippedQuantity: orderLines.shippedQuantity,
-			shippedNeeded: unitsShippedNeeded,
 			unsent: unitsUnsent,
 			imageUrl: products.imageUrl,
 			weightGrams: products.weightGrams,
@@ -237,29 +244,55 @@ async function plannedLines(db: Db, orderIds: number[]) {
 			aerosol: sql<boolean>`coalesce(${products.aerosol}, false)`,
 		})
 		.from(orderLines)
-		.innerJoin(orders, eq(orders.id, orderLines.orderId))
 		.leftJoin(products, eq(products.id, orderLines.productId))
 		// A cancelled line stays at 0; there's nothing of it to pack.
 		.where(
-			and(inArray(orderLines.orderId, orderIds), gt(orderLines.quantity, 0)),
+			and(
+				inArray(
+					orderLines.orderId,
+					members.map((o) => o.id),
+				),
+				gt(orderLines.quantity, 0),
+			),
 		)
 		.orderBy(orderLines.orderId, orderLines.id);
-	const choices = [...groupBy(rows, (r) => r.orderId).values()].flatMap(
-		(lines) => {
-			const packing = toPack(lines);
-			return packing.kind === "known"
-				? packing.lines.map(
-						({ shippedQuantity, shippedNeeded, unsent, ...line }) => line,
-					)
-				: [];
+	const counted = await withPackable(members, rows, reads).catch(
+		(err: unknown) => {
+			if (err instanceof OpenUnread) return err;
+			throw err;
 		},
 	);
-	const whole = rows.every(
-		(r) =>
-			choices.find((c) => c.orderLineId === r.orderLineId)?.quantity ===
-			r.quantity,
+	if (counted instanceof OpenUnread)
+		return { choices: [], whole: false, unread: counted.message };
+	const choices = counted.flatMap(
+		({ externalId, shippedQuantity, unsent, packable, ...line }) =>
+			packable > 0 ? [{ ...line, quantity: packable }] : [],
 	);
-	return { choices, whole };
+	const whole = counted.every((l) => l.packable === l.quantity);
+	return { choices, whole, unread: null };
+}
+
+// Units still to ship of each of these orders, by the synced count (all of
+// a line whose count is unknown), less what a label not yet handed off
+// holds: a hint beside an order quick ship offers to combine. The plan
+// reads the marketplace once it's combined.
+async function itemsLeft(db: Db, orderIds: number[]) {
+	const items = new Map<number, number>();
+	if (orderIds.length === 0) return items;
+	const rows = await db
+		.select({
+			orderId: orderLines.orderId,
+			quantity: orderLines.quantity,
+			shippedQuantity: orderLines.shippedQuantity,
+			unsent: unitsUnsent,
+		})
+		.from(orderLines)
+		.where(inArray(orderLines.orderId, orderIds));
+	for (const l of rows) {
+		const left = Math.max(0, (unitsToShip(l) ?? l.quantity) - l.unsent);
+		items.set(l.orderId, (items.get(l.orderId) ?? 0) + left);
+	}
+	return items;
 }
 
 // Every box of the latest dispatch with these contents that set the

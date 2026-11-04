@@ -91,7 +91,14 @@ const remainingItemsPage = type({
 	},
 });
 
-export async function remainingUnits(orderId: string) {
+// Units of each line Shopify still has to ship, by line ID, summed across
+// fulfillment orders (each page read to its end; a missing cursor throws).
+// Every fulfillment order not cancelled or closed counts, on hold and
+// scheduled too, unless only names the statuses to count.
+export async function remainingUnits(
+	orderId: string,
+	only?: ReadonlySet<string>,
+) {
 	const remaining = new Map<string, number>();
 	let orderCursor: string | null = null;
 	do {
@@ -108,6 +115,7 @@ export async function remainingUnits(orderId: string) {
 		for (const fulfillment of order.fulfillmentOrders.nodes) {
 			if (fulfillment.status === "CANCELLED" || fulfillment.status === "CLOSED")
 				continue;
+			if (only && !only.has(fulfillment.status)) continue;
 			let lineCursor: string | null = null;
 			do {
 				const { node } = remainingItemsPage.assert(
@@ -139,3 +147,10 @@ export async function remainingUnits(orderId: string) {
 	} while (orderCursor);
 	return remaining;
 }
+
+// What can be packed now, by line ID: units Shopify still has to ship on
+// fulfillment orders it lets katasync fulfill. On hold and scheduled ones
+// wait, as shopifyFulfill does.
+export const SHIPPABLE = new Set(["OPEN", "IN_PROGRESS"]);
+export const openUnits = (orderId: string) =>
+	remainingUnits(orderId, SHIPPABLE);

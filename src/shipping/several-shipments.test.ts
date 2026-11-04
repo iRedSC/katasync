@@ -1,23 +1,27 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import * as schema from "#/db/schema";
-import { BEHIND_REMAINING } from "#/orders/remaining";
 import { buyDispatch } from "./buy";
 import { addPackedDispatch } from "./dispatch.fixtures";
+import { voidDispatch } from "./handoff";
 import { EMPTY_ORDER } from "./packed";
-import { orderForShipping, shipmentPlan } from "./quick-ship";
+import { orderForShipping } from "./quick-ship";
 import {
 	addOrder,
-	blockOf,
 	buy,
 	buying,
 	db,
 	freshOrder,
 	handOff,
 	lineId,
+	marketplace,
+	openReads,
 	orderId,
 	packedIn,
+	planOf,
 	refused,
+	shipOutside,
+	shopify,
 	statusOf,
 	sync,
 } from "./several-shipments.fixtures";
@@ -29,7 +33,7 @@ freshOrder();
 
 describe("choosing which units ship now", () => {
 	test("every packable unit goes by default", async () => {
-		const plan = await shipmentPlan(db, [orderId]);
+		const plan = await planOf();
 		expect(plan.contentsKey).toBe("WRENCH×3");
 		expect(plan.lowered).toEqual([]);
 		expect(plan.choosable).toBe(true);
@@ -38,8 +42,7 @@ describe("choosing which units ship now", () => {
 	});
 
 	test("a lowered count changes the contents and what's insured", async () => {
-		const plan = await shipmentPlan(
-			db,
+		const plan = await planOf(
 			[orderId],
 			[{ orderLineId: lineId, quantity: 1 }],
 		);
@@ -64,8 +67,8 @@ describe("choosing which units ship now", () => {
 				unitPrice: 15,
 			})
 			.returning();
-		const plan = await shipmentPlan(
-			db,
+		marketplace.open.set("line-knife", 1);
+		const plan = await planOf(
 			[orderId],
 			[{ orderLineId: second.id, quantity: 0 }],
 		);
@@ -86,18 +89,22 @@ describe("choosing which units ship now", () => {
 			.update(schema.orderLines)
 			.set({ quantity: 1 })
 			.where(eq(schema.orderLines.id, oneLine));
-		expect((await shipmentPlan(db, [one])).choosable).toBe(false);
+		marketplace.open.set("line-2", 1);
+		expect((await planOf([one])).choosable).toBe(false);
 	});
 
 	test("TikTok ships the whole order, so a partial selection is refused", async () => {
 		const { orderId: tiktok, lineId: tiktokLine } = await addOrder("3", {
 			salesChannel: "TikTok",
 		});
-		const plan = await shipmentPlan(
-			db,
+		const before = marketplace.reads;
+		const plan = await planOf(
 			[tiktok],
 			[{ orderLineId: tiktokLine, quantity: 1 }],
 		);
+		// TikTok's own units are checked when its label is bought, not read
+		// here.
+		expect(marketplace.reads).toBe(before);
 		// Not offered, and the plan ignores the counts.
 		expect(plan.choosable).toBe(false);
 		expect(plan.contentsKey).toBe("WRENCH×3");
@@ -131,137 +138,182 @@ describe("choosing which units ship now", () => {
 });
 
 describe("several shipments of one order", () => {
-	test("the rest goes in a new shipment once the first is handed off and synced", async () => {
+	test("the rest goes in a new shipment once the first is handed off, with no sync", async () => {
 		const first = await buy([{ orderLineId: lineId, quantity: 1 }]);
 		expect(await packedIn(first.dispatchId)).toEqual([1]);
 		// While it's not handed off, it's the order's one open shipment.
 		await expect(buy()).rejects.toThrow("already has a label not yet sent");
 
-		await handOff(first.dispatchId, 2);
+		await handOff(first.dispatchId);
 		expect(await statusOf()).toBe("PARTIALLY_FULFILLED");
-		const [pin] = await db
+		// The synced count still says none shipped; Shopify says 2 are open.
+		const plan = await planOf();
+		expect(plan.choices).toMatchObject([{ packable: 2, quantity: 2 }]);
+		const [{ pin }] = await db
 			.select({ pin: schema.orders.pin })
 			.from(schema.orders)
 			.where(eq(schema.orders.id, orderId));
-		// Shopify hasn't synced its own count yet: packing now could pack the
-		// unit just sent, so it waits.
-		await expect(buy()).rejects.toThrow(BEHIND_REMAINING);
-		expect((await shipmentPlan(db, [orderId])).lines).toEqual([]);
-
-		await sync(1);
-		const plan = await shipmentPlan(db, [orderId]);
-		expect(plan.contentsKey).toBe("WRENCH×2");
-		if (pin.pin !== null) {
-			const found = await orderForShipping(db, pin.pin);
+		if (pin !== null) {
+			const found = await orderForShipping(db, pin, openReads);
 			// The first shipment is handed off; it doesn't block this one.
 			expect(found?.liveDispatchId).toBeNull();
 		}
 		const second = await buy();
 		expect(await packedIn(second.dispatchId)).toEqual([2]);
-		await handOff(second.dispatchId, 0);
+		await handOff(second.dispatchId);
 		expect(await statusOf()).toBe("FULFILLED");
 	});
 });
 
-describe("units shipped outside katasync", () => {
-	test("count toward the fence, so a stale count packs nothing", async () => {
-		// 10 sold, 5 shipped from the marketplace's own admin.
+describe("what's packable is what the marketplace says is open, live", () => {
+	test("the plan reads it once, and the purchase again", async () => {
+		const before = marketplace.reads;
+		const plan = await planOf();
+		expect(marketplace.reads).toBe(before + 1);
+		await buy(plan.lowered);
+		// buy() plans once more as the browser would, then the purchase reads.
+		expect(marketplace.reads).toBe(before + 3);
+	});
+
+	test("eBay is read the same way", async () => {
+		const [ebay] = await db
+			.insert(schema.stores)
+			.values({ channel: "ebay", name: "eBay" })
+			.returning();
+		const { orderId: sale } = await addOrder("8", { storeId: ebay.id });
+		marketplace.open.set("line-8", 2);
+		await sync(3);
+		const plan = await planOf([sale]);
+		expect(plan.choices).toMatchObject([{ packable: 2, quantity: 2 }]);
+		expect(await packedIn((await buy([], [sale])).dispatchId)).toEqual([2]);
+	});
+
+	test("a marketplace that doesn't answer stops the plan and the purchase, nothing bought", async () => {
+		marketplace.failing = true;
+		const plan = await planOf();
+		expect(plan.unread).toBe(
+			"1: Shopify didn't say what's left to ship. Try again",
+		);
+		expect(plan.lines).toEqual([]);
+		await expect(
+			buyDispatch(
+				db,
+				{
+					orderIds: [orderId],
+					contentsKey: "WRENCH×3",
+					boxes: [
+						{
+							packageId: null,
+							lengthMm: 300,
+							widthMm: 200,
+							heightMm: 100,
+							weightGrams: 600,
+							insureAmount: null,
+							hazmat: false,
+						},
+					],
+					choice: { carrier: "USPS", service: "ground", id: "r", total: 100 },
+					signature: false,
+					setsDefault: true,
+				},
+				buying,
+			),
+		).rejects.toThrow("Shopify didn't say what's left to ship");
+		expect(await db.select().from(schema.dispatches)).toEqual([]);
+	});
+
+	test("more than is open is refused by the purchase, whatever the screen sent", async () => {
+		// Synced says 3 to ship; Shopify has shipped 1 from its admin since.
+		shipOutside(1);
+		const asShown = (lowered: { orderLineId: number; quantity: number }[]) =>
+			buyDispatch(
+				db,
+				{
+					orderIds: [orderId],
+					contentsKey: "WRENCH×3",
+					lowered,
+					boxes: [
+						{
+							packageId: null,
+							lengthMm: 300,
+							widthMm: 200,
+							heightMm: 100,
+							weightGrams: 600,
+							insureAmount: null,
+							hazmat: false,
+						},
+					],
+					choice: { carrier: "USPS", service: "ground", id: "r", total: 100 },
+					signature: false,
+					setsDefault: true,
+				},
+				buying,
+			);
+		await expect(asShown([])).rejects.toThrow("The order changed");
+		await expect(
+			asShown([{ orderLineId: lineId, quantity: 3 }]),
+		).rejects.toThrow("Only 2 of a line can be packed");
+		expect(await db.select().from(schema.dispatches)).toEqual([]);
+	});
+});
+
+// Sequences that broke the fence of synced counts this replaced: each one
+// once packed a unit twice, or never let the order pack again.
+describe("a stale synced count can't pack a unit twice", () => {
+	test("shipped outside between purchase and handoff, then an older handoff voided", async () => {
 		await db
 			.update(schema.orderLines)
-			.set({ quantity: 10, shippedQuantity: 5 })
+			.set({ quantity: 10 })
 			.where(eq(schema.orderLines.id, lineId));
-		const first = await buy([{ orderLineId: lineId, quantity: 2 }]);
-		// What the count was when the box was bought, kept with it.
-		const [kept] = await db
-			.select({ before: schema.dispatchLines.shippedBefore })
-			.from(schema.dispatchLines)
-			.where(eq(schema.dispatchLines.dispatchId, first.dispatchId));
-		expect(kept.before).toBe(5);
-		await handOff(first.dispatchId, 3);
-
-		// Still 5 until the next sync: 2 handed off is covered by 5, but
-		// those 5 were all shipped before, so it's stale.
-		await expect(buy()).rejects.toThrow(BEHIND_REMAINING);
-		expect((await shipmentPlan(db, [orderId])).lines).toEqual([]);
-
-		await sync(7);
-		const plan = await shipmentPlan(db, [orderId]);
+		marketplace.open.set("line-1", 10);
+		const d1 = await buy([{ orderLineId: lineId, quantity: 2 }]);
+		await handOff(d1.dispatchId);
+		await sync(2);
+		const d2 = await buy([{ orderLineId: lineId, quantity: 3 }]);
+		// 4 go out from Shopify's admin before D2 is handed off.
+		shipOutside(4);
+		await handOff(d2.dispatchId);
+		await voidDispatch(db, d1.dispatchId, shopify());
+		// Shopify: 10 less 3 (D2) less 4 (outside), D1's 2 back: 3 open.
+		// The synced count still says 2.
+		const plan = await planOf();
 		expect(plan.choices).toMatchObject([{ packable: 3, quantity: 3 }]);
-		expect(await packedIn((await buy()).dispatchId)).toEqual([3]);
+		const d3 = await buy();
+		expect(await packedIn(d3.dispatchId)).toEqual([3]);
+		await handOff(d3.dispatchId);
+		expect(marketplace.open.get("line-1")).toBe(0);
 	});
 
-	test("the count kept is the database's, whatever the app passes", async () => {
-		await sync(1);
-		await db.transaction(async (tx) => {
-			const [d] = await tx
-				.insert(schema.dispatches)
-				.values({ contentsKey: "WRENCH×1", contents: "packed", boxCount: 1 })
-				.returning();
-			await tx
-				.insert(schema.dispatchOrders)
-				.values({ dispatchId: d.id, orderId });
-			await tx.insert(schema.dispatchLines).values({
-				dispatchId: d.id,
-				orderId,
-				lineExternalId: "line-1",
-				title: "Wrench",
-				quantity: 1,
-				shippedBefore: 99,
-			});
-		});
-		const kept = await db
-			.select({ before: schema.dispatchLines.shippedBefore })
-			.from(schema.dispatchLines);
-		expect(kept.map((k) => k.before)).toEqual([1]);
-	});
-
-	test("a handoff from before the count was kept falls back to all units handed off", async () => {
-		// As a dispatch from main has it: no shipped_before.
-		await db.execute(
-			sql`alter table dispatch_lines disable trigger dispatch_lines_packable`,
-		);
+	test("an earlier handoff with no kept counts, after a shipment outside", async () => {
+		// As a dispatch from before this change: 2 handed off, and 1 shipped
+		// from Shopify's admin. The sync last saw only the 1.
 		const { dispatchId } = await addPackedDispatch(db, {
 			orderIds: [orderId],
 			units: 2,
 		});
-		await db.execute(
-			sql`alter table dispatch_lines enable trigger dispatch_lines_packable`,
-		);
 		await db
 			.update(schema.dispatchOrders)
 			.set({ channelSentAt: new Date() })
 			.where(eq(schema.dispatchOrders.dispatchId, dispatchId));
+		shipOutside(1);
+		// What the handoff of 2 took off Shopify's open count.
+		shipOutside(2);
 		await sync(1);
-		await refused(
-			addPackedDispatch(db, { orderIds: [orderId], units: 1 }),
-			"wait for the next sync",
-		);
-		await sync(2);
-		await addPackedDispatch(db, { orderIds: [orderId], units: 1 });
+		const plan = await planOf();
+		expect(plan.choices).toEqual([]);
+		await expect(buy()).rejects.toThrow("Nothing on these orders to pack");
+		expect(await db.select().from(schema.dispatches)).toHaveLength(1);
 	});
-});
 
-describe("a count katasync's handoff can't explain", () => {
-	test("says so once the order has synced since the handoff", async () => {
-		const first = await buy([{ orderLineId: lineId, quantity: 1 }]);
-		await handOff(first.dispatchId, 2);
-		// Not synced since: likely just lag.
-		await db
-			.update(schema.orders)
-			.set({ syncedAt: new Date(Date.now() - 60_000) })
-			.where(eq(schema.orders.id, orderId));
-		expect(await blockOf()).toBe("behind");
-		// Synced since, and the marketplace still says none shipped: its
-		// fulfillment was likely cancelled there.
-		await db
-			.update(schema.orders)
-			.set({ syncedAt: new Date(Date.now() + 60_000) })
-			.where(eq(schema.orders.id, orderId));
-		expect(await blockOf()).toBe("short");
-		await expect(buy()).rejects.toThrow("fewer shipped than katasync sent");
-		// Caught up: nothing blocks it.
-		await sync(1);
-		expect(await blockOf()).toBeNull();
+	test("voided and bought again before the cancellation syncs", async () => {
+		const first = await buy();
+		await handOff(first.dispatchId);
+		await sync(3);
+		await voidDispatch(db, first.dispatchId, shopify());
+		// Shopify has all 3 open again; the sync still says 3 shipped.
+		const plan = await planOf();
+		expect(plan.choices).toMatchObject([{ packable: 3, quantity: 3 }]);
+		expect(await packedIn((await buy()).dispatchId)).toEqual([3]);
 	});
 });
 
@@ -270,7 +322,8 @@ describe("combining orders", () => {
 		const { orderId: other, lineId: otherLine } = await addOrder("6");
 		const ids = [orderId, other];
 		const zeroed = [{ orderLineId: otherLine, quantity: 0 }];
-		await expect(shipmentPlan(db, ids, zeroed)).rejects.toThrow(EMPTY_ORDER);
+		marketplace.open.set("line-6", 3);
+		await expect(planOf(ids, zeroed)).rejects.toThrow(EMPTY_ORDER);
 		// Past the plan, as a stale or hand-made request would be.
 		await expect(
 			buyDispatch(
@@ -379,7 +432,7 @@ describe("the database", () => {
 		await db.insert(schema.dispatchLines).values({ ...wrench, quantity: 1 });
 	});
 
-	test("refuses more than the line has, or any of an unknown line", async () => {
+	test("refuses more of a line than was sold", async () => {
 		await refused(
 			db.transaction(async (tx) => {
 				const [d] = await tx
@@ -399,32 +452,8 @@ describe("the database", () => {
 			}),
 			"fewer than 4 units left to pack",
 		);
-		const { orderId: other } = await addOrder("4");
-		await db
-			.update(schema.orderLines)
-			.set({ shippedQuantity: null })
-			.where(eq(schema.orderLines.orderId, other));
-		// Unknown means nothing is packable.
-		await refused(
-			addPackedDispatch(db, { orderIds: [other] }),
-			"fewer than 3 units left to pack",
-		);
-	});
-
-	test("refuses packing behind a count that predates our own handoff", async () => {
-		const { dispatchId } = await addPackedDispatch(db, {
-			orderIds: [orderId],
-			units: 1,
-		});
-		await db
-			.update(schema.dispatchOrders)
-			.set({ channelSentAt: new Date() })
-			.where(eq(schema.dispatchOrders.dispatchId, dispatchId));
-		await refused(
-			addPackedDispatch(db, { orderIds: [orderId], units: 1 }),
-			"wait for the next sync",
-		);
-		await sync(1);
-		await addPackedDispatch(db, { orderIds: [orderId], units: 2 });
+		// The synced count doesn't bound it: the live read does.
+		await sync(3);
+		await addPackedDispatch(db, { orderIds: [orderId], units: 3 });
 	});
 });

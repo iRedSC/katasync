@@ -7,7 +7,6 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
-import type { PackBlock } from "./remaining";
 
 // The order's payment status, counting a refund of every line and its
 // shipping as REFUNDED. Amazon reports a refunded order as paid forever, and
@@ -46,45 +45,21 @@ export const needsShipping = sql<boolean>`(
 // so it stays on To ship but is never packed here.
 export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null)`;
 
-// What katasync itself holds of an order line, from its dispatches: what
-// the marketplace's shipped count must reach to cover katasync's handoffs,
-// and units in live dispatches not handed off yet. For a select from
-// order_lines; remaining.ts turns them into what's packable, and
-// drizzle/0182 defines both functions, which its triggers use too.
-export const unitsShippedNeeded = sql<number>`order_line_shipped_needed(${orderLines.orderId}, ${orderLines.externalId})`;
+// Units of an order line in live dispatches not yet handed off to its
+// marketplace (drizzle/0182's order_line_unsent, which its trigger uses
+// too). For a select from order_lines.
 export const unitsUnsent = sql<number>`order_line_unsent(${orderLines.orderId}, ${orderLines.externalId})`;
 
-// A line whose marketplace count doesn't cover what katasync handed off:
-// a snapshot from before that handoff, so the next sync will correct it.
-const behindLine = sql`l.shipped_quantity < order_line_shipped_needed(l.order_id, l.external_id)`;
-
-// Why an order's packable units aren't known, or null when they are
-// (remaining.ts's PackBlock). Behind clears on the next sync. Short is behind even though the order
-// synced after katasync's latest handoff (both clocks are ours), so it's
-// likely not lag but a fulfillment taken back on the marketplace.
-export const packBlock = sql<PackBlock | null>`(case
-	when exists (
-		select 1 from ${orderLines} l
-		where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
-	) then 'unknown'
-	when exists (
-		select 1 from ${orderLines} l
-		where l.order_id = "orders"."id" and l.quantity > 0 and ${behindLine}
-	) then case
-		when "orders"."synced_at" > (
-			select max(d.channel_sent_at) from ${dispatchOrders} d
-			where d.order_id = "orders"."id" and d.reversed_at is null
-		) then 'short'
-		else 'behind'
-	end
-end)`;
-
-// What's packable isn't known: a line with units and no shipped count,
-// whatever the order's status (katasync rewrites that one locally, on a
-// void), or a count still behind katasync's own handoffs. Such an order
-// can't be packed (whyNotTogether), and the sync reads it again
-// (unknown-shipped.ts); remaining.ts is the same rule.
-export const remainingUnknown = sql<boolean>`(${packBlock} is not null)`;
+// The marketplace hasn't said which units shipped: a line with units and no
+// shipped count, whatever the order's status (katasync rewrites that one
+// locally, on a void). The order page and To ship say so. Quick ship packs
+// from what the marketplace says live where it can (src/shipping/
+// live-open.ts), so this blocks only orders it can't read that way
+// (whyNotTogether); remaining.ts is the same rule.
+export const remainingUnknown = sql<boolean>`exists (
+	select 1 from ${orderLines} l
+	where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
+)`;
 
 // Waiting on a supplier's tracking: on To ship, but only for typing it in.
 export const awaitsDropShip = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is not null)`;

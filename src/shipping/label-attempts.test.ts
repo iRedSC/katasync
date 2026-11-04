@@ -3,12 +3,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { syncedOpen } from "#/test/open-reads";
 import { type BoxPlan, type BuyOutside, buyDispatch } from "./buy";
-import { contentsKey } from "./contents";
 import { memoryLocker } from "./dispatch";
 import { LabelRefused, type Lookup } from "./label-attempt-state";
 import { type CheckOutside, checkLabelAttempt } from "./label-attempts";
-import { packableLines } from "./packed";
+import { shipmentPlan } from "./quick-ship";
 
 let db: Db;
 let storeId: number;
@@ -85,7 +85,7 @@ function fakes(overrides: Partial<BuyOutside> = {}): BuyOutside {
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokBuy: vi.fn(),
 		tiktokUnits: vi.fn(),
-		ebayCheck: vi.fn(async () => {}),
+		open: syncedOpen(() => db),
 		isTest: () => false,
 		...overrides,
 	};
@@ -117,7 +117,8 @@ const buy = async (orderIds: number[], boxes: number, outside: BuyOutside) =>
 		db,
 		{
 			orderIds,
-			contentsKey: contentsKey(await packableLines(db, orderIds)),
+			contentsKey: (await shipmentPlan(db, orderIds, [], syncedOpen(db)))
+				.contentsKey,
 			boxes: Array.from({ length: boxes }, () => box),
 			choice: { carrier: "USPS", service: "ground", id: "r", total: 100 },
 			signature: false,
@@ -202,7 +203,7 @@ describe("packed contents", () => {
 
 	test("an order edited after packing stops the purchase with nothing bought", async () => {
 		const a = await addOrder("#1", 2);
-		const shown = contentsKey(await packableLines(db, [a]));
+		const shown = (await shipmentPlan(db, [a], [], syncedOpen(db))).contentsKey;
 		await db
 			.update(schema.orderLines)
 			.set({ quantity: 1 })

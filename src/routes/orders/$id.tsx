@@ -24,13 +24,13 @@ import { SendRow } from "#/components/order-page/send-row";
 import { TimelineCard } from "#/components/order-page/timeline-card";
 import { TrackingCard } from "#/components/order-page/tracking-card";
 import { OrderStatusBadge } from "#/components/order-status";
-import { PackBlockBadge } from "#/components/pack-block-badge";
 import { Badge, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
 import { ReturnDialog } from "#/components/return-dialog";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import {
 	channelName,
 	cityLine,
@@ -44,7 +44,11 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { externalFulfillment } from "#/orders/fulfillment";
-import { partlyShipped, shippedOf } from "#/orders/remaining";
+import {
+	partlyShipped,
+	shippedOf,
+	UNKNOWN_REMAINING,
+} from "#/orders/remaining";
 import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
 import { getBuyerChat } from "#/server/buyer-chat";
@@ -299,8 +303,12 @@ function OrderPage() {
 					<OrderStatusBadge status={status} />
 					{/* Still to ship, and the marketplace hasn't said what already
 					went: nothing can be packed until it does. */}
-					{order.pin !== null && order.packBlock && (
-						<PackBlockBadge block={order.packBlock} />
+					{order.pin !== null && order.remainingUnknown && (
+						<Tip content={`Can't pack yet: ${UNKNOWN_REMAINING}`}>
+							<span>
+								<Badge tone="critical">? shipped</Badge>
+							</span>
+						</Tip>
 					)}
 					{order.pin !== null && (
 						<span className="font-mono text-base text-muted-foreground">

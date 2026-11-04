@@ -5,73 +5,37 @@ import * as schema from "#/db/schema";
 import { createProduct, createTestDb } from "#/test/db";
 import { type ChannelOrder, ingestOrder } from "./ingest";
 import {
-	BEHIND_REMAINING,
-	packableOf,
 	partlyShipped,
 	remainingOf,
-	SHORT_REMAINING,
 	shippedOf,
 	toPack,
 	toPrint,
-	whyNotPackable,
+	unitsToShip,
 } from "./remaining";
 
 // order_lines.shipped_quantity: what the marketplace says already went out
 // of each line. Null is unknown, never none.
 
 describe("what's left to ship", () => {
-	// shippedNeeded and unsent are katasync's own dispatches (see remaining.ts).
-	const line = (
-		quantity: number,
-		shippedQuantity: number | null,
-		shippedNeeded = 0,
-		unsent = 0,
-	) => ({ quantity, shippedQuantity, shippedNeeded, unsent });
-	const units = (l: ReturnType<typeof line>) => {
-		const p = packableOf(l);
-		return p.kind === "known" ? p.units : p.kind;
-	};
+	const line = (quantity: number, shippedQuantity: number | null) => ({
+		quantity,
+		shippedQuantity,
+	});
 
 	test("is the quantity less what shipped, never below none", () => {
-		expect(units(line(5, 2))).toBe(3);
-		expect(units(line(2, 3))).toBe(0);
-		expect(units(line(2, 0))).toBe(2);
+		expect(unitsToShip(line(5, 2))).toBe(3);
+		expect(unitsToShip(line(2, 3))).toBe(0);
+		expect(unitsToShip(line(2, 0))).toBe(2);
 	});
 
 	test("an uncounted line is unknown, whatever the order's status says", () => {
 		// katasync rewrites the status locally (a void puts it back to
 		// UNFULFILLED), so it can't stand in for the marketplace's count.
-		expect(units(line(2, null))).toBe("unknown");
-		expect(toPack([line(2, null)]).kind).toBe("unknown");
+		expect(unitsToShip(line(2, null))).toBeNull();
+		expect(toPack([line(2, null)])).toBeNull();
 		expect(remainingOf([line(2, 1), line(1, null)]).kind).toBe("unknown");
 		// A cancelled line has nothing to know.
 		expect(remainingOf([line(2, 1), line(0, null)]).kind).toBe("known");
-	});
-
-	test("units in a live dispatch not yet handed off aren't packable again", () => {
-		expect(units(line(5, 0, 0, 2))).toBe(3);
-		expect(units(line(5, 0, 0, 5))).toBe(0);
-		// Shipped by the marketplace and held by us together.
-		expect(units(line(5, 2, 0, 2))).toBe(1);
-	});
-
-	test("a count that covers our own handoff is trusted", () => {
-		// Handed off 2, and the marketplace now says 2 (or more, from its own
-		// admin) shipped.
-		expect(units(line(5, 2, 2))).toBe(3);
-		expect(units(line(5, 3, 2))).toBe(2);
-	});
-
-	test("a count from before our own handoff has to wait for the next sync", () => {
-		// Handed off 2, but the marketplace's snapshot still says none: taking
-		// it at its word would pack those 2 again.
-		expect(units(line(5, 0, 2))).toBe("behind");
-		expect(remainingOf([line(5, 0, 2), line(1, 0)]).kind).toBe("behind");
-		expect(toPack([line(5, 0, 2)]).kind).toBe("behind");
-		// Unknown still wins: that one may need a person.
-		expect(remainingOf([line(5, 0, 2), line(1, null)]).kind).toBe("unknown");
-		expect(whyNotPackable("behind")).toBe(BEHIND_REMAINING);
-		expect(whyNotPackable("short")).toBe(SHORT_REMAINING);
 	});
 
 	test("packing leaves out lines with nothing left", () => {
@@ -80,63 +44,45 @@ describe("what's left to ship", () => {
 				{ id: 1, ...line(5, 2) },
 				{ id: 2, ...line(1, 1) },
 			]),
-		).toEqual({
-			kind: "known",
-			lines: [
-				{ id: 1, quantity: 3, shippedQuantity: 2, shippedNeeded: 0, unsent: 0 },
-			],
-		});
+		).toEqual([{ id: 1, quantity: 3, shippedQuantity: 2 }]);
 	});
 
-	test("the packing slip prints what's packable only while the order still needs packing", () => {
-		const lines = [line(5, 2), line(1, 1), line(4, 1, 1)];
+	// On a packing slip, with what a label not yet handed off holds.
+	const slip = (quantity: number, shipped: number | null, unsent = 0) => ({
+		...line(quantity, shipped),
+		unsent,
+	});
+
+	test("the packing slip prints what's left only while the order still needs packing", () => {
+		const lines = [slip(5, 2), slip(1, 1)];
 		const printed = (needsPacking: boolean) =>
 			toPrint(lines, { needsPacking }).map((l) => [l.toPack, l.quantity]);
 		expect(printed(true)).toEqual([
 			[3, 5],
 			[0, 1],
-			[3, 4],
 		]);
 		// A reprint of a finished order shows what was sold, as it went out.
 		expect(printed(false)).toEqual([
 			[5, 5],
 			[1, 1],
-			[4, 4],
 		]);
-		// Unknown, or behind, prints what was sold too; quick ship refuses
-		// packing it.
+		// Unknown prints what was sold too; quick ship refuses packing it.
 		expect(
-			toPrint([line(5, null)], { needsPacking: true }).map((l) => l.toPack),
-		).toEqual([5]);
-		expect(
-			toPrint([line(5, 0, 2)], { needsPacking: true }).map((l) => l.toPack),
+			toPrint([slip(5, null)], { needsPacking: true }).map((l) => l.toPack),
 		).toEqual([5]);
 	});
 
 	test("a reprint while a label waits to be handed off prints that box", () => {
-		// All 3 bought, handoff pending or failed: the box holds 3, though
-		// nothing is packable any more.
-		const all = toPrint([line(3, 0, 0, 3)], { needsPacking: true });
+		// All 3 bought, handoff pending or failed: the box holds 3.
+		const all = toPrint([slip(3, 0, 3)], { needsPacking: true });
 		expect(all.map((l) => [l.toPack, l.quantity])).toEqual([[3, 3]]);
 		// Part of the order in the box: what's in it, not what's left after.
-		const part = toPrint([line(5, 0, 0, 2), line(2, 0)], {
-			needsPacking: true,
-		});
+		const part = toPrint([slip(5, 0, 2), slip(2, 0)], { needsPacking: true });
 		expect(part.map((l) => l.toPack)).toEqual([2, 0]);
 		// Even once the order no longer needs packing, the box is the box.
 		expect(
-			toPrint([line(3, 0, 0, 3)], { needsPacking: false }).map((l) => l.toPack),
+			toPrint([slip(3, 0, 3)], { needsPacking: false }).map((l) => l.toPack),
 		).toEqual([3]);
-	});
-
-	test("the fence counts units shipped outside katasync before our handoff", () => {
-		// 10 sold, 5 shipped from the marketplace's admin, then katasync
-		// handed off 2 bought at a count of 5: the count must reach 7.
-		const needed = 5 + 2;
-		// The saved count still says 5: a snapshot from before the handoff.
-		expect(units(line(10, 5, needed))).toBe("behind");
-		// Once it says 7, 3 are left.
-		expect(units(line(10, 7, needed))).toBe(3);
 	});
 
 	test("partly shipped means some went and some didn't, as far as is known", () => {

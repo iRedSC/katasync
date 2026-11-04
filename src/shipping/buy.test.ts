@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { syncedOpen } from "#/test/open-reads";
 import { type BoxPlan, type BuyOutside, buyDispatch } from "./buy";
-import { contentsKey } from "./contents";
 import { memoryLocker } from "./dispatch";
 import { LabelRefused } from "./label-attempt-state";
-import { packableLines } from "./packed";
+import { shipmentPlan } from "./quick-ship";
 
 let db: Db;
 let storeId: number;
@@ -47,7 +47,7 @@ async function addOrder(name: string, extra: Record<string, unknown> = {}) {
 }
 
 const keyOf = async (orderIds: number[]) =>
-	contentsKey(await packableLines(db, orderIds));
+	(await shipmentPlan(db, orderIds, [], syncedOpen(db))).contentsKey;
 
 // Shippo ids are unique, across every fake.
 let n = 0;
@@ -101,7 +101,7 @@ function fakes(overrides: Partial<BuyOutside> = {}): BuyOutside {
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokBuy: vi.fn(),
 		tiktokUnits: vi.fn(),
-		ebayCheck: vi.fn(async () => {}),
+		open: syncedOpen(() => db),
 		isTest: () => false,
 		...overrides,
 	};

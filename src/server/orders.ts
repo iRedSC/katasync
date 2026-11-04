@@ -40,7 +40,6 @@ import {
 	financialStatus,
 	labelToVoid,
 	needsShipping,
-	packBlock,
 	remainingUnknown,
 } from "#/orders/to-ship";
 import { type SameBuyer, sameBuyerOrders } from "#/shipping/same-buyer";
@@ -188,7 +187,6 @@ export const getOrder = createServerFn({ method: "GET" })
 				fulfilledByChannel: orders.fulfilledByChannel,
 				dropShipAt: orders.dropShipAt,
 				remainingUnknown,
-				packBlock,
 				dropShipSentAt: orders.dropShipSentAt,
 				dropShipCarrier: orders.dropShipCarrier,
 				dropShipTracking: orders.dropShipTracking,

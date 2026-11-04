@@ -87,17 +87,6 @@ export function ebayOpen(read: EbayRead) {
 	return { open, titles };
 }
 
-// Before buying: eBay must still have every packed line open with at least
-// its packed quantity (fit within, see packed.ts). The rest of the order can
-// wait for a later shipment.
-export async function ebayAssertAsPacked(
-	orderId: string,
-	packed: Map<string, number>,
-) {
-	const { open, titles } = ebayOpen(await ebayRead(orderId));
-	assertFits("within", packed, open, titles);
-}
-
 // Tells eBay these packed quantities shipped with this tracking; eBay tells
 // the buyer. eBay takes one tracking number per line item, so it's the
 // first box's. packed must fit what eBay has open (exactly, or within for

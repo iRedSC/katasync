@@ -1,5 +1,4 @@
 import { ChannelBadge } from "#/components/channel-badge";
-import { PackBlockBadge } from "#/components/pack-block-badge";
 import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Truncate } from "#/components/truncate";
@@ -50,12 +49,18 @@ export function OrderSummary({
 					{found.liveDispatchId !== null && (
 						<Badge tone="warning">Already has a label</Badge>
 					)}
-					{/* Nothing to pack until the marketplace's count is known;
-					buying says why too. */}
-					{o.packBlock && <PackBlockBadge block={o.packBlock} />}
+					{/* The marketplace hasn't said what already shipped: nothing
+					to pack until it does, and buying says why. */}
+					{o.remainingUnknown && <Badge tone="critical">? shipped</Badge>}
 					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
 				</div>
 			</div>
+			{/* Nothing is packable until the marketplace answers. */}
+			{plan.unread && (
+				<p className="text-base font-semibold text-critical-text">
+					{plan.unread}
+				</p>
+			)}
 			<ul className="flex flex-col gap-2">
 				{plan.choices.map((l) => (
 					<li

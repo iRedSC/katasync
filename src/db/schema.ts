@@ -780,9 +780,8 @@ export const orderLines = pgTable(
 		// unknown, never none: a partly shipped order whose channel hasn't
 		// said can't be packed. It can exceed quantity on a channel's quirk, so
 		// readers clamp it (src/orders/remaining.ts) rather than a check
-		// breaking the sync. Only the sync writes it: a count lower than what
-		// katasync itself handed off predates that handoff, so the line counts
-		// as unknown until the next sync (drizzle/0182).
+		// breaking the sync. Shown, and counted on To ship; what can be packed
+		// comes from the marketplace live (src/shipping/live-open.ts).
 		shippedQuantity: integer(),
 		// Price per unit after every discount.
 		unitPrice: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
@@ -1506,8 +1505,9 @@ export const packages = pgTable(
 // One send to one address: the boxes that went out together, for every
 // order packed into them. An order can go out in several over time, but has
 // at most one live dispatch (a box not voided, or a purchase not settled)
-// not yet handed off to its marketplace, and no unit of it is packed twice
-// (drizzle/0182). contentsKey is everything in it, merged across orders;
+// not yet handed off to its marketplace (drizzle/0182). What goes in each is
+// what the marketplace says is still open (src/shipping/live-open.ts).
+// contentsKey is everything in it, merged across orders;
 // quick ship reuses the last dispatch with the same contents that sets the
 // default.
 // Rules live in src/shipping/dispatch.ts.
@@ -1637,9 +1637,9 @@ export const dispatchOrders = pgTable(
 
 // What a packed dispatch holds: each order line's units packed in it (all
 // that was left of the line, or fewer staff chose to send now), its SKU as
-// the channel named it, and the product it was mapped to then. A row never
-// takes more than the line has packable, and every order in the dispatch
-// has a row (drizzle/0182). Written with the dispatch and never changed
+// the channel named it, and the product it was mapped to then. Rows not yet
+// handed off never hold more of a line than was sold, and every order in
+// the dispatch has a row (drizzle/0182). Written with the dispatch and never changed
 // (drizzle/0115), so it stays the evidence of what went out whatever happens to the order
 // afterwards. Only the dispatch membership is a foreign key: the line id and
 // product id are values as they were, so later changes to the order's lines
@@ -1655,15 +1655,6 @@ export const dispatchLines = pgTable(
 		sku: text(),
 		title: text().notNull(),
 		quantity: integer().notNull(),
-		// The line's shipped count as the marketplace had it when this was
-		// bought, set by drizzle/0182 (whatever is passed), so the next
-		// shipment knows what the count must reach. Null on rows from before
-		// it was kept.
-		shippedBefore: integer(),
-		// Units of the line already handed off and not reversed when this
-		// was bought, so all counted in shippedBefore. Set beside it, by the
-		// database; lets a later void of those lower the fence (drizzle/0182).
-		handedOffBefore: integer(),
 	},
 	(t) => [
 		primaryKey({ columns: [t.dispatchId, t.orderId, t.lineExternalId] }),

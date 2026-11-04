@@ -6,13 +6,11 @@ import {
 	dispatchLines,
 	type HandoffHold,
 	orderLines,
-	orders,
 	products,
 } from "#/db/schema";
-import { groupBy } from "#/lib/group-by";
-import { toPack, whyNotPackable } from "#/orders/remaining";
-import { unitsShippedNeeded, unitsUnsent } from "#/orders/to-ship";
+import { unitsUnsent } from "#/orders/to-ship";
 import { contentsKey } from "./contents";
+import { type OpenReads, withPackable } from "./live-open";
 
 // What went in a dispatch's boxes, kept when its labels are bought
 // (dispatch_lines in schema.ts) and checked against the order again before
@@ -20,7 +18,7 @@ import { contentsKey } from "./contents";
 
 export type PackedLine = Omit<
 	typeof dispatchLines.$inferSelect,
-	"dispatchId" | "orderLineId" | "shippedBefore" | "handedOffBefore"
+	"dispatchId" | "orderLineId"
 > & { orderLineId?: number | null };
 
 // What katasync knows a dispatch held. unknown: bought before contents were
@@ -87,43 +85,43 @@ export function assertEveryOrderPacked(
 }
 
 // Every line of these orders with something packable, at what's packable
-// (src/orders/remaining.ts), as quick ship showed it (shipmentPlan). Throws
-// for an order whose remaining isn't known, which whyNotTogether refuses
-// first.
+// (live-open.ts), as quick ship showed it (shipmentPlan). Throws
+// OpenUnread when a marketplace read live doesn't answer.
 export async function packableLines(
 	db: Db,
-	orderIds: number[],
+	list: Parameters<typeof withPackable>[0],
+	reads: OpenReads,
 ): Promise<LineToPack[]> {
 	const rows = await db
 		.select({
 			orderId: orderLines.orderId,
 			orderLineId: orderLines.id,
 			lineExternalId: orderLines.externalId,
+			externalId: orderLines.externalId,
 			productId: orderLines.productId,
 			sku: orderLines.sku,
 			keySku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 			title: orderLines.title,
 			quantity: orderLines.quantity,
 			shippedQuantity: orderLines.shippedQuantity,
-			shippedNeeded: unitsShippedNeeded,
 			unsent: unitsUnsent,
-			orderName: orders.name,
 		})
 		.from(orderLines)
-		.innerJoin(orders, eq(orders.id, orderLines.orderId))
 		.leftJoin(products, eq(products.id, orderLines.productId))
 		.where(
-			and(inArray(orderLines.orderId, orderIds), gt(orderLines.quantity, 0)),
+			and(
+				inArray(
+					orderLines.orderId,
+					list.map((o) => o.id),
+				),
+				gt(orderLines.quantity, 0),
+			),
 		)
 		.orderBy(orderLines.orderId, orderLines.id);
-	return [...groupBy(rows, (r) => r.orderId).values()].flatMap((lines) => {
-		const packing = toPack(lines);
-		if (packing.kind !== "known")
-			throw new Error(`${lines[0].orderName}: ${whyNotPackable(packing.kind)}`);
-		return packing.lines.map(
-			({ shippedQuantity, shippedNeeded, unsent, orderName, ...line }) => line,
-		);
-	});
+	return (await withPackable(list, rows, reads)).flatMap(
+		({ externalId, shippedQuantity, unsent, packable, ...line }) =>
+			packable > 0 ? [{ ...line, quantity: packable }] : [],
+	);
 }
 
 // Stops a purchase when the orders no longer hold what was on screen when

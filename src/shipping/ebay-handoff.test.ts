@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { ebayAssertAsPacked, ebayShip } from "./ebay-handoff";
+import { ebayShip } from "./ebay-handoff";
+import { liveOpenReads } from "./live-open";
 import { ContentsChanged, Held } from "./packed";
 
 type Line = { lineItemId: string; quantity: number; refunds?: unknown[] };
@@ -166,16 +167,25 @@ describe("ebayShip", () => {
 	});
 });
 
-describe("ebayAssertAsPacked", () => {
-	test("before buying, eBay need only hold at least the box", async () => {
-		ebay([
-			{ lineItemId: "L1", quantity: 3 },
-			{ lineItemId: "L2", quantity: 1 },
-		]);
-		await expect(ebayAssertAsPacked("o", packed)).resolves.toBeUndefined();
-		ebay([{ lineItemId: "L1", quantity: 1 }]);
-		await expect(ebayAssertAsPacked("o", packed)).rejects.toBeInstanceOf(
-			ContentsChanged,
+describe("what eBay has open, read before buying", () => {
+	test("is each line less what its shipments carry", async () => {
+		ebay(
+			[
+				{ lineItemId: "L1", quantity: 3 },
+				{ lineItemId: "L2", quantity: 1 },
+			],
+			[{ fulfillmentId: "F1", lineItems: [{ lineItemId: "L1", quantity: 1 }] }],
 		);
+		expect(await liveOpenReads.ebay("o")).toEqual(
+			new Map([
+				["L1", 2],
+				["L2", 1],
+			]),
+		);
+	});
+
+	test("a cancellation is held, not counted", async () => {
+		ebay([{ lineItemId: "L1", quantity: 3 }], [], "CANCEL_REQUESTED");
+		await expect(liveOpenReads.ebay("o")).rejects.toBeInstanceOf(Held);
 	});
 });

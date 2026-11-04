@@ -18,9 +18,7 @@ import { toPrint } from "#/orders/remaining";
 import {
 	financialStatus,
 	needsPacking,
-	packBlock,
 	remainingUnknown,
-	unitsShippedNeeded,
 	unitsUnsent,
 } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
@@ -75,7 +73,6 @@ export const listInvoices = createServerFn({ method: "GET" })
 					buyerId: orders.buyerId,
 					needsPacking,
 					remainingUnknown,
-					packBlock,
 					fulfillmentStatus: orders.fulfillmentStatus,
 				})
 				.from(orders)
@@ -104,9 +101,8 @@ export const listInvoices = createServerFn({ method: "GET" })
 						name: sql<string>`coalesce(${products.name}, ${orderLines.title})`,
 						quantity: orderLines.quantity,
 						shippedQuantity: orderLines.shippedQuantity,
-						// What katasync's own shipments hold, so the slip prints
-						// only what's packable now.
-						shippedNeeded: unitsShippedNeeded,
+						// What a label not yet handed off holds, so a reprint
+						// prints that box (toPrint).
 						unsent: unitsUnsent,
 						unitPrice: orderLines.unitPrice,
 						// The size or option to pick, from the catalog: channel
