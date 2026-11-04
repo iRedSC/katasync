@@ -45,14 +45,37 @@ export const needsShipping = sql<boolean>`(
 // so it stays on To ship but is never packed here.
 export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null)`;
 
-// The marketplace hasn't said which units shipped: a line with units and no
-// shipped count, whatever the order's status (katasync rewrites that one
-// locally, on a void). Such an order can't be packed (whyNotTogether);
-// remaining.ts is the same rule.
+// Units of an order line katasync itself holds, from its dispatches: handed
+// off to the marketplace and not taken back, and in live dispatches not
+// handed off yet. For a select from order_lines; remaining.ts turns them
+// into what's packable, and drizzle/0182 defines both functions, which its
+// triggers use too.
+export const unitsHandedOff = sql<number>`order_line_handed_off(${orderLines.orderId}, ${orderLines.externalId})`;
+export const unitsUnsent = sql<number>`order_line_unsent(${orderLines.orderId}, ${orderLines.externalId})`;
+
+// A line whose marketplace count is lower than what katasync handed off:
+// a snapshot from before that handoff, so the next sync will correct it.
+const behindLine = sql`l.shipped_quantity < order_line_handed_off(l.order_id, l.external_id)`;
+
+// What's packable isn't known: a line with units and no shipped count,
+// whatever the order's status (katasync rewrites that one locally, on a
+// void), or a count still behind katasync's own handoff. Such an order
+// can't be packed (whyNotTogether), and the sync reads it again
+// (unknown-shipped.ts); remaining.ts is the same rule.
 export const remainingUnknown = sql<boolean>`exists (
 	select 1 from ${orderLines} l
-	where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
+	where l.order_id = "orders"."id" and l.quantity > 0
+		and (l.shipped_quantity is null or ${behindLine})
 )`;
+
+// Only behind, not unknown: the next sync clears it on its own.
+export const remainingBehind = sql<boolean>`(not exists (
+	select 1 from ${orderLines} l
+	where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
+) and exists (
+	select 1 from ${orderLines} l
+	where l.order_id = "orders"."id" and l.quantity > 0 and ${behindLine}
+))`;
 
 // Waiting on a supplier's tracking: on To ship, but only for typing it in.
 export const awaitsDropShip = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is not null)`;

@@ -8,7 +8,7 @@ import { contentsKey } from "./contents";
 import { memoryLocker } from "./dispatch";
 import { LabelRefused, type Lookup } from "./label-attempt-state";
 import { type CheckOutside, checkLabelAttempt } from "./label-attempts";
-import { linesToPack } from "./packed";
+import { packableLines } from "./packed";
 
 let db: Db;
 let storeId: number;
@@ -117,7 +117,7 @@ const buy = async (orderIds: number[], boxes: number, outside: BuyOutside) =>
 		db,
 		{
 			orderIds,
-			contentsKey: contentsKey(await linesToPack(db, orderIds)),
+			contentsKey: contentsKey(await packableLines(db, orderIds)),
 			boxes: Array.from({ length: boxes }, () => box),
 			choice: { carrier: "USPS", service: "ground", id: "r", total: 100 },
 			signature: false,
@@ -202,7 +202,7 @@ describe("packed contents", () => {
 
 	test("an order edited after packing stops the purchase with nothing bought", async () => {
 		const a = await addOrder("#1", 2);
-		const shown = contentsKey(await linesToPack(db, [a]));
+		const shown = contentsKey(await packableLines(db, [a]));
 		await db
 			.update(schema.orderLines)
 			.set({ quantity: 1 })

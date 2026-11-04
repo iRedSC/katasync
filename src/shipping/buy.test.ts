@@ -7,7 +7,7 @@ import { type BoxPlan, type BuyOutside, buyDispatch } from "./buy";
 import { contentsKey } from "./contents";
 import { memoryLocker } from "./dispatch";
 import { LabelRefused } from "./label-attempt-state";
-import { linesToPack } from "./packed";
+import { packableLines } from "./packed";
 
 let db: Db;
 let storeId: number;
@@ -47,7 +47,7 @@ async function addOrder(name: string, extra: Record<string, unknown> = {}) {
 }
 
 const keyOf = async (orderIds: number[]) =>
-	contentsKey(await linesToPack(db, orderIds));
+	contentsKey(await packableLines(db, orderIds));
 
 // Shippo ids are unique, across every fake.
 let n = 0;
@@ -225,7 +225,7 @@ describe("buyDispatch", () => {
 		expect(members.map((d) => d.orderId).sort()).toEqual([a, b].sort());
 	});
 
-	test("refuses a second shipment while one is live", async () => {
+	test("refuses a second shipment while one is live and not yet sent", async () => {
 		const a = await addOrder("#1");
 		await buy([a], [box()]);
 		const outside = fakes();

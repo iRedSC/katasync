@@ -10,7 +10,8 @@ import { assertShippable } from "./tiktok-units";
 import { storefrontTrackingUrl } from "./tracking-link";
 
 // Telling one order's marketplace its packed box shipped, after asking the
-// marketplace what it still has to ship and finding exactly the box. Each
+// marketplace what it still has to ship and finding the box within it (one
+// shipment can be part of the order; TikTok's must still be all of it). Each
 // returns the marketplace's id for the fulfillment and how many units the
 // order still has to ship after it, so katasync's own status says partly
 // fulfilled rather than claiming it's all gone. A mismatch throws Held.
@@ -67,14 +68,20 @@ export async function deliver(
 				})),
 			},
 			byLine(packed),
+			"within",
 		);
 	}
 	const [first] = boxes;
-	return outside.ebayShip(order.externalId, byLine(packed), {
-		carrier: first.carrier,
-		trackingNumber: first.trackingNumber as string,
-		shippedAt: first.createdAt,
-	});
+	return outside.ebayShip(
+		order.externalId,
+		byLine(packed),
+		{
+			carrier: first.carrier,
+			trackingNumber: first.trackingNumber as string,
+			shippedAt: first.createdAt,
+		},
+		"within",
+	);
 }
 
 // Throws Held unless TikTok still has exactly this order's packed units to

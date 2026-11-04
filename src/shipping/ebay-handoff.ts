@@ -6,7 +6,7 @@ import {
 	ebayCarrierCode,
 	ebayShippingFulfillments,
 } from "#/channels/ebay";
-import { assertUnchanged, driftOf, unmappable } from "./packed";
+import { assertFits, driftOf, type Fit, unmappable } from "./packed";
 
 // eBay's own word on an order before katasync buys for it or tells eBay it
 // shipped: GET /sell/fulfillment/v1/order/{orderId} and its
@@ -87,20 +87,25 @@ export function ebayOpen(read: EbayRead) {
 	return { open, titles };
 }
 
+// Before buying: eBay must still have every packed line open with at least
+// its packed quantity (fit within, see packed.ts). The rest of the order can
+// wait for a later shipment.
 export async function ebayAssertAsPacked(
 	orderId: string,
 	packed: Map<string, number>,
 ) {
 	const { open, titles } = ebayOpen(await ebayRead(orderId));
-	assertUnchanged(packed, open, titles);
+	assertFits("within", packed, open, titles);
 }
 
 // Tells eBay these packed quantities shipped with this tracking; eBay tells
 // the buyer. eBay takes one tracking number per line item, so it's the
-// first box's. Safe to repeat: a fulfillment already carrying the tracking
-// is returned, only if it holds exactly what was packed. Returns how much
-// the order still has to ship after it. With no tracking (a drop-ship
-// whose supplier never sent one) eBay is told it shipped without any, and a
+// first box's. packed must fit what eBay has open (exactly, or within for
+// one shipment of several). Safe to repeat: a fulfillment already carrying
+// the tracking is returned, only if it holds exactly what was packed, so a
+// retry never takes an earlier shipment for this one. Returns how much the
+// order still has to ship after it. With no tracking (a drop-ship whose
+// supplier never sent one) eBay is told it shipped without any, and a
 // repeat finds nothing left open and throws instead of shipping twice.
 export async function ebayShip(
 	orderId: string,
@@ -108,6 +113,7 @@ export async function ebayShip(
 	shipment:
 		| { carrier: string; trackingNumber: string; shippedAt: Date }
 		| { carrier: null; trackingNumber: null; shippedAt: Date },
+	fit: Fit,
 ): Promise<{ fulfillmentId: string | null; remaining: number }> {
 	const read = await ebayRead(orderId);
 	const { open, titles } = ebayOpen(read);
@@ -129,7 +135,7 @@ export async function ebayShip(
 		}
 		return { fulfillmentId: already.fulfillmentId, remaining };
 	}
-	assertUnchanged(packed, open, titles);
+	assertFits(fit, packed, open, titles);
 	const response = await fetch(`${orderUrl(orderId)}/shipping_fulfillment`, {
 		method: "POST",
 		headers: {
@@ -155,8 +161,9 @@ export async function ebayShip(
 			`eBay refused: ${response.status} ${await response.text()}`,
 		);
 	}
+	const sent = [...packed.values()].reduce((sum, n) => sum + n, 0);
 	return {
 		fulfillmentId: response.headers.get("location")?.split("/").pop() ?? null,
-		remaining: 0,
+		remaining: remaining - sent,
 	};
 }

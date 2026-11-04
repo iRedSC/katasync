@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { assertUnchanged, driftOf, unmappable } from "#/shipping/packed";
+import { assertFits, driftOf, type Fit, unmappable } from "#/shipping/packed";
 import { shopifyQuery, userErrors } from "./client";
 
 const morePages = { pageInfo: { hasNextPage: "boolean" } } as const;
@@ -62,15 +62,20 @@ const DONE = new Set(["CANCELLED", "CLOSED"]);
 // which voiding needs, and how many units the order still has to ship
 // after it. Needs write_merchant_managed_fulfillment_orders.
 //
-// packed is each line item's quantity in the box. Everything Shopify still
-// has to ship (on hold and scheduled too) must be exactly that, or it
-// throws ContentsChanged and fulfills nothing; the fulfillment then names
-// every line's quantity, so nothing added in between ships with it.
+// packed is each line item's quantity in the box, checked against what
+// Shopify still has to ship (on hold and scheduled too) by fit (see
+// packed.ts): exactly for a whole order, within for one shipment of
+// several. If it doesn't fit, it throws ContentsChanged and fulfills
+// nothing; the fulfillment then names every line's quantity, so nothing
+// added in between ships with it. Units on hold or scheduled block it only
+// when the box needs them.
 //
 // Safe to repeat: a fulfillment already carrying these tracking numbers
 // (an earlier try got through) is returned instead of a second one, but
-// only if it shipped exactly what was packed. Anything Shopify shows that
-// katasync can't be sure of is held for a person rather than guessed at.
+// only if it shipped exactly what was packed, whatever the fit, so a retry
+// never takes an earlier shipment of other units for this one. Anything
+// Shopify shows that katasync can't be sure of is held for a person rather
+// than guessed at.
 //
 // tracking null ships it with no tracking at all (a drop-ship whose supplier
 // never sent one). Nothing then tells a repeat from a first try, so a repeat
@@ -82,6 +87,7 @@ export async function shopifyFulfill(
 		boxes: { number: string; url: string | null }[];
 	} | null,
 	packed: Map<string, number>,
+	fit: Fit,
 ): Promise<{ fulfillmentId: string; remaining: number }> {
 	if (tracking?.boxes.length === 0) throw new Error("No tracking to send");
 	const numbers = tracking?.boxes.map((b) => b.number) ?? [];
@@ -133,13 +139,14 @@ export async function shopifyFulfill(
 		}
 		return { fulfillmentId: f.id, remaining };
 	}
-	assertUnchanged(packed, open, titles);
+	assertFits(fit, packed, open, titles);
 	const fulfillable = live.filter((f) => FULFILLABLE.has(f.status));
 	const items = exactly(fulfillable, packed);
 	const allocated = items
 		.flatMap((f) => f.fulfillmentOrderLineItems)
 		.reduce((sum, i) => sum + i.quantity, 0);
-	if (allocated !== remaining) {
+	const wanted = [...packed.values()].reduce((sum, n) => sum + n, 0);
+	if (allocated !== wanted) {
 		throw unmappable(
 			"Some of it is on hold or scheduled in Shopify; release it there, then send again",
 		);
@@ -176,7 +183,12 @@ export async function shopifyFulfill(
 			`Shopify refused: ${fulfillmentCreate.userErrors.map((e) => e.message).join("; ")}`,
 		);
 	}
-	return { fulfillmentId: fulfillmentCreate.fulfillment.id, remaining: 0 };
+	// What Shopify still has to ship once this fulfillment is in: what was
+	// open, less what it took.
+	return {
+		fulfillmentId: fulfillmentCreate.fulfillment.id,
+		remaining: remaining - allocated,
+	};
 }
 
 type OpenOrder = (typeof openFulfillmentOrders.infer)["order"] & {};
@@ -207,8 +219,8 @@ const fulfillmentCancelled = type({
 	fulfillmentCancel: { userErrors },
 });
 
-// Undoes shopifyFulfill after a label is voided: the order goes back to
-// unfulfilled on Shopify.
+// Undoes shopifyFulfill after a label is voided: that fulfillment's units go
+// back to unfulfilled on Shopify; other shipments of the order stay.
 export async function shopifyCancelFulfillment(fulfillmentId: string) {
 	const { fulfillmentCancel } = fulfillmentCancelled.assert(
 		await shopifyQuery(

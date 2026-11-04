@@ -8,8 +8,12 @@ import {
 	stores,
 } from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
-import { UNKNOWN_REMAINING } from "#/orders/remaining";
-import { needsPacking, remainingUnknown } from "#/orders/to-ship";
+import { whyNotPackable } from "#/orders/remaining";
+import {
+	needsPacking,
+	remainingBehind,
+	remainingUnknown,
+} from "#/orders/to-ship";
 
 // The rules for what can go out together. A dispatch is one send to one
 // address: one or more boxes, for one or more orders (see schema.ts).
@@ -85,17 +89,21 @@ export async function ordersOf(db: Db, dispatchId: number) {
 	return rows.map((r) => r.orderId);
 }
 
-// The live dispatch each of these orders is already in, if any: one with a
-// label not voided, or a purchase not yet settled (unsure), which may have
-// been charged and so blocks buying again just the same.
+// The live dispatches each of these orders is in: ones with a label not
+// voided, or a purchase not yet settled (unsure), which may have been charged
+// and so counts just the same. sent: already handed off to the order's
+// marketplace. An order can have any number of those, but at most one not
+// yet sent (drizzle/0182), and that one blocks buying again.
 export async function liveDispatches(db: Db, orderIds: number[]) {
 	if (orderIds.length === 0) return [];
+	const member = {
+		orderId: dispatchOrders.orderId,
+		dispatchId: dispatchOrders.dispatchId,
+		sent: sql<boolean>`${dispatchOrders.channelSentAt} is not null`,
+	};
 	const [labelled, unsettled] = await Promise.all([
 		db
-			.selectDistinct({
-				orderId: dispatchOrders.orderId,
-				dispatchId: dispatchOrders.dispatchId,
-			})
+			.selectDistinct(member)
 			.from(dispatchOrders)
 			.innerJoin(shipments, eq(shipments.dispatchId, dispatchOrders.dispatchId))
 			.where(
@@ -105,10 +113,7 @@ export async function liveDispatches(db: Db, orderIds: number[]) {
 				),
 			),
 		db
-			.selectDistinct({
-				orderId: dispatchOrders.orderId,
-				dispatchId: dispatchOrders.dispatchId,
-			})
+			.selectDistinct(member)
 			.from(dispatchOrders)
 			.innerJoin(
 				labelAttempts,
@@ -133,6 +138,11 @@ export async function liveDispatches(db: Db, orderIds: number[]) {
 			.map((l) => ({ ...l, unsure: false })),
 	];
 }
+
+// The one live dispatch of each order not yet handed off, which stops
+// another label being bought until it's sent or voided.
+export const unsentOf = <L extends { sent?: boolean }>(live: L[]) =>
+	live.filter((l) => !l.sent);
 
 type AddressFields = {
 	shipAddress1: string | null;
@@ -189,6 +199,7 @@ const candidateFields = {
 	total: orders.total,
 	needsPacking,
 	remainingUnknown,
+	remainingBehind,
 	shipAddress1: orders.shipAddress1,
 	shipAddress2: orders.shipAddress2,
 	shipPostalCode: orders.shipPostalCode,
@@ -205,17 +216,22 @@ type Candidate = {
 	externalId: string;
 	needsPacking: boolean;
 	remainingUnknown: boolean;
+	// Of remainingUnknown, only waiting on the next sync; just the message.
+	remainingBehind?: boolean;
 } & BoxFields;
 
 // Why these orders can't go out together in one dispatch, or null if they
-// can. Every order must still need shipping, have no live dispatch, take a
-// label katasync buys itself, share one label seller, and (with more than
-// one) share a boxKey.
+// can. Every order must still need shipping, have no live dispatch not yet
+// handed off (ones already sent are earlier shipments of it), take a label
+// katasync buys itself, know what's left to pack, share one label seller,
+// and (with more than one) share a boxKey. live with no sent counts as
+// unsent, the safe side.
 export function whyNotTogether(
 	list: Candidate[],
-	live: { orderId: number; unsure?: boolean }[],
+	all: { orderId: number; unsure?: boolean; sent?: boolean }[],
 ): string | null {
 	if (list.length === 0) return "No orders to ship";
+	const live = unsentOf(all);
 	for (const o of list) {
 		if (!o.needsPacking) {
 			return `${o.name} isn't ours to pack (cancelled, refunded, shipped elsewhere, or drop-shipped). Don't ship it.`;
@@ -224,11 +240,12 @@ export function whyNotTogether(
 			return `${o.name} has a label purchase that may have been charged. Check it on the order page before buying another.`;
 		}
 		if (live.some((l) => l.orderId === o.id)) {
-			return `${o.name} already has a label. Void it on the order page to buy a new one.`;
+			return `${o.name} already has a label not yet sent. Send or void it on the order page first.`;
 		}
 		const external = externalFulfillment(o);
 		if (external) return `${o.name} ships on ${external.name}'s own label`;
-		if (o.remainingUnknown) return `${o.name}: ${UNKNOWN_REMAINING}`;
+		if (o.remainingUnknown)
+			return `${o.name}: ${whyNotPackable(o.remainingBehind ? "behind" : "unknown")}`;
 	}
 	if (list.length > 1) {
 		const tiktok = list.filter((o) => labelSource(o) === "tiktok").length;

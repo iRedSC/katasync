@@ -23,9 +23,15 @@ import {
 import { groupBy } from "#/lib/group-by";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { toPack } from "#/orders/remaining";
-import { remainingUnknown } from "#/orders/to-ship";
+import {
+	remainingBehind,
+	remainingUnknown,
+	unitsHandedOff,
+	unitsUnsent,
+} from "#/orders/to-ship";
 import { contentsKey } from "./contents";
-import { companionsOf, liveDispatches } from "./dispatch";
+import { companionsOf, liveDispatches, unsentOf } from "./dispatch";
+import { choose, type Lowered } from "./packed";
 import type { Rate } from "./shippo";
 
 // Orders worth more than this get the insurance step even if no item asks
@@ -80,6 +86,7 @@ export async function orderForShipping(db: Db, pin: number) {
 			storeId: orders.storeId,
 			buyerId: orders.buyerId,
 			remainingUnknown,
+			remainingBehind,
 		})
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
@@ -87,17 +94,20 @@ export async function orderForShipping(db: Db, pin: number) {
 	if (!order) return null;
 
 	const external = externalFulfillment(order);
-	const [live] = await liveDispatches(db, [order.id]);
+	// Earlier shipments already handed off don't stop another.
+	const [live] = unsentOf(await liveDispatches(db, [order.id]));
 	const companions =
 		external || live
 			? []
 			: await companionsOf(db, { ...order, needsPacking: true });
-	// What's left to pack of each, the way the plan counts it.
+	// What's packable of each, the way the plan counts it.
 	const companionLines = companions.length
-		? await plannedLines(
-				db,
-				companions.map((c) => c.id),
-			)
+		? (
+				await plannedLines(
+					db,
+					companions.map((c) => c.id),
+				)
+			).choices
 		: [];
 	const items = [...groupBy(companionLines, (l) => l.orderId)].map(
 		([orderId, lines]) => ({
@@ -110,7 +120,7 @@ export async function orderForShipping(db: Db, pin: number) {
 		order,
 		labelSource: labelSource(order),
 		external,
-		// The order's live dispatch, if it already has labels.
+		// The order's live dispatch not yet handed off, if it has one.
 		liveDispatchId: live?.dispatchId ?? null,
 		companions: companions.map((c) => ({
 			id: c.id,
@@ -123,10 +133,14 @@ export async function orderForShipping(db: Db, pin: number) {
 	};
 }
 
-// What's in the box for these orders together: their lines, the merged
-// contents key, insurance, and the boxes these exact contents went out in
-// last time.
-export async function shipmentPlan(db: Db, orderIds: number[]) {
+// What's in the box for these orders together: their lines at the counts
+// chosen (every packable unit, less any lowered), the merged contents key,
+// insurance, and the boxes these exact contents went out in last time.
+export async function shipmentPlan(
+	db: Db,
+	orderIds: number[],
+	lowered: Lowered = [],
+) {
 	const members = await db
 		.select({
 			id: orders.id,
@@ -142,16 +156,43 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 	if (members.length !== new Set(orderIds).size) {
 		throw new Error("One of these orders no longer exists");
 	}
-	const lines = await plannedLines(db, orderIds);
+	const planned = await plannedLines(db, orderIds);
+	const shippo = members.every((o) => labelSource(o) === "shippo");
+	// TikTok's label is for the whole order, so its counts aren't chosen.
+	const { lines } = choose(planned.choices, shippo ? lowered : []);
+	const chosen = new Map(lines.map((l) => [l.orderLineId, l.quantity]));
+	const choices = planned.choices.map((l) => ({
+		...l,
+		packable: l.quantity,
+		quantity: chosen.get(l.orderLineId) ?? 0,
+	}));
 
 	const key = contentsKey(lines);
-	const total = members.reduce((sum, o) => sum + o.total, 0);
-	const shippo = members.every((o) => labelSource(o) === "shippo");
+	// What's in the box is worth the orders' totals when it's all of them;
+	// part of an order, what those units sold for.
+	const whole =
+		planned.whole && choices.every((c) => c.quantity === c.packable);
+	const total = whole
+		? members.reduce((sum, o) => sum + o.total, 0)
+		: Math.round(
+				lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0) * 100,
+			) / 100;
 	return {
 		// In the order quick ship was given them: the pin's order first.
 		orderIds,
 		orderNames: orderIds.map((id) => members.find((o) => o.id === id)?.name),
 		lines,
+		// Every packable line with how many go now (0 leaves it for later),
+		// and the counts lowered from all of it, to send back when buying.
+		choices,
+		lowered: choices.flatMap((c) =>
+			c.quantity < c.packable
+				? [{ orderLineId: c.orderLineId, quantity: c.quantity }]
+				: [],
+		),
+		// Whether there's anything to choose: more than one unit, on a label
+		// that can carry part of an order.
+		choosable: shippo && choices.reduce((n, c) => n + c.packable, 0) > 1,
 		contentsKey: key,
 		total,
 		// Shippo labels take insurance and a signature; TikTok's come with
@@ -174,17 +215,22 @@ export async function shipmentPlan(db: Db, orderIds: number[]) {
 
 export type ShipmentPlan = Awaited<ReturnType<typeof shipmentPlan>>;
 
-// The lines to pack for these orders, each at what's left to ship of it
-// (src/orders/remaining.ts), the same as linesToPack keeps at purchase. An
-// order whose remaining is unknown has none: whyNotTogether refuses it.
+// The lines to pack for these orders, each at what's packable of it
+// (src/orders/remaining.ts), the same as packableLines keeps at purchase.
+// An order whose remaining isn't known has none: whyNotTogether refuses it.
+// whole: every unit of every line is packable, none shipped or held.
 async function plannedLines(db: Db, orderIds: number[]) {
 	const rows = await db
 		.select({
 			orderId: orderLines.orderId,
+			orderLineId: orderLines.id,
 			sku: sql<string | null>`coalesce(${products.sku}, ${orderLines.sku})`,
 			title: orderLines.title,
 			quantity: orderLines.quantity,
+			unitPrice: orderLines.unitPrice,
 			shippedQuantity: orderLines.shippedQuantity,
+			handedOff: unitsHandedOff,
+			unsent: unitsUnsent,
 			imageUrl: products.imageUrl,
 			weightGrams: products.weightGrams,
 			insureWhenShipped: sql<boolean>`coalesce(${products.insureWhenShipped}, false)`,
@@ -198,9 +244,22 @@ async function plannedLines(db: Db, orderIds: number[]) {
 			and(inArray(orderLines.orderId, orderIds), gt(orderLines.quantity, 0)),
 		)
 		.orderBy(orderLines.orderId, orderLines.id);
-	return [...groupBy(rows, (r) => r.orderId).values()].flatMap(
-		(lines) => toPack(lines)?.map(({ shippedQuantity, ...line }) => line) ?? [],
+	const choices = [...groupBy(rows, (r) => r.orderId).values()].flatMap(
+		(lines) => {
+			const packing = toPack(lines);
+			return packing.kind === "known"
+				? packing.lines.map(
+						({ shippedQuantity, handedOff, unsent, ...line }) => line,
+					)
+				: [];
+		},
 	);
+	const whole = rows.every(
+		(r) =>
+			choices.find((c) => c.orderLineId === r.orderLineId)?.quantity ===
+			r.quantity,
+	);
+	return { choices, whole };
 }
 
 // Every box of the latest dispatch with these contents that set the

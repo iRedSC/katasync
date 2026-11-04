@@ -311,7 +311,6 @@ describe("with a database", () => {
 	});
 
 	test("invoices get the box and weight these contents last shipped in", async () => {
-		const order = await addOrder("#1");
 		const [box] = await db
 			.insert(schema.packages)
 			.values({
@@ -321,9 +320,11 @@ describe("with a database", () => {
 				heightMm: 50,
 			})
 			.returning();
-		const ship = (weights: number[], at: string) =>
+		// Other orders with the same contents: an order has at most one
+		// shipment not yet handed off.
+		const ship = async (weights: number[], at: string) =>
 			addDispatch(db, {
-				orderIds: [order],
+				orderIds: [await addOrder(at)],
 				contentsKey: "WRENCH×2",
 				createdAt: new Date(at),
 				boxes: weights.map((weightGrams) => ({
@@ -410,9 +411,15 @@ describe("with a database", () => {
 	test("a one-off box leaves the default from before", async () => {
 		const order = await addOrder("#1");
 		await addLine(order, null);
-		const ship = (weightGrams: number, at: string, setsDefault: boolean) =>
+		// Other orders with the same contents: an order has at most one
+		// shipment not yet handed off.
+		const ship = async (
+			weightGrams: number,
+			at: string,
+			setsDefault: boolean,
+		) =>
 			addDispatch(db, {
-				orderIds: [order],
+				orderIds: [await addOrder(at)],
 				createdAt: new Date(at),
 				setsDefault,
 				boxes: [{ weightGrams }],

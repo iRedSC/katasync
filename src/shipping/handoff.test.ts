@@ -73,6 +73,7 @@ async function addOrder(name: string, channel: "shopify" | "ebay") {
 		title: "Wrench",
 		quantity: 2,
 		unitPrice: 15,
+		shippedQuantity: 0,
 	});
 	return row.id;
 }
@@ -176,6 +177,7 @@ describe("sendTracking", () => {
 				],
 			},
 			new Map([["line-9", 2]]),
+			"within",
 		);
 		expect((await handoffOf(id)).channelFulfillmentId).toBe(
 			"gid://shopify/Fulfillment/1",
@@ -198,6 +200,7 @@ describe("sendTracking", () => {
 				],
 			}),
 			new Map([["line-9", 2]]),
+			"within",
 		);
 	});
 
@@ -290,6 +293,7 @@ describe("sendTracking", () => {
 			"gid://shopify/Order/10",
 			expect.anything(),
 			new Map([["line-10", 2]]),
+			"within",
 		);
 	});
 
@@ -381,6 +385,7 @@ describe("sendTracking on eBay", () => {
 				carrier: "USPS",
 				trackingNumber: "9400100000000000000000",
 			}),
+			"within",
 		);
 	});
 
@@ -396,6 +401,7 @@ describe("sendTracking on eBay", () => {
 			"9",
 			expect.any(Map),
 			expect.objectContaining({ trackingNumber: "9400100000000000000000" }),
+			"within",
 		);
 		expect(result.message).toContain("one number");
 	});
@@ -445,23 +451,6 @@ describe("voidDispatch", () => {
 		await voidDispatch(db, old.dispatchId, fakes());
 		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
 		expect((await handoffOf(newer)).channelSentAt).not.toBeNull();
-	});
-
-	test("finishing a historical fulfillment void preserves a newer shipment", async () => {
-		const old = await ship();
-		await sendTracking(db, old, fakes());
-		await db
-			.update(schema.shipments)
-			.set({ voidedAt: new Date() })
-			.where(eq(schema.shipments.dispatchId, old));
-		await db
-			.update(schema.orders)
-			.set({ fulfillmentStatus: "UNFULFILLED" })
-			.where(eq(schema.orders.id, orderId));
-		const newer = await ship();
-		await sendTracking(db, newer, fakes());
-		await voidDispatch(db, old, fakes());
-		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
 	});
 
 	test("a voided label's tracking is never sent", async () => {

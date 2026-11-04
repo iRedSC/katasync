@@ -91,6 +91,7 @@ describe("shopifyFulfill", () => {
 				["L1", 3],
 				["L2", 1],
 			]),
+			"within",
 		);
 		expect(result).toEqual({
 			fulfillmentId: "gid://shopify/Fulfillment/7",
@@ -111,7 +112,7 @@ describe("shopifyFulfill", () => {
 		]);
 	});
 
-	test("more open on Shopify than was packed fulfills nothing", async () => {
+	test("a whole order fulfills nothing when Shopify has more open than packed", async () => {
 		const calls = shopify([
 			{
 				id: "FO1",
@@ -122,7 +123,7 @@ describe("shopifyFulfill", () => {
 				],
 			},
 		]);
-		const sent = shopifyFulfill("o", tracking, new Map([["L1", 2]]));
+		const sent = shopifyFulfill("o", tracking, new Map([["L1", 2]]), "exactly");
 		await expect(sent).rejects.toBeInstanceOf(ContentsChanged);
 		await sent.catch((err: ContentsChanged) =>
 			expect(err.drift).toEqual([
@@ -130,6 +131,28 @@ describe("shopifyFulfill", () => {
 			]),
 		);
 		expect(mutationOf(calls)).toBeUndefined();
+	});
+
+	test("one shipment of several fulfills just the box and says what's left", async () => {
+		const calls = shopify([
+			{
+				id: "FO1",
+				status: "OPEN",
+				items: [
+					{ id: "FOL1", line: "L1", name: "Wrench", remaining: 3 },
+					{ id: "FOL2", line: "L2", name: "Knife", remaining: 1 },
+				],
+			},
+		]);
+		expect(
+			await shopifyFulfill("o", tracking, new Map([["L1", 2]]), "within"),
+		).toEqual({ fulfillmentId: "gid://shopify/Fulfillment/7", remaining: 2 });
+		expect(mutationOf(calls)?.lineItemsByFulfillmentOrder).toEqual([
+			{
+				fulfillmentOrderId: "FO1",
+				fulfillmentOrderLineItems: [{ id: "FOL1", quantity: 2 }],
+			},
+		]);
 	});
 
 	test("less open than packed fulfills nothing", async () => {
@@ -141,12 +164,12 @@ describe("shopifyFulfill", () => {
 			},
 		]);
 		await expect(
-			shopifyFulfill("o", tracking, new Map([["L1", 2]])),
+			shopifyFulfill("o", tracking, new Map([["L1", 2]]), "within"),
 		).rejects.toBeInstanceOf(ContentsChanged);
 		expect(mutationOf(calls)).toBeUndefined();
 	});
 
-	test("an unpacked line on hold still counts as left to ship", async () => {
+	test("an unpacked line on hold doesn't block the box, and is still left to ship", async () => {
 		const calls = shopify([
 			{
 				id: "FO1",
@@ -159,10 +182,19 @@ describe("shopifyFulfill", () => {
 				items: [{ id: "FOL2", line: "L2", name: "Knife", remaining: 1 }],
 			},
 		]);
+		expect(
+			await shopifyFulfill("o", tracking, new Map([["L1", 2]]), "within"),
+		).toEqual({ fulfillmentId: "gid://shopify/Fulfillment/7", remaining: 1 });
+		expect(mutationOf(calls)?.lineItemsByFulfillmentOrder).toEqual([
+			{
+				fulfillmentOrderId: "FO1",
+				fulfillmentOrderLineItems: [{ id: "FOL1", quantity: 2 }],
+			},
+		]);
+		// A whole order still counts it.
 		await expect(
-			shopifyFulfill("o", tracking, new Map([["L1", 2]])),
+			shopifyFulfill("o", tracking, new Map([["L1", 2]]), "exactly"),
 		).rejects.toBeInstanceOf(ContentsChanged);
-		expect(mutationOf(calls)).toBeUndefined();
 	});
 
 	test("packed items on hold are held, not partly fulfilled", async () => {
@@ -174,7 +206,7 @@ describe("shopifyFulfill", () => {
 			},
 		]);
 		await expect(
-			shopifyFulfill("o", tracking, new Map([["L1", 2]])),
+			shopifyFulfill("o", tracking, new Map([["L1", 2]]), "within"),
 		).rejects.toThrow("on hold");
 		expect(mutationOf(calls)).toBeUndefined();
 	});
@@ -186,16 +218,17 @@ describe("shopifyFulfill", () => {
 			items: [{ id: "FOL2", line: "L2", name: "Knife", remaining: 1 }],
 		};
 		shopify([open], [{ id: "F1", numbers: ["9400"], lines: [["L1", 2]] }]);
-		expect(await shopifyFulfill("o", tracking, new Map([["L1", 2]]))).toEqual({
-			fulfillmentId: "F1",
-			remaining: 1,
-		});
+		expect(
+			await shopifyFulfill("o", tracking, new Map([["L1", 2]]), "within"),
+		).toEqual({ fulfillmentId: "F1", remaining: 1 });
 
 		const calls = shopify(
 			[open],
 			[{ id: "F1", numbers: ["9400"], lines: [["L1", 1]] }],
 		);
-		const wrong = shopifyFulfill("o", tracking, new Map([["L1", 2]]));
+		// Even when the box fits within what's open, a retry never takes an
+		// earlier fulfillment of other units for this one.
+		const wrong = shopifyFulfill("o", tracking, new Map([["L1", 2]]), "within");
 		await expect(wrong).rejects.toBeInstanceOf(Held);
 		await expect(wrong).rejects.not.toBeInstanceOf(ContentsChanged);
 		expect(mutationOf(calls)).toBeUndefined();

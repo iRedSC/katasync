@@ -3,7 +3,7 @@ import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
 import { groupBy } from "#/lib/group-by";
 import { needsPacking } from "#/orders/to-ship";
-import { liveDispatches } from "./dispatch";
+import { liveDispatches, unsentOf } from "./dispatch";
 
 export type SameBuyer = {
 	id: number;
@@ -17,7 +17,8 @@ type Open = SameBuyer & { storeId: number; buyerId: string | null };
 // TikTok hides the buyer's address, so one buyer's orders are found by their
 // TikTok account, to pack in one box on one combined label. For each order,
 // the same buyer's other orders on the same store; orders with a label are
-// left out, since it's too late for them.
+// left out, since it's too late for them (a
+// shipment already handed off isn't: the rest can still go together).
 export function sameBuyerGroups(
 	open: readonly Open[],
 	live: readonly { orderId: number }[],
@@ -75,9 +76,11 @@ export async function sameBuyerOrders(
 		);
 	return sameBuyerGroups(
 		open,
-		await liveDispatches(
-			db,
-			open.map((o) => o.id),
+		unsentOf(
+			await liveDispatches(
+				db,
+				open.map((o) => o.id),
+			),
 		),
 	);
 }

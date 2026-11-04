@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { ebayShip } from "./ebay-handoff";
+import { ebayAssertAsPacked, ebayShip } from "./ebay-handoff";
 import { ContentsChanged, Held } from "./packed";
 
 type Line = { lineItemId: string; quantity: number; refunds?: unknown[] };
@@ -55,7 +55,7 @@ beforeEach(() => {
 describe("ebayShip", () => {
 	test("sends exactly the packed quantities when they're what eBay has left", async () => {
 		const posts = ebay([{ lineItemId: "L1", quantity: 2 }]);
-		expect(await ebayShip("o", packed, shipment)).toEqual({
+		expect(await ebayShip("o", packed, shipment, "within")).toEqual({
 			fulfillmentId: "F-new",
 			remaining: 0,
 		});
@@ -78,18 +78,42 @@ describe("ebayShip", () => {
 				},
 			],
 		);
-		await ebayShip("o", packed, shipment);
+		await ebayShip("o", packed, shipment, "within");
 		expect(posts).toHaveLength(1);
 	});
 
-	test("more or other lines on eBay than packed sends nothing", async () => {
+	test("one shipment of several sends just the box, and says what's left", async () => {
+		const posts = ebay([
+			{ lineItemId: "L1", quantity: 3 },
+			{ lineItemId: "L2", quantity: 1 },
+		]);
+		expect(await ebayShip("o", packed, shipment, "within")).toEqual({
+			fulfillmentId: "F-new",
+			remaining: 2,
+		});
+		expect(posts).toEqual([
+			expect.objectContaining({
+				lineItems: [{ lineItemId: "L1", quantity: 2 }],
+			}),
+		]);
+	});
+
+	test("fewer open than packed sends nothing", async () => {
+		const posts = ebay([{ lineItemId: "L1", quantity: 1 }]);
+		await expect(
+			ebayShip("o", packed, shipment, "within"),
+		).rejects.toBeInstanceOf(ContentsChanged);
+		expect(posts).toEqual([]);
+	});
+
+	test("a whole order must be everything open, nothing more", async () => {
 		const posts = ebay([
 			{ lineItemId: "L1", quantity: 2 },
 			{ lineItemId: "L2", quantity: 1 },
 		]);
-		await expect(ebayShip("o", packed, shipment)).rejects.toBeInstanceOf(
-			ContentsChanged,
-		);
+		await expect(
+			ebayShip("o", packed, shipment, "exactly"),
+		).rejects.toBeInstanceOf(ContentsChanged);
 		expect(posts).toEqual([]);
 	});
 
@@ -104,7 +128,7 @@ describe("ebayShip", () => {
 				},
 			],
 		);
-		expect(await ebayShip("o", packed, shipment)).toEqual({
+		expect(await ebayShip("o", packed, shipment, "within")).toEqual({
 			fulfillmentId: "F1",
 			remaining: 0,
 		});
@@ -119,7 +143,7 @@ describe("ebayShip", () => {
 				},
 			],
 		);
-		await expect(ebayShip("o", packed, shipment)).rejects.toThrow(
+		await expect(ebayShip("o", packed, shipment, "within")).rejects.toThrow(
 			"other items",
 		);
 		expect(posts).toEqual([]);
@@ -134,10 +158,24 @@ describe("ebayShip", () => {
 		];
 		for (const setUp of cases) {
 			const posts = setUp();
-			await expect(ebayShip("o", packed, shipment)).rejects.toBeInstanceOf(
-				Held,
-			);
+			await expect(
+				ebayShip("o", packed, shipment, "within"),
+			).rejects.toBeInstanceOf(Held);
 			expect(posts).toEqual([]);
 		}
+	});
+});
+
+describe("ebayAssertAsPacked", () => {
+	test("before buying, eBay need only hold at least the box", async () => {
+		ebay([
+			{ lineItemId: "L1", quantity: 3 },
+			{ lineItemId: "L2", quantity: 1 },
+		]);
+		await expect(ebayAssertAsPacked("o", packed)).resolves.toBeUndefined();
+		ebay([{ lineItemId: "L1", quantity: 1 }]);
+		await expect(ebayAssertAsPacked("o", packed)).rejects.toBeInstanceOf(
+			ContentsChanged,
+		);
 	});
 });

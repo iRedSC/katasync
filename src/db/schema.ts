@@ -780,7 +780,9 @@ export const orderLines = pgTable(
 		// unknown, never none: a partly shipped order whose channel hasn't
 		// said can't be packed. It can exceed quantity on a channel's quirk, so
 		// readers clamp it (src/orders/remaining.ts) rather than a check
-		// breaking the sync.
+		// breaking the sync. Only the sync writes it: a count lower than what
+		// katasync itself handed off predates that handoff, so the line counts
+		// as unknown until the next sync (drizzle/0182).
 		shippedQuantity: integer(),
 		// Price per unit after every discount.
 		unitPrice: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
@@ -1502,10 +1504,12 @@ export const packages = pgTable(
 );
 
 // One send to one address: the boxes that went out together, for every
-// order packed into them. One order can be in at most one live dispatch (one
-// with a box not voided). contentsKey is everything in it, merged across
-// orders; quick ship reuses the last dispatch with the same contents that
-// sets the default.
+// order packed into them. An order can go out in several over time, but has
+// at most one live dispatch (a box not voided, or a purchase not settled)
+// not yet handed off to its marketplace, and no unit of it is packed twice
+// (drizzle/0182). contentsKey is everything in it, merged across orders;
+// quick ship reuses the last dispatch with the same contents that sets the
+// default.
 // Rules live in src/shipping/dispatch.ts.
 //
 // contents says whether katasync knows what went in the box: packed ones
@@ -1631,9 +1635,10 @@ export const dispatchOrders = pgTable(
 	],
 );
 
-// What a packed dispatch holds: each order line's quantity when its labels
-// were bought, its SKU as the channel named it, and the product it was
-// mapped to then. Written with the dispatch and never changed (drizzle/0115),
+// What a packed dispatch holds: each order line's units packed in it (all
+// that was left of the line, or fewer staff chose to send now), its SKU as
+// the channel named it, and the product it was mapped to then. A row never
+// takes more than the line has packable (drizzle/0182). Written with the dispatch and never changed (drizzle/0115),
 // so it stays the evidence of what went out whatever happens to the order
 // afterwards. Only the dispatch membership is a foreign key: the line id and
 // product id are values as they were, so later changes to the order's lines

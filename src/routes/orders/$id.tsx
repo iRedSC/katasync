@@ -44,11 +44,7 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { externalFulfillment } from "#/orders/fulfillment";
-import {
-	partlyShipped,
-	shippedOf,
-	UNKNOWN_REMAINING,
-} from "#/orders/remaining";
+import { partlyShipped, shippedOf, whyNotPackable } from "#/orders/remaining";
 import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
 import { getBuyerChat } from "#/server/buyer-chat";
@@ -304,9 +300,15 @@ function OrderPage() {
 					{/* Still to ship, and the marketplace hasn't said what already
 					went: nothing can be packed until it does. */}
 					{order.pin !== null && order.remainingUnknown && (
-						<Tip content={`Can't pack yet: ${UNKNOWN_REMAINING}`}>
+						<Tip
+							content={`Can't pack yet: ${whyNotPackable(order.remainingBehind ? "behind" : "unknown")}`}
+						>
 							<span>
-								<Badge tone="critical">? shipped</Badge>
+								{order.remainingBehind ? (
+									<Badge tone="info">Syncing</Badge>
+								) : (
+									<Badge tone="critical">? shipped</Badge>
+								)}
 							</span>
 						</Tip>
 					)}

@@ -173,3 +173,54 @@ test("accepted tracking with a failed stock write remains durable and retries th
 	expect(await world.onHand(wrench, world.warehouse)).toBe(2);
 	expect(await reserved()).toBe(0);
 });
+
+test("two shipments of one order each consume their own units, and voiding one restores only it", async () => {
+	const api = outside();
+	const send = async (units: number, fulfillmentId: string, left: number) => {
+		vi.mocked(api.shopifyFulfill).mockResolvedValueOnce({
+			fulfillmentId,
+			remaining: left,
+		});
+		const { dispatchId } = await addPackedDispatch(db, {
+			orderIds: [orderId],
+			units,
+		});
+		await sendTracking(db, dispatchId, api);
+		return dispatchId;
+	};
+	const first = await send(1, "fulfillment-1", 2);
+	expect(await world.onHand(wrench, world.warehouse)).toBe(4);
+	expect(await reserved()).toBe(2);
+	// The marketplace's next sync counts what that shipment took.
+	await world.ingest(
+		channelOrder({
+			fulfillmentStatus: "PARTIALLY_FULFILLED",
+			lines: [{ ...channelOrder().lines[0], shipped: 1 }],
+		}),
+	);
+	const second = await send(2, "fulfillment-2", 0);
+	expect(await world.onHand(wrench, world.warehouse)).toBe(2);
+	expect(await reserved()).toBe(0);
+
+	await voidDispatch(db, first, api);
+	expect(api.shopifyCancel).toHaveBeenCalledWith("fulfillment-1");
+	// Only the first shipment's unit comes back; the second's stay shipped.
+	expect(await world.onHand(wrench, world.warehouse)).toBe(3);
+	expect(await reserved()).toBe(1);
+	const [order] = await db
+		.select({ status: schema.orders.fulfillmentStatus })
+		.from(schema.orders)
+		.where(eq(schema.orders.id, orderId));
+	expect(order.status).toBe("PARTIALLY_FULFILLED");
+	const handoffs = await db
+		.select({
+			dispatchId: schema.dispatchOrders.dispatchId,
+			reversedAt: schema.dispatchOrders.reversedAt,
+		})
+		.from(schema.dispatchOrders)
+		.orderBy(schema.dispatchOrders.dispatchId);
+	expect(handoffs.map((h) => [h.dispatchId, h.reversedAt !== null])).toEqual([
+		[first, true],
+		[second, false],
+	]);
+});

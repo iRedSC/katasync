@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
 	assertAsPacked,
-	assertUnchanged,
+	assertFits,
 	ContentsChanged,
+	choose,
 	driftOf,
+	shortOf,
 } from "./packed";
 
 const titles = new Map([
@@ -37,9 +39,9 @@ describe("driftOf", () => {
 		]);
 	});
 
-	test("assertUnchanged throws the drift to show", () => {
+	test("an exact fit throws the drift to show", () => {
 		try {
-			assertUnchanged(new Map([["L1", 2]]), new Map([["L1", 1]]), titles);
+			assertFits("exactly", new Map([["L1", 2]]), new Map([["L1", 1]]), titles);
 			expect.unreachable();
 		} catch (err) {
 			expect(err).toBeInstanceOf(ContentsChanged);
@@ -47,6 +49,77 @@ describe("driftOf", () => {
 				{ line: "L1", title: "Wrench", packed: 2, open: 1 },
 			]);
 		}
+		// More open than packed isn't a whole order.
+		expect(() =>
+			assertFits("exactly", new Map([["L1", 2]]), new Map([["L1", 3]]), titles),
+		).toThrow(ContentsChanged);
+	});
+});
+
+describe("a box within what's open", () => {
+	const packed = new Map([["L1", 2]]);
+
+	test("leaves extra open units and other lines for later", () => {
+		const open = new Map([
+			["L1", 5],
+			["L2", 1],
+		]);
+		expect(shortOf(packed, open, titles)).toEqual([]);
+		expect(() => assertFits("within", packed, open, titles)).not.toThrow();
+	});
+
+	test("refuses a packed line with fewer open than packed, or none", () => {
+		expect(shortOf(packed, new Map([["L1", 1]]), titles)).toEqual([
+			{ line: "L1", title: "Wrench", packed: 2, open: 1 },
+		]);
+		expect(() =>
+			assertFits("within", packed, new Map([["L2", 3]]), titles),
+		).toThrow(ContentsChanged);
+	});
+});
+
+describe("choosing how many of each line go now", () => {
+	const lines = [
+		{ orderId: 1, orderLineId: 10, quantity: 3 },
+		{ orderId: 1, orderLineId: 11, quantity: 1 },
+		{ orderId: 2, orderLineId: 20, quantity: 2 },
+	];
+
+	test("every packable unit goes unless lowered", () => {
+		expect(choose(lines, [])).toEqual({ lines, partial: [] });
+	});
+
+	test("a lowered line goes at its count, and 0 leaves it out", () => {
+		expect(
+			choose(lines, [
+				{ orderLineId: 10, quantity: 1 },
+				{ orderLineId: 11, quantity: 0 },
+			]),
+		).toEqual({
+			lines: [{ ...lines[0], quantity: 1 }, lines[2]],
+			partial: [1],
+		});
+		// Lowered to all of it is no lowering.
+		expect(choose(lines, [{ orderLineId: 20, quantity: 2 }]).partial).toEqual(
+			[],
+		);
+	});
+
+	test("refuses counts that aren't packable", () => {
+		expect(() => choose(lines, [{ orderLineId: 10, quantity: 4 }])).toThrow(
+			"Only 3",
+		);
+		expect(() => choose(lines, [{ orderLineId: 10, quantity: -1 }])).toThrow();
+		expect(() => choose(lines, [{ orderLineId: 10, quantity: 1.5 }])).toThrow();
+		expect(() => choose(lines, [{ orderLineId: 99, quantity: 1 }])).toThrow(
+			"nothing left",
+		);
+		expect(() =>
+			choose(lines, [
+				{ orderLineId: 10, quantity: 1 },
+				{ orderLineId: 10, quantity: 2 },
+			]),
+		).toThrow("twice");
 	});
 });
 

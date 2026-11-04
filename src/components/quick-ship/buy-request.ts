@@ -19,6 +19,8 @@ export function buyRequest(
 		contentsKey: plan.contentsKey,
 		signature: extras.signature,
 		setsDefault: setsDefault(plan, list, newDefault),
+		// The counts lowered from all that's packable, as priced.
+		lowered: plan.lowered,
 		boxes: list.map((p, i) => ({
 			packageId: p.box?.id ?? null,
 			...p.dims,

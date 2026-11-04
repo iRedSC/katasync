@@ -36,6 +36,7 @@ import type {
 	Step,
 } from "#/components/quick-ship/types";
 import { useQuickShipCache } from "#/components/quick-ship/use-quick-ship-cache";
+import { useReplan } from "#/components/quick-ship/use-replan";
 import { useRun } from "#/components/quick-ship/use-run";
 import { WeightStep } from "#/components/quick-ship/weight-step";
 import { Dialog, DialogContent, DialogTitle } from "#/components/ui/dialog";
@@ -228,31 +229,23 @@ export function QuickShip() {
 	// saved for one counts only while it's still that one.
 	const choosing = `${session.current}:${packed.length}:${plan?.orderIds.join(",")}`;
 
-	// Adds or removes another order to the same address from this box. Only
-	// while choosing the first box: the contents decide the boxes.
-	async function toggleCompanion(id?: number) {
-		if (!found || !plan || packed.length > 0 || busy) return;
-		const chosen = new Set(plan.orderIds.slice(1));
-		const ids = id === undefined ? found.companions.map((c) => c.id) : [id];
-		const adding = ids.some((i) => !chosen.has(i));
-		for (const i of ids) adding ? chosen.add(i) : chosen.delete(i);
-		const orderIds = [
-			found.order.id,
-			...found.companions.map((c) => c.id).filter((i) => chosen.has(i)),
-		];
-		// busy holds the box step until the new contents are known, so the box
-		// and prices are never for the old plan.
-		const next = await run(() => planFor(orderIds));
-		if (!next) return;
-		setPlan(next);
-		// New contents, new default: a choice made for the old ones is dropped.
-		setHazmatChoice(null);
-		setNewDefault(false);
-		setExtras(startingExtras(next));
-		setRates(null);
-		latest.current++;
-		if (next.last) suggestBox(next, 0);
-	}
+	const { toggleCompanion, setCount } = useReplan({
+		found,
+		plan,
+		ready: !!plan && packed.length === 0 && step === "package" && !busy,
+		run,
+		planFor,
+		onPlan: (next) => {
+			setPlan(next);
+			// New contents, new default: a choice made for the old ones is dropped.
+			setHazmatChoice(null);
+			setNewDefault(false);
+			setExtras(startingExtras(next));
+			setRates(null);
+			latest.current++;
+			if (next.last) suggestBox(next, 0);
+		},
+	});
 
 	function choosePackage(next: { box: Box | null; dims: Dims }, of: string) {
 		// A box saved after leaving the step or its box, or while new contents
@@ -452,6 +445,7 @@ export function QuickShip() {
 							plan={plan}
 							canCombine={step === "package" && packed.length === 0}
 							onToggle={toggleCompanion}
+							onCount={setCount}
 						/>
 					)}
 

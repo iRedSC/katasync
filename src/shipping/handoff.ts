@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import {
 	shopifyCancelFulfillment,
 	shopifyFulfill,
@@ -146,8 +146,8 @@ export type Voided = {
 };
 
 // Voids a dispatch: asks for every box's postage back, takes the tracking
-// back off each order's marketplace where it can, and returns the orders to
-// To ship. Each box is refunded on its own: a refused refund leaves that box
+// back off each order's marketplace where it can, and returns its units to
+// To ship. Other shipments of the same orders are left alone. Each box is refunded on its own: a refused refund leaves that box
 // (and so the dispatch) live, keeps the boxes already refunded voided, and
 // voiding again retries just what's left. The orders only go back once
 // every box is voided. Each order's reversal is recorded when it finishes,
@@ -232,37 +232,41 @@ export async function voidDispatch(
 				}
 				if (!backToShip) continue;
 				let putBack = false;
-				// One live dispatch per order, so voiding it means nothing has
-				// shipped. Recorded together with the order going back.
+				// Only this dispatch is taken back: its stock commitments, and
+				// the order's status from the shipments of it still standing.
+				// shipped_quantity is the marketplace's, so the next sync corrects
+				// it. Recorded together with the order going back.
 				await db.transaction(async (tx) => {
 					await readQuantityMode(tx);
-					const [newer] = await tx
-						.select({ dispatchId: dispatchOrders.dispatchId })
-						.from(dispatchOrders)
-						.where(
-							and(
-								eq(dispatchOrders.orderId, order.id),
-								gt(dispatchOrders.dispatchId, dispatchId),
-								isNotNull(dispatchOrders.channelSentAt),
-								isNull(dispatchOrders.reversedAt),
-							),
-						)
-						.limit(1);
-					putBack =
-						handoff.channelSentAt !== null &&
-						!newer &&
-						order.fulfillmentStatus === "FULFILLED";
-					if (putBack) {
-						await tx
-							.update(orders)
-							.set({ fulfillmentStatus: "UNFULFILLED" })
-							.where(eq(orders.id, order.id));
-					}
-					if (handoff.channelSentAt !== null && !newer)
+					if (handoff.channelSentAt !== null) {
 						await restoreCommitments(tx, {
 							orderId: order.id,
 							fulfillmentKey: `dispatch:${dispatchId}:order:${order.id}`,
 						});
+						const [other] = await tx
+							.select({ dispatchId: dispatchOrders.dispatchId })
+							.from(dispatchOrders)
+							.where(
+								and(
+									eq(dispatchOrders.orderId, order.id),
+									ne(dispatchOrders.dispatchId, dispatchId),
+									isNotNull(dispatchOrders.channelSentAt),
+									isNull(dispatchOrders.reversedAt),
+								),
+							)
+							.limit(1);
+						putBack = HANDED_OFF.includes(order.fulfillmentStatus);
+						if (putBack) {
+							await tx
+								.update(orders)
+								.set({
+									fulfillmentStatus: other
+										? "PARTIALLY_FULFILLED"
+										: "UNFULFILLED",
+								})
+								.where(eq(orders.id, order.id));
+						}
+					}
 					await tx
 						.update(dispatchOrders)
 						.set({ reversedAt: new Date() })
@@ -372,6 +376,10 @@ export async function retryStorefrontTracking(
 		? { sent: false, message: note }
 		: { sent: true, message: "Storefront tracking up to date" };
 }
+
+// The statuses a handoff leaves an order in (tell.ts), which a void takes
+// back. Any other is the marketplace's own, left for the next sync.
+const HANDED_OFF = ["FULFILLED", "PARTIALLY_FULFILLED"];
 
 // One word for several boxes' refunds when they agree, else each.
 const summary = (statuses: string[]) => [...new Set(statuses)].join(", ");

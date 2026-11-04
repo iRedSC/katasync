@@ -10,7 +10,8 @@ import {
 	products,
 } from "#/db/schema";
 import { groupBy } from "#/lib/group-by";
-import { toPack, UNKNOWN_REMAINING } from "#/orders/remaining";
+import { toPack, whyNotPackable } from "#/orders/remaining";
+import { unitsHandedOff, unitsUnsent } from "#/orders/to-ship";
 import { contentsKey } from "./contents";
 
 // What went in a dispatch's boxes, kept when its labels are bought
@@ -32,11 +33,47 @@ export type Contents =
 // product's, else the channel's) beside the channel's own, which is kept.
 export type LineToPack = PackedLine & { keySku: string | null };
 
-// Every line of these orders with something still to pack, at what's left
-// of it after anything the marketplace already shipped, as quick ship showed
-// it (shipmentPlan). Throws for an order whose remaining is unknown, which
-// whyNotTogether refuses first.
-export async function linesToPack(
+// Lines staff lowered from all that's packable: how many of each go now,
+// by order line. Any line not named ships everything packable; 0 leaves it
+// out, for a later shipment.
+export type Lowered = { orderLineId: number; quantity: number }[];
+
+// The lines with their chosen counts, without the ones set to 0, and the
+// orders sending less than all that's packable (TikTok refuses those).
+// Throws for a count that isn't a whole number from 0 to what's packable,
+// or a line that has nothing packable here.
+export function choose<
+	L extends { orderId: number; orderLineId?: number | null; quantity: number },
+>(packable: L[], lowered: Lowered): { lines: L[]; partial: number[] } {
+	const counts = new Map<number, number>();
+	for (const l of lowered) {
+		if (counts.has(l.orderLineId)) throw new Error("A line was chosen twice");
+		const line = packable.find((p) => p.orderLineId === l.orderLineId);
+		if (!line) throw new Error("A chosen line has nothing left to pack");
+		if (
+			!Number.isInteger(l.quantity) ||
+			l.quantity < 0 ||
+			l.quantity > line.quantity
+		)
+			throw new Error(`Only ${line.quantity} of a line can be packed`);
+		counts.set(l.orderLineId, l.quantity);
+	}
+	const partial = new Set<number>();
+	const lines = packable.flatMap((l) => {
+		const chosen =
+			l.orderLineId == null ? undefined : counts.get(l.orderLineId);
+		const quantity = chosen ?? l.quantity;
+		if (quantity < l.quantity) partial.add(l.orderId);
+		return quantity > 0 ? [{ ...l, quantity }] : [];
+	});
+	return { lines, partial: [...partial] };
+}
+
+// Every line of these orders with something packable, at what's packable
+// (src/orders/remaining.ts), as quick ship showed it (shipmentPlan). Throws
+// for an order whose remaining isn't known, which whyNotTogether refuses
+// first.
+export async function packableLines(
 	db: Db,
 	orderIds: number[],
 ): Promise<LineToPack[]> {
@@ -51,6 +88,8 @@ export async function linesToPack(
 			title: orderLines.title,
 			quantity: orderLines.quantity,
 			shippedQuantity: orderLines.shippedQuantity,
+			handedOff: unitsHandedOff,
+			unsent: unitsUnsent,
 			orderName: orders.name,
 		})
 		.from(orderLines)
@@ -62,9 +101,11 @@ export async function linesToPack(
 		.orderBy(orderLines.orderId, orderLines.id);
 	return [...groupBy(rows, (r) => r.orderId).values()].flatMap((lines) => {
 		const packing = toPack(lines);
-		if (!packing)
-			throw new Error(`${lines[0].orderName}: ${UNKNOWN_REMAINING}`);
-		return packing.map(({ shippedQuantity, orderName, ...line }) => line);
+		if (packing.kind !== "known")
+			throw new Error(`${lines[0].orderName}: ${whyNotPackable(packing.kind)}`);
+		return packing.lines.map(
+			({ shippedQuantity, handedOff, unsent, orderName, ...line }) => line,
+		);
 	});
 }
 
@@ -171,12 +212,38 @@ export class ContentsChanged extends Held {
 export const unmappable = (why: string) =>
 	new Held({ kind: "unmappable", why }, why);
 
-// Throws ContentsChanged when an order's open lines differ from its box.
-export function assertUnchanged(
+// How a box must match what the marketplace has open. exactly: everything
+// open is in the box, nothing more (a drop-ship sends the whole order).
+// within: every packed line is still open with at least its packed
+// quantity; open units beyond the box, and lines not in it, are the rest of
+// the order, left for a later shipment.
+export type Fit = "exactly" | "within";
+
+// The packed lines the marketplace no longer has enough of open.
+export function shortOf(
+	packed: Map<string, number>,
+	open: Map<string, number>,
+	titles: Map<string, string>,
+): ContentsDrift {
+	return [...packed.keys()].sort().flatMap((line) => {
+		const p = packed.get(line) ?? 0;
+		const o = open.get(line) ?? 0;
+		return o >= p
+			? []
+			: [{ line, title: titles.get(line) ?? line, packed: p, open: o }];
+	});
+}
+
+// Throws ContentsChanged when the box doesn't fit what's open.
+export function assertFits(
+	fit: Fit,
 	packed: Map<string, number>,
 	open: Map<string, number>,
 	titles: Map<string, string>,
 ) {
-	const drift = driftOf(packed, open, titles);
+	const drift =
+		fit === "exactly"
+			? driftOf(packed, open, titles)
+			: shortOf(packed, open, titles);
 	if (drift.length > 0) throw new ContentsChanged(drift);
 }

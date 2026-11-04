@@ -8,7 +8,7 @@ import { type BuyOutside, buyDispatch } from "./buy";
 import { contentsKey } from "./contents";
 import { memoryLocker, whyNotTogether } from "./dispatch";
 import { type Outside, sendTracking, voidDispatch } from "./handoff";
-import { contentsOf, linesToPack } from "./packed";
+import { contentsOf, packableLines } from "./packed";
 import { shipmentPlan } from "./quick-ship";
 
 // An order the marketplace partly shipped from its own admin: quick ship
@@ -190,11 +190,12 @@ describe("a partly shipped order", () => {
 		expect((await sendTracking(db, bought.dispatchId, outside)).sent).toBe(
 			true,
 		);
-		// Exactly what Shopify still has open, so its equality check passes.
+		// What Shopify still has open, as one shipment of several.
 		expect(outside.shopifyFulfill).toHaveBeenCalledWith(
 			"gid://shopify/Order/9",
 			expect.anything(),
 			new Map([["BLADE", 3]]),
+			"within",
 		);
 		const [order] = await db
 			.select()
@@ -238,7 +239,7 @@ describe("an order partly shipped where the marketplace hasn't said what", () =>
 
 	test("isn't packed, and says why", async () => {
 		expect((await shipmentPlan(db, [orderId])).lines).toEqual([]);
-		await expect(linesToPack(db, [orderId])).rejects.toThrow(
+		await expect(packableLines(db, [orderId])).rejects.toThrow(
 			"hasn't said which items already shipped",
 		);
 		await expect(buy("BLADE×5")).rejects.toThrow(
@@ -273,7 +274,7 @@ test("an unshipped order with no count yet isn't packed", async () => {
 	await addOrder("UNFULFILLED", [
 		{ externalId: "BLADE", quantity: 2, shipped: null },
 	]);
-	await expect(linesToPack(db, [orderId])).rejects.toThrow(
+	await expect(packableLines(db, [orderId])).rejects.toThrow(
 		"hasn't said which items already shipped",
 	);
 });
@@ -311,7 +312,7 @@ test("a void doesn't turn an unknown count into nothing shipped", async () => {
 	// Not all 5: 2 of them already went out from Shopify.
 	expect(await unknown()).toBe(true);
 	expect((await shipmentPlan(db, [orderId])).lines).toEqual([]);
-	await expect(linesToPack(db, [orderId])).rejects.toThrow(
+	await expect(packableLines(db, [orderId])).rejects.toThrow(
 		"hasn't said which items already shipped",
 	);
 
@@ -319,6 +320,6 @@ test("a void doesn't turn an unknown count into nothing shipped", async () => {
 	await sync(2);
 	expect(await unknown()).toBe(false);
 	expect(
-		(await linesToPack(db, [orderId])).map((l) => [l.sku, l.quantity]),
+		(await packableLines(db, [orderId])).map((l) => [l.sku, l.quantity]),
 	).toEqual([["BLADE", 3]]);
 });
