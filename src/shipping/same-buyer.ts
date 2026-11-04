@@ -2,7 +2,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
 import { groupBy } from "#/lib/group-by";
-import { needsShipping } from "#/orders/to-ship";
+import { needsPacking } from "#/orders/to-ship";
 import { liveDispatches } from "./dispatch";
 
 export type SameBuyer = {
@@ -64,7 +64,7 @@ export async function sameBuyerOrders(
 		.from(orders)
 		.where(
 			and(
-				needsShipping,
+				needsPacking,
 				buyer
 					? and(
 							eq(orders.storeId, buyer.storeId),

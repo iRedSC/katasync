@@ -100,6 +100,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				unmatched: sql<number>`coalesce(${lineStats.unmatched}, 0)`,
 				labelToVoid,
 				fulfilledByChannel: orders.fulfilledByChannel,
+				dropShipAt: orders.dropShipAt,
 				invoicePrintedAt: orders.invoicePrintedAt,
 			})
 			.from(orders)
@@ -182,6 +183,10 @@ export const getOrder = createServerFn({ method: "GET" })
 				cancelledAt: orders.cancelledAt,
 				fulfillmentStatus: orders.fulfillmentStatus,
 				fulfilledByChannel: orders.fulfilledByChannel,
+				dropShipAt: orders.dropShipAt,
+				dropShipSentAt: orders.dropShipSentAt,
+				dropShipCarrier: orders.dropShipCarrier,
+				dropShipTracking: orders.dropShipTracking,
 				financialStatus,
 				customerName: orders.customerName,
 				buyerEmail: orderBuyerContacts.email,

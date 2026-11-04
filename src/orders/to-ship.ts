@@ -40,6 +40,14 @@ export const needsShipping = sql<boolean>`(
 	and coalesce(${financialStatus}, '') not in ('REFUNDED', 'VOIDED')
 )`;
 
+// Still to ship, from our own shelf: everything that gets a pin, a label,
+// and a printed invoice. A drop-ship still needs shipping, by its supplier,
+// so it stays on To ship but is never packed here.
+export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null)`;
+
+// Waiting on a supplier's tracking: on To ship, but only for typing it in.
+export const awaitsDropShip = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is not null)`;
+
 // Cancelled or refunded after its label was bought but before tracking went
 // out: the box must not ship, and the label should be voided to get the
 // postage back. Test labels cost nothing, so they don't count.

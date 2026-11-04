@@ -345,7 +345,7 @@ describe("buyDispatch", () => {
 
 	test("a cancelled order can't be bought for", async () => {
 		const a = await addOrder("#1", { cancelledAt: new Date() });
-		await expect(buy([a], [box()])).rejects.toThrow("no longer needs shipping");
+		await expect(buy([a], [box()])).rejects.toThrow("isn't ours to pack");
 	});
 
 	test("a box failing part way refunds the ones bought and never counts as bought", async () => {

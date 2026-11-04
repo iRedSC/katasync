@@ -279,6 +279,7 @@ export async function refreshFromSumtracker(
 					gte(orders.placedAt, options.exportedAt),
 					eq(orders.fulfilledByChannel, false),
 					sql`${orders.cancelledAt} is null`,
+					sql`${orders.dropShipAt} is null`,
 					isNotNull(orderLines.productId),
 					sql`${orderLines.quantity} > 0`,
 				),

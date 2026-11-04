@@ -75,6 +75,14 @@ export function externalFulfillment(
 export const amazonOrderLink = (id: string) =>
 	`https://sellercentral.amazon.com/orders-v3/order/${encodeURIComponent(id)}`;
 
+// The order in TikTok Seller Center, from its marketplace order id
+// ("tiktok:<no>"), or null when it isn't a TikTok sale.
+export function tiktokOrderLink(marketplaceOrderId: string | null) {
+	return marketplaceOrderId?.startsWith("tiktok:")
+		? `https://seller-us.tiktok.com/order/detail?order_no=${encodeURIComponent(marketplaceOrderId.slice("tiktok:".length))}`
+		: null;
+}
+
 // Katasync's redirect to the order in Shopify's admin. The store's handle is
 // server-only, so pages link here and the server finishes the address.
 export function shopifyOrderLink(externalId: string): string {

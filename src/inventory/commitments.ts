@@ -291,6 +291,7 @@ export async function lineTargets(
 			productId: orderLines.productId,
 			target: sql<number>`(case when ${orderLines.productId} is not null
 				and not ${orders.fulfilledByChannel} and not ${orders.soldInStore}
+				and ${orders.dropShipAt} is null
 				and ${orders.cancelledAt} is null and ${stores.stockFrom} is not null
 				and ${orders.placedAt} >= ${stores.stockFrom}
 				then greatest(${orderLines.quantity}, 0) else 0 end)::int`,

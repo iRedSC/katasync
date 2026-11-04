@@ -503,7 +503,7 @@ export async function undoBatch(
 
 const undoReference = (batchId: string) => `undo:${batchId}`;
 
-async function isUndone(db: Db, batchId: string) {
+export async function isUndone(db: Db, batchId: string) {
 	const [undo] = await db
 		.select({ id: movements.id })
 		.from(movements)

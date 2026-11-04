@@ -8,6 +8,8 @@ export const ORDER_STATUSES = {
 	unfulfilled: "Unfulfilled",
 	// Unfulfilled too, but shipped from the marketplace's own page.
 	external: "Unfulfilled",
+	// A supplier ships it; it waits on their tracking (drop-ship.ts).
+	dropship: "Waiting on tracking",
 	pending: "Pending",
 	fulfilled: "Fulfilled",
 	// Amazon shipped it from its own stock (FBA); it never takes ours.
@@ -47,6 +49,7 @@ export function orderStatus(order: {
 	externalId: string;
 	shipCountry: string | null;
 	fulfilledByChannel: boolean;
+	dropShipAt: Date | null;
 	// Cancelled or refunded with a label still live (see to-ship.ts).
 	labelToVoid: boolean;
 	returnStage: ReturnStage;
@@ -79,6 +82,7 @@ export function orderStatus(order: {
 		case "ON_HOLD":
 			return is("pending");
 		default: {
+			if (order.dropShipAt) return is("dropship", "info");
 			// Partly shipped is still unfulfilled: the rest has to go.
 			const external = externalFulfillment(order);
 			return external

@@ -107,18 +107,25 @@ export async function ebayAssertAsPacked(
 // the buyer. eBay takes one tracking number per line item, so it's the
 // first box's. Safe to repeat: a fulfillment already carrying the tracking
 // is returned, only if it holds exactly what was packed. Returns how much
-// the order still has to ship after it.
+// the order still has to ship after it. With no tracking (a drop-ship
+// whose supplier never sent one) eBay is told it shipped without any, and a
+// repeat finds nothing left open and throws instead of shipping twice.
 export async function ebayShip(
 	orderId: string,
 	packed: Map<string, number>,
-	shipment: { carrier: string; trackingNumber: string; shippedAt: Date },
+	shipment:
+		| { carrier: string; trackingNumber: string; shippedAt: Date }
+		| { carrier: null; trackingNumber: null; shippedAt: Date },
 ): Promise<{ fulfillmentId: string | null; remaining: number }> {
 	const read = await ebayRead(orderId);
 	const { open, titles } = ebayOpen(read);
 	const remaining = [...open.values()].reduce((sum, n) => sum + n, 0);
-	const already = read.fulfillments.find(
-		(f) => f.shipmentTrackingNumber === shipment.trackingNumber,
-	);
+	const already =
+		shipment.trackingNumber === null
+			? undefined
+			: read.fulfillments.find(
+					(f) => f.shipmentTrackingNumber === shipment.trackingNumber,
+				);
 	if (already) {
 		const sent = new Map(
 			(already.lineItems ?? []).map((l) => [l.lineItemId, l.quantity]),
@@ -143,8 +150,12 @@ export async function ebayShip(
 				quantity,
 			})),
 			shippedDate: shipment.shippedAt.toISOString(),
-			shippingCarrierCode: ebayCarrierCode(shipment.carrier),
-			trackingNumber: shipment.trackingNumber,
+			...(shipment.carrier === null
+				? {}
+				: {
+						shippingCarrierCode: ebayCarrierCode(shipment.carrier),
+						trackingNumber: shipment.trackingNumber,
+					}),
 		}),
 	});
 	if (!response.ok) {

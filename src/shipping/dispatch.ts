@@ -8,7 +8,7 @@ import {
 	stores,
 } from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
-import { needsShipping } from "#/orders/to-ship";
+import { needsPacking } from "#/orders/to-ship";
 
 // The rules for what can go out together. A dispatch is one send to one
 // address: one or more boxes, for one or more orders (see schema.ts).
@@ -186,7 +186,7 @@ const candidateFields = {
 	marketplaceOrderId: orders.marketplaceOrderId,
 	externalId: orders.externalId,
 	total: orders.total,
-	needsShipping,
+	needsPacking,
 	shipAddress1: orders.shipAddress1,
 	shipAddress2: orders.shipAddress2,
 	shipPostalCode: orders.shipPostalCode,
@@ -201,7 +201,7 @@ type Candidate = {
 	salesChannel: string | null;
 	marketplaceOrderId: string | null;
 	externalId: string;
-	needsShipping: boolean;
+	needsPacking: boolean;
 } & BoxFields;
 
 // Why these orders can't go out together in one dispatch, or null if they
@@ -214,8 +214,8 @@ export function whyNotTogether(
 ): string | null {
 	if (list.length === 0) return "No orders to ship";
 	for (const o of list) {
-		if (!o.needsShipping) {
-			return `${o.name} no longer needs shipping (cancelled, refunded, or shipped elsewhere). Don't ship it.`;
+		if (!o.needsPacking) {
+			return `${o.name} isn't ours to pack (cancelled, refunded, shipped elsewhere, or drop-shipped). Don't ship it.`;
 		}
 		if (live.some((l) => l.orderId === o.id && l.unsure)) {
 			return `${o.name} has a label purchase that may have been charged. Check it on the order page before buying another.`;
@@ -280,7 +280,7 @@ export async function companionsOf(db: Db, order: Candidate) {
 		.select(candidateFields)
 		.from(orders)
 		.innerJoin(stores, eq(stores.id, orders.storeId))
-		.where(and(ne(orders.id, order.id), needsShipping, narrowed))
+		.where(and(ne(orders.id, order.id), needsPacking, narrowed))
 		.orderBy(orders.placedAt);
 	const live = await liveDispatches(db, [order.id, ...nearby.map((o) => o.id)]);
 	return nearby.filter(

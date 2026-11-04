@@ -437,7 +437,7 @@ describe("with a database", () => {
 			.select()
 			.from(schema.orders)
 			.where(eq(schema.orders.id, id));
-		return { ...o, channel, needsShipping: true };
+		return { ...o, channel, needsPacking: true };
 	};
 
 	test("postal codes match however they're written", async () => {
@@ -498,7 +498,7 @@ describe("addressKey and whyNotTogether", () => {
 		salesChannel: "Online Store",
 		marketplaceOrderId: null,
 		externalId: `gid://shopify/Order/${id}`,
-		needsShipping: true,
+		needsPacking: true,
 		shipAddress1: "12 Oak St.",
 		shipAddress2: null,
 		shipPostalCode: "16501",
@@ -526,8 +526,8 @@ describe("addressKey and whyNotTogether", () => {
 			whyNotTogether([order(1), order(2, { shipPostalCode: "16502" })], []),
 		).toContain("same address");
 		expect(
-			whyNotTogether([order(1), order(2, { needsShipping: false })], []),
-		).toContain("no longer needs shipping");
+			whyNotTogether([order(1), order(2, { needsPacking: false })], []),
+		).toContain("isn't ours to pack");
 		expect(whyNotTogether([order(1), order(2)], [{ orderId: 2 }])).toContain(
 			"already has a label",
 		);

@@ -22,6 +22,7 @@ function order(over: Partial<SearchableOrder> = {}): SearchableOrder {
 		financialStatus: "PAID",
 		labelToVoid: false,
 		fulfilledByChannel: false,
+		dropShipAt: null,
 		returnStage: null,
 		total: 40,
 		items: 1,
