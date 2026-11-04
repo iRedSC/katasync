@@ -449,4 +449,70 @@ describe("buyDispatch", () => {
 		);
 		expect(outside.tiktokBuy).not.toHaveBeenCalled();
 	});
+
+	describe("reads Shopify last, just before paying", () => {
+		// Shopify with the order's one line open at these locations.
+		const at = (
+			...locations: string[]
+		): Awaited<ReturnType<BuyOutside["open"]["shopify"]>> => ({
+			fulfillments: [],
+			fulfillmentOrders: locations.map((location, i) => ({
+				id: `FO${i}`,
+				status: "OPEN",
+				location,
+				items: [
+					{ id: `FOL${i}`, line: "#1-line", name: "Wrench", remaining: 1 },
+				],
+			})),
+		});
+
+		test("a unit shipped while quoting stops the buy with nothing bought", async () => {
+			const a = await addOrder("#1");
+			let open = at("W");
+			const outside = fakes({
+				open: { ...syncedOpen(() => db), shopify: async () => open },
+			});
+			const quote = outside.getRates;
+			outside.getRates = vi.fn(async (...args: Parameters<typeof quote>) => {
+				// Someone ships it in Shopify while Shippo answers.
+				open = { ...open, fulfillmentOrders: [] };
+				return quote(...args);
+			});
+			await expect(buy([a], [box()], outside)).rejects.toThrow(
+				"Nothing on these orders to pack",
+			);
+			expect(outside.getRates).toHaveBeenCalled();
+			expect(outside.buyLabel).not.toHaveBeenCalled();
+			expect(await db.select().from(schema.dispatches)).toEqual([]);
+		});
+
+		test("units at two Shopify locations are refused before paying", async () => {
+			const a = await addOrder("#1");
+			await db
+				.update(schema.orderLines)
+				.set({ quantity: 2 })
+				.where(eq(schema.orderLines.orderId, a));
+			const outside = fakes({
+				open: { ...syncedOpen(() => db), shopify: async () => at("A", "B") },
+			});
+			await expect(buy([a], [box()], outside)).rejects.toThrow(
+				"#1: These items are at different Shopify locations",
+			);
+			expect(outside.buyLabel).not.toHaveBeenCalled();
+		});
+
+		test("an order with more shipments than katasync can see is refused before paying", async () => {
+			const a = await addOrder("#1");
+			const outside = fakes({
+				open: {
+					...syncedOpen(() => db),
+					shopify: async () => ({ ...at("W"), fulfillments: "too many" }),
+				},
+			});
+			await expect(buy([a], [box()], outside)).rejects.toThrow(
+				"ship it in Shopify",
+			);
+			expect(outside.buyLabel).not.toHaveBeenCalled();
+		});
+	});
 });

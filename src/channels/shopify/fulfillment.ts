@@ -1,40 +1,13 @@
 import { type } from "arktype";
 import { assertFits, driftOf, type Fit, unmappable } from "#/shipping/packed";
 import { shopifyQuery, userErrors } from "./client";
-
-const morePages = { pageInfo: { hasNextPage: "boolean" } } as const;
-
-const openFulfillmentOrders = type({
-	order: type({
-		fulfillmentOrders: {
-			...morePages,
-			nodes: type({
-				id: "string",
-				status: "string",
-				lineItems: {
-					...morePages,
-					nodes: type({
-						id: "string",
-						remainingQuantity: "number.integer >= 0",
-						lineItem: { id: "string", name: "string" },
-					}).array(),
-				},
-			}).array(),
-		},
-		fulfillments: type({
-			id: "string",
-			status: "string",
-			trackingInfo: type({ number: "string | null" }).array(),
-			fulfillmentLineItems: {
-				...morePages,
-				nodes: type({
-					quantity: "number.integer",
-					lineItem: { id: "string" },
-				}).array(),
-			},
-		}).array(),
-	}).or("null"),
-});
+import {
+	allocate,
+	fulfillmentLines,
+	readShopifyOpen,
+	TOO_MANY_SHIPMENTS,
+	unitsOpen,
+} from "./fulfillment-units";
 
 const fulfillmentCreated = type({
 	fulfillmentCreate: {
@@ -42,20 +15,6 @@ const fulfillmentCreated = type({
 		userErrors,
 	},
 });
-
-const MOST_FULFILLMENTS = 10;
-
-const OPEN_QUERY = `query($id: ID!) { order(id: $id) {
-	fulfillmentOrders(first: 5) { pageInfo { hasNextPage } nodes { id status
-		lineItems(first: 50) { pageInfo { hasNextPage } nodes { id remainingQuantity lineItem { id name } } }
-	} }
-	fulfillments(first: ${MOST_FULFILLMENTS}) { id status trackingInfo { number }
-		fulfillmentLineItems(first: 50) { pageInfo { hasNextPage } nodes { quantity lineItem { id } } }
-	}
-} }`;
-
-const FULFILLABLE = new Set(["OPEN", "IN_PROGRESS"]);
-const DONE = new Set(["CANCELLED", "CLOSED"]);
 
 // Marks what was packed as shipped with this tracking (one number per box),
 // and has Shopify email the customer. Returns Shopify's fulfillment id,
@@ -68,7 +27,8 @@ const DONE = new Set(["CANCELLED", "CLOSED"]);
 // several. If it doesn't fit, it throws ContentsChanged and fulfills
 // nothing; the fulfillment then names every line's quantity, so nothing
 // added in between ships with it. Units on hold or scheduled block it only
-// when the box needs them.
+// when the box needs them, and the box must come from one location
+// (allocate), as the purchase checked.
 //
 // Safe to repeat: a fulfillment already carrying these tracking numbers
 // (an earlier try got through) is returned instead of a second one, but
@@ -91,32 +51,20 @@ export async function shopifyFulfill(
 ): Promise<{ fulfillmentId: string; remaining: number }> {
 	if (tracking?.boxes.length === 0) throw new Error("No tracking to send");
 	const numbers = tracking?.boxes.map((b) => b.number) ?? [];
-	const { order } = openFulfillmentOrders.assert(
-		await shopifyQuery(OPEN_QUERY, { id: orderId }),
+	// Read whole (readShopifyOpen), so a purchase and its handoff agree on
+	// what's open and where (allocate).
+	const order = await readShopifyOpen(orderId);
+	const open = unitsOpen(order.fulfillmentOrders);
+	const titles = new Map(
+		order.fulfillmentOrders.flatMap((f) =>
+			f.items.map((i) => [i.line, i.name] as const),
+		),
 	);
-	if (!order) throw new Error("Shopify has no such order");
-	const live = order.fulfillmentOrders.nodes.filter((f) => !DONE.has(f.status));
-	if (
-		order.fulfillmentOrders.pageInfo.hasNextPage ||
-		live.some((f) => f.lineItems.pageInfo.hasNextPage) ||
-		order.fulfillments.length >= MOST_FULFILLMENTS
-	) {
-		throw unmappable(
-			"Too much on this order for katasync to check; fulfill it in Shopify",
-		);
-	}
-	const open = new Map<string, number>();
-	const titles = new Map<string, string>();
-	for (const item of live.flatMap((f) => f.lineItems.nodes)) {
-		const id = item.lineItem.id;
-		titles.set(id, item.lineItem.name);
-		if (item.remainingQuantity > 0)
-			open.set(id, (open.get(id) ?? 0) + item.remainingQuantity);
-	}
 	const remaining = [...open.values()].reduce((sum, n) => sum + n, 0);
+	if (order.fulfillments === "too many") throw unmappable(TOO_MANY_SHIPMENTS);
 	for (const f of order.fulfillments) {
 		if (f.status === "CANCELLED") continue;
-		const has = new Set(f.trackingInfo.map((t) => t.number));
+		const has = new Set(f.numbers);
 		const matching = numbers.filter((n) => has.has(n));
 		if (matching.length === 0) continue;
 		if (matching.length < numbers.length) {
@@ -124,15 +72,7 @@ export async function shopifyFulfill(
 				`Shopify already has a fulfillment with ${matching.join(", ")} but not ${numbers.filter((n) => !has.has(n)).join(", ")}; fix it in Shopify`,
 			);
 		}
-		const shipped = new Map<string, number>();
-		for (const item of f.fulfillmentLineItems.nodes) {
-			const id = item.lineItem.id;
-			shipped.set(id, (shipped.get(id) ?? 0) + item.quantity);
-		}
-		if (
-			f.fulfillmentLineItems.pageInfo.hasNextPage ||
-			driftOf(packed, shipped, titles).length > 0
-		) {
+		if (driftOf(packed, await fulfillmentLines(f.id), titles).length > 0) {
 			throw unmappable(
 				"Shopify already has this tracking on a fulfillment of other items; fix it in Shopify",
 			);
@@ -140,17 +80,10 @@ export async function shopifyFulfill(
 		return { fulfillmentId: f.id, remaining };
 	}
 	assertFits(fit, packed, open, titles);
-	const fulfillable = live.filter((f) => FULFILLABLE.has(f.status));
-	const items = exactly(fulfillable, packed);
+	const items = allocate(order, packed);
 	const allocated = items
 		.flatMap((f) => f.fulfillmentOrderLineItems)
 		.reduce((sum, i) => sum + i.quantity, 0);
-	const wanted = [...packed.values()].reduce((sum, n) => sum + n, 0);
-	if (allocated !== wanted) {
-		throw unmappable(
-			"Some of it is on hold or scheduled in Shopify; release it there, then send again",
-		);
-	}
 	const { fulfillmentCreate } = fulfillmentCreated.assert(
 		await shopifyQuery(
 			"mutation($fulfillment: FulfillmentInput!) { fulfillmentCreate(fulfillment: $fulfillment) { fulfillment { id } userErrors { field message } } }",
@@ -189,30 +122,6 @@ export async function shopifyFulfill(
 		fulfillmentId: fulfillmentCreate.fulfillment.id,
 		remaining: remaining - allocated,
 	};
-}
-
-type OpenOrder = (typeof openFulfillmentOrders.infer)["order"] & {};
-
-// Each fulfillment order's line items with how many of each to fulfill, the
-// packed quantity of a line shared out across the fulfillment orders that
-// hold it.
-function exactly(
-	open: OpenOrder["fulfillmentOrders"]["nodes"],
-	packed: Map<string, number>,
-) {
-	const left = new Map(packed);
-	return open.flatMap((f) => {
-		const items = f.lineItems.nodes.flatMap((item) => {
-			const want = left.get(item.lineItem.id) ?? 0;
-			const quantity = Math.min(want, item.remainingQuantity);
-			if (quantity === 0) return [];
-			left.set(item.lineItem.id, want - quantity);
-			return [{ id: item.id, quantity }];
-		});
-		return items.length > 0
-			? [{ fulfillmentOrderId: f.id, fulfillmentOrderLineItems: items }]
-			: [];
-	});
 }
 
 const fulfillmentCancelled = type({

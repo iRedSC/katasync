@@ -10,7 +10,7 @@ import {
 } from "#/db/schema";
 import { unitsUnsent } from "#/orders/to-ship";
 import { contentsKey } from "./contents";
-import { type OpenReads, withPackable } from "./live-open";
+import { type OpenRead, type OpenReads, withPackable } from "./live-open";
 
 // What went in a dispatch's boxes, kept when its labels are bought
 // (dispatch_lines in schema.ts) and checked against the order again before
@@ -85,13 +85,13 @@ export function assertEveryOrderPacked(
 }
 
 // Every line of these orders with something packable, at what's packable
-// (live-open.ts), as quick ship showed it (shipmentPlan). Throws
-// OpenUnread when a marketplace read live doesn't answer.
+// (live-open.ts), as quick ship showed it (shipmentPlan), and each order's
+// live read. Throws OpenUnread when a marketplace read live doesn't answer.
 export async function packableLines(
 	db: Db,
 	list: Parameters<typeof withPackable>[0],
 	reads: OpenReads,
-): Promise<LineToPack[]> {
+): Promise<{ lines: LineToPack[]; reads: Map<number, OpenRead | null> }> {
 	const rows = await db
 		.select({
 			orderId: orderLines.orderId,
@@ -118,10 +118,14 @@ export async function packableLines(
 			),
 		)
 		.orderBy(orderLines.orderId, orderLines.id);
-	return (await withPackable(list, rows, reads)).flatMap(
-		({ externalId, shippedQuantity, unsent, packable, ...line }) =>
-			packable > 0 ? [{ ...line, quantity: packable }] : [],
-	);
+	const counted = await withPackable(list, rows, reads);
+	return {
+		lines: counted.lines.flatMap(
+			({ externalId, shippedQuantity, unsent, packable, ...line }) =>
+				packable > 0 ? [{ ...line, quantity: packable }] : [],
+		),
+		reads: counted.reads,
+	};
 }
 
 // Stops a purchase when the orders no longer hold what was on screen when

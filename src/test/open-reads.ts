@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { atOneLocation } from "#/channels/shopify/fulfillment-units";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import type { OpenReads } from "#/shipping/live-open";
@@ -23,7 +24,7 @@ export function syncedOpen(db: Db | (() => Db)): OpenReads {
 			rows.map((r) => [r.line, Math.max(0, r.quantity - (r.shipped ?? 0))]),
 		);
 	};
-	return { shopify: read, ebay: read };
+	return { shopify: async (id) => atOneLocation(await read(id)), ebay: read };
 }
 
 // A marketplace whose open counts the test sets, by line external id, for
@@ -34,5 +35,9 @@ export function setOpen(open: Map<string, number>) {
 		reads.count++;
 		return new Map(open);
 	};
-	return { open, reads, as: { shopify: read, ebay: read } as OpenReads };
+	const as: OpenReads = {
+		shopify: async () => atOneLocation(await read()),
+		ebay: read,
+	};
+	return { open, reads, as };
 }

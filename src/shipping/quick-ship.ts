@@ -256,7 +256,8 @@ async function plannedLines(
 			),
 		)
 		.orderBy(orderLines.orderId, orderLines.id);
-	const counted = await withPackable(members, rows, reads).catch(
+	const counted = await withPackable(members, rows, reads).then(
+		(c) => c.lines,
 		(err: unknown) => {
 			if (err instanceof OpenUnread) return err;
 			throw err;

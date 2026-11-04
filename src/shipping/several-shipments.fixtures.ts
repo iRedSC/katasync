@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, expect, vi } from "vitest";
+import { atOneLocation } from "#/channels/shopify/fulfillment-units";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
@@ -44,7 +45,10 @@ const read = async () => {
 	if (marketplace.failing) throw new Error("Shopify answered 503");
 	return new Map(marketplace.open);
 };
-export const openReads: OpenReads = { shopify: read, ebay: read };
+export const openReads: OpenReads = {
+	shopify: async () => atOneLocation(await read()),
+	ebay: read,
+};
 
 // Units shipped from the marketplace's own admin, which katasync never sees
 // but in what's open.

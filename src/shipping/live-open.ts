@@ -1,4 +1,8 @@
-import { openUnits } from "#/channels/shopify/fulfillment-units";
+import {
+	type ShopifyOpen,
+	shippableNow,
+	unitsOpen,
+} from "#/channels/shopify/fulfillment-units";
 import { groupBy } from "#/lib/group-by";
 import { labelSource } from "#/orders/fulfillment";
 import { unitsToShip } from "#/orders/remaining";
@@ -15,17 +19,28 @@ import { Held } from "./packed";
 // TikTok, whose label is for the whole order and checked against TikTok's
 // own units when bought (tiktok-units.ts).
 
-// Each line's open units by its external id, for one order.
+// What one order has open. eBay: each line's open units by its external
+// id. Shopify: its fulfillment orders, each with its location, since one
+// shipment must come from one location (allocate).
 export type OpenReads = {
 	// Shopify order GID.
-	shopify: (orderId: string) => Promise<Map<string, number>>;
+	shopify: (orderId: string) => Promise<ShopifyOpen>;
 	// eBay order id.
 	ebay: (orderId: string) => Promise<Map<string, number>>;
 };
 
+// Called through, not bound, so a cycle through packed.ts can't see these
+// before they're defined.
 export const liveOpenReads: OpenReads = {
-	shopify: openUnits,
+	shopify: (orderId) => shippableNow(orderId),
 	ebay: async (orderId) => ebayOpen(await ebayRead(orderId)).open,
+};
+
+// One order's live read: each line's open units, and Shopify's own answer
+// for the checks a purchase makes with it.
+export type OpenRead = {
+	open: Map<string, number>;
+	shopify: ShopifyOpen | null;
 };
 
 type OrderRef = {
@@ -50,13 +65,19 @@ export function openSource(order: Omit<OrderRef, "name" | "externalId">) {
 // The marketplace couldn't say what's open, so nothing is packable.
 export class OpenUnread extends Error {}
 
-// What's open of each line of this order, or null when it isn't read live.
-// Throws OpenUnread when the marketplace doesn't answer in full.
-export async function readOpen(order: OrderRef, reads: OpenReads) {
+// What's open of this order, or null when it isn't read live. Throws
+// OpenUnread when the marketplace doesn't answer in full.
+export async function readOpen(
+	order: OrderRef,
+	reads: OpenReads,
+): Promise<OpenRead | null> {
 	const source = openSource(order);
 	if (!source) return null;
 	try {
-		return await reads[source](order.externalId);
+		if (source === "ebay")
+			return { open: await reads.ebay(order.externalId), shopify: null };
+		const shopify = await reads.shopify(order.externalId);
+		return { open: unitsOpen(shopify.fulfillmentOrders), shopify };
 	} catch (err) {
 		// eBay's own holds (a cancellation, a refund) already say why.
 		if (err instanceof Held)
@@ -100,20 +121,26 @@ export function packableOf<L extends Line>(
 }
 
 // packableOf for the lines of several orders, each order read once, all at
-// once. Lines keep their order.
+// once. Lines keep their order. Each order's read is returned too, by id.
 export async function withPackable<L extends Line>(
 	orders: (OrderRef & { id: number })[],
 	lines: L[],
 	reads: OpenReads,
-): Promise<(L & { packable: number })[]> {
-	const open = new Map(
+): Promise<{
+	lines: (L & { packable: number })[];
+	reads: Map<number, OpenRead | null>;
+}> {
+	const read = new Map(
 		await Promise.all(
 			orders.map(async (o) => [o.id, await readOpen(o, reads)] as const),
 		),
 	);
-	return [...groupBy(lines, (l) => l.orderId)].flatMap(([id, of]) => {
-		const read = open.get(id);
-		if (read === undefined) throw new Error("A line's order wasn't read");
-		return packableOf(of, read);
-	});
+	return {
+		lines: [...groupBy(lines, (l) => l.orderId)].flatMap(([id, of]) => {
+			const one = read.get(id);
+			if (one === undefined) throw new Error("A line's order wasn't read");
+			return packableOf(of, one?.open ?? null);
+		}),
+		reads: read,
+	};
 }
