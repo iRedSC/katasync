@@ -15,6 +15,24 @@ export async function shipAddresses(
 	if (!o.shipAddress1 || !o.shipCity || !o.shipPostalCode || !o.shipCountry) {
 		throw new Error(`${o.name} has no full shipping address`);
 	}
+	return {
+		from: await shipFrom(db),
+		to: {
+			name: o.customerName ?? "Customer",
+			street1: o.shipAddress1,
+			street2: o.shipAddress2,
+			city: o.shipCity,
+			state: o.shipRegion ?? "",
+			zip: o.shipPostalCode,
+			country: o.shipCountry,
+			phone: o.shipPhone,
+		},
+	};
+}
+
+// The address labels ship from: Shopify's primary location, with the store's
+// contact email, which carriers require.
+export async function shipFrom(db: Db): Promise<Address> {
 	const locationId = await shippingLocation(db);
 	const [from] = locationId
 		? await db.select().from(locations).where(eq(locations.id, locationId))
@@ -31,26 +49,14 @@ export async function shipAddresses(
 		);
 	}
 	return {
-		from: {
-			name: from.shipFromName ?? from.name,
-			street1: from.address1,
-			street2: from.address2,
-			city: from.city,
-			state: from.region ?? "",
-			zip: from.postalCode,
-			country: from.country,
-			phone: from.phone,
-			email: from.email,
-		},
-		to: {
-			name: o.customerName ?? "Customer",
-			street1: o.shipAddress1,
-			street2: o.shipAddress2,
-			city: o.shipCity,
-			state: o.shipRegion ?? "",
-			zip: o.shipPostalCode,
-			country: o.shipCountry,
-			phone: o.shipPhone,
-		},
+		name: from.shipFromName ?? from.name,
+		street1: from.address1,
+		street2: from.address2,
+		city: from.city,
+		state: from.region ?? "",
+		zip: from.postalCode,
+		country: from.country,
+		phone: from.phone,
+		email: from.email,
 	};
 }

@@ -1247,6 +1247,13 @@
       "when": 1793652952471,
       "tag": "0177_sold_as_parts",
       "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "7",
+      "when": 1793741730561,
+      "tag": "0178_addressed_sends",
+      "breakpoints": true
     }
   ]
 }

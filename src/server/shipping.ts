@@ -5,6 +5,11 @@ import { asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "#/db/client";
 import { orders, packages, stores } from "#/db/schema";
 import { labelSource } from "#/orders/fulfillment";
+import {
+	addressedRates,
+	buyAddressed,
+	voidAddressed,
+} from "#/shipping/addressed";
 import { shipAddresses } from "#/shipping/addresses";
 import { boxQuoter } from "#/shipping/box-quotes";
 import { createBoxes, deleteBox, updateBox } from "#/shipping/boxes";
@@ -305,3 +310,52 @@ export const retryStorefront = createServerFn({ method: "POST" })
 export const voidLabel = createServerFn({ method: "POST" })
 	.validator(type({ dispatchId: "number.integer > 0" }))
 	.handler(async ({ data }) => voidDispatch(getDb(), data.dispatchId));
+
+// A package to an address, for no order (see src/shipping/addressed.ts).
+const addressed = {
+	to: {
+		name: "string > 0",
+		street1: "string > 0",
+		street2: "string > 0 | null",
+		city: "string > 0",
+		state: /^[A-Z]{2}$/,
+		zip: /^\d{5}(-\d{4})?$/,
+	},
+	box: {
+		packageId: "number.integer > 0 | null",
+		lengthMm: "number.integer > 0",
+		widthMm: "number.integer > 0",
+		heightMm: "number.integer > 0",
+		weightGrams: "number.integer > 0",
+	},
+} as const;
+
+export const addressedQuote = createServerFn({ method: "POST" })
+	.validator(type(addressed))
+	.handler(async ({ data }) => addressedRates(getDb(), data));
+
+export const addressedBuy = createServerFn({ method: "POST" })
+	.validator(
+		type({
+			...addressed,
+			attemptId: "string.uuid",
+			choice: {
+				carrier: "string > 0",
+				service: "string > 0",
+				total: "number >= 0",
+			},
+		}),
+	)
+	.handler(async ({ data }) => {
+		const db = getDb();
+		const bought = await buyAddressed(db, data);
+		// Saved now so reprints never depend on Shippo; retried on first print.
+		if (bought.kind === "bought") {
+			await labelPdf(db, bought.shipmentId).catch(() => {});
+		}
+		return bought;
+	});
+
+export const addressedVoid = createServerFn({ method: "POST" })
+	.validator(type({ dispatchId: "number.integer > 0" }))
+	.handler(async ({ data }) => voidAddressed(getDb(), data.dispatchId));

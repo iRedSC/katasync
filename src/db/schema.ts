@@ -1475,15 +1475,20 @@ export const packages = pgTable(
 // have every order line's quantity in dispatch_lines and the number of boxes
 // planned; unknown ones were bought before katasync kept that, so nothing
 // may assume what they held. Neither changes once made (drizzle/0115).
+// addressed ones are a single box sent to sentTo for no order at all (a
+// personal package): no orders, no lines, no tracking handoff, no stock
+// (drizzle/0178 keeps orders off them).
 export const dispatches = pgTable(
 	"dispatches",
 	{
 		id: integer().primaryKey().generatedAlwaysAsIdentity(),
 		contentsKey: text().notNull(),
-		contents: text({ enum: ["packed", "unknown"] })
+		contents: text({ enum: ["packed", "unknown", "addressed"] })
 			.notNull()
 			.default("unknown"),
 		boxCount: integer(),
+		// Who an addressed dispatch went to; null on every other.
+		sentTo: jsonb().$type<SentTo>(),
 		// When every planned box's label was bought. Null while buying, or
 		// when a box failed part way: such a dispatch never sends tracking,
 		// it can only be voided.
@@ -1497,14 +1502,32 @@ export const dispatches = pgTable(
 		index("dispatches_contents_idx").on(t.contentsKey, t.createdAt),
 		check(
 			"dispatches_contents_known",
-			sql`${t.contents} in ('packed', 'unknown')`,
+			sql`${t.contents} in ('packed', 'unknown', 'addressed')`,
 		),
 		check(
 			"dispatches_packed_box_count",
-			sql`(${t.contents} = 'packed') = (${t.boxCount} is not null and ${t.boxCount} > 0)`,
+			sql`(${t.contents} in ('packed', 'addressed')) = (${t.boxCount} is not null and ${t.boxCount} > 0)`,
+		),
+		check(
+			"dispatches_addressed_sent_to",
+			sql`(${t.contents} = 'addressed') = (${t.sentTo} is not null)`,
+		),
+		check(
+			"dispatches_addressed_one_box",
+			sql`${t.contents} <> 'addressed' or ${t.boxCount} = 1`,
 		),
 	],
 );
+
+// A package's recipient and address, US only.
+export type SentTo = {
+	name: string;
+	street1: string;
+	street2: string | null;
+	city: string;
+	state: string;
+	zip: string;
+};
 
 // A line whose packed quantity no longer matches what the channel has open:
 // open is what's there now (0 when the line is gone or shipped elsewhere).
