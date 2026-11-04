@@ -225,9 +225,9 @@ export function QuickShip() {
 	const choosePackageRef = useRef(
 		(_: { box: Box | null; dims: Dims }, _for: string) => {},
 	);
-	// Which box of which plan in which opening is being chosen. A custom box
-	// saved for one counts only while it's still that one.
-	const choosing = `${session.current}:${packed.length}:${plan?.orderIds.join(",")}`;
+	// Which box of which contents in which opening is being chosen. A custom
+	// box saved for one counts only while it's still that one.
+	const choosing = `${session.current}:${packed.length}:${plan?.orderIds.join(",")}:${plan?.contentsKey}`;
 
 	const { toggleCompanion, setCount } = useReplan({
 		found,
@@ -243,7 +243,8 @@ export function QuickShip() {
 			setExtras(startingExtras(next));
 			setRates(null);
 			latest.current++;
-			if (next.last) suggestBox(next, 0);
+			// The box step follows unless the packer chose there already.
+			suggestBox(next, 0);
 		},
 	});
 
