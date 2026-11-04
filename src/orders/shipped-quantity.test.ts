@@ -7,6 +7,7 @@ import { type ChannelOrder, ingestOrder } from "./ingest";
 import {
 	partlyShipped,
 	remainingOf,
+	shippedOf,
 	toPack,
 	toPrint,
 	unitsToShip,
@@ -22,67 +23,65 @@ describe("what's left to ship", () => {
 	});
 
 	test("is the quantity less what shipped, never below none", () => {
-		expect(unitsToShip(line(5, 2), "PARTIALLY_FULFILLED")).toBe(3);
-		expect(unitsToShip(line(2, 3), "PARTIALLY_FULFILLED")).toBe(0);
+		expect(unitsToShip(line(5, 2))).toBe(3);
+		expect(unitsToShip(line(2, 3))).toBe(0);
+		expect(unitsToShip(line(2, 0))).toBe(2);
 	});
 
-	test("an uncounted line is all of it before anything ships, unknown after", () => {
-		expect(unitsToShip(line(2, null), "UNFULFILLED")).toBe(2);
-		expect(unitsToShip(line(2, null), "AWAITING_PAYMENT")).toBe(2);
-		expect(unitsToShip(line(2, null), "PARTIALLY_FULFILLED")).toBeNull();
-		// Shopify's hold is on what's left; the rest may have shipped.
-		expect(unitsToShip(line(2, null), "ON_HOLD")).toBeNull();
-		expect(
-			remainingOf([line(2, 1), line(1, null)], "PARTIALLY_FULFILLED").kind,
-		).toBe("unknown");
+	test("an uncounted line is unknown, whatever the order's status says", () => {
+		// katasync rewrites the status locally (a void puts it back to
+		// UNFULFILLED), so it can't stand in for the marketplace's count.
+		expect(unitsToShip(line(2, null))).toBeNull();
+		expect(toPack([line(2, null)])).toBeNull();
+		expect(remainingOf([line(2, 1), line(1, null)]).kind).toBe("unknown");
 		// A cancelled line has nothing to know.
-		expect(
-			remainingOf([line(2, 1), line(0, null)], "PARTIALLY_FULFILLED").kind,
-		).toBe("known");
+		expect(remainingOf([line(2, 1), line(0, null)]).kind).toBe("known");
 	});
 
 	test("packing leaves out lines with nothing left", () => {
 		expect(
-			toPack(
-				[
-					{ id: 1, ...line(5, 2) },
-					{ id: 2, ...line(1, 1) },
-				],
-				"PARTIALLY_FULFILLED",
-			),
+			toPack([
+				{ id: 1, ...line(5, 2) },
+				{ id: 2, ...line(1, 1) },
+			]),
 		).toEqual([{ id: 1, quantity: 3, shippedQuantity: 2 }]);
 	});
 
 	test("the packing slip prints what's left only while the order still needs packing", () => {
 		const lines = [line(5, 2), line(1, 1)];
-		const printed = (needsPacking: boolean, fulfillmentStatus: string) =>
-			toPrint(lines, { needsPacking, fulfillmentStatus }).map((l) => [
-				l.toPack,
-				l.quantity,
-			]);
-		expect(printed(true, "PARTIALLY_FULFILLED")).toEqual([
+		const printed = (needsPacking: boolean) =>
+			toPrint(lines, { needsPacking }).map((l) => [l.toPack, l.quantity]);
+		expect(printed(true)).toEqual([
 			[3, 5],
 			[0, 1],
 		]);
 		// A reprint of a finished order shows what was sold, as it went out.
-		expect(printed(false, "FULFILLED")).toEqual([
+		expect(printed(false)).toEqual([
 			[5, 5],
 			[1, 1],
 		]);
 		// Unknown prints what was sold too; quick ship refuses packing it.
 		expect(
-			toPrint([line(5, null)], {
-				needsPacking: true,
-				fulfillmentStatus: "PARTIALLY_FULFILLED",
-			}).map((l) => l.toPack),
+			toPrint([line(5, null)], { needsPacking: true }).map((l) => l.toPack),
 		).toEqual([5]);
 	});
 
-	test("partly shipped means some went and some didn't", () => {
+	test("partly shipped means some went and some didn't, as far as is known", () => {
 		expect(partlyShipped([line(5, 2)])).toBe(true);
 		expect(partlyShipped([line(1, 1), line(1, 0)])).toBe(true);
 		expect(partlyShipped([line(1, 1), line(1, 1)])).toBe(false);
 		expect(partlyShipped([line(1, 0), line(1, null)])).toBe(false);
+		// An unknown line is neither shipped nor still to ship.
+		expect(partlyShipped([line(1, 1), line(1, null)])).toBe(false);
+		expect(partlyShipped([line(2, null)])).toBe(false);
+		expect(partlyShipped([line(5, 2), line(1, null)])).toBe(true);
+	});
+
+	test("shipped of a line is its count, at most its quantity, or unknown", () => {
+		expect(shippedOf(line(5, 2))).toBe(2);
+		expect(shippedOf(line(2, 3))).toBe(2);
+		expect(shippedOf(line(2, 0))).toBe(0);
+		expect(shippedOf(line(2, null))).toBeNull();
 	});
 });
 

@@ -2,40 +2,34 @@
 // from its own admin. One rule for packing, the order page, To ship, and the
 // packing slip. Pure, so the browser can use it too.
 
-// Statuses that guarantee nothing has gone out yet, so a line the channel
-// hasn't counted still has all of it to ship. AWAITING_PAYMENT is only ever
-// a sale not yet paid for (Amazon's Pending, TikTok's UNPAID), which can't
-// ship. ON_HOLD isn't one: Shopify's describes the items not yet shipped, so
-// an order can hold some and have shipped the rest. Any other status with
-// an uncounted line means some units may be gone and we can't say which.
-export const NOTHING_SHIPPED_STATUSES = [
-	"UNFULFILLED",
-	"AWAITING_PAYMENT",
-] as const;
+// Statuses that guarantee nothing has gone out yet. AWAITING_PAYMENT is
+// only ever a sale not yet paid for (Amazon's Pending, TikTok's UNPAID),
+// which can't ship. ON_HOLD isn't one: Shopify's describes the items not yet
+// shipped, so an order can hold some and have shipped the rest.
+const NOTHING_SHIPPED_STATUSES = ["UNFULFILLED", "AWAITING_PAYMENT"];
 
-const nothingShipped = (status: string) =>
-	(NOTHING_SHIPPED_STATUSES as readonly string[]).includes(status);
-
-// What an order's status alone says shipped of a line: all of it once
-// fulfilled, none when nothing can have shipped, and unknown otherwise. For
-// channels whose own per-line count can be missing.
+// What a marketplace's own order status alone says shipped of a line: all of
+// it once fulfilled, none when nothing can have shipped, and unknown
+// otherwise. Only for channel adapters at sync time, where the status is the
+// marketplace's. Never for a saved order: katasync rewrites its status
+// locally (a void puts it back to UNFULFILLED), so it no longer says what
+// the marketplace shipped.
 export function shippedByStatus(fulfillmentStatus: string, quantity: number) {
 	if (
 		fulfillmentStatus === "FULFILLED" ||
 		fulfillmentStatus === "FULFILLMENT_NOT_REQUIRED"
 	)
 		return quantity;
-	return nothingShipped(fulfillmentStatus) ? 0 : null;
+	return NOTHING_SHIPPED_STATUSES.includes(fulfillmentStatus) ? 0 : null;
 }
 
 type Line = { quantity: number; shippedQuantity: number | null };
 
-// Units of a line still to ship, or null when unknown. Shipped is clamped to
-// the line's quantity: a channel reporting more shipped than ordered means
-// nothing is left, not a negative.
-export function unitsToShip(line: Line, fulfillmentStatus: string) {
-	if (line.shippedQuantity === null)
-		return nothingShipped(fulfillmentStatus) ? line.quantity : null;
+// Units of a line still to ship, or null when the marketplace hasn't said
+// what shipped of it. Shipped is clamped to the line's quantity: a channel
+// reporting more shipped than ordered means nothing is left, not a negative.
+export function unitsToShip(line: Line) {
+	if (line.shippedQuantity === null) return null;
 	return line.quantity - Math.min(line.shippedQuantity, line.quantity);
 }
 
@@ -46,13 +40,10 @@ export type Remaining<L> =
 	| { kind: "known"; lines: (L & { toShip: number })[] }
 	| { kind: "unknown" };
 
-export function remainingOf<L extends Line>(
-	lines: L[],
-	fulfillmentStatus: string,
-): Remaining<L> {
+export function remainingOf<L extends Line>(lines: L[]): Remaining<L> {
 	const counted: (L & { toShip: number })[] = [];
 	for (const line of lines) {
-		const toShip = unitsToShip(line, fulfillmentStatus);
+		const toShip = unitsToShip(line);
 		if (toShip === null) {
 			if (line.quantity > 0) return { kind: "unknown" };
 			continue;
@@ -62,9 +53,10 @@ export function remainingOf<L extends Line>(
 	return { kind: "known", lines: counted };
 }
 
-// The lines to put in the box, each at what's left of it.
-export function toPack<L extends Line>(lines: L[], fulfillmentStatus: string) {
-	const remaining = remainingOf(lines, fulfillmentStatus);
+// The lines to put in the box, each at what's left of it, or null when
+// what's left is unknown.
+export function toPack<L extends Line>(lines: L[]) {
+	const remaining = remainingOf(lines);
 	if (remaining.kind === "unknown") return null;
 	return remaining.lines
 		.filter((l) => l.toShip > 0)
@@ -77,25 +69,34 @@ export function toPack<L extends Line>(lines: L[], fulfillmentStatus: string) {
 // quantity stays what was sold either way, for the money.
 export function toPrint<L extends Line>(
 	lines: L[],
-	order: { needsPacking: boolean; fulfillmentStatus: string },
+	order: { needsPacking: boolean },
 ): (L & { toPack: number })[] {
-	const status = order.fulfillmentStatus;
-	const known =
-		order.needsPacking && remainingOf(lines, status).kind === "known";
+	const known = order.needsPacking && remainingOf(lines).kind === "known";
 	return lines.map((l) => ({
 		...l,
-		toPack: known ? (unitsToShip(l, status) ?? l.quantity) : l.quantity,
+		toPack: known ? (unitsToShip(l) ?? l.quantity) : l.quantity,
 	}));
 }
 
-// Units of a line known to have gone out, at most its quantity.
+// Units of a line known to have gone out, at most its quantity, or null when
+// the marketplace hasn't said.
 export const shippedOf = (line: Line) =>
-	Math.min(line.shippedQuantity ?? 0, line.quantity);
+	line.shippedQuantity === null
+		? null
+		: Math.min(line.shippedQuantity, line.quantity);
 
-// Some of the order went out and some didn't: worth showing what's left.
-export const partlyShipped = (lines: Line[]) =>
-	lines.some((l) => shippedOf(l) > 0) &&
-	lines.some((l) => shippedOf(l) < l.quantity);
+// Some of the order is known to have gone out and some known not to: worth
+// showing what's left. A line whose count is unknown is neither.
+export function partlyShipped(lines: Line[]) {
+	const shipped = lines.flatMap((l) => {
+		const s = shippedOf(l);
+		return s === null ? [] : [{ shipped: s, quantity: l.quantity }];
+	});
+	return (
+		shipped.some((l) => l.shipped > 0) &&
+		shipped.some((l) => l.shipped < l.quantity)
+	);
+}
 
 export const UNKNOWN_REMAINING =
 	"the marketplace hasn't said which items already shipped. Ship it there, or wait for the next sync";

@@ -40,6 +40,7 @@ async function addOrder(name: string, extra: Record<string, unknown> = {}) {
 		sku: "WRENCH",
 		title: "Wrench",
 		quantity: 1,
+		shippedQuantity: 0,
 		unitPrice: 30,
 	});
 	return row.id;

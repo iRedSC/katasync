@@ -51,7 +51,6 @@ export async function linesToPack(
 			title: orderLines.title,
 			quantity: orderLines.quantity,
 			shippedQuantity: orderLines.shippedQuantity,
-			fulfillmentStatus: orders.fulfillmentStatus,
 			orderName: orders.name,
 		})
 		.from(orderLines)
@@ -62,12 +61,10 @@ export async function linesToPack(
 		)
 		.orderBy(orderLines.orderId, orderLines.id);
 	return [...groupBy(rows, (r) => r.orderId).values()].flatMap((lines) => {
-		const packing = toPack(lines, lines[0].fulfillmentStatus);
+		const packing = toPack(lines);
 		if (!packing)
 			throw new Error(`${lines[0].orderName}: ${UNKNOWN_REMAINING}`);
-		return packing.map(
-			({ shippedQuantity, fulfillmentStatus, orderName, ...line }) => line,
-		);
+		return packing.map(({ shippedQuantity, orderName, ...line }) => line);
 	});
 }
 

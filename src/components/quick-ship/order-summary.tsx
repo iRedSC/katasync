@@ -40,9 +40,9 @@ export function OrderSummary({
 					{found.liveDispatchId !== null && (
 						<Badge tone="warning">Already has a label</Badge>
 					)}
-					{/* Partly shipped on the marketplace, which hasn't said what:
-					nothing to pack until it does, and buying says why. */}
-					{o.remainingUnknown && <Badge tone="critical">Partly shipped</Badge>}
+					{/* The marketplace hasn't said what already shipped: nothing
+					to pack until it does, and buying says why. */}
+					{o.remainingUnknown && <Badge tone="critical">? shipped</Badge>}
 					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
 				</div>
 			</div>

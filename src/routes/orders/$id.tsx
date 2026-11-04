@@ -12,6 +12,12 @@ import { FromStoreBadge } from "#/components/order-page/from-store";
 import { Line } from "#/components/order-page/line";
 import { MailCard } from "#/components/order-page/mail-card";
 import { MessageBuyer } from "#/components/order-page/message-buyer";
+import {
+	orderData,
+	reloadOnly,
+	returnedPatch,
+	takenBackPatch,
+} from "#/components/order-page/patches";
 import { ProfitCard } from "#/components/order-page/profit-card";
 import { hasReturn, ReturnCard } from "#/components/order-page/return-card";
 import { SendRow } from "#/components/order-page/send-row";
@@ -21,13 +27,10 @@ import { OrderStatusBadge } from "#/components/order-status";
 import { Badge, Card, Page, useBack } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { openQuickShip } from "#/components/quick-ship";
-import {
-	type Outcome,
-	type Received,
-	ReturnDialog,
-} from "#/components/return-dialog";
+import { ReturnDialog } from "#/components/return-dialog";
 import { DetailSkeleton, FieldsCard, ListCard } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
+import { Tip } from "#/components/ui/tooltip";
 import {
 	channelName,
 	cityLine,
@@ -38,10 +41,14 @@ import {
 	formatPhone,
 } from "#/lib/format";
 import { useHotkeys } from "#/lib/hotkeys";
-import { optimism, optimistic, type Patch } from "#/lib/optimism";
+import { optimism } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { externalFulfillment } from "#/orders/fulfillment";
-import { partlyShipped, shippedOf } from "#/orders/remaining";
+import {
+	partlyShipped,
+	shippedOf,
+	UNKNOWN_REMAINING,
+} from "#/orders/remaining";
 import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
 import { getBuyerChat } from "#/server/buyer-chat";
@@ -81,61 +88,6 @@ export const Route = createFileRoute("/orders/$id")({
 		/>
 	),
 });
-
-// The page's data with changes the server hasn't confirmed laid over it.
-const orderData = optimistic<OrderDetail>("order");
-
-// Receiving a return counts it against each line, and against the line's
-// restocked count when it went back on a shelf (its own or a refurb's).
-// Units counted back at cutover are taken last, as receiving takes them,
-// and were already counted (and restocked, costing nothing). Undo takes it
-// off again; one that took cutover units waits for the reload instead.
-const returnedPatch =
-	(orderId: number, sign: 1 | -1) =>
-	(received: Received[], outcome: Outcome): Patch =>
-		orderData.patch(orderId, (d) => ({
-			...d,
-			lines: d.lines.map((l) => {
-				const got = received.find((r) => r.lineId === l.id);
-				if (!got) return l;
-				const left = l.returnQuantity - l.returned - l.onBench.length;
-				const fromCutover = sign === 1 ? Math.max(0, got.quantity - left) : 0;
-				const n = sign * got.quantity;
-				const shelved = outcome === "write_off" ? 0 : n;
-				return {
-					...l,
-					returned: l.returned + n - fromCutover,
-					counted: l.counted - fromCutover,
-					restocked: l.restocked + shelved - fromCutover,
-				};
-			}),
-		}));
-const reloadOnly = (orderId: number) => orderData.patch(orderId, (d) => d);
-
-// Taking a received return back: it leaves the Return card, and its units
-// leave the line's returned (and restocked) counts.
-const takenBackPatch = (
-	orderId: number,
-	r: OrderDetail["returnsReceived"][number],
-): Patch =>
-	orderData.patch(orderId, (d) => ({
-		...d,
-		returnsReceived: d.returnsReceived.filter((x) => x.id !== r.id),
-		lines: d.lines.map((l) =>
-			l.id !== r.lineId
-				? l
-				: {
-						...l,
-						// Units it took off the cutover count are counted back.
-						returned: l.returned - r.quantity + (r.cutoverQuantity ?? 0),
-						counted: l.counted + (r.cutoverQuantity ?? 0),
-						restocked:
-							(r.restocked || r.refurb || r.preCutover
-								? l.restocked - r.quantity
-								: l.restocked) + (r.cutoverQuantity ?? 0),
-					},
-		),
-	}));
 
 function OrderPage() {
 	const loaded = Route.useLoaderData();
@@ -349,6 +301,15 @@ function OrderPage() {
 				<span className="flex items-center gap-2">
 					{order.name}
 					<OrderStatusBadge status={status} />
+					{/* Still to ship, and the marketplace hasn't said what already
+					went: nothing can be packed until it does. */}
+					{order.pin !== null && order.remainingUnknown && (
+						<Tip content={`Can't pack yet: ${UNKNOWN_REMAINING}`}>
+							<span>
+								<Badge tone="critical">? shipped</Badge>
+							</span>
+						</Tip>
+					)}
 					{order.pin !== null && (
 						<span className="font-mono text-base text-muted-foreground">
 							Pin {order.pin}
@@ -419,7 +380,7 @@ function OrderPage() {
 												)}
 											</span>
 											{l.quantity === 0 && <Badge>Cancelled</Badge>}
-											{partly && l.quantity > 0 && (
+											{partly && l.quantity > 0 && shippedOf(l) !== null && (
 												<Badge>
 													{shippedOf(l)} of {l.quantity} shipped
 												</Badge>

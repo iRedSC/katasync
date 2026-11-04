@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
+import { remainingUnknown } from "#/orders/to-ship";
 import { createTestDb } from "#/test/db";
 import { type BuyOutside, buyDispatch } from "./buy";
 import { contentsKey } from "./contents";
@@ -266,11 +267,58 @@ describe("an order partly shipped where the marketplace hasn't said what", () =>
 	});
 });
 
-test("an unshipped order with no counts yet packs in full", async () => {
+// A line saved without a count is unknown whatever the order's status says:
+// katasync rewrites that status itself (a void puts it back to UNFULFILLED).
+test("an unshipped order with no count yet isn't packed", async () => {
 	await addOrder("UNFULFILLED", [
 		{ externalId: "BLADE", quantity: 2, shipped: null },
 	]);
+	await expect(linesToPack(db, [orderId])).rejects.toThrow(
+		"hasn't said which items already shipped",
+	);
+});
+
+test("a void doesn't turn an unknown count into nothing shipped", async () => {
+	// Shopify shipped 2 of 5 from its own admin.
+	await addOrder("PARTIALLY_FULFILLED", [
+		{ externalId: "BLADE", quantity: 5, shipped: 2 },
+	]);
+	const sync = (shipped: number | null) =>
+		db
+			.update(schema.orderLines)
+			.set({ shippedQuantity: shipped })
+			.where(eq(schema.orderLines.orderId, orderId));
+	const unknown = async () =>
+		(
+			await db
+				.select({ unknown: remainingUnknown })
+				.from(schema.orders)
+				.where(eq(schema.orders.id, orderId))
+		)[0].unknown;
+
+	// katasync ships the other 3; a sync then can't give a count.
+	const bought = await buy((await shipmentPlan(db, [orderId])).contentsKey);
+	const outside = handoffOutside(0);
+	await sendTracking(db, bought.dispatchId, outside);
+	await sync(null);
+
+	await voidDispatch(db, bought.dispatchId, outside);
+	const [order] = await db
+		.select()
+		.from(schema.orders)
+		.where(eq(schema.orders.id, orderId));
+	expect(order.fulfillmentStatus).toBe("UNFULFILLED");
+	// Not all 5: 2 of them already went out from Shopify.
+	expect(await unknown()).toBe(true);
+	expect((await shipmentPlan(db, [orderId])).lines).toEqual([]);
+	await expect(linesToPack(db, [orderId])).rejects.toThrow(
+		"hasn't said which items already shipped",
+	);
+
+	// The next sync says 2 shipped: exactly the rest packs.
+	await sync(2);
+	expect(await unknown()).toBe(false);
 	expect(
 		(await linesToPack(db, [orderId])).map((l) => [l.sku, l.quantity]),
-	).toEqual([["BLADE", 2]]);
+	).toEqual([["BLADE", 3]]);
 });

@@ -14,14 +14,17 @@ type Line = Omit<OrderRow["lines"][number], "shippedQuantity"> & {
 };
 
 // What each line shows: what's left to ship once part of the order went
-// out, else what sold.
+// out, else what sold. A line the marketplace hasn't counted shows what sold.
 function shownLines(lines: readonly Line[]) {
 	const counted = lines.map((l) => ({
 		...l,
 		shippedQuantity: l.shippedQuantity ?? null,
 	}));
 	if (!partlyShipped(counted)) return lines.map((l) => ({ ...l, left: null }));
-	return counted.map((l) => ({ ...l, left: l.quantity - shippedOf(l) }));
+	return counted.map((l) => {
+		const shipped = shippedOf(l);
+		return { ...l, left: shipped === null ? null : l.quantity - shipped };
+	});
 }
 
 // Katasync's name for what sold; the marketplace's long listing title only

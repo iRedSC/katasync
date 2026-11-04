@@ -185,7 +185,6 @@ async function plannedLines(db: Db, orderIds: number[]) {
 			title: orderLines.title,
 			quantity: orderLines.quantity,
 			shippedQuantity: orderLines.shippedQuantity,
-			fulfillmentStatus: orders.fulfillmentStatus,
 			imageUrl: products.imageUrl,
 			weightGrams: products.weightGrams,
 			insureWhenShipped: sql<boolean>`coalesce(${products.insureWhenShipped}, false)`,
@@ -200,10 +199,7 @@ async function plannedLines(db: Db, orderIds: number[]) {
 		)
 		.orderBy(orderLines.orderId, orderLines.id);
 	return [...groupBy(rows, (r) => r.orderId).values()].flatMap(
-		(lines) =>
-			toPack(lines, lines[0].fulfillmentStatus)?.map(
-				({ shippedQuantity, fulfillmentStatus, ...line }) => line,
-			) ?? [],
+		(lines) => toPack(lines)?.map(({ shippedQuantity, ...line }) => line) ?? [],
 	);
 }
 

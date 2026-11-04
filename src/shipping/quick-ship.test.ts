@@ -370,6 +370,7 @@ describe("with a database", () => {
 			sku: "WRENCH",
 			title: "Wrench",
 			quantity,
+			shippedQuantity: 0,
 			unitPrice: 20,
 		});
 

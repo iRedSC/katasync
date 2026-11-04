@@ -7,7 +7,6 @@ import {
 	shipments,
 	stores,
 } from "#/db/schema";
-import { NOTHING_SHIPPED_STATUSES } from "./remaining";
 
 // The order's payment status, counting a refund of every line and its
 // shipping as REFUNDED. Amazon reports a refunded order as paid forever, and
@@ -46,18 +45,13 @@ export const needsShipping = sql<boolean>`(
 // so it stays on To ship but is never packed here.
 export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null)`;
 
-// Partly shipped on the marketplace, and it hasn't said which units: a line
-// with units and no shipped count on an order past nothing-shipped. Such an
-// order can't be packed (whyNotTogether); remaining.ts is the same rule.
-export const remainingUnknown = sql<boolean>`(
-	${orders.fulfillmentStatus} not in (${sql.join(
-		NOTHING_SHIPPED_STATUSES.map((s) => sql`${s}`),
-		sql`, `,
-	)})
-	and exists (
-		select 1 from ${orderLines} l
-		where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
-	)
+// The marketplace hasn't said which units shipped: a line with units and no
+// shipped count, whatever the order's status (katasync rewrites that one
+// locally, on a void). Such an order can't be packed (whyNotTogether);
+// remaining.ts is the same rule.
+export const remainingUnknown = sql<boolean>`exists (
+	select 1 from ${orderLines} l
+	where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null
 )`;
 
 // Waiting on a supplier's tracking: on To ship, but only for typing it in.
