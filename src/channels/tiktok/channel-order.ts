@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import type { ChannelOrder } from "#/orders/ingest";
+import { shippedByStatus } from "#/orders/remaining";
 import type { OrderTax } from "#/orders/tax";
 
 // A TikTok order as the Partner API sends it, and as katasync keeps it.
@@ -66,6 +67,12 @@ const fulfillment: Record<string, string> = {
 	CANCELLED: "FULFILLMENT_NOT_REQUIRED",
 };
 
+// A unit in one of these has gone out: the same statuses that make a whole
+// order fulfilled.
+const SHIPPED = new Set(
+	Object.keys(fulfillment).filter((s) => fulfillment[s] === "FULFILLED"),
+);
+
 // When TikTok buys the label, it hides the buyer behind asterisks ("J***n");
 // a hidden value is no value.
 function shown(value: string | undefined) {
@@ -121,6 +128,16 @@ export function tiktokToChannelOrder(
 	// change between syncs. The price of the SKU's first unit (by TikTok's
 	// unit ID, whatever order they're listed in) keeps the bare SKU as its
 	// line's ID, which is the ID its one line had before prices were split.
+	// Each line's shipped units are its counted units TikTok shows as gone.
+	// A unit with no status of its own went if the whole order did, not if
+	// none of it did, and can't say on a partly shipped order.
+	const fulfillmentStatus = fbt
+		? "FULFILLMENT_NOT_REQUIRED"
+		: (fulfillment[order.status] ?? "UNFULFILLED");
+	const unitGone = (() => {
+		const all = shippedByStatus(fulfillmentStatus, 1);
+		return all === null ? null : all === 1;
+	})();
 	const firstPrice = new Map<string, number>();
 	const byPrice = new Map<string, ChannelOrder["lines"][number]>();
 	const units = [...order.line_items].sort((a, b) =>
@@ -148,9 +165,18 @@ export function tiktokToChannelOrder(
 					? `${item.product_name} - ${item.sku_name}`
 					: item.product_name,
 			quantity: 0,
+			shipped: 0,
 			unitPrice: cents / 100,
 		};
-		if (counts) line.quantity += 1;
+		if (counts) {
+			line.quantity += 1;
+			const gone =
+				item.display_status === undefined
+					? unitGone
+					: SHIPPED.has(item.display_status);
+			if (gone === null) line.shipped = null;
+			else if (gone && line.shipped !== null) line.shipped += 1;
+		}
 		byPrice.set(externalId, line);
 	}
 	return {
@@ -165,9 +191,7 @@ export function tiktokToChannelOrder(
 			order.status === "CANCELLED"
 				? fromUnix(order.cancel_time ?? order.update_time)
 				: null,
-		fulfillmentStatus: fbt
-			? "FULFILLMENT_NOT_REQUIRED"
-			: (fulfillment[order.status] ?? "UNFULFILLED"),
+		fulfillmentStatus,
 		fulfilledByChannel: fbt,
 		soldInStore: false,
 		financialStatus: order.status === "UNPAID" ? "PENDING" : "PAID",

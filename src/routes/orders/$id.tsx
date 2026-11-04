@@ -41,6 +41,7 @@ import { useHotkeys } from "#/lib/hotkeys";
 import { optimism, optimistic, type Patch } from "#/lib/optimism";
 import { offerUndo } from "#/lib/undo";
 import { externalFulfillment } from "#/orders/fulfillment";
+import { partlyShipped, shippedOf } from "#/orders/remaining";
 import { isLabeled, orderStatus, returnBlocker } from "#/orders/status";
 import { printLabels } from "#/printing/qz-client";
 import { getBuyerChat } from "#/server/buyer-chat";
@@ -154,6 +155,7 @@ function OrderPage() {
 	const goBack = useBack({ to: "/orders" });
 	const status = orderStatus(order);
 	const external = externalFulfillment(order);
+	const partly = partlyShipped(lines);
 	const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 	// Shippable here: still to ship (it has a pin), not a marketplace label,
 	// and no live label yet.
@@ -417,6 +419,11 @@ function OrderPage() {
 												)}
 											</span>
 											{l.quantity === 0 && <Badge>Cancelled</Badge>}
+											{partly && l.quantity > 0 && (
+												<Badge>
+													{shippedOf(l)} of {l.quantity} shipped
+												</Badge>
+											)}
 											<FromStoreBadge parts={l.fromStore} sku={l.productSku} />
 											{l.restocked > 0 && (
 												<Badge tone="info">

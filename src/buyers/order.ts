@@ -13,7 +13,11 @@ import { carrierOf, channelPackages } from "#/orders/channel-tracking";
 import { readTracking } from "#/orders/package-tracking";
 import { returnStages } from "#/orders/return-stage";
 import { orderStatus } from "#/orders/status";
-import { financialStatus, labelToVoid } from "#/orders/to-ship";
+import {
+	financialStatus,
+	labelToVoid,
+	remainingUnknown,
+} from "#/orders/to-ship";
 import { carrierPage, type TrackingRead } from "#/orders/tracking-read";
 import { normalTracking } from "#/purchasing/inbox/tracking-numbers";
 import { isThreadOrder } from "./thread-order";
@@ -57,6 +61,7 @@ export async function orderSummary(db: Db, orderId: number) {
 				shipCountry: orders.shipCountry,
 				fulfilledByChannel: orders.fulfilledByChannel,
 				dropShipAt: orders.dropShipAt,
+				remainingUnknown,
 				labelToVoid,
 			})
 			.from(orders)

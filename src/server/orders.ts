@@ -34,14 +34,14 @@ import { labelRebills } from "#/orders/postage-adjustments";
 import { orderRecords } from "#/orders/return-records";
 import { returnStages } from "#/orders/return-stage";
 import { committedStock, returnQuantity } from "#/orders/return-stock";
-import {
-	followReturn,
-	returnTrackingPage,
-	trackingFor,
-} from "#/orders/return-tracking";
+import { returnTrackingPage, trackingFor } from "#/orders/return-tracking";
 import { stockEffectApplied } from "#/orders/stock-effects";
-import { financialStatus, labelToVoid, needsShipping } from "#/orders/to-ship";
-import { afterFailure, type TrackingRead } from "#/orders/tracking-read";
+import {
+	financialStatus,
+	labelToVoid,
+	needsShipping,
+	remainingUnknown,
+} from "#/orders/to-ship";
 import { type SameBuyer, sameBuyerOrders } from "#/shipping/same-buyer";
 import { sendsOf } from "#/shipping/sends";
 
@@ -101,6 +101,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				labelToVoid,
 				fulfilledByChannel: orders.fulfilledByChannel,
 				dropShipAt: orders.dropShipAt,
+				remainingUnknown,
 				invoicePrintedAt: orders.invoicePrintedAt,
 			})
 			.from(orders)
@@ -120,6 +121,7 @@ export const listOrders = createServerFn({ method: "GET" })
 				title: orderLines.title,
 				sku: orderLines.sku,
 				quantity: orderLines.quantity,
+				shippedQuantity: orderLines.shippedQuantity,
 				productSku: products.sku,
 				productName: products.name,
 				variantName: products.variantName,
@@ -184,6 +186,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				fulfillmentStatus: orders.fulfillmentStatus,
 				fulfilledByChannel: orders.fulfilledByChannel,
 				dropShipAt: orders.dropShipAt,
+				remainingUnknown,
 				dropShipSentAt: orders.dropShipSentAt,
 				dropShipCarrier: orders.dropShipCarrier,
 				dropShipTracking: orders.dropShipTracking,
@@ -221,6 +224,7 @@ export const getOrder = createServerFn({ method: "GET" })
 				title: orderLines.title,
 				sku: orderLines.sku,
 				quantity: orderLines.quantity,
+				shippedQuantity: orderLines.shippedQuantity,
 				unitPrice: orderLines.unitPrice,
 				returnQuantity,
 				unitCost: orderLines.unitCost,
@@ -496,50 +500,8 @@ export const getOrder = createServerFn({ method: "GET" })
 		};
 	});
 
-// Asks Shippo where a return request's package is and keeps the answer,
-// as its order opens, between the four-hourly sweeps.
-export const followReturnNow = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0" }))
-	.handler(async ({ data }): Promise<TrackingRead> => {
-		const db = getDb();
-		const [r] = await db
-			.select({
-				id: returnRequests.id,
-				carrier: returnRequests.carrier,
-				trackingNumber: returnRequests.trackingNumber,
-				saved: returnTracking,
-			})
-			.from(returnRequests)
-			.leftJoin(
-				returnTracking,
-				eq(returnTracking.returnRequestId, returnRequests.id),
-			)
-			.where(eq(returnRequests.id, data.id));
-		if (!r) throw new Error(`No return request ${data.id}`);
-		const follow = await followReturn(db, r);
-		const strip = ({
-			returnRequestId: _,
-			...t
-		}: typeof returnTracking.$inferSelect) => t;
-		if (follow.state === "checked")
-			return { state: "fresh", t: strip(follow.saved) };
-		if (follow.state === "unsupported") return { state: "unsupported" };
-		const kept = trackingFor(r.trackingNumber, r.saved);
-		return afterFailure(kept && strip(kept), new Error(follow.why));
-	});
-
-// Stops, or starts again, following a return's package: one coming back
-// some other way, or never coming, isn't asked about every four hours.
-export const setReturnFollowed = createServerFn({ method: "POST" })
-	.validator(type({ id: "number.integer > 0", followed: "boolean" }))
-	.handler(async ({ data }) => {
-		await getDb()
-			.update(returnRequests)
-			.set({ unfollowedAt: data.followed ? null : new Date() })
-			.where(eq(returnRequests.id, data.id));
-	});
-
 export { listInvoices, markInvoicesPrinted } from "./orders/invoices";
+export { followReturnNow, setReturnFollowed } from "./orders/return-tracking";
 // Split out by what they serve; kept here so callers import one place.
 export {
 	getRefurbishOptions,

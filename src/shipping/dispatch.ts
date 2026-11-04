@@ -8,7 +8,8 @@ import {
 	stores,
 } from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
-import { needsPacking } from "#/orders/to-ship";
+import { UNKNOWN_REMAINING } from "#/orders/remaining";
+import { needsPacking, remainingUnknown } from "#/orders/to-ship";
 
 // The rules for what can go out together. A dispatch is one send to one
 // address: one or more boxes, for one or more orders (see schema.ts).
@@ -187,6 +188,7 @@ const candidateFields = {
 	externalId: orders.externalId,
 	total: orders.total,
 	needsPacking,
+	remainingUnknown,
 	shipAddress1: orders.shipAddress1,
 	shipAddress2: orders.shipAddress2,
 	shipPostalCode: orders.shipPostalCode,
@@ -202,6 +204,7 @@ type Candidate = {
 	marketplaceOrderId: string | null;
 	externalId: string;
 	needsPacking: boolean;
+	remainingUnknown: boolean;
 } & BoxFields;
 
 // Why these orders can't go out together in one dispatch, or null if they
@@ -225,6 +228,7 @@ export function whyNotTogether(
 		}
 		const external = externalFulfillment(o);
 		if (external) return `${o.name} ships on ${external.name}'s own label`;
+		if (o.remainingUnknown) return `${o.name}: ${UNKNOWN_REMAINING}`;
 	}
 	if (list.length > 1) {
 		const tiktok = list.filter((o) => labelSource(o) === "tiktok").length;

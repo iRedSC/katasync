@@ -17,6 +17,7 @@ const base = {
 	labelToVoid: false,
 	fulfilledByChannel: false,
 	dropShipAt: null,
+	remainingUnknown: false,
 	returnStage: null,
 } as const;
 const keyOf = (over: Partial<Parameters<typeof orderStatus>[0]>) =>
@@ -29,9 +30,21 @@ describe("orderStatus", () => {
 			label: "Unfulfilled",
 			tone: "warning",
 		});
-		expect(keyOf({ fulfillmentStatus: "PARTIALLY_FULFILLED" })).toBe(
-			"unfulfilled",
-		);
+		// Partly shipped elsewhere: still ours to finish, named once we know
+		// what's left.
+		expect(
+			orderStatus({ ...base, fulfillmentStatus: "PARTIALLY_FULFILLED" }),
+		).toMatchObject({
+			key: "partly",
+			label: "Partly shipped",
+			tone: "warning",
+		});
+		expect(
+			keyOf({
+				fulfillmentStatus: "PARTIALLY_FULFILLED",
+				remainingUnknown: true,
+			}),
+		).toBe("unfulfilled");
 		expect(
 			orderStatus({
 				...base,

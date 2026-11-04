@@ -1,5 +1,6 @@
 import type { ChannelOrder } from "#/orders/ingest";
 import type { OrderTax } from "#/orders/tax";
+import type { ShippedUnits } from "./fulfillment-units";
 import type { ShopifyOrder } from "./order-shapes";
 
 // Shopify's TikTok channel tags each order "TikTokOrderID:<id>".
@@ -78,11 +79,12 @@ export function shopifyTax(
 	};
 }
 
-// `shipped` is units shipped per line ID, needed when any line has refunded
-// or removed units (see shopifyLineQuantity).
+// `shipped` is units shipped per line ID, read when any line has refunded
+// or removed units (see shopifyLineQuantity) or the order is partly shipped
+// (shopifyShipped); null when not read, or more than one read returns.
 export function shopifyToChannelOrder(
 	o: ShopifyOrder,
-	shipped: Map<string, number> | null,
+	shipped: ShippedUnits | null,
 	remaining: Map<string, number> | null,
 ): ChannelOrder {
 	return {
@@ -109,15 +111,39 @@ export function shopifyToChannelOrder(
 		shippingCharged: o.totalShippingPriceSet.shopMoney.amount,
 		tax: shopifyTax(o),
 		sourceUpdatedAt: o.updatedAt,
-		lines: o.lineItems.nodes.map((l) => ({
-			externalId: l.id,
-			listingExternalId: l.variant?.id ?? null,
-			sku: l.sku || null,
-			title: l.name,
-			quantity: shopifyLineQuantity(o, l, shipped, remaining),
-			unitPrice: l.discountedUnitPriceAfterAllDiscountsSet.shopMoney.amount,
-		})),
+		lines: o.lineItems.nodes.map((l) => {
+			const quantity = shopifyLineQuantity(o, l, shipped, remaining);
+			return {
+				externalId: l.id,
+				listingExternalId: l.variant?.id ?? null,
+				sku: l.sku || null,
+				title: l.name,
+				quantity,
+				shipped: shopifyShipped(o, l.id, quantity, shipped),
+				unitPrice: l.discountedUnitPriceAfterAllDiscountsSet.shopMoney.amount,
+			};
+		}),
 	};
+}
+
+// Units of a line Shopify shows shipped. The order's status says it for all
+// but a partly shipped order, whose successful fulfillments are counted;
+// unknown when they couldn't all be read.
+export function shopifyShipped(
+	o: Pick<ShopifyOrder, "displayFulfillmentStatus">,
+	lineId: string,
+	quantity: number,
+	shipped: ShippedUnits | null,
+): number | null {
+	switch (o.displayFulfillmentStatus) {
+		case "FULFILLED":
+		case "FULFILLMENT_NOT_REQUIRED":
+			return quantity;
+		case "PARTIALLY_FULFILLED":
+			return shipped ? (shipped.succeeded.get(lineId) ?? 0) : null;
+		default:
+			return 0;
+	}
 }
 
 // Units that leave our stock. Shopify's `quantity` never changes and its
@@ -129,7 +155,7 @@ export function shopifyToChannelOrder(
 export function shopifyLineQuantity(
 	o: Pick<ShopifyOrder, "cancelledAt">,
 	l: { id: string; quantity: number; currentQuantity: number },
-	shipped: Map<string, number> | null,
+	shipped: ShippedUnits | null,
 	remaining: Map<string, number> | null,
 ) {
 	if (o.cancelledAt || l.currentQuantity >= l.quantity) return l.quantity;
@@ -137,6 +163,6 @@ export function shopifyLineQuantity(
 		throw new Error("Shopify fulfillment quantities are unavailable");
 	return Math.min(
 		l.quantity,
-		(shipped.get(l.id) ?? 0) + (remaining.get(l.id) ?? 0),
+		(shipped.sent.get(l.id) ?? 0) + (remaining.get(l.id) ?? 0),
 	);
 }

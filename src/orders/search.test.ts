@@ -23,6 +23,7 @@ function order(over: Partial<SearchableOrder> = {}): SearchableOrder {
 		labelToVoid: false,
 		fulfilledByChannel: false,
 		dropShipAt: null,
+		remainingUnknown: false,
 		returnStage: null,
 		total: 40,
 		items: 1,

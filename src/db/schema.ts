@@ -770,6 +770,13 @@ export const orderLines = pgTable(
 		sku: text(),
 		title: text().notNull(),
 		quantity: integer().notNull(),
+		// Units the marketplace says already went out, from its own admin
+		// (Shopify, Seller Central, Seller Hub) or a katasync handoff. Null is
+		// unknown, never none: a partly shipped order whose channel hasn't
+		// said can't be packed. It can exceed quantity on a channel's quirk, so
+		// readers clamp it (src/orders/remaining.ts) rather than a check
+		// breaking the sync.
+		shippedQuantity: integer(),
 		// Price per unit after every discount.
 		unitPrice: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		// Cost per unit when the line first came in, so later cost changes don't
@@ -788,6 +795,10 @@ export const orderLines = pgTable(
 		index("order_lines_unsettled_idx")
 			.on(t.id)
 			.where(sql`${t.saleBatchId} is null and ${t.productId} is not null`),
+		check(
+			"order_lines_shipped_quantity_nonnegative",
+			sql`${t.shippedQuantity} >= 0`,
+		),
 	],
 );
 

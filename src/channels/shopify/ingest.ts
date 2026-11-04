@@ -79,13 +79,17 @@ async function ingestNode(
 			}
 		: o;
 	// Units refunded or removed only matter once we know whether they
-	// shipped, so only those orders cost the extra call.
-	const shipped =
+	// shipped, and a partly shipped order needs to say which units went, so
+	// only those orders cost the extra calls. Every other status says it
+	// outright (shopifyShipped).
+	const refunded =
 		!order.cancelledAt &&
-		order.lineItems.nodes.some((l) => l.currentQuantity < l.quantity)
+		order.lineItems.nodes.some((l) => l.currentQuantity < l.quantity);
+	const shipped =
+		refunded || order.displayFulfillmentStatus === "PARTIALLY_FULFILLED"
 			? await shippedUnits(o.id)
 			: null;
-	const remaining = shipped ? await remainingUnits(o.id) : null;
+	const remaining = refunded && shipped ? await remainingUnits(o.id) : null;
 	const channelOrder = shopifyToChannelOrder(order, shipped, remaining);
 	// Checked again under the lock TikTok's takeover holds: TikTok may have
 	// started syncing since tiktokDirect was read.

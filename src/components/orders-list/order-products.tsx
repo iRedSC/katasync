@@ -4,9 +4,25 @@ import { FromStoreBadge } from "#/components/order-page/from-store";
 import { ProductImage } from "#/components/product";
 import { formatCount } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { partlyShipped, shippedOf } from "#/orders/remaining";
 import type { OrderRow } from "#/server/orders";
 
-type Line = OrderRow["lines"][number];
+// Units already shipped come only with orders still to ship; a list of
+// returns has none to show.
+type Line = Omit<OrderRow["lines"][number], "shippedQuantity"> & {
+	shippedQuantity?: number | null;
+};
+
+// What each line shows: what's left to ship once part of the order went
+// out, else what sold.
+function shownLines(lines: readonly Line[]) {
+	const counted = lines.map((l) => ({
+		...l,
+		shippedQuantity: l.shippedQuantity ?? null,
+	}));
+	if (!partlyShipped(counted)) return lines.map((l) => ({ ...l, left: null }));
+	return counted.map((l) => ({ ...l, left: l.quantity - shippedOf(l) }));
+}
 
 // Katasync's name for what sold; the marketplace's long listing title only
 // until the line is mapped to a product.
@@ -16,10 +32,12 @@ const nameOf = (l: Line) => l.productName ?? l.title;
 // up to three photos, a +N square for the rest, and how many products.
 // Hovering lists every line. Clicking still opens the order, as anywhere else
 // on its row.
-export function OrderProducts({ lines }: { lines: readonly Line[] }) {
+export function OrderProducts({ lines: sold }: { lines: readonly Line[] }) {
+	const lines = shownLines(sold);
 	const [first] = lines;
 	if (!first) return <span className="text-faint">No products</span>;
-	const items = lines.reduce((n, l) => n + l.quantity, 0);
+	const items = lines.reduce((n, l) => n + (l.left ?? l.quantity), 0);
+	const firstCount = first.left ?? first.quantity;
 	return (
 		<HoverCard.Root openDelay={150} closeDelay={100}>
 			<HoverCard.Trigger asChild>
@@ -39,9 +57,15 @@ export function OrderProducts({ lines }: { lines: readonly Line[] }) {
 							{formatCount(lines.length)} products
 						</span>
 					)}
-					{lines.length === 1 && first.quantity > 1 && (
+					{lines.length === 1 && (firstCount > 1 || first.left !== null) && (
 						<span className="shrink-0 font-semibold tabular-nums">
-							× {formatCount(first.quantity)}
+							× {formatCount(firstCount)}
+							{first.left !== null && (
+								<span className="font-normal text-muted-foreground">
+									{" "}
+									of {formatCount(first.quantity)}
+								</span>
+							)}
 						</span>
 					)}
 				</div>
@@ -127,8 +151,9 @@ function Photos({ lines }: { lines: readonly Line[] }) {
 	);
 }
 
-function LineRow({ line }: { line: Line }) {
+function LineRow({ line }: { line: Line & { left: number | null } }) {
 	const cancelled = line.quantity === 0;
+	const sent = line.left === 0;
 	const body = (
 		<>
 			<ProductImage src={line.imageUrl} className="size-8" />
@@ -157,7 +182,21 @@ function LineRow({ line }: { line: Line }) {
 					cancelled ? "text-muted-foreground" : "font-semibold",
 				)}
 			>
-				{cancelled ? "Cancelled" : `× ${formatCount(line.quantity)}`}
+				{cancelled ? (
+					"Cancelled"
+				) : sent ? (
+					<span className="font-normal text-muted-foreground">Shipped</span>
+				) : (
+					<>
+						× {formatCount(line.left ?? line.quantity)}
+						{line.left !== null && (
+							<span className="font-normal text-muted-foreground">
+								{" "}
+								of {formatCount(line.quantity)}
+							</span>
+						)}
+					</>
+				)}
 			</span>
 		</>
 	);

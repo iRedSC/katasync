@@ -4,6 +4,7 @@ import type { FeedPhase } from "#/channels/pass-feeds";
 import type { Db } from "#/db/client";
 import { orders } from "#/db/schema";
 import { type ChannelOrder, ingestOrder } from "#/orders/ingest";
+import { shippedByStatus } from "#/orders/remaining";
 import { applyListingsToOrders } from "#/orders/remap";
 import type { OrderTax } from "#/orders/tax";
 import { MARKETPLACE_US, spApi } from "./amazon-api";
@@ -38,6 +39,9 @@ export const amazonItem = type({
 	"SellerSKU?": "string",
 	Title: "string",
 	QuantityOrdered: "number.integer",
+	// Units Amazon says went out. Optional in its API; when missing, the
+	// order's status says it where it can.
+	"QuantityShipped?": "number.integer >= 0",
 	"ItemPrice?": money,
 	"PromotionDiscount?": money,
 	"ShippingPrice?": money,
@@ -97,6 +101,14 @@ export function amazonToChannelOrder(
 	items: (typeof amazonItem.infer)[],
 ): ChannelOrder {
 	const fba = order.FulfillmentChannel === "AFN";
+	// Pending is Amazon not yet confirming the sale, FBA or not: it has no
+	// price yet and nothing has shipped.
+	const fulfillmentStatus =
+		order.OrderStatus === "Pending"
+			? "AWAITING_PAYMENT"
+			: fba
+				? "FULFILLMENT_NOT_REQUIRED"
+				: (fulfillment[order.OrderStatus] ?? "UNFULFILLED");
 	return {
 		externalId: order.AmazonOrderId,
 		name: order.AmazonOrderId,
@@ -106,14 +118,7 @@ export function amazonToChannelOrder(
 		// Amazon doesn't say when an order was cancelled; its last update is
 		// the closest honest answer.
 		cancelledAt: order.OrderStatus === "Canceled" ? order.LastUpdateDate : null,
-		// Pending is Amazon not yet confirming the sale, FBA or not: it has
-		// no price yet and nothing has shipped.
-		fulfillmentStatus:
-			order.OrderStatus === "Pending"
-				? "AWAITING_PAYMENT"
-				: fba
-					? "FULFILLMENT_NOT_REQUIRED"
-					: (fulfillment[order.OrderStatus] ?? "UNFULFILLED"),
+		fulfillmentStatus,
 		fulfilledByChannel: fba,
 		soldInStore: false,
 		// Pending means Amazon hasn't confirmed payment yet.
@@ -145,6 +150,9 @@ export function amazonToChannelOrder(
 			sku: i.SellerSKU ?? null,
 			title: i.Title,
 			quantity: i.QuantityOrdered,
+			shipped:
+				i.QuantityShipped ??
+				shippedByStatus(fulfillmentStatus, i.QuantityOrdered),
 			// ItemPrice covers every unit; promotions come off separately.
 			unitPrice:
 				i.QuantityOrdered > 0
