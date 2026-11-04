@@ -700,8 +700,8 @@ export const orders = pgTable(
 		// plain orders that have one (src/orders/to-ship.ts's printed);
 		// ticking an order prints it again.
 		invoicePrintedAt: timestamp({ withTimezone: true }),
-		// Goes up whenever a sync changes the order's lines; triggers keep it
-		// (drizzle/0183). A print is only recorded at the version the printed
+		// Goes up whenever a sync changes what its invoice prints: its lines
+		// or its buyer, address and totals; triggers keep it (drizzle/0183). A print is only recorded at the version the printed
 		// invoice showed.
 		pickingVersion: integer().notNull().default(0),
 		total: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),

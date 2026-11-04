@@ -90,6 +90,27 @@ describe("a plain order", () => {
 	});
 });
 
+// The invoice prints each line's price and the order's buyer and address:
+// a sync changing only those makes the print stale too.
+describe("a plain order's printed details", () => {
+	test.each([
+		["a price", { unitPrice: 12 }, {}],
+		["an address", {}, { shipAddress2: "Apt 4" }],
+		["a buyer", {}, { customerName: "Pat Smith" }],
+	] as const)("%s change after printing puts it back in Print all", async (_, line, changed) => {
+		await ingest();
+		const shown = (await order()).version;
+		await print();
+		await ingest(line, changed);
+		await alwaysPrintsAgain();
+		// Acknowledged late, at the version it printed.
+		expect(await recordPrinted(db, [{ orderId, version: shown }])).toEqual({
+			changed: 1,
+		});
+		await alwaysPrintsAgain();
+	});
+});
+
 describe("an order that isn't plain", () => {
 	test("with shipped units, no dispatch: never printed", async () => {
 		await sync(1);
@@ -223,7 +244,10 @@ describe("what earlier reviews found", () => {
 
 // The fixture's order "1" as the next sync reads it: 3 wrenches, none
 // shipped, unless a test says otherwise.
-async function ingest(line: Partial<ChannelOrder["lines"][number]> = {}) {
+async function ingest(
+	line: Partial<ChannelOrder["lines"][number]> = {},
+	changed: Partial<ChannelOrder> = {},
+) {
 	const [{ id: shipping }] = await db.select().from(schema.locations);
 	const synced: ChannelOrder = {
 		externalId: "gid://shopify/Order/1",
@@ -261,6 +285,7 @@ async function ingest(line: Partial<ChannelOrder["lines"][number]> = {}) {
 				...line,
 			},
 		],
+		...changed,
 	};
 	await ingestOrder(db, { id: storeId, stockFrom: null }, synced, {
 		shipping,

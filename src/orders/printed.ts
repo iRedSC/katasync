@@ -8,8 +8,8 @@ import { plain } from "./to-ship";
 export type PrintedInvoice = { orderId: number; version: number };
 
 // Marks these invoices printed, each only if its order is still plain
-// (to-ship.ts) and its lines are still the version that was printed: a sync
-// changing them bumps the version (drizzle/0183), and that newer work stays
+// (to-ship.ts) and what its invoice prints is still the version that was
+// printed: a sync changing it bumps the version (drizzle/0183), and that newer work stays
 // unprinted so Print all picks it up. An order no longer plain never counts
 // as printed, so it isn't marked. Returns how many weren't recorded.
 export async function recordPrinted(
