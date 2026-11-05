@@ -294,6 +294,21 @@ export function reportPage(db: Db, period: Period) {
 	);
 }
 
+// One revision's figures, for printing it again exactly as saved.
+export async function readRevision(db: Db, id: number) {
+	const [row] = await db
+		.select({
+			period: reportSnapshots.period,
+			revision: reportSnapshots.revision,
+			asOf: reportSnapshots.asOf,
+			data: reportSnapshots.data,
+		})
+		.from(reportSnapshots)
+		.where(eq(reportSnapshots.id, id));
+	if (!row) throw new Error("No such revision");
+	return { ...row, data: parseReportData(row.data) };
+}
+
 export async function readArtifact(
 	db: Db,
 	{ snapshotId, name }: { snapshotId: number; name: string },

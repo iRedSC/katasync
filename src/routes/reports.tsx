@@ -1,16 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import {
-	ChevronLeft,
-	ChevronRight,
-	Download,
-	Printer,
-	Receipt,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Receipt } from "lucide-react";
 import type { ReactNode } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
 import { Card, EmptyState, Page } from "#/components/page";
 import { downloadText } from "#/components/report-page/download";
-import { Revisions } from "#/components/report-page/revisions";
+import { History, PrintButton } from "#/components/report-page/revisions";
 import { ListCard, ListSkeleton } from "#/components/skeleton";
 import { Button } from "#/components/ui/button";
 import { Tip } from "#/components/ui/tooltip";
@@ -74,7 +68,16 @@ function Reports() {
 	const d = Route.useLoaderData();
 	const { period: text } = Route.useSearch();
 	const period = parsePeriod(text ?? "") ?? lastMonth();
-	const unknown = d.channels.reduce((n, c) => n + c.taxUnknown, 0);
+	const partial = d.partial.map((p) => (
+		<Flag key={p.channel} tone="critical">
+			No {channelName(p.channel)} orders before{" "}
+			{p.firstOrder.toLocaleDateString("en-US", {
+				month: "short",
+				day: "numeric",
+				year: "numeric",
+			})}
+		</Flag>
+	));
 
 	return (
 		<Page
@@ -83,78 +86,60 @@ function Reports() {
 			actions={
 				<>
 					<PeriodPicker period={period} />
-					<Link
-						to="/print/report"
-						search={{ period: periodText(period) }}
-						target="_blank"
-						className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 font-semibold text-white hover:bg-primary-hover"
-					>
-						<Printer className="size-4" />
-						Print
-					</Link>
+					<PrintButton
+						period={periodText(period)}
+						revisions={d.revisions}
+						live={d.live.data}
+						liveState={d.liveState}
+					/>
 				</>
 			}
 		>
-			<Revisions
-				period={periodText(period)}
-				revisions={d.revisions}
-				live={d.live.data}
-				liveState={d.liveState}
+			<Tiles
+				channels={d.channels}
+				deposits={d.deposits}
+				failing={d.payoutErrors.length > 0}
 			/>
-			{d.partial.map((p) => (
-				<p
-					key={p.channel}
-					className="rounded-lg bg-critical-surface px-3 py-2 font-medium text-critical-text"
-				>
-					No {channelName(p.channel)} orders before{" "}
-					{p.firstOrder.toLocaleDateString("en-US", {
-						month: "short",
-						day: "numeric",
-						year: "numeric",
-					})}
-				</p>
-			))}
-			{d.payoutErrors.map((e) => (
-				<p
-					key={e.channel}
-					className="rounded-lg bg-warning-surface px-3 py-2 font-medium text-warning-text"
-				>
-					{payoutProblem(e)}
-				</p>
-			))}
 			{d.channels.length === 0 ? (
-				<EmptyState
-					icon={Receipt}
-					title={`No orders in ${periodName(period)}`}
-				/>
+				<>
+					{partial}
+					<EmptyState
+						icon={Receipt}
+						title={`No orders in ${periodName(period)}`}
+					/>
+				</>
 			) : (
 				<>
-					{unknown > 0 && (
-						<p className="rounded-lg bg-warning-surface px-3 py-2 font-medium text-warning-text">
-							Tax not read yet on {formatCount(unknown)}{" "}
-							{unknown === 1 ? "order" : "orders"}
-						</p>
-					)}
-					{d.taxedElsewhere.map((s) => (
-						<p
-							key={`${s.country}|${s.state}|${s.how}`}
-							className="rounded-lg bg-critical-surface px-3 py-2 font-medium text-critical-text"
-						>
-							Shopify charged {placeName(s)} tax on {formatCount(s.taxedOrders)}{" "}
-							{s.how === "shipped" ? "shipped" : "picked up"}{" "}
-							{s.taxedOrders === 1 ? "order" : "orders"}: {formatMoney(s.tax)}
-						</p>
-					))}
-					<Channels rows={d.channels} live={d.live.data} period={period} />
-					<Jurisdictions
-						rows={d.jurisdictions}
+					<Channels
+						rows={d.channels}
 						live={d.live.data}
 						period={period}
-						unread={d.channels
-							.filter((c) => c.source === "shopify" || c.source === "retail")
-							.reduce((n, c) => n + c.taxUnknown, 0)}
+						notes={partial}
 					/>
-					<States rows={d.states} live={d.live.data} period={period} />
+					<div className="grid items-start gap-4 lg:grid-cols-2">
+						<Jurisdictions
+							rows={d.jurisdictions}
+							live={d.live.data}
+							period={period}
+							unread={d.channels
+								.filter((c) => c.source === "shopify" || c.source === "retail")
+								.reduce((n, c) => n + c.taxUnknown, 0)}
+						/>
+						<States
+							rows={d.states}
+							live={d.live.data}
+							period={period}
+							notes={d.taxedElsewhere.map((s) => (
+								<Flag key={`${s.country}|${s.state}|${s.how}`} tone="critical">
+									Shopify charged {placeName(s)} tax on{" "}
+									{formatCount(s.taxedOrders)}{" "}
+									{s.how === "shipped" ? "shipped" : "picked up"}{" "}
+									{s.taxedOrders === 1 ? "order" : "orders"}:{" "}
+									{formatMoney(s.tax)}
+								</Flag>
+							))}
+						/>
+					</div>
 				</>
 			)}
 			{/* Cash is its own section: deposits in a month with no sales still count. */}
@@ -163,8 +148,112 @@ function Reports() {
 				live={d.live.data}
 				period={period}
 				failing={d.payoutErrors.length > 0}
+				notes={d.payoutErrors.map((e) => (
+					<Flag key={e.channel} tone="warning">
+						{payoutProblem(e)}
+					</Flag>
+				))}
+			/>
+			<History
+				revisions={d.revisions}
+				live={d.live.data}
+				liveState={d.liveState}
 			/>
 		</Page>
+	);
+}
+
+// A problem shown inside the section whose figures it affects.
+function Flag({
+	tone,
+	children,
+}: {
+	tone: "warning" | "critical";
+	children: ReactNode;
+}) {
+	return (
+		<p
+			className={cn(
+				"rounded-md border-l-4 px-3 py-1.5 font-medium",
+				tone === "warning"
+					? "border-warning-icon bg-warning-surface text-warning-text"
+					: "border-critical-icon bg-critical-surface text-critical-text",
+			)}
+		>
+			{children}
+		</p>
+	);
+}
+
+// The month at a glance: what sold, the tax that's ours, the tax that
+// isn't, and what arrived in the bank.
+function Tiles({
+	channels,
+	deposits,
+	failing,
+}: {
+	channels: ChannelRow[];
+	deposits: Deposit[];
+	failing: boolean;
+}) {
+	const all = (get: (r: ChannelRow) => number) =>
+		channels.reduce((s, r) => s + get(r), 0);
+	const unread = all((r) => r.taxUnknown);
+	// Currencies don't add up, so each one's total is joined, not summed.
+	const paid = (status: "sent" | "pending") =>
+		currencies(deposits)
+			.filter((c) =>
+				deposits.some((r) => r.currency === c && r.status === status),
+			)
+			.map((c) =>
+				formatAmount(
+					payoutTotals(deposits.filter((r) => r.currency === c))[status],
+					c,
+				),
+			)
+			.join(" + ");
+	const tiles: { label: string; value: string; note?: ReactNode }[] = [
+		{
+			label: "Gross sales",
+			value: formatMoney(all((r) => r.grossSales)),
+			note: `${formatCount(all((r) => r.orders))} orders`,
+		},
+		{
+			label: "Sales tax you collected",
+			value: formatMoney(all((r) => r.ourTax)),
+			note: unread > 0 && (
+				<span className="text-warning-text">
+					Not read yet on {formatCount(unread)}{" "}
+					{unread === 1 ? "order" : "orders"}
+				</span>
+			),
+		},
+		{
+			label: "Tax paid by marketplaces",
+			value: formatMoney(all((r) => r.marketplaceTax)),
+		},
+		{
+			label: "Deposits sent",
+			value: paid("sent") || formatMoney(0),
+			note: failing ? (
+				<span className="text-warning-text">Not all read</span>
+			) : (
+				paid("pending") && `${paid("pending")} on its way`
+			),
+		},
+	];
+	return (
+		<dl className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+			{tiles.map((t) => (
+				<div key={t.label} className="rounded-xl bg-card p-4 shadow-card">
+					<dt className="text-muted-foreground">{t.label}</dt>
+					<dd className="mt-1 text-2xl font-bold tabular-nums">{t.value}</dd>
+					{t.note && (
+						<dd className="mt-1 text-xs text-muted-foreground">{t.note}</dd>
+					)}
+				</div>
+			))}
+		</dl>
 	);
 }
 
@@ -208,7 +297,20 @@ type Column<T> = {
 	label: string;
 	cell: (row: T) => ReactNode;
 	money?: boolean;
+	// Neighbouring columns with the same group share a heading above them.
+	group?: string;
 };
+
+// Runs of neighbouring columns under one heading, blank where there's none.
+function groupsOf<T>(columns: Column<T>[]) {
+	const runs: { group: string; span: number }[] = [];
+	for (const c of columns) {
+		const last = runs.at(-1);
+		if (last && last.group === (c.group ?? "")) last.span++;
+		else runs.push({ group: c.group ?? "", span: 1 });
+	}
+	return runs;
+}
 
 function Table<T>({
 	title,
@@ -219,6 +321,7 @@ function Table<T>({
 	rows,
 	totals = [],
 	keyOf,
+	notes,
 }: {
 	title: string;
 	file: CsvFile;
@@ -228,7 +331,10 @@ function Table<T>({
 	rows: T[];
 	totals?: T[];
 	keyOf: (row: T) => string;
+	// Problems with these figures, shown above them.
+	notes?: ReactNode[];
 }) {
+	const groups = columns.some((c) => c.group) ? groupsOf(columns) : null;
 	return (
 		<Card
 			title={title}
@@ -250,9 +356,29 @@ function Table<T>({
 				</Button>
 			}
 		>
+			{notes && notes.length > 0 && (
+				<div className="flex flex-col gap-2 px-4 pb-3">{notes}</div>
+			)}
 			<div className="overflow-x-auto">
 				<table className="w-full tabular-nums">
 					<thead className="text-left text-muted-foreground">
+						{groups && (
+							<tr>
+								{groups.map((g, i) => (
+									<th
+										// biome-ignore lint/suspicious/noArrayIndexKey: blank groups repeat, and runs never reorder
+										key={i}
+										colSpan={g.span}
+										className={cn(
+											"px-4 pt-1 text-center text-xs font-semibold tracking-wide uppercase",
+											g.group && "border-b",
+										)}
+									>
+										{g.group}
+									</th>
+								))}
+							</tr>
+						)}
 						<tr className="border-t">
 							{columns.map((c) => (
 								<th
@@ -306,8 +432,12 @@ function Table<T>({
 	);
 }
 
-function money<T>(label: string, get: (r: T) => number): Column<T> {
-	return { label, money: true, cell: (r) => formatMoney(get(r)) };
+function money<T>(
+	label: string,
+	get: (r: T) => number,
+	group?: string,
+): Column<T> {
+	return { label, money: true, group, cell: (r) => formatMoney(get(r)) };
 }
 function count<T>(label: string, get: (r: T) => number): Column<T> {
 	return { label, money: true, cell: (r) => formatCount(get(r)) };
@@ -321,10 +451,12 @@ function Channels({
 	rows,
 	live,
 	period,
+	notes,
 }: {
 	rows: ChannelRow[];
 	live: ReportData;
 	period: Period;
+	notes: ReactNode[];
 }) {
 	const numbers = Object.keys(rows[0]).filter((k) => k !== "source") as Exclude<
 		keyof ChannelRow,
@@ -342,20 +474,20 @@ function Channels({
 			cell: (r) => (r.source === "total" ? "Total" : SOURCES[r.source]),
 		},
 		count("Orders", (r) => r.orders),
-		money("Item sales", (r) => r.itemSales),
-		money("Shipping", (r) => r.shipping),
-		money("Gross sales", (r) => r.grossSales),
+		money("Items", (r) => r.itemSales, "Sales"),
+		money("Shipping", (r) => r.shipping, "Sales"),
+		money("Gross", (r) => r.grossSales, "Sales"),
 		{
-			...money("Tax paid by marketplace", (r: ChannelLine) => r.marketplaceTax),
+			...money("Marketplace paid", (r: ChannelLine) => r.marketplaceTax, "Tax"),
 			cell: (r) => <Unread row={r}>{formatMoney(r.marketplaceTax)}</Unread>,
 		},
 		{
-			...money("Tax you collected", (r: ChannelLine) => r.ourTax),
+			...money("You collected", (r: ChannelLine) => r.ourTax, "Tax"),
 			cell: (r) => <Unread row={r}>{formatMoney(r.ourTax)}</Unread>,
 		},
-		money("Refunds", (r) => r.refunds),
+		money("Refunds", (r) => r.refunds, "Costs"),
 		{
-			...money("Fees", (r: ChannelLine) => r.fees),
+			...money("Fees", (r: ChannelLine) => r.fees, "Costs"),
 			cell: (r) => (
 				<>
 					{formatMoney(r.fees)}
@@ -369,9 +501,9 @@ function Channels({
 				</>
 			),
 		},
-		money("Labels", (r) => r.labels),
-		money("Postage adjustments", (r) => r.postageAdjustments),
-		money("Adjustments", (r) => r.adjustments),
+		money("Labels", (r) => r.labels, "Costs"),
+		money("Postage", (r) => r.postageAdjustments, "Costs"),
+		money("Adjustments", (r) => r.adjustments, "Costs"),
 		money("Proceeds before cost", (r) => r.net),
 	];
 	return (
@@ -384,6 +516,7 @@ function Channels({
 			rows={rows}
 			totals={rows.length > 1 ? [total] : []}
 			keyOf={(r) => r.source}
+			notes={notes}
 		/>
 	);
 }
@@ -445,6 +578,15 @@ function Jurisdictions({
 			]}
 			rows={rows}
 			keyOf={(r) => `${r.country}|${r.jurisdiction}|${r.rate}`}
+			notes={
+				unread > 0
+					? [
+							<Flag key="unread" tone="warning">
+								Not read yet on {formatCount(unread)} Shopify orders
+							</Flag>,
+						]
+					: []
+			}
 		/>
 	);
 }
@@ -459,10 +601,12 @@ function States({
 	rows,
 	live,
 	period,
+	notes,
 }: {
 	rows: Data["states"];
 	live: ReportData;
 	period: Period;
+	notes: ReactNode[];
 }) {
 	if (rows.length === 0) return null;
 	const where = (r: Data["states"][number]) => `${placeName(r)}${HOW[r.how]}`;
@@ -487,6 +631,7 @@ function States({
 			]}
 			rows={rows}
 			keyOf={(r) => `${r.country}|${r.state}|${r.how}`}
+			notes={notes}
 		/>
 	);
 }
@@ -517,19 +662,26 @@ function Deposits({
 	live,
 	period,
 	failing,
+	notes,
 }: {
 	rows: Deposit[];
 	live: ReportData;
 	period: Period;
 	// A marketplace's payouts couldn't be read, so an empty list means unknown.
 	failing: boolean;
+	notes: ReactNode[];
 }) {
 	if (rows.length === 0)
 		return (
 			<Card title="Deposits">
-				<p className={failing ? "text-warning-text" : "text-muted-foreground"}>
-					{failing ? "Not read yet" : `None in ${periodName(period)}`}
-				</p>
+				<div className="flex flex-col gap-2">
+					{notes}
+					{!failing && (
+						<p className="text-muted-foreground">
+							None in {periodName(period)}
+						</p>
+					)}
+				</div>
 			</Card>
 		);
 	const subtotals: DepositLine[] = currencies(rows).flatMap((currency) => {
@@ -595,6 +747,7 @@ function Deposits({
 			]}
 			rows={rows}
 			totals={subtotals}
+			notes={notes}
 			keyOf={(l) =>
 				isDeposit(l)
 					? `${l.channel}|${l.depositedAt.toISOString()}|${l.amount}`

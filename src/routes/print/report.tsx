@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import {
 	Banknote,
 	Globe,
@@ -11,68 +11,45 @@ import {
 } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { ChannelBadge } from "#/components/channel-badge";
-import { SavedPrint } from "#/components/report-page/saved-print";
-import { formatCount, formatMoney } from "#/lib/format";
+import { formatCount, formatDateTime, formatMoney } from "#/lib/format";
 import { placeName, taxName } from "#/lib/places";
 import { cn } from "#/lib/utils";
 import {
-	type ChannelRow,
 	formatAmount,
-	lastMonth,
 	parsePeriod,
 	payoutProblem,
 	payoutTotals,
 	periodDays,
 	periodName,
-	periodText,
 	taxedElsewhere,
 } from "#/orders/sales-report";
-import { getReportArtifact, getSalesReport } from "#/server/reports";
+import type { ReportData } from "#/reports/snapshot";
+import { getReportRevision } from "#/server/reports";
 
 // The month's sales and sales tax on one or two letter pages, for the
 // accountant: what needs a look first, the totals, a row per channel, and
-// the tax, owed and not. Rows of zeros are left out. Same numbers as the
-// Reports tab.
+// the tax, owed and not. Rows of zeros are left out. Always a saved
+// revision, so what's printed can be printed again exactly.
 export const Route = createFileRoute("/print/report")({
-	validateSearch: (
-		search: Record<string, unknown>,
-	): { period?: string; snapshot?: number } => {
-		const period = String(search.period ?? "");
+	validateSearch: (search: Record<string, unknown>): { snapshot?: number } => {
 		const snapshot = Number(search.snapshot);
-		return {
-			...(parsePeriod(period) ? { period } : {}),
-			...(Number.isInteger(snapshot) && snapshot > 0 ? { snapshot } : {}),
-		};
+		return Number.isInteger(snapshot) && snapshot > 0 ? { snapshot } : {};
 	},
-	loaderDeps: ({ search }) => ({
-		period: search.period ?? periodText(lastMonth()),
-		snapshot: search.snapshot,
-	}),
-	loader: async ({ deps }) =>
-		deps.snapshot
-			? {
-					kind: "saved" as const,
-					file: await getReportArtifact({
-						data: { snapshotId: deps.snapshot, name: "report.html" },
-					}),
-				}
-			: {
-					kind: "live" as const,
-					report: await getSalesReport({ data: { period: deps.period } }),
-				},
+	loaderDeps: ({ search }) => ({ snapshot: search.snapshot }),
+	loader: ({ deps }) => {
+		if (!deps.snapshot) throw redirect({ to: "/reports" });
+		return getReportRevision({ data: { id: deps.snapshot } });
+	},
 	head: () => ({ meta: [{ title: "Sales and sales tax report" }] }),
 	component: PrintPage,
 });
 
-type Data = Awaited<ReturnType<typeof getSalesReport>>;
+type Data = ReportData;
+type ChannelRow = Data["channels"][number];
 
 function PrintPage() {
-	const loaded = Route.useLoaderData();
-	return loaded.kind === "saved" ? (
-		<SavedPrint file={loaded.file} />
-	) : (
-		<PrintReport d={loaded.report} />
-	);
+	const r = Route.useLoaderData();
+	return <PrintReport d={r.data} revision={r.revision} asOf={r.asOf} />;
 }
 
 type Source = ChannelRow["source"];
@@ -105,9 +82,17 @@ const CHIPS: Record<Source, ReactNode> = Object.fromEntries(
 const sum = <T,>(rows: T[], get: (r: T) => number) =>
 	rows.reduce((s, r) => s + get(r), 0);
 
-function PrintReport({ d }: { d: Data }) {
-	const { period: text } = Route.useSearch();
-	const period = parsePeriod(text ?? "") ?? lastMonth();
+function PrintReport({
+	d,
+	revision,
+	asOf,
+}: {
+	d: Data;
+	revision: number;
+	asOf: Date;
+}) {
+	// A saved period always reads; the type just can't know it.
+	const period = parsePeriod(d.period);
 	const home = d.business.homeState;
 
 	return (
@@ -121,11 +106,14 @@ function PrintReport({ d }: { d: Data }) {
 			<div className="mx-auto mb-4 flex max-w-[8.5in] items-center justify-between print:hidden">
 				<Link
 					to="/reports"
-					search={{ period: periodText(period) }}
+					search={{ period: d.period }}
 					className="text-muted-foreground hover:text-foreground"
 				>
 					Back to Reports
 				</Link>
+				<span className="text-muted-foreground tabular-nums">
+					Revision {revision}, {formatDateTime(asOf)}
+				</span>
 				<button
 					type="button"
 					onClick={() => window.print()}
@@ -141,11 +129,11 @@ function PrintReport({ d }: { d: Data }) {
 						<div>
 							<p className="font-semibold">{d.business.name}</p>
 							<h1 className="text-[17pt] leading-tight font-bold">
-								Sales and Sales Tax, {periodName(period)}
+								Sales and Sales Tax, {period ? periodName(period) : d.period}
 							</h1>
 						</div>
 						<p className="shrink-0 text-right text-[9pt]">
-							{periodDays(period)}
+							{period ? periodDays(period) : d.period}
 							<br />
 							By order date
 						</p>
@@ -256,7 +244,7 @@ function Totals({ channels }: { channels: ChannelRow[] }) {
 		["Gross sales", sum(channels, (c) => c.grossSales), "border-info-icon"],
 		[
 			"Proceeds before cost",
-			sum(channels, (c) => c.net),
+			sum(channels, (c) => c.proceedsBeforeCost),
 			"border-success-icon",
 		],
 		[
@@ -399,7 +387,7 @@ function Channels({ rows }: { rows: ChannelRow[] }) {
 		formatMoney(fees(r as ChannelRow)),
 		formatMoney(r.labels),
 		formatMoney(r.postageAdjustments),
-		formatMoney(r.net),
+		formatMoney(r.proceedsBeforeCost),
 	];
 	const all = (get: (r: ChannelRow) => number) => sum(rows, get);
 	return (
@@ -428,7 +416,7 @@ function Channels({ rows }: { rows: ChannelRow[] }) {
 							formatMoney(all(fees)),
 							formatMoney(all((r) => r.labels)),
 							formatMoney(all((r) => r.postageAdjustments)),
-							formatMoney(all((r) => r.net)),
+							formatMoney(all((r) => r.proceedsBeforeCost)),
 						]
 					: undefined
 			}

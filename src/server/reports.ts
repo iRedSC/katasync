@@ -1,10 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
 import { getDb } from "#/db/client";
-import { parsePeriod, salesReport } from "#/orders/sales-report";
+import { parsePeriod } from "#/orders/sales-report";
 import {
 	handOff,
 	readArtifact,
+	readRevision,
 	reportPage,
 	saveRevision,
 } from "#/reports/store";
@@ -15,10 +16,6 @@ function periodOf(text: string) {
 	return period;
 }
 
-export const getSalesReport = createServerFn({ method: "GET" })
-	.validator(type({ period: "string" }))
-	.handler(async ({ data }) => salesReport(getDb(), periodOf(data.period)));
-
 export const getReportPage = createServerFn({ method: "GET" })
 	.validator(type({ period: "string" }))
 	.handler(async ({ data }) => reportPage(getDb(), periodOf(data.period)));
@@ -26,6 +23,10 @@ export const getReportPage = createServerFn({ method: "GET" })
 export const saveReportRevision = createServerFn({ method: "POST" })
 	.validator(type({ period: "string" }))
 	.handler(async ({ data }) => saveRevision(getDb(), periodOf(data.period)));
+
+export const getReportRevision = createServerFn({ method: "GET" })
+	.validator(type({ id: "number.integer > 0" }))
+	.handler(async ({ data }) => readRevision(getDb(), data.id));
 
 export const getReportArtifact = createServerFn({ method: "GET" })
 	.validator(
