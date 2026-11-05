@@ -6,6 +6,7 @@ import { createTestDb } from "#/test/db";
 import {
 	type AddressedOutside,
 	buyAddressed,
+	sentPackages,
 	voidAddressed,
 } from "./addressed";
 import { LabelRefused } from "./label-attempt-state";
@@ -276,4 +277,36 @@ test("an addressed package can never be given an order", async () => {
 			.insert(schema.dispatchOrders)
 			.values({ dispatchId: bought.dispatchId, orderId: order.id }),
 	).rejects.toThrow();
+});
+
+test("lists packages sent, newest first, voided ones marked", async () => {
+	const outside = fakes();
+	let tx = 0;
+	outside.buyLabel = vi.fn(async () => ({
+		id: `tx${++tx}`,
+		labelUrl: "https://example.com/l.pdf",
+		trackingNumber: `9400${tx}`,
+		trackingUrl: null,
+	}));
+	const first = await buyAddressed(
+		db,
+		{ attemptId: crypto.randomUUID(), to, box, choice: ground },
+		outside,
+	);
+	await buyAddressed(
+		db,
+		{
+			attemptId: crypto.randomUUID(),
+			to: { ...to, name: "Sam Roe" },
+			box,
+			choice: ground,
+		},
+		outside,
+	);
+	if (first.kind !== "bought") throw new Error("not bought");
+	await voidAddressed(db, first.dispatchId, outside);
+
+	const list = await sentPackages(db);
+	expect(list.map((p) => p.sentTo.name)).toEqual(["Sam Roe", "Pat Doe"]);
+	expect(list.map((p) => p.voidedAt !== null)).toEqual([false, true]);
 });

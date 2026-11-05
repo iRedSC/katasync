@@ -15,6 +15,7 @@ import {
 	inches,
 	MM_PER_INCH,
 } from "#/components/quick-ship/units";
+import { SentPackages } from "#/components/sent-packages";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -123,6 +124,7 @@ export function SendPackage() {
 	const [f, setF] = useState<Fields>(blank);
 	const [phase, setPhase] = useState<Phase>({ kind: "editing" });
 	const [error, setError] = useState<string | null>(null);
+	const [view, setView] = useState<"new" | "sent">("new");
 	const busy = phase.kind === "pricing" || phase.kind === "buying";
 	// This purchase's name, kept until a clear answer: a retry after a lost
 	// response settles the label already bought instead of buying another.
@@ -234,10 +236,31 @@ export function SendPackage() {
 				}}
 			>
 				<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto bg-card sm:max-w-lg">
-					<DialogHeader>
+					<DialogHeader className="flex-row items-center justify-between gap-3">
 						<DialogTitle>Send a package</DialogTitle>
+						<div className="mr-6 flex rounded-lg bg-muted p-0.5 text-[0.8125rem] font-semibold">
+							{(["new", "sent"] as const).map((v) => (
+								<button
+									key={v}
+									type="button"
+									// Money moving on the form: it stays in view.
+									disabled={locked}
+									onClick={() => setView(v)}
+									className={cn(
+										"rounded-md px-3 py-1 disabled:opacity-50",
+										view === v
+											? "bg-white shadow-sm"
+											: "text-muted-foreground hover:text-foreground",
+									)}
+								>
+									{v === "new" ? "New" : "Sent"}
+								</button>
+							))}
+						</div>
 					</DialogHeader>
-					{done ? (
+					{view === "sent" ? (
+						<SentPackages />
+					) : done ? (
 						<Done
 							phase={phase}
 							onVoid={voidIt}

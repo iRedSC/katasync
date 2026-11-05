@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "#/db/client";
 import { dispatches, labelAttempts, type SentTo, shipments } from "#/db/schema";
 import { shipFrom } from "./addresses";
@@ -316,4 +316,29 @@ export async function voidAddressed(
 		.set({ refundStatus: status })
 		.where(eq(shipments.id, box.id));
 	return { refundStatus: status };
+}
+
+// Packages sent so far, newest first: who to, which label, and whether it
+// was voided. Only labels actually bought; a purchase still unsure has none.
+export async function sentPackages(db: Db, limit = 100) {
+	const rows = await db
+		.select({
+			dispatchId: dispatches.id,
+			shipmentId: shipments.id,
+			sentTo: dispatches.sentTo,
+			serviceName: shipments.serviceName,
+			cost: shipments.cost,
+			trackingNumber: shipments.trackingNumber,
+			trackingUrl: shipments.trackingUrl,
+			test: shipments.test,
+			voidedAt: shipments.voidedAt,
+			refundStatus: shipments.refundStatus,
+			createdAt: shipments.createdAt,
+		})
+		.from(shipments)
+		.innerJoin(dispatches, eq(dispatches.id, shipments.dispatchId))
+		.where(eq(dispatches.contents, "addressed"))
+		.orderBy(desc(shipments.createdAt), desc(shipments.id))
+		.limit(limit);
+	return rows.flatMap((r) => (r.sentTo ? [{ ...r, sentTo: r.sentTo }] : []));
 }
