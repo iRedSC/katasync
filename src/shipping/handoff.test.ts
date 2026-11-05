@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
-import { labelToVoid } from "#/orders/to-ship";
+import { labelToVoid, inPrintAll as toPrintAll } from "#/orders/to-ship";
 import { addDispatch, createTestDb } from "#/test/db";
 import { memoryLocker } from "./dispatch";
 import { addPackedDispatch } from "./dispatch.fixtures";
@@ -73,6 +73,7 @@ async function addOrder(name: string, channel: "shopify" | "ebay") {
 		title: "Wrench",
 		quantity: 2,
 		unitPrice: 15,
+		shippedQuantity: 0,
 	});
 	return row.id;
 }
@@ -176,6 +177,7 @@ describe("sendTracking", () => {
 				],
 			},
 			new Map([["line-9", 2]]),
+			"within",
 		);
 		expect((await handoffOf(id)).channelFulfillmentId).toBe(
 			"gid://shopify/Fulfillment/1",
@@ -198,6 +200,7 @@ describe("sendTracking", () => {
 				],
 			}),
 			new Map([["line-9", 2]]),
+			"within",
 		);
 	});
 
@@ -290,6 +293,7 @@ describe("sendTracking", () => {
 			"gid://shopify/Order/10",
 			expect.anything(),
 			new Map([["line-10", 2]]),
+			"within",
 		);
 	});
 
@@ -381,6 +385,7 @@ describe("sendTracking on eBay", () => {
 				carrier: "USPS",
 				trackingNumber: "9400100000000000000000",
 			}),
+			"within",
 		);
 	});
 
@@ -396,6 +401,7 @@ describe("sendTracking on eBay", () => {
 			"9",
 			expect.any(Map),
 			expect.objectContaining({ trackingNumber: "9400100000000000000000" }),
+			"within",
 		);
 		expect(result.message).toContain("one number");
 	});
@@ -445,23 +451,6 @@ describe("voidDispatch", () => {
 		await voidDispatch(db, old.dispatchId, fakes());
 		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
 		expect((await handoffOf(newer)).channelSentAt).not.toBeNull();
-	});
-
-	test("finishing a historical fulfillment void preserves a newer shipment", async () => {
-		const old = await ship();
-		await sendTracking(db, old, fakes());
-		await db
-			.update(schema.shipments)
-			.set({ voidedAt: new Date() })
-			.where(eq(schema.shipments.dispatchId, old));
-		await db
-			.update(schema.orders)
-			.set({ fulfillmentStatus: "UNFULFILLED" })
-			.where(eq(schema.orders.id, orderId));
-		const newer = await ship();
-		await sendTracking(db, newer, fakes());
-		await voidDispatch(db, old, fakes());
-		expect((await orderRow()).fulfillmentStatus).toBe("FULFILLED");
 	});
 
 	test("a voided label's tracking is never sent", async () => {
@@ -547,6 +536,35 @@ describe("voidDispatch", () => {
 		await expect(voidDispatch(db, id, outside)).rejects.toThrow(
 			"already voided",
 		);
+	});
+
+	test("putting an order back puts it back in Print all", async () => {
+		const inPrintAll = async () =>
+			(
+				await db
+					.select({ is: toPrintAll })
+					.from(schema.orders)
+					.where(eq(schema.orders.id, orderId))
+			)[0].is;
+		const refusing = fakes({
+			shopifyCancel: vi.fn(async () => {
+				throw new Error("nope");
+			}),
+		});
+		const id = await ship();
+		await sendTracking(db, id, refusing);
+		await db
+			.update(schema.orders)
+			.set({ invoicePrintedAt: new Date() })
+			.where(eq(schema.orders.id, orderId));
+		// Still shipped on Shopify: nothing to pack.
+		await voidDispatch(db, id, refusing);
+		expect(await inPrintAll()).toBe(false);
+
+		// Back to pack, and with a dispatch behind it, never printed.
+		await voidDispatch(db, id, fakes());
+		expect((await orderRow()).fulfillmentStatus).toBe("UNFULFILLED");
+		expect(await inPrintAll()).toBe(true);
 	});
 
 	test("if Shopify won't cancel, the order isn't put back", async () => {

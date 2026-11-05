@@ -308,6 +308,7 @@ export async function sendDropShipTracking(
 								}
 							: null,
 						packed,
+						"exactly",
 					)
 				: await outside.ebayShip(
 						order.externalId,
@@ -319,6 +320,7 @@ export async function sendDropShipTracking(
 									shippedAt: new Date(),
 								}
 							: { carrier: null, trackingNumber: null, shippedAt: new Date() },
+						"exactly",
 					);
 		}
 		await db

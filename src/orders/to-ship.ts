@@ -45,10 +45,38 @@ export const needsShipping = sql<boolean>`(
 // so it stays on To ship but is never packed here.
 export const needsPacking = sql<boolean>`(${needsShipping} and ${orders.dropShipAt} is null)`;
 
+// An order whose slip is just its lines: katasync has never made a dispatch
+// for it, and the marketplace says nothing of it shipped (a line with no
+// shipped count, a "?" slip, isn't plain). Only a plain order's print can be
+// trusted to still match what's to pack: drizzle/0183 versions its lines.
+// Any other slip reads a box, a handoff, or the marketplace live, which can
+// change without the order changing, so those always print again.
+export const plain = sql<boolean>`(
+	not exists (select 1 from ${dispatchOrders} d where d.order_id = "orders"."id")
+	and not exists (
+		select 1 from ${orderLines} l
+		where l.order_id = "orders"."id" and l.shipped_quantity is distinct from 0
+	)
+)`;
+
+// Printed, as Print all and To ship see it: only a plain order's mark counts.
+// Catalog name, SKU or recipe edits after printing don't unprint it (as on main).
+export const printed = sql<boolean>`(${orders.invoicePrintedAt} is not null and ${plain})`;
+
+// What Print all prints: still to pack and not printed.
+export const inPrintAll = sql<boolean>`(${needsPacking} and not ${printed})`;
+
+// Units of an order line in live dispatches not yet handed off to its
+// marketplace (drizzle/0182's order_line_unsent, which its trigger uses
+// too). For a select from order_lines.
+export const unitsUnsent = sql<number>`order_line_unsent(${orderLines.orderId}, ${orderLines.externalId})`;
+
 // The marketplace hasn't said which units shipped: a line with units and no
 // shipped count, whatever the order's status (katasync rewrites that one
-// locally, on a void). Such an order can't be packed (whyNotTogether);
-// remaining.ts is the same rule.
+// locally, on a void). The order page and To ship say so. Quick ship packs
+// from what the marketplace says live where it can (src/shipping/
+// live-open.ts), so this blocks only orders it can't read that way
+// (whyNotTogether); remaining.ts is the same rule.
 export const remainingUnknown = sql<boolean>`exists (
 	select 1 from ${orderLines} l
 	where l.order_id = "orders"."id" and l.quantity > 0 and l.shipped_quantity is null

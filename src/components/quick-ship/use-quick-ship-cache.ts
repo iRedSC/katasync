@@ -4,6 +4,7 @@ import {
 	quickShipPlan,
 	quickShipRates,
 } from "#/server/shipping";
+import type { Lowered } from "#/shipping/packed";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import { splitInsurance } from "./insurance";
 import type { Extras, Found, Packed, Rates } from "./types";
@@ -35,11 +36,11 @@ export function useQuickShipCache(plan: ShipmentPlan | null) {
 		return pending;
 	}
 
-	function planFor(orderIds: number[]) {
-		const key = orderIds.join(",");
+	function planFor(orderIds: number[], lowered: Lowered = []) {
+		const key = JSON.stringify([orderIds, lowered]);
 		let pending = plans.current.get(key);
 		if (!pending) {
-			pending = quickShipPlan({ data: { orderIds } });
+			pending = quickShipPlan({ data: { orderIds, lowered } });
 			pending.catch(() => plans.current.delete(key));
 			plans.current.set(key, pending);
 		}

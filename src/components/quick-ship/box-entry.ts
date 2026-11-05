@@ -59,3 +59,14 @@ export function reopenSide(entry: BoxEntry): BoxEntry | null {
 // A name search typed away to nothing is ready for a size again.
 export const typeName = (text: string): BoxEntry =>
 	text === "" ? emptyEntry : { kind: "name", text };
+
+// Where the box step starts from a suggestion: its saved box highlighted
+// with nothing typed, or a size used without a saved box typed in (sides in
+// inches), or nothing at all.
+export const startFrom = (
+	box: { id: number } | null,
+	sides: number[] | null,
+): { entry: BoxEntry; picked: string | null } =>
+	box
+		? { entry: emptyEntry, picked: `box:${box.id}` }
+		: { entry: sides ? sizeEntry(sides) : emptyEntry, picked: null };

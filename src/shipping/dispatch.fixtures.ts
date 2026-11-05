@@ -6,7 +6,8 @@ import * as schema from "#/db/schema";
 // dispatch holding every order line's current quantity, a label per box,
 // and each box's settled purchase (with TikTok's units for a TikTok box).
 // bought: false plans one box more than was bought. Pass overrides per
-// box. Returns the dispatch and its boxes' ids.
+// box. units packs that many of each line instead of all of it, as one
+// shipment of several. Returns the dispatch and its boxes' ids.
 export async function addPackedDispatch(
 	db: Db,
 	input: {
@@ -16,6 +17,7 @@ export async function addPackedDispatch(
 		boxes?: Partial<typeof schema.shipments.$inferInsert>[];
 		unitIds?: string[];
 		legacyLineIdentity?: true;
+		units?: number;
 	},
 ) {
 	const boxes = input.boxes ?? [{}];
@@ -52,7 +54,7 @@ export async function addPackedDispatch(
 				productId: l.productId,
 				sku: l.sku,
 				title: l.title,
-				quantity: l.quantity,
+				quantity: Math.min(input.units ?? l.quantity, l.quantity),
 			})),
 		);
 		const saved = await tx

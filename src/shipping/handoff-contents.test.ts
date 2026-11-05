@@ -58,6 +58,7 @@ async function setUp(channel: "shopify" | "ebay", extra = {}) {
 			title: "Wrench",
 			quantity: 2,
 			unitPrice: 10,
+			shippedQuantity: 0,
 		},
 		{
 			orderId,
@@ -66,6 +67,7 @@ async function setUp(channel: "shopify" | "ebay", extra = {}) {
 			title: "Knife",
 			quantity: 1,
 			unitPrice: 10,
+			shippedQuantity: 0,
 		},
 	]);
 }
@@ -111,6 +113,7 @@ describe("Shopify", () => {
 				["L1", 2],
 				["L2", 1],
 			]),
+			"within",
 		);
 		expect(await statusOf()).toBe("FULFILLED");
 	});
@@ -260,6 +263,11 @@ describe("TikTok through Shopify", () => {
 			expect((await sendTracking(db, id, outside)).sent).toBe(false);
 			expect(outside.tiktokShip).not.toHaveBeenCalled();
 			expect(await holdOf(db, id, orderId)).toMatchObject({ kind: "drift" });
+			// Cancelled in Seller Center, so the next try can buy another.
+			await db
+				.update(schema.shipments)
+				.set({ voidedAt: new Date() })
+				.where(eq(schema.shipments.dispatchId, id));
 		}
 	});
 
@@ -292,6 +300,7 @@ describe("TikTok through Shopify", () => {
 				title: "Saw",
 				quantity: 1,
 				unitPrice: 10,
+				shippedQuantity: 0,
 			});
 		});
 
@@ -379,6 +388,7 @@ describe("eBay", () => {
 				["L2", 1],
 			]),
 			expect.objectContaining({ carrier: "USPS" }),
+			"within",
 		);
 	});
 

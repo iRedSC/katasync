@@ -82,9 +82,17 @@ export const quickShipLookup = createServerFn({ method: "GET" })
 
 // What's in the box when these orders ship together (the pin's order
 // first), for quick ship to show and price.
+// Lines sending fewer than all that's packable (see shipmentPlan).
+const lowered = type({
+	orderLineId: "number.integer > 0",
+	quantity: "number.integer >= 0",
+}).array();
+
 export const quickShipPlan = createServerFn({ method: "GET" })
-	.validator(type({ orderIds: "(number.integer > 0)[] > 0" }))
-	.handler(async ({ data }) => shipmentPlan(getDb(), data.orderIds));
+	.validator(type({ orderIds: "(number.integer > 0)[] > 0", lowered }))
+	.handler(async ({ data }) =>
+		shipmentPlan(getDb(), data.orderIds, data.lowered),
+	);
 
 const box = {
 	packageId: "number.integer > 0 | null",
@@ -221,6 +229,7 @@ export const quickShipBuy = createServerFn({ method: "POST" })
 			...send,
 			boxes: type(box).array().atLeastLength(1),
 			setsDefault: "boolean",
+			lowered,
 			// Which service, not which rate: the server prices every box again,
 			// and buys only if that comes to no more than total, the price shown.
 			choice: {

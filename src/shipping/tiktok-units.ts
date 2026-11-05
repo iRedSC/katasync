@@ -1,5 +1,5 @@
 import type { Lookup } from "./label-attempt-state";
-import { assertUnchanged, byKey, type PackedLine, unmappable } from "./packed";
+import { assertFits, byKey, type PackedLine, unmappable } from "./packed";
 
 // TikTok lists every unit sold as its own line item. These match a box's
 // packed lines to them: by sku_id for an order katasync took from TikTok
@@ -52,7 +52,7 @@ function assertUnitsMatch(
 			return key ? [[key, l.title] as const] : [];
 		}),
 	);
-	assertUnchanged(want, have, titles);
+	assertFits("exactly", want, have, titles);
 }
 
 // The units a new label is for: every one not cancelled, which must be

@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { createTestDb } from "#/test/db";
+import { syncedOpen } from "#/test/open-reads";
 import { type BoxPlan, type BuyOutside, buyDispatch } from "./buy";
-import { contentsKey } from "./contents";
 import { memoryLocker } from "./dispatch";
 import { LabelRefused } from "./label-attempt-state";
-import { linesToPack } from "./packed";
+import { WHOLE_LINE } from "./packed";
+import { shipmentPlan } from "./quick-ship";
 
 let db: Db;
 let storeId: number;
@@ -47,7 +48,7 @@ async function addOrder(name: string, extra: Record<string, unknown> = {}) {
 }
 
 const keyOf = async (orderIds: number[]) =>
-	contentsKey(await linesToPack(db, orderIds));
+	(await shipmentPlan(db, orderIds, [], syncedOpen(db))).contentsKey;
 
 // Shippo ids are unique, across every fake.
 let n = 0;
@@ -101,7 +102,7 @@ function fakes(overrides: Partial<BuyOutside> = {}): BuyOutside {
 		refund: vi.fn(async () => ({ status: "QUEUED" })),
 		tiktokBuy: vi.fn(),
 		tiktokUnits: vi.fn(),
-		ebayCheck: vi.fn(async () => {}),
+		open: syncedOpen(() => db),
 		isTest: () => false,
 		...overrides,
 	};
@@ -225,7 +226,7 @@ describe("buyDispatch", () => {
 		expect(members.map((d) => d.orderId).sort()).toEqual([a, b].sort());
 	});
 
-	test("refuses a second shipment while one is live", async () => {
+	test("refuses a second shipment while one is live and not yet sent", async () => {
 		const a = await addOrder("#1");
 		await buy([a], [box()]);
 		const outside = fakes();
@@ -264,6 +265,74 @@ describe("buyDispatch", () => {
 			.mock.calls.map(([input]) => input.signature);
 		expect(asked).toEqual([false, true, true]);
 		expect((await boxesOf(bigBuy.dispatchId))[0].signature).toBe(true);
+	});
+
+	test("sends an eBay line whole or leaves it for later, never part of it", async () => {
+		const [ebay] = await db
+			.insert(schema.stores)
+			.values({ channel: "ebay", name: "eBay" })
+			.returning();
+		const a = await addOrder("#1", { storeId: ebay.id });
+		const lines = await db
+			.insert(schema.orderLines)
+			.values({
+				orderId: a,
+				externalId: "#1-knife",
+				sku: "KNIFE",
+				title: "Knife",
+				quantity: 3,
+				shippedQuantity: 0,
+				unitPrice: 10,
+			})
+			.returning();
+		const knife = lines[0].id;
+		const withLowered = async (
+			lowered: { orderLineId: number; quantity: number }[],
+			outside: BuyOutside,
+		) =>
+			buyDispatch(
+				db,
+				{
+					orderIds: [a],
+					contentsKey: (await shipmentPlan(db, [a], lowered, syncedOpen(db)))
+						.contentsKey,
+					boxes: [box()],
+					choice: ground,
+					signature: false,
+					setsDefault: true,
+					lowered,
+				},
+				outside,
+			);
+		const refused = fakes();
+		await expect(
+			buyDispatch(
+				db,
+				{
+					orderIds: [a],
+					contentsKey: await keyOf([a]),
+					boxes: [box()],
+					choice: ground,
+					signature: false,
+					setsDefault: true,
+					lowered: [{ orderLineId: knife, quantity: 2 }],
+				},
+				refused,
+			),
+		).rejects.toThrow(WHOLE_LINE);
+		expect(refused.buyLabel).not.toHaveBeenCalled();
+
+		const outside = fakes();
+		const bought = await withLowered(
+			[{ orderLineId: knife, quantity: 0 }],
+			outside,
+		);
+		expect(bought.failed).toBeNull();
+		const packed = await db
+			.select()
+			.from(schema.dispatchLines)
+			.where(eq(schema.dispatchLines.dispatchId, bought.dispatchId));
+		expect(packed.map((l) => [l.sku, l.quantity])).toEqual([["WRENCH", 1]]);
 	});
 
 	test("won't combine orders to different addresses", async () => {
@@ -448,5 +517,71 @@ describe("buyDispatch", () => {
 			"Seller Center",
 		);
 		expect(outside.tiktokBuy).not.toHaveBeenCalled();
+	});
+
+	describe("reads Shopify last, just before paying", () => {
+		// Shopify with the order's one line open at these locations.
+		const at = (
+			...locations: string[]
+		): Awaited<ReturnType<BuyOutside["open"]["shopify"]>> => ({
+			fulfillments: [],
+			fulfillmentOrders: locations.map((location, i) => ({
+				id: `FO${i}`,
+				status: "OPEN",
+				location,
+				items: [
+					{ id: `FOL${i}`, line: "#1-line", name: "Wrench", remaining: 1 },
+				],
+			})),
+		});
+
+		test("a unit shipped while quoting stops the buy with nothing bought", async () => {
+			const a = await addOrder("#1");
+			let open = at("W");
+			const outside = fakes({
+				open: { ...syncedOpen(() => db), shopify: async () => open },
+			});
+			const quote = outside.getRates;
+			outside.getRates = vi.fn(async (...args: Parameters<typeof quote>) => {
+				// Someone ships it in Shopify while Shippo answers.
+				open = { ...open, fulfillmentOrders: [] };
+				return quote(...args);
+			});
+			await expect(buy([a], [box()], outside)).rejects.toThrow(
+				"Nothing on these orders to pack",
+			);
+			expect(outside.getRates).toHaveBeenCalled();
+			expect(outside.buyLabel).not.toHaveBeenCalled();
+			expect(await db.select().from(schema.dispatches)).toEqual([]);
+		});
+
+		test("units at two Shopify locations are refused before paying", async () => {
+			const a = await addOrder("#1");
+			await db
+				.update(schema.orderLines)
+				.set({ quantity: 2 })
+				.where(eq(schema.orderLines.orderId, a));
+			const outside = fakes({
+				open: { ...syncedOpen(() => db), shopify: async () => at("A", "B") },
+			});
+			await expect(buy([a], [box()], outside)).rejects.toThrow(
+				"#1: These items are at different Shopify locations",
+			);
+			expect(outside.buyLabel).not.toHaveBeenCalled();
+		});
+
+		test("an order with more shipments than katasync can see is refused before paying", async () => {
+			const a = await addOrder("#1");
+			const outside = fakes({
+				open: {
+					...syncedOpen(() => db),
+					shopify: async () => ({ ...at("W"), fulfillments: "too many" }),
+				},
+			});
+			await expect(buy([a], [box()], outside)).rejects.toThrow(
+				"ship it in Shopify",
+			);
+			expect(outside.buyLabel).not.toHaveBeenCalled();
+		});
 	});
 });

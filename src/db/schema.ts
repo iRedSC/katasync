@@ -697,8 +697,13 @@ export const orders = pgTable(
 		// their turn behind the rest instead of holding the queue.
 		shippedCheckedAt: timestamp({ withTimezone: true }),
 		// The last time its invoice went to the printer. Print all skips
-		// orders that have one; ticking an order prints it again.
+		// plain orders that have one (src/orders/to-ship.ts's printed);
+		// ticking an order prints it again.
 		invoicePrintedAt: timestamp({ withTimezone: true }),
+		// Goes up whenever a sync changes what its invoice prints: its lines
+		// or its buyer, address and totals; triggers keep it (drizzle/0183). A print is only recorded at the version the printed
+		// invoice showed.
+		pickingVersion: integer().notNull().default(0),
 		total: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
 		shippingCharged: numeric({ precision: 12, scale: 2, mode: "number" })
 			.notNull()
@@ -780,7 +785,8 @@ export const orderLines = pgTable(
 		// unknown, never none: a partly shipped order whose channel hasn't
 		// said can't be packed. It can exceed quantity on a channel's quirk, so
 		// readers clamp it (src/orders/remaining.ts) rather than a check
-		// breaking the sync.
+		// breaking the sync. Shown, and counted on To ship; what can be packed
+		// comes from the marketplace live (src/shipping/live-open.ts).
 		shippedQuantity: integer(),
 		// Price per unit after every discount.
 		unitPrice: numeric({ precision: 12, scale: 2, mode: "number" }).notNull(),
@@ -1502,10 +1508,13 @@ export const packages = pgTable(
 );
 
 // One send to one address: the boxes that went out together, for every
-// order packed into them. One order can be in at most one live dispatch (one
-// with a box not voided). contentsKey is everything in it, merged across
-// orders; quick ship reuses the last dispatch with the same contents that
-// sets the default.
+// order packed into them. An order can go out in several over time, but has
+// at most one live dispatch (a box not voided, or a purchase not settled)
+// not yet handed off to its marketplace (drizzle/0182). What goes in each is
+// what the marketplace says is still open (src/shipping/live-open.ts).
+// contentsKey is everything in it, merged across orders;
+// quick ship reuses the last dispatch with the same contents that sets the
+// default.
 // Rules live in src/shipping/dispatch.ts.
 //
 // contents says whether katasync knows what went in the box: packed ones
@@ -1631,10 +1640,12 @@ export const dispatchOrders = pgTable(
 	],
 );
 
-// What a packed dispatch holds: each order line's quantity when its labels
-// were bought, its SKU as the channel named it, and the product it was
-// mapped to then. Written with the dispatch and never changed (drizzle/0115),
-// so it stays the evidence of what went out whatever happens to the order
+// What a packed dispatch holds: each order line's units packed in it (all
+// that was left of the line, or fewer staff chose to send now), its SKU as
+// the channel named it, and the product it was mapped to then. Rows not yet
+// handed off never hold more of a line than was sold, and every order in
+// the dispatch has a row (drizzle/0182). Written with the dispatch and never changed
+// (drizzle/0115), so it stays the evidence of what went out whatever happens to the order
 // afterwards. Only the dispatch membership is a foreign key: the line id and
 // product id are values as they were, so later changes to the order's lines
 // or products can neither rewrite nor block this history.

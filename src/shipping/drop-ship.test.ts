@@ -262,6 +262,8 @@ describe("sendDropShipTracking", () => {
 				boxes: [{ number: "1Z999AA10123456784", url: null }],
 			},
 			new Map([["gid://shopify/LineItem/1", 2]]),
+			// A drop-ship is the whole order (see packed.ts).
+			"exactly",
 		);
 		const row = await orderRow(id);
 		expect(row).toMatchObject({
@@ -286,6 +288,7 @@ describe("sendDropShipTracking", () => {
 			"gid://shopify/Order/1",
 			null,
 			expect.any(Map),
+			"exactly",
 		);
 		expect(await orderRow(id)).toMatchObject({
 			dropShipTracking: null,

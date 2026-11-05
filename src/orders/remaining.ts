@@ -63,9 +63,10 @@ export function toPack<L extends Line>(lines: L[]) {
 		.map(({ toShip, ...line }) => ({ ...line, quantity: toShip }));
 }
 
-// What a packing slip says to put in the box per line: what's left, for an
-// order still to pack whose marketplace has said what shipped. Anything
-// else (finished, cancelled, a reprint, or unknown) prints what was sold.
+// What a packing slip says to put in the box per line, for an order without
+// a label waiting to be handed off (that one prints its box: slipsOf): what's
+// left, for an order still to pack whose marketplace has said what shipped.
+// Anything else (finished, cancelled, or unknown) prints what was sold.
 // quantity stays what was sold either way, for the money.
 export function toPrint<L extends Line>(
 	lines: L[],

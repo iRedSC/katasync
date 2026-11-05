@@ -1,4 +1,5 @@
 import { eq, inArray } from "drizzle-orm";
+import { allocate } from "#/channels/shopify/fulfillment-units";
 import type { Db } from "#/db/client";
 import {
 	dispatches,
@@ -16,14 +17,19 @@ import {
 	lockOnOwnConnection,
 	type OrderLocker,
 } from "./dispatch";
-import { ebayAssertAsPacked } from "./ebay-handoff";
 import { type Label, LabelRefused, outcomeOf } from "./label-attempt-state";
 import { beginAttempt, recordBought, settleWithout } from "./label-attempts";
+import { liveOpenReads, type OpenReads } from "./live-open";
 import {
 	assertAsPacked,
+	assertEveryOrderPacked,
 	byLine,
+	choose,
+	Held,
 	type LineToPack,
-	linesToPack,
+	type Lowered,
+	linesShipWhole,
+	packableLines,
 	packedOf,
 	unmappable,
 } from "./packed";
@@ -41,7 +47,7 @@ import { tiktokBuyLabel, tiktokOrderId, tiktokOrderUnits } from "./tiktok";
 import { unitsToBuy } from "./tiktok-units";
 
 // The outside calls, passed in so tests can stand in for Shippo, TikTok,
-// and the order locks.
+// the marketplaces' open counts, and the order locks.
 export type BuyOutside = {
 	lock: OrderLocker;
 	getRates: typeof getRates;
@@ -50,7 +56,7 @@ export type BuyOutside = {
 	refund: typeof refundLabel;
 	tiktokBuy: typeof tiktokBuyLabel;
 	tiktokUnits: typeof tiktokOrderUnits;
-	ebayCheck: typeof ebayAssertAsPacked;
+	open: OpenReads;
 	isTest: () => boolean;
 };
 
@@ -62,7 +68,7 @@ export const liveBuy: BuyOutside = {
 	refund: refundLabel,
 	tiktokBuy: tiktokBuyLabel,
 	tiktokUnits: tiktokOrderUnits,
-	ebayCheck: ebayAssertAsPacked,
+	open: liveOpenReads,
 	isTest: shippoIsTest,
 };
 
@@ -107,7 +113,8 @@ export type Bought = {
 
 // Buys one label per box for these orders, all with one service, as one
 // dispatch. The orders' locks are held throughout, and none may already
-// have a live dispatch, so a double press or two people can't buy twice.
+// have a live dispatch not yet handed off, so a double press or two people
+// can't buy twice. Earlier shipments already handed off don't count.
 //
 // Each box is priced again here from the orders' own address and the box's
 // own size, so a stale or mismatched quote from the browser can't be bought.
@@ -119,8 +126,15 @@ export type Bought = {
 // send tracking, only be voided. A box with no clear answer stops the
 // purchase with nothing refunded: checking it settles the dispatch.
 //
-// What's packed is checked against the orders as quick ship showed them
-// (contentsKey), then kept with the dispatch as its contents.
+// What's packed is what's packable now with staff's lowered counts: for
+// Shopify and eBay, what the marketplace says is open, read here under the
+// locks after quoting, just before the first payment (packedNow), so
+// nothing it already shipped is bought for again.
+// It's checked against the orders as quick ship showed them (contentsKey),
+// then kept with the dispatch as its contents. The database refuses a
+// second dispatch not yet handed off and more units than a line has
+// (drizzle/0182); the first box's purchase is saved with the dispatch, so
+// the dispatch counts as live for those checks from the moment it exists.
 export async function buyDispatch(
 	db: Db,
 	input: {
@@ -132,6 +146,8 @@ export async function buyDispatch(
 		signature: boolean;
 		// Whether these boxes become the default for these contents.
 		setsDefault: boolean;
+		// Lines sending fewer than all that's packable; the rest stays to ship.
+		lowered?: Lowered;
 	},
 	outside: BuyOutside = liveBuy,
 ): Promise<Bought> {
@@ -154,16 +170,6 @@ export async function buyDispatch(
 				"TikTok: one box per label. Split it in TikTok Seller Center.",
 			);
 		}
-		// Anything that could stop a record being saved is checked before
-		// money is spent.
-		const lines = await linesToPack(db, input.orderIds);
-		assertAsPacked(lines, input.contentsKey);
-		const unitIds = await assertMarketplacesAsPacked(
-			list,
-			lines,
-			tiktok,
-			outside,
-		);
 		await assertBoxesExist(db, boxes);
 		const signature =
 			!tiktok && (input.signature || signatureRequired(list) !== null);
@@ -179,28 +185,22 @@ export async function buyDispatch(
 			choice.total,
 		);
 		if (rose) throw new Error(rose);
+		// What's in the box is read from the marketplaces last, after quoting
+		// (which can take seconds), so only the dispatch's own records stand
+		// between this read and the first payment. That gap can't be closed:
+		// no marketplace holds units for a label. A shipment made in it is
+		// caught at handoff, which reads again and refuses a box no longer
+		// open (deliver.ts), leaving the label to void.
+		const { lines, unitIds } = await packedNow(
+			db,
+			list,
+			input,
+			tiktok,
+			outside,
+		);
 
-		const dispatchId = await db.transaction(async (tx) => {
-			const [dispatch] = await tx
-				.insert(dispatches)
-				.values({
-					contentsKey: input.contentsKey,
-					contents: "packed",
-					boxCount: boxes.length,
-					setsDefault: input.setsDefault,
-				})
-				.returning();
-			await tx
-				.insert(dispatchOrders)
-				.values(list.map((o) => ({ dispatchId: dispatch.id, orderId: o.id })));
-			await tx
-				.insert(dispatchLines)
-				.values(lines.map((l) => ({ ...l, dispatchId: dispatch.id })));
-			return dispatch.id;
-		});
-
-		const bought: Shipment[] = [];
-		for (const [i, plan] of boxes.entries()) {
+		const prepare = (i: number, dispatchId: number): PreparedBox => {
+			const plan = boxes[i];
 			const box = {
 				dispatchId,
 				packageId: plan.packageId,
@@ -210,7 +210,7 @@ export async function buyDispatch(
 				weightGrams: plan.weightGrams,
 				hazmat: plan.hazmat,
 			};
-			const prepared: PreparedBox = tiktok
+			return tiktok
 				? {
 						...box,
 						provider: "tiktok",
@@ -234,14 +234,43 @@ export async function buyDispatch(
 						signature,
 						test: outside.isTest(),
 					};
-			const attempt = await beginAttempt(db, {
-				dispatchId,
-				boxIndex: i,
-				provider: tiktok ? "tiktok" : "shippo",
-				rateId: tiktok ? choice.id : rates[i].id,
-				unitIds,
-				box: prepared,
-			});
+		};
+		const attemptOf = (i: number, dispatchId: number) => ({
+			dispatchId,
+			boxIndex: i,
+			provider: tiktok ? ("tiktok" as const) : ("shippo" as const),
+			rateId: tiktok ? choice.id : rates[i].id,
+			unitIds,
+			box: prepare(i, dispatchId),
+		});
+
+		const { dispatchId, first } = await db.transaction(async (tx) => {
+			const [dispatch] = await tx
+				.insert(dispatches)
+				.values({
+					contentsKey: input.contentsKey,
+					contents: "packed",
+					boxCount: boxes.length,
+					setsDefault: input.setsDefault,
+				})
+				.returning();
+			await tx
+				.insert(dispatchOrders)
+				.values(list.map((o) => ({ dispatchId: dispatch.id, orderId: o.id })));
+			await tx
+				.insert(dispatchLines)
+				.values(lines.map((l) => ({ ...l, dispatchId: dispatch.id })));
+			return {
+				dispatchId: dispatch.id,
+				first: await beginAttempt(tx, attemptOf(0, dispatch.id)),
+			};
+		});
+
+		const bought: Shipment[] = [];
+		for (const [i, plan] of boxes.entries()) {
+			const prepared = prepare(i, dispatchId);
+			const attempt =
+				i === 0 ? first : await beginAttempt(db, attemptOf(i, dispatchId));
 			const of = `Box ${i + 1} of ${boxes.length}`;
 			let saved: Shipment;
 			try {
@@ -300,11 +329,53 @@ export async function buyDispatch(
 	});
 }
 
-// What each order's marketplace still has to ship must be exactly what was
-// packed, asked of eBay and TikTok themselves before money is spent (Shopify
-// is asked at handoff, where its fulfillment names each quantity). Returns
-// the TikTok units the label is for, every order's, or null for a Shippo
-// label.
+// What goes in the box: what's packable now, read live (live-open.ts), with
+// staff's lowered counts, checked against what quick ship showed and against
+// what each marketplace will take at handoff, so nothing is paid for that
+// can't then be sent. Returns the lines and the TikTok units the label is
+// for.
+async function packedNow(
+	db: Db,
+	list: Awaited<ReturnType<typeof assertTogether>>,
+	input: { contentsKey: string; lowered?: Lowered },
+	tiktok: boolean,
+	outside: BuyOutside,
+) {
+	const packable = await packableLines(db, list, outside.open);
+	const { lines, partial } = choose(packable.lines, input.lowered ?? [], (id) =>
+		list.some((o) => o.id === id && linesShipWhole(o)),
+	);
+	// TikTok's label is for every unit it still waits on (unitsToBuy).
+	if (tiktok && partial.length > 0) {
+		throw new Error(
+			"TikTok ships the whole order at once; split it in TikTok Seller Center",
+		);
+	}
+	assertAsPacked(lines, input.contentsKey);
+	assertEveryOrderPacked(list, lines);
+	// Shopify ships one box from one location, and only while katasync can
+	// see every shipment of the order; handoff asks the same (allocate).
+	for (const [orderId, read] of packable.reads) {
+		if (!read?.shopify) continue;
+		const name = list.find((o) => o.id === orderId)?.name ?? "An order";
+		try {
+			allocate(read.shopify, byLine(packedOf(lines, orderId)));
+		} catch (err) {
+			if (err instanceof Held) throw new Error(`${name}: ${err.message}`);
+			throw err;
+		}
+	}
+	return {
+		lines,
+		unitIds: await assertMarketplacesAsPacked(list, lines, tiktok, outside),
+	};
+}
+
+// Each order must answer to a marketplace katasync can tell, and TikTok's
+// units must be exactly what was packed (the whole order), asked of TikTok
+// before money is spent. Shopify and eBay were read for what's open already
+// (packableLines). Returns the TikTok units the label is for, every
+// order's, or null for a Shippo label.
 async function assertMarketplacesAsPacked(
 	list: Awaited<ReturnType<typeof assertTogether>>,
 	lines: LineToPack[],
@@ -316,9 +387,6 @@ async function assertMarketplacesAsPacked(
 		const to = destinationOf(order, [tiktok ? "tiktok" : "shippo"]);
 		const packed = packedOf(lines, order.id);
 		if (to.kind === "hold") throw unmappable(to.why);
-		if (to.kind === "ebay") {
-			await outside.ebayCheck(order.externalId, byLine(packed));
-		}
 		if (to.kind === "tiktok") {
 			unitIds = [
 				...(unitIds ?? []),

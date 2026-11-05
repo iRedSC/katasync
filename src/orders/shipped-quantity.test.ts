@@ -47,8 +47,10 @@ describe("what's left to ship", () => {
 		).toEqual([{ id: 1, quantity: 3, shippedQuantity: 2 }]);
 	});
 
+	const slip = line;
+
 	test("the packing slip prints what's left only while the order still needs packing", () => {
-		const lines = [line(5, 2), line(1, 1)];
+		const lines = [slip(5, 2), slip(1, 1)];
 		const printed = (needsPacking: boolean) =>
 			toPrint(lines, { needsPacking }).map((l) => [l.toPack, l.quantity]);
 		expect(printed(true)).toEqual([
@@ -62,7 +64,7 @@ describe("what's left to ship", () => {
 		]);
 		// Unknown prints what was sold too; quick ship refuses packing it.
 		expect(
-			toPrint([line(5, null)], { needsPacking: true }).map((l) => l.toPack),
+			toPrint([slip(5, null)], { needsPacking: true }).map((l) => l.toPack),
 		).toEqual([5]);
 	});
 

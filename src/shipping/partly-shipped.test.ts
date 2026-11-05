@@ -4,16 +4,18 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { remainingUnknown } from "#/orders/to-ship";
 import { createTestDb } from "#/test/db";
+import { setOpen, syncedOpen } from "#/test/open-reads";
 import { type BuyOutside, buyDispatch } from "./buy";
 import { contentsKey } from "./contents";
 import { memoryLocker, whyNotTogether } from "./dispatch";
 import { type Outside, sendTracking, voidDispatch } from "./handoff";
-import { contentsOf, linesToPack } from "./packed";
+import { contentsOf } from "./packed";
 import { shipmentPlan } from "./quick-ship";
 
 // An order the marketplace partly shipped from its own admin: quick ship
 // packs only what's left, the purchase keeps that, and the handoff tells
-// the marketplace exactly that and records it shipped.
+// the marketplace exactly that and records it shipped. Shopify's open
+// counts here agree with the sync unless a test says otherwise.
 
 let db: Db;
 let orderId: number;
@@ -89,7 +91,7 @@ const buyOutside = (): BuyOutside => ({
 	refund: vi.fn(async () => ({ status: "QUEUED" })),
 	tiktokBuy: vi.fn(),
 	tiktokUnits: vi.fn(),
-	ebayCheck: vi.fn(async () => {}),
+	open: syncedOpen(() => db),
 	isTest: () => false,
 });
 
@@ -105,7 +107,10 @@ const handoffOutside = (remaining: number): Outside => ({
 	tiktokUnits: vi.fn(),
 });
 
-const buy = async (contents: string) =>
+// Quick ship's plan, with Shopify agreeing with the sync unless told.
+const planOf = (open = syncedOpen(db)) => shipmentPlan(db, [orderId], [], open);
+
+const buy = async (contents: string, open = syncedOpen(db)) =>
 	buyDispatch(
 		db,
 		{
@@ -126,7 +131,7 @@ const buy = async (contents: string) =>
 			signature: false,
 			setsDefault: true,
 		},
-		buyOutside(),
+		{ ...buyOutside(), open },
 	);
 
 const shippedOf = async () =>
@@ -169,7 +174,7 @@ describe("a partly shipped order", () => {
 	);
 
 	test("quick ship plans only what's left", async () => {
-		const plan = await shipmentPlan(db, [orderId]);
+		const plan = await planOf();
 		expect(plan.lines.map((l) => [l.sku, l.quantity])).toEqual([["BLADE", 3]]);
 		expect(plan.contentsKey).toBe(
 			contentsKey([{ sku: "BLADE", title: "BLADE", quantity: 3 }]),
@@ -177,7 +182,7 @@ describe("a partly shipped order", () => {
 	});
 
 	test("buying keeps the rest as packed, and the handoff ships it", async () => {
-		const plan = await shipmentPlan(db, [orderId]);
+		const plan = await planOf();
 		const bought = await buy(plan.contentsKey);
 		expect(bought.failed).toBeNull();
 		const contents = await contentsOf(db, bought.dispatchId);
@@ -190,11 +195,12 @@ describe("a partly shipped order", () => {
 		expect((await sendTracking(db, bought.dispatchId, outside)).sent).toBe(
 			true,
 		);
-		// Exactly what Shopify still has open, so its equality check passes.
+		// What Shopify still has open, as one shipment of several.
 		expect(outside.shopifyFulfill).toHaveBeenCalledWith(
 			"gid://shopify/Order/9",
 			expect.anything(),
 			new Map([["BLADE", 3]]),
+			"within",
 		);
 		const [order] = await db
 			.select()
@@ -212,7 +218,7 @@ describe("a partly shipped order", () => {
 			["KNIFE", 1],
 			["TAPE", 3],
 		];
-		const plan = await shipmentPlan(db, [orderId]);
+		const plan = await planOf();
 		const bought = await buy(plan.contentsKey);
 		const outside = handoffOutside(0);
 		await sendTracking(db, bought.dispatchId, outside);
@@ -229,24 +235,25 @@ describe("a partly shipped order", () => {
 	});
 });
 
-describe("an order partly shipped where the marketplace hasn't said what", () => {
+describe("an order partly shipped where the sync hasn't said what", () => {
 	beforeEach(() =>
 		addOrder("PARTIALLY_FULFILLED", [
 			{ externalId: "BLADE", quantity: 5, shipped: null },
 		]),
 	);
 
-	test("isn't packed, and says why", async () => {
-		expect((await shipmentPlan(db, [orderId])).lines).toEqual([]);
-		await expect(linesToPack(db, [orderId])).rejects.toThrow(
-			"hasn't said which items already shipped",
-		);
-		await expect(buy("BLADE×5")).rejects.toThrow(
-			"#9: the marketplace hasn't said which items already shipped",
-		);
+	test("packs what Shopify says is open, read live", async () => {
+		const shopify = setOpen(new Map([["BLADE", 3]]));
+		const plan = await planOf(shopify.as);
+		expect(plan.lines.map((l) => [l.sku, l.quantity])).toEqual([["BLADE", 3]]);
+		const bought = await buy(plan.contentsKey, shopify.as);
+		expect(bought.failed).toBeNull();
+		expect(await contentsOf(db, bought.dispatchId)).toMatchObject({
+			lines: [{ lineExternalId: "BLADE", quantity: 3 }],
+		});
 	});
 
-	test("whyNotTogether refuses it", () => {
+	test("whyNotTogether refuses it only where nothing is read live", () => {
 		const order = {
 			id: 1,
 			name: "#9",
@@ -263,19 +270,14 @@ describe("an order partly shipped where the marketplace hasn't said what", () =>
 			storeId: 1,
 			buyerId: null,
 		};
-		expect(whyNotTogether([order], [])).toContain("Ship it there");
+		expect(whyNotTogether([order], [])).toBeNull();
+		expect(
+			whyNotTogether(
+				[{ ...order, channel: "tiktok", marketplaceOrderId: "tiktok:9" }],
+				[],
+			),
+		).toContain("Ship it there");
 	});
-});
-
-// A line saved without a count is unknown whatever the order's status says:
-// katasync rewrites that status itself (a void puts it back to UNFULFILLED).
-test("an unshipped order with no count yet isn't packed", async () => {
-	await addOrder("UNFULFILLED", [
-		{ externalId: "BLADE", quantity: 2, shipped: null },
-	]);
-	await expect(linesToPack(db, [orderId])).rejects.toThrow(
-		"hasn't said which items already shipped",
-	);
 });
 
 test("a void doesn't turn an unknown count into nothing shipped", async () => {
@@ -297,7 +299,7 @@ test("a void doesn't turn an unknown count into nothing shipped", async () => {
 		)[0].unknown;
 
 	// katasync ships the other 3; a sync then can't give a count.
-	const bought = await buy((await shipmentPlan(db, [orderId])).contentsKey);
+	const bought = await buy((await planOf()).contentsKey);
 	const outside = handoffOutside(0);
 	await sendTracking(db, bought.dispatchId, outside);
 	await sync(null);
@@ -308,17 +310,11 @@ test("a void doesn't turn an unknown count into nothing shipped", async () => {
 		.from(schema.orders)
 		.where(eq(schema.orders.id, orderId));
 	expect(order.fulfillmentStatus).toBe("UNFULFILLED");
-	// Not all 5: 2 of them already went out from Shopify.
+	// Still shown as unknown, not all 5: 2 already went out from Shopify.
 	expect(await unknown()).toBe(true);
-	expect((await shipmentPlan(db, [orderId])).lines).toEqual([]);
-	await expect(linesToPack(db, [orderId])).rejects.toThrow(
-		"hasn't said which items already shipped",
-	);
-
-	// The next sync says 2 shipped: exactly the rest packs.
-	await sync(2);
-	expect(await unknown()).toBe(false);
+	// Quick ship packs what Shopify has open after the void.
+	const shopify = setOpen(new Map([["BLADE", 3]]));
 	expect(
-		(await linesToPack(db, [orderId])).map((l) => [l.sku, l.quantity]),
+		(await planOf(shopify.as)).lines.map((l) => [l.sku, l.quantity]),
 	).toEqual([["BLADE", 3]]);
 });

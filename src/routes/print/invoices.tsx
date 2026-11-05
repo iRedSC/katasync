@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertCircle, Check, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Loader2, RefreshCw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { cityLine, formatMoney, formatPhone } from "#/lib/format";
 import { listInvoices, markInvoicesPrinted } from "#/server/orders";
@@ -47,27 +47,43 @@ function payment(status: string | null): Payment {
 
 type Data = Awaited<ReturnType<typeof listInvoices>>;
 
+type Printed = { orderId: number; version: number }[];
+
 // Whether the printed invoices were recorded as printed. A failed record keeps
-// its ids, so retrying it never prints anything again.
+// what it sent, so retrying it never prints anything again. Saved says how
+// many weren't recorded because their lines changed since printing;
+// Print all prints those again.
 type Marking =
 	| { state: "idle" }
 	| { state: "saving" }
-	| { state: "saved" }
-	| { state: "failed"; ids: number[] };
+	| { state: "saved"; changed: number }
+	| { state: "failed"; printed: Printed };
+
+// How long the "changed since printing" note stays.
+const CHANGED_NOTE_MS = 8000;
 
 function Invoices() {
 	const { from, invoices } = Route.useLoaderData();
 	const { ids } = Route.useSearch();
 	const [marking, setMarking] = useState<Marking>({ state: "idle" });
-	const markPrinted = useCallback(async (printed: number[]) => {
+	const markPrinted = useCallback(async (printed: Printed) => {
 		setMarking({ state: "saving" });
 		try {
-			await markInvoicesPrinted({ data: { ids: printed } });
-			setMarking({ state: "saved" });
+			const { changed } = await markInvoicesPrinted({ data: { printed } });
+			setMarking({ state: "saved", changed });
 		} catch {
-			setMarking({ state: "failed", ids: printed });
+			setMarking({ state: "failed", printed });
 		}
 	}, []);
+	const changed = marking.state === "saved" ? marking.changed : 0;
+	useEffect(() => {
+		if (changed === 0) return;
+		const t = setTimeout(
+			() => setMarking({ state: "saved", changed: 0 }),
+			CHANGED_NOTE_MS,
+		);
+		return () => clearTimeout(t);
+	}, [changed]);
 
 	// Item photos load from the stores' CDNs; printing before they arrive
 	// prints empty boxes. Waits for each to load or fail, at most a few
@@ -94,16 +110,21 @@ function Invoices() {
 
 	// The browser doesn't say whether the dialog printed or was cancelled,
 	// so closing it counts as printed. A cancelled order can be ticked and
-	// printed again from the list.
-	const printedIds = invoices.map((o) => o.id).join();
-	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the ids, not each load's copy of the list
+	// printed again from the list. Only plain orders are recorded; the rest
+	// stay in Print all (to-ship.ts's plain).
+	const recorded = invoices.filter((o) => o.plain);
+	const printedKey = recorded.map((o) => `${o.id}@${o.pickingVersion}`).join();
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed by the ids and versions, not each load's copy of the list
 	useEffect(() => {
-		if (invoices.length === 0) return;
-		const ids = invoices.map((o) => o.id);
-		const mark = () => void markPrinted(ids);
+		if (recorded.length === 0) return;
+		const printed = recorded.map((o) => ({
+			orderId: o.id,
+			version: o.pickingVersion,
+		}));
+		const mark = () => void markPrinted(printed);
 		window.addEventListener("afterprint", mark);
 		return () => window.removeEventListener("afterprint", mark);
-	}, [printedIds, markPrinted]);
+	}, [printedKey, markPrinted]);
 
 	return (
 		<div className="min-h-svh bg-surface py-6 print:bg-white print:py-0">
@@ -119,11 +140,17 @@ function Invoices() {
 							className="size-4 animate-spin text-muted-foreground"
 						/>
 					)}
-					{marking.state === "saved" && (
+					{marking.state === "saved" && marking.changed === 0 && (
 						<Check
 							aria-label="Recorded as printed"
 							className="size-4 text-success-icon"
 						/>
+					)}
+					{marking.state === "saved" && marking.changed > 0 && (
+						<span className="flex animate-in items-center gap-1.5 text-warning-text fade-in">
+							<RefreshCw className="size-4" />
+							{marking.changed} changed since printing
+						</span>
 					)}
 					{marking.state === "failed" && (
 						<>
@@ -131,7 +158,7 @@ function Invoices() {
 							<span className="text-critical-text">Not marked printed</span>
 							<button
 								type="button"
-								onClick={() => void markPrinted(marking.ids)}
+								onClick={() => void markPrinted(marking.printed)}
 								className="h-8 px-2 font-semibold text-primary hover:underline"
 							>
 								Retry
@@ -166,10 +193,7 @@ function Invoice({
 	from: Data["from"];
 	invoice: Data["invoices"][number];
 }) {
-	const subtotal = o.lines.reduce(
-		(sum, l) => sum + l.unitPrice * l.quantity,
-		0,
-	);
+	const { subtotal } = o;
 	// Whatever the total holds beyond items and shipping: tax, or a discount
 	// when negative.
 	const rest = o.total - subtotal - o.shippingCharged;
@@ -248,12 +272,26 @@ function Invoice({
 						>
 							<td className="py-2 text-[13pt] font-bold tabular-nums">
 								{/* What goes in the box; what was sold beside it when some
-								already went out (toPrint). */}
-								{l.toPack}
-								{l.toPack !== l.quantity && (
-									<span className="block text-[9pt] font-normal text-muted-foreground">
-										of {l.quantity}
-									</span>
+								already went out, or a dash for a line sold but going in
+								another box (slipsOf). */}
+								{l.toPack === "unknown" ? (
+									<span className="text-muted-foreground">?</span>
+								) : l.toPack === null ? (
+									<>
+										<span className="text-muted-foreground">–</span>
+										<span className="block text-[9pt] leading-tight font-normal text-muted-foreground">
+											Not in this box
+										</span>
+									</>
+								) : (
+									<>
+										{l.toPack}
+										{l.sold && l.toPack !== l.sold.quantity && (
+											<span className="block text-[9pt] font-normal text-muted-foreground">
+												of {l.sold.quantity}
+											</span>
+										)}
+									</>
 								)}
 							</td>
 							<td className="py-2">
@@ -271,7 +309,7 @@ function Invoice({
 										)}
 									</div>
 								</div>
-								{l.parts.length > 0 && (
+								{l.toPack !== null && l.parts.length > 0 && (
 									<ul className="mt-2 ml-[calc(0.6in+0.75rem)] flex flex-col gap-1.5 border-l-2 border-border pl-3">
 										{l.parts.map((p) => (
 											<li
@@ -280,7 +318,9 @@ function Invoice({
 											>
 												<Photo src={p.imageUrl} className="size-[0.35in]" />
 												<span className="w-8 font-bold tabular-nums">
-													{p.perSet * l.toPack}
+													{typeof l.toPack === "number"
+														? p.perSet * l.toPack
+														: "?"}
 												</span>
 												<span className="min-w-0">
 													<span>
@@ -300,10 +340,10 @@ function Invoice({
 							{!slip && (
 								<>
 									<td className="py-2 text-right tabular-nums">
-										{formatMoney(l.unitPrice)}
+										{l.sold && formatMoney(l.sold.unitPrice)}
 									</td>
 									<td className="py-2 text-right tabular-nums">
-										{formatMoney(l.unitPrice * l.quantity)}
+										{l.sold && formatMoney(l.sold.unitPrice * l.sold.quantity)}
 									</td>
 								</>
 							)}

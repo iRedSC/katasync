@@ -4,12 +4,12 @@ import { headerState, printPlan, toggle, toggleAll } from "./selection";
 const rows = [1, 2, 3, 4, 5].map((id) => ({
 	id,
 	labelToVoid: id === 5,
-	invoicePrintedAt: null as Date | null,
+	printed: false,
 }));
 // Orders 2 and 3 have been printed before.
 const somePrinted = rows.map((o) => ({
 	...o,
-	invoicePrintedAt: o.id === 2 || o.id === 3 ? new Date() : null,
+	printed: o.id === 2 || o.id === 3,
 }));
 const ids = (ticks: ReadonlySet<number>) => [...ticks].sort();
 
@@ -132,7 +132,7 @@ describe("what Print prints", () => {
 	test("says when everything is already printed", () => {
 		const allPrinted = rows.map((o) => ({
 			...o,
-			invoicePrintedAt: new Date(),
+			printed: true,
 		}));
 		for (const filtering of [false, true]) {
 			expect(

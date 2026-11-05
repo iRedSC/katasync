@@ -1,11 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { type } from "arktype";
-import { and, asc, eq, gt, inArray, isNull, type SQL, sql } from "drizzle-orm";
+import { asc, eq, inArray, type SQL } from "drizzle-orm";
 import { shippingLocation } from "#/channels/stores";
 import { getDb } from "#/db/client";
 import {
 	locations,
-	orderLines,
 	orders,
 	productComponents,
 	products,
@@ -14,10 +13,13 @@ import {
 import { cityLine } from "#/lib/format";
 import { groupBy } from "#/lib/group-by";
 import { sharingOrders } from "#/orders/invoice-index";
-import { toPrint } from "#/orders/remaining";
+import { recordPrinted } from "#/orders/printed";
+import { slipsOf } from "#/orders/slip";
 import {
 	financialStatus,
+	inPrintAll,
 	needsPacking,
+	plain,
 	remainingUnknown,
 } from "#/orders/to-ship";
 import { boxSize } from "#/shipping/box-filter";
@@ -29,15 +31,21 @@ import { lastPackedFor } from "#/shipping/quick-ship";
 // the stack matches what packers type. `ids` picks the orders instead,
 // whether or not they still need shipping.
 // Called by the invoices page once the print dialog closes, with the
-// orders it held, so the next Print all skips them.
+// plain orders it held and the picking version each was printed at, so the
+// next Print all skips them. One whose lines changed since stays unprinted;
+// the count of those comes back.
 export const markInvoicesPrinted = createServerFn({ method: "POST" })
-	.validator(type({ ids: "(number.integer > 0)[] > 0" }))
-	.handler(async ({ data }) => {
-		await getDb()
-			.update(orders)
-			.set({ invoicePrintedAt: new Date() })
-			.where(inArray(orders.id, data.ids));
-	});
+	.validator(
+		type({
+			printed: type({
+				orderId: "number.integer > 0",
+				version: "number.integer >= 0",
+			})
+				.array()
+				.atLeastLength(1),
+		}),
+	)
+	.handler(({ data }) => recordPrinted(getDb(), data.printed));
 
 export const listInvoices = createServerFn({ method: "GET" })
 	.validator(type({ "ids?": "(number.integer > 0)[]" }))
@@ -73,57 +81,28 @@ export const listInvoices = createServerFn({ method: "GET" })
 					needsPacking,
 					remainingUnknown,
 					fulfillmentStatus: orders.fulfillmentStatus,
+					// Read with the order, before its slip, so a change while the
+					// slip is read makes the print's acknowledgement stale, not
+					// the other way round.
+					pickingVersion: orders.pickingVersion,
+					// Only a plain order's print is recorded (to-ship.ts); the
+					// page doesn't send the rest, so Print all keeps them.
+					plain,
 				})
 				.from(orders)
 				.innerJoin(stores, eq(stores.id, orders.storeId))
 				.where(where)
 				.orderBy(asc(orders.pin), asc(orders.placedAt));
-		// The orders picked, printed before or not, or every order still to
-		// ship that hasn't been printed.
+		// The orders picked, printed before or not, or Print all's.
 		const toShip = await select(
-			data.ids
-				? inArray(orders.id, data.ids)
-				: sql`${needsPacking} and ${isNull(orders.invoicePrintedAt)}`,
+			data.ids ? inArray(orders.id, data.ids) : inPrintAll,
 		);
-		const lines = toShip.length
-			? await db
-					.select({
-						orderId: orderLines.orderId,
-						productId: orderLines.productId,
-						sku: sql<
-							string | null
-						>`coalesce(${products.sku}, ${orderLines.sku})`,
-						title: orderLines.title,
-						// What the invoice prints: the catalog's short name, not the
-						// channel's long listing title, which only lines not yet
-						// mapped to a product fall back to.
-						name: sql<string>`coalesce(${products.name}, ${orderLines.title})`,
-						quantity: orderLines.quantity,
-						shippedQuantity: orderLines.shippedQuantity,
-						unitPrice: orderLines.unitPrice,
-						// The size or option to pick, from the catalog: channel
-						// titles don't always carry it.
-						variantName: products.variantName,
-						weightGrams: products.weightGrams,
-						imageUrl: products.imageUrl,
-					})
-					.from(orderLines)
-					.leftJoin(products, eq(products.id, orderLines.productId))
-					.where(
-						and(
-							inArray(
-								orderLines.orderId,
-								toShip.map((o) => o.id),
-							),
-							gt(orderLines.quantity, 0),
-						),
-					)
-					.orderBy(orderLines.id)
-			: [];
+		const slips = await slipsOf(db, toShip);
+		const items = [...slips.values()].flatMap((slip) => slip.items);
 		// What's inside each set sold (kit or bundle), one level down, so the
 		// invoice lists the pieces under it.
 		const setIds = [
-			...new Set(lines.flatMap((l) => (l.productId ? [l.productId] : []))),
+			...new Set(items.flatMap((l) => (l.productId ? [l.productId] : []))),
 		];
 		const parts = setIds.length
 			? await db
@@ -146,18 +125,24 @@ export const listInvoices = createServerFn({ method: "GET" })
 		const partsBy = groupBy(parts, (p) => p.setId);
 		const partsOf = (productId: number | null) =>
 			productId === null ? [] : (partsBy.get(productId) ?? []);
-		const linesBy = groupBy(lines, (l) => l.orderId);
-		const linesOf = (o: {
-			id: number;
-			needsPacking: boolean;
-			fulfillmentStatus: string;
-		}) => toPrint(linesBy.get(o.id) ?? [], o);
-		// What goes in the box, at what's left of each line.
-		const packing = (o: Parameters<typeof linesOf>[0]) =>
-			linesOf(o).flatMap((l) =>
-				l.toPack > 0 ? [{ ...l, quantity: l.toPack }] : [],
+		const slipOf = (o: { id: number }) =>
+			slips.get(o.id) ?? { items: [], subtotal: 0 };
+		// What goes in the box, or null when part of it is unknown.
+		const packing = (o: { id: number }) => {
+			const items = slipOf(o).items;
+			if (items.some((l) => l.toPack === "unknown")) return null;
+			return items.flatMap((l) =>
+				typeof l.toPack === "number" && l.toPack > 0
+					? [{ ...l, quantity: l.toPack }]
+					: [],
 			);
-		const keys = new Map(toShip.map((o) => [o.id, contentsKey(packing(o))]));
+		};
+		const keys = new Map(
+			toShip.flatMap((o) => {
+				const packed = packing(o);
+				return packed ? [[o.id, contentsKey(packed)] as const] : [];
+			}),
+		);
 		const lastPacked = await lastPackedFor(db, [...new Set(keys.values())]);
 		// Any order still to ship can share the box, printed or not, so a
 		// packer printing a few still hears about the rest.
@@ -183,12 +168,14 @@ export const listInvoices = createServerFn({ method: "GET" })
 					}
 				: null,
 			invoices: toShip.map((o) => {
-				const own = linesOf(o);
+				const { items: own, subtotal } = slipOf(o);
 				const packed = packing(o);
-				const last = lastPacked.get(keys.get(o.id) ?? "");
+				const key = keys.get(o.id);
+				const last = key === undefined ? undefined : lastPacked.get(key);
 				return {
 					...o,
 					lines: own.map((l) => ({ ...l, parts: partsOf(l.productId) })),
+					subtotal,
 					shipsWith: sharing.get(o.id) ?? [],
 					// What quick ship will suggest: the box and weight these exact
 					// contents went out in last time, else the items' own weight.
@@ -199,7 +186,7 @@ export const listInvoices = createServerFn({ method: "GET" })
 					boxes: last?.boxes ?? 1,
 					weightGrams:
 						last?.weightGrams ??
-						(packed.every((l) => l.weightGrams !== null)
+						(packed?.every((l) => l.weightGrams !== null)
 							? packed.reduce(
 									(g, l) => g + (l.weightGrams ?? 0) * l.quantity,
 									0,

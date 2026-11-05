@@ -4,6 +4,7 @@ import type { Db } from "#/db/client";
 import * as schema from "#/db/schema";
 import { externalFulfillment, labelSource } from "#/orders/fulfillment";
 import { addDispatch, createProduct, createTestDb } from "#/test/db";
+import { syncedOpen } from "#/test/open-reads";
 import { billedAs } from "./billed-as";
 import { contentsKey } from "./contents";
 import { addressKey, companionsOf, whyNotTogether } from "./dispatch";
@@ -311,7 +312,6 @@ describe("with a database", () => {
 	});
 
 	test("invoices get the box and weight these contents last shipped in", async () => {
-		const order = await addOrder("#1");
 		const [box] = await db
 			.insert(schema.packages)
 			.values({
@@ -321,9 +321,11 @@ describe("with a database", () => {
 				heightMm: 50,
 			})
 			.returning();
-		const ship = (weights: number[], at: string) =>
+		// Other orders with the same contents: an order has at most one
+		// shipment not yet handed off.
+		const ship = async (weights: number[], at: string) =>
 			addDispatch(db, {
-				orderIds: [order],
+				orderIds: [await addOrder(at)],
 				contentsKey: "WRENCH×2",
 				createdAt: new Date(at),
 				boxes: weights.map((weightGrams) => ({
@@ -393,7 +395,11 @@ describe("with a database", () => {
 		for (const orderId of [first, second]) await addLine(orderId, wrench);
 		await assignOrderPins(db);
 
-		const before = await orderForShipping(db, await pinOf(second));
+		const before = await orderForShipping(
+			db,
+			await pinOf(second),
+			syncedOpen(db),
+		);
 		expect(before?.plan.contentsKey).toBe("WRENCH×2");
 		expect(before?.plan.itemsWeightGrams).toBe(600);
 		expect(before?.plan.last).toBeNull();
@@ -402,7 +408,11 @@ describe("with a database", () => {
 			orderIds: [first],
 			boxes: [{ weightGrams: 700 }, { weightGrams: 400 }],
 		});
-		const after = await orderForShipping(db, await pinOf(second));
+		const after = await orderForShipping(
+			db,
+			await pinOf(second),
+			syncedOpen(db),
+		);
 		expect(after?.plan.last?.map((b) => b.weightGrams)).toEqual([700, 400]);
 		expect(after?.liveDispatchId).toBeNull();
 	});
@@ -410,9 +420,15 @@ describe("with a database", () => {
 	test("a one-off box leaves the default from before", async () => {
 		const order = await addOrder("#1");
 		await addLine(order, null);
-		const ship = (weightGrams: number, at: string, setsDefault: boolean) =>
+		// Other orders with the same contents: an order has at most one
+		// shipment not yet handed off.
+		const ship = async (
+			weightGrams: number,
+			at: string,
+			setsDefault: boolean,
+		) =>
 			addDispatch(db, {
-				orderIds: [order],
+				orderIds: [await addOrder(at)],
 				createdAt: new Date(at),
 				setsDefault,
 				boxes: [{ weightGrams }],
@@ -420,7 +436,7 @@ describe("with a database", () => {
 		await ship(500, "2026-10-01T00:00:00Z", true);
 		await ship(900, "2026-10-05T00:00:00Z", false);
 
-		const plan = await shipmentPlan(db, [order]);
+		const plan = await shipmentPlan(db, [order], [], syncedOpen(db));
 		expect(plan.last?.map((b) => b.weightGrams)).toEqual([500]);
 		const invoice = await lastPackedFor(db, [plan.contentsKey]);
 		expect(invoice.get(plan.contentsKey)?.weightGrams).toBe(500);
@@ -475,7 +491,7 @@ describe("with a database", () => {
 		await addDispatch(db, { orderIds: [labelled] });
 		await assignOrderPins(db);
 
-		const found = await orderForShipping(db, await pinOf(a));
+		const found = await orderForShipping(db, await pinOf(a), syncedOpen(db));
 		expect(found?.companions.map((c) => c.name)).toEqual(["#2"]);
 		// An order already holding a label is offered nothing, and isn't
 		// offered to others.
@@ -484,7 +500,7 @@ describe("with a database", () => {
 		);
 		expect(found?.companions[0]).toMatchObject({ items: 1 });
 
-		const together = await shipmentPlan(db, [a, b]);
+		const together = await shipmentPlan(db, [a, b], [], syncedOpen(db));
 		expect(together.contentsKey).toBe("WRENCH×2");
 		expect(together.orderNames).toEqual(["#1", "#2"]);
 		expect(together.total).toBe(80);

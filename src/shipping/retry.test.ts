@@ -77,6 +77,7 @@ beforeEach(async () => {
 		title: "Wrench",
 		quantity: 1,
 		unitPrice: 30,
+		shippedQuantity: 0,
 	});
 	({ dispatchId } = await addPackedDispatch(db, { orderIds: [orderId] }));
 });

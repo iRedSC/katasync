@@ -13,10 +13,10 @@ import {
 } from "#/shipping/box-filter";
 import {
 	type BoxEntry,
-	emptyEntry,
 	entryQuery,
 	isPartial,
 	sizeEntry,
+	startFrom,
 } from "./box-entry";
 import { BoxEntryInput } from "./box-entry-input";
 import { Key } from "./key";
@@ -66,10 +66,10 @@ export function PackageStep({
 	onChoose: (choice: { box: Box | null; dims: Dims }) => void;
 	onSaved: (box: Box) => void;
 }) {
-	// A size used last time without a saved box starts typed in.
-	const [entry, setEntry] = useState<BoxEntry>(
-		!current && dims ? sizeEntry(sidesOf(dims)) : emptyEntry,
-	);
+	// Starts from the suggestion: last time's saved box highlighted, or a
+	// size used without a saved box typed in.
+	const start = startFrom(current, dims && sidesOf(dims));
+	const [entry, setEntry] = useState<BoxEntry>(start.entry);
 	const query = entryQuery(entry);
 	const [saving, setSaving] = useState(false);
 
@@ -93,9 +93,7 @@ export function PackageStep({
 	];
 	// The box from last time stays highlighted until something else is typed
 	// or picked.
-	const [picked, setPicked] = useState<string | null>(
-		current ? `box:${current.id}` : null,
-	);
+	const [picked, setPicked] = useState<string | null>(start.picked);
 	const index = Math.max(
 		0,
 		options.findIndex((o) => keyOf(o) === picked),

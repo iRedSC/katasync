@@ -2,22 +2,28 @@ import { ChannelBadge } from "#/components/channel-badge";
 import { Badge } from "#/components/page";
 import { ProductImage } from "#/components/product";
 import { Truncate } from "#/components/truncate";
+import { cn } from "#/lib/utils";
 import type { ShipmentPlan } from "#/shipping/quick-ship";
 import { Key } from "./key";
 import type { Found } from "./types";
+import { countSteps } from "./unit-count";
 
 export function OrderSummary({
 	found,
 	plan,
 	canCombine,
 	onToggle,
+	onCount,
 }: {
 	found: Found;
 	plan: ShipmentPlan;
 	canCombine: boolean;
 	onToggle: (id?: number) => void;
+	onCount: (orderLineId: number, quantity: number) => void;
 }) {
 	const o = found.order;
+	// Counts are chosen with the box's contents, while choosing the first box.
+	const chooses = canCombine && plan.choosable;
 	const combined = plan.orderIds.length > 1;
 	// TikTok hides the address, so its orders match on the buyer.
 	const toSame =
@@ -46,18 +52,41 @@ export function OrderSummary({
 					<ChannelBadge channel={o.channel} salesChannel={o.salesChannel} />
 				</div>
 			</div>
+			{/* Nothing is packable until the marketplace answers. */}
+			{plan.unread && (
+				<p className="text-base font-semibold text-critical-text">
+					{plan.unread}
+				</p>
+			)}
 			<ul className="flex flex-col gap-2">
-				{plan.lines.map((l, i) => (
+				{plan.choices.map((l) => (
 					<li
-						// biome-ignore lint/suspicious/noArrayIndexKey: lines never reorder within a plan
-						key={i}
-						className="flex items-center gap-3"
+						key={l.orderLineId}
+						className={cn(
+							"flex items-center gap-3 transition-opacity",
+							// Left for a later shipment.
+							l.quantity === 0 && "opacity-40",
+						)}
 					>
 						<ProductImage src={l.imageUrl} className="size-12" />
-						<span className="w-12 shrink-0 text-2xl font-bold tabular-nums">
-							{l.quantity}×
-						</span>
-						<Truncate text={l.title} className="flex-1 text-base" />
+						{chooses ? (
+							<UnitCount
+								line={l}
+								steps={countSteps(l, plan.choices)}
+								onCount={(n) => onCount(l.orderLineId, n)}
+							/>
+						) : (
+							<span className="w-12 shrink-0 text-2xl font-bold tabular-nums">
+								{l.quantity}×
+							</span>
+						)}
+						<Truncate
+							text={l.title}
+							className={cn(
+								"flex-1 text-base",
+								l.quantity === 0 && "line-through",
+							)}
+						/>
 						{combined && (
 							<span className="shrink-0 text-muted-foreground">
 								{plan.orderNames[plan.orderIds.indexOf(l.orderId)]}
@@ -106,5 +135,62 @@ export function OrderSummary({
 				</div>
 			)}
 		</div>
+	);
+}
+
+// How many of a line go in this box, from 0 to all that's packable. When
+// fewer, the rest shows beside it: it stays on To ship. A line that ships
+// whole (eBay) goes from all to 0 and back.
+function UnitCount({
+	line,
+	steps,
+	onCount,
+}: {
+	line: ShipmentPlan["choices"][number];
+	steps: ReturnType<typeof countSteps>;
+	onCount: (quantity: number) => void;
+}) {
+	const step =
+		"size-7 shrink-0 rounded-md border text-lg leading-none hover:bg-muted disabled:opacity-30";
+	// Clicked, never focused: Enter keeps finishing the box step instead of
+	// pressing the button again.
+	const keepFocus = {
+		tabIndex: -1,
+		onMouseDown: (e: { preventDefault: () => void }) => e.preventDefault(),
+	};
+	return (
+		<span className="flex shrink-0 items-center gap-1">
+			<button
+				type="button"
+				{...keepFocus}
+				className={step}
+				aria-label={`Send ${line.whole ? "none of" : "one fewer"} ${line.title}`}
+				disabled={steps.lower === null}
+				onClick={() => steps.lower !== null && onCount(steps.lower)}
+			>
+				−
+			</button>
+			<span className="w-8 text-center text-2xl font-bold tabular-nums">
+				{line.quantity}
+			</span>
+			<button
+				type="button"
+				{...keepFocus}
+				className={step}
+				aria-label={`Send ${line.whole ? "all of" : "one more"} ${line.title}`}
+				disabled={steps.raise === null}
+				onClick={() => steps.raise !== null && onCount(steps.raise)}
+			>
+				+
+			</button>
+			<span
+				className={cn(
+					"w-14 text-muted-foreground tabular-nums",
+					line.quantity === line.packable && "invisible",
+				)}
+			>
+				of {line.packable}
+			</span>
+		</span>
 	);
 }
