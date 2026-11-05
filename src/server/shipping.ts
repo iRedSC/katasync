@@ -8,6 +8,7 @@ import { labelSource } from "#/orders/fulfillment";
 import {
 	addressedRates,
 	buyAddressed,
+	sentPackages,
 	voidAddressed,
 } from "#/shipping/addressed";
 import { shipAddresses } from "#/shipping/addresses";
@@ -368,3 +369,7 @@ export const addressedBuy = createServerFn({ method: "POST" })
 export const addressedVoid = createServerFn({ method: "POST" })
 	.validator(type({ dispatchId: "number.integer > 0" }))
 	.handler(async ({ data }) => voidAddressed(getDb(), data.dispatchId));
+
+export const listSentPackages = createServerFn({ method: "GET" }).handler(
+	async () => sentPackages(getDb()),
+);
