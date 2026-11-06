@@ -142,6 +142,10 @@ export function fileAmount(
 			group: "income",
 			label: refund ? "Gift wrap credit refunds" : "Gift wrap credits",
 		};
+	// Amazon's fee for handling a refund, which it files among the refunded
+	// fees; its summary lists it apart.
+	if (/refundcommission|refundadmin/i.test(all))
+		return { group: "expenses", label: "Refund administration fees" };
 	if (/fee|commission/i.test(all)) {
 		const fba = /fba|fulfil/i.test(all);
 		if (/^ServiceFee$/i.test(type))
@@ -164,6 +168,13 @@ export function fileAmount(
 			group: "income",
 			label: refund ? "Shipping credit refunds" : "Shipping credits",
 		};
+	// Amazon paying us for inventory it lost or damaged comes as a sale
+	// outside any shipment or refund.
+	if (
+		/sales|product|principal|price/i.test(all) &&
+		/adjust|reimburs/i.test(type)
+	)
+		return { group: "income", label: "FBA inventory credit" };
 	if (/sales|product|principal|price/i.test(all))
 		return { group: "income", label: productLabel(fbaOrMfn, refund) };
 	if (/advertis|productads/i.test(type))
@@ -204,7 +215,10 @@ export function amazonStatement(
 	transactions: Transaction[],
 ): Statement {
 	const sums = new Map<string, { group: Group; amount: number }>();
-	const add = (f: Filed, amount: number) => {
+	// Amazon's transfer posts as money going out to the bank, which its
+	// summary shows as a debit.
+	const add = (f: Filed, posted: number) => {
+		const amount = f.group === "transfers" ? -posted : posted;
 		const key = `${f.group}\u0000${f.label}`;
 		const at = sums.get(key) ?? { group: f.group, amount: 0 };
 		at.amount += amount;
@@ -267,9 +281,6 @@ export function amazonStatement(
 		sections,
 		netSales: amountOf((l) =>
 			/^(FBA )?product sale|^promotional rebate/i.test(l),
-		),
-		marketplaceTax: amountOf((l) =>
-			/taxes and regulatory fee (collected|refunded)/.test(l),
 		),
 	};
 }
