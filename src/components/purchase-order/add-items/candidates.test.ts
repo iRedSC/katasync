@@ -139,7 +139,10 @@ describe("candidateRows", () => {
 			[10, "recommended"],
 			[1, "recommended"],
 		]);
-		const more = new Map([...prepared, [3, { ...a, row: { ...a.row, id: 3 } }]]);
+		const more = new Map([
+			...prepared,
+			[3, { ...a, row: { ...a.row, id: 3 } }],
+		]);
 		expect(
 			candidateRows({
 				recs: [rec(10, 5)],
