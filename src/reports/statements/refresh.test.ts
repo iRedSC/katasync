@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Db } from "#/db/client";
 import type { Period } from "#/orders/sales-report";
 import { createTestDb } from "#/test/db";
-import { amazonStatement } from "./amazon";
+import { amazonStatement, amazonStatementTransaction } from "./amazon";
 import { ebayStatement } from "./ebay";
 import { readStatements, refreshStatement } from "./refresh";
 import type { Statement } from "./types";
@@ -117,6 +117,42 @@ describe("amazonStatement", () => {
 	test("refuses to add another currency into dollars", () => {
 		expect(() => amazonStatement(window, [t("ATVPDKIKX0DER", "CAD")])).toThrow(
 			/CAD/,
+		);
+	});
+
+	test("reads what Amazon sends as null, and splits FBA from the rest", () => {
+		const sale = (fulfillmentNetwork: string | null) =>
+			({
+				transactionType: "Shipment",
+				postedDate: null,
+				marketplaceDetails: { marketplaceId: "ATVPDKIKX0DER" },
+				totalAmount: { currencyAmount: 10, currencyCode: null },
+				items: [{ contexts: [{ contextType: null, fulfillmentNetwork }] }],
+				breakdowns: [
+					{
+						breakdownType: "Sales",
+						breakdownAmount: { currencyAmount: 10 },
+						breakdowns: [
+							{
+								breakdownType: "ProductCharges",
+								breakdownAmount: { currencyAmount: 10 },
+							},
+						],
+					},
+				],
+			}) as unknown;
+		const parsed = [sale(null), sale("AFN"), sale("MFN")].map((x) =>
+			amazonStatementTransaction.assert(x),
+		);
+		const s = amazonStatement(window, parsed);
+		const lines =
+			s.channel === "amazon" ? s.sections.flatMap((x) => x.lines) : [];
+		expect(lines).toEqual(
+			expect.arrayContaining([
+				{ label: "Product sales", amount: 10 },
+				{ label: "FBA product sales", amount: 10 },
+				{ label: "Product sales (non-FBA)", amount: 10 },
+			]),
 		);
 	});
 });

@@ -105,7 +105,7 @@ function Figures({
 			? read.error
 			: r.state === "missing"
 				? r.error
-				: null;
+				: r.lastError;
 	return (
 		<Card
 			flush

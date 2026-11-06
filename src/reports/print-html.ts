@@ -24,9 +24,7 @@ import {
 } from "./snapshot";
 import type { StatementResult } from "./statements/types";
 import {
-	STATEMENT_BASIS,
 	STATEMENT_NAME,
-	STATEMENT_TITLE,
 	statementCaveat,
 	statementSummary,
 	statementView,
@@ -65,7 +63,7 @@ function table(
 const section = (title: string, body: string) =>
 	`<section><h2>${escapeHtml(title)}</h2>${body}</section>`;
 
-const STYLE = `@page{size:letter;margin:0.6in}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font:10pt/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;margin:0;padding:0.4in;background:#fff}header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #000;padding-bottom:6px}h1{font-size:17pt;margin:0}h2{font-size:12pt;margin:18px 0 4px}p{margin:4px 0}dl.totals{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}dl.totals div{border-top:4px solid #999;padding-top:4px}dl.totals dd{margin:0;font-size:15pt;font-weight:700}table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th{font-weight:600;border-bottom:1px solid #000}th,td{padding:2px 6px;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left;white-space:normal}tr.total td{border-top:1px solid #000;font-weight:700}.flag{color:#b42318;font-weight:600}footer{margin-top:20px;border-top:1px solid #999;padding-top:6px;font-size:8pt;color:#333;word-break:break-all}section{break-inside:avoid}h3{font-size:10.5pt;margin:12px 0 2px}p.basis{font-size:8.5pt;color:#333}p.callout{margin:4px 0 0}`;
+const STYLE = `@page{size:letter;margin:0.6in}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font:10pt/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;margin:0;padding:0.4in;background:#fff}header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #000;padding-bottom:6px}h1{font-size:17pt;margin:0}h2{font-size:12pt;margin:18px 0 4px}p{margin:4px 0}dl.totals{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}dl.totals div{border-top:4px solid #999;padding-top:4px}dl.totals dd{margin:0;font-size:15pt;font-weight:700}table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th{font-weight:600;border-bottom:1px solid #000}th,td{padding:2px 6px;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left;white-space:normal}tr.total td{border-top:1px solid #000;font-weight:700}.flag{color:#b42318;font-weight:600}footer{margin-top:20px;border-top:1px solid #999;padding-top:6px;font-size:8pt;color:#333;word-break:break-all}section{break-inside:avoid}h3{font-size:10.5pt;margin:12px 0 2px}p.callout{margin:4px 0 0}`;
 
 // Tax another merchant of record (Managed Markets) paid on Shopify orders.
 export const internationalTax = (d: {
@@ -77,7 +75,7 @@ export const internationalTax = (d: {
 
 function caveat(r: StatementResult) {
 	const why = statementCaveat(r);
-	return why ? `<p class="flag">${escapeHtml(why)}</p>` : "";
+	return why ? ` <span class="flag">${escapeHtml(why)}</span>` : "";
 }
 
 function statementBlock(
@@ -86,11 +84,9 @@ function statementBlock(
 ): string {
 	const name = STATEMENT_NAME[r.channel];
 	if (r.state === "missing")
-		return `<h3>${escapeHtml(name)}</h3><p class="flag">${escapeHtml(
-			r.error ? `Not read: ${r.error}` : "Not read yet",
-		)}</p>`;
+		return `<h3>${escapeHtml(name)} <span class="flag">Not read</span></h3>`;
 	const view = statementView(r.statement);
-	const head = `<h3>${escapeHtml(name)}: ${escapeHtml(STATEMENT_TITLE[r.channel])}</h3><p class="basis">${escapeHtml(STATEMENT_BASIS[r.channel])}</p>${caveat(r)}`;
+	const head = `<h3>${escapeHtml(name)}${caveat(r)}</h3>`;
 	if (view.kind === "table") {
 		const cell = (n: number, i: number) => (view.columns[i].count ? n : usd(n));
 		return `${head}${table(

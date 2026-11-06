@@ -18,7 +18,12 @@ import type { MonthWindow } from "./window";
 // and whatever a transaction's breakdowns don't itemize is listed too, so the
 // month always adds up to Amazon's own transaction totals.
 
-const money = type({ currencyAmount: "number", "currencyCode?": "string" });
+// Amazon sends a field it has no value for as null as often as it leaves it
+// out, so every optional field takes either.
+const money = type({
+	currencyAmount: "number",
+	"currencyCode?": "string | null",
+});
 const breakdown = type
 	.scope({
 		breakdown: {
@@ -30,14 +35,14 @@ const breakdown = type
 	.type("breakdown");
 type Breakdown = typeof breakdown.infer;
 const context = type({
-	"contextType?": "string",
-	"fulfillmentNetwork?": "string",
+	"contextType?": "string | null",
+	"fulfillmentNetwork?": "string | null",
 });
 export const amazonStatementTransaction = type({
 	transactionType: "string",
-	"postedDate?": "string",
+	"postedDate?": "string | null",
 	"totalAmount?": money,
-	"marketplaceDetails?": type({ "marketplaceId?": "string" }).or("null"),
+	"marketplaceDetails?": type({ "marketplaceId?": "string | null" }).or("null"),
 	"relatedIdentifiers?": type({
 		relatedIdentifierName: "string",
 		relatedIdentifierValue: "string",
